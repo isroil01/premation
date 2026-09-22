@@ -102,9 +102,9 @@ describe('a disabled expression falls back to the keyframes', () => {
 describe('boundaries — what the keyframed fixture excludes', () => {
   /**
    * (1) No keyframes: the fallback is the BASE VALUE provider, a different
-   * branch. With no track, `value` inside the expression is 0 (there is nothing
-   * to sample), so enabled gives 0 + 200 = 200 and disabled gives the static
-   * 12 the provider reports. Two distinct numbers, neither of them the other
+   * branch. With no track, `value` inside the expression is the STATIC value
+   * (AE: the pre-expression value — see expressionStaticValue.test.ts), so
+   * enabled gives 12 + 200 = 212 and disabled gives the static 12 alone. Two distinct numbers, neither of them the other
    * branch's answer.
    */
   test('no keyframes — disabled falls back to the STATIC value, not to 0', () => {
@@ -112,7 +112,7 @@ describe('boundaries — what the keyframed fixture excludes', () => {
     a.setBaseValueProvider((_id, prop) => (prop === 'rotation' ? 12 : undefined));
     a.setExpression('n1', 'rotation', 'value + 200');
 
-    expect(a.sample('n1', 'rotation', 1)).toBeCloseTo(200);
+    expect(a.sample('n1', 'rotation', 1)).toBeCloseTo(212);
     a.setExpressionEnabled('n1', 'rotation', false);
     expect(a.sample('n1', 'rotation', 1)).toBeCloseTo(12);
   });

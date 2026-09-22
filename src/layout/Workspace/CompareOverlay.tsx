@@ -1,7 +1,7 @@
 /**
  * Snapshot comparison — the drawing half of `compareStore`.
  *
- * `F5` freezes the frame, `F6` shows it, and this paints the result in one of
+ * `F5` freezes the frame, `Shift+F5` shows it, and this paints the result in one of
  * four ways:
  *
  *   toggle        the snapshot instead of the live frame (`flip` swaps back)

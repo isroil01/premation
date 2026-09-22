@@ -14,14 +14,13 @@ import { SearchField } from '@components/SearchField';
 import { EmptyState } from '@components/EmptyState';
 import { ColorPicker } from '@components/ColorPicker';
 import { Switch } from '@components/Switch';
-import { Icon, type IconName } from '@components/Icon';
+import { Icon } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
-import { openModal } from '@stores/modalStore';
 import { getCommandRegistry } from '@core/commands/Command';
 import { ensureCommandsRegistered } from '@core/commands/ensureCommandsRegistered';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { chordFromEvent } from '@core/commands/CommandSystem';
-import { formatChord } from '@layout/Menu/formatChord';
+import { chordKeys, formatChord } from '@layout/Menu/formatChord';
 import {
   getShortcutOverrides,
   setShortcutOverride,
@@ -43,10 +42,12 @@ import { UpdatesControl } from './UpdatesControl';
 import { ObjectMatteControl } from './ObjectMatteControl';
 import { FilesTab } from './FilesTab';
 import { AudioHardwareSection } from './AudioHardwareSection';
-import { aiEnabled } from '@core/config/edition';
+import { LanguageSetting } from './LanguageSetting';
+import { isServerEdition } from '@core/config/edition';
 import styles from './CustomizeDialog.module.css';
 
-export type Tab = 'shortcuts' | 'tabs' | 'appearance' | 'audio' | 'files' | 'ai';
+export type { Tab } from './customizeTabs';
+import { tabsForEdition, type Tab } from './customizeTabs';
 
 /** Modifier-only keydowns aren't a chord — keep listening until a real key. */
 function isModifierKey(key: string): boolean {
@@ -82,13 +83,9 @@ function renderChordKeys(chord: KeyChord | undefined): JSX.Element {
       </span>
     );
   }
-  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-  const keys: string[] = [];
-  if (chord.ctrl) keys.push(isMac ? '⌃' : 'Ctrl');
-  if (chord.alt) keys.push(isMac ? '⌥' : 'Alt');
-  if (chord.shift) keys.push(isMac ? '⇧' : 'Shift');
-  if (chord.meta) keys.push(isMac ? '⌘' : 'Win');
-  keys.push(chord.key.length === 1 ? chord.key.toUpperCase() : chord.key);
+  // The same keycaps every menu and tooltip prints — one formatter, so the
+  // dialog can never disagree with the label it is documenting.
+  const keys = chordKeys(chord);
 
   return (
     <div className={styles.keyCombo}>
@@ -479,6 +476,7 @@ export function AppearanceTab(): JSX.Element {
   const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
   const retainOriginalSvg = usePreferenceStore((s) => s.retainOriginalSvg);
   const idleCacheWorkArea = usePreferenceStore((s) => s.idleCacheWorkArea);
+  const shareUsageData = usePreferenceStore((s) => s.shareUsageData);
   const setPref = usePreferenceStore((s) => s.set);
 
   const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
@@ -504,6 +502,8 @@ export function AppearanceTab(): JSX.Element {
 
   return (
     <div className={styles.appearanceScroll}>
+      <LanguageSetting />
+
       <div className={styles.sectionGroup}>
         <div className={styles.sectionHeading}>
           <span className={styles.sectionTitle}>Theme & Brand Accent</span>
@@ -970,6 +970,24 @@ export function AppearanceTab(): JSX.Element {
             </div>
           </div>
 
+          {isServerEdition() && (
+            <div className={styles.switchRow}>
+              <div className={styles.settingInfo}>
+                <span className={styles.settingTitle}>Share Usage Data</span>
+                <span className={styles.settingDesc}>
+                  Tells us which features you use and what goes wrong — for example
+                  “exported an MP4” or “an import failed”. Never your projects, file
+                  names, text or media.
+                </span>
+              </div>
+              <Switch
+                checked={shareUsageData !== false}
+                onChange={(e) => setPref('shareUsageData', e.target.checked)}
+                aria-label="Share usage data"
+              />
+            </div>
+          )}
+
           <UpdatesControl />
         </div>
       </div>
@@ -977,19 +995,6 @@ export function AppearanceTab(): JSX.Element {
   );
 }
 
-export function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string; icon: IconName }> {
-  return [
-    { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' as IconName },
-    { id: 'tabs', label: 'Workspaces', icon: 'layout' as IconName },
-    { id: 'appearance', label: 'Appearance', icon: 'palette' as IconName },
-    // AE's Preferences ▸ Audio Hardware. Its own pane rather than a section of
-    // Appearance: nothing in it is about how the app looks, and a monitoring
-    // device buried under "Appearance" is a device nobody finds.
-    { id: 'audio', label: 'Audio', icon: 'audio' as IconName },
-    { id: 'files', label: 'Files', icon: 'folder' as IconName },
-    ...(aiEnabled() ? [{ id: 'ai' as const, label: 'AI Engine', icon: 'ai' as IconName }] : []),
-  ];
-}
 
 /**
  * The preview cache's size, its budget, and the two ways to empty it.
@@ -1109,16 +1114,8 @@ export function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): J
   );
 }
 
-export function openCustomizeDialog(initialTab?: Tab): void {
-  openModal({
-    id: 'customize',
-    title: 'Studio Preferences & Customization',
-    size: 'lg',
-    render: () => <Customize {...(initialTab ? { initialTab } : {})} />,
-  });
-}
-
-export function openAiSettings(): void {
-  if (!aiEnabled()) return;
-  openCustomizeDialog('ai');
-}
+// `openCustomizeDialog` / `openAiSettings` live in ./openCustomizeDialog.tsx:
+// a module that exports components AND plain functions cannot Fast Refresh,
+// and every edit anywhere upstream then invalidated this file, its importers
+// (Providers, TopNav, the title bar, the AI chat) and back again — Vite's
+// client looped in `importUpdatedModule` until the page was unusable.

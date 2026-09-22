@@ -94,6 +94,8 @@ export function SceneControls(): JSX.Element {
   const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
   const setPreference = usePreferenceStore((s) => s.set);
   const toggleLayerBoxesVisible = (): void => setPreference('showLayerBounds', !layerBoxesVisible);
+  const deviceWireframesAll = usePreferenceStore((s) => s.deviceWireframesAll);
+  const toggleDeviceWireframesAll = (): void => setPreference('deviceWireframesAll', !deviceWireframesAll);
 
   const armedCamera = CAMERA_TOOLS.find((t) => t.id === cameraTool);
   const gizmo = GIZMO_MODES.find((g) => g.id === gizmo3dState) ?? GIZMO_MODES[0]!;
@@ -239,6 +241,13 @@ export function SceneControls(): JSX.Element {
             label: 'Layer bounding boxes',
             checked: layerBoxesVisible,
             onChange: () => toggleLayerBoxesVisible(),
+          },
+          {
+            type: 'checkbox',
+            id: 'view-device-wireframes',
+            label: 'Camera & light wireframes for unselected layers',
+            checked: deviceWireframesAll,
+            onChange: () => toggleDeviceWireframesAll(),
           },
           { type: 'separator' },
           // The focus plane is three-valued in its store (off / selected /

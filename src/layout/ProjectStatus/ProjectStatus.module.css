@@ -17,6 +17,10 @@
   transition: background var(--motion-duration-fast) var(--motion-ease-standard),
               border-color var(--motion-duration-fast) var(--motion-ease-standard);
   min-width: 0;
+  /* Never wider than the slot a host gives it: the title bar's centre is
+     whatever the menu bar and the window controls leave over. */
+  max-width: 100%;
+  box-sizing: border-box;
   -webkit-app-region: no-drag;
 }
 
@@ -34,9 +38,23 @@
   font-weight: 500;
   color: var(--color-text-primary);
   max-width: 320px;
+  min-width: 0;
+  /* Two halves (see `splitForMiddleEllipsis`): the head shrinks and ends in
+     "…", the tail never does — so a long name keeps the END that tells two
+     versions of one project apart ("…Final v7"). */
+  display: flex;
+  white-space: pre;
+}
+
+.nameHead {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.nameTail {
+  flex: none;
 }
 
 /* No project open yet: Ctrl+S will ask where to put it, so say so quietly
@@ -59,4 +77,9 @@
   font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
   white-space: nowrap;
+  /* The lowest-priority part of the chip: it gives way long before the name
+     starts to truncate. */
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
 }

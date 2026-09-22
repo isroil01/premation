@@ -36,6 +36,8 @@ describe('lights', () => {
       falloffDistance: 500,
       shadowDarkness: 100,
       shadowDiffusion: 0,
+      // The screen-blended glow is opt-in (AE has none): see `glow` in light.ts.
+      glow: false,
       // Geometry-aware shadows, off by default: `shadowMap: false` leaves the
       // 2.5D projected copy in place, and the three settings below are inert
       // until it is switched on.

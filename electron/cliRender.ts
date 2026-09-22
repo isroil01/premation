@@ -93,7 +93,7 @@ export interface CliTask {
 /** Where the renderer lives — the dev server, or the packaged bundle. */
 function rendererEntry(): { url: string } | { file: string } {
   return process.env.NODE_ENV === 'development'
-    ? { url: 'http://localhost:5173/#/render' }
+    ? { url: `${(process.env.PREMATION_DEV_URL ?? 'http://localhost:5173').replace(/\/+$/, '')}/#/render` }
     : { file: path.join(__dirname, '..', 'dist', 'index.html') };
 }
 

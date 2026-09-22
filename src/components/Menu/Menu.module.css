@@ -18,6 +18,15 @@
   overflow-y: visible;
 }
 
+/* …except a SUBMENU that would be taller than the window. "No scrollbar" was
+   for the short submenus (Arrange, Label Color) that must not grow one; a
+   40-row Effect ▸ Stylize in a 690px window is not un-scrolled, it is
+   unreachable past the fold. The cap only bites when the list cannot fit. */
+.subMenuWrapper > .noScroll {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
 /* Context menus: room between rows, not a packed 280px scroller.
    Compact toolbar dropdowns keep the default `.menu` metrics. */
 .spacious {

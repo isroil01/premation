@@ -400,6 +400,23 @@ export function compRootOf(nodeId: string): string | null {
  * in one you weren't looking at. The dropdown offered every layer in the project
  * with nothing to distinguish them, so the only cue was the layer disappearing.
  */
+/**
+ * Whether `targetId` may become `childId`'s parent — the predicate form of
+ * `eligibleParents`, for the pick-whip's `accept`. Same rules: a layer of the
+ * same composition (not one inside a nested precomp), not the comp root, not
+ * itself, not one of its own descendants. O(depth) per call, where building
+ * the whole eligible list was a walk of the comp per ROW per render.
+ */
+export function canBeParentOf(childId: string, targetId: string): boolean {
+  if (targetId === childId) return false;
+  const target = defaultSceneGraph.getNode(targetId);
+  if (!target || target.parent === null || target.parent === undefined) return false;
+  const root = enclosingCompRootOf(childId);
+  if (!root || targetId === root) return false;
+  if (enclosingCompRootOf(targetId) !== root) return false;
+  return !isDescendant(childId, targetId);
+}
+
 export function eligibleParents(childId: string): Array<{ id: string; name: string }> {
   const out: Array<{ id: string; name: string }> = [];
   const root = enclosingCompRootOf(childId);

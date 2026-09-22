@@ -439,6 +439,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Wraps: four swatches + the hex field + the Transparent switch do not fit
+     the left column's width, and un-wrapped the switch's label ran out over
+     the panel edge ("Transpar…"). */
+  flex-wrap: wrap;
   gap: 8px;
   width: 100%;
 }

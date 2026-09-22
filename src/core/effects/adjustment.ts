@@ -10,9 +10,10 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 export function readNodeAdjustment(node: SceneNode): boolean {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   return fx?.props.isAdjustment === true;
 }
 

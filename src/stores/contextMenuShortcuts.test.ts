@@ -31,7 +31,7 @@ afterEach(() => {
 describe('resolveContextMenuItems', () => {
   it('fills shortcut, label and a default action from the command', () => {
     const [item] = resolveContextMenuItems([{ id: 'dup', commandId: 'test.dup' }]);
-    expect(item!.shortcut).toBe('CtrlD');
+    expect(item!.shortcut).toBe('Ctrl+D');
     expect(item!.label).toBe('Duplicate Thing');
     expect(typeof item!.onSelect).toBe('function');
     expect(item!.disabled).toBeUndefined();
@@ -59,7 +59,7 @@ describe('resolveContextMenuItems', () => {
       { id: 'parent', label: 'More', children: [{ id: 'kid', commandId: 'test.dup' }] },
     ]);
     const parent = useContextMenuStore.getState().items[0]!;
-    expect(parent.children?.[0]?.shortcut).toBe('CtrlD');
+    expect(parent.children?.[0]?.shortcut).toBe('Ctrl+D');
     useContextMenuStore.getState().close();
   });
 });

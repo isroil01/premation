@@ -143,9 +143,11 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
  */
 // CloudThumbnail removed; using worker component instead
 
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy } from 'react';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { StartScreen } from '@layout/Start/StartScreen';
+import { useStartScreenVisible } from '@layout/Start/useStartScreenVisible';
+import { AboutCommandInstaller } from '@layout/Help/AboutDialog';
 import { setStartScreenVisible } from '@stores/onboardingStore';
 import { cloudProjectsEnabled } from '@core/config/edition';
 
@@ -161,14 +163,15 @@ const LazyEditorShell = lazy(() => import('../App').then(m => ({ default: m.Edit
  * Dismissal is session state, not a preference: closing it means "not now",
  * and a user who returns to an empty editor next launch should be offered
  * their recents again rather than having silently opted out forever.
+ *
+ * Visibility FOLLOWS the project manager (see `useStartScreenVisible`). It was
+ * read once at mount and cleared only by the screen's own buttons, so a
+ * project opened any other way — Ctrl+O, File ▸ Open, a crash-recovery
+ * Restore — loaded behind it and stayed hidden until the user found
+ * "Continue without a project".
  */
 function LocalStart(): JSX.Element | null {
-  const [dismissed, setDismissed] = useState(false);
-  // Read once at mount. This is the pre-project state by definition, and
-  // subscribing would re-show the screen the moment a project is CLOSED —
-  // mid-session, over a canvas the user is still looking at.
-  const [hadProject] = useState(() => getProjectManager().getState().current !== null);
-  const visible = !(cloudProjectsEnabled() || dismissed || hadProject);
+  const { visible, dismiss } = useStartScreenVisible(!cloudProjectsEnabled());
   // The onboarding tour must not auto-start behind this screen; tell the
   // store while it is up and again when it goes (dismissal or unmount).
   useEffect(() => {
@@ -176,7 +179,7 @@ function LocalStart(): JSX.Element | null {
     return () => setStartScreenVisible(false);
   }, [visible]);
   if (!visible) return null;
-  return <StartScreen onDismiss={() => setDismissed(true)} />;
+  return <StartScreen onDismiss={dismiss} />;
 }
 
 export function EditorPage(): JSX.Element {
@@ -191,6 +194,9 @@ export function EditorPage(): JSX.Element {
             Mounted for the whole session; it resolves the current bundle per
             capture and no-ops without one (or without a desktop bridge). */}
         {!cloudProjectsEnabled() ? <LocalThumbnailWorker /> : null}
+        {/* Help ▸ About, registered after boot so it replaces the stale copy —
+            see AboutCommandInstaller for why it has to be in here. */}
+        <AboutCommandInstaller />
         {/*
           The read-only bar sits ABOVE the shell in a flex column so it pushes the
           editor down rather than floating over the canvas — a locked document is

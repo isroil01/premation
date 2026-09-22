@@ -22,6 +22,7 @@ import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorTabStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompName } from '@layout/Composition/activeCompName';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useAssetStore } from '@stores/assetStore';
@@ -68,9 +69,9 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
 
   const activeTab = tabs.find((t) => t.id === activeId);
   const sceneActive = activeId === SCENE_TAB_ID;
-  // A pristine, never-adopted, still-empty comp reads as "(none)" — the AE
-  // fresh-project state — even though the engine keeps a root under the hood.
-  // Drawing into it makes it real by use, flag or no flag.
+  // A pristine, never-adopted, still-empty comp is the AE fresh-project state
+  // — the engine keeps a root under the hood. Drawing into it makes it real by
+  // use, flag or no flag.
   const rawCompName = useCompositionStore((s) => s.name);
   const activePristine = useProjectStore((s) => {
     const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
@@ -78,7 +79,14 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
     const node = defaultSceneGraph.getNode(id);
     return !node || node.children.length === 0;
   });
-  const compName = activePristine ? '' : rawCompName;
+  // The TAB names whichever comp is active — pristine or not. It used to read
+  // "Composition (none)" for a pristine comp, while the timeline tab, the
+  // status bar and Composition Settings all named the very comp it was
+  // showing ("Composition 1"): a viewer that says it has nothing open, open on
+  // something. "(none)" is now only what it says — no active composition.
+  // `activePristine` still gates the comp-only menu entries below.
+  const activeCompName = useActiveCompName();
+  const compName = activeCompName ?? rawCompName;
   // Unsaved edits on the active comp's tab — the same flag the discard prompt
   // and ProjectStatus read, so the three can never disagree.
   const activeDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty === true : false));

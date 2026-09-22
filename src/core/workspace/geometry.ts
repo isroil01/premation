@@ -16,6 +16,9 @@ import { hasTextPath, readParagraphBox } from '@core/text/textExtras';
 import { applyTextPath, pathGlyphBounds, readTextPathConfig, textPathGeometry } from '@core/text/textPath';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+// Read-only throughout: `SceneNode.components` copies on every access, and the
+// group walk below reads it for every descendant, every painted frame.
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
@@ -42,7 +45,7 @@ export function textPathExtent(
   if (!cfg || !table || !layout) return null;
   let align: string | undefined;
   let vertical = false;
-  for (const c of node.components) {
+  for (const c of renderComponentsOf(node)) {
     const p = c.props as Record<string, unknown>;
     if (typeof p.align === 'string') align = p.align;
     if (p.orientation === 'vertical' || p.orientation === 'horizontal') vertical = p.orientation === 'vertical';
@@ -215,7 +218,7 @@ export function readGeometry(
   let height: number | undefined;
   let shapeType: string | undefined;
   let radius: number | undefined;
-  for (const c of node.components) {
+  for (const c of renderComponentsOf(node)) {
     const p = c.props as Record<string, unknown>;
     if (typeof p.x === 'number') x = p.x;
     if (typeof p.y === 'number') y = p.y;
@@ -245,7 +248,7 @@ export function readGeometry(
   // Measure exact bounding box of shape Geometry points if available
   let pointsBounds: { w: number; h: number } | null = null;
   if (kind === 'shape') {
-    for (const c of node.components) {
+    for (const c of renderComponentsOf(node)) {
       if (c.props && Array.isArray((c.props as any).points)) {
         const pts = (c.props as any).points as Array<{ x: number; y: number }>;
         if (pts.length > 0) {
@@ -292,7 +295,7 @@ export function readGeometry(
     ? (() => {
         const fromOverride = overrideProps?.boxWidth;
         if (typeof fromOverride === 'number' && fromOverride > 0) return fromOverride;
-        for (const c of node.components) {
+        for (const c of renderComponentsOf(node)) {
           const v = (c.props as Record<string, unknown>).boxWidth;
           if (typeof v === 'number' && v > 0) return v;
         }
@@ -362,7 +365,7 @@ export function readGeometry(
   // left makeNode's 100×100 at (160,120) while the renderer drew full-comp —
   // the "tiny blueprint in the corner" bug.
   const isSolid = kind === 'shape'
-    && node.components.some((c) => c.type === 'fx' && (c.props as { solid?: boolean }).solid === true);
+    && renderComponentsOf(node).some((c) => c.type === 'fx' && (c.props as { solid?: boolean }).solid === true);
   let finalX = x ?? node.transform.position.x;
   let finalY = y ?? node.transform.position.y;
   if (isSolid) {

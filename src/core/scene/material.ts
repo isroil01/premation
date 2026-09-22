@@ -27,6 +27,7 @@
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /**
  * AE's tri-state shadow switches. `only` is not a cosmetic third option — it is
@@ -175,7 +176,7 @@ export const MATERIAL_ANIMATABLE = [
 ] as const;
 
 function transformProps(node: SceneNode): Record<string, unknown> {
-  return (node.components.find((c) => c.type === 'Transform')?.props ?? {}) as Record<string, unknown>;
+  return (renderComponentsOf(node).find((c) => c.type === 'Transform')?.props ?? {}) as Record<string, unknown>;
 }
 
 const pct = (v: unknown, fallback: number): number =>

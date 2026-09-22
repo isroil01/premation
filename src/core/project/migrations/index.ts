@@ -38,9 +38,10 @@ import { v1_3_0_to_v1_4_0 } from './v1_3_0_to_v1_4_0';
 import { v1_4_0_to_v1_5_0 } from './v1_4_0_to_v1_5_0';
 import { v1_5_0_to_v1_6_0 } from './v1_5_0_to_v1_6_0';
 import { v1_6_0_to_v1_7_0 } from './v1_6_0_to_v1_7_0';
+import { v1_7_0_to_v1_8_0 } from './v1_7_0_to_v1_8_0';
 
 /** The version this build writes and understands. Bump when adding a migration. */
-export const CURRENT_DOCUMENT_VERSION = '1.7.0';
+export const CURRENT_DOCUMENT_VERSION = '1.8.0';
 
 /**
  * The version assumed for a document that carries none. The oldest shape we
@@ -95,6 +96,7 @@ export const MIGRATIONS: readonly DocumentMigration[] = [
   v1_4_0_to_v1_5_0,
   v1_5_0_to_v1_6_0,
   v1_6_0_to_v1_7_0,
+  v1_7_0_to_v1_8_0,
 ];
 
 /**

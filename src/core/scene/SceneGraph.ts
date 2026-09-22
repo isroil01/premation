@@ -97,6 +97,10 @@ class AppNodeView implements SceneNode {
   set parent(v: ID | null | undefined) {
     this.e.custom.parentId = v ?? null;
   }
+  /** The engine node's own-state sequence — see `SceneNode.mutationSeq`. */
+  get mutationSeq(): number {
+    return this.e.mutationSeq;
+  }
   get visible(): boolean {
     return this.e.visible;
   }

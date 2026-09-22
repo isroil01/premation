@@ -31,7 +31,15 @@ export type DropdownItem =
 
 export interface DropdownProps {
   trigger: ReactElement;
-  items: ReadonlyArray<DropdownItem>;
+  /**
+   * The menu, or a function that builds it. Either way the rows are only
+   * turned into elements while the menu is OPEN: a closed dropdown used to
+   * create every item element on each render, and a timeline row carries a
+   * Parent menu listing every layer in the comp — 2,000 layers × 40 visible
+   * rows made adding one layer take seconds. A function defers building the
+   * list itself as well.
+   */
+  items: ReadonlyArray<DropdownItem> | (() => ReadonlyArray<DropdownItem>);
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'right-start' | 'left-start';
   offset?: { x: number; y: number };
   className?: string;
@@ -39,8 +47,11 @@ export interface DropdownProps {
   noScroll?: boolean;
 }
 
-export function Dropdown({ trigger, items, placement = 'bottom-start', offset, className, noScroll }: DropdownProps): JSX.Element {
+const NO_ITEMS: ReadonlyArray<DropdownItem> = [];
+
+export function Dropdown({ trigger, items: itemsProp, placement = 'bottom-start', offset, className, noScroll }: DropdownProps): JSX.Element {
   const [open, setOpen] = useState(false);
+  const items = open ? (typeof itemsProp === 'function' ? itemsProp() : itemsProp) : NO_ITEMS;
 
   const handleSelect = (onSelect?: (modifiers: MenuSelectModifiers) => void) => {
     return (modifiers: MenuSelectModifiers) => {

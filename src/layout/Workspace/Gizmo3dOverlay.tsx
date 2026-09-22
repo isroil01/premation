@@ -35,6 +35,8 @@ export interface Gizmo3dOverlayProps {
   nodeScale: { scaleX: number; scaleY: number; scaleZ: number };
   camera: Camera3D;
   orthoView: OrthoView | null;
+  /** See `SceneGeometryOverlay`. */
+  throughSceneCamera?: boolean;
   compWidth: number;
   compHeight: number;
   /** Comp → canvas transform (RenderView): canvasPx = compPx·scale + offset. */
@@ -57,6 +59,7 @@ export interface Gizmo3dOverlayProps {
 export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
   deviceHandles,
   hoveredDeviceHandle,
+  throughSceneCamera,
   showGizmo,
   position3D,
   nodeRotation,
@@ -253,6 +256,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
         sceneGizmos={sceneGizmos}
         deviceHandles={deviceHandles}
         hoveredDeviceHandle={hoveredDeviceHandle}
+        throughSceneCamera={throughSceneCamera}
       />
 
       {/* ── Render 3D Gizmo Handles ── */}

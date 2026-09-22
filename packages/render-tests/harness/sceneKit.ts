@@ -212,7 +212,11 @@ export function node(
     {
       id: `${id}_t`,
       type: 'Transform',
-      props: { [SCENE_KIND_PROP]: kind, x: position.x, y: position.y, rotation, ...transform },
+      // Every reference frame with a light in it was captured with the glow
+      // wash drawn, back when it was unconditional. It is opt-in in the app now
+      // (`glow` in light.ts), so the harness asks for it: the goldens keep
+      // covering the wash, and a scene can still pass `lightGlow: false`.
+      props: { [SCENE_KIND_PROP]: kind, x: position.x, y: position.y, rotation, ...(kind === 'light' ? { lightGlow: true } : {}), ...transform },
     },
   ];
   if (style) comps.push({ id: `${id}_s`, type: 'Style', props: { opacity: 100, ...style } });

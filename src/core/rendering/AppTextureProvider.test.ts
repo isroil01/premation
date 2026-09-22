@@ -15,6 +15,7 @@ import { ResourceManager, NullBackend } from '@motion/renderer';
 import { AppTextureProvider, textCssFont, spotConeFactor, poolProfile, type ImageLoader, type VideoFactory } from './AppTextureProvider';
 import { videoDiag } from './videoPlaybackDiag';
 import type { RenderLayer } from './RenderBackend';
+import * as maskModule from '@core/effects/mask';
 
 /** A fake decoded bitmap (only width/height matter to the provider). */
 function fakeBitmap(w = 320, h = 240): ImageBitmap {
@@ -235,6 +236,64 @@ describe('AppTextureProvider', () => {
    * re-decoded from scratch every time it crossed — so the loading placeholder
    * reappeared on every pass and every scrub, not just on first load.
    */
+  /**
+   * A static mask must survive the rasterizer evicting its matte.
+   *
+   * `setMask` used to return on an unchanged signature without consulting the
+   * rasterizer, so its matte aged out of the byte-capped LRU, the GPU texture
+   * was freed, and the provider kept handing out the dead handle — WebGPU then
+   * rejected the pass and a long export wrote black frames while reporting
+   * success.
+   */
+  describe('mask mattes and rasterizer eviction', () => {
+    class DestroyTracking extends NullBackend {
+      readonly dead = new Set<number>();
+      override destroyTexture(h: Parameters<NullBackend['destroyTexture']>[0]): void {
+        this.dead.add(h.id);
+        super.destroyTexture(h);
+      }
+    }
+    // jsdom has no Path2D, and the matte's PIXELS are not what is under test.
+    let paint: jest.SpyInstance;
+    beforeAll(() => { paint = jest.spyOn(maskModule, 'paintMaskMatte').mockImplementation(() => {}); });
+    afterAll(() => paint.mockRestore());
+
+    const masked = {
+      id: 'm', kind: 'shape', x: 0, y: 0, width: 64, height: 64, rotation: 0, scaleX: 1, scaleY: 1,
+      opacity: 1, visible: true, depth: 0,
+      mask: { paths: [{
+        closed: true, inverted: false, mode: 'add', feather: 0,
+        points: [[0, 0], [64, 0], [64, 64]].map(([x, y]) => ({ x, y, inX: 0, inY: 0, outX: 0, outY: 0 })),
+      }] },
+    } as unknown as RenderLayer;
+
+    it('re-rasterizes instead of returning a freed texture', () => {
+      const backend = new DestroyTracking();
+      const resources = new ResourceManager(backend);
+      resources.beginFrame(1);
+      const provider = new AppTextureProvider(resources, {});
+
+      provider.setMask('k', masked);
+      const first = provider.get('k')!.texture;
+
+      // What the LRU does under memory pressure: drop the entry, free the texture.
+      (provider as unknown as { rasterizer: { invalidate(prefix: string): void } }).rasterizer.invalidate('');
+      expect(backend.dead.has(first.id)).toBe(true);
+
+      provider.setMask('k', masked); // same signature — the old early return
+      expect(backend.dead.has(provider.get('k')!.texture.id)).toBe(false);
+    });
+
+    it('still skips the rasterize when the matte is alive', () => {
+      const { provider } = setup();
+      provider.setMask('k', masked);
+      const painted = paint.mock.calls.length;
+      expect(painted).toBeGreaterThan(0);
+      provider.setMask('k', masked);
+      expect(paint.mock.calls.length).toBe(painted);
+    });
+  });
+
   describe('retain()', () => {
     it('KEEPS a briefly-inactive image, so scrubbing over a clip start does not re-decode', async () => {
       const { provider } = setup(async () => fakeBitmap());

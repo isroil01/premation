@@ -67,6 +67,7 @@ let seq = 0;
 export { activeCompRootId } from './activeComp';
 import { activeCompRootId, activeCompSize } from './activeComp';
 import { computeFit } from '@core/source/fitCommands';
+import { defaultTextSize } from '@core/scene/textDefaults';
 
 /** Build a fresh scene node of `kind` with sensible default components. */
 export function makeNode(kind: SceneKind, name: string): SceneNode {
@@ -89,7 +90,7 @@ export function makeNode(kind: SceneKind, name: string): SceneNode {
               anchorY: 0,
             },
           },
-          { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: 32, opacity: 100 } },
+          { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: defaultTextSize(), opacity: 100 } },
         ]
       : kind === 'group'
         ? [
@@ -1005,7 +1006,7 @@ export function insertPathNode(
 }
 
 /** Insert a text layer seeded with a preset's font size / weight, label, and style overrides. */
-export function insertText(name: string, fontSize = 32, fontWeight = 400, extraProps: Record<string, any> = {}): void {
+export function insertText(name: string, fontSize = defaultTextSize(), fontWeight = 400, extraProps: Record<string, any> = {}): void {
   const rootId = activeCompRootId();
   const node = makeNode('text', name);
   placeInComp(node, { customFontSize: fontSize > 36 ? fontSize : undefined });
@@ -1249,6 +1250,10 @@ export function insertLight(seed: LightSeed = {}): void {
     t.props.z = -Math.round(compSize.width * 0.2315);
     t.props.intensity = typeof seed.intensity === 'number' ? seed.intensity : 100;
     t.props.radius = Math.round(Math.max(compSize.width, compSize.height) * 0.45);
+    // Written explicitly, unlike every other optional light prop: a light with
+    // NO falloff prop is what the 1.7.0 → 1.8.0 migration reads as "lit under
+    // the old radius ramp" and stamps `legacy`. New lights mean AE's None.
+    t.props.falloff = 'none';
     // Only write the optional props when chosen — an unseeded light keeps the
     // exact prop shape it always had (readNodeLight defaults cover the rest).
     if (seed.type && seed.type !== 'point') t.props.lightType = seed.type;

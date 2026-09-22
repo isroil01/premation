@@ -1,7 +1,7 @@
 /**
  * Snapshot / A-B / wipe compare for the viewport.
  *
- * `F5` freezes what the content canvas is showing into an ImageBitmap; `F6`
+ * `F5` freezes what the content canvas is showing into an ImageBitmap; `Shift+F5`
  * shows or hides the comparison. Four ways to look at it:
  *
  *   toggle        the snapshot replaces the live frame (press again to flip)

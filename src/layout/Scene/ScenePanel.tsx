@@ -54,7 +54,7 @@ import { renameLayer } from '@core/scene/renameLayer';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
 import { KIND_LABEL, flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { canReparent, eligibleParents, moveNodeAdjacent, parentOptionsFor, reparentNode } from '@core/scene/parenting';
+import { canReparent, moveNodeAdjacent, parentOptionsFor, reparentNode, canBeParentOf } from '@core/scene/parenting';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { LAYER_FLAGS } from '@core/scene/layerFlags';
 import { runDocumentEdit } from '@core/commands/documentEdit';
@@ -673,11 +673,10 @@ export function ScenePanel(): JSX.Element {
             renderLead={(node) => {
               const n = defaultSceneGraph.getNode(node.id);
               if (!n || n.parent === null) return null;
-              const options = eligibleParents(node.id);
               return (
                 <PickWhip
                   label="Parent pick-whip — drag onto a layer (Shift: jump to the parent · Alt: keep values)"
-                  accept={(target) => options.some((o) => o.id === target.nodeId)}
+                  accept={(target) => canBeParentOf(node.id, target.nodeId)}
                   onPick={(target, m) => reparentNode(node.id, target.nodeId, parentOptionsFor(m))}
                 />
               );

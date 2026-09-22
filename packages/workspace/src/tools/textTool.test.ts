@@ -40,6 +40,14 @@ describe('TextTool', () => {
     expect(created[0]!.kind).toBe('Text');
   });
 
+  it('REGRESSION: point text is a POINT — no 200×40 box, origin on the click', () => {
+    // The rect used to be 200×40: the host stored it as the layer's size (a box
+    // point text does not have) and centred the layer 100px right of the click.
+    const { ctx, created } = makeCtx();
+    new TextTool().onClick(click(40, 50), ctx);
+    expect(created[0]!.bounds).toEqual({ x: 40, y: 50, width: 0, height: 0 });
+  });
+
   it('a drag creates PARAGRAPH text with the dragged rectangle as its box', () => {
     const { ctx, created } = makeCtx();
     // Dragged up-left: the box is still the normalised rectangle.

@@ -21,7 +21,9 @@ import { BottomTimeline } from '@layout/BottomTimeline/BottomTimeline';
 import type { TimelineModel } from './TimelineModel';
 import { getTimelineFitSource } from './fitSelection';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { getCommandRegistry } from '@core/commands/Command';
+import { BuiltinCommands, getCommandRegistry } from '@core/commands/Command';
+import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
+import { useSelectionStore } from '@stores/selectionStore';
 import { asCommandId } from '@app-types/common';
 
 class NoopResizeObserver {
@@ -202,6 +204,81 @@ describe('the layer rows as a listbox', () => {
     expect(onToggleExpand).toHaveBeenCalledWith('a');
     fireEvent.keyDown(rows()[0]!, { key: ' ' });
     expect(onToggleVisible).toHaveBeenCalledWith('a');
+  });
+});
+
+/**
+ * Delete from the row you just clicked.
+ *
+ * The root CLAIMS `delete` / `backspace` so a keyframe selection can have them,
+ * and a claim makes `ShortcutManager` skip the chord whatever is selected. With
+ * no keyframes selected nothing picked the key back up — and clicking a layer's
+ * name, the ordinary way to select one, is exactly what puts focus on a row
+ * inside the claim. So the medium is a keydown ON THE ROW: the global command
+ * being correct is the reason this went unnoticed.
+ */
+describe('Delete / Backspace on a focused layer row', () => {
+  const rows = (): HTMLElement[] => screen.getAllByRole('option');
+  const execute = jest.fn();
+
+  beforeEach(() => {
+    execute.mockClear();
+    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+    const registry = getCommandRegistry();
+    if (registry.get(BuiltinCommands.DeleteSelected)) registry.unregister(BuiltinCommands.DeleteSelected);
+    // The REAL id with a spy behind it: what is under test is that the panel
+    // routes to the command the global chord runs, not what that command does.
+    registry.register({
+      id: BuiltinCommands.DeleteSelected,
+      label: 'Delete Selected',
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute,
+    });
+    useSelectionStore.getState().set(['a']);
+  });
+
+  it('POSITIVE CONTROL: the root claims both keys, so the global chord cannot fire here', () => {
+    const { container } = render(<Timeline model={MODEL} />);
+    const claim = (container.firstElementChild as HTMLElement).getAttribute('data-shortcut-claim')!.split(/\s+/);
+    expect(claim).toEqual(expect.arrayContaining(['delete', 'backspace']));
+  });
+
+  it.each(['Delete', 'Backspace'])('%s runs the Delete Selected command', (key) => {
+    render(<Timeline model={MODEL} selectedTrackIds={['a']} />);
+    const notCancelled = fireEvent.keyDown(rows()[0]!, { key });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(notCancelled).toBe(false); // preventDefault — Backspace must not navigate
+  });
+
+  it('does nothing, and leaves the key alone, with no layer selected', () => {
+    useSelectionStore.getState().set([]);
+    render(<Timeline model={MODEL} />);
+    expect(fireEvent.keyDown(rows()[0]!, { key: 'Delete' })).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('leaves Backspace to a text field inside the panel', () => {
+    const { container } = render(<Timeline model={MODEL} />);
+    const input = document.createElement('input');
+    (container.firstElementChild as HTMLElement).appendChild(input);
+    fireEvent.keyDown(input, { key: 'Backspace' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+Backspace is not a delete', () => {
+    render(<Timeline model={MODEL} />);
+    fireEvent.keyDown(rows()[0]!, { key: 'Backspace', ctrlKey: true });
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('J / K', () => {
+  it('are claimed on the root, where they mean previous / next keyframe', () => {
+    // `useTimelineKeys` reads this same claim to decide whether J / K are its
+    // own, so the claim is the single switch for both halves of the rule.
+    const { container } = render(<Timeline model={MODEL} />);
+    const claim = (container.firstElementChild as HTMLElement).getAttribute('data-shortcut-claim')!.split(/\s+/);
+    expect(claim).toEqual(expect.arrayContaining(['j', 'k']));
   });
 });
 

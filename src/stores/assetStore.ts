@@ -10,8 +10,9 @@ import { isPersistableProxy, type ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
 import { maybeIngestForImport } from '@core/assets/ingest';
 import { useUIStore } from '@stores/uiStore';
-import { bumpScene } from '@stores/sceneStore';
+import { bumpScene, bumpSceneRevision } from '@stores/sceneStore';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
+import { failureReason, mediaKindOf, track as trackEvent } from '@core/analytics/productEvents';
 
 export interface ImportedAsset {
   id: string;
@@ -288,8 +289,23 @@ interface AssetStoreActions {
   setLabel: (assetIds: readonly string[], label: string | null) => void;
   /** Replace the local list with the signed-in user's cloud assets. */
   loadFromCloud: () => Promise<void>;
-  /** Initialize local assets hydrated from IndexedDB. */
-  initialize: () => Promise<void>;
+  /**
+   * Initialize local assets hydrated from IndexedDB.
+   *
+   * `only` narrows the hydration to those ids — what Open uses after a
+   * `resetSession`, to bring back the footage the opened document references
+   * without re-listing the whole device library in its Assets panel.
+   */
+  initialize: (opts?: { only?: ReadonlySet<string> }) => Promise<void>;
+  /**
+   * Empty the SESSION's asset list — New Project and Close Project.
+   *
+   * In memory only. The device library (IndexedDB), the cloud rows and the
+   * organisation maps are untouched: crash recovery and single-file projects
+   * reconnect their footage by asset id out of that library, so deleting from
+   * it here would turn "start a new project" into "break the last one".
+   */
+  resetSession: () => void;
 }
 
 // ── Client-side organisation persistence ───────────────────────────
@@ -329,6 +345,47 @@ const ANALYSIS_PROXY_KEY = 'motion-editor.assetAnalysisProxies.v1';
  */
 const ORGANISATION_KEY = 'motion-editor.assetOrganisation.v1';
 
+/**
+ * Assets that exist in the device library but were dropped from this session's
+ * list by `resetSession`.
+ *
+ * Every map below is written WHOLESALE from the live asset list, so the first
+ * import after a New Project would otherwise rewrite each of them without the
+ * parked assets' rows — silently un-filing, un-tagging and un-conforming
+ * footage the previous project still depends on. `keepParked` carries their
+ * stored rows across such a write; an id leaves the set when it is hydrated
+ * back (and a parked asset cannot be deleted — it is not in the list to pick).
+ */
+const parkedIds = new Set<string>();
+
+/** Fold the stored rows of parked assets into a map that is about to replace them. */
+function keepParked<T>(key: string, next: Record<string, T>): Record<string, T> {
+  if (parkedIds.size === 0) return next;
+  try {
+    const raw = localStorage.getItem(key);
+    const prev = raw ? (JSON.parse(raw) as Record<string, T>) : {};
+    for (const id of parkedIds) if (!(id in next) && id in prev) next[id] = prev[id]!;
+  } catch {
+    /* unreadable store — nothing to carry */
+  }
+  return next;
+}
+
+/**
+ * Bumped by `resetSession`. An `initialize` that started before a reset must
+ * not land after it: the boot hydration is async (it reads every blob), and a
+ * New Project clicked while it is in flight would otherwise be refilled with
+ * the whole library a moment later.
+ */
+let sessionEpoch = 0;
+
+/** Which of `ids` were parked by a reset and are therefore worth a library read. */
+export function parkedAmong(ids: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const id of ids) if (parkedIds.has(id)) out.add(id);
+  return out;
+}
+
 interface AssetOrganisation {
   tags?: string[];
   label?: string;
@@ -357,7 +414,7 @@ function saveOrganisation(assets: ImportedAsset[]): void {
       if (a.path) row.path = a.path;
       if (Object.keys(row).length > 0) map[a.id] = row;
     }
-    localStorage.setItem(ORGANISATION_KEY, JSON.stringify(map));
+    localStorage.setItem(ORGANISATION_KEY, JSON.stringify(keepParked(ORGANISATION_KEY, map)));
   } catch {
     /* ignore */
   }
@@ -400,7 +457,7 @@ function saveAssignments(assets: ImportedAsset[]): void {
   try {
     const map: Record<string, string> = {};
     for (const a of assets) if (a.folderId) map[a.id] = a.folderId;
-    localStorage.setItem(ASSIGN_KEY, JSON.stringify(map));
+    localStorage.setItem(ASSIGN_KEY, JSON.stringify(keepParked(ASSIGN_KEY, map)));
   } catch {
     /* ignore */
   }
@@ -457,7 +514,7 @@ function saveSources(assets: ImportedAsset[]): void {
   try {
     const map: Record<string, AssetSource> = {};
     for (const a of assets) if (a.source && a.source !== 'user') map[a.id] = a.source;
-    localStorage.setItem(SOURCE_KEY, JSON.stringify(map));
+    localStorage.setItem(SOURCE_KEY, JSON.stringify(keepParked(SOURCE_KEY, map)));
   } catch {
     /* ignore */
   }
@@ -512,12 +569,12 @@ function saveProxies(assets: ImportedAsset[]): void {
     // isPersistableProxy: writing a liability is how the decoder later gets a
     // dead url instead of a clean fall back to full resolution.
     for (const a of assets) if (isPersistableProxy(a.proxy)) map[a.id] = a.proxy!;
-    localStorage.setItem(PROXY_KEY, JSON.stringify(map));
+    localStorage.setItem(PROXY_KEY, JSON.stringify(keepParked(PROXY_KEY, map)));
     const analysis: Record<string, ProxyRecord> = {};
     // Same durability rule, applied separately: the two records fail
     // independently, so one being unpersistable must not lose the other.
     for (const a of assets) if (isPersistableProxy(a.analysisProxy)) analysis[a.id] = a.analysisProxy!;
-    localStorage.setItem(ANALYSIS_PROXY_KEY, JSON.stringify(analysis));
+    localStorage.setItem(ANALYSIS_PROXY_KEY, JSON.stringify(keepParked(ANALYSIS_PROXY_KEY, analysis)));
   } catch {
     /* ignore */
   }
@@ -527,7 +584,7 @@ function saveInterpretations(assets: ImportedAsset[]): void {
   try {
     const map: Record<string, FootageInterpretation> = {};
     for (const a of assets) if (a.interpret && Object.keys(a.interpret).length > 0) map[a.id] = a.interpret;
-    localStorage.setItem(INTERPRET_KEY, JSON.stringify(map));
+    localStorage.setItem(INTERPRET_KEY, JSON.stringify(keepParked(INTERPRET_KEY, map)));
   } catch {
     /* ignore */
   }
@@ -657,12 +714,52 @@ function probeWithTimeout(run: (done: () => void) => void, timeoutMs = 10_000): 
   });
 }
 
+/**
+ * How deep inside an import we are. `addAsset` re-enters itself — a plugin
+ * decode hands back a PNG, a PSD becomes one asset per layer — and only the
+ * OUTERMOST call is something the user did.
+ */
+let importDepth = 0;
+
+/**
+ * Report an import the user made: one `media_imported` per kind with a count,
+ * or an `import_failed` with a reason code. Assets the app makes for itself
+ * (`derived`, `ai`) are not imports and are not reported.
+ */
+async function trackedImport<T>(files: File[], source: AssetSource, run: () => Promise<T>): Promise<T> {
+  const outer = importDepth === 0 && source === 'user';
+  importDepth++;
+  try {
+    const result = await run();
+    if (outer && files.length > 0) {
+      const byKind = new Map<string, number>();
+      for (const f of files) {
+        const kind = mediaKindOf(f);
+        byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
+      }
+      for (const [kind, count] of byKind) trackEvent('media_imported', { kind, count });
+    }
+    return result;
+  } catch (err) {
+    if (outer) {
+      trackEvent('import_failed', {
+        kind: files[0] ? mediaKindOf(files[0]) : 'other',
+        reason: failureReason(err),
+      });
+    }
+    throw err;
+  } finally {
+    importDepth--;
+  }
+}
+
 export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
   immer((set, get) => ({
     assets: [],
     folders: loadFolders(),
 
-    addAsset: async (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) => {
+    addAsset: (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) =>
+      trackedImport([file], opts.source ?? 'user', async () => {
       const source: AssetSource = opts.source ?? 'user';
 
       /*
@@ -890,9 +987,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       }
 
       return asset;
-    },
+    }),
 
-    addAssetsBatch: async (items: Array<{ file: File; folderId?: string | null }>): Promise<ImportedAsset[]> => {
+    addAssetsBatch: (items: Array<{ file: File; folderId?: string | null }>): Promise<ImportedAsset[]> =>
+      trackedImport(items.map((i) => i.file), 'user', async () => {
       if (items.length === 0) return [];
       const createdAssets: ImportedAsset[] = [];
       // Thumbnail blobs, index-aligned with createdAssets (null = keep original).
@@ -1027,7 +1125,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       for (const asset of createdAssets) triggerAutoProxy(asset);
 
       return createdAssets;
-    },
+    }),
 
     removeAsset: (id) => {
       const asset = get().assets.find((a) => a.id === id);
@@ -1161,7 +1259,13 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         else delete a.proxy;
       });
       saveProxies(get().assets);
-      bumpScene();
+      // Revision only — NOT `bumpScene()`. A proxy finishing (or starting: it
+      // is automatic for restored footage) is device-local state, not an edit.
+      // The structural event is wired to "unsaved change", so an untouched
+      // project read "Unsaved changes" three seconds after it opened and asked
+      // to discard work nobody had done; it also cost a full timeline
+      // reconcile and a stray undo step. The renderer only needs the re-read.
+      bumpSceneRevision();
     },
 
     /**
@@ -1227,9 +1331,21 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       }
     },
 
-    initialize: async () => {
+    initialize: async (opts = {}) => {
+      const epoch = sessionEpoch;
       try {
-        const dbAssets = await AssetDatabase.getAllAssets();
+        const all = await AssetDatabase.getAllAssets();
+        // A reset landed while the library was being read — this hydration
+        // belongs to the session that was just thrown away. Nothing has been
+        // minted yet, so there is nothing to release. The rows are PARKED
+        // rather than forgotten, so a later Open can still ask for the ones
+        // its document references.
+        if (epoch !== sessionEpoch) {
+          for (const a of all) parkedIds.add(a.id);
+          return;
+        }
+        const only = opts.only;
+        const dbAssets = only ? all.filter((a) => only.has(a.id)) : all;
         // Filter FIRST, mint object URLs second.
         //
         // This used to createObjectURL for every asset in IndexedDB and only then
@@ -1259,7 +1375,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             hydratedAssets.filter((ha) => !present.has(ha.id)),
             s.folders,
           );
-          for (const ha of fresh) s.assets.push(ha);
+          for (const ha of fresh) {
+            s.assets.push(ha);
+            parkedIds.delete(ha.id);
+          }
         });
         // The urls minted above are NEW — any already-restored document still
         // points its layers at the dead ones it was saved with. Reconnect by
@@ -1269,6 +1388,27 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       } catch (err) {
         console.error('[AssetStore] failed to initialize from IndexedDB:', err);
       }
+    },
+
+    resetSession: () => {
+      sessionEpoch += 1;
+      const dropped = get().assets;
+      if (dropped.length === 0) return;
+      // Revoke, but do NOT `releaseAsset`: that also deletes the IndexedDB and
+      // cloud rows, which is what "the user deleted this footage" means. The
+      // outgoing document has already been unloaded, so no layer is left
+      // decoding from these urls.
+      for (const a of dropped) {
+        if (a.src.startsWith('blob:')) URL.revokeObjectURL(a.src);
+        if (a.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(a.thumbSrc);
+        parkedIds.add(a.id);
+      }
+      set((s) => {
+        s.assets = [];
+      });
+      // No save* calls: the maps on disk are still right for the parked
+      // assets, and writing them from an empty list is exactly the loss
+      // `keepParked` exists to prevent.
     },
   })),
 );

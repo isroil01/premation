@@ -32,6 +32,10 @@ import { Matrix4Math } from '@motion/scene';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
+import { sceneMutationEpoch } from '@motion/scene';
+import { useSceneRevision } from '@stores/sceneStore';
+import type { SceneNode } from '@core/types';
+import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { readNodeLight } from '@core/scene/light';
 import { cameraFromNode, readCameraPoi } from '@core/scene/camera3d';
 import { defaultAnimation } from '@motion/animation';
@@ -62,6 +66,28 @@ export interface DeviceHandle {
  * from the same resolvers the gizmos and the renderer use, so a handle can
  * never sit somewhere its own wireframe is not.
  */
+/**
+ * The comp's cameras and lights, found once per scene state rather than by
+ * walking every layer per FRAME: this runs on each playback tick (the
+ * handles follow animated devices), and on a 2,000-layer comp the walk was
+ * the whole cost of a gizmo layer that usually has two devices in it.
+ * Keyed by the comp root, the mutation epoch (any prop write) and the scene
+ * revision (structural edits — a removed camera bumps that, not the epoch).
+ */
+let deviceCache: { key: string; nodes: Array<{ node: SceneNode; kind: SceneKind }> } | null = null;
+function deviceNodes(): Array<{ node: SceneNode; kind: SceneKind }> {
+  const root = activeCompRootId();
+  const key = `${root ?? ''}|${sceneMutationEpoch()}|${useSceneRevision.getState().rev}`;
+  if (deviceCache && deviceCache.key === key) return deviceCache.nodes;
+  const nodes: Array<{ node: SceneNode; kind: SceneKind }> = [];
+  for (const node of flattenComposition(defaultSceneGraph, root)) {
+    const kind = readNodeKind(node);
+    if (kind === 'camera' || kind === 'light') nodes.push({ node, kind });
+  }
+  deviceCache = { key, nodes };
+  return nodes;
+}
+
 export function collectDeviceHandles(
   time: number,
   compWidth: number,
@@ -80,8 +106,7 @@ export function collectDeviceHandles(
   viewingThroughCameraId: string | null = null,
 ): DeviceHandle[] {
   const out: DeviceHandle[] = [];
-  for (const node of flattenComposition(defaultSceneGraph, activeCompRootId())) {
-    const kind = readNodeKind(node);
+  for (const { node, kind } of deviceNodes()) {
 
     if (kind === 'camera') {
       if (node.id === viewingThroughCameraId) continue;

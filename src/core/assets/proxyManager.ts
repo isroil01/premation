@@ -19,6 +19,7 @@ import {
   analysisResolution, analysisEncodeArgs,
   type ProxyRecord,
 } from './proxy';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 /** Placeholders the main process substitutes with paths it owns. Keeping the
  *  ARGUMENTS in the renderer keeps the encode rule in one place. */
@@ -104,7 +105,7 @@ export async function startProxy(assetId: string): Promise<ProxyRefusal | null> 
   try {
     // The original's bytes. `src` is an object/blob URL for local imports and a
     // backend URL in cloud mode; fetch handles both.
-    const res = await fetch(asset.src);
+    const res = await fetchAssetSrc(asset.src);
     bytes = new Uint8Array(await res.arrayBuffer());
   } catch {
     // Only write the failure if this asset is still the one we started on.
@@ -183,7 +184,7 @@ export async function startAnalysisProxy(assetId: string): Promise<ProxyRefusal 
 
   let bytes: Uint8Array;
   try {
-    const res = await fetch(asset.src);
+    const res = await fetchAssetSrc(asset.src);
     bytes = new Uint8Array(await res.arrayBuffer());
   } catch {
     if (current(assetId)?.analysisProxy?.status === 'generating') {

@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { floatingLayerContainer } from '@utils/floatingLayerContainer';
 import { cn } from '@utils/cn';
 import { positionPopover, type Placement } from '@hooks/positionPopover';
 import styles from './Popover.module.css';
@@ -145,7 +146,8 @@ export function Popover({
         >
           {children}
         </div>,
-        document.body,
+        // Inside the dialog when opened from one — see floatingLayerContainer.
+        floatingLayerContainer(triggerRef.current),
       ) : null}
     </>
   );

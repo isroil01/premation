@@ -5,7 +5,9 @@
  *   Home / End              → go to start / end
  *   Page Up / Page Down     → previous / next frame
  *   Shift+Page Up / Page Dn → previous / next marker
- *   J / K                   → previous / next keyframe
+ *   J / K                   → previous / next keyframe (timeline focused only)
+ *   Alt+Page Dn / Page Up   → nudge selected LAYERS one frame later / earlier
+ *   Alt+Shift+Page Dn / Up  → … ten frames
  *   B / N                   → set work-area in / out at the playhead
  *   Shift+B                 → clear the work area
  *   Ctrl/Cmd+Shift+D        → split selected clips at the playhead
@@ -29,6 +31,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import { claimsChord } from '@core/commands/ShortcutManager';
 import { performRedo, performUndo } from '@stores/historyStore';
 import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
 import { smoothMotionPath } from '@core/motion/motionPath';
@@ -131,12 +134,23 @@ export function useTimelineKeys(): void {
       }
 
       // ── Single-key ───────────────────────────────────────────────
-      // Alt is allowed through for [ and ] only: those are AE's Trim In/Out
-      // (Alt+[ / Alt+]), and their branches below test altKey themselves. A
-      // blanket `if (e.altKey) return` made both permanently unreachable while
-      // the transport tooltips went on advertising them.
-      const altTrim = e.key === '[' || e.key === ']';
-      if (e.altKey && !altTrim) return;
+      // Alt is allowed through for the keys that HAVE an Alt meaning, and for
+      // nothing else: [ and ] are AE's Trim In/Out (Alt+[ / Alt+]), Page
+      // Up/Down its layer nudge (Alt+Page Up / Down). Their branches below test
+      // altKey themselves. A blanket `if (e.altKey) return` made the trims
+      // permanently unreachable while the transport tooltips went on
+      // advertising them — and the allow-list written to fix that named only
+      // the brackets, which left the nudge unreachable in exactly the same way.
+      const altAware = e.key === '[' || e.key === ']' || e.key === 'PageDown' || e.key === 'PageUp';
+      if (e.altKey && !altAware) return;
+      // J / K belong to whichever surface has focus: the comp transport's
+      // shuttle takes them in the viewport (and with nothing focused), and
+      // they mean "previous / next keyframe" only where the timeline CLAIMED
+      // them — the same `data-shortcut-claim` that keeps ShortcutManager's
+      // hands off, so the two rules cannot drift apart. Before this, J stepped
+      // keyframes from any panel the shuttle did not own while K, its twin,
+      // was eaten by a global chord and never got here at all.
+      const timelineOwns = (k: string): boolean => claimsChord(el, k);
       switch (e.key) {
         case 'Home':
           e.preventDefault();
@@ -147,22 +161,33 @@ export function useTimelineKeys(): void {
           c.goToEnd();
           break;
         case 'PageDown':
+        case 'PageUp': {
+          const later = e.key === 'PageDown';
+          if (e.altKey) {
+            // Alt — nudge the selected layers in time; Shift makes it ten
+            // frames. One undoable engine transaction per press. The key is
+            // left alone (no preventDefault) when there was nothing to nudge.
+            const frames = (later ? 1 : -1) * (e.shiftKey ? 10 : 1);
+            if (c.nudgeSelectedLayers(useSelectionStore.getState().ids, frames)) e.preventDefault();
+            break;
+          }
           e.preventDefault();
-          if (e.shiftKey) c.goToNextMarker();
-          else c.nextFrame();
-          break;
-        case 'PageUp':
-          e.preventDefault();
-          if (e.shiftKey) c.goToPrevMarker();
+          if (e.shiftKey) {
+            if (later) c.goToNextMarker();
+            else c.goToPrevMarker();
+          } else if (later) c.nextFrame();
           else c.previousFrame();
           break;
+        }
         case 'j':
         case 'J':
+          if (!timelineOwns('j')) break;
           e.preventDefault();
           c.goToPrevKeyframe();
           break;
         case 'k':
         case 'K':
+          if (!timelineOwns('k')) break;
           e.preventDefault();
           c.goToNextKeyframe();
           break;

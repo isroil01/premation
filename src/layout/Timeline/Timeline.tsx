@@ -86,7 +86,7 @@ import { TranscriptLane } from './TranscriptLane';
 import { TRANSCRIPT_LANE_HEIGHT } from './transcriptGeometry';
 import { HeatLane } from './HeatLane';
 import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead, installTimelineMarkerCommands } from './markerCommands';
-import { installTimelineClipEditCommands, rippleDeleteSelection } from './clipEditCommands';
+import { deleteSelectionFromTimeline, installTimelineClipEditCommands, rippleDeleteSelection } from './clipEditCommands';
 import { stickyCategoryFor } from './stickyCategory';
 import { activeCompRootId } from '@core/scene/activeComp';
 import {
@@ -365,9 +365,6 @@ function Timeline({
   );
 
   const minHeaderWidth = headerWidthFor(columns, extraColumns.length);
-  // The same resolution the panel's toolbar makes for its left column — see
-  // `resolveTrackHeaderWidth` — so the two edges are one edge.
-  const headerWidth = resolveTrackHeaderWidth(model.trackHeaderWidth, prefHeaderWidth, columns, extraColumns.length);
 
   // Playhead is the one value that changes 60×/s during playback. We accept
   // it as a separate prop so the model can stay referentially stable and the
@@ -391,6 +388,10 @@ function Timeline({
    */
   const colHeadsRef = useRef<HTMLDivElement | null>(null);
   const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
+  // The same resolution the panel's toolbar makes for its left column — see
+  // `resolveTrackHeaderWidth` — so the two edges are one edge. Capped to the
+  // measured panel so the lanes always keep room (see `capHeaderToPanel`).
+  const headerWidth = resolveTrackHeaderWidth(model.trackHeaderWidth, prefHeaderWidth, columns, extraColumns.length, size.width);
   /** Latest `onScroll`, so the mount-once viewport effect can report a
    *  programmatic scroll without re-registering on every render. */
   const onScrollRef = useRef(onScroll);
@@ -1771,6 +1772,64 @@ function Timeline({
 
   // ── Track row reorder ──────────────────────────────────────────────────────
   const rowDrag = useRef<{ id: string; startY: number; currentIndex: number } | null>(null);
+
+  /*
+    Stable per-row handlers. `TrackHeader` is memoised, and a memo is only as
+    good as its props: every row used to get a fresh closure for each of its
+    fourteen callbacks on every Timeline render, so no row ever skipped — on a
+    2,000-layer comp adding one layer re-rendered every visible header. The
+    closures below are created once per track id and read the CURRENT
+    callbacks through a ref, so they never go stale and never change identity.
+    Row styles are cached by (top, height) for the same reason.
+  */
+  const latestRowCallbacks = useRef({
+    toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
+    onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
+    onTrackRename, toggleSwitchPin, setActiveTrackId,
+  });
+  latestRowCallbacks.current = {
+    toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
+    onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
+    onTrackRename, toggleSwitchPin, setActiveTrackId,
+  };
+  const rowRealIndex = useRef(new Map<string, number>());
+  const rowHandlerCache = useRef(new Map<string, ReturnType<typeof makeRowHandlers>>());
+  function makeRowHandlers(id: string) {
+    const L = latestRowCallbacks;
+    return {
+      onToggleExpand: (recursive: boolean) => L.current.toggleExpandRow(id, recursive),
+      onActivate: () => L.current.onTrackActivate?.(id),
+      onClick: (mods: SelectModifiers) => L.current.selectTrack(id, mods),
+      onToggleVisible: () => L.current.onTrackToggleVisible?.(id),
+      onToggleLock: () => L.current.onTrackToggleLock?.(id),
+      onToggleSolo: (exclusive: boolean) => L.current.onTrackToggleSolo?.(id, exclusive),
+      onToggleAudio: () => L.current.onClipMuteToggle?.(id),
+      onBlendModeChange: (mode: LayerBlendMode) => L.current.onTrackBlendModeChange?.(id, mode),
+      onMatteChange: (matte: unknown) => L.current.onTrackMatteChange?.(id, matte as never),
+      onParentChange: (parentId: string | null, options?: { preserveWorld?: boolean; jump?: boolean }) => L.current.onTrackParentChange?.(id, parentId, options),
+      onToggleFlag: (flag: Parameters<NonNullable<typeof onTrackToggleFlag>>[1]) => L.current.onTrackToggleFlag?.(id, flag),
+      onRename: (name: string) => L.current.onTrackRename?.(id, name),
+      onToggleSwitchPin: () => L.current.toggleSwitchPin(id),
+      onRowFocus: () => L.current.setActiveTrackId(id),
+      onReorderStart: (e: ReactPointerEvent<HTMLDivElement>) => {
+        const idx = rowRealIndex.current.get(id) ?? 0;
+        rowDrag.current = { id, startY: e.clientY, currentIndex: idx };
+        document.body.style.userSelect = 'none';
+      },
+    };
+  }
+  const handlersFor = (id: string) => {
+    let h = rowHandlerCache.current.get(id);
+    if (!h) { h = makeRowHandlers(id); rowHandlerCache.current.set(id, h); }
+    return h;
+  };
+  const rowStyleCache = useRef(new Map<string, CSSProperties>());
+  const rowStyleFor = (top: number, height: number): CSSProperties => {
+    const key = `${top}|${height}`;
+    let st = rowStyleCache.current.get(key);
+    if (!st) { st = { position: 'absolute', top, left: 0, right: 0, height }; rowStyleCache.current.set(key, st); }
+    return st;
+  };
   const [rowDragOver, setRowDragOver] = useState<number | null>(null);
 
   useEffect(() => {
@@ -1955,8 +2014,13 @@ function Timeline({
       /* `s` is claimed so the snap switch can take it WITH THE TIMELINE
          FOCUSED while the global `S` (reveal Scale) keeps working everywhere
          else — ShortcutManager listens in the capture phase and skips a chord
-         an ancestor of the focused element has claimed. */
-      data-shortcut-claim="delete backspace shift+delete Ctrl+a Meta+a s m alt+m"
+         an ancestor of the focused element has claimed.
+         `j` / `k` are claimed for the same reason: here they are AE's previous
+         / next keyframe (`useTimelineKeys`, which reads this very claim),
+         everywhere else they are the transport's shuttle. Unclaimed, `k` was
+         dispatched to a global chord in the capture phase and "next keyframe"
+         never ran while `j`, its twin, did. */
+      data-shortcut-claim="delete backspace shift+delete Ctrl+a Meta+a s m alt+m j k"
       data-tour="timeline"
       data-edit-mode={editMode}
       onKeyDown={(e) => {
@@ -1990,6 +2054,26 @@ function Timeline({
           e.preventDefault();
           e.stopPropagation();
           rippleDeleteSelection();
+          return;
+        }
+        // Plain `Delete` / `Backspace` with no keyframes selected — the
+        // selected LAYERS. The claim above exists so a keyframe selection can
+        // own these keys, but a claim makes ShortcutManager skip them whatever
+        // is selected, and nothing here picked them back up: click a layer's
+        // name (which focuses its header, inside the claim), press Delete,
+        // and nothing happened. A `<select>` keeps its own keys, and the
+        // keyframe and transition deletes are untouched — the first is the
+        // `selectedKfIds` guard, the second runs in the capture phase and has
+        // already stopped the event by the time it would reach this handler.
+        if (
+          (e.key === 'Delete' || e.key === 'Backspace') &&
+          !e.shiftKey && !e.altKey &&
+          t?.tagName !== 'SELECT' &&
+          selectedKfIds.size === 0 &&
+          deleteSelectionFromTimeline()
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
         }
       }}
     >
@@ -2121,14 +2205,10 @@ function Timeline({
           >
             {visibleRows.map((row, i) => {
               const realIndex = startRow + i;
-              const rowStyle: CSSProperties = {
-                position: 'absolute',
-                top: TIMELINE_TOP_PADDING + realIndex * trackHeight,
-                left: 0,
-                right: 0,
-                height: trackHeight,
-              };
+              const rowStyle = rowStyleFor(TIMELINE_TOP_PADDING + realIndex * trackHeight, trackHeight);
               if (row.type === 'track') {
+                rowRealIndex.current.set(row.track.id, realIndex);
+                const h = handlersFor(row.track.id);
                 return (
                   <TrackHeader
                     key={`h_${row.track.id}`}
@@ -2137,22 +2217,22 @@ function Timeline({
                     selected={selectedTrackIds?.includes(row.track.id) ?? false}
                     expanded={row.expanded}
                     hasProps={row.hasProps}
-                    onToggleExpand={(recursive) => toggleExpandRow(row.track.id, recursive)}
-                    onActivate={() => onTrackActivate?.(row.track.id)}
-                    onClick={(mods) => selectTrack(row.track.id, mods)}
-                    onToggleVisible={() => onTrackToggleVisible?.(row.track.id)}
-                    onToggleLock={() => onTrackToggleLock?.(row.track.id)}
-                    onToggleSolo={(exclusive) => onTrackToggleSolo?.(row.track.id, exclusive)}
-                    onToggleAudio={onClipMuteToggle ? () => onClipMuteToggle(row.track.id) : undefined}
-                    onBlendModeChange={(mode) => onTrackBlendModeChange?.(row.track.id, mode)}
-                    onMatteChange={(matte) => onTrackMatteChange?.(row.track.id, matte)}
-                    onParentChange={(parentId, options) => onTrackParentChange?.(row.track.id, parentId, options)}
-                    onToggleFlag={(flag) => onTrackToggleFlag?.(row.track.id, flag)}
-                    onRename={(name) => onTrackRename?.(row.track.id, name)}
+                    onToggleExpand={h.onToggleExpand}
+                    onActivate={h.onActivate}
+                    onClick={h.onClick}
+                    onToggleVisible={h.onToggleVisible}
+                    onToggleLock={h.onToggleLock}
+                    onToggleSolo={h.onToggleSolo}
+                    onToggleAudio={onClipMuteToggle ? h.onToggleAudio : undefined}
+                    onBlendModeChange={h.onBlendModeChange}
+                    onMatteChange={h.onMatteChange}
+                    onParentChange={h.onParentChange}
+                    onToggleFlag={h.onToggleFlag}
+                    onRename={h.onRename}
                     onTrackColorChange={onTrackColorChange}
                     switchesOnHover={switchesOnHover}
                     switchesPinned={pinnedSwitchRows.has(row.track.id)}
-                    onToggleSwitchPin={() => toggleSwitchPin(row.track.id)}
+                    onToggleSwitchPin={h.onToggleSwitchPin}
                     showSwitches={showSwitches}
                     showModes={showModes}
                     extraColumns={extraColumns}
@@ -2162,12 +2242,8 @@ function Timeline({
                         ? realIndex === firstTrackRowIndex
                         : activeTrackId === row.track.id
                     }
-                    onRowFocus={() => setActiveTrackId(row.track.id)}
-                    onReorderStart={(e) => {
-                      if (row.track.locked) return;
-                      rowDrag.current = { id: row.track.id, startY: e.clientY, currentIndex: realIndex };
-                      document.body.style.userSelect = 'none';
-                    }}
+                    onRowFocus={h.onRowFocus}
+                    onReorderStart={row.track.locked ? noopReorderStart : h.onReorderStart}
                     style={rowStyle}
                   />
                 );
@@ -2903,4 +2979,7 @@ function Timeline({
  * skipped-render behavior for free.
  */
 const MemoizedTimeline = memo(Timeline);
+
+/** For a locked row: the reorder gesture must not start, and a stable no-op keeps the memo. */
+function noopReorderStart(): void {}
 export { MemoizedTimeline as Timeline };

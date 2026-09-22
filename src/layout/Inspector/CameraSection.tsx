@@ -18,6 +18,7 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
+import { Checkbox } from '@components/Checkbox';
 import styles from './TransformSection.module.css';
 import { KeyframeRow } from './KeyframeRow';
 
@@ -236,6 +237,21 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
         })()}
 
         <div className={styles.subhead} style={{ marginTop: 8 }}>Depth of field</div>
+        {/*
+          A real on/off. Depth of field used to be switched on by typing a
+          number into "Blur strength" — nothing on screen said that was the
+          switch, so the camera effect people reach for first looked absent.
+          On starts at a blur you can SEE (20px) focused on the comp plane; off
+          is strength 0, which is what "off" has always meant to the renderer.
+        */}
+        <div className={styles.popoverRow}>
+          <span className={styles.popoverLabel}>Enable</span>
+          <Checkbox
+            checked={typeof dofRaw === 'number' && dofRaw > 0}
+            onChange={() => setDofStrength(typeof dofRaw === 'number' && dofRaw > 0 ? 0 : 20)}
+            title="Blur layers by their distance from the focus plane. Layers must be 3D."
+          />
+        </div>
         <KeyframeRow nodeId={nodeId} prop="dofStrength" label="Blur strength" value={typeof dofRaw === 'number' ? dofRaw : 0} unit="px" min={0} max={60} onStatic={(v) => setDofStrength(v)} />
         {typeof dofRaw === 'number' && dofRaw > 0 && (
           <>

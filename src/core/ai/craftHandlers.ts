@@ -16,6 +16,8 @@
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { bakeSpring, bindAlias, resolveSpring, thinSamples, type SpringParams, type SpringPresetName } from '@motion/ai-tools';
 import { bumpScene } from '@stores/sceneStore';
+import { makeStop, setNodeFill } from '@core/paint/fill';
+import { arrangeNodes } from '@core/scene/parenting';
 import { isAnimatableProp } from './toolContext';
 
 const ok = (content: string, data?: unknown): ToolResult => ({ ok: true, content, data });
@@ -416,8 +418,26 @@ const addSurfaceTreatment: AiTool['handler'] = (input, ctx) => {
 
 // ── create_gradient ───────────────────────────────────────────────────
 
+/**
+ * Where the backdrop went, said in the reply.
+ *
+ * A new layer is appended to the child order, and the last child is the
+ * FRONT-most — so a "backdrop" created after any other layer used to land on
+ * top of all of them and cover the scene it was meant to sit behind. Bottom is
+ * the default because that is what the word means; `top` stays reachable for
+ * the rare overlay wash.
+ */
+function placeBackdrop(id: string, placement: 'bottom' | 'top' | undefined): string {
+  if (placement === 'top') return 'on TOP of the layer stack (it covers everything beneath it)';
+  arrangeNodes([id], 'back');
+  return 'at the BOTTOM of the layer stack, behind every existing layer';
+}
+
 const createGradient: AiTool['handler'] = (input, ctx) => {
-  const i = input as { id?: string; stops: string[]; kind?: 'linear' | 'radial' | 'corners'; angle?: number; name?: string };
+  const i = input as {
+    id?: string; stops: string[]; kind?: 'linear' | 'radial' | 'corners'; angle?: number; name?: string;
+    placement?: 'bottom' | 'top'; centerX?: number; centerY?: number; radius?: number;
+  };
   const comp = ctx.comp.get();
   const id = ctx.scene.create('solid', i.name ?? 'Gradient', { x: comp.width / 2, y: comp.height / 2 });
   if (!id) return fail('Could not create the gradient layer.');
@@ -427,6 +447,7 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
   ctx.scene.setProp(id, 'fill', i.stops[0]!);
 
   const kind = i.kind ?? 'linear';
+  const where = placeBackdrop(id, i.placement);
 
   // 4 stops map exactly onto the four-color-gradient effect, which is a genuine
   // 2D blend rather than two stacked ramps.
@@ -436,7 +457,34 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
     const keys = ['colorTL', 'colorTR', 'colorBL', 'colorBR'];
     i.stops.forEach((c, n) => ctx.scene.updateEffectParam(id, fx, keys[n]!, c));
     bumpScene();
-    return ok(`Created a 4-corner gradient backdrop '${id}'.`, { id, effectIds: [fx] });
+    return ok(`Created a 4-corner gradient backdrop '${id}', ${where}.`, { id, effectIds: [fx], placement: i.placement ?? 'bottom' });
+  }
+
+  // Radial is a FILL PAINT, not an effect. `gradient-ramp` has no radial mode —
+  // its only geometry parameter is `angle` — so the old code, which routed
+  // radial through the same ramps with angle 0, drew a left→right LINEAR
+  // gradient and then reported "radial". The layer's own fill paint does have a
+  // real radial type (Fill ▸ Type ▸ Radial), multi-stop, with a keyframeable
+  // centre and radius, and it rasterizes through the same path the UI uses.
+  if (kind === 'radial') {
+    const last = i.stops.length - 1;
+    setNodeFill(id, {
+      type: 'radial',
+      // Schema speaks percent of the frame; the paint model speaks 0..1.
+      cx: (i.centerX ?? 50) / 100,
+      cy: (i.centerY ?? 50) / 100,
+      // A fraction of the half-DIAGONAL, so 100% is the first radius at which a
+      // centred gradient's last stop lands exactly on the corners — anything
+      // smaller leaves a flat band of the end colour around the frame.
+      radius: (i.radius ?? 100) / 100,
+      stops: i.stops.map((c, n) => makeStop(n / last, c)),
+    });
+    bumpScene();
+    return ok(
+      `Created a ${i.stops.length}-stop radial gradient backdrop '${id}' (${i.stops.join(' → ')}, centre outward), ${where}. ` +
+      `Animate it with set_keyframes on 'fillCenterX' / 'fillCenterY' / 'fillRadius' — FRACTIONS (0.5 = centre, radius 1 = reaches the corners), not the percentages this call took.`,
+      { id, effectIds: [], placement: i.placement ?? 'bottom' },
+    );
   }
 
   // 2 or 3 stops → chained ramps between CONSECUTIVE stops. Chaining rather than
@@ -449,7 +497,7 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
     if (!fx) continue;
     ctx.scene.updateEffectParam(id, fx, 'colorA', i.stops[n]!);
     ctx.scene.updateEffectParam(id, fx, 'colorB', i.stops[n + 1]!);
-    ctx.scene.updateEffectParam(id, fx, 'angle', i.angle ?? (kind === 'radial' ? 0 : 90));
+    ctx.scene.updateEffectParam(id, fx, 'angle', i.angle ?? 90);
     // Later bands blend over the earlier ones at reducing strength, so the
     // handoff between stops is smooth instead of a visible seam.
     ctx.scene.updateEffectParam(id, fx, 'blend', n === 0 ? 100 : Math.round(100 / (n + 1)));
@@ -458,8 +506,11 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
   if (!effectIds.length) return fail('Could not add the gradient effect.');
   bumpScene();
   return ok(
-    `Created a ${i.stops.length}-stop ${kind} gradient backdrop '${id}' (${i.stops.join(' → ')}).`,
-    { id, effectIds },
+    // `corners` with anything but 4 stops has no four-colour mapping and falls
+    // through to here — say "linear", because that is what was drawn.
+    `Created a ${i.stops.length}-stop linear gradient backdrop '${id}' (${i.stops.join(' → ')}), ${where}.` +
+    (kind === 'corners' ? ` NOTE: kind "corners" needs exactly 4 stops — with ${i.stops.length} it was drawn as a linear gradient.` : ''),
+    { id, effectIds, placement: i.placement ?? 'bottom' },
   );
 };
 

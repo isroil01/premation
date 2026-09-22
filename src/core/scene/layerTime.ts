@@ -10,6 +10,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 
@@ -87,7 +88,8 @@ function normalize(v: unknown): LayerTime {
 
 /** Read a node's time config from its `fx` component (undefined when default). */
 export function readNodeLayerTime(node: SceneNode): LayerTime | undefined {
-  const fx = node.components.find((c) => c.type === 'fx');
+  // Read-only, and on the per-node path of every keyframe-time fold.
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   if (!fx || fx.props.time === undefined) return undefined;
   const cfg = normalize(fx.props.time);
   return isIdentityTime(cfg) && cfg.frameBlend === 'none' ? undefined : cfg;

@@ -12,6 +12,13 @@ import { componentRegistry, deepCloneData } from './Component';
 import { bumpSceneMutationEpoch } from '../core/mutationEpoch';
 
 export class DataComponent implements Component {
+  /**
+   * The node this component is attached to (set by `SceneNode.addComponent`),
+   * told about every `set` so the node's `mutationSeq` moves. Null until
+   * attached, and on a clone until it is added somewhere.
+   */
+  owner: { noteMutation(): void } | null = null;
+
   constructor(
     public readonly type: string,
     public data: Record<string, unknown>,
@@ -29,6 +36,7 @@ export class DataComponent implements Component {
    */
   set(key: string, value: unknown): void {
     this.data[key] = value;
+    this.owner?.noteMutation();
     bumpSceneMutationEpoch();
   }
 

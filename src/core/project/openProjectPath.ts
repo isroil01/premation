@@ -20,10 +20,12 @@
  */
 
 import { getProjectManager } from '@core/services/coreServices';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { ProjectRef } from '@core/project/ProjectManager';
 import { bumpScene } from '@stores/sceneStore';
 import { baselineProjectHistory, afterProjectLoaded } from '@core/project/projectSession';
 import { restoreBundleAssets } from '@core/assets/local/bundleAssetCollect';
+import { rehydrateReferencedAssets } from '@core/project/sessionAssets';
 
 /**
  * Open `path` and make it the current project. Returns the ref, or null when
@@ -50,6 +52,34 @@ export async function openProjectPath(path: string): Promise<ProjectRef | null> 
   // on screen is waiting on this — what it restores is the Assets PANEL, and
   // holding the open on a disk read for a side panel would be the wrong trade.
   // It rebinds and bumps the scene itself when it lands.
-  void restoreBundleAssets(ref.path);
+  void settleClean(restoreBundleAssets(ref.path));
+  // And the DEVICE library's half. New/Close Project empty the session's asset
+  // list, so an open that follows one finds nothing to rebind a single-file
+  // project's dead `blob:` srcs against. A no-op unless a reset actually parked
+  // something this document references; fire-and-forget for the reason above.
+  void settleClean(rehydrateReferencedAssets());
   return ref;
+}
+
+/**
+ * Re-filling the Assets panel is not an edit.
+ *
+ * Both restores above land a few seconds after the open and bump the scene so
+ * layers rebind — and every scene bump is wired to mean "unsaved change". So an
+ * untouched project turned "Unsaved changes" three seconds after it opened
+ * (seen in the desktop app), and closing it asked whether to discard work
+ * nobody had done. Once the restore settles the project is marked clean again —
+ * but ONLY if the undo history has not moved since the open: an edit made in
+ * those seconds is real, and its dirty flag (and recovery snapshot) must stay.
+ */
+async function settleClean(work: Promise<unknown>): Promise<void> {
+  const history = getCommandSystem().getHistory();
+  const entries = history.getEntries().length;
+  const index = history.getIndex();
+  const opened = getProjectManager().getState().current;
+  try { await work; } catch { /* the restore reports its own failures */ }
+  // Let the bump it raised (and the markDirty that follows) land first.
+  await Promise.resolve();
+  const untouched = history.getEntries().length === entries && history.getIndex() === index;
+  if (untouched && getProjectManager().getState().current === opened) afterProjectLoaded();
 }

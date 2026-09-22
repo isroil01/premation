@@ -30,7 +30,7 @@ const CLIENT_SOURCES = [
   'src/layout/Motion/MotionPresetsPanel.tsx',
 ];
 
-const ROOTS = /^\/(auth|projects|assets|render|ai|billing|sync|plugins|publishers|health|announcements|lessons|blog|waitlist|v1|admin)(\/|$|\?|\$)/;
+const ROOTS = /^\/(auth|projects|assets|render|ai|billing|sync|plugins|publishers|health|announcements|lessons|blog|waitlist|v1|admin|analytics)(\/|$|\?|\$)/;
 
 const root = join(__dirname, '..', '..', '..');
 

@@ -17,6 +17,7 @@ import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { defaultAnimation } from '@motion/animation';
 import { DEFAULT_COMP_SETTINGS } from '@stores/projectStore';
+import { unloadProjectSession } from '@core/project/projectSession';
 import { DEFAULT_MOTION_BLUR_SETTINGS } from '@stores/motionBlurStore';
 import { DEFAULT_GUIDES_SETTINGS } from '@stores/guidesStore';
 import { DEFAULT_COLOR_MANAGEMENT_SETTINGS } from '@stores/colorManagementStore';
@@ -70,6 +71,17 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
   }),
 
   capture: () => captureDocument(),
+
+  /**
+   * Close Project. The empty document says everything a document can; the
+   * session state it cannot express (tabs, timelines, undo, the asset list)
+   * goes in the same step, so there is no moment where a closed project is
+   * half-unloaded.
+   */
+  unload: () => {
+    restoreDocument(projectDocumentIO.createEmpty('Untitled'));
+    unloadProjectSession();
+  },
 
   restore: (doc) => {
     // A `.motion` written by an older build is a bare ProjectFile — restore the

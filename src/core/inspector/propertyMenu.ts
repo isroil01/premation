@@ -27,6 +27,8 @@ import {
 } from '@core/animation/expressionCommands';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { formatChord } from '@layout/Menu/formatChord';
+import type { KeyChord } from '@app-types/common';
 import { resolvePropertyMeta } from './propertyMeta';
 import { isPinnedProp, setPinnedProp } from './pinnedProps';
 import {
@@ -62,11 +64,11 @@ export interface PropertyMenuContext {
  * `Hold` is last because it is categorically different — it stops interpolation
  * rather than shaping it.
  */
-const EASING_PRESETS: ReadonlyArray<{ id: EasingPreset; label: string; shortcut?: string }> = [
+const EASING_PRESETS: ReadonlyArray<{ id: EasingPreset; label: string; chord?: KeyChord }> = [
   { id: 'Linear', label: 'Linear' },
-  { id: 'Ease', label: 'Easy Ease', shortcut: 'F9' },
-  { id: 'EaseIn', label: 'Easy Ease In', shortcut: '⇧F9' },
-  { id: 'EaseOut', label: 'Easy Ease Out', shortcut: '⌃⇧F9' },
+  { id: 'Ease', label: 'Easy Ease', chord: { key: 'F9' } },
+  { id: 'EaseIn', label: 'Easy Ease In', chord: { key: 'F9', shift: true } },
+  { id: 'EaseOut', label: 'Easy Ease Out', chord: { key: 'F9', ctrl: true, shift: true } },
   { id: 'Hold', label: 'Toggle Hold' },
 ];
 
@@ -110,7 +112,8 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
         children: EASING_PRESETS.map((p) => ({
           id: `ease-${p.id}`,
           label: p.label,
-          ...(p.shortcut ? { shortcut: p.shortcut } : {}),
+          // Formatted per call: the label follows the keyboard (⇧F9 vs Shift+F9).
+          ...(p.chord ? { shortcut: formatChord(p.chord) } : {}),
           onSelect: () => applyEasingToKeyframes([makeKeyframeId(nodeId, prop, at.t)], p.id),
         })),
       });

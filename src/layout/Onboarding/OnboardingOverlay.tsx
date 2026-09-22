@@ -322,8 +322,30 @@ export function OnboardingOverlay({ onDone }: { onDone: () => void }): JSX.Eleme
     useOnboardingStore.getState().onEditorMounted();
   }, []);
 
-  if (!active) return null;
+  // An AUTO-started tour waits for the shell it points at. On a cold boot this
+  // mounts seconds before the toolbar does, and for that gap the very first
+  // thing a new user saw was a card over a black window reading "The toolbar is
+  // hidden". That line is for someone who closed the toolbar, not for an app
+  // that has not finished loading. A tour the user ASKED for shows at once.
+  const autoStarted = useOnboardingStore((s) => s.autoStarted);
+  const shellUp = useShellPresent(active && autoStarted);
+
+  if (!active || (autoStarted && !shellUp)) return null;
   return createPortal(<TourLayer onDone={onDone} />, document.body);
+}
+
+/** True once the first step's anchor is in the document. Polls only while `watch`. */
+function useShellPresent(watch: boolean): boolean {
+  const [present, setPresent] = useState(false);
+  useEffect(() => {
+    if (!watch) return;
+    const selector = TOUR_STEPS[0]?.anchor;
+    const check = (): boolean => !selector || !!document.querySelector(selector);
+    if (check()) { setPresent(true); return; }
+    const id = window.setInterval(() => { if (check()) { setPresent(true); window.clearInterval(id); } }, 200);
+    return () => window.clearInterval(id);
+  }, [watch]);
+  return present;
 }
 
 export default OnboardingOverlay;

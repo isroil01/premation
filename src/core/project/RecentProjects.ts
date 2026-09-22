@@ -4,6 +4,7 @@
  */
 
 import type { SettingsManager } from '@core/settings/SettingsManager';
+import { displayProjectName, looksLikeFilePath } from '@core/project/projectName';
 
 export interface RecentProjectEntry {
   id: string;
@@ -15,14 +16,28 @@ export interface RecentProjectEntry {
 
 const KEY = 'project.recent';
 
+/** Untouched rows keep their identity, so an all-good list costs no copies. */
+function repairNames(list: RecentProjectEntry[]): RecentProjectEntry[] {
+  return list.map((e) => (looksLikeFilePath(e.name) ? { ...e, name: displayProjectName(e.name) } : e));
+}
+
 export class RecentProjects {
   constructor(
     private readonly settings: SettingsManager,
     private readonly max = 10,
   ) {}
 
+  /**
+   * The list, with path-shaped names repaired on the way out.
+   *
+   * `openPath` used to record the FULL PATH as the project's name, and those
+   * rows are sitting in users' settings. Repairing on read rather than with a
+   * one-off rewrite means every reader (start screen, Open Recent menu) is
+   * fixed at once, and the next `add` persists the repaired rows anyway
+   * because it rebuilds the list from this.
+   */
   list(): RecentProjectEntry[] {
-    return this.settings.get<RecentProjectEntry[]>(KEY, []);
+    return repairNames(this.settings.get<RecentProjectEntry[]>(KEY, []));
   }
 
   /**
@@ -51,6 +66,6 @@ export class RecentProjects {
   }
 
   subscribe(listener: (list: RecentProjectEntry[]) => void): () => void {
-    return this.settings.observe<RecentProjectEntry[]>(KEY, (v) => listener(v ?? []));
+    return this.settings.observe<RecentProjectEntry[]>(KEY, (v) => listener(repairNames(v ?? [])));
   }
 }

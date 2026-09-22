@@ -35,6 +35,12 @@ export interface Preferences {
   highContrast: boolean;
   timelineAutoKeyframe: boolean;
   /**
+   * Send product events (what was done, never what was made) to the backend.
+   * Hosted edition only; see core/analytics/productEvents. On by default and
+   * disclosed in Settings — off drops events rather than queueing them.
+   */
+  shareUsageData: boolean;
+  /**
    * How generated motion should feel: the duration, travel, stagger and easing
    * that Animate In/Out and the beat-synced commands use together.
    *
@@ -104,6 +110,15 @@ export interface Preferences {
    * boxes could not be turned OFF, not that they were on.
    */
   showLayerBounds: boolean;
+  /**
+   * Draw camera frustums and light cones for EVERY camera and light, or only
+   * for selected ones (After Effects' default, "Camera and Light Wireframes:
+   * Selected"). Off by default: an unselected spot light's cone is a pair of
+   * amber lines across the whole viewer, a full-time reminder of a layer
+   * nobody is editing, and with two lights and a camera the comp sat under
+   * a cat's cradle of chrome.
+   */
+  deviceWireframesAll: boolean;
   /**
    * Decode low-resolution proxies in the viewport (After Effects' Use Proxies).
    *
@@ -261,6 +276,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   density: 'default',
   highContrast: false,
   timelineAutoKeyframe: false,
+  shareUsageData: true,
   motionFeel: 'smooth',
   editorReduceMotion: false,
   confirmOnClose: true,
@@ -280,6 +296,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   // The previous hardcoded budget, so nobody's cache changes size by upgrading.
   previewDiskCacheGb: 4,
   showLayerBounds: true,
+  deviceWireframesAll: false,
   useProxies: true,
   libraryFavorites: [],
   effectFavorites: [],

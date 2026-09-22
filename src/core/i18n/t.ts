@@ -23,20 +23,57 @@
  *
  * Existing strings are NOT migrated by this change; do that per feature, when
  * you are in the file anyway.
+ *
+ * WHO FILLS THE CATALOGUE. `localeRuntime.ts` — the user's language choice
+ * loads a `locales/<code>.json` and hands it to `setCatalogue`. Nothing else
+ * should call it outside tests. A `t()` result is a plain string, so UI that
+ * must redraw on a language switch subscribes (`subscribeCatalogue`, or the
+ * `useLocale` hook built on it).
  */
 
 export type TranslationVars = Record<string, string | number>;
 
+export type Catalogue = Readonly<Record<string, string>>;
+
+export interface CatalogueOptions {
+  /**
+   * Applied to every resolved template (catalogue hit OR fallback) before
+   * interpolation. Exists for the development pseudo-locale, which must reach
+   * strings that have no catalogue entry — that is the point of it: anything
+   * still plain English on screen is a string `t()` never saw.
+   */
+  transform?: (template: string) => string;
+}
+
 /**
  * A catalogue is a flat map from key to translated template. There is exactly
- * one, it is empty, and `setCatalogue` is the only way to fill it — kept
- * module-private so the seam has one entry point when the real loader comes.
+ * one, and `setCatalogue` is the only way to fill it — kept module-private so
+ * the seam has one entry point.
  */
-let catalogue: Readonly<Record<string, string>> = {};
+let catalogue: Catalogue = {};
+let transform: ((template: string) => string) | undefined;
+let revision = 0;
+const listeners = new Set<() => void>();
 
-/** Replace the active catalogue. Intended for the future locale loader and for tests. */
-export function setCatalogue(next: Readonly<Record<string, string>>): void {
+/** Replace the active catalogue and notify subscribers. For `localeRuntime` and tests. */
+export function setCatalogue(next: Catalogue, options: CatalogueOptions = {}): void {
   catalogue = next;
+  transform = options.transform;
+  revision += 1;
+  for (const l of listeners) {
+    try { l(); } catch { /* one bad subscriber must not stop the rest redrawing */ }
+  }
+}
+
+/** Bumped by every `setCatalogue`. A `useSyncExternalStore` snapshot. */
+export function getCatalogueRevision(): number {
+  return revision;
+}
+
+/** Called after every `setCatalogue`. Returns an unsubscribe fn. */
+export function subscribeCatalogue(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
 }
 
 /** `{name}` → vars.name; unknown names are left as written so a typo is visible. */
@@ -53,5 +90,5 @@ function interpolate(template: string, vars?: TranslationVars): string {
  */
 export function t(key: string, fallback?: string, vars?: TranslationVars): string {
   const template = catalogue[key] ?? fallback ?? key;
-  return interpolate(template, vars);
+  return interpolate(transform ? transform(template) : template, vars);
 }

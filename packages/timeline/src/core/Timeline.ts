@@ -752,12 +752,28 @@ export class Timeline {
     return right;
   }
 
-  /** Move a layer's clip to an absolute timeline start (undoable). */
-  setLayerStart(id: string, frame: number): boolean {
+  /**
+   * Move a layer's clip to an absolute timeline start (undoable).
+   *
+   * The start is floored at frame 0 unless `allowNegative` is set. The floor is
+   * the right default for a pointer drag — a bar flung left should stop at the
+   * comp's edge, not vanish — but it is wrong for an edit that PLACES THE OUT
+   * POINT: "end this layer at the playhead" needs `start = playhead − duration`,
+   * which is negative for any layer longer than the playhead time. With the
+   * floor that edit clamped back to the start it already had and reported a
+   * no-op, so the key did nothing at all. After Effects lets a layer begin
+   * before time 0 (its head is simply never shown), and every consumer here is
+   * plain `start + offset` arithmetic gated by `isActiveAt`, so the same holds.
+   *
+   * Even then at least ONE frame stays at or after frame 0: a bar wholly in
+   * negative time is never drawn in the lanes and could not be grabbed back.
+   */
+  setLayerStart(id: string, frame: number, opts: { allowNegative?: boolean } = {}): boolean {
     const layer = this.layerIndex.get(id);
     if (!layer || layer.locked) return false;
     const prev = layer.clip.start;
-    const next = Math.max(0, Math.round(frame));
+    const floor = opts.allowNegative ? Math.min(0, 1 - Math.round(layer.clip.duration)) : 0;
+    const next = Math.max(floor, Math.round(frame));
     if (next === prev) return false;
     this.history.run({
       label: 'Move Layer',

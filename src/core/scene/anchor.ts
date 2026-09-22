@@ -12,14 +12,16 @@
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { writeTransformProps, readTransformProp } from '@core/scene/transformWrite';
 
 const DEG = Math.PI / 180;
 export const ANCHOR_PROPS = ['anchorX', 'anchorY'] as const;
 
+// Read-only (writes go through `writeProp`), so the memoised view — see threeD.ts.
 function transformComponent(node: SceneNode): { id: string; props: Record<string, unknown> } | undefined {
-  return node.components.find((c) => c.type === 'Transform') as
+  return renderComponentsOf(node).find((c) => c.type === 'Transform') as
     | { id: string; props: Record<string, unknown> }
     | undefined;
 }

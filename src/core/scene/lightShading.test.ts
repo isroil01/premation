@@ -52,11 +52,20 @@ describe('shadeLayer', () => {
     expect(graze[0]).toBeCloseTo(0, 5);
   });
 
-  it('point light attenuates with distance and dies at the radius', () => {
+  it('Falloff None is constant at any distance — the radius is not a reach (AE)', () => {
     const near = shadeLayer(N, P, [light({ x: 0, y: 0, z: -100, radius: 1000 })])!;
     const far = shadeLayer(N, P, [light({ x: 0, y: 0, z: -900, radius: 1000 })])!;
     const out = shadeLayer(N, P, [light({ x: 0, y: 0, z: -2000, radius: 1000 })])!;
-    expect(near[0]).toBeGreaterThan(far[0]);
+    expect(near[0]).toBeCloseTo(far[0], 5);
+    expect(out[0]).toBeCloseTo(far[0], 5);
+    expect(out[0]).toBeGreaterThan(0);
+  });
+
+  it('a falloff curve keeps full intensity inside the radius and dies past it', () => {
+    const inside = shadeLayer(N, P, [light({ x: 0, y: 0, z: -500, radius: 1000, falloff: 'smooth', falloffDistance: 200 })])!;
+    const edge = shadeLayer(N, P, [light({ x: 0, y: 0, z: -1000, radius: 1000, falloff: 'smooth', falloffDistance: 200 })])!;
+    const out = shadeLayer(N, P, [light({ x: 0, y: 0, z: -1300, radius: 1000, falloff: 'smooth', falloffDistance: 200 })])!;
+    expect(inside[0]).toBeCloseTo(edge[0], 5);
     expect(out[0]).toBe(0);
   });
 
@@ -195,6 +204,7 @@ describe('toShaderLights (shader-term conversion for the per-fragment path)', ()
       expect(toShaderLights([{ ...base }])[0]!.falloffMode).toBe(0);
       expect(toShaderLights([{ ...base, falloff: 'smooth' }])[0]!.falloffMode).toBe(1);
       expect(toShaderLights([{ ...base, falloff: 'inverse-square' }])[0]!.falloffMode).toBe(2);
+      expect(toShaderLights([{ ...base, falloff: 'legacy' }])[0]!.falloffMode).toBe(3);
 
       expect(toShaderLights([{ ...base, falloff: 'smooth', falloffDistance: 250 }])[0]!.falloffDistance).toBe(250);
       // Absent ⇒ the same default lightFalloffAt applies, resolved here so the

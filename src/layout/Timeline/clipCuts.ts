@@ -84,12 +84,28 @@ export function collectClipCuts(
     }
   });
 
+  // Sorted by time, then a binary search for the window each out-point can
+  // meet. The pairwise scan was quadratic in the clip count — four million
+  // comparisons on a 2,000-layer comp, on every timeline rebuild — to find
+  // the handful of in-points that actually coincide.
+  ins.sort((a, b) => a.time - b.time);
+  const lowerBound = (t: number): number => {
+    let lo = 0;
+    let hi = ins.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (ins[mid]!.time < t) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
   const cuts: ClipCut[] = [];
   for (const out of outs) {
-    for (const inn of ins) {
+    for (let i = lowerBound(out.time - tol); i < ins.length; i++) {
+      const inn = ins[i]!;
+      if (inn.time - out.time > tol) break;
       if (out.clipId === inn.clipId) continue;
       if (out.nodeId === inn.nodeId) continue;
-      if (Math.abs(out.time - inn.time) > tol) continue;
       cuts.push({
         time: out.time,
         leftClipId: out.clipId,

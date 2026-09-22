@@ -16,6 +16,8 @@ import type { ProjectStorage } from '@core/persistence/ProjectStorage';
 import type { RecentProjects } from '@core/project/RecentProjects';
 import type { Logger } from '@core/logging/Logger';
 import { getEventBus } from '@core/events/EventBus';
+import { trackProjectCreated } from '@core/analytics/productEvents';
+import { projectNameFromFilePath } from '@core/project/projectName';
 
 export interface ProjectRef {
   id: string;
@@ -54,8 +56,7 @@ export type SaveOutcome =
 function nameFromSavePath(path: string, fallback: string): string {
   const looksLikePath = /[\\/]/.test(path) || /\.(motion|json)$/i.test(path);
   if (!looksLikePath) return fallback;
-  const stem = (path.split(/[\\/]/).pop() ?? '').replace(/\.(motion|json)$/i, '').trim();
-  return stem || fallback;
+  return projectNameFromFilePath(path, fallback);
 }
 
 /** Bridge between the project file format and the live document (scene, etc.). */
@@ -71,6 +72,15 @@ export interface ProjectDocumentIO<T extends VersionedDocument = VersionedDocume
   createEmpty(name: string): T;
   capture(): T;
   restore(file: T): void;
+  /**
+   * Drop the live document entirely — Close Project.
+   *
+   * Optional: without it `close()` restores `createEmpty()`, which is the
+   * document half of an unload. The app's IO also has session state an empty
+   * document cannot express (precomp tabs, timelines, undo, the asset list) and
+   * overrides this to clear those in the same step.
+   */
+  unload?(): void;
 }
 
 /** Default IO — an empty document. The app replaces this at boot. */
@@ -138,6 +148,8 @@ export class ProjectManager {
     this.state = { current: ref };
     this.emit();
     this.deps.logger?.info(`New project "${name}"`);
+    // Before ProjectLoaded, so a creation reads as created-then-opened.
+    trackProjectCreated();
     getEventBus().emit('ProjectLoaded', { projectId: ref.id });
     return ref;
   }
@@ -160,7 +172,9 @@ export class ProjectManager {
       this.deps.logger?.warn(`Project not found at ${path}`);
       return null;
     }
-    return this.applyLoadedDoc(file, path.replace(/\.[^.]+$/, ''), path);
+    // The file's BASE name. This was `path.replace(ext, '')` — the whole path —
+    // so the title bar and the recent list both read "C:/Users/…/files/qa1".
+    return this.applyLoadedDoc(file, projectNameFromFilePath(path), path);
   }
 
   /** Open from an already-read string (the native Open dialog path). */
@@ -185,6 +199,19 @@ export class ProjectManager {
     this.emit();
     this.recordRecent(ref);
     getEventBus().emit('ProjectLoaded', { projectId: ref.id });
+    return ref;
+  }
+
+  /**
+   * Become the current project again after crash recovery restored its
+   * document. Unlike `adopt` this is not an open: nothing is added to the
+   * recent list (a never-saved project has no file to reopen) and no
+   * ProjectLoaded fires — it only rebinds, so Save writes back to `path`.
+   */
+  resume(name: string, path: string | null): ProjectRef {
+    const ref: ProjectRef = { id: this.deps.newId(), name, path };
+    this.state = { current: ref };
+    this.emit();
     return ref;
   }
 
@@ -257,8 +284,27 @@ export class ProjectManager {
     }
   }
 
+  /**
+   * Close the project: unload its document AND drop the reference.
+   *
+   * This used to drop only the reference. The scene, compositions, timeline
+   * and undo stack all stayed live and editable under a "No project" title —
+   * and because Save with no current project routes to Save As, the "closed"
+   * project could then be written straight back out under a new name.
+   *
+   * The unload runs BEFORE the reference drops and before ProjectUnloaded, so
+   * every listener that re-reads the scene on that event sees the empty one.
+   * A failed unload still closes: a reference to a project the user asked to
+   * close is the worse thing to be left holding.
+   */
   close(): void {
     const prev = this.state.current;
+    try {
+      if (this.io.unload) this.io.unload();
+      else this.io.restore(this.io.createEmpty('Untitled'));
+    } catch (err) {
+      this.deps.logger?.error('Failed to unload project document', err);
+    }
     this.state = { current: null };
     this.emit();
     if (prev) getEventBus().emit('ProjectUnloaded', { projectId: prev.id });

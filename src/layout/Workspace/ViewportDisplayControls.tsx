@@ -459,7 +459,7 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
   const compareMode = useCompareStore((s) => s.mode);
   const snapshotCount = useCompareStore((s) => s.snapshots.length);
   const compareItems: DropdownItem[] = [
-    { type: 'checkbox', id: 'vd-cmp-show', label: snapshotCount === 0 ? 'Show Snapshot — take one first (F5)' : 'Show Snapshot (F6)', checked: compareVisible, disabled: snapshotCount === 0, onChange: () => run(VIEWPORT_COMMAND_IDS.compareToggle) },
+    { type: 'checkbox', id: 'vd-cmp-show', label: snapshotCount === 0 ? 'Show Snapshot — take one first (F5)' : 'Show Snapshot (Shift+F5)', checked: compareVisible, disabled: snapshotCount === 0, onChange: () => run(VIEWPORT_COMMAND_IDS.compareToggle) },
     { type: 'separator' },
     ...(Object.keys(COMPARE_MODE_LABEL) as CompareMode[]).map<DropdownItem>((m) => ({
       type: 'checkbox',

@@ -44,7 +44,9 @@ import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { renderComponentsOf, renderTransformOf } from '@core/scene/SceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
+import { uniqueLayerName } from '@core/scene/layerNames';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
 import { flattenComposition } from '@core/scene/sceneDerive';
@@ -68,10 +70,12 @@ import { compToKeyframeTime, getRemappedTime, getTimelineController, governingCl
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { Matrix4Math, Project3D } from '@motion/scene';
 import { currentViewProjector, currentViewCamera } from '@core/workspace/viewProjection';
-import { orthoViewOf } from '@core/scene/cameraViewMode';
+import { orthoViewOf, isSceneCameraView } from '@core/scene/cameraViewMode';
+import { viewCameraNode } from '@core/scene/camera3d';
 import { composeNodeWorld3d, parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
 import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, readNodeMaskAt, setMaskPoints, editMaskPathTopology, setMaskPathFlags, MaskPath, MaskPoint, type MaskPathEditState } from '@core/effects/mask';
 import { defaultPolystar, POLYSTAR_FX_PROP, type PolystarType } from '@core/scene/polystar';
+import { defaultTextSize } from '@core/scene/textDefaults';
 
 /** Convex hull (monotone chain) of 2D points, counter-clockwise. */
 function convexHull2D(pts: ReadonlyArray<{ x: number; y: number }>): Array<{ x: number; y: number }> {
@@ -115,14 +119,43 @@ function pointInPolygon(pt: { x: number; y: number }, poly: ReadonlyArray<{ x: n
  * (measured 3.4 s of a 3.8 s import, re-run on every scene bump). One shared
  * map turns the pass back into O(N).
  */
+/**
+ * A node's READ-ONLY view as a plain object — memoized components instead of a
+ * rebuild per access.
+ *
+ * `SceneNode.components` deliberately copies on every read (see
+ * `AppNodeView.renderComponents`), and everything below reads it: kind, 3D,
+ * anchor, geometry, masks — a dozen times per node. Profiled in the desktop app
+ * with 305 layers selected, that one getter was 50.6% of all CPU during
+ * playback (2 fps, against 15 fps with nothing selected). This path only ever
+ * reads, so it takes the render path's shared arrays, exactly as
+ * `staticPrecompCache.plain` does.
+ */
+function readOnlyView(n: SceneNode): SceneNode {
+  return {
+    id: n.id, name: n.name, parent: n.parent, children: n.children,
+    visible: n.visible, locked: n.locked, solo: (n as { solo?: boolean }).solo,
+    color: (n as { color?: string }).color,
+    components: renderComponentsOf(n), transform: renderTransformOf(n),
+  } as unknown as SceneNode;
+}
+
+/** Is `nodeId` the camera that `view` (default: the main viewport's) looks through? */
+export function isLookedThrough(nodeId: string, view?: Camera3dMode): boolean {
+  const mode = view ?? useGuidesStore.getState().camera3dMode;
+  if (!isSceneCameraView(mode)) return false;
+  return viewCameraNode(defaultSceneGraph, mode, activeCompRootId() as string)?.id === nodeId;
+}
+
 function toWorkspaceNode(
-  node: SceneNode,
+  liveNode: SceneNode,
   zIndex: number,
   wmCache: Map<string, import('@motion/scene').Matrix2D> = new Map(),
   /** Project through THIS view rather than the main viewport's — see
    *  {@link createSceneGraphPort}. */
   view?: Camera3dMode,
 ): WorkspaceNode | null {
+  const node = readOnlyView(liveNode);
   // Retrieve current active tab settings and active playhead time
   const activeTabId = useProjectStore.getState().activeTabId;
   const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
@@ -166,6 +199,12 @@ function toWorkspaceNode(
   // Calculate the world matrix based on whether 3D is active
   const is3D = is3DEnabled(node);
   const kind = readNodeKind(node);
+  // The camera this view looks THROUGH has no presence in it. Seen from inside,
+  // its box, its grab handle and its motion path all project onto the middle of
+  // the frame — a dashed square and a line across a shot that contains neither.
+  // AE never draws the active camera in its own view. From any other view
+  // (Top, Left, Custom, another camera) it is a normal, grabbable device.
+  if (kind === 'camera' && isLookedThrough(node.id, view)) return null;
   let worldMatrixVal: import('@motion/workspace').Mat2D;
   /** The layer's full 4×4 model matrix — kept for the extruded-silhouette hit
    *  test below, which needs to project corners the flat affine cannot express. */
@@ -395,6 +434,22 @@ export function createSceneGraphPort(viewOf?: () => Camera3dMode): SceneGraphPor
       });
       return out;
     },
+    getNodesById(ids: readonly NodeId[]): Map<NodeId, WorkspaceNode> {
+      // `getNode`'s per-call setup, paid once: one flatten, one index map, one
+      // ancestor-matrix cache for the whole batch.
+      const out = new Map<NodeId, WorkspaceNode>();
+      const index = new Map<string, number>();
+      canvasNodes().forEach((n, i) => index.set(n.id as string, i));
+      const wmCache = new Map<string, import('@motion/scene').Matrix2D>();
+      const v = view();
+      for (const id of ids) {
+        const node = defaultSceneGraph.getNode(id as ID);
+        if (!node || !isCanvasNode(node)) continue;
+        const wn = toWorkspaceNode(node, index.get(id as string) ?? 0, wmCache, v);
+        if (wn) out.set(id, wn);
+      }
+      return out;
+    },
     getNode(id: NodeId): WorkspaceNode | undefined {
       const node = defaultSceneGraph.getNode(id as ID);
       if (!node || !isCanvasNode(node)) return undefined;
@@ -615,7 +670,7 @@ function makeNodeAt(
   if (kind === 'text') {
     components.push(
       { id: `${id}_t`, type: 'Transform', props: transformProps },
-      { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: 32, opacity: 100 } },
+      { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: defaultTextSize(), opacity: 100 } },
     );
   } else {
     components.push(
@@ -640,7 +695,7 @@ function makeNodeAt(
     components.push({ id: `${id}_g`, type: 'Geometry', props: { points, ...openProps } });
   }
 
-  return { id, name: displayName, parent: null, children: [], transform, visible: true, locked: false, components };
+  return { id, name: uniqueLayerName(displayName), parent: null, children: [], transform, visible: true, locked: false, components };
 }
 
 /** Find the id of the component that carries this node's x/y (the transform). */
@@ -1277,7 +1332,17 @@ function createNode(payload: CreateNodePayload): void {
     }
   }
 
-  const node = makeNodeAt(kind, payload.kind, outX, outY, ellipse, outPoints, outW, outH, payload.closed === true);
+  // POINT text carries no authored size. Its box IS its glyphs (`readGeometry`
+  // and `buildSnapshot` both measure a text layer and ignore these props), so a
+  // stored width/height is a number in the inspector that describes nothing —
+  // and it read as a fixed box the type then failed to fit. Paragraph kinds
+  // keep theirs as `boxWidth`/`boxHeight` below, which IS what wraps them.
+  const pointText = payload.kind === 'Text' || payload.kind === 'VerticalText';
+  const node = makeNodeAt(
+    kind, payload.kind, outX, outY, ellipse, outPoints,
+    pointText ? undefined : outW, pointText ? undefined : outH,
+    payload.closed === true,
+  );
   if (payload.kind === 'ParagraphText' || payload.kind === 'VerticalParagraphText') {
     // AE paragraph text: the dragged rectangle IS the box. The layer origin is
     // the rect centre (text content is centred on it), so the box lands exactly

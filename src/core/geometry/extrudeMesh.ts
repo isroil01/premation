@@ -113,6 +113,9 @@ interface PreparedRing {
   hole: boolean;
 }
 
+/** Share of the local thickness one side's inset may consume (see `insetAt`). */
+const INSET_SHARE = 0.3;
+
 /**
  * Build the per-ring corner table: outward edge normals, smooth-vs-hard
  * decisions, and the mitred inset.
@@ -176,6 +179,37 @@ function prepareRing(pts: ReadonlyArray<Pt2>, hole: boolean, bevel: number, smoo
     }
   }
 
+  /*
+    How far vertex i may travel along `dir` (unit, the direction its inset
+    moves) before it leaves the ring: the first crossing of the ring's own
+    edges along that ray, not counting the two edges that meet at i. The
+    arc-length clearance above cannot see a sharp TIP — the leg of an R, the
+    apex of an A — because there the opposite wall is close in arc length too
+    and reads as "the ring merely continues"; the mitre then ran its full
+    2.9× limit through the far edge and out of the letter, and the bevel grew
+    a spike past the tip. A ray is the honest measure and costs one pass
+    over the ring per vertex, only when there is a bevel to inset for.
+  */
+  const rayLimit = (i: number, dirX: number, dirY: number): number => {
+    const p = ring[i]!;
+    let best = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (j === i || j === (i - 1 + n) % n) continue;
+      const a = ring[j]!;
+      const b = ring[(j + 1) % n]!;
+      const ex = b.x - a.x;
+      const ey = b.y - a.y;
+      const den = dirX * ey - dirY * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const wx = a.x - p.x;
+      const wy = a.y - p.y;
+      const t = (wx * ey - wy * ex) / den; // along the ray
+      const u = (wx * dirY - wy * dirX) / den; // along the edge
+      if (t > 1e-6 && u >= -1e-9 && u <= 1 + 1e-9 && t < best) best = t;
+    }
+    return best;
+  };
+
   const insetAt = (b: number): Pt2[] => {
     const out: Pt2[] = new Array(n);
     for (let i = 0; i < n; i++) {
@@ -187,19 +221,96 @@ function prepareRing(pts: ReadonlyArray<Pt2>, hole: boolean, bevel: number, smoo
       let bx = nPrev.x + nNext.x;
       let by = nPrev.y + nNext.y;
       const bl = Math.hypot(bx, by);
-      // Never travel past ~half the local thickness — the vertex-wise version
-      // of the global thinness clamp, for the pinches that clamp cannot see.
-      const cap = clearance[i]! * 0.45;
+      // Never travel past 30 % of the local thickness — the vertex-wise
+      // version of the global thinness clamp, for the pinches that clamp
+      // cannot see. Both sides of a stroke inset, so 30 % each leaves 40 % of
+      // the stroke as flat cap; the 45 % this used to allow left a 3px sliver
+      // on a 25px stem, and a title read as hollow pillows rather than type.
+      const cap = clearance[i]! * INSET_SHARE;
       if (bl < 1e-6) {
         // 180° reversal — no sensible bisector; inset along one normal.
-        const d = Math.min(b, cap);
+        const d = Math.min(b, cap, rayLimit(i, -nNext.x, -nNext.y) * INSET_SHARE);
         out[i] = { x: p.x - nNext.x * d, y: p.y - nNext.y * d };
       } else {
         bx /= bl;
         by /= bl;
         const cosHalf = Math.max(0.35, bx * nNext.x + by * nNext.y); // miter limit ≈ 2.9×
-        const d = Math.min(b / cosHalf, cap);
+        const d = Math.min(b / cosHalf, cap, rayLimit(i, -bx, -by) * INSET_SHARE);
         out[i] = { x: p.x - bx * d, y: p.y - by * d };
+      }
+    }
+    /*
+      Swallowtails. Offsetting a convex arc whose radius is smaller than the
+      inset turns it inside out: the arc's inset points come out in reverse
+      order and the ring crosses itself in a tiny loop. A bitmap trace draws
+      every rounded corner of a glyph as such an arc, so a bevel deeper than
+      the corner radius put half a dozen loops in an M — and the ear-clipping
+      cap, which needs a simple polygon, dropped most of the letter's front.
+      An inset edge running AGAINST its outline edge is the signature; both
+      of its ends collapse to their midpoint, repeated until the ring is
+      monotone again (a loop of k points closes in ~log k passes).
+    */
+    for (let pass = 0; pass < 8; pass++) {
+      let changed = false;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const ex = ring[j]!.x - ring[i]!.x;
+        const ey = ring[j]!.y - ring[i]!.y;
+        const fx = out[j]!.x - out[i]!.x;
+        const fy = out[j]!.y - out[i]!.y;
+        if (ex * fx + ey * fy >= 0) continue;
+        const mx = (out[i]!.x + out[j]!.x) / 2;
+        const my = (out[i]!.y + out[j]!.y) / 2;
+        out[i] = { x: mx, y: my };
+        out[j] = { x: mx, y: my };
+        changed = true;
+      }
+      if (!changed) break;
+    }
+    /*
+      What the pass above cannot straighten: two inset edges that CROSS
+      without either running backwards — the offsets of a sharp notch (the
+      V of an M) meet before the notch does, and a corner arc the pass has
+      already folded can still leave a micro-loop. Each crossing bounds a
+      loop the cap must not see, so the shorter side of it collapses onto
+      the crossing point. Exact duplicates, on purpose: the bevel rows index
+      this ring corner-for-corner, and a zero-length edge is a degenerate
+      quad the builder already drops, while the cap dedupes before clipping.
+    */
+    for (let iter = 0; iter < 24; iter++) {
+      let hit: { s: number; t: number; x: number; y: number } | null = null;
+      outer: for (let s = 0; s < n; s++) {
+        const a1 = out[s]!;
+        const a2 = out[(s + 1) % n]!;
+        const ax = a2.x - a1.x;
+        const ay = a2.y - a1.y;
+        if (ax * ax + ay * ay < 1e-12) continue;
+        for (let t = s + 2; t < n; t++) {
+          if (s === 0 && t === n - 1) continue;
+          const b1 = out[t]!;
+          const b2 = out[(t + 1) % n]!;
+          const bx = b2.x - b1.x;
+          const by = b2.y - b1.y;
+          if (bx * bx + by * by < 1e-12) continue;
+          const den = ax * by - ay * bx;
+          if (Math.abs(den) < 1e-12) continue;
+          const wx = b1.x - a1.x;
+          const wy = b1.y - a1.y;
+          const u = (wx * by - wy * bx) / den;
+          const v = (wx * ay - wy * ax) / den;
+          if (u <= 1e-9 || u >= 1 - 1e-9 || v <= 1e-9 || v >= 1 - 1e-9) continue;
+          hit = { s, t, x: a1.x + ax * u, y: a1.y + ay * u };
+          break outer;
+        }
+      }
+      if (!hit) break;
+      const span = hit.t - hit.s; // points s+1 .. t lie on the loop
+      const P = { x: hit.x, y: hit.y };
+      if (span <= n - span) {
+        for (let k = hit.s + 1; k <= hit.t; k++) out[k] = P;
+      } else {
+        for (let k = hit.t + 1; k < n; k++) out[k] = P;
+        for (let k = 0; k <= hit.s; k++) out[k] = P;
       }
     }
     return out;

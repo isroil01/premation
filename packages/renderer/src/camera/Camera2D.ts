@@ -82,10 +82,24 @@ export class Camera2D {
     return Mat3.ortho(-width / 2, width / 2, height / 2, -height / 2);
   }
 
-  /** Combined world → clip matrix (projection · view). */
+  /**
+   * Combined world → clip matrix (projection · view).
+   *
+   * Cached against the five numbers it depends on: it is asked once per
+   * renderable per frame (`mvpFor`), and rebuilding it allocated four
+   * matrices per draw — a third of the renderer's garbage on a 300-layer
+   * comp. Callers must not mutate the result (none do; `mvpFor` multiplies
+   * into a fresh matrix).
+   */
   viewProjectionMatrix(): Mat3 {
-    return Mat3.multiply(this.projectionMatrix(), this.viewMatrix());
+    const { center, zoomLevel: z, viewport } = this;
+    const c = this.vpCache;
+    if (c && c.cx === center.x && c.cy === center.y && c.z === z && c.w === viewport.width && c.h === viewport.height) return c.m;
+    const m = Mat3.multiply(this.projectionMatrix(), this.viewMatrix());
+    this.vpCache = { cx: center.x, cy: center.y, z, w: viewport.width, h: viewport.height, m };
+    return m;
   }
+  private vpCache: { cx: number; cy: number; z: number; w: number; h: number; m: Mat3 } | null = null;
 
   screenToWorld(screen: Vec2): Vec2 {
     // screen (0..w, 0..h, origin top-left) → centered pixels → world

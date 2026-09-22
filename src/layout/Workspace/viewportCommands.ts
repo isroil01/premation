@@ -9,27 +9,23 @@
  * as `previewCacheCommands`. Menu rows are NOT added here — `menuModel.ts` is
  * not this directory's to edit — the rows wanted are listed at the bottom.
  *
- * ## Chords that share a key
+ * ## J, K and L are one rule
  *
- * `K` is also the Knife tool (`tool.knife` in `Providers.tsx`) and `F6` the
- * Render Queue. `ShortcutManager` dispatches the most recently registered
- * ENABLED binding for a chord and lets a disabled one fall through, so a
- * command that returns false from `enabled()` hands the key back.
+ * All three take the same gate: the viewport or its transport bar has focus,
+ * OR nothing has focus, OR a shuttle is already running.
  *
- * J and L collide with nothing, so they take the permissive rule: the
- * viewport or its transport bar has focus, OR nothing has focus, OR a shuttle
- * is already running.
+ * K used to take a STRICTER one, because it was also the Knife tool's key and
+ * "nothing has focus" is the app's resting state. The cost was the transport:
+ * hold-K-and-tap-J/L, the frame step editors reach for without thinking, did
+ * nothing from rest. The Knife now lives on Shift+K (`tool.knife` in
+ * `Providers.tsx`) and K belongs to the transport alone.
  *
- * K takes a STRICTER one — a running shuttle, or real focus in the viewport.
- * The permissive rule would have been wrong for it: "nothing has focus" is the
- * app's ordinary resting state, so K would have been taken from the Knife
- * essentially always, and a niche tool would have lost its key to a transport
- * nobody had started. Under the strict rule, K stops a shuttle the instant
- * there is one to stop (pressing J or L is how you get one), and otherwise
- * cuts a path exactly as it did before.
+ * With the TIMELINE focused none of this applies: the timeline root claims
+ * `j` and `k` (`data-shortcut-claim`), where they are AE's previous / next
+ * keyframe — see `useTimelineKeys`.
  *
- * `F6` shows the comparison only once a snapshot exists; with none, the
- * Render Queue keeps the key.
+ * `F6` used to be shared the same way (Show Snapshot once a snapshot existed,
+ * the Render Queue otherwise). It no longer is: Show Snapshot is `Shift+F5`.
  */
 
 import { asCommandId } from '@app-types/common';
@@ -115,16 +111,6 @@ export function transportChordsActive(): boolean {
   return viewportHasFocus(el);
 }
 
-/**
- * The strict rule, for `K` alone — see the header. No "nothing has focus"
- * branch: a resting app must not take the Knife's key.
- */
-export function transportStopChordActive(): boolean {
-  if (getCompositionShuttle().rate() !== 0) return true;
-  if (typeof document === 'undefined') return false;
-  const el = document.activeElement;
-  return !!el && viewportHasFocus(el);
-}
 
 /**
  * Start an audio-only preview, and put the picture back when it ends.
@@ -193,9 +179,7 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
       description: 'K — stop the shuttle. Hold with J / L to step frames.',
       icon: 'pause',
       shortcut: { key: 'k' },
-      // The STRICT gate — the Knife keeps `k` until a shuttle is running or
-      // the viewport genuinely has focus.
-      enabled: transportStopChordActive,
+      enabled: transportChordsActive,
       execute: () => getCompositionShuttle().keyDown('k'),
     },
     {
@@ -321,7 +305,12 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
       label: 'Show Snapshot',
       description: 'Show or hide the comparison with the last snapshot.',
       icon: 'eye',
-      shortcut: { key: 'F6' },
+      // Shift+F5, beside Take Snapshot's F5 — NOT F6. F6 is the Render Queue,
+      // and the queue says so in three tooltips and a toast. Sharing it on an
+      // `enabled()` gate meant the same key opened a panel until the first
+      // snapshot was taken and toggled an overlay ever after, with nothing on
+      // screen to say which one you were about to get.
+      shortcut: { key: 'F5', shift: true },
       enabled: canCompare,
       isChecked: () => useCompareStore.getState().visible,
       execute: () => useCompareStore.getState().toggleVisible(),

@@ -51,6 +51,19 @@ export interface CollectGizmosOptions {
   viewingThroughCameraId: string | null;
   /** Draw bounding boxes for 3D layers. Off in Draft 3D-less flat scenes. */
   includeLayerBoxes: boolean;
+  /**
+   * The view looks THROUGH a scene camera. Boxes are then drawn for SELECTED
+   * layers only. They exist so a Top or Left view is not a blank field — a flat
+   * layer seen edge-on draws no pixels — and through the camera that problem
+   * does not arise: there the cage around every 3D layer was pure clutter, and
+   * its hidden edges showing through made an extruded title look see-through.
+   */
+  throughSceneCamera?: boolean;
+  /**
+   * Draw cameras and lights only when SELECTED (AE's default). The camera
+   * being looked through is always skipped regardless.
+   */
+  devicesSelectedOnly?: boolean;
 }
 
 export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
@@ -74,6 +87,7 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
 
     if (kind === 'camera') {
       if (node.id === opts.viewingThroughCameraId) continue;
+      if (opts.devicesSelectedOnly && !selected) continue;
       const sample = sampleOf(node.id);
       // `toWorldPointAt` is the SAME parent lift the renderer hands
       // `cameraFromNode`. Without it the gizmo resolved the camera's raw local
@@ -115,6 +129,7 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
       // Ambient Fill made that literal: add one light, see two. The badge is
       // selection feedback only.
       if ((lt.type === 'ambient' || lt.type === 'environment') && !selected) continue;
+      if (opts.devicesSelectedOnly && !selected) continue;
       // Parent-aware, through the same resolver the renderer's wash, Lambert
       // shading and shadow light all use. This read the raw LOCAL props, so a
       // light on a null rig had its cone and falloff sphere drawn where the
@@ -152,6 +167,7 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
     }
 
     if (!opts.includeLayerBoxes) continue;
+    if (opts.throughSceneCamera && !selected) continue;
     if (!canBe3D(node) || !is3DEnabled(node)) continue;
     if (node.visible === false) continue;
 

@@ -12,6 +12,11 @@ describe('splitChord', () => {
     expect(splitChord('Ctrl⌥Enter')).toEqual(['Ctrl', '⌥', 'Enter']);
   });
 
+  it('reads a trailing + as the plus KEY, not a separator', () => {
+    expect(splitChord('Ctrl++')).toEqual(['Ctrl', '+']);
+    expect(splitChord('+')).toEqual(['+']);
+  });
+
   it('keeps a multi-character key whole', () => {
     expect(splitChord('Ctrl+ArrowDown')).toEqual(['Ctrl', 'ArrowDown']);
     expect(splitChord('Escape')).toEqual(['Escape']);

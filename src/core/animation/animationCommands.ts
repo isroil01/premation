@@ -28,6 +28,7 @@
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import { trackOnce } from '@core/analytics/productEvents';
 import { defaultAnimation, AnimationEngine, type AnimSnapshot, type Keyframe, type PropPath, type DataTrack, type ExpressionState } from '@motion/animation';
 
 /** One track's before/after keyframes (`null` = the track is absent). */
@@ -69,6 +70,11 @@ export class AnimEditCommand implements Command {
 
   private readonly engine: AnimationEngine;
   private readonly changes: TrackChange[];
+
+  /** Whether any track ended with more keyframes than it started with. */
+  addsKeyframes(): boolean {
+    return this.changes.some((c) => (c.after?.length ?? 0) > (c.before?.length ?? 0));
+  }
 
   constructor(engine: AnimationEngine, changes: TrackChange[], label: string, mergeKey?: string) {
     this.engine = engine;
@@ -265,6 +271,10 @@ export function beginAnimEdit(engine: AnimationEngine = defaultAnimation): {
  */
 export function recordAnimEdit(command: AnimEditCommand | null): void {
   if (!command) return;
+  // A user's first keyframe this session — the "they animated something" step
+  // of the activation funnel. Only edits that ADD keys count: deleting or
+  // re-easing is work, but it is not the moment someone first animates.
+  if (command.addsKeyframes()) trackOnce('first_keyframe');
   const history = getCommandSystem().getHistory();
   const top = history.peek();
   if (

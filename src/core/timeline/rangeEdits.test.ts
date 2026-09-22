@@ -177,3 +177,41 @@ describe('workAreaRange', () => {
     expect(range!.end).toBeCloseTo(3, 1);
   });
 });
+
+/**
+ * B and N pressed OUTSIDE the current work area. B used to clamp to one frame
+ * before the existing out-point, so with a work area of 0–2 s, pressing B at 6 s
+ * did nothing visible at all (seen in the desktop app setting up an export
+ * range). AE moves the area instead.
+ */
+describe('B / N outside the current work area', () => {
+  it('B past the out-point moves the in-point there and pushes the out-point to the end', () => {
+    const c = getTimelineController();
+    c.setWorkArea(0, 2);
+    c.seekSeconds(6);
+    c.setWorkAreaIn();
+    const wa = c.getWorkArea()!;
+    expect(wa.start).toBeCloseTo(6, 1);
+    expect(wa.end).toBeGreaterThan(wa.start);
+  });
+
+  it('N before the in-point pulls the in-point back to the start', () => {
+    const c = getTimelineController();
+    c.setWorkArea(5, 8);
+    c.seekSeconds(3);
+    c.setWorkAreaOut();
+    const wa = c.getWorkArea()!;
+    expect(wa.start).toBeCloseTo(0, 1);
+    expect(wa.end).toBeCloseTo(3, 1);
+  });
+
+  it('inside the area they still trim it, as before', () => {
+    const c = getTimelineController();
+    c.setWorkArea(1, 8);
+    c.seekSeconds(3); c.setWorkAreaIn();
+    c.seekSeconds(6); c.setWorkAreaOut();
+    const wa = c.getWorkArea()!;
+    expect(wa.start).toBeCloseTo(3, 1);
+    expect(wa.end).toBeCloseTo(6, 1);
+  });
+});

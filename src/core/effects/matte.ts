@@ -34,6 +34,7 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /** What the source contributes: its alpha channel, or its luminance. */
 export type MatteMode = 'alpha' | 'luma';
@@ -100,7 +101,7 @@ export function readMatte(v: unknown): TrackMatte | undefined {
 
 /** Read a node's matte from its `fx` component (undefined = none). */
 export function readNodeMatte(node: SceneNode): TrackMatte | undefined {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   return readMatte(fx?.props.matte);
 }
 

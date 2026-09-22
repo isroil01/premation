@@ -41,6 +41,7 @@ import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, pointLines, type GizmoHandleType, type RenderedGizmo3D, type SnapLine, type SnapPointTarget } from '@motion/workspace';
 import { snapActive, snapGizmoTranslate } from './gizmo3dSnap';
 import type { SceneNode } from '@core/types';
+import { isSceneCameraView } from '@core/scene/cameraViewMode';
 
 export interface DragState3D {
   active: boolean;
@@ -654,6 +655,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   }, [is3D, singleId, selectedIds, axisMode, mode, customViews, compWidth, compHeight, time]);
 
   return {
+    /** Looking THROUGH a scene camera (Active Camera / Camera N), not at the scene from outside. */
+    throughSceneCamera: isSceneCameraView(mode),
     is3D,
     scene3d,
     sceneGizmos,

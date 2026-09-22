@@ -13,6 +13,8 @@ import { registerPowerTourCommand } from '@stores/onboardingStore';
 import { installTextToolCommands } from '@layout/Text/textToolCommands';
 import { installTextCommands } from '@layout/Inspector/textCommands';
 import { installParagraphTextCommands } from '@layout/Inspector/paragraphTextCommands';
+import { installAssetCommands } from '@layout/Assets/assetCommands';
+import { installEffectMenuCommands } from '@layout/Menu/effectMenu';
 
 let installed = false;
 
@@ -27,6 +29,10 @@ export function installOverlayCommands(): void {
     // Shift+X (Swap Fill and Stroke) must work before the Character panel mounts.
     installTextCommands();
     installParagraphTextCommands();
+    // File ▸ Import must exist before (and without) the Assets panel mounting.
+    installAssetCommands();
+    // Effect ▸ <folder> ▸ <effect>: one command per registry entry.
+    installEffectMenuCommands();
   } catch {
     /* a pre-boot route without a registry — the editor route installs later */
   }

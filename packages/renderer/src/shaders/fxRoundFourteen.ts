@@ -76,12 +76,12 @@ fn chan(v : vec4<f32>, ch : i32) -> f32 {
 }
 // percentile(): first bin at which the running count reaches total·frac, skipping empty bins.
 fn pct(frac : f32, ch : i32, total : f32) -> f32 {
-  let target = total * clamp(frac, 0.0, 1.0);
+  let goal = total * clamp(frac, 0.0, 1.0);
   var acc = 0.0;
   for (var j = 0; j < 256; j = j + 1) {
     let h = chan(H(j), ch);
     acc = acc + h;
-    if (acc >= target && h > 0.0) { return f32(j); }
+    if (acc >= goal && h > 0.0) { return f32(j); }
   }
   return 255.0;
 }
@@ -89,8 +89,8 @@ fn stretch(i : f32, lo : f32, hi : f32) -> f32 {
   let span = hi - lo;
   return select(i, clamp((i - lo) / span * 255.0, 0.0, 255.0), span > 0.0);
 }
-fn gammaFor(median : f32, target : f32) -> f32 {
-  let m = clamp(median / 255.0, 0.0, 1.0); let t = clamp(target / 255.0, 0.0, 1.0);
+fn gammaFor(median : f32, goal : f32) -> f32 {
+  let m = clamp(median / 255.0, 0.0, 1.0); let t = clamp(goal / 255.0, 0.0, 1.0);
   if (m <= 0.001 || m >= 0.999 || t <= 0.001 || t >= 0.999) { return 1.0; }
   return clamp(log(m) / log(t), 1.0 / 3.0, 3.0);
 }
@@ -101,12 +101,12 @@ float chan(vec4 v, int ch) {
   if (ch == 3) return v.a; return v.r + v.g + v.b;
 }
 float pct(float frac, int ch, float total) {
-  float target = total * clamp(frac, 0.0, 1.0);
+  float goal = total * clamp(frac, 0.0, 1.0);
   float acc = 0.0;
   for (int j = 0; j < 256; j++) {
     float h = chan(H(j), ch);
     acc += h;
-    if (acc >= target && h > 0.0) return float(j);
+    if (acc >= goal && h > 0.0) return float(j);
   }
   return 255.0;
 }
@@ -114,8 +114,8 @@ float stretch(float i, float lo, float hi) {
   float span = hi - lo;
   return (span > 0.0) ? clamp((i - lo) / span * 255.0, 0.0, 255.0) : i;
 }
-float gammaFor(float median, float target) {
-  float m = clamp(median / 255.0, 0.0, 1.0); float t = clamp(target / 255.0, 0.0, 1.0);
+float gammaFor(float median, float goal) {
+  float m = clamp(median / 255.0, 0.0, 1.0); float t = clamp(goal / 255.0, 0.0, 1.0);
   if (m <= 0.001 || m >= 0.999 || t <= 0.001 || t >= 0.999) return 1.0;
   return clamp(log(m) / log(t), 1.0 / 3.0, 3.0);
 }
@@ -151,8 +151,8 @@ export const FX_AUTO_TABLE_FX = withHelpers(fxShader('fx-auto-table', 2,
     if (mode == 4 && snap > 0.0) {
       let med = vec3<f32>(
         floor(stretch(pct(0.5, 0, n), lo.r, hi.r)), floor(stretch(pct(0.5, 1, n), lo.g, hi.g)), floor(stretch(pct(0.5, 2, n), lo.b, hi.b)));
-      let target = (med.r + med.g + med.b) / 3.0;
-      let g = 1.0 + (vec3<f32>(gammaFor(med.r, target), gammaFor(med.g, target), gammaFor(med.b, target)) - 1.0) * snap;
+      let goal = (med.r + med.g + med.b) / 3.0;
+      let g = 1.0 + (vec3<f32>(gammaFor(med.r, goal), gammaFor(med.g, goal), gammaFor(med.b, goal)) - 1.0) * snap;
       let warped = floor(clamp(pow(tbl / 255.0, 1.0 / g) * 255.0, vec3<f32>(0.0), vec3<f32>(255.0)));
       tbl = select(warped, tbl, abs(g - 1.0) < vec3<f32>(0.0001));
     }
@@ -181,8 +181,8 @@ export const FX_AUTO_TABLE_FX = withHelpers(fxShader('fx-auto-table', 2,
     if (mode == 4 && snap > 0.0) {
       vec3 med = vec3(
         floor(stretch(pct(0.5, 0, n), lo.r, hi.r)), floor(stretch(pct(0.5, 1, n), lo.g, hi.g)), floor(stretch(pct(0.5, 2, n), lo.b, hi.b)));
-      float target = (med.r + med.g + med.b) / 3.0;
-      vec3 g = 1.0 + (vec3(gammaFor(med.r, target), gammaFor(med.g, target), gammaFor(med.b, target)) - 1.0) * snap;
+      float goal = (med.r + med.g + med.b) / 3.0;
+      vec3 g = 1.0 + (vec3(gammaFor(med.r, goal), gammaFor(med.g, goal), gammaFor(med.b, goal)) - 1.0) * snap;
       vec3 warped = floor(clamp(pow(tbl / 255.0, 1.0 / g) * 255.0, 0.0, 255.0));
       tbl = mix(warped, tbl, vec3(lessThan(abs(g - 1.0), vec3(0.0001))));
     }

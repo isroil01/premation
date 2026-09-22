@@ -20,6 +20,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 
@@ -33,7 +34,8 @@ export type LayerQuality = 'best' | 'draft' | 'wireframe';
 
 /** Read a layer's quality (defaults to 'best' — absent means antialiased). */
 export function readNodeQuality(node: SceneNode): LayerQuality {
-  const fx = node.components.find((c) => c.type === 'fx');
+  // Read-only, asked per node per frame by the wireframe overlay.
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const q = fx?.props.quality;
   return q === 'draft' || q === 'wireframe' ? q : 'best';
 }

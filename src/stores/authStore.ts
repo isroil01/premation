@@ -16,6 +16,7 @@ import {
   setSession,
 } from '@core/api/session';
 import { useAssetStore } from './assetStore';
+import { noteSignedIn, resetProductEvents } from '@core/analytics/productEvents';
 import { useAiProviderStore } from './aiProviderStore';
 import { useEntitlementStore } from './entitlementStore';
 
@@ -82,6 +83,7 @@ interface AuthActions {
 }
 
 async function afterAuth(userId: string): Promise<void> {
+  noteSignedIn(userId);
   // Bring the user's cloud assets into the panel; ignore failures (offline).
   await useAssetStore.getState().loadFromCloud().catch(() => undefined);
   // Which account the assistant's key status belongs to. MUST come before the
@@ -171,6 +173,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
     // for 90 days on whatever copied it. Fire-and-forget: being signed out
     // locally must not depend on the network.
     void api.logout().catch(() => undefined);
+    resetProductEvents();
     void clearSession();
     // Everything cached was fetched under a session that is now gone — leaving
     // it would show the previous account's projects to the next person to sign

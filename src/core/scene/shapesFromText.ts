@@ -125,6 +125,9 @@ export function textPaintSpecFromNode(node: SceneNode): TextPaintSpec | null {
   };
 }
 
+/** Turn angle at which a traced glyph vertex is a corner — see `smoothContour`. */
+const TEXT_CORNER_ANGLE_DEG = 38;
+
 /** Trace, smooth, and express contours in LAYER space (centre-origin, 1×). */
 function contoursToRuns(
   contours: ReadonlyArray<TracedContour>,
@@ -139,6 +142,9 @@ function contoursToRuns(
       points: smoothContour(
         c.points.map((p) => ({ x: (p.x - cx) / scale, y: (p.y - cy) / scale })),
         0.55,
+        // TYPE: keep corners. 38° sits above the ~18–32° steps a simplified
+        // bowl or counter turns by, and far below a stem's 90° or an apex.
+        TEXT_CORNER_ANGLE_DEG,
       ),
     }));
 }

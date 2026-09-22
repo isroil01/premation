@@ -15,7 +15,7 @@ import type { TimelineTrack, TimelineKeyframeRef } from './TimelineModel';
 import { Dropdown } from '@components/Dropdown';
 import { type LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
-import { eligibleParents, parentOfNode, parentOptionsFor } from '@core/scene/parenting';
+import { canBeParentOf, eligibleParents, parentOfNode, parentOptionsFor } from '@core/scene/parenting';
 import type { MenuSelectModifiers } from '@components/Menu';
 import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
 import styles from './Timeline.module.css';
@@ -198,9 +198,8 @@ export const TrackHeader = memo(function TrackHeader({
   const frameBlendOn = hasFrameBlend ? readFrameBlendSwitch(track.id) : false;
 
   const currentParent = parentOfNode(track.id);
-  const parentOptions = eligibleParents(track.id);
   const currentParentName = currentParent
-    ? parentOptions.find((o) => o.id === currentParent)?.name ?? 'Parent'
+    ? defaultSceneGraph.getNode(currentParent)?.name ?? 'Parent'
     : 'None';
 
   // Option id + label come from the SHARED menu, not a second hardcoded copy of
@@ -208,23 +207,29 @@ export const TrackHeader = memo(function TrackHeader({
   const currentMatteOption = matteOptionId(track.matteMode);
   const currentMatteLabel = MATTE_SHORT_LABEL[currentMatteOption] ?? 'None';
 
-  const parentItems = [
-    {
-      type: 'item' as const,
-      id: '__none__',
-      label: 'None',
-      icon: currentParent === null ? ('check' as const) : undefined,
-      onSelect: (m: MenuSelectModifiers) => onParentChange?.(null, parentOptionsFor(m)),
-    },
-    ...(parentOptions.length ? [{ type: 'separator' as const }] : []),
-    ...parentOptions.map((o) => ({
-      type: 'item' as const,
-      id: o.id,
-      label: o.name,
-      icon: o.id === currentParent ? ('check' as const) : undefined,
-      onSelect: (m: MenuSelectModifiers) => onParentChange?.(o.id, parentOptionsFor(m)),
-    })),
-  ];
+  // Built when the menu OPENS, not per render: the list names every layer in
+  // the comp, and the walk that collects it ran for every visible row on
+  // every timeline render (see `Dropdown.items`).
+  const parentItems = () => {
+    const parentOptions = eligibleParents(track.id);
+    return [
+      {
+        type: 'item' as const,
+        id: '__none__',
+        label: 'None',
+        icon: currentParent === null ? ('check' as const) : undefined,
+        onSelect: (m: MenuSelectModifiers) => onParentChange?.(null, parentOptionsFor(m)),
+      },
+      ...(parentOptions.length ? [{ type: 'separator' as const }] : []),
+      ...parentOptions.map((o) => ({
+        type: 'item' as const,
+        id: o.id,
+        label: o.name,
+        icon: o.id === currentParent ? ('check' as const) : undefined,
+        onSelect: (m: MenuSelectModifiers) => onParentChange?.(o.id, parentOptionsFor(m)),
+      })),
+    ];
+  };
 
   return (
     <div
@@ -466,16 +471,35 @@ export const TrackHeader = memo(function TrackHeader({
             />
           )}
 
-          <button
-            type="button"
-            className={styles.trackAction}
-            data-kind="fx"
-            data-on={track.fxEnabled !== false || undefined}
-            title="Toggle Effects (fx)"
-            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
-          >
-            {track.fxEnabled !== false ? <span className={styles.fxText}>fx</span> : null}
-          </button>
+          {/*
+            The fx switch is a fact about EFFECTS, so it lights only on a layer
+            that has some (AE draws it the same way). It was "on" for every
+            layer — fxEnabled defaults true — which put a blue fx box on every
+            camera, light and bare solid in the comp: ten switches a row, one
+            of them permanently lit, saying nothing.
+          */}
+          {track.hasEffects ? (
+            <button
+              type="button"
+              className={styles.trackAction}
+              data-kind="fx"
+              data-on={track.fxEnabled !== false || undefined}
+              title="Toggle Effects (fx)"
+              onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
+            >
+              {track.fxEnabled !== false ? <span className={styles.fxText}>fx</span> : null}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.trackAction}
+              data-kind="fx"
+              disabled
+              tabIndex={-1}
+              aria-hidden="true"
+              title="No effects on this layer"
+            />
+          )}
 
           {hasFrameBlend ? (
             <button
@@ -550,20 +574,40 @@ export const TrackHeader = memo(function TrackHeader({
           >
             {track.preserveTransparency ? <span className={styles.fxText}>T</span> : null}
           </button>
-          <button
-            type="button"
-            className={styles.trackAction}
-            data-kind="threeD"
-            data-on={track.threeD || undefined}
-            title="Toggle 3D Layer"
-            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
-          >
-            {track.threeD ? <Icon name="3d" size="sm" /> : null}
-          </button>
+          {/* A camera or light IS 3D; AE shows it no switch, and neither does this row. */}
+          {track.kind === 'camera' || track.kind === 'light' ? (
+            <button
+              type="button"
+              className={styles.trackAction}
+              data-kind="threeD"
+              disabled
+              tabIndex={-1}
+              aria-hidden="true"
+              title="Cameras and lights are always 3D"
+            />
+          ) : (
+            <button
+              type="button"
+              className={styles.trackAction}
+              data-kind="threeD"
+              data-on={track.threeD || undefined}
+              title="Toggle 3D Layer"
+              onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
+            >
+              {track.threeD ? <Icon name="3d" size="sm" /> : null}
+            </button>
+          )}
         </div>
       )}
 
-      {showModes && (
+      {/* A camera or light has no pixels to blend or matte with: AE leaves both cells empty. */}
+      {showModes && (track.kind === 'camera' || track.kind === 'light') && (
+        <>
+          <div className={styles.modeCol} aria-hidden="true" />
+          <div className={styles.matteCol} aria-hidden="true" />
+        </>
+      )}
+      {showModes && !(track.kind === 'camera' || track.kind === 'light') && (
         <>
         <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
           <Dropdown
@@ -607,7 +651,7 @@ export const TrackHeader = memo(function TrackHeader({
         <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
           <PickWhip
             label={PARENT_WHIP_LABEL}
-            accept={(target) => parentOptions.some((o) => o.id === target.nodeId)}
+            accept={(target) => canBeParentOf(track.id, target.nodeId)}
             onPick={(target, m) => onParentChange?.(target.nodeId, parentOptionsFor(m))}
           />
           <Dropdown
@@ -621,6 +665,24 @@ export const TrackHeader = memo(function TrackHeader({
           />
         </div>
         </>
+      )}
+      {showModes && (track.kind === 'camera' || track.kind === 'light') && (
+        <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
+          <PickWhip
+            label={PARENT_WHIP_LABEL}
+            accept={(target) => canBeParentOf(track.id, target.nodeId)}
+            onPick={(target, m) => onParentChange?.(target.nodeId, parentOptionsFor(m))}
+          />
+          <Dropdown
+            placement="bottom-start"
+            trigger={
+              <button type="button" className={styles.timelineSelectTrigger} aria-label="Parent Layer">
+                {currentParentName}
+              </button>
+            }
+            items={parentItems}
+          />
+        </div>
       )}
 
       {/*

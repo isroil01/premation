@@ -1146,6 +1146,29 @@
   color: var(--color-text-primary);
 }
 
+/*
+  At rest the Mode / TrkMat / Parent triggers read as TEXT, like AE's columns:
+  three boxed wells per row, on every row, were most of what made the header
+  look crowded. The well returns when the row is hovered or focused — the same
+  rule the switches follow — so the control is still discoverable.
+*/
+.trackHeader .timelineSelectTrigger {
+  background: transparent;
+  border-color: transparent;
+}
+
+.trackHeader:hover .timelineSelectTrigger,
+.trackHeader:focus-within .timelineSelectTrigger,
+.trackHeader .timelineSelectTrigger[aria-expanded='true'] {
+  background: var(--color-timeline-well, #141414);
+  border-color: var(--color-border);
+}
+
+.trackHeader:hover .timelineSelectTrigger:hover {
+  background: var(--color-timeline-well-hover);
+  border-color: var(--color-timeline-well-border-hover);
+}
+
 .timelineSelectTrigger:active {
   transform: scale(0.95);
 }
@@ -1512,6 +1535,42 @@
   pointer-events: none;
 }
 
+/* ── Quiet at rest ────────────────────────────────────────────────────
+   A row carries ~14 switch cells and most of them are off or do not apply to
+   the layer. Drawn as a bordered well each, every row was a grid of empty
+   boxes and the panel read as a spreadsheet — the loudest thing on screen was
+   the absence of settings. After Effects draws an empty cell as NOTHING: only
+   a switch that is ON has a presence, and the column header says what the
+   column is.
+     • off / unavailable at rest → no fill, no border;
+     • the row under the pointer or holding focus → its wells come back, so the
+       target is visible exactly when you are about to aim at it;
+     • on → always drawn (rules above).
+   Size and position never change, so nothing shifts and nothing is harder to
+   hit than it was. */
+.trackAction:not([data-on]) {
+  background: transparent;
+  border-color: transparent;
+}
+
+.trackHeader:hover .trackAction:not([data-on]):not(:disabled):not([data-spacer]),
+.trackHeader:focus-within .trackAction:not([data-on]):not(:disabled):not([data-spacer]) {
+  background: var(--color-timeline-well);
+  border-color: var(--color-border);
+}
+
+.trackHeader:hover .trackAction:not([data-on]):not(:disabled):not([data-spacer]):hover {
+  background: var(--color-timeline-well-hover);
+  border-color: var(--color-timeline-well-border-hover);
+}
+
+/* A switch that cannot apply to this layer is never a box, hovered or not. */
+.trackAction:disabled,
+.trackAction[data-spacer] {
+  background: transparent;
+  border-color: transparent;
+}
+
 /* Visibility icon is crisp when visible. */
 .trackAction[data-kind="visible"][data-on] {
   color: var(--color-text-primary);
@@ -1582,6 +1641,14 @@
   left: 2px;
   right: 2px;
   border-radius: 1px;
+  pointer-events: none;
+}
+
+.minimapCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 

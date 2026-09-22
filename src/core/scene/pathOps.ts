@@ -23,6 +23,7 @@ import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { repeaterCopies, defaultRepeater, type Repeater, type RepeaterComposite } from '@core/scene/repeater';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 export type PathOpType =
   | 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen' | 'trim' | 'repeater'
@@ -1265,7 +1266,7 @@ export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp, tim
 
 const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
 function fxProps(node: SceneNode): Record<string, unknown> | undefined {
-  return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
+  return renderComponentsOf(node).find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
 }
 
 const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater', 'wiggleTransform'];

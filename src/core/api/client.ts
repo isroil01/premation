@@ -26,6 +26,7 @@ import {
   type Paginated,
 } from './transport';
 import { cachedGet, clear as clearCache, invalidate } from './cache';
+import type { EventBatch } from '@core/analytics/productEvents';
 import { clearSession, clientNameHeader, signIn } from './session';
 
 export {
@@ -984,6 +985,17 @@ export const api = {
    * `needsSignupSource`, and without the tap the question returns on the next
    * read and asks again for something just answered.
    */
+  /**
+   * A batch of product events (see core/analytics/productEvents). The server
+   * re-checks every prop against its own allow-list; this is not the place a
+   * payload is trusted.
+   */
+  sendProductEvents: (batch: EventBatch) =>
+    request<{ accepted: number }>('/analytics/events', {
+      method: 'POST',
+      body: JSON.stringify(batch),
+    }),
+
   setSignupSource: (source: SignupSource, other?: string) =>
     request<{ signupSource: SignupSource }>('/auth/signup-source', {
       method: 'POST',

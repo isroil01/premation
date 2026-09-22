@@ -64,6 +64,7 @@ import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
 import { useUIStore } from '@stores/uiStore';
 import { useOnboardingStore } from '@stores/onboardingStore';
+import { noteNextProjectSource } from '@core/analytics/productEvents';
 import styles from './StartScreen.module.css';
 
 /** One card: an index row, an MRU entry, or both — joined on the path. */
@@ -219,6 +220,7 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
 
   /** New project, then the template built into it — the gallery's own flow, from the start. */
   const newFromTemplate = useCallback(async (templateId: string) => {
+    noteNextProjectSource('template');
     await getCommandSystem().execute(asCommandId(ProjectCommands.New));
     // New can be declined (the unsaved-changes confirmation).
     if (!getProjectManager().getState().current) return;

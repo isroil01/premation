@@ -18,6 +18,7 @@ import {
   canAutoStart,
   resetOnboardingRuntime,
   setStartScreenVisible,
+  setViewerEmpty,
 } from './onboardingStore';
 
 const SEEN_LS = 'motion-editor.onboarding.seen';
@@ -192,6 +193,37 @@ describe('first-run policy', () => {
     expect(localStorage.getItem(SEEN_LS)).toBeNull();
     setStartScreenVisible(false);
     expect(useOnboardingStore.getState().active).toBe(true);
+  });
+
+  test('the tour waits for a canvas — New Project lands on the "New Composition" cards', () => {
+    // Step 1 is "drag a shape out on the canvas". With the cards up there is no
+    // canvas, and the tour card covered the button that would have made one.
+    setStartScreenVisible(true);
+    useOnboardingStore.getState().onEditorMounted();
+    setViewerEmpty(true);
+    setStartScreenVisible(false); // New Project clicked: start screen goes, cards show
+    expect(useOnboardingStore.getState().active).toBe(false);
+    expect(localStorage.getItem(SEEN_LS)).toBeNull();
+
+    setViewerEmpty(false); // a composition exists: now there is something to draw on
+    expect(useOnboardingStore.getState().active).toBe(true);
+    expect(useOnboardingStore.getState().autoStarted).toBe(true);
+  });
+
+  test('an already-running auto-start is retracted while the viewer is empty, then re-offered', () => {
+    useOnboardingStore.getState().onEditorMounted();
+    expect(useOnboardingStore.getState().active).toBe(true);
+    setViewerEmpty(true);
+    expect(useOnboardingStore.getState().active).toBe(false);
+    setViewerEmpty(false);
+    expect(useOnboardingStore.getState().active).toBe(true);
+  });
+
+  test('an empty viewer owes nothing to someone who never qualified for the tour', () => {
+    localStorage.setItem(SEEN_LS, '1');
+    setViewerEmpty(true);
+    setViewerEmpty(false);
+    expect(useOnboardingStore.getState().active).toBe(false);
   });
 
   test('the tour waits behind the start screen and begins when it is dismissed', () => {

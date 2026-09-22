@@ -297,7 +297,7 @@ function EditorShellInner(): JSX.Element {
     void clipRev;
     void markerRev;
     void valueRev;
-    return deriveTimelineTracks({ activeCompId, compFps, expandedIds });
+    return deriveTimelineTracks({ activeCompId, compFps, expandedIds, revs: { anim: animRev, clip: clipRev, marker: markerRev } });
   // `sceneRev` is deliberately NOT a dependency — `valueRev` is, and it IS
   // `sceneRev` gated on there being an expanded row to show a value on. Listing
   // the raw counter here as well defeated that gate completely: the memo ran on
@@ -319,9 +319,30 @@ function EditorShellInner(): JSX.Element {
     const animSub = bus.on('AnimationChanged', (payload) => {
       if (!isMediaDecodeRepaint(payload)) setAnimRev((v) => v + 1);
     });
+    /*
+      A RENAME that arrives as a value write. `node.name = …` beside a prop edit
+      (the text tool naming a layer after what it says) announces `NodeUpdated`
+      and nothing structural, so the tracks above — derived on `graphRev` — kept
+      the old name: the Layers panel and the inspector read "PREMIUM" while the
+      timeline row and its bar still read "Text". Names are compared per event,
+      for the one node it names, so a slider drag costs a Map lookup and no more.
+    */
+    const names = new Map<string, string | undefined>();
+    const nameSub = bus.on('NodeUpdated', ({ nodeId }) => {
+      const name = defaultSceneGraph.getNode(nodeId)?.name;
+      const known = names.has(nodeId);
+      const before = names.get(nodeId);
+      names.set(nodeId, name);
+      // First sight of a node: compare against what the timeline is showing.
+      const shown = known ? before : tracksRef.current.find((t) => t.id === nodeId)?.name;
+      if (shown === undefined || shown === name) return;
+      getTimelineController().syncFromScene();
+      setGraphRev((v) => v + 1);
+    });
     return () => {
       graphSub.dispose();
       animSub.dispose();
+      nameSub.dispose();
     };
   }, []);
 
@@ -653,11 +674,30 @@ function EditorShellInner(): JSX.Element {
       }
 
       if (mode === 'animated') {
-        const animatedInTarget = targetIds.filter((id) => animatedProps(id).length > 0);
+        /*
+          Read the ENGINE, as `force` does. The model only builds property rows
+          for tracks that are already EXPANDED, so asking it which props a
+          COLLAPSED layer animates — the one case U exists for — always answered
+          "none": select a keyframed camera, press U, nothing happened. The
+          model rows are kept as a second source for anything the engine does
+          not list (data tracks the model surfaces).
+        */
+        const enginePropsOf = (id: string): string[] => {
+          const node = defaultSceneGraph.getNode(id);
+          const separated = node?.components.find((c) => c.type === 'Transform')?.props.separateDimensions === true;
+          const out = new Set<string>(animatedProps(id).map((p) => p.prop));
+          for (const p of defaultAnimation.animatedProps(id)) {
+            if (!separated && (p === 'x' || p === 'y' || p === 'z')) out.add(POSITION_PSEUDO_PROP);
+            else out.add(p);
+          }
+          return [...out];
+        };
+        const propsById = new Map(targetIds.map((id) => [id, enginePropsOf(id)] as const));
+        const animatedInTarget = targetIds.filter((id) => (propsById.get(id)?.length ?? 0) > 0);
         // Filter the revealed rows to the animated ones (AE's U shows only
         // keyframed properties; the chevron twirl shows the whole tree).
         const filter = new Set<string>();
-        for (const id of animatedInTarget) for (const p of animatedProps(id)) filter.add(p.prop);
+        for (const id of animatedInTarget) for (const p of propsById.get(id) ?? []) filter.add(p);
         setRevealFilter(filter.size > 0 ? [...filter] : null);
 
         setExpandedIds((cur) => {

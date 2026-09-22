@@ -30,6 +30,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { floatingLayerContainer } from '@utils/floatingLayerContainer';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
 import { positionPopover, type Placement } from '@hooks/positionPopover';
@@ -308,7 +309,8 @@ export function MenuItem({
             {children}
           </Menu>
         </div>,
-        document.body,
+        // Beside its parent menu — inside the dialog, if that is where it is.
+        floatingLayerContainer(triggerRef.current),
       ) : null}
     </>
   );
@@ -391,6 +393,8 @@ export interface ContextMenuProps {
 export function ContextMenu({ children, menu, className }: ContextMenuProps): JSX.Element {
   const [coords, setCoords] = useState<{ x: number; y: number } | null>(null);
   const subRef = useRef<HTMLDivElement | null>(null);
+  /** The element right-clicked, so the menu can mount inside its dialog. */
+  const anchorRef = useRef<Element | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
@@ -433,6 +437,7 @@ export function ContextMenu({ children, menu, className }: ContextMenuProps): JS
     ? cloneElement(children as ReactElement<Record<string, unknown>>, {
         onContextMenu: (e: React.MouseEvent) => {
           e.preventDefault();
+          anchorRef.current = e.currentTarget as Element;
           setCoords({ x: e.clientX, y: e.clientY });
         },
       })
@@ -452,7 +457,7 @@ export function ContextMenu({ children, menu, className }: ContextMenuProps): JS
             {menu(() => setCoords(null))}
           </Menu>
         </div>,
-        document.body,
+        floatingLayerContainer(anchorRef.current),
       ) : null}
     </>
   );

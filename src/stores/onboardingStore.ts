@@ -458,10 +458,55 @@ export function setStartScreenVisible(visible: boolean): void {
   if (editorMounted && !store.active && canAutoStart()) {
     store.start();
     useOnboardingStore.setState({ autoStarted: true });
+  } else if (editorMounted && !store.active && viewerEmpty && firstRunEligible()) {
+    // Held back only because there is no canvas yet (New Project lands on the
+    // "New Composition" cards). Owed for when there is one — see setViewerEmpty.
+    owedAfterViewer = true;
+  }
+}
+
+/**
+ * The same problem one step later. A new project opens on the "New Composition"
+ * cards, not a canvas — and step 1 is "drag a shape out on the canvas". On a
+ * fresh profile (observed 2026-09-21) the tour asked for a drawing with nothing
+ * to draw on, and its card sat on top of the very "New Composition" button that
+ * would have produced one. While the viewer is empty the tour waits, exactly as
+ * it does for the start screen; the first canvas re-runs the first-run check.
+ */
+let viewerEmpty = false;
+/** An auto-start this gate took back, owed to the user once there is a canvas. */
+let owedAfterViewer = false;
+
+export function setViewerEmpty(empty: boolean): void {
+  if (viewerEmpty === empty) return;
+  viewerEmpty = empty;
+  const store = useOnboardingStore.getState();
+  if (empty) {
+    // Retract an auto-start without marking it seen — nobody could act on it.
+    if (store.active && store.autoStarted) {
+      useOnboardingStore.setState({ active: false, autoStarted: false });
+      stopPoll();
+      owedAfterViewer = true;
+    }
+    return;
+  }
+  // NOT `canAutoStart()`: by now a project is open, which that check reads as
+  // "not a first run". This re-offers only what was retracted above.
+  const owed = owedAfterViewer;
+  owedAfterViewer = false;
+  if (owed && editorMounted && !store.active && !startScreenVisible
+    && !readFlag(SEEN_KEY) && !readFlag(DISMISSED_KEY)) {
+    store.start();
+    useOnboardingStore.setState({ autoStarted: true });
   }
 }
 
 export function canAutoStart(): boolean {
+  return !viewerEmpty && firstRunEligible();
+}
+
+/** `canAutoStart` without the canvas gate — is this a first run at all? */
+function firstRunEligible(): boolean {
   if (startScreenVisible) return false;
   if (readFlag(SEEN_KEY) || readFlag(DISMISSED_KEY)) return false;
   const core = tryCoreServices();
@@ -531,6 +576,8 @@ let editorMounted = false;
 
 /** Test seam — jsdom keeps module state between cases in one file. */
 export function resetOnboardingRuntime(): void {
+  viewerEmpty = false;
+  owedAfterViewer = false;
   stopPoll();
   editorMounted = false;
   startScreenVisible = false;

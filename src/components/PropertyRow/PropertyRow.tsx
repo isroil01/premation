@@ -270,11 +270,17 @@ export function PropertyRow({
 
   if (layout === 'inspector') {
     /*
-     *     Label·······[tray]  [ field ][ field ]  [◀ ◆ ▶]
+     *     [⏱] Label····[tray]  [ field ][ field ]  [◀ ◆ ▶]
      *
-     * The tray (stopwatch, `=`, whip, caller extras) lives in the LABEL cell
-     * and is revealed on hover/focus, so revealing it can only truncate the
-     * label under the cursor — never move a field. Children marked
+     * The STOPWATCH leads the label and is always there, as in After Effects:
+     * it is how a property becomes an animation, and hidden-until-hover meant a
+     * new user looking at a camera's Position saw no way to keyframe it at all.
+     * It also used to arrive in the tray on hover and crush the label beside it
+     * ("Rotation X" read "F").
+     *
+     * The tray (`=`, whip, caller extras) stays in the label cell and is
+     * revealed on hover/focus, so revealing it can only truncate the label
+     * under the cursor — never move a field. Children marked
      * `data-persist` stay visible at rest: that is how an attached expression
      * keeps its `=` mark. The right-hand cell is reserved even when empty for
      * the reason the default grid reserves its navigator column.
@@ -297,6 +303,7 @@ export function PropertyRow({
         data-mixed={mixed || undefined}
       >
         <span className={cn(styles.name, animated && styles.nameAnimated)} title={error ?? a11yLabel}>
+          {onStopwatch && <StopwatchButton animated={animated} label={a11yLabel} onToggle={onStopwatch} className={styles.leadStopwatch} />}
           {pinned && <Icon name="push-pin" size="sm" className={styles.pin} title="Pinned" />}
           <span className={cn(styles.nameText, error && styles.nameError)} data-error={error ? '' : undefined}>
             {sentenceCaseLabel(label)}
@@ -307,12 +314,7 @@ export function PropertyRow({
             </span>
           )}
           {hint && <span className={styles.hint}>{hint}</span>}
-          {(onStopwatch || trailing) && (
-            <span className={styles.trailing}>
-              {onStopwatch && <StopwatchButton animated={animated} label={a11yLabel} onToggle={onStopwatch} />}
-              {trailing}
-            </span>
-          )}
+          {trailing && <span className={styles.trailing}>{trailing}</span>}
         </span>
         <div className={styles.values}>{children}</div>
         <span className={styles.anim}>

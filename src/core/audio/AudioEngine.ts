@@ -20,6 +20,7 @@ import { getAudioHardware, applyOutputDevice } from './audioHardware';
 import {
   connectAudioEffects, hasBackwards, reverseBuffer, backwardsOffset, type AudioEffect,
 } from './audioEffects';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {
@@ -123,7 +124,7 @@ async function fetchAudioBytes(src: string): Promise<ArrayBuffer> {
     }
     return new TextEncoder().encode(decodeURIComponent(payload)).buffer as ArrayBuffer;
   }
-  const res = await fetch(src);
+  const res = await fetchAssetSrc(src);
   return res.arrayBuffer();
 }
 

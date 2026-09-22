@@ -16,6 +16,7 @@
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { bumpScene } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -82,8 +83,14 @@ const ZERO_3D: Node3D = {
   holeBevelDepth: DEFAULT_HOLE_BEVEL_DEPTH,
 };
 
+/**
+ * Read-only: every reader here writes through `defaultSceneGraph.writeProp`,
+ * never into the component, so the memoised render view is the right one.
+ * `node.components` rebuilds the whole array on each read, and `is3DEnabled`
+ * runs per node per frame from the viewport chrome.
+ */
 function transformComponent(node: SceneNode): { id: string; props: Record<string, unknown> } | undefined {
-  return node.components.find((c) => c.type === 'Transform') as
+  return renderComponentsOf(node).find((c) => c.type === 'Transform') as
     | { id: string; props: Record<string, unknown> }
     | undefined;
 }

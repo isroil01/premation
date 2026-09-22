@@ -352,6 +352,8 @@ interface ComponentsMemo {
  * both "is this safe to memoize" and "what do we already know".
  */
 const epochStableComponents = new WeakMap<object, ComponentsMemo>();
+/** See the content-hash site in buildLayerNode: digest per materialised component array. */
+const staticContentHashes = new WeakMap<object, string>();
 
 /**
  * {@link readBaseUncached}, memoized across frames on an epoch-stable
@@ -2044,6 +2046,9 @@ export function buildSnapshot(
   // Custom views (AE parity): a pre-built view camera supplied by the editor
   // replaces the scene camera — the shot camera is deliberately IGNORED.
   const customCamera = orthoView ? null : comp.customViewCamera ?? null;
+  // Resolved once per frame: the camera, the DOF and the motion-blur gate all
+  // read the same node, and each resolution walks the comp.
+  const viewCam = orthoView ? null : viewCameraNode(graph, cameraMode, comp.rootId, { isLiveAt });
   const camera = orthoView
     ? null
     : customCamera ?? readSceneCamera(
@@ -2055,7 +2060,7 @@ export function buildSnapshot(
         // The camera is a layer: it follows its parent chain like everything
         // else, through the renderer's own per-frame caches.
         toWorldPoint,
-        { isLiveAt, view: cameraMode },
+        { isLiveAt, view: cameraMode, node: viewCam },
       );
   const project = orthoView
     ? (p: { x: number; y: number; z: number }) => Project3D.projectOrtho(p, orthoView, comp.width, comp.height)
@@ -2075,9 +2080,7 @@ export function buildSnapshot(
     the camera's parent chain is sampled at frame time like every other parent
     (the documented static-chain approximation).
   */
-  const cameraMotionNode = !orthoView && !customCamera && motionBlur
-    ? viewCameraNode(graph, cameraMode, comp.rootId, { isLiveAt })
-    : null;
+  const cameraMotionNode = !orthoView && !customCamera && motionBlur ? viewCam : null;
   const cameraAnimated =
     cameraMotionNode !== null &&
     CAMERA_MOTION_PROPS.some((p) => anim.isAnimated(cameraMotionNode.id, p));
@@ -2106,7 +2109,7 @@ export function buildSnapshot(
   // Draft 3D skips DOF entirely (dof = null ⇒ withDof/dofEffectOf no-op).
   const dof = orthoView || customCamera || comp.draft3d
     ? null
-    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId, { isLiveAt, view: cameraMode });
+    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId, { isLiveAt, view: cameraMode, node: viewCam });
   // `depth: undefined` = this layer is not in the camera's space (a 2D layer),
   // so it is never defocused.
   const withDof = (f: string | undefined, depth: number | undefined): string | undefined => {
@@ -2293,6 +2296,45 @@ export function buildSnapshot(
    * of a light's position, which is the bug this file has fixed three times.
    */
   const sceneLightById = new Map<string, SceneLight>();
+  /**
+   * The FORM RIG — what lights an extruded solid in a comp that has no lights.
+   *
+   * Unlit, every side wall of an extrusion was ONE flat colour (fill × 0.72)
+   * whichever way it faced, so a 3D title read as a white word with a grey
+   * smear behind it: no edges, no turn, no form — "low quality", and the most
+   * common case there is, since a new user extrudes first and lights later.
+   * Every 3D tool's default view shades by orientation; this is that, routed
+   * through the SAME per-fragment lit path real lights use (no second shading
+   * model to keep in step): a soft ambient floor, a key from upper-left-front
+   * and a weak fill from the right.
+   *
+   * Solids only. It is never pushed into `sceneLights`, so flat 3D layers,
+   * shadows, washes and the "is this comp lit" tests are untouched — and the
+   * moment the user adds a real light, this rig is gone and theirs is the only
+   * light there is. Off in Draft 3D, like all lighting.
+   */
+  const formRig: SceneLight[] = [];
+  if (!comp.draft3d) {
+    const c = { x: comp.width / 2, y: comp.height / 2, z: 0 };
+    const FAR = 100000;
+    const base = { color: '#ffffff', radius: 500, angle: 0, cone: 45, shadows: false, shadowMap: false, falloff: 'none' as const };
+    // `from` is the direction LIT NORMALS FACE (see the environment rig above).
+    const parallel = (fx: number, fy: number, fz: number, intensity: number): SceneLight => {
+      const l = Math.hypot(fx, fy, fz) || 1;
+      return { ...base, type: 'parallel', intensity, x: c.x - (fx / l) * FAR, y: c.y - (fy / l) * FAR, z: 0 - (fz / l) * FAR, poi: c };
+    };
+    formRig.push(
+      // Tuned by eye on white type over a dark comp: walls land ~45–72% against
+      // a 100% front, enough turn to read without going theatrical.
+      { ...base, type: 'ambient', intensity: 30, x: c.x, y: c.y, z: 0, poi: null },
+      parallel(0.45, 0.62, 0.64, 64),
+      parallel(-0.8, 0.05, 0.4, 14),
+    );
+  }
+  /** Real lights when the comp has any; otherwise the form rig. Solids only. */
+  const solidLights = (): SceneLight[] => (sceneLights.length > 0 ? sceneLights : formRig);
+  /** An extruded solid actually took the rig this frame — only then does it ship. */
+  let formRigUsed = false;
   /**
    * The environment light's REFLECTION half, as the three numbers it takes to
    * ask for it. The ATLAS itself is fetched at the end, and only if the frame
@@ -2789,7 +2831,9 @@ export function buildSnapshot(
         id: node.id, kind: 'shape',
         x: lp.x, y: lp.y, rotation: aimDeg, scaleX: 1, scaleY: 1, depth: 0,
         opacity: 1, width: comp.width, height: comp.height,
-        fill: '#000', visible: node.visible !== false,
+        // Opt-in: see `glow` in readNodeLight. The light still LIGHTS either way —
+        // that is `sceneLights`, not this layer.
+        fill: '#000', visible: node.visible !== false && lt.glow,
         light: {
           color: lt.color,
           intensity: av?.get('intensity') ?? lt.intensity,
@@ -3428,8 +3472,15 @@ export function buildSnapshot(
     // override the rasterizer paints over every path (see AppTextureProvider's
     // rasterizeSvg), so defaulting it to the kind's category colour would render
     // every imported SVG as a flat teal silhouette.
+    // TEXT is not a "category colour" kind either. `KIND_FILL.text` is the steel
+    // blue of a text layer's TIMELINE LABEL; the flat text painter never reads
+    // it (an unset text colour paints white — see textPaint), so a fresh title
+    // was white until it was extruded and then its faces and walls, which DO
+    // read `layer.fill`, turned that label blue. Same fallback as the painter.
     let finalFill = base.fill
-      ?? (kind === 'image' || kind === 'video' || kind === 'svg' ? undefined : KIND_FILL[kind]);
+      ?? (kind === 'image' || kind === 'video' || kind === 'svg'
+        ? undefined
+        : kind === 'text' ? (base.color ?? '#ffffff') : KIND_FILL[kind]);
     // A solid paint set via the Fill & Stroke panel lives on the fx component
     // and must beat the legacy Style fill string — Canvas2D's fillStyleFor
     // resolves solid paints to this fallback string, so bake it in here.
@@ -4309,7 +4360,25 @@ export function buildSnapshot(
     // transform-invariant digest ONCE here so echo ghosts and repeater copies —
     // which spread `...layer` below — inherit it for free (exactly the
     // transform-only-variation reuse case the rasterizer cache exploits).
-    layer.contentHash = contentHashOf(layer);
+    /*
+      Static solids and shapes hash once per scene state, not once per frame.
+      The digest is transform-invariant and, for a layer with no animated
+      values and no effects, depends only on the node's own content — which
+      the materialised component array stands for (it is rebuilt when the
+      scene mutates, and only then). Hashing was a tenth of the snapshot on a
+      2,000-layer comp, all of it re-deriving the same digests.
+    */
+    const staticHashable = a.size === 0 && layerKind === 'shape' && (layer.effects?.length ?? 0) === 0
+      // Masks, paint and stroke data animate on DATA tracks, which `a` (scalar
+      // values) does not carry; text paths follow a mask. None of those may hit.
+      && !layer.mask && !layer.paint && !layer.textPath && rawAnim.dataTracksFor(node.id).length === 0;
+    if (staticHashable) {
+      const cached = staticContentHashes.get(node.components);
+      if (cached !== undefined) layer.contentHash = cached;
+      else { layer.contentHash = contentHashOf(layer); staticContentHashes.set(node.components, layer.contentHash); }
+    } else {
+      layer.contentHash = contentHashOf(layer);
+    }
 
     // DOF blur + light-cast shadow as REAL effect entries for the GPU path
     // (`filter` above is the same math as a CSS string, kept only for tests /
@@ -4562,7 +4631,8 @@ export function buildSnapshot(
       // single-colour behaviour, since resolveFaceMaterial falls back to the
       // layer fill × the kind's original hardcoded gain.
       const faceMats = readNodeFaceMaterials(node);
-      const extLit = extMat.acceptsLights && sceneLights.length > 0;
+      const extLit = extMat.acceptsLights && solidLights().length > 0;
+      if (extLit && sceneLights.length === 0) formRigUsed = true;
       // Derived from the layer's STYLED surface colour, not its raw fill: a
       // Colour/Gradient Overlay repaints the front face, and taking the raw
       // fill here left every other face the old colour — one object in two
@@ -4984,7 +5054,7 @@ export function buildSnapshot(
           if (extLit) {
             // The material's Ambient / Diffuse, as the GPU path applies them —
             // without it the affine fallback lit a Diffuse-100 body at half.
-            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, { ambient: extMat.ambient, diffuse: extMat.diffuse });
+            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, solidLights(), { ambient: extMat.ambient, diffuse: extMat.diffuse });
             if (lg) {
               sliceLayer.lighting = lg;
               sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}) };
@@ -5158,7 +5228,7 @@ export function buildSnapshot(
               above (their normals are all +Z, so clamping would black the whole
               stack out under a front light).
             */
-            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, { ambient: extMat.ambient, diffuse: extMat.diffuse }, true);
+            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, solidLights(), { ambient: extMat.ambient, diffuse: extMat.diffuse }, true);
             if (lg) {
               faceLayer.lighting = lg;
               faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}) };
@@ -5961,7 +6031,11 @@ export function buildSnapshot(
     : undefined;
   // Scene lights in shader terms — only worth carrying when a 3D layer exists
   // (per-fragment shading is gated on Accepts Lights per layer anyway).
-  const lights3d = has3d && sceneLights.length > 0 ? toShaderLights(sceneLights) : undefined;
+  // The form rig rides the same uniform when the comp has no lights of its own:
+  // only layers that asked to be lit read it, and with no real lights those are
+  // exactly the extruded solids above.
+  const shippedLights = sceneLights.length > 0 ? sceneLights : formRigUsed ? formRig : [];
+  const lights3d = has3d && shippedLights.length > 0 ? toShaderLights(shippedLights) : undefined;
 
   return {
     width: comp.width,

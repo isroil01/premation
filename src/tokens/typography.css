@@ -72,3 +72,18 @@
   --letter-spacing-wide:    0.02em;
   --letter-spacing-uppercase: 0.06em;
 }
+
+/* Simplified Chinese UI (set by core/i18n/localeRuntime via <html lang>).
+   IBM Plex has no Han glyphs, and a browser left to fall back on its own may
+   pick a JAPANESE face for them — Han is shared, the glyph shapes are not.
+   Latin stays in Plex; Han falls through to the platform's SC font. */
+:root:lang(zh-CN),
+:root:lang(zh-Hans) {
+  --font-family-sans:
+    "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Noto Sans SC", "Source Han Sans SC", "Segoe UI", -apple-system,
+    system-ui, sans-serif;
+  --font-family-display:
+    "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+}

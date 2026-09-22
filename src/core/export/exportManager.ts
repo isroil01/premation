@@ -62,6 +62,7 @@ import { exportFcpxmlText } from './exportFcpxml';
 import { exportAleText } from './exportAle';
 import { exportMogrtZip } from './exportMogrt';
 import { encodeExr } from '@core/media/exr';
+import { exportFormatCode, failureReason, track as trackEvent } from '@core/analytics/productEvents';
 
 export type ExportFormat =
   | VideoFormat
@@ -1438,9 +1439,28 @@ async function exportWavAudio(opts: ExportOptions): Promise<void> {
   download(mix.wav, `${opts.baseName ?? defaultBaseName()}.wav`);
 }
 
-export async function runExport(
-  opts: ExportOptions,
-): Promise<{ videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } }> {
+type ExportResult = { videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } };
+
+/**
+ * Every local export — the Export panel and the assistant both come through
+ * here, so this is the one place an export is reported. A cancel is neither a
+ * completion nor a failure and reports nothing past its start.
+ */
+export async function runExport(opts: ExportOptions): Promise<ExportResult> {
+  const format = exportFormatCode(String(opts.format));
+  const started = Date.now();
+  trackEvent('export_started', { format, target: 'local' });
+  try {
+    const result = await runExportFormat(opts);
+    trackEvent('export_completed', { format, target: 'local', seconds: (Date.now() - started) / 1000 });
+    return result;
+  } catch (err) {
+    if (!isAbortError(err)) trackEvent('export_failed', { format, target: 'local', reason: failureReason(err) });
+    throw err;
+  }
+}
+
+async function runExportFormat(opts: ExportOptions): Promise<ExportResult> {
   switch (opts.format) {
     case 'png': await exportPNG(opts); return {};
     case 'png-sequence': await exportSequence(opts, 'png'); return {};

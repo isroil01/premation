@@ -31,6 +31,7 @@ GET /api/admin/blog/{id}
 GET /api/admin/email/audience
 GET /api/admin/email/campaigns
 GET /api/admin/email/campaigns/{id}
+GET /api/admin/engagement
 GET /api/admin/jobs
 GET /api/admin/keys
 GET /api/admin/lessons
@@ -150,6 +151,7 @@ POST /api/ai/image
 POST /api/ai/speech
 POST /api/ai/stream
 POST /api/ai/video
+POST /api/analytics/events
 POST /api/assets
 POST /api/auth/forgot-password
 POST /api/auth/login

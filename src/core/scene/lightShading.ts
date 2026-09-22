@@ -18,7 +18,7 @@
  */
 
 import { Color } from '@motion/renderer';
-import { lightAttenuationAt, LIGHT_DEFAULTS, type Light } from './light';
+import { lightFalloffAt, LIGHT_DEFAULTS, type Light } from './light';
 
 /**
  * A light placed in the scene. The newer AE properties are OPTIONAL here even
@@ -196,7 +196,7 @@ export interface ShaderLight {
   shadowDarkness?: number;
 }
 
-const FALLOFF_ID: Record<string, number> = { none: 0, smooth: 1, 'inverse-square': 2 };
+const FALLOFF_ID: Record<string, number> = { none: 0, smooth: 1, 'inverse-square': 2, legacy: 3 };
 
 /**
  * The 3D unit aim a light actually shades with.
@@ -330,14 +330,17 @@ export function shadeLayer(
       const ly = light.y - pos.y;
       const lz = light.z - pos.z;
       const d = Math.hypot(lx, ly, lz);
-      // `falloff: 'none'` (the default) keeps the legacy hard radius cutoff and
-      // linear ramp. The curves extend reach past the radius, so the cutoff has
-      // to move out with them or the curve would never be visible.
+      // Distance rule for SHADING — the AE one. `falloff: 'none'` (the
+      // default) is constant intensity at any distance: Radius only matters
+      // once a curve is chosen (full inside it, curving off past it).
       //
-      // Both branches live in `lightAttenuationAt` now — the glow wash bakes its
-      // profile from the same function, so a light cannot light one distance and
-      // glow another.
-      const curve = lightAttenuationAt(d, light);
+      // It used to take the glow wash's profile instead (`lightAttenuationAt`:
+      // hard cutoff AT the radius, linear ramp inside it), so a default light
+      // parked more than ~one radius from a 3D layer lit nothing at all, and
+      // one nearer lit it at a fraction nothing in the UI explained — "lights
+      // don't work" was the whole report. The wash keeps that profile; it is a
+      // 2D glow of `radius` px, which is the one place the radius IS a reach.
+      const curve = lightFalloffAt(d, light);
       if (curve <= 0.001) continue;
       atten = curve;
       const inv = d < 1e-9 ? 0 : 1 / d;

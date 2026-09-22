@@ -201,6 +201,48 @@ broken.
 - Say plainly what you did *not* do — known gaps in a PR are fine, silent ones
   are not.
 
+## Translating the interface
+
+Translations are welcome. Today the **menu bar** is translatable; the rest of
+the UI moves onto `t()` (`src/core/i18n/t.ts`) feature by feature, and each
+migrated string joins the list below automatically.
+
+**The source list is `src/core/i18n/locales/en.json`.** Every translatable
+string with its current English, generated from the code and pinned by a test,
+so it is never stale. Keys are stable ids (`menu.project.new`,
+`menu.sub.transform`), not the English words — rewording a label does not
+orphan its translations.
+
+To add a language:
+
+1. Copy `en.json` to `src/core/i18n/locales/<code>.json` (BCP 47, e.g.
+   `zh-CN`) and translate the values. Keep every `{placeholder}` exactly as
+   written. You do not have to translate everything — a missing key shows in
+   English.
+2. Add one entry to `LOCALES` in `src/core/i18n/locales.ts`: the code, the
+   language's name **in that language** (`简体中文`), the system locales it
+   should be picked for, and its loader. The header of that file walks through
+   it.
+3. Run `npx jest src/core/i18n`. `localeCatalogues.test.ts` rejects unknown
+   keys, changed placeholders and empty strings, and prints your coverage.
+4. A script without Latin glyphs may need a fallback font: see the `:lang()`
+   rule at the end of `src/tokens/typography.css`.
+
+The language appears in Settings ▸ Appearance ▸ Language. In a dev build you can
+also pick **Pseudo (en-XA)**, which accents and lengthens every translatable
+string — anything still plain English on screen has not been migrated to `t()`
+yet, and anything that overflows will overflow in German too.
+
+Terminology and review:
+
+- Follow **Adobe After Effects' official UI** in your language wherever the
+  concept exists — most users come from AE.
+- Do **not** translate expressions, file names, or third-party plugin and
+  effect names.
+- AI-assisted translation is fine if the PR says so, and a human who reads the
+  language reviews it before it merges.
+- Open the PR against `dev`.
+
 ## Reporting bugs
 
 Use the issue templates. What actually helps:

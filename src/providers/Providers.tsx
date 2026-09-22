@@ -45,7 +45,8 @@ import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { attachRenderBackendEvents } from '@stores/renderBackendStore';
 import { Button } from '@components/Button';
-import { Logo } from '@components/Logo';
+import { openAbout } from '@layout/Help/AboutDialog';
+import { dismissStartScreen } from '@layout/Start/useStartScreenVisible';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import pluginHost from '@core/plugins/PluginHost';
@@ -101,7 +102,7 @@ import { buildAudioCommands } from '@core/audio/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
-import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
@@ -300,6 +301,7 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
   // A blank document first: the import ADDS compositions, and adding four of
   // someone else's on top of the user's own would produce a project belonging
   // to neither. `newProject` also clears the path, so Save asks where to go.
+  noteNextProjectSource('aep');
   getProjectManager().newProject(file.name.replace(/\.aepx?$/i, ''));
   resetProjectWorkspace();
 
@@ -401,7 +403,9 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'rotate', label: 'Rotate Tool', chord: { key: 'w' } },
     { tool: 'pan-behind', label: 'Pan Behind (Anchor Point) Tool', chord: { key: 'y' } },
     { tool: 'pen', label: 'Pen Tool', chord: { key: 'g' } },
-    { tool: 'knife', label: 'Knife Tool', chord: { key: 'k' } },
+    // Shift+K, not K: bare K is the J-K-L transport's stop / hold-to-step key
+    // (AE), and sharing it left the app's resting state unable to frame-step.
+    { tool: 'knife', label: 'Knife Tool', chord: { key: 'k', shift: true } },
     { tool: 'brush', label: 'Brush Tool' },
     { tool: 'text', label: 'Text Tool', chord: { key: 't', meta: true } },
     // No chord of its own: AE reaches it by pressing Ctrl+T again, which the
@@ -634,6 +638,7 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  */
 import { mergeSelectedPaths, liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 import { compSizeOf } from '@core/composition/compSizes';
+import { installProductAnalytics, noteNextProjectSource } from '@core/analytics/productEvents';
 
 /** The four boolean operators, in the order every other surface lists them. */
 const MERGE_OPS: ReadonlyArray<{ op: MergeOp; label: string; bakeId: string }> = [
@@ -2251,22 +2256,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       id: asCommandId(ProjectCommands.About),
       label: 'About Premation',
       enabled: () => true,
-      execute: () => {
-        openModal({
-          title: 'Premation',
-          size: 'sm',
-          render: () => (
-            <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.6, fontSize: 'var(--font-size-md)' }}>
-              <Logo variant="lockup" size={34} />
-              <div style={{ marginTop: '14px' }}>
-                Professional AI-native motion design application.
-                <br />
-                Version 0.1.0 — frontend foundation.
-              </div>
-            </div>
-          ),
-        });
-      },
+      // The dialog itself lives with Help; this used to be an inline modal with a
+      // hand-typed "Version 0.1.0" that no release ever updated.
+      execute: () => openAbout(),
     },
   ];
 }
@@ -2333,6 +2325,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         workspace,
       });
       track(attachRenderBackendEvents());
+      track(installProductAnalytics());
 
       // Core services are registered inside Application.boot; track the rest of
       // the boot sequence as a loading task so the UI can reflect it.
@@ -2403,9 +2396,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         defaultAnimation.setBaseValueProvider((nodeId, prop) => {
           const node = defaultSceneGraph.getNode(nodeId);
           if (!node) return undefined;
+          // Transform first (where x/y/rotation live), then every other
+          // component: opacity sits on Style, and `value` on it must not be 0.
           const t = node.components.find((c) => c.type === 'Transform');
-          const v = t?.props[prop as string];
-          return typeof v === 'number' ? v : undefined;
+          for (const c of t ? [t, ...node.components.filter((o) => o !== t)] : node.components) {
+            const v = c.props[prop as string];
+            if (typeof v === 'number') return v;
+          }
+          return undefined;
         });
         defaultAnimation.setCompInfoProvider(() => {
           const comp = useCompositionStore.getState().comp();
@@ -3074,6 +3072,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
                       useHistoryStore.getState().record('Recovered', true);
                       const s = useProjectStore.getState();
                       if (s.activeTabId) s.actions.markDirty(s.activeTabId, true);
+                      // The scene is back; get the project browser out of its way.
+                      dismissStartScreen();
                       notify('Session recovered', 'success');
                       close();
                     }}

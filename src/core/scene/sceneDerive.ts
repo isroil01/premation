@@ -27,7 +27,14 @@ export function readNodeKind(node: SceneNode): SceneKind {
   return 'shape';
 }
 
-/** Depth-first flatten of the graph (roots → children), i.e. layer stacking order. */
+/**
+ * Depth-first flatten of the graph (roots → children), i.e. layer stacking order.
+ *
+ * Deliberately NOT memoised on the scene mutation epoch: structural edits
+ * (add, remove, reparent, reorder, clone) write `custom.childIds` directly
+ * and never bump it, so a cached list went stale the moment a layer was
+ * deleted (`nextDeviceName` handed out "Camera 3" after "Camera 1" was gone).
+ */
 export function flattenScene(graph: SceneGraph): SceneNode[] {
   const out: SceneNode[] = [];
   const walk = (n: SceneNode): void => {

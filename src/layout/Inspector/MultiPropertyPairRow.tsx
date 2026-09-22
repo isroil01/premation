@@ -296,6 +296,10 @@ function MultiPropertyPairRowInner({
           <div
             className={styles.slot}
             data-numeric
+            // A field's SHARE follows its number. Equal thirds gave "960" as
+            // much room as "-2179.1", so a camera's Z read "-217" while X and Y
+            // sat half empty beside it. Digits are tabular, so length is width.
+            style={slots.length > 2 ? { flexGrow: fieldWeight(s.field.fieldProps.value) } : undefined}
             onContextMenu={(e) => {
               e.stopPropagation();
               s.field.openMenu(e);
@@ -313,6 +317,12 @@ function MultiPropertyPairRowInner({
       {after}
     </PropertyRow>
   );
+}
+
+/** Flex weight for a triple's field: its character count, within sane bounds. */
+export function fieldWeight(value: unknown): number {
+  const n = typeof value === 'number' ? String(Math.round(value * 10) / 10).length : String(value ?? '').length;
+  return Math.min(9, Math.max(4, n + 1)); // +1 for the axis prefix
 }
 
 export const MultiPropertyPairRow = memo(MultiPropertyPairRowInner);

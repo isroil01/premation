@@ -29,6 +29,7 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 /** Matches `audioForCaster` — a long file would stall the UI on decode. */
 const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
@@ -144,7 +145,7 @@ export async function analyseLayerBeats(preferredId?: string): Promise<BeatGrid 
   if (cache?.key === key) return cache.grid;
 
   try {
-    const res = await fetch(src);
+    const res = await fetchAssetSrc(src);
     if (!res.ok) {
       cache = { key, grid: null };
       return null;

@@ -3138,8 +3138,19 @@ export class AppTextureProvider implements TextureProvider {
     ).join('||');
     const signature = `${layer.width}x${layer.height}|mask:${ptsSig}`;
 
+    /*
+      An unchanged signature is only a hit while the rasterizer still HOLDS the
+      matte. The early return here used to be unconditional, so a static mask
+      never refreshed its slot in the rasterizer's byte-capped LRU: in a heavy
+      comp it aged to the oldest entry, was evicted — which frees the GPU
+      texture — and this map went on handing out the destroyed handle. WebGPU
+      rejects the whole pass for that ("Destroyed texture raster:…|mask:…"), so
+      a long export wrote seconds of black and still reported success. `touch`
+      is the same contract the text and path reuse records keep: refresh the
+      entry, or learn it is gone and take the full path below.
+    */
     const existing = this.maskEntries.get(key);
-    if (existing && existing.signature === signature) return;
+    if (existing && existing.signature === signature && this.rasterizer.touch(rasterCacheKey(signature, 1, 0))) return;
     perfBegin(PerfStage.raster);
 
     const result = this.rasterizer.rasterize({

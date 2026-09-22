@@ -93,6 +93,46 @@ function stableStringify(value: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
 }
 
+/**
+ * One node's row, as it went into the last hash of that graph.
+ *
+ * Keyed by node id and validated by the node's `mutationSeq` (every own-state
+ * write moves it, and it is globally unique so a node rebuilt by a restore
+ * never matches an old entry) plus the structural facts the sequence does
+ * not cover, compared directly. A hit skips the `stableStringify` of every
+ * component — which is where the time went: a 2,000-layer comp spent ~200ms
+ * per EDIT re-serialising 2,000 unchanged nodes (180k stringify calls, 60k
+ * key sorts) so that one changed row could be found.
+ */
+interface RowEntry {
+  seq: number;
+  parent: string;
+  children: string;
+  flags: string;
+  row: string;
+}
+const rowCaches = new WeakMap<HashableGraph, Map<string, RowEntry>>();
+
+function nodeRow(n: SceneNode): string {
+  const parts: string[] = [
+    n.id,
+    String(n.parent ?? ''),
+    // Z-ORDER. Back-to-front, the scene graph's one authority for stacking.
+    stableStringify([...((n as unknown as { children?: string[] }).children ?? [])]),
+    n.visible === false ? '0' : '1',
+    n.locked ? '1' : '0',
+    (n as unknown as { solo?: boolean }).solo ? '1' : '0',
+    stableStringify((n as unknown as { transform?: unknown }).transform),
+  ];
+  // Components in ARRAY order — that order is meaningful (`readBase` is
+  // last-write-wins, `transformComponent` is first-match), so a reorder is a
+  // pixel change.
+  for (const c of n.components ?? []) {
+    parts.push(c.id, c.type, stableStringify(c.props));
+  }
+  return parts.join('');
+}
+
 /** Fingerprint of the scene graph and every animation track on it. */
 export function sceneContentHash(graph: HashableGraph, anim: AnimationEngine): string {
   const h = new Hasher();
@@ -110,35 +150,49 @@ export function sceneContentHash(graph: HashableGraph, anim: AnimationEngine): s
   // and the canvas kept the old stacking order while the Scene tree and the
   // timeline (which read the graph directly) showed the new one. Reported as
   // "I selected the layer underneath and Bring Forward does nothing".
+  const prevRows = rowCaches.get(graph);
+  const nextRows = new Map<string, RowEntry>();
   const rows: string[] = [];
   graph.traverse((n) => {
-    const parts: string[] = [
-      n.id,
-      String(n.parent ?? ''),
-      // Z-ORDER. Back-to-front, the scene graph's one authority for stacking.
-      stableStringify([...((n as unknown as { children?: string[] }).children ?? [])]),
-      n.visible === false ? '0' : '1',
-      n.locked ? '1' : '0',
-      (n as unknown as { solo?: boolean }).solo ? '1' : '0',
-      stableStringify((n as unknown as { transform?: unknown }).transform),
-    ];
-    // Components in ARRAY order — that order is meaningful (`readBase` is
-    // last-write-wins, `transformComponent` is first-match), so a reorder is a
-    // pixel change.
-    for (const c of n.components ?? []) {
-      parts.push(c.id, c.type, stableStringify(c.props));
+    const seq = (n as unknown as { mutationSeq?: number }).mutationSeq;
+    if (typeof seq !== 'number') {
+      // A plain node (tests, builders) carries no sequence: no cache for it.
+      rows.push(nodeRow(n));
+      return;
     }
-    rows.push(parts.join(''));
+    const parent = String(n.parent ?? '');
+    const children = ((n as unknown as { children?: string[] }).children ?? []).join('');
+    const flags = (n.visible === false ? '0' : '1') + (n.locked ? '1' : '0') + ((n as unknown as { solo?: boolean }).solo ? '1' : '0');
+    const prev = prevRows?.get(n.id);
+    const row = prev && prev.seq === seq && prev.parent === parent && prev.children === children && prev.flags === flags
+      ? prev.row
+      : nodeRow(n);
+    nextRows.set(n.id, { seq, parent, children, flags, row });
+    rows.push(row);
   });
+  rowCaches.set(graph, nextRows);
   rows.sort();
   for (const r of rows) h.push(r);
 
   // ── Animation ────────────────────────────────────────────────────
   h.push('anim');
-  const nodeIds = [...anim.getAnimatedNodeIds()].sort();
+  // Keyframed nodes AND expression-only ones. `getAnimatedNodeIds` /
+  // `getAnimatedPropPaths` mean "has keyframes", so an expression on a property
+  // nobody keyframed — `value + wiggle` on a static Position, the commonest
+  // expression there is — was in neither list: editing it left this hash
+  // unchanged, and every cache keyed on it (an effect-baked layer, above all)
+  // went on drawing the layer where it used to be.
+  const exprProps = new Map<string, Set<string>>();
+  for (const e of anim.allExpressions?.() ?? []) {
+    let props = exprProps.get(e.nodeId);
+    if (!props) exprProps.set(e.nodeId, (props = new Set()));
+    props.add(e.prop as string);
+  }
+  const nodeIds = [...new Set([...anim.getAnimatedNodeIds(), ...exprProps.keys()])].sort();
   for (const id of nodeIds) {
     h.push(id);
-    for (const prop of [...anim.getAnimatedPropPaths(id)].sort()) {
+    const props = new Set<string>([...(anim.getAnimatedPropPaths(id) as string[]), ...(exprProps.get(id) ?? [])]);
+    for (const prop of [...props].sort()) {
       h.push(prop);
       const kfs = anim.getTrackKeyframes(id, prop);
       if (kfs) for (const k of kfs) h.push(stableStringify(k));

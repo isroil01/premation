@@ -174,6 +174,9 @@ function historyStore(): Pick<HistoryStore, 'flush' | 'runRestoring'> | null {
   }
 }
 
+/** Shared empty result for nodes without clips — never mutated by callers. */
+const EMPTY_LAYERS: Layer[] = [];
+
 export class TimelineController {
   private registries = new Map<string, Timeline>();
   private compositionTrackIds = new Map<string, string>();
@@ -459,7 +462,7 @@ export class TimelineController {
    * per-node arrays are re-sorted on read. Keyed per track because clips now
    * resolve to the OWNING comp's track, not always the active one.
    */
-  private layerIndexes = new WeakMap<object, { arr: unknown; len: number; idx: Map<string, Layer[]> }>();
+  private layerIndexes = new WeakMap<object, { arr: unknown; len: number; idx: Map<string, Layer[]>; sorted: Map<string, Layer[]> }>();
 
   /** Drop the memoized layer indexes (call after structural clip changes). */
   invalidateLayerIndex(): void {
@@ -514,11 +517,25 @@ export class TimelineController {
         if (arr) arr.push(l);
         else idx.set(l.sourceId, [l]);
       }
-      entry = { arr: track.layers, len: track.layers.length, idx };
+      entry = { arr: track.layers, len: track.layers.length, idx, sorted: new Map() };
       this.layerIndexes.set(track, entry);
     }
     const arr = entry.idx.get(nodeId);
-    return arr ? [...arr].sort((a, b) => a.start - b.start) : [];
+    if (!arr) return EMPTY_LAYERS;
+    // The sorted copy is cached per node on the index entry. This is asked
+    // per layer per FRAME by the snapshot and per row per timeline render;
+    // a fresh copy-and-sort each time was 2.5% of a 2,000-layer frame. A
+    // clip's `start` can move in place, so a cached order is re-checked
+    // (one pass, usually over a single clip) and rebuilt if it went stale.
+    let sorted = entry.sorted.get(nodeId);
+    if (sorted) {
+      let ok = sorted.length === arr.length;
+      for (let i = 1; ok && i < sorted.length; i++) if (sorted[i - 1]!.start > sorted[i]!.start) ok = false;
+      if (ok) return sorted;
+    }
+    sorted = [...arr].sort((a, b) => a.start - b.start);
+    entry.sorted.set(nodeId, sorted);
+    return sorted;
   }
 
   /**
@@ -1266,15 +1283,53 @@ export class TimelineController {
     }
   }
 
-  /** Move selected layers' end time to playhead (After Effects: ]). */
+  /**
+   * Move selected layers' end time to playhead (After Effects: ]).
+   *
+   * `allowNegative` is the whole fix for "] does nothing": the new start is
+   * `playhead − duration`, which is below zero for every layer longer than the
+   * playhead time — i.e. for a default full-comp layer, ALWAYS. The engine's
+   * frame-0 floor turned that into the start the bar already had, and the move
+   * was dropped as a no-op. AE lets the head hang off the front of the comp;
+   * so does the engine when asked (see `Timeline.setLayerStart`).
+   */
   moveSelectedEndToPlayhead(nodeIds: readonly string[]): void {
     const frame = Math.round(this.timeline.currentFrame);
-    for (const nodeId of nodeIds) {
-      for (const layer of this.getLayersForNode(nodeId)) {
-        const duration = layer.end - layer.start;
-        this.timeline.setLayerStart(layer.id, frame - duration);
+    // One transaction: several selected layers are one Ctrl+Z, not one each.
+    this.timeline.history.transaction('Move Layer Out Point', () => {
+      for (const nodeId of nodeIds) {
+        for (const layer of this.getLayersForNode(nodeId)) {
+          const duration = layer.end - layer.start;
+          this.timeline.setLayerStart(layer.id, frame - duration, { allowNegative: true });
+        }
       }
-    }
+    });
+  }
+
+  /**
+   * Nudge every bar of the selected layers by whole frames (After Effects:
+   * Alt+Page Down / Alt+Page Up, ×10 with Shift).
+   *
+   * One transaction, so a nudge of twenty selected layers is ONE Ctrl+Z — the
+   * same reasoning as {@link setClipStarts}. Negative starts are allowed for
+   * the reason `]` allows them: a layer already hanging off the front of the
+   * comp must be nudgeable in both directions, and one sitting at 0 must be
+   * able to go earlier, as it can in AE. Returns whether anything moved, so a
+   * caller can leave the key alone when the selection has no bars.
+   */
+  nudgeSelectedLayers(nodeIds: readonly string[], deltaFrames: number): boolean {
+    const delta = Math.trunc(deltaFrames);
+    if (delta === 0) return false;
+    const bars = nodeIds.flatMap((nodeId) => this.getLayersForNode(nodeId));
+    if (bars.length === 0) return false;
+    let moved = false;
+    this.timeline.history.transaction(bars.length > 1 ? 'Nudge Layers' : 'Nudge Layer', () => {
+      for (const bar of bars) {
+        if (this.timeline.setLayerStart(bar.id, bar.start + delta, { allowNegative: true })) moved = true;
+      }
+    });
+    if (moved) this.invalidateLayerIndex();
+    return moved;
   }
 
   /** Remove a clip (engine layer). */
@@ -1571,8 +1626,12 @@ export class TimelineController {
   setWorkAreaIn(): void {
     const f = Math.round(this.timeline.currentFrame);
     const wa = this.timeline.getRanges().workArea;
-    const outFrame = wa ? wa.start + wa.duration : this.timeline.duration;
-    const start = Math.min(f, outFrame - 1);
+    const last = this.timeline.duration;
+    // B at or past the current out-point MOVES the area (AE): the out-point is
+    // pushed to the comp end rather than the press being clamped to out − 1,
+    // which left B doing nothing at all anywhere to the right of the work area.
+    const outFrame = wa && f < wa.start + wa.duration ? wa.start + wa.duration : last;
+    const start = Math.max(0, Math.min(f, last - 1));
     this.timeline.setRange('workArea', { start, duration: outFrame - start });
     this.syncLoopToWorkArea();
   }
@@ -1580,7 +1639,9 @@ export class TimelineController {
   setWorkAreaOut(): void {
     const f = Math.round(this.timeline.currentFrame);
     const wa = this.timeline.getRanges().workArea;
-    const inFrame = wa ? wa.start : 0;
+    // N at or before the current in-point pulls the in-point back to the start,
+    // for the same reason B pushes the out-point — see setWorkAreaIn.
+    const inFrame = wa && f > wa.start ? wa.start : 0;
     const end = Math.max(f, inFrame + 1);
     this.timeline.setRange('workArea', { start: inFrame, duration: end - inFrame });
     this.syncLoopToWorkArea();

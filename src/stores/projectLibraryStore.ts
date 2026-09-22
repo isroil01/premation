@@ -12,6 +12,7 @@
 
 import { create } from 'zustand';
 import { api, type ProjectSummary } from '@core/api/client';
+import { trackProjectCreated } from '@core/analytics/productEvents';
 
 /** Default rows per page. The user can change it from the page control. */
 export const DEFAULT_PAGE_SIZE = 24;
@@ -129,6 +130,7 @@ export const useProjectLibrary = create<LibraryState & LibraryActions>((set, get
 
   create: async (name, document?: unknown) => {
     const record = await api.createProject(name.trim() || 'Untitled', document);
+    trackProjectCreated(document === undefined ? undefined : 'duplicate');
     // The new project belongs at the top of page 1 by `updatedAt`, but the page
     // on screen may be page 4 of a search it doesn't match. Count it, then let
     // a refetch decide whether it is actually visible from here.

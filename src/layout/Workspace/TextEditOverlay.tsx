@@ -30,7 +30,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import { readRuns, reindexRuns, RUNS_INDEX_PROP, RUNS_INDEX_GRAPHEME } from '@core/text/richText';
 import { utf16ToGraphemeIndex } from '@core/text/graphemes';
-import { readParagraphDirection, resolveAlignForDirection } from '@core/text/textExtras';
+import { readParagraphBox, readParagraphDirection, resolveAlignForDirection } from '@core/text/textExtras';
+import { isAutoTextLayerName, textLayerNameFor } from '@core/text/textLayerName';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
@@ -155,9 +156,20 @@ export function TextEditOverlay(): JSX.Element | null {
         const oy = (geom?.offsetY ?? 0) * zoom * sy;
         box.style.left = `${p.x}px`;
         box.style.top = `${p.y}px`;
-        if (geom && geom.width > 0 && geom.height > 0) {
+        // Only PARAGRAPH text has a box to pin the editor to. `geom` measures
+        // the COMMITTED content, so pinning point text to it froze the editor
+        // at the width of the old text ("Text", for a layer made a moment ago)
+        // while a whole sentence was typed into it — a fixed box that point
+        // text, by definition, does not have. Point text sizes to its own
+        // content (`max-content`) and so grows as you type,
+        // centred on the layer origin exactly as the renderer centres it.
+        const hasBox = !!node && readParagraphBox(node) !== null;
+        if (hasBox && geom && geom.width > 0 && geom.height > 0) {
           box.style.width = `${geom.width}px`;
           box.style.height = `${geom.height}px`;
+        } else if (!hasBox) {
+          box.style.width = 'max-content';
+          box.style.height = 'auto';
         }
         box.style.transform =
           `translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px)) rotate(${p.rotationDeg}deg) scale(${zoom * sx}, ${zoom * sy})`;
@@ -297,6 +309,15 @@ export function TextEditOverlay(): JSX.Element | null {
       // Emits NodeUpdated, which the history snapshot records — the same
       // undoable path every canvas prop edit uses. (Not runAnimEdit: that is
       // for keyframes, and text content is a plain node prop.)
+      // AE: a text layer is NAMED after what it says, until the user names it.
+      // "Still ours to rename" = the name is the tool's default or is what the
+      // previous content would have produced — anything else was typed by hand.
+      // Written BEFORE the content edit so it rides that edit's NodeUpdated:
+      // one event for the Layers panel to re-derive from, one undo entry.
+      if (isAutoTextLayerName(node.name, prev)) {
+        const auto = textLayerNameFor(next);
+        if (auto && auto !== node.name) node.name = auto;
+      }
       updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, 'content', next);
       // Runs address characters by index, so an edit that shifts characters
       // must shift the runs with them — otherwise typing a word at the front

@@ -13,7 +13,7 @@ import type { Vec2 } from '../math/Vec2';
 import type { Rect } from '../math/Rect';
 import * as R from '../math/Rect';
 import type { Modifiers } from '../input/events';
-import type { NodeId, SceneGraphPort, SelectionPort } from '../ports';
+import type { NodeId, SceneGraphPort, SelectionPort, WorkspaceNode } from '../ports';
 import type { HitTester } from '../hit/HitTester';
 import { Marquee, type MarqueeMode } from './Marquee';
 import type { Corners } from '../math/OrientedBox';
@@ -136,12 +136,44 @@ export class SelectionController {
    * gets drawn: see `selectionBoxes`.
    */
   selectionBounds(): Rect | null {
-    const rects: Rect[] = [];
-    for (const id of this.selection.get()) {
-      const n = this.scene.getNode(id);
-      if (n) rects.push(n.worldBounds);
+    return R.bounds(this.selectedNodes().map((s) => s.node.worldBounds));
+  }
+
+  /** The resolved selection, for the duration of one {@link resolveOnce} call. */
+  private scoped: Array<{ id: NodeId; node: WorkspaceNode }> | null = null;
+
+  /**
+   * Run `fn` with the selection resolved ONCE and shared by every geometry
+   * query inside it. One overlay build asks for the bounds, the boxes and the
+   * handles; each used to re-resolve every selected node, and a selected group
+   * re-walks all its children each time. Scoped to the call and cleared in
+   * `finally`, so nothing survives into a frame where the scene has moved.
+   */
+  resolveOnce<T>(fn: () => T): T {
+    if (this.scoped) return fn();
+    this.scoped = this.selectedNodes();
+    try { return fn(); } finally { this.scoped = null; }
+  }
+
+  /**
+   * The selected nodes, resolved in one pass where the host can.
+   *
+   * Per-id `getNode` made the overlay's cost (selected × scene size): the app's
+   * port flattens the whole comp on every call, so 256 selected layers in a
+   * 512-layer comp meant ~770 full scene walks per painted frame — playback
+   * fell to one frame every 6.9 s while the same comp ran at 15 fps deselected.
+   */
+  private selectedNodes(): Array<{ id: NodeId; node: WorkspaceNode }> {
+    if (this.scoped) return this.scoped;
+    const ids = this.selection.get();
+    if (ids.length === 0) return [];
+    const batch = ids.length > 1 ? this.scene.getNodesById?.(ids) : undefined;
+    const out: Array<{ id: NodeId; node: WorkspaceNode }> = [];
+    for (const id of ids) {
+      const node = batch ? batch.get(id) : this.scene.getNode(id);
+      if (node) out.push({ id, node });
     }
-    return R.bounds(rects);
+    return out;
   }
 
   /**
@@ -153,16 +185,13 @@ export class SelectionController {
    * them and encloses whatever happens to lie between them.
    */
   selectionBoxes(): SelectionBox[] {
-    const out: SelectionBox[] = [];
-    for (const id of this.selection.get()) {
-      const n = this.scene.getNode(id);
-      // The id rides along so the painter can colour each outline by its own
-      // layer's label. Bare `Corners` made the drawn boxes anonymous: with
-      // three layers selected there was no way to tell which outline belonged
-      // to which timeline row, which is exactly what label colours are for.
-      if (n) out.push({ id, corners: n.worldCorners ?? (R.corners(n.worldBounds) as Corners) });
-    }
-    return out;
+    // The id rides along so the painter can colour each outline by its own
+    // layer's label. Bare `Corners` made the drawn boxes anonymous: with
+    // three layers selected there was no way to tell which outline belonged
+    // to which timeline row, which is exactly what label colours are for.
+    return this.selectedNodes().map(({ id, node: n }) => (
+      { id, corners: n.worldCorners ?? (R.corners(n.worldBounds) as Corners) }
+    ));
   }
 
   /**

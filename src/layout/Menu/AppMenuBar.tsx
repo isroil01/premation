@@ -20,17 +20,27 @@
  * except on a submenu parent, where Right opens the submenu (the Menu
  * component's own behaviour).
  *
+ * OVERFLOW. The bar never lets itself be covered or clipped: when its host
+ * gives it less room than its groups need, the trailing groups fold into a
+ * "…" group whose menu lists each of them as a submenu (`menuBarOverflow.ts`).
+ * The title bar's project chip used to sit on top of Help — and, with a long
+ * project name, on View, Window and Plugins too — because nothing here could
+ * get narrower. The folded group is an ordinary group to everything below:
+ * roving focus, arrows and hover-switching all run over the folded list.
+ *
  * In a right-to-left layout (`dir="rtl"` on the bar or an ancestor) the
  * groups run right-to-left too, so Left/Right are mirrored: "the next group"
  * is always the one the arrow points at.
  */
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Menu } from '@components/Menu';
 import { useAppMenuGroups } from './useAppMenuGroups';
 import { anchorMenuTo } from './menuAnchor';
 import { MenuModelItems } from './MenuModelItems';
+import { t } from '@core/i18n';
+import { countFittingGroups, estimateGroupWidth, foldOverflowGroups, OVERFLOW_GROUP_ID } from './menuBarOverflow';
 import styles from './AppMenuBar.module.css';
 
 /** True when `el` renders right-to-left: an explicit `dir` wins, else the computed style. */
@@ -44,13 +54,60 @@ function isRtl(el: HTMLElement | null): boolean {
 export function AppMenuBar(): JSX.Element {
   // Not the static APP_MENU: the Plugins group is assembled from what the user
   // installed and rebuilds as plugins start, stop and crash.
-  const menuGroups = useAppMenuGroups();
+  const allGroups = useAppMenuGroups();
+  // How many leading groups the bar has room for. Everything, until measured.
+  const [fitCount, setFitCount] = useState<number>(Number.POSITIVE_INFINITY);
+  // Rendered widths by label. A folded group is not in the DOM, so its width
+  // is remembered from when it was — that is what lets the bar grow back.
+  const widthCache = useRef<Map<string, number>>(new Map());
+  const [naturalWidth, setNaturalWidth] = useState<number | null>(null);
+  const overflowLabel = t('menu.overflow', 'More menus');
+  const menuGroups = useMemo(
+    () => foldOverflowGroups(allGroups, fitCount, overflowLabel),
+    [allGroups, fitCount, overflowLabel],
+  );
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   // Roving focus: the one group button that is tabbable.
   const [focusIdx, setFocusIdx] = useState(0);
   const barRef = useRef<HTMLDivElement | null>(null);
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const measure = (): void => {
+      buttonRefs.current.forEach((btn, i) => {
+        const g = menuGroups[i];
+        if (btn && g && g.id !== OVERFLOW_GROUP_ID && btn.offsetWidth > 0) widthCache.current.set(g.label, btn.offsetWidth);
+      });
+      const widths = allGroups.map((g) => widthCache.current.get(g.label) ?? estimateGroupWidth(g.label));
+      const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
+      const last = menuGroups.length - 1;
+      const moreBtn = menuGroups[last]?.id === OVERFLOW_GROUP_ID ? buttonRefs.current[last] : null;
+      const moreWidth = moreBtn && moreBtn.offsetWidth > 0 ? moreBtn.offsetWidth : 28;
+      // The bar's flex-basis is its full, UNFOLDED width (the inline `width`
+      // below), so its clientWidth reads "what the host can spare", not "what
+      // is drawn right now" — without that a folded bar could never grow back.
+      const natural = widths.reduce((a, w) => a + w, 0) + gap * Math.max(0, widths.length - 1);
+      setNaturalWidth(widthCache.current.size > 0 ? Math.ceil(natural) : null);
+      // 0 = not laid out (jsdom, a hidden pane): fold nothing rather than everything.
+      const available = bar.clientWidth;
+      setFitCount(available > 0 ? countFittingGroups(widths, gap, available, moreWidth) : Number.POSITIVE_INFINITY);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [allGroups, menuGroups]);
+
+  // A group that folded away (or unfolded) under an open menu must not leave
+  // that menu open, anchored to a button that is no longer on the bar.
+  useEffect(() => {
+    if (openGroup && !menuGroups.some((g) => g.id === openGroup)) setOpenGroup(null);
+    if (focusIdx >= menuGroups.length) setFocusIdx(Math.max(0, menuGroups.length - 1));
+  }, [menuGroups, openGroup, focusIdx]);
 
   const openAt = useCallback((groupId: string, btn: HTMLElement): void => {
     // Shared with AppMenuButton: left-aligned under the group, clamped to the
@@ -142,7 +199,13 @@ export function AppMenuBar(): JSX.Element {
   const group = menuGroups.find((g) => g.id === openGroup) ?? null;
 
   return (
-    <div className={styles.bar} ref={barRef} role="menubar" aria-label="Application menu">
+    <div
+      className={styles.bar}
+      ref={barRef}
+      role="menubar"
+      aria-label="Application menu"
+      style={naturalWidth !== null ? { width: naturalWidth } : undefined}
+    >
       {menuGroups.map((g, i) => (
         <button
           key={g.id}
@@ -151,6 +214,8 @@ export function AppMenuBar(): JSX.Element {
           role="menuitem"
           aria-haspopup="menu"
           aria-expanded={openGroup === g.id}
+          aria-label={g.id === OVERFLOW_GROUP_ID ? g.label : undefined}
+          title={g.id === OVERFLOW_GROUP_ID ? g.label : undefined}
           tabIndex={i === focusIdx ? 0 : -1}
           className={openGroup === g.id ? styles.groupActive : styles.group}
           onClick={(e) => {
@@ -167,7 +232,7 @@ export function AppMenuBar(): JSX.Element {
             }
           }}
         >
-          {g.label}
+          {g.id === OVERFLOW_GROUP_ID ? '…' : g.label}
         </button>
       ))}
 

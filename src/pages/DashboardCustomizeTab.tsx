@@ -15,13 +15,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { aiEnabled } from '@core/config/edition';
-import {
-  ShortcutsTab,
-  WorkspacesTab,
-  AppearanceTab,
-  tabsForEdition,
-  type Tab as CustomizeTabId,
-} from '@layout/Settings/CustomizeDialog';
+import { ShortcutsTab, WorkspacesTab, AppearanceTab, type Tab as CustomizeTabId } from '@layout/Settings/CustomizeDialog';
+import { tabsForEdition } from '@layout/Settings/customizeTabs';
 import { AudioHardwareSection } from '@layout/Settings/AudioHardwareSection';
 import { FilesTab } from '@layout/Settings/FilesTab';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';

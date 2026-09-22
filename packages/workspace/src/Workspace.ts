@@ -806,7 +806,8 @@ export class Workspace implements InputSink {
   }
 
   private pushOverlay(): void {
-    this.renderer.setOverlay?.(this.buildOverlay());
+    // One resolve of the selection for the whole build — see `resolveOnce`.
+    this.renderer.setOverlay?.(this.selectionController.resolveOnce(() => this.buildOverlay()));
   }
 
   private buildOverlay(): WorkspaceOverlay {

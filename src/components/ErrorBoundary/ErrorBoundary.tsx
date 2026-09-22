@@ -6,6 +6,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { getLogger } from '@core/logging/Logger';
+import { trackCrash } from '@core/analytics/productEvents';
 import styles from './ErrorBoundary.module.css';
 
 interface ErrorBoundaryProps {
@@ -41,6 +42,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     } catch {
       /* logging must never itself throw here */
     }
+    trackCrash('boundary', error);
   }
 
   private reset = (): void => this.setState({ error: null });

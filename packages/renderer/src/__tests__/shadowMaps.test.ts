@@ -225,8 +225,8 @@ describe('both dialects sample the map only inside the gate', () => {
     // the map, and nine taps per light would be eight wasted — quite apart from
     // WGSL's rules about sampling under non-uniform control flow.
     for (const [dialect, call, loop] of [
-      [src.wgsl, 'let shTerm = shadowFactor(world);', 'for (var i = 0; i < 8; i = i + 1) {'],
-      [src.glsl!.fragment, 'float shTerm = shadowFactor(world);', 'for (int i = 0; i < 8; i++) {'],
+      [src.wgsl, 'let shTerm = shadowFactor(world, N);', 'for (var i = 0; i < 8; i = i + 1) {'],
+      [src.glsl!.fragment, 'float shTerm = shadowFactor(world, N);', 'for (int i = 0; i < 8; i++) {'],
     ] as const) {
       expect(dialect.indexOf(call)).toBeGreaterThan(0);
       expect(dialect.indexOf(call)).toBeLessThan(dialect.indexOf(loop));

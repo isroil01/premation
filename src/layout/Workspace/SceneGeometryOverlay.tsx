@@ -44,6 +44,14 @@ export interface SceneGeometryOverlayProps {
   deviceHandles?: readonly { nodeId: string; kind: 'position' | 'poi'; world: Vec3 }[];
   /** The handle under the pointer, drawn highlighted. */
   hoveredDeviceHandle?: { nodeId: string; kind: 'position' | 'poi' } | null;
+  /**
+   * The view looks THROUGH a scene camera. The z = 0 comp rectangle is then not
+   * drawn: from outside it says "here is the frame"; through the camera the
+   * frame is the viewer itself, and the projected rectangle slides across it as
+   * the camera moves — a dolly or a parallax pan looked like the output frame
+   * drifting off-screen, which is the opposite of what is happening.
+   */
+  throughSceneCamera?: boolean;
 }
 
 /**
@@ -82,6 +90,7 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
   sceneGizmos,
   deviceHandles,
   hoveredDeviceHandle,
+  throughSceneCamera,
 }) => {
   const projectScreen = (p: Vec3): { x: number; y: number } => {
     const cp = orthoView
@@ -141,6 +150,7 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
    * custom view — which is exactly the cue that tells you how you are looking.
    */
   const renderCompFrame = () => {
+    if (throughSceneCamera) return null;
     const corners = [
       { x: 0, y: 0, z: 0 },
       { x: compWidth, y: 0, z: 0 },

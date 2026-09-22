@@ -21,7 +21,14 @@ export type LightType = 'point' | 'ambient' | 'spot' | 'parallel' | 'environment
  * stays the default so existing scenes are unchanged; the other two shape how
  * intensity decays between `radius` and `falloffDistance`.
  */
-export type LightFalloff = 'none' | 'smooth' | 'inverse-square';
+/**
+ * `none` is After Effects' None: constant intensity at any distance. `legacy`
+ * is what `none` used to mean here — a linear ramp from full at the light to
+ * zero at `radius` — kept as an explicit mode so documents lit under that rule
+ * (the 1.7.0 → 1.8.0 migration stamps it on every light that had no falloff)
+ * render exactly as they did.
+ */
+export type LightFalloff = 'none' | 'legacy' | 'smooth' | 'inverse-square';
 
 export interface Light {
   /** Light kind: point (radial glow), ambient (whole-frame lift), spot (cone). */
@@ -48,6 +55,16 @@ export interface Light {
   falloffDistance: number;
   /** Cast 2.5D drop-shadows from this light onto content layers. */
   shadows: boolean;
+  /**
+   * Draw the light's screen-blended glow ("wash") over the frame. OFF by
+   * default, as in AE, where a light is visible only through the 3D surfaces it
+   * shades. The wash predates real per-fragment lighting: it brightens
+   * EVERYTHING beneath it — 2D layers and the comp background included — so one
+   * light beside a single 3D layer turned a dark comp into grey haze, in the
+   * viewer and in the exported file. It survives as a deliberate look (a
+   * visible lamp bloom), not as how lights light.
+   */
+  glow: boolean;
   /** Shadow opacity, percent (AE's Shadow Darkness). */
   shadowDarkness: number;
   /** Shadow edge softness, comp px (AE's Shadow Diffusion). */
@@ -135,7 +152,7 @@ function lightType(v: unknown): LightType {
  *  comes from the Style fill; intensity/radius/angle/cone are numeric props
  *  (so the inspector keyframes them); type is a string prop. */
 function lightFalloff(v: unknown): LightFalloff {
-  return v === 'smooth' || v === 'inverse-square' ? v : 'none';
+  return v === 'smooth' || v === 'inverse-square' || v === 'legacy' ? v : 'none';
 }
 
 export function readNodeLight(node: SceneNode): Light {
@@ -149,6 +166,7 @@ export function readNodeLight(node: SceneNode): Light {
   let falloff: LightFalloff = 'none';
   let falloffDistance: number = LIGHT_DEFAULTS.falloffDistance;
   let shadows = false;
+  let glow = false;
   let shadowDarkness: number = LIGHT_DEFAULTS.shadowDarkness;
   let shadowDiffusion: number = LIGHT_DEFAULTS.shadowDiffusion;
   let shadowMap = false;
@@ -178,6 +196,7 @@ export function readNodeLight(node: SceneNode): Light {
     if (typeof p.poiY === 'number') poiY = p.poiY;
     if (typeof p.poiZ === 'number') poiZ = p.poiZ;
     if (p.castShadows === true || p.castShadows === 1) shadows = true;
+    if (p.lightGlow === true || p.lightGlow === 1) glow = true;
     if (p.shadowMap === true || p.shadowMap === 1) shadowMap = true;
     shadowMapSize = num(p.shadowMapSize, shadowMapSize);
     shadowBias = num(p.shadowBias, shadowBias);
@@ -191,7 +210,7 @@ export function readNodeLight(node: SceneNode): Light {
   const hasPOI = poiX !== undefined || poiY !== undefined || poiZ !== undefined;
   return {
     type, color, intensity, radius, angle, cone, coneFeather,
-    falloff, falloffDistance, shadows, shadowDarkness, shadowDiffusion,
+    falloff, falloffDistance, shadows, glow, shadowDarkness, shadowDiffusion,
     shadowMap, shadowMapSize, shadowBias, shadowSoftness,
     poi: hasPOI ? { x: poiX ?? 0, y: poiY ?? 0, z: poiZ ?? 0 } : null,
     envPreset, envRotation, envReflections,
@@ -214,14 +233,21 @@ export function lightFalloffAt(
   light: { falloff?: LightFalloff; radius: number; falloffDistance?: number },
 ): number {
   if (!light.falloff || light.falloff === 'none') return 1;
-  const r = Math.max(1, light.radius);
   const d = Math.max(0, distance);
+  if (light.falloff === 'legacy') return legacyRamp(d, light.radius);
+  const r = Math.max(1, light.radius);
   if (d <= r) return 1;
   if (light.falloff === 'smooth') {
     const span = Math.max(1, light.falloffDistance ?? LIGHT_DEFAULTS.falloffDistance);
     return Math.max(0, 1 - (d - r) / span);
   }
   return (r * r) / (d * d);
+}
+
+/** Full at the light, zero at `radius`, straight line between — the wash profile. */
+function legacyRamp(d: number, radius: number): number {
+  if (radius <= 0) return 1;
+  return d >= radius ? 0 : 1 - d / radius;
 }
 
 /** The three fields every distance rule below needs. */
@@ -243,10 +269,7 @@ type FalloffShape = { falloff?: LightFalloff; radius: number; falloffDistance?: 
  */
 export function lightAttenuationAt(distance: number, light: FalloffShape): number {
   const d = Math.max(0, distance);
-  if (!light.falloff || light.falloff === 'none') {
-    if (light.radius <= 0) return 1;
-    return d >= light.radius ? 0 : 1 - d / light.radius;
-  }
+  if (!light.falloff || light.falloff === 'none' || light.falloff === 'legacy') return legacyRamp(d, light.radius);
   return lightFalloffAt(d, light);
 }
 

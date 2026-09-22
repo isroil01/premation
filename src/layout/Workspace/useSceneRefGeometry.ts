@@ -65,6 +65,7 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   const customViews = useGuidesStore((s) => s.customViews);
   const groundGridSetting = useGuidesStore((s) => s.groundGridVisible);
   const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
+  const deviceWireframesAll = usePreferenceStore((s) => s.deviceWireframesAll);
   const draft3d = useGuidesStore((s) => s.draft3d);
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
@@ -118,7 +119,9 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
    * Active view counts on its own: switching a flat comp to Left view otherwise
    * shows a blank field with no way to tell which way is up.
    */
-  const scene3d = (() => {
+  // Memoised on the scene revision: this hook re-renders every FRAME during
+  // playback (it reads the time), and the scan is a walk of the whole comp.
+  const scene3d = useMemo(() => {
     if (!isSceneCameraView(mode) || draft3d) return true;
     // Comp-scoped: a camera or 3D layer in a DIFFERENT composition must not
     // switch this one's reference geometry on.
@@ -128,7 +131,8 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
       if (k !== 'light' && is3DEnabled(n)) return true;
     }
     return false;
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
+  }, [mode, draft3d, compRootId, sceneRev]);
 
   const sceneGizmos = useMemo(
     () =>
@@ -145,13 +149,15 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
             // pack together into a picket fence of vertical lines that reads as
             // banding on the artwork itself — chrome mistaken for output.
             includeLayerBoxes: layerBoxesVisible,
+            throughSceneCamera: isSceneCameraView(mode),
+            devicesSelectedOnly: !deviceWireframesAll,
           })
         : [],
     // `sceneRev` is not read inside the callback — it is the dependency that
     // matters most. The collector walks the MUTABLE scene graph, so nothing
     // else here changes when a layer moves; the revision counter is the only
     // signal that the graph is different and the gizmos must be rebuilt.
-    [scene3d, time, compWidth, compHeight, selectedIds, mode, activeCameraId, sceneRev, layerBoxesVisible],
+    [scene3d, time, compWidth, compHeight, selectedIds, mode, activeCameraId, sceneRev, layerBoxesVisible, deviceWireframesAll],
   );
 
   return { camera, orthoView, activeCameraId, scene3d, groundGridVisible, groundLevel, sceneGizmos, compWidth, compHeight };

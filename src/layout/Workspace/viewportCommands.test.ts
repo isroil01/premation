@@ -3,8 +3,8 @@
  * the chords it claims do not collide with each other, and that the two
  * commands sharing a key with something older are gated rather than greedy.
  *
- * The gating is the part worth a test. `K` is also the Knife tool and `F6` the
- * Render Queue; `ShortcutManager` dispatches the most recently registered
+ * The gating is the part worth a test. J/K/L share keys with the timeline;
+ * `ShortcutManager` dispatches the most recently registered
  * ENABLED binding and lets a disabled one fall through, so the whole design
  * rests on `enabled()` returning false at the right moments. A regression
  * there does not throw — it quietly steals a key from another panel.
@@ -76,10 +76,13 @@ describe('viewportCommands', () => {
   });
 
   describe('chords shared with older bindings', () => {
-    it('F6 shows the comparison only once a snapshot exists', () => {
+    it('Show Snapshot is Shift+F5 and leaves F6 to the Render Queue', () => {
       const toggle = byId(VIEWPORT_COMMAND_IDS.compareToggle)!;
-      expect(toggle.shortcut).toMatchObject({ key: 'F6' });
-      // No snapshot: disabled, so the Render Queue's F6 still wins.
+      // It shared F6 with the Render Queue on an `enabled()` gate, so one key
+      // did two unrelated things depending on whether a snapshot existed.
+      expect(toggle.shortcut).toMatchObject({ key: 'F5', shift: true });
+      expect(buildViewportCommands().some((c) => c.shortcut?.key === 'F6')).toBe(false);
+      // Still nothing to show until a snapshot exists.
       expect(toggle.enabled?.()).toBe(false);
 
       useCompareStore.getState().addSnapshot({
@@ -89,15 +92,14 @@ describe('viewportCommands', () => {
       expect(toggle.enabled?.()).toBe(true);
     });
 
-    it('K stays with the Knife while nothing is focused and no shuttle runs', () => {
-      // The strict gate. "Nothing has focus" is the app's resting state, so a
-      // permissive rule here would take `k` from `tool.knife` permanently.
-      const stop = byId(VIEWPORT_COMMAND_IDS.shuttleStop)!;
+    it('J, K and L share one rule — all three are live while nothing is focused', () => {
+      // K was once held back for the Knife at rest, which broke hold-K-tap-J/L
+      // frame stepping. The Knife is on Shift+K now; K is the transport's.
       expect(getCompositionShuttle().rate()).toBe(0);
-      expect(stop.enabled?.()).toBe(false);
-      // J and L have no competing binding, so they take the permissive rule.
-      expect(byId(VIEWPORT_COMMAND_IDS.shuttleForward)!.enabled?.()).toBe(true);
-      expect(byId(VIEWPORT_COMMAND_IDS.shuttleReverse)!.enabled?.()).toBe(true);
+      for (const id of [VIEWPORT_COMMAND_IDS.shuttleReverse, VIEWPORT_COMMAND_IDS.shuttleStop, VIEWPORT_COMMAND_IDS.shuttleForward]) {
+        expect(byId(id)!.enabled?.()).toBe(true);
+      }
+      expect(byId(VIEWPORT_COMMAND_IDS.shuttleStop)!.shortcut).toEqual({ key: 'k' });
     });
 
     it('J/K/L are claimed while a shuttle is running, whatever has focus', () => {

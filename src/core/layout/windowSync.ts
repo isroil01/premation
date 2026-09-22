@@ -78,6 +78,9 @@ export function startWindowSync(): () => void {
 
   const scheduleDoc = (): void => {
     if (applying || disposed) return;
+    // Nobody to send to: a popout announces itself with a doc-request, and
+    // until one has, capturing the document per edit is pure cost.
+    if (!syncChannel.hasPeers()) return;
     if (docTimer !== null) window.clearTimeout(docTimer);
     docTimer = window.setTimeout(() => {
       docTimer = null;

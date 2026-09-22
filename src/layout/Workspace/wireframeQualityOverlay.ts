@@ -16,6 +16,9 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeQuality } from '@core/effects/layerQuality';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { flattenComposition } from '@core/scene/sceneDerive';
+import { sceneMutationEpoch } from '@motion/scene';
 
 export interface WirePt {
   x: number;
@@ -29,6 +32,25 @@ export interface WireframeNodeGeometry {
   readonly id: string;
   readonly worldBounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   readonly worldCorners?: ReadonlyArray<WirePt>;
+}
+
+/**
+ * Whether the active comp has ANY wireframe-quality layer, memoised per scene
+ * mutation. The painter used to ask the workspace port for every node's
+ * resolved world geometry on every frame just to find out there was nothing
+ * to draw — on a 300-layer comp that resolve (with its per-node keyframe-time
+ * fold) was the single largest allocation of a playback frame.
+ */
+let anyWireframeEpoch = -1;
+let anyWireframe = false;
+export function compHasWireframeQualityLayer(): boolean {
+  const epoch = sceneMutationEpoch();
+  if (epoch !== anyWireframeEpoch) {
+    anyWireframeEpoch = epoch;
+    anyWireframe = flattenComposition(defaultSceneGraph, activeCompRootId() as string | undefined)
+      .some((n) => n.visible !== false && readNodeQuality(n) === 'wireframe');
+  }
+  return anyWireframe;
 }
 
 /** Hidden (eye off) layers draw nothing, as in AE. */

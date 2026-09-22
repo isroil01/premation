@@ -255,7 +255,7 @@ describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
     expect((build.match(/oneSided: true/g) ?? []).length).toBe(4);
     // The one-sided CPU call also carries the material's Ambient/Diffuse, as
     // the GPU path does — still exactly one site.
-    expect((build.match(/sceneLights, \{ ambient: extMat\.ambient, diffuse: extMat\.diffuse \}, true\)/g) ?? []).length).toBe(1);
+    expect((build.match(/solidLights\(\), \{ ambient: extMat\.ambient, diffuse: extMat\.diffuse \}, true\)/g) ?? []).length).toBe(1);
   });
 });
 

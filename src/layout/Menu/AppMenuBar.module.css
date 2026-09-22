@@ -2,11 +2,19 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  /* Shrinkable: the component sets `width` to the bar's full unfolded width
+     and reads back what the host actually granted, folding trailing groups
+     into "…" to match. `max-width` covers a host that is not a flex row. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .group,
 .groupActive {
   height: 26px;
+  /* Never squeezed: a group either fits whole or folds into "…". */
+  flex: none;
   padding: 0 var(--space-4);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);

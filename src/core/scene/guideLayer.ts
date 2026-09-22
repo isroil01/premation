@@ -29,10 +29,11 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /** True when this layer is a guide — visible in the comp, never rendered out. */
 export function readIsGuideLayer(node: SceneNode): boolean {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   return fx?.props.guide === true;
 }
 

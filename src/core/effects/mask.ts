@@ -20,6 +20,7 @@ import type { SceneNode } from '@core/types';
 // maskSegments here) — safe because both sides touch the other only inside
 // function bodies, never at module evaluation.
 import { hasVariableFeather, paintVariableFeatherPath } from './maskFeather';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /**
  * How a mask combines with the matte accumulated from the masks above it.
@@ -447,7 +448,7 @@ export function paintMaskMatte(
 
 /** Read a node's mask from its `fx` component (undefined when none). */
 export function readNodeMask(node: SceneNode): LayerMask | undefined {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const m = fx?.props.mask as LayerMask | undefined;
   return m && Array.isArray(m.paths) && m.paths.length > 0 ? m : undefined;
 }
@@ -528,7 +529,7 @@ export function interpolateMask(kfs: ReadonlyArray<MaskKeyframe>, t: number): La
 
 /** Read the node's mask keyframes (empty when none). */
 export function readNodeMaskAnim(node: SceneNode): MaskKeyframe[] {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const raw = (fx?.props as Record<string, unknown> | undefined)?.maskAnim;
   return Array.isArray(raw) ? (raw as MaskKeyframe[]) : [];
 }

@@ -189,6 +189,27 @@ describe('Timeline layers', () => {
     expect(layer.start).toBe(0);
   });
 
+  it('floors a move at frame 0 unless asked — and then keeps one frame in the comp', () => {
+    const t = timeline();
+    const track = t.addTrack();
+    const layer = t.addLayer(track.id, { clip: { start: 0, duration: 30 } })!;
+    // The default: a bar flung left stops at the edge. 0 → 0 is a no-op, and
+    // that no-op is exactly how "end this layer at the playhead" got dropped.
+    expect(t.setLayerStart(layer.id, -20)).toBe(false);
+    expect(layer.start).toBe(0);
+    // Asked: the head may hang off the front, as it does in After Effects.
+    expect(t.setLayerStart(layer.id, -20, { allowNegative: true })).toBe(true);
+    expect(layer.start).toBe(-20);
+    expect(layer.isActiveAt(0)).toBe(true);
+    expect(layer.isActiveAt(10)).toBe(false);
+    // …but never the whole bar: a layer wholly before 0 cannot be grabbed back.
+    t.setLayerStart(layer.id, -500, { allowNegative: true });
+    expect(layer.end).toBe(1);
+    t.history.undo();
+    t.history.undo();
+    expect(layer.start).toBe(0);
+  });
+
   it('trims a layer head and tail', () => {
     const t = timeline();
     const track = t.addTrack();

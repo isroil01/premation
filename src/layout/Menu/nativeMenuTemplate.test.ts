@@ -23,6 +23,7 @@ import { buildTranscriptCommands } from '@layout/Transcript/transcriptCommands';
 import { buildHelpCommands } from '@layout/Help/helpCommands';
 import { buildExportPanelCommands } from '@layout/Export/exportPanelCommands';
 import { buildAssetCommands } from '@layout/Assets/assetCommands';
+import { buildEffectMenuCommands } from './effectMenu';
 import { buildTimelineExpandCommands } from '@layout/Timeline/expandCollapse';
 import { buildTimelineSnapCommands } from '@layout/Timeline/snapCommands';
 import { buildViewportCommands } from '@layout/Workspace/viewportCommands';
@@ -82,6 +83,8 @@ describe('buildNativeMenuTemplate over APP_MENU', () => {
       ...buildTextCommands(),
       ...buildParagraphTextCommands(),
       ...buildPaintCommands(),
+      // Effect ▸ <folder> ▸ <effect> — one command per registry entry.
+      ...buildEffectMenuCommands(),
     ]) registry.register(cmd);
     // Registers itself rather than returning a Command — the tour's execute
     // closes over the store, so there is no build-only form of it.

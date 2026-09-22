@@ -4655,14 +4655,28 @@ fn unpackShadowDepth(c : vec4<f32>) -> f32 {
 // One body for both maps: the block's four uniforms and the map's handles are
 // parameters, so the second light's shadow (plan B2) is the same arithmetic
 // against its own map rather than a copy that could drift.
-fn shadowTerm(world : vec3<f32>, mtx : mat4x4<f32>, axis : vec4<f32>, origin : vec4<f32>, params : vec4<f32>, tex : texture_2d<f32>, smp : sampler) -> f32 {
+fn shadowTerm(worldIn : vec3<f32>, n : vec3<f32>, mtx : mat4x4<f32>, axis : vec4<f32>, origin : vec4<f32>, params : vec4<f32>, tex : texture_2d<f32>, smp : sampler) -> f32 {
   if (params.x < 0.0005) { return 1.0; }
+  // Acne control, two halves. A constant bias is tuned for a surface FACING
+  // the light; one turned away from it crosses a whole map texel of depth
+  // per texel of map, so the same bias reads its own back as an occluder and
+  // the face hatches with stripes (every lit wall of an extrusion did). The
+  // bias grows with the surface's slope against the light axis (slope-scaled
+  // bias, clamped so a grazing wall does not float its shadow away), and the
+  // lookup point steps off the surface along its normal by the bias distance
+  // (normal-offset shadows), which is what actually clears the stripes on the
+  // walls the slope term alone still catches. params.y is bias / far, so
+  // bias in px is params.y / axis.w.
+  let cosN = abs(dot(n, axis.xyz));
+  let slope = sqrt(max(0.0, 1.0 - cosN * cosN)) / max(cosN, 0.05);
+  let bias = params.y * (1.0 + min(slope, 4.0) * 1.5);
+  let world = worldIn + n * (params.y / max(axis.w, 1e-9));
   let clip = mtx * vec4<f32>(world, 1.0);
   if (clip.w <= 1e-6) { return 1.0; }
   var uv = (clip.xy / clip.w) * 0.5 + vec2<f32>(0.5);
   if (params.w > 0.5) { uv.y = 1.0 - uv.y; }
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return 1.0; }
-  let d = dot(world - origin.xyz, axis.xyz) * axis.w - params.y;
+  let d = dot(world - origin.xyz, axis.xyz) * axis.w - bias;
   if (d <= 0.0 || d >= 1.0) { return 1.0; }
   let s = params.z;
   var lit = 0.0;
@@ -4679,13 +4693,13 @@ fn shadowTerm(world : vec3<f32>, mtx : mat4x4<f32>, axis : vec4<f32>, origin : v
   // on the projected path.
   return 1.0 - (1.0 - lit / 9.0) * params.x;
 }
-fn shadowFactor(world : vec3<f32>) -> f32 {
+fn shadowFactor(world : vec3<f32>, n : vec3<f32>) -> f32 {
   if (obj.shadowParams.x < 0.0005) { return 1.0; }
-  return shadowTerm(world, obj.shadowMatrix, obj.shadowAxis, obj.shadowOrigin, obj.shadowParams, shadowTex, shadowSmp);
+  return shadowTerm(world, n, obj.shadowMatrix, obj.shadowAxis, obj.shadowOrigin, obj.shadowParams, shadowTex, shadowSmp);
 }
-fn shadowFactor2(world : vec3<f32>) -> f32 {
+fn shadowFactor2(world : vec3<f32>, n : vec3<f32>) -> f32 {
   if (obj.shadow2Params.x < 0.0005) { return 1.0; }
-  return shadowTerm(world, obj.shadow2Matrix, obj.shadow2Axis, obj.shadow2Origin, obj.shadow2Params, shadow2Tex, shadow2Smp);
+  return shadowTerm(world, n, obj.shadow2Matrix, obj.shadow2Axis, obj.shadow2Origin, obj.shadow2Params, shadow2Tex, shadow2Smp);
 }
 
 /*
@@ -4790,11 +4804,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   // nine texture taps per light for one answer would be eight wasted.
   // shadowOrigin.w names WHICH light the map was rendered from — resolved by
   // packShade3D against the same filtered array the loop walks.
-  let shTerm = shadowFactor(world);
+  let shTerm = shadowFactor(world, N);
   let shadowIdx = i32(obj.shadowOrigin.w + 0.5);
   let shadowOn = obj.shadowParams.x > 0.0005;
   // The second mapped light's term (plan B2), against its own map and index.
-  let shTerm2 = shadowFactor2(world);
+  let shTerm2 = shadowFactor2(world, N);
   let shadow2Idx = i32(obj.shadow2Origin.w + 0.5);
   let shadow2On = obj.shadow2Params.x > 0.0005;
   // Sampled once, beside the shadow term and for the same reasons: it is a fact
@@ -4832,7 +4846,12 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
       let radius = misc.x;
       let fMode = i32(misc2.z + 0.5);
       if (fMode == 0) {
-        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        // Falloff None: constant intensity at any distance (AE). Mirrors
+        // lightFalloffAt — the radius is not a reach until a curve is chosen.
+        atten = 1.0;
+      } else if (fMode == 3) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it — what
+        // None meant before 1.8.0, kept for the documents lit under it.
         if (radius > 0.0 && d >= radius) { skip = true; }
         if (!skip) { atten = select(1.0, 1.0 - d / radius, radius > 0.0); }
       } else {
@@ -5006,14 +5025,19 @@ float unpackShadowDepth(vec4 c) {
   return dot(c.rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
 }
 // One body for both maps — see the WGSL twin.
-float shadowTerm(vec3 world, mat4 mtx, vec4 axis, vec4 origin, vec4 params, sampler2D tex) {
+float shadowTerm(vec3 worldIn, vec3 n, mat4 mtx, vec4 axis, vec4 origin, vec4 params, sampler2D tex) {
   if (params.x < 0.0005) return 1.0;
+  // Slope-scaled bias + normal offset — see the WGSL twin.
+  float cosN = abs(dot(n, axis.xyz));
+  float slope = sqrt(max(0.0, 1.0 - cosN * cosN)) / max(cosN, 0.05);
+  float bias = params.y * (1.0 + min(slope, 4.0) * 1.5);
+  vec3 world = worldIn + n * (params.y / max(axis.w, 1e-9));
   vec4 clip = mtx * vec4(world, 1.0);
   if (clip.w <= 1e-6) return 1.0;
   vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
   if (params.w > 0.5) uv.y = 1.0 - uv.y;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-  float d = dot(world - origin.xyz, axis.xyz) * axis.w - params.y;
+  float d = dot(world - origin.xyz, axis.xyz) * axis.w - bias;
   if (d <= 0.0 || d >= 1.0) return 1.0;
   float s = params.z;
   float lit = 0.0;
@@ -5026,9 +5050,9 @@ float shadowTerm(vec3 world, mat4 mtx, vec4 axis, vec4 origin, vec4 params, samp
   // Darkness lerps back toward fully lit — see the WGSL twin.
   return 1.0 - (1.0 - lit / 9.0) * params.x;
 }
-float shadowFactor(vec3 world) {
+float shadowFactor(vec3 world, vec3 n) {
   if (shadowParams.x < 0.0005) return 1.0;
-  return shadowTerm(world, shadowMatrix, shadowAxis, shadowOrigin, shadowParams, uShadowTex);
+  return shadowTerm(world, n, shadowMatrix, shadowAxis, shadowOrigin, shadowParams, uShadowTex);
 }
 
 // Screen-space ambient occlusion. See the WGSL twin for the full note; the two
@@ -5040,9 +5064,9 @@ uniform sampler2D uSsaoTex;
 // identifiers in order, and a wrapper above this line failed to compile on
 // every lit-3d shader ("uShadow2Tex: undeclared identifier").
 uniform sampler2D uShadow2Tex;
-float shadowFactor2(vec3 world) {
+float shadowFactor2(vec3 world, vec3 n) {
   if (shadow2Params.x < 0.0005) return 1.0;
-  return shadowTerm(world, shadow2Matrix, shadow2Axis, shadow2Origin, shadow2Params, uShadow2Tex);
+  return shadowTerm(world, n, shadow2Matrix, shadow2Axis, shadow2Origin, shadow2Params, uShadow2Tex);
 }
 float aoFactor(vec3 world) {
   if (aoParams.x < 0.0005) return 1.0;
@@ -5090,11 +5114,11 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   // Toon: shadeParams.z is the band count — use a fixed tight highlight.
   float shin = toonFlag ? 32.0 : max(shadeParams.z, 1.0);
   // Sampled once, before the loop — see the WGSL twin.
-  float shTerm = shadowFactor(world);
+  float shTerm = shadowFactor(world, N);
   int shadowIdx = int(shadowOrigin.w + 0.5);
   bool shadowOn = shadowParams.x > 0.0005;
   // The second mapped light's term (plan B2) — see the WGSL twin.
-  float shTerm2 = shadowFactor2(world);
+  float shTerm2 = shadowFactor2(world, N);
   int shadow2Idx = int(shadow2Origin.w + 0.5);
   bool shadow2On = shadow2Params.x > 0.0005;
   // Sampled once, beside the shadow term — see the WGSL twin.
@@ -5127,7 +5151,11 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
       float radius = misc.x;
       int fMode = int(misc2.z + 0.5);
       if (fMode == 0) {
-        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        // Falloff None: constant intensity at any distance (AE). Mirrors
+        // lightFalloffAt — the radius is not a reach until a curve is chosen.
+        atten = 1.0;
+      } else if (fMode == 3) {
+        // Legacy radius ramp — see the WGSL twin.
         if (radius > 0.0 && d >= radius) continue;
         atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
       } else {

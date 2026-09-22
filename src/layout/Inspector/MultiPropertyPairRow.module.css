@@ -1,5 +1,34 @@
+/* What a pair / a triple needs to show its numbers whole ("X 1280.0"): the
+   inspector grid shrinks the LABEL to make this room before it squeezes the
+   fields (see `.inspector` in PropertyRow.module.css). Sized so that label
+   floor + this + the keyframe navigator still fit the narrowest inspector. */
 .pairRow {
   min-width: 0;
+  --prop-values-min: 124px;
+}
+
+.pairRow:has(.slot ~ .slot ~ .slot) {
+  --prop-values-min: 116px;
+  /* The label keeps room for its stopwatch AND a readable word: 54 + 116 + the
+     50px navigator + two 4px gaps is exactly the 228px panel a 1175px window
+     leaves. 8px gaps put it over. */
+  --prop-label-min: 54px;
+  column-gap: var(--space-1);
+}
+
+/* Three numbers and three axis letters do not fit that cell: "X 960  Y 540
+   Z -2179.1" needs ~150px. The letters go when the row is ANIMATED (the
+   navigator has just taken 50px from it) and on any laptop-width window — X,
+   Y, Z is the order everywhere (After Effects shows no letters at all), and
+   each field keeps its accessible name and tooltip. */
+.pairRow:has(.slot ~ .slot ~ .slot):has([class*='_nav_']) [class*='prefix'] {
+  display: none;
+}
+
+@media (max-width: 1360px) {
+  .pairRow:has(.slot ~ .slot ~ .slot) [class*='prefix'] {
+    display: none;
+  }
 }
 
 /* One field cell. The ValueField inside fills it, so two slots are two equal
@@ -13,7 +42,12 @@
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
+  /* A pair is the tightest cell in the panel: a pixel less padding each side
+     is a digit's worth of number over the two fields. Digits are already
+     tabular (ValueField), so a scrub never changes the width. */
+  padding-inline: 3px;
 }
+
 
 /* Linked Scale, between the two fields — where Figma and Framer put it, and
    where the eye already is when it decides whether W and H move together. */

@@ -16,6 +16,7 @@ import { useUIStore } from '@stores/uiStore';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { summarizeAepImport, type AepImportResult } from './aepImport';
+import { track } from '@core/analytics/productEvents';
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -80,6 +81,10 @@ function openReport(fileLabel: string, result: AepImportResult): void {
 export function reportAepImport(fileLabel: string, result: AepImportResult): void {
   const { notify } = useUIStore.getState();
   const warnings = result.applied.warnings;
+  track('aep_imported', {
+    layers: result.project.comps.reduce((n, c) => n + c.layers.length, 0),
+    warnings: warnings.length,
+  });
   if (warnings.length === 0) {
     notify({ level: 'success', message: `Opened ${summarizeAepImport(result)} from “${fileLabel}”`, durationMs: 3200 });
     return;
@@ -94,6 +99,8 @@ export function reportAepImport(fileLabel: string, result: AepImportResult): voi
 
 /** The file could not be read at all. */
 export function reportAepImportFailure(fileLabel: string, message: string): void {
+  // The message names the file and quotes its contents; only a code goes out.
+  track('import_failed', { kind: 'other', reason: 'aep_unreadable' });
   useUIStore.getState().notify({
     level: 'error',
     message: `Could not open “${fileLabel}” — ${message}`,

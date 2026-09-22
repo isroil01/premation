@@ -90,13 +90,26 @@ export const CAMERA_PROPS = [
   'dofAperture',
 ] as const;
 
+/**
+ * A gradient FILL's geometry. `buildSnapshot`'s fillPaint resolution samples
+ * these by name on any layer whose fill is a gradient — `fillAngle` for linear,
+ * the other three for radial — and they are FRACTIONS of the layer box, the
+ * paint model's own unit. `create_gradient kind:"radial"` builds exactly such a
+ * fill, so without these in the gate the tool could create a radial backdrop
+ * that nothing could then move.
+ */
+export const GRADIENT_FILL_PROPS = ['fillAngle', 'fillCenterX', 'fillCenterY', 'fillRadius'] as const;
+
 const isPrefixed = (prop: string): boolean =>
   // 'pathop.' LOWERCASE: that is what `pathOpPropPath` writes and what the
   // renderer samples. This gate said `pathOp.` (camelCase) — a prefix no real
   // track has ever carried — so every AI attempt to keyframe a path operator
   // was rejected as "not animatable" while add_path_operator's own reply text
   // was telling the model to do exactly that.
-  prop.startsWith('effect.') || prop.startsWith('ta.') || prop.startsWith('pathop.');
+  prop.startsWith('effect.') || prop.startsWith('ta.') || prop.startsWith('pathop.') ||
+  // `polystar.<param>` — plain keys, one polystar per layer (see polystar.ts).
+  // The renderer folds them in through `resolvePolystar` every frame.
+  prop.startsWith('polystar.');
 
 /**
  * Puppet pin scalar tracks: `puppet.<pinId>.rotation` / `puppet.<pinId>.stiffness`.
@@ -125,6 +138,7 @@ export function isAnimatableProp(prop: string): boolean {
     (THREE_D_PROPS as readonly string[]).includes(prop) ||
     (SPECIAL_PROPS as readonly string[]).includes(prop) ||
     (CAMERA_PROPS as readonly string[]).includes(prop) ||
+    (GRADIENT_FILL_PROPS as readonly string[]).includes(prop) ||
     isPrefixed(prop) ||
     isPuppetScalar(prop) ||
     isSkeletonScalar(prop)
@@ -207,12 +221,21 @@ function spreadPlacement(index: number, w: number, h: number): { x: number; y: n
   return { x: w / 2 + (col - 1) * (w / 5), y: h / 2 + (row - 1) * (h / 5) };
 }
 
-/** Layer kinds whose real insert seeds config the AI would otherwise lose. */
-const SPECIAL_INSERTERS: Record<string, (() => void) | undefined> = {
-  camera: insertCamera,
-  light: insertLight,
-  adjustment: insertAdjustmentLayer,
-  particle: insertParticle,
+/**
+ * Layer kinds whose real insert seeds config the AI would otherwise lose.
+ *
+ * Each takes the caller's NAME. They used to be called bare, so the inserter
+ * minted its own ("Light 1", "Camera 1", "Adjustment Layer"…) and `create_layer`
+ * then replied "Created light layer 'My Key Light'" about a layer called
+ * something else — and the model went on to look for a name that did not exist.
+ * Camera and light accept it as a seed; the other two have no seed, so they are
+ * renamed once the insert has selected the new node.
+ */
+const SPECIAL_INSERTERS: Record<string, ((name: string) => void) | undefined> = {
+  camera: (name) => insertCamera({ name }),
+  light: (name) => insertLight({ name }),
+  adjustment: () => insertAdjustmentLayer(),
+  particle: () => insertParticle(),
 };
 
 function makeNode(kind: string, name: string, x: number, y: number, fill: string): SceneNode {
@@ -260,8 +283,12 @@ export function createSceneFacade(): SceneFacade {
       // select the new node, then read its id back.
       const inserter = SPECIAL_INSERTERS[kind];
       if (inserter) {
-        inserter();
+        inserter(name);
         const id = useSelectionStore.getState().ids[0];
+        // The seedless inserters named the layer themselves. An empty name keeps
+        // theirs rather than blanking the row.
+        const made = id ? defaultSceneGraph.getNode(id as ID) : undefined;
+        if (made && name.trim() && made.name !== name.trim()) made.name = name.trim();
         if (id && at) {
           const n = defaultSceneGraph.getNode(id as ID);
           const t = n && transformComponent(n);

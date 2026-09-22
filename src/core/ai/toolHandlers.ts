@@ -39,10 +39,11 @@ import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
 
 import {
   addPathOp, defaultPathOpOf, newPathOpId, readPathOps, readTrimOp,
-  ensureTrimOp, updatePathOp, updateRepeaterOp, pathOpPropPath, type PathOp,
+  ensureTrimOp, updatePathOp, addRepeaterOp, pathOpPropPath, type PathOp,
 } from '@core/scene/pathOps';
 
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import { defaultPolystar, setNodePolystar } from '@core/scene/polystar';
 import {
   MATERIAL_PCT_DEFAULTS,
   setNodeAcceptsLights,
@@ -58,6 +59,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { insertMedia, insertSvgLayer } from '@core/scene/sceneInsert';
+import { convertSvgLayerToShapes } from '@core/svg/svgConvert';
 import { analyseAudio } from '@motion/audio';
 import { resolveStyle, buildCustomStyle, setRuntimeStyle, type CustomStyleInput } from './design';
 import { decodeBase64Bytes } from './decodeBase64';
@@ -267,7 +269,11 @@ const listPresetsHandler: AiTool['handler'] = (_input, ctx) => {
 // ── Write: structure ──────────────────────────────────────────────
 
 const createLayer: AiTool['handler'] = (input, ctx) => {
-  const i = input as { id?: string; kind: string; name: string; x?: number; y?: number; width?: number; height?: number; text?: string; shape?: string; fill?: string; parent?: string };
+  const i = input as {
+    id?: string; kind: string; name: string; x?: number; y?: number; width?: number; height?: number;
+    text?: string; shape?: string; fill?: string; parent?: string;
+    points?: number; outerRadius?: number; innerRadius?: number; roundness?: number;
+  };
   if (i.parent && !ctx.scene.has(i.parent)) return fail(unknownNode(ctx, i.parent));
   // Accept x-only or y-only (the old code discarded BOTH if either was missing,
   // silently centring the layer). Only when NEITHER is given do we hand the
@@ -278,12 +284,39 @@ const createLayer: AiTool['handler'] = (input, ctx) => {
       ? { x: i.x ?? comp.width / 2, y: i.y ?? comp.height / 2 }
       : undefined;
   const id = ctx.scene.create(i.kind, i.name, at);
+  if (!id) return fail(`Could not create a ${i.kind} layer — the insert produced no node.`);
   // Bind the caller's handle BEFORE anything else, so a later call in the same
   // batch can address this layer without a round-trip through the model.
   bindAlias(ctx, i.id, id);
   if (i.text !== undefined) ctx.scene.setProp(id, 'content', i.text);
   if (i.fill) ctx.scene.setProp(id, 'fill', i.fill);
-  if (i.shape) ctx.scene.setProp(id, 'shapeType', i.shape);
+  // Polygon / star are PARAMETRIC — the same `fx.polystar` node the UI's
+  // Polygon and Star tools create (ports.ts), whose outline `buildSnapshot`
+  // recomputes from live parameters every frame. Writing `shapeType: 'polygon'`
+  // alone, as this used to, names a primitive the renderer has no SDF for and
+  // carries no Geometry either — so it fell through to the rect and drew a
+  // square, with no way to say how many sides.
+  const polystarType = i.kind === 'shape' && (i.shape === 'polygon' || i.shape === 'star') ? i.shape : null;
+  let polystar: ReturnType<typeof defaultPolystar> | null = null;
+  if (polystarType) {
+    const outer = Math.max(1, i.outerRadius ?? Math.min(i.width ?? 200, i.height ?? 200) / 2);
+    // Hexagon / five-point star: what `insertShape` has always drawn for these
+    // two names, so an un-parameterised call keeps its familiar look.
+    const base = defaultPolystar(polystarType, outer, i.points ?? (polystarType === 'polygon' ? 6 : 5));
+    polystar = {
+      ...base,
+      ...(polystarType === 'star' && i.innerRadius !== undefined
+        ? { innerRadius: Math.max(0, i.innerRadius) }
+        : {}),
+      ...(i.roundness !== undefined
+        ? { outerRoundness: i.roundness, innerRoundness: polystarType === 'star' ? i.roundness : 0 }
+        : {}),
+    };
+    ctx.scene.setProp(id, 'shapeType', 'polystar');
+    setNodePolystar(id, polystar);
+  } else if (i.shape) {
+    ctx.scene.setProp(id, 'shapeType', i.shape);
+  }
   if (i.parent) ctx.scene.reparent(id, i.parent);
 
   // GPU renderer builds its model matrix from layer.width × layer.scaleX and
@@ -293,6 +326,11 @@ const createLayer: AiTool['handler'] = (input, ctx) => {
   if (kind === 'solid') {
     ctx.scene.setProp(id, 'width', i.width ?? comp.width);
     ctx.scene.setProp(id, 'height', i.height ?? comp.height);
+  } else if (polystar) {
+    // The box follows the radius — the renderer sizes a polystar's raster from
+    // its live outer radius anyway, and the selection outline reads these.
+    ctx.scene.setProp(id, 'width', polystar.outerRadius * 2);
+    ctx.scene.setProp(id, 'height', polystar.outerRadius * 2);
   } else if (kind === 'shape') {
     ctx.scene.setProp(id, 'width', i.width ?? 200);
     ctx.scene.setProp(id, 'height', i.height ?? 200);
@@ -308,7 +346,23 @@ const createLayer: AiTool['handler'] = (input, ctx) => {
     if (i.height !== undefined) ctx.scene.setProp(id, 'height', i.height);
   }
 
-  return ok(`Created ${i.kind} layer '${i.name}' with id ${id}. Use this id in later calls.`, { id });
+  // Report what the scene ACTUALLY holds, read back — not the request echoed.
+  // The special inserters (camera/light/adjustment/particle) name and select
+  // their own node, and a reply that repeats `i.name` regardless is how "Created
+  // light layer 'My Key Light'" got said about a layer called "Light 1".
+  const made = ctx.scene.get(id);
+  const realName = made?.name ?? i.name;
+  const renamed = realName !== i.name ? ` (requested '${i.name}' — the engine named it '${realName}')` : '';
+  const shapeNote = polystar
+    ? ` It is a parametric ${polystar.starType}: ${polystar.points} points, outer radius ${polystar.outerRadius}px` +
+      (polystar.starType === 'star' ? `, inner radius ${polystar.innerRadius}px` : '') +
+      `. Keyframe 'polystar.points' / 'polystar.outerRadius' / 'polystar.innerRadius' / ` +
+      `'polystar.outerRoundness' / 'polystar.rotation' with set_keyframes.`
+    : '';
+  return ok(
+    `Created ${i.kind} layer '${realName}' with id ${id}${renamed}. Use this id in later calls.${shapeNote}`,
+    { id, name: realName, ...(polystar ? { polystar } : {}) },
+  );
 };
 
 const deleteLayer: AiTool['handler'] = (input, ctx) => {
@@ -478,6 +532,20 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
   const bad: string[] = [];
   const touched = new Set<string>();
   let applied = 0;
+  /**
+   * Where each key of THIS call landed, per track — to catch two keys becoming
+   * one.
+   *
+   * `ctx.time.toLayerTime` rides the renderer's own axis, and that axis is
+   * frame-rounded inside a clip (`compToKeyframeTime`): at 30 fps, t=0.00 and
+   * t=0.01 are the same stored time. The engine upserts by exact time, so the
+   * second key silently REPLACED the first and the call still reported "Set 2
+   * keyframes" — a hold-then-jump authored as two keys came out as a constant.
+   * The snap is the engine's rule and stays; what changes is that it is said.
+   */
+  const landed = new Map<string, Map<number, { index: number; t: number }>>();
+  const merged: Array<{ nodeId: string; prop: string; kept: number; replaced: number; t: number }> = [];
+  const mergeNotes: string[] = [];
 
   for (const [i, k] of keyframes.entries()) {
     if (!ctx.scene.has(k.nodeId)) { bad.push(`keyframes[${i}]: ${unknownNode(ctx, k.nodeId)}`); continue; }
@@ -529,11 +597,25 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
     // The one conversion, done once, for the value AND its easing. Splitting
     // these is exactly the bug this design exists to prevent.
     const lt = ctx.time.toLayerTime(k.nodeId, k.t);
+    const trackKey = `${k.nodeId}.${k.prop}`;
+    const slots = landed.get(trackKey) ?? new Map<number, { index: number; t: number }>();
+    landed.set(trackKey, slots);
+    const earlier = slots.get(lt);
+    // Same requested time twice is a caller overwriting itself on purpose (or a
+    // plain duplicate) — only DIFFERENT times that collapse are worth a warning.
+    if (earlier && earlier.t !== k.t) {
+      merged.push({ nodeId: k.nodeId, prop: k.prop, kept: i, replaced: earlier.index, t: lt });
+      mergeNotes.push(
+        `keyframes[${earlier.index}] (t=${earlier.t}s) and keyframes[${i}] (t=${k.t}s) on ${trackKey} ` +
+          `landed on the same frame — only keyframes[${i}]'s value (${k.value}) survives`,
+      );
+    }
+    slots.set(lt, { index: i, t: k.t });
     ctx.anim.setKeyframe(k.nodeId, k.prop, lt, k.value, k.easing ?? 'linear');
     if (k.easing === 'bezier' && k.bezier) {
       ctx.anim.setBezier(k.nodeId, k.prop, lt, k.bezier);
     }
-    touched.add(`${k.nodeId}.${k.prop}`);
+    touched.add(trackKey);
     applied++;
   }
 
@@ -548,10 +630,27 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
     ? `\nNote: ${singles.join(', ')} now has only ONE keyframe, so it holds a constant. Add a second at a different time to make it move.`
     : '';
 
+  const fps = ctx.comp.get().fps || 30;
+  const mergeWarn = mergeNotes.length
+    ? `\nWARNING: keyframe times snap to the frame grid (one frame = ${(1 / fps).toFixed(4)}s at ` +
+      `${fps} fps), so ${mergeNotes.length} key(s) MERGED:\n- ${mergeNotes.join('\n- ')}` +
+      `\nSpace keys at least one frame apart — for an instant jump, put the two values on consecutive ` +
+      `frames and give the first one easing "hold".`
+    : '';
+  // Distinct stored keys — what the caller will actually find on the timeline.
+  const stored = applied - merged.length;
+
   if (bad.length) {
-    return { ok: false, content: `Applied ${applied} of ${keyframes.length} keyframes. Rejected:\n- ${bad.join('\n- ')}${warn}` };
+    return {
+      ok: false,
+      content: `Applied ${applied} of ${keyframes.length} keyframes. Rejected:\n- ${bad.join('\n- ')}${warn}${mergeWarn}`,
+      ...(merged.length ? { data: { merged } } : {}),
+    };
   }
-  return ok(`Set ${applied} keyframes across ${touched.size} propert${touched.size === 1 ? 'y' : 'ies'}.${warn}`);
+  return ok(
+    `Set ${stored} keyframes across ${touched.size} propert${touched.size === 1 ? 'y' : 'ies'}.${warn}${mergeWarn}`,
+    merged.length ? { merged } : undefined,
+  );
 };
 
 const removeKeyframes: AiTool['handler'] = (input, ctx) => {
@@ -1467,22 +1566,96 @@ const mergePathsHandler: AiTool['handler'] = (input, ctx) => {
   return ok(`Applied live merge '${i.op}'. Result: ${resultIds.join(', ')}. Sources stay editable.`, { resultIds });
 };
 
-const setTrimPathHandler: AiTool['handler'] = (input, ctx) => {
-  const i = input as { nodeId: string; start?: number; end?: number; offset?: number };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  // A PATCH, so naming one field is an edit rather than a reset. Trim is an
-  // entry in the `fx.pathOps` chain since document version 1.4.0 — the same
-  // ordered stack the deformers live in — so this creates the entry if the
-  // layer has none and then patches it by id.
+/** Patch (creating if absent) a node's trim entry; returns its op id. */
+function applyTrim(nodeId: string, i: { start?: number; end?: number; offset?: number }): string {
   const patch: Partial<PathOp> = {};
   if (i.start !== undefined) patch.start = i.start;
   if (i.end !== undefined) patch.end = i.end;
   if (i.offset !== undefined) patch.offset = i.offset;
-  if (!Object.keys(patch).length) {
+  const opId = ensureTrimOp(nodeId);
+  updatePathOp(nodeId, opId, patch);
+  return opId;
+}
+
+/**
+ * Kinds that never reach the shape path pipeline.
+ *
+ * Path operators are applied in ONE place — `buildSnapshot`'s shape branch,
+ * which seeds the chain from the layer's outline. Every kind below renders some
+ * other way (an SVG layer is its stored document rasterized to a texture, like
+ * an image; text is glyph runs; the rest draw nothing of their own), so an
+ * `fx.pathOps` entry on one of them is stored, keyframeable, visible in the
+ * timeline — and read by nothing. `set_trim_path` on an SVG ring reported
+ * success and the ring stayed fully drawn, which is the silent no-op this whole
+ * file exists to prevent. A deny-list rather than `kind === 'shape'` because
+ * shape-rendered kinds are open-ended (solids, plugin kinds fall back to shape).
+ */
+const NO_PATH_PIPELINE = new Set(['svg', 'image', 'video', 'text', 'audio', 'camera', 'light', 'null', 'group', 'comp']);
+
+/** Every shape-pipeline layer under `rootId` (inclusive), in stack order. */
+function shapeDescendants(ctx: ToolContext, rootId: string): string[] {
+  const all = ctx.scene.all();
+  const keep = new Set<string>([rootId]);
+  // `all` is parents-before-children, so one pass collects the subtree.
+  for (const n of all) if (n.parent && keep.has(n.parent)) keep.add(n.id);
+  return all.filter((n) => keep.has(n.id) && !NO_PATH_PIPELINE.has(n.kind)).map((n) => n.id);
+}
+
+const setTrimPathHandler: AiTool['handler'] = (input, ctx) => {
+  const i = input as { nodeId: string; start?: number; end?: number; offset?: number; convertSvg?: boolean };
+  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (i.start === undefined && i.end === undefined && i.offset === undefined) {
     return fail(`Nothing to set — give at least one of start, end or offset (percentages, 0..100).`);
   }
-  const opId = ensureTrimOp(i.nodeId);
-  updatePathOp(i.nodeId, opId, patch);
+
+  const kind = ctx.scene.get(i.nodeId)?.kind ?? 'shape';
+  if (kind === 'svg') {
+    if (!i.convertSvg) {
+      return fail(
+        `'${i.nodeId}' is an SVG layer: it renders as its document rasterized to a texture, so it has no ` +
+          `path for Trim to cut and the trim would change nothing. Call set_trim_path again with ` +
+          `convertSvg: true to convert it into editable shape layers first (one per SVG path — masks and ` +
+          `filters are flattened, and the layer's id CHANGES to a group id that the reply returns), ` +
+          `or build the stroke as a shape layer with create_layer instead.`,
+      );
+    }
+    // The user's own Inspector ▸ "Convert to editable shapes", not a second
+    // parser: same geometry, same carried transform, same Revert.
+    const groupId = convertSvgLayerToShapes(i.nodeId);
+    if (!groupId) {
+      return fail(
+        `'${i.nodeId}' has no vector paths to convert (an SVG that only embeds a bitmap, for instance) — ` +
+          `it stays an SVG layer and cannot be trimmed.`,
+      );
+    }
+    // Handles bound to the SVG layer would now point at a deleted node.
+    for (const [handle, real] of ctx.aliases) if (real === i.nodeId) ctx.aliases.set(handle, groupId);
+    const shapeIds = shapeDescendants(ctx, groupId);
+    if (!shapeIds.length) return fail(`Converted '${i.nodeId}' to group '${groupId}', but it holds no shape layers to trim.`);
+    const trims = shapeIds.map((id) => ({ nodeId: id, opId: applyTrim(id, i) }));
+    return ok(
+      `Converted SVG layer '${i.nodeId}' into group '${groupId}' (${shapeIds.length} shape layer(s)) and set ` +
+        `trim on each: start ${i.start ?? 0}%, end ${i.end ?? 100}%, offset ${i.offset ?? 0}%. '${i.nodeId}' no longer ` +
+        `exists — use '${groupId}' for the whole mark. Each shape has its OWN trim track: keyframe ` +
+        `${trims.slice(0, 3).map((t) => `'${pathOpPropPath(t.opId, 'end')}' on ${t.nodeId}`).join(', ')}` +
+        `${trims.length > 3 ? ', … (all listed in data.trims)' : ''} from 0 to 100 for the draw-on.`,
+      { groupId, trims },
+    );
+  }
+  if (NO_PATH_PIPELINE.has(kind)) {
+    return fail(
+      `'${i.nodeId}' is a ${kind} layer, and Trim Paths only cuts SHAPE layers — on a ${kind} it would store a ` +
+        `track nothing renders. ` +
+        (kind === 'group'
+          ? `Trim the shape layers inside the group one by one.`
+          : `Draw the path as a shape layer (create_layer kind:"shape") and trim that.`),
+    );
+  }
+  // A PATCH, so naming one field is an edit rather than a reset. Trim is an
+  // entry in the `fx.pathOps` chain since document version 1.4.0 — the same
+  // ordered stack the deformers live in — so this creates the entry if the
+  // layer has none and then patches it by id.
+  const opId = applyTrim(i.nodeId, i);
   const t = readTrimOp(defaultSceneGraph.getNode(i.nodeId)!);
   return ok(
     `Trim path on '${i.nodeId}' is now start ${t?.start ?? 0}%, end ${t?.end ?? 100}%, offset ${t?.offset ?? 0}%. ` +
@@ -1518,8 +1691,55 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
     anchorY?: number;
     startOpacity?: number;
     endOpacity?: number;
+    opId?: string;
   };
   if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+
+  const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
+  const repeaters = chain.filter((o) => o.type === 'repeater');
+
+  /**
+   * UPDATE — only when the caller names the operator.
+   *
+   * This used to be the ONLY behaviour: every call went through
+   * `updateRepeaterOp`, which patches "the node's repeater", so a second call
+   * returned the first call's op id and overwrote it. After Effects stacks N
+   * repeaters — a dot grid is a row repeated down the columns — and the chain
+   * already applies them in order (`applyPathOpChain`), so the single-repeater
+   * limit lived in this handler alone.
+   */
+  if (i.opId !== undefined) {
+    const target = repeaters.find((o) => o.id === i.opId);
+    if (!target) {
+      return fail(
+        `'${i.nodeId}' has no repeater '${i.opId}'. ` +
+          (repeaters.length
+            ? `Its repeaters are: ${repeaters.map((o) => o.id).join(', ')}.`
+            : 'It has no repeaters — omit opId to add one.'),
+      );
+    }
+    // A PATCH: only what was named changes. Opacity is derived from a PAIR, so
+    // it is re-derived only when the caller supplied at least one end of it.
+    const copiesNow = i.copies !== undefined ? Math.max(1, Math.round(i.copies)) : (target.copies ?? 1);
+    const patch: Partial<PathOp> = {
+      ...(i.copies !== undefined ? { copies: copiesNow } : {}),
+      ...(i.positionX !== undefined ? { offsetX: i.positionX } : {}),
+      ...(i.positionY !== undefined ? { offsetY: i.positionY } : {}),
+      ...(i.rotation !== undefined ? { offsetRotation: i.rotation } : {}),
+      ...(i.scale !== undefined ? { offsetScale: i.scale } : {}),
+      ...(i.anchorX !== undefined ? { anchorX: i.anchorX } : {}),
+      ...(i.anchorY !== undefined ? { anchorY: i.anchorY } : {}),
+      ...(i.startOpacity !== undefined || i.endOpacity !== undefined
+        ? { offsetOpacity: perCopyOpacity(copiesNow, i.startOpacity ?? 100, i.endOpacity ?? i.startOpacity ?? 100) }
+        : {}),
+    };
+    if (!Object.keys(patch).length) return fail(`Nothing to update on repeater '${i.opId}' — pass at least one field to change.`);
+    updatePathOp(i.nodeId, target.id, patch);
+    return ok(
+      `Updated repeater '${target.id}' on '${i.nodeId}' (${Object.keys(patch).join(', ')}).`,
+      { nodeId: i.nodeId, opId: target.id, repeaterCount: repeaters.length },
+    );
+  }
 
   const copies = Math.max(1, Math.round(i.copies ?? 3));
   const start = i.startOpacity ?? 100;
@@ -1528,7 +1748,7 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
   // Field-for-field into the vocabulary the repeater OPERATOR actually reads.
   // The old shape shared exactly ONE name with it (`copies`), so even a write
   // that had landed would have produced N identical stacked copies.
-  const repOpId = updateRepeaterOp(i.nodeId, {
+  const repOpId = addRepeaterOp(i.nodeId, {
     copies,
     offsetX: i.positionX ?? 0,
     offsetY: i.positionY ?? 0,
@@ -1540,9 +1760,14 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
   });
 
   const closes = Math.abs(copies * (i.rotation ?? 0) - 360) < 1;
+  const total = repeaters.reduce((n, o) => n * Math.max(1, Math.round(o.copies ?? 1)), copies);
   return ok(
-    `Repeater on '${i.nodeId}': ${copies} copies, ${i.rotation ?? 0}° apart` +
+    `Repeater '${repOpId}' on '${i.nodeId}': ${copies} copies, ${i.rotation ?? 0}° apart` +
       (closes ? ' (a closed ring)' : '') +
+      (repeaters.length
+        ? `. It is repeater #${repeaters.length + 1} on this layer and repeats the OUTPUT of the ` +
+          `${repeaters.length} before it — ${total} copies in all. Pass opId to edit one instead of stacking`
+        : '') +
       // The REAL keyframe paths, id-scoped like every other operator's. This
       // advertised 'repeater.copies' / 'repeater.offset', which were never
       // property paths this app has understood — a caller following the advice
@@ -1553,7 +1778,7 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
       (closes && !i.anchorX
         ? ` NOTE: anchorX is 0, so every copy pivots about its own origin and the ring has no radius — set anchorX to the radius you want.`
         : ''),
-    { nodeId: i.nodeId },
+    { nodeId: i.nodeId, opId: repOpId, repeaterCount: repeaters.length + 1 },
   );
 };
 
@@ -1734,11 +1959,35 @@ const addRadialBurst: AiTool['handler'] = (input, ctx) => {
 };
 
 const addPathMorph: AiTool['handler'] = (input, ctx) => {
-  const i = input as { op?: 'puckerBloat' | 'zigzag'; amount?: number; style?: string };
+  const i = input as {
+    nodeId?: string; op?: 'puckerBloat' | 'zigzag'; amount?: number; fromAmount?: number;
+    startSec?: number; durationSec?: number; pingPong?: boolean; fill?: string; x?: number; y?: number;
+    style?: string;
+  };
+  if (i.nodeId !== undefined) {
+    if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+    const kind = ctx.scene.get(i.nodeId)?.kind ?? 'shape';
+    // Same gate as set_trim_path, same reason: a path operator on a layer with
+    // no shape path is stored and never rendered.
+    if (NO_PATH_PIPELINE.has(kind)) {
+      return fail(
+        `'${i.nodeId}' is a ${kind} layer — a path morph distorts a SHAPE layer's outline, and a ${kind} has ` +
+          `none. Pass the id of a shape layer, or omit nodeId to have one created.`,
+      );
+    }
+  }
   const s = resolveStyle(i.style);
-  const id = recipePathMorph(ctx, s, { op: i.op, amount: i.amount });
+  const r = recipePathMorph(ctx, s, i);
   bumpScene();
-  return ok(`Added organic shape path morph '${id}'.`, { id });
+  const span = `${r.startSec.toFixed(2)}s → ${r.endSec.toFixed(2)}s`;
+  return ok(
+    (r.created
+      ? `Created shape layer '${r.id}' (fill ${i.fill ?? s.palette.accent}, on top of the stack) and morphed it`
+      : `Morphed existing layer '${r.id}' in place — no new layer, its fill and position are untouched`) +
+      `: ${i.op ?? 'puckerBloat'} ${i.fromAmount ?? 0} → ${i.amount ?? 35}${i.pingPong ? ` → ${i.fromAmount ?? 0}` : ''} over ${span}. ` +
+      `The animated track is '${r.prop}' — retime or extend it with set_keyframes.`,
+    { id: r.id, opId: r.opId, prop: r.prop, created: r.created },
+  );
 };
 
 // ── Registry wiring ───────────────────────────────────────────────

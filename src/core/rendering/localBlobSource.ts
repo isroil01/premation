@@ -123,6 +123,24 @@ export async function resolveLocalBlobObjectUrl(
   return url;
 }
 
+/**
+ * `fetch`, for a src that may be a `motion-blob:<hash>` ref.
+ *
+ * The ref is an identity, not a URL: `fetch('motion-blob:…')` is refused by the
+ * page's CSP and would not resolve anyway. The exact video decoder learned this
+ * first; the audio engine, the beat grid and the proxy generator went on
+ * fetching raw — so footage carried inside a saved `.motion` bundle played
+ * SILENT after a reopen, and could be neither beat-tracked nor proxied. Every
+ * reader of asset bytes goes through here instead. No holder: the bytes are
+ * read inside this one await and nothing keeps the URL.
+ */
+export async function fetchAssetSrc(src: string): Promise<Response> {
+  if (!isLocalBlobRef(src)) return fetch(src);
+  const url = await resolveLocalBlobObjectUrl(src);
+  if (!url) throw new Error(`local blob not found: ${src}`);
+  return fetch(url);
+}
+
 /** The cached URL for a ref if one already exists — no bytes read, no await. */
 export function peekLocalBlobObjectUrl(src: string): string | null {
   const hash = hashOf(src);

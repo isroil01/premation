@@ -7,7 +7,7 @@
  * stream cases then assert the ONLY difference is how the video enters.
  */
 
-import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput } from './ffmpegEncodeArgs';
+import { buildEncodeArgs, h264MaxRate, ffmpegRate, rawVideoInput, stagedVideoInput } from './ffmpegEncodeArgs';
 
 const even = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
 const IN = '/job/frame_%04d.png';
@@ -100,5 +100,27 @@ describe('buildEncodeArgs — the stream differs ONLY in its video input', () =>
     ]);
     expect(ffmpegRate(59.94)).toBe('60000/1001');
     expect(ffmpegRate(60)).toBe('60');
+  });
+});
+
+describe('H.264 bitrate ceiling', () => {
+  const base = { format: 'mp4' as const, videoInput: ['-i', 'x'], audio: null, chaptersFile: null, alpha: false, out: 'o.mp4' };
+
+  it('bounds a 1080p30 High export near 20 Mbit/s — CRF alone reached 100+', () => {
+    const args = buildEncodeArgs({ ...base, quality: 'high', frame: { width: 1920, height: 1080, fps: 30 } });
+    const max = Number(args[args.indexOf('-maxrate') + 1]);
+    expect(max).toBeGreaterThan(15_000_000);
+    expect(max).toBeLessThan(25_000_000);
+    expect(Number(args[args.indexOf('-bufsize') + 1])).toBe(max * 2);
+    expect(args).toContain('-crf'); // still quality-targeted underneath
+  });
+
+  it('scales with the frame and steps down with quality', () => {
+    expect(h264MaxRate(3840, 2160, 30, 'high')).toBe(h264MaxRate(1920, 1080, 30, 'high') * 4);
+    expect(h264MaxRate(1920, 1080, 30, 'draft')).toBeLessThan(h264MaxRate(1920, 1080, 30, 'medium'));
+  });
+
+  it('adds nothing when the frame size is unknown', () => {
+    expect(buildEncodeArgs({ ...base, quality: 'high' })).not.toContain('-maxrate');
   });
 });

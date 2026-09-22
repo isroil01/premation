@@ -80,7 +80,20 @@ export const createLayerDef: AiToolDef = {
       width: { type: 'number', description: 'Layer width in px. REQUIRED for shape/solid — GPU renderer needs explicit size.' },
       height: { type: 'number', description: 'Layer height in px. REQUIRED for shape/solid — GPU renderer needs explicit size.' },
       text: { type: 'string', description: 'For kind=text: the content.' },
-      shape: { type: 'string', enum: ['rect', 'ellipse', 'line', 'star', 'polygon'], description: 'For kind=shape.' },
+      shape: {
+        type: 'string',
+        enum: ['rect', 'ellipse', 'line', 'star', 'polygon'],
+        description:
+          'For kind=shape. "polygon" and "star" create a PARAMETRIC polystar (the same layer the ' +
+          'Polygon / Star tools draw) — size it with outerRadius, not width/height.',
+      },
+      // Polystar-only. They are accepted on any call (the schema has no
+      // conditionals) and ignored unless shape is polygon/star; the handler's
+      // reply states the values it actually used, so a dropped one is visible.
+      points: { type: 'number', minimum: 3, maximum: 64, description: 'shape=polygon|star: number of corners / spikes. Default 6 for polygon, 5 for star. A triangle is polygon with points 3.' },
+      outerRadius: { type: 'number', minimum: 1, description: 'shape=polygon|star: corner / spike radius in px. Defaults to half of width/height, else 100.' },
+      innerRadius: { type: 'number', minimum: 0, description: 'shape=star: valley radius in px. Defaults to half the outer radius. Smaller = spikier.' },
+      roundness: { type: 'number', minimum: -100, maximum: 100, description: 'shape=polygon|star: segment bulge, percent. 0 = sharp corners, positive rounds them, negative curls them inward.' },
       fill: { type: 'string', description: 'Hex colour, e.g. #2b7eff.' },
       parent: { type: 'string', description: 'Parent layer id.' },
     },
@@ -531,7 +544,15 @@ export const addEffectDef: AiToolDef = {
           'path-stroke', 'scribble',
         ],
       },
-      amount: { type: 'number', description: 'Initial value for the primary param. Omit for the effect default.' },
+      amount: {
+        type: 'number',
+        description:
+          'Initial value for the primary param. Omit for the effect default. For type "blur" this is the ' +
+          'Gaussian sigma in px, 0..250 — 40+ is what a large soft glow needs. Past ~60 the kernel strides ' +
+          'between samples: invisible on shapes, glows and gradients, but fine detail (footage, small text) ' +
+          'can shimmer in motion, so keep detailed layers under that. gaussian-blur (blurriness 0..500) and ' +
+          'fast-box-blur (blurRadius 0..500) share the same kernel and add per-axis control.',
+      },
       id: {
         type: 'string',
         description:
@@ -830,7 +851,11 @@ export const mergePathsDef: AiToolDef = {
 export const setTrimPathDef: AiToolDef = {
   name: 'set_trim_path',
   kind: 'write',
-  description: 'Configure or keyframe trim path properties (start, end, offset) on a shape layer.',
+  description:
+    'Configure trim path properties (start, end, offset) on a SHAPE layer and return the opId to ' +
+    'keyframe (`pathop.<opId>.end` 0→100 is a stroke draw-on). Only shape layers have a path to cut: ' +
+    'text, image and group layers are rejected, and an SVG layer must be converted first — pass ' +
+    'convertSvg: true.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -842,6 +867,15 @@ export const setTrimPathDef: AiToolDef = {
       offset: {
         type: 'number',
         description: 'Rotate the visible window around the path, PERCENT of its length (wraps). Not degrees.',
+      },
+      convertSvg: {
+        type: 'boolean',
+        default: false,
+        description:
+          'Only for an SVG layer. An SVG layer is a rasterized document with no path to trim, so this ' +
+          'first converts it into a GROUP of editable shape layers — one per SVG path, masks and filters ' +
+          'flattened — then trims every one. The original id stops existing; the reply returns the group ' +
+          'id and the opId of each shape.',
       },
     },
   },
@@ -859,15 +893,19 @@ export const addRepeaterDef: AiToolDef = {
   name: 'add_repeater',
   kind: 'write',
   description:
-    'Add or update an AE-style Repeater shape operator: N copies, each offset from the last in ' +
+    'Add an AE-style Repeater shape operator: N copies, each offset from the last in ' +
     'position, rotation, scale and opacity. A radial burst is copies × rotation = 360 with a ' +
-    'non-zero anchorX; a linear array is rotation 0 with a positionX step.',
+    'non-zero anchorX; a linear array is rotation 0 with a positionX step. ' +
+    'Repeaters STACK: every call APPENDS a new one that repeats the output of those before it, ' +
+    'so a dot grid is two calls (a row, then that row down the columns). To CHANGE an existing ' +
+    'repeater instead, pass the opId an earlier call returned.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
     required: ['nodeId'],
     properties: {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
+      opId: { type: 'string', description: 'Update THIS existing repeater (an opId a previous add_repeater returned) instead of appending a new one. Only the fields you pass change.' },
       copies: { type: 'number', minimum: 1, maximum: 100, description: 'Number of copies, including the original.' },
       positionX: { type: 'number', description: 'X offset per copy, in px.' },
       positionY: { type: 'number', description: 'Y offset per copy, in px.' },

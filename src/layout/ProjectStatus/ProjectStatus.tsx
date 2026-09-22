@@ -36,6 +36,17 @@ export function formatAgo(savedAt: number, now: number): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+/**
+ * Split a name for a MIDDLE ellipsis: CSS can only truncate an end, so the
+ * name is drawn as a shrinkable head plus a fixed tail. Short names stay whole
+ * (an ellipsis inside "Untitled" would be noise).
+ */
+export function splitForMiddleEllipsis(name: string, tailLength = 8, minLength = 20): [head: string, tail: string] {
+  const chars = [...name]; // by code point — never cut a surrogate pair in half
+  if (chars.length < minLength) return [name, ''];
+  return [chars.slice(0, -tailLength).join(''), chars.slice(-tailLength).join('')];
+}
+
 function useLastSaved(): number | null {
   const [at, setAt] = useState<number | null>(lastSavedAt);
   useEffect(() => {
@@ -91,14 +102,18 @@ export function ProjectStatus({ compact = false }: { compact?: boolean }): JSX.E
 
   const name = current?.name;
   const ago = savedAt !== null ? formatAgo(savedAt, Date.now()) : null;
+  // Always carries the FULL name: the chip truncates, and this is where the
+  // rest of it can still be read.
   const title = current?.path
     ? `${name} — ${current.path}${dirty ? ' (unsaved changes)' : ''}${ago ? ` · saved ${ago}` : ''}`
-    : 'Not saved yet — Save will ask where to put it';
+    : `${name ? `${name} — ` : ''}Not saved yet — Save will ask where to put it`;
+  const [head, tail] = splitForMiddleEllipsis(name ?? 'No project');
 
   return (
     <div className={compact ? `${styles.status} ${styles.compact}` : styles.status} title={title}>
       <span className={name ? styles.name : `${styles.name} ${styles.unnamed}`}>
-        {name ?? 'No project'}
+        <span className={styles.nameHead}>{head}</span>
+        {tail ? <span className={styles.nameTail}>{tail}</span> : null}
       </span>
       {/* Decorative: the accessible statement is the `title` above, so a screen
           reader gets "unsaved changes" as words rather than a bare dot. */}

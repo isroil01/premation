@@ -27,6 +27,7 @@ import { bumpScene } from '@stores/sceneStore';
 import type { LumaPlane } from './patchMatch';
 import { lumaFromDecodedFrame, makeCanvasLumaReader } from './lumaExtract';
 import { walkSceneEdits, type SceneEditOptions } from './sceneEditDetect';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 export interface SceneEditRequest extends SceneEditOptions {
   nodeId: string;
@@ -64,7 +65,7 @@ export async function detectSceneEdits(req: SceneEditRequest): Promise<SceneEdit
 
   // The ORIGINAL file, never the proxy: a proxy's re-encode can smear a hard
   // cut across a frame and the detector would land one frame late.
-  const res = await fetch(asset.src);
+  const res = await fetchAssetSrc(asset.src);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   const buf = await res.arrayBuffer();
   // Off the main thread when one is available (see demuxClient). `buf` is

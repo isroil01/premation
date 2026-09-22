@@ -89,6 +89,15 @@ export interface ShadowCamera {
   origin: readonly [number, number, number];
   /** 1 / far: turns that distance into the map's stored 0..1 value. */
   invFar: number;
+  /**
+   * World width the map spans at the run's depth, px — the whole map, so
+   * `footprint / size` is one texel in world units there. The depth bias is
+   * scaled by it: a fixed 3px bias is one texel on a tight map and a fraction
+   * of one on a wide frustum, where every lit face then hatches with stripes
+   * (self-shadowing across the PCF taps' texels). Perspective fits measure it
+   * at the run's mid depth; a parallel fit is the same width everywhere.
+   */
+  footprint: number;
 }
 
 /** The light, as much of it as a shadow map cares about. */
@@ -212,7 +221,7 @@ export function shadowCameraFor(light: ShadowLight, box: WorldBox): ShadowCamera
       0, 0, 1 / far, 0,
       0, 0, 0, 1,
     ]);
-    return { matrix: Mat4.multiply(proj, view), axis: f, origin: eye, invFar: 1 / far };
+    return { matrix: Mat4.multiply(proj, view), axis: f, origin: eye, invFar: 1 / far, footprint: 2 * half };
   }
 
   // Spot and point: a perspective frustum from the light itself.
@@ -243,7 +252,21 @@ export function shadowCameraFor(light: ShadowLight, box: WorldBox): ShadowCamera
     0, 0, far / (far - near), 1,
     0, 0, -(near * far) / (far - near), 0,
   ]);
-  return { matrix: Mat4.multiply(proj, view), axis: f, origin: eye, invFar: 1 / far };
+  const midZ = Math.max(near, (Math.max(minZ, 0) + maxZ) / 2);
+  return { matrix: Mat4.multiply(proj, view), axis: f, origin: eye, invFar: 1 / far, footprint: 2 * tan * midZ };
+}
+
+/**
+ * The depth bias a map needs, in WORLD px: the user's slider plus the map's
+ * own texel at the run — one texel, widened by the PCF radius (`softness`
+ * texels each way), because every tap in that neighbourhood compares its own
+ * depth against this fragment's. The shader then scales it by the surface's
+ * slope against the light. Without the texel term the slider's 3px default
+ * striped every lit face of a 1920-wide title under a spot 1000px away.
+ */
+export function shadowBiasPx(userBias: number, camera: ShadowCamera, size: number, softness: number): number {
+  const texel = camera.footprint / Math.max(1, size);
+  return Math.max(0, userBias) + texel * (1 + Math.max(0, softness));
 }
 
 /** Clamp a requested shadow-map size to the three the UI offers. */

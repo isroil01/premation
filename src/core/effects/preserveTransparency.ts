@@ -51,10 +51,11 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /** Read the switch off a node. Absent / non-boolean = off. */
 export function readNodePreserveTransparency(node: SceneNode): boolean {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   return fx?.props.preserveTransparency === true;
 }
 

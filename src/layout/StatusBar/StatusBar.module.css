@@ -23,6 +23,16 @@
   font-family: var(--font-family-sans);
   user-select: none;
   letter-spacing: var(--letter-spacing-wide);
+  /* ONE ROW, always. Nothing in here set `nowrap`, so at a 1175px window a
+     selection ("1 selected" + the info readout) or playback (the fps meter)
+     pushed the text onto a second line inside a bar that has a fixed height.
+     The bar is a query container so its contents can drop their low-priority
+     items by the BAR's width (see EditorStatusBar.module.css); whatever still
+     does not fit is clipped rather than wrapped. */
+  white-space: nowrap;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: statusbar;
 }
 
 .group {
@@ -30,8 +40,11 @@
   align-items: center;
   gap: var(--space-4);
   min-width: 0;
+  overflow: hidden;
 }
 
-.left   { flex: 0 1 auto; }
+/* The right group holds the things you act on (timecode, zoom, search), so it
+   is the last to be squeezed; the left group's readouts give way first. */
+.left   { flex: 0 100 auto; }
 .center { flex: 1 1 auto; justify-content: center; }
 .right  { flex: 0 1 auto; }

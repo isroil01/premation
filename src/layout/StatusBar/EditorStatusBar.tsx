@@ -23,6 +23,9 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { openPalette } from '@stores/commandPaletteStore';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { useActiveCompName } from '@layout/Composition/activeCompName';
+import { isMacKeyboard } from '@layout/Menu/formatChord';
+import { countLabel } from './countLabel';
 import { StatusBar } from './StatusBar';
 import { FpsMeter } from './FpsMeter';
 import { InfoReadout } from './InfoReadout';
@@ -32,8 +35,6 @@ import { StatusBarTimecode } from './StatusBarTimecode';
 import { VideoHealth } from './VideoHealth';
 import { JobTray } from './JobTray';
 import styles from './EditorStatusBar.module.css';
-
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 export interface EditorStatusBarProps {
   /** Layers in the active composition, as the timeline derives them. */
@@ -47,7 +48,9 @@ function Sep(): JSX.Element {
 export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Element {
   const selectionCount = useSelectionStore((s) => s.ids.length);
   const activeDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty ?? false : false));
-  const activeTitle = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.title : undefined));
+  // The COMPOSITION's name, not the tab's title — a tab keeps the title it was
+  // minted with ("Main Comp") through every rename. See `activeCompName.ts`.
+  const compName = useActiveCompName();
   const compFps = useCompositionStore((s) => s.fps);
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
@@ -59,29 +62,31 @@ export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Eleme
         <>
           {/* Real state, not a hardcoded "Ready": amber while unsaved. */}
           <span className={cn(styles.stateDot, activeDirty && styles.stateDotDirty)} aria-hidden>●</span>
-          <span>{activeDirty ? 'Unsaved changes' : 'Ready'}</span>
-          <Sep />
-          <span>{layerCount} layers</span>
+          <span className={styles.drop4}>{activeDirty ? 'Unsaved changes' : 'Ready'}</span>
+          <span className={styles.drop4}><Sep /></span>
+          <span>{countLabel(layerCount, 'layer')}</span>
           {selectionCount > 0 ? (
             <>
               <Sep />
               <span>{selectionCount} selected</span>
             </>
           ) : null}
-          <Sep />
-          <InfoReadout />
+          <span className={cn(styles.cluster, styles.drop3)}>
+            <Sep />
+            <InfoReadout />
+          </span>
         </>
       }
       center={
         <button
           type="button"
           className={styles.comp}
-          title="Composition settings"
+          title={compName ? `${compName} — Composition settings` : 'Composition settings'}
           onClick={() => openCompositionSettings()}
         >
           <Icon name="layers" size="sm" className={styles.compIcon} />
-          <span className={styles.compName}>{activeTitle ?? 'Untitled'}</span>
-          <span className={styles.compMeta}>
+          <span className={styles.compName}>{compName ?? 'Untitled'}</span>
+          <span className={cn(styles.compMeta, styles.drop3)}>
             {compWidth}×{compHeight} · {compFps}fps
           </span>
           {activeDirty ? (
@@ -92,14 +97,16 @@ export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Eleme
       right={
         <>
           <JobTray />
-          <VUMeter />
+          <span className={cn(styles.passthrough, styles.drop4)}><VUMeter /></span>
           {/* Timeline zoom. It had a 22px footer row to itself at the
               bottom of the timeline panel, empty across its whole left
               half; the status bar is already the strip for readouts you
               glance at and occasionally poke. */}
           <TimelineZoom />
-          <Sep />
-          <FpsMeter />
+          <span className={cn(styles.cluster, styles.drop2)}>
+            <Sep />
+            <FpsMeter />
+          </span>
           <Sep />
           <StatusBarTimecode fps={compFps} startFrame={compStartFrame} />
           <VideoHealth />
@@ -112,8 +119,10 @@ export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Eleme
             title="Search commands, layers, effects, presets… (? for docs)"
           >
             <Icon name="search" size="sm" />
-            Search
-            <Kbd size="sm" chord={IS_MAC ? '⌘⇧P' : 'Ctrl+Shift+P'} />
+            <span className={styles.drop2}>Search</span>
+            <span className={cn(styles.cluster, styles.drop1)}>
+              <Kbd size="sm" chord={isMacKeyboard() ? '⇧⌘P' : 'Ctrl+Shift+P'} />
+            </span>
           </button>
         </>
       }

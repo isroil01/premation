@@ -124,6 +124,72 @@ export function customConfirm(
   });
 }
 
+/** What the user chose in a `customSaveChoice`. Dismissal (Esc, ×) is `cancel`. */
+export type SaveChoice = 'save' | 'discard' | 'cancel';
+
+/**
+ * The three-way unsaved-changes dialog: Save / Don't Save / Cancel.
+ *
+ * `customConfirm` can only ask yes-or-no, so the unsaved-changes prompt built
+ * on it offered Cancel and "Discard and continue" — the one thing a person
+ * closing a dirty project most often wants, keeping the work, was not on the
+ * dialog at all. The footer slots already say where each answer goes: the way
+ * out on the left, the destructive verb beside it in red, and Save alone on
+ * the right where Enter finds it — so Enter can never discard.
+ */
+export function customSaveChoice(
+  title: string,
+  message: string,
+  options?: { saveLabel?: string; discardLabel?: string; cancelLabel?: string },
+): Promise<SaveChoice> {
+  const { saveLabel = 'Save', discardLabel = 'Don’t Save', cancelLabel = 'Cancel' } = options ?? {};
+  return new Promise((resolve) => {
+    let resolved = false;
+    const settle = (value: SaveChoice, close: () => void): void => {
+      resolved = true;
+      close();
+      resolve(value);
+    };
+
+    openModal({
+      title: <DialogTitle icon="warning" danger>{title}</DialogTitle>,
+      size: 'sm',
+      persistent: true,
+      onClose: () => {
+        if (!resolved) {
+          resolved = true;
+          resolve('cancel');
+        }
+      },
+      render: () => (
+        <div className={styles.stack}>
+          <p className={cn(styles.message, styles.preWrap)}>{message}</p>
+        </div>
+      ),
+      footer: (close) => (
+        <DialogFooter
+          secondary={
+            <Button variant="ghost" onClick={() => settle('cancel', close)}>
+              {cancelLabel}
+            </Button>
+          }
+          destructive={
+            <Button variant="danger" onClick={() => settle('discard', close)}>
+              {discardLabel}
+            </Button>
+          }
+          primary={
+            <Button variant="primary" onClick={() => settle('save', close)}>
+              {saveLabel}
+            </Button>
+          }
+        />
+      ),
+      primaryAction: (close) => settle('save', close),
+    });
+  });
+}
+
 /**
  * In-app replacement for `window.alert`.
  *

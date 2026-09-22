@@ -6,7 +6,7 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle, SamplerHandle, BufferHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitLutTextured3D, emitMaskedTextured3D, emitMesh3D, emitShadowCaster, emitSsao, emitSsaoBlur } from './passUtils';
-import { addTransformedBox, boxIsEmpty, emptyBox, shadowCameraFor, shadowMapSizeOf, type ShadowCamera, type WorldBox } from './shadowMap';
+import { addTransformedBox, boxIsEmpty, emptyBox, shadowBiasPx, shadowCameraFor, shadowMapSizeOf, type ShadowCamera, type WorldBox } from './shadowMap';
 import { ssaoBufferSize, ssaoCameraFor, ssaoFarFor, ssaoIntensityOf, ssaoRadiusOf, SSAO_SAMPLES } from './ssao';
 import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, DOF_GATHER_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL, RADIAL_BLUR_MATERIAL, CORNER_PIN_MATERIAL, TRANSFORM_FX_MATERIAL, KEYLIGHT_MATERIAL, LINEAR_COLOR_KEY_MATERIAL, LUMA_KEY_MATERIAL, COLOR_KEY_MATERIAL, COLOR_RANGE_MATERIAL, EXTRACT_MATERIAL, SPILL_SUPPRESSOR_MATERIAL, WAVE_WARP_MATERIAL, ALPHA_MORPH_MATERIAL, ALPHA_BOX_MATERIAL, DIRECTIONAL_BLUR_MATERIAL, LINEAR_WIPE_MATERIAL, SHIFT_CHANNELS_MATERIAL, ALPHA_LEVELS_MATERIAL, SOLID_COMPOSITE_MATERIAL, CHANNEL_COMBINER_MATERIAL, REMOVE_COLOR_MATTING_MATERIAL, CHANGE_COLOR_MATERIAL, CHANGE_TO_COLOR_MATERIAL, LEAVE_COLOR_MATERIAL, TONER_MATERIAL, VENETIAN_BLINDS_MATERIAL, RADIAL_WIPE_MATERIAL, IRIS_WIPE_MATERIAL, LINE_SWEEP_MATERIAL, CHANNEL_BOX_MATERIAL, MINMAX_MATERIAL, UNSHARP_MASK_MATERIAL, SHADOW_HIGHLIGHT_MATERIAL, CHECKERBOARD_MATERIAL, GRID_MATERIAL, FOUR_COLOR_GRADIENT_MATERIAL, CIRCLE_MATERIAL, ELLIPSE_MATERIAL, RADIAL_SHADOW_PROJECT_FX_MATERIAL, RADIAL_SHADOW_FX_MATERIAL, PLASTIC_FX_MATERIAL, GLASS_FX_MATERIAL, VECTOR_BLUR_FX_MATERIAL, FX_HISTOGRAM_FX_MATERIAL, FX_AUTO_TABLE_FX_MATERIAL, FX_AUTO_APPLY_FX_MATERIAL, DEEP_GLOW_ACC_FX_MATERIAL, DEEP_GLOW_BLUR_FX_MATERIAL, DEEP_GLOW_COMPOSITE_FX_MATERIAL, EFFECT_OPACITY_FX_MATERIAL } from '../../shaders/Material';
 import { GENERATOR_TARGET, renderGeneratorField } from './generatorField';
@@ -3428,7 +3428,7 @@ export class CompositionPass extends RenderPass {
         // The UI's bias is in WORLD units, which is the unit a user can reason
         // about; the shader compares normalised distances, so it converts here
         // rather than asking the UI to know the far plane.
-        bias: Math.max(0, shadowLight?.shadowBias ?? 3) * shadowRun.camera.invFar,
+        bias: shadowBiasPx(shadowLight?.shadowBias ?? 3, shadowRun.camera, shadowRun.size, shadowLight?.shadowSoftness ?? 1) * shadowRun.camera.invFar,
         step: Math.max(0, shadowLight?.shadowSoftness ?? 1) / shadowRun.size,
         flipV: shadowFlipV,
       }
@@ -3440,7 +3440,7 @@ export class CompositionPass extends RenderPass {
         invFar: shadow2Run.camera.invFar,
         origin: shadow2Run.camera.origin,
         darkness: Math.max(0, Math.min(1, shadow2Light?.shadowDarkness ?? 1)),
-        bias: Math.max(0, shadow2Light?.shadowBias ?? 3) * shadow2Run.camera.invFar,
+        bias: shadowBiasPx(shadow2Light?.shadowBias ?? 3, shadow2Run.camera, shadow2Run.size, shadow2Light?.shadowSoftness ?? 1) * shadow2Run.camera.invFar,
         step: Math.max(0, shadow2Light?.shadowSoftness ?? 1) / shadow2Run.size,
         flipV: shadowFlipV,
       }

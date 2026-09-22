@@ -321,7 +321,11 @@ function transformRows(node: SceneNode, nodeId: string): StaticPropertyRow[] {
   } else {
     out.push(
       row(groupPlaceholderPath('position'), 'transform', posMembers, {
-        valueProps: posMembers.slice(0, 2),
+        // All of them. This was `slice(0, 2)`, so a 3D layer's — and every
+        // camera's — Position row showed X and Y and no Z: the one axis a dolly
+        // or a parallax depth is made of could not be read or typed in the
+        // timeline. Anchor and Scale already show three.
+        valueProps: posMembers,
         merged: POSITION_PSEUDO_PROP,
       }),
     );
@@ -755,11 +759,18 @@ export function buildStaticPropertyTree(nodeId: string): StaticPropertyRow[] {
     (r) => transform.length > 0 || r.group !== 'transform',
   );
 
+  // A camera or a light has no Contents. Its Transform component carries a
+  // width/height like every node's, and those fell through `groupOf`'s default
+  // into "Contents ▸ Width, Height" — the FIRST thing a twirled-open camera
+  // showed, above the Position and Point of Interest the user opened it for.
+  const kindOfNode = readNodeKind(node);
+  const hasContents = kindOfNode !== 'camera' && kindOfNode !== 'light';
+
   const rows = [
     ...scanned.filter((r) => r.group === 'text'),
     ...text,
-    ...scanned.filter((r) => r.group === 'contents'),
-    ...contents,
+    ...(hasContents ? scanned.filter((r) => r.group === 'contents') : []),
+    ...(hasContents ? contents : []),
     ...maskRows(node, nodeId),
     ...effectRows(nodeId),
     ...paintRows(node, nodeId),

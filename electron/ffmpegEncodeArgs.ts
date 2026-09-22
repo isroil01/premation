@@ -70,7 +70,25 @@ export interface EncodeArgsOptions {
   chaptersFile: string | null;
   /** The frames carry a real alpha channel (webm keeps it as yuva420p). */
   alpha: boolean;
+  /** Frame size and rate, when the caller knows them — sizes the H.264 bitrate ceiling. */
+  frame?: { width: number; height: number; fps: number };
   out: string;
+}
+
+/**
+ * The H.264 bitrate CEILING for a frame size, in bits per second.
+ *
+ * CRF alone is a quality target with no upper bound: on grain, noise or dither
+ * x264 spends whatever it takes, and a 60 s 1080p30 "High" export came out at
+ * 96–113 Mbit/s (720–850 MB) — ten times a delivery bitrate, for no visible
+ * gain. A VBV ceiling keeps CRF's quality on clean frames and bounds the busy
+ * ones. Bits per pixel per frame: 0.32 at High is ~20 Mbit/s for 1080p30 and
+ * ~80 for 4K30 — above every platform's upload recommendation, so it never
+ * bites on normal motion graphics.
+ */
+export function h264MaxRate(width: number, height: number, fps: number, quality: EncodeQuality = 'high'): number {
+  const bpp = quality === 'draft' ? 0.08 : quality === 'medium' ? 0.16 : 0.32;
+  return Math.max(1_000_000, Math.round(width * height * fps * bpp));
 }
 
 /** The full non-HDR ffmpeg argument list. */
@@ -164,6 +182,11 @@ export function buildEncodeArgs(o: EncodeArgsOptions): string[] {
         '-c:v', 'libx264',
         '-preset', o.quality === 'draft' ? 'veryfast' : 'medium',
         '-crf', crf,
+        // Quality-targeted, but bounded — see `h264MaxRate`.
+        ...(o.frame
+          ? ((rate: number) => ['-maxrate', String(rate), '-bufsize', String(rate * 2)])(
+              h264MaxRate(o.frame.width, o.frame.height, o.frame.fps, o.quality))
+          : []),
         // H.264 carries no alpha. A transparent comp arrives as RGBA and this
         // conversion flattens it over BLACK — ffmpeg's own behaviour, relied on
         // deliberately rather than stumbled into, and stated in the composition

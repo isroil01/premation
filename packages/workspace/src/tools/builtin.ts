@@ -188,9 +188,13 @@ export class SelectTool implements Tool {
   private multiTransformIds(ctx: ToolContext): NodeId[] | null {
     const sel = ctx.selectionIds();
     if (sel.length < 2) return null;
+    // One pass where the host offers it: this runs on every overlay build (it
+    // decides whether the grips show), and per-id `getNode` cost a full comp
+    // flatten EACH in the app — 38% of playback CPU with 300 layers selected.
+    const batch = ctx.scene.getNodesById?.(sel);
     const out: NodeId[] = [];
     for (const id of sel) {
-      const n = ctx.scene.getNode(id);
+      const n = batch ? batch.get(id) : ctx.scene.getNode(id);
       if (!n || n.is3D || n.device || n.locked) continue;
       out.push(id);
     }
@@ -2272,9 +2276,15 @@ export class TextTool implements Tool {
     ctx.requestRender();
   }
 
+  /**
+   * POINT text has no box — it is as wide as what is typed. The click is sent
+   * as a ZERO-SIZE rect: a point. This used to be a 200×40 rect, which the host
+   * stored as the layer's width/height (a box point text does not have) and
+   * whose CENTRE, 100px right of the click, became the layer origin — so the
+   * type appeared beside the cursor rather than under it.
+   */
   private placePoint(world: Vec2, ctx: ToolContext): void {
-    const rect = R.rect(world.x, world.y, 200, 40);
-    ctx.execute(commands.createNode('Text', rect));
+    ctx.execute(commands.createNode('Text', R.rect(world.x, world.y, 0, 0)));
     ctx.requestRender();
   }
 }
@@ -2304,7 +2314,8 @@ export class VerticalTextTool implements Tool {
   }
 
   private placePoint(world: Vec2, ctx: ToolContext): void {
-    ctx.execute(commands.createNode('VerticalText', R.rect(world.x, world.y, 40, 200)));
+    // A point, like the horizontal tool: vertical point text has no box either.
+    ctx.execute(commands.createNode('VerticalText', R.rect(world.x, world.y, 0, 0)));
     ctx.requestRender();
   }
 }

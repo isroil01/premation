@@ -41,6 +41,7 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 export type LayerBlendMode =
   | 'normal'
@@ -183,7 +184,7 @@ export function isBlendMode(v: unknown): v is LayerBlendMode {
 
 /** Read a node's blend mode from its `fx` component (defaults to 'normal'). */
 export function readNodeBlend(node: SceneNode): LayerBlendMode {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const m = fx?.props.blendMode;
   return isBlendMode(m) ? m : 'normal';
 }

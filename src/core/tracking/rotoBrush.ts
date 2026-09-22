@@ -31,6 +31,7 @@ import {
 import { floodMatte, matteToPath, refineRotoMatte } from './rotoMatte';
 import { grabCutMatte } from './grabCut';
 import { sourceDisplaySize } from './trackerSource';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 export interface RotoBrushRequest {
   nodeId: string;
@@ -169,7 +170,7 @@ export async function loadExactSource(nodeId: string): Promise<{
   const assetId = assetIdOf(node);
   const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
   if (!asset?.src) throw new Error('No video source on this layer.');
-  const res = await fetch(asset.src);
+  const res = await fetchAssetSrc(asset.src);
   if (!res.ok) throw new Error(`Could not load footage (${res.status}).`);
   const buf = await res.arrayBuffer();
   // Off the main thread when one is available (see demuxClient). `buf` is

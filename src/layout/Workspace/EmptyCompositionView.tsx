@@ -6,11 +6,12 @@
  * 2. "New Composition From Footage" — opens file picker or accepts drag & drop to auto-conform comp to media.
  */
 
-import { useState, useRef, type DragEvent } from 'react';
+import { useState, useRef, useEffect, type DragEvent } from 'react';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { useAssetStore } from '@stores/assetStore';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { useUIStore } from '@stores/uiStore';
+import { setViewerEmpty } from '@stores/onboardingStore';
 import styles from './EmptyCompositionView.module.css';
 
 /** After Effects Composition icon: comp screen frame with circle and triangle shapes */
@@ -126,6 +127,11 @@ export function AeFootageIcon({ size = 72, className }: { size?: number; classNa
 
 export function EmptyCompositionView(): JSX.Element {
   const [footageHover, setFootageHover] = useState(false);
+  // No canvas while this is up, so the first-run tour ("draw a shape") waits.
+  useEffect(() => {
+    setViewerEmpty(true);
+    return () => setViewerEmpty(false);
+  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handlePickFootage = (): void => {

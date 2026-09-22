@@ -10,6 +10,7 @@ import { bumpSceneRevision } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { pluginEffectDef } from './pluginEffectDefs';
 import type { SceneNode } from '@core/types';
+import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 export type EffectType =
   | 'blur'
@@ -714,8 +715,31 @@ function scalar(
   };
 }
 
+/**
+ * The top of Blur's range, px. The value IS the Gaussian sigma (CSS `blur()`
+ * semantics), so 250 reaches ±625px — the same order as Gaussian Blur's 500
+ * (whose sigma is r/√3 ≈ 289).
+ *
+ * It was 40, and that was a slider bound, not an engine limit: a large soft
+ * glow built from a blurred shape stopped softening at 40 and kept a visibly
+ * hard edge. Nothing downstream clamps — the GPU pass, the effect-margin
+ * (`effectSpreadPx`) and the CSS fallback all take the number as given, and
+ * Gaussian Blur / Fast Box Blur have always ridden the SAME pass at larger
+ * sigmas than this.
+ *
+ * What the pass does NOT do is get more expensive with radius: it is a fixed
+ * 61-tap separable kernel whose taps spread apart past sigma ≈ 12 (spacing =
+ * sigma/12 texels, bilinear between them). So cost is flat, and the trade is
+ * quality on DETAILED sources — at sigma 250 the taps are ~21 texels apart, and
+ * fine texture under them can shimmer in motion. Smooth sources (shapes, glows,
+ * gradients — what a radius this large is for) are unaffected. There is no
+ * downsampled multi-pass path to fall back on, for this or for the other two
+ * blurs, so the bound stops here rather than at AE's 1000+.
+ */
+export const BLUR_MAX_PX = 250;
+
 export const EFFECT_DEFS: EffectDef[] = [
-  scalar('blur', 'Blur', 'px', 0, 40, 6, (a) => `blur(${a}px)`),
+  scalar('blur', 'Blur', 'px', 0, BLUR_MAX_PX, 6, (a) => `blur(${a}px)`),
 
   // Glow: a colored halo at zero offset. The color used to be hardcoded
   // rgba(120,180,255,0.9) — a blue glow was the only glow this app could make.
@@ -4840,7 +4864,7 @@ export function migrateEffect(raw: Effect): Effect {
 
 /** Read the effect stack off a node (from its `fx` component). */
 export function readNodeEffects(node: SceneNode): Effect[] {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const list = fx?.props.effects;
   return Array.isArray(list) ? (list as Effect[]).map(migrateEffect) : [];
 }
@@ -4851,7 +4875,7 @@ export function readNodeEffects(node: SceneNode): Effect[] {
  * Absent means enabled, so existing projects keep rendering their effects.
  */
 export function readNodeFxEnabled(node: SceneNode): boolean {
-  const fx = node.components.find((c) => c.type === 'fx');
+  const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   return fx?.props.fxEnabled !== false;
 }
 

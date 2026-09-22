@@ -4,9 +4,9 @@
  *   <Kbd chord="Ctrl+Shift+P" />      Ctrl · Shift · P
  *   <Kbd chord={formatChord(chord)} />  ⌘ · ⇧ · K
  *
- * Accepts the compact string `formatChord()` (layout/Menu/formatChord.ts)
- * produces — modifiers run together with no separator ("Ctrl⇧K") — as well as
- * the `+`-joined spelling humans type. `splitChord` is the tokenizer and is
+ * Accepts both spellings `formatChord()` (layout/Menu/formatChord.ts) produces
+ * — Mac glyphs run together with no separator ("⌘⇧K"), and the `+`-joined words
+ * of a PC keyboard ("Ctrl+Shift+K"). `splitChord` is the tokenizer and is
  * exported so the menu bar and the command palette can share it.
  */
 
@@ -26,7 +26,9 @@ const WORD_MODIFIERS = /^(Ctrl|Control|Alt|Shift|Meta|Cmd|Command|Win|Option|Sup
 /** "Ctrl⇧K" → ["Ctrl", "⇧", "K"]; "Ctrl+Shift+P" → ["Ctrl", "Shift", "P"]. */
 export function splitChord(chord: string): string[] {
   const out: string[] = [];
-  for (const part of chord.split('+').map((p) => p.trim()).filter(Boolean)) {
+  // A `+` is a separator only BETWEEN keys: "Ctrl++" (zoom in) is Ctrl and the
+  // plus key, which a bare split('+') dropped entirely.
+  for (const part of chord.split(/(?<=[^+])\+(?=.)/).map((p) => p.trim()).filter(Boolean)) {
     let rest = part;
     while (rest.length > 0) {
       const first = [...rest][0]!;

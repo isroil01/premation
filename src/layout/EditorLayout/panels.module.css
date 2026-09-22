@@ -508,6 +508,17 @@
   opacity: 1;
 }
 
+/* An unset switch takes NO ROOM until the row is pointed at or focused. At
+   `opacity: 0` it was invisible but still 22px wide, and seven of them are
+   most of a 215px row — the layer name beside them rendered 0px wide. Set
+   switches (`data-on`) and Quality are state, not affordance, and stay put. */
+[role='treeitem']:not(:hover):not(:focus-within) .rowAction:not([data-on]):not([data-kind='quality']) {
+  width: 0;
+  overflow: hidden;
+  /* `gap` is the parent's; a zero-width child would still claim one. */
+  margin-inline-start: calc(-1 * var(--space-1));
+}
+
 .rowAction[data-on] {
   opacity: 1;
   color: var(--color-text-secondary);
@@ -1556,6 +1567,9 @@
   color: var(--color-text-tertiary);
   user-select: none;
   flex: 0 0 auto;
+  /* A query container, like `.assetListHost` below: the columns fold on the
+     PANEL's width, which the window's width says nothing about. */
+  container-type: inline-size;
 }
 
 .assetHeadName { flex: 1 1 auto; min-width: 0; }
@@ -1655,9 +1669,14 @@
 .assetGlyphComp { color: var(--color-filetype-comp); }
 .assetGlyphFile { color: var(--color-filetype-other); }
 
+/* NAME has priority. It used to be the only cell allowed to shrink, beside
+   130px of fixed Type and Size — so at the sidebar's default ~215px every
+   name was cut to a letter ("c…", "i…") while "Image" and "1.2 MB" were shown
+   in full. The name keeps a floor; the container queries below drop Type (and
+   the tag chips) first, then Size. The row's tooltip carries the full name. */
 .assetRowName {
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2499,6 +2518,7 @@
 /* The virtual list's box: measured, so the list can be given a pixel
    height (a percentage of a flex item is not reliably definite). */
 .assetListHost {
+  container-type: inline-size;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
@@ -2671,4 +2691,24 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+
+/* ── Assets: list columns at narrow panel widths ───────────────────────
+   Least useful first. Type repeats what the row's glyph colour already says;
+   Size goes only when the panel is about as narrow as it can be dragged.
+   Heading and cell fold at the same width so a heading never sits over
+   nothing. Sorting by a folded column stays available from the sort menu. */
+@container (max-width: 300px) {
+  .assetHeadType,
+  .assetRowType,
+  .assetRowTags {
+    display: none;
+  }
+}
+
+@container (max-width: 190px) {
+  .assetHeadSize,
+  .assetRowSize {
+    display: none;
+  }
 }

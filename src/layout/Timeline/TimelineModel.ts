@@ -190,6 +190,8 @@ export interface TimelineTrack {
   shy?: boolean;
   collapse?: boolean;
   fxEnabled?: boolean;
+  /** The layer carries at least one effect — the fx switch is drawn only then (AE). */
+  hasEffects?: boolean;
   motionBlur?: boolean;
   adjustment?: boolean;
   threeD?: boolean;

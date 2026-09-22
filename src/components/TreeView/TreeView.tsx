@@ -664,7 +664,9 @@ export function TreeView<T = unknown>({
                   }}
                 />
               ) : (
-                <span className={styles.label}>{row.node.label}</span>
+                // `title`: the label ellipsizes, and this is where the rest of
+                // a long name can still be read.
+                <span className={styles.label} title={renameSeed(row.node) || undefined}>{row.node.label}</span>
               )}
               {renderActions ? (
                 <span className={styles.actions} onClick={(e) => e.stopPropagation()}>

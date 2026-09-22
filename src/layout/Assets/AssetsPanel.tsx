@@ -1017,7 +1017,7 @@ export function AssetsPanel(): JSX.Element {
               }}
             />
           ) : (
-            <span className={styles.assetRowName}>{row.folder.name}</span>
+            <span className={styles.assetRowName} title={row.folder.name}>{row.folder.name}</span>
           )}
           <span className={styles.assetGridFolderBadge}>
             {row.count > 0 ? `${row.count} ${row.count === 1 ? 'item' : 'items'}` : 'Empty'}
@@ -1088,7 +1088,7 @@ export function AssetsPanel(): JSX.Element {
             }}
           />
         ) : (
-          <span className={styles.assetRowName}>{row.folder.name}</span>
+          <span className={styles.assetRowName} title={row.folder.name}>{row.folder.name}</span>
         )}
         <span className={styles.assetRowType}>Folder</span>
         <span className={styles.assetRowSize} />

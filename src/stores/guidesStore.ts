@@ -420,7 +420,11 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   draft3d: false,
   smartGuides: true,
   cameraTool: 'none',
-  cameraOrbitPivot: 'poi',
+  // 'scene', not 'poi': a one-node camera's POI is wherever it happens to be
+  // looking, so after any pan the first orbit swung the artwork out of frame.
+  // Pivoting on the content keeps it framed by construction; Cursor and Camera
+  // POI are one click away in the tool's options.
+  cameraOrbitPivot: 'scene',
   guidesVisible: true,
   cameraBookmarks: {},
   overlayOpacity: 1,

@@ -44,8 +44,8 @@ const BODY_TAG = 'gz1:';
 function contentJson(snap: RecoverySnapshot): string {
   return JSON.stringify(
     snap.doc
-      ? { projectId: snap.projectId, time: snap.time, doc: snap.doc }
-      : { projectId: snap.projectId, time: snap.time, scene: snap.scene, anim: snap.anim },
+      ? { projectId: snap.projectId, project: snap.project, time: snap.time, doc: snap.doc }
+      : { projectId: snap.projectId, project: snap.project, time: snap.time, scene: snap.scene, anim: snap.anim },
   );
 }
 
@@ -55,6 +55,12 @@ export function encodeRecoveryBody(savedAt: number, content: string): string {
   // Level 3: most of the ratio (JSON is very repetitive) for a fraction of the
   // time level 9 costs — this also runs inline on window close.
   return BODY_TAG + strFromU8(gzipSync(strToU8(json), { level: 3 }), true);
+}
+
+function validProject(p: unknown): p is NonNullable<RecoverySnapshot['project']> {
+  if (!p || typeof p !== 'object') return false;
+  const { name, path } = p as { name?: unknown; path?: unknown };
+  return typeof name === 'string' && (path === null || typeof path === 'string');
 }
 
 /** Decode a stored body; null for anything missing, foreign, truncated or corrupt. */
@@ -75,6 +81,7 @@ export function decodeRecoveryBody(body: string | null | undefined): RecoverySna
     const anim = c.doc ? c.doc.animation : c.anim;
     return {
       projectId: c.projectId,
+      ...(validProject(c.project) ? { project: c.project } : {}),
       savedAt: parsed.savedAt,
       time: typeof c.time === 'number' ? c.time : 0,
       ...(c.doc ? { doc: c.doc } : {}),

@@ -255,6 +255,13 @@ export interface ViewCameraOptions extends ActiveCameraFilter {
   /** The view mode being drawn. A `camera:<id>` view looks through that node;
    *  absent or any other mode ⇒ the active camera, unchanged. */
   view?: string;
+  /**
+   * The view camera, already resolved by the caller — `null` meaning "there
+   * is none". A frame resolves it ONCE and hands it to every reader; each
+   * resolution is a walk of the whole comp, and the snapshot asked three
+   * times per frame (camera, DOF, motion blur).
+   */
+  node?: SceneNode | null;
 }
 
 /**
@@ -318,8 +325,9 @@ export function viewCameraNode(
   graph: SceneGraph,
   mode: string | null | undefined,
   rootId?: string,
-  filter?: ActiveCameraFilter,
+  filter?: ActiveCameraFilter & { node?: SceneNode | null },
 ): SceneNode | null {
+  if (filter && 'node' in filter) return filter.node ?? null;
   return lookThroughCamera(graph, cameraViewNodeId(mode), rootId)
     ?? activeCameraNode(graph, rootId, filter);
 }

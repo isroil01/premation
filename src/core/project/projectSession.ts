@@ -17,6 +17,7 @@ import { useProjectStore } from '@stores/projectStore';
 import { useHistoryStore } from '@stores/historyStore';
 import { clearRecovery } from '@core/persistence/recovery';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { resetSessionAssets } from '@core/project/sessionAssets';
 
 /**
  * Drop the active tab's unsaved marker.
@@ -87,12 +88,44 @@ export function afterProjectLoaded(): void {
  * must not wipe it. That is right for opening a file and wrong for starting a
  * new project, and there is no key meaning "drop the compositions I did not
  * mention". `projectDocumentIO.createEmpty` states the defaults it can
- * (comps, motion blur, guides); these two it cannot.
+ * (comps, motion blur, guides); these three it cannot.
+ *
+ * The third is the asset list. It is not part of the document at all — it is
+ * the device's footage library doubling as the project's — so a fresh
+ * "Untitled" with 0 layers used to open with the previous project's clips
+ * still listed in its Assets panel. Session-only: see `sessionAssets.ts` for
+ * why the library underneath is left alone. Neither Open nor crash-recovery
+ * restore comes through here, so neither loses the footage it rebinds against.
  *
  * Call AFTER the new document is restored, so the timeline re-initialises
- * against the new comp settings rather than the outgoing project's.
+ * against the new comp settings rather than the outgoing project's — and so no
+ * layer is still decoding from an object URL the asset reset revokes.
  */
 export function resetProjectWorkspace(): void {
   useProjectStore.getState().actions.resetTabs();
   getTimelineController().reset();
+  resetSessionAssets();
+}
+
+/**
+ * The session half of Close Project — what `ProjectManager.close()` runs, via
+ * the document IO's `unload`, after the empty document is restored.
+ *
+ * Close is New Project without the project: the same workspace reset and the
+ * same undo re-baseline (one Ctrl+Z after closing must not pull the closed
+ * project's scene back onto the canvas).
+ *
+ * The clean-mark is DEFERRED, and that is deliberate. Every caller follows
+ * `close()` with a `bumpScene()` — the command does, and so does the boot
+ * wiring's ProjectUnloaded listener — and each bump emits SceneGraphChanged,
+ * which is turned straight back into markDirty(true). Marking clean here,
+ * synchronously, would be undone before the command returned, and the start
+ * screen's New Project would then ask to discard "unsaved changes" in an empty
+ * scene. A microtask runs after the caller's synchronous tail and before
+ * anything the user can do.
+ */
+export function unloadProjectSession(): void {
+  resetProjectWorkspace();
+  baselineProjectHistory('Close Project');
+  queueMicrotask(afterProjectLoaded);
 }

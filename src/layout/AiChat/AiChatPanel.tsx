@@ -21,7 +21,7 @@ import type { GatewayProviderId, AiProviderId } from '@core/api/client';
 import { processImageFile, type PendingImage } from '@core/ai/imageAttachment';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAiChatContext } from './AiChatContext';
-import { openAiSettings } from '@layout/Settings/CustomizeDialog';
+import { openAiSettings } from '@layout/Settings/openCustomizeDialog';
 import styles from './AiChatPanel.module.css';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 

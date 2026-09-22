@@ -16,6 +16,8 @@ import { APP_MENU, LAYER_NEW_SUBMENU_LABEL, type MenuGroupModel, type MenuItemMo
 import { buildPluginsMenuGroup } from './pluginMenu';
 import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { pluginsEnabled } from '@core/config/edition';
+import { useCatalogueRevision } from '@hooks/useLocale';
+import { localizeMenuGroups } from './menuI18n';
 
 export function useAppMenuGroups(): MenuGroupModel[] {
   // Runtime status (running / stopped / crashed, contributed commands).
@@ -25,6 +27,9 @@ export function useAppMenuGroups(): MenuGroupModel[] {
   );
   // What is installed at all.
   const installed = usePluginStore((s) => s.plugins);
+  // The UI language. Translation is the LAST step below, after the plugin and
+  // layer-kind splicing — which finds Layer ▸ New by its English label.
+  const i18nRevision = useCatalogueRevision();
 
   return useMemo(() => {
     /*
@@ -40,7 +45,7 @@ export function useAppMenuGroups(): MenuGroupModel[] {
       true the moment something registers a kind for an unrelated reason.
     */
     if (!pluginsEnabled()) {
-      return APP_MENU.map((g) => ({ ...g, items: visibleItems(g.items) }));
+      return localizeMenuGroups(APP_MENU.map((g) => ({ ...g, items: visibleItems(g.items) })));
     }
 
     const plugins = buildPluginsMenuGroup();
@@ -85,8 +90,10 @@ export function useAppMenuGroups(): MenuGroupModel[] {
       };
     });
 
-    return withKinds.map((g) => ({ ...g, items: visibleItems(g.items) }));
-  }, [revision, installed]);
+    return localizeMenuGroups(withKinds.map((g) => ({ ...g, items: visibleItems(g.items) })));
+    // The catalogue is read by `t()` inside, not by this closure — hence the rule.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision, installed, i18nRevision]);
 }
 
 /**

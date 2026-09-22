@@ -12,6 +12,8 @@ import { setDevRendererBuild } from '@core/rendering/rendererIdentity';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { installPluginNetBridge } from '@core/plugins/pluginNetBridge';
 import { configureUiPlatform } from '@core/config/uiPlatform';
+import { setDevBuild } from '@core/config/devBuild';
+import { initLocale } from '@core/i18n';
 import './styles/global.css';
 
 // FIRST, before any store hydrates or any plugin host boots: remove plaintext
@@ -40,6 +42,8 @@ const edition = parseEdition(import.meta.env.VITE_EDITION as string | undefined)
 // restart. Read here for the same reason the flags above are: `import.meta`
 // trips Jest under this repo's CJS transform.
 setDevRendererBuild(import.meta.env.DEV === true);
+// Developer-only menu entries (the demo-scene loader) show in dev builds only.
+setDevBuild(import.meta.env.DEV === true);
 setEdition(edition);
 
 // Report it to the shell, which resolved its OWN edition from a different build
@@ -136,12 +140,20 @@ if (!rootEl) {
 // engine boot, so it lives at the true root: the global TitleBar renders on
 // /login and /dashboard — outside the Providers boot gate — and its IconButtons
 // need a provider too. One provider for every route.
-createRoot(rootEl).render(
-  <StrictMode>
-    <ErrorBoundary scope="root">
-      <TooltipProvider>
-        <AppRouter />
-      </TooltipProvider>
-    </ErrorBoundary>
-  </StrictMode>,
-);
+// The UI language, loaded BEFORE the first render — a catalogue is one small
+// local chunk, and a Chinese user should not watch the menus flip from English
+// a frame later. `initLocale` never rejects: a failed load renders English.
+void initLocale({
+  isDev: import.meta.env.DEV,
+  systemLocales: navigator.languages?.length ? navigator.languages : [navigator.language],
+}).finally(() => {
+  createRoot(rootEl).render(
+    <StrictMode>
+      <ErrorBoundary scope="root">
+        <TooltipProvider>
+          <AppRouter />
+        </TooltipProvider>
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+});

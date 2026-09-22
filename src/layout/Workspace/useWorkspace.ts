@@ -27,7 +27,7 @@ import { mayServeCachedFrame, mayFillFromPausedRender, playbackBlitWorthwhile } 
 import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { paintWireframeQualityLayers } from './wireframeQualityOverlay';
+import { compHasWireframeQualityLayer, paintWireframeQualityLayers } from './wireframeQualityOverlay';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, clampOverlayOpacity } from '@stores/guidesStore';
@@ -48,6 +48,7 @@ import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { currentViewProjector } from '@core/workspace/viewProjection';
+import { isLookedThrough } from '@core/workspace/ports';
 
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
@@ -2587,7 +2588,9 @@ function paintOverlay(
     paintDisplayMode(ctx, controller, displayMode);
   }
   // Per-layer Quality = Wireframe: the renderer skipped these layers' pixels.
-  if (controller) {
+  // Gated: `sceneNodes()` resolves every layer's world geometry, which is
+  // only worth paying when there is a wireframe layer to draw.
+  if (controller && compHasWireframeQualityLayer()) {
     paintWireframeQualityLayers(ctx, controller.sceneNodes(), (p) => controller.ws.worldToScreen(p), themeGuides().TEXT);
   }
 
@@ -3480,6 +3483,8 @@ function paintMotionPath(
   const nodeId = ids[0]!;
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasPositionAnimation(nodeId)) return;
+  // A camera's own path, seen through that camera, is a line across the frame.
+  if (isLookedThrough(nodeId)) return;
   const win = motionPathWindowFor(nodeId, time);
   if (!win) return;
   const samples = motionPathSamples(node).filter((s) => inMotionPathWindow(s.t, win));

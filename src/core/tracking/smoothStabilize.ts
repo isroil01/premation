@@ -24,6 +24,7 @@ import { fitSimilarity, flowSamplePoints, stabilizingCorrections, IDENTITY_SIM, 
 import { applySmoothStabilize, applySubspaceMeshSequence } from './applyTrack';
 import { estimateRollingShutterShear, fitSubspaceWarp, applyRollingShutterRepair } from './subspaceWarp';
 import { planAnalysisDecode } from './analysisTier';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 export interface SmoothStabilizeRequest {
   nodeId: string;
@@ -98,7 +99,7 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
   // table in `@core/assets/proxy`) and the readback canvas, which drops from
   // 3840x2160 to 960x540 — a sixteenth of the pixels pulled back per frame.
   const plan = planAnalysisDecode(req.nodeId, asset);
-  const res = await fetch(plan.src);
+  const res = await fetchAssetSrc(plan.src);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   // Off the main thread when one is available (see demuxClient). This also
   // picks the container by magic bytes, where this call site assumed MP4 —

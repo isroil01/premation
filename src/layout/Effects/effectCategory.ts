@@ -274,3 +274,15 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'path-stroke': 'Generate',
   scribble: 'Generate',
 };
+
+/**
+ * The folders in menu order — most-reached-for first, as the Effects browser
+ * lists them (the browser interleaves its own non-effect `Shape` folder and
+ * ends with `Plugins`; neither is an `EFFECT_CATEGORY` value). Here rather
+ * than in the panel so the Effect MENU can be built from it without importing
+ * a React panel. `effectMenu.test.ts` fails if a category is missing from it.
+ */
+export const EFFECT_CATEGORY_ORDER: readonly string[] = [
+  'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
+  'Distort', 'Perspective', 'Channel', 'Keying', 'Time', 'Transition',
+];

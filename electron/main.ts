@@ -36,6 +36,7 @@ import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 import { nativeTemplateFromGroups, sanitizeMenuGroups, type NativeMenuGroupSpec, type NativeMenuOptions } from './nativeMenu';
 import { CLI_HELP, cliArgs, parseCli, type CliInvocation } from './cliArgs';
 import { runCliAndExit } from './cliRender';
+import { enforceProjectExtension } from './projectSavePath';
 import {
   inspectJob,
   jobDir as resumeJobDir,
@@ -47,6 +48,12 @@ import {
 } from './renderResume';
 
 const isDev = process.env.NODE_ENV === 'development';
+/**
+ * Where the dev renderer is served from. Vite's default port, unless another
+ * project on the machine already holds it — `PREMATION_DEV_URL` then points a
+ * dev launch at the port Vite actually took (`vite --port 5273`).
+ */
+const DEV_SERVER_URL = (process.env.PREMATION_DEV_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
 
 /** The main window, tracked so the OAuth deep-link handler can reach it. */
 let mainWindow: BrowserWindow | null = null;
@@ -229,7 +236,26 @@ function registerFileIpc(): void {
 
   handle('project:chooseSavePath', async (_event, defaultName: string) => {
     const res = await dialog.showSaveDialog({ defaultPath: defaultName, filters: PROJECT_FILTERS });
-    return res.canceled ? null : res.filePath ?? null;
+    if (res.canceled || !res.filePath) return null;
+    // The filters do not bind what the user TYPES — "oops.mp4" came back as
+    // "oops.mp4" and the project JSON was written into it. See projectSavePath.
+    const target = enforceProjectExtension(res.filePath);
+    if (!target.changed) return target.path;
+    // The OS only asked about replacing the path as typed. The corrected one is
+    // a different file (or, local-first, a bundle directory) it never checked,
+    // so a project already sitting there must not be replaced without a word.
+    if (existsSync(target.path)) {
+      const answer = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Replace', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        message: `“${path.basename(target.path)}” already exists.`,
+        detail: 'Projects are saved as .motion, so that is the name this one would be saved under. Replace the existing project?',
+      });
+      if (answer.response !== 0) return null;
+    }
+    return target.path;
   });
 
   handle('file:read', async (_event, filePath: string) => {
@@ -1040,6 +1066,7 @@ function registerRenderIpc(): void {
       const args = buildEncodeArgs({
         format: opts.format,
         videoInput: rawVideoInput(width, height, opts.fps),
+        frame: { width, height, fps: opts.fps },
         quality: opts.quality,
         proresProfile: opts.proresProfile,
         audio: hasAudio ? audio : null,
@@ -1337,7 +1364,7 @@ function createMainWindow(): BrowserWindow {
   // URL rather than asking over IPC (src/core/config/uiPlatform.ts).
   const chromeQuery = uiChromeQuery(chrome);
   if (isDev) {
-    void win.loadURL(`http://localhost:5173/?${new URLSearchParams(chromeQuery).toString()}`);
+    void win.loadURL(`${DEV_SERVER_URL}/?${new URLSearchParams(chromeQuery).toString()}`);
   } else {
     void win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: chromeQuery });
   }
@@ -1398,7 +1425,7 @@ function registerPopoutIpc(): void {
 
     const isDev = process.env.NODE_ENV === 'development';
     const popoutUrl = isDev
-      ? `http://localhost:5173/#/popout/${panelId}`
+      ? `${DEV_SERVER_URL}/#/popout/${panelId}`
       : `file://${path.join(__dirname, '..', 'dist', 'index.html')}#/popout/${panelId}`;
 
     void popoutWin.loadURL(popoutUrl);

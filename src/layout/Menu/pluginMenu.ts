@@ -121,7 +121,7 @@ export function buildPluginsMenuGroup(): MenuGroupModel {
   }
 
   if (items.length === 0) {
-    items.push({ label: 'No plugins installed' });
+    items.push({ label: 'No plugins installed', labelKey: 'menu.plugins.none' });
     items.push({ separator: true });
   } else if (fold) {
     items.push({ separator: true });

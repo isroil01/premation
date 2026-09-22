@@ -120,6 +120,14 @@ export interface SceneGraphPort {
   /** All nodes eligible for interaction, in any order. */
   getNodes(): Iterable<WorkspaceNode>;
   getNode(id: NodeId): WorkspaceNode | undefined;
+  /**
+   * Several nodes in ONE pass. Optional: a port whose `getNode` is cheap need
+   * not bother. A host whose `getNode` has per-call setup (flattening the comp
+   * to find a z-index, a fresh ancestor-matrix cache) pays that setup per id
+   * otherwise — and the selection overlay asks for every selected id, every
+   * frame. Missing ids are simply absent from the map.
+   */
+  getNodesById?(ids: readonly NodeId[]): Map<NodeId, WorkspaceNode>;
   /** Subscribe to structural/transform changes so the index can be rebuilt. */
   onChanged(listener: () => void): () => void;
   /**

@@ -716,7 +716,7 @@ export function WorkspaceViewport({
           {/* Roto Brush strokes. Claims the pointer only while the roto tool
               is active and a footage layer is selected; inert otherwise. */}
           <RotoBrushOverlay />
-          {/* Snapshot comparison (F5 / F6). Above the picture, below the
+          {/* Snapshot comparison (F5 / Shift+F5). Above the picture, below the
               interactive handles — a wipe must not cover the gizmo you drag. */}
           <CompareOverlay />
           {/* fps / frame ms / cache / resolution / backend, top-left. */}

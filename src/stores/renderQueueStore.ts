@@ -36,6 +36,7 @@ import {
 import { readPersisted, writePersisted } from '@core/settings/persistedValue';
 import { useProjectStore } from './projectStore';
 import { useUIStore } from './uiStore';
+import { exportFormatCode, failureReason, track as trackEvent } from '@core/analytics/productEvents';
 
 /** The tray/toast job a queue entry runs under. */
 const jobIdFor = (job: RenderJob): string => `render:${job.id}`;
@@ -95,6 +96,15 @@ function notifyPlugins(info: {
   elapsedMs: number;
   error?: string;
 }): void {
+  // The same single finish point feeds product events. `skipped` (rendered,
+  // save dialog dismissed) is not reported: no file exists, and it is not a
+  // failure of the product either.
+  const format = exportFormatCode(String(info.job.format));
+  if (info.status === 'done') {
+    trackEvent('export_completed', { format, target: 'local', seconds: info.elapsedMs / 1000 });
+  } else if (info.status === 'failed') {
+    trackEvent('export_failed', { format, target: 'local', reason: failureReason(info.error ?? '') });
+  }
   void import('@core/plugins/PluginHost')
     .then(({ pluginHost }) => {
       pluginHost.notifyRenderFinished({
@@ -592,6 +602,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
         if (!job) break;
         if (job.id === target) set({ _resumeTarget: null });
         const started = Date.now();
+        trackEvent('export_started', { format: exportFormatCode(String(job.format)), target: 'local' });
         // Progress SURVIVES: a resumed job is already 40% encoded, and showing
         // 0% while ffmpeg's staging dir holds 400 frames was the visible half
         // of pause meaning "start over". Whatever needed attention has now

@@ -14,7 +14,11 @@
 import type { ToolContext } from '@motion/ai-tools';
 import { set3DEnabled } from '@core/scene/threeD';
 import { PHYSICS, type Bezier, type MotionStyle } from './design';
-import { addPathOp, defaultPathOp, newPathOpId, updateRepeaterOp } from '@core/scene/pathOps';
+import { addPathOp, defaultPathOp, newPathOpId, pathOpPropPath, updateRepeaterOp } from '@core/scene/pathOps';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { defaultPolystar, setNodePolystar } from '@core/scene/polystar';
+import { measureTextNodeBoxes } from '@core/text/measureText';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { activeSceneWindow, nextSceneElementStart, beginSceneWindow } from './sceneWindow';
 import { applyEntrance, nonUniformStagger, type EntranceArchetype } from './archetypes';
 
@@ -39,12 +43,46 @@ function nextStartAt(ctx: ToolContext, s: MotionStyle): number {
   return Math.min(animated * s.staggerSec, 1.3);
 }
 
+/**
+ * Start a layer's timeline bar at `startSec` — the layer does not EXIST before
+ * it, which is a stronger statement than "its opacity is 0 before it".
+ *
+ * Scene membership used to be opacity alone, and for a `cut` that failed
+ * outright: the two keys that make an instant 0→100 sat 1 ms apart, keyframe
+ * times snap to the frame grid, so they merged into a single 100 and Scene 2's
+ * background was opaque from t=0 — covering every earlier scene for its whole
+ * length. A trimmed in-point cannot collapse that way, and it is also what an
+ * editor would do by hand (and what the timeline then shows: bars that tile).
+ *
+ * TRIM, not move: `Clip.trimStart` shifts `sourceIn` with `start`, so the
+ * layer's keyframe axis stays equal to composition time and every `kf()` in
+ * this file keeps meaning what it says. Moving the bar would slide the axis.
+ *
+ * The bar is mirrored from the scene lazily (`syncFromScene`), so it is synced
+ * here first — a layer created one line ago has none yet. Returns false when
+ * there is no timeline to trim (headless runs, unit tests); callers keep their
+ * opacity keys as the fallback, which is why those are still written.
+ */
+function setLayerInPoint(nodeId: string, startSec: number): boolean {
+  if (!(startSec > 0)) return false;
+  const tl = getTimelineController();
+  tl.syncFromScene(tl.compIdForNode(nodeId));
+  const bars = tl.getLayersForNode(nodeId);
+  const first = bars[0];
+  if (!first) return false;
+  tl.trimClipTo(first.id, 'start', startSec);
+  return true;
+}
+
 /** If a scene window is open, fade + drift this element OUT near the scene's
  *  end, so its content clears before the next scene — the thing that makes
- *  scenes read as separate. No-op outside a scene (single-shot holds to end). */
+ *  scenes read as separate. No-op outside a scene (single-shot holds to end).
+ *  Also pins the element's in-point to the scene start, so nothing of scene N
+ *  is live during scene N-1 whatever its entrance keys evaluate to there. */
 function applySceneExit(ctx: ToolContext, id: string, cy: number): void {
   const w = activeSceneWindow();
   if (!w) return;
+  setLayerInPoint(id, w.startSec);
   const out = Math.min(w.transitionSec, 0.5);
   const exitAt = Math.max(w.startSec + 0.2, w.endSec - out);
   kf(ctx, id, 'opacity', [
@@ -113,14 +151,32 @@ export function recipeScene(
   ctx.scene.setProp(id, 'width', comp.width);
   ctx.scene.setProp(id, 'height', comp.height);
   ctx.scene.setProp(id, 'fill', opts.background ?? s.palette.bg);
+  // The scene's layers are not live before the scene: the in-point is the
+  // authority, for EVERY transition type (see setLayerInPoint).
+  const atStart = startSec <= 0.02;
+  if (!atStart) setLayerInPoint(id, startSec);
   // Opacity window: the first scene is opaque from frame 0; later scenes fade
   // in over `trans` (dissolve) and then hold — the previous scene's background
   // sits underneath and is revealed only while this one is transparent.
-  const atStart = startSec <= 0.02;
-  kf(ctx, id, 'opacity', [
-    { t: Math.max(0, startSec - 0.001), value: atStart ? 100 : 0, easing: 'easeInOut' },
-    { t: startSec + (atStart ? 0 : trans), value: 100, easing: 'easeInOut' },
-  ]);
+  if (atStart) {
+    kf(ctx, id, 'opacity', [{ t: 0, value: 100, easing: 'linear' }]);
+  } else if (trans > 0) {
+    kf(ctx, id, 'opacity', [
+      { t: startSec, value: 0, easing: 'easeInOut' },
+      { t: startSec + trans, value: 100, easing: 'easeInOut' },
+    ]);
+  } else {
+    // A cut. The old pair was (start − 1 ms → 0, start → 100): closer than one
+    // frame, so the snap merged them into a lone 100 and the background was
+    // opaque for the whole composition. One WHOLE frame apart with a hold is
+    // the same instant jump and survives the snap — kept as the fallback for
+    // when there is no timeline bar to trim.
+    const frame = 1 / (comp.fps || 30);
+    kf(ctx, id, 'opacity', [
+      { t: Math.max(0, startSec - frame), value: 0, easing: 'hold' },
+      { t: startSec, value: 100, easing: 'linear' },
+    ]);
+  }
   return id;
 }
 
@@ -343,25 +399,55 @@ export function recipeKineticText(
   if (!words.length) return [];
   const px = opts.fontSize ?? (words.length > 4 ? s.type.subtitlePx * 1.6 : s.type.titlePx * 0.8);
   const cy = opts.y ?? comp.height * 0.5;
-  // Approximate glyph advance (~0.56em average) to centre the whole row.
-  const wordW = words.map((w) => Math.max(1, w.length) * px * 0.56);
-  const gap = px * 0.42;
-  const totalW = wordW.reduce((a, b) => a + b, 0) + gap * (words.length - 1);
-  let cursor = comp.width / 2 - totalW / 2;
   const base = nextStartAt(ctx, s);
   const beat = Math.max(s.staggerSec, 0.1);
   // Words land on a breathing beat, not a metronome.
   const beatOffsets = nonUniformStagger(words.length, beat);
-  const ids: string[] = [];
-  words.forEach((word, i) => {
-    const w = wordW[i] ?? px;
-    const cx = cursor + w / 2;
-    cursor += w + gap;
-    const id = ctx.scene.create('text', word.slice(0, 24), { x: cx, y: cy });
+
+  // Pass 1 — make every word REAL before laying any of them out, because the
+  // only honest width of a word is the one the renderer's own measurer reports
+  // for that node (its font, weight, size, tracking).
+  const ids = words.map((word) => {
+    const id = ctx.scene.create('text', word.slice(0, 24), { x: comp.width / 2, y: cy });
     ctx.scene.setProp(id, 'content', word);
     ctx.scene.setProp(id, 'fontSize', Math.round(px));
     ctx.scene.setProp(id, 'fontWeight', s.type.weightTitle);
     ctx.scene.setProp(id, 'fill', s.palette.fg);
+    return id;
+  });
+
+  /**
+   * Pass 2 — measure, then set the line like a typesetter.
+   *
+   * This estimated every word at `chars × 0.56em` and put a fixed 0.42em
+   * between them. Both are wrong per word: "frame" and "tells" are five letters
+   * each and nowhere near the same width, so each estimated slot was wider or
+   * narrower than its word by a different amount, and since a word is centred in
+   * its slot the error showed up as the GAPS — "Every frame  tells  a story".
+   * The real advance removes the per-word error, and the gap is the font's own
+   * space: the advance of "x x" minus "xx", which is what a space adds between
+   * two glyphs in this exact style (a lone " " is not safe to measure — a
+   * measurer is free to trim it).
+   */
+  const advanceOf = (id: string, content?: string): number | null => {
+    const node = defaultSceneGraph.getNode(id);
+    const m = node ? measureTextNodeBoxes(node, content !== undefined ? { content } : undefined) : null;
+    return m && m.advance > 0 ? m.advance : null;
+  };
+  const wordW = words.map((w, i) => advanceOf(ids[i]!) ?? Math.max(1, w.length) * px * 0.56);
+  const spaced = advanceOf(ids[0]!, 'x x');
+  const tight = advanceOf(ids[0]!, 'xx');
+  // No canvas to measure with (headless): a typical grotesque's space, ~0.28em.
+  const gap = spaced !== null && tight !== null && spaced > tight ? spaced - tight : px * 0.28;
+  const totalW = wordW.reduce((a, b) => a + b, 0) + gap * (words.length - 1);
+  let cursor = comp.width / 2 - totalW / 2;
+
+  words.forEach((_word, i) => {
+    const w = wordW[i] ?? px;
+    const cx = cursor + w / 2;
+    cursor += w + gap;
+    const id = ids[i]!;
+    ctx.scene.setProp(id, 'x', cx);
     const t0 = base + (beatOffsets[i] ?? i * beat);
     kf(ctx, id, 'opacity', [
       { t: t0, value: 0, easing: 'easeOut' },
@@ -376,7 +462,6 @@ export function recipeKineticText(
       { t: t0 + 0.42, value: cy, easing: 'bezier', bezier: PHYSICS.overshoot },
     ]);
     applySceneExit(ctx, id, cy);
-    ids.push(id);
   });
   return ids;
 }
@@ -707,49 +792,105 @@ export function recipeRadialBurst(
   return id;
 }
 
+export interface PathMorphResult {
+  id: string;
+  opId: string;
+  /** The keyframed track, `pathop.<opId>.amount`. */
+  prop: string;
+  /** True when the recipe built its own layer (no `nodeId` was given). */
+  created: boolean;
+  startSec: number;
+  endSec: number;
+}
+
 /**
- * Organic shape morphing distortion (pucker/bloat / zigzag).
+ * Organic shape morphing distortion (pucker/bloat / zigzag) — the outline MOVES
+ * between two amounts of the operator.
+ *
+ * Two things this used to get wrong. It always built its own layer — a dark
+ * `palette.card` star parked at comp centre, on top of the stack — so asked to
+ * morph a shape the caller already had, it left that shape untouched and
+ * covered it. And the "morph" did not morph: the operator's `amount` was a
+ * constant and the only thing keyframed was the layer's rotation. Now the
+ * target is `opts.nodeId` when given (its own fill, position and stacking are
+ * left alone — only an operator and its `amount` track are added), and the
+ * amount is keyframed `fromAmount → amount`, optionally back.
  */
 export function recipePathMorph(
   ctx: ToolContext,
   s: MotionStyle,
-  opts: { op?: 'puckerBloat' | 'zigzag'; amount?: number; durationSec?: number },
-): string {
+  opts: {
+    nodeId?: string;
+    op?: 'puckerBloat' | 'zigzag';
+    amount?: number;
+    fromAmount?: number;
+    startSec?: number;
+    durationSec?: number;
+    pingPong?: boolean;
+    fill?: string;
+    x?: number;
+    y?: number;
+  },
+): PathMorphResult {
   const comp = ctx.comp.get();
-  const cx = comp.width / 2;
-  const cy = comp.height / 2;
-  const dur = opts.durationSec ?? 1.2;
+  const dur = Math.max(0.1, opts.durationSec ?? 1.2);
   const opType = opts.op ?? 'puckerBloat';
   const amount = opts.amount ?? 35;
-  const t0 = nextStartAt(ctx, s);
+  const from = opts.fromAmount ?? 0;
+  const created = !opts.nodeId;
+  // An existing layer morphs when the caller says (default: from the playhead
+  // of the build, t=0); a layer made here joins the scene's entrance stagger.
+  const t0 = opts.startSec ?? (created ? nextStartAt(ctx, s) : 0);
 
-  const id = ctx.scene.create('shape', 'Morph Shape', { x: cx, y: cy });
-  ctx.scene.setProp(id, 'shapeType', 'star');
-  ctx.scene.setProp(id, 'width', 160);
-  ctx.scene.setProp(id, 'height', 160);
-  ctx.scene.setProp(id, 'fill', s.palette.card);
-  ctx.scene.setProp(id, 'stroke', s.palette.accent);
-  ctx.scene.setProp(id, 'strokeWidth', 3);
-  set3DEnabled(id, true);
+  let id = opts.nodeId ?? '';
+  if (created) {
+    const cx = opts.x ?? comp.width / 2;
+    const cy = opts.y ?? comp.height / 2;
+    id = ctx.scene.create('shape', 'Morph Shape', { x: cx, y: cy });
+    // A PARAMETRIC star (see polystar.ts). `shapeType: 'star'` alone names a
+    // primitive with no SDF and no Geometry, which renders as a square.
+    ctx.scene.setProp(id, 'shapeType', 'polystar');
+    ctx.scene.setProp(id, 'width', 160);
+    ctx.scene.setProp(id, 'height', 160);
+    setNodePolystar(id, defaultPolystar('star', 80, 5));
+    // The accent, not `palette.card`: the card colour is a near-background
+    // panel tone, so the hero of this recipe was close to invisible on the
+    // backgrounds the same style paints.
+    ctx.scene.setProp(id, 'fill', opts.fill ?? s.palette.accent);
+    set3DEnabled(id, true);
+  }
 
   // `fx.pathOps` is the operator CHAIN that replaced the single `fx.pathOp` slot
   // in document version 1.3.0, and the reader deliberately does not accept the
   // old shape. 'puckerBloat' is this recipe's public name for it; the engine
   // operator is 'pucker', and passing the alias straight through failed
   // `isPathOpType` and coerced the whole operator to 'none'.
+  const opId = newPathOpId();
   addPathOp(id, {
     ...defaultPathOp(),
-    id: newPathOpId(),
+    id: opId,
     type: opType === 'puckerBloat' ? 'pucker' : 'zigzag',
+    // The static value is the morph's END state, so a frame sampled outside
+    // the keyframed span — or with the track deleted — still shows the shape.
     amount,
   });
 
-  kf(ctx, id, 'rotation', [
-    { t: t0, value: 0, easing: 'bezier', bezier: PHYSICS.smooth },
-    { t: t0 + dur, value: 180, easing: 'bezier', bezier: PHYSICS.smooth },
+  const prop = pathOpPropPath(opId, 'amount');
+  const endSec = t0 + dur * (opts.pingPong ? 2 : 1);
+  kf(ctx, id, prop, [
+    { t: t0, value: from, easing: 'bezier', bezier: PHYSICS.smooth },
+    { t: t0 + dur, value: amount, easing: 'bezier', bezier: PHYSICS.smooth },
+    ...(opts.pingPong ? [{ t: endSec, value: from, easing: 'bezier', bezier: PHYSICS.smooth }] : []),
   ]);
 
-  applyEntrance(ctx, id, t0, s, cy, { role: 'generic' });
-  applySceneExit(ctx, id, cy);
-  return id;
+  if (created) {
+    const cy = opts.y ?? comp.height / 2;
+    kf(ctx, id, 'rotation', [
+      { t: t0, value: 0, easing: 'bezier', bezier: PHYSICS.smooth },
+      { t: t0 + dur, value: 180, easing: 'bezier', bezier: PHYSICS.smooth },
+    ]);
+    applyEntrance(ctx, id, t0, s, cy, { role: 'generic' });
+    applySceneExit(ctx, id, cy);
+  }
+  return { id, opId, prop, created, startSec: t0, endSec };
 }

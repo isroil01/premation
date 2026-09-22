@@ -124,8 +124,32 @@ export function resolveTrackHeaderWidth(
   preferred: number | undefined | null,
   columns: 'switches' | 'modes' | 'both',
   extraCount = 0,
+  available = 0,
 ): number {
-  return pinned ?? preferred ?? headerWidthFor(columns, extraCount);
+  if (pinned !== undefined) return pinned;
+  return capHeaderToPanel(preferred ?? headerWidthFor(columns, extraCount), available);
+}
+
+/** The least the LANES keep, however many columns are on: px, and share of the panel. */
+export const TIMELINE_MIN_LANES_PX = 320;
+export const TIMELINE_MIN_LANES_SHARE = 0.42;
+
+/**
+ * Never let the header column take the whole panel.
+ *
+ * The 'both' column set needs ~897px. On a laptop the docked timeline is ~855px
+ * wide, so the lanes were left with ZERO width: no ruler, no bars, no keyframes,
+ * no playhead — a timeline with no time in it, and nothing on screen saying why.
+ * The columns scroll horizontally inside the header (they always could), so
+ * capping the header costs a scroll; not capping it costs the timeline.
+ *
+ * `available` is the panel's measured width; 0 (not measured yet, or a test
+ * with no layout) leaves the width alone.
+ */
+export function capHeaderToPanel(width: number, available: number): number {
+  if (!(available > 0)) return width;
+  const lanes = Math.max(TIMELINE_MIN_LANES_PX, Math.round(available * TIMELINE_MIN_LANES_SHARE));
+  return Math.max(TRACK_HEADER_MIN_WIDTH, Math.min(width, available - lanes));
 }
 
 export const TIMELINE_TOP_PADDING = 6;

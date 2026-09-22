@@ -15,12 +15,14 @@
 
 import { BuiltinCommands } from '@core/commands/Command';
 import { cloudProjectsEnabled } from '@core/config/edition';
+import { isDevBuild } from '@core/config/devBuild';
 // `tryCoreServices`, not `getFileManager`: this model's `visible` predicates are
 // evaluated wherever the menu renders, and TitleBar renders on /login and
 // /dashboard, where the core has not booted. `coreServices()` throws there.
 import { tryCoreServices } from '@core/services/coreServices';
 import { buildWorkspaceMenuItems } from './workspaceMenu';
 import { pluginPanelMenuItems } from './pluginPanelsMenu';
+import { buildEffectMenuItems } from './effectMenu';
 
 /** Project-lifecycle command ids (registered against ProjectManager at boot). */
 export const ProjectCommands = {
@@ -52,6 +54,14 @@ export interface MenuItemModel {
   commandId?: string;
   /** Overrides the command's label. */
   label?: string;
+  /**
+   * The translation key for `label`. Only a submenu PARENT needs one, and it
+   * must have one (`menuI18n.test.ts`): a command item's key is derived from
+   * its `commandId`, which outlives any rewording of the English. Parents use
+   * `menu.sub.<name>`. Runtime entries — a workspace the user named, a
+   * plugin's name — have neither and are never translated. See `menuI18n.ts`.
+   */
+  labelKey?: string;
   separator?: boolean;
   /**
    * A nested menu. Either a fixed list, or a thunk evaluated by the RENDERER
@@ -143,6 +153,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // Three doors into the same library. Nested so File stays under its
         // entry cap; the panel's own Import button offers the same three.
         label: 'Import',
+        labelKey: 'menu.sub.import',
         children: [
           { commandId: 'assets.importFiles', label: 'Files…' },
           { commandId: 'assets.importFolder', label: 'Folder…' },
@@ -187,6 +198,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // every layer, closing the gap; or select the filler words to delete.
         // Folded beside Delete because that is the verb they refine.
         label: 'Transcript',
+        labelKey: 'menu.sub.transcript',
         children: [
           { commandId: 'transcript.deleteSelection', label: 'Delete Transcript Selection' },
           { commandId: 'transcript.selectFillers', label: 'Select Filler Words' },
@@ -211,6 +223,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // of each is a composition that did not exist before (or, for Assemble
         // on a layer, a comp whose whole cut did not exist before).
         label: 'New From Footage',
+        labelKey: 'menu.sub.newFromFootage',
         children: [
           { commandId: 'comp.multicam', label: 'New Multicam from Selected Assets…' },
           { commandId: 'comp.newFromSelectedClips', label: 'New Composition from Selected Clips…' },
@@ -229,6 +242,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // '9:16' into the command palette. Each greys itself out for a comp
         // already at that aspect, which would have nothing to pan within.
         label: 'Auto-Reframe',
+        labelKey: 'menu.sub.autoReframe',
         children: [
           { commandId: 'comp.autoReframe.9:16', label: '9:16 Vertical' },
           { commandId: 'comp.autoReframe.1:1', label: '1:1 Square' },
@@ -242,6 +256,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // property of the whole comp (its spoken words), and every one of
         // these acts on all of them at once, not on a selection.
         label: 'Captions',
+        labelKey: 'menu.sub.captions',
         children: [
           { commandId: 'captions.import', label: 'Import…' },
           { commandId: 'captions.generate', label: 'Generate from Audio' },
@@ -253,6 +268,7 @@ export const APP_MENU: MenuGroupModel[] = [
       {
         // The transcript panel's verbs: the same spoken words, as an editable list.
         label: 'Transcript',
+        labelKey: 'menu.sub.transcript',
         children: [
           { commandId: 'transcript.transcribe', label: 'Transcribe Composition' },
           { commandId: 'transcript.addCaptions', label: 'Convert to Captions' },
@@ -265,6 +281,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // In / out marking, beside the composition they apply to. The shuttle
         // itself (J / K / L) is a chord, not a menu row.
         label: 'Transport',
+        labelKey: 'menu.sub.transport',
         children: [
           { commandId: 'transport.markIn', label: 'Mark In' },
           { commandId: 'transport.markOut', label: 'Mark Out' },
@@ -286,10 +303,13 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
       { commandId: 'comp.copyFrame', label: 'Copy Frame to Clipboard' },
-      { separator: true },
+      { separator: true, visible: isDevBuild },
       // A demo-scene loader, not a composition verb — last, below a rule, so
-      // it does not read as part of the working set above it.
-      { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
+      // it does not read as part of the working set above it. DEVELOPMENT
+      // BUILDS ONLY: it replaces the open scene with a physics test rig, and a
+      // shipped Composition menu ending in "Load: Block Tower" reads as a
+      // debug build. The command stays registered (the palette, tests).
+      { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower', visible: isDevBuild },
     ],
   },
   {
@@ -302,6 +322,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // plugin layer kinds, so a plugin's layer sits beside Text and Solid
         // rather than under a menu named after the mechanism providing it.
         label: LAYER_NEW_SUBMENU_LABEL,
+        labelKey: 'menu.sub.new',
         children: [
           { commandId: 'layer.newText', label: 'Text' },
           { commandId: 'layer.newSolid', label: 'Solid…' },
@@ -315,6 +336,7 @@ export const APP_MENU: MenuGroupModel[] = [
             // you browse rather than search. They belong beside the other New
             // entries.
             label: '3D Primitive',
+            labelKey: 'menu.sub.3dPrimitive',
             children: [
               { commandId: 'layer.new3d.cube', label: 'Cube' },
               { commandId: 'layer.new3d.sphere', label: 'Sphere' },
@@ -337,10 +359,12 @@ export const APP_MENU: MenuGroupModel[] = [
          * palette. Reset, the two Flips and Auto-Orient are new.
          */
         label: 'Transform',
+        labelKey: 'menu.sub.transform',
         children: [
           { commandId: 'layer.resetTransform', label: 'Reset' },
           {
             label: 'Anchor Point',
+            labelKey: 'menu.sub.anchorPoint',
             children: [
               { commandId: 'layer.centreAnchor', label: 'Center Anchor Point in Layer Content' },
             ],
@@ -363,6 +387,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // Text-layer verbs AE keeps on the layer: point ↔ paragraph conversion
         // (no visual jump) and the Character panel's fill/stroke swap (Shift+X).
         label: 'Text',
+        labelKey: 'menu.sub.text',
         children: [
           { commandId: 'text.convertToParagraphText', label: 'Convert to Paragraph Text' },
           { commandId: 'text.convertToPointText', label: 'Convert to Point Text' },
@@ -376,6 +401,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // AE's Layer ▸ Mask and Shape Path. Acts on the vertices selected with
         // Direct Selection, else on the selected layers' paths (pathCommands.ts).
         label: 'Mask and Shape Path',
+        labelKey: 'menu.sub.maskAndShapePath',
         children: [
           { commandId: 'path.toggleClosed', label: 'Closed' },
           { commandId: 'path.setFirstVertex', label: 'Set First Vertex' },
@@ -392,6 +418,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'layer.toggleGuide', label: 'Guide Layer' },
       {
         label: 'Arrange',
+        labelKey: 'menu.sub.arrange',
         children: [
           { commandId: 'layer.bringToFront', label: 'Bring to Front' },
           { commandId: 'layer.bringForward', label: 'Bring Forward' },
@@ -405,6 +432,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // Derive new layers from the selection — nulls from a path's points,
         // shapes from text, a traced outline from footage.
         label: 'Create',
+        labelKey: 'menu.sub.create',
         children: [
           { commandId: 'layer.nullsFromPath', label: 'Nulls From Path Points' },
           { commandId: 'layer.nullsFromPathLive', label: 'Nulls From Path Points (Points Follow Nulls)' },
@@ -417,6 +445,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // AE's Layer ▸ Camera: the rig verbs. Every one existed as a prop you
         // could type into; none existed as a thing you could ask for.
         label: 'Camera',
+        labelKey: 'menu.sub.camera',
         children: [
           { commandId: 'camera.createOrbitNull', label: 'Create Orbit Null' },
           { commandId: 'camera.distributeZ', label: 'Distribute Layers in Z' },
@@ -435,6 +464,7 @@ export const APP_MENU: MenuGroupModel[] = [
          * rule, which is the same order the kebab uses.
          */
         label: 'Path Operations',
+        labelKey: 'menu.sub.pathOperations',
         children: [
           { commandId: 'shape.boolean.union', label: 'Union (Add)' },
           { commandId: 'shape.boolean.subtract', label: 'Subtract' },
@@ -452,6 +482,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // AE puts Scene Edit Detection under Layer, and so did the code's own
         // comment on the clip menu — which was the only place it could be run.
         label: 'Scene Edit Detection',
+        labelKey: 'menu.sub.sceneEditDetection',
         children: [
           { commandId: 'layer.sceneEditDetect.markers', label: 'Markers' },
           { commandId: 'layer.sceneEditDetect.split', label: 'Split Clips' },
@@ -462,20 +493,12 @@ export const APP_MENU: MenuGroupModel[] = [
   {
     id: 'effect',
     label: 'Effect',
-    items: [
-      // Short enough to stay flat; ruled into families so it scans like AE's
-      // Effect menu rather than like the order the shaders were written in.
-      { commandId: 'effect.blur', label: 'Fast Box Blur' },
-      { separator: true },
-      { commandId: 'effect.brightness', label: 'Brightness & Contrast' },
-      { commandId: 'effect.contrast', label: 'Contrast' },
-      { commandId: 'effect.saturate', label: 'Hue/Saturation' },
-      { commandId: 'effect.hue', label: 'Hue Rotate' },
-      { separator: true },
-      { commandId: 'effect.glow', label: 'Glow' },
-      { commandId: 'effect.grayscale', label: 'Grayscale' },
-      { commandId: 'effect.sepia', label: 'Sepia' },
-    ],
+    // GENERATED from the effect registry: one submenu per browser folder, as
+    // in After Effects. It was eight hand-picked rows out of two hundred
+    // effects — see `effectMenu.ts`. The eight legacy `effect.<name>` commands
+    // stay registered (shortcuts, the palette); the menu no longer lists them,
+    // because each is now a row of its folder and a command may appear once.
+    items: buildEffectMenuItems(),
   },
   {
     // AE's Animation menu — keyframe assistants that were shortcut-only.
@@ -489,6 +512,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'anim.easyEaseOut', label: 'Easy Ease Out' },
       {
         label: 'Keyframe Interpolation',
+        labelKey: 'menu.sub.keyframeInterpolation',
         children: [
           { commandId: 'anim.interpLinear', label: 'Linear' },
           { commandId: 'anim.interpHold', label: 'Hold' },
@@ -498,6 +522,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // AE Animation ▸ Keyframe Assistant — engines lived in the palette /
         // TopNav only; this menu is where AE muscle memory looks first.
         label: 'Keyframe Assistant',
+        labelKey: 'menu.sub.keyframeAssistant',
         children: [
           { commandId: 'animation.easyEaseAll', label: 'Easy Ease All Keyframes' },
           { commandId: 'animation.timeReverseKeyframes', label: 'Time-Reverse Keyframes' },
@@ -517,12 +542,14 @@ export const APP_MENU: MenuGroupModel[] = [
         // Creates animation on layers that have none — the counterpart to
         // Stagger Animations above, which only offsets keyframes that exist.
         label: 'Animate',
+        labelKey: 'menu.sub.animate',
         children: [
           { commandId: 'animation.animateIn', label: 'Animate In' },
           { commandId: 'animation.animateOut', label: 'Animate Out' },
           { separator: true },
           {
             label: 'Motion Feel',
+            labelKey: 'menu.sub.motionFeel',
             children: [
               { commandId: 'animation.motionFeel.snappy', label: 'Snappy' },
               { commandId: 'animation.motionFeel.smooth', label: 'Smooth' },
@@ -535,6 +562,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // Everything driven by the comp's sound: the beat-driven verbs, the
         // two edits that read the waveform, and the bake to keyframes.
         label: 'Audio',
+        labelKey: 'menu.sub.audio',
         children: [
           { commandId: 'audio.fadeIn', label: 'Fade In' },
           { commandId: 'audio.fadeOut', label: 'Fade Out' },
@@ -551,6 +579,7 @@ export const APP_MENU: MenuGroupModel[] = [
       },
       {
         label: 'Time',
+        labelKey: 'menu.sub.time',
         children: [
           // AE's Layer ▸ Time, in AE's order. All of these existed as switches
           // in the Compositing section and the viewport's Video submenu; the
@@ -576,6 +605,7 @@ export const APP_MENU: MenuGroupModel[] = [
       {
         // The three that turn something procedural into plain keyframes.
         label: 'Bake',
+        labelKey: 'menu.sub.bake',
         children: [
           { commandId: 'dynamics.bakePhysics', label: 'Bake Physics to Keyframes…' },
           { commandId: 'dynamics.bakeParticles', label: 'Bake Particles to Layers…' },
@@ -602,6 +632,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // compose, so the menu shows the chord a user would otherwise only
         // discover by pressing it and wondering where the panels went.
         label: 'Focus Mode',
+        labelKey: 'menu.sub.focusMode',
         children: [
           { commandId: 'view.focusMode.viewportTimeline', label: 'Viewport + Timeline' },
           { commandId: 'view.focusMode.viewport', label: 'Viewport Only' },
@@ -610,6 +641,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       {
         label: 'Guides & Grid',
+        labelKey: 'menu.sub.guidesAndGrid',
         children: [
           { commandId: 'view.grid', label: 'Show Grid' },
           { commandId: 'view.proportionalGrid', label: 'Show Proportional Grid' },
@@ -631,6 +663,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // The Assets panel's own view state. Nested rather than listed flat:
         // these act on one panel, and View is already close to its entry cap.
         label: 'Assets Panel',
+        labelKey: 'menu.sub.assetsPanel',
         children: [
           { commandId: 'assets.toggleGridView', label: 'Grid View' },
           { commandId: 'assets.toggleUnusedFilter', label: 'Show Unused Only' },
@@ -646,6 +679,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // fourteen top-level entries and these four zooms were most of the
         // pressure on it.
         label: 'Timeline',
+        labelKey: 'menu.sub.timeline',
         children: [
           { commandId: 'timeline.zoomToFit', label: 'Fit Composition' },
           { commandId: 'timeline.zoomToWorkArea', label: 'Fit Work Area' },
@@ -661,6 +695,7 @@ export const APP_MENU: MenuGroupModel[] = [
         // How the viewport DRAWS: the display mode, the readout over it, and
         // the monitor-only look. Nothing here changes a rendered frame.
         label: 'Viewport',
+        labelKey: 'menu.sub.viewport',
         children: [
           { commandId: 'view.displayMode.shaded', label: 'Shaded' },
           { commandId: 'view.displayMode.wireframe', label: 'Wireframe' },
@@ -676,6 +711,7 @@ export const APP_MENU: MenuGroupModel[] = [
             // Snapshot and compare are one workflow: take a frame, then look
             // at it against the live one.
             label: 'Snapshot & Compare',
+            labelKey: 'menu.sub.snapshotAndCompare',
             children: [
               { commandId: 'view.snapshot', label: 'Take Snapshot' },
               { commandId: 'view.compareToggle', label: 'Show Snapshot' },
@@ -691,6 +727,7 @@ export const APP_MENU: MenuGroupModel[] = [
           },
           {
             label: 'Camera Bookmarks',
+            labelKey: 'menu.sub.cameraBookmarks',
             children: [
               { commandId: 'view.cameraBookmark.recall1', label: 'Recall 1' },
               { commandId: 'view.cameraBookmark.recall2', label: 'Recall 2' },
@@ -718,6 +755,7 @@ export const APP_MENU: MenuGroupModel[] = [
             // shortcuts (1 / 2) and no menu line; Look At is new. Inside
             // Viewport because View sits at its fourteen-entry cap.
             label: '3D View',
+            labelKey: 'menu.sub.3dView',
             children: [
               { commandId: 'view.activeCamera', label: 'Active Camera' },
               { commandId: 'view.lastCustom', label: 'Last Custom View' },
@@ -730,6 +768,7 @@ export const APP_MENU: MenuGroupModel[] = [
       },
       {
         label: 'Timeline Tools',
+        labelKey: 'menu.sub.timelineTools',
         children: [
           { commandId: 'timeline.editMode.select', label: 'Selection Tool' },
           { commandId: 'timeline.editMode.razor', label: 'Razor Tool' },
@@ -741,6 +780,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       {
         label: 'Cache',
+        labelKey: 'menu.sub.cache',
         children: [
           { commandId: 'preview.cacheWorkArea', label: 'Cache Work Area Now' },
           { commandId: 'preview.purgeRam', label: 'Purge RAM Preview' },
@@ -779,6 +819,7 @@ export const APP_MENU: MenuGroupModel[] = [
       // 14-entry cap (`menuSubmenus.test.ts`). Commands: Providers.tsx.
       {
         label: 'Panels',
+        labelKey: 'menu.sub.panels',
         // A THUNK, not a list: the app's own panels are fixed, and a plugin's
         // are not — they appear and disappear with what the user has installed,
         // and the renderer re-evaluates this every time the menu is drawn.
@@ -804,7 +845,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       // Built per render from WorkspaceManager — half of it is user data. See
       // workspaceMenu.ts.
-      { label: 'Workspace', children: buildWorkspaceMenuItems },
+      { label: 'Workspace', labelKey: 'menu.sub.workspace', children: buildWorkspaceMenuItems },
       { commandId: 'view.customize', label: 'Customize…' },
       // No Plugins entry here: the Plugins GROUP (built dynamically in
       // pluginMenu.ts) owns it, and a second door labelled the same thing is

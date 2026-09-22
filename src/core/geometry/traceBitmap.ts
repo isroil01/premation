@@ -257,12 +257,45 @@ export function traceBitmap(
 export function smoothContour(
   pts: ReadonlyArray<TracePoint>,
   tension = 0.5,
+  /**
+   * Turn angle (degrees) at or above which a vertex is a CORNER and keeps no
+   * handles. Omitted = the original behaviour: every vertex smoothed, with a
+   * tangent sized by the span between its neighbours.
+   *
+   * That original is right for traced ARTWORK and wrong for TYPE. A simplified
+   * letter is long straight runs between sharp turns: the span-sized tangent
+   * made each stem bulge (two far-apart vertices ⇒ a huge handle) and rounded
+   * every corner, so "PREMIUM" traced as melted letters — and 3D extrusion,
+   * which builds its solid from this outline, extruded the melt. With a corner
+   * angle, sharp turns stay sharp and each handle is sized by ITS OWN adjacent
+   * segment, so a stem stays straight and a bowl stays round.
+   */
+  cornerAngleDeg?: number,
 ): Array<{ x: number; y: number; inX: number; inY: number; outX: number; outY: number }> {
   const n = pts.length;
   const k = tension / 3; // Catmull-Rom → Bézier handle factor at tension 1 is 1/6 per side; /3 reads better for traced art
+  if (cornerAngleDeg === undefined) {
+    return pts.map((p, i) => {
+      const prev = pts[(i + n - 1) % n]!, next = pts[(i + 1) % n]!;
+      const tx = (next.x - prev.x) * k, ty = (next.y - prev.y) * k;
+      return { x: p.x, y: p.y, inX: p.x - tx, inY: p.y - ty, outX: p.x + tx, outY: p.y + ty };
+    });
+  }
+  const cosCorner = Math.cos((cornerAngleDeg * Math.PI) / 180);
   return pts.map((p, i) => {
     const prev = pts[(i + n - 1) % n]!, next = pts[(i + 1) % n]!;
-    const tx = (next.x - prev.x) * k, ty = (next.y - prev.y) * k;
-    return { x: p.x, y: p.y, inX: p.x - tx, inY: p.y - ty, outX: p.x + tx, outY: p.y + ty };
+    const ax = p.x - prev.x, ay = p.y - prev.y, bx = next.x - p.x, by = next.y - p.y;
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    const sharp = { x: p.x, y: p.y, inX: p.x, inY: p.y, outX: p.x, outY: p.y };
+    if (la < 1e-6 || lb < 1e-6) return sharp;
+    // cos of the TURN: 1 = dead straight, 0 = a right angle.
+    if ((ax * bx + ay * by) / (la * lb) <= cosCorner) return sharp;
+    // Smooth vertex: tangent along the neighbour chord, each side's handle a
+    // third of ITS segment — the standard arc fit, and zero bulge on a line.
+    const cx = next.x - prev.x, cy = next.y - prev.y, lc = Math.hypot(cx, cy) || 1;
+    const ux = cx / lc, uy = cy / lc;
+    // Same factor the uncornered path uses at its default tension (0.5 → 1/3).
+    const f = Math.min(1 / 3, k * 2);
+    return { x: p.x, y: p.y, inX: p.x - ux * la * f, inY: p.y - uy * la * f, outX: p.x + ux * lb * f, outY: p.y + uy * lb * f };
   });
 }

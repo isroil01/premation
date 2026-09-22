@@ -203,3 +203,30 @@ describe('distinctness at scale', () => {
     expect(seen.size).toBe(1000);
   });
 });
+
+/**
+ * An expression on a property with NO keyframes — `value + wiggle` on a static
+ * Position. The engine's "animated" lists mean "has keyframes", so this node was
+ * in none of them and its expression never reached the hash: editing it left
+ * the hash unchanged and an effect-baked layer kept drawing at its old place
+ * (seen in the desktop app: Auto Levels + `value + 900` did not move the layer).
+ */
+describe('expressions on un-keyframed properties', () => {
+  const withExpr = (src: string | null, enabled = true): AnimationEngine => {
+    const a = new AnimationEngine();
+    if (src !== null) { a.setExpression('a', 'x', src); a.setExpressionEnabled('a', 'x', enabled); }
+    return a;
+  };
+
+  it('adding one changes the hash', () => {
+    expect(hash([node('a')], withExpr('value + 100'))).not.toBe(hash([node('a')], withExpr(null)));
+  });
+
+  it('editing it changes the hash', () => {
+    expect(hash([node('a')], withExpr('value + 100'))).not.toBe(hash([node('a')], withExpr('value + 700')));
+  });
+
+  it('disabling it changes the hash', () => {
+    expect(hash([node('a')], withExpr('value + 100', true))).not.toBe(hash([node('a')], withExpr('value + 100', false)));
+  });
+});

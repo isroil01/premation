@@ -130,8 +130,10 @@ function mergedPositionRow(
     prop: POSITION_PSEUDO_PROP,
     label: propertyLabel(POSITION_PSEUDO_PROP),
     keyframes: [...merged.values()].sort((a, b) => a.time - b.time),
-    // The merged Position row edits the two real props behind it.
-    valueProps: members.filter((p) => p !== 'z'),
+    // The merged Position row edits the real props behind it — Z included. It
+    // used to filter `z` out, a leftover from a 2D-only timeline: a keyframed
+    // camera or 3D layer showed X and Y and hid the depth its move is made of.
+    valueProps: members,
     valueUnit: resolvePropertyMeta(POSITION_PSEUDO_PROP).unit || undefined,
     stopwatchProps: members,
   };

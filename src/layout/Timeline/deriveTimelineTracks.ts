@@ -11,7 +11,7 @@ import type { TrackId, KeyId, NodeId } from '@app-types/common';
 import { VIDEO_AUDIO_MUTED_PROP, videoHasAudioTrack } from '@core/audio/audioScene';
 import { getNodeBlend } from '@core/effects/blendMode';
 import { getNodeMatte } from '@core/effects/matte';
-import { readNodeFxEnabled } from '@core/effects/effects';
+import { getNodeEffects, readNodeFxEnabled } from '@core/effects/effects';
 import { readNodeMotionBlur } from '@core/effects/motionBlur';
 import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
@@ -49,13 +49,44 @@ export interface DeriveTimelineTracksArgs {
   activeCompId: string | undefined;
   compFps: number;
   expandedIds: ReadonlyArray<string>;
+  /**
+   * The caller's animation / clip / marker revision counters. With them, a
+   * COLLAPSED node whose own state (`mutationSeq`), cheap view fields, clip
+   * list and these counters are all unchanged gets its previous track object
+   * back — same identity, so the memoised row components skip. Without them
+   * every track is rebuilt, as before.
+   */
+  revs?: { anim: number; clip: number; marker: number };
+}
+
+interface TrackCacheEntry {
+  key: string;
+  track: TimelineTrack;
+}
+
+/**
+ * Per node, the last track built for it and the inputs it was built from.
+ *
+ * Deriving the timeline is a walk of the whole comp building a fresh object
+ * per node — 2,000 nodes on every scene change, each reading a dozen props
+ * and the animation engine, to hand the rows 2,000 NEW objects that were
+ * equal to the old ones. Expanded nodes are never cached: their property rows
+ * carry values sampled at the playhead.
+ */
+const trackCache = new Map<string, TrackCacheEntry>();
+
+/** Whether a node is even a cache candidate: a caller with revs, a collapsed row, a sequenced node. */
+function cacheKey0(revs: DeriveTimelineTracksArgs['revs'], isExpanded: boolean, seq: unknown): boolean {
+  return !!revs && !isExpanded && typeof seq === 'number';
 }
 
 export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTrack[] {
-  const { activeCompId, compFps, expandedIds } = args;
+  const { activeCompId, compFps, expandedIds, revs } = args;
   const controller = getTimelineController();
   const compId = activeCompId || 'comp_root';
   const result: TimelineTrack[] = [];
+  const expandedSet = new Set(expandedIds);
+  const seen = new Set<string>();
 
   const traverse = (parentId: string, depth: number): void => {
     // Front-most first — the same projection of the graph's child array the
@@ -63,7 +94,36 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
     const nodes = stackOrderedChildren(defaultSceneGraph, parentId);
     for (const node of nodes) {
       const kind = readNodeKind(node);
-      const isExpanded = expandedIds.includes(node.id);
+      const isExpanded = expandedSet.has(node.id);
+      // ── Cache probe (collapsed nodes only) ──────────────────────────
+      const seq = (node as unknown as { mutationSeq?: number }).mutationSeq;
+      const hasAudioNow = kind === 'audio' || (kind === 'video' && videoHasAudioTrack(node) !== false);
+      // Clips and markers are keyed per NODE, not by the global clip/marker
+      // counters: adding a layer bumps those counters, which would miss the
+      // cache for every other row on the one edit this exists to speed up.
+      const layersRef = cacheKey0(revs, isExpanded, seq) ? controller.getLayersForNode(node.id) : null;
+      const cacheKey = layersRef
+        ? [seq, node.name ?? '', (node as { color?: string }).color ?? '', node.solo === true ? 1 : 0, node.visible === false ? 0 : 1,
+           node.locked === true ? 1 : 0, (node as { shy?: boolean }).shy === true ? 1 : 0, node.parent ?? '', depth, compFps,
+           revs!.anim, hasAudioNow ? 1 : 0,
+           layersRef.map((l) => `${l.id}:${l.start}:${l.duration}:${l.clip.sourceIn}:${l.clip.duration}`).join(','),
+           controller.getLayerMarkers(node.id).map((m) => `${m.id}:${m.time}:${m.label}:${m.color ?? ''}`).join(',')].join('|')
+        : null;
+      if (cacheKey !== null) {
+        const hit = trackCache.get(node.id);
+        // The key carries every clip's geometry; `getLayersForNode` returns a
+        // fresh sorted copy per call, so its identity is never a valid test.
+        if (hit && hit.key === cacheKey) {
+          seen.add(node.id);
+          result.push(hit.track);
+          if (kind === 'group') {
+            if (expandedSet.has(node.id)) traverse(node.id, depth + 1);
+          } else {
+            traverse(node.id, depth);
+          }
+          continue;
+        }
+      }
       const properties: TimelinePropertyTrack[] = isExpanded ? buildPropertyRows(node.id) : [];
       const keyframes: TimelineKeyframeRef[] = isExpanded
         ? properties.flatMap((p) => p.keyframes)
@@ -137,6 +197,7 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
         threeD: is3DEnabled(node),
         motionBlur: readNodeMotionBlur(node),
         fxEnabled: readNodeFxEnabled(node),
+        hasEffects: getNodeEffects(node.id).length > 0,
         adjustment: readNodeAdjustment(node),
         guide: readIsGuideLayer(node),
         preserveTransparency: readNodePreserveTransparency(node),
@@ -153,13 +214,17 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
         depth,
         isGroup: kind === 'group',
         canExpand,
-        expanded: expandedIds.includes(node.id),
+        expanded: expandedSet.has(node.id),
       };
 
+      if (cacheKey !== null) {
+        trackCache.set(node.id, { key: cacheKey, track });
+        seen.add(node.id);
+      }
       result.push(track);
 
       if (kind === 'group') {
-        if (expandedIds.includes(node.id)) traverse(node.id, depth + 1);
+        if (expandedSet.has(node.id)) traverse(node.id, depth + 1);
       } else {
         traverse(node.id, depth);
       }
@@ -167,5 +232,7 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
   };
 
   traverse(compId, 0);
+  // Drop entries for nodes no longer in this walk (deleted, or another comp).
+  if (revs) for (const id of trackCache.keys()) if (!seen.has(id)) trackCache.delete(id);
   return result;
 }

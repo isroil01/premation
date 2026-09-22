@@ -60,6 +60,40 @@ const MinimapImpl = forwardRef(function MinimapImpl({
   const scrollFromPointerRef = useRef(scrollFromPointer);
   scrollFromPointerRef.current = scrollFromPointer;
 
+  /*
+    One canvas, not one element per row. The map used to render a positioned
+    div per timeline row — 2,000 of them on a 2,000-layer comp, rebuilt on
+    every scene change and laid out by the browser each time. A repaint of a
+    12px-wide strip is a fraction of a millisecond.
+  */
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(c.clientWidth * dpr));
+    const h = Math.max(1, Math.round(viewportHeight * dpr));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(c);
+    const mutedColor = css.getPropertyValue('--color-text-muted').trim() || '#888';
+    const borderColor = css.getPropertyValue('--color-border-strong').trim() || '#666';
+    const rowH = Math.max(1, trackHeight * scale - 1) * dpr;
+    const left = 2 * dpr;
+    const width = Math.max(1, w - 4 * dpr);
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      const top = (TIMELINE_TOP_PADDING + i * trackHeight) * scale * dpr;
+      if (top > h) break;
+      ctx.globalAlpha = row.type === 'track' ? 0.7 : 0.4;
+      ctx.fillStyle = row.type === 'track' ? (row.track.color ?? mutedColor) : borderColor;
+      ctx.fillRect(left, top, width, rowH);
+    }
+    ctx.globalAlpha = 1;
+  }, [rows, trackHeight, scale, viewportHeight]);
+
   useEffect(() => {
     const move = (e: PointerEvent): void => { if (dragging.current) scrollFromPointerRef.current(e.clientY); };
     const up = (): void => { dragging.current = false; };
@@ -75,18 +109,7 @@ const MinimapImpl = forwardRef(function MinimapImpl({
       style={{ top: viewportTop, height: viewportHeight }}
       onPointerDown={(e) => { dragging.current = true; scrollFromPointer(e.clientY); }}
     >
-      {rows.map((row, i) => (
-        <div
-          key={i}
-          className={styles.minimapRow}
-          style={{
-            top: (TIMELINE_TOP_PADDING + i * trackHeight) * scale,
-            height: Math.max(1, trackHeight * scale - 1),
-            background: row.type === 'track' ? (row.track.color ?? 'var(--color-text-muted)') : 'var(--color-border-strong)',
-            opacity: row.type === 'track' ? 0.7 : 0.4,
-          }}
-        />
-      ))}
+      <canvas ref={canvasRef} className={styles.minimapCanvas} />
       <div className={styles.minimapWindow} style={{ top: winTop, height: winH }} />
     </div>
   );

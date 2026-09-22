@@ -8,7 +8,7 @@
  * has any 3D layer — the same rule that makes the 3D chrome relevant.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -47,7 +47,7 @@ const AXIS_PX = 16;
 const LABEL_PX = 21;
 
 export const AxisWidgetOverlay: React.FC = () => {
-  useSceneRevisionFrame();
+  const sceneRev = useSceneRevisionFrame();
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
   // Scoped like the renderer's, so the overlay never draws a different camera
@@ -60,12 +60,16 @@ export const AxisWidgetOverlay: React.FC = () => {
   // Visible only when the comp actually has 3D content.
   // Comp-scoped: another composition's 3D layers must not make THIS comp's
   // viewport claim it is 3D.
-  let has3D = false;
-  for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
-    const k = readNodeKind(n);
-    if (k === 'camera') continue;
-    if (k !== 'light' && is3DEnabled(n)) has3D = true;
-  }
+  // Memoised on the scene revision — this widget re-renders every frame.
+  const has3D = useMemo(() => {
+    for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
+      const k = readNodeKind(n);
+      if (k === 'camera') continue;
+      if (k !== 'light' && is3DEnabled(n)) return true;
+    }
+    return false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
+  }, [compRootId, sceneRev]);
   // One resolver for every camera read in the app. A local first-match search
   // here would draw the widget for a different camera than the frame was
   // rendered through — same scope and same tie-break, or neither is trustworthy.

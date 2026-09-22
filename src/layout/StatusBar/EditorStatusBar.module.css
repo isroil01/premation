@@ -9,6 +9,49 @@
   user-select: none;
 }
 
+/* An item together with the separator that introduces it, so the two leave
+   the bar as one — a dropped readout must not strand its "·". */
+.cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* A wrapper that exists only to carry a drop class: its child lays out as if
+   the wrapper were not there, so a child that renders nothing (the VU meter
+   with no audio) leaves no empty box claiming a gap. */
+.passthrough {
+  display: contents;
+}
+
+/*
+ * What goes first as the bar narrows — lowest priority first. The save state's
+ * dot, the counts, the comp name, the timecode and the search button itself
+ * never drop. Widths are the BAR's (a `statusbar` query container), so a
+ * popped-out or split window behaves like a narrow one.
+ *
+ *   drop1  the search button's shortcut hint          ≤ 1400px
+ *   drop2  the fps meter, the "Search" word           ≤ 1250px
+ *   drop3  the info readout, the comp chip's size/fps ≤ 1100px
+ *   drop4  the VU meter, the save state's words       ≤  900px
+ */
+@container statusbar (max-width: 1400px) {
+  .drop1 { display: none; }
+}
+
+@container statusbar (max-width: 1250px) {
+  .drop2 { display: none; }
+}
+
+@container statusbar (max-width: 1100px) {
+  .drop3 { display: none; }
+}
+
+@container statusbar (max-width: 900px) {
+  .drop4 { display: none; }
+}
+
 .mono {
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
@@ -40,6 +83,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--font-size-xs);
+  min-width: 0;
   color: var(--color-text-primary);
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
               background-color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -61,6 +105,10 @@
 
 .compName {
   font-weight: var(--font-weight-medium);
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .compMeta {

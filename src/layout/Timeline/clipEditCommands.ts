@@ -24,7 +24,8 @@
  */
 
 import { asCommandId } from '@app-types/common';
-import { getCommandRegistry, type Command } from '@core/commands/Command';
+import { BuiltinCommands, getCommandRegistry, type Command } from '@core/commands/Command';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
@@ -70,6 +71,32 @@ export function rippleDeleteSelection(): number {
   for (const bar of bars) controller.rippleDeleteLayer(bar.id);
   if (bars.length > 0) bumpScene();
   return bars.length;
+}
+
+/**
+ * Plain Delete / Backspace with the TIMELINE focused: delete the selected
+ * layers, exactly as the key does everywhere else.
+ *
+ * WHY THE PANEL HAS TO DO THIS ITSELF. The timeline root claims `delete` and
+ * `backspace` (`data-shortcut-claim`) so a KEYFRAME selection can take them —
+ * and a claim makes `ShortcutManager` skip the chord outright, whatever is
+ * selected. Nothing picked the key back up when there were no keyframes to
+ * delete, so it fell on the floor. Clicking a layer's name is how a layer gets
+ * selected, and it is also what puts focus on the row header inside the claim:
+ * the ordinary "select a layer, press Delete" did nothing, while the same key
+ * worked from the viewport, where no claim applies.
+ *
+ * Routed through the registered command rather than `deleteSelectedLayers`
+ * directly, so this is the same undoable edit, the same toast and the same
+ * `enabled` gate as the global chord, and cannot drift from it.
+ *
+ * Returns whether the key was taken, so the caller only swallows the event
+ * when something was there to delete.
+ */
+export function deleteSelectionFromTimeline(): boolean {
+  if (useSelectionStore.getState().count() === 0) return false;
+  void getCommandSystem().execute(BuiltinCommands.DeleteSelected);
+  return true;
 }
 
 /** Shared by both range commands: run it, or say why it could not. */

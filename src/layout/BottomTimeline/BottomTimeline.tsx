@@ -112,12 +112,16 @@ export function isToolbarShed(group: TimelineToolbarGroup, level: number): boole
  * row. `key` re-arms it when the row remounts (the panel collapses and
  * reopens) — the ref object itself never changes identity.
  */
-function useClientLeft(ref: RefObject<HTMLElement | null>, key: unknown): number {
-  const [left, setLeft] = useState(0);
+function useClientLeft(ref: RefObject<HTMLElement | null>, key: unknown): { left: number; width: number } {
+  const [edge, setEdge] = useState({ left: 0, width: 0 });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const read = (): void => setLeft(el.getBoundingClientRect().left);
+    const read = (): void => {
+      const r = el.getBoundingClientRect();
+      // Same object when nothing moved: a ResizeObserver tick must not re-render the panel.
+      setEdge((prev) => (prev.left === r.left && prev.width === r.width ? prev : { left: r.left, width: r.width }));
+    };
     read();
     if (typeof ResizeObserver === 'undefined') {
       window.addEventListener('resize', read);
@@ -131,7 +135,7 @@ function useClientLeft(ref: RefObject<HTMLElement | null>, key: unknown): number
       window.removeEventListener('resize', read);
     };
   }, [ref, key]);
-  return left;
+  return edge;
 }
 
 const ROW_HEIGHT_LABEL: Record<number, string> = { 28: 'Compact', 36: 'Normal', 46: 'Tall' };
@@ -266,16 +270,20 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
    * so the seam between the buttons and the navigator is the seam between the
    * headers and the lanes. Dragging the header resizer moves both at once.
    */
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const { left: rowLeft, width: rowWidth } = useClientLeft(toolbarRef, isCollapsed);
+  // `rowWidth` is the panel's width, the same one `<Timeline>` measures below —
+  // so both cap the header identically (see `capHeaderToPanel`).
   const headerWidth = resolveTrackHeaderWidth(
     timelineProps.model.trackHeaderWidth,
     prefHeaderWidth,
     timelineColumns,
     extraColumns.length,
+    rowWidth,
   );
 
   // How many groups the left column has shed — see TIMELINE_TOOLBAR_DEMOTE_ORDER.
   // Measured on the COLUMN: its width is the header width, not the row's.
-  const toolbarRef = useRef<HTMLDivElement | null>(null);
   const toolsColRef = useRef<HTMLDivElement | null>(null);
   const toolbarLevel = useTransportDemote(toolsColRef, TIMELINE_TOOLBAR_DEMOTE_ORDER.length);
   const moreShed = isToolbarShed('more', toolbarLevel);
@@ -304,7 +312,6 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   // navigator COLUMN is placed over them from the same record.
   const lanes = useSyncExternalStore(subscribeTimelineViewport, getTimelineViewport, getTimelineViewport);
   const navViewport = lanes.width;
-  const rowLeft = useClientLeft(toolbarRef, isCollapsed);
   /**
    * Where the navigator sits: the lanes' span, from the ruler's time origin
    * to the visible clips' right edge. `null` while there is nothing to align

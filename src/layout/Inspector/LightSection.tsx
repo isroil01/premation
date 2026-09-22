@@ -98,6 +98,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [coneRaw, setCone] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightCone');
   const [fillRaw, setFill] = useNodeComponentProp(defaultSceneGraph, nodeId, sComp?.id, 'fill');
   const [shadowsRaw, setShadows] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'castShadows');
+  const [glowRaw, setGlow] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightGlow');
   const [featherRaw, setFeather] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightConeFeather');
   const [falloffRaw, setFalloff] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloff');
   const [falloffDistRaw, setFalloffDist] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloffDistance');
@@ -141,11 +142,12 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const angle = num(angleRaw, LIGHT_DEFAULTS.angle);
   const cone = num(coneRaw, LIGHT_DEFAULTS.cone);
   const feather = num(featherRaw, LIGHT_DEFAULTS.coneFeather);
-  const falloff = falloffRaw === 'smooth' || falloffRaw === 'inverse-square' ? falloffRaw : 'none';
+  const falloff = falloffRaw === 'smooth' || falloffRaw === 'inverse-square' || falloffRaw === 'legacy' ? falloffRaw : 'none';
   const falloffDistance = num(falloffDistRaw, LIGHT_DEFAULTS.falloffDistance);
   const darkness = num(darknessRaw, LIGHT_DEFAULTS.shadowDarkness);
   const diffusion = num(diffusionRaw, LIGHT_DEFAULTS.shadowDiffusion);
   const castsShadows = shadowsRaw === true || shadowsRaw === 1;
+  const hasGlow = glowRaw === true || glowRaw === 1;
   const shadowMap = shadowMapRaw === true || shadowMapRaw === 1;
   const mapSize = num(mapSizeRaw, LIGHT_DEFAULTS.shadowMapSize);
   const shadowBias = num(shadowBiasRaw, LIGHT_DEFAULTS.shadowBias);
@@ -197,9 +199,9 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
       setType(p.type);
       setIntensity(p.intensity);
       setFill(kelvinToHex(p.kelvin));
-      // `none` is the absence of a falloff prop, not a stored value — the same
-      // convention the Falloff menu below writes.
-      setFalloff(p.falloff === 'none' ? undefined : p.falloff);
+      // Stored explicitly, `none` included: an ABSENT falloff is what the
+      // 1.7.0 → 1.8.0 migration reads as the old radius ramp.
+      setFalloff(p.falloff);
       if (p.type === 'spot') {
         setCone(p.cone ?? LIGHT_DEFAULTS.cone);
         setFeather(p.coneFeather ?? LIGHT_DEFAULTS.coneFeather);
@@ -392,15 +394,16 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 className={styles.select}
                 style={{ width: 110 }}
                 value={falloff}
-                onChange={(e) => setFalloff(e.target.value === 'none' ? undefined : e.target.value)}
+                onChange={(e) => setFalloff(e.target.value)}
                 aria-label="Falloff"
               >
                 <option value="none">None</option>
                 <option value="smooth">Smooth</option>
                 <option value="inverse-square">Inverse Square Clamped</option>
+                <option value="legacy">Radius ramp (legacy)</option>
               </select>
             </div>
-            {falloff !== 'none' && (
+            {(falloff === 'smooth' || falloff === 'inverse-square') && (
               <KfRow
                 nodeId={nodeId}
                 prop="falloffDistance"
@@ -464,6 +467,16 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               </>
             )}
           </>
+        )}
+        {type !== 'environment' && (
+          <div className={styles.popoverRow}>
+            <span className={styles.popoverLabel}>Visible glow</span>
+            <Checkbox
+              checked={hasGlow}
+              onChange={() => setGlow(hasGlow ? false : true)}
+              title="Also draw a soft bloom over the frame. It brightens everything beneath it, 2D layers included — leave off for lighting that only affects 3D layers"
+            />
+          </div>
         )}
         {positional && (
           <div className={styles.popoverRow}>

@@ -104,7 +104,7 @@ describe('shadeLayer regression — the new knobs must not move old scenes', () 
 
   it('inverse-square falloff reaches PAST the radius, where the legacy ramp cut off', () => {
     const far = { x: 0, y: 0, z: -600 };
-    const legacy = light({ ...far, radius: 500 });
+    const legacy = light({ ...far, radius: 500, falloff: 'legacy' });
     const curved = light({ ...far, radius: 500, falloff: 'inverse-square' });
     // Legacy: beyond the radius ⇒ no contribution at all.
     expect(shadeLayer(normal, pos, [legacy])).toEqual([0, 0, 0]);

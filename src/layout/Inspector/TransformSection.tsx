@@ -217,6 +217,12 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   const isCamera = kind === 'camera';
   const isLight = kind === 'light';
   const hasDepth = isCamera || isLight || is3D;
+  // A camera or a light is a point in space, not artwork: the renderer reads
+  // its position (and a light's rotation, which aims it) and nothing else here.
+  // Scale, Size, Opacity, Anchor, Skew and Fill Opacity were all offered for
+  // them, all editable and keyframeable, and all did nothing — six dead rows
+  // above the Camera / Light settings that do the real work.
+  const isDevice = isCamera || isLight;
   const threeDEligible = kind !== 'group' && kind !== 'null' && canBe3D(node);
 
   const anyAnimated = (props: string[]): boolean => props.some((p) => defaultAnimation.isAnimated(nodeId, p));
@@ -345,14 +351,16 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
             trailing={unitToggle('position', 'Position', 'composition')}
           />
 
-          <MultiPropertyPairRow
-            nodeId={nodeId}
-            label="Scale"
-            props={[field('scaleX', 'W'), field('scaleY', 'H')]}
-            linked={{ value: linkedScale, onToggle: () => setLinkedScale((v) => !v), label: 'Scale dimensions' }}
-          />
+          {!isDevice && (
+            <MultiPropertyPairRow
+              nodeId={nodeId}
+              label="Scale"
+              props={[field('scaleX', 'W'), field('scaleY', 'H')]}
+              linked={{ value: linkedScale, onToggle: () => setLinkedScale((v) => !v), label: 'Scale dimensions' }}
+            />
+          )}
 
-          {hasSize && (
+          {hasSize && !isDevice && (
             <MultiPropertyPairRow
               nodeId={nodeId}
               label="Size"
@@ -362,9 +370,9 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
 
           {row('rotation')}
 
-          {sComp && row('opacity')}
+          {sComp && !isDevice && row('opacity')}
 
-          {!isCamera && (
+          {!isDevice && (
             <MultiPropertyPairRow
               nodeId={nodeId}
               label="Anchor"
@@ -375,7 +383,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
             />
           )}
 
-          <button
+          {!isDevice && (<button
             type="button"
             className={styles.moreToggle}
             aria-expanded={moreOpen}
@@ -383,8 +391,8 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
           >
             <Icon name={moreOpen ? 'chevron-down' : 'chevron-right'} size="sm" />
             More
-          </button>
-          {moreOpen && (
+          </button>)}
+          {moreOpen && !isDevice && (
             <div className={styles.moreBody}>
               {row('skew')}
               {row('skewAxis')}

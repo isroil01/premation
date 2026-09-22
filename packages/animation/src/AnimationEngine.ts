@@ -772,12 +772,16 @@ export class AnimationEngine {
   ): ExprContext {
     const track = this.tracks.get(nodeId)?.get(prop);
     const kfs = track?.keyframes ?? [];
+    // An un-keyframed property still HAS a value: the static one on the node
+    // (AE: `value` is the pre-expression value). Falling straight to 0 sent
+    // `value + wiggle` on a layer nobody had keyframed to the comp's corner.
+    const rest = (): number => this.baseValueProvider(nodeId, prop) ?? 0;
     return {
       time: t,
-      value: base ?? 0,
+      value: base ?? rest(),
       audio: this.audioLevel(t),
       ctrl: (name) => this.controlProvider(name, t),
-      selfAt: (tt) => (track ? sampleTrack(track, tt) : undefined) ?? 0,
+      selfAt: (tt) => (track ? sampleTrack(track, tt) : undefined) ?? rest(),
       selfSpan: kfs.length > 0 ? { start: kfs[0]!.t, end: kfs[kfs.length - 1]!.t } : null,
       layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
       comp: this.compInfoProvider(),

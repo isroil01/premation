@@ -32,6 +32,11 @@
   gap: 8px;
   padding-left: 10px;
   z-index: 1;
+  /* Shrinks LAST: `.center` has a zero basis, so the project chip gives up all
+     of its room before this is asked for any — and when it is, the menu bar
+     folds its trailing groups into "…" rather than being clipped. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 /* The brand mark supplies its own blue rounded-square, so this only handles
@@ -59,24 +64,52 @@
   white-space: nowrap;
 }
 
-/* The centre slot: ProjectStatus (name · dirty dot · saved-ago) sits under
-   the window's middle, absolutely placed so the left and right clusters
-   cannot push it off-centre. `.projectName` and `.dirtyDot` themselves moved
-   to ProjectStatus.module.css — the component draws them, both this bar and
-   the web TopNav mount it. Above the drag region so it is clickable. */
+/* The centre slot: ProjectStatus (name · dirty dot · saved-ago).
+
+   IN THE FLOW, between the two clusters, taking only what they leave. It used
+   to be absolutely placed at the window's middle with `max-width: 40%`, which
+   kept it optically centred and let it sit ON TOP of whatever was there: at a
+   1175px window "Untitled" covered Help, and a long name covered View, Window,
+   Plugins, Help and the panel toggles (elementFromPoint at Help's centre
+   returned the chip). Centred in the free space is a few pixels off the
+   window's axis; a menu you cannot click is not a trade worth making for it.
+
+   `.projectName` and `.dirtyDot` live in ProjectStatus.module.css — both this
+   bar and the web TopNav mount the component. */
 .center {
-  position: absolute;
-  left: 50%;
-  top: 0;
+  flex: 1 1 0;
+  min-width: 0;
   height: 100%;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  max-width: 40%;
-  min-width: 0;
+  padding: 0 8px;
+  box-sizing: border-box;
+  overflow: hidden;
   z-index: 1;
-  -webkit-app-region: no-drag;
+  /* The slot itself stays draggable — only the chip inside opts out — so the
+     empty title-bar space around the name still moves the window. */
+  container-type: inline-size;
+}
+
+/* No room for even a stub of the name: yield entirely rather than show a
+   one-letter chip. The name is still in the window title and the tab strip. */
+@container (max-width: 72px) {
+  .center > * {
+    display: none;
+  }
+}
+
+/* The Mac bar's title has no neighbours to collide with, so it keeps the true
+   window-centre placement every Mac window has. */
+.center.macTitle {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  max-width: 40%;
+  padding: 0;
+  container-type: normal;
 }
 
 .right {
@@ -84,6 +117,8 @@
   align-items: center;
   height: 100%;
   z-index: 1;
+  /* The controls are never the thing that gives way. */
+  flex: none;
   -webkit-app-region: no-drag;
 }
 
@@ -98,6 +133,7 @@
   width: 1px;
   height: 14px;
   margin: 0 6px;
+  flex: none;
   background: var(--color-divider);
 }
 
@@ -144,6 +180,8 @@
 .appMenuBarWrapper {
   display: flex;
   align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
   -webkit-app-region: no-drag;
 }
 

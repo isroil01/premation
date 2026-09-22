@@ -44,8 +44,22 @@ class StateSyncChannel {
     }
   }
 
+  /** A message from ANOTHER window has arrived — someone is listening. */
+  private peerSeen = false;
+
+  /**
+   * Whether any other window has ever spoken on this channel. The document
+   * publisher checks it before serialising the whole project: with no popout
+   * open, every scene edit still captured a full document (2,000 layers,
+   * every keyframe) just to broadcast it to nobody.
+   */
+  public hasPeers(): boolean {
+    return this.peerSeen;
+  }
+
   private dispatchMessage(msg: SyncMessage): void {
     if (msg.senderId === this.windowId) return; // ignore self-messages
+    this.peerSeen = true;
     const set = this.handlers.get(msg.type);
     if (set) {
       for (const handler of set) {

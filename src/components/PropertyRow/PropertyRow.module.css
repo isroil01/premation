@@ -277,10 +277,19 @@
    navigator cell is empty until a property is animated, so `auto` collapses it
    to nothing; the one-time sideways move when animation starts is the cheaper
    cost than numbers nobody can read. */
+/* THE LABEL GIVES WAY BEFORE THE NUMBERS DO. With a fixed 64px label, the
+   moment a property is animated the `auto` navigator column takes its 50px
+   straight out of the values cell — at the sidebar width a 1175px window
+   leaves, a Position pair dropped to ~40px a field and "1280.0" read "128".
+   A row may now declare the least its values need (`--prop-values-min`; the
+   pair row does); the label column then only grows toward its 64px out of
+   what is left AFTER that, so "Position" ellipsizes (its full name is the
+   cell's tooltip) while X and Y stay whole. Rows that declare nothing resolve
+   exactly as before: label 64px, values the rest. */
 .inspector {
   grid-template-columns:
-    var(--prop-label-col, 64px)
-    minmax(0, 1fr)
+    minmax(var(--prop-label-min, 40px), var(--prop-label-col, 78px))
+    minmax(var(--prop-values-min, 0px), 1fr)
     var(--prop-anim-col, auto);
   column-gap: var(--space-2);
   /* The field look for this layout, handed to ValueField through its custom
@@ -293,6 +302,14 @@
 .inspector .name {
   font-weight: var(--font-weight-regular);
   color: var(--color-text-secondary);
+}
+
+/* The always-visible stopwatch that leads the label. Narrower than the tray's
+   18px and never shrinking, so the label gives way, not the control. */
+.leadStopwatch {
+  flex: none;
+  width: 14px;
+  margin-left: -2px;
 }
 
 .inspector .values {
@@ -321,6 +338,15 @@
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
+}
+
+/* In the inspector the navigator keeps its OWN width. With `min-width: 0` its
+   `auto` grid column could be squeezed below the navigator's 50px — measured at
+   20px in a 228px panel — and, being right-aligned, the navigator then
+   overflowed LEFT: the keyframe diamond sat on top of the last field's digits
+   (a camera's Z read "-217◆"). The label and the fields give way instead. */
+.inspector .anim {
+  min-width: max-content;
 }
 
 /* The tray is always "on"; its CHILDREN are what hover reveals. `display`

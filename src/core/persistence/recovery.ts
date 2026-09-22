@@ -14,7 +14,7 @@
  * `recoveryStore.ts`: one new body plus a small index per write.
  */
 
-import { getSettingsManager } from '@core/services/coreServices';
+import { getProjectManager, getSettingsManager } from '@core/services/coreServices';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { baselineHistory } from '@stores/historyStore';
 import { type AnimSnapshot } from '@motion/animation';
@@ -48,20 +48,55 @@ export interface RecoverySnapshot {
   doc?: EditorDocument;
   scene: ProjectFile;
   anim: AnimSnapshot;
+  /**
+   * The desktop project the document belonged to, so a restore can bind it
+   * back to its file and Save writes where it came from. Absent for a cloud
+   * project (the route id is its identity) and for a scratch scene.
+   */
+  project?: { name: string; path: string | null };
 }
 
 /**
- * The editor's project id, read from the route.
+ * Identity for a document with no project at all ("Continue without a
+ * project"). Stable, so every tick of one scratch session lands in the same
+ * ring slot instead of looking like a new project each time.
+ */
+export const SCRATCH_PROJECT_ID = 'scratch';
+
+/**
+ * The cloud project id, read from the route.
  *
  * The app uses a HashRouter, so the route lives in `location.hash` — reading
  * `location.pathname` yielded `/` in dev and the index.html path under
  * Electron's file://, so this never matched and the entire recovery subsystem
  * was inert.
  */
-function currentProjectId(): string | undefined {
+function routeProjectId(): string | undefined {
   if (typeof window === 'undefined') return undefined;
   const from = (s: string): string | undefined => s.match(/\/editor\/([^/?#]+)/)?.[1];
-  return from(window.location.hash) ?? from(window.location.pathname);
+  const id = from(window.location.hash) ?? from(window.location.pathname);
+  return id && id.trim() !== '' ? id : undefined;
+}
+
+/**
+ * Who the document belongs to.
+ *
+ * Only the cloud route carries an id. The desktop editor runs on plain
+ * `/editor` with its project held by the ProjectManager, so keying on the
+ * route alone meant a desktop project — new, opened or saved — never produced
+ * a single snapshot: the one edition that most needs crash recovery had none.
+ */
+function currentIdentity(): Pick<RecoverySnapshot, 'projectId' | 'project'> {
+  const routeId = routeProjectId();
+  if (routeId) return { projectId: routeId };
+  let current: { id: string; name: string; path: string | null } | null = null;
+  try {
+    current = getProjectManager().getState().current;
+  } catch {
+    /* services not booted — no project yet, so this is a scratch scene */
+  }
+  if (current) return { projectId: current.id, project: { name: current.name, path: current.path } };
+  return { projectId: SCRATCH_PROJECT_ID };
 }
 
 /**
@@ -76,11 +111,9 @@ function currentProjectId(): string | undefined {
  * before any later edit can reach the few store values it shares.
  */
 export function captureRecovery(time: number): RecoverySnapshot | null {
-  const projectId = currentProjectId();
-  if (!projectId || projectId.trim() === '') return null;
   const doc = captureDocument();
   return {
-    projectId,
+    ...currentIdentity(),
     savedAt: 0, // stamped at persist time (Date.now lives at the call site)
     time,
     doc,
@@ -500,6 +533,15 @@ export function restoreRecovery(snap: RecoverySnapshot): number {
       scene: structuredClone(snap.scene),
       animation: snap.anim,
     });
+  }
+  // A desktop project goes back to its file, so Save doesn't ask where to
+  // write a document that already has a home (or a name, if it was new).
+  if (snap.project) {
+    try {
+      getProjectManager().resume(snap.project.name, snap.project.path);
+    } catch {
+      /* services not booted — the document is restored, only unbound */
+    }
   }
   // Recovering IS a load: undo must not be able to step behind it into the
   // seeded starter scene captured at boot.

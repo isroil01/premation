@@ -17,6 +17,7 @@ import { readNodeMaskAt, getNodeMask } from '@core/effects/mask';
 import { readGeometry } from '@core/workspace/geometry';
 import type { SceneNode } from '@core/types';
 import { propagateFillBidirectional } from './contentAwareFill';
+import { fetchAssetSrc } from '@core/rendering/localBlobSource';
 
 export interface ContentAwareFillFrame {
   t: number;
@@ -112,7 +113,7 @@ export async function runContentAwareFill(req: ContentAwareFillRequest): Promise
   const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
   if (!asset?.src) throw new Error('No video source.');
 
-  const buf = await (await fetch(asset.src)).arrayBuffer();
+  const buf = await (await fetchAssetSrc(asset.src)).arrayBuffer();
   const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
   const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
   const source = new ExactVideoSource(demuxed);

@@ -2,7 +2,7 @@ import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { IconButton } from '@components/IconButton';
 import { Dropdown } from '@components/Dropdown';
-import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { buildWorkspaceItems } from '@layout/Workspace/workspaceMenuItems';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';

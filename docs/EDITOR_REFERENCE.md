@@ -492,7 +492,7 @@ Lottie exporter now emits for these layers). Old baked polygons are plain
 the chain now: `shapeOutline` threads the layer's per-corner radii into the
 seed outline as flattened arcs at the chain's own adaptive density.
 
-**Knife tool** (`K`, `KnifeTool` in `packages/workspace/src/tools/builtin.ts`,
+**Knife tool** (`Shift+K`, `KnifeTool` in `packages/workspace/src/tools/builtin.ts`,
 cutting through `core/geometry/pathCut.ts`): drag a
 line across the canvas and every targeted shape path is cut EXACTLY along it,
 cubic segments included, with closed shapes capped into islands. The tool's own

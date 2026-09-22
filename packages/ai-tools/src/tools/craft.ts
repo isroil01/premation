@@ -260,6 +260,8 @@ export const createGradientDef: AiToolDef = {
   kind: 'write',
   description:
     'Create a full-frame gradient backdrop from 2–4 colour stops and return the layer id. ' +
+    'It is placed at the BOTTOM of the layer stack, behind everything already there, so it is ' +
+    'safe to call at any point in a build. ' +
     'Pass stops that were computed in OKLCH — interpolating in sRGB is what produces the grey ' +
     'dead-zone in the middle of every amateur gradient, so supply the midpoint colour explicitly ' +
     'rather than letting two endpoints be blended naively. ' +
@@ -276,8 +278,22 @@ export const createGradientDef: AiToolDef = {
         maxItems: 4,
         items: { type: 'string', description: 'Hex colour, in order from start to end.' },
       },
-      kind: { type: 'string', enum: ['linear', 'radial', 'corners'], default: 'linear' },
+      kind: {
+        type: 'string',
+        enum: ['linear', 'radial', 'corners'],
+        default: 'linear',
+        description: 'linear = along `angle`. radial = first stop at the centre, last at the edge. corners = exactly 4 stops, one per corner (TL, TR, BL, BR).',
+      },
       angle: { type: 'number', description: 'Degrees, for kind=linear. 90 = top to bottom.' },
+      centerX: { type: 'number', minimum: -100, maximum: 200, default: 50, description: 'kind=radial: centre X as a percent of the frame width. 50 = middle.' },
+      centerY: { type: 'number', minimum: -100, maximum: 200, default: 50, description: 'kind=radial: centre Y as a percent of the frame height. 50 = middle.' },
+      radius: { type: 'number', minimum: 1, maximum: 400, default: 100, description: 'kind=radial: where the LAST stop lands, as a percent of the frame half-diagonal. 100 = exactly reaches the corners from a centred gradient; 50 = a tight spotlight.' },
+      placement: {
+        type: 'string',
+        enum: ['bottom', 'top'],
+        default: 'bottom',
+        description: 'Where in the layer stack. bottom (default) = behind every existing layer, which is what a backdrop is. top = over everything — it will COVER the scene unless you lower its opacity or blend it.',
+      },
       name: { type: 'string', default: 'Gradient' },
     },
   },
@@ -396,13 +412,24 @@ export const addRadialBurstDef: AiToolDef = {
 export const addPathMorphDef: AiToolDef = {
   name: 'add_path_morph',
   kind: 'compose',
-  description: 'Create a fluid organic morphing shape via a pucker/bloat or zigzag path distortion.',
+  description:
+    'Morph a shape\'s outline: animates a pucker/bloat or zigzag path distortion from fromAmount to ' +
+    'amount. Pass nodeId to morph an EXISTING shape layer in place (nothing is created, its fill and ' +
+    'position stay as they are). Omit nodeId and a new star is created at x/y with `fill`.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
     properties: {
+      nodeId: { type: 'string', description: 'The shape layer to morph. Omit to create a new one. Must be a shape layer — text, image, SVG and group layers have no path.' },
       op: { type: 'string', enum: ['puckerBloat', 'zigzag'], description: 'Distortion operator.' },
-      amount: { type: 'number', description: 'Distortion intensity.' },
+      amount: { type: 'number', description: 'Distortion at the END of the morph. puckerBloat: percent, negative puckers and positive bloats. zigzag: amplitude in px. Default 35.' },
+      fromAmount: { type: 'number', default: 0, description: 'Distortion at the START. 0 = the undistorted shape.' },
+      startSec: { type: 'number', minimum: 0, description: 'When the morph starts, composition seconds. Default 0 for an existing layer.' },
+      durationSec: { type: 'number', minimum: 0.1, default: 1.2, description: 'Length of one morph pass.' },
+      pingPong: { type: 'boolean', default: false, description: 'Morph back to fromAmount afterwards (takes a second durationSec).' },
+      fill: { type: 'string', description: 'Only when creating: hex fill for the new shape. Defaults to the style accent.' },
+      x: { type: 'number', description: 'Only when creating: centre X. Defaults to comp centre.' },
+      y: { type: 'number', description: 'Only when creating: centre Y. Defaults to comp centre.' },
       style: { type: 'string', description: 'Motion style name.' },
     },
   },

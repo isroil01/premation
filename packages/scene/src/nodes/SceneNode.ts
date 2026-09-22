@@ -30,11 +30,26 @@ export interface SceneNodeOptions {
   updatedAt?: Timestamp;
 }
 
+/** Globally unique, monotonic — see `SceneNode.mutationSeq`. */
+let nextMutationSeq = 0;
+
 export class SceneNode {
   readonly id: NodeId;
   readonly type: string;
   readonly createdAt: Timestamp;
   updatedAt: Timestamp;
+  /**
+   * Changes on every mutation of THIS node's own state: a field set, a
+   * component added or removed, a data-component property written. Drawn
+   * from one global counter, so no two (node, state) pairs ever share a
+   * value — a node rebuilt by a document restore starts on a fresh number
+   * rather than 0, which is what lets a cache keyed by id trust it.
+   *
+   * Structure is NOT covered: parent and child links are `custom` fields
+   * written directly (see the app graph), so a reader that cares about
+   * those must compare them itself.
+   */
+  mutationSeq = ++nextMutationSeq;
 
   parent: SceneNode | null = null;
   readonly children: SceneNode[] = [];
@@ -111,13 +126,22 @@ export class SceneNode {
    */
   touch(changed: string): void {
     this.updatedAt = Date.now();
+    this.mutationSeq = ++nextMutationSeq;
     bumpSceneMutationEpoch();
     this.onChange?.(this, changed);
+  }
+
+  /** A component wrote a property without going through `touch`. */
+  noteMutation(): void {
+    this.mutationSeq = ++nextMutationSeq;
   }
 
   // ── Components ──────────────────────────────────────────────────
   addComponent(component: Component): this {
     this.components.set(component.type, component);
+    // A data component reports its writes back here (see DataComponent.set).
+    const owned = component as { owner?: SceneNode | null };
+    if ('owner' in owned) owned.owner = this;
     this.touch(`component:${component.type}`);
     return this;
   }
