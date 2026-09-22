@@ -12,6 +12,7 @@ import {
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile, stat } from 'node:fs/promises';
+import { writeFileAtomic } from './atomicWrite';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat } from './ffmpegEncodeArgs';
@@ -266,12 +267,15 @@ function registerFileIpc(): void {
     }
   });
 
+  // The project file itself comes through these two (localProjectIO,
+  // FileManager). Temp-then-rename: a crash or a full disk mid-save leaves
+  // the previous version, never a truncated one (electron/atomicWrite.ts).
   handle('file:write', async (_event, filePath: string, contents: string) => {
-    await writeFile(filePath, contents, 'utf8');
+    await writeFileAtomic(filePath, contents);
   });
 
   handle('file:writeBytes', async (_event, filePath: string, bytes: Uint8Array) => {
-    await writeFile(filePath, Buffer.from(bytes));
+    await writeFileAtomic(filePath, Buffer.from(bytes));
   });
 
   handle('file:readBytes', async (_event, filePath: string) => {
@@ -343,10 +347,7 @@ function registerBundleIpc(): void {
   handle('bundle:writeAtomic', async (_event, root: string, name: string, contents: string) => {
     const target = contained(root, name);
     if (!target) throw new Error('bundle:writeAtomic path escapes bundle root');
-    await mkdir(path.dirname(target), { recursive: true });
-    const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(tmp, contents, 'utf8');
-    await rename(tmp, target); // atomic on the same filesystem
+    await writeFileAtomic(target, contents, { mkdirp: true });
   });
 
   handle('bundle:remove', async (_event, root: string, name: string) => {
@@ -411,10 +412,7 @@ function registerBlobIpc(): void {
   handle('blob:write', async (_event, root: string, hash: string, bytes: Uint8Array) => {
     const target = blobPath(root, hash);
     if (!target) throw new Error('blob:write invalid hash');
-    await mkdir(path.dirname(target), { recursive: true });
-    const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(tmp, Buffer.from(bytes));
-    await rename(tmp, target);
+    await writeFileAtomic(target, Buffer.from(bytes), { mkdirp: true });
   });
 
   handle('blob:remove', async (_event, root: string, hash: string) => {
