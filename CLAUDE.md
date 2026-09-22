@@ -8,11 +8,16 @@ settled and are not re-opened in a code change.
 
 **Electron/React is the UI only. The engine is a C++ process**
 (`premation-engine`, supervised by Electron main): evaluation, render graph,
-GPU via Dawn, decode, text/vector, effects, plugins, export. The migration is
-the "Native engine track" (E0–E10) in `docs/NATIVE_CORE_PLAN.md`. Until each
-step flips, the TypeScript engine below is the reference and the fallback —
-new engine features must be designed so they can move into the C++ engine,
-and must not deepen the UI's hold on engine state.
+GPU via Dawn, float colour + OCIO, decode, audio, text/vector, effects,
+plugins, export. The migration is phases A–G in `docs/NATIVE_CORE_PLAN.md`.
+Until each step flips, the TypeScript engine below is the reference and the
+fallback.
+
+- **UI changes to the document go through the engine API** (plan §2): commands
+  with inverses, queries, change events. New UI code must not write the scene
+  graph or animation stores directly — phase B makes this lint-enforced.
+- New engine features are designed so they can move into the C++ engine, and
+  must not deepen the UI's hold on engine state.
 
 ## Layering today (lint-enforced, see eslint.config.js)
 
