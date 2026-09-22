@@ -56,6 +56,12 @@ import { getEventBus } from '@core/events/EventBus';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
 import { useHistoryStore, type HistoryStore } from '@stores/historyStore';
+import { unifiedHistoryEnabled } from '@core/config/flags';
+import {
+  registerClipGeometryProvider,
+  type ClipGeometry,
+  type ClipsByComp,
+} from '@core/commands/snapshotSharing';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import type { Command as TimelineCommand } from '@motion/timeline';
 
@@ -111,13 +117,10 @@ export interface TimelineMarkerView {
   duration: number;
 }
 
-/** A clip bar's geometry in FRAMES — `Clip.toJSON()`, named for readers. */
-export interface ClipGeometry {
-  start: number;
-  duration: number;
-  sourceIn: number;
-  sourceDuration: number | null;
-}
+/** A clip bar's geometry in FRAMES — `Clip.toJSON()`, named for readers.
+ *  Declared beside the snapshot that carries it; re-exported here for the
+ *  transition commands that already import it from this module. */
+export type { ClipGeometry } from '@core/commands/snapshotSharing';
 
 /** One bar of one node, addressed the way `captureClipBars` documents. */
 export interface ClipBarSnapshot {
@@ -174,6 +177,28 @@ function historyStore(): Pick<HistoryStore, 'flush' | 'runRestoring'> | null {
   }
 }
 
+/**
+ * The id a NEW bar for `nodeId` should be created with, or undefined to let
+ * the engine mint one (`uid('layer')`).
+ *
+ * Under the unified history (NATIVE_CORE_PLAN §4 T1) a bar's id derives from
+ * its scene node — `clip:<nodeId>` — so a snapshot that carries clip geometry
+ * can address the bar it belongs to across a restore, instead of every bar
+ * being re-minted and every captured id going stale. A legacy document may
+ * already hold several bars on one node (a pre-T1 split), so a taken id gets
+ * the smallest free `:<n>` suffix. Bars that already exist are never renamed:
+ * documents persist ids through `Layer.toJSON`/`fromJSON`.
+ */
+function seedBarId(timeline: Timeline, nodeId: string): string | undefined {
+  if (!unifiedHistoryEnabled()) return undefined;
+  const base = `clip:${nodeId}`;
+  if (!timeline.getLayer(base)) return base;
+  for (let n = 1; ; n += 1) {
+    const candidate = `${base}:${n}`;
+    if (!timeline.getLayer(candidate)) return candidate;
+  }
+}
+
 /** Shared empty result for nodes without clips — never mutated by callers. */
 const EMPTY_LAYERS: Layer[] = [];
 
@@ -219,6 +244,22 @@ export class TimelineController {
       frameRate: frameRate(compSettings.fps),
       duration: Math.max(1, Math.round(compSettings.durationSeconds * compSettings.fps)),
       historyOptions: {
+        // Commit whatever scene edit is mid-debounce BEFORE the engine command
+        // mutates anything. The push emits `UndoStackChanged`, whose baseline
+        // sync re-captures `lastState` — so a pending 700 ms scene capture that
+        // had not fired yet compared equal afterwards and was silently dropped:
+        // move a layer, then trim its bar within the window, and the move never
+        // reached the undo stack (T1 design note S2). Flushing gives it its own
+        // entry, in order, ahead of this one — and flushing before `do()`
+        // (not in `onPush`, which runs after) keeps this command's change out
+        // of that entry once snapshots carry clip geometry.
+        onBeforeRun: () => {
+          try {
+            historyStore()?.flush();
+          } catch {
+            // Store not attached (headless tests).
+          }
+        },
         onPush: (cmd) => {
           try {
             getCommandSystem().getHistory().push(new TimelineCommandAdapter(cmd));
@@ -577,6 +618,7 @@ export class TimelineController {
         }
         for (const l of moving) {
           const added = to.addLayer(toTrackId, {
+            id: l.sourceId ? seedBarId(to, l.sourceId) : undefined,
             name: l.name,
             sourceId: l.sourceId,
             enabled: l.enabled,
@@ -999,17 +1041,23 @@ export class TimelineController {
 
   /** Put a {@link captureClipBars} snapshot back, as one engine history entry. */
   restoreClipBars(snapshot: ReadonlyArray<ClipBarSnapshot>): boolean {
-    const targets: Array<{ layer: Layer; next: ClipGeometry; prev: ClipGeometry }> = [];
+    const targets: Array<{ timeline: Timeline; id: string; next: ClipGeometry; prev: ClipGeometry }> = [];
     for (const entry of snapshot) {
       const layer = this.getLayersForNode(entry.nodeId)[entry.index];
-      if (!layer) continue;
-      targets.push({ layer, next: { ...entry.clip }, prev: layer.clip.toJSON() });
+      const timeline = this.registryForNode(entry.nodeId)?.timeline;
+      if (!layer || !timeline) continue;
+      targets.push({ timeline, id: layer.id, next: { ...entry.clip }, prev: layer.clip.toJSON() });
     }
     if (targets.length === 0) return false;
     const set = (pick: 'next' | 'prev'): void => {
       for (const t of targets) {
-        t.layer.clip = Clip.fromJSON(t[pick]);
-        this.timeline.events.emit('LayerUpdated', { layer: t.layer, changed: 'clip' });
+        // Resolved by id at run time, never through a held `Layer`: undoing a
+        // remove re-attaches a FRESH object (Timeline.restoreLayer), so a
+        // closure that kept the old one would write to a detached bar.
+        const live = t.timeline.getLayer(t.id);
+        if (!live) continue;
+        live.clip = Clip.fromJSON(t[pick]);
+        t.timeline.events.emit('LayerUpdated', { layer: live, changed: 'clip' });
       }
       this.invalidateLayerIndex();
     };
@@ -1143,6 +1191,10 @@ export class TimelineController {
         if (!target) return;
         if (sourceNodeId && rightNodeId) cloneLayerNode(sourceNodeId, rightNodeId);
         timeline.history.silently(() => {
+          // TODO(T1 step 2): once `splitLayer` takes `{ rightId }`, pass
+          // `seedBarId(timeline, rightNodeId)` so the right half is
+          // `clip:<rightNodeId>` under the unified history like every other
+          // seeded bar, instead of an engine-minted `layer-…`.
           const right = timeline.splitLayer(target.id, frame, rightNodeId ?? undefined);
           rightLayerId = right?.id ?? null;
         });
@@ -2011,6 +2063,7 @@ export class TimelineController {
           // layers (shapes/text/images) stay unbounded (null).
           const sourceFrames = mediaSourceFrames(node, timeline.getFrameRate().fps);
           timeline.addLayer(trackId, {
+            id: seedBarId(timeline, nodeId),
             name: node.name ?? nodeId,
             sourceId: nodeId,
             enabled: node.visible !== false,
@@ -2035,6 +2088,125 @@ export class TimelineController {
       this.invalidateLayerIndex();
     }
   }
+
+  // ── Snapshot half (unified history, NATIVE_CORE_PLAN §4 T1) ──────
+  /**
+   * Every registered composition's bars as plain geometry, keyed by comp and
+   * node, each node's bars in start order — the timeline half of a history
+   * snapshot (`snapshotSharing.captureSharedState`). Fresh objects every call;
+   * the snapshot layer decides what to share. Reads the registries directly:
+   * the `timeline` getter would build (and sync) the active comp's timeline as
+   * a side effect of a capture.
+   */
+  captureClipGeometry(): ClipsByComp {
+    const out: ClipsByComp = {};
+    for (const [compId, timeline] of this.registries) {
+      const trackId = this.compositionTrackIds.get(compId);
+      const track = trackId ? timeline.getTrack(trackId) : undefined;
+      const byNode: Record<string, ClipGeometry[]> = {};
+      if (track) {
+        for (const layer of track.layers) {
+          if (!layer.sourceId) continue;
+          const bars = byNode[layer.sourceId];
+          if (bars) bars.push(layer.clip.toJSON());
+          else byNode[layer.sourceId] = [layer.clip.toJSON()];
+        }
+        for (const bars of Object.values(byNode)) {
+          if (bars.length > 1) bars.sort((a, b) => a.start - b.start);
+        }
+      }
+      out[compId] = byNode;
+    }
+    return out;
+  }
+
+  /**
+   * Make the live timelines match a snapshot's clip geometry. Called by the
+   * snapshot restore AFTER the scene and animation are back, inside its scene
+   * batch; the restore itself is the undo entry, so nothing here is recorded.
+   *
+   *   1. Membership: `syncFromScene` for EVERY registered composition, so a
+   *      restored node has a bar and a removed node's bar is gone — the
+   *      `SceneGraphChanged` subscriber only syncs the active comp, which left
+   *      an undo across a Pre-compose incoherent in the other timeline.
+   *   2. Geometry, per comp and node, matched to the live bars by index in
+   *      start order: a bar is written only when its geometry differs (no
+   *      `LayerUpdated` storm), bars beyond the snapshot's count are removed,
+   *      and missing ones are seeded with `seedBarId` — but only for a node
+   *      the restored scene holds; a stray entry for a node that no longer
+   *      exists creates nothing.
+   *
+   * A comp the snapshot names but no timeline knows is built on first touch
+   * (`timelineForComp`, which syncs it), so its geometry is not lost to a
+   * later lazy seed. A comp the snapshot does not name is left alone.
+   */
+  applyClipGeometry(clips: ClipsByComp): void {
+    const wasReconciling = this.reconciling;
+    this.reconciling = true;
+    try {
+      for (const compId of Array.from(this.registries.keys())) this.syncFromScene(compId);
+
+      for (const [compId, byNode] of Object.entries(clips)) {
+        if (!byNode || typeof byNode !== 'object') continue;
+        const reg = this.timelineForComp(compId);
+        if (!reg) continue;
+        const { timeline, trackId } = reg;
+        const track = timeline.getTrack(trackId);
+        if (!track) continue;
+
+        const live = new Map<string, Layer[]>();
+        for (const layer of track.layers) {
+          if (!layer.sourceId) continue;
+          const arr = live.get(layer.sourceId);
+          if (arr) arr.push(layer);
+          else live.set(layer.sourceId, [layer]);
+        }
+
+        let structural = false;
+        timeline.history.silently(() => {
+          for (const [nodeId, want] of Object.entries(byNode)) {
+            if (!Array.isArray(want)) continue;
+            const have = [...(live.get(nodeId) ?? [])].sort((a, b) => a.start - b.start);
+            const shared = Math.min(have.length, want.length);
+            for (let i = 0; i < shared; i++) {
+              const bar = have[i]!;
+              const g = want[i]!;
+              if (
+                bar.clip.start === g.start &&
+                bar.clip.duration === g.duration &&
+                bar.clip.sourceIn === g.sourceIn &&
+                bar.clip.sourceDuration === g.sourceDuration
+              ) continue;
+              bar.clip = Clip.fromJSON(g);
+              timeline.events.emit('LayerUpdated', { layer: bar, changed: 'clip' });
+            }
+            for (let i = want.length; i < have.length; i++) {
+              timeline.removeLayer(have[i]!.id);
+              structural = true;
+            }
+            if (want.length > have.length) {
+              const node = defaultSceneGraph.getNode(nodeId);
+              if (!node) continue;
+              for (let i = have.length; i < want.length; i++) {
+                timeline.addLayer(trackId, {
+                  id: seedBarId(timeline, nodeId),
+                  name: node.name ?? nodeId,
+                  sourceId: nodeId,
+                  enabled: node.visible !== false,
+                  locked: node.locked === true,
+                  clip: want[i],
+                });
+                structural = true;
+              }
+            }
+          }
+        });
+        if (structural) this.invalidateLayerIndex();
+      }
+    } finally {
+      this.reconciling = wasReconciling;
+    }
+  }
 }
 
 let singleton: TimelineController | null = null;
@@ -2050,6 +2222,15 @@ export function getTimelineController(): TimelineController {
   }
   return singleton;
 }
+
+// The timeline half of every history snapshot (see `snapshotSharing.ts`).
+// Registered from here rather than imported there: this module already
+// imports the history store, which imports the snapshot module — the cycle
+// would resolve to `undefined` at load under the CJS transform.
+registerClipGeometryProvider({
+  capture: () => getTimelineController().captureClipGeometry(),
+  apply: (clips) => getTimelineController().applyClipGeometry(clips),
+});
 
 // ── Canonical keyframe time axis ──────────────────────────────────
 //

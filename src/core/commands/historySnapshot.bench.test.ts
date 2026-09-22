@@ -34,6 +34,10 @@ import { captureRecovery, configureRecoveryForTests } from '@core/persistence/re
 import { RecoverySerializer } from '@core/persistence/recoverySerializer';
 import { appendRecoverySnapshot, type RecoveryKV } from '@core/persistence/recoveryStore';
 import type { SceneNode } from '@core/types';
+import { setUnifiedHistory } from '@core/config/flags';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { useProjectStore } from '@stores/projectStore';
+import { recordBench } from '@core/perf/bench/benchRecord';
 
 const LAYERS = 2000;
 // The pre-sharing history ran a 4 GB heap out of memory before 500 entries on
@@ -116,6 +120,22 @@ function buildDocument(): void {
     defaultAnimation.setKeyframes(`L${i}`, 'x', Array.from({ length: 6 }, (_, k) => ({ t: k, value: k * 10 + i, easing: 'bezier', bezier: [0.3, 0, 0.7, 1] })) as never);
     defaultAnimation.setKeyframes(`L${i}`, 'opacity', Array.from({ length: 4 }, (_, k) => ({ t: k, value: 100 - k * 20 })) as never);
   }
+  // T1: every snapshot carries clip geometry, so the document needs its bars.
+  // Register the comp the way the app does and let the timeline mirror seed
+  // one bar per layer — 2000 bars in the capture, the realistic worst case.
+  // `BENCH_UNIFIED=0` measures the legacy path (no clips) for comparison.
+  setUnifiedHistory(process.env.BENCH_UNIFIED !== '0');
+  const proj = useProjectStore.getState();
+  proj.actions.resetTabs();
+  proj.actions.replaceComps({
+    comp_root: {
+      id: 'comp_root', name: 'Composition 1', width: 1920, height: 1080, fps: 30,
+      durationSeconds: 10, background: '#101014', transparent: false, startFrame: 0,
+    },
+  });
+  proj.actions.setActiveTab(proj.actions.openTab('comp_root', ['comp_root'], 'Composition 1'));
+  getTimelineController().reset();
+  getTimelineController().syncFromScene();
 }
 
 function write(result: unknown): void {
@@ -249,6 +269,16 @@ describe('history + autosave on a 2000-layer document', () => {
         settingsPayloadMB: +(settingsBytes / 1e6).toFixed(3),
       },
     });
+    // The ratchet (scripts/bench-check.mjs) reads these; the JSON above is the
+    // detailed report. p50 rather than min: a record is one sample per edit,
+    // and the interesting regression is the typical entry, not the best one.
+    const bars = getTimelineController().getLayersForNode('L0').length;
+    expect(bars).toBe(1);
+    recordBench([
+      { name: 'history/record-2000-with-clips', metric: 'record.p50', unit: 'ms', value: stats(recordMs).p50, samples: recordMs.length },
+      { name: 'history/record-2000-with-clips', metric: 'undo.p50', unit: 'ms', value: stats(undoMs).p50, samples: undoMs.length },
+      { name: 'history/record-2000-with-clips', metric: 'retainedMBPer500', unit: 'count', value: +(((heap1 - heap0) / ENTRIES) * 500).toFixed(1), samples: 0 },
+    ]);
     expect(entries).toBeGreaterThan(ENTRIES * 0.8);
   });
 });

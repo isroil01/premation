@@ -46,12 +46,12 @@
  * suspended, then push ONE composite. See `commitBake`.
  */
 
-import { defaultAnimation, type AnimSnapshot, type Keyframe } from '@motion/animation';
+import { defaultAnimation, type Keyframe } from '@motion/animation';
 import { smoothTrackKeyframes } from '@core/animation/keyframeAssistants';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { StoreSnapshotCommand, useHistoryStore, type HistoryStore } from '@stores/historyStore';
 import type { HistoryService } from '@core/commands/HistoryService';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
+import { captureSharedState, type DocState } from '@core/commands/snapshotSharing';
 import { bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition } from '@core/scene/sceneDerive';
@@ -78,7 +78,7 @@ import {
 } from '@core/particles/particleSim';
 import { particlesFromSoA } from '@core/particles/statefulParticleSim';
 import { statefulParticleCache } from '@core/particles/statefulParticleCache';
-import type { ProjectFile, SceneNode } from '@core/types';
+import type { SceneNode } from '@core/types';
 
 // ── Shared range / track plumbing ─────────────────────────────────────
 
@@ -152,11 +152,6 @@ export function finishBakedTrack(
 
 // ── The one-undo-entry commit ─────────────────────────────────────────
 
-interface DocState {
-  scene: ProjectFile;
-  anim: AnimSnapshot;
-}
-
 /** Both history mechanisms, or null in a headless context (tests, workers). */
 function historyPair(): {
   history: HistoryService | null;
@@ -177,12 +172,13 @@ function historyPair(): {
   return { history, store };
 }
 
+/**
+ * Scene + animation (+ clip geometry under the unified history), structurally
+ * shared with every other history snapshot.
+ */
 function captureDoc(): DocState | null {
   try {
-    return {
-      scene: structuredClone(sceneProjectIO.capture()),
-      anim: defaultAnimation.snapshot(),
-    };
+    return captureSharedState();
   } catch {
     // A document that cannot be captured is a document the bake cannot make
     // undoable — the mutation still happens, which is the honest trade: losing

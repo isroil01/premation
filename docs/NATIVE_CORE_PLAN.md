@@ -6,7 +6,30 @@
 > document it came from so a later reader can re-measure and disagree with
 > evidence.
 >
-> **Status (2026-09-22): T0 landed on `native-core`, everything else is plan.**
+> **Status (2026-09-22): T0 and T1 landed on `native-core`, everything else is plan.**
+> T1 delivered: every persisted file is temp-then-rename (`electron/atomicWrite.ts`);
+> WebGPU device-loss recovery and desktop recovery snapshots were already in
+> (`c47c2053`, with `gpuLossRecovery.test.ts` / `recoveryIdentity.test.ts`);
+> and ONE undo history behind `unifiedHistoryEnabled()` (default on,
+> `VITE_UNIFIED_HISTORY=0` is the one-release escape hatch): engine commands
+> resolve their layer by id at do/undo time, the timeline history has an
+> `onBeforeRun` hook that flushes the pending debounced scene capture BEFORE an
+> engine command mutates, bar ids derive from their node (`clip:<nodeId>`), and
+> every snapshot carries clip geometry for every comp — restored inside one
+> scene batch with only differing bars rewritten. The three incoherence cases
+> the design study found are pinned in `src/core/timeline/unifiedHistory.test.ts`
+> (flag-off `test.failing`, flag-on gate). Cost on the 2000-layer bench
+> (`history/record-2000-with-clips`): record p50 126 → 148 ms, undo p50 451 →
+> 516 ms; both are T3's problem (per-node revision keys), not T1's.
+> Deviation from the plan text: the 700 ms debounce stays — removing it needs
+> gesture-boundary signals at every drag site and is orthogonal to coherence.
+> Known small leak: undoing a Pre-compose leaves the deleted precomp's timeline
+> in the registry (`TimelineController.restore` merges, never prunes).
+> Bench lesson from T1's gate: `bench:check` reported 13–16 "regressions" in
+> scenarios T1 never touches; a bisect with every T1 change reverted showed
+> the same numbers, so the earlier baseline was an unusually fast machine
+> state. Local tolerance is now 15 % (was 10) and the baseline was retaken;
+> a failing check is rerun before it is bisected.
 > T0 delivered: the two lint boundaries (`eslint.config.js`, with 7
 > `TODO(T0)` allow-listed `src/core` files that need a dialog/icon port
 > injected rather than a move), 10 hook/store/component relocations out of

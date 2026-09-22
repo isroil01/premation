@@ -44,3 +44,27 @@ export function casterEnabled(): boolean {
 export function setCasterEnabled(on: boolean): void {
   caster = on;
 }
+
+/**
+ * Unified undo history (NATIVE_CORE_PLAN §4 T1).
+ *
+ * ON: every scene/animation snapshot also carries clip geometry, timeline bar
+ * ids derive from their scene node (`clip:<nodeId>`), and a pending debounced
+ * scene capture is flushed before an engine command is pushed — so an undo
+ * never leaves the scene and the timeline disagreeing.
+ * OFF: the pre-T1 behaviour (bars re-minted on restore, geometry not in the
+ * snapshot), kept as the escape hatch for one release.
+ *
+ * Default ON since T1 landed (2026-09-22); `VITE_UNIFIED_HISTORY=0` turns it
+ * off for one release as the escape hatch (`main.tsx`). Tests default OFF via
+ * their own `setUnifiedHistory` calls where they pin the legacy path.
+ */
+let unifiedHistory = true;
+
+export function unifiedHistoryEnabled(): boolean {
+  return unifiedHistory;
+}
+
+export function setUnifiedHistory(on: boolean): void {
+  unifiedHistory = on;
+}

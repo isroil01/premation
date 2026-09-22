@@ -17,6 +17,15 @@ export interface HistoryOptions {
   limit?: number;
   /** Custom handler to route commands to a global undo stack instead of the local one. */
   onPush?: (command: Command) => void;
+  /**
+   * Called BEFORE a recordable command (or the first command of a
+   * transaction) mutates anything — i.e. before `do()`. The host uses it to
+   * commit whatever else it has pending (a debounced scene capture) so that
+   * entry lands ahead of this one and does not absorb this command's change.
+   * Not called while disabled, mid-undo/redo, or for commands collected
+   * inside an already-open transaction.
+   */
+  onBeforeRun?: (command: Command | null) => void;
 }
 
 export class History {
@@ -24,6 +33,7 @@ export class History {
   private readonly redoStack: Command[] = [];
   private readonly limit: number;
   private readonly onPush?: (command: Command) => void;
+  private readonly onBeforeRun?: (command: Command | null) => void;
   private enabled = true;
   private applying = false;
   /** Non-null while a {@link transaction} is open — commands land here
@@ -33,6 +43,7 @@ export class History {
   constructor(opts: HistoryOptions = {}) {
     this.limit = opts.limit ?? 200;
     this.onPush = opts.onPush;
+    this.onBeforeRun = opts.onBeforeRun;
   }
 
   get canUndo(): boolean {
@@ -55,6 +66,7 @@ export class History {
    * disabled (or we're mid-undo/redo) the change still runs but isn't recorded.
    */
   run(command: Command): void {
+    if (this.enabled && !this.applying && !this.collecting) this.onBeforeRun?.(command);
     command.do();
     if (!this.enabled || this.applying) return;
 
@@ -127,6 +139,7 @@ export class History {
    */
   transaction<T>(label: string, fn: () => T): T {
     if (this.collecting) return fn(); // nested — the outer entry owns it
+    if (this.enabled && !this.applying) this.onBeforeRun?.(null);
     const collected: Command[] = [];
     this.collecting = collected;
     let result: T;

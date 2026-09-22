@@ -15,28 +15,20 @@
  * The mutations land live, so the canvas animates as the model works.
  */
 
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
-import { StoreSnapshotCommand } from '@stores/historyStore';
+import { StoreSnapshotCommand, restoreSnapshotState } from '@stores/historyStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { bumpScene } from '@stores/sceneStore';
-import type { ProjectFile } from '@core/types';
+import { captureSharedState, statesEqual, type DocState } from '@core/commands/snapshotSharing';
 
-interface DocState {
-  scene: ProjectFile;
-  anim: AnimSnapshot;
-}
+/**
+ * Scene + animation (+ clip geometry under the unified history), structurally
+ * shared with every other history snapshot — so a run's entry restores the
+ * timeline too, and a long session of runs does not hold a document per step.
+ */
+const capture = (): DocState => captureSharedState();
 
-const capture = (): DocState => ({
-  scene: structuredClone(sceneProjectIO.capture()),
-  anim: defaultAnimation.snapshot(),
-});
-
-const restore = (s: DocState): void => {
-  sceneProjectIO.restore(structuredClone(s.scene));
-  defaultAnimation.restore(s.anim);
-  bumpScene();
-};
+/** The store's own restore path: clones, restores every half, re-baselines. */
+const restore = (s: DocState): void => restoreSnapshotState(s);
 
 export interface AiTransaction {
   /** Push one undo entry covering everything the run changed. */
@@ -87,8 +79,9 @@ export function beginAiTransaction(label: string): AiTransaction {
       release();
       const after = capture();
       // A read-only run (the model just answered a question) must not litter
-      // the undo stack with a no-op entry.
-      if (JSON.stringify(before) === JSON.stringify(after)) return;
+      // the undo stack with a no-op entry. Same JSON equality as before, walked
+      // only through what the run changed.
+      if (statesEqual(before, after)) return;
       history.push(new StoreSnapshotCommand(label, before, after));
       bumpScene();
     },

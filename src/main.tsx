@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
-import { setLocalFirst } from '@core/config/flags';
+import { setLocalFirst, setUnifiedHistory } from '@core/config/flags';
 import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
 import { restoreSamModelAtBoot, useSamModelStore } from '@stores/samModelStore';
 import { registerBundledSamAtBoot } from '@core/tracking/samBundled';
@@ -75,6 +75,12 @@ setLocalFirst(
   edition === 'local' ||
     import.meta.env.VITE_LOCAL_FIRST === '1' ||
     import.meta.env.VITE_LOCAL_FIRST === 'true',
+);
+
+// Unified undo history (NATIVE_CORE_PLAN §4 T1): default on; the env is the
+// one-release escape hatch back to the pre-T1 behaviour.
+setUnifiedHistory(
+  !(import.meta.env.VITE_UNIFIED_HISTORY === '0' || import.meta.env.VITE_UNIFIED_HISTORY === 'false'),
 );
 
 // Object Matte — neural, one-click subject selection. The segmenter and its

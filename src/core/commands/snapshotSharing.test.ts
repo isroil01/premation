@@ -40,11 +40,18 @@ import { runDocumentEdit } from './documentEdit';
 import {
   captureSharedScene,
   captureSharedState,
+  cloneStateForRestore,
   internState,
   jsonEqual,
+  noteRestoredState,
+  registerClipGeometryProvider,
   resetSnapshotSharing,
   statesEqual,
+  type ClipGeometry,
+  type ClipGeometryProvider,
+  type ClipsByComp,
 } from './snapshotSharing';
+import { setUnifiedHistory } from '@core/config/flags';
 import type { SceneNode } from '@core/types';
 
 jest.useFakeTimers();
@@ -522,5 +529,152 @@ describe('restored state never aliases history', () => {
     expect(JSON.stringify(interned)).toBe(JSON.stringify(foreign));
     expect(interned.scene.nodes[1]).toBe(live.scene.nodes[1]);
     expect(interned.anim.tracks.n1!.x).toBe(live.anim.tracks.n1!.x);
+  });
+});
+
+// ── Clip geometry (unified history) ───────────────────────────────────────
+
+describe('clip geometry in the snapshot (unified history)', () => {
+  const bar = (start: number, duration: number, sourceIn = 0, sourceDuration: number | null = null): ClipGeometry =>
+    ({ start, duration, sourceIn, sourceDuration });
+
+  /** What a fake timeline reports; each capture returns FRESH objects, as the real one does. */
+  let live: ClipsByComp;
+  let applied: ClipsByComp[];
+  let previous: ClipGeometryProvider | null;
+  const fresh = (): ClipsByComp => JSON.parse(JSON.stringify(live)) as ClipsByComp;
+
+  beforeEach(() => {
+    freshHistory();
+    seedWorld(2);
+    live = {
+      main: { n0: [bar(0, 300)], n1: [bar(30, 170, 10, 500), bar(200, 100, 180, 500)] },
+      pre: { n2: [bar(0, 60)] },
+    };
+    applied = [];
+    previous = registerClipGeometryProvider({ capture: fresh, apply: (c) => { applied.push(c); } });
+    setUnifiedHistory(true);
+  });
+
+  afterEach(() => {
+    setUnifiedHistory(false);
+    registerClipGeometryProvider(previous);
+  });
+
+  it('flag off: the snapshot has no clips key at all', () => {
+    setUnifiedHistory(false);
+    const s = captureSharedState();
+    expect('clips' in s).toBe(false);
+    expect(Object.keys(s)).toEqual(['scene', 'anim']);
+  });
+
+  it('flag on: the snapshot carries every comp, equal in content to the provider', () => {
+    const s = captureSharedState();
+    expect(s.clips).toEqual(live);
+    expect(s.clips).not.toBe(live);
+  });
+
+  it('shares per node: an unchanged node keeps its array, a changed one gets a new one', () => {
+    const a = captureSharedState();
+    live.main!.n1 = [bar(40, 160, 20, 500), bar(200, 100, 180, 500)];
+    const b = captureSharedState();
+    expect(b.clips!.main!.n0).toBe(a.clips!.main!.n0);
+    expect(b.clips!.main!.n1).not.toBe(a.clips!.main!.n1);
+    expect(b.clips!.main!.n1).toEqual(live.main!.n1);
+    // An untouched comp keeps its whole record.
+    expect(b.clips!.pre).toBe(a.clips!.pre);
+    // A touched comp gets a new record; the document gets a new clips object.
+    expect(b.clips!.main).not.toBe(a.clips!.main);
+    expect(b.clips).not.toBe(a.clips);
+  });
+
+  it('shares the whole clips object when nothing moved', () => {
+    const a = captureSharedState();
+    const b = captureSharedState();
+    expect(b.clips).toBe(a.clips);
+    expect(statesEqual(a, b)).toBe(true);
+  });
+
+  it('a removed or added bar, node or comp is a change', () => {
+    const a = captureSharedState();
+    live.main!.n1 = [live.main!.n1![0]!];
+    const b = captureSharedState();
+    expect(b.clips!.main!.n1).not.toBe(a.clips!.main!.n1);
+    expect(statesEqual(a, b)).toBe(false);
+
+    delete live.pre;
+    const c = captureSharedState();
+    expect(c.clips!.pre).toBeUndefined();
+    expect(statesEqual(b, c)).toBe(false);
+
+    live.main!.n9 = [bar(1, 1)];
+    const d = captureSharedState();
+    expect(statesEqual(c, d)).toBe(false);
+    expect(d.clips!.main!.n0).toBe(a.clips!.main!.n0);
+  });
+
+  it('statesEqual: a pure clip change (scene and animation untouched) is a different state', () => {
+    const a = captureSharedState();
+    live.main!.n0 = [bar(12, 288)];
+    const b = captureSharedState();
+    expect(b.scene.nodes).toEqual(a.scene.nodes);
+    expect(statesEqual(a, b)).toBe(false);
+    // …and the same geometry on a later capture compares equal again.
+    live.main!.n0 = [bar(0, 300)];
+    expect(statesEqual(a, captureSharedState())).toBe(true);
+  });
+
+  it('a pure clip change records its own entry through the store', () => {
+    baselineHistory('Open');
+    const n = getCommandSystem().getHistory().getEntries().length;
+    live.main!.n0 = [bar(12, 288)];
+    useHistoryStore.getState().record();
+    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(n + 1);
+    // Undo hands the entry's clips to the provider.
+    performUndo();
+    expect(applied.at(-1)!.main!.n0).toEqual([bar(0, 300)]);
+    performRedo();
+    expect(applied.at(-1)!.main!.n0).toEqual([bar(12, 288)]);
+  });
+
+  it('cloneStateForRestore deep-copies clips, so a restore never hands the snapshot to a live store', () => {
+    const s = captureSharedState();
+    const copy = cloneStateForRestore(s);
+    expect(copy.clips).toEqual(s.clips);
+    expect(copy.clips).not.toBe(s.clips);
+    expect(copy.clips!.main).not.toBe(s.clips!.main);
+    expect(copy.clips!.main!.n1).not.toBe(s.clips!.main!.n1);
+    expect(copy.clips!.main!.n1![0]).not.toBe(s.clips!.main!.n1![0]);
+    // Flag off, no clips: no key is invented.
+    expect('clips' in cloneStateForRestore({ scene: s.scene, anim: s.anim })).toBe(false);
+  });
+
+  it('internState carries clips and shares them with the live capture', () => {
+    const liveState = captureSharedState();
+    const foreign = { scene: legacyCapture().scene, anim: legacyCapture().anim, clips: fresh() };
+    const interned = internState(foreign);
+    expect(interned.clips).toEqual(foreign.clips);
+    expect(interned.clips!.main!.n1).toBe(liveState.clips!.main!.n1);
+    // The caller's objects are not what the entry holds.
+    foreign.clips.main!.n0![0]!.start = 999;
+    expect(interned.clips!.main!.n0![0]!.start).toBe(0);
+    // A foreign state without clips stays without.
+    expect('clips' in internState({ scene: foreign.scene, anim: foreign.anim })).toBe(false);
+  });
+
+  it('noteRestoredState seeds the clip cache so the next capture shares with the restored entry', () => {
+    const a = captureSharedState();
+    live.main!.n0 = [bar(5, 5)];
+    captureSharedState();
+    // The live timeline is put back to `a` by a restore…
+    live.main!.n0 = [bar(0, 300)];
+    noteRestoredState(a.scene, a.anim, a.clips);
+    // …and the next capture reuses `a`'s objects rather than building new ones.
+    expect(captureSharedState().clips).toBe(a.clips);
+  });
+
+  it('without a provider the flag-on snapshot carries an empty clips record', () => {
+    registerClipGeometryProvider(null);
+    expect(captureSharedState().clips).toEqual({});
   });
 });

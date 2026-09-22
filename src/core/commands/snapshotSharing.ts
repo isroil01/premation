@@ -14,8 +14,12 @@
  *
  * A snapshot is still a plain, complete `{ scene, anim }` value — nothing that
  * reads one (restore, the AI transaction's rollback, the bake commit) sees a
- * diff, a patch or a lazy view. What changed is only that two snapshots now
- * SHARE the node objects and animation tracks whose content is identical:
+ * diff, a patch or a lazy view. Under the unified history (NATIVE_CORE_PLAN
+ * §4 T1, `unifiedHistoryEnabled`) it also carries `clips`: every registered
+ * composition's clip-bar geometry, so a snapshot restore puts the timeline
+ * back too instead of leaving the scene and the bars disagreeing. What changed
+ * is only that two snapshots now SHARE the node objects, animation tracks and
+ * per-node bar arrays whose content is identical:
  *
  *   • a node is serialised once per capture (the same JSON the old capture's
  *     round trip produced) and compared, as a string, with the last captured
@@ -47,11 +51,65 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
+import { unifiedHistoryEnabled } from '@core/config/flags';
 import type { ProjectFile, SceneNode } from '@core/types';
+
+/** A clip bar's geometry in FRAMES — the timeline engine's `Clip.toJSON()`. */
+export interface ClipGeometry {
+  start: number;
+  duration: number;
+  sourceIn: number;
+  sourceDuration: number | null;
+}
+
+/**
+ * compId → nodeId → that node's bars, in start order (the order
+ * `TimelineController.getLayersForNode` hands them out). A bar is addressed by
+ * node + index, never by layer id: the engine re-mints ids for legacy bars and
+ * the split's right half, and node ids live in the document.
+ */
+export type ClipsByComp = Record<string, Record<string, ClipGeometry[]>>;
 
 export interface DocState {
   scene: ProjectFile;
   anim: AnimSnapshot;
+  /** Present only on snapshots taken while the unified history is on. */
+  clips?: ClipsByComp;
+}
+
+// ── Clip geometry provider (the timeline engine, registered from outside) ─
+
+/**
+ * The timeline side of a snapshot. `TimelineController` registers itself at
+ * module load; it cannot be imported here because it already imports the
+ * history store, which imports this module.
+ */
+export interface ClipGeometryProvider {
+  /** Every registered composition's bars, as fresh plain objects. */
+  capture(): ClipsByComp;
+  /**
+   * Make the live timelines match `clips`. Called AFTER the scene and the
+   * animation are restored, inside the restore's scene batch; the provider
+   * reconciles membership against the restored scene first, then writes only
+   * the bars whose geometry differs, with its own history suppressed.
+   */
+  apply(clips: ClipsByComp): void;
+}
+
+let clipProvider: ClipGeometryProvider | null = null;
+
+/** Returns the previous provider so a test can put it back. */
+export function registerClipGeometryProvider(
+  provider: ClipGeometryProvider | null,
+): ClipGeometryProvider | null {
+  const prev = clipProvider;
+  clipProvider = provider;
+  return prev;
+}
+
+/** Hand a snapshot's clips to the live timelines (no-op without a provider). */
+export function applySharedClips(clips: ClipsByComp | undefined): void {
+  if (clips) clipProvider?.apply(clips);
 }
 
 // ── JSON-equality without building the strings ───────────────────────────
@@ -335,11 +393,97 @@ function shareAnim(anim: AnimSnapshot): AnimSnapshot {
   return shared;
 }
 
+// ── Clip geometry ─────────────────────────────────────────────────────────
+
+/** The last captured / restored clips — what the next capture shares with. */
+let clipCache: ClipsByComp | null = null;
+
+/**
+ * The per-node signature, compared field by field instead of as a string:
+ * four numbers per bar, so the comparison IS the signature and allocates
+ * nothing. `Object.is` so a NaN or -0 that somehow reached a clip compares the
+ * way the JSON equality below sees it.
+ */
+function sameGeometry(a: ReadonlyArray<ClipGeometry>, b: ReadonlyArray<ClipGeometry>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (
+      !Object.is(x.start, y.start) ||
+      !Object.is(x.duration, y.duration) ||
+      !Object.is(x.sourceIn, y.sourceIn) ||
+      !Object.is(x.sourceDuration, y.sourceDuration)
+    ) return false;
+  }
+  return true;
+}
+
+function ownGeometry(bars: ReadonlyArray<ClipGeometry>): ClipGeometry[] {
+  return bars.map((b) => ({
+    start: b.start,
+    duration: b.duration,
+    sourceIn: b.sourceIn,
+    sourceDuration: b.sourceDuration,
+  }));
+}
+
+/**
+ * `cur`, rebuilt so every node whose bars are unchanged since the last capture
+ * holds the SAME array — and a composition none of whose nodes changed holds
+ * the same record, and a document none of whose compositions changed the same
+ * `clips` object — so `statesEqual` walks only what moved.
+ */
+function shareClips(cur: ClipsByComp): ClipsByComp {
+  const prev = clipCache;
+  const compIds = Object.keys(cur);
+  let compsChanged = !prev || Object.keys(prev).length !== compIds.length;
+  const out: ClipsByComp = {};
+  for (const compId of compIds) {
+    const byNode = cur[compId];
+    if (!byNode || typeof byNode !== 'object') {
+      // Malformed foreign input: carried through unchanged, never shared.
+      out[compId] = byNode as unknown as Record<string, ClipGeometry[]>;
+      compsChanged = true;
+      continue;
+    }
+    const prevByNode = prev?.[compId];
+    const nodeIds = Object.keys(byNode);
+    let nodesChanged = !prevByNode || Object.keys(prevByNode).length !== nodeIds.length;
+    const o: Record<string, ClipGeometry[]> = {};
+    for (const nodeId of nodeIds) {
+      const bars = byNode[nodeId]!;
+      const p = prevByNode?.[nodeId];
+      if (p && Array.isArray(bars) && sameGeometry(p, bars)) {
+        o[nodeId] = p;
+      } else {
+        // Our own copy: the provider's objects are fresh, a foreign state's
+        // (internState) belong to the caller.
+        o[nodeId] = Array.isArray(bars) ? ownGeometry(bars) : bars;
+        nodesChanged = true;
+      }
+    }
+    if (nodesChanged || !prevByNode) {
+      out[compId] = o;
+      compsChanged = true;
+    } else {
+      out[compId] = prevByNode;
+    }
+  }
+  const shared = compsChanged || !prev ? out : prev;
+  clipCache = shared;
+  return shared;
+}
+
 // ── Public surface ────────────────────────────────────────────────────────
 
-/** Capture the editable state (scene + animation) with structural sharing. */
+/**
+ * Capture the editable state (scene + animation, plus every composition's clip
+ * geometry under the unified history) with structural sharing.
+ */
 export function captureSharedState(): DocState {
-  const state = { scene: captureSharedScene(), anim: shareAnim(defaultAnimation.snapshot()) };
+  const state: DocState = { scene: captureSharedScene(), anim: shareAnim(defaultAnimation.snapshot()) };
+  if (unifiedHistoryEnabled()) state.clips = shareClips(clipProvider ? clipProvider.capture() : {});
   sharedStates.add(state);
   return state;
 }
@@ -351,7 +495,8 @@ export function captureSharedState(): DocState {
  */
 export function internState(state: DocState): DocState {
   if (!state || sharedStates.has(state)) return state;
-  const shared = { scene: internScene(state.scene), anim: shareAnim(state.anim) };
+  const shared: DocState = { scene: internScene(state.scene), anim: shareAnim(state.anim) };
+  if (state.clips) shared.clips = shareClips(state.clips);
   sharedStates.add(shared);
   return shared;
 }
@@ -373,7 +518,9 @@ export function internDocumentParts<T extends { scene: ProjectFile; animation: A
  * passed to them directly.
  */
 export function cloneStateForRestore(state: DocState): DocState {
-  return { scene: structuredClone(state.scene), anim: deepCopy(state.anim) };
+  const copy: DocState = { scene: structuredClone(state.scene), anim: deepCopy(state.anim) };
+  if (state.clips) copy.clips = structuredClone(state.clips);
+  return copy;
 }
 
 /**
@@ -381,7 +528,11 @@ export function cloneStateForRestore(state: DocState): DocState {
  * jump), so the next capture shares with it instead of re-parsing every node.
  * Purely an optimisation: the next capture still compares real content.
  */
-export function noteRestoredState(scene: ProjectFile | undefined, anim: AnimSnapshot | undefined): void {
+export function noteRestoredState(
+  scene: ProjectFile | undefined,
+  anim: AnimSnapshot | undefined,
+  clips?: ClipsByComp,
+): void {
   if (scene && Array.isArray(scene.nodes)) {
     const next = new Map<string, CachedNode>();
     for (const node of scene.nodes) {
@@ -390,10 +541,12 @@ export function noteRestoredState(scene: ProjectFile | undefined, anim: AnimSnap
     nodeCache = next;
   }
   if (anim) animCache = anim;
+  if (clips) clipCache = clips;
 }
 
 /** Drop the sharing caches. Tests only — correctness never depends on them. */
 export function resetSnapshotSharing(): void {
   nodeCache = new Map();
   animCache = null;
+  clipCache = null;
 }

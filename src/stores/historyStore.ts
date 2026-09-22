@@ -11,17 +11,18 @@
 
 import { create } from 'zustand';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
-import type { ProjectFile } from '@core/types';
-import { bumpScene } from './sceneStore';
+import { defaultAnimation } from '@motion/animation';
+import { bumpScene, batchScene } from './sceneStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import {
+  applySharedClips,
   captureSharedState,
   cloneStateForRestore,
   internState,
   noteRestoredState,
   statesEqual,
+  type DocState,
 } from '@core/commands/snapshotSharing';
 
 /**
@@ -30,9 +31,40 @@ import {
  * Structurally shared with every earlier snapshot (see `snapshotSharing.ts`):
  * a complete, immutable value whose unchanged nodes and tracks are the SAME
  * objects the previous entry holds, rather than a full deep clone per entry.
+ * Under the unified history it also carries every composition's clip geometry.
  */
-function captureState(): { scene: ProjectFile; anim: AnimSnapshot } {
+function captureState(): DocState {
   return captureSharedState();
+}
+
+/**
+ * Make the live document match a snapshot. The ONE restore path for every
+ * snapshot entry — `StoreSnapshotCommand` and the AI transaction's rollback.
+ *
+ * With clip geometry in the snapshot (unified history), the restore runs as
+ * one scene batch in this order: scene, animation, then the timeline —
+ * membership reconciled against the restored scene for EVERY registered
+ * composition (not just the active one, which is all the `SceneGraphChanged`
+ * subscriber syncs), then geometry written onto the bars that differ. A
+ * snapshot from before the flag (no `clips`) restores as it always did and the
+ * `SceneGraphChanged` subscriber re-seeds its bars.
+ */
+export function restoreSnapshotState(state: DocState): void {
+  // A private copy: the stores keep what they are given, and these objects
+  // are shared with neighbouring entries.
+  const copy = cloneStateForRestore(state);
+  if (copy.clips) {
+    batchScene(() => {
+      sceneProjectIO.restore(copy.scene);
+      defaultAnimation.restore(copy.anim);
+      applySharedClips(copy.clips);
+    });
+  } else {
+    sceneProjectIO.restore(copy.scene);
+    defaultAnimation.restore(copy.anim);
+  }
+  noteRestoredState(state.scene, state.anim, state.clips);
+  bumpScene();
 }
 
 export class StoreSnapshotCommand implements IUndoableCommand {
@@ -44,15 +76,10 @@ export class StoreSnapshotCommand implements IUndoableCommand {
    * — so a pinned snapshot looked identical to every auto entry.
    */
   readonly named: boolean;
-  private readonly before: { scene: ProjectFile; anim: AnimSnapshot };
-  private readonly after: { scene: ProjectFile; anim: AnimSnapshot };
+  private readonly before: DocState;
+  private readonly after: DocState;
 
-  constructor(
-    label: string,
-    before: { scene: ProjectFile; anim: AnimSnapshot },
-    after: { scene: ProjectFile; anim: AnimSnapshot },
-    named = false,
-  ) {
+  constructor(label: string, before: DocState, after: DocState, named = false) {
     this.label = label;
     // Callers outside this store (the AI transaction, the dynamics bake) still
     // build full copies; interning re-expresses them with shared nodes so a long
@@ -70,14 +97,8 @@ export class StoreSnapshotCommand implements IUndoableCommand {
     this.apply(this.before);
   }
 
-  private apply(state: { scene: ProjectFile; anim: AnimSnapshot }): void {
-    // A private copy: the stores keep what they are given, and these objects
-    // are shared with neighbouring entries.
-    const copy = cloneStateForRestore(state);
-    sceneProjectIO.restore(copy.scene);
-    defaultAnimation.restore(copy.anim);
-    noteRestoredState(state.scene, state.anim);
-    bumpScene();
+  private apply(state: DocState): void {
+    restoreSnapshotState(state);
   }
 }
 
@@ -112,7 +133,7 @@ export interface HistoryStore {
 }
 
 let seq = 0;
-let lastState: { scene: ProjectFile; anim: AnimSnapshot } | null = null;
+let lastState: DocState | null = null;
 /** True while `record` pushes its own entry (see the baseline sync). */
 let pushingOwnSnapshot = false;
 

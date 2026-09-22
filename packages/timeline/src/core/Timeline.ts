@@ -16,10 +16,10 @@ import type { TimelineEventMap } from '../events/TimelineEvents';
 import { History } from '../history/History';
 import { Playhead } from '../playhead/Playhead';
 import { TimelineSelection } from '../selection/TimelineSelection';
-import { Track, type TrackInit, type TrackFlags } from '../tracks/Track';
-import { Layer, type LayerInit } from '../layers/Layer';
-import { Clip } from '../clips/Clip';
-import { Marker, type MarkerInit } from '../markers/Marker';
+import { Track, type TrackInit, type TrackFlags, type TrackData } from '../tracks/Track';
+import { Layer, type LayerInit, type LayerData } from '../layers/Layer';
+import { Clip, type ClipData } from '../clips/Clip';
+import { Marker, type MarkerInit, type MarkerData } from '../markers/Marker';
 import { MarkerList } from '../markers/MarkerList';
 import { type FrameRate, frameRate as makeFrameRate, FPS_30 } from '../time/FrameRate';
 import { framesToSeconds, msToFrames, secondsToFrames, timecodeToFrames, convertFrames } from '../time/Time';
@@ -273,10 +273,24 @@ export class Timeline {
   addTrack(init: TrackInit = {}, index = this.tracks.length): Track {
     const track = new Track(init);
     const at = Math.max(0, Math.min(index, this.tracks.length));
+    const trackId = track.id;
+    // The first `do` attaches the object handed back to the caller; a redo
+    // after the document was rebuilt resurrects it from the snapshot instead.
+    let seed: Track | null = track;
+    let snapshot = track.toJSON();
     this.history.run({
       label: 'Add Track',
-      do: () => this.insertTrack(track, at),
-      undo: () => this.detachTrack(track.id),
+      do: () => {
+        const obj = seed;
+        seed = null;
+        this.restoreTrack(snapshot, at, obj);
+      },
+      undo: () => {
+        const live = this.trackIndex.get(trackId);
+        if (!live) return;
+        snapshot = live.toJSON();
+        this.detachTrack(trackId);
+      },
     });
     return track;
   }
@@ -285,10 +299,16 @@ export class Timeline {
     const track = this.trackIndex.get(id);
     if (!track) return false;
     const index = this.tracks.indexOf(track);
+    let snapshot = track.toJSON();
     this.history.run({
       label: 'Remove Track',
-      do: () => this.detachTrack(id),
-      undo: () => this.insertTrack(track, index),
+      do: () => {
+        const live = this.trackIndex.get(id);
+        if (!live) return;
+        snapshot = live.toJSON();
+        this.detachTrack(id);
+      },
+      undo: () => this.restoreTrack(snapshot, index),
     });
     return true;
   }
@@ -324,10 +344,22 @@ export class Timeline {
       copy.layers.push(cl);
     }
     const index = this.tracks.indexOf(track) + 1;
+    const copyId = copy.id;
+    let seed: Track | null = copy;
+    let snapshot = copy.toJSON();
     this.history.run({
       label: 'Duplicate Track',
-      do: () => this.insertTrack(copy, index),
-      undo: () => this.detachTrack(copy.id),
+      do: () => {
+        const obj = seed;
+        seed = null;
+        this.restoreTrack(snapshot, index, obj);
+      },
+      undo: () => {
+        const live = this.trackIndex.get(copyId);
+        if (!live) return;
+        snapshot = live.toJSON();
+        this.detachTrack(copyId);
+      },
     });
     return copy;
   }
@@ -337,16 +369,16 @@ export class Timeline {
     if (!track) return false;
     const prev = { ...track.flags };
     const next = { ...prev, ...flags };
+    const apply = (value: TrackFlags): void => {
+      const live = this.trackIndex.get(id);
+      if (!live) return;
+      live.flags = { ...value };
+      this.events.emit('TrackFlagsChanged', { track: live });
+    };
     this.history.run({
       label: 'Set Track Flags',
-      do: () => {
-        track.flags = { ...next };
-        this.events.emit('TrackFlagsChanged', { track });
-      },
-      undo: () => {
-        track.flags = { ...prev };
-        this.events.emit('TrackFlagsChanged', { track });
-      },
+      do: () => apply(next),
+      undo: () => apply(prev),
     });
     return true;
   }
@@ -355,16 +387,16 @@ export class Timeline {
     const track = this.trackIndex.get(id);
     if (!track) return false;
     const prev = track.name;
+    const apply = (value: string): void => {
+      const live = this.trackIndex.get(id);
+      if (!live) return;
+      live.name = value;
+      this.events.emit('TrackUpdated', { track: live, changed: 'name' });
+    };
     this.history.run({
       label: 'Rename Track',
-      do: () => {
-        track.name = name;
-        this.events.emit('TrackUpdated', { track, changed: 'name' });
-      },
-      undo: () => {
-        track.name = prev;
-        this.events.emit('TrackUpdated', { track, changed: 'name' });
-      },
+      do: () => apply(name),
+      undo: () => apply(prev),
     });
     return true;
   }
@@ -379,7 +411,10 @@ export class Timeline {
       label: 'Group Tracks',
       do: () => {
         this.groups.set(group.id, group);
-        for (const id of valid) this.trackIndex.get(id)!.groupId = group.id;
+        for (const id of valid) {
+          const t = this.trackIndex.get(id);
+          if (t) t.groupId = group.id;
+        }
       },
       undo: () => {
         this.groups.delete(group.id);
@@ -439,11 +474,28 @@ export class Timeline {
     const track = this.trackIndex.get(trackId);
     if (!track) return null;
     const layer = new Layer({ ...init, trackId });
+    if (this.layerIndex.has(layer.id)) {
+      throw new Error(`Timeline.addLayer: a layer with id "${layer.id}" already exists; layer ids must be unique per timeline`);
+    }
+    const layerId = layer.id;
     const at = index ?? track.layers.length;
+    // The first `do` attaches the object handed back to the caller; a redo
+    // after the document was rebuilt resurrects it from the snapshot instead.
+    let seed: Layer | null = layer;
+    let snapshot = layer.toJSON();
     this.history.run({
       label: 'Add Layer',
-      do: () => this.attachLayer(layer, track, at),
-      undo: () => this.detachLayer(layer.id),
+      do: () => {
+        const obj = seed;
+        seed = null;
+        this.restoreLayer(snapshot, at, obj);
+      },
+      undo: () => {
+        const live = this.layerIndex.get(layerId);
+        if (!live) return;
+        snapshot = live.toJSON();
+        this.detachLayer(layerId);
+      },
     });
     return layer;
   }
@@ -451,12 +503,17 @@ export class Timeline {
   removeLayer(id: string): boolean {
     const layer = this.layerIndex.get(id);
     if (!layer) return false;
-    const track = this.trackIndex.get(layer.trackId)!;
-    const index = track.indexOfLayer(id);
+    const index = this.trackIndex.get(layer.trackId)?.indexOfLayer(id) ?? 0;
+    let snapshot = layer.toJSON();
     this.history.run({
       label: 'Remove Layer',
-      do: () => this.detachLayer(id),
-      undo: () => this.attachLayer(layer, track, index),
+      do: () => {
+        const live = this.layerIndex.get(id);
+        if (!live) return;
+        snapshot = live.toJSON();
+        this.detachLayer(id);
+      },
+      undo: () => this.restoreLayer(snapshot, index),
     });
     return true;
   }
@@ -477,28 +534,21 @@ export class Timeline {
     const later = track.layers
       .filter((l) => l.id !== id && l.clip.start >= cut)
       .map((l) => ({ id: l.id, prev: l.clip.toJSON() }));
+    let snapshot = layer.toJSON();
 
     this.history.run({
       label: 'Ripple Delete Layer',
       do: () => {
-        this.detachLayer(id);
-        for (const { id: lid } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip.shift(-delta);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
+        const live = this.layerIndex.get(id);
+        if (live) {
+          snapshot = live.toJSON();
+          this.detachLayer(id);
         }
+        for (const { id: lid } of later) this.shiftClip(lid, -delta);
       },
       undo: () => {
-        this.attachLayer(layer, track, index);
-        for (const { id: lid, prev } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip = Clip.fromJSON(prev);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        this.restoreLayer(snapshot, index);
+        for (const { id: lid, prev } of later) this.applyClip(lid, prev);
       },
     });
     return true;
@@ -526,26 +576,12 @@ export class Timeline {
     this.history.run({
       label: 'Ripple Trim Layer',
       do: () => {
-        layer.clip = Clip.fromJSON(nextSelf);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-        for (const { id: lid } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip.shift(-delta);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        this.applyClip(id, nextSelf);
+        for (const { id: lid } of later) this.shiftClip(lid, -delta);
       },
       undo: () => {
-        layer.clip = Clip.fromJSON(prevSelf);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-        for (const { id: lid, prev } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip = Clip.fromJSON(prev);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        this.applyClip(id, prevSelf);
+        for (const { id: lid, prev } of later) this.applyClip(lid, prev);
       },
     });
     return true;
@@ -582,26 +618,12 @@ export class Timeline {
     this.history.run({
       label: 'Ripple Trim Start',
       do: () => {
-        layer.clip = Clip.fromJSON(nextSelf);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-        for (const { id: lid } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip.shift(-delta);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        this.applyClip(id, nextSelf);
+        for (const { id: lid } of later) this.shiftClip(lid, -delta);
       },
       undo: () => {
-        layer.clip = Clip.fromJSON(prevSelf);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-        for (const { id: lid, prev } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip = Clip.fromJSON(prev);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        this.applyClip(id, prevSelf);
+        for (const { id: lid, prev } of later) this.applyClip(lid, prev);
       },
     });
     return true;
@@ -623,22 +645,10 @@ export class Timeline {
     this.history.run({
       label: 'Ripple Insert Gap',
       do: () => {
-        for (const { id: lid } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip.shift(durationFrames);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        for (const { id: lid } of later) this.shiftClip(lid, durationFrames);
       },
       undo: () => {
-        for (const { id: lid, prev } of later) {
-          const n = this.layerIndex.get(lid);
-          if (n) {
-            n.clip = Clip.fromJSON(prev);
-            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-          }
-        }
+        for (const { id: lid, prev } of later) this.applyClip(lid, prev);
       },
     });
     return true;
@@ -649,21 +659,25 @@ export class Timeline {
     const layer = this.layerIndex.get(id);
     const toTrack = this.trackIndex.get(toTrackId);
     if (!layer || !toTrack) return false;
-    const fromTrack = this.trackIndex.get(layer.trackId)!;
-    const fromIndex = fromTrack.indexOfLayer(id);
+    const fromTrackId = layer.trackId;
+    const fromIndex = this.trackIndex.get(fromTrackId)?.indexOfLayer(id) ?? 0;
     const toIndex = index ?? toTrack.layers.length;
+    // Resolve everything by id at run time: the source is wherever the layer
+    // lives NOW (its trackId), the destination the captured track id.
+    const relocate = (destTrackId: string, destIndex: number): void => {
+      const live = this.layerIndex.get(id);
+      const dest = this.trackIndex.get(destTrackId);
+      if (!live || !dest) return;
+      const src = this.trackIndex.get(live.trackId);
+      if (!src) return;
+      src.removeLayer(id);
+      dest.insertLayer(live, destIndex);
+      this.events.emit('LayerMoved', { layer: live, fromTrackId: src.id, toTrackId: dest.id, index: destIndex });
+    };
     this.history.run({
       label: 'Move Layer',
-      do: () => {
-        fromTrack.removeLayer(id);
-        toTrack.insertLayer(layer, toIndex);
-        this.events.emit('LayerMoved', { layer, fromTrackId: fromTrack.id, toTrackId: toTrack.id, index: toIndex });
-      },
-      undo: () => {
-        toTrack.removeLayer(id);
-        fromTrack.insertLayer(layer, fromIndex);
-        this.events.emit('LayerMoved', { layer, fromTrackId: toTrack.id, toTrackId: fromTrack.id, index: fromIndex });
-      },
+      do: () => relocate(toTrackId, toIndex),
+      undo: () => relocate(fromTrackId, fromIndex),
     });
     return true;
   }
@@ -671,19 +685,21 @@ export class Timeline {
   reorderLayer(id: string, toIndex: number): boolean {
     const layer = this.layerIndex.get(id);
     if (!layer) return false;
-    const track = this.trackIndex.get(layer.trackId)!;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return false;
     const from = track.indexOfLayer(id);
     if (from === toIndex) return false;
+    const reorder = (to: number): void => {
+      const live = this.layerIndex.get(id);
+      const t = live ? this.trackIndex.get(live.trackId) : undefined;
+      if (!live || !t) return;
+      t.reorderLayer(id, to);
+      this.events.emit('LayerUpdated', { layer: live, changed: 'order' });
+    };
     this.history.run({
       label: 'Reorder Layer',
-      do: () => {
-        track.reorderLayer(id, toIndex);
-        this.events.emit('LayerUpdated', { layer, changed: 'order' });
-      },
-      undo: () => {
-        track.reorderLayer(id, from);
-        this.events.emit('LayerUpdated', { layer, changed: 'order' });
-      },
+      do: () => reorder(toIndex),
+      undo: () => reorder(from),
     });
     return true;
   }
@@ -691,14 +707,27 @@ export class Timeline {
   duplicateLayer(id: string): Layer | null {
     const layer = this.layerIndex.get(id);
     if (!layer) return null;
-    const track = this.trackIndex.get(layer.trackId)!;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return null;
     const copy = layer.clone();
     copy.name = `${layer.name} copy`;
+    const copyId = copy.id;
     const index = track.indexOfLayer(id) + 1;
+    let seed: Layer | null = copy;
+    let snapshot = copy.toJSON();
     this.history.run({
       label: 'Duplicate Layer',
-      do: () => this.attachLayer(copy, track, index),
-      undo: () => this.detachLayer(copy.id),
+      do: () => {
+        const obj = seed;
+        seed = null;
+        this.restoreLayer(snapshot, index, obj);
+      },
+      undo: () => {
+        const live = this.layerIndex.get(copyId);
+        if (!live) return;
+        snapshot = live.toJSON();
+        this.detachLayer(copyId);
+      },
     });
     return copy;
   }
@@ -712,11 +741,19 @@ export class Timeline {
    * fine for an engine-level test, wrong for an editor, where the halves have
    * to be separately selectable, editable and deletable. App callers pass a
    * freshly cloned source id; see `core/scene/cloneLayerNode`.
+   *
+   * `opts.rightId` fixes the right-hand layer's id (default: a fresh uid) so an
+   * app that mirrors timeline ids elsewhere can choose it deterministically.
+   * Throws when that id is already taken, like `addLayer`.
    */
-  splitLayer(id: string, frame: number, rightSourceId?: string): Layer | null {
+  splitLayer(id: string, frame: number, rightSourceId?: string, opts: { rightId?: string } = {}): Layer | null {
     const layer = this.layerIndex.get(id);
     if (!layer || layer.locked) return null;
-    const track = this.trackIndex.get(layer.trackId)!;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return null;
+    if (opts.rightId !== undefined && this.layerIndex.has(opts.rightId)) {
+      throw new Error(`Timeline.splitLayer: a layer with id "${opts.rightId}" already exists; layer ids must be unique per timeline`);
+    }
     const prevClip = layer.clip.toJSON();
     // Compute the split once (this mutates layer.clip → left part).
     const rightData = layer.clip.split(frame);
@@ -726,6 +763,7 @@ export class Timeline {
     }
     const leftClip = layer.clip.toJSON();
     const right = new Layer({
+      id: opts.rightId,
       name: layer.name,
       trackId: track.id,
       clip: new Clip(rightData),
@@ -736,17 +774,28 @@ export class Timeline {
     });
     layer.clip = Clip.fromJSON(prevClip); // revert so `do()` applies cleanly
     const index = track.indexOfLayer(id) + 1;
+    const rightId = right.id;
+    let seed: Layer | null = right;
+    let rightSnapshot = right.toJSON();
     this.history.run({
       label: 'Split Layer',
       do: () => {
-        layer.clip = Clip.fromJSON(leftClip);
-        this.attachLayer(right, track, index);
-        this.events.emit('LayerSplit', { original: layer, right, frame });
+        const original = this.layerIndex.get(id);
+        if (!original) return;
+        original.clip = Clip.fromJSON(leftClip);
+        const obj = seed;
+        seed = null;
+        const attached = this.restoreLayer(rightSnapshot, index, obj);
+        if (attached) this.events.emit('LayerSplit', { original, right: attached, frame });
+        else this.events.emit('LayerUpdated', { layer: original, changed: 'clip' });
       },
       undo: () => {
-        this.detachLayer(right.id);
-        layer.clip = Clip.fromJSON(prevClip);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        const liveRight = this.layerIndex.get(rightId);
+        if (liveRight) {
+          rightSnapshot = liveRight.toJSON();
+          this.detachLayer(rightId);
+        }
+        this.applyClip(id, prevClip);
       },
     });
     return right;
@@ -775,16 +824,16 @@ export class Timeline {
     const floor = opts.allowNegative ? Math.min(0, 1 - Math.round(layer.clip.duration)) : 0;
     const next = Math.max(floor, Math.round(frame));
     if (next === prev) return false;
+    const setStart = (value: number): void => {
+      const live = this.layerIndex.get(id);
+      if (!live) return;
+      live.clip.start = value;
+      this.events.emit('LayerUpdated', { layer: live, changed: 'clip' });
+    };
     this.history.run({
       label: 'Move Layer',
-      do: () => {
-        layer.clip.start = next;
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-      },
-      undo: () => {
-        layer.clip.start = prev;
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-      },
+      do: () => setStart(next),
+      undo: () => setStart(prev),
     });
     return true;
   }
@@ -797,13 +846,17 @@ export class Timeline {
     this.history.run({
       label: 'Trim Layer',
       do: () => {
-        if (edge === 'start') layer.clip.trimStart(frame, minDuration);
-        else layer.clip.trimEnd(frame, minDuration);
-        this.events.emit('LayerTrimmed', { layer });
+        const live = this.layerIndex.get(id);
+        if (!live) return;
+        if (edge === 'start') live.clip.trimStart(frame, minDuration);
+        else live.clip.trimEnd(frame, minDuration);
+        this.events.emit('LayerTrimmed', { layer: live });
       },
       undo: () => {
-        layer.clip = Clip.fromJSON(prevClip);
-        this.events.emit('LayerTrimmed', { layer });
+        const live = this.layerIndex.get(id);
+        if (!live) return;
+        live.clip = Clip.fromJSON(prevClip);
+        this.events.emit('LayerTrimmed', { layer: live });
       },
     });
     return true;
@@ -823,14 +876,8 @@ export class Timeline {
     const nextClip = trial.toJSON();
     this.history.run({
       label: 'Slip Layer',
-      do: () => {
-        layer.clip = Clip.fromJSON(nextClip);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-      },
-      undo: () => {
-        layer.clip = Clip.fromJSON(prevClip);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-      },
+      do: () => this.applyClip(id, nextClip),
+      undo: () => this.applyClip(id, prevClip),
     });
     return true;
   }
@@ -872,35 +919,29 @@ export class Timeline {
     if (d === 0) return false;
 
     const selfPrev = clip.toJSON();
-    const neighborPrev = new Map<string, ReturnType<Clip['toJSON']>>();
-    if (abutsPrev && prev) neighborPrev.set(prev.id, prev.clip.toJSON());
-    if (abutsNext && next) neighborPrev.set(next.id, next.clip.toJSON());
+    const prevId = abutsPrev && prev ? prev.id : null;
+    const nextId = abutsNext && next ? next.id : null;
+    const neighborPrev = new Map<string, ClipData>();
+    if (prevId && prev) neighborPrev.set(prevId, prev.clip.toJSON());
+    if (nextId && next) neighborPrev.set(nextId, next.clip.toJSON());
 
     this.history.run({
       label: 'Slide Layer',
       do: () => {
-        if (abutsPrev && prev) prev.clip.trimEnd(prev.clip.end + d, minDuration);
-        if (abutsNext && next) next.clip.trimStart(next.clip.start + d, minDuration);
-        clip.shift(d);
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-        if (prev && neighborPrev.has(prev.id)) {
-          this.events.emit('LayerUpdated', { layer: prev, changed: 'clip' });
-        }
-        if (next && neighborPrev.has(next.id)) {
-          this.events.emit('LayerUpdated', { layer: next, changed: 'clip' });
-        }
+        const live = this.layerIndex.get(id);
+        if (!live) return;
+        const p = prevId ? this.layerIndex.get(prevId) : undefined;
+        const n = nextId ? this.layerIndex.get(nextId) : undefined;
+        if (p) p.clip.trimEnd(p.clip.end + d, minDuration);
+        if (n) n.clip.trimStart(n.clip.start + d, minDuration);
+        live.clip.shift(d);
+        this.events.emit('LayerUpdated', { layer: live, changed: 'clip' });
+        if (p) this.events.emit('LayerUpdated', { layer: p, changed: 'clip' });
+        if (n) this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
       },
       undo: () => {
-        layer.clip = Clip.fromJSON(selfPrev);
-        for (const [nid, data] of neighborPrev) {
-          const n = this.layerIndex.get(nid);
-          if (n) n.clip = Clip.fromJSON(data);
-        }
-        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
-        for (const nid of neighborPrev.keys()) {
-          const n = this.layerIndex.get(nid);
-          if (n) this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
-        }
+        this.applyClip(id, selfPrev);
+        for (const [nid, data] of neighborPrev) this.applyClip(nid, data);
       },
     });
     return true;
@@ -910,16 +951,16 @@ export class Timeline {
     const layer = this.layerIndex.get(id);
     if (!layer) return false;
     const prev = layer.name;
+    const rename = (value: string): void => {
+      const live = this.layerIndex.get(id);
+      if (!live) return;
+      live.name = value;
+      this.events.emit('LayerUpdated', { layer: live, changed: 'name' });
+    };
     this.history.run({
       label: 'Rename Layer',
-      do: () => {
-        layer.name = name;
-        this.events.emit('LayerUpdated', { layer, changed: 'name' });
-      },
-      undo: () => {
-        layer.name = prev;
-        this.events.emit('LayerUpdated', { layer, changed: 'name' });
-      },
+      do: () => rename(name),
+      undo: () => rename(prev),
     });
     return true;
   }
@@ -927,16 +968,24 @@ export class Timeline {
   // ── Markers ──────────────────────────────────────────────────────
   addMarker(init: MarkerInit): Marker {
     const marker = new Marker(init);
-    const list = this.markerListFor(marker);
+    const markerId = marker.id;
+    // The owning MarkerList is resolved at run time from the marker's scope
+    // and ownerId — the list is rebuilt with its layer/track on restore.
+    let seed: Marker | null = marker;
+    let snapshot = marker.toJSON();
     this.history.run({
       label: 'Add Marker',
       do: () => {
-        list.add(marker);
-        this.events.emit('MarkerAdded', { marker });
+        const obj = seed;
+        seed = null;
+        this.restoreMarker(snapshot, obj);
       },
       undo: () => {
-        list.remove(marker.id);
-        this.events.emit('MarkerRemoved', { markerId: marker.id });
+        const found = this.findMarker(markerId);
+        if (!found) return;
+        snapshot = found.marker.toJSON();
+        found.list.remove(markerId);
+        this.events.emit('MarkerRemoved', { markerId });
       },
     });
     return marker;
@@ -945,17 +994,17 @@ export class Timeline {
   removeMarker(id: string): boolean {
     const found = this.findMarker(id);
     if (!found) return false;
-    const { marker, list } = found;
+    let snapshot = found.marker.toJSON();
     this.history.run({
       label: 'Remove Marker',
       do: () => {
-        list.remove(id);
+        const live = this.findMarker(id);
+        if (!live) return;
+        snapshot = live.marker.toJSON();
+        live.list.remove(id);
         this.events.emit('MarkerRemoved', { markerId: id });
       },
-      undo: () => {
-        list.add(marker);
-        this.events.emit('MarkerAdded', { marker });
-      },
+      undo: () => this.restoreMarker(snapshot),
     });
     return true;
   }
@@ -1160,6 +1209,62 @@ export class Timeline {
     this.layerIndex.delete(id);
     this.selection.forget(id);
     this.events.emit('LayerRemoved', { layerId: id, trackId: layer.trackId });
+  }
+
+  // ── Command-time resolution ──────────────────────────────────────
+  // Undo commands hold IDS and plain snapshots, never Track/Layer objects.
+  // The app rebuilds every Track/Layer when a document is restored
+  // (applySerializedTimeline → Track.fromJSON, ids preserved), so an object a
+  // closure captured earlier is detached by the time the user presses undo,
+  // and a write to it changes nothing visible. Each helper resolves the live
+  // object by id at run time and no-ops when the id is gone.
+
+  /** Replace a layer's clip from a snapshot and announce it. No-op if gone. */
+  private applyClip(id: string, data: ClipData): void {
+    const live = this.layerIndex.get(id);
+    if (!live) return;
+    live.clip = Clip.fromJSON(data);
+    this.events.emit('LayerUpdated', { layer: live, changed: 'clip' });
+  }
+
+  /** Shift a layer's clip by `delta` frames and announce it. No-op if gone. */
+  private shiftClip(id: string, delta: number): void {
+    const live = this.layerIndex.get(id);
+    if (!live) return;
+    live.clip.shift(delta);
+    this.events.emit('LayerUpdated', { layer: live, changed: 'clip' });
+  }
+
+  /**
+   * Re-attach a layer from a snapshot at `index` on its (snapshot) track.
+   * `seed` is the freshly built object the FIRST run attaches, so the handle
+   * returned to the caller is the live one; later runs rebuild from the
+   * snapshot. No-op when the id is already live or the track is gone.
+   */
+  private restoreLayer(data: LayerData, index: number, seed: Layer | null = null): Layer | null {
+    if (this.layerIndex.has(data.id)) return null;
+    const track = this.trackIndex.get(data.trackId);
+    if (!track) return null;
+    const layer = seed ?? Layer.fromJSON(data);
+    this.attachLayer(layer, track, index);
+    return layer;
+  }
+
+  /** Track counterpart of {@link restoreLayer}. */
+  private restoreTrack(data: TrackData, index: number, seed: Track | null = null): Track | null {
+    if (this.trackIndex.has(data.id)) return null;
+    const track = seed ?? Track.fromJSON(data);
+    this.insertTrack(track, Math.max(0, Math.min(index, this.tracks.length)));
+    return track;
+  }
+
+  /** Marker counterpart: the owning list is resolved from scope/ownerId now. */
+  private restoreMarker(data: MarkerData, seed: Marker | null = null): Marker | null {
+    if (this.findMarker(data.id)) return null;
+    const marker = seed ?? Marker.fromJSON(data);
+    this.markerListFor(marker).add(marker);
+    this.events.emit('MarkerAdded', { marker });
+    return marker;
   }
 
   // Internal accessors for the serializer (keep fields private otherwise).
