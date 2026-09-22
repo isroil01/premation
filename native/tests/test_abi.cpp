@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "motion/motion_abi.h"
+#include "motion/motion_eval.h"  // motion_keyframe + MOTION_KEYFRAME_PACKED_DOUBLES
 
 TEST_CASE("motion_abi_version packs MAJOR.MINOR", "[abi]") {
   const std::uint32_t v = motion_abi_version();

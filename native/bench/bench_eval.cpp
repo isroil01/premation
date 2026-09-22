@@ -78,7 +78,7 @@ void BM_SampleScalar_PerCall(benchmark::State& state) {
     double acc = 0.0;
     for (const double t : times) {
       double out = 0.0;
-      const motion_status st = motion_eval_sample_scalar(kfs.data(), kfs.size(), t, &out, nullptr);
+      motion_status st = motion_eval_sample_scalar(kfs.data(), kfs.size(), t, &out, nullptr);
       benchmark::DoNotOptimize(st);
       acc += out;
     }
@@ -93,7 +93,7 @@ void BM_SampleScalar_Batch(benchmark::State& state) {
   const std::vector<double> times = make_times();
   std::vector<double> out(times.size(), 0.0);
   for (auto _ : state) {
-    const motion_status st = motion_eval_sample_scalar_batch(kfs.data(), kfs.size(), times.data(),
+    motion_status st = motion_eval_sample_scalar_batch(kfs.data(), kfs.size(), times.data(),
                                                              times.size(), out.data(), nullptr);
     benchmark::DoNotOptimize(st);
     benchmark::DoNotOptimize(out.data());
@@ -109,7 +109,7 @@ void BM_SampleScalar_PackedBatch(benchmark::State& state) {
   const std::vector<double> times = make_times();
   std::vector<double> out(times.size(), 0.0);
   for (auto _ : state) {
-    const motion_status st = motion_eval_sample_scalar_packed_batch(
+    motion_status st = motion_eval_sample_scalar_packed_batch(
         packed.data(), kfs.size(), times.data(), times.size(), out.data(), nullptr);
     benchmark::DoNotOptimize(st);
     benchmark::DoNotOptimize(out.data());
