@@ -31,6 +31,10 @@ import { canEncodeLocally } from '@core/export/videoSink';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { customConfirm } from '@components/Modal/Dialogs';
+import { useExportQueueStore } from '@stores/exportQueueStore';
+import { isFinishedStatus, isLiveStatus } from '@core/export/exportSupervisorClient';
+import { ExportQueueList } from '@layout/Export/ExportQueueList';
+import { addToRenderQueue } from '@layout/Export/supervisorQueue';
 import styles from './RenderQueuePanel.module.css';
 
 const FORMAT_LABEL: Record<OutputFormat, string> = {
@@ -81,7 +85,6 @@ export function RenderQueuePanel(): JSX.Element {
   // so selecting them never triggers a render; only `jobs`/`isRunning` do.
   const jobs = useRenderQueueStore((s) => s.jobs);
   const isRunning = useRenderQueueStore((s) => s.isRunning);
-  const addJob = useRenderQueueStore((s) => s.addJob);
   const removeJob = useRenderQueueStore((s) => s.removeJob);
   const duplicateJob = useRenderQueueStore((s) => s.duplicateJob);
   const skipJob = useRenderQueueStore((s) => s.skipJob);
@@ -95,6 +98,10 @@ export function RenderQueuePanel(): JSX.Element {
   const outputDir = useRenderQueueStore((s) => s.outputDir);
   const chooseOutputDir = useRenderQueueStore((s) => s.chooseOutputDir);
   const restoreFromLastSession = useRenderQueueStore((s) => s.restoreFromLastSession);
+  // Jobs main is rendering in their own windows (desktop). Listed beside the
+  // in-window jobs, not merged into them: they have different verbs (no
+  // pause/resume — an interrupted one restarts) and a different owner.
+  const backgroundJobs = useExportQueueStore((s) => s.jobs);
 
   const [showDialog, setShowDialog] = useState(false);
 
@@ -184,7 +191,10 @@ export function RenderQueuePanel(): JSX.Element {
     // a queued job renders what was queued, not the live global work area.
     const wa = getTimelineController().getWorkArea();
     const range = wa ?? { start: 0, end: settings.durationSec };
-    addJob({
+    // Main's queue on desktop, this window's queue otherwise (web/hosted,
+    // `exportInProcess`, HDR, a project the snapshot cannot carry) — the same
+    // decision the Export dialog's Add to Queue makes.
+    addToRenderQueue({
       compositionName: compName ?? 'Comp 1',
       // Bind the job to the comp it was queued FROM (see RenderJob.compositionId).
       compositionId: comp.id,
@@ -216,6 +226,7 @@ export function RenderQueuePanel(): JSX.Element {
   // ordinary stopped jobs to the runner, but they deserve to be named: a queue
   // that silently repopulated itself after a crash would look like a bug.
   const fromLastSession = jobs.filter((j) => j._adopt);
+  const backgroundLive = backgroundJobs.filter((j) => !isFinishedStatus(j.status)).length;
 
   return (
     <div className={styles.root}>
@@ -251,11 +262,17 @@ export function RenderQueuePanel(): JSX.Element {
 
         <span className={styles.spacer} />
 
-        {isRunning ? (
+        {/*
+          The badge describes whichever queue is actually working. "Stopped"
+          only means something for in-window jobs (it is the Render All
+          runner's state), so with none of those it is not shown — a finished
+          background render next to a "Stopped" badge read as a failure.
+        */}
+        {isRunning || backgroundJobs.some((j) => isLiveStatus(j.status)) ? (
           <span className={styles.statusBadgeRunning}>● Running</span>
-        ) : (
+        ) : jobs.length > 0 ? (
           <span className={styles.statusBadge}>Stopped</span>
-        )}
+        ) : null}
 
         {/*
           "Stop (keep progress)" — the label is the promise.
@@ -333,7 +350,12 @@ export function RenderQueuePanel(): JSX.Element {
 
       {/* ── Job list ─────────────────────────────────────────────── */}
       <div className={styles.jobList}>
-        {jobs.length === 0 && (
+        {/* Background renders first: they are already running (main's queue
+            starts what it holds), while the in-window jobs below wait for
+            Render All. */}
+        <ExportQueueList priorityControls />
+
+        {jobs.length === 0 && backgroundJobs.length === 0 && (
           <EmptyState
             icon="queue"
             title="Nothing queued"
@@ -497,6 +519,7 @@ export function RenderQueuePanel(): JSX.Element {
         <Icon name="queue" size="sm" />
         {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued
         {resumableCount > 0 ? ` · ${resumableCount} paused` : ''} · {doneCount} done
+        {backgroundJobs.length > 0 ? ` · ${backgroundLive} in background` : ''}
         {isRunning && <span style={{ color: 'var(--color-primary)' }}> · Rendering…</span>}
       </div>
     </div>

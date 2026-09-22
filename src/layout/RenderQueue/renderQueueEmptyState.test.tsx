@@ -22,6 +22,8 @@ jest.mock('@core/export/renderJob', () => ({
 import { render, screen, fireEvent } from '@testing-library/react';
 import { RenderQueuePanel } from './RenderQueuePanel';
 import { useRenderQueueStore } from '@stores/renderQueueStore';
+import { resetExportQueueForTest, useExportQueueStore } from '@stores/exportQueueStore';
+import type { ExportJobRecord } from '@core/export/exportSupervisorClient';
 
 beforeEach(() => {
   for (const job of [...useRenderQueueStore.getState().jobs]) {
@@ -39,5 +41,49 @@ it('shows an empty state, with the add action, when nothing is queued', () => {
 
   // The output-module dialog is the panel's own "Add Comp" surface — if the
   // action were inert this would find nothing.
-  expect(screen.getByText(/output/i)).toBeTruthy();
+  expect(screen.getAllByText(/output/i).length).toBeGreaterThan(0);
+});
+
+/*
+  Desktop renders run in main's supervisor, one hidden window per job; the
+  panel lists them from exportQueueStore beside any in-window jobs (legacy
+  persisted entries, web/hosted, exportInProcess), with the supervisor's own
+  verbs and its restart note.
+*/
+describe('background (supervisor) jobs', () => {
+  const bg = (over: Partial<ExportJobRecord> = {}): ExportJobRecord => ({
+    id: 'exp-1',
+    status: 'rendering',
+    priority: 0,
+    createdAt: 1,
+    attempts: 0,
+    spec: { projectPath: 'C:\\j\\p.motion', outPath: 'D:\\out\\Hero.mp4', format: 'mp4', label: 'Hero → Hero.mp4', totalFrames: 48 },
+    progress: { fraction: 0.5, frame: 24, totalFrames: 48, fps: 12, etaSec: 2 },
+    ...over,
+  });
+
+  beforeEach(() => resetExportQueueForTest());
+  afterAll(() => resetExportQueueForTest());
+
+  it('lists them instead of the empty state, with frame/fps/ETA and the restart note', () => {
+    useExportQueueStore.setState({ jobs: [bg(), bg({ id: 'exp-2', status: 'queued', progress: { fraction: 0, frame: 0, totalFrames: 48, fps: null, etaSec: null } })] });
+    render(<RenderQueuePanel />);
+    expect(screen.queryByText('Nothing queued')).toBeNull();
+    expect(screen.getByText(/Frame 24 \/ 48 · 12\.0 fps · 0:02 left/)).toBeTruthy();
+    expect(screen.getByText(/interrupted render starts again/i)).toBeTruthy();
+    // Priority up/down on the waiting one only.
+    expect(screen.getAllByRole('button', { name: /raise priority/i })).toHaveLength(1);
+    expect(screen.getByText(/2 in background/)).toBeTruthy();
+  });
+
+  it('shows in-window (legacy) jobs alongside them', () => {
+    useExportQueueStore.setState({ jobs: [bg()] });
+    useRenderQueueStore.getState().addJob({
+      compositionName: 'Legacy comp', outputPath: 'legacy.mp4', format: 'mp4',
+      width: 100, height: 100, fps: 24, durationSec: 1, transparent: false,
+    });
+    render(<RenderQueuePanel />);
+    expect(screen.getByText('Legacy comp')).toBeTruthy();
+    expect(screen.getByText('Hero → Hero.mp4')).toBeTruthy();
+  });
 });

@@ -24,7 +24,7 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { usePlaybackClockStore } from '@stores/playbackClockStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
-import { useRenderQueueStore, outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
+import { outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -35,8 +35,9 @@ import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/h
 import { compSizeOf } from '@core/composition/compSizes';
 import { openHelp } from '@layout/Help/openHelp';
 import { getProjectManager } from '@core/services/coreServices';
-import { buildSupervisorSpec, exportSupervisorAvailable, exportSupervisorClient } from '@core/export/exportSupervisorClient';
+import { buildSupervisorSpec, exportSupervisorClient } from '@core/export/exportSupervisorClient';
 import { useExportQueueStore } from '@stores/exportQueueStore';
+import { addToRenderQueue, shouldUseSupervisor } from './supervisorQueue';
 import { ExportPreview } from './ExportPreview';
 import { ExportQueueList } from './ExportQueueList';
 import { useExportFormStore } from './exportFormStore';
@@ -78,23 +79,9 @@ const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportF
 /** The job id the immediate export runs under — one at a time, by design. */
 export const EXPORT_JOB_ID = 'export';
 
-/**
- * Formats the out-of-process path can take: everything the headless CLI can
- * render to a file. The rest (Lottie, WAV, the editorial formats, a single
- * PNG) are quick in-process writes with no render loop worth isolating.
- */
-const SUPERVISED: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
-
-/**
- * Whether an export of `format` should go to the main-owned queue.
- *
- * Desktop with the bridge and the preference at its default (off = out of
- * process). The web edition has no supervisor and takes the in-window path;
- * so does anyone who turned `exportInProcess` on.
- */
-export function shouldUseSupervisor(format: ExportFormat, exportInProcess: boolean): boolean {
-  return !exportInProcess && SUPERVISED.has(format) && exportSupervisorAvailable();
-}
+// The supervisor-or-window decision lives in ./supervisorQueue, shared with the
+// Render Queue panel; re-exported so existing importers keep one name for it.
+export { shouldUseSupervisor };
 
 function dataPreviewMeta(format: ExportFormat): { icon: import('@components/Icon').IconName; title: string } {
   switch (format) {
@@ -354,7 +341,9 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     // reason: markers are live editor state.
     const range = captureRange();
     const chapterMarks = captureChapters();
-    useRenderQueueStore.getState().addJob({
+    // Main's queue on desktop (the job starts rendering in its own window),
+    // the in-window queue otherwise — see `addToRenderQueue`.
+    const { where } = addToRenderQueue({
       compositionName: compName ?? 'Comp 1',
       compositionId: baseComp.id,
       background: baseComp.background,
@@ -376,7 +365,13 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
     });
     useLayoutStore.getState().openPanel('renderQueue');
-    useUIStore.getState().notify({ level: 'success', message: 'Added to Render Queue (F6)', durationMs: 2600 });
+    useUIStore.getState().notify({
+      level: 'success',
+      message: where === 'supervisor'
+        ? 'Added to Render Queue (F6) — it renders in the background'
+        : 'Added to Render Queue (F6)',
+      durationMs: 2600,
+    });
     return true;
   }, [format, captureRange, captureChapters, compName, baseComp, width, height, fps, duration, alpha, quality, proresProfile]);
 

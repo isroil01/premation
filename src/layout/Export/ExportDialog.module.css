@@ -491,6 +491,8 @@
   flex-shrink: 0;
   max-height: 200px;
   overflow-y: auto;
+  /* The list also sits in the Render dock panel, which defaults to ~280px. */
+  container-type: inline-size;
 }
 
 .queueRow {
@@ -539,4 +541,25 @@
 .queueActions {
   display: inline-flex;
   gap: var(--space-2);
+}
+
+/* Narrow host (the dock panel): three columns squeezed the label to "Com…"
+   and the status to "Done …". Label + actions share the first line and the
+   progress bar takes its own full-width line under them.
+   Must stay AFTER the base .queueRow/.queueLabel rules: same specificity, so
+   source order decides, and placed earlier it silently never applied. */
+@container (max-width: 420px) {
+  .queueRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .queueRow > .progressWrap {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .queueLabel {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
