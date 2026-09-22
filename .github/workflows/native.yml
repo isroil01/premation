@@ -132,13 +132,28 @@ jobs:
       - name: N-API addon (cmake-js)
         working-directory: native/bindings/napi
         shell: bash
+        # Two first-run failures shaped this step:
+        #  - Windows: CMake resolved `rc` to node_modules/.bin/rc — the npm
+        #    config-loader package of that name, which npx puts first on PATH —
+        #    instead of a resource compiler, and the compiler probe failed.
+        #    Name LLVM's resource compiler explicitly.
+        #  - Linux: cmake-js downloads Node headers from nodejs.org and the
+        #    runner's connection timed out (ETIMEDOUT). Retry the compile.
         run: |
           npm install --no-audit --no-fund
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            npx cmake-js compile -G Ninja --CDCMAKE_C_COMPILER=clang-cl --CDCMAKE_CXX_COMPILER=clang-cl
-          else
-            CC=clang CXX=clang++ npx cmake-js compile
-          fi
+          compile() {
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              npx cmake-js compile -G Ninja --CDCMAKE_C_COMPILER=clang-cl --CDCMAKE_CXX_COMPILER=clang-cl \
+                "--CDCMAKE_RC_COMPILER=C:/Program Files/LLVM/bin/llvm-rc.exe"
+            else
+              CC=clang CXX=clang++ npx cmake-js compile
+            fi
+          }
+          for attempt in 1 2 3; do
+            if compile; then break; fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "cmake-js attempt $attempt failed; retrying in 20 s"; sleep 20
+          done
           node smoke.cjs
 
       - name: Upload addon
