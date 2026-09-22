@@ -79,11 +79,10 @@ typedef enum motion_spatial {
 } motion_spatial;
 
 /**
- * One keyframe of a scalar track. 64 bytes, 8-byte aligned, no padding holes
- * (`easing` + `flags` together fill one 8-byte slot), so an array of these is
- * also a valid array of 8 doubles per keyframe when the two 32-bit fields are
- * read as one — but callers should not rely on that; use the packed layout
- * below when crossing from JavaScript.
+ * One keyframe of a scalar track. 72 bytes (8 + 8 + 4 + 4 + 6 × 8), 8-byte
+ * aligned, no padding holes (`easing` + `flags` together fill one 8-byte
+ * slot). Callers crossing from JavaScript use the packed layout below, not
+ * this struct's bytes. test_abi.cpp pins the size and every field offset.
  */
 typedef struct motion_keyframe {
   double t;       /**< seconds */

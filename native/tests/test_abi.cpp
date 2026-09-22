@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -24,11 +25,21 @@ TEST_CASE("motion_status_name is total", "[abi]") {
   // exactly what UBSan's -fsanitize=enum rejects, and the suite runs under it.
 }
 
-TEST_CASE("motion_keyframe is a plain 64-byte record", "[abi]") {
+TEST_CASE("motion_keyframe is a plain 72-byte record with no padding", "[abi]") {
   // The packed Float64Array layout and the struct layout are both ABI. If this
   // changes, MOTION_ABI_VERSION_MAJOR changes with it.
-  STATIC_CHECK(sizeof(motion_keyframe) == 64);
+  // (An earlier version claimed 64 bytes; the fields sum to 8+8+4+4+6*8 = 72.
+  // The first CI compile caught it.)
+  STATIC_CHECK(sizeof(motion_keyframe) == 72);
   STATIC_CHECK(alignof(motion_keyframe) == 8);
+  STATIC_CHECK(offsetof(motion_keyframe, t) == 0);
+  STATIC_CHECK(offsetof(motion_keyframe, value) == 8);
+  STATIC_CHECK(offsetof(motion_keyframe, easing) == 16);
+  STATIC_CHECK(offsetof(motion_keyframe, flags) == 20);
+  STATIC_CHECK(offsetof(motion_keyframe, c0) == 24);
+  STATIC_CHECK(offsetof(motion_keyframe, c3) == 48);
+  STATIC_CHECK(offsetof(motion_keyframe, si) == 56);
+  STATIC_CHECK(offsetof(motion_keyframe, so) == 64);
   STATIC_CHECK(MOTION_KEYFRAME_PACKED_DOUBLES == 10);
   STATIC_CHECK(sizeof(motion_error) == MOTION_ERROR_MESSAGE_CAP);
 }
