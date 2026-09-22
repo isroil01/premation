@@ -1,0 +1,57 @@
+// Events: the only way the UI mirror learns what changed. Revisioned events
+// describe document changes and are applied in order; `ephemeral` events are
+// status (transport, stats, jobs) and carry no revision. Event ids: 2000–2199.
+// Ids 2100–2199 are reserved for the frame route phase C1 chooses.
+
+family "DocumentEvents";
+
+enum ResetReason { opened = 0; created = 1; reverted = 2; recovered = 3; engineRestarted = 4; resync = 5; }
+
+/// The whole mirror is invalid: refetch getDocument. Sent on open/new/revert, after an engine restart, and when the engine cannot express a change incrementally.
+event documentReset = 2000 { revision: Revision = 1; reason: ResetReason = 2; }
+event projectSettingsChanged = 2001 { settings: ProjectSettings = 1; }
+/// Items added or changed: full ItemInfo records (upsert).
+event itemsChanged = 2002 { items: ItemInfo[] = 1; }
+event itemsRemoved = 2003 { items: ItemId[] = 1; }
+event compositionChanged = 2004 { comp: ItemId = 1; settings: CompSettings = 2; }
+/// Layers added or their header changed (name, switches, parent, timing, blend, matte, markers): full LayerInfo (upsert).
+event layersChanged = 2005 { layers: LayerInfo[] = 1; }
+event layersRemoved = 2006 { comp: ItemId = 1; layers: LayerId[] = 2; }
+/// The full new stack order of a composition.
+event layerOrderChanged = 2007 { comp: ItemId = 1; layers: LayerId[] = 2; }
+/// Property metadata/static value changes. One PropertyInfo per changed property (children not included).
+event propertiesChanged = 2008 { layer: LayerId = 1; properties: PropertyInfo[] = 2; }
+/// Full replacement keyframe lists for each changed property (an empty list = no longer animated).
+event keyframesChanged = 2009 { sets: KeyframeSet[] = 1; }
+/// Structure under `parent` changed (group added/removed/moved/renamed/enabled): the new ordered child list with their infos.
+event propertyGroupsChanged = 2010 { layer: LayerId = 1; parent: PropPath = 2; children: PropertyInfo[] = 3; }
+/// All markers of one owner (full replacement).
+event markersChanged = 2011 { owner: MarkerOwner = 1; markers: Marker[] = 2; }
+event renderQueueChanged = 2012 { items: RenderItemInfo[] = 1; }
+
+family "StatusEvents";
+
+event historyChanged = 2050 [ephemeral] { state: HistoryState = 1; undoLabel: string = 2; redoLabel: string = 3; }
+event dirtyChanged = 2051 [ephemeral] { dirty: bool = 1; projectPath: string = 2; }
+
+enum TransportState { stopped = 0; playing = 1; caching = 2; stalled = 3; }
+
+event transportChanged = 2052 [ephemeral] { state: TransportState = 1; comp: ItemId = 2; time: Time = 3; rate: f64 = 4; loop: LoopMode = 5; range: TimeRange = 6; }
+/// The playhead, at most once per displayed frame during playback and after every seek.
+event playhead = 2053 [ephemeral] { comp: ItemId = 1; time: Time = 2; frame: i64 = 3; droppedFrames: u32 = 4; }
+event renderStatsUpdated = 2054 [ephemeral] { stats: RenderStats = 1; }
+/// Cached time ranges of a composition (the green bar).
+event cacheChanged = 2055 [ephemeral] { comp: ItemId = 1; ram: TimeRange[] = 2; disk: TimeRange[] = 3; }
+event engineError = 2056 [ephemeral] { error: EngineError = 1; fatal: bool = 2; }
+/// The complete current set of per-layer errors for a composition (snapshot.layerErrors).
+event layerErrors = 2057 [ephemeral] { comp: ItemId = 1; errors: LayerError[] = 2; }
+event jobProgress = 2058 [ephemeral] { job: JobInfo = 1; }
+event jobFinished = 2059 [ephemeral] { job: JobInfo = 1; error?: EngineError = 2; }
+event projectSaved = 2060 [ephemeral] { path: string = 1; revision: Revision = 2; }
+
+enum AssetStatus { ready = 0; missing = 1; decoding = 2; offline = 3; failed = 4; }
+
+event assetStatusChanged = 2061 [ephemeral] { item: ItemId = 1; status: AssetStatus = 2; message: string = 3; }
+event fontsChanged = 2062 [ephemeral] {}
+/// An autosave / recovery file was written.
+event autosaved = 2063 [ephemeral] { path: string = 1; revision: Revision = 2; }

@@ -1,0 +1,49 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+    },
+    {
+      "name": "linux-clang",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++" }
+    },
+    {
+      "name": "linux-clang-asan",
+      "inherits": "linux-clang",
+      "cacheVariables": { "MOTION_SANITIZE": "asan-ubsan", "PROTOCOL_BUILD_BENCH": "OFF" }
+    },
+    {
+      "name": "macos-clang",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++" }
+    },
+    {
+      "name": "windows-clang-cl",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang-cl" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux-clang", "configurePreset": "linux-clang" },
+    { "name": "linux-clang-asan", "configurePreset": "linux-clang-asan" },
+    { "name": "macos-clang", "configurePreset": "macos-clang" },
+    { "name": "windows-clang-cl", "configurePreset": "windows-clang-cl" }
+  ],
+  "testPresets": [
+    { "name": "linux-clang", "configurePreset": "linux-clang", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-asan", "configurePreset": "linux-clang-asan", "output": { "outputOnFailure": true } },
+    { "name": "macos-clang", "configurePreset": "macos-clang", "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-cl", "configurePreset": "windows-clang-cl", "output": { "outputOnFailure": true } }
+  ]
+}

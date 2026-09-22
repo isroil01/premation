@@ -1,0 +1,139 @@
+// Envelope: the messages that carry commands, queries, results and events.
+// On the pipe (C2) each EngineMessage is framed as a 4-byte little-endian
+// length followed by the encoded message. Inside Electron (UI ⇄ main) the
+// same bytes travel as an ArrayBuffer over the typed preload API.
+
+family "Envelope";
+
+/// Every message on the engine connection.
+union EngineMessage {
+  hello: Hello = 1;
+  welcome: Welcome = 2;
+  request: Request = 3;
+  response: Response = 4;
+  events: EventBatch = 5;
+  goodbye: Goodbye = 6;
+}
+
+/// Client → engine, first message. The engine answers Welcome or closes with Goodbye{versionMismatch}.
+struct Hello {
+  protocolMajor: u32 = 1;
+  protocolMinor: u32 = 2;
+  /// 'premation-ui', 'premation-cli', 'replay', a plugin id, …
+  client: string = 3;
+  clientVersion: string = 4;
+  /// Optional features the client understands (e.g. 'frames.sharedTexture').
+  capabilities: string[] = 5;
+}
+
+struct Welcome {
+  protocolMajor: u32 = 1;
+  protocolMinor: u32 = 2;
+  /// 'premation-engine-ts' (phase B/C) or 'premation-engine' (C++).
+  engine: string = 3;
+  engineVersion: string = 4;
+  /// Current document revision; the mirror fetches getDocument at this revision.
+  revision: Revision = 5;
+  sessionId: string = 6;
+  capabilities: string[] = 7;
+}
+
+enum GoodbyeReason { normal = 0; versionMismatch = 1; engineShutdown = 2; protocolError = 3; }
+
+struct Goodbye { reason: GoodbyeReason = 1; message: string = 2; }
+
+struct Request {
+  seq: Seq = 1;
+  body: RequestBody = 2;
+  /// Optimistic concurrency: when set, the engine rejects the request with `conflict` if the document is not at this revision.
+  baseRevision?: Revision = 3;
+  origin: Origin = 4;
+}
+
+union RequestBody {
+  command: Command = 1;
+  query: Query = 2;
+  /// Several commands applied atomically as ONE undo entry, all-or-nothing.
+  batch: CommandBatch = 3;
+}
+
+struct CommandBatch {
+  /// History label ('Align Layers', 'Easy Ease').
+  label: string = 1;
+  commands: Command[] = 2;
+}
+
+struct Response {
+  seq: Seq = 1;
+  /// Document revision after the request (unchanged for queries, controls and errors).
+  revision: Revision = 2;
+  outcome: Outcome = 3;
+}
+
+union Outcome {
+  command: CommandResult = 1;
+  query: QueryResult = 2;
+  batch: BatchResult = 3;
+  error: EngineError = 4;
+}
+
+struct BatchResult { results: CommandResult[] = 1; }
+
+/// Change notifications. Revisioned events carry the document from `fromRevision` to `toRevision`; a batch of only ephemeral events has fromRevision == toRevision.
+struct EventBatch {
+  fromRevision: Revision = 1;
+  toRevision: Revision = 2;
+  events: Event[] = 3;
+  /// The request that caused these changes, when there was one.
+  causedBy?: Seq = 4;
+  origin?: Origin = 5;
+}
+
+enum ErrorCode {
+  internal = 0;
+  invalidArgument = 1;
+  notFound = 2;
+  typeMismatch = 3;
+  outOfRange = 4;
+  locked = 5;
+  /// Parenting or precomp nesting would create a cycle.
+  cycle = 6;
+  notAnimatable = 7;
+  /// setProperty without a time on a property that has keyframes.
+  animated = 8;
+  /// baseRevision did not match.
+  conflict = 9;
+  /// Unknown command/query/variant (a newer client) or a feature this engine does not implement.
+  unsupported = 10;
+  gestureOpen = 11;
+  noGesture = 12;
+  busy = 13;
+  io = 14;
+  decode = 15;
+  permissionDenied = 16;
+  expressionError = 17;
+  nothingToUndo = 18;
+  nothingToRedo = 19;
+  cancelled = 20;
+}
+
+/// A failed request changed NOTHING. Batches report the index of the command that failed.
+struct EngineError {
+  code: ErrorCode = 1;
+  message: string = 2;
+  commandIndex?: u32 = 3;
+  layer?: LayerId = 4;
+  path?: PropPath = 5;
+  item?: ItemId = 6;
+  /// Machine-readable extra detail (JSON), e.g. the expected ValueType.
+  detail?: string = 7;
+}
+
+/// One line of a recorded command log (§8). Replaying the requests in order against a fresh engine reproduces the document.
+struct LogRecord {
+  request: Request = 1;
+  /// Revision the engine reported after applying it; replay asserts it matches.
+  revisionAfter: Revision = 2;
+  /// Hash of the document after applying (0 = not recorded).
+  documentHash: u64 = 3;
+}

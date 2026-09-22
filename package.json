@@ -64,7 +64,11 @@
     "native:tidy": "node scripts/native.mjs tidy",
     "native:wasm": "node scripts/native.mjs wasm",
     "native:napi": "node scripts/native.mjs napi",
-    "native:golden": "node scripts/native.mjs golden"
+    "native:golden": "node scripts/native.mjs golden",
+    "engine-api:gen": "node packages/engine-api/codegen/generate.cjs",
+    "engine-api:check": "node packages/engine-api/codegen/generate.cjs --check",
+    "engine-api:bench": "node packages/engine-api/bench/run.mjs",
+    "protocol:build": "node native/protocol/build.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

@@ -1,0 +1,116 @@
+// Properties, keyframes, expressions and property groups (effects, masks,
+// text animators, selectors, shape contents, layer styles, paint strokes,
+// puppet pins). Command ids: 400–699. Addressing: ENGINE_API.md §3.4.
+
+family "Properties";
+
+/// One property write inside setProperties.
+struct PropertyWrite {
+  prop: PropRef = 1;
+  value: Value = 2;
+  time?: Time = 3;
+}
+
+/// Set a property.
+/// Not animated: sets the static value (time is ignored).
+/// Animated: `time` is required; creates the keyframe at `time` or replaces its value (AE setValueAtTime). No time → error `animated`.
+/// Undo restores the previous static value, or removes the created keyframe / restores the replaced value.
+command setProperty = 400 [coalesce] { prop: PropRef = 1; value: Value = 2; time?: Time = 3; } -> PropertyWriteResult;
+/// Many writes, one command (multi-layer drags). Same rules per write; all-or-nothing.
+command setProperties = 401 [coalesce] { writes: PropertyWrite[] = 1; }
+/// Reset to the property's default (a keyframe at `time` if animated).
+command resetProperty = 402 { prop: PropRef = 1; time?: Time = 2; }
+/// The stopwatch. On: one keyframe at `time` holding the current value. Off: removes every keyframe; the static value becomes the value at `time`.
+command setAnimated = 403 { prop: PropRef = 1; animated: bool = 2; time: Time = 3; } -> PropertyWriteResult;
+/// Separate Dimensions (position → X/Y/Z Position). Keyframes are split/merged exactly as AE does.
+command setDimensionsSeparated = 404 { layer: LayerId = 1; path: PropPath = 2; separated: bool = 3; }
+/// Set or replace an expression. An empty source removes it. The result carries compile errors (the expression is still stored, disabled on error like AE).
+command setExpression = 405 { prop: PropRef = 1; source: string = 2; enabled: bool = 3; } -> ExpressionResult;
+command setExpressionEnabled = 406 { props: PropRef[] = 1; enabled: bool = 2; }
+/// Bake an expression (or an evaluated property) to keyframes over `range`, one per `step` (0 = every frame).
+command convertExpressionToKeyframes = 407 { prop: PropRef = 1; range?: TimeRange = 2; step: Time = 3; } -> KeyframeIds;
+/// Link: set a pickwhip expression on `prop` that reads `target`.
+command linkProperty = 408 { prop: PropRef = 1; target: PropRef = 2; }
+
+struct PropertyWriteResult {
+  /// Set when the write created or replaced a keyframe.
+  keyframe?: KeyframeId = 1;
+}
+
+struct ExpressionDiagnostic { message: string = 1; line: u32 = 2; column: u32 = 3; }
+
+struct ExpressionResult { ok: bool = 1; diagnostics: ExpressionDiagnostic[] = 2; }
+
+family "Keyframes";
+
+struct KeyframeInsert {
+  prop: PropRef = 1;
+  time: Time = 2;
+  /// Absent = the property's current evaluated value at `time`.
+  value?: Value = 3;
+  easing?: Easing = 4;
+  bezier?: CubicBezier = 5;
+  roving?: bool = 6;
+  spatialInterp?: SpatialInterp = 7;
+  spatialIn: f64[] = 8;
+  spatialOut: f64[] = 9;
+}
+
+/// Only present fields change. `time` moves this one key (moveKeyframes moves many by a delta).
+struct KeyframePatch {
+  id: KeyframeId = 1;
+  time?: Time = 2;
+  value?: Value = 3;
+  easing?: Easing = 4;
+  bezier?: CubicBezier = 5;
+  clearBezier?: bool = 6;
+  continuous?: bool = 7;
+  roving?: bool = 8;
+  spatialInterp?: SpatialInterp = 9;
+  spatialIn: f64[] = 10;
+  spatialOut: f64[] = 11;
+  clearSpatial?: bool = 12;
+  label?: u32 = 13;
+}
+
+/// Add keyframes (replacing any at the same time on the same property — the replaced key keeps its id). Returns ids in input order.
+command addKeyframes = 500 { keys: KeyframeInsert[] = 1; } -> KeyframeIds;
+/// Delete keyframes. Deleting the last key of a property leaves it static at that key's value.
+command deleteKeyframes = 501 { ids: KeyframeId[] = 1; }
+/// Move keyframes by `delta`. A moved key landing on an unmoved key replaces it; undo restores the replaced key with its id.
+command moveKeyframes = 502 [coalesce] { ids: KeyframeId[] = 1; delta: Time = 2; }
+/// Patch keyframes (value, easing, handles, tangents, roving, label). Undo restores every patched field.
+command updateKeyframes = 503 [coalesce] { patches: KeyframePatch[] = 1; }
+/// Scale keyframe times around `pivot` (Alt-drag a keyframe group).
+command scaleKeyframes = 504 [coalesce] { ids: KeyframeId[] = 1; pivot: Time = 2; factor: f64 = 3; }
+/// Time-reverse keyframes within their span.
+command reverseKeyframes = 505 { ids: KeyframeId[] = 1; }
+/// Paste keyframes copied from any property onto `prop`, the first at `time`.
+command pasteKeyframes = 506 { prop: PropRef = 1; time: Time = 2; keys: Keyframe[] = 3; } -> KeyframeIds;
+
+struct KeyframeIds { ids: KeyframeId[] = 1; }
+
+family "PropertyGroups";
+
+enum MaskMode { none = 0; add = 1; subtract = 2; intersect = 3; lighten = 4; darken = 5; difference = 6; }
+
+/// Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order.
+command addEffect = 600 { layers: LayerId[] = 1; effect: string = 2; index?: u32 = 3; params: PropertyInit[] = 4; } -> GroupList;
+/// Add a mask. Returns 'masks/<id>'.
+command addMask = 601 { layer: LayerId = 1; path: BezierPath = 2; mode: MaskMode = 3; name?: string = 4; index?: u32 = 5; inverted: bool = 6; } -> GroupList;
+/// Add any other group under `parent` by match name: text animator ('text/animators', 'ADBE Text Animator'), selector, shape content (rect, ellipse, polystar, path, fill, stroke, gradient fill/stroke, trim, repeater, merge, offset, round corners, twist, wiggle, zig-zag, pucker), layer style, paint stroke, puppet pin, expression control, essential property.
+command addPropertyGroup = 602 { layer: LayerId = 1; parent: PropPath = 2; matchName: string = 3; index?: u32 = 4; init: PropertyInit[] = 5; name?: string = 6; } -> GroupList;
+/// Remove groups (effects, masks, animators, …) with their keyframes and expressions. Undo restores them at their index with the same ids.
+command removePropertyGroups = 603 { groups: PropRef[] = 1; }
+/// Move a group within its parent (reorder effects, masks, animators, shape contents).
+command movePropertyGroup = 604 { group: PropRef = 1; toIndex: u32 = 2; }
+command duplicatePropertyGroups = 605 { groups: PropRef[] = 1; } -> GroupList;
+/// The fx switch / mask enable / animator enable.
+command setGroupEnabled = 606 { groups: PropRef[] = 1; enabled: bool = 2; }
+command renamePropertyGroup = 607 { group: PropRef = 1; name: string = 2; }
+/// Copy groups to other layers (paste effects / masks). Returns new paths in target order.
+command copyPropertyGroups = 608 { groups: PropRef[] = 1; toLayers: LayerId[] = 2; } -> GroupList;
+/// Apply an animation preset (.ffx-like Premation preset) to layers at `time`.
+command applyPreset = 609 { layers: LayerId[] = 1; preset: string = 2; time: Time = 3; } -> GroupList;
+/// A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry.
+command invokeEffectAction = 610 { group: PropRef = 1; action: string = 2; payload?: string = 3; }

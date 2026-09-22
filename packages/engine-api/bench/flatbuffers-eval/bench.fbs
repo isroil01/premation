@@ -1,0 +1,61 @@
+// FlatBuffers twin of the engine-api benchmark payloads (evaluation only).
+namespace fbbench;
+
+struct Vec2 { x:double; y:double; }
+struct Vec3 { x:double; y:double; z:double; }
+struct CubicBezier { x1:double; y1:double; x2:double; y2:double; }
+struct LayerTiming { in_point:long; out_point:long; start_time:long; stretch:double; time_remap_enabled:bool; retime:ubyte; }
+
+table VScalar { v:double; }
+table VBool { v:bool; }
+table VChoice { v:string; }
+table VVec2 { v:Vec2; }
+table VVec3 { v:Vec3; }
+union Value { VScalar, VBool, VChoice, VVec2, VVec3 }
+
+table PropRef { layer:string; path:string; }
+table SetProperty { prop:PropRef; value:Value; time:long = null; }
+union Command { SetProperty }
+table CommandMsg { cmd:Command; }
+
+table LayerSwitches {
+  visible:bool; audio_enabled:bool; solo:bool; locked:bool; shy:bool; collapse:bool; quality:ubyte;
+  effects_enabled:bool; motion_blur:bool; adjustment:bool; three_d:bool; guide:bool; frame_blend:ubyte;
+  auto_orient:ubyte; preserve_transparency:bool; label:uint;
+}
+table TrackMatte { layer:string; mode:ubyte; }
+table LayerInfo {
+  id:string; comp:string; kind:ubyte; name:string; parent:string; source:string;
+  switches:LayerSwitches; timing:LayerTiming; blend_mode:ubyte; matte:TrackMatte;
+  children:[string]; has_video:bool; has_audio:bool; comment:string;
+}
+table PropertyInfo {
+  path:string; name:string; match_name:string; kind:ubyte; vtype:ubyte; animatable:bool; animated:bool;
+  dimensions:uint; separated:bool; enabled:bool; value:Value; choices:[string]; unit:string; expression:string;
+  expression_enabled:bool; expression_error:string; keyframe_count:uint; children:[string]; hidden:bool;
+}
+table PropertyTree { layer:string; nodes:[PropertyInfo]; }
+table Keyframe {
+  id:string; time:long; value:Value; easing:ubyte; bezier:CubicBezier; continuous:bool; roving:bool;
+  spatial_interp:ubyte; spatial_in:[double]; spatial_out:[double]; label:uint;
+}
+table KeyframeSet { prop:PropRef; keyframes:[Keyframe]; }
+table ProjectSettings {
+  bit_depth:ubyte; working_space:ubyte; linear_blending:bool; ocio_config:string; time_display:ubyte;
+  expression_engine:ubyte; frames_start_at:uint; audio_sample_rate:uint;
+}
+table CompSettings {
+  name:string; width:uint; height:uint; pixel_aspect:double; fps_num:uint; fps_den:uint; duration:long;
+  start_timecode:long; background_r:double; background_g:double; background_b:double; background_a:double;
+  transparent:bool; work_start:long; work_duration:long; shutter_angle:double; shutter_phase:double;
+  samples:uint; adaptive:uint; renderer3d:ubyte; light_angle:double; light_altitude:double; drop_frame:bool;
+  preserve_frame_rate:bool; preserve_resolution:bool;
+}
+table CompInfo { id:string; settings:CompSettings; layers:[string]; }
+table DocumentSnapshot {
+  revision:ulong; project_path:string; dirty:bool; settings:ProjectSettings; comps:[CompInfo];
+  layers:[LayerInfo]; property_trees:[PropertyTree]; keyframes:[KeyframeSet];
+}
+table KeyframesChanged { sets:[KeyframeSet]; }
+union Event { KeyframesChanged }
+table EventBatch { from_revision:ulong; to_revision:ulong; events:[Event]; caused_by:ulong; origin:ubyte; }

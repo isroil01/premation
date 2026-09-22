@@ -1,0 +1,209 @@
+// Project items (footage, folders, compositions) and the render queue.
+// Command ids: 50–199.
+
+family "Items";
+
+enum ItemKind { folder = 0; composition = 1; footage = 2; solid = 3; placeholder = 4; }
+enum AlphaMode { auto = 0; ignore = 1; straight = 2; premultiplied = 3; }
+enum FieldOrder { progressive = 0; upperFirst = 1; lowerFirst = 2; }
+
+struct Interpretation {
+  alpha: AlphaMode = 1;
+  /// Matte colour for premultiplied alpha.
+  premultipliedMatte?: Color = 2;
+  /// Conform frame rate; absent = use the file's.
+  conformFrameRate?: Rational = 3;
+  pixelAspect: f64 = 4;
+  fieldOrder: FieldOrder = 5;
+  loops: u32 = 6;
+  /// Embedded or assigned input colour profile ('auto' = from file).
+  colorProfile: string = 7;
+  /// Image-sequence start frame / timecode override.
+  startTimecode?: Time = 8;
+  invertAlpha: bool = 9;
+}
+
+struct InterpretationPatch {
+  alpha?: AlphaMode = 1;
+  premultipliedMatte?: Color = 2;
+  conformFrameRate?: Rational = 3;
+  pixelAspect?: f64 = 4;
+  fieldOrder?: FieldOrder = 5;
+  loops?: u32 = 6;
+  colorProfile?: string = 7;
+  startTimecode?: Time = 8;
+  invertAlpha?: bool = 9;
+  /// true clears conformFrameRate back to the file's rate.
+  clearConform?: bool = 10;
+}
+
+struct ImportFile {
+  path: string = 1;
+  /// Treat a numbered file as an image sequence.
+  asSequence: bool = 2;
+  folder?: ItemId = 3;
+  interpretation?: InterpretationPatch = 4;
+  /// Create a composition from this file after import.
+  createComposition: bool = 5;
+}
+
+/// Import files as footage items. Undo removes the items (files on disk are never touched).
+command importFiles = 50 { files: ImportFile[] = 1; } -> ItemList;
+/// Point an item at a different file (relink missing footage / Replace Footage). Undo restores the old path.
+command relinkItem = 51 { item: ItemId = 1; path: string = 2; keepInterpretation: bool = 3; }
+/// Re-read items from disk (not a document change).
+command reloadItems = 52 [control] { items: ItemId[] = 1; }
+/// Remove items. Layers that use them are removed too when removeUsingLayers, otherwise the command fails with `locked` if any are in use. Undo restores items and layers exactly.
+command removeItems = 53 { items: ItemId[] = 1; removeUsingLayers: bool = 2; }
+command renameItem = 54 { item: ItemId = 1; name: string = 2; }
+command createFolder = 55 { name: string = 1; parent?: ItemId = 2; } -> ItemRef;
+/// Move items into a folder (absent = project root).
+command moveItems = 56 { items: ItemId[] = 1; folder?: ItemId = 2; }
+command setInterpretation = 57 { items: ItemId[] = 1; patch: InterpretationPatch = 2; }
+command setItemLabel = 58 { items: ItemId[] = 1; label: u32 = 2; }
+/// Remove every footage item no composition uses (File ▸ Dependencies ▸ Remove Unused Footage).
+command removeUnusedItems = 59 {} -> ItemList;
+/// Assign / enable a proxy for footage or a composition. Absent path with enabled=false clears it.
+command setProxy = 60 { item: ItemId = 1; path?: string = 2; enabled: bool = 3; }
+command setItemComment = 61 { item: ItemId = 1; comment: string = 2; }
+command setItemTags = 62 { item: ItemId = 1; tags: string[] = 2; }
+
+struct ItemRef { item: ItemId = 1; }
+
+family "Compositions";
+
+enum Renderer3d { classic = 0; advanced = 1; raytraced = 2; }
+
+struct MotionBlurSettings {
+  shutterAngle: f64 = 1;
+  shutterPhase: f64 = 2;
+  samplesPerFrame: u32 = 3;
+  adaptiveSampleLimit: u32 = 4;
+}
+
+/// A composition's settings as stored.
+struct CompSettings {
+  name: string = 1;
+  width: u32 = 2;
+  height: u32 = 3;
+  pixelAspect: f64 = 4;
+  frameRate: Rational = 5;
+  duration: Time = 6;
+  /// Displayed timecode of frame 0 (AE Start Timecode). Display only.
+  startTimecode: Time = 7;
+  background: Color = 8;
+  /// Rich background paint (gradient), when set.
+  backgroundGradient?: Gradient = 9;
+  transparent: bool = 10;
+  workArea: TimeRange = 11;
+  motionBlur: MotionBlurSettings = 12;
+  renderer3d: Renderer3d = 13;
+  globalLightAngle: f64 = 14;
+  globalLightAltitude: f64 = 15;
+  dropFrame: bool = 16;
+  /// Nested-comp behaviour (Advanced tab).
+  preserveFrameRate: bool = 17;
+  preserveResolution: bool = 18;
+  /// Environment preset / ground level / sky / SSAO live under this JSON until typed (§11).
+  world?: string = 19;
+}
+
+struct CompSettingsPatch {
+  name?: string = 1;
+  width?: u32 = 2;
+  height?: u32 = 3;
+  pixelAspect?: f64 = 4;
+  frameRate?: Rational = 5;
+  duration?: Time = 6;
+  startTimecode?: Time = 7;
+  background?: Color = 8;
+  backgroundGradient?: Gradient = 9;
+  clearBackgroundGradient?: bool = 20;
+  transparent?: bool = 10;
+  workArea?: TimeRange = 11;
+  motionBlur?: MotionBlurSettings = 12;
+  renderer3d?: Renderer3d = 13;
+  globalLightAngle?: f64 = 14;
+  globalLightAltitude?: f64 = 15;
+  dropFrame?: bool = 16;
+  preserveFrameRate?: bool = 17;
+  preserveResolution?: bool = 18;
+  world?: string = 19;
+}
+
+/// Create a composition. `fromItems` makes it from footage (size/duration/rate from the first item, one layer per item).
+command createComposition = 100 { settings: CompSettingsPatch = 1; folder?: ItemId = 2; fromItems: ItemId[] = 3; } -> ItemRef;
+/// Duplicate a composition. deep=true also duplicates nested compositions.
+command duplicateComposition = 101 { comp: ItemId = 1; deep: bool = 2; } -> ItemRef;
+/// Change composition settings. Undo restores exactly the patched fields. Changing duration/rate never moves keyframes (times are flicks).
+command setCompositionSettings = 102 [coalesce] { comp: ItemId = 1; patch: CompSettingsPatch = 2; }
+command setWorkArea = 103 [coalesce] { comp: ItemId = 1; range: TimeRange = 2; }
+
+enum PrecomposeMode {
+  /// Move all attributes into the new composition (AE default for several layers).
+  moveAll = 0;
+  /// Leave all attributes in the old composition (only valid for one layer).
+  leaveAttributes = 1;
+}
+
+/// Replace `layers` with one layer of a new composition that contains them. Undo restores the layers exactly and deletes the new item.
+command precompose = 104 { comp: ItemId = 1; layers: LayerId[] = 2; name: string = 3; mode: PrecomposeMode = 4; adjustDuration: bool = 5; } -> PrecomposeResult;
+/// Trim the composition duration to its work area (shifting layers by the work-area start).
+command trimCompToWorkArea = 105 { comp: ItemId = 1; }
+/// Crop the composition to a region (Composition ▸ Crop Comp to Region of Interest).
+command cropComposition = 106 { comp: ItemId = 1; region: Rect = 2; }
+/// Build a composition from clips laid end to end (Assemble / New Comp from Selection ▸ sequence).
+command assembleComposition = 107 { items: ItemId[] = 1; name: string = 2; overlap: Time = 3; } -> ItemRef;
+
+struct PrecomposeResult { comp: ItemId = 1; layer: LayerId = 2; }
+
+family "RenderQueue";
+
+enum RenderStatus { queued = 0; needsOutput = 1; rendering = 2; done = 3; failed = 4; stopped = 5; unqueued = 6; }
+
+/// Output module + render settings for one queue item.
+struct RenderSettings {
+  /// Container/format id from getCapabilities ('mp4-h264', 'mov-prores4444', 'png-seq', …).
+  format: string = 1;
+  outputPath: string = 2;
+  range: TimeRange = 3;
+  /// Output size; absent = composition size.
+  width?: u32 = 4;
+  height?: u32 = 5;
+  frameRate?: Rational = 6;
+  bitDepth: BitDepth = 7;
+  includeAudio: bool = 8;
+  includeAlpha: bool = 9;
+  /// Encoder quality 0..100 or CRF, format-specific.
+  quality: f64 = 10;
+  /// Output colour space ('' = working space).
+  outputColorSpace: string = 11;
+  motionBlur: bool = 12;
+  frameBlending: bool = 13;
+  /// Extra encoder options (JSON) until each format is typed.
+  encoderOptions?: string = 14;
+}
+
+struct RenderSettingsPatch {
+  format?: string = 1;
+  outputPath?: string = 2;
+  range?: TimeRange = 3;
+  width?: u32 = 4;
+  height?: u32 = 5;
+  frameRate?: Rational = 6;
+  bitDepth?: BitDepth = 7;
+  includeAudio?: bool = 8;
+  includeAlpha?: bool = 9;
+  quality?: f64 = 10;
+  outputColorSpace?: string = 11;
+  motionBlur?: bool = 12;
+  frameBlending?: bool = 13;
+  encoderOptions?: string = 14;
+}
+
+command addRenderItems = 150 { comps: ItemId[] = 1; settings: RenderSettingsPatch = 2; } -> RenderItemList;
+command setRenderItem = 151 { item: RenderItemId = 1; patch: RenderSettingsPatch = 2; queued?: bool = 3; }
+command removeRenderItems = 152 { items: RenderItemId[] = 1; }
+command reorderRenderItems = 153 { items: RenderItemId[] = 1; toIndex: u32 = 2; }
+
+struct RenderItemList { items: RenderItemId[] = 1; }

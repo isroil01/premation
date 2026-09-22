@@ -1,0 +1,83 @@
+// Session: history, gestures, project lifecycle and project settings.
+// Command ids: 1–99.
+
+family "History";
+
+/// Undo the newest history entry. Undo is itself a revision: the document moves forward to a state equal to an older one.
+command undo = 1 [control] {} -> HistoryStep;
+command redo = 2 [control] {} -> HistoryStep;
+/// Jump to a history position (History panel click). 0 = before the first entry.
+command jumpToHistory = 3 [control] { position: u32 = 1; } -> HistoryStep;
+/// Open a gesture: every edit until endGesture becomes ONE undo entry with this label. Gestures do not nest.
+command beginGesture = 4 [control] { label: string = 1; } -> GestureRef;
+/// Close the open gesture. commit=false rolls every edit of the gesture back (Esc during a drag).
+command endGesture = 5 [control] { gesture: u32 = 1; commit: bool = 2; }
+/// Drop all history (the document is unchanged).
+command clearHistory = 6 [control] {}
+command setHistoryLimit = 7 [control] { entries: u32 = 1; }
+
+struct HistoryStep {
+  /// Label of the entry that was undone / redone.
+  label: string = 1;
+  position: u32 = 2;
+}
+
+struct GestureRef { gesture: u32 = 1; }
+
+family "Project";
+
+enum ColorWorkingSpace { none = 0; srgb = 1; srgbLinear = 2; rec709 = 3; rec2020 = 4; acescg = 5; acescct = 6; displayP3 = 7; }
+enum BitDepth { u8 = 0; u16 = 1; f32 = 2; }
+enum TimeDisplay { timecode = 0; frames = 1; feetFrames = 2; }
+enum ExpressionEngine { premation = 0; javascript = 1; }
+
+struct ProjectSettings {
+  bitDepth: BitDepth = 1;
+  workingSpace: ColorWorkingSpace = 2;
+  linearBlending: bool = 3;
+  /// OCIO config path when colour-managed through OCIO (empty = built-in).
+  ocioConfig: string = 4;
+  timeDisplay: TimeDisplay = 5;
+  expressionEngine: ExpressionEngine = 6;
+  /// Frame count starting number for the Frames display (0 or 1).
+  framesStartAt: u32 = 7;
+  audioSampleRate: u32 = 8;
+}
+
+/// Every field optional: only present fields change; undo restores exactly those fields.
+struct ProjectSettingsPatch {
+  bitDepth?: BitDepth = 1;
+  workingSpace?: ColorWorkingSpace = 2;
+  linearBlending?: bool = 3;
+  ocioConfig?: string = 4;
+  timeDisplay?: TimeDisplay = 5;
+  expressionEngine?: ExpressionEngine = 6;
+  framesStartAt?: u32 = 7;
+  audioSampleRate?: u32 = 8;
+}
+
+/// Replace the document with an empty project. Clears history.
+command newProject = 10 [io] { template?: string = 1; }
+/// Open a .motion project (or a recovery file). Clears history; the UI receives documentReset.
+command openProject = 11 [io] { path: string = 1; } -> OpenProjectResult;
+/// Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged.
+command saveProject = 12 [io] { path?: string = 1; copy: bool = 2; } -> SaveProjectResult;
+/// Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder. Undoable.
+command importProject = 13 { path: string = 1; folder?: ItemId = 2; } -> ItemList;
+command setProjectSettings = 14 { patch: ProjectSettingsPatch = 1; }
+/// Revert to the last saved state. Clears history.
+command revertProject = 15 [io] {}
+/// Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged.
+command collectFiles = 16 [io] { folder: string = 1; onlyUsed: bool = 2; } -> SaveProjectResult;
+/// Autosave / crash-recovery cadence (a preference the engine executes; not document state).
+command setAutosave = 17 [control] { enabled: bool = 1; intervalSeconds: u32 = 2; keep: u32 = 3; }
+
+struct OpenProjectResult {
+  /// Migrations applied, missing fonts, missing footage, …
+  warnings: string[] = 1;
+  missingItems: ItemId[] = 2;
+}
+
+struct SaveProjectResult { path: string = 1; bytes: u64 = 2; }
+
+struct ItemList { items: ItemId[] = 1; }

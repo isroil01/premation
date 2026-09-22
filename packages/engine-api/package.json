@@ -1,0 +1,14 @@
+{
+  "name": "@motion/engine-api",
+  "version": "1.0.0",
+  "description": "The engine API contract (docs/ENGINE_API.md): schema, generated TypeScript types and the canonical binary codec shared with the C++ engine (native/protocol).",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest --config jest.config.cjs"
+  },
+  "license": "MIT"
+}

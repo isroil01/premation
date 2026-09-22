@@ -1,0 +1,351 @@
+// Queries: read without changing anything. They answer at the revision in the
+// Response. Query ids: 1000–1199.
+
+family "Model";
+
+/// A project item as the mirror holds it.
+struct ItemInfo {
+  id: ItemId = 1;
+  kind: ItemKind = 2;
+  name: string = 3;
+  parent?: ItemId = 4;
+  label: u32 = 5;
+  comment: string = 6;
+  /// Footage fields.
+  path: string = 7;
+  missing: bool = 8;
+  width: u32 = 9;
+  height: u32 = 10;
+  duration: Time = 11;
+  frameRate?: Rational = 12;
+  hasVideo: bool = 13;
+  hasAudio: bool = 14;
+  hasAlpha: bool = 15;
+  interpretation?: Interpretation = 16;
+  proxyPath: string = 17;
+  proxyEnabled: bool = 18;
+  tags: string[] = 19;
+  codec: string = 20;
+  audioChannels: u32 = 21;
+  audioSampleRate: u32 = 22;
+  colorProfile: string = 23;
+  fileBytes: u64 = 24;
+}
+
+struct CompInfo {
+  id: ItemId = 1;
+  settings: CompSettings = 2;
+  /// Layer ids, top of the stack first.
+  layers: LayerId[] = 3;
+  markers: Marker[] = 4;
+}
+
+/// The layer header the timeline and layer panel draw (no property tree).
+struct LayerInfo {
+  id: LayerId = 1;
+  comp: ItemId = 2;
+  kind: LayerKind = 3;
+  name: string = 4;
+  parent?: LayerId = 5;
+  source?: ItemId = 6;
+  switches: LayerSwitches = 7;
+  timing: LayerTiming = 8;
+  blendMode: BlendMode = 9;
+  matte: TrackMatte = 10;
+  /// Child layer ids for group layers, in stack order.
+  children: LayerId[] = 11;
+  hasVideo: bool = 12;
+  hasAudio: bool = 13;
+  /// Layer markers.
+  markers: Marker[] = 14;
+  comment: string = 15;
+}
+
+enum PropertyKind { property = 0; group = 1; indexedGroup = 2; }
+
+/// One node of a layer's property tree (AE's Property / PropertyGroup).
+struct PropertyInfo {
+  path: PropPath = 1;
+  name: string = 2;
+  matchName: string = 3;
+  kind: PropertyKind = 4;
+  valueType: ValueType = 5;
+  animatable: bool = 6;
+  animated: bool = 7;
+  dimensions: u32 = 8;
+  separated: bool = 9;
+  enabled: bool = 10;
+  /// The static value (not animated) — the value at the query time otherwise.
+  value?: Value = 11;
+  defaultValue?: Value = 12;
+  min?: f64 = 13;
+  max?: f64 = 14;
+  softMin?: f64 = 15;
+  softMax?: f64 = 16;
+  /// Allowed values for choice properties.
+  choices: string[] = 17;
+  unit: string = 18;
+  expression: string = 19;
+  expressionEnabled: bool = 20;
+  expressionError: string = 21;
+  keyframeCount: u32 = 22;
+  /// Child paths for groups, in order.
+  children: PropPath[] = 23;
+  /// Hidden in the default UI (AE's hidden/advanced params).
+  hidden: bool = 24;
+}
+
+struct KeyframeSet {
+  prop: PropRef = 1;
+  keyframes: Keyframe[] = 2;
+}
+
+struct PropertyValue {
+  prop: PropRef = 1;
+  value: Value = 2;
+}
+
+/// Whole-document snapshot: what the UI mirror is built from after Welcome or documentReset.
+struct DocumentSnapshot {
+  revision: Revision = 1;
+  projectPath: string = 2;
+  dirty: bool = 3;
+  settings: ProjectSettings = 4;
+  items: ItemInfo[] = 5;
+  comps: CompInfo[] = 6;
+  layers: LayerInfo[] = 7;
+  /// Present only when requested (includeProperties): every layer's property tree with static values.
+  propertyTrees: PropertyTree[] = 8;
+  keyframes: KeyframeSet[] = 9;
+  renderQueue: RenderItemInfo[] = 10;
+}
+
+struct RenderItemInfo {
+  id: RenderItemId = 1;
+  comp: ItemId = 2;
+  settings: RenderSettings = 3;
+  status: RenderStatus = 4;
+  queued: bool = 5;
+  progress: f64 = 6;
+  error: string = 7;
+}
+
+query getDocument = 1000 { includeProperties: bool = 1; includeKeyframes: bool = 2; } -> DocumentSnapshot;
+query getComposition = 1001 { comp: ItemId = 1; } -> CompositionDetails;
+query getLayers = 1002 { layers: LayerId[] = 1; } -> LayerDetails;
+/// The property tree under `path` ('' = whole layer) to `depth` levels (0 = unlimited), values at `time`.
+query getPropertyTree = 1003 { layer: LayerId = 1; path: PropPath = 2; depth: u32 = 3; time?: Time = 4; } -> PropertyTree;
+/// Values at `time`. evaluated=false returns the pre-expression value.
+query getPropertyValues = 1004 { props: PropRef[] = 1; time: Time = 2; evaluated: bool = 3; } -> PropertyValues;
+/// Sample one property densely (graph editor value/speed graphs, motion paths).
+query sampleProperty = 1005 { prop: PropRef = 1; range: TimeRange = 2; samples: u32 = 3; speed: bool = 4; } -> PropertySamples;
+query getKeyframes = 1006 { props: PropRef[] = 1; range?: TimeRange = 2; } -> KeyframeSets;
+query getMotionPath = 1007 { layer: LayerId = 1; range: TimeRange = 2; samples: u32 = 3; } -> PropertySamples;
+query getMarkers = 1008 { owner: MarkerOwner = 1; range?: TimeRange = 2; } -> MarkerList;
+/// Serialize layers (with the items they reference) for the clipboard; pasteLayers consumes it.
+query copyLayers = 1009 { layers: LayerId[] = 1; } -> DocumentFragment;
+
+struct CompositionDetails { comp: CompInfo = 1; layers: LayerInfo[] = 2; }
+struct LayerDetails { layers: LayerInfo[] = 1; }
+struct PropertyTree { layer: LayerId = 1; nodes: PropertyInfo[] = 2; }
+struct PropertyValues { values: PropertyValue[] = 1; }
+struct KeyframeSets { sets: KeyframeSet[] = 1; }
+struct MarkerList { markers: Marker[] = 1; }
+
+/// Dense samples: `values` holds `dimensions` numbers per time.
+struct PropertySamples {
+  times: f64[] = 1;
+  values: f64[] = 2;
+  dimensions: u32 = 3;
+  /// Speed (units/s) per time when requested.
+  speeds: f64[] = 4;
+}
+
+family "Media";
+
+struct WaveformPeaks {
+  /// Interleaved min/max per bucket per channel.
+  peaks: f32[] = 1;
+  channels: u32 = 2;
+  buckets: u32 = 3;
+  /// RMS per bucket (loudness display), optional.
+  rms: f32[] = 4;
+}
+
+struct FontInfo {
+  family: string = 1;
+  style: string = 2;
+  postScriptName: string = 3;
+  weight: f64 = 4;
+  italic: bool = 5;
+  variableAxes: FontAxisInfo[] = 6;
+  /// Scripts covered ('Latn', 'Hang', 'Arab', …).
+  scripts: string[] = 7;
+  path: string = 8;
+}
+
+struct FontAxisInfo { tag: string = 1; name: string = 2; min: f64 = 3; max: f64 = 4; defaultValue: f64 = 5; }
+
+query getWaveform = 1020 { layer?: LayerId = 1; item?: ItemId = 2; range: TimeRange = 3; buckets: u32 = 4; } -> WaveformPeaks;
+query listFonts = 1021 { query: string = 1; } -> FontList;
+query getItems = 1022 { items: ItemId[] = 1; } -> ItemDetails;
+/// A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes.
+query getThumbnail = 1023 { item?: ItemId = 1; layer?: LayerId = 2; time: Time = 3; maxSize: u32 = 4; } -> Thumbnail;
+
+struct FontList { fonts: FontInfo[] = 1; }
+struct ItemDetails { items: ItemInfo[] = 1; }
+struct Thumbnail { width: u32 = 1; height: u32 = 2; format: string = 3; data: bytes = 4; }
+
+family "Catalog";
+
+struct EffectParamInfo {
+  name: string = 1;
+  matchName: string = 2;
+  valueType: ValueType = 3;
+  animatable: bool = 4;
+  defaultValue?: Value = 5;
+  min?: f64 = 6;
+  max?: f64 = 7;
+  softMin?: f64 = 8;
+  softMax?: f64 = 9;
+  choices: string[] = 10;
+  unit: string = 11;
+  group: string = 12;
+}
+
+struct EffectInfo {
+  matchName: string = 1;
+  displayName: string = 2;
+  category: string = 3;
+  gpu: bool = 4;
+  /// 'builtin' or the plugin id.
+  provider: string = 5;
+  params: EffectParamInfo[] = 6;
+  supportsFloat: bool = 7;
+  audio: bool = 8;
+}
+
+query listEffects = 1040 { category: string = 1; } -> EffectCatalog;
+/// Which group match names can be added under a parent path (the Add ▸ menus).
+query listGroupTypes = 1041 { layer: LayerId = 1; parent: PropPath = 2; } -> GroupTypeList;
+query listPresets = 1042 { category: string = 1; } -> PresetList;
+query getCapabilities = 1043 {} -> Capabilities;
+
+struct EffectCatalog { effects: EffectInfo[] = 1; }
+struct GroupTypeInfo { matchName: string = 1; displayName: string = 2; category: string = 3; }
+struct GroupTypeList { types: GroupTypeInfo[] = 1; }
+struct PresetInfo { id: string = 1; name: string = 2; category: string = 3; description: string = 4; }
+struct PresetList { presets: PresetInfo[] = 1; }
+
+struct Capabilities {
+  gpuAdapter: string = 1;
+  gpuBackend: string = 2;
+  vramBytes: u64 = 3;
+  maxTextureSize: u32 = 4;
+  hardwareDecode: string[] = 5;
+  exportFormats: string[] = 6;
+  colorManagement: bool = 7;
+  float32: bool = 8;
+  pluginApis: string[] = 9;
+  expressionEngines: string[] = 10;
+  cpuThreads: u32 = 11;
+}
+
+family "Interaction";
+
+enum HitMode { topmost = 0; all = 1; }
+enum BoundsSpace { comp = 0; layer = 1; viewport = 2; }
+
+struct LayerBounds {
+  layer: LayerId = 1;
+  /// Axis-aligned bounds in the requested space.
+  bounds: Rect = 2;
+  /// The four corners of the transformed layer box (x0,y0 … x3,y3) in that space.
+  corners: f64[] = 3;
+}
+
+struct LayerTransform {
+  layer: LayerId = 1;
+  /// Column-major 4×4 layer→comp matrix at the query time.
+  matrix: f64[] = 2;
+  anchor: Vec3 = 3;
+}
+
+struct GlyphBox { index: u32 = 1; line: u32 = 2; box: Rect = 3; baseline: f64 = 4; advance: f64 = 5; }
+
+query hitTest = 1060 { comp: ItemId = 1; time: Time = 2; point: Vec2 = 3; mode: HitMode = 4; includeLocked: bool = 5; } -> HitResult;
+query getLayerBounds = 1061 { layers: LayerId[] = 1; time: Time = 2; space: BoundsSpace = 3; includeEffects: bool = 4; viewport?: u32 = 5; } -> LayerBoundsList;
+query getLayerTransforms = 1062 { layers: LayerId[] = 1; time: Time = 2; } -> LayerTransformList;
+/// Text layout for in-viewport editing (caret, selection, hit-testing glyphs).
+query getTextLayout = 1063 { layer: LayerId = 1; time: Time = 2; } -> TextLayout;
+/// Evaluate an expression without storing it (expression editor preview).
+query evaluateExpression = 1064 { prop: PropRef = 1; time: Time = 2; source: string = 3; } -> ExpressionEvaluation;
+/// Pixel values under a point of a viewport (Info panel, eyedropper), in working space.
+query readPixels = 1065 { viewport: u32 = 1; region: Rect = 2; } -> PixelSamples;
+query findLayers = 1066 { comp?: ItemId = 1; name: string = 2; kinds: LayerKind[] = 3; effect: string = 4; } -> LayerList;
+/// What a layer/item depends on and what depends on it (flowchart, expression references, precomp nesting).
+query getDependencies = 1067 { layer?: LayerId = 1; item?: ItemId = 2; } -> Dependencies;
+
+struct HitResult { layers: LayerId[] = 1; }
+struct LayerBoundsList { bounds: LayerBounds[] = 1; }
+struct LayerTransformList { transforms: LayerTransform[] = 1; }
+struct TextLayout { glyphs: GlyphBox[] = 1; lines: u32 = 2; box: Rect = 3; }
+struct ExpressionEvaluation { value?: Value = 1; diagnostics: ExpressionDiagnostic[] = 2; }
+struct PixelSamples { width: u32 = 1; height: u32 = 2; rgba: f32[] = 3; }
+struct Dependencies { uses: PropRef[] = 1; usedBy: PropRef[] = 2; items: ItemId[] = 3; }
+
+family "Status";
+
+struct HistoryEntry { label: string = 1; origin: Origin = 2; }
+
+struct HistoryState {
+  entries: HistoryEntry[] = 1;
+  position: u32 = 2;
+  canUndo: bool = 3;
+  canRedo: bool = 4;
+  gestureOpen: bool = 5;
+  limit: u32 = 6;
+}
+
+struct RenderStats {
+  gpuFrameMs: f64 = 1;
+  cpuFrameMs: f64 = 2;
+  fps: f64 = 3;
+  droppedFrames: u64 = 4;
+  vramBytes: u64 = 5;
+  ramCacheBytes: u64 = 6;
+  diskCacheBytes: u64 = 7;
+  cacheHitRate: f64 = 8;
+  decodeMs: f64 = 9;
+}
+
+struct LayerError {
+  layer: LayerId = 1;
+  /// Where it failed: 'effect', 'decode', 'plugin', 'expression', 'text', 'mask', …
+  stage: string = 2;
+  message: string = 3;
+  path?: PropPath = 4;
+}
+
+enum JobStatus { queued = 0; running = 1; done = 2; failed = 3; cancelled = 4; }
+
+struct JobInfo {
+  id: JobId = 1;
+  kind: string = 2;
+  status: JobStatus = 3;
+  progress: f64 = 4;
+  message: string = 5;
+}
+
+query getHistory = 1080 {} -> HistoryState;
+query getRenderStats = 1081 {} -> RenderStats;
+query getLayerErrors = 1082 { comp?: ItemId = 1; } -> LayerErrorList;
+query getJobs = 1083 {} -> JobList;
+query getRenderQueue = 1084 {} -> RenderQueueState;
+/// The command log since `fromRevision` (B5 replay, bug reports).
+query getCommandLog = 1085 { fromRevision: Revision = 1; } -> CommandLog;
+
+struct LayerErrorList { errors: LayerError[] = 1; }
+struct JobList { jobs: JobInfo[] = 1; }
+struct RenderQueueState { items: RenderItemInfo[] = 1; }
+struct CommandLog { records: LogRecord[] = 1; }

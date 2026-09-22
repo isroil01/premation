@@ -24,12 +24,14 @@ on:
     paths:
       - 'native/**'
       - 'packages/native-bridge/**'
+      - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
       - 'scripts/native.mjs'
   pull_request:
     paths:
       - 'native/**'
       - 'packages/native-bridge/**'
+      - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
       - 'scripts/native.mjs'
   workflow_dispatch:
@@ -233,6 +235,32 @@ jobs:
             native/build/wasm/bindings/wasm/motion_wasm.mjs
             native/build/wasm/bindings/wasm/motion_wasm.wasm
           if-no-files-found: error
+
+  # The engine API wire protocol (docs/ENGINE_API.md): the generated C++ codec
+  # must decode and re-encode every TS-generated sample to identical bytes.
+  # Separate CMake project, no vcpkg packages. The TS half runs in jest (ci.yml).
+  protocol:
+    name: protocol · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install clang + ninja (apt)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang ninja-build
+      - name: MSVC environment for clang-cl
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Generated code is current
+        run: node packages/engine-api/codegen/generate.cjs --check
+      - name: Build + round-trip test
+        run: node native/protocol/build.mjs
 
   format:
     name: clang-format (non-blocking until first formatted)

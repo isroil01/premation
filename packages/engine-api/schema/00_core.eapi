@@ -1,0 +1,221 @@
+// Premation engine API — core value types.
+//
+// Schema language: docs/ENGINE_API.md §9.2. `///` lines are documentation and
+// flow into the generated TypeScript. Field numbers are the wire identity:
+// never renumber, never reuse a removed number, never change a field's type.
+
+version 1.0;
+
+family "Core";
+
+/// A layer (scene node) id. Stable for the layer's lifetime, survives save/load and undo.
+alias LayerId = string;
+/// A project item id: composition, footage, folder.
+alias ItemId = string;
+/// A property-group instance id (effect, mask, text animator, selector, shape group, paint stroke, puppet pin, layer style).
+alias GroupId = string;
+/// A keyframe id. Engine-assigned, stable across moves, retimes and undo (see ENGINE_API.md §3.3).
+alias KeyframeId = string;
+alias MarkerId = string;
+alias JobId = string;
+alias RenderItemId = string;
+/// A property path inside a layer: '/'-separated segments, groups addressed by GroupId (ENGINE_API.md §3.4).
+alias PropPath = string;
+/// Time in FLICKS: 1/705,600,000 s. Integer, exact for every standard and NTSC frame rate. Comp time unless a field says otherwise.
+alias Time = i64;
+/// Document revision; bumps by one for every applied edit (undo and redo included).
+alias Revision = u64;
+/// Request sequence number, chosen by the sender, echoed in the response.
+alias Seq = u64;
+
+/// The empty result.
+struct Empty {}
+
+struct Vec2 { x: f64 = 1; y: f64 = 2; }
+struct Vec3 { x: f64 = 1; y: f64 = 2; z: f64 = 3; }
+struct Vec4 { x: f64 = 1; y: f64 = 2; z: f64 = 3; w: f64 = 4; }
+
+/// Straight (non-premultiplied) RGBA, 0..1 nominal, in the project's working colour space. Values may exceed 1 (float projects).
+struct Color { r: f64 = 1; g: f64 = 2; b: f64 = 3; a: f64 = 4; }
+
+struct Rect { x: f64 = 1; y: f64 = 2; width: f64 = 3; height: f64 = 4; }
+
+/// An exact frame rate, e.g. 30000/1001.
+struct Rational { num: u32 = 1; den: u32 = 2; }
+
+struct TimeRange { start: Time = 1; duration: Time = 2; }
+
+/// A cubic bezier path (mask, shape path, paint stroke, motion sketch). Tangents are relative to their vertex, AE-style.
+struct BezierPath {
+  /// Flattened [x0, y0, x1, y1, …].
+  vertices: f64[] = 1;
+  inTangents: f64[] = 2;
+  outTangents: f64[] = 3;
+  closed: bool = 4;
+  /// Per-vertex feather (AE variable-width mask feather), optional.
+  featherPoints: FeatherPoint[] = 5;
+}
+
+struct FeatherPoint {
+  /// Segment index + position along it (0..1).
+  segment: u32 = 1;
+  t: f64 = 2;
+  radius: f64 = 3;
+  tension: f64 = 4;
+}
+
+enum GradientKind { linear = 0; radial = 1; angular = 2; diamond = 3; }
+
+struct GradientStop { offset: f64 = 1; color: Color = 2; midpoint?: f64 = 3; }
+
+struct Gradient {
+  kind: GradientKind = 1;
+  stops: GradientStop[] = 2;
+  /// Separate opacity stops (AE gradient editor); empty = alpha from colour stops.
+  alphaStops: GradientStop[] = 3;
+  start?: Vec2 = 4;
+  end?: Vec2 = 5;
+}
+
+enum TextJustify { left = 0; center = 1; right = 2; justifyLeft = 3; justifyCenter = 4; justifyRight = 5; justifyAll = 6; }
+enum TextDirection { auto = 0; ltr = 1; rtl = 2; }
+enum TextOrientation { horizontal = 0; vertical = 1; }
+enum TextCaps { normal = 0; allCaps = 1; smallCaps = 2; }
+enum TextBaseline { normal = 0; superscript = 1; subscript = 2; }
+
+/// A run of character styling over [start, start+length) UTF-16 code units of the text.
+struct TextStyleRun {
+  start: u32 = 1;
+  length: u32 = 2;
+  fontFamily?: string = 3;
+  fontStyle?: string = 4;
+  fontWeight?: f64 = 5;
+  fontSize?: f64 = 6;
+  fillColor?: Color = 7;
+  strokeColor?: Color = 8;
+  strokeWidth?: f64 = 9;
+  tracking?: f64 = 10;
+  leading?: f64 = 11;
+  baselineShift?: f64 = 12;
+  horizontalScale?: f64 = 13;
+  verticalScale?: f64 = 14;
+  caps?: TextCaps = 15;
+  baseline?: TextBaseline = 16;
+  /// OpenType feature tags, e.g. ['liga', 'ss01'].
+  features: string[] = 17;
+  /// Variable-font axis values as [tag, value] pairs.
+  axes: FontAxisValue[] = 18;
+  fauxBold?: bool = 19;
+  fauxItalic?: bool = 20;
+  /// Tate-chu-yoko (horizontal-in-vertical) for this run.
+  tateChuYoko?: bool = 21;
+}
+
+struct FontAxisValue { tag: string = 1; value: f64 = 2; }
+
+struct ParagraphStyle {
+  start: u32 = 1;
+  length: u32 = 2;
+  justify: TextJustify = 3;
+  direction: TextDirection = 4;
+  firstLineIndent: f64 = 5;
+  startIndent: f64 = 6;
+  endIndent: f64 = 7;
+  spaceBefore: f64 = 8;
+  spaceAfter: f64 = 9;
+  /// Kinsoku / line-break rule set name ('none', 'hard', 'soft').
+  lineBreakRules?: string = 10;
+}
+
+/// AE's TextDocument: the value of the Source Text property.
+struct TextDocument {
+  text: string = 1;
+  runs: TextStyleRun[] = 2;
+  paragraphs: ParagraphStyle[] = 3;
+  orientation: TextOrientation = 4;
+  /// Paragraph (box) text when present; point text when absent.
+  box?: Rect = 5;
+  /// Kerning mode: 'metrics', 'optical', or 'none'.
+  kerning: string = 6;
+}
+
+/// One animatable or static property value. The engine type-checks it against the property's declared ValueType.
+union Value {
+  none: void = 1;
+  bool: bool = 2;
+  int: i64 = 3;
+  scalar: f64 = 4;
+  vec2: Vec2 = 5;
+  vec3: Vec3 = 6;
+  vec4: Vec4 = 7;
+  color: Color = 8;
+  string: string = 9;
+  /// A member of an enumerated property (blend mode, mask mode, …) by its schema name.
+  choice: string = 10;
+  path: BezierPath = 11;
+  gradient: Gradient = 12;
+  textDocument: TextDocument = 13;
+  /// Layer parameter (AE Layer Control, matte source, displacement map layer).
+  layer: LayerId = 14;
+  item: ItemId = 15;
+  /// A numeric list (dash pattern, curve points, custom data).
+  scalars: F64List = 16;
+  /// ESCAPE HATCH for structured values that have no typed variant yet (ENGINE_API.md §11 lists every property that still uses it).
+  json: string = 17;
+}
+
+struct F64List { values: f64[] = 1; }
+
+/// Which kind of Value a property holds (queries report it; setProperty is checked against it).
+enum ValueType {
+  none = 0; bool = 1; int = 2; scalar = 3; vec2 = 4; vec3 = 5; vec4 = 6; color = 7; string = 8;
+  choice = 9; path = 10; gradient = 11; textDocument = 12; layer = 13; item = 14; scalars = 15; json = 16;
+}
+
+/// Temporal interpolation of the segment that STARTS at a keyframe — the model motion_eval implements bit-exactly.
+enum Easing {
+  linear = 0; hold = 1; bezier = 2; ease = 3; easeIn = 4; easeOut = 5; easeInOut = 6; step = 7;
+  autoBezier = 8; continuousBezier = 9;
+}
+
+/// AE spatial interpolation of a keyframe's motion-path vertex.
+enum SpatialInterp { legacy = 0; linear = 1; bezier = 2; continuous = 3; auto = 4; }
+
+/// Cubic-bezier easing handles [x1, y1, x2, y2] for Easing.bezier (x in 0..1, y may overshoot).
+struct CubicBezier { x1: f64 = 1; y1: f64 = 2; x2: f64 = 3; y2: f64 = 4; }
+
+/// A keyframe as the engine stores it.
+struct Keyframe {
+  id: KeyframeId = 1;
+  time: Time = 2;
+  value: Value = 3;
+  easing: Easing = 4;
+  bezier?: CubicBezier = 5;
+  continuous: bool = 6;
+  roving: bool = 7;
+  spatialInterp: SpatialInterp = 8;
+  /// Spatial tangents per dimension, value-space offsets (empty = none).
+  spatialIn: f64[] = 9;
+  spatialOut: f64[] = 10;
+  /// AE keyframe colour label (0 = none).
+  label: u32 = 11;
+}
+
+/// A property + layer pair: the address of every animatable or static value.
+struct PropRef { layer: LayerId = 1; path: PropPath = 2; }
+
+/// Initial value for a property at creation time.
+struct PropertyInit { path: PropPath = 1; value: Value = 2; }
+
+enum BlendMode {
+  normal = 0; multiply = 1; screen = 2; overlay = 3; darken = 4; lighten = 5;
+  "color-dodge" = 6; "color-burn" = 7; "hard-light" = 8; "soft-light" = 9; difference = 10; exclusion = 11;
+  hue = 12; saturation = 13; color = 14; luminosity = 15;
+  add = 16; "linear-burn" = 17; "linear-dodge" = 18; "linear-light" = 19; "vivid-light" = 20; "pin-light" = 21;
+  "hard-mix" = 22; subtract = 23; divide = 24; dissolve = 25; "darker-color" = 26; "lighter-color" = 27;
+  "stencil-alpha" = 28; "stencil-luma" = 29; "silhouette-alpha" = 30; "silhouette-luma" = 31; "alpha-add" = 32;
+  "luminescent-premul" = 33; "classic-color-dodge" = 34; "classic-color-burn" = 35; "classic-difference" = 36; "dancing-dissolve" = 37;
+}
+
+/// Who sent a request (for history labels, logs, permission checks).
+enum Origin { ui = 0; ai = 1; script = 2; plugin = 3; replay = 4; engine = 5; }

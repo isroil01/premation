@@ -1,0 +1,120 @@
+// Markers (document), transport, viewport and preview (engine-owned, never
+// in the document, never undoable). Command ids: 700–849.
+
+family "Markers";
+
+/// Composition marker (no layer) or layer marker (layer time).
+struct MarkerOwner {
+  comp: ItemId = 1;
+  layer?: LayerId = 2;
+}
+
+struct Marker {
+  id: MarkerId = 1;
+  owner: MarkerOwner = 2;
+  time: Time = 3;
+  duration: Time = 4;
+  name: string = 5;
+  comment: string = 6;
+  label: u32 = 7;
+  chapter: string = 8;
+  url: string = 9;
+  /// Cue point name for export; empty = none.
+  cuePoint: string = 10;
+  /// Protected region (time-stretch of a precomp leaves it untouched).
+  protectedRegion: bool = 11;
+}
+
+struct MarkerInsert {
+  owner: MarkerOwner = 1;
+  time: Time = 2;
+  duration: Time = 3;
+  name: string = 4;
+  comment: string = 5;
+  label: u32 = 6;
+}
+
+struct MarkerPatch {
+  id: MarkerId = 1;
+  time?: Time = 2;
+  duration?: Time = 3;
+  name?: string = 4;
+  comment?: string = 5;
+  label?: u32 = 6;
+  chapter?: string = 7;
+  url?: string = 8;
+  cuePoint?: string = 9;
+  protectedRegion?: bool = 10;
+}
+
+command addMarkers = 700 { markers: MarkerInsert[] = 1; } -> MarkerIds;
+command updateMarkers = 701 [coalesce] { patches: MarkerPatch[] = 1; }
+command deleteMarkers = 702 { ids: MarkerId[] = 1; }
+command moveMarkers = 703 [coalesce] { ids: MarkerId[] = 1; delta: Time = 2; }
+
+struct MarkerIds { ids: MarkerId[] = 1; }
+
+family "Transport";
+
+enum PlayRange { all = 0; workArea = 1; custom = 2; }
+enum LoopMode { once = 0; loop = 1; pingPong = 2; }
+enum PreviewResolution { full = 0; half = 1; third = 2; quarter = 3; auto = 4; }
+enum FastPreview { off = 0; adaptive = 1; draft = 2; wireframe = 3; }
+enum SeekMode { exact = 0; scrub = 1; }
+
+/// Start playback of the active composition. The engine owns the clock; audio is the master clock when enabled.
+command play = 800 [control] {
+  /// 1 = real time; negative = reverse (J/K/L shuttle up to ±4).
+  rate: f64 = 1;
+  range: PlayRange = 2;
+  custom?: TimeRange = 3;
+  audio: bool = 4;
+  /// Cache frames first, then play at full rate (RAM preview).
+  cacheFirst: bool = 5;
+  from?: Time = 6;
+}
+command pause = 801 [control] { returnToStart: bool = 1; }
+/// Move the playhead. Scrub mode may render at preview quality and plays audio scrub.
+command seek = 802 [control, coalesce] { time: Time = 1; mode: SeekMode = 2; }
+command step = 803 [control] { frames: i32 = 1; }
+command setLoop = 804 [control] { mode: LoopMode = 1; }
+command setPreviewQuality = 805 [control] {
+  resolution: PreviewResolution = 1;
+  fastPreview: FastPreview = 2;
+  draft3d: bool = 3;
+  motionBlur: bool = 4;
+  /// Lowest resolution adaptive mode may fall to.
+  adaptiveFloor: PreviewResolution = 5;
+}
+command setAudioPreview = 806 [control] { muted: bool = 1; volume: f64 = 2; scrubAudio: bool = 3; }
+/// Which composition the clock and the viewport follow (the active comp tab). View state for the engine, not document state.
+command setActiveComposition = 807 [control] { comp: ItemId = 1; }
+
+enum ChannelView { rgb = 0; red = 1; green = 2; blue = 3; alpha = 4; rgbStraight = 5; }
+
+/// A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure.
+command setViewport = 808 [control, coalesce] {
+  viewport: u32 = 1;
+  width: u32 = 2;
+  height: u32 = 3;
+  devicePixelRatio: f64 = 4;
+  zoom: f64 = 5;
+  pan: Vec2 = 6;
+  regionOfInterest?: Rect = 7;
+  channel: ChannelView = 8;
+  exposure: f64 = 9;
+  transparencyGrid: bool = 10;
+  /// View LUT / display transform name ('' = project default).
+  displayTransform: string = 11;
+  /// Show a single layer (Layer panel) instead of the composition.
+  layer?: LayerId = 12;
+  layerRenderEffects: bool = 13;
+}
+command closeViewport = 809 [control] { viewport: u32 = 1; }
+command setCacheBudget = 810 [control] { ramMegabytes: u64 = 1; diskMegabytes: u64 = 2; diskPath: string = 3; }
+
+enum PurgeKind { all = 0; ram = 1; disk = 2; undo = 3; images = 4; }
+
+command purgeCache = 811 [control] { kind: PurgeKind = 1; }
+/// Interaction hint: the UI is dragging, the engine may drop to draft quality until it ends.
+command setInteracting = 812 [control] { interacting: bool = 1; }

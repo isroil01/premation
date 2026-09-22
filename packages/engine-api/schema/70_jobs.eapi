@@ -1,0 +1,62 @@
+// Long-running engine jobs: analysis, tracking, rendering. A job never edits
+// the document while it runs; when it finishes, its result is applied as ONE
+// history entry labelled with the job (origin = engine), unless apply=false.
+// Command ids: 850–899.
+
+family "Jobs";
+
+enum TrackKind { position = 0; positionRotation = 1; positionRotationScale = 2; perspectiveCorner = 3; mask = 4; planar = 5; }
+enum TrackDirection { forward = 0; backward = 1; both = 2; }
+
+struct TrackPointSpec {
+  /// Feature region centre + size, search region size, in layer pixels.
+  feature: Rect = 1;
+  search: Rect = 2;
+  attach: Vec2 = 3;
+}
+
+struct TrackMotionJob {
+  layer: LayerId = 1;
+  kind: TrackKind = 2;
+  points: TrackPointSpec[] = 3;
+  range: TimeRange = 4;
+  direction: TrackDirection = 5;
+  /// Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only.
+  applyTo?: PropRef = 6;
+}
+
+struct StabilizeJob { layer: LayerId = 1; range: TimeRange = 2; smoothness: f64 = 3; method: string = 4; }
+struct AutoTraceJob { layer: LayerId = 1; range: TimeRange = 2; channel: string = 3; threshold: f64 = 4; }
+struct SceneDetectJob { layer: LayerId = 1; createMarkers: bool = 2; splitLayers: bool = 3; }
+struct ObjectMatteJob { layer: LayerId = 1; range: TimeRange = 2; prompts: Vec2[] = 3; }
+struct TranscribeJob { layer: LayerId = 1; language: string = 2; createCaptions: bool = 3; }
+struct AudioAnalysisJob { layer: LayerId = 1; beats: bool = 2; amplitudeKeyframes: bool = 3; }
+struct RenderJob { items: RenderItemId[] = 1; }
+/// Pre-render (Pre-render / proxy creation) of compositions to files.
+struct PrerenderJob { comps: ItemId[] = 1; outputFolder: string = 2; format: string = 3; }
+
+union JobSpec {
+  trackMotion: TrackMotionJob = 1;
+  stabilize: StabilizeJob = 2;
+  autoTrace: AutoTraceJob = 3;
+  sceneDetect: SceneDetectJob = 4;
+  objectMatte: ObjectMatteJob = 5;
+  transcribe: TranscribeJob = 6;
+  audioAnalysis: AudioAnalysisJob = 7;
+  render: RenderJob = 8;
+  prerender: PrerenderJob = 9;
+}
+
+command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;
+command cancelJob = 851 [control] { job: JobId = 1; }
+/// Apply a finished job's result (when started with apply=false). One history entry.
+command applyJobResult = 852 { job: JobId = 1; } -> ItemList;
+
+struct JobRef { job: JobId = 1; }
+
+family "Plugins";
+
+/// Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager).
+command setPluginEnabled = 870 [control] { plugin: string = 1; enabled: bool = 2; }
+/// Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project.
+command setPluginData = 871 { layer: LayerId = 1; group: PropPath = 2; key: string = 3; data: bytes = 4; }
