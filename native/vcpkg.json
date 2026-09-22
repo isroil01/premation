@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "motion-native",
+  "version-string": "0.1.0",
+  "description": "Premation native core (N0/N1): test + bench dependencies only. skia/ffmpeg/glm/highway arrive with N2 and N4.",
+  "builtin-baseline": "c76c06644034521fb761a39f8f52d8e87d1103d5",
+  "dependencies": [
+    "catch2",
+    "benchmark"
+  ]
+}

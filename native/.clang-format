@@ -1,0 +1,26 @@
+# MotionNative formatting. Google base with the two things the repo cares
+# about set explicitly: 100 columns (the same width as the TypeScript side's
+# prettier config) and 2-space indent. Everything else is the Google default,
+# so a reviewer can look it up instead of memorising local overrides.
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 2
+AccessModifierOffset: -1
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  # The file's own header / the public ABI first, then C++ std, then the rest.
+  - Regex: '^"motion/'
+    Priority: 1
+  - Regex: '^<[a-z_]+>$'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 4

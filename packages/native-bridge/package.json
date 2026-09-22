@@ -1,0 +1,11 @@
+{
+  "name": "@motion/native-bridge",
+  "version": "0.1.0",
+  "description": "The one place that talks to the native core (native/): typed functions over the WASM / N-API builds, with the TypeScript implementation as the fallback behind a flag.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "test": "jest --config jest.config.cjs" },
+  "license": "MIT"
+}

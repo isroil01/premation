@@ -1,0 +1,16 @@
+{
+  "name": "@motion/native-napi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Premation native core as an N-API addon (motion_eval). Built by cmake-js; loaded by the export process and the worker-engine host only — never by the editor renderer.",
+  "main": "index.cjs",
+  "scripts": {
+    "build": "cmake-js compile",
+    "build:electron": "cmake-js compile --runtime electron --runtime-version $ELECTRON_VERSION",
+    "smoke": "node smoke.cjs"
+  },
+  "devDependencies": {
+    "cmake-js": "^7.3.0",
+    "node-addon-api": "^8.3.0"
+  }
+}

@@ -56,7 +56,15 @@
     "icons:generate": "node scripts/generate-sharp-icons.mjs",
     "verify-plugin-chain": "node packages/render-tests/scripts/verify-plugin-chain.mjs",
     "verify-plugin-shaders": "node packages/render-tests/scripts/verify-plugin-shaders.mjs",
-    "build-test-kit": "node scripts/build-test-kit-plugin.mjs"
+    "build-test-kit": "node scripts/build-test-kit-plugin.mjs",
+    "native:configure": "node scripts/native.mjs configure",
+    "native:build": "node scripts/native.mjs build",
+    "native:test": "node scripts/native.mjs test",
+    "native:bench": "node scripts/native.mjs bench",
+    "native:tidy": "node scripts/native.mjs tidy",
+    "native:wasm": "node scripts/native.mjs wasm",
+    "native:napi": "node scripts/native.mjs napi",
+    "native:golden": "node scripts/native.mjs golden"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

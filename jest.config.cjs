@@ -57,6 +57,7 @@ module.exports = {
     '^@motion/product-motion$': '<rootDir>/packages/product-motion/src/index.ts',
     '^@motion/caster$': '<rootDir>/packages/caster/src/index.ts',
     '^@motion/audio$': '<rootDir>/packages/audio/src/index.ts',
+    '^@motion/native-bridge$': '<rootDir>/packages/native-bridge/src/index.ts',
     '^@core(.*)$': '<rootDir>/src/core$1',
     '^@components(.*)$': '<rootDir>/src/components$1',
     '^@layout(.*)$': '<rootDir>/src/layout$1',

@@ -71,7 +71,7 @@ rediscovered in git history and believed a second time.
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
 | Stores | 69 | `src/stores/*.ts` |
-| Packages | 14 | `packages/*` |
+| Packages | 15 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
 
@@ -93,7 +93,7 @@ Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
                           ├── src/stores/*        69 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
-                          └── packages/*          13 workspace packages
+                          └── packages/*          15 workspace packages
                                 ├── scene       scene graph + components
                                 ├── animation   tracks, easing, expressions
                                 ├── renderer    WebGPU → WebGL2 → Null

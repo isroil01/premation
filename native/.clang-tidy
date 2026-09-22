@@ -1,0 +1,42 @@
+# MotionNative clang-tidy configuration (docs/NATIVE_CORE_PLAN.md §2).
+#
+# The four families the plan names are ON and every warning is an error. The
+# handful of checks disabled below are each disabled for a stated reason; add
+# to this list only with a reason of the same weight.
+#
+#   cppcoreguidelines-avoid-magic-numbers / readability-magic-numbers
+#       The library IS numbers: bezier coefficients (3.0, 0.333, 0.667),
+#       Newton thresholds (1e-5, 1e-6) and iteration counts (8) are the
+#       TypeScript reference's constants, ported verbatim so the port is
+#       reviewable line-by-line against interpolate.ts. Naming each would hide
+#       the correspondence the golden gate depends on.
+#   modernize-use-trailing-return-type
+#       Style-only; the repo uses leading return types.
+#   bugprone-easily-swappable-parameters
+#       Every function here takes runs of doubles (x1, y1, x2, y2, x). The
+#       check fires on all of them and the fix (strong types per coordinate)
+#       is not worth its weight at a C ABI boundary of plain doubles.
+#   cppcoreguidelines-pro-bounds-pointer-arithmetic
+#       Stays ON. Internally everything is std::span; the only raw pointers are
+#       the C ABI's, wrapped into spans on entry (motion_eval.cpp).
+#
+# The C headers under include/motion carry file-scoped NOLINTBEGIN/END for the
+# modernize checks that do not apply to C (typedef, <stdint.h>, #define).
+Checks: >
+  -*,
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -modernize-use-trailing-return-type,
+  -bugprone-easily-swappable-parameters
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*(native[/\\](include|libs)[/\\]).*'
+FormatStyle: file
+CheckOptions:
+  - key: cppcoreguidelines-pro-type-member-init.IgnoreArrays
+    value: 'true'

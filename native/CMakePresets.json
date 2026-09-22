@@ -1,0 +1,128 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MOTION_BUILD_TESTS": "ON",
+        "MOTION_BUILD_BENCH": "ON"
+      }
+    },
+    {
+      "name": "vcpkg",
+      "hidden": true,
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    },
+
+    {
+      "name": "linux-clang",
+      "displayName": "Linux · clang · RelWithDebInfo",
+      "inherits": ["base", "vcpkg"],
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-clang-asan",
+      "displayName": "Linux · clang · ASan + UBSan",
+      "inherits": "linux-clang",
+      "cacheVariables": { "MOTION_SANITIZE": "asan-ubsan", "MOTION_BUILD_BENCH": "OFF" }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux · clang · TSan",
+      "inherits": "linux-clang",
+      "cacheVariables": { "MOTION_SANITIZE": "tsan", "MOTION_BUILD_BENCH": "OFF" }
+    },
+
+    {
+      "name": "macos-clang",
+      "displayName": "macOS · clang · RelWithDebInfo",
+      "inherits": ["base", "vcpkg"],
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "macos-clang-asan",
+      "displayName": "macOS · clang · ASan + UBSan",
+      "inherits": "macos-clang",
+      "cacheVariables": { "MOTION_SANITIZE": "asan-ubsan", "MOTION_BUILD_BENCH": "OFF" }
+    },
+    {
+      "name": "macos-clang-tsan",
+      "displayName": "macOS · clang · TSan",
+      "inherits": "macos-clang",
+      "cacheVariables": { "MOTION_SANITIZE": "tsan", "MOTION_BUILD_BENCH": "OFF" }
+    },
+
+    {
+      "name": "windows-clang-cl",
+      "displayName": "Windows · clang-cl · RelWithDebInfo",
+      "inherits": ["base", "vcpkg"],
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
+    },
+    {
+      "name": "windows-clang-cl-asan",
+      "displayName": "Windows · clang-cl · ASan (no UBSan on Windows)",
+      "inherits": "windows-clang-cl",
+      "cacheVariables": { "MOTION_SANITIZE": "asan-ubsan", "MOTION_BUILD_BENCH": "OFF" }
+    },
+
+    {
+      "name": "wasm",
+      "displayName": "WebAssembly · Emscripten · Release",
+      "inherits": "base",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MOTION_BUILD_TESTS": "OFF",
+        "MOTION_BUILD_BENCH": "OFF",
+        "MOTION_BUILD_WASM": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux-clang", "configurePreset": "linux-clang" },
+    { "name": "linux-clang-asan", "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan", "configurePreset": "linux-clang-tsan" },
+    { "name": "macos-clang", "configurePreset": "macos-clang" },
+    { "name": "macos-clang-asan", "configurePreset": "macos-clang-asan" },
+    { "name": "macos-clang-tsan", "configurePreset": "macos-clang-tsan" },
+    { "name": "windows-clang-cl", "configurePreset": "windows-clang-cl" },
+    { "name": "windows-clang-cl-asan", "configurePreset": "windows-clang-cl-asan" },
+    { "name": "wasm", "configurePreset": "wasm" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    },
+    { "name": "linux-clang", "inherits": "test-base", "configurePreset": "linux-clang" },
+    { "name": "linux-clang-asan", "inherits": "test-base", "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan", "inherits": "test-base", "configurePreset": "linux-clang-tsan" },
+    { "name": "macos-clang", "inherits": "test-base", "configurePreset": "macos-clang" },
+    { "name": "macos-clang-asan", "inherits": "test-base", "configurePreset": "macos-clang-asan" },
+    { "name": "macos-clang-tsan", "inherits": "test-base", "configurePreset": "macos-clang-tsan" },
+    { "name": "windows-clang-cl", "inherits": "test-base", "configurePreset": "windows-clang-cl" },
+    { "name": "windows-clang-cl-asan", "inherits": "test-base", "configurePreset": "windows-clang-cl-asan" }
+  ]
+}

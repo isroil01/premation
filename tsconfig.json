@@ -69,7 +69,8 @@
       "@motion/technique-library": ["./packages/technique-library/src/index.ts"],
       "@motion/product-motion": ["./packages/product-motion/src/index.ts"],
       "@motion/caster": ["./packages/caster/src/index.ts"],
-      "@motion/audio": ["./packages/audio/src/index.ts"]
+      "@motion/audio": ["./packages/audio/src/index.ts"],
+      "@motion/native-bridge": ["./packages/native-bridge/src/index.ts"]
     }
   },
   "include": ["src", "src/**/*.ts", "src/**/*.tsx"],

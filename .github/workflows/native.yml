@@ -1,0 +1,232 @@
+# Native core gate (docs/NATIVE_CORE_PLAN.md §2 "Safety gates", §4 N0).
+#
+# Every job here is blocking. The one exception is `format`, which stays
+# non-blocking until the sources have been through a real clang-format once
+# (they were authored on a machine without a C++ toolchain, so the first CI
+# run is the first time they meet the tool; see native/README.md).
+#
+#   build-test   ubuntu / macos / windows: configure preset → build → ctest,
+#                then the N-API addon (cmake-js) + its smoke test; clang-tidy on ubuntu
+#   sanitizers   ubuntu: ASan+UBSan and TSan builds run the full Catch2 suite
+#   wasm         Emscripten build + Node smoke test over the golden table
+#   format       clang-format --dry-run (non-blocking, see above)
+#
+# Compiler: Clang everywhere. Ubuntu takes clang from apt, Windows takes the
+# LLVM clang-cl the runner image ships with (MSVC SDK/CRT env from
+# ilammy/msvc-dev-cmd), macOS uses Apple clang — good enough for N0/N1; the
+# plan's "one compiler" rule will pin an LLVM release once skia/ffmpeg arrive.
+
+name: Native
+
+on:
+  push:
+    branches: [native-core, dev, main]
+    paths:
+      - 'native/**'
+      - 'packages/native-bridge/**'
+      - '.github/workflows/native.yml'
+      - 'scripts/native.mjs'
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'packages/native-bridge/**'
+      - '.github/workflows/native.yml'
+      - 'scripts/native.mjs'
+  workflow_dispatch:
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The vcpkg checkout the toolchain file comes from. Same commit as
+  # native/vcpkg.json "builtin-baseline" so the two never disagree.
+  VCPKG_COMMIT: c76c06644034521fb761a39f8f52d8e87d1103d5
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu · clang
+            os: ubuntu-latest
+            preset: linux-clang
+          - name: macos · clang
+            os: macos-latest
+            preset: macos-clang
+          - name: windows · clang-cl
+            os: windows-latest
+            preset: windows-clang-cl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ── Toolchain ────────────────────────────────────────────────────────
+      - name: Install clang + ninja (apt)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tidy clang-format ninja-build
+          clang++ --version
+          run-clang-tidy --help > /dev/null
+
+      - name: Install ninja (brew)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja
+          clang++ --version
+
+      - name: MSVC environment for clang-cl (SDK, CRT, lib.exe)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Ninja + LLVM on PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ninja --no-progress -y
+          # The runner image ships LLVM; make sure its clang-cl wins over any other.
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files\LLVM\bin'
+          & 'C:\Program Files\LLVM\bin\clang-cl.exe' --version
+
+      - name: vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: ${{ runner.workspace }}/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+          vcpkgJsonGlob: 'native/vcpkg.json'
+
+      # ── Core library, tests, bench ───────────────────────────────────────
+      - name: Configure (${{ matrix.preset }})
+        working-directory: native
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        working-directory: native
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        working-directory: native
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Bench (smoke — numbers are not ratcheted yet)
+        if: runner.os == 'Linux'
+        working-directory: native
+        run: ./build/${{ matrix.preset }}/bench/motion_bench --benchmark_min_time=0.05s
+
+      - name: clang-tidy (libs)
+        if: runner.os == 'Linux'
+        working-directory: native
+        run: run-clang-tidy -p build/${{ matrix.preset }} -quiet '.*/native/libs/.*'
+
+      # ── N-API addon ──────────────────────────────────────────────────────
+      - name: N-API addon (cmake-js)
+        working-directory: native/bindings/napi
+        shell: bash
+        run: |
+          npm install --no-audit --no-fund
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            npx cmake-js compile -G Ninja --CDCMAKE_C_COMPILER=clang-cl --CDCMAKE_CXX_COMPILER=clang-cl
+          else
+            CC=clang CXX=clang++ npx cmake-js compile
+          fi
+          node smoke.cjs
+
+      - name: Upload addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion_napi-${{ matrix.os }}
+          path: native/bindings/napi/build/Release/motion_napi.node
+          if-no-files-found: error
+
+  sanitizers:
+    name: ubuntu · ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [linux-clang-asan, linux-clang-tsan]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang + ninja (apt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build
+      - name: vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: ${{ runner.workspace }}/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+          vcpkgJsonGlob: 'native/vcpkg.json'
+      - name: Configure
+        working-directory: native
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        working-directory: native
+        run: cmake --build --preset ${{ matrix.preset }}
+      - name: Test under the sanitizer
+        working-directory: native
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --preset ${{ matrix.preset }}
+
+  wasm:
+    name: wasm · emscripten
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install ninja (apt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+      - name: emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+      - name: Configure (wasm)
+        working-directory: native
+        run: |
+          test -n "$EMSDK" || { echo "EMSDK not set by setup-emsdk"; exit 1; }
+          cmake --preset wasm
+      - name: Build
+        working-directory: native
+        run: cmake --build --preset wasm
+      - name: Smoke test (Node)
+        run: node native/bindings/wasm/smoke.mjs native/build/wasm/bindings/wasm/motion_wasm.mjs
+      - name: Upload module
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion_wasm
+          path: |
+            native/build/wasm/bindings/wasm/motion_wasm.mjs
+            native/build/wasm/bindings/wasm/motion_wasm.wasm
+          if-no-files-found: error
+
+  format:
+    name: clang-format (non-blocking until first formatted)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: clang-format --dry-run
+        run: |
+          git ls-files 'native/**/*.cpp' 'native/**/*.hpp' 'native/**/*.h' \
+            | xargs clang-format --dry-run --Werror --style=file:native/.clang-format
