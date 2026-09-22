@@ -4,11 +4,22 @@ The architecture and its migration order live in `docs/NATIVE_CORE_PLAN.md`.
 Read §0 (decisions) before proposing structural change; those decisions are
 settled and are not re-opened in a code change.
 
-## Layering (lint-enforced, see eslint.config.js)
+## Target architecture (decided 2026-09-22)
+
+**Electron/React is the UI only. The engine is a C++ process**
+(`premation-engine`, supervised by Electron main): evaluation, render graph,
+GPU via Dawn, decode, text/vector, effects, plugins, export. The migration is
+the "Native engine track" (E0–E10) in `docs/NATIVE_CORE_PLAN.md`. Until each
+step flips, the TypeScript engine below is the reference and the fallback —
+new engine features must be designed so they can move into the C++ engine,
+and must not deepen the UI's hold on engine state.
+
+## Layering today (lint-enforced, see eslint.config.js)
 
 ```
 Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/hooks)
-                      →  Engine (src/core, packages/*)  →  GPU (packages/renderer)
+                      →  TS engine (src/core, packages/*)  →  GPU (packages/renderer)
+                                    ↘ being replaced by native/ (C++ engine process)
 ```
 
 - `src/core/**` and `packages/**` never import `react`, `react-dom`, `zustand`,
@@ -55,8 +66,9 @@ Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/h
 - No exceptions cross the C ABI in `include/motion/`. Exported functions
   return an error code + message buffer.
 - FFI to ffmpeg/Skia/OS lives only in `*_ffi.cpp` files.
-- The N-API module is never loaded into the editor's renderer process. It
-  runs in the export process and the worker-engine host only.
+- No engine code in the UI process: not in the renderer page and not as an
+  N-API addon in Electron main. Native engine code runs in the
+  `premation-engine` process; a crash there restarts the engine, never the app.
 - Every native replacement ships behind a flag with the TypeScript fallback
   intact, and flips default only when bit-identical on the golden gate.
 

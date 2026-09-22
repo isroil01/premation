@@ -1,4 +1,14 @@
-# Native core plan — C++ engine libraries under the existing Electron/React editor
+# Native core plan — a C++ engine process under the Electron/React UI
+
+> **Correction, 2026-09-22 (read first).** The first version of this plan kept
+> the GPU renderer in TypeScript and used C++ only for CPU hot paths. That was
+> the author's earlier "hybrid" recommendation carried over by mistake: the
+> product owner's decision is **Electron/React is the UI only; the engine —
+> evaluation, render graph, GPU, decode, effects, plugins, export — is C++**,
+> the way After Effects is built. §0 and §4 "Native engine track" below are
+> rewritten to that decision; T3's worker-hostable TypeScript engine and the
+> old N1–N5 library-by-library track are superseded. Work already landed
+> (T0, T1, T2, `native/` skeleton, `motion_eval`) carries over — see §4.
 
 > Written 2026-09-22 on branch `native-core`, cut from `dev` at `c47c2053`.
 > It records the decisions taken in the architecture discussion of the same
@@ -74,9 +84,10 @@
 | Product | After-Effects-level **desktop** app, sold commercially | No web editor, no collaboration, no render farm. Do not build for them, do not prevent them. |
 | Native language | **C++20** | Chosen over Rust for the shorter path to a native plugin tier and eventual AE-SDK compatibility. Its costs (memory safety, build fragility) are contained by §2. |
 | UI | **Stays React 18 + TypeScript + Zustand + Radix + CSS modules in Electron 32** | The UI is not the bottleneck. The engine is. A C++ UI (Qt, ImGui) restarts years of work at zero. |
-| GPU | **Stays WebGPU with WebGL2 fallback in `packages/renderer`** | The GPU does the work; the language issuing commands does not matter. Nothing in the renderer package moves to C++. |
+| Engine | **A native C++ process (`premation-engine`), spawned and supervised by Electron main** | The UI never hosts the engine. A separate process (not an N-API addon in main) means an engine crash restarts the engine, not the app — the same isolation T2 built for export. |
+| GPU | **Moves into the C++ engine via Dawn native** — the same WebGPU API and the same WGSL shaders, driven from C++ instead of TypeScript. `packages/renderer` stays as the reference and fallback until the port passes the golden gate. | *Corrected.* The earlier row said the issuing language does not matter; it does for thousands of small passes per frame, for handing C++ results to the GPU without a JS copy, for zero-copy hardware decode, and for GPU texture handoff to plugins. Dawn keeps the port mechanical rather than a redesign. |
 | Package re-tree | **Rejected** | Eight new packages for ~700 `src/core` files buys nothing a desktop user can feel. Boundaries are enforced by lint (§4 phase 0), carved opportunistically (§4 phase F). |
-| "DOM-free engine" | **Replaced by "worker-hostable engine"** | OffscreenCanvas + WebGPU + WebCodecs + `self.fonts` exist in workers. Worker-hostable is what unlocks multi-frame export; fully DOM-free only unlocks the web build we are not doing. |
+| "DOM-free engine" | **Superseded: the engine is native, so it is DOM-free by construction** | The earlier "worker-hostable TypeScript engine" (T3) is dropped; multi-frame export comes from C++ threads in the engine process instead. |
 | CLI and render-worker | **Keep, do not invest as products** | `electron/cliRender.ts` (hidden-window `premation render`) and `packages/render-worker` (HTTP render service) ARE the internal headless capability. They become the desktop export process in phase B. |
 | Branch | **`native-core`** off `dev`; feature work continues on `dev` | Native work merges to `dev` per milestone, never as one drop. See §5. |
 
@@ -171,9 +182,10 @@ substitute for the borrow checker.
   checks).
 
 **Process placement**
-- The N-API module is **never loaded into the main editor renderer process**.
-  It loads in the export process (phase B) and the worker engine host. A native
-  crash kills a render, never the user's project.
+- Native engine code runs **only in the `premation-engine` process**, never in
+  the UI's renderer page and never as an addon inside Electron main. Electron
+  main supervises and restarts it; a native crash costs a restart or one
+  render, never the user's project or the app.
 
 ---
 
@@ -278,7 +290,56 @@ isolated enough to swap a function and measured enough to prove the swap helped.
   bench fixture; output bit-identical to the previous path at the same CRF
   (golden export test).
 
-### T3 / C — Worker-hostable engine (≈6–8 weeks, overlaps N1–N2)
+### Native engine track (E0–E10) — supersedes T3's worker engine and N1–N5
+
+The target, stated once:
+
+```text
+Electron UI (React)  — panels, timeline, inspector, dialogs; no engine code
+   │  commands + small data  (renderer → preload → main → pipe)
+   ▼
+premation-engine  (C++ process, supervised by Electron main)
+   document evaluation · render graph · Dawn → D3D12/Vulkan/Metal
+   hardware decode → GPU · text/vector · effects · plugins · export → ffmpeg
+   │  finished frames
+   ▼
+Viewport in the UI  (display route chosen by E1's measurement)
+```
+
+**Principles.** One engine binary serves preview, export and headless use.
+Every step runs beside the TypeScript path behind a flag and flips default
+only on the golden gate (§2). The UI keeps working at every commit. Where the
+engine's document model lives moves in stages (E9), not in one jump.
+
+| Step | What | Exit criterion | Size |
+|---|---|---|---|
+| **E0** | Toolchain on the dev machine + first green `native.yml` run (CI is today's only compiler); fix whatever the nine unverified spots in `native/README.md` turn up. | `motion_eval` golden table bit-exact on Windows, Linux, macOS, WASM | 1–2 wk |
+| **E1** | **Prototype and measure the viewport.** A native process renders one textured layer with Dawn; show it in the Electron viewport three ways: (a) frames copied to the page over a transferable buffer, (b) a native child window parented over the viewport region via `getNativeWindowHandle`, (c) a shared GPU texture, *if* Electron 32's APIs permit importing one — to be verified, not assumed. Measure latency, CPU, 1080p/4K throughput, resize/z-order behaviour. | A written decision with numbers; the losing routes deleted | 3 wk |
+| **E2** | `premation-engine` executable + protocol + supervisor. Electron main spawns and restarts it (the T2 `ExportSupervisor` pattern), a versioned binary protocol over a pipe, `motion_eval` inside. The renderer reaches it only through typed preload functions. | Engine crash → auto-restart, UI shows a notice, nothing lost; protocol fuzz-tested | 4 wk |
+| **E3** | **Port the render graph and passes to C++/Dawn.** Stage 1: the UI still builds the flat frame description (`buildSnapshot` output) and sends it; the engine renders it. WGSL shaders reused as-is. | Golden gate: the engine matches today's WebGPU reference within the existing ratchet ceilings on all 360 frames | 10–14 wk |
+| **E4** | Engine viewport default-on (flag keeps the TypeScript renderer for one release). | HUD frame time ≤ TS path on the bench comps; no visual diffs | 2–4 wk |
+| **E5** | Hardware decode in the engine: ffmpeg + NVDEC / D3D11VA / VideoToolbox into GPU textures, zero-copy where the API allows; ProRes, DNxHR, mixed timelines. | 4K ProRes scrub ≤ 50 ms; 6 × 1080p layers at full rate | 6 wk |
+| **E6** | Text and vector in the engine: Skia (its Graphite backend targets Dawn) with HarfBuzz; bidi/vertical/kinsoku parity with today's TypeScript. | Noto text goldens match; animated-text bench ≥ 3× | 8 wk |
+| **E7** | Effects: GPU effects reuse their WGSL; the 28 Canvas2D-only effects and the 44 CPU bake sites become C++ SIMD kernels across cores. | No effect drops the bench comp below 24 fps; golden parity | 8–10 wk |
+| **E8** | Export straight from the engine: the export supervisor spawns engine jobs instead of hidden Chromium windows; frames go from GPU to ffmpeg with no page in between; multi-frame rendering across threads. Hardware encode stays. | Export ≥ 3× T2's raw-pipe fps on 8 cores; md5-identical to today at the same settings | 4 wk |
+| **E9** | **Document ownership moves into the engine.** Stage 2: the engine receives the document and edits as deltas and evaluates animation, expressions and the scene itself; the UI keeps a read mirror for panels. Stage 3: the engine owns the document and undo; the UI sends commands. Each stage flagged. | Stage 3: the UI process holds no authoritative project state; undo/redo parity suite green | 10+ wk |
+| **E10** | Native plugin SDK with GPU texture handoff (the AE-SDK tier), published C ABI. Open question to settle first: today's JavaScript kernel plugins need either a JS runtime in the engine or a texture round-trip to the UI process. | A sample native GPU effect loads, renders and survives a crash in isolation | 6 wk |
+
+**What carries over from work already landed:** T0's boundaries and bench
+ratchet; T1's atomic saves and single undo history (E9 moves it, it does not
+redo it); T2's supervisor (becomes the engine supervisor) and raw pipe to
+ffmpeg (the engine writes to it); `native/` with its C ABI and `motion_eval`
+(the engine's first library); the golden gate (the parity contract for E3+).
+**What is superseded:** T3's worker-hosted TypeScript engine and TS
+multi-frame export; `packages/native-bridge`'s in-page WASM route (kept as a
+test fallback only); the separate N1–N5 phases below (their content lives in
+E3, E5, E6, E7, E10).
+
+### T3 / C — Worker-hostable engine — **SUPERSEDED by the native engine track above**
+
+Kept for the record. Of its items, only cheap wins that also help the
+TypeScript fallback may still be done (the path raster-key memo landed in
+`1c15904b`); the worker engine and TS multi-frame export are not built.
 
 - Video decode fully in the worker with direct `VideoFrame` upload and
   latest-wins seeks (`src/core/video/decode.worker.ts`).
@@ -305,6 +366,12 @@ isolated enough to swap a function and measured enough to prove the swap helped.
 - Exit: `npm run native:build` produces artifacts on Windows, macOS, Linux and
   WASM in CI; a trivial function callable from the worker engine and from the
   export process.
+
+> **N1–N5 below are superseded by the native engine track (E0–E10).** They
+> described C++ libraries called from the TypeScript page; the libraries now
+> live inside the engine process. Their technical content (golden parity for
+> eval, Skia for raster, SIMD kernels, ffmpeg media, C ABI plugin SDK) is
+> reused by E3/E5/E6/E7/E10. Kept for the record.
 
 ### N1 — `motion_eval` behind a flag (≈6 weeks)
 
@@ -375,8 +442,10 @@ isolated enough to swap a function and measured enough to prove the swap helped.
 
 ## 6. What stays unchanged
 
-`packages/renderer` (render graph, WebGPU/WebGL2 backends, shaders),
-`packages/animation` (track model, expression parser), the plugin system and
+Until the engine track replaces them behind flags: `packages/renderer`
+(the reference and fallback renderer, and the source of the WGSL the engine
+reuses), `packages/animation` (track model, expression parser — the spec the
+C++ port must match). Permanently: the plugin system and
 its permission model, the effect registry and `PropertyRegistry`, IPC security
 posture, project migrations, the React/Zustand/Radix/CSS-modules UI stack, the
 dock and design-system packages, Playwright and golden gates.
@@ -396,34 +465,46 @@ dock and design-system packages, Playwright and golden gates.
 | Contributor pool for the engine shrinks (open source) | Engine stays a minority of the code; UI, plugins, and TS remain the contributor surface |
 | Skia build time and size | vcpkg binary cache in CI; Skia only in `motion_raster`; measured binary-size budget in the bench ratchet |
 | Two languages, one team | `CLAUDE.md` rules (§2); the agent builds, sanitizers and tidy review |
+| Showing engine frames in the Electron viewport is the hard interop problem | E1 measures three routes before any port starts; no route is assumed to exist |
+| Two renderers diverge during the port | The TypeScript renderer is the reference; the golden gate compares them on every frame of the suite; default flips only on parity |
+| Moving document ownership (E9) breaks editing | Three flagged stages; the UI keeps a mirror until stage 3; the undo parity suite from T1 is the gate |
+| JavaScript kernel plugins have no runtime in a native engine | Decided before E10; worker/WGSL plugins keep working through the texture round-trip meanwhile |
+| The engine becomes the 24-month rewrite | Every E-step ships behind a flag with the TypeScript path intact; nothing waits for "the engine to be complete" |
 
 ---
 
 ## 8. Timeline (single-team, sequential where dependencies force it)
 
-| Month | Track T | Track N |
-|---|---|---|
-| 1 | T0 boundaries + measurement | — |
-| 2 | T1 reliability | N0 tooling |
-| 3 | T1 → T2 export | N1 eval |
-| 4 | T2 export done | N1 eval flips default |
-| 5–6 | T3 worker engine | N2 raster |
-| 7 | T3 multi-frame export | N2 flips; N3 kernels |
-| 8–9 | F carving continuous | N3 done; N4 media |
-| 10 | — | N4 done |
-| 11–12 | — | N5 plugin SDK; hardening |
+Revised with the correction. T0, T1, T2 and N0 are done (month 1).
 
-At month 12 the product is at After Effects level on responsiveness, export
-speed, codec coverage and stability for the motion-graphics market. Remaining
-gaps are the size of the third-party plugin ecosystem and very large RAM
-previews (Chromium heap), which are business and hardware problems.
+| Months | Native engine track | Also |
+|---|---|---|
+| 1 | E0 toolchain + first green CI · E1 viewport prototype | T2 close-out |
+| 2 | E2 engine process + protocol + supervisor | |
+| 3–5 | E3 render graph port to Dawn (golden parity) | |
+| 6 | E4 engine viewport default-on | |
+| 6–7 | E5 hardware decode | |
+| 7–9 | E6 text/vector (Skia) · E7 effects | |
+| 9 | E8 export from the engine, multi-frame | |
+| 10–13 | E9 document ownership to the engine (3 stages) | |
+| 13–14 | E10 native plugin SDK with GPU handoff | hardening |
+
+Honest range: 12–18 months for one team, because E3 and E9 are large and E1
+may change the viewport approach. The product improves at every step: E4 is
+where preview is fully native, E8 where export is, E9 where the UI holds no
+engine state. Remaining gaps after that are the third-party plugin ecosystem
+and business problems, not architecture. RAM preview is no longer capped by
+the Chromium heap once frames live in the engine process.
 
 ---
 
 ## 9. What we are NOT doing (so the plan does not grow)
 
-- No C++ UI. No Qt, no ImGui, no native panels.
-- No move of `packages/renderer` to C++/wgpu.
+- No C++ UI. No Qt, no ImGui, no native panels — the UI is Electron/React.
+- No engine code in the UI process: not in the renderer page, not as an
+  N-API addon in Electron main. The engine is its own process.
+- No big-bang switch: the TypeScript renderer stays until the engine passes
+  the golden gate.
 - No eight-package re-tree of `src/core`.
 - No web renderer, collaboration, render farm, or public CLI product work.
 - No AE-SDK compatibility shim until N5 is shipped and stable.
