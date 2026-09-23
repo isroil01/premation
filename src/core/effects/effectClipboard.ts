@@ -21,6 +21,12 @@ export interface CopiedEffect {
   effect: Effect;
   /** Keyframe tracks for this effect, keyed by the param suffix after its id. */
   tracks: Record<string, Keyframe[]>;
+  /**
+   * The layer it was copied from (clipboard only, never saved in a preset): a
+   * paste whose source is still exactly as copied goes through the engine's
+   * `copyPropertyGroups` (B3, layout/Effects/effectEdits.ts).
+   */
+  sourceNodeId?: string;
 }
 
 let clipboard: CopiedEffect[] = [];
@@ -59,13 +65,18 @@ export function captureEffect(nodeId: string, effect: Effect): CopiedEffect {
 export function copyEffects(nodeId: string, effectIds: readonly string[]): void {
   const wanted = new Set(effectIds);
   const picked = getNodeEffects(nodeId).filter((e) => wanted.has(e.id));
-  if (picked.length) clipboard = picked.map((e) => captureEffect(nodeId, e));
+  if (picked.length) clipboard = picked.map((e) => ({ ...captureEffect(nodeId, e), sourceNodeId: nodeId }));
 }
 
 /** Copy a layer's ENTIRE effect stack. */
 export function copyAllEffects(nodeId: string): void {
   const all = getNodeEffects(nodeId);
-  if (all.length) clipboard = all.map((e) => captureEffect(nodeId, e));
+  if (all.length) clipboard = all.map((e) => ({ ...captureEffect(nodeId, e), sourceNodeId: nodeId }));
+}
+
+/** What is on the clipboard (read-only view for the paste edit). */
+export function readEffectClipboard(): readonly CopiedEffect[] {
+  return clipboard;
 }
 
 let pasteSeq = 0;

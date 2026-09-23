@@ -16,7 +16,10 @@
  * the failure this panel has had before (see pluginEffectStack.test.tsx).
  */
 
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { buildScene } from '@core/engine/__testHelpers__/scene';
+import { engineIdle } from '@core/engine/engineInstance';
 import { EffectStack } from './EffectStack';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { addEffect, getNodeEffects, effectDefFor } from '@core/effects/effects';
@@ -59,20 +62,31 @@ describe('Echo Operator — the enum control', () => {
     ]);
   });
 
-  test('opens on AE’s default (Add) and writes the chosen mode back as a NUMBER', () => {
-    addEffect(NODE, 'echo');
-    render(<EffectStack nodeId={NODE} />);
+  test('opens on AE’s default (Add) and writes the chosen mode back as a NUMBER', async () => {
+    // The write goes through the engine API (B3), so the effect sits on a real layer.
+    const h = await setupAppEngine();
+    try {
+      const s = await buildScene(h);
+      await h.run({ type: 'addEffect', layers: [s.A], effect: 'echo', params: [] });
+      render(<EffectStack nodeId={s.A} />);
 
-    const menu = screen.getByLabelText('Echo Echo Operator') as HTMLSelectElement;
-    expect(menu.value).toBe('0');
+      const menu = screen.getByLabelText('Echo Echo Operator') as HTMLSelectElement;
+      expect(menu.value).toBe('0');
 
-    fireEvent.change(menu, { target: { value: '3' } });
+      await act(async () => {
+        fireEvent.change(menu, { target: { value: '3' } });
+        await engineIdle();
+      });
 
-    // Stored numeric, like every other param — that is what lets it read
-    // through effectNumber and pack into a uniform unchanged.
-    const stored = getNodeEffects(NODE).find((e) => e.type === 'echo')?.params?.echoOperator;
-    expect(stored).toBe(3);
-    expect(typeof stored).toBe('number');
+      // Stored numeric, like every other param — that is what lets it read
+      // through effectNumber and pack into a uniform unchanged.
+      const stored = getNodeEffects(s.A).find((e) => e.type === 'echo')?.params?.echoOperator;
+      expect(stored).toBe(3);
+      expect(typeof stored).toBe('number');
+    } finally {
+      cleanup();
+      await h.dispose();
+    }
   });
 
   test('an enum has no stopwatch — interpolating between named modes is meaningless', () => {

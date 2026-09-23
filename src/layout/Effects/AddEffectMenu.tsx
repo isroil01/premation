@@ -14,9 +14,9 @@ import { useMemo, useState } from 'react';
 import { Popover } from '@components/Popover';
 import { SearchField } from '@components/SearchField';
 import { Icon } from '@components/Icon';
-import { addEffect, type EffectDef, type EffectType } from '@core/effects/effects';
+import type { EffectDef, EffectType } from '@core/effects/effects';
 import { PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
-import { batchHistory } from '@stores/historyStore';
+import { addEffectEdit } from './effectEdits';
 import { EFFECT_CATEGORY } from './effectCategory';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
 import styles from './AddEffectMenu.module.css';
@@ -69,12 +69,10 @@ export function AddEffectMenu({ nodeIds }: { nodeIds: ReadonlyArray<string> }): 
     setQuery('');
   };
 
-  /** One undo step however many layers are selected. */
+  /** One undo step however many layers are selected (ONE `addEffect` over all of them). */
   const apply = (type: EffectType): void => {
     if (nodeIds.length === 0) return;
-    batchHistory(`fx:add:${type}`, () => {
-      for (const id of nodeIds) addEffect(id, type);
-    });
+    void addEffectEdit(nodeIds, type);
     close();
   };
 

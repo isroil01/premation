@@ -14,7 +14,8 @@
 
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { addEffect, type EffectType } from '@core/effects/effects';
+import type { EffectType } from '@core/effects/effects';
+import { addEffectEdit } from './effectEdits';
 
 export function revealEffectControls(): void {
   useLayoutStore.getState().openPanel('effectControls');
@@ -33,8 +34,8 @@ export function revealEffectsInProperties(): void {
   useLayoutStore.getState().openPanel('properties');
 }
 
-/** Add an effect to a layer and bring its parameters on screen in Properties. */
+/** Add an effect to a layer (ONE engine entry) and bring its parameters on screen in Properties. */
 export function addEffectAndReveal(nodeId: string, type: EffectType): void {
-  addEffect(nodeId, type);
+  void addEffectEdit([nodeId], type);
   revealEffectsInProperties();
 }

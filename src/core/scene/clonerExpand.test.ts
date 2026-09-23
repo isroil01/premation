@@ -186,8 +186,9 @@ describe('the control is reachable', () => {
     const library = readSource('layout/Effects/EffectsPanel.tsx');
     const controls = readSource('layout/Effects/EffectControlsPanel.tsx');
     const props = readSource('layout/Inspector/inspectorSections.ts');
-    // Add from the Effects browser…
-    expect(library).toMatch(/enableNodeCloner/);
+    // Add from the Effects browser (through the Effects area's edit module, B3)…
+    expect(library).toMatch(/legacyEnableSimulation/);
+    expect(readSource('layout/Effects/effectEdits.ts')).toMatch(/enableNodeCloner/);
     expect(library).toMatch(/Simulation/);
     // …edit in Effect Controls once attached.
     expect(controls).toMatch(/import \{ ClonerSection \}/);

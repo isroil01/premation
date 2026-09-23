@@ -1,8 +1,6 @@
-import { writeEffectParams } from '@core/effects/writeEffectParams';
 import { hasEffectHandles } from '@core/effects/effectHandles';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useState } from 'react';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * EffectStack — the applied-effects list for a layer (AE Effect Controls): each
  * effect has an enable toggle, reorder, remove, and one row per PARAMETER.
@@ -33,7 +31,11 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  *                     four identical labels (see `effectDisplayNames`).
  *
  * The header is AE's too: `▾ fx Name ............ Reset`, the selected effect
- * banded, its actions revealed on hover.
+ * banded, its actions revealed on hover; right-click it for Duplicate / Copy.
+ *
+ * Every edit goes through the engine API (B3, `effectEdits.ts`): one undo entry
+ * per click, typed value, drag (a scrub, a slider / dial / colour / curve drag
+ * is one gesture) or reorder. Values shown are direct reads until B4.
  */
 
 import { useState as useLocalState, Fragment } from 'react';
@@ -52,35 +54,43 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useTrackNavigator } from '@layout/Inspector/AnimToggle';
 import { defaultAnimation } from '@motion/animation';
-import { Color } from '@motion/renderer';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import {
   effectDefFor,
   getNodeEffects,
-  updateEffectParam,
-  removeEffect,
-  toggleEffect,
-  setEffectMaskId,
-  setEffectOpacity,
   effectOpacityPath,
-  moveEffect,
-  dragEffectTo,
   effectPropPath,
   effectParam,
   effectDisplayNames,
-  resetEffectParams,
-  setEffectLabelColor,
   resolveChannelColor,
   type Effect,
   type EffectDef,
   type EffectParamDef,
+  type EffectParamValue,
   type CurvePoints,
 } from '@core/effects/effects';
+import { copyEffects } from '@core/effects/effectClipboard';
 import { getNodeMask } from '@core/effects/mask';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { buildPropertyMenu } from '@core/inspector/propertyMenu';
+import { layerTimeFor, readPropertyValue } from '@core/inspector/multiSelection';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
+import {
+  dropEffectEdit,
+  duplicateEffectEdit,
+  effectOpacityCommands,
+  legacyEffectOpacityStopwatch,
+  legacySetEffectLabelColor,
+  legacySetEffectMask,
+  legacySetEffectOpacity,
+  nudgeEffectEdit,
+  paramCommands,
+  paramStopwatchCommands,
+  removeEffectEdit,
+  resetEffectEdit,
+  setEffectEnabledEdit,
+} from './effectEdits';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
@@ -189,50 +199,28 @@ function ParamGroup({
  */
 function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
+  const e = useEngineEdit();
   const path = effectOpacityPath(effect.id);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  const layerT = compToKeyframeTime(nodeId, time);
   const stored = effect.opacity ?? 100;
-  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? stored : stored;
+  // Display read (B4's mirror replaces it): the sampled key on the layer's own axis, else the field.
+  const display = readPropertyValue(nodeId, path, time, { read: () => stored }) ?? stored;
   const navigator = useTrackNavigator(nodeId, [path], 'Effect Opacity', () => [display]);
 
-  // Same split `writeEffectParams` makes for declared params: keyframe when the
-  // property is already animated, set the static value when it is not. Written
-  // out rather than routed through that helper because the static half is
-  // `setEffectOpacity` (an instance field) instead of `updateEffectParam`.
+  // Keyframe when the property is already animated (an engine key at the
+  // playhead), set the static instance field when it is not — that half, the
+  // stopwatch and the reset keep the legacy writer (see effectEdits' gap note).
   const onChange = (v: number): void => {
     const next = Math.max(0, Math.min(100, v));
-    if (animated) {
-      runAnimEdit(
-        'Set Effect Opacity',
-        () => defaultAnimation.setKeyframe(nodeId, path, layerT, next),
-        `fxop:${nodeId}:${path}:${layerT}`,
-      );
-    } else {
-      setEffectOpacity(nodeId, effect.id, next);
-    }
+    const cmds = effectOpacityCommands(nodeId, effect.id, next, time);
+    if (cmds) e.send('Set Effect Opacity', cmds);
+    else legacySetEffectOpacity(nodeId, effect.id, next);
   };
 
-  const toggle = (): void => {
-    if (animated) {
-      runAnimEdit('Remove Effect Opacity animation', () => {
-        defaultAnimation.removeTrack(nodeId, path);
-        // Put the last sampled value back as the STATIC one, so switching the
-        // stopwatch off leaves the frame looking as it did. Without this the
-        // field falls back to whatever static value predated the animation —
-        // usually 100 — and the effect snaps to full strength on the frame the
-        // author was looking at.
-        setEffectOpacity(nodeId, effect.id, display);
-      });
-    } else {
-      runAnimEdit('Animate Effect Opacity', () => {
-        defaultAnimation.setKeyframe(nodeId, path, layerT, stored);
-        // Stamp the field so the layer is on the CPU bake from the first frame,
-        // not only once the ramp leaves 100 — see `Effect.opacity`.
-        if (effect.opacity === undefined) setEffectOpacity(nodeId, effect.id, stored);
-      });
-    }
-  };
+  // Stopwatch off puts the last sampled value back as the STATIC one, so the
+  // frame looks as it did; on stamps the field so the layer is on the CPU bake
+  // from the first frame — see `Effect.opacity`.
+  const toggle = (): void => legacyEffectOpacityStopwatch(nodeId, effect, time, display);
 
   return (
     <ParamLine>
@@ -241,10 +229,11 @@ function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }
         animated={animated}
         onStopwatch={toggle}
         navigator={navigator}
-        onReset={animated ? undefined : () => setEffectOpacity(nodeId, effect.id, undefined)}
+        onReset={animated ? undefined : () => legacySetEffectOpacity(nodeId, effect.id, undefined)}
         compact
       >
         <ValueField
+          {...e.scrub('Set Effect Opacity', () => animated)}
           value={display}
           min={0}
           max={100}
@@ -275,10 +264,7 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
           <span className={row.paramLabel}>Effect Mask</span>
           <select
             value={current}
-            onChange={(ev) => {
-              const v = ev.currentTarget.value;
-              runAnimEdit('Set effect mask', () => setEffectMaskId(nodeId, effect.id, v || undefined));
-            }}
+            onChange={(ev) => legacySetEffectMask(nodeId, effect.id, ev.currentTarget.value || undefined)}
             aria-label={`${effect.type} effect mask`}
             title="Restrict this effect to a mask path. Prefer a path with mode None so it scopes the effect without also cutting the layer."
             className={panel.paramSelect}
@@ -340,9 +326,17 @@ function EffectParamRow({
   // a `useState` after it would change this component's hook count the moment
   // an effect with a resolved param (Audio Spectrum) entered the stack.
   const [sliderOpen, setSliderOpen] = useLocalState(false);
+  const e = useEngineEdit();
 
   const value = effectParam(effect, param.key);
   const label = `${def.label} ${param.label}`;
+  /** One write of this param: into the open gesture (a drag), else ONE entry. */
+  const send = (raw: EffectParamValue): void => {
+    e.send(`Set ${label}`, paramCommands(nodeId, effect.id, param, raw, time));
+  };
+  const toggleAnim = (animated: boolean): void => {
+    e.send(animated ? `Remove ${label} animation` : `Animate ${label}`, paramStopwatchCommands(nodeId, effect.id, param, time));
+  };
   // The navigator's tracks, decided by param type — called unconditionally so
   // the hook count never depends on which parameter this row is drawing.
   const navPrefix = effectPropPath(effect.id, param.key);
@@ -364,47 +358,20 @@ function EffectParamRow({
     // stopwatch couldn't touch: no animated glow color, no shadow color ramp.
     const chPrefix = effectPropPath(effect.id, param.key);
     const animated = defaultAnimation.isAnimated(nodeId, `${chPrefix}_r`);
-    // The canonical keyframe axis — what buildSnapshot samples for this node.
-    const layerT = compToKeyframeTime(nodeId, time);
     // Same rule the RENDERER uses (resolveEffectParams calls the same helper):
     // an unanimated channel falls back to the stored colour's channel, not to a
     // constant. Two implementations of this disagreed, and the swatch was the
-    // one that lied.
+    // one that lied. Display read, sampled on the layer's own keyframe axis.
     const displayed = animated
-      ? resolveChannelColor(String(value), (s) => defaultAnimation.sample(nodeId, `${chPrefix}${s}`, layerT))
+      ? resolveChannelColor(String(value), (s) => readPropertyValue(nodeId, `${chPrefix}${s}`, time))
       : String(value);
-    const writeChannels = (hex: string, editLabel: string): void => {
-      const c = Color.fromHex(hex);
-      runAnimEdit(editLabel, () => {
-        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_r`, layerT, c.r);
-        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_g`, layerT, c.g);
-        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_b`, layerT, c.b);
-        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_a`, layerT, c.a ?? 1);
-      }, `fxcolor:${nodeId}:${chPrefix}`);
-    };
-    const toggleColorAnim = (): void => {
-      if (animated) {
-        runAnimEdit(`Remove ${label} animation`, () => {
-          for (const ch of ['_r', '_g', '_b', '_a']) {
-            defaultAnimation.removeTrack(nodeId, `${chPrefix}${ch}`);
-          }
-        });
-      } else {
-        writeChannels(String(value), `Animate ${label}`);
-      }
-    };
     return (
       <ParamLine>
-        <PropertyRow label={param.label} animated={animated} onStopwatch={toggleColorAnim} navigator={navigator} compact>
-          <ColorPicker
-            value={displayed}
-            onChange={(hex) => {
-              if (animated) writeChannels(hex, `Set ${label}`);
-              else updateEffectParam(nodeId, effect.id, param.key, hex);
-            }}
-            aria-label={label}
-            compact
-          />
+        <PropertyRow label={param.label} animated={animated} onStopwatch={() => toggleAnim(animated)} navigator={navigator} compact>
+          {/* A picker drag (press → release) is one gesture: one undo entry. */}
+          <span style={{ display: 'contents' }} {...e.press(`Set ${label}`)}>
+            <ColorPicker value={displayed} onChange={send} aria-label={label} compact />
+          </span>
         </PropertyRow>
       </ParamLine>
     );
@@ -418,7 +385,7 @@ function EffectParamRow({
           <span className={row.paramLabel}>{param.label}</span>
           <Checkbox
             checked={value === true}
-            onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.checked)}
+            onChange={(ev) => send(ev.currentTarget.checked)}
             aria-label={label}
             style={{ width: 14, height: 14 }}
           />
@@ -444,7 +411,7 @@ function EffectParamRow({
         <span className={row.paramLabel}>{param.label}</span>
         <select
           value={current}
-          onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.value)}
+          onChange={(ev) => send(ev.currentTarget.value)}
           aria-label={label}
           className={panel.paramSelect}
         >
@@ -475,7 +442,7 @@ function EffectParamRow({
         <span className={row.paramLabel}>{param.label}</span>
         <select
           value={current}
-          onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.value)}
+          onChange={(ev) => send(ev.currentTarget.value)}
           aria-label={label}
           className={panel.paramSelect}
         >
@@ -513,7 +480,7 @@ function EffectParamRow({
           <span className={row.paramLabel}>{param.label}</span>
           <select
             value={known ? String(current) : String(param.default)}
-            onChange={(ev) => updateEffectParam(nodeId, effect.id, param.key, Number(ev.currentTarget.value))}
+            onChange={(ev) => send(Number(ev.currentTarget.value))}
             aria-label={label}
             className={panel.paramSelect}
           >
@@ -531,10 +498,13 @@ function EffectParamRow({
       <ParamLine>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
           <span className={row.paramLabel}>{param.label}</span>
-          <CurveEditor
-            value={Array.isArray(value) ? (value as CurvePoints) : [[0, 0], [255, 255]]}
-            onChange={(points) => updateEffectParam(nodeId, effect.id, param.key, points)}
-          />
+          {/* A point drag (press → release) is one gesture: one undo entry. */}
+          <div {...e.press(`Set ${label}`)}>
+            <CurveEditor
+              value={Array.isArray(value) ? (value as CurvePoints) : [[0, 0], [255, 255]]}
+              onChange={send}
+            />
+          </div>
         </div>
       </ParamLine>
     );
@@ -544,25 +514,14 @@ function EffectParamRow({
   const stored = typeof value === 'number' ? value : 0;
   const path = effectPropPath(effect.id, param.key);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  // ONE axis for reads and writes: the canonical keyframe time.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? stored : stored;
+  // Display read (B4's mirror replaces it): sampled on the layer's own keyframe axis.
+  const display = readPropertyValue(nodeId, path, time, { read: () => stored }) ?? stored;
 
-  // ONE writer, shared with the canvas handle overlay. This used to be the
-  // `animated ? setKeyframe : updateEffectParam` branch inline, and the overlay
-  // needed the identical rule — a second copy of "does this edit keyframe?" is
-  // the §2·0 shape that guarantees the canvas and the field eventually disagree
-  // about the same parameter.
-  const onChange = (v: number): void => {
-    writeEffectParams(
-      nodeId, effect.id, { [param.key]: v },
-      { time, mergeKey: `fx:${nodeId}:${path}:${layerT}`, label: `Set ${label}` },
-    );
-  };
-  const toggle = (): void => {
-    if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, stored));
-  };
+  // The field, slider, dial, reset and context menu share ONE writer: a key at
+  // the playhead when the param is animated (AE setValueAtTime), else the static
+  // value — `paramCommands`, the rule the canvas handle overlay uses too.
+  const onChange = (v: number): void => send(v);
+  const toggle = (): void => toggleAnim(animated);
 
   // Range, step, precision and unit all resolve through the property registry,
   // which reads them off this effect's own definition — so the timeline row and
@@ -595,7 +554,8 @@ function EffectParamRow({
       expander={expander}
       below={
         ranged && sliderOpen ? (
-          <div className={panel.paramSlider}>
+          // A slider drag (press → release) is one gesture: one undo entry.
+          <div className={panel.paramSlider} {...e.press(`Set ${label}`)}>
             <Slider
               value={display}
               min={meta.min as number}
@@ -620,20 +580,21 @@ function EffectParamRow({
         navigator={navigator}
         onReset={
           typeof meta.defaultValue === 'number' && meta.resettable
-            ? () => updateEffectParam(nodeId, effect.id, param.key, meta.defaultValue as number)
+            ? () => send(meta.defaultValue as number)
             : undefined
         }
-        onContextMenu={(e) => {
-          e.preventDefault();
+        onContextMenu={(ev) => {
+          ev.preventDefault();
           openContextMenu(
-            e.clientX,
-            e.clientY,
+            ev.clientX,
+            ev.clientY,
             buildPropertyMenu({
               nodeId,
               prop: path,
-              layerT,
+              // The menu's own keyframe items work on the layer's keyframe axis (display read).
+              layerT: layerTimeFor(nodeId, path, time),
               value: display,
-              setValue: (v) => updateEffectParam(nodeId, effect.id, param.key, v),
+              setValue: (v) => send(v),
             }),
           );
         }}
@@ -644,9 +605,12 @@ function EffectParamRow({
             numbers in one column across rows that have a dial and rows
             that do not. */}
         {isAngle && (
-          <AngleDial value={display} onChange={onChange} aria-label={`${label} dial`} />
+          <span style={{ display: 'contents' }} {...e.press(`Set ${label}`)}>
+            <AngleDial value={display} onChange={onChange} aria-label={`${label} dial`} />
+          </span>
         )}
         <ValueField
+          {...e.scrub(`Set ${label}`)}
           value={display}
           min={meta.min}
           max={meta.max}
@@ -672,7 +636,7 @@ function effectLabelColorMenuItems(
       id: 'fx-label-none',
       label: 'None (Default)',
       icon: current === undefined ? 'check' : undefined,
-      onSelect: () => setEffectLabelColor(nodeId, effectId, undefined),
+      onSelect: () => legacySetEffectLabelColor(nodeId, effectId, undefined),
     },
     { id: 'fx-label-sep', separator: true },
     ...LABEL_COLORS.map((c): ContextMenuItem => ({
@@ -695,8 +659,19 @@ function effectLabelColorMenuItems(
         </>
       ),
       icon: current === c.color ? 'check' : undefined,
-      onSelect: () => setEffectLabelColor(nodeId, effectId, c.color),
+      onSelect: () => legacySetEffectLabelColor(nodeId, effectId, c.color),
     })),
+  ];
+}
+
+/** Right-click on an effect's header: AE's Duplicate (Ctrl+D) and Copy, plus Reset / Remove. */
+function effectHeaderMenuItems(nodeId: string, effectId: string, name: string): ContextMenuItem[] {
+  return [
+    { id: 'fx-duplicate', label: 'Duplicate', icon: 'copy', onSelect: () => { void duplicateEffectEdit(nodeId, effectId, name); } },
+    { id: 'fx-copy', label: 'Copy', onSelect: () => copyEffects(nodeId, [effectId]) },
+    { id: 'fx-sep', separator: true },
+    { id: 'fx-reset', label: 'Reset', onSelect: () => { void resetEffectEdit(nodeId, effectId, name); } },
+    { id: 'fx-remove', label: 'Remove', danger: true, onSelect: () => { void removeEffectEdit(nodeId, effectId, name); } },
   ];
 }
 
@@ -778,7 +753,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
             onDragOver={onDragOver}
             onDrop={(ev) => {
               ev.preventDefault();
-              if (dragId && dropIndex !== null) dragEffectTo(nodeId, dragId, dropIndex);
+              if (dragId && dropIndex !== null) void dropEffectEdit(nodeId, dragId, dropIndex);
               setDragId(null);
               setDropIndex(null);
             }}
@@ -799,6 +774,10 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 ev.dataTransfer.setData('text/plain', e.id);
               }}
               onDragEnd={() => { setDragId(null); setDropIndex(null); }}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                openContextMenu(ev.clientX, ev.clientY, effectHeaderMenuItems(nodeId, e.id, name));
+              }}
             >
               <span className={panel.dragGrip} aria-hidden title="Drag to reorder">
                 <Icon name="grip-vertical" size="sm" />
@@ -814,7 +793,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
 
               <Checkbox
                 checked={!off}
-                onChange={() => toggleEffect(nodeId, e.id)}
+                onChange={() => { void setEffectEnabledEdit(nodeId, e.id, off, name); }}
                 title={off ? 'Enable effect' : 'Disable effect'}
                 style={{ width: 15, height: 15, flexShrink: 0 }}
               />
@@ -859,7 +838,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   className={panel.remove}
                   aria-label={`Move ${name} up`}
                   disabled={i === 0}
-                  onClick={() => moveEffect(nodeId, e.id, -1)}
+                  onClick={() => { void nudgeEffectEdit(nodeId, e.id, -1); }}
                 >
                   <Icon name="arrow-up" size="sm" />
                 </button>
@@ -868,7 +847,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   className={panel.remove}
                   aria-label={`Move ${name} down`}
                   disabled={i === effects.length - 1}
-                  onClick={() => moveEffect(nodeId, e.id, 1)}
+                  onClick={() => { void nudgeEffectEdit(nodeId, e.id, 1); }}
                 >
                   <Icon name="arrow-down" size="sm" />
                 </button>
@@ -876,7 +855,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   type="button"
                   className={panel.remove}
                   aria-label={`Remove ${name}`}
-                  onClick={() => removeEffect(nodeId, e.id)}
+                  onClick={() => { void removeEffectEdit(nodeId, e.id, name); }}
                 >
                   <Icon name="close" size="sm" />
                 </button>
@@ -889,7 +868,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 type="button"
                 className={panel.resetLink}
                 title={`Restore every ${name} parameter to its default`}
-                onClick={() => resetEffectParams(nodeId, e.id)}
+                onClick={() => { void resetEffectEdit(nodeId, e.id, name); }}
               >
                 Reset
               </button>

@@ -66,10 +66,13 @@ describe('Effect Controls panel wiring', () => {
   it('hosts Cloner and Physics once attached from Effects → Simulation', () => {
     const controls = readFileSync(join(SRC, 'layout/Effects/EffectControlsPanel.tsx'), 'utf8');
     const library = readFileSync(join(SRC, 'layout/Effects/EffectsPanel.tsx'), 'utf8');
+    // The library's Simulation rows write through the Effects area's edit module (B3).
+    const edits = readFileSync(join(SRC, 'layout/Effects/effectEdits.ts'), 'utf8');
     const props = readFileSync(join(SRC, 'layout/Inspector/inspectorSections.ts'), 'utf8');
     expect(library).toMatch(/Simulation/);
-    expect(library).toMatch(/enableNodeCloner/);
-    expect(library).toMatch(/enableNodePhysics/);
+    expect(library).toMatch(/legacyEnableSimulation/);
+    expect(edits).toMatch(/enableNodeCloner/);
+    expect(edits).toMatch(/enableNodePhysics/);
     expect(controls).toMatch(/ClonerSection/);
     expect(controls).toMatch(/PhysicsSection/);
     // Properties must not still mount them on every layer.

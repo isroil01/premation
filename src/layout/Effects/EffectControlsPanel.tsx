@@ -8,7 +8,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getNodeEffects, getNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
+import { getNodeEffects, getNodeFxEnabled } from '@core/effects/effects';
 import { readPathOps } from '@core/scene/pathOps';
 import { nodeHasCloner } from '@core/scene/clonerExpand';
 import { nodeHasPhysics } from '@core/simulation/physicsBodies';
@@ -16,6 +16,7 @@ import { PathOpControls } from '@layout/Inspector/PathOpControls';
 import { ClonerSection } from '@layout/Inspector/ClonerSection';
 import { PhysicsSection } from '@layout/Inspector/PhysicsSection';
 import { EffectStack } from './EffectStack';
+import { setLayerEffectsEnabledEdit } from './effectEdits';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import styles from './EffectsPanel.module.css';
@@ -72,7 +73,7 @@ export function EffectControlsPanel(): JSX.Element {
   // timeline's fx column flips — not local state that changed nothing.
   const masterFx = primary ? getNodeFxEnabled(primary) : true;
   const setMasterFx = (on: boolean): void => {
-    if (primary) setNodeFxEnabled(primary, on);
+    if (primary) void setLayerEffectsEnabledEdit(primary, on);
   };
   const setLocked = (on: boolean): void => setLockedId(on && selected ? selected : null);
 

@@ -21,7 +21,6 @@ import { BrowserRow, BrowserTag, BrowserEmpty } from '@components/BrowserTree';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getNodeEffects, type EffectDef } from '@core/effects/effects';
@@ -30,42 +29,46 @@ import { addEffectAndReveal, revealEffectsInProperties } from './revealEffectCon
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
 import {
   copyAllEffects,
-  pasteEffects,
   hasEffectClipboard,
   effectClipboardSize,
   saveEffectPreset,
-  applyEffectPreset,
   deleteEffectPreset,
   listEffectPresets,
 } from '@core/effects/effectClipboard';
 import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
 import { customPrompt } from '@components/Modal/Dialogs';
-import {
-  PATH_OP_CATALOG,
-  addPathOp,
-  defaultPathOpOf,
-  readTrimOp,
-  readRepeaterOp,
-} from '@core/scene/pathOps';
+import { PATH_OP_CATALOG, readTrimOp, readRepeaterOp } from '@core/scene/pathOps';
 import {
   getNodeMask,
   readNodeMaskAt,
-  addMaskPath,
-  updateMaskPath,
-  setMaskPointFeather,
-  removeMaskPath,
   rectangleMask,
   ellipseMask,
-  keyframeMask,
-  clearMaskAnim,
   hasMaskAnim,
   type MaskMode,
+  type MaskPath,
 } from '@core/effects/mask';
+import { layerTimeFor } from '@core/inspector/multiSelection';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { enableNodeCloner, readNodeCloner } from '@core/scene/clonerExpand';
-import { enableNodePhysics, readNodePhysics } from '@core/simulation/physicsBodies';
+import { readNodeCloner } from '@core/scene/clonerExpand';
+import { readNodePhysics } from '@core/simulation/physicsBodies';
+import {
+  addMaskEdit,
+  applyEffectPresetEdit,
+  legacyEnableSimulation,
+  legacyPatchAnimatedMask,
+  legacySetMaskVertexFeather,
+  maskValueCommands,
+  pasteEffectsEdit,
+  removeMaskEdit,
+  renameMaskEdit,
+  setMaskInvertedEdit,
+  setMaskModeEdit,
+  setMaskShapeAnimatedEdit,
+} from './effectEdits';
 import { EFFECT_CATEGORY } from './effectCategory';
 import { effectPreviewFor, EFFECT_PREVIEW_H, EFFECT_PREVIEW_W } from './effectPreviewThumbs';
 import {
@@ -386,18 +389,19 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
         addEffectAndReveal(primary, row.def.type);
         break;
       case 'preset':
-        applyEffectPreset(row.name, [primary]);
+        void applyEffectPresetEdit(row.name, [primary]);
         bumpClipboard((n) => n + 1);
         revealEffectsInProperties();
         break;
       case 'shapeOp':
         if (row.taken) return;
-        addPathOp(primary, defaultPathOpOf(row.opType as Parameters<typeof defaultPathOpOf>[0]));
+        void edit(`Add ${row.label}`, {
+          type: 'addPropertyGroup', layer: primary, parent: 'contents', matchName: `pathop:${row.opType}`, init: [],
+        });
         revealEffectsInProperties();
         break;
       case 'sim':
-        if (row.id === 'cloner') enableNodeCloner(primary);
-        else enableNodePhysics(primary);
+        legacyEnableSimulation(primary, row.id === 'cloner' ? 'cloner' : 'physics');
         revealEffectsInProperties();
         break;
     }
@@ -486,7 +490,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
           title={hasEffectClipboard() ? `Paste ${effectClipboardSize()} effect(s) onto this layer` : 'Nothing copied yet'}
           onClick={() => {
             if (!primary) return;
-            pasteEffects([primary]);
+            void pasteEffectsEdit([primary]);
             bumpClipboard((n) => n + 1);
             revealEffectsInProperties();
           }}
@@ -704,6 +708,166 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
 }
 
 /**
+ * One mask's card: header band (name, mode, remove), then its values.
+ *
+ * Every edit is an engine command (B3): Rectangle / Ellipse / Remove / Mode /
+ * Inverted / Name are one entry each, a Feather / Opacity / Expansion scrub is
+ * one gesture. Two things keep the legacy writer, both engine gaps: values of a
+ * mask whose SHAPE is keyframed (they belong in the shape keyframe at the
+ * playhead) and per-vertex feather.
+ */
+function MaskCard({
+  nodeId,
+  mask: m,
+  index: i,
+  time,
+  shapeKeyed,
+}: {
+  nodeId: string;
+  mask: MaskPath;
+  index: number;
+  /** The playhead, comp seconds. */
+  time: number;
+  shapeKeyed: boolean;
+}): JSX.Element {
+  const e = useEngineEdit();
+  // The name commits on blur / Enter — one "Rename Mask" entry, not one per keystroke.
+  const [draft, setDraft] = useState<string | null>(null);
+  const commitName = (): void => {
+    if (draft === null) return;
+    const next = draft.trim();
+    setDraft(null);
+    if (next !== (m.name ?? '')) void renameMaskEdit(nodeId, m.id, next);
+  };
+  const setValue = (key: 'feather' | 'opacity' | 'expansion', v: number, label: string): void => {
+    const cmds = maskValueCommands(nodeId, m.id, key, v, time);
+    if (cmds) e.send(label, cmds);
+    else legacyPatchAnimatedMask(nodeId, m.id, key === 'opacity' ? { opacity: v / 100 } : { [key]: v }, time);
+  };
+  const onEngine = (): boolean => !shapeKeyed;
+  const variable = m.points.some((pt) => typeof pt.feather === 'number');
+
+  return (
+    // Same card as an applied effect: header band, then the parameters
+    // under it. A mask IS a per-layer item with a mode and a handful of
+    // values, exactly like an effect, and the panel showing the two in
+    // two different shapes was the only reason they read as unrelated.
+    <div className={styles.effectCardItem}>
+      <div className={styles.effectCardHead}>
+        <span className={styles.maskMark} aria-hidden>
+          <Icon name="mask-square" size="sm" />
+        </span>
+        <span className={styles.itemLabel}>{m.name?.trim() || `Mask ${i + 1}`}</span>
+        <Dropdown
+          placement="left-start"
+          trigger={
+            <button type="button" className={styles.blendTrigger}>
+              {MASK_MODES.find((x) => x.mode === m.mode)?.label ?? 'Add'}
+              <Icon name="chevron-down" size="sm" />
+            </button>
+          }
+          items={MASK_MODES.map((x) => ({
+            type: 'item',
+            id: x.mode,
+            label: x.label,
+            icon: x.mode === m.mode ? 'check' : undefined,
+            onSelect: () => { void setMaskModeEdit(nodeId, m.id, x.mode); },
+          }))}
+        />
+        <div className={styles.itemActions}>
+          <button
+            type="button"
+            className={styles.remove}
+            aria-label={`Remove Mask ${i + 1}`}
+            title={`Remove Mask ${i + 1}`}
+            onClick={() => { void removeMaskEdit(nodeId, m.id, `Remove Mask ${i + 1}`); }}
+          >
+            <Icon name="close" size="sm" />
+          </button>
+        </div>
+      </div>
+      <div className={styles.effectParamsBody}>
+        <PropertyRow label="Name" compact>
+          <input
+            value={draft ?? m.name ?? ''}
+            placeholder={`Mask ${i + 1}`}
+            aria-label={`Mask ${i + 1} name`}
+            onChange={(ev) => setDraft(ev.target.value)}
+            onBlur={commitName}
+            onKeyDown={(ev) => {
+              if (ev.key === 'Enter') ev.currentTarget.blur();
+              else if (ev.key === 'Escape') { setDraft(null); ev.currentTarget.blur(); }
+            }}
+            style={{
+              width: '100%',
+              fontSize: 'var(--font-size-xs)',
+              padding: '2px 6px',
+              borderRadius: 4,
+              border: '1px solid var(--color-border, #333)',
+              background: 'var(--color-surface, #1e1e1e)',
+              color: 'inherit',
+            }}
+          />
+        </PropertyRow>
+        {/* One PropertyRow per value, so a mask's Feather sits in the
+            same column as an effect's Softness rather than in a
+            three-up strip of its own. */}
+        <PropertyRow label="Feather" compact>
+          <ValueField {...e.scrub('Set Mask Feather', onEngine)} value={m.feather} min={0} max={200} precision={0} unit="px"
+            onChange={(v) => setValue('feather', v, 'Set Mask Feather')} aria-label="Mask feather" />
+        </PropertyRow>
+        {/* Variable-width feather: one row per vertex. A vertex with
+            its own value overrides the uniform Feather above and the
+            softness interpolates along the outline between vertices
+            (the distance-field renderer in maskFeather.ts). Right-side
+            clear button drops the override — every override cleared
+            returns the path to the plain blur renderer. */}
+        <PropertyRow label="Per-Vertex" compact>
+          <Checkbox
+            checked={variable}
+            onChange={() => {
+              // Toggle ON seeds every vertex at the uniform value (so
+              // nothing visibly changes until a vertex is edited);
+              // toggle OFF clears every override.
+              legacySetMaskVertexFeather(nodeId, m.id, m.points.map((_, vi) => ({ index: vi, feather: variable ? undefined : m.feather })), time);
+            }}
+            aria-label={`Variable feather for Mask ${i + 1}`}
+            style={{ width: 14, height: 14 }}
+          />
+        </PropertyRow>
+        {variable &&
+          m.points.map((pt, vi) => (
+            <PropertyRow key={vi} label={`  V${vi + 1}`} compact>
+              <ValueField
+                value={Math.round(pt.feather ?? m.feather)}
+                min={0} max={200} precision={0} unit="px"
+                onChange={(v) => legacySetMaskVertexFeather(nodeId, m.id, [{ index: vi, feather: v }], time)}
+                aria-label={`Mask ${i + 1} vertex ${vi + 1} feather`}
+              />
+            </PropertyRow>
+          ))}
+        <PropertyRow label="Opacity" compact>
+          <ValueField {...e.scrub('Set Mask Opacity', onEngine)} value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
+            onChange={(v) => setValue('opacity', v, 'Set Mask Opacity')} aria-label="Mask opacity" />
+        </PropertyRow>
+        <PropertyRow label="Expansion" compact>
+          <ValueField {...e.scrub('Set Mask Expansion', onEngine)} value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
+            onChange={(v) => setValue('expansion', v, 'Set Mask Expansion')} aria-label="Mask expansion" />
+        </PropertyRow>
+        <PropertyRow label="Inverted" compact>
+          <Checkbox
+            checked={!!m.inverted}
+            onChange={() => { void setMaskInvertedEdit(nodeId, m.id, !m.inverted); }}
+            aria-label={`Invert Mask ${i + 1}`}
+            style={{ width: 14, height: 14 }}
+          />
+        </PropertyRow>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The right-inspector Effects panel: the browser above, the selected layer's
  * masks below. Needs a layer — with none it says so instead of offering a
  * search box for a library nothing can be added to.
@@ -711,11 +875,11 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
 export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   useSceneRevision((s) => s.rev);
-  // The playhead on the layer's KEYFRAME axis — where the renderer reads the
-  // mask, so the keyframe button and every mask edit below land where the shape
-  // actually changes. Raw comp time was wrong for a moved or trimmed layer.
+  // The playhead (comp seconds): engine edits take comp time and the engine
+  // maps it onto the layer's keyframe axis. The mask DISPLAY is read on that
+  // axis — where the renderer reads the mask — so a moved or trimmed layer
+  // shows the shape that actually draws.
   const maskCompTime = useActiveWorkspace()?.time ?? 0;
-  const maskTime = primary ? compToKeyframeTime(primary, maskCompTime) : maskCompTime;
   const hasSelection = !!(primary && defaultSceneGraph.getNode(primary));
 
   // NOTE: the empty-state early return must come AFTER every hook — returning
@@ -735,10 +899,13 @@ export function EffectsPanel(): JSX.Element {
   const kind = node ? readNodeKind(node) : 'shape';
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
+  // Display read (B4's mirror replaces it): the playhead on the layer's keyframe axis.
+  const maskTime = layerTimeFor(primary, '', maskCompTime);
   // The mask the renderer draws at the playhead — an animated mask's
   // interpolated shape, whose values the edits below patch — not the static
   // shape it stops reading once keyed (same read as the Layer panel).
   const masks = node ? (readNodeMaskAt(node, maskTime) ?? getNodeMask(primary)).paths : [];
+  const shapeKeyed = !!node && hasMaskAnim(node);
 
   return (
     <div className={styles.root}>
@@ -758,7 +925,7 @@ export function EffectsPanel(): JSX.Element {
           className={styles.addChip}
           disabled={!hasSelection}
           title={hasSelection ? 'Add a rectangle mask' : 'Select a layer first'}
-          onClick={() => primary && addMaskPath(primary, rectangleMask(maskW, maskH))}
+          onClick={() => { if (primary) void addMaskEdit(primary, rectangleMask(maskW, maskH), 'Add Rectangle Mask'); }}
         >
           <Icon name="plus" size="sm" /> Rectangle
         </button>
@@ -767,7 +934,7 @@ export function EffectsPanel(): JSX.Element {
           className={styles.addChip}
           disabled={!hasSelection}
           title={hasSelection ? 'Add an ellipse mask' : 'Select a layer first'}
-          onClick={() => primary && addMaskPath(primary, ellipseMask(maskW, maskH))}
+          onClick={() => { if (primary) void addMaskEdit(primary, ellipseMask(maskW, maskH), 'Add Ellipse Mask'); }}
         >
           <Icon name="plus" size="sm" /> Ellipse
         </button>
@@ -784,10 +951,10 @@ export function EffectsPanel(): JSX.Element {
           <button
             type="button"
             className={styles.addChip}
-            title={node && hasMaskAnim(node) ? 'Remove mask animation' : 'Keyframe the mask shape at the playhead (animate the mask)'}
-            onClick={() => (node && hasMaskAnim(node) ? clearMaskAnim(primary) : keyframeMask(primary, maskTime))}
+            title={shapeKeyed ? 'Remove mask animation' : 'Keyframe the mask shape at the playhead (animate the mask)'}
+            onClick={() => { void setMaskShapeAnimatedEdit(primary, masks[0]!.id, !shapeKeyed, maskCompTime); }}
           >
-            <Icon name="keyframe" size="sm" /> {node && hasMaskAnim(node) ? 'Un-animate' : 'Keyframe shape'}
+            <Icon name="keyframe" size="sm" /> {shapeKeyed ? 'Un-animate' : 'Keyframe shape'}
           </button>
         )}
       </div>
@@ -795,121 +962,7 @@ export function EffectsPanel(): JSX.Element {
       {masks.length > 0 && (
         <div className={styles.stackList}>
           {masks.map((m, i) => (
-            // Same card as an applied effect: header band, then the parameters
-            // under it. A mask IS a per-layer item with a mode and a handful of
-            // values, exactly like an effect, and the panel showing the two in
-            // two different shapes was the only reason they read as unrelated.
-            <div key={m.id} className={styles.effectCardItem}>
-              <div className={styles.effectCardHead}>
-                <span className={styles.maskMark} aria-hidden>
-                  <Icon name="mask-square" size="sm" />
-                </span>
-                <span className={styles.itemLabel}>{m.name?.trim() || `Mask ${i + 1}`}</span>
-                <Dropdown
-                  placement="left-start"
-                  trigger={
-                    <button type="button" className={styles.blendTrigger}>
-                      {MASK_MODES.find((x) => x.mode === m.mode)?.label ?? 'Add'}
-                      <Icon name="chevron-down" size="sm" />
-                    </button>
-                  }
-                  items={MASK_MODES.map((x) => ({
-                    type: 'item',
-                    id: x.mode,
-                    label: x.label,
-                    icon: x.mode === m.mode ? 'check' : undefined,
-                    onSelect: () => updateMaskPath(primary, m.id, { mode: x.mode }, maskTime),
-                  }))}
-                />
-                <div className={styles.itemActions}>
-                  <button
-                    type="button"
-                    className={styles.remove}
-                    aria-label={`Remove Mask ${i + 1}`}
-                    title={`Remove Mask ${i + 1}`}
-                    onClick={() => removeMaskPath(primary, m.id)}
-                  >
-                    <Icon name="close" size="sm" />
-                  </button>
-                </div>
-              </div>
-              <div className={styles.effectParamsBody}>
-                <PropertyRow label="Name" compact>
-                  <input
-                    value={m.name ?? ''}
-                    placeholder={`Mask ${i + 1}`}
-                    aria-label={`Mask ${i + 1} name`}
-                    onChange={(e) =>
-                      updateMaskPath(primary, m.id, { name: e.target.value || undefined }, maskTime)
-                    }
-                    style={{
-                      width: '100%',
-                      fontSize: 'var(--font-size-xs)',
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      border: '1px solid var(--color-border, #333)',
-                      background: 'var(--color-surface, #1e1e1e)',
-                      color: 'inherit',
-                    }}
-                  />
-                </PropertyRow>
-                {/* One PropertyRow per value, so a mask's Feather sits in the
-                    same column as an effect's Softness rather than in a
-                    three-up strip of its own. */}
-                <PropertyRow label="Feather" compact>
-                  <ValueField value={m.feather} min={0} max={200} precision={0} unit="px"
-                    onChange={(v) => updateMaskPath(primary, m.id, { feather: v }, maskTime)} aria-label="Mask feather" />
-                </PropertyRow>
-                {/* Variable-width feather: one row per vertex. A vertex with
-                    its own value overrides the uniform Feather above and the
-                    softness interpolates along the outline between vertices
-                    (the distance-field renderer in maskFeather.ts). Right-side
-                    clear button drops the override — every override cleared
-                    returns the path to the plain blur renderer. */}
-                <PropertyRow label="Per-Vertex" compact>
-                  <Checkbox
-                    checked={m.points.some((pt) => typeof pt.feather === 'number')}
-                    onChange={() => {
-                      const on = m.points.some((pt) => typeof pt.feather === 'number');
-                      // Toggle ON seeds every vertex at the uniform value (so
-                      // nothing visibly changes until a vertex is edited);
-                      // toggle OFF clears every override.
-                      m.points.forEach((_, i) =>
-                        setMaskPointFeather(primary, m.id, i, on ? undefined : m.feather, maskTime));
-                    }}
-                    aria-label={`Variable feather for Mask ${i + 1}`}
-                    style={{ width: 14, height: 14 }}
-                  />
-                </PropertyRow>
-                {m.points.some((pt) => typeof pt.feather === 'number') &&
-                  m.points.map((pt, vi) => (
-                    <PropertyRow key={vi} label={`  V${vi + 1}`} compact>
-                      <ValueField
-                        value={Math.round(pt.feather ?? m.feather)}
-                        min={0} max={200} precision={0} unit="px"
-                        onChange={(v) => setMaskPointFeather(primary, m.id, vi, v, maskTime)}
-                        aria-label={`Mask ${i + 1} vertex ${vi + 1} feather`}
-                      />
-                    </PropertyRow>
-                  ))}
-                <PropertyRow label="Opacity" compact>
-                  <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                    onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 }, maskTime)} aria-label="Mask opacity" />
-                </PropertyRow>
-                <PropertyRow label="Expansion" compact>
-                  <ValueField value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
-                    onChange={(v) => updateMaskPath(primary, m.id, { expansion: v }, maskTime)} aria-label="Mask expansion" />
-                </PropertyRow>
-                <PropertyRow label="Inverted" compact>
-                  <Checkbox
-                    checked={!!m.inverted}
-                    onChange={() => updateMaskPath(primary, m.id, { inverted: !m.inverted }, maskTime)}
-                    aria-label={`Invert Mask ${i + 1}`}
-                    style={{ width: 14, height: 14 }}
-                  />
-                </PropertyRow>
-              </div>
-            </div>
+            <MaskCard key={m.id} nodeId={primary} mask={m} index={i} time={maskCompTime} shapeKeyed={shapeKeyed} />
           ))}
         </div>
       )}
