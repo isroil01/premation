@@ -16,8 +16,10 @@
 import { EFFECT_DEFS, effectDefFor, type EffectType } from '@core/effects/effects';
 import { pluginEffectDefs, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { EFFECT_CATEGORY } from '@layout/Effects/effectCategory';
-import { addEffectAndReveal } from '@layout/Effects/revealEffectControls';
-import { listPresets, presetFolder, applyPreset, type AnimationPreset } from '@core/animation/animationPresets';
+import { revealEffectsInProperties } from '@layout/Effects/revealEffectControls';
+import { addEffectEdit } from '@layout/Effects/effectEdits';
+import { applyAnimationPresetEdit } from '@layout/Menu/appEdits';
+import { listPresets, presetFolder, type AnimationPreset } from '@core/animation/animationPresets';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -68,8 +70,9 @@ export function effectHits(term: string, limit: number): QuickApplyHit[] {
       apply: () => {
         // Every selected layer gets the effect — AE applies to the whole
         // selection, and a search-to-apply that only hit the first would force
-        // the user to repeat the search per layer.
-        for (const id of sel) addEffectAndReveal(id, d.type as EffectType);
+        // the user to repeat the search per layer. ONE engine entry for all.
+        void addEffectEdit(sel, d.type as EffectType);
+        revealEffectsInProperties();
       },
     });
   }
@@ -111,10 +114,12 @@ export function presetHits(term: string, limit: number): QuickApplyHit[] {
       enabled: fits.length > 0,
       apply: () => {
         const t = getTimelineController().currentSeconds;
-        for (const id of fits) applyPreset(p, id, t);
-        // Show what just landed: the preset's keyframes are the whole point,
-        // and a preset applied to a collapsed layer is invisible until U.
-        if (fits.length) getEventBus().emit('RevealAnimatedProps', { nodeIds: fits, mode: 'animated', force: true });
+        // `applyPreset` through the engine (B3): every fitting layer, one entry.
+        void applyAnimationPresetEdit(fits, p.name, t).then((ok) => {
+          // Show what just landed: the preset's keyframes are the whole point,
+          // and a preset applied to a collapsed layer is invisible until U.
+          if (ok && fits.length) getEventBus().emit('RevealAnimatedProps', { nodeIds: fits, mode: 'animated', force: true });
+        });
       },
     });
   }

@@ -102,7 +102,7 @@ import { buildIk3DCommands } from '@core/scene/ikCommands';
 import { buildBakeCommands } from '@core/simulation/bakeCommands';
 import { buildAudioCommands } from '@core/audio/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
-import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
+import { easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
 import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
@@ -132,7 +132,7 @@ import {
 import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
 import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
-import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
+import { isGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -145,14 +145,13 @@ import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
 import { focusNavigationClaimedNow } from '@core/commands/focusContext';
 import { isNativeMenuActionId } from '@layout/Menu/nativeMenuTemplate';
-import { insertAdjustmentLayer, insertPrimitive, deleteSelectedLayers, duplicateSelectedLayers, insert3DPrimitive } from '@core/scene/sceneInsert';
+import { insertPrimitive, insert3DPrimitive } from '@core/scene/sceneInsert';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
-import { insertNull, arrangeNodes } from '@core/scene/parenting';
 import { createNullsFromPathUndoable, pathVertices } from '@core/scene/nullsFromPaths';
 import { buildPathCommands } from '@core/workspace/pathCommands';
 import { createShapesFromText, canCreateShapesFromText } from '@core/scene/shapesFromText';
@@ -160,7 +159,20 @@ import { autoTraceLayer } from '@core/effects/autoTrace';
 import { fitNodeTo, centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { addEffect } from '@core/effects/effects';
+import { addEffectEdit } from '@layout/Effects/effectEdits';
+import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
+import { setLayersSwitch } from '@layout/Inspector/inspectorEdits';
+import { arrangeLayersEdit, deleteSelectedLayersEdit, duplicateSelectedLayersEdit } from '@layout/Workspace/layerMenuEdits';
+import {
+  centreAnchorEdit,
+  centreInCompEdit,
+  createLayerEdit,
+  easyEaseAllEdit,
+  fitLayersEdit,
+  sequenceLayerBarsEdit,
+  staggerAnimationsEdit,
+  timeReverseKeyframesEdit,
+} from '@layout/Menu/appEdits';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { deleteComposition } from '@core/composition/compositionOps';
@@ -684,6 +696,7 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     icon: 'layers' as const,
     enabled,
     execute: () => {
+      // B3-legacy: engine gap — the destructive Merge Paths bake (boolean of several shape layers into one new outline) has no API command (`convertLayer` has no boolean mode).
       const ids = mergeSelectedPaths(op);
       if (ids.length > 0) notify(`Merged paths (${op})`, 'success');
       else notify('Select at least two shape layers to merge', 'warning');
@@ -832,11 +845,18 @@ function buildEasingCommands(): ReadonlyArray<Command> {
     ...(shortcut ? { shortcut } : {}),
     // Keep the chord live only when it can act, so it falls through otherwise.
     enabled: () => easingTargetKeyframes().length > 0,
+    // `updateKeyframes` through the engine (B3); easePresetOnKeys keeps the
+    // preset writer for a key the API cannot address alone.
     execute: () => {
-      if (applyEasingToSelection(preset)) notify(`${label} applied`, 'success');
+      const kfIds = easingTargetKeyframes();
+      if (kfIds.length === 0) return;
+      void easePresetOnKeys(kfIds, preset).then(() => notify(`${label} applied`, 'success'));
     },
   }));
 }
+
+/** The playhead in comp seconds — where the registry's transform commands read and key. */
+const playheadSeconds = (): number => getTimelineController().currentSeconds;
 
 function buildBuiltinCommands(): ReadonlyArray<Command> {
   return [
@@ -943,7 +963,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         const ids = useSelectionStore.getState().ids;
         if (ids.length === 0) return;
         const next = !isGuideLayer(ids[0]!);
-        for (const id of ids) setGuideLayer(id, next);
+        // `setLayerSwitches{guide}` through the engine (B3): the whole selection, one entry.
+        void setLayersSwitch(ids, { guide: next }, next ? 'Enable Guide Layer' : 'Disable Guide Layer');
         const plural = ids.length > 1;
         notify(
           next
@@ -1040,6 +1061,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
+        // B3-legacy: not converted — Exponential Scale bakes per-frame Scale keys (a client macro over `addKeyframes`); left on the legacy writer with the other baking assistants.
         const { written, refusal } = applyExponentialScale(nodeId);
         if (refusal) { notify(REFUSAL_TEXT[refusal], 'warning'); return; }
         const total = [...written.values()].reduce((a, b) => a + b, 0);
@@ -1062,8 +1084,12 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        if (timeReverseKeyframes(id)) notify('Keyframes reversed', 'success');
-        else notify('Layer has no keyframes yet', 'warning');
+        void timeReverseKeyframesEdit(id).then((done) => {
+          if (done === 'none') { notify('Layer has no keyframes yet', 'warning'); return; }
+          // B3-legacy: engine gap — `reverseKeyframes` mirrors each property within its OWN span; the assistant mirrors the layer's overall span (they differ when properties span different times).
+          if (!done && !timeReverseKeyframes(id)) { notify('Layer has no keyframes yet', 'warning'); return; }
+          notify('Keyframes reversed', 'success');
+        });
       },
     },
     {
@@ -1078,8 +1104,12 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        if (easyEaseAll(id)) notify('Eased all keyframes', 'success');
-        else notify('Layer has no keyframes yet', 'warning');
+        void easyEaseAllEdit(id).then((done) => {
+          if (done === 'none') { notify('Layer has no keyframes yet', 'warning'); return; }
+          // B3-legacy: engine gap — an animated property outside the API catalog.
+          if (!done && !easyEaseAll(id)) { notify('Layer has no keyframes yet', 'warning'); return; }
+          notify('Eased all keyframes', 'success');
+        });
       },
     },
     {
@@ -1163,7 +1193,11 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
           notify('Overlap must be a number of seconds, 0 or more', 'warning');
           return;
         }
-        if (!getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 })) {
+        // `sequenceLayers` through the engine (B3): bars and cross-dissolves, ONE entry.
+        const sequenced = await sequenceLayerBarsEdit(selectedIds, overlap, overlap > 0);
+        // B3-legacy: engine gap — `sequenceLayers` takes the layers of ONE composition; a selection spanning comps keeps the timeline controller's walk.
+        const ok = sequenced === false ? getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 }) : sequenced === true;
+        if (!ok) {
           notify('Select 2+ layers with timeline bars', 'warning');
           return;
         }
@@ -1209,8 +1243,12 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().ids.length >= 2,
       execute: () => {
         const ids = useSelectionStore.getState().ids;
-        if (sequenceLayers(ids, 0.3)) notify('Animations staggered', 'success');
-        else notify('Select 2+ animated layers first', 'warning');
+        void staggerAnimationsEdit(ids, 0.3).then((done) => {
+          // B3-legacy: engine gap — an animated property outside the API catalog.
+          const ok = done === false ? sequenceLayers(ids, 0.3) : done === true;
+          if (ok) notify('Animations staggered', 'success');
+          else notify('Select 2+ animated layers first', 'warning');
+        });
       },
     },
     {
@@ -1233,6 +1271,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
+        // B3-legacy: engine gap — it creates a null carrying expression-control sliders (named `ctrl()` props), and expression controls have no API group type.
         void convertAudioToSliderNull(nodeId).then(({ nodeId: nullId, written }) => {
           if (!nullId) {
             notify('That layer has no decodable audio.', 'warning');
@@ -1265,6 +1304,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
+        // B3-legacy: engine gap — the API's `convertExpressionToKeyframes` REMOVES the expression and bakes over in→out; the assistant (and AE) DISABLE it and bake over its own range rule.
         const { written, refusal } = convertExpressionToKeyframes(nodeId);
         if (refusal) { notify(BAKE_REFUSAL_TEXT[refusal], 'warning'); return; }
         const total = [...written.values()].reduce((a, b) => a + b, 0);
@@ -1323,7 +1363,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'Backspace' },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        deleteSelectedLayers();
+        void deleteSelectedLayersEdit();
         notify('Deleted selected layers', 'info');
       },
     },
@@ -1333,7 +1373,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'Delete' },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        deleteSelectedLayers();
+        void deleteSelectedLayersEdit();
         notify('Deleted selected layers', 'info');
       },
     },
@@ -1344,8 +1384,9 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'd', meta: true },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        duplicateSelectedLayers();
-        notify('Duplicated layers', 'success');
+        void duplicateSelectedLayersEdit().then((copies) => {
+          if (copies.length > 0) notify('Duplicated layers', 'success');
+        });
       },
     },
     // Cut/Copy/Paste were in the Edit menu but never registered, so all three
@@ -1379,6 +1420,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       // checked async on execute — we cannot sync-probe the system clipboard.
       enabled: () => true,
       execute: () => {
+        // B3-legacy: not converted — the clipboard module (keyframe entries, path paste, node-snapshot layers) predates `copyLayers`/`pasteLayers`; the Copy side must capture the engine fragment first.
         void pasteSelection().then((kind) => {
           if (kind === 'svg') notify('Pasted SVG', 'success');
           else if (kind) notify('Pasted', 'success');
@@ -1445,6 +1487,7 @@ function buildRigPresetCommands(): ReadonlyArray<Command> {
       // reports the UNSCALED size, which is what keeps a scaled layer from getting
       // a differently-proportioned skeleton.
       const geom = readGeometry(node);
+      // B3-legacy: engine gap — skeleton / bones / IK have no API groups or commands.
       const problems = applyRigPreset(
         nodeId,
         RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
@@ -1659,6 +1702,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
           ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
           : `Delete “${comp.name}”?`;
         if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+          // B3-legacy: engine gap — `removeItems` does not close the comp's tabs or re-seed an empty project (compositionOps does).
           deleteComposition(compId);
         }
       },
@@ -1678,6 +1722,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Text',
       shortcut: { key: 't', meta: true, alt: true, shift: true },
       enabled: () => true,
+      // B3-legacy: engine gap — `createLayer{text}` places at the comp centre with the default size; the insert places at the pointer, scaled to the comp (`placeInComp`).
       execute: () => insertPrimitive('text', 'Text'),
     },
     {
@@ -1714,7 +1759,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Null Object',
       shortcut: { key: 'y', meta: true, alt: true, shift: true },
       enabled: () => true,
-      execute: () => insertNull(),
+      execute: () => { void createLayerEdit('null', { name: 'Null', label: 'New Null Object' }); },
     },
     {
       // AE's "Create Nulls From Paths" script: a handle on every vertex of the
@@ -1732,6 +1777,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
         // One labelled undo step for the nulls, their parenting and bindings.
+        // B3-legacy: engine gap — the nulls' links to the path vertices are expression bindings / vertex parenting with no API form.
         const made = createNullsFromPathUndoable(id, getTimelineController().currentSeconds);
         notify(made.length ? `Created ${made.length} null${made.length === 1 ? '' : 's'} on the path` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
       },
@@ -1749,6 +1795,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
+        // B3-legacy: engine gap — as above (points-follow-nulls vertex bindings).
         const made = createNullsFromPathUndoable(id, getTimelineController().currentSeconds, { pointsFollowNulls: true });
         notify(made.length ? `${made.length} null${made.length === 1 ? '' : 's'} now drive the path — move one and the outline follows` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
       },
@@ -1766,6 +1813,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
+        // B3-legacy: engine gap — `convertLayer{shapesFromText}` answers unsupported in the TS engine.
         const made = await createShapesFromText(id);
         notify(
           !made
@@ -1827,7 +1875,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Adjustment Layer',
       shortcut: { key: 'y', meta: true, alt: true },
       enabled: () => true,
-      execute: () => insertAdjustmentLayer(),
+      execute: () => { void createLayerEdit('adjustment', { name: 'Adjustment Layer 1', label: 'New Adjustment Layer' }); },
     },
     {
       id: asCommandId('layer.precompose'),
@@ -1857,7 +1905,12 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
         const frame = activeCompSize();
-        for (const nodeId of useSelectionStore.getState().ids) fitNodeTo(nodeId, frame, mode);
+        const ids = useSelectionStore.getState().ids;
+        // Through the engine (B3): the whole selection, one entry.
+        void fitLayersEdit(ids, frame, mode, playheadSeconds()).then((done) => {
+          // B3-legacy: engine gap — a layer whose size is not a catalog property (width / height).
+          if (!done) for (const nodeId of ids) fitNodeTo(nodeId, frame, mode);
+        });
       },
     })),
     {
@@ -1867,7 +1920,12 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'Home', meta: true, alt: true },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        for (const nodeId of useSelectionStore.getState().ids) centreAnchorInContent(nodeId);
+        const ids = useSelectionStore.getState().ids;
+        // Through the engine (B3): anchor + compensating Position, one entry for the selection.
+        void centreAnchorEdit(ids, playheadSeconds()).then((done) => {
+          // B3-legacy: engine gap — a node that is not a layer of a composition.
+          if (!done) for (const nodeId of ids) centreAnchorInContent(nodeId);
+        });
       },
     },
     {
@@ -1895,7 +1953,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
         const frame = activeCompSize();
-        for (const nodeId of useSelectionStore.getState().ids) centreInFrame(nodeId, frame);
+        const ids = useSelectionStore.getState().ids;
+        void centreInCompEdit(ids, frame, playheadSeconds()).then((done) => {
+          // B3-legacy: engine gap — a node that is not a layer of a composition.
+          if (!done) for (const nodeId of ids) centreInFrame(nodeId, frame);
+        });
       },
     },
     {
@@ -1936,7 +1998,10 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut,
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        if (arrangeNodes(useSelectionStore.getState().ids, action)) notify(message, 'info');
+        // `reorderLayers` through the engine (B3), one entry.
+        void arrangeLayersEdit(useSelectionStore.getState().ids, action).then((moved) => {
+          if (moved) notify(message, 'info');
+        });
       },
     })),
     {
@@ -1945,7 +2010,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'blur'); notify('Added Fast Box Blur', 'success'); }
+        if (id) { void addEffectEdit([id], 'blur'); notify('Added Fast Box Blur', 'success'); }
       },
     },
     {
@@ -1954,7 +2019,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'glow'); notify('Added Glow', 'success'); }
+        if (id) { void addEffectEdit([id], 'glow'); notify('Added Glow', 'success'); }
       },
     },
     {
@@ -1963,7 +2028,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'brightness'); notify('Added Brightness & Contrast', 'success'); }
+        if (id) { void addEffectEdit([id], 'brightness'); notify('Added Brightness & Contrast', 'success'); }
       },
     },
     {
@@ -1972,7 +2037,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'contrast'); notify('Added Contrast', 'success'); }
+        if (id) { void addEffectEdit([id], 'contrast'); notify('Added Contrast', 'success'); }
       },
     },
     {
@@ -1981,7 +2046,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'saturate'); notify('Added Hue/Saturation', 'success'); }
+        if (id) { void addEffectEdit([id], 'saturate'); notify('Added Hue/Saturation', 'success'); }
       },
     },
     {
@@ -1990,7 +2055,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'grayscale'); notify('Added Grayscale', 'success'); }
+        if (id) { void addEffectEdit([id], 'grayscale'); notify('Added Grayscale', 'success'); }
       },
     },
     {
@@ -1999,7 +2064,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'sepia'); notify('Added Sepia', 'success'); }
+        if (id) { void addEffectEdit([id], 'sepia'); notify('Added Sepia', 'success'); }
       },
     },
     {
@@ -2008,7 +2073,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().primary !== null,
       execute: () => {
         const id = useSelectionStore.getState().primary;
-        if (id) { addEffect(id, 'hue-rotate'); notify('Added Hue Rotate', 'success'); }
+        if (id) { void addEffectEdit([id], 'hue-rotate'); notify('Added Hue Rotate', 'success'); }
       },
     },
     {
@@ -2710,6 +2775,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               label: `New ${entry.kind.label}`,
               icon: (entry.kind.icon as never) ?? 'plugin',
               enabled: () => true,
+              // B3-legacy: engine gap — a plugin layer kind (`createLayer{component}`) is refused by the TS engine; the plugin's own factory builds it.
               execute: () => { void createCustomLayerFromMenu(kind); },
             });
           }
@@ -2983,6 +3049,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // History: initial "Open" state, then a debounced snapshot after edits.
         try {
           useHistoryStore.getState().reset();
+          // B3-legacy: engine gap — the 700 ms recorder's baseline at boot (history infrastructure, not an edit); it goes with the recorder (ENGINE_API.md §15.3).
           useHistoryStore.getState().record('Open', true);
           // The debounce lives in the store so undo/redo can flush it — a
           // pending snapshot that only exists in a local closure is why Ctrl+Z
@@ -3084,6 +3151,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
                       // every project not shot at 60.
                       getTimelineController().seekSeconds(t);
                       bumpScene();
+                      // B3-legacy: engine gap — the recorder's baseline after crash recovery (history infrastructure, not an edit); it goes with the recorder.
                       useHistoryStore.getState().record('Recovered', true);
                       const s = useProjectStore.getState();
                       if (s.activeTabId) s.actions.markDirty(s.activeTabId, true);

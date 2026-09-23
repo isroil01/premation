@@ -128,7 +128,7 @@ beforeEach(() => {
  * Driven through the host, not by writing components directly, so the shapes
  * under test are the ones the shipped code produces.
  */
-function authorDocument(): { worker: FakeWorker; customLayerId: string; nativeLayerId: string } {
+async function authorDocument(): Promise<{ worker: FakeWorker; customLayerId: string; nativeLayerId: string }> {
   const worker = bootPlugin(pkg(), { granted: ['scene:read', 'scene:write', 'animation:write'] });
 
   // The ordinary layer first: `insertPrimitive` parents to the selection, so a
@@ -156,7 +156,7 @@ function authorDocument(): { worker: FakeWorker; customLayerId: string; nativeLa
   worker.callAndWait('scene.setProxyChildren', customLayerId, planeSpecs('Hero depth', 3));
 
   // 3. …and a plugin effect on the ordinary layer.
-  const effectId = (worker.callAndWait(
+  const effectId = (await worker.callAsync(
     'effects.add', nativeLayerId, `${PLUGIN}.${EFFECT.id}`,
   ) as { value: string }).value;
   worker.callAndWait('effects.setParam', nativeLayerId, effectId, 'amount', 2.5);
@@ -174,8 +174,8 @@ function saveAndReopen(doc: EditorDocument): EditorDocument {
 }
 
 describe('a document authored with a plugin, reopened without it', () => {
-  it('round-trips byte-identically', () => {
-    authorDocument();
+  it('round-trips byte-identically', async () => {
+    await authorDocument();
     const saved = captureDocument();
 
     // The plugin goes away — the same state a build without plugin support is
@@ -192,8 +192,8 @@ describe('a document authored with a plugin, reopened without it', () => {
     expect(serializeProject(reopened as never)).toBe(serializeProject(saved as never));
   });
 
-  it('keeps the custom layer and every authored value', () => {
-    const { customLayerId } = authorDocument();
+  it('keeps the custom layer and every authored value', async () => {
+    const { customLayerId } = await authorDocument();
     const saved = captureDocument();
     pluginHost.uninstall(PLUGIN);
     resetEffectsForTests();
@@ -211,8 +211,8 @@ describe('a document authored with a plugin, reopened without it', () => {
     });
   });
 
-  it('keeps the proxy subtree, its ownership marks and its expressions', () => {
-    const { customLayerId } = authorDocument();
+  it('keeps the proxy subtree, its ownership marks and its expressions', async () => {
+    const { customLayerId } = await authorDocument();
     const saved = captureDocument();
     pluginHost.uninstall(PLUGIN);
     resetEffectsForTests();
@@ -229,8 +229,8 @@ describe('a document authored with a plugin, reopened without it', () => {
     expect(defaultAnimation.snapshot().expressions).toEqual(saved.animation.expressions);
   });
 
-  it('keeps the plugin effect on the layer, with its parameters', () => {
-    const { nativeLayerId } = authorDocument();
+  it('keeps the plugin effect on the layer, with its parameters', async () => {
+    const { nativeLayerId } = await authorDocument();
     const saved = captureDocument();
     pluginHost.uninstall(PLUGIN);
     resetEffectsForTests();
@@ -248,9 +248,9 @@ describe('a document authored with a plugin, reopened without it', () => {
     expect(effects[0]!.params?.amount).toBe(2.5);
   });
 
-  it('still names the plugin the document depends on', () => {
+  it('still names the plugin the document depends on', async () => {
     // Without this the editor can say "this layer needs a plugin" and not which.
-    authorDocument();
+    await authorDocument();
     const saved = captureDocument();
     pluginHost.uninstall(PLUGIN);
     resetEffectsForTests();

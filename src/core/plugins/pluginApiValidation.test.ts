@@ -182,9 +182,9 @@ describe('animation.setKeyframes — names', () => {
     expect(() => call('animation.setKeyframes', id, 'plugin.focal', [{ t: 0, value: 1 }])).toThrow(/not a plugin layer/);
   });
 
-  it('refuses a param the effect does not have', () => {
+  it('refuses a param the effect does not have', async () => {
     const id = newLayer();
-    const fx = call('effects.add', id, 'glow') as string;
+    const fx = await (call('effects.add', id, 'glow') as Promise<string>);
     expect(() => call('animation.setKeyframes', id, `effect.${fx}.threshold`, [{ t: 0, value: 1 }]))
       .toThrow(/"threshold" is not a parameter of Glow/);
   });
@@ -213,9 +213,9 @@ describe('animation.setKeyframes — typed values', () => {
       .toThrow(/"keyframe\[0\]\.value\.r" must be a number from 0 to 255/);
   });
 
-  it('animates an effect colour param through its channels, one keyframe at a time too', () => {
+  it('animates an effect colour param through its channels, one keyframe at a time too', async () => {
     const id = newLayer();
-    const fx = call('effects.add', id, 'glow') as string;
+    const fx = await (call('effects.add', id, 'glow') as Promise<string>);
     call('animation.setKeyframe', id, `effect.${fx}.color`, 0.5, '#00ff00');
     expect(track(id, `effect.${fx}.color_g`)).toEqual([expect.objectContaining({ t: 0.5, value: 1 })]);
   });
@@ -250,27 +250,27 @@ describe('animation.setKeyframes — typed values', () => {
 });
 
 describe('effects.setParam — keys and ranges', () => {
-  it('★ turns the guessed Drop Shadow "blur" into a refusal that names "softness"', () => {
+  it('★ turns the guessed Drop Shadow "blur" into a refusal that names "softness"', async () => {
     // The exact call a real plugin shipped: a name borrowed from CSS. It used
     // to store `blur` beside `softness` and render nothing different.
     const id = newLayer();
-    const fx = call('effects.add', id, 'drop-shadow') as string;
+    const fx = await (call('effects.add', id, 'drop-shadow') as Promise<string>);
     expect(() => call('effects.setParam', id, fx, 'blur', 8))
       .toThrow(/"blur" is not a parameter of Drop Shadow[\s\S]*softness[\s\S]*effects\.describe\("drop-shadow"\)/);
     expect(getNodeEffects(id).find((e) => e.id === fx)?.params).not.toHaveProperty('blur');
   });
 
-  it('★ refuses a value outside the declared range, naming it, and stores nothing', () => {
+  it('★ refuses a value outside the declared range, naming it, and stores nothing', async () => {
     const id = newLayer();
-    const fx = call('effects.add', id, 'glow') as string;
+    const fx = await (call('effects.add', id, 'glow') as Promise<string>);
     const before = getNodeEffects(id).find((e) => e.id === fx)?.params?.intensity;
     expect(() => call('effects.setParam', id, fx, 'intensity', 150)).toThrow(/between 0 and 100 \(%\); got 150/);
     expect(getNodeEffects(id).find((e) => e.id === fx)?.params?.intensity).toBe(before);
   });
 
-  it('checks the value against the param type', () => {
+  it('checks the value against the param type', async () => {
     const id = newLayer();
-    const fx = call('effects.add', id, 'glow') as string;
+    const fx = await (call('effects.add', id, 'glow') as Promise<string>);
     expect(() => call('effects.setParam', id, fx, 'color', 'red')).toThrow(/colour string/);
     expect(() => call('effects.setParam', id, fx, 'radius', '12')).toThrow(/finite number/);
     expect(call('effects.setParam', id, fx, 'color', '#ff0000')).toBe(true);

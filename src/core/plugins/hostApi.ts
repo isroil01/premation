@@ -14,8 +14,10 @@
  *      third-party code. Every one is re-validated here; a `NaN` time or a
  *      1 MB layer name is a bug report against us, not against the plugin.
  *   2. **Writes are undoable, as one entry.** A plugin command the user did not
- *      like has to be one Ctrl-Z, not fifty — so each mutating call runs inside
- *      `runDocumentEdit` labelled with the plugin's name.
+ *      like has to be one Ctrl-Z, not fifty — so each mutating call is ONE
+ *      engine batch (`origin: plugin`, the same commands the UI sends — see
+ *      `viaEngine` at the bottom) or, where the engine API cannot address it
+ *      yet, one `runDocumentEdit`, labelled with the plugin's name either way.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -30,6 +32,10 @@ import { createComposition, renameComposition, deleteComposition } from '@core/c
 import { useUIStore } from '@stores/uiStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { runDocumentEdit } from '@core/commands/documentEdit';
+import type { Command, CommandResult, EngineError } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { isLayer } from '@core/engine/doc';
+import { describeEngineError } from '@core/engine/uiEdits';
 import { insertPrimitive } from '@core/scene/sceneInsert';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { bumpScene, batchScene } from '@stores/sceneStore';
@@ -196,6 +202,20 @@ export function createHostApi(
   },
 ): Record<string, (...args: unknown[]) => unknown> {
   const edit = <T>(what: string, fn: () => T): T => runDocumentEdit(`${manifest.name}: ${what}`, fn);
+
+  /**
+   * A plugin's write through the ENGINE API (B3 / ENGINE_API.md §12): the
+   * same commands the UI sends, with `origin: plugin` and the plugin's name on
+   * the undo entry — one entry per call, as `edit` gives. A typed refusal
+   * rejects the call with the engine's message (or `explain`'s), and has
+   * changed nothing. The legacy `edit` stays for what the API cannot address.
+   */
+  const send = async (what: string, cmds: Command[], explain?: (e: EngineError) => string | undefined): Promise<CommandResult[]> => {
+    const label = `${manifest.name}: ${what}`;
+    const res = await engine().batch(label, cmds, { origin: 'plugin' });
+    if (!res.ok) return fail(explain?.(res.error) ?? describeEngineError(label, res.error));
+    return res.value;
+  };
 
   /**
    * Which panel a panel-shaped call means.
@@ -1282,7 +1302,91 @@ export function createHostApi(
     },
   };
 
-  return table;
+  /*
+    The single-call verbs that map 1:1 onto engine commands (ENGINE_API.md
+    §12), sent with `origin: plugin`: one undo entry per call, labelled with
+    the plugin's name, exactly like the UI's commands. Validation is the
+    legacy handler's, word for word, and runs first and synchronously. A node
+    that is not a layer of a composition — the only thing the API cannot
+    address here — falls through to the legacy handler.
+
+    `scene.apply` keeps dispatching to the LEGACY table (`runOp(table, …)`):
+    its all-or-nothing guarantee is a synchronous `runDocumentEdit` snapshot,
+    and its ops address layers a legacy `createLayer` made mid-batch.
+    B3-legacy: engine gap — as an engine gesture it needs `createLayer` for
+    plugin layer kinds (the TS engine refuses `component`), and an abort that
+    reverts the gesture on the first failing op.
+  */
+  const viaEngine: Record<string, (...args: unknown[]) => unknown> = {
+    'scene.renameLayer': (id, name) => {
+      const n = node(id);
+      const nm = str(name, 'layer name').slice(0, 80);
+      if (!isLayer(n.id)) return table['scene.renameLayer']!(id, name);
+      return send('rename layer', [{ type: 'renameLayer', layer: n.id, name: nm }]).then(() => true);
+    },
+
+    'scene.deleteLayer': (id) => {
+      const n = node(id);
+      if (n.parent === null) return fail('That is a composition root, not a layer.');
+      // B3-legacy: engine gap — `deleteLayers` re-parents a deleted layer's children (keeping their world pose); this verb removes the whole subtree (a group with its members, a custom layer with its proxy children), so a layer WITH children keeps the legacy handler.
+      if (!isLayer(n.id) || n.children.length > 0) return table['scene.deleteLayer']!(id);
+      return send(`delete ${n.name}`, [{ type: 'deleteLayers', layers: [n.id] }]).then(() => true);
+    },
+
+    'scene.setParent': (id, parentId) => {
+      const n = node(id);
+      const target = parentId === null || parentId === undefined ? null : str(parentId, 'parent id');
+      if (target !== null) node(target);
+      if (!isLayer(n.id) || (target !== null && !isLayer(target))) return table['scene.setParent']!(id, parentId);
+      const refusal = `"${n.name}" cannot be parented there — a layer cannot be its own ancestor, `
+        + 'and parenting only works within one composition.';
+      // `setParent` keeps the world pose (AE's default), as `reparentNode` did.
+      return send(
+        `reparent ${n.name}`,
+        [{ type: 'setParent', layers: [n.id], ...(target ? { parent: target } : {}), keepWorldTransform: true }],
+        (e) => (e.code === 'cycle' || e.code === 'invalidArgument' ? refusal : undefined),
+      ).then(() => true);
+    },
+
+    'scene.setVisible': (id, visible) => {
+      const n = node(id);
+      if (typeof visible !== 'boolean') return fail('visible must be true or false.');
+      if (!isLayer(n.id)) return table['scene.setVisible']!(id, visible);
+      return send(`${visible ? 'show' : 'hide'} ${n.name}`, [{ type: 'setLayerSwitches', layers: [n.id], patch: { visible } }]).then(() => true);
+    },
+
+    'scene.setLocked': (id, locked) => {
+      const n = node(id);
+      if (typeof locked !== 'boolean') return fail('locked must be true or false.');
+      if (!isLayer(n.id)) return table['scene.setLocked']!(id, locked);
+      return send(`${locked ? 'lock' : 'unlock'} ${n.name}`, [{ type: 'setLayerSwitches', layers: [n.id], patch: { locked } }]).then(() => true);
+    },
+
+    'effects.add': (id, type) => {
+      const n = node(id);
+      const t = str(type, 'effect type');
+      if (!effectDefFor(t)) return fail(unknownEffectTypeMessage(t));
+      if (!isLayer(n.id)) return table['effects.add']!(id, type);
+      return send(`add ${t}`, [{ type: 'addEffect', layers: [n.id], effect: t, params: [] }]).then((r) => {
+        const addedId = (r[0] as { groups?: string[] } | undefined)?.groups?.[0]?.split('/')[1];
+        if (!addedId) return fail(`"${t}" could not be added to "${n.name}".`);
+        // The WebGL2-tier flag, exactly as the legacy handler reports it.
+        const inactive = t.includes('.') && !pluginEffectsCanRender();
+        if (inactive) noteInertPluginEffect(manifest.name);
+        return inactive ? { id: addedId, active: false, reason: 'webgpu-unavailable' } : addedId;
+      });
+    },
+
+    'effects.remove': (id, effectId) => {
+      const n = node(id);
+      const fx = str(effectId, 'effect id');
+      if (!getNodeEffects(n.id).some((e) => e.id === fx)) return fail(`"${n.name}" has no effect "${fx}".`);
+      if (!isLayer(n.id)) return table['effects.remove']!(id, effectId);
+      return send('remove effect', [{ type: 'removePropertyGroups', groups: [{ layer: n.id, path: `effects/${fx}` }] }]).then(() => true);
+    },
+  };
+
+  return { ...table, ...viaEngine };
 }
 
 /**

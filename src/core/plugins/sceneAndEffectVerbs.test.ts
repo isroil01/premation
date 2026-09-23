@@ -66,22 +66,22 @@ beforeAll(() => {
 });
 
 describe('scene.setParent', () => {
-  it('parents one layer under another', () => {
+  it('parents one layer under another', async () => {
     const parent = newLayer();
     const child = newLayer();
-    expect(api['scene.setParent']!(child, parent)).toBe(true);
+    await expect(api['scene.setParent']!(child, parent)).resolves.toBe(true);
     expect(defaultSceneGraph.getNode(child)!.parent).toBe(parent);
   });
 
-  it('moves a layer back to the composition root with null', () => {
+  it('moves a layer back to the composition root with null', async () => {
     const parent = newLayer();
     const child = newLayer();
-    api['scene.setParent']!(child, parent);
-    expect(api['scene.setParent']!(child, null)).toBe(true);
+    await api['scene.setParent']!(child, parent);
+    await expect(api['scene.setParent']!(child, null)).resolves.toBe(true);
     expect(defaultSceneGraph.getNode(child)!.parent).not.toBe(parent);
   });
 
-  it('★ refuses a cycle instead of returning false', () => {
+  it('★ refuses a cycle instead of returning false', async () => {
     /*
       `reparentNode` answers `false` — it does not throw. Passing that through
       as a resolved value would let a plugin build what it believes is a
@@ -89,8 +89,8 @@ describe('scene.setParent', () => {
     */
     const a = newLayer();
     const b = newLayer();
-    api['scene.setParent']!(b, a);
-    expect(() => api['scene.setParent']!(a, b)).toThrow(/cannot be parented there/);
+    await api['scene.setParent']!(b, a);
+    await expect(api['scene.setParent']!(a, b)).rejects.toThrow(/cannot be parented there/);
   });
 
   it('refuses a parent that does not exist', () => {
@@ -100,17 +100,17 @@ describe('scene.setParent', () => {
 });
 
 describe('scene.setVisible / setLocked', () => {
-  it('hides and shows a layer', () => {
+  it('hides and shows a layer', async () => {
     const id = newLayer();
-    api['scene.setVisible']!(id, false);
+    await api['scene.setVisible']!(id, false);
     expect(defaultSceneGraph.getNode(id)!.visible).toBe(false);
-    api['scene.setVisible']!(id, true);
+    await api['scene.setVisible']!(id, true);
     expect(defaultSceneGraph.getNode(id)!.visible).toBe(true);
   });
 
-  it('locks and unlocks a layer', () => {
+  it('locks and unlocks a layer', async () => {
     const id = newLayer();
-    api['scene.setLocked']!(id, true);
+    await api['scene.setLocked']!(id, true);
     expect(defaultSceneGraph.getNode(id)!.locked).toBe(true);
   });
 
@@ -122,9 +122,9 @@ describe('scene.setVisible / setLocked', () => {
 });
 
 describe('effects', () => {
-  it('adds an effect and returns its id', () => {
+  it('adds an effect and returns its id', async () => {
     const id = newLayer();
-    const fx = api['effects.add']!(id, 'blur') as string;
+    const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
     expect(typeof fx).toBe('string');
     expect(getNodeEffects(id).map((e) => e.id)).toContain(fx);
   });
@@ -142,36 +142,36 @@ describe('effects', () => {
     expect(getNodeEffects(id)).toHaveLength(0);
   });
 
-  it('lists what is on a layer', () => {
+  it('lists what is on a layer', async () => {
     const id = newLayer();
-    const fx = api['effects.add']!(id, 'blur') as string;
+    const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
     const list = api['effects.list']!(id) as Array<{ id: string; type: string }>;
     expect(list.find((e) => e.id === fx)?.type).toBe('blur');
   });
 
-  it('sets a parameter', () => {
+  it('sets a parameter', async () => {
     // Blur's one parameter is `amount` (0–40 px). This case used to write
     // `radius`, which Blur does not have — and passed, because the host stored
     // the unknown key beside the real one. That is the bug `propValidation`
     // closes; the refusal is pinned below.
     const id = newLayer();
-    const fx = api['effects.add']!(id, 'blur') as string;
+    const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
     api['effects.setParam']!(id, fx, 'amount', 12);
     expect(getNodeEffects(id).find((e) => e.id === fx)?.params?.amount).toBe(12);
   });
 
-  it('★ refuses a parameter the effect does not have, listing the ones it does', () => {
+  it('★ refuses a parameter the effect does not have, listing the ones it does', async () => {
     const id = newLayer();
-    const fx = api['effects.add']!(id, 'blur') as string;
+    const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
     expect(() => api['effects.setParam']!(id, fx, 'radius', 12))
       .toThrow(/"radius" is not a parameter of Blur[\s\S]*Its parameters: amount/);
     expect(getNodeEffects(id).find((e) => e.id === fx)?.params).not.toHaveProperty('radius');
   });
 
-  it('removes an effect', () => {
+  it('removes an effect', async () => {
     const id = newLayer();
-    const fx = api['effects.add']!(id, 'blur') as string;
-    api['effects.remove']!(id, fx);
+    const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
+    await api['effects.remove']!(id, fx);
     expect(getNodeEffects(id).map((e) => e.id)).not.toContain(fx);
   });
 
@@ -187,9 +187,9 @@ describe('effects', () => {
     expect(() => api['effects.setParam']!(id, 'fx_nope', 'radius', 1)).toThrow(/has no effect/);
   });
 
-  it('refuses a parameter value that is not a scalar', () => {
+  it('refuses a parameter value that is not a scalar', async () => {
     const id = newLayer();
-    const fx = api['effects.add']!(id, 'blur') as string;
+    const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
     expect(() => api['effects.setParam']!(id, fx, 'radius', { a: 1 }))
       .toThrow(/number, string or boolean/);
   });

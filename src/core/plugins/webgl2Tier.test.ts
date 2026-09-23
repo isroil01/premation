@@ -147,7 +147,7 @@ describe('a plugin that merely CONTRIBUTES effects', () => {
 });
 
 describe('effects.add on the WebGL2 tier', () => {
-  it('SUCCEEDS, and returns a flag saying it will not draw', () => {
+  it('SUCCEEDS, and returns a flag saying it will not draw', async () => {
     /*
       Not a failure, deliberately. The effect is in the document, it is saved
       with it, and it renders the moment the file is opened on a WebGPU machine.
@@ -158,41 +158,41 @@ describe('effects.add on the WebGL2 tier', () => {
     setWebgpuAvailable(false);
     const { worker, layerId } = boot();
 
-    const reply = worker.callAndWait('effects.add', layerId, `${PLUGIN}.tint`);
+    const reply = await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
     expect(reply.ok).toBe(true);
     expect(reply.ok && reply.value).toMatchObject({ active: false, reason: 'webgpu-unavailable' });
   });
 
-  it('puts the effect in the document regardless', () => {
+  it('puts the effect in the document regardless', async () => {
     setWebgpuAvailable(false);
     const { worker, layerId } = boot();
-    worker.callAndWait('effects.add', layerId, `${PLUGIN}.tint`);
+    await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
 
     const node = defaultSceneGraph.getNode(layerId)!;
     const fx = node.components.find((c) => c.type === 'fx');
     expect(JSON.stringify(fx?.props)).toContain(`${PLUGIN}.tint`);
   });
 
-  it('returns a bare id on WebGPU, exactly as before', () => {
+  it('returns a bare id on WebGPU, exactly as before', async () => {
     // The unchanged path. A plugin written before any of this reads the return
     // value as an id, and must keep being able to.
     const { worker, layerId } = boot();
-    const reply = worker.callAndWait('effects.add', layerId, `${PLUGIN}.tint`);
+    const reply = await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
     expect(typeof (reply.ok && reply.value)).toBe('string');
   });
 
-  it('returns a bare id for a BUILT-IN effect on WebGL2', () => {
+  it('returns a bare id for a BUILT-IN effect on WebGL2', async () => {
     // Built-ins render fine on WebGL2. Flagging them would be a false alarm on
     // every effect in the app.
     setWebgpuAvailable(false);
     const { worker, layerId } = boot();
-    const reply = worker.callAndWait('effects.add', layerId, 'blur');
+    const reply = await worker.callAsync('effects.add', layerId, 'blur');
     expect(typeof (reply.ok && reply.value)).toBe('string');
   });
 });
 
 describe('the toast', () => {
-  it('fires once, however many effects are added', () => {
+  it('fires once, however many effects are added', async () => {
     /*
       Per session, not per effect. A generative plugin adding forty effects
       would otherwise produce forty identical toasts, and a user buried in them
@@ -201,16 +201,16 @@ describe('the toast', () => {
     */
     setWebgpuAvailable(false);
     const { worker, layerId } = boot();
-    for (let i = 0; i < 5; i++) worker.callAndWait('effects.add', layerId, `${PLUGIN}.tint`);
+    for (let i = 0; i < 5; i++) await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
 
     const about = useUIStore.getState().notifications.filter((n) => /WebGPU/i.test(n.message));
     expect(about).toHaveLength(1);
     expect(about[0]!.message).toMatch(/saved with your project/i);
   });
 
-  it('does not fire at all on WebGPU', () => {
+  it('does not fire at all on WebGPU', async () => {
     const { worker, layerId } = boot();
-    worker.callAndWait('effects.add', layerId, `${PLUGIN}.tint`);
+    await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
     expect(useUIStore.getState().notifications.filter((n) => /WebGPU/i.test(n.message))).toHaveLength(0);
   });
 });

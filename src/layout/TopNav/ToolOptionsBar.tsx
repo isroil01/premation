@@ -150,6 +150,7 @@ export function ToolOptionsBar(): JSX.Element | null {
                 title="Remove the most recent paint stroke on this layer"
                 // Its own undo step, like the stroke it removes — unwrapped, it
                 // left no history entry and Ctrl+Z skipped straight past it.
+                // B3-legacy: engine gap — paint strokes have no API group commands (`removePropertyGroups` does not address `paint/…`).
                 onClick={() => runDocumentEdit('Remove Last Stroke', () => removeLastStroke(selectedIds[0]!))}
               >
                 Undo last stroke

@@ -16,6 +16,9 @@ import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
 import { effectHits, presetHits } from './quickApply';
 import { parseQuery } from './paletteSearch';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { buildScene } from '@core/engine/__testHelpers__/scene';
 
 function node(id: string, kind = 'shape'): SceneNode {
   return {
@@ -94,11 +97,21 @@ describe('presets', () => {
     expect(onText!.enabled).toBe(true);
   });
 
-  it('applies a preset at the playhead and leaves keyframes behind', () => {
-    useSelectionStore.getState().set(['a']);
-    const hit = presetHits('', 200).find((h) => h.enabled)!;
-    expect(hit).toBeDefined();
-    hit.apply();
-    expect(defaultAnimation.tracksFor('a').length + defaultAnimation.dataTracksFor('a').length).toBeGreaterThan(0);
+  it('applies a preset at the playhead through the engine (one undo entry) and leaves keyframes behind', async () => {
+    // A LAYER of a composition: `applyPreset` addresses layers (B3).
+    const h = await setupAppEngine();
+    try {
+      const s = await buildScene(h);
+      useSelectionStore.getState().set([s.B]);
+      const before = historyLabels().length;
+      const hit = presetHits('', 200).find((x) => x.enabled)!;
+      expect(hit).toBeDefined();
+      hit.apply();
+      await engineIdle();
+      expect(defaultAnimation.tracksFor(s.B).length + defaultAnimation.dataTracksFor(s.B).length).toBeGreaterThan(0);
+      expect(historyLabels().length).toBe(before + 1);
+    } finally {
+      await h.dispose();
+    }
   });
 });

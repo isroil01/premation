@@ -29,7 +29,7 @@ import { toolShortcut, toolLabelWithShortcut } from './toolShortcuts';
 import { useElementWidth } from './useElementWidth';
 import { collapseFor } from './toolbarCollapse';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { insertPrimitive, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { insertPrimitive, insertAudio, insertImageSequence, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
 import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -37,7 +37,8 @@ import { importLottieFile } from '@core/library/lottieLibrary';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
+import { listPresets } from '@core/animation/animationPresets';
+import { applyAnimationPresetEdit, createLayerEdit } from '@layout/Menu/appEdits';
 import { applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
 import { applyBounce, describeBounce, revealBounce } from '@core/animation/bounce';
 import { useBounceStore, currentSquash } from '@stores/bounceStore';
@@ -55,7 +56,6 @@ const CONTROL_KINDS: ReadonlyArray<{ kind: ControlKind; label: string }> = [
   { kind: 'layer', label: 'Layer Control' },
 ];
 import { hasTextComponent } from '@core/text/textAnimators';
-import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
@@ -210,14 +210,17 @@ function buildAnimateItems(
     label: p.name,
     icon: 'play' as const,
     onSelect: () => {
-      applyPresetByName(id, p.name, playhead);
-      notify(`Applied “${p.name}”`);
+      // `applyPreset` through the engine (B3): one entry, refusals toasted.
+      void applyAnimationPresetEdit([id], p.name, playhead).then((ok) => {
+        if (ok) notify(`Applied “${p.name}”`);
+      });
     },
   }));
 
   return [
     ...presetItems,
     { type: 'separator' },
+    // B3-legacy: not converted — the text-animator rigs (animator + selectors + keyed selector params) belong with the text area's animator migration; as engine commands they need each new group id mid-macro (a gesture of addPropertyGroup / addKeyframes).
     { type: 'item', id: 'anim-typewriter', label: 'Typewriter (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTypewriter(id, playhead)) notify('Typewriter rig created'); } },
     { type: 'item', id: 'anim-bounce-in-words', label: 'Bounce In Words (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyBounceInWords(id, playhead)) notify('Bounce In Words rig created'); } },
     { type: 'item', id: 'anim-spin-fade-chars', label: 'Spin & Fade Characters (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applySpinFadeCharacters(id, playhead)) notify('Spin & Fade Characters rig created'); } },
@@ -228,6 +231,7 @@ function buildAnimateItems(
     // the menu is a shortcut to that panel's current shape, not a second,
     // hardcoded bounce. `applyBounce` (not `bounceKeyframes`) so the item is
     // never a no-op: with nothing to rebound from it generates the fall too.
+    // B3-legacy: engine gap — the Bounce generator (keys + squash, ounce.ts) is not ported to commands (it reads back its own writes to place the rebounds).
     { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); const r = applyBounce(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }); if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { void getCommandSystem().execute(asCommandId('animation.timeReverseKeyframes')); } },
     // Sequence / stagger live as registered commands (Animation menu + palette);
@@ -249,6 +253,7 @@ function buildAnimateItems(
         id: `anim-control-${k.kind}`,
         label: k.label,
         onSelect: () => {
+          // B3-legacy: engine gap — expression controls (named `ctrl()` props on the Transform) have no API group type (`listGroupTypes` has none).
           const name = addControl(id, k.kind);
           if (!name) return;
           // Multi-component kinds expose several names, so tell the user what
@@ -353,6 +358,7 @@ export function TopNav(): JSX.Element {
     return () => sub.dispose();
   }, []);
 
+  // B3-legacy: engine gap — `importFiles` imports by PATH; the pickers below hand browser `File`s (no path), and `createLayer` has no media fitting / image-sequence / Lottie conversion.
   const addAsset = useAssetStore((s) => s.addAsset);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -719,13 +725,14 @@ export function TopNav(): JSX.Element {
                   </button>
                 }
                 items={[
+                  // B3-legacy: engine gap — `createLayer` places at the comp centre at a fixed size; the shape / text inserts place at the pointer, scaled to the comp (`placeInComp`).
                   { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => insertPrimitive('shape', 'Shape') },
                   { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => insertPrimitive('text', 'Text') },
                   { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'solid', onSelect: () => openSolidSettings({ mode: 'new' }) },
                   { type: 'separator' },
-                  { type: 'item', id: 'new-group', label: 'Group', icon: 'layers', onSelect: () => insertPrimitive('group', 'Group') },
-                  { type: 'item', id: 'new-null', label: 'Null Object', icon: 'crosshair', onSelect: () => insertNull() },
-                  { type: 'item', id: 'new-adjustment', label: 'Adjustment Layer', icon: 'adjustment', onSelect: () => insertAdjustmentLayer() },
+                  { type: 'item', id: 'new-group', label: 'Group', icon: 'layers', onSelect: () => { void createLayerEdit('group', { name: 'Group', label: 'New Group' }); } },
+                  { type: 'item', id: 'new-null', label: 'Null Object', icon: 'crosshair', onSelect: () => { void createLayerEdit('null', { name: 'Null', label: 'New Null Object' }); } },
+                  { type: 'item', id: 'new-adjustment', label: 'Adjustment Layer', icon: 'adjustment', onSelect: () => { void createLayerEdit('adjustment', { name: 'Adjustment Layer 1', label: 'New Adjustment Layer' }); } },
                   ...(insertableComps.length > 0
                     ? ([{
                         type: 'item' as const,
@@ -737,7 +744,7 @@ export function TopNav(): JSX.Element {
                           id: `new-ci-${c.id}`,
                           label: c.name,
                           icon: 'component' as const,
-                          onSelect: () => insertCompInstance(c.id),
+                          onSelect: () => { void createLayerEdit('precomp', { source: c.id, label: 'Add Composition' }); },
                         })),
                       }] satisfies DropdownItem[])
                     : []),
@@ -747,7 +754,7 @@ export function TopNav(): JSX.Element {
                   // seed and every camera and light in the app was identical.
                   { type: 'item', id: 'new-camera', label: 'Camera…', icon: 'camera', onSelect: () => openCameraDialog() },
                   { type: 'item', id: 'new-light', label: 'Light…', icon: 'light', onSelect: () => openLightDialog() },
-                  { type: 'item', id: 'new-particle', label: 'Particle System', icon: 'sparkles', onSelect: () => insertParticle() },
+                  { type: 'item', id: 'new-particle', label: 'Particle System', icon: 'sparkles', onSelect: () => { void createLayerEdit('particle', { name: 'Particles 1', label: 'New Particle System' }); } },
                   { type: 'separator' },
                   { type: 'item', id: 'new-3d-text', label: '3D Extruded Text', icon: 'text-3d', onSelect: () => insert3DText('3D TEXT') },
                   { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => insert3DPrimitive('cube') },

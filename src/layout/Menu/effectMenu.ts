@@ -28,11 +28,11 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import { EFFECT_DEFS, addEffect, type EffectDef, type EffectType } from '@core/effects/effects';
+import { EFFECT_DEFS, type EffectDef, type EffectType } from '@core/effects/effects';
 import { pluginEffectDefs, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { EFFECT_CATEGORY, EFFECT_CATEGORY_ORDER } from '@layout/Effects/effectCategory';
 import { revealEffectsInProperties } from '@layout/Effects/revealEffectControls';
-import { batchHistory } from '@stores/historyStore';
+import { addEffectEdit } from '@layout/Effects/effectEdits';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { MenuItemModel } from './menuModel';
@@ -59,13 +59,11 @@ function byLabel(a: EffectDef, b: EffectDef): number {
   return a.label.localeCompare(b.label, 'en');
 }
 
-/** Add `type` to every selected layer: one undo step, then show its controls. */
+/** Add `type` to every selected layer: ONE engine entry (`addEffect`), then show its controls. */
 export function applyEffectToSelection(type: EffectType, label: string): void {
   const ids = [...useSelectionStore.getState().ids];
   if (ids.length === 0) return;
-  batchHistory(`fx:add:${type}`, () => {
-    for (const id of ids) addEffect(id, type);
-  });
+  void addEffectEdit(ids, type);
   revealEffectsInProperties();
   useUIStore.getState().notify({
     level: 'success',
