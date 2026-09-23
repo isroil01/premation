@@ -149,7 +149,7 @@ DocumentSnapshot make_document(std::uint32_t n, bool full) {
   cs.duration = 60 * kF;
   cs.background = Color{0, 0, 0, 1};
   cs.work_area = TimeRange{0, 60 * kF};
-  cs.motion_blur = MotionBlurSettings{180, -90, 16, 128};
+  cs.motion_blur = MotionBlurSettings{180, -90, 16, 128, std::nullopt};
   cs.renderer3d = Renderer3d::classic;
   cs.global_light_angle = 120;
   cs.global_light_altitude = 45;

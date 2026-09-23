@@ -106,18 +106,37 @@ describe('an AI turn on the engine', () => {
   it('a turn that writes around the engine is still ONE entry — a snapshot that names its gaps', async () => {
     const before = h.doc();
     const r = await runToolTurn('AI: boxes', [
-      { name: 'create_layer', args: { id: 's', kind: 'shape', name: 'Box', fill: '#ff0000' } },
+      { name: 'create_layer', args: { id: 's', kind: 'shape', shape: 'star', name: 'Box', fill: '#ff0000' } },
       { name: 'set_keyframes', args: { keyframes: [{ nodeId: 's', prop: 'opacity', t: 0, value: 0 }, { nodeId: 's', prop: 'opacity', t: 1, value: 100 }] } },
       { name: 'create_layer', args: { id: 'n', kind: 'null', name: 'N' } },
     ]);
     expect(r.outcome.kind).toBe('snapshot');
-    expect(r.outcome.gaps.join('\n')).toContain('create_layer kind');
+    expect(r.outcome.gaps.join('\n')).toContain('polystar');
     expect(historyLabels()).toEqual(['AI: boxes']);
     const after = h.doc();
     await h.run({ type: 'undo' });
     expect(h.doc()).toBe(before);
     await h.run({ type: 'redo' });
     expect(h.doc()).toBe(after);
+  });
+
+  it('G1: drawn layers, fill colour, text fields, an enum by value and a static write on a keyed property stay on the engine', async () => {
+    const r = await runToolTurn('AI: title card', [
+      { name: 'create_layer', args: { id: 'bg', kind: 'solid', name: 'BG', width: 640, height: 360, fill: '#112233' } },
+      { name: 'create_layer', args: { id: 'box', kind: 'shape', name: 'Box', fill: '#ff0000' } },
+      { name: 'create_layer', args: { id: 't', kind: 'text', name: 'Title', text: 'Hello' } },
+      { name: 'create_layer', args: { id: 'g', kind: 'group', name: 'G' } },
+      { name: 'create_layer', args: { id: 'l', kind: 'light', name: 'Key' } },
+      { name: 'update_layer', args: { nodeId: 't', fontFamily: 'Georgia', align: 'center', fontWeight: 700, fill: '#ffcc00' } },
+      { name: 'set_keyframes', args: { keyframes: [{ nodeId: 'box', prop: 'opacity', t: 0, value: 0 }, { nodeId: 'box', prop: 'opacity', t: 1, value: 100 }, { nodeId: 'box', prop: 'scaleX', t: 0.5, value: 2 }] } },
+      { name: 'update_layer', args: { nodeId: 'box', opacity: 50 } },
+    ]);
+    expect(r.outcome.kind === 'snapshot' ? r.outcome.gaps : []).toEqual([]);
+    expect(r.outcome.kind).toBe('engine');
+    expect(historyLabels()).toEqual(['AI: title card']);
+    // One light: After Effects adds no ambient fill light beside it.
+    const lights = (await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false })).layers.filter((x) => x.kind === 'light');
+    expect(lights).toHaveLength(1);
   });
 
   it('a read-only turn leaves no entry', async () => {

@@ -328,6 +328,7 @@ ResultOf<api::SetCompositionSettings> handle(const api::SetCompositionSettings& 
     m.shutterPhase = mb.shutter_phase;
     m.samples = mb.samples_per_frame;
     m.adaptiveSampleLimit = mb.adaptive_sample_limit;
+    if (mb.enabled) m.enabled = *mb.enabled;
   }
   return {};
 }

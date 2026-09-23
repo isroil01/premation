@@ -272,24 +272,55 @@ export function baselineHistory(label = 'Open'): void {
   }
 }
 
-export function performUndo(): void {
+/**
+ * Where the app's undo/redo/jump go when a document engine is running: the
+ * engine's own `undo` / `redo` / `jumpToHistory` commands (ENGINE_API.md §4.1),
+ * so a keyboard undo is a REQUEST — it lands in the command log and a recorded
+ * session replays revision-exact. The engine walks the same shared stack
+ * (foreign entries included) and flushes the debounce recorder first.
+ * Registered by `core/engine/engineInstance` for the current instance.
+ */
+export interface HistoryRoute {
+  step(dir: 'undo' | 'redo'): Promise<unknown>;
+  /** `position` = entries applied afterwards (HistoryService index + 1). */
+  jump(position: number): Promise<unknown>;
+}
+
+let historyRoute: HistoryRoute | null = null;
+
+export function setHistoryRoute(route: HistoryRoute | null): void {
+  historyRoute = route;
+}
+
+/**
+ * Undo (Ctrl+Z, Edit ▸ Undo, the toolbar). With an engine, resolves once the
+ * engine applied it (callers may fire and forget); a refusal (a drag still
+ * open, nothing to undo) changes nothing.
+ */
+export function performUndo(): Promise<void> {
   const h = useHistoryStore.getState();
   h.flush();
-  if (!getCommandSystem().getHistory().canUndo()) return;
+  if (!getCommandSystem().getHistory().canUndo()) return Promise.resolve();
+  if (historyRoute) return historyRoute.step('undo').then(() => undefined, () => undefined);
   h.runRestoring(() => getCommandSystem().getHistory().undo());
+  return Promise.resolve();
 }
 
-export function performRedo(): void {
+export function performRedo(): Promise<void> {
   const h = useHistoryStore.getState();
   h.flush();
-  if (!getCommandSystem().getHistory().canRedo()) return;
+  if (!getCommandSystem().getHistory().canRedo()) return Promise.resolve();
+  if (historyRoute) return historyRoute.step('redo').then(() => undefined, () => undefined);
   h.runRestoring(() => getCommandSystem().getHistory().redo());
+  return Promise.resolve();
 }
 
-export function performJumpTo(index: number): void {
+export function performJumpTo(index: number): Promise<void> {
   const h = useHistoryStore.getState();
   h.flush();
+  if (historyRoute) return historyRoute.jump(index + 1).then(() => undefined, () => undefined);
   h.runRestoring(() => getCommandSystem().getHistory().jumpTo(index));
+  return Promise.resolve();
 }
 
 import { getEventBus } from '@core/events/EventBus';

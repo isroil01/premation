@@ -34,7 +34,11 @@ class IdAllocator {
   std::string next_keyframe(const std::function<bool(const std::string&)>& taken);
   /// Seed the keyframe counter past every `k<n>` in `ids`.
   void seed_keyframes(const std::vector<std::string>& ids);
-  void reset() { counters_.clear(); }
+  /// The next gesture id (ids.ts `nextGesture`): counted under `gesture`, so the
+  /// id state carries it and a replay names the same gestures.
+  std::uint32_t next_gesture();
+  /// A new document's counters; the gesture counter is a session counter and survives.
+  void reset();
   [[nodiscard]] const std::map<std::string, double, std::less<>>& state() const noexcept { return counters_; }
   void restore(std::map<std::string, double, std::less<>> s) { counters_ = std::move(s); }
 
@@ -101,6 +105,11 @@ class Ports {
 /// deterministic footage records, projects kept in memory.
 class FakePorts final : public Ports {
  public:
+  FakePorts() = default;
+  /// `dir` non-empty: every written project is also written to `dir` (one file
+  /// per path, hex-named), and a path not in memory is read from there: the
+  /// cross-engine replay's fixtures and its saved-document comparison.
+  explicit FakePorts(std::string dir) : dir_(std::move(dir)) {}
   [[nodiscard]] bool has_import() const override { return true; }
   [[nodiscard]] Json import_file(const api::ImportFile& file, const std::string& id) override;
   [[nodiscard]] bool has_probe() const override { return true; }
@@ -111,6 +120,7 @@ class FakePorts final : public Ports {
 
  private:
   std::map<std::string, Json, std::less<>> files_;
+  std::string dir_;
 };
 
 /// Project files on disk: JSON EditorDocuments, written temp-file + rename.

@@ -6,25 +6,24 @@
  * it at the same font size. With the Selection tool the same handles scale the
  * layer (ports.ts `resizeNode`, unchanged).
  *
- * One drag = one viewport gesture = one undo step (viewportGesture.ts). The
+ * One drag = one engine gesture = one undo step (G1: the box is the
+ * `text/boxWidth` / `text/boxHeight` / `text/boxAutoSize` fields). The
  * box props are written as static props (they are not keyframeable); Position
  * — which moves so the opposite edge stays put — follows the AE keyframing
  * contract: a lit stopwatch (or Auto-Keyframe) keyframes it at the playhead.
  */
 
-import type { ID } from '@core/types';
+import type { Command } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { getRemappedTime } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
-import { readTransformProp, writesAsKeyframe, writeTransformBase } from '@core/scene/transformWrite';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { readTransformProp } from '@core/scene/transformWrite';
 import { parentWorld2DAt } from '@core/scene/layerSpace';
-import {
-  beginViewportGesture,
-  endViewportGesture,
-  gestureAnimEdit,
-  gestureSceneBump,
-} from '@core/workspace/viewportGesture';
+import { isLayer } from '@core/engine/doc';
+import { paths } from '@core/engine/propRefs';
+import { GestureSession } from '@core/engine/uiEdits';
+import { fieldCommands } from '@layout/Text/textEdits';
+import { valueCommands } from '@layout/Inspector/inspectorEdits';
 import {
   compDeltaToLocal,
   handleDirection,
@@ -52,14 +51,13 @@ function playheadTime(): number {
 /** Start a box-handle drag on a paragraph text layer, or null when it cannot take one. */
 export function beginBoxReflow(nodeId: string, handle: BoxHandle): BoxReflowSession | null {
   const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || node.locked) return null;
+  if (!node || node.locked || !isLayer(nodeId)) return null;
   const textComp = node.components.find((c) => c.type === 'Text');
   const transformComp = node.components.find((c) => c.type === 'Transform');
   const box = readParagraphBox(node);
   if (!textComp || !transformComp || !box) return null;
 
   const rawTime = playheadTime();
-  const layerTime = getRemappedTime(nodeId, rawTime);
   const measured = box.fixedHeight ? null : measureTextNodeParagraphBox(node);
   const pose: BoxPose = {
     width: box.boxWidth,
@@ -78,11 +76,10 @@ export function beginBoxReflow(nodeId: string, handle: BoxHandle): BoxReflowSess
   const anchorDy = !box.fixedHeight ? measured?.lineOffsetY ?? 0 : 0;
   const shift = anchorDy ? localToParentVector({ x: 0, y: anchorDy }, pose.rotationDeg, pose.scaleX, pose.scaleY) : null;
   const verticalPose: BoxPose = shift ? { ...pose, x: pose.x + shift.x, y: pose.y + shift.y } : pose;
-  const keyPosition = writesAsKeyframe(nodeId, 'x');
-  let madeFixed = false;
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
   let open = true;
 
-  beginViewportGesture();
+  const gesture = new GestureSession('Resize Text Box');
   return {
     update(compDelta) {
       if (!open) return;
@@ -92,42 +89,23 @@ export function beginBoxReflow(nodeId: string, handle: BoxHandle): BoxReflowSess
         minHeight: MIN_BOX_SIZE,
         round: true,
       });
-      const id = nodeId as ID;
-      // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
-      defaultSceneGraph.writeProp(id, textComp.id, 'boxWidth', next.width);
+      // ONE engine gesture (G1): the box fields (`text/boxWidth`, `text/boxHeight`,
+      // `text/boxAutoSize`) and the compensating Position — keyed at the playhead
+      // when animated / Auto-Keyframe (AE). Every send carries absolute values.
+      const cmds: Command[] = [...fieldCommands(nodeId, paths.textProp('boxWidth'), next.width)];
       if (vertical) {
         // Dragging a top/bottom handle of an auto-height box fixes its height,
         // as AE turns auto-size off when you size the box by hand.
-        if (!box.fixedHeight && !madeFixed) {
-          // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
-          defaultSceneGraph.writeProp(id, textComp.id, 'boxAutoSize', 'off');
-          madeFixed = true;
-        }
-        // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
-        defaultSceneGraph.writeProp(id, textComp.id, 'boxHeight', next.height);
+        if (!box.fixedHeight) cmds.push(...fieldCommands(nodeId, paths.textProp('boxAutoSize'), 'off'));
+        cmds.push(...fieldCommands(nodeId, paths.textProp('boxHeight'), next.height));
       }
-      // Base Position through the router; the keyframe (when the stopwatch is
-      // lit) is set in the gesture edit below.
-      // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
-      writeTransformBase(nodeId, [{ prop: 'x', value: next.x }, { prop: 'y', value: next.y }], transformComp.id);
-      if (keyPosition) {
-        gestureAnimEdit(
-          'Resize Text Box',
-          () => {
-            // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
-            defaultAnimation.setKeyframe(nodeId, 'x', layerTime, next.x);
-            // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
-            defaultAnimation.setKeyframe(nodeId, 'y', layerTime, next.y);
-          },
-          `textbox:${nodeId}:${layerTime}`,
-        );
-      }
-      gestureSceneBump();
+      cmds.push(...valueCommands([{ nodeId, values: { x: next.x, y: next.y } }], { seconds: rawTime, autoKeyframe }));
+      gesture.send(cmds);
     },
     end() {
       if (!open) return;
       open = false;
-      endViewportGesture();
+      void gesture.end();
     },
   };
 }

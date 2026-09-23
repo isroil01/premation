@@ -29,6 +29,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { writeTransformProps } from '@core/scene/transformWrite';
 import type { SceneNode } from '@core/types';
 import { fail, check } from '../errors';
+import { canonicalStringify } from '../canonical';
 import { graph, compOfLayer, requireLayer, requireComp, layerIdsOfComp, isCompItem, apiParentOf } from '../doc';
 import { K, documentScope, newScope, scopeLayer, scopeTimeline } from '../state';
 import { catalogFor, requireBinding, writeStatic } from '../props';
@@ -530,7 +531,8 @@ export function encodeFragment(layers: string[]): DocumentFragment {
     for (const c of [...graph.getChildOrder(id)].reverse()) if (!layers.includes(c)) visit(c);
   };
   for (const id of layers) visit(id);
-  const json = JSON.stringify({ layers: out } satisfies FragmentData);
+  // Canonical key order (canonical.ts): the same bytes the C++ engine writes.
+  const json = canonicalStringify({ layers: out } satisfies FragmentData);
   return { version: FRAGMENT_VERSION, data: new TextEncoder().encode(json) };
 }
 

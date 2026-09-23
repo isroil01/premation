@@ -76,16 +76,19 @@ import {
   removeEffect,
   getNodeEffects,
   primaryParamKey,
+  effectDefFor,
   parseColorChannels,
 } from '@core/effects/effects';
 import { defaultPrecompName, precomposeNow } from '@core/composition/precompose';
 import { setPrecomp } from '@core/scene/precomp';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import type { EffectType } from '@core/effects/effects';
-import { applyPresetByName, listPresets } from '@core/animation/animationPresets';
+import { listPresets } from '@core/animation/animationPresets';
 import { bumpScene } from '@stores/sceneStore';
 import { engine } from '@core/engine/engineInstance';
-import { propRefForTrack, memberWrite } from '@core/engine/propRefs';
+import { propRefForTrack, memberWrite, fieldWrite } from '@core/engine/propRefs';
+import { readRuns } from '@core/text/richText';
+import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { apiUnitFactor } from '@core/engine/props';
 import type { ID, SceneNode } from '@core/types';
 import { EngineTurnSession } from './aiEngineSession';
@@ -188,24 +191,21 @@ export function isAnimatableProp(prop: string): boolean {
  * records (`session.legacy`). The engine API gaps behind them (report B5):
  */
 export const LEGACY_GAPS = {
-  createKind: 'create_layer kind with no exact engine shape (shape/solid rect + AI fill, text box width, group, light + ambient fill, media)',
+  createKind: 'create_layer kind the engine has no layer kind for',
   createRefused: 'create_layer refused by the engine (active comp is not a composition item)',
   removeSubtree: 'deleting a layer with children (the engine un-parents them; the tool deletes the subtree)',
   reparent: 'reparent refused by the engine',
-  setProp: 'static write the catalog does not address exactly (fill/colour strings, text box, owner-component mismatch, animated base value, UI-kit SVG)',
+  setProp: 'static write the catalog does not address exactly (the Transform width/height of a text layer, shapeType, owner-component mismatch, UI-kit SVG, a gradient fill given as a colour)',
   effectId: 'add_effect with a caller-chosen effect id (the engine mints ids)',
-  effectParam: 'effect parameter write the engine does not take (enum by value, animated param, unknown binding)',
+  effectParam: 'effect parameter write the engine does not take (an unknown binding or option)',
   precompose: 'precompose refused by the engine',
   timeRemap: 'time-remap switch on a group/precomp (legacy precomp flag)',
   puppet: 'puppet rig write (no puppet command beyond pins)',
-  perMemberKey: 'per-member keyframe the API cannot address (scale/scaleX/scaleY members, data tracks, unknown bindings)',
+  perMemberKey: 'per-member keyframe the API cannot address (the uniform `scale` override track, data tracks, unknown bindings)',
   pointsKey: 'points data keyframe (puppet pin position)',
-  lastKeyRemoval: "removing a property's last keyframe (the engine keeps the key's value static, like AE; the tool restores the pre-animation value)",
-  roving: 'roving keyframes (paired x/y spatial rule)',
+  roving: 'roving on a key the API cannot address alone',
   expression: 'expression on a property the catalog does not address as one member',
-  preset: 'animation preset on a layer whose keyframe axis is offset (engine applies the preset at comp time)',
   compSettings: 'composition settings refused by the engine',
-  motionBlur: 'composition motion blur (MotionBlurSettings has no `enabled`)',
 } as const;
 
 /** Cheap edit-distance, only used to say "did you mean…" on a bad node id. */
@@ -468,8 +468,17 @@ const ENGINE_EASINGS: ReadonlySet<string> = new Set<Easing>([
 
 const POSITION_DIMS = new Set(['x', 'y', 'z']);
 
-function trackAnimated(nodeId: string, member: string): boolean {
-  return (defaultAnimation.getTrackKeyframes(nodeId, member)?.length ?? 0) > 0;
+/**
+ * "Member `prop` := `value` at comp time `t`" as the WHOLE vector value of
+ * its property (the other members at their value there), or null when `prop`
+ * is not one member of an animatable vector (G1: Scale X / Y, anchor axes).
+ */
+function vectorMemberKey(nodeId: string, prop: string, value: number, t: number): { prop: PropRef; value: Value } | null {
+  if (!defaultSceneGraph.getNode(nodeId as ID)) return null;
+  const r = propRefForTrack(nodeId, prop);
+  if (!r || !r.animatable || r.members.length < 2 || !r.members.includes(prop) || r.valueType === 'color') return null;
+  const w = memberWrite(nodeId, prop, value, t);
+  return w ? { prop: w.prop, value: w.value } : null;
 }
 
 /**
@@ -543,6 +552,29 @@ const ENGINE_CREATE_KINDS: Partial<Record<string, LayerKind>> = {
   camera: 'camera',
   adjustment: 'adjustment',
   particle: 'particle',
+  // G1: the drawn kinds are the layer factory's rectangle / text / group with
+  // the AI's defaults as init (the size and fill the tool then overrides);
+  // a light is ONE light — After Effects adds no ambient light beside it.
+  shape: 'rectangle',
+  solid: 'rectangle',
+  text: 'text',
+  group: 'group',
+  light: 'light',
+};
+
+/** What the pre-engine insert gave each drawn kind (a 220 px blue rect, 32 px text). */
+const ENGINE_CREATE_INIT: Partial<Record<string, PropertyInit[]>> = {
+  shape: [
+    { path: 'layer/width', value: { kind: 'scalar', value: 220 } },
+    { path: 'layer/height', value: { kind: 'scalar', value: 220 } },
+    { path: 'layer/fill', value: { kind: 'color', value: { r: 0x2b / 255, g: 0x7e / 255, b: 1, a: 1 } } },
+  ],
+  solid: [
+    { path: 'layer/width', value: { kind: 'scalar', value: 220 } },
+    { path: 'layer/height', value: { kind: 'scalar', value: 220 } },
+    { path: 'layer/fill', value: { kind: 'color', value: { r: 0x2b / 255, g: 0x7e / 255, b: 1, a: 1 } } },
+  ],
+  text: [{ path: 'text/fontSize', value: { kind: 'scalar', value: 32 } }],
 };
 
 // ── Facades ──────────────────────────────────────────────────────────
@@ -577,13 +609,15 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
       }
       const comp = useCompositionStore.getState().comp();
       const trimmed = name.trim();
-      const layerName = trimmed || (kind === 'camera' ? nextDeviceName('camera') : '');
-      // Nulls fan out like the legacy rects; the special kinds keep their own
-      // default placement unless the model placed them.
-      const place = kind === 'null' ? (at ?? spreadPlacement(flattenScene(defaultSceneGraph).length, comp.width, comp.height)) : at;
-      const init: PropertyInit[] = place
-        ? [{ path: 'transform/position', value: { kind: 'vec2', value: { x: place.x, y: place.y } } }]
-        : [];
+      const layerName = trimmed || (kind === 'camera' ? nextDeviceName('camera') : kind === 'light' ? nextDeviceName('light') : '');
+      // Nulls and the drawn kinds fan out like the legacy rects; the special
+      // kinds keep their own default placement unless the model placed them.
+      const fans = kind === 'null' || kind === 'shape' || kind === 'solid' || kind === 'text' || kind === 'group';
+      const place = fans ? (at ?? spreadPlacement(flattenScene(defaultSceneGraph).length, comp.width, comp.height)) : at;
+      const init: PropertyInit[] = [
+        ...(place ? [{ path: 'transform/position', value: { kind: 'vec2', value: { x: place.x, y: place.y } } } as PropertyInit] : []),
+        ...(ENGINE_CREATE_INIT[kind] ?? []),
+      ];
       const cmd = {
         type: 'createLayer',
         comp: activeCompRootId(),
@@ -751,33 +785,64 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
  */
 function setPropCommand(node: SceneNode, ownerId: string, prop: string, value: unknown): Command[] | null {
   if ((node as { rawUiSvg?: unknown }).rawUiSvg && (prop === 'fill' || prop === 'content')) return null;
+  // A static write on an ANIMATED property is a key at the playhead — After
+  // Effects' setValue on a keyed property (G1); `time` is ignored when static.
+  const t = playheadSeconds();
   if (prop === 'content') {
     const text = node.components.find((c) => c.type === 'Text');
     if (typeof value !== 'string' || !text || text.id !== ownerId) return null;
-    if (defaultAnimation.getDataTrack(node.id, SOURCE_TEXT_PROP)) return null;
-    return [{ type: 'setProperty', prop: { layer: node.id, path: 'text/sourceText' }, value: { kind: 'string', value } } as Command];
+    const set = { type: 'setProperty', prop: { layer: node.id, path: 'text/sourceText' }, value: { kind: 'string', value }, time: secondsToFlicks(t) } as Command;
+    // The legacy writer kept the layer's style runs; so does this (the API's Source Text drops them).
+    const runs = readRuns(node);
+    const keep = runs.length > 0 && !defaultAnimation.getDataTrack(node.id, SOURCE_TEXT_PROP)
+      ? [{ type: 'setProperty', prop: { layer: node.id, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify(runs) } } as Command]
+      : [];
+    return [set, ...keep];
   }
+  // Static fields (G1): a layer's own fill colour, the Text component's
+  // strings / choices (font family, alignment…).
+  const fw = fieldWrite(node.id, ownerId, prop, value, t);
+  if (fw) return [{ type: 'setProperty', prop: fw.prop, value: fw.value, ...(fw.time !== undefined ? { time: fw.time } : {}) } as Command];
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  // The engine writes a member onto the FIRST component carrying it as a number.
-  const first = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number');
+  // The engine writes a member onto the FIRST component carrying it as a number
+  // (a text prop the layer has not stored as a number yet: its Text component).
+  const first = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number')
+    ?? (resolvePropertyMeta(prop, node.id).group === 'text' ? node.components.find((c) => c.type === 'Text') : undefined)
+    // A text layer's box (layer/width, layer/height): the Transform, like the legacy writer.
+    ?? ((prop === 'width' || prop === 'height') ? node.components.find((c) => c.type === 'Transform') : undefined);
   if (!first || first.id !== ownerId) return null;
   const r = propRefForTrack(node.id, prop);
   if (!r || !r.members.includes(prop)) return null;
-  if (r.members.some((m) => trackAnimated(node.id, m))) return null;
-  const w = memberWrite(node.id, prop, value, 0);
+  const w = memberWrite(node.id, prop, value, t);
   if (!w) return null;
-  return [{ type: 'setProperty', prop: w.prop, value: w.value } as Command];
+  return [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) } as Command];
+}
+
+/** The active composition's playhead, comp seconds (the comp facade's `playhead`). */
+function playheadSeconds(): number {
+  const s = useProjectStore.getState();
+  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
 }
 
 /** The engine command for an effect parameter write, or null (see the gap list). */
 function effectParamCommand(nodeId: string, effectId: string, key: string, value: number | string | boolean): Command[] | null {
-  if (!getNodeEffects(nodeId).some((e) => e.id === effectId)) return null;
+  const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);
+  if (!effect) return null;
   const ref: PropRef = { layer: nodeId, path: `effects/${effectId}/${key}` };
+  // An animated param takes a key at the playhead (AE setValue on a keyed property).
+  const time = secondsToFlicks(playheadSeconds());
+  // A dropdown given BY VALUE (the stored option value, as a number or its
+  // string) or by label: the API takes the option's label (G1).
+  const def = effectDefFor(effect.type)?.params.find((p) => p.key === key);
+  if (def?.type === 'enum') {
+    const opt = def.options?.find((o) => String(o.value) === String(value) || o.label === value);
+    return opt ? [{ type: 'setProperty', prop: ref, value: { kind: 'choice', value: opt.label } } as Command] : null;
+  }
   if (typeof value === 'number') {
     const member = `effect.${effectId}.${key}`;
     const r = propRefForTrack(nodeId, member);
-    if (!r || r.members.length !== 1 || r.members[0] !== member || trackAnimated(nodeId, member)) return null;
-    return [{ type: 'setProperty', prop: r.ref, value: { kind: 'scalar', value: value * apiUnitFactor(member) } } as Command];
+    if (!r || r.members.length !== 1 || r.members[0] !== member) return null;
+    return [{ type: 'setProperty', prop: r.ref, value: { kind: 'scalar', value: value * apiUnitFactor(member) }, time } as Command];
   }
   if (typeof value === 'boolean') {
     const r = propRefForTrack(nodeId, ref.path);
@@ -787,8 +852,8 @@ function effectParamCommand(nodeId: string, effectId: string, key: string, value
   const color = hexToColor(value);
   if (!color) return null;
   const r = propRefForTrack(nodeId, `effect.${effectId}.${key}_r`) ?? propRefForTrack(nodeId, ref.path);
-  if (!r || r.valueType !== 'color' || r.members.some((m) => trackAnimated(nodeId, m))) return null;
-  return [{ type: 'setProperty', prop: r.ref, value: color } as Command];
+  if (!r || r.valueType !== 'color') return null;
+  return [{ type: 'setProperty', prop: r.ref, value: color, time } as Command];
 }
 
 export function createAnimFacade(session: AiEngineSession = freeSession()): AnimFacade {
@@ -834,6 +899,12 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
           }],
         } as Command;
         cmds = addressable(nodeId, prop, target) ? [add] : [separateCmd(nodeId), add];
+      } else if (!target && (easing === undefined || ENGINE_EASINGS.has(easing)) && Number.isFinite(value)) {
+        // One member of a vector property that has no separate dimensions
+        // (Scale X / Y, an anchor axis — AE keys the whole vector): a key of the
+        // whole value at t, the other members at their value there (G1).
+        const w = vectorMemberKey(nodeId, prop, value, t);
+        if (w) cmds = [{ type: 'addKeyframes', keys: [{ prop: w.prop, time: secondsToFlicks(t), value: w.value, ...(easing ? { easing: easing as Easing } : {}), spatialIn: [], spatialOut: [] }] } as Command];
       }
       await engineOr(session, `${LEGACY_GAPS.perMemberKey}: ${prop}`, cmds, () => undefined, () => legacySetKeyframe(nodeId, prop, t, value, easing));
     },
@@ -858,16 +929,15 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     removeKeyframe: async (nodeId, prop, t) => {
       const target = keyTarget(nodeId, prop);
       const legacy = (): void => defaultAnimation.removeKeyframe(nodeId, prop, compToKeyframeTime(nodeId, t));
-      const keys = defaultAnimation.getTrackKeyframes(nodeId, prop) ?? [];
       const stored = storedKeyAt(nodeId, prop, t);
       if (!stored) return; // nothing there — the legacy writer is a no-op too
       let cmds: Command[] | null = null;
-      if (target && keys.length > 1 && addressable(nodeId, prop, target)) {
+      // AE: deleting a property's last key leaves it static at that key's value (G1).
+      if (target && addressable(nodeId, prop, target)) {
         const id = await keyIdAt(session, target.ref, t);
         if (id) cmds = [{ type: 'deleteKeyframes', ids: [id] } as Command];
       }
-      const gap = target && keys.length <= 1 ? LEGACY_GAPS.lastKeyRemoval : `${LEGACY_GAPS.perMemberKey}: ${prop}`;
-      await engineOr(session, gap, cmds, () => undefined, legacy);
+      await engineOr(session, `${LEGACY_GAPS.perMemberKey}: ${prop}`, cmds, () => undefined, legacy);
     },
 
     setEasing: async (nodeId, prop, t, easing) => {
@@ -898,8 +968,17 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       );
     },
     setRoving: async (nodeId, prop, t, roving) => {
-      session.legacy(LEGACY_GAPS.roving);
-      defaultAnimation.setRoving(nodeId, prop, compToKeyframeTime(nodeId, t), roving);
+      // Roving is a property of the (spatial) KEY: on merged Position the API
+      // key is the whole vector, which is AE's rule (x and y rove together).
+      const r = defaultSceneGraph.getNode(nodeId as ID) ? propRefForTrack(nodeId, prop) : null;
+      const stored = storedKeyAt(nodeId, prop, t);
+      if (!stored) return;
+      let cmds: Command[] | null = null;
+      if (r && r.animatable && r.members.includes(prop)) {
+        const id = await keyIdAt(session, r.ref, t);
+        if (id) cmds = [{ type: 'updateKeyframes', patches: [{ id, roving, spatialIn: [], spatialOut: [] }] } as Command];
+      }
+      await engineOr(session, LEGACY_GAPS.roving, cmds, () => undefined, () => defaultAnimation.setRoving(nodeId, prop, compToKeyframeTime(nodeId, t), roving));
     },
     setExpression: async (nodeId, prop, src) => {
       const r = defaultSceneGraph.getNode(nodeId as ID) ? propRefForTrack(nodeId, prop) : null;
@@ -918,13 +997,18 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       })),
     evaluate: async (nodeId, t) => Object.fromEntries(defaultAnimation.evaluateNode(nodeId, compToKeyframeTime(nodeId, t))),
     applyPreset: async (nodeId, name, atTime) => {
-      const lt = compToKeyframeTime(nodeId, atTime);
       const preset = listPresets().find((p) => p.name === name);
       if (!preset) return false;
-      // The engine applies a preset at the time it is given; exact only where
-      // the layer's keyframe axis is the comp's.
-      const cmds = lt === atTime ? [{ type: 'applyPreset', layers: [nodeId], preset: name, time: secondsToFlicks(atTime) } as Command] : null;
-      return engineOr(session, LEGACY_GAPS.preset, cmds, () => true, () => applyPresetByName(nodeId, name, lt));
+      // Composition seconds: the engine writes the preset's keys on the
+      // layer's keyframe axis (start offset, stretch). A refusal (the preset
+      // does not apply to this layer) changed nothing.
+      try {
+        await session.apply([{ type: 'applyPreset', layers: [nodeId], preset: name, time: secondsToFlicks(atTime) }]);
+        return true;
+      } catch (err) {
+        if (err instanceof AiEngineError) return false;
+        throw err;
+      }
     },
     listPresets: async () => listPresets().map((p) => p.name),
   };
@@ -974,12 +1058,29 @@ export function createCompFacade(session: AiEngineSession = freeSession()): Comp
       // Each setter clamps and notifies autosave — going through them rather
       // than `set()` is what keeps the shutter round-tripping into the project
       // file and the render key changing.
-      session.legacy(LEGACY_GAPS.motionBlur);
+      // One setCompositionSettings (G1: MotionBlurSettings carries the comp's
+      // Enable Motion Blur switch); the engine's store write clamps like the setters.
       const s = useMotionBlurStore.getState();
-      if (patch.enabled !== undefined) s.setEnabled(patch.enabled);
-      if (patch.shutterAngle !== undefined) s.setShutterAngle(patch.shutterAngle);
-      if (patch.shutterPhase !== undefined) s.setShutterPhase(patch.shutterPhase);
-      if (patch.samples !== undefined) s.setSamples(patch.samples);
+      const cmd = {
+        type: 'setCompositionSettings',
+        comp: activeCompRootId(),
+        patch: {
+          motionBlur: {
+            shutterAngle: patch.shutterAngle ?? s.shutterAngle,
+            shutterPhase: patch.shutterPhase ?? s.shutterPhase,
+            samplesPerFrame: Math.max(0, Math.round(patch.samples ?? s.samples)),
+            adaptiveSampleLimit: s.adaptiveSampleLimit,
+            enabled: patch.enabled ?? s.enabled,
+          },
+        },
+      } as Command;
+      await engineOr(session, LEGACY_GAPS.compSettings, [cmd], () => undefined, () => {
+        const st = useMotionBlurStore.getState();
+        if (patch.enabled !== undefined) st.setEnabled(patch.enabled);
+        if (patch.shutterAngle !== undefined) st.setShutterAngle(patch.shutterAngle);
+        if (patch.shutterPhase !== undefined) st.setShutterPhase(patch.shutterPhase);
+        if (patch.samples !== undefined) st.setSamples(patch.samples);
+      });
     },
   };
 }

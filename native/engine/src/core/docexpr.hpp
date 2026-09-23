@@ -7,7 +7,7 @@
 //   layerInfo          name + Transform width/height (else the comp's)
 //   controlProvider    `ctrl_<name>` on a Transform (expressionControls.ts `controlValue`)
 //   sourceRect         the Transform box (text is measured by the renderer: not here)
-//   layerSpace         2D world matrix of the layer chain (keyframed values)
+//   layerSpace         layerSpaceAt: 2D affine, or 3D matrix + active camera (worldxf.hpp)
 //   markers            the active comp's markers / the layer's bar markers (absolute)
 #pragma once
 
@@ -17,6 +17,7 @@
 #include "anim.hpp"
 #include "model.hpp"
 #include "timeline.hpp"
+#include "worldxf.hpp"
 
 namespace premation::doc {
 
@@ -41,6 +42,7 @@ class DocExprEnv final : public ExprEnv {
 
  private:
   [[nodiscard]] std::optional<std::string> space_node(std::string_view self, const std::u16string* name) const;
+  [[nodiscard]] std::optional<LayerSpace> space_at(const std::string& id, double t) const;
   const Document& d_;
   const EditorView& view_;
   ExprCache& cache_;

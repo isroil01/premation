@@ -293,11 +293,24 @@ export function readStaticPropertyValue(nodeId: string, prop: string): number | 
       return typeof v === 'number' ? v : undefined;
     }
     const v = (data[ta.index] as Record<string, unknown> | undefined)?.[ta.param];
-    return typeof v === 'number' ? v : undefined;
+    if (typeof v === 'number') return v;
+    // AE's animator Blur is 2-D: an unset Y radius is linked to X (reads as X).
+    if (ta.param === 'blurY' && ta.selector === null) {
+      const x = data[ta.index]?.blur;
+      return typeof x === 'number' ? x : undefined;
+    }
+    return undefined;
   }
 
   // Gradient geometry lives inside a paint object (a fill, a text stroke).
   if (isGradientGeometryProp(prop)) return readGradientGeometryProp(node, prop);
+
+  // wght: the Text component stores its weight as a number OR as a CSS weight
+  // string ('700', 'bold') — the Character panel's font menu writes strings.
+  if (prop === 'fontWeight') {
+    const w = textFontWeight(node);
+    if (w !== undefined) return w;
+  }
 
   // Flat component prop — the ordinary case, and the one the transform,
   // geometry, fill, stroke and audio-level rows all take.
@@ -380,7 +393,8 @@ export function writeStaticPropertyValue(nodeId: string, prop: string, value: nu
   }
 
   const comp = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number')
-    ?? transformHomeFor(node, prop);
+    ?? transformHomeFor(node, prop)
+    ?? textHomeFor(node, prop);
   if (comp) {
     updateNodeComponentProp(defaultSceneGraph, nodeId, comp.id, prop, value);
     return true;
@@ -404,6 +418,29 @@ export function writeStaticPropertyValue(nodeId: string, prop: string, value: nu
 function transformHomeFor(node: SceneNode, prop: string): SceneNode['components'][number] | undefined {
   if (resolvePropertyMeta(prop, node.id).group !== 'transform') return undefined;
   return node.components.find((c) => c.type === 'Transform');
+}
+
+/**
+ * The Text component, for a text property (Grouping Alignment, Font Width…)
+ * the layer has never STORED — or stores as another type (a string weight).
+ * Before this the first static write fell through to the caller's Transform
+ * fallback, where nothing reads it (G1).
+ */
+function textHomeFor(node: SceneNode, prop: string): SceneNode['components'][number] | undefined {
+  if (resolvePropertyMeta(prop, node.id).group !== 'text') return undefined;
+  return node.components.find((c) => c.type === 'Text');
+}
+
+/** The Text component's weight as a number: a number, a numeric string, or 'normal' / 'bold'. */
+function textFontWeight(node: SceneNode): number | undefined {
+  const text = node.components.find((c) => c.type === 'Text');
+  const w = (text?.props as Record<string, unknown> | undefined)?.fontWeight;
+  if (typeof w === 'number') return Number.isFinite(w) ? w : undefined;
+  if (typeof w !== 'string') return undefined;
+  const s = w.trim();
+  if (s === 'normal') return 400;
+  if (s === 'bold') return 700;
+  return /^\d+(\.\d+)?$/.test(s) ? Number(s) : undefined;
 }
 
 /** True when {@link writeStaticPropertyValue} has somewhere to put a value. */
@@ -442,7 +479,7 @@ export function canWriteStaticPropertyValue(nodeId: string, prop: string): boole
   if (ta) return readAnimatorData(node)[ta.index] !== undefined;
 
   if (node.components.some((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number')) return true;
-  if (transformHomeFor(node, prop)) return true;
+  if (transformHomeFor(node, prop) || textHomeFor(node, prop)) return true;
   return prop === 'x' || prop === 'y';
 }
 

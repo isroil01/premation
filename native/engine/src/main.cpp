@@ -9,6 +9,7 @@
 //                    [--slots N]           frame-slot ring size (default 3, C1's measured value)
 //                    [--no-gpu]            no Dawn: frames are simulated (protocol work, CI)
 //                    [--test-ports]        in-memory projects + fake media (cross-engine tests)
+//                    [--test-ports-dir D]  with --test-ports: project files also read from / written to D
 //                    [--log-level debug|info|warn|error]
 //                    [--version]
 //
@@ -48,6 +49,11 @@ int run(int argc, char** argv) {
       // (the TypeScript harness's `fakePorts`), for the cross-engine replay.
       o.testPorts = true;
       continue;
+    } else if (k == "--test-ports-dir") {
+      // Tests only: the cross-engine replay seeds fixture projects here and
+      // compares what each engine saved.
+      o.testPortsDir = std::string(v);
+      ok = !v.empty();
     } else if (k == "--host-pid") {
       ok = parse_u32(v, o.render.hostPid);
     } else if (k == "--gpu-vendor") {

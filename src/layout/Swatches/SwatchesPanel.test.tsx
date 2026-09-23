@@ -3,13 +3,15 @@
  *
  * Everything else here is palette bookkeeping the store already covers. What
  * this file exists for is the write path — that "Apply to selection" goes
- * through `setNodeFill`, the same function the Appearance section's fill
- * picker calls, so a multi-fill layer's STACK and its legacy single-fill slot
- * stay in agreement. A panel that wrote `fx.props.fill` itself would look
+ * through the engine's `layer/fillPaint` (G1), the same write the Appearance
+ * section's fill picker sends, so a multi-fill layer's STACK and its legacy
+ * single-fill slot stay in agreement, as ONE undo entry. A panel that wrote `fx.props.fill` itself would look
  * correct in the viewport and be wrong in the inspector.
  */
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { SwatchesPanel } from './SwatchesPanel';
 import { useSwatchStore } from '@stores/swatchStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -57,43 +59,51 @@ beforeEach(() => {
 });
 
 describe('applying a swatch to the selection', () => {
-  it('fills every selected layer', () => {
-    defaultSceneGraph.addNode(shapeNode('a', { fill: { type: 'solid', color: '#000000' } }));
-    defaultSceneGraph.addNode(shapeNode('b', { fill: { type: 'solid', color: '#000000' } }));
-    defaultSceneGraph.addNode(shapeNode('c', { fill: { type: 'solid', color: '#000000' } }));
-    useSelectionStore.getState().set(['a', 'b']);
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  const layer = async (name: string, fills: unknown[]): Promise<string> => {
+    const { layer: id } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name, init: [] });
+    await h.run({ type: 'setProperty', prop: { layer: id, path: 'layer/fills' }, value: { kind: 'json', value: JSON.stringify(fills) } });
+    return id;
+  };
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
+
+  it('fills every selected layer, one undo entry', async () => {
+    const black = { type: 'solid', color: '#000000' };
+    const a = await layer('a', [black]);
+    const b = await layer('b', [black]);
+    const c = await layer('c', [black]);
+    useSelectionStore.getState().set([a, b]);
     useSwatchStore.getState().addSwatch('#ff0000', 'Brand Red');
+    const entries = historyLabels().length;
 
     render(<SwatchesPanel />);
-    fireEvent.click(screen.getByLabelText('Apply Brand Red to selection'));
+    await act(async () => { fireEvent.click(screen.getByLabelText('Apply Brand Red to selection')); await engineIdle(); });
 
-    expect(getNodeFill('a')).toEqual({ type: 'solid', color: '#ff0000' });
-    expect(getNodeFill('b')).toEqual({ type: 'solid', color: '#ff0000' });
+    expect(getNodeFill(a)).toEqual({ type: 'solid', color: '#ff0000' });
+    expect(getNodeFill(b)).toEqual({ type: 'solid', color: '#ff0000' });
     // Unselected layers are untouched — the action is "apply to SELECTION".
-    expect(getNodeFill('c')).toEqual({ type: 'solid', color: '#000000' });
+    expect(getNodeFill(c)).toEqual({ type: 'solid', color: '#000000' });
+    expect(historyLabels().length).toBe(entries + 1);
   });
 
-  it('keeps the rest of a multi-fill stack, replacing only the primary', () => {
-    // The reason this routes through setNodeFill rather than the graph: a
-    // direct write would leave fills[0] and the legacy slot disagreeing.
-    defaultSceneGraph.addNode(shapeNode('multi', {
-      fill: { type: 'solid', color: '#000000' },
-      fills: [
-        { type: 'solid', color: '#000000' },
-        { type: 'solid', color: '#222222' },
-      ],
-    }));
-    useSelectionStore.getState().set(['multi']);
+  it('keeps the rest of a multi-fill stack, replacing only the primary', async () => {
+    // A direct write would leave fills[0] and the legacy slot disagreeing.
+    const multi = await layer('multi', [
+      { type: 'solid', color: '#000000' },
+      { type: 'solid', color: '#222222' },
+    ]);
+    useSelectionStore.getState().set([multi]);
     useSwatchStore.getState().addSwatch('#ff0000', 'Brand Red');
 
     render(<SwatchesPanel />);
-    fireEvent.click(screen.getByLabelText('Apply Brand Red to selection'));
+    await act(async () => { fireEvent.click(screen.getByLabelText('Apply Brand Red to selection')); await engineIdle(); });
 
-    expect(getNodeFills('multi')).toEqual([
+    expect(getNodeFills(multi)).toEqual([
       { type: 'solid', color: '#ff0000' },
       { type: 'solid', color: '#222222' },
     ]);
-    expect(getNodeFill('multi')).toEqual({ type: 'solid', color: '#ff0000' });
+    expect(getNodeFill(multi)).toEqual({ type: 'solid', color: '#ff0000' });
   });
 
   it('is inert with nothing selected, rather than painting at random', () => {

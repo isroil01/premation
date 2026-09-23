@@ -160,12 +160,16 @@ export function normalizeSwatches(raw: unknown): ProjectSwatch[] {
   if (!Array.isArray(raw)) return [];
   const out: ProjectSwatch[] = [];
   const usedIds = new Set<string>();
+  // A document entry without a usable id gets `sw_doc_<n>`, not a clock-based
+  // id: opening the same file must give the same ids (replay, the C++ engine).
+  let minted = 0;
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
     const rec = entry as Partial<ProjectSwatch>;
     const hex = canonicalHex(rec.hex);
     if (!hex) continue;
-    const id = typeof rec.id === 'string' && rec.id && !usedIds.has(rec.id) ? rec.id : swatchId();
+    let id = typeof rec.id === 'string' && rec.id && !usedIds.has(rec.id) ? rec.id : '';
+    while (!id || usedIds.has(id)) id = `sw_doc_${++minted}`;
     usedIds.add(id);
     out.push({ id, name: typeof rec.name === 'string' && rec.name.trim() ? rec.name : hex.toUpperCase(), hex });
   }

@@ -79,6 +79,8 @@ struct MotionBlurSettings {
   shutterPhase: f64 = 2;
   samplesPerFrame: u32 = 3;
   adaptiveSampleLimit: u32 = 4;
+  /// AE's composition switch "Enable Motion Blur for all layers with Motion Blur set". Queries always report it; a patch without it leaves the switch as it is.
+  enabled?: bool = 5;
 }
 
 /// A composition's settings as stored.

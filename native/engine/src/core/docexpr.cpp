@@ -4,6 +4,7 @@
 
 #include "scene.hpp"
 #include "transform.hpp"
+#include "worldxf.hpp"
 
 namespace premation::doc {
 namespace ex = motion::expr;
@@ -32,39 +33,6 @@ double rec_num(const Json* rec, std::string_view key, double fb) {
   if (rec == nullptr) return fb;
   const Json& v = rec->at(key);
   return v.is_number() ? v.num() : fb;
-}
-
-/// Keyframed (not expression) value of a transform member at `t`, else its base.
-double member_at(const Document& d, const Node& n, std::string_view prop, double t, double fallback) {
-  if (const auto* keys = anim_track(d, n.id, prop)) {
-    if (auto v = sample_keys(*keys, t)) return *v;
-  }
-  if (const Component* c = n.comp_with_number(prop)) return c->props.at(prop).num();
-  return fallback;
-}
-
-motion::xf::Mat2D world_2d(const Document& d, std::string_view nodeId, double t) {
-  using motion::xf::Mat2D;
-  Mat2D world{1, 0, 0, 1, 0, 0};
-  const Node* n = d.node(nodeId);
-  std::vector<const Node*> chain;
-  while (n != nullptr && n->parent) {
-    chain.push_back(n);
-    n = d.node(*n->parent);
-    if (n != nullptr && !n->parent) break;  // the comp root is not a transform
-  }
-  for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-    const Node& node = **it;
-    motion::xf::Local2D l;
-    const ViewTransform vt = view_transform(node);
-    l.x = member_at(d, node, "x", t, vt.x);
-    l.y = member_at(d, node, "y", t, vt.y);
-    l.rotation = member_at(d, node, "rotation", t, vt.rotation);
-    l.scale_x = member_at(d, node, "scaleX", t, 1);
-    l.scale_y = member_at(d, node, "scaleY", t, 1);
-    world = motion::xf::multiply(world, motion::xf::local_matrix(l));
-  }
-  return world;
 }
 
 }  // namespace
@@ -192,36 +160,47 @@ std::optional<std::string> DocExprEnv::space_node(std::string_view self, const s
   return node_by_name(d_, to_u8(*name));
 }
 
-bool DocExprEnv::space_exists(std::string_view self, const std::u16string* name, double /*t*/) const {
-  return space_node(self, name).has_value();
+bool DocExprEnv::space_exists(std::string_view self, const std::u16string* name, double t) const {
+  const auto id = space_node(self, name);
+  return id && space_at(*id, t).has_value();
+}
+
+std::optional<LayerSpace> DocExprEnv::space_at(const std::string& id, double t) const {
+  // Providers.tsx: layerSpaceAt(node, t, {width, height} of the active comp).
+  const Json* c = comp_record(d_, view_);
+  return layer_space_at(SpaceCtx{d_, view_, *this, cache_}, id, t, rec_num(c, "width", 1920), rec_num(c, "height", 1080));
 }
 
 std::array<double, 3> DocExprEnv::space_convert(std::string_view self, const std::u16string* name, double t,
                                                 ex::SpaceOp op, std::array<double, 3> p) const {
   const auto id = space_node(self, name);
   if (!id) return p;
-  // 2D layer space (worldMatrixOf); a 3D layer's camera projection is the
-  // renderer's (layerSpaceAt → nodeWorldWithParents3d) and not modelled here.
-  const motion::xf::LayerSpace2D space(world_2d(d_, *id, t));
-  switch (op) {
-    case ex::SpaceOp::kToComp: {
-      const auto q = space.to_comp({p[0], p[1]});
-      return {q.x, q.y, p[2]};
-    }
-    case ex::SpaceOp::kFromComp: {
-      const auto q = space.from_comp({p[0], p[1]});
-      return {q.x, q.y, p[2]};
-    }
-    case ex::SpaceOp::kToWorld: {
-      const auto q = space.to_world({p[0], p[1]});
-      return {q.x, q.y, q.z};
-    }
-    case ex::SpaceOp::kFromWorld: {
-      const auto q = space.from_world({p[0], p[1], p[2]});
-      return {q.x, q.y, 0};
-    }
-  }
-  return p;
+  const auto space = space_at(*id, t);
+  if (!space) return p;
+  // layerSpace.ts: the 2D affine or the 3D matrix + camera (projection, ray/plane).
+  return std::visit(
+      [&](const auto& sp) -> std::array<double, 3> {
+        switch (op) {
+          case ex::SpaceOp::kToComp: {
+            const auto q = sp.to_comp({p[0], p[1]});
+            return {q.x, q.y, p[2]};
+          }
+          case ex::SpaceOp::kFromComp: {
+            const auto q = sp.from_comp({p[0], p[1]});
+            return {q.x, q.y, p[2]};
+          }
+          case ex::SpaceOp::kToWorld: {
+            const auto q = sp.to_world({p[0], p[1]});
+            return {q.x, q.y, q.z};
+          }
+          case ex::SpaceOp::kFromWorld: {
+            const auto q = sp.from_world({p[0], p[1], p[2]});
+            return {q.x, q.y, 0};
+          }
+        }
+        return p;
+      },
+      *space);
 }
 
 std::optional<ex::SourceTextSample> DocExprEnv::source_text(std::string_view node, double t) const {

@@ -5,19 +5,17 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { legacyComponentWrite, useComponentProp, type ComponentPropHandle } from './useComponentProp';
 import { useGesture } from '@hooks/useGesture';
 import { edit } from '@core/engine/uiEdits';
-import { hasStyleRuns, sourceTextCommand, sourceTextStopwatchCommand, textPresetEdit } from '@layout/Text/textEdits';
+import { fieldCommands, fieldEdit, sourceTextCommand, sourceTextStopwatchCommand, textPresetEdit } from '@layout/Text/textEdits';
 import { getFontWeights, WEIGHT_LABELS } from '@core/text/fontCatalog';
 import { useTextEditStore, hasRange, TEXT_EDIT_KEEP_ATTR } from '@stores/textEditStore';
-import { readRuns, writeRuns, applyStyleToRange, styleOverRange, type RunStyleKey, type RichRun } from '@core/text/richText';
+import { readRuns, applyStyleToRange, styleOverRange, type RunStyleKey, type RichRun } from '@core/text/richText';
 import type { TextStyle } from '@core/text/textLayout';
 import { graphemeCount } from '@core/text/graphemes';
 import { AUTO_LEADING, STROKE_ORDERS, strokeOrderOf, type StrokeOrder, type StrokeLineJoin } from '@core/text/textExtras';
-import { readTextPathConfig, setTextPath, defaultTextPath } from '@core/text/textPath';
+import { readTextPathConfig } from '@core/text/textPath';
 import type { MaskPath } from '@core/effects/mask';
 import { captureTextPreset } from '@core/inspector/sectionPresets';
 import { FontPicker } from './FontPicker';
@@ -229,11 +227,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
    */
   const restyleRange = (label: string, lo: number, hi: number, patch: Partial<TextStyle>): void => {
     if (!primary || !node) return;
-    // B3-legacy: engine gap — per-character style runs: `text/sourceText` carries plain text and the
-    // TS engine drops `__runs` (ENGINE_API.md §15.4); `applyStyleToRange` itself is pure (the rule's
-    // `apply…` verb match — belongs in NOT_WRITES).
+    // The runs are computed here (pure) and sent whole: `text/styleRuns` (G1).
     const runs: RichRun[] = applyStyleToRange(readRuns(node), lo, hi, patch, textLen);
-    runDocumentEdit(label, () => writeRuns(primary, runs));
+    void edit(label, fieldCommands(primary, 'text/styleRuns', runs));
   };
 
   const setCharProp = <K extends RunStyleKey>(
@@ -375,17 +371,6 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     : undefined;
   const contentStr = typeof sampledSource === 'string' ? sampledSource : contentStrRaw;
 
-  /** A Source Text key edit on a node the API cannot address (see below). */
-  const legacySourceKeys = (label: string, next: string | null): void => {
-    if (!primary) return;
-    // B3-legacy: engine gap — a text node that is not a layer of a composition has no API address;
-    // and the stopwatch OFF on styled text (setAnimated's static write drops the style runs).
-    runAnimEdit(label, () => {
-      if (next === null) defaultAnimation.setDataTrack(primary, 'text.source', null);
-      else defaultAnimation.setDataKeyframe(primary, 'text.source', 'text', layerT, next);
-    }, `srcText:${primary}`);
-  };
-
   /**
    * The Content box: every keystroke sends the WHOLE text (absolute — latest
    * wins) into one gesture that ends when the box loses focus, so a typing
@@ -393,22 +378,20 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
    */
   const onContentEdit = (next: string): void => {
     if (!hasTarget || !primary) return;
-    const cmd = sourceTextCommand(primary, next, time);
-    if (cmd) {
+    const cmds = sourceTextCommand(primary, next, time);
+    if (cmds) {
       if (!sourceTyping.isActive()) sourceTyping.begin(sourceAnimated ? 'Edit Source Text keyframe' : 'Edit Text');
-      sourceTyping.send(cmd);
+      sourceTyping.send(cmds);
       return;
     }
-    if (sourceAnimated) legacySourceKeys('Edit Source Text keyframe', next);
-    // Styled text (runs) or not a layer: the pre-API component write (useComponentProp's funnel).
-    else setContent(next);
+    // Not a layer: the pre-API component write (useComponentProp's funnel).
+    setContent(next);
   };
 
   const toggleSourceStopwatch = (): void => {
     if (!primary) return;
-    const cmd = sourceAnimated && hasStyleRuns(primary) ? null : sourceTextStopwatchCommand(primary, !sourceAnimated, time);
-    if (cmd) void edit(sourceAnimated ? 'Remove Source Text keyframes' : 'Animate Source Text', cmd);
-    else legacySourceKeys(sourceAnimated ? 'Remove Source Text keyframes' : 'Animate Source Text', sourceAnimated ? null : contentStr);
+    const cmds = sourceTextStopwatchCommand(primary, !sourceAnimated, time);
+    if (cmds) void edit(sourceAnimated ? 'Remove Source Text keyframes' : 'Animate Source Text', cmds);
   };
 
   // Mask path riding
@@ -512,18 +495,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
       setFallbackStrokeOrder(order);
       return;
     }
-    // The legacy boolean is kept in step so older readers (the extrusion trace
-    // key, Create Shapes From Text) agree about which paint is on top.
-    // B3-legacy: engine gap — Text component enum/bool props (strokeOrder, strokeOverFill) have no API property.
-    runDocumentEdit('Fill and Stroke Order', () => {
-      defaultSceneGraph.writeProp(primary, tComp.id, 'strokeOrder', order);
-      defaultSceneGraph.writeProp(
-        primary,
-        tComp.id,
-        'strokeOverFill',
-        order === 'stroke-over-fill' || order === 'all-strokes-over-all-fills',
-      );
-    });
+    // `text/strokeOrder` (G1); the engine keeps the legacy `strokeOverFill`
+    // boolean in step for older readers (extrusion trace key, Create Shapes From Text).
+    void fieldEdit('Fill and Stroke Order', primary, 'text/strokeOrder', order);
   };
 
   const handleKerningChange = (v: number) => {
@@ -556,8 +530,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   /** Auto tate-chu-yoko (layer-wide): digit runs up to N set horizontally. */
   const writeTcyProp = (label: string, prop: 'tateChuYokoAuto' | 'tateChuYokoDigits', value: boolean | number): void => {
     if (!hasTarget || !primary || !tComp) return;
-    // B3-legacy: engine gap — tateChuYokoAuto (bool) / tateChuYokoDigits (a number with no property meta) have no API property.
-    runDocumentEdit(label, () => defaultSceneGraph.writeProp(primary, tComp.id, prop, value));
+    void fieldEdit(label, primary, `text/${prop}`, value);
   };
   const handleTcyAutoChange = (on: boolean) => {
     if (hasTarget) writeTcyProp('Auto Tate-Chu-Yoko', 'tateChuYokoAuto', on);
@@ -1502,10 +1475,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               aria-label="Mask Path"
               onChange={(e) => {
                 if (!primary) return;
-                const id = e.target.value;
-                // B3-legacy: engine gap — text on a path (attach / detach / which mask) has no API property
-                // (AE's Path Options ▸ Path, a reference to one of the layer's masks); recorded by the history debounce.
-                setTextPath(primary, id ? { ...(textPathCfg ?? defaultTextPath()), pathId: id } : null);
+                // AE's Path Options ▸ Path: '' detaches (G1 `text/pathOptions/path`).
+                void fieldEdit(e.target.value ? 'Text on Path' : 'Detach Text from Path', primary, 'text/pathOptions/path', e.target.value);
               }}
               className={`${styles.fontSelect} ${styles.pathSelect}`}
             >

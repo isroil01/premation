@@ -2,6 +2,7 @@
 // src/core/composition/precompose.ts `precomposeNow` (Move all attributes /
 // Leave all attributes).
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <functional>
 #include <set>
@@ -13,6 +14,115 @@
 #include "readmodel.hpp"
 
 namespace premation::doc {
+
+namespace {
+
+/// `id.replace(/[^\w-]/g, '_')` — the scope sanitizeSvg is given.
+std::string svg_scope_of(std::string_view id) {
+  std::string out(id);
+  for (char& c : out) {
+    const auto u = static_cast<unsigned char>(c);
+    if (!(std::isalnum(u) != 0 || c == '_' || c == '-')) c = '_';
+  }
+  return out;
+}
+
+/// The ids the SOURCE markup declares (svgSanitize.ts collectIds, read off the
+/// text: `id="…"` / `id='…'` attributes), in document order.
+std::vector<std::string> svg_source_ids(std::string_view src) {
+  std::vector<std::string> out;
+  for (std::size_t i = src.find("id"); i != std::string_view::npos; i = src.find("id", i + 2)) {
+    const bool bounded = i == 0 || std::isspace(static_cast<unsigned char>(src[i - 1])) != 0;
+    if (!bounded) continue;
+    std::size_t j = i + 2;
+    while (j < src.size() && std::isspace(static_cast<unsigned char>(src[j])) != 0) ++j;
+    if (j >= src.size() || src[j] != '=') continue;
+    ++j;
+    while (j < src.size() && std::isspace(static_cast<unsigned char>(src[j])) != 0) ++j;
+    if (j >= src.size() || (src[j] != '"' && src[j] != '\'')) continue;
+    const char q = src[j];
+    const std::size_t end = src.find(q, j + 1);
+    if (end == std::string_view::npos) break;
+    if (end > j + 1) out.emplace_back(src.substr(j + 1, end - j - 1));
+  }
+  return out;
+}
+
+/// The scope the stored sanitized markup was made under: the `<scope>` of the
+/// first `id="<scope>__<sourceId>"` it holds.
+std::optional<std::string> svg_markup_scope(std::string_view markup, const std::vector<std::string>& ids) {
+  for (const std::string& id : ids) {
+    const std::string tail = "__" + id;
+    for (const char q : {'"', '\''}) {
+      const std::string needle = std::string("id=") + q;
+      for (std::size_t i = markup.find(needle); i != std::string_view::npos; i = markup.find(needle, i + 1)) {
+        const std::size_t start = i + needle.size();
+        const std::size_t end = markup.find(q, start);
+        if (end == std::string_view::npos) break;
+        const std::string_view value = markup.substr(start, end - start);
+        if (value.size() > tail.size() && value.ends_with(tail)) return std::string(value.substr(0, value.size() - tail.size()));
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+/// precompose.ts sanitizes the SVG SOURCE again under the content's id. The
+/// sanitizer (DOMPurify over a DOM) is the editor's; its output depends on the
+/// scope only through the names scopeSvgIds writes (`<scope>__<id>` in ids,
+/// `#…` / `url(#…)` references, CSS selectors and SMIL `<id>.` sync-bases), so
+/// the engine re-scopes the markup it already holds: every `<old>__` that
+/// starts a scoped name becomes `<new>__`. The same bytes as the editor's
+/// re-sanitize, for markup the current policy produced.
+std::string rescope_svg_markup(const std::string& markup, std::string_view source, const std::string& newScope) {
+  const auto ids = svg_source_ids(source);
+  if (ids.empty()) return markup;
+  const auto old = svg_markup_scope(markup, ids);
+  if (!old || *old == newScope) return markup;
+  const std::string from = *old + "__";
+  const std::string to = newScope + "__";
+  std::string out;
+  out.reserve(markup.size() + 16);
+  std::size_t pos = 0;
+  for (std::size_t i = markup.find(from); i != std::string::npos; i = markup.find(from, i + 1)) {
+    const char before = i == 0 ? '\0' : markup[i - 1];
+    // A scoped name starts after an attribute quote, `#`, or a SMIL separator.
+    const bool starts = before == '"' || before == '\'' || before == '#' || before == ';' || before == '+' ||
+                        std::isspace(static_cast<unsigned char>(before)) != 0;
+    if (!starts) continue;
+    out.append(markup, pos, i - pos);
+    out += to;
+    pos = i + from.size();
+  }
+  out.append(markup, pos, std::string::npos);
+  return out;
+}
+
+/// svgLayer.ts makeSvgComponent's props for the precomp's content (precompose.ts).
+Json content_svg_props(const Json& sp, const std::string& contentId, double layerW, double layerH, const std::string& nodeName) {
+  const std::string sourceMarkup = sp.at("sourceMarkup").is_string() ? sp.at("sourceMarkup").str() : std::string();
+  const std::string stored = sp.at("sanitizedMarkup").is_string() ? sp.at("sanitizedMarkup").str() : std::string();
+  const std::string sanitized = sourceMarkup.empty() ? stored : rescope_svg_markup(stored, sourceMarkup, svg_scope_of(contentId));
+  const auto num_or_zero = [](const Json& v) { return v.is_number() && std::isfinite(v.num()) ? v.num() : 0.0; };
+  const double iw = num_or_zero(sp.at("intrinsicWidth"));
+  const double ih = num_or_zero(sp.at("intrinsicHeight"));
+  Json p = Json::object();
+  p.set("sourceMarkup", Json::string(sourceMarkup));
+  p.set("sanitizedMarkup", Json::string(sanitized));
+  p.set("sanitizePolicy", Json::number(2));  // SVG_SANITIZE_POLICY_VERSION
+  p.set("intrinsicWidth", Json::number(iw != 0 ? iw : layerW));
+  p.set("intrinsicHeight", Json::number(ih != 0 ? ih : layerH));
+  const Json& vb = sp.at("viewBox");
+  p.set("viewBox", vb.is_undefined() ? Json::null() : vb);
+  p.set("capabilities", sp.at("capabilities"));
+  p.set("fileName", sp.at("fileName").is_undefined() || sp.at("fileName").is_null() ? Json::string(nodeName)
+                                                                                     : (sp.at("fileName").is_string() ? sp.at("fileName") : Json::string(sp.at("fileName").is_number() ? js::number_to_string(sp.at("fileName").num()) : js::stringify(sp.at("fileName")))));
+  if (sp.at("livePlayback").is_bool() && sp.at("livePlayback").b()) p.set("livePlayback", Json::boolean(true));
+  return p;
+}
+
+}  // namespace
+
 
 using api::ErrorCode;
 
@@ -220,14 +330,17 @@ std::pair<std::string, std::string> move_all_attributes(HCtx& x, const std::vect
   if (span) {
     if (tl_ensure(d, compId)) {
       Timeline& inner = d.timeline_mut(compId);
-      for (Bar& b : inner.bars) b.clip.start -= spanStart;
+      // Timeline.setLayerStart: whole frames, never before frame 0, a locked bar stays.
+      for (Bar& b : inner.bars) {
+        if (!b.locked) b.clip.start = std::max(0.0, motion::js::round(b.clip.start - spanStart));
+      }
     }
     const auto bars = tl_bars_for_node(d, x.view, mint.instanceId);
     if (!bars.empty() && tl_ensure(d, hostId)) {
       const std::string barId = bars[0]->id;
       Timeline& outer = d.timeline_mut(hostId);
       for (Bar& b : outer.bars) {
-        if (b.id == barId) b.clip.start = spanStart;
+        if (b.id == barId && !b.locked) b.clip.start = std::max(0.0, motion::js::round(spanStart));
       }
     }
   }
@@ -316,9 +429,11 @@ std::pair<std::string, std::string> leave_all_attributes(HCtx& x, const std::str
   content.parent = compId;
   content.components = {Component{contentId + "_t", "Transform", std::move(ct)}, Component{contentId + "_s", "Style", std::move(cs)}};
   if (!contentFx.obj().empty()) content.components.push_back(Component{contentId + "_fx", "fx", contentFx});
-  // An SVG layer's component moves as stored (the editor re-sanitises the markup
-  // under the new id; the engine keeps the sanitised markup it already has).
-  if (svg != nullptr) content.components.push_back(Component{contentId + "_svg", "svg", svg->props});
+  // An SVG layer: its markup is scoped to the node holding it, so the content's
+  // copy is re-scoped to the content's id (precompose.ts re-sanitises).
+  if (svg != nullptr) {
+    content.components.push_back(Component{contentId + "_svg", "svg", content_svg_props(svg->props, contentId, layerW, layerH, node.name)});
+  }
   sg_add_child(d, compId, std::move(content));
 
   if (const NodeAnim* a = d.anim(layerId)) {

@@ -10,7 +10,9 @@
  * zoom, light intensity/radius, material/geometry options, effect and style
  * params, a solid's size…) AND the engine's static writer would land it on THIS
  * component (it writes the first component carrying the prop). Numbers and
- * colour hexes are sent as values; anything else — booleans, enums, strings,
+ * colour hexes are sent as values. A Text component's static fields (font,
+ * style, justification, box, OpenType… — G1 `text/<key>`) and a layer's own
+ * fill colour (`layer/fill`) are sent as typed field values. Anything else —
  * structured values, props the catalog does not list — is an ENGINE GAP and
  * keeps the pre-API writer, in exactly one place: `legacyComponentWrite` below.
  *
@@ -27,7 +29,8 @@ import { useNodeRevision } from '@hooks/useNodeRevision';
 import { getTime } from '@stores/playbackClockStore';
 import { parseColorChannels } from '@core/effects/effects';
 import { compTime } from '@core/engine/propRefs';
-import { values as apiValues } from '@core/engine/propRefs';
+import { values as apiValues, fieldWrite, fieldBindingForComponentProp } from '@core/engine/propRefs';
+import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
 import { trackRef, trackWrites } from './inspectorEdits';
 import { useEngineEdit } from './useEngineEdit';
@@ -37,7 +40,11 @@ const HEX = /^#?[0-9a-fA-F]{3,8}$/;
 /** The component the engine's static writer would put `key` on (the first carrying it with that type). */
 function engineHome(nodeId: string, key: string, kind: 'number' | 'string'): string | undefined {
   const node = defaultSceneGraph.getNode(nodeId);
-  return node?.components.find((c) => typeof (c.props as Record<string, unknown>)[key] === kind)?.id;
+  const found = node?.components.find((c) => typeof (c.props as Record<string, unknown>)[key] === kind)?.id;
+  if (found || kind !== 'number' || !node) return found;
+  // A text prop the layer has not stored as a number yet (a string weight,
+  // Grouping Alignment): the engine homes it on the Text component (G1).
+  return resolvePropertyMeta(key, nodeId).group === 'text' ? node.components.find((c) => c.type === 'Text')?.id : undefined;
 }
 
 /**
@@ -49,11 +56,19 @@ export function componentPropCommands(
   nodeId: string,
   componentId: string,
   key: string,
-  value: unknown,
+  rawValue: unknown,
   seconds: number,
 ): Command[] | null {
+  // A weight picked from a font menu is a CSS weight string ('700'): the engine
+  // addresses wght as a number (`text/axes/wght`).
+  const value = key === 'fontWeight' && typeof rawValue === 'string' && /^\d+(\.\d+)?$/.test(rawValue.trim()) ? Number(rawValue.trim()) : rawValue;
   const r = trackRef(nodeId, key);
-  if (!r) return null;
+  if (!r) {
+    // A static field (G1): a Text component's strings / choices / switches /
+    // box numbers, a layer's own fill colour.
+    const w = isLayer(nodeId) ? fieldWrite(nodeId, componentId, key, value, seconds) : null;
+    return w ? [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) }] : null;
+  }
   if (typeof value === 'number' && Number.isFinite(value) && r.valueType !== 'color') {
     if (engineHome(nodeId, key, 'number') !== componentId) return null;
     const writes = trackWrites(nodeId, { [key]: value }, seconds);
@@ -148,7 +163,7 @@ export function useComponentProp(
 
   const handle = useMemo<ComponentPropHandle>(() => {
     const label = `Set ${resolvePropertyMeta(key, nodeId).label || key}`;
-    const onEngine = (): boolean => !!nodeId && !!componentId && trackRef(nodeId, key) !== null;
+    const onEngine = (): boolean => !!nodeId && !!componentId && (trackRef(nodeId, key) !== null || (isLayer(nodeId) && fieldBindingForComponentProp(nodeId, componentId, key) !== null));
     return { scrub: e.scrub(label, onEngine), press: e.press(label, onEngine), active: () => e.active() };
   }, [e, key, nodeId, componentId]);
 

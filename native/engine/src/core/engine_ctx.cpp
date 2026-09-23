@@ -43,6 +43,24 @@ std::string IdAllocator::next_keyframe(const std::function<bool(const std::strin
   return id;
 }
 
+std::uint32_t IdAllocator::next_gesture() {
+  const auto it = counters_.find("gesture");
+  const double n = (it != counters_.end() ? it->second : 0) + 1;
+  counters_.insert_or_assign("gesture", n);
+  return static_cast<std::uint32_t>(n);
+}
+
+void IdAllocator::reset() {
+  const auto it = counters_.find("gesture");
+  if (it == counters_.end()) {
+    counters_.clear();
+    return;
+  }
+  const double g = it->second;
+  counters_.clear();
+  counters_.insert_or_assign("gesture", g);
+}
+
 void IdAllocator::seed_keyframes(const std::vector<std::string>& ids) {
   const auto it = counters_.find("k");
   double max = it != counters_.end() ? it->second : 0;
@@ -220,15 +238,42 @@ Json FakePorts::probe_file(const std::string& path) {
   return out;
 }
 
+namespace {
+/// `<dir>/<hex of the path's bytes>.json` (FakePorts' mirror directory).
+std::filesystem::path mirror_file(const std::string& dir, const std::string& path) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string name;
+  for (const char c : path) {
+    const auto b = static_cast<unsigned char>(c);
+    name.push_back(kHex[b >> 4U]);
+    name.push_back(kHex[b & 15U]);
+  }
+  return std::filesystem::path(std::u8string(dir.begin(), dir.end())) / (name + ".json");
+}
+}  // namespace
+
 Json FakePorts::read_project(const std::string& path) {
   const auto it = files_.find(path);
-  if (it == files_.end()) fail(api::ErrorCode::io, "could not read '" + path + "': ENOENT");
-  return it->second;
+  if (it != files_.end()) return it->second;
+  if (!dir_.empty()) {
+    std::ifstream in(mirror_file(dir_, path), std::ios::binary);
+    if (in) {
+      std::ostringstream ss;
+      ss << in.rdbuf();
+      if (auto parsed = js::parse(ss.str())) return std::move(*parsed);
+    }
+  }
+  fail(api::ErrorCode::io, "could not read '" + path + "': ENOENT");
 }
 
 std::uint64_t FakePorts::write_project(const std::string& path, const Json& doc) {
   files_.insert_or_assign(path, doc);
-  return js::stringify(doc).size();
+  const std::string text = js::stringify(doc);
+  if (!dir_.empty()) {
+    std::ofstream out(mirror_file(dir_, path), std::ios::binary | std::ios::trunc);
+    out << text;
+  }
+  return text.size();
 }
 
 Json FilePorts::read_project(const std::string& path) {

@@ -229,6 +229,8 @@ through the engine's own catalog:
 | layer style key | `paths.styleParam('dropShadow', 'distance')` | `styles/dropShadow/distance` |
 | material / geometry / camera / light | `paths.material(p)` … | `material/metal` |
 | one member of a vector (X field, a colour channel) | `memberWrite(nodeId, track, n, seconds)` | a whole-value `PropertyWrite` (the API writes Position as one vec2) |
+| a static FIELD (G1): a Text component string / choice / switch / box number, an animator or selector field, Path Options ▸ Path, style runs, a fill paint | `fieldCommands(nodeId, path, raw)` (layout/Text/textEdits.ts); component props through `useComponentProp` go there on their own | `text/align`, `text/animators/a1/selectors/s1/basedOn`, `layer/fillPaint` — ENGINE_API.md §15.7 |
+| an optional animator property (Add ▸ Property) | `addAnimatorPropertiesEdit`, `removeAnimatorPropertyEdit` | `addProperties` / `removeProperties` |
 
 Values: `values.scalar/vec2/vec3/color/bool/choice/string/layer/json`.
 Colours are ONE value (`color`), not four `_r/_g/_b/_a` tracks.

@@ -17,6 +17,8 @@ import { useUIStore } from '@stores/uiStore';
 import { useModalStore, closeAllModals } from '@stores/modalStore';
 import type { SceneNode } from '@core/types';
 import { ReplaceFontsBody, REPLACE_FONTS_MODAL_ID } from './ReplaceFontsDialog';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
 class StubResizeObserver {
   observe(): void {}
@@ -86,7 +88,18 @@ describe('ReplaceFontsBody', () => {
     expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled();
   });
 
-  it('Replace writes layer fonts and run fonts in ONE undo entry', async () => {
+  it('Replace writes layer fonts and run fonts in ONE undo entry (engine: text/fontFamily + text/styleRuns)', async () => {
+    // The document on the app engine: the same two layers, built through the API.
+    const h = await setupAppEngine();
+    const mk = async (name: string): Promise<string> => (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
+    const a = await mk('Title');
+    const b = await mk('Lower third');
+    await h.batch('Setup', [
+      { type: 'setProperty', prop: { layer: a, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Brand Sans' } },
+      { type: 'setProperty', prop: { layer: b, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
+      { type: 'setProperty', prop: { layer: b, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }]) } },
+    ]);
+    getCommandSystem().getHistory().clear();
     localStorage.setItem(RECENT_FONTS_KEY, JSON.stringify(['Georgia']));
     const close = jest.fn();
     render(<ReplaceFontsBody usages={collectFontUsage(allNodes())} missingKeys={new Set(['brand sans'])} close={close} />);
@@ -98,16 +111,18 @@ describe('ReplaceFontsBody', () => {
 
     const replace = screen.getByRole('button', { name: 'Replace' });
     expect(replace).not.toBeDisabled();
-    fireEvent.click(replace);
+    await act(async () => { fireEvent.click(replace); await engineIdle(); });
 
     expect(close).toHaveBeenCalled();
-    expect(textProps('a').fontFamily).toBe('Georgia');
-    expect(textProps('b').fontFamily).toBe('Inter');
-    expect(readRuns(defaultSceneGraph.getNode('b')!)[0]!.style.fontFamily).toBe('Georgia');
+    expect(textProps(a).fontFamily).toBe('Georgia');
+    expect(textProps(b).fontFamily).toBe('Inter');
+    expect(readRuns(defaultSceneGraph.getNode(b)!)[0]!.style.fontFamily).toBe('Georgia');
+    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(1);
 
-    getCommandSystem().undo();
-    expect(textProps('a').fontFamily).toBe('Brand Sans');
-    expect(readRuns(defaultSceneGraph.getNode('b')!)[0]!.style.fontFamily).toBe('brand sans');
+    await act(async () => { await h.run({ type: 'undo' }); });
+    expect(textProps(a).fontFamily).toBe('Brand Sans');
+    expect(readRuns(defaultSceneGraph.getNode(b)!)[0]!.style.fontFamily).toBe('brand sans');
+    await h.dispose();
   });
 });
 

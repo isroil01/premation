@@ -931,6 +931,350 @@ Json migrate_document(Json doc) {
   fail(api::ErrorCode::io, "Migration chain from " + from + " did not terminate.");
 }
 
+// ── Document extras: guides, swatches, materials, transitions, plugin storage ──
+// The stores' document halves (guidesStore settings()/restore, swatchStore
+// normalizeSwatches, materialStore normalizeMaterials, transitionStore,
+// pluginStorage restoreProjectStorage/captureProjectStorage). No command edits
+// them (ENGINE_API.md §14.3); they ride through open → save unchanged.
+namespace {
+
+double clamp_round(double v, double lo, double hi) { return std::max(lo, std::min(hi, motion::js::round(v))); }
+
+bool is_camera_3d_mode(const Json& v) {
+  if (!v.is_string()) return false;
+  const std::string& s = v.str();
+  static const std::set<std::string, std::less<>> fixed = {"active", "front", "left", "top", "back", "right", "bottom",
+                                                            "custom1", "custom2", "custom3"};
+  return fixed.contains(s) || (s.size() > 7 && s.starts_with("camera:"));
+}
+
+bool is_hex_color(const Json& v) {  // /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+  if (!v.is_string()) return false;
+  const std::string& s = v.str();
+  if (s.empty() || s[0] != '#') return false;
+  const std::size_t n = s.size() - 1;
+  if (n != 3 && n != 4 && n != 6 && n != 8) return false;
+  return std::all_of(s.begin() + 1, s.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+}
+
+/// guidesStore sanitizeBookmarks.
+Json sanitize_bookmarks(const Json& raw) {
+  Json out = Json::object();
+  if (!raw.is_object()) return out;
+  for (const auto& m : raw.obj()) {
+    if (!m.value.is_array()) continue;
+    std::vector<std::pair<double, Json>> ok;
+    for (const Json& b : m.value.arr()) {
+      if (!b.is_object()) continue;
+      const Json& slot = b.at("slot");
+      if (!slot.is_number() || slot.num() < 1 || slot.num() > 9) continue;
+      if (!b.at("mode").is_string()) continue;
+      const Json& f = b.at("framing");
+      if (!f.is_object() || !f.at("zoom").is_number() || !f.at("center").is_object() || !f.at("center").at("x").is_number() ||
+          !f.at("center").at("y").is_number()) {
+        continue;
+      }
+      Json bm = Json::object();
+      const double s = motion::js::round(slot.num());
+      bm.set("slot", Json::number(s));
+      bm.set("name", b.at("name").is_string() ? b.at("name") : Json::string("Bookmark " + js::number_to_string(slot.num())));
+      bm.set("mode", is_camera_3d_mode(b.at("mode")) ? b.at("mode") : Json::string("active"));
+      Json center = Json::object();
+      center.set("x", f.at("center").at("x"));
+      center.set("y", f.at("center").at("y"));
+      Json framing = Json::object();
+      framing.set("center", std::move(center));
+      framing.set("zoom", f.at("zoom"));
+      bm.set("framing", std::move(framing));
+      if (truthy(b.at("customView"))) bm.set("customView", b.at("customView"));
+      ok.emplace_back(s, std::move(bm));
+    }
+    if (ok.empty()) continue;
+    std::stable_sort(ok.begin(), ok.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    Json list = Json::array();
+    for (auto& [s, bm] : ok) list.arr_mut().push_back(std::move(bm));
+    out.set(m.key, std::move(list));
+  }
+  return out;
+}
+
+/// guideGeometry sanitizeStoredGuides.
+Json sanitize_stored_guides(const Json& raw) {
+  Json out = Json::array();
+  if (!raw.is_array()) return out;
+  for (const Json& g : raw.arr()) {
+    if (!g.is_object()) continue;
+    const Json& axis = g.at("axis");
+    if (!axis.is_string() || (axis.str() != "x" && axis.str() != "y")) continue;
+    const double value = g.at("value").is_number()      ? g.at("value").num()
+                         : g.at("position").is_number() ? g.at("position").num()
+                                                        : std::nan("");
+    if (!std::isfinite(value)) continue;
+    Json o = Json::object();
+    o.set("axis", axis);
+    o.set("value", Json::number(value));
+    o.set("unit", Json::string(g.at("unit").is_string() && g.at("unit").str() == "%" ? "%" : "px"));
+    o.set("edge", Json::string(g.at("edge").is_string() && g.at("edge").str() == "end" ? "end" : "start"));
+    if (is_hex_color(g.at("color"))) o.set("color", g.at("color"));
+    if (g.at("locked").is_bool() && g.at("locked").b()) o.set("locked", Json::boolean(true));
+    out.arr_mut().push_back(std::move(o));
+  }
+  return out;
+}
+
+/// guidesStore.restore(s) over the current guides (only the keys `s` carries, as the store does).
+Json restore_guides(Json g, const Json& s) {
+  for (const char* k : {"rulers", "grid", "snapToGrid", "proportionalGrid", "safeArea", "motionPathVisible"}) {
+    if (s.at(k).is_bool()) g.set(k, s.at(k));
+  }
+  const Json& style = s.at("gridStyle");
+  if (style.is_string() && (style.str() == "lines" || style.str() == "dashed" || style.str() == "dots")) g.set("gridStyle", style);
+  const Json& dots = s.at("motionPathDots");
+  if (dots.is_string() && (dots.str() == "off" || dots.str() == "small" || dots.str() == "medium" || dots.str() == "large")) {
+    g.set("motionPathDots", dots);
+  }
+  if (s.at("gridSpacing").is_number()) g.set("gridSpacing", Json::number(clamp_round(s.at("gridSpacing").num(), 1, 10000)));
+  if (s.at("gridSubdivisions").is_number()) g.set("gridSubdivisions", Json::number(clamp_round(s.at("gridSubdivisions").num(), 1, 64)));
+  if (s.at("proportionalColumns").is_number()) g.set("proportionalColumns", Json::number(clamp_round(s.at("proportionalColumns").num(), 1, 64)));
+  if (s.at("proportionalRows").is_number()) g.set("proportionalRows", Json::number(clamp_round(s.at("proportionalRows").num(), 1, 64)));
+  if (s.at("gridColor").is_string()) g.set("gridColor", s.at("gridColor"));
+  const Json& oo = s.at("overlayOpacity");
+  g.set("overlayOpacity", Json::number(oo.is_number() ? (std::isfinite(oo.num()) ? std::max(0.2, std::min(1.0, oo.num())) : 1.0) : 1.0));
+  g.set("cameraBookmarks", sanitize_bookmarks(s.at("cameraBookmarks")));
+  g.set("userGuides", sanitize_stored_guides(s.at("userGuides")));
+  const Json& show = s.at("motionPathShow");
+  g.set("motionPathShow", Json::string(show.is_string() && (show.str() == "none" || show.str() == "window") ? show.str() : "all"));
+  if (s.at("motionPathWindowSeconds").is_number()) {
+    const double w = s.at("motionPathWindowSeconds").num();
+    g.set("motionPathWindowSeconds", Json::number(std::isfinite(w) ? std::max(0.1, std::min(600.0, w)) : 2.0));
+  }
+  // Legacy `gridDivisions` restores onto the proportional grid.
+  if (s.at("gridDivisions").is_number() && !s.at("proportionalColumns").is_number()) {
+    const double n = clamp_round(s.at("gridDivisions").num(), 1, 64);
+    g.set("proportionalColumns", Json::number(n));
+    g.set("proportionalRows", Json::number(n));
+  }
+  return g;
+}
+
+/// guidesStore.settings(): the persisted fields, the optional ones only when not default.
+Json guides_settings(const Json& g) {
+  Json out = Json::object();
+  for (const char* k : {"rulers", "grid", "gridSpacing", "gridSubdivisions", "snapToGrid", "gridColor", "gridStyle", "proportionalGrid",
+                        "proportionalColumns", "proportionalRows", "safeArea", "motionPathVisible", "motionPathDots"}) {
+    out.set(k, g.at(k));
+  }
+  if (g.at("cameraBookmarks").is_object() && !g.at("cameraBookmarks").obj().empty()) out.set("cameraBookmarks", g.at("cameraBookmarks"));
+  if (g.at("overlayOpacity").num() != 1) out.set("overlayOpacity", g.at("overlayOpacity"));
+  if (g.at("motionPathShow").str() != "all") {
+    out.set("motionPathShow", g.at("motionPathShow"));
+    out.set("motionPathWindowSeconds", g.at("motionPathWindowSeconds"));
+  }
+  if (g.at("userGuides").is_array() && !g.at("userGuides").arr().empty()) out.set("userGuides", g.at("userGuides"));
+  return out;
+}
+
+/// swatchStore canonicalHex.
+std::optional<std::string> canonical_hex(const Json& raw) {
+  if (!raw.is_string()) return std::nullopt;
+  std::string_view t = raw.str();
+  const auto ws = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; };
+  while (!t.empty() && ws(t.front())) t.remove_prefix(1);
+  while (!t.empty() && ws(t.back())) t.remove_suffix(1);
+  if (t.starts_with('#')) t.remove_prefix(1);
+  std::string body;
+  for (char c : t) {
+    if (std::isxdigit(static_cast<unsigned char>(c)) == 0) return std::nullopt;
+    body.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  }
+  if (body.empty()) return std::nullopt;
+  std::string full;
+  if (body.size() == 3 || body.size() == 4) {
+    for (char c : body) full.append(2, c);
+  } else if (body.size() == 6 || body.size() == 8) {
+    full = body;
+  } else {
+    return std::nullopt;
+  }
+  if (full.size() == 8 && full.ends_with("ff")) full.resize(6);
+  return "#" + full;
+}
+
+std::string upper(std::string s) {
+  for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  return s;
+}
+
+bool blank(const std::string& s) {
+  return std::all_of(s.begin(), s.end(), [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; });
+}
+
+/// swatchStore normalizeSwatches (an entry without a usable id: `sw_doc_<n>`).
+Json normalize_swatches(const Json& raw) {
+  Json out = Json::array();
+  if (!raw.is_array()) return out;
+  std::set<std::string, std::less<>> used;
+  std::size_t minted = 0;
+  for (const Json& e : raw.arr()) {
+    if (!e.is_object()) continue;
+    const auto hex = canonical_hex(e.at("hex"));
+    if (!hex) continue;
+    const Json& rid = e.at("id");
+    std::string id = rid.is_string() && !rid.str().empty() && !used.contains(rid.str()) ? rid.str() : std::string();
+    while (id.empty() || used.contains(id)) id = "sw_doc_" + std::to_string(++minted);
+    used.insert(id);
+    Json s = Json::object();
+    s.set("id", Json::string(id));
+    s.set("name", e.at("name").is_string() && !blank(e.at("name").str()) ? e.at("name") : Json::string(upper(*hex)));
+    s.set("hex", Json::string(*hex));
+    out.arr_mut().push_back(std::move(s));
+  }
+  return out;
+}
+
+/// material.ts normalizeMaterialParams.
+Json normalize_material_params(const Json& raw) {
+  const Json p = raw.is_object() ? raw : Json::object();
+  const auto num = [&p](const char* k, double fallback, double lo, double hi) {
+    const Json& v = p.at(k);
+    return v.is_number() && std::isfinite(v.num()) ? std::max(lo, std::min(hi, v.num())) : fallback;
+  };
+  const auto shadow = [](const Json& v) -> const char* {
+    if ((v.is_string() && v.str() == "only") || (v.is_number() && v.num() == 2)) return "only";
+    if ((v.is_bool() && !v.b()) || (v.is_string() && v.str() == "off") || (v.is_number() && v.num() == 0)) return "off";
+    if (v.is_number()) return v.num() >= 1.5 ? "only" : v.num() >= 0.5 ? "on" : "off";
+    return "on";
+  };
+  const Json& al = p.at("acceptsLights");
+  const bool acceptsLights = al.is_number() ? al.num() > 0.5 : (al.is_bool() && al.b());
+  const Json& sh = p.at("shading");
+  const char* shading = sh.is_string() && sh.str() == "pbr" ? "pbr" : sh.is_string() && sh.str() == "toon" ? "toon" : "phong";
+  Json o = Json::object();
+  o.set("castsShadows", Json::string(shadow(p.at("castsShadows"))));
+  o.set("acceptsShadows", Json::string(shadow(p.at("acceptsShadows"))));
+  o.set("acceptsLights", Json::boolean(acceptsLights));
+  o.set("lightTransmission", Json::number(num("lightTransmission", 0, 0, 100)));
+  o.set("ambient", Json::number(num("ambient", 100, 0, 100)));
+  o.set("diffuse", Json::number(num("diffuse", 50, 0, 100)));
+  o.set("metal", Json::number(num("metal", 0, 0, 100)));
+  o.set("specular", Json::number(num("specular", 0, 0, 100)));
+  o.set("shininess", Json::number(num("shininess", 32, 1, 512)));
+  o.set("shading", Json::string(shading));
+  o.set("roughness", Json::number(num("roughness", 50, 0, 100)));
+  o.set("toonBands", Json::number(motion::js::round(num("toonBands", 3, 2, 8))));
+  o.set("reflectionIntensity", Json::number(num("reflectionIntensity", 100, 0, 100)));
+  o.set("reflectionSharpness", Json::number(num("reflectionSharpness", 0, 0, 100)));
+  o.set("reflectionRolloff", Json::number(num("reflectionRolloff", 0, 0, 100)));
+  o.set("transparency", Json::number(num("transparency", 0, 0, 100)));
+  o.set("transparencyRolloff", Json::number(num("transparencyRolloff", 0, 0, 100)));
+  o.set("ior", Json::number(num("ior", 1.52, 1, 4)));
+  return o;
+}
+
+std::string trim_ws(const std::string& s) {
+  std::string_view t = s;
+  const auto ws = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; };
+  while (!t.empty() && ws(t.front())) t.remove_prefix(1);
+  while (!t.empty() && ws(t.back())) t.remove_suffix(1);
+  return std::string(t);
+}
+
+/// materialStore normalizeMaterials (deterministic ids for entries without one).
+Json normalize_materials(const Json& raw) {
+  Json out = Json::array();
+  if (!raw.is_array()) return out;
+  std::set<std::string, std::less<>> used;
+  std::size_t minted = 0;
+  for (const Json& e : raw.arr()) {
+    if (!e.is_object()) continue;
+    const Json& rid = e.at("id");
+    const bool keep = rid.is_string() && !rid.str().empty() && !used.contains(rid.str()) && !rid.str().starts_with("builtin:");
+    std::string id = keep ? rid.str() : std::string();
+    while (id.empty() || used.contains(id)) id = "mat_doc_" + std::to_string(++minted);
+    used.insert(id);
+    const Json& rn = e.at("name");
+    const std::string name = rn.is_string() && !blank(rn.str()) ? trim_ws(rn.str()) : "Material";
+    Json m = Json::object();
+    m.set("id", Json::string(id));
+    m.set("name", Json::string(name));
+    m.set("params", normalize_material_params(e.at("params")));
+    const Json& sw = e.at("swatch");
+    if (sw.is_string() && sw.str().size() == 7 && is_hex_color(sw)) {
+      std::string lower = sw.str();
+      for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      m.set("swatch", Json::string(lower));
+    }
+    out.arr_mut().push_back(std::move(m));
+  }
+  return out;
+}
+
+/// pluginStorage isScopeStore: plugin id → { key → string }.
+bool is_scope_store(const Json& v) {
+  if (!v.is_object()) return false;
+  for (const auto& m : v.obj()) {
+    if (!m.value.is_object()) return false;
+    for (const auto& kv : m.value.obj()) {
+      if (!kv.value.is_string()) return false;
+    }
+  }
+  return true;
+}
+
+/// captureProjectStorage: the non-empty bags, or undefined when none.
+Json capture_project_storage(const Json& store) {
+  Json out = Json::object();
+  if (!store.is_object()) return out;
+  for (const auto& m : store.obj()) {
+    if (m.value.is_object() && !m.value.obj().empty()) out.set(m.key, m.value);
+  }
+  return out;
+}
+
+/// restoreDocument's extras: present keys replace (swatches, materials,
+/// transitions) or merge (guides) over what the session held; plugin storage
+/// is assigned unconditionally.
+DocExtras restore_extras(const DocExtras& prev, const Json& doc) {
+  DocExtras x = prev;
+  x.pluginStorage = is_scope_store(doc.at("pluginStorage")) ? doc.at("pluginStorage") : Json::object();
+  if (truthy(doc.at("guides"))) x.guides = restore_guides(prev.guides, doc.at("guides"));
+  if (truthy(doc.at("swatches"))) x.swatches = normalize_swatches(doc.at("swatches"));
+  if (truthy(doc.at("materials"))) x.materials = normalize_materials(doc.at("materials"));
+  if (truthy(doc.at("transitions"))) x.transitions = doc.at("transitions");
+  return x;
+}
+
+}  // namespace
+
+DocExtras default_doc_extras() {
+  DocExtras x;
+  Json g = Json::object();
+  g.set("rulers", Json::boolean(false));
+  g.set("grid", Json::boolean(false));
+  g.set("gridSpacing", Json::number(100));
+  g.set("gridSubdivisions", Json::number(4));
+  g.set("snapToGrid", Json::boolean(false));
+  g.set("gridColor", Json::string("#ffffff14"));
+  g.set("gridStyle", Json::string("lines"));
+  g.set("proportionalGrid", Json::boolean(false));
+  g.set("proportionalColumns", Json::number(8));
+  g.set("proportionalRows", Json::number(6));
+  g.set("safeArea", Json::boolean(false));
+  g.set("motionPathVisible", Json::boolean(true));
+  g.set("motionPathDots", Json::string("small"));
+  g.set("cameraBookmarks", Json::object());
+  g.set("overlayOpacity", Json::number(1));
+  g.set("motionPathShow", Json::string("all"));
+  g.set("motionPathWindowSeconds", Json::number(2));
+  g.set("userGuides", Json::array());
+  x.guides = std::move(g);
+  x.swatches = Json::array();
+  x.materials = Json::array();
+  x.transitions = Json::object();
+  x.pluginStorage = Json::object();
+  return x;
+}
+
 Json capture_document(const Document& d, const EditorView& v) {
   Json doc = Json::object();
   doc.set("version", Json::string("1.1.0"));
@@ -955,17 +1299,19 @@ Json capture_document(const Document& d, const EditorView& v) {
   mbj.set("samples", Json::number(mb.samples));
   mbj.set("adaptiveSampleLimit", Json::number(mb.adaptiveSampleLimit));
   doc.set("motionBlur", std::move(mbj));
+  doc.set("guides", guides_settings(d.extras().guides));
   const ColorMgmt& cm = d.color();
   Json cmj = Json::object();
   cmj.set("workingSpace", Json::string(cm.workingSpace));
   cmj.set("displayTransform", Json::string(cm.displayTransform));
   cmj.set("bitDepth", Json::number(cm.bitDepth));
   doc.set("colorManagement", std::move(cmj));
-  // The engine document holds no swatches, materials or transitions: stated empty.
-  doc.set("swatches", Json::array());
-  doc.set("materials", Json::array());
-  doc.set("transitions", Json::object());
+  doc.set("swatches", d.extras().swatches);
+  doc.set("materials", d.extras().materials);
+  doc.set("transitions", d.extras().transitions);
   doc.set("openTabs", open_tabs_json(d, v));
+  // Absent when empty (captureProjectStorage), so such a document reads back byte-identical.
+  if (Json ps = capture_project_storage(d.extras().pluginStorage); !ps.obj().empty()) doc.set("pluginStorage", std::move(ps));
   // captureProjectItems: ALWAYS written, even empty — the key's presence marks a
   // document written by this build; its absence, an older file.
   const Items& items = d.items();
@@ -1157,6 +1503,7 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& input, co
       }
     }
   }
+  nd.extras_mut() = restore_extras(d.extras(), doc);
   d = std::move(nd);
   return result;
 }

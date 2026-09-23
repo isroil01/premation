@@ -168,7 +168,6 @@ export class LocalEngine extends EngineClientBase {
   private jump: { from: Parts; to: Parts } | null = null;
   /** The request's single EventBatch, delivered just before its response (§8.1). */
   private pendingBatch: EventBatch | null = null;
-  private gestureSeq = 0;
   private applying = 0;
   private stale = false;
   private currentSeq: number | undefined;
@@ -565,7 +564,19 @@ export class LocalEngine extends EngineClientBase {
         }
         const a = captureScope(scope);
         for (const [k, v] of b) if (!before.has(k)) before.set(k, v);
+        // A key only the AFTER capture has did not exist before this command
+        // (document scope enumerates the parts that exist). Its first-seen
+        // before is "absent" — a later command's before capture must not make
+        // it look pre-existing, or undoing the batch keeps what the earlier
+        // commands created (two createComposition in one batch left the first).
+        for (const k of a.keys()) if (!before.has(k)) before.set(k, undefined);
         for (const [k, v] of a) after.set(k, v);
+        // …and a key only the BEFORE capture has is gone after it: its
+        // last-seen after is "absent", not what an earlier command's after
+        // capture saw (an editWorkArea removing a layer after another comp's
+        // editWorkArea left the layer in the batch's after → no layersRemoved,
+        // and undo did not restore it).
+        for (const k of b.keys()) if (!a.has(k)) after.set(k, undefined);
         results.push({ type: cmd.type, ...result } as CommandResult);
         if (!batchLabel) label = plan.label ?? humanize(cmd.type);
         this.keyIndex.invalidate();
@@ -707,10 +718,11 @@ export class LocalEngine extends EngineClientBase {
       case 'beginGesture': {
         if (this.gesture) fail('gestureOpen', `gesture '${this.gesture.label}' is already open`);
         useHistoryStore.getState().flush();
-        this.gestureSeq += 1;
-        this.gesture = { id: this.gestureSeq, label: cmd.label, origin, before: new Map(), after: new Map(), startRevision: this.docRevision };
+        // The id comes from the id state (ids.ts), so a log header carries it.
+        const id = this.ids.nextGesture();
+        this.gesture = { id, label: cmd.label, origin, before: new Map(), after: new Map(), startRevision: this.docRevision };
         this.emitStatus();
-        return { gesture: this.gestureSeq };
+        return { gesture: id };
       }
       case 'endGesture': {
         const g = this.gesture;

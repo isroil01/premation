@@ -24,10 +24,10 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import {
   countInScope,
-  replaceAllInScope,
   textLayersInScope,
   type FindScope,
 } from '@core/textTools/textFindReplace';
+import { replaceTextEdit } from './textEdits';
 import styles from './TextDialogs.module.css';
 
 export const FIND_REPLACE_TEXT_MODAL_ID = 'find-replace-text';
@@ -60,10 +60,10 @@ export function FindReplaceTextBody({ close, initialScope }: { close: () => void
   );
 
   const replaceAll = (): void => {
-    // B3-legacy: engine gap — a replace re-indexes the layers' style runs (`text/sourceText` writes drop
-    // `__runs`, ENGINE_API.md §15.4) and rewrites Source Text keyframe values on layers of every comp; one runDocumentEdit entry.
-    const r = replaceAllInScope(scope, find, replacement, opts);
-    setDone(`Replaced ${plural(r.matches, 'match')} in ${plural(r.layers, 'layer')}.`);
+    // One engine batch: Source Text (+ its re-indexed style runs) or its keys, per layer.
+    void replaceTextEdit(scope, find, replacement, opts).then((r) => {
+      setDone(`Replaced ${plural(r.matches, 'match')} in ${plural(r.layers, 'layer')}.`);
+    });
   };
 
   const status = !find

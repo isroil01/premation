@@ -181,6 +181,7 @@ int run_engine(const EngineOptions& options) {
   SessionOptions sessionOptions;
   sessionOptions.engineVersion = kEngineVersion;
   sessionOptions.testPorts = options.testPorts;
+  sessionOptions.testPortsDir = options.testPortsDir;
   Session session(outbox, *sink, sessionOptions);
   int exitCode = kExitOk;
   bool running = true;

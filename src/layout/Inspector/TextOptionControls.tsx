@@ -16,8 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene, useSceneRevision } from '@stores/sceneStore';
-import { runDocumentEdit } from '@core/commands/documentEdit';
+import { useSceneRevision } from '@stores/sceneStore';
 import { readTextPathConfig, textPathPropPath, textPathParamValue, type TextPathParam } from '@core/text/textPath';
 import { axisPropPath, axisLabel, readFontAxesProp } from '@core/text/fontAxes';
 import { loadFamilyAxes, registeredAxisFallback, type FamilyAxes } from '@core/text/fontAxesLoader';
@@ -26,7 +25,7 @@ import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Icon } from '@components/Icon';
 import { AnimToggle } from './AnimToggle';
-import { useTextParam } from '@layout/Text/textEdits';
+import { fieldEdit, useTextParam } from '@layout/Text/textEdits';
 import styles from './CharacterPanel.module.css';
 
 function textComp(nodeId: string): { id: string; props: Record<string, unknown> } | null {
@@ -128,21 +127,8 @@ export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element
     if (a.tag === 'slnt') return typeof comp.props.fontSlant === 'number' ? comp.props.fontSlant : a.default;
     return stored[a.tag] ?? a.default;
   };
-  /**
-   * wght / wdth / slnt keep their static value in fontWeight (a string) /
-   * fontWidth / fontSlant while their keyframes live on the axis track; every
-   * other axis is stored under its track (`text/axes/<tag>`) and goes through
-   * the engine.
-   */
-  const REGISTERED: Readonly<Record<string, string>> = { wght: 'fontWeight', wdth: 'fontWidth', slnt: 'fontSlant' };
-  const writeRegistered = (tag: string, v: number): void => {
-    const key = REGISTERED[tag]!;
-    // B3-legacy: engine gap — a registered axis' static value lives in another prop than its track (fontWeight is a string); no API property addresses it.
-    runDocumentEdit(`Font Axis ${tag}`, () => {
-      defaultSceneGraph.writeProp(nodeId, comp.id, key, tag === 'wght' ? String(Math.round(v)) : v);
-      bumpScene();
-    });
-  };
+  // Every axis — wght / wdth / slnt included — is ONE engine property,
+  // `text/axes/<tag>` (G1): static value and keys through the same path.
 
   return (
     <div className={styles.sectionCard}>
@@ -171,7 +157,6 @@ export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element
               min={a.min}
               max={a.max}
               step={a.max - a.min <= 2 ? 0.01 : 1}
-              onStatic={REGISTERED[a.tag] ? (v) => writeRegistered(a.tag, v) : undefined}
             />
           ))}
         </div>
@@ -234,12 +219,10 @@ export function OpenTypeControls({ nodeId }: { nodeId: string }): JSX.Element | 
   const dlig = p.discretionaryLigatures === true;
   const calt = p.contextualAlternates !== false;
   const sets = Array.isArray(p.stylisticSets) ? (p.stylisticSets as number[]) : [];
-  const write = (label: string, key: string, value: unknown): void =>
-    // B3-legacy: engine gap — Text component OpenType props (booleans, the stylistic-set list) have no API property.
-    runDocumentEdit(label, () => {
-      defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
-      bumpScene();
-    });
+  // OpenType switches and the stylistic-set list are text fields (G1); undefined = the default.
+  const write = (label: string, key: string, value: unknown): void => {
+    void fieldEdit(label, nodeId, `text/${key}`, value);
+  };
   const NOTE = 'Applied through an installed-font alias (canvas has no font-feature API); a web font keeps its defaults.';
   const setItems: DropdownItem[] = Array.from({ length: 20 }, (_, i) => i + 1).map((n) => ({
     type: 'checkbox',

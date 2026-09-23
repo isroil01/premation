@@ -353,6 +353,7 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   s.motion_blur.shutter_phase = mb.shutterPhase;
   s.motion_blur.samples_per_frame = u32_of(mb.samples);
   s.motion_blur.adaptive_sample_limit = u32_of(mb.adaptiveSampleLimit);
+  s.motion_blur.enabled = mb.enabled;
   const Json& r3 = c.at("renderer3d");
   s.renderer3d = r3.is_string() ? enum_from_string<api::Renderer3d>(r3.str()).value_or(api::Renderer3d::classic)
                                 : api::Renderer3d::classic;

@@ -12,7 +12,6 @@ import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Icon } from '@components/Icon';
 import {
-  setNodeFill,
   makeStop,
   sortedStops,
   sortedOpacityStops,
@@ -27,6 +26,7 @@ import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { setFillPaintEdit } from './paintEdits';
 import effStyles from '../../Effects/EffectsPanel.module.css';
 
 /**
@@ -46,8 +46,8 @@ export function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: Fill
   const ramp = sortedOpacityStops(paint.opacityStops);
 
   const write = (next: OpacityStop[] | undefined): void => {
-    // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
-    setNodeFill(nodeId, { ...paint, opacityStops: next && next.length > 0 ? next : undefined });
+    // The primary fill paint, whole (`layer/fillPaint`, G1).
+    void setFillPaintEdit('Gradient Opacity Stops', nodeId, { ...paint, opacityStops: next && next.length > 0 ? next : undefined });
   };
 
   if (ramp.length === 0) {
@@ -167,7 +167,7 @@ export function StopList({
       // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
       updateNodeStrokeAt(nodeId, strokeIndex, { paint: { ...paint, stops: next } });
     } else {
-      setNodeFill(nodeId, { ...paint, stops: next });
+      void setFillPaintEdit('Gradient Stops', nodeId, { ...paint, stops: next });
     }
   };
   const toggleStopwatch = (): void => {

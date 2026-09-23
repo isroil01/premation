@@ -378,6 +378,76 @@ ResultOf<api::UngroupLayer> handle(const api::UngroupLayer& c, HCtx& x) {
   return out;
 }
 
+namespace {
+
+/// UTF-8 → UTF-16 code units (JavaScript's string order is by UTF-16 unit).
+std::u16string utf16_of(std::string_view s) {
+  std::u16string out;
+  for (std::size_t i = 0; i < s.size();) {
+    const auto b = static_cast<unsigned char>(s[i]);
+    std::uint32_t cp = b;
+    std::size_t n = 1;
+    if (b >= 0xF0) n = 4;
+    else if (b >= 0xE0) n = 3;
+    else if (b >= 0xC0) n = 2;
+    if (n > 1 && i + n <= s.size()) {
+      cp = b & (0xFFU >> (n + 1));
+      for (std::size_t k = 1; k < n; ++k) cp = (cp << 6U) | (static_cast<unsigned char>(s[i + k]) & 0x3FU);
+    } else {
+      n = 1;
+    }
+    if (cp >= 0x10000) {
+      cp -= 0x10000;
+      out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10U)));
+      out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FFU)));
+    } else {
+      out.push_back(static_cast<char16_t>(cp));
+    }
+    i += n;
+  }
+  return out;
+}
+
+/// An array-index key ("0", "17" … < 2^32 − 1): a JS object lists those first, ascending.
+std::optional<double> array_index(std::string_view k) {
+  if (k.empty() || k.size() > 10 || (k.size() > 1 && k[0] == '0')) return std::nullopt;
+  double v = 0;
+  for (const char ch : k) {
+    if (ch < '0' || ch > '9') return std::nullopt;
+    v = v * 10 + (ch - '0');
+  }
+  if (v >= 4294967295.0) return std::nullopt;
+  return v;
+}
+
+/// canonical.ts `sortKeys`: every object's keys in sorted order as a JS object
+/// holds them (array-index keys first, ascending; the rest by UTF-16 units),
+/// undefined members dropped.
+Json sort_keys(const Json& v) {
+  if (v.is_array()) {
+    Json a = Json::array();
+    for (const Json& x : v.arr()) a.arr_mut().push_back(sort_keys(x));
+    return a;
+  }
+  if (!v.is_object()) return v;
+  std::vector<const Json::Member*> members;
+  for (const auto& m : v.obj()) {
+    if (!m.value.is_undefined()) members.push_back(&m);
+  }
+  std::stable_sort(members.begin(), members.end(), [](const Json::Member* a, const Json::Member* b) {
+    const auto ia = array_index(a->key);
+    const auto ib = array_index(b->key);
+    if (ia && ib) return *ia < *ib;
+    if (ia || ib) return ia.has_value();
+    return utf16_of(a->key) < utf16_of(b->key);
+  });
+  Json o = Json::object();
+  for (const Json::Member* m : members) o.set(m->key, sort_keys(m->value));
+  return o;
+}
+
+}  // namespace
+
 api::DocumentFragment encode_fragment(const PCtx& c, const std::vector<std::string>& layers) {
   const Document& d = c.d;
   Json out = Json::array();
@@ -410,7 +480,8 @@ api::DocumentFragment encode_fragment(const PCtx& c, const std::vector<std::stri
   for (const auto& id : layers) visit(id);
   Json data = Json::object();
   data.set("layers", std::move(out));
-  const std::string text = js::stringify(data);
+  // Canonical key order (canonical.ts canonicalStringify): the same bytes the TS engine writes.
+  const std::string text = js::stringify(sort_keys(data));
   api::DocumentFragment f;
   f.version = kFragmentVersion;
   f.data.assign(text.begin(), text.end());

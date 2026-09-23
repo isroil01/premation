@@ -16,6 +16,8 @@ import { readParagraphBox } from '@core/text/textExtras';
 import { hasCanvas } from '@core/effects/__testHelpers__/canvasFidelity';
 import { buildTextCommands, TEXT_TOGGLE_ORIENTATION_COMMAND, toggleTextOrientation } from './textCommands';
 import { convertToPointText, setBoxAutoSize } from './paragraphTextCommands';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
 beforeAll(() => {
   const services: any = {
@@ -75,24 +77,37 @@ beforeEach(() => {
 });
 
 describe('Convert to Vertical/Horizontal Text', () => {
-  it('toggles orientation as one command', () => {
-    defaultSceneGraph.addNode(textNode({ content: '縦書き' }));
-    expect(toggleTextOrientation([ID])).toBe('vertical');
-    expect(textProps().orientation).toBe('vertical');
-    expect(toggleTextOrientation([ID])).toBe('horizontal');
-    expect(textProps().orientation).toBe('horizontal');
+  // A text LAYER on the app engine: the toggle is a `text/orientation` batch (G1).
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  let T = '';
+  const orientation = (): unknown => (defaultSceneGraph.getNode(T)!.components.find((c) => c.type === 'Text')!.props as Record<string, unknown>).orientation;
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    T = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: '縦書き', init: [] })).layer;
+  });
+  afterEach(async () => { await h.dispose(); });
+
+  it('toggles orientation as one command', async () => {
+    expect(toggleTextOrientation([T])).toBe('vertical');
+    await engineIdle();
+    expect(orientation()).toBe('vertical');
+    expect(toggleTextOrientation([T])).toBe('horizontal');
+    await engineIdle();
+    expect(orientation()).toBe('horizontal');
+    expect(historyLabels().slice(-2)).toEqual(['Convert to Vertical Text', 'Convert to Horizontal Text']);
     expect(toggleTextOrientation(['nope'])).toBeNull();
   });
 
-  it('is registered and enabled only with a text layer selected', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'x' }));
+  it('is registered and enabled only with a text layer selected', async () => {
     const cmd = buildTextCommands().find((c) => c.id === TEXT_TOGGLE_ORIENTATION_COMMAND)!;
     expect(cmd.label).toBe('Convert to Vertical/Horizontal Text');
+    useSelectionStore.setState({ ids: [] });
     expect(cmd.enabled!()).toBe(false);
-    useSelectionStore.setState({ ids: [ID] });
+    useSelectionStore.setState({ ids: [T] });
     expect(cmd.enabled!()).toBe(true);
     void cmd.execute({} as never);
-    expect(textProps().orientation).toBe('vertical');
+    await engineIdle();
+    expect(orientation()).toBe('vertical');
   });
 });
 

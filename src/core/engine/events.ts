@@ -35,15 +35,35 @@ export class EventBuilder {
   private props = new Map<string, Map<string, string>>();
   /** layer → path → JSON of the last keyframe list reported. */
   private keys = new Map<string, Map<string, string>>();
+  /**
+   * layer → paths whose keyframe list was reported before its cache row was
+   * dropped (the layer was removed, or its bar moved). When the layer is next
+   * reported, a path that is no longer animated gets its empty list: a mirror
+   * that kept the old list (it need not drop a removed layer's keys) would
+   * otherwise keep it forever — a multi-entry jumpToHistory that restores a
+   * removed layer AND un-keys it sent no keyframesChanged for that path.
+   */
+  private dropped = new Map<string, Set<string>>();
 
   reset(): void {
     this.props.clear();
     this.keys.clear();
+    this.dropped.clear();
   }
 
   /** Forget a layer (removed, or about to be re-reported whole). */
   forget(layerId: string): void {
     this.props.delete(layerId);
+    this.dropKeys(layerId);
+  }
+
+  /** Re-report the layer's keyframe lists next time, remembering which paths were reported. */
+  private dropKeys(layerId: string): void {
+    const cache = this.keys.get(layerId);
+    if (!cache) return;
+    const paths = this.dropped.get(layerId) ?? new Set<string>();
+    for (const path of cache.keys()) paths.add(path);
+    this.dropped.set(layerId, paths);
     this.keys.delete(layerId);
   }
 
@@ -110,7 +130,7 @@ export class EventBuilder {
           for (const nodeId of new Set([...Object.keys(b), ...Object.keys(a)])) {
             if (JSON.stringify(b[nodeId]) !== JSON.stringify(a[nodeId]) && graph.getNode(nodeId)?.parent) {
               touched.add(nodeId);
-              this.keys.delete(nodeId); // comp times of its keys moved with the bar
+              this.dropKeys(nodeId); // comp times of its keys moved with the bar
             }
           }
           break;
@@ -277,6 +297,11 @@ export class EventBuilder {
       out.push({ prop: { layer: layerId, path }, keyframes: [] });
       cache.delete(path);
     }
+    // Reported before the cache row was dropped and not animated now: empty too.
+    for (const path of [...(this.dropped.get(layerId) ?? [])].sort()) {
+      if (!live.has(path)) out.push({ prop: { layer: layerId, path }, keyframes: [] });
+    }
+    this.dropped.delete(layerId);
     this.keys.set(layerId, cache);
     return out;
   }

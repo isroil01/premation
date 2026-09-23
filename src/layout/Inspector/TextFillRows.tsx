@@ -26,12 +26,11 @@ import {
   type LinearFill,
   type RadialFill,
 } from '@core/paint/fill';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import { readTextStrokePaint } from '@core/text/textExtras';
 import { readGradientGeometryProp, writeGradientGeometryProp } from '@core/inspector/gradientGeometryProps';
 import { ColorPicker } from '@components/ColorPicker';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
-import { runDocumentEdit } from '@core/commands/documentEdit';
+import { setFillPaintEdit, setTextStrokePaintEdit } from './appearance/paintEdits';
 import { useGradientEditStore } from '@layout/Workspace/gradientEditStore';
 import { Icon } from '@components/Icon';
 import { AnimatablePaintRow } from './appearance/AnimatablePaintRow';
@@ -98,12 +97,9 @@ export function TextFillRows({ nodeId, textColor }: { nodeId: string; textColor:
 
   const setType = (next: TextFillType): void => {
     if (next === type) return;
-    // B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
-    runDocumentEdit('Text Fill Type', () => {
-      if (next === 'solid') setNodeFill(nodeId, undefined);
-      // A new gradient starts from the text's own colour.
-      else setNodeFill(nodeId, convertFill(gradient ?? solidFill(textColor ?? DEFAULT_TEXT_FILL), next));
-    });
+    // `layer/fillPaint` (G1). A new gradient starts from the text's own colour.
+    void setFillPaintEdit('Text Fill Type', nodeId,
+      next === 'solid' ? undefined : convertFill(gradient ?? solidFill(textColor ?? DEFAULT_TEXT_FILL), next));
   };
 
   return (
@@ -202,10 +198,8 @@ export function TextStrokeRows({ nodeId, strokeColor }: { nodeId: string; stroke
   const strokeArmed = armedId === nodeId && armedTarget === 'stroke';
 
   const write = (label: string, next: FillPaint | undefined): void => {
-    // B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
-    runDocumentEdit(label, () => {
-      updateNodeComponentProp(defaultSceneGraph, nodeId, tc.id, 'strokePaint', next);
-    });
+    // `text/strokePaint` (G1): the whole paint, one entry.
+    void setTextStrokePaintEdit(label, nodeId, next);
   };
   const setType = (next: TextFillType): void => {
     if (next === type) return;

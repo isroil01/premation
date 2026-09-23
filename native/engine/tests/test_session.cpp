@@ -9,9 +9,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <set>
 
 #include "core/catalog_data.hpp"
+#include "core/props.hpp"
+#include "core/ptree.hpp"
 #include "invariants.hpp"
 #include "session_harness.hpp"
 
@@ -589,4 +592,135 @@ TEST_CASE("session: the same request stream produces the same bytes", "[session]
   REQUIRE(a.decodeFailures == 0);
   REQUIRE(a.wireLog == b.wireLog);
   REQUIRE(a.frameMsgs == b.frameMsgs);
+}
+
+// ── G2: engine-internal correctness (both engines; crossEngine.test.ts replays the same) ──
+
+namespace {
+
+std::vector<api::Time> key_times(Harness& h, const api::LayerId& layer, const std::string& path) {
+  api::GetKeyframes q;
+  q.props = {api::PropRef{layer, path}};
+  const auto sets = query<api::KeyframeSets>(h, qry(q)).sets;
+  std::vector<api::Time> out;
+  if (!sets.empty()) {
+    for (const auto& k : sets.at(0).keyframes) out.push_back(k.time);
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("session: gesture ids live in the id state and survive New Project", "[session][history][g2]") {
+  Harness h;
+  (void)h.hello();
+  auto begin = [&] {
+    const auto r = h.run(cmd(api::BeginGesture{"g"}));
+    REQUIRE(is_ok(r));
+    const auto g = result_as<api::GestureRef>(r).gesture;
+    REQUIRE(is_ok(h.run(cmd(api::EndGesture{g, true}))));
+    return g;
+  };
+  REQUIRE(begin() == 1U);
+  REQUIRE(begin() == 2U);
+  REQUIRE(is_ok(h.run(cmd(api::NewProject{}))));
+  // A session counter: a gesture id is never reused while the engine lives.
+  REQUIRE(begin() == 3U);
+}
+
+TEST_CASE("session: applyPreset keys land at the composition time on an offset layer", "[session][g2]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  REQUIRE(is_ok(h.run(cmd(api::MoveLayersInTime{{layer}, kSec, false}))));
+  REQUIRE(is_ok(h.run(cmd(api::ApplyPreset{{layer}, "Fade In", 2 * kSec}))));
+  REQUIRE(key_times(h, layer, "transform/opacity") == std::vector<api::Time>{2 * kSec, 2 * kSec + kSec / 2});
+}
+
+TEST_CASE("session: a jump that restores a removed layer AND un-keys it sends the empty list", "[session][events][g2]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  const auto position = history(h).position;
+  REQUIRE(is_ok(add_key(h, layer, "transform/opacity", kSec, scalar(40))));
+  REQUIRE(is_ok(h.run(cmd(api::DeleteLayers{{layer}}))));
+  const std::size_t from = h.messages.size();
+  REQUIRE(is_ok(h.run(cmd(api::JumpToHistory{position}))));
+  bool emptied = false;
+  for (const auto& e : events_of<api::KeyframesChangedEvent>(h.events_since(from))) {
+    for (const auto& s : e.sets) {
+      if (s.prop.layer == layer && s.prop.path == "transform/opacity" && s.keyframes.empty()) emptied = true;
+    }
+  }
+  REQUIRE(emptied);
+  REQUIRE(key_times(h, layer, "transform/opacity").empty());
+}
+
+TEST_CASE("session: a batch creating two compositions undoes both", "[session][history][g2]") {
+  Harness h;
+  (void)h.hello();
+  const DocState before = state_of(h.session.document());
+  api::CreateComposition a;
+  a.settings.name = "One";
+  api::CreateComposition b;
+  b.settings.name = "Two";
+  REQUIRE(is_ok(h.batch("Two comps", {cmd(a), cmd(b)})));
+  REQUIRE(state_of(h.session.document()) != before);
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  REQUIRE(state_of(h.session.document()) == before);
+}
+
+// Hidden ([.bench]): where the time of a 10,000-value getPropertyValues goes.
+//   engine_tests.exe "[query-bench]"
+TEST_CASE("bench: getPropertyValues over 2,000 layers", "[.bench][query-bench]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  std::vector<api::Command> creates;
+  for (int i = 0; i < 2000; ++i) {
+    api::CreateLayer c;
+    c.comp = comp;
+    c.kind = i % 2 ? api::LayerKind::solid : api::LayerKind::shape;
+    creates.push_back(cmd(c));
+  }
+  const auto r = h.batch("Build", creates);
+  REQUIRE(is_ok(r));
+  std::vector<std::string> layers;
+  for (const auto& id : h.session.document().nodes().keys()) {
+    const auto* n = h.session.document().node(id);
+    if (n->parent && *n->parent == comp) layers.push_back(id);
+  }
+  api::GetPropertyValues q;
+  for (const auto& l : layers) {
+    for (const char* p : {"transform/anchorPoint", "transform/position", "transform/scale", "transform/rotation", "transform/opacity"}) q.props.push_back({l, p});
+  }
+  q.evaluated = false;
+  using C = std::chrono::steady_clock;
+  auto ms = [](C::time_point a) { return std::chrono::duration<double, std::milli>(C::now() - a).count(); };
+  auto t0 = C::now();
+  REQUIRE(is_ok(h.ask(qry(q))));
+  const double query = ms(t0);
+  t0 = C::now();
+  REQUIRE(is_ok(h.ask(qry(q))));
+  const double again = ms(t0);
+  t0 = C::now();
+  std::size_t n = 0;
+  for (const auto& l : layers) n += doc::catalog_for(h.session.document(), l).props.size();
+  const double catalogs = ms(t0);
+  t0 = C::now();
+  for (const auto& l : layers) n += doc::build_static_property_tree(h.session.document(), l).size();
+  const double trees = ms(t0);
+  std::vector<doc::Catalog> cats;
+  for (const auto& l : layers) cats.push_back(doc::catalog_for(h.session.document(), l));
+  const char* paths[] = {"transform/anchorPoint", "transform/position", "transform/scale", "transform/rotation", "transform/opacity"};
+  t0 = C::now();
+  for (std::size_t i = 0; i < layers.size(); ++i) for (const char* pp : paths) n += doc::is_animated(h.session.document(), layers[i], doc::require_binding(cats[i], pp)) ? 1 : 0;
+  const double anim = ms(t0);
+  t0 = C::now();
+  for (std::size_t i = 0; i < layers.size(); ++i) for (const char* pp : paths) n += doc::read_static(h.session.document(), layers[i], doc::require_binding(cats[i], pp)).kind() == api::Value::Kind::none ? 0 : 1;
+  const double stat = ms(t0);
+  WARN("is_animated x10000 " << anim << " ms; read_static x10000 " << stat << " ms");
+  WARN("query " << query << " ms (again at the same revision " << again << " ms); 2000 catalogs " << catalogs << " ms; 2000 static trees " << trees << " ms (" << n << ")");
 }

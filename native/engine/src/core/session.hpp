@@ -62,6 +62,8 @@ struct SessionOptions {
   std::string sessionId = "s1";
   /// The test harness's ports (in-memory projects, deterministic fake media).
   bool testPorts = false;
+  /// With testPorts: mirror the in-memory project files to this directory (FakePorts).
+  std::string testPortsDir;
 };
 
 class Session {
@@ -169,6 +171,8 @@ class Session {
   doc::Document doc_;
   doc::EditorView view_;
   doc::IdAllocator ids_;
+  /// Query-side catalog cache (queries.hpp QCtx::catalogs); cleared before every command.
+  std::unordered_map<std::string, doc::Catalog> catalogCache_;
   doc::KeyIndex keys_;
   doc::EventBuilder builder_;
   doc::ExprCache exprCache_;
@@ -182,7 +186,6 @@ class Session {
     doc::ChangeSet changes;
   };
   std::optional<Gesture> gesture_;
-  std::uint32_t gestureSeq_ = 0;
   api::Revision revision_ = 0;
   api::Revision savedRevision_ = 0;
   std::string projectPath_;

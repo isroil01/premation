@@ -66,7 +66,7 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
         if (r === 'gone') {
           useUIStore.getState().notify({ level: 'warning', message: 'That layer no longer exists.', durationMs: 3000 });
         } else if (r === 'legacy') {
-          // B3-legacy: engine gap — a solid's colour has no property path (`layer/fill` is not in the catalog), nor does an off-palette label colour; such an apply keeps the snapshot writer for the whole dialog (one step).
+          // B3-legacy: engine gap — an off-palette label colour has no API label index; such an apply keeps the snapshot writer for the whole dialog (one step).
           applyLayerSettings(nodeId, values);
         }
       });

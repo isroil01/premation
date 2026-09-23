@@ -107,28 +107,21 @@ export async function recordSession(opts: { engine?: LocalEngine } = {}): Promis
     );
   }
   await engine.batch('', []);
-  // Gesture ids are engine-assigned sequence numbers that are NOT part of the
-  // log header's id counters (report B5: engine gap), and a recorded
-  // `endGesture{gesture: n}` must name the same gesture on replay. Open and
-  // close an empty gesture to learn where the sequence stands; the replay
-  // brings a fresh engine to the same point before the first request.
-  const probe = await engine.beginGesture('');
-  const gestureSeq = probe.ok ? probe.value.gesture : 0;
-  if (probe.ok) await engine.endGesture(probe.value.gesture, true);
   await engine.whenIdle();
+  // The header's id counters include the gesture counter (ids.ts), so a
+  // recorded `endGesture{gesture: n}` names the same gesture on replay.
   engine.startLog();
-  const withSeq = (d: CommandLogData): CommandLogData => ({ ...d, header: { ...d.header, gestureSeq } as CommandLogData['header'] });
   let stopped: CommandLogData | null = null;
   let around = 0;
   const unsubscribe = engine.subscribe((batch) => {
     if (!stopped) for (const ev of batch.events) if (ev.type === 'documentReset' && ev.reason === 'resync') around += 1;
   });
   return {
-    snapshot: () => withSeq(stopped ?? engine.commandLog()),
+    snapshot: () => stopped ?? engine.commandLog(),
     get writesAroundEngine() { return around; },
     stop: () => {
       if (!stopped) {
-        stopped = withSeq(engine.commandLog());
+        stopped = engine.commandLog();
         unsubscribe();
       }
       return logToJsonl(stopped);
@@ -157,41 +150,20 @@ export async function replaySession(log: string | CommandLogData, opts: { engine
   const data = typeof log === 'string' ? logFromJsonl(log) : log;
   if (!data.header?.document) throw new CommandLogUnavailable('Not a command log: the header has no start document.');
   const engine = opts.engine ?? rebuildEngine('opened');
-  const gestureSeq = (data.header as { gestureSeq?: number }).gestureSeq ?? 0;
-  const result = gestureSeq > 0
-    ? await replayAligned(data, engine, gestureSeq, opts.checkHashes ?? false)
-    : await replayLog(data, engine, { checkHashes: opts.checkHashes ?? false });
+  const result = await replayLog(withGestureCounter(data), engine, { checkHashes: opts.checkHashes ?? false });
   await engine.whenIdle();
   if (!opts.engine) await engineIdle();
   return { ...result, document: canonicalJson() };
 }
 
 /**
- * `replayLog` (core/engine/replay.ts), with the gesture sequence brought to
- * where the recording's engine had it before the first request: empty
- * gestures change nothing (no revision, no history entry) and only advance
- * the counter. A target already past it cannot be aligned — reported as a
- * mismatch at index -1 and replayed anyway.
+ * A log recorded before the gesture counter joined the id counters (B5's
+ * recorder) carries it as `header.gestureSeq`: read it as the `gesture` counter.
  */
-async function replayAligned(data: CommandLogData, engine: LocalEngine, gestureSeq: number, checkHashes: boolean): Promise<ReplayResult> {
-  const first = data.records[0];
-  if (!first) return replayLog(data, engine, { checkHashes });
-  // Load the start document the way replayLog does, burn gestures, then
-  // replay the records with the header's load already done: replayLog loads
-  // again (idempotent, same header) and gestureSeq survives a load.
-  engine.loadDocument(data.header.document, { ids: data.header.ids, revision: data.header.revision, reason: 'resync', resetWorkspace: true });
-  let last = 0;
-  while (last < gestureSeq) {
-    const g = await engine.beginGesture('');
-    if (!g.ok) break;
-    last = g.value.gesture;
-    await engine.endGesture(last, true);
-  }
-  const result = await replayLog(data, engine, { checkHashes });
-  if (last !== gestureSeq) {
-    result.mismatches.unshift({ index: -1, what: 'outcome', expected: `gesture sequence ${gestureSeq}`, actual: `${last}` });
-  }
-  return result;
+function withGestureCounter(data: CommandLogData): CommandLogData {
+  const legacy = (data.header as { gestureSeq?: number }).gestureSeq;
+  if (legacy === undefined || data.header.ids.gesture !== undefined) return data;
+  return { ...data, header: { ...data.header, ids: { ...data.header.ids, gesture: legacy } } };
 }
 
 export { logToJsonl, logFromJsonl };

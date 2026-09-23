@@ -64,6 +64,11 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
 import { fail } from './errors';
 import { secondsToFlicks, flicksToSeconds } from './time';
+import { addFieldBindings, readField, writeField, type FieldRef } from './fields';
+import { parseTextPathPropPath } from '@core/text/textPath';
+
+/** The registered variable-font axes and the Text props their static values and keys live in (fontAxes.ts). */
+const AXIS_OF_MEMBER: Readonly<Record<string, string>> = { fontWeight: 'wght', fontWidth: 'wdth', fontSlant: 'slnt' };
 
 // ── Bindings ─────────────────────────────────────────────────────────
 
@@ -72,7 +77,11 @@ export type Special =
   | 'maskPath'
   | 'maskMode'
   | 'maskInverted'
-  | 'effectParam';
+  | 'effectParam'
+  /** A static field (fields.ts): text / animator / selector fields, style runs, the text path's mask. */
+  | 'field'
+  /** The layer's own solid fill colour (`layer/fill`, fields.ts), keyed through fill_r/_g/_b/_a. */
+  | 'layerFill';
 
 export interface PropBinding {
   path: string;
@@ -90,6 +99,8 @@ export interface PropBinding {
   maskId?: string;
   effectId?: string;
   paramKey?: string;
+  /** A `field` binding's storage (fields.ts). */
+  field?: FieldRef;
   animatable: boolean;
   separated?: boolean;
   unit: string;
@@ -177,6 +188,12 @@ function apiPathFor(
   if (paint) return `paint/${paint[1]}/${paint[2]}`;
   const axis = /^text\.axis\.([A-Za-z0-9]{4})$/.exec(prop);
   if (axis) return `text/axes/${axis[1]}`;
+  // wght / wdth / slnt: ONE API path per axis, like every other axis (G1).
+  const legacyAxis = AXIS_OF_MEMBER[prop];
+  if (legacyAxis) return `text/axes/${legacyAxis}`;
+  // AE's Text ▸ Path Options ▸ <param>.
+  const tp = parseTextPathPropPath(prop);
+  if (tp) return `text/pathOptions/${tp}`;
   const ta = parseAnimatorTrack(prop);
   if (ta) {
     const aid = animIds[ta.anim] ?? `#${ta.anim}`;
@@ -313,6 +330,11 @@ export function catalogFor(layerId: string): Catalog {
   // Masks without a mask-shape row (no rows are built for a mask with no paths).
   for (const p of mask?.paths ?? []) addMaskProps(p, add);
 
+  // G1: static fields (text / animator / selector fields, style runs, Path
+  // Options ▸ Path), Blur Y, the registered font axes and the layer's fill
+  // colour — before the unclaimed tracks below, which they claim.
+  addFieldBindings(node, layerId, animators, add, (p) => byPath.has(p));
+
   // Animated tracks the tree did not describe.
   const snap = defaultAnimation.snapshotNode(layerId);
   for (const prop of Object.keys(snap?.tracks ?? {})) {
@@ -359,6 +381,7 @@ export function catalogFor(layerId: string): Catalog {
       return { name: o ? o.type : seg[1]!, matchName: o ? `pathop:${o.type}` : seg[1]!, enabled: (o as { enabled?: boolean } | undefined)?.enabled !== false, kind: 'group' };
     }
     if (path === 'text/animators') return { name: 'Animators', matchName: 'ADBE Text Animators', enabled: true, kind: 'indexedGroup' };
+    if (path === 'text/pathOptions') return { name: 'Path Options', matchName: 'ADBE Text Path Options', enabled: true, kind: 'group' };
     if (seg[0] === 'text' && seg[1] === 'animators' && seg.length === 3) {
       const a = animators.find((x) => x.id === seg[2]);
       return { name: a?.name ?? `Animator ${animators.indexOf(a!) + 1}`, matchName: 'ADBE Text Animator', enabled: a?.enabled !== false, kind: 'group' };
@@ -621,6 +644,9 @@ export function readStatic(layerId: string, b: PropBinding): Value {
       if (b.valueType === 'string') return { kind: 'string', value: typeof v === 'string' ? v : '' };
       return { kind: 'json', value: JSON.stringify(v ?? null) };
     }
+    case 'field':
+    case 'layerFill':
+      return readField(node, b);
     default: break;
   }
   if (b.colorBase) {
@@ -725,6 +751,10 @@ export function writeStatic(layerId: string, b: PropBinding, value: Value): void
       updateEffectParam(layerId, b.effectId!, b.paramKey!, v as never);
       return;
     }
+    case 'field':
+    case 'layerFill':
+      writeField(layerId, node, b, value);
+      return;
     default: break;
   }
   if (b.dataTrack) fail('unsupported', `'${b.path}' has no static value in this engine; key it instead`, { path: b.path });
@@ -1017,6 +1047,9 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
 }
 
 function staticNum(layerId: string, b: PropBinding, i: number): number {
+  // The layer's fill colour is a hex string on a component (or a paint object):
+  // its channels have no numeric static seam.
+  if (b.special === 'layerFill') return numbersOfLoose(readStatic(layerId, b))[i] ?? 0;
   const v = readStaticPropertyValue(layerId, b.members[i]!);
   return v ?? 0;
 }
@@ -1076,7 +1109,9 @@ export function dropKeys(layerId: string, b: PropBinding, times: number[]): void
     });
   } else if (emptied && b.colorBase) {
     const c = lastValues;
-    writeColorBase(nodeOf(layerId), b.colorBase, { r: c[0] ?? 0, g: c[1] ?? 0, b: c[2] ?? 0, a: c[3] ?? 1 });
+    const color: Color = { r: c[0] ?? 0, g: c[1] ?? 0, b: c[2] ?? 0, a: c[3] ?? 1 };
+    if (b.special === 'layerFill') writeField(layerId, nodeOf(layerId), b, { kind: 'color', value: color });
+    else writeColorBase(nodeOf(layerId), b.colorBase, color);
   }
 }
 

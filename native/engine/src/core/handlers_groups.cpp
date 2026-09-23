@@ -1535,7 +1535,10 @@ ResultOf<api::ApplyPreset> handle(const api::ApplyPreset& c, HCtx& x) {
       if (a.at("id").is_string()) beforeAnim.insert(a.at("id").str());
       else beforeAnimUndefined = true;
     }
-    if (!apply_preset(x, *preset, layer, atTime)) {
+    // `time` is composition time; the preset's keys go on the layer's keyframe
+    // axis (start offset, stretch, remap) — groups.ts applyPreset.
+    const double layerTime = comp_to_keyframe_time(d, x.view, layer, atTime);
+    if (!apply_preset(x, *preset, layer, layerTime)) {
       fail(ErrorCode::invalid_argument, "preset '" + name + "' does not apply to layer '" + layer + "'", {.layer = layer});
     }
     // The preset code mints clock-based ids; replace them with engine ids so replay is exact.

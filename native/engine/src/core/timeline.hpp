@@ -49,6 +49,21 @@ void tl_sync_all(Document& d);
 [[nodiscard]] std::string tl_owner_comp(const Document& d, const EditorView& v, std::string_view node);
 /// `getLayersForNode`: the node's bars, sorted by start (stable).
 [[nodiscard]] std::vector<const Bar*> tl_bars_for_node(const Document& d, const EditorView& v, std::string_view node);
+
+/// While one is alive (on this thread), the document is READ ONLY — a query —
+/// and `tl_bars_for_node` answers from a per-timeline index (source id → bars,
+/// by start) built once, instead of scanning every bar of the composition per
+/// call. A query that samples every property of every layer called it several
+/// times per value: O(values × bars). Never open one around an edit.
+class TlReadScope {
+ public:
+  TlReadScope();
+  ~TlReadScope();
+  TlReadScope(const TlReadScope&) = delete;
+  TlReadScope& operator=(const TlReadScope&) = delete;
+  TlReadScope(TlReadScope&&) = delete;
+  TlReadScope& operator=(TlReadScope&&) = delete;
+};
 [[nodiscard]] double tl_fps_for_node(const Document& d, const EditorView& v, std::string_view node);
 [[nodiscard]] double tl_duration_for_node(const Document& d, const EditorView& v, std::string_view node);
 

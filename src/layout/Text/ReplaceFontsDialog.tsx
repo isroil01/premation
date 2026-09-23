@@ -20,7 +20,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { FontPicker } from '@layout/Inspector/FontPicker';
 import { collectFontUsage, familyKey, type FontUsage } from '@core/fonts/missingFonts';
 import { detectFontAvailability } from '@core/fonts/fontAvailability';
-import { replaceFontFamilies } from '@core/fonts/replaceFonts';
+import { replaceFontFamiliesEdit } from './textEdits';
 import type { SceneNode } from '@core/types';
 import styles from './TextDialogs.module.css';
 
@@ -49,12 +49,13 @@ export function ReplaceFontsBody({ usages, missingKeys, close }: ReplaceFontsBod
   const pending = Object.entries(choices).filter(([from, to]) => to && familyKey(to) !== familyKey(from));
 
   const apply = (): void => {
-    // B3-legacy: engine gap — fontFamily is a Text component string (no API property) and the swap also rewrites style runs (`__runs`).
-    const { layers } = replaceFontFamilies(new Map(pending));
-    useUIStore.getState().notify({
-      level: 'success',
-      message: `Replaced fonts on ${layers} layer${layers === 1 ? '' : 's'}`,
-      durationMs: 2600,
+    // One engine batch: `text/fontFamily` + `text/styleRuns` on every layer that uses a replaced font.
+    void replaceFontFamiliesEdit(new Map(pending)).then((layers) => {
+      useUIStore.getState().notify({
+        level: 'success',
+        message: `Replaced fonts on ${layers} layer${layers === 1 ? '' : 's'}`,
+        durationMs: 2600,
+      });
     });
     close();
   };

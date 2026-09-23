@@ -872,6 +872,8 @@ struct RenamePropertyGroup;
 struct CopyPropertyGroups;
 struct ApplyPreset;
 struct InvokeEffectAction;
+struct AddProperties;
+struct RemoveProperties;
 struct MarkerOwner;
 struct MarkerInsert;
 struct AddMarkers;
@@ -960,6 +962,7 @@ struct PropertyWriteResult;
 struct ExpressionDiagnostic;
 struct ExpressionResult;
 struct KeyframeIds;
+struct PropertyPaths;
 struct MarkerIds;
 struct JobRef;
 struct CommandResult;
@@ -1514,6 +1517,7 @@ struct MotionBlurSettings {
   double shutter_phase = 0.0;
   std::uint32_t samples_per_frame = 0;
   std::uint32_t adaptive_sample_limit = 0;
+  std::optional<bool> enabled;
   bool operator==(const MotionBlurSettings&) const = default;
 };
 
@@ -2098,6 +2102,17 @@ struct InvokeEffectAction {
   bool operator==(const InvokeEffectAction&) const = default;
 };
 
+struct AddProperties {
+  PropRef parent;
+  std::vector<std::string> names;
+  bool operator==(const AddProperties&) const = default;
+};
+
+struct RemoveProperties {
+  std::vector<PropRef> props;
+  bool operator==(const RemoveProperties&) const = default;
+};
+
 struct MarkerOwner {
   ItemId comp;
   std::optional<LayerId> layer;
@@ -2461,6 +2476,8 @@ struct Command {
     copy_property_groups = 608,
     apply_preset = 609,
     invoke_effect_action = 610,
+    add_properties = 611,
+    remove_properties = 612,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -2484,7 +2501,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -2828,6 +2845,11 @@ struct KeyframeIds {
   bool operator==(const KeyframeIds&) const = default;
 };
 
+struct PropertyPaths {
+  std::vector<PropPath> paths;
+  bool operator==(const PropertyPaths&) const = default;
+};
+
 struct MarkerIds {
   std::vector<MarkerId> ids;
   bool operator==(const MarkerIds&) const = default;
@@ -2939,6 +2961,8 @@ struct CommandResult {
     copy_property_groups = 608,
     apply_preset = 609,
     invoke_effect_action = 610,
+    add_properties = 611,
+    remove_properties = 612,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -2962,7 +2986,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -4523,6 +4547,10 @@ void encode(wire::Writer& w, const ApplyPreset& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ApplyPreset& out);
 void encode(wire::Writer& w, const InvokeEffectAction& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, InvokeEffectAction& out);
+void encode(wire::Writer& w, const AddProperties& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AddProperties& out);
+void encode(wire::Writer& w, const RemoveProperties& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RemoveProperties& out);
 void encode(wire::Writer& w, const MarkerOwner& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerOwner& out);
 void encode(wire::Writer& w, const MarkerInsert& v);
@@ -4699,6 +4727,8 @@ void encode(wire::Writer& w, const ExpressionResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ExpressionResult& out);
 void encode(wire::Writer& w, const KeyframeIds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, KeyframeIds& out);
+void encode(wire::Writer& w, const PropertyPaths& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PropertyPaths& out);
 void encode(wire::Writer& w, const MarkerIds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerIds& out);
 void encode(wire::Writer& w, const JobRef& v);

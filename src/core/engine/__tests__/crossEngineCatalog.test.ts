@@ -42,6 +42,7 @@ import { LABEL_COLORS } from '@core/scene/labelColor';
 import { STROKE_TRACK_PARAMS, STROKE_DASH_PARAMS } from '@core/rendering/strokeTracks';
 import { MASK_PROPERTY_KEYS } from '@core/effects/mask';
 import { TEXT_PATH_PARAMS } from '@core/text/textPath';
+import { TEXT_FIELDS, ANIMATOR_FIELDS, ANIMATOR_OPTIONAL_FIELDS, SELECTOR_FIELDS, SELECTOR_KIND_PARAMS } from '@core/text/textFields';
 import { listPresets } from '@core/animation/animationPresets';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { defaultPrimitiveSpec, makePrimitiveComponent } from '@core/scene/primitiveLayer';
@@ -154,6 +155,8 @@ function data(): unknown {
       label: PAINT_KEY_LABEL, unit: PAINT_KEY_UNIT, percentKeys: [...PAINT_PERCENT_KEYS],
     },
     strokeTracks: { params: STROKE_TRACK_PARAMS, dash: STROKE_DASH_PARAMS },
+    // G1: the static fields of text layers, animators and selectors (fields.ts / fields.cpp).
+    fields: { text: TEXT_FIELDS, animator: ANIMATOR_FIELDS, animatorOptional: ANIMATOR_OPTIONAL_FIELDS, selector: SELECTOR_FIELDS, selectorKindParams: SELECTOR_KIND_PARAMS },
     maskKeys: MASK_PROPERTY_KEYS,
     textPathParams: TEXT_PATH_PARAMS,
     labels: LABEL_COLORS,

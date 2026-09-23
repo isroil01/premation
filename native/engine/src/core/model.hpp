@@ -234,6 +234,25 @@ struct ColorMgmt {
 using RenderQueue = std::vector<api::RenderItemInfo>;
 using IdList = std::vector<std::string>;
 
+/// Authored document state no engine command edits (ENGINE_API.md §14.3):
+/// saved with the project and read back on open, exactly as the TS stores do
+/// (docio.cpp). Not journaled — no command changes it, so no undo entry can.
+struct DocExtras {
+  /// guidesStore: every persisted field (settings() writes the defaults-omitted form).
+  Json guides;
+  /// swatchStore.list(): `{id, name, hex}` in the user's order.
+  Json swatches;
+  /// materialStore.list(): project materials only.
+  Json materials;
+  /// transitionStore.capture(): comp id → transition records.
+  Json transitions;
+  /// pluginStorage (project scope): plugin id → key → string.
+  Json pluginStorage;
+};
+
+/// A new project's extras (projectDocumentIO.createEmpty + the stores' defaults).
+[[nodiscard]] DocExtras default_doc_extras();
+
 [[nodiscard]] api::ProjectSettings default_project_settings();
 
 // ── Parts ────────────────────────────────────────────────────────────────
@@ -289,6 +308,9 @@ class Document {
   [[nodiscard]] const RenderQueue& render_queue() const noexcept { return *rq_; }
   [[nodiscard]] const MotionBlur& motion_blur() const noexcept { return *mb_; }
   [[nodiscard]] const ColorMgmt& color() const noexcept { return *cm_; }
+  /// Swatches, materials, guides, transitions, plugin storage (not journaled).
+  [[nodiscard]] const DocExtras& extras() const noexcept { return extras_; }
+  DocExtras& extras_mut() noexcept { return extras_; }
   [[nodiscard]] const OrderedMap<Ptr<Node>>& nodes() const noexcept { return nodes_; }
   [[nodiscard]] const OrderedMap<Ptr<NodeAnim>>& anims() const noexcept { return anims_; }
   [[nodiscard]] const OrderedMap<Ptr<Json>>& comps() const noexcept { return comps_; }
@@ -366,6 +388,7 @@ class Document {
   Ptr<RenderQueue> rq_;
   Ptr<MotionBlur> mb_;
   Ptr<ColorMgmt> cm_;
+  DocExtras extras_ = default_doc_extras();
   std::unique_ptr<Parts> journal_;
   std::unordered_set<std::string> tlTouched_;
   bool tlAllDirty_ = true;

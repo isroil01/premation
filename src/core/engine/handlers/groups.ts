@@ -48,6 +48,7 @@ import { graph, requireLayer } from '../doc';
 import { newScope, scopeLayer, type Scope } from '../state';
 import { catalogFor, requireBinding, writeStatic, bezierToPoints } from '../props';
 import { flicksToSeconds } from '../time';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import type { HandlerTable, HandlerCtx } from '../handler';
 import { plural } from './common';
 
@@ -517,7 +518,11 @@ export const groupHandlers: HandlerTable = {
         for (const layer of cmd.layers) {
           const beforeFx = new Set(getNodeEffects(layer).map((e) => e.id));
           const beforeAnim = new Set(readAnimatorData(graph.getNode(layer)!).map((a) => a.id));
-          if (!applyPreset(preset, layer, flicksToSeconds(cmd.time))) fail('invalidArgument', `preset '${preset.name}' does not apply to layer '${layer}'`, { layer });
+          // `time` is composition time (the API's axis); the preset's keys are
+          // written on the layer's keyframe axis (start offset, stretch, remap),
+          // like AE placing a preset's first key at the CTI on any layer.
+          const at = compToKeyframeTime(layer, flicksToSeconds(cmd.time));
+          if (!applyPreset(preset, layer, at)) fail('invalidArgument', `preset '${preset.name}' does not apply to layer '${layer}'`, { layer });
           // The preset code mints clock-based ids; replace them with engine ids so replay is exact.
           for (const e of getNodeEffects(layer)) {
             if (beforeFx.has(e.id)) continue;

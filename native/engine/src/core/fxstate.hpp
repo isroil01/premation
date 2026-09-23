@@ -155,7 +155,7 @@ struct PaintColorRef {
   char channel = 'r';
 };
 [[nodiscard]] std::optional<PaintColorRef> parse_paint_color_path(std::string_view prop);
-[[nodiscard]] double read_paint_stroke_value(const Json& stroke, std::string_view key);
+[[nodiscard]] std::optional<double> read_paint_stroke_value(const Json& stroke, std::string_view key);
 [[nodiscard]] Json paint_stroke_patch(const Json& stroke, std::string_view key, double value);
 void update_paint_stroke(Document& d, std::string_view nodeId, std::string_view strokeId, const Json& patch);
 
@@ -165,5 +165,18 @@ struct MaskPropRef {
   std::string key;  ///< feather | opacity | expansion
 };
 [[nodiscard]] std::optional<MaskPropRef> parse_mask_prop_path(std::string_view prop);
+
+// ── gradient geometry (inspector/gradientGeometryProps.ts) ──────────────────
+// fillAngle / fillCenterX|Y / fillRadius (the layer's gradient fill) and
+// strokeAngle / strokeCenterX|Y / strokeRadius (a text layer's stroke gradient):
+// keyframeable scalars whose static value lives inside a paint object.
+
+[[nodiscard]] bool is_gradient_geometry_prop(std::string_view prop);
+/// The static value; nullopt when the layer has no such gradient or its type lacks the field.
+[[nodiscard]] std::optional<double> read_gradient_geometry_prop(const Node& n, std::string_view prop);
+/// Write it back into its paint (a fill: setNodeFill incl. the fill stack; a text stroke).
+bool write_gradient_geometry_prop(Document& d, std::string_view nodeId, std::string_view prop, double value);
+/// A TEXT layer's gradient geometry rows: the fill gradient's, then the stroke gradient's.
+[[nodiscard]] std::vector<std::string> gradient_geometry_props_for(const Node& n);
 
 }  // namespace premation::doc

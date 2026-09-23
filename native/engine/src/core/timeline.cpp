@@ -316,10 +316,46 @@ std::string tl_owner_comp(const Document& d, const EditorView& v, std::string_vi
   return v.tabComp;
 }
 
+namespace {
+
+/// TlReadScope's state: the depth, and per timeline VERSION (entities are
+/// immutable while a read scope is open) its bars grouped by source id.
+struct BarIndex {
+  int depth = 0;
+  std::unordered_map<const Timeline*, std::unordered_map<std::string, std::vector<const Bar*>>> byTimeline;
+};
+thread_local BarIndex g_barIndex;
+
+const std::unordered_map<std::string, std::vector<const Bar*>>& bar_index_of(const Timeline& t) {
+  auto [it, fresh] = g_barIndex.byTimeline.try_emplace(&t);
+  if (fresh) {
+    for (const Bar& b : t.bars) {
+      if (b.sourceId) it->second[*b.sourceId].push_back(&b);
+    }
+    for (auto& [id, list] : it->second) {
+      std::stable_sort(list.begin(), list.end(), [](const Bar* a, const Bar* b) { return a->clip.start < b->clip.start; });
+    }
+  }
+  return it->second;
+}
+
+}  // namespace
+
+TlReadScope::TlReadScope() { ++g_barIndex.depth; }
+TlReadScope::~TlReadScope() {
+  if (--g_barIndex.depth == 0) g_barIndex.byTimeline.clear();
+}
+
 std::vector<const Bar*> tl_bars_for_node(const Document& d, const EditorView& v, std::string_view node) {
   std::vector<const Bar*> out;
   const Timeline* t = d.timeline(tl_owner_comp(d, v, node));
   if (t == nullptr) return out;
+  if (g_barIndex.depth > 0) {
+    const auto& idx = bar_index_of(*t);
+    const auto it = idx.find(std::string(node));
+    if (it != idx.end()) out = it->second;
+    return out;
+  }
   for (const Bar& b : t->bars) {
     if (b.sourceId && *b.sourceId == node) out.push_back(&b);
   }

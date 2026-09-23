@@ -68,6 +68,7 @@ struct Registry {
   Json pathOps;        ///< {type: {params: [...], default: {...}}}
   Json polystar;       ///< {params, star, polygon, default}
   Json animators;      ///< {animatorParams, selectorParams, optional, defaultAnimator, selectors}
+  Json fields;         ///< G1 textFields.ts: {text, animator, animatorOptional, selector, selectorKindParams}
   Json paint;
   Json strokeTracks;
   std::vector<std::string> maskKeys;

@@ -122,12 +122,14 @@ export function normalizeMaterials(raw: unknown): NamedMaterial[] {
   if (!Array.isArray(raw)) return [];
   const out: NamedMaterial[] = [];
   const usedIds = new Set<string>();
+  // A document entry without a usable id gets `mat_doc_<n>`, not a clock-based
+  // id: opening the same file must give the same ids (replay, the C++ engine).
+  let minted = 0;
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
     const rec = entry as Partial<NamedMaterial>;
-    const id = typeof rec.id === 'string' && rec.id && !usedIds.has(rec.id) && !rec.id.startsWith('builtin:')
-      ? rec.id
-      : materialId();
+    let id = typeof rec.id === 'string' && rec.id && !usedIds.has(rec.id) && !rec.id.startsWith('builtin:') ? rec.id : '';
+    while (!id || usedIds.has(id)) id = `mat_doc_${++minted}`;
     usedIds.add(id);
     const name = typeof rec.name === 'string' && rec.name.trim() ? rec.name.trim() : 'Material';
     const swatch = typeof rec.swatch === 'string' && /^#[0-9a-fA-F]{6}$/.test(rec.swatch)

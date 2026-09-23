@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <iterator>
+#include <cmath>
+#include <limits>
 #include <set>
+#include <type_traits>
+#include <variant>
 
 #include "fail.hpp"
 #include "readmodel.hpp"
@@ -11,6 +15,31 @@
 
 namespace premation::doc {
 namespace {
+
+/// events.ts compares JSON.stringify(info): NaN and null print alike, so a
+/// NaN value is "the same" as the NaN it was (C++ == says NaN != NaN).
+bool same_info(const api::PropertyInfo& a, const api::PropertyInfo& b) {
+  if (a == b) return true;
+  api::PropertyInfo x = a;
+  api::PropertyInfo y = b;
+  for (api::PropertyInfo* i : {&x, &y}) {
+    if (!i->value) continue;
+    std::visit(
+        [](auto& v) {
+          using T = std::decay_t<decltype(v)>;
+          const auto z = [](double& d) {
+            if (std::isnan(d)) d = std::numeric_limits<double>::lowest();
+          };
+          if constexpr (std::is_same_v<T, double>) z(v);
+          else if constexpr (std::is_same_v<T, api::Vec2>) { z(v.x); z(v.y); }
+          else if constexpr (std::is_same_v<T, api::Vec3>) { z(v.x); z(v.y); z(v.z); }
+          else if constexpr (std::is_same_v<T, api::Vec4>) { z(v.x); z(v.y); z(v.z); z(v.w); }
+          else if constexpr (std::is_same_v<T, api::Color>) { z(v.r); z(v.g); z(v.b); z(v.a); }
+        },
+        i->value->v);
+  }
+  return x == y;
+}
 
 /// A timeline's clip geometry per node (captureClipGeometry: bars grouped by sourceId, track order).
 std::map<std::string, std::vector<Clip>> geometry_of(const Timeline* t) {
@@ -156,7 +185,7 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
       const Node* live = d.node(nodeId);
       if (live != nullptr && live->parent) {
         touch(nodeId);
-        keys_.erase(nodeId);  // comp times of its keys moved with the bar
+        drop_keys(nodeId);  // comp times of its keys moved with the bar
       }
     }
     if (geomChanged) geometryComps.insert(comp);
@@ -301,7 +330,7 @@ void EventBuilder::layer_properties(const PCtx& c, const std::string& layer, std
     api::PropertyInfo info = property_info(c, layer, cat, b);
     seenProps.insert(b.path);
     const auto it = cache.infos.find(b.path);
-    if (it == cache.infos.end() || !(it->second == info)) {
+    if (it == cache.infos.end() || !same_info(it->second, info)) {
       cache.infos.insert_or_assign(b.path, info);
       changedInfos.push_back(std::move(info));
     }
@@ -363,6 +392,13 @@ void EventBuilder::layer_keyframes(const PCtx& c, const std::string& layer, std:
     }
     out.push_back(api::KeyframeSet{api::PropRef{layer, it->first}, {}});
     it = cache.erase(it);
+  }
+  // Reported before the cache row was dropped and not animated now: empty too.
+  if (const auto d = dropped_.find(layer); d != dropped_.end()) {
+    for (const auto& path : d->second) {
+      if (!live.contains(path)) out.push_back(api::KeyframeSet{api::PropRef{layer, path}, {}});
+    }
+    dropped_.erase(d);
   }
 }
 

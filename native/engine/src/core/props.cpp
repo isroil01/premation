@@ -1,11 +1,14 @@
 #include "props.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdlib>
 #include <set>
 
 #include "catalog_data.hpp"
 #include "fail.hpp"
+#include "fields.hpp"
 #include "fxstate.hpp"
 #include "meta.hpp"
 #include "ptree.hpp"
@@ -61,6 +64,12 @@ std::string api_path_for(std::string_view prop, const StaticPropertyRow* row, co
   if (prop.starts_with("polystar.") && prop.size() > 9) return "contents/polystar/" + std::string(prop.substr(9));
   if (auto p = parse_prefixed_id_rest(prop, "paint.")) return "paint/" + p->id + "/" + p->rest;
   if (auto tag = parse_axis_prop_path(prop)) return "text/axes/" + *tag;
+  // wght / wdth / slnt: ONE API path per axis, like every other axis (G1).
+  if (prop == "fontWeight") return "text/axes/wght";
+  if (prop == "fontWidth") return "text/axes/wdth";
+  if (prop == "fontSlant") return "text/axes/slnt";
+  // AE's Text ▸ Path Options ▸ <param>.
+  if (auto tp = parse_text_path_prop_path(prop)) return "text/pathOptions/" + *tp;
   if (auto ta = parse_animator_track(prop)) {
     const std::string aid = ta->anim < static_cast<int>(animIds.size()) ? animIds[static_cast<std::size_t>(ta->anim)]
                                                                         : "#" + std::to_string(ta->anim);
@@ -316,6 +325,10 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     for (const Json& p : mask->at("paths").arr()) add_mask_props(p);
   }
 
+  // G1: static fields, Blur Y, the registered font axes and the layer's fill
+  // colour — before the unclaimed tracks below, which they claim (fields.ts).
+  add_field_bindings(node, layerId, animators, add, [&cat](std::string_view p) { return cat.byPath.contains(p); });
+
   if (const NodeAnim* an = d.anim(layerId)) {
     for (const auto& [prop, keys] : an->tracks) {
       if (cat.byMember.contains(prop)) continue;
@@ -414,6 +427,11 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       const Json* o = find_by_id(ops, seg[1]);
       g.name = o != nullptr ? o->at("type").str() : seg[1];
       g.matchName = o != nullptr ? "pathop:" + o->at("type").str() : seg[1];
+      return g;
+    }
+    if (path == "text/pathOptions") {
+      g.name = "Path Options";
+      g.matchName = "ADBE Text Path Options";
       return g;
     }
     if (path == "text/animators") {
@@ -684,6 +702,32 @@ bool write_effect_value(Document& d, std::string_view nodeId, const std::string&
   return true;
 }
 
+/// The Text component's weight as a number: a number, a decimal string, or 'normal' / 'bold'.
+std::optional<double> text_font_weight(const Node& n) {
+  const Component* text = n.comp("Text");
+  if (text == nullptr) return std::nullopt;
+  const Json& w = text->props.at("fontWeight");
+  if (w.is_number()) return std::isfinite(w.num()) ? std::optional<double>(w.num()) : std::nullopt;
+  if (!w.is_string()) return std::nullopt;
+  std::string_view s = w.str();
+  auto ws = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+  while (!s.empty() && ws(s.front())) s.remove_prefix(1);
+  while (!s.empty() && ws(s.back())) s.remove_suffix(1);
+  if (s == "normal") return 400.0;
+  if (s == "bold") return 700.0;
+  // /^\d+(\.\d+)?$/
+  std::size_t i = 0;
+  while (i < s.size() && is_ascii_digit(s[i])) ++i;
+  if (i == 0) return std::nullopt;
+  if (i < s.size()) {
+    if (s[i] != '.') return std::nullopt;
+    std::size_t j = i + 1;
+    while (j < s.size() && is_ascii_digit(s[j])) ++j;
+    if (j == i + 1 || j != s.size()) return std::nullopt;
+  }
+  return std::strtod(std::string(s).c_str(), nullptr);
+}
+
 }  // namespace
 
 std::optional<double> read_static_property_value(const Document& d, std::string_view nodeId, std::string_view prop) {
@@ -756,9 +800,21 @@ std::optional<double> read_static_property_value(const Document& d, std::string_
     }
     if (animator == nullptr) return std::nullopt;
     const Json& v = animator->at(ta->param);
-    return v.is_number() ? std::optional<double>(v.num()) : std::nullopt;
+    if (v.is_number()) return v.num();
+    // AE's animator Blur is 2-D: an unset Y radius is linked to X (reads as X).
+    if (ta->param == "blurY" && !ta->selector) {
+      const Json& x = animator->at("blur");
+      return x.is_number() ? std::optional<double>(x.num()) : std::nullopt;
+    }
+    return std::nullopt;
   }
-  // isGradientGeometryProp: gradient paints on a text layer (editor-authored; see ptree.cpp).
+  // wght: a Text component stores its weight as a number OR a CSS weight
+  // string ('700', 'bold') — the Character panel's font menu writes strings.
+  if (prop == "fontWeight") {
+    if (auto w = text_font_weight(n)) return w;
+  }
+  // Gradient geometry lives inside a paint object (a fill, a text stroke).
+  if (is_gradient_geometry_prop(prop)) return read_gradient_geometry_prop(n, prop);
   for (const Component& c : n.components) {
     const Json* v = c.props.find(prop);
     if (v != nullptr && v->is_number()) return v->num();
@@ -771,6 +827,8 @@ std::optional<double> read_static_property_value(const Document& d, std::string_
 bool write_static_property_value(Document& d, std::string_view nodeId, std::string_view prop, double value) {
   const Node* np = d.node(nodeId);
   if (np == nullptr) return false;
+  // Gradient geometry is written back into its paint (a fill, a text stroke).
+  if (is_gradient_geometry_prop(prop)) return write_gradient_geometry_prop(d, nodeId, prop, value);
   if (auto eff = parse_prefixed_id_rest(prop, "effect.")) return write_effect_value(d, nodeId, eff->id, eff->rest, value);
   if (auto pp = parse_paint_prop_path(prop)) {
     const auto strokes = read_node_paint(*np);
@@ -843,7 +901,14 @@ bool write_static_property_value(Document& d, std::string_view nodeId, std::stri
       break;
     }
   }
-  if (comp == nullptr && resolve_property_meta(prop, np).group == "transform") comp = np->comp("Transform");
+  if (comp == nullptr) {
+    const std::string group = resolve_property_meta(prop, np).group;
+    // A transform prop the layer never stored lives on the Transform; a text
+    // prop (Grouping Alignment, Font Width, a string-stored weight) on the
+    // Text component — never on the Transform, where nothing reads it (G1).
+    if (group == "transform") comp = np->comp("Transform");
+    else if (group == "text") comp = np->comp("Text");
+  }
   if (comp == nullptr) return false;
   const std::string cid = comp->id;
   return sg_write_prop(d, nodeId, cid, prop, Json::number(value));
@@ -1026,6 +1091,9 @@ api::Value read_static(const Document& d, std::string_view layer, const PropBind
       if (b.valueType == ValueType::string) return v_string(v.is_string() ? v.str() : "");
       return v_json(stringify(v.is_undefined() ? Json::null() : v));
     }
+    case Special::field:
+    case Special::layerFill:
+      return read_field(n, b);
     case Special::none: break;
   }
   if (b.colorBase) {
@@ -1178,6 +1246,10 @@ void write_static(Document& d, std::string_view layer, const PropBinding& b, con
       update_effect_param(d, layer, *b.effectId, *b.paramKey, std::move(v));
       return;
     }
+    case Special::field:
+    case Special::layerFill:
+      write_field(d, layer, b, value);
+      return;
     case Special::none: break;
   }
   if (b.dataTrack) {
@@ -1520,6 +1592,15 @@ void put_mask_keys(const PCtx& c, std::string_view layer, const PropBinding& b, 
 }
 
 double static_num(const Document& d, std::string_view layer, const PropBinding& b, std::size_t i) {
+  // The layer's fill colour is a hex string on a component (or a paint object):
+  // its channels have no numeric static seam.
+  if (b.special == Special::layerFill) {
+    const api::Value v = read_static(d, layer, b);
+    if (v.kind() != VK::color) return 0;
+    const api::Color& c = get<VK::color>(v);
+    const std::array<double, 4> ch{c.r, c.g, c.b, c.a};
+    return i < ch.size() ? ch[i] : 0;
+  }
   return read_static_property_value(d, layer, b.members[i]).value_or(0);
 }
 
@@ -1698,7 +1779,9 @@ void drop_keys(const PCtx& c, std::string_view layer, const PropBinding& b, cons
     }
   } else if (emptied && b.colorBase) {
     auto lv = [&](std::size_t i, double fb) { return i < lastValues.size() && lastValues[i] ? *lastValues[i] : fb; };
-    (void)write_color_base(d, layer, *b.colorBase, api::Color{lv(0, 0), lv(1, 0), lv(2, 0), lv(3, 1)});
+    const api::Color color{lv(0, 0), lv(1, 0), lv(2, 0), lv(3, 1)};
+    if (b.special == Special::layerFill) write_field(d, layer, b, v_color(color.r, color.g, color.b, color.a));
+    else (void)write_color_base(d, layer, *b.colorBase, color);
   }
 }
 

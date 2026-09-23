@@ -33,6 +33,7 @@ import {
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { apiUnitFactor, catalogFor, readStatic, vectorValue, type PropBinding } from './props';
 import { readPropertyValue } from '@core/inspector/multiSelection';
+import { parseColorChannels } from '@core/effects/effects';
 
 // ── Pure path builders ─────────────────────────────────────────────────
 
@@ -190,6 +191,58 @@ export function propRefForComponentProp(nodeId: string, componentId: string, pro
   if (type === 'light') return { layer: nodeId, path: paths.light(safe) };
   if (type === 'text') return { layer: nodeId, path: paths.textProp(safe) };
   return { layer: nodeId, path: paths.layerParam(safe) };
+}
+
+// ── Static fields (G1, fields.ts) ──────────────────────────────────────
+
+/**
+ * The API FIELD property a component prop is (a Text component's
+ * `fontFamily` → `text/fontFamily`, `align` → `text/align`, a layer's own
+ * `fill` → `layer/fill`), or null when the catalog has none.
+ */
+export function fieldBindingForComponentProp(nodeId: string, componentId: string, key: string): PropBinding | null {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const comp = node?.components.find((c) => c.id === componentId);
+  if (!node || !comp) return null;
+  const cat = catalogFor(nodeId);
+  if (key === 'fill') {
+    const b = cat.byPath.get('layer/fill');
+    return b && (typeof (comp.props as Record<string, unknown>).fill === 'string' || comp.type === 'Text') ? b : null;
+  }
+  if (comp.type !== 'Text') return null;
+  const b = cat.byPath.get(`text/${key}`);
+  return b && b.special === 'field' ? b : null;
+}
+
+/**
+ * A raw UI value (what `updateNodeComponentProp` was handed) as the Value a
+ * field binding takes, or null when it cannot be one. `undefined` — the UI's
+ * "back to the default" for clear-at-default fields — is the default value.
+ */
+export function fieldValue(b: PropBinding, raw: unknown): Value | null {
+  if (raw === undefined) return b.defaultValue ?? null;
+  switch (b.valueType) {
+    case 'string': return typeof raw === 'string' ? values.string(raw) : null;
+    case 'choice': return typeof raw === 'string' && (b.choices ?? []).includes(raw) ? values.choice(raw) : null;
+    case 'bool': return typeof raw === 'boolean' ? values.bool(raw) : null;
+    case 'scalar': return typeof raw === 'number' && Number.isFinite(raw) ? values.scalar(raw) : null;
+    case 'scalars': return Array.isArray(raw) && raw.every((x) => typeof x === 'number' && Number.isFinite(x)) ? { kind: 'scalars', value: { values: [...raw] as number[] } } : null;
+    case 'color': {
+      if (typeof raw !== 'string' || !/^#?[0-9a-fA-F]{3,8}$/.test(raw.trim())) return null;
+      const [r, g, b2, a] = parseColorChannels(raw);
+      return values.color(r, g, b2, a);
+    }
+    case 'json': return values.json(raw);
+    default: return null;
+  }
+}
+
+/** "Component prop `key` := `raw`" as ONE field write (time = the playhead, for a keyed `layer/fill`), or null. */
+export function fieldWrite(nodeId: string, componentId: string, key: string, raw: unknown, seconds: number): PropertyWrite | null {
+  const b = fieldBindingForComponentProp(nodeId, componentId, key);
+  if (!b) return null;
+  const value = fieldValue(b, raw);
+  return value ? { prop: { layer: nodeId, path: b.path }, value, time: compTime(seconds) } : null;
 }
 
 /** Comp-time seconds (the UI's playhead) → API time. */

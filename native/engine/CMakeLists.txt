@@ -235,6 +235,7 @@ set(ENGINE_DOC_SOURCES
   src/core/docio.cpp
   src/core/engine_ctx.cpp
   src/core/events.cpp
+  src/core/fields.cpp
   src/core/fxstate.cpp
   src/core/handlers_common.cpp
   src/core/handlers_comps.cpp
@@ -245,6 +246,7 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_layertime.cpp
   src/core/handlers_markers.cpp
   src/core/handlers_misc.cpp
+  src/core/handlers_optional.cpp
   src/core/handlers_precompose.cpp
   src/core/handlers_properties.cpp
   src/core/json.cpp

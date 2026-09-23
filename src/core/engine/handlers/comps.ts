@@ -273,7 +273,7 @@ export const compHandlers: HandlerTable = {
         if (cmd.patch.workArea) setWorkArea(cmd.comp, cmd.patch.workArea.start, cmd.patch.workArea.duration);
         if (cmd.patch.motionBlur) {
           const mb = cmd.patch.motionBlur;
-          useMotionBlurStore.getState().restore({ shutterAngle: mb.shutterAngle, shutterPhase: mb.shutterPhase, samples: mb.samplesPerFrame, adaptiveSampleLimit: mb.adaptiveSampleLimit });
+          useMotionBlurStore.getState().restore({ shutterAngle: mb.shutterAngle, shutterPhase: mb.shutterPhase, samples: mb.samplesPerFrame, adaptiveSampleLimit: mb.adaptiveSampleLimit, ...(mb.enabled !== undefined ? { enabled: mb.enabled } : {}) });
         }
         return {};
       },

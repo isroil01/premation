@@ -318,16 +318,18 @@ export function TextEditOverlay(): JSX.Element | null {
       end();
       return;
     }
-    if (node && textComp && next !== prev && viaEngine && readRuns(node).length === 0) {
-      // Content (+ the auto-name that follows it) as ONE entry.
+    if (node && textComp && next !== prev && viaEngine) {
+      // Content (+ the auto-name that follows it, + the style runs re-indexed so
+      // styling stays on its characters — `text/styleRuns`, G1) as ONE entry.
       const auto = isAutoTextLayerName(node.name, prev) ? textLayerNameFor(next) : null;
       const rename = auto && auto !== node.name ? auto : undefined;
-      void commitSourceTextEdit(node.id, next, { seconds: t, label: 'Edit Text', ...(rename ? { rename } : {}) }).finally(end);
+      const runs = readRuns(node);
+      void commitSourceTextEdit(node.id, next, {
+        seconds: t, label: 'Edit Text', ...(rename ? { rename } : {}), ...(runs.length > 0 ? { runs: reindexRuns(runs, prev, next) } : {}),
+      }).finally(end);
       return;
     }
-    // B3-legacy: engine gap (the block below) — styled text: `text/sourceText` writes carry plain
-    // text and the TS engine DROPS the `__runs` style runs on a content change (ENGINE_API.md
-    // §15.4), where this edit re-indexes them; and a text node that is not a layer.
+    // B3-legacy: engine gap (the block below) — a text node that is not a layer of a composition has no API address.
     if (node && textComp && next !== prev) {
       // Emits NodeUpdated, which the history snapshot records — the same
       // undoable path every canvas prop edit uses. (Not runAnimEdit: that is
@@ -339,10 +341,10 @@ export function TextEditOverlay(): JSX.Element | null {
       // one event for the Layers panel to re-derive from, one undo entry.
       if (isAutoTextLayerName(node.name, prev)) {
         const auto = textLayerNameFor(next);
-        // B3-legacy: engine gap — styled / non-layer text (see above).
+        // B3-legacy: engine gap — non-layer text (see above).
         if (auto && auto !== node.name) node.name = auto;
       }
-      // B3-legacy: engine gap — styled / non-layer text (see above).
+      // B3-legacy: engine gap — non-layer text (see above).
       updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, 'content', next);
       // Runs address characters by index, so an edit that shifts characters
       // must shift the runs with them — otherwise typing a word at the front
@@ -351,9 +353,9 @@ export function TextEditOverlay(): JSX.Element | null {
       // so the rewrite is stamped grapheme-indexed.
       const runs = readRuns(node);
       if (runs.length > 0) {
-        // B3-legacy: engine gap — style runs through the API (textDocument runs are not applied).
+        // B3-legacy: engine gap — non-layer text (see above).
         updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, RUNS_INDEX_PROP, RUNS_INDEX_GRAPHEME);
-        // B3-legacy: engine gap — same (the re-indexed runs).
+        // B3-legacy: engine gap — same (the re-indexed runs of non-layer text).
         updateNodeComponentProp(
           defaultSceneGraph,
           node.id,

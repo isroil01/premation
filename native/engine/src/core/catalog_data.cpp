@@ -65,6 +65,7 @@ Registry build() {
   c.pathOps = d.at("pathOps");
   c.polystar = d.at("polystar");
   c.animators = d.at("animators");
+  c.fields = d.at("fields");
   c.paint = d.at("paint");
   c.strokeTracks = d.at("strokeTracks");
   for (const Json& k : d.at("maskKeys").arr()) c.maskKeys.push_back(k.str());

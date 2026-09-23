@@ -1,6 +1,7 @@
 #include "queries.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <cmath>
 #include <set>
 
@@ -157,9 +158,12 @@ struct Q {
   }
   api::QueryResult operator()(const api::GetPropertyValues& q) const {
     api::PropertyValues out;
+    out.values.reserve(q.props.size());
     for (const auto& p : q.props) {
-      (void)require_layer(d, p.layer);
-      const Catalog cat = catalog_for(d, p.layer);
+      // One catalog per LAYER (a layer's five transform properties asked
+      // together built its whole property tree five times), kept until the
+      // next command.
+      const Catalog& cat = query_catalog(c, p.layer);
       const PropBinding& b = require_binding(cat, p.path);
       const double t = flicks_to_key_time(pc, p.layer, b, q.time);
       api::Value value = is_animated(d, p.layer, b) ? value_at(pc, p.layer, b, t).value_or(read_static(d, p.layer, b))
@@ -454,6 +458,18 @@ struct Q {
 };
 
 }  // namespace
+
+const Catalog& query_catalog(QCtx& c, const std::string& layer) {
+  (void)require_layer(c.pc.d, layer);
+  if (c.catalogs == nullptr) {
+    thread_local std::unordered_map<std::string, Catalog> local;
+    local.clear();
+    return local.emplace(layer, catalog_for(c.pc.d, layer)).first->second;
+  }
+  auto it = c.catalogs->find(layer);
+  if (it == c.catalogs->end()) it = c.catalogs->emplace(layer, catalog_for(c.pc.d, layer)).first;
+  return it->second;
+}
 
 api::QueryResult run_query(const api::Query& q, QCtx& c) {
   return std::visit(Q{c, c.pc, c.pc.d}, q.v);

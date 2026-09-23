@@ -262,6 +262,7 @@ export function compSettings(compId: string): CompSettings {
       shutterPhase: mb.shutterPhase,
       samplesPerFrame: mb.samples,
       adaptiveSampleLimit: mb.adaptiveSampleLimit,
+      enabled: mb.enabled,
     },
     renderer3d: c.renderer3d ?? 'classic',
     globalLightAngle: c.globalLightAngle ?? DEFAULT_GLOBAL_LIGHT.angle,

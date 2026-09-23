@@ -38,8 +38,10 @@ import {
   type Response,
   type Value,
 } from '@motion/engine-api';
-import { writeFileSync } from 'node:fs';
-import { CORPUS as B2_CORPUS, FAMILY_CORPUS, GENERATED_CORPUS } from '../__testHelpers__/corpus';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CORPUS as B2_CORPUS, CORPUS_FIXTURES, FAMILY_CORPUS, GENERATED_CORPUS } from '../__testHelpers__/corpus';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../__testHelpers__/nativeEngine';
 // Both TS engines evaluate expressions with the app's providers, as the C++ engine does.
@@ -68,11 +70,19 @@ if (!exe) console.warn('[C3 cross-engine] premation-engine is not built — `nod
 
 const TRANSFORM = ['transform/anchorPoint', 'transform/position', 'transform/scale', 'transform/rotation', 'transform/opacity'];
 const TIMES = [0, sec(0.5), sec(1), sec(1.5)];
-/** Queries whose answers are facts about the engine, not the document. */
-// copyLayers: an opaque fragment; the C++ engine writes keyframe objects in one
-// canonical key order (the TS in creation order) — pasting either engine's
-// fragment into either engine is what the replay checks.
-const QUERY_EXEMPT = new Set(['getCapabilities', 'getRenderStats', 'getCommandLog', 'getJobs', 'listFonts', 'copyLayers']);
+/**
+ * Queries whose answers are facts about the engine, not the document.
+ * (copyLayers is compared: both engines write the fragment in one canonical
+ * key order, so its BYTES must be identical — G2.)
+ */
+const QUERY_EXEMPT = new Set(['getCapabilities', 'getRenderStats', 'getCommandLog', 'getJobs', 'listFonts']);
+/**
+ * What each engine SAVED must agree on these document keys (G2 #7: the stores
+ * no command edits — they ride through open → save; byte-identical JSON).
+ */
+const SAVED_KEYS = ['guides', 'swatches', 'materials', 'transitions', 'pluginStorage'] as const;
+/** The C++ engine's `--test-ports-dir` file for a project path (engine_ctx.cpp FakePorts). */
+const portsFile = (dir: string, path: string): string => join(dir, `${Buffer.from(path, 'utf8').toString('hex')}.json`);
 /** Document events (§8.1): the kinds both engines must agree on per request. */
 const DOC_EVENTS = new Set(['documentReset', 'itemsChanged', 'itemsRemoved', 'compositionChanged', 'layersChanged', 'layersRemoved', 'layerOrderChanged', 'propertiesChanged', 'keyframesChanged']);
 
@@ -87,13 +97,15 @@ interface SessionReport {
   catalogDiffs: string[];
   /** Undo/redo/jumps over entries only the TS engine has (not sent). */
   tsOnlyHistory: number;
-  /** Event-mirror gaps both engines show identically (the reference's; reported, not failed). */
+  /** Event-mirror gaps both engines show identically (also counted in mismatches since G2). */
   sharedEventGaps: string[];
   finalLayers: number;
   finalValues: number;
   finalKeys: number;
   /** Layers whose whole property tree was compared. */
   finalTrees: number;
+  /** Saved project files compared (SAVED_KEYS). */
+  savedDocs: number;
 }
 
 function numbers(v: Value | undefined): number[] {
@@ -118,6 +130,17 @@ const close = (a: number[], b: number[]): boolean => a.length === b.length && a.
  */
 function diffDeep(a: unknown, b: unknown, path: string, out: string[] = []): string[] {
   if (out.length > 16) return out;
+  if (a instanceof Uint8Array && b instanceof Uint8Array) {
+    // Bytes (a copyLayers fragment): identical, or where they first part.
+    const ta = new TextDecoder().decode(a);
+    const tb = new TextDecoder().decode(b);
+    if (ta !== tb) {
+      let i = 0;
+      while (i < ta.length && ta[i] === tb[i]) i++;
+      out.push(`final: ${path}: bytes differ at ${i}: ts …${ta.slice(Math.max(0, i - 80), i + 120)}… c++ …${tb.slice(Math.max(0, i - 80), i + 120)}…`);
+    }
+    return out;
+  }
   if (typeof a === 'number' && typeof b === 'number') {
     const same = a === b || (Number.isNaN(a) && Number.isNaN(b)) || Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a));
     if (!same) out.push(`final: ${path}: ts ${a} c++ ${b}`);
@@ -276,11 +299,19 @@ async function replaySession(name: string): Promise<SessionReport> {
   ts.engine.loadDocument(log.header.document, { ids: log.header.ids, revision: log.header.revision, reason: 'resync', resetWorkspace: true });
   let native: NativeEngine | null = null;
   let cxx: ProcessEngineClient | null = null;
-  const report: SessionReport = { records: log.records.length, compared: 0, unsupported: {}, dependent: 0, mismatches: [], eventKindDiffs: [], catalogDiffs: [], tsOnlyHistory: 0, sharedEventGaps: [], finalLayers: 0, finalValues: 0, finalKeys: 0, finalTrees: 0 };
+  // Project files: fixtures seeded into both engines; the C++ engine mirrors
+  // what it saves into `portsDir`, so the saved documents can be compared.
+  const portsDir = mkdtempSync(join(tmpdir(), 'premation-ce-'));
+  for (const [path, make] of Object.entries(CORPUS_FIXTURES)) {
+    const doc = make();
+    ts.files.set(path, structuredClone(doc));
+    writeFileSync(portsFile(portsDir, path), JSON.stringify(doc));
+  }
+  const report: SessionReport = { records: log.records.length, compared: 0, unsupported: {}, dependent: 0, mismatches: [], eventKindDiffs: [], catalogDiffs: [], tsOnlyHistory: 0, sharedEventGaps: [], finalLayers: 0, finalValues: 0, finalKeys: 0, finalTrees: 0, savedDocs: 0 };
   try {
     // --test-ports: the C++ twin of the harness's fakePorts (in-memory project
     // files, deterministic fake media), so io commands replay too.
-    native = await startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] });
+    native = await startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports', '--test-ports-dir', portsDir] });
     cxx = new ProcessEngineClient(native.bridge);
     await cxx.whenReady();
     const cxxBatches: EventBatch[] = [];
@@ -379,8 +410,10 @@ async function replaySession(name: string): Promise<SessionReport> {
       } else if (cmd?.type === 'jumpToHistory') {
         const from = cxxPos(pos);
         const to = cxxPos(cmd.position);
+        // A jump to where the TS engine already is: both engines answer it.
+        const noop = pos === cmd.position;
         pos = cmd.position;
-        if (from === to) {
+        if (from === to && !noop) {
           report.tsOnlyHistory += 1;
           continue;
         }
@@ -473,15 +506,14 @@ async function replaySession(name: string): Promise<SessionReport> {
     const tsFinal = await ts.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
     const sharedLayers = tsFinal.layers.map((l) => l.id).filter((id) => !tainted.has(id) && map.get(id));
     const sharedComps = tsFinal.comps.map((c) => c.id).filter((id) => map.get(id));
-    // A gap BOTH mirrors show identically is the reference's own event gap (the
-    // C++ engine ports events.ts): reported, not a parity mismatch.
+    // Every gap fails, including one BOTH mirrors show (G2 fixed the reference's
+    // own gaps; `sharedEventGaps` only labels which ones both engines share).
     const tsGaps = await mirrorMismatches('ts', tsMirror, ts.engine, sharedComps, sharedLayers);
     const cxxGaps = await mirrorMismatches('c++', cxxMirror, cxx, sharedComps.map((c) => map.get(c)!), sharedLayers.map((l) => map.get(l)!));
     const body = (s: string): string => s.replace(/^(ts|c\+\+) mirror: /, '');
     const cxxBodies = new Set(cxxGaps.map(body));
-    const tsBodies = new Set(tsGaps.map(body));
     report.sharedEventGaps = tsGaps.filter((s) => cxxBodies.has(body(s))).map(body);
-    report.mismatches.push(...tsGaps.filter((s) => !cxxBodies.has(body(s))), ...cxxGaps.filter((s) => !tsBodies.has(body(s))));
+    report.mismatches.push(...tsGaps, ...cxxGaps);
 
     // 6. The documents: every comp both have, every layer neither side tainted.
     const tsComps = (await ts.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false })).comps;
@@ -601,11 +633,34 @@ async function replaySession(name: string): Promise<SessionReport> {
       report.mismatches.push(...diffDeep(tsFinal.settings, cxxDoc.value.settings, 'project settings').slice(0, 8));
       report.mismatches.push(...diffDeep(map.translate(tsFinal.renderQueue), cxxDoc.value.renderQueue, 'render queue').slice(0, 8));
     }
+    // The saved documents (every project file the TS replay wrote that the C++ engine wrote too).
+    for (const [path, tsSaved] of ts.files) {
+      if (path in CORPUS_FIXTURES) continue;
+      const file = portsFile(portsDir, path);
+      if (!existsSync(file)) continue;
+      const cxxSaved = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+      const tsDoc = tsSaved as unknown as Record<string, unknown>;
+      for (const key of SAVED_KEYS) {
+        const a = JSON.stringify(tsDoc[key]);
+        const b = JSON.stringify(cxxSaved[key]);
+        if (a !== b) report.mismatches.push(`saved ${path} .${key}: ts ${a?.slice(0, 300)} c++ ${b?.slice(0, 300)}`);
+      }
+      // Every SVG component both saved documents hold (G2 #12), byte for byte.
+      const svgs = (d: Record<string, unknown>): Map<string, string> => new Map(((d.scene as { nodes?: Array<{ id: string; components?: Array<{ type: string; props: unknown }> }> } | undefined)?.nodes ?? [])
+        .flatMap((n) => (n.components ?? []).filter((c) => c.type === 'svg').map((c) => [n.id, JSON.stringify(c.props)] as [string, string])));
+      const cxxSvgs = svgs(cxxSaved);
+      for (const [id, props] of svgs(tsDoc)) {
+        const other = cxxSvgs.get(map.get(id) ?? id);
+        if (other !== undefined && other !== props) report.mismatches.push(`saved ${path} svg of ${id}: ts ${props.slice(0, 400)} c++ ${other.slice(0, 400)}`);
+      }
+      report.savedDocs += 1;
+    }
     return report;
   } finally {
     await cxx?.close();
     await native?.stop();
     await ts.dispose();
+    rmSync(portsDir, { recursive: true, force: true });
   }
 }
 
@@ -625,7 +680,7 @@ describeNative('C3: the replay corpus against both engines', () => {
     }
     const rows = Object.entries(reports).map(([n, r]) => {
       const unsupported = Object.values(r.unsupported).reduce((a, b) => a + b, 0);
-      return `${n.slice(0, 48).padEnd(48)} records ${String(r.records).padStart(3)} · compared ${String(r.compared).padStart(3)} · unsupported ${String(unsupported).padStart(3)} · dependent ${String(r.dependent).padStart(3)} · final layers ${r.finalLayers}, trees ${r.finalTrees}, values ${r.finalValues}, keys ${r.finalKeys} · ts-only history ${r.tsOnlyHistory} · shared event gaps ${r.sharedEventGaps.length} · catalog diffs ${r.catalogDiffs.length} · mismatches ${r.mismatches.length} · event-kind diffs ${r.eventKindDiffs.length}`;
+      return `${n.slice(0, 48).padEnd(48)} records ${String(r.records).padStart(3)} · compared ${String(r.compared).padStart(3)} · unsupported ${String(unsupported).padStart(3)} · dependent ${String(r.dependent).padStart(3)} · final layers ${r.finalLayers}, trees ${r.finalTrees}, values ${r.finalValues}, keys ${r.finalKeys}, saved docs ${r.savedDocs} · ts-only history ${r.tsOnlyHistory} · shared event gaps ${r.sharedEventGaps.length} · catalog diffs ${r.catalogDiffs.length} · mismatches ${r.mismatches.length} · event-kind diffs ${r.eventKindDiffs.length}`;
     });
     const unsupportedByType: Record<string, number> = {};
     for (const r of Object.values(reports)) for (const [t, n] of Object.entries(r.unsupported)) unsupportedByType[t] = (unsupportedByType[t] ?? 0) + n;
@@ -633,7 +688,7 @@ describeNative('C3: the replay corpus against both engines', () => {
     const never = edits.filter((t) => !ISSUED.has(t));
     const totals = Object.values(reports).reduce((a, r) => ({ records: a.records + r.records, compared: a.compared + r.compared, dependent: a.dependent + r.dependent, mismatches: a.mismatches + r.mismatches.length }), { records: 0, compared: 0, dependent: 0, mismatches: 0 });
     const gaps = Object.entries(reports).flatMap(([n, r]) => [...r.sharedEventGaps, ...r.eventKindDiffs].map((g) => `  ${n}: ${g}`));
-    console.log(`[C3 cross-engine]\n${rows.join('\n')}\nunsupported by command: ${JSON.stringify(unsupportedByType)}\ntotals: ${JSON.stringify(totals)}\nedit commands issued ${edits.length - never.length}/${edits.length}; never issued: ${JSON.stringify(never)}${gaps.length ? `\nevent gaps the TS reference shows too:\n${gaps.join('\n')}` : ''}`);
+    console.log(`[C3 cross-engine]\n${rows.join('\n')}\nunsupported by command: ${JSON.stringify(unsupportedByType)}\ntotals: ${JSON.stringify(totals)}\nedit commands issued ${edits.length - never.length}/${edits.length}; never issued: ${JSON.stringify(never)}${gaps.length ? `\nevent gaps (both engines) and event-kind diffs:\n${gaps.join('\n')}` : ''}`);
   });
 
   test.each(Object.keys(CORPUS))('%s', async (name) => {

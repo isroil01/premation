@@ -114,3 +114,9 @@ command copyPropertyGroups = 608 { groups: PropRef[] = 1; toLayers: LayerId[] = 
 command applyPreset = 609 { layers: LayerId[] = 1; preset: string = 2; time: Time = 3; } -> GroupList;
 /// A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry.
 command invokeEffectAction = 610 { group: PropRef = 1; action: string = 2; payload?: string = 3; }
+/// AE's Add ▸ Property: add OPTIONAL properties that exist only once added — a text animator's Anchor Point, Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color, Stroke Color, and Font Axis properties ('axis<TAG>'). `parent` is the property group ('text/animators/<id>/props'); `names` are the new properties' path leaves. A property already present is kept as it is (AE's menu disables it). Returns the property paths in input order. Undo removes what this added.
+command addProperties = 611 { parent: PropRef = 1; names: string[] = 2; } -> PropertyPaths;
+/// Remove optional properties (AE: select the property ▸ Delete) with their keyframes and expressions; a font axis property frees its slot. A property that is not optional is refused (`invalidArgument`). Undo restores the properties, their keys and expressions exactly.
+command removeProperties = 612 { props: PropRef[] = 1; }
+
+struct PropertyPaths { paths: PropPath[] = 1; }

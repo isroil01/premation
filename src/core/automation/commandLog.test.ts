@@ -21,6 +21,7 @@ import type { LocalEngine } from '@core/engine/LocalEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import { setupRecordingAppEngine, historyLabels } from './__testHelpers__/recordingAppEngine';
 import { recordSession, replaySession, isRecording, CommandLogUnavailable, logFromJsonl } from './commandLog';
+import { performUndo, performRedo, performJumpTo } from '@stores/historyStore';
 
 let h: Harness & { engine: LocalEngine };
 beforeEach(async () => { h = await setupRecordingAppEngine(); });
@@ -121,11 +122,81 @@ describe('record → replay', () => {
 
   it('says when a session wrote around the engine (a legacy AI turn): its replay would not be exact', async () => {
     const rec = await recordSession();
-    const turn = await runToolTurn('AI: legacy', [{ name: 'create_layer', args: { kind: 'shape', name: 'Box', fill: '#ff0000' } }]);
+    // A caller-chosen effect id is a named legacy gap (the engine mints ids).
+    const turn = await runToolTurn('AI: legacy', [
+      { name: 'create_layer', args: { id: 'b', kind: 'shape', name: 'Box' } },
+      { name: 'add_effect', args: { nodeId: 'b', type: 'glow', id: 'my_glow' } },
+    ]);
     expect(turn.outcome.kind).toBe('snapshot');
     await createLayerEdit('null', { name: 'After' });
     rec.stop();
     expect(rec.writesAroundEngine).toBeGreaterThan(0);
+  });
+
+  it('gesture ids ride in the header id counters: gestures before the recording, none burned on replay', async () => {
+    // Three drags BEFORE recording: the recorded drags are gestures 4 and 5.
+    const a = (await createLayerEdit('null', { name: 'A' }))!;
+    for (let i = 0; i < 3; i++) {
+      const g = new GestureSession('Pre');
+      g.send({ type: 'setProperty', prop: { layer: a, path: 'transform/rotation' }, value: { kind: 'scalar', value: i } });
+      await g.end();
+    }
+    const before = historyLabels();
+    const rec = await recordSession();
+    // Recording starts no gesture of its own (B5 burned one to learn the counter).
+    expect(historyLabels()).toEqual(before);
+    for (let i = 0; i < 2; i++) {
+      const g = new GestureSession('Drag');
+      g.send({ type: 'setProperty', prop: { layer: a, path: 'transform/position' }, value: { kind: 'vec2', value: { x: i * 10, y: 5 } } });
+      await g.end();
+    }
+    const log = logFromJsonl(rec.stop());
+    expect(log.header.ids.gesture).toBe(3);
+    const ends = log.records.map((r) => r.request.body).filter((b) => b.kind === 'command' && b.value.type === 'endGesture');
+    expect(ends.map((b) => (b.value as { gesture: number }).gesture)).toEqual([4, 5]);
+    const saved = await save('C:/p/g-live.motion');
+    const replay = await replaySession(log);
+    expect(replay.mismatches).toEqual([]);
+    expect(await save('C:/p/g-replay.motion')).toBe(saved);
+  });
+
+  it('a log in the B5 format (header.gestureSeq) still replays', async () => {
+    const a = (await createLayerEdit('null', { name: 'A' }))!;
+    const pre = new GestureSession('Pre');
+    pre.send({ type: 'setProperty', prop: { layer: a, path: 'transform/rotation' }, value: { kind: 'scalar', value: 9 } });
+    await pre.end();
+    const rec = await recordSession();
+    const g = new GestureSession('Drag');
+    g.send({ type: 'setProperty', prop: { layer: a, path: 'transform/rotation' }, value: { kind: 'scalar', value: 3 } });
+    await g.end();
+    const log = logFromJsonl(rec.stop());
+    const { gesture, ...ids } = log.header.ids;
+    const b5 = { ...log, header: { ...log.header, ids, gestureSeq: gesture } };
+    expect((await replaySession(b5)).mismatches).toEqual([]);
+  });
+
+  it('keyboard undo/redo and the History panel jump are engine requests: the session replays revision-exact', async () => {
+    const rec = await recordSession();
+    const a = (await createLayerEdit('null', { name: 'A' }))!;
+    await edit('Rename Layer', { type: 'renameLayer', layer: a, name: 'B' });
+    await edit('Rename Layer', { type: 'renameLayer', layer: a, name: 'C' });
+    // Ctrl+Z / Edit ▸ Undo / Ctrl+Shift+Z all call these.
+    await performUndo();
+    await performUndo();
+    await performRedo();
+    // History panel: click the first entry.
+    await performJumpTo(0);
+    await createLayerEdit('null', { name: 'D' });
+    await engineIdle();
+    const jsonl = rec.stop();
+    const types = logFromJsonl(jsonl).records.map((r) => (r.request.body.kind === 'command' ? r.request.body.value.type : r.request.body.kind));
+    expect(types.filter((t) => t === 'undo' || t === 'redo' || t === 'jumpToHistory')).toEqual(['undo', 'undo', 'redo', 'jumpToHistory']);
+    const savedLive = await save('C:/p/k-live.motion');
+    const historyLive = await history();
+    const replay = await replaySession(jsonl);
+    expect(replay.mismatches).toEqual([]);
+    expect(await save('C:/p/k-replay.motion')).toBe(savedLive);
+    expect(await history()).toEqual(historyLive);
   });
 
   it('refuses a file that is not a command log', async () => {

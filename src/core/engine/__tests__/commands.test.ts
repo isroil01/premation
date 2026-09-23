@@ -203,6 +203,15 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   copyPropertyGroups: { cmd: (s) => ({ type: 'copyPropertyGroups', groups: [{ layer: s.A, path: `effects/${s.fx}` }], toLayers: [s.B, s.T] }) },
   applyPreset: { cmd: (s) => ({ type: 'applyPreset', layers: [s.B], preset: 'Fade In', time: sec(1) }) },
   invokeEffectAction: { cmd: (s) => ({ type: 'invokeEffectAction', group: { layer: s.A, path: `effects/${s.fx}` }, action: 'reset' }), fails: 'unsupported' },
+  addProperties: { cmd: (s) => ({ type: 'addProperties', parent: { layer: s.T, path: `text/animators/${s.animator}/props` }, names: ['anchorX', 'fillHue', 'axisGRAD', 'color'] }) },
+  removeProperties: {
+    cmd: async (s, h) => {
+      const parent = { layer: s.T, path: `text/animators/${s.animator}/props` };
+      await h.run({ type: 'addProperties', parent, names: ['skewAxis', 'axisGRAD'] });
+      await h.run({ type: 'setAnimated', prop: { layer: s.T, path: `${parent.path}/skewAxis` }, animated: true, time: 0 });
+      return { type: 'removeProperties', props: [{ layer: s.T, path: `${parent.path}/skewAxis` }, { layer: s.T, path: `${parent.path}/axisGRAD` }] };
+    },
+  },
   // ── Markers ──
   addMarkers: { cmd: (s) => ({ type: 'addMarkers', markers: [{ owner: { comp: s.comp, layer: s.A }, time: sec(1), duration: sec(1), name: 'L', comment: 'c', label: 2 }] }) },
   updateMarkers: { cmd: (s) => ({ type: 'updateMarkers', patches: [{ id: s.marker, name: 'Chapter 1', chapter: 'Intro', protectedRegion: true, time: sec(3) }] }) },
@@ -221,7 +230,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(91);
+  expect(edits.length).toBe(93);
 });
 
 describe.each(edits)('%s', (type) => {

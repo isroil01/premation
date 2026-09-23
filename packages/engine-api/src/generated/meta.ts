@@ -114,6 +114,8 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   copyPropertyGroups: { id: 608, kind: 'edit', coalesce: false, family: "PropertyGroups", result: "GroupList", doc: "Copy groups to other layers (paste effects / masks). Returns new paths in target order." },
   applyPreset: { id: 609, kind: 'edit', coalesce: false, family: "PropertyGroups", result: "GroupList", doc: "Apply an animation preset (.ffx-like Premation preset) to layers at `time`." },
   invokeEffectAction: { id: 610, kind: 'edit', coalesce: false, family: "PropertyGroups", result: "Empty", doc: "A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry." },
+  addProperties: { id: 611, kind: 'edit', coalesce: false, family: "PropertyGroups", result: "PropertyPaths", doc: "AE's Add ▸ Property: add OPTIONAL properties that exist only once added — a text animator's Anchor Point, Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color, Stroke Color, and Font Axis properties ('axis<TAG>'). `parent` is the property group ('text/animators/<id>/props'); `names` are the new properties' path leaves. A property already present is kept as it is (AE's menu disables it). Returns the property paths in input order. Undo removes what this added." },
+  removeProperties: { id: 612, kind: 'edit', coalesce: false, family: "PropertyGroups", result: "Empty", doc: "Remove optional properties (AE: select the property ▸ Delete) with their keyframes and expressions; a font axis property frees its slot. A property that is not optional is refused (`invalidArgument`). Undo restores the properties, their keys and expressions exactly." },
   addMarkers: { id: 700, kind: 'edit', coalesce: false, family: "Markers", result: "MarkerIds", doc: "" },
   updateMarkers: { id: 701, kind: 'edit', coalesce: true, family: "Markers", result: "Empty", doc: "" },
   deleteMarkers: { id: 702, kind: 'edit', coalesce: false, family: "Markers", result: "Empty", doc: "" },
@@ -204,4 +206,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":69,"structs":347,"unions":11,"commands":121,"queries":32,"events":27} as const;
+export const SCHEMA_COUNTS = {"enums":69,"structs":350,"unions":11,"commands":123,"queries":32,"events":27} as const;

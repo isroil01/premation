@@ -2312,6 +2312,7 @@ function encS_MotionBlurSettings(w: Writer, v: T.MotionBlurSettings): void {
   w.byte(17); w.f64(v.shutterPhase);
   w.byte(24); w.u32(v.samplesPerFrame);
   w.byte(32); w.u32(v.adaptiveSampleLimit);
+  if (v.enabled !== undefined) { w.byte(40); w.bool(v.enabled); }
 }
 function decS_MotionBlurSettings(r: Reader, end: number, o: any): T.MotionBlurSettings {
   let h_shutterAngle = false;
@@ -2322,6 +2323,7 @@ function decS_MotionBlurSettings(r: Reader, end: number, o: any): T.MotionBlurSe
   let v_shutterPhase: number | undefined;
   let v_samplesPerFrame: number | undefined;
   let v_adaptiveSampleLimit: number | undefined;
+  let v_enabled: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2329,6 +2331,7 @@ function decS_MotionBlurSettings(r: Reader, end: number, o: any): T.MotionBlurSe
       case 17: v_shutterPhase = r.f64(); h_shutterPhase = true; break;
       case 24: v_samplesPerFrame = r.u32(); h_samplesPerFrame = true; break;
       case 32: v_adaptiveSampleLimit = r.u32(); h_adaptiveSampleLimit = true; break;
+      case 40: v_enabled = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -2341,6 +2344,7 @@ function decS_MotionBlurSettings(r: Reader, end: number, o: any): T.MotionBlurSe
   o.shutterPhase = v_shutterPhase;
   o.samplesPerFrame = v_samplesPerFrame;
   o.adaptiveSampleLimit = v_adaptiveSampleLimit;
+  if (v_enabled !== undefined) o.enabled = v_enabled;
   return o;
 }
 function encS_CompSettings(w: Writer, v: T.CompSettings): void {
@@ -5127,6 +5131,60 @@ function decS_InvokeEffectAction(r: Reader, end: number, o: any): T.InvokeEffect
   o.group = v_group;
   o.action = v_action;
   if (v_payload !== undefined) o.payload = v_payload;
+  return o;
+}
+function encS_AddProperties(w: Writer, v: T.AddProperties): void {
+  w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.parent); w.endLd(s); }
+  { const a = v.names; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_AddProperties(r: Reader, end: number, o: any): T.AddProperties {
+  const l_names: string[] = [];
+  let h_parent = false;
+  let v_parent: T.PropRef | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_parent = decS_PropRef(r, r.ldEnd(), {}); h_parent = true; break;
+      case 18: l_names.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_parent) throw new DecodeError('AddProperties.parent: missing', 'missingField');
+  o.parent = v_parent;
+  o.names = l_names;
+  return o;
+}
+function encS_RemoveProperties(w: Writer, v: T.RemoveProperties): void {
+  { const a = v.props; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_PropRef(w, a[i]!); w.endLd(s); } } }
+}
+function decS_RemoveProperties(r: Reader, end: number, o: any): T.RemoveProperties {
+  const l_props: T.PropRef[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_props.push(decS_PropRef(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.props = l_props;
+  return o;
+}
+function encS_PropertyPaths(w: Writer, v: T.PropertyPaths): void {
+  { const a = v.paths; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_PropertyPaths(r: Reader, end: number, o: any): T.PropertyPaths {
+  const l_paths: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_paths.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.paths = l_paths;
   return o;
 }
 function encS_MarkerOwner(w: Writer, v: T.MarkerOwner): void {
@@ -11608,6 +11666,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'copyPropertyGroups': w.varint(4866); { const s = w.beginLd(); encS_CopyPropertyGroups(w, v); w.endLd(s); } return;
     case 'applyPreset': w.varint(4874); { const s = w.beginLd(); encS_ApplyPreset(w, v); w.endLd(s); } return;
     case 'invokeEffectAction': w.varint(4882); { const s = w.beginLd(); encS_InvokeEffectAction(w, v); w.endLd(s); } return;
+    case 'addProperties': w.varint(4890); { const s = w.beginLd(); encS_AddProperties(w, v); w.endLd(s); } return;
+    case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_RemoveProperties(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_AddMarkers(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_UpdateMarkers(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_DeleteMarkers(w, v); w.endLd(s); } return;
@@ -11738,6 +11798,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4866: out = decS_CopyPropertyGroups(r, r.ldEnd(), { type: 'copyPropertyGroups' }) as T.Command; break;
       case 4874: out = decS_ApplyPreset(r, r.ldEnd(), { type: 'applyPreset' }) as T.Command; break;
       case 4882: out = decS_InvokeEffectAction(r, r.ldEnd(), { type: 'invokeEffectAction' }) as T.Command; break;
+      case 4890: out = decS_AddProperties(r, r.ldEnd(), { type: 'addProperties' }) as T.Command; break;
+      case 4898: out = decS_RemoveProperties(r, r.ldEnd(), { type: 'removeProperties' }) as T.Command; break;
       case 5602: out = decS_AddMarkers(r, r.ldEnd(), { type: 'addMarkers' }) as T.Command; break;
       case 5610: out = decS_UpdateMarkers(r, r.ldEnd(), { type: 'updateMarkers' }) as T.Command; break;
       case 5618: out = decS_DeleteMarkers(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.Command; break;
@@ -11868,6 +11930,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'copyPropertyGroups': w.varint(4866); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'applyPreset': w.varint(4874); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'invokeEffectAction': w.varint(4882); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'addProperties': w.varint(4890); { const s = w.beginLd(); encS_PropertyPaths(w, v); w.endLd(s); } return;
+    case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_MarkerIds(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -11998,6 +12062,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4866: out = decS_GroupList(r, r.ldEnd(), { type: 'copyPropertyGroups' }) as T.CommandResult; break;
       case 4874: out = decS_GroupList(r, r.ldEnd(), { type: 'applyPreset' }) as T.CommandResult; break;
       case 4882: out = decS_Empty(r, r.ldEnd(), { type: 'invokeEffectAction' }) as T.CommandResult; break;
+      case 4890: out = decS_PropertyPaths(r, r.ldEnd(), { type: 'addProperties' }) as T.CommandResult; break;
+      case 4898: out = decS_Empty(r, r.ldEnd(), { type: 'removeProperties' }) as T.CommandResult; break;
       case 5602: out = decS_MarkerIds(r, r.ldEnd(), { type: 'addMarkers' }) as T.CommandResult; break;
       case 5610: out = decS_Empty(r, r.ldEnd(), { type: 'updateMarkers' }) as T.CommandResult; break;
       case 5618: out = decS_Empty(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.CommandResult; break;
@@ -12444,6 +12510,9 @@ export const codecs = {
   CopyPropertyGroups: mk<T.CopyPropertyGroups>(encS_CopyPropertyGroups, (r, e) => decS_CopyPropertyGroups(r, e, {})),
   ApplyPreset: mk<T.ApplyPreset>(encS_ApplyPreset, (r, e) => decS_ApplyPreset(r, e, {})),
   InvokeEffectAction: mk<T.InvokeEffectAction>(encS_InvokeEffectAction, (r, e) => decS_InvokeEffectAction(r, e, {})),
+  AddProperties: mk<T.AddProperties>(encS_AddProperties, (r, e) => decS_AddProperties(r, e, {})),
+  RemoveProperties: mk<T.RemoveProperties>(encS_RemoveProperties, (r, e) => decS_RemoveProperties(r, e, {})),
+  PropertyPaths: mk<T.PropertyPaths>(encS_PropertyPaths, (r, e) => decS_PropertyPaths(r, e, {})),
   MarkerOwner: mk<T.MarkerOwner>(encS_MarkerOwner, (r, e) => decS_MarkerOwner(r, e, {})),
   Marker: mk<T.Marker>(encS_Marker, (r, e) => decS_Marker(r, e, {})),
   MarkerInsert: mk<T.MarkerInsert>(encS_MarkerInsert, (r, e) => decS_MarkerInsert(r, e, {})),

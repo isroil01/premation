@@ -33,8 +33,6 @@ import { toHexColor } from '@core/text/cssColor';
 import {
   hasTextComponent,
   readAnimatorData,
-  updateAnimator,
-  updateSelector,
   animatorPropPath,
   selectorPropPath,
   type AnimatorParam,
@@ -53,9 +51,6 @@ import {
   type TrackingType,
   OPTIONAL_ANIMATOR_PROPERTIES,
   ALL_TRANSFORM_OPTIONAL,
-  addAnimatorProperties,
-  removeAnimatorProperty,
-  addAnimatorAxis,
   animatorAxisPropPath,
 } from '@core/text/textAnimators';
 import {
@@ -68,12 +63,16 @@ import {
 } from '@core/text/textMoreOptions';
 import { REGISTERED_AXES, MAX_ANIMATED_AXES, axisLabel, readFontAxesProp } from '@core/text/fontAxes';
 import { loadFamilyAxes } from '@core/text/fontAxesLoader';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { bumpScene } from '@stores/sceneStore';
+import { paths } from '@core/engine/propRefs';
 import { is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import {
   addAnimatorEdit,
+  addAnimatorPropertiesEdit,
   addSelectorEdit,
+  animatorColorEdit,
+  fieldEdit,
+  removeAnimatorPropertyEdit,
+  selectorFieldsEdit,
   removeAnimatorEdit,
   removeSelectorEdit,
   setAnimatorEnabledEdit,
@@ -274,9 +273,11 @@ function SelectorPanel({
   // Kind / Based On / Mode / Units / Shape / Randomize Order / Random Seed /
   // Lock Dimensions / the expression — every selector field that is not a
   // keyframeable number.
-  const patch = (p: Record<string, unknown>): void =>
-    // B3-legacy: engine gap — non-numeric selector fields (choice / bool / string, and the unkeyed Random Seed) have no API property under text/animators/<id>/selectors/<id>/; recorded by the history debounce.
-    updateSelector(nodeId, index, selIndex, p);
+  // Engine API (G1): the selector's fields are properties under
+  // text/animators/<id>/selectors/<id>/ — a kind switch keeps the selector's id.
+  const patch = (p: Record<string, unknown>): void => {
+    void selectorFieldsEdit(nodeId, animatorId, sel.id, p);
+  };
 
   return (
     <div className={styles.group} style={{ marginLeft: 8, borderLeft: '1px solid var(--color-border-subtle)', paddingLeft: 8 }}>
@@ -522,23 +523,21 @@ const TRACKING_TYPES: { id: TrackingType; label: string }[] = [
  * The optional properties of one group that this animator has ADDED, each
  * keyframeable, each removable — AE's Animator ▸ Add ▸ Property rows.
  */
-/** Animator edits the engine API cannot address yet — the one place this section writes them. */
-type LegacyAnimatorOp =
+/** Animator edits through the engine API (G1): Add ▸ Property / Font Axis, removing them, the animator's fields. */
+type AnimatorOp =
   | { op: 'addProperties'; params: ReadonlyArray<AnimatorParam> }
   | { op: 'removeProperty'; param: string }
   | { op: 'addAxis'; tag: string }
-  | { op: 'patch'; patch: Partial<TextAnimatorData> };
+  | { op: 'field'; key: 'trackingType' | 'characterRange'; value: string | undefined; label: string }
+  | { op: 'color'; key: 'color' | 'strokeColor'; hex: string | undefined; present: boolean };
 
-function legacyAnimatorEdit(nodeId: string, index: number, e: LegacyAnimatorOp): boolean {
-  // B3-legacy: engine gap — AE's Add ▸ Property / Font Axis (an optional animator property or axis
-  // does not exist until added; no add/remove-property command), and the animator's non-numeric
-  // fields (Tracking Type, Character Range: choices; Fill / Stroke colour: an optional colour —
-  // absent ≠ black) have no API property. Recorded by the history debounce.
+async function animatorEdit(nodeId: string, animatorId: string, e: AnimatorOp): Promise<boolean> {
   switch (e.op) {
-    case 'addProperties': addAnimatorProperties(nodeId, index, e.params); return true;
-    case 'removeProperty': removeAnimatorProperty(nodeId, index, e.param); return true;
-    case 'addAxis': return addAnimatorAxis(nodeId, index, e.tag);
-    case 'patch': updateAnimator(nodeId, index, e.patch); return true;
+    case 'addProperties': return addAnimatorPropertiesEdit(nodeId, animatorId, e.params);
+    case 'removeProperty': await removeAnimatorPropertyEdit(nodeId, animatorId, e.param); return true;
+    case 'addAxis': return addAnimatorPropertiesEdit(nodeId, animatorId, [`axis${e.tag}`]);
+    case 'field': await fieldEdit(e.label, nodeId, paths.animatorProp(animatorId, e.key), e.value); return true;
+    case 'color': await animatorColorEdit(nodeId, animatorId, e.key, e.hex, e.present); return true;
     default: return false;
   }
 }
@@ -581,7 +580,7 @@ function OptionalParamRows({
           <button
             type="button"
             className={styles.remove}
-            onClick={() => legacyAnimatorEdit(nodeId, index, { op: 'removeProperty', param: o.param })}
+            onClick={() => { void animatorEdit(nodeId, data.id, { op: 'removeProperty', param: o.param }); }}
             aria-label={`Remove ${o.label}`}
             title="Remove property"
           >
@@ -619,7 +618,7 @@ function AnimatorGroup({
       type: 'item',
       id: 'allTransform',
       label: 'All Transform Properties',
-      onSelect: () => { legacyAnimatorEdit(nodeId, index, { op: 'addProperties', params: ALL_TRANSFORM_OPTIONAL }); },
+      onSelect: () => { void animatorEdit(nodeId, data.id, { op: 'addProperties', params: ALL_TRANSFORM_OPTIONAL }); },
     },
     { type: 'separator' },
     ...OPTIONAL_ANIMATOR_PROPERTIES.filter((o) => o.param !== 'anchorZ' || show3D).map((o): DropdownItem => ({
@@ -627,7 +626,7 @@ function AnimatorGroup({
       id: o.param,
       label: o.label,
       disabled: stored[o.param] !== undefined,
-      onSelect: () => { legacyAnimatorEdit(nodeId, index, { op: 'addProperties', params: [o.param] }); },
+      onSelect: () => { void animatorEdit(nodeId, data.id, { op: 'addProperties', params: [o.param] }); },
     })),
     { type: 'separator' },
     {
@@ -640,9 +639,9 @@ function AnimatorGroup({
         label: `${axisLabel(tag)} (${tag})`,
         disabled: !!data.axes && tag in data.axes,
         onSelect: () => {
-          if (!legacyAnimatorEdit(nodeId, index, { op: 'addAxis', tag })) {
-            notify({ level: 'warning', message: `A text layer's animators can drive at most ${MAX_ANIMATED_AXES} font axes.`, durationMs: 2400 });
-          }
+          void animatorEdit(nodeId, data.id, { op: 'addAxis', tag }).then((ok) => {
+            if (!ok) notify({ level: 'warning', message: `A text layer's animators can drive at most ${MAX_ANIMATED_AXES} font axes.`, durationMs: 2400 });
+          });
         },
       })),
     },
@@ -735,7 +734,7 @@ function AnimatorGroup({
         label="Tracking Type"
         value={data.trackingType ?? 'after'}
         options={TRACKING_TYPES}
-        onSelect={(id) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { trackingType: id === 'after' ? undefined : id } })}
+        onSelect={(id) => { void animatorEdit(nodeId, data.id, { op: 'field', key: 'trackingType', value: id, label: 'Tracking Type' }); }}
       />
       <AnimatorParamRow nodeId={nodeId} index={index} param="lineSpacing" label="Line Spacing" value={data.lineSpacing ?? 0} unit="px" />
       {/* Character Offset walks each glyph through its own alphabet — the
@@ -745,7 +744,7 @@ function AnimatorGroup({
         label="Character Range"
         value={data.characterRange ?? 'preserve'}
         options={CHARACTER_RANGES}
-        onSelect={(id) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { characterRange: id === 'preserve' ? undefined : id } })}
+        onSelect={(id) => { void animatorEdit(nodeId, data.id, { op: 'field', key: 'characterRange', value: id, label: 'Character Range' }); }}
       />
       <OptionalParamRows nodeId={nodeId} index={index} data={data} group="typography" show3D={show3D} />
       {Object.entries(data.axes ?? {}).map(([tag, value]) => (
@@ -761,7 +760,7 @@ function AnimatorGroup({
           <button
             type="button"
             className={styles.remove}
-            onClick={() => legacyAnimatorEdit(nodeId, index, { op: 'removeProperty', param: `axis${tag}` })}
+            onClick={() => { void animatorEdit(nodeId, data.id, { op: 'removeProperty', param: `axis${tag}` }); }}
             aria-label={`Remove Font Axis ${tag}`}
             title="Remove property"
           >
@@ -785,12 +784,12 @@ function AnimatorGroup({
       <ColorRow
         label="Fill colour"
         value={data.color}
-        onSet={(hex) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { color: hex } })}
+        onSet={(hex) => { void animatorEdit(nodeId, data.id, { op: 'color', key: 'color', hex, present: data.color !== undefined }); }}
       />
       <ColorRow
         label="Stroke colour"
         value={data.strokeColor}
-        onSet={(hex) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { strokeColor: hex } })}
+        onSet={(hex) => { void animatorEdit(nodeId, data.id, { op: 'color', key: 'strokeColor', hex, present: data.strokeColor !== undefined }); }}
       />
     </div>
   );
@@ -858,14 +857,10 @@ function MoreOptionsGroup({ nodeId }: { nodeId: string }): JSX.Element | null {
   const comp = node?.components.find((c) => c.type === 'Text');
   if (!node || !comp) return null;
   const o = readTextMoreOptions(node);
-  const stored = (key: string): boolean => typeof (comp.props as Record<string, unknown>)[key] === 'number';
-  // Anchor Point Grouping / Fill & Stroke / Inter-Character Blending (choices).
-  const write = (label: string, key: string, value: unknown): void =>
-    // B3-legacy: engine gap — Text component enum props (More Options' choices) have no API property.
-    runDocumentEdit(label, () => {
-      defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
-      bumpScene();
-    });
+  // Anchor Point Grouping / Fill & Stroke / Inter-Character Blending: text fields (G1).
+  const write = (label: string, key: string, value: string): void => {
+    void fieldEdit(label, nodeId, `text/${key}`, value);
+  };
   return (
     <div className={styles.group}>
       <div className={styles.groupHead}>
@@ -877,14 +872,8 @@ function MoreOptionsGroup({ nodeId }: { nodeId: string }): JSX.Element | null {
         options={ANCHOR_GROUPINGS.map((g) => ({ id: g.value, label: g.label }))}
         onSelect={(v) => write('Anchor Point Grouping', 'anchorGrouping', v)}
       />
-      {/* Through the engine once the Text component stores the value. Before
-          that the engine's static writer would home it on the Transform
-          component, where nothing reads it (engine gap), so the first static
-          write keeps the legacy writer. */}
-      <ParamRow nodeId={nodeId} path="groupingAlignX" label="Grouping Alignment X" value={o.groupingAlignX} unit="%"
-        onStatic={stored('groupingAlignX') ? undefined : (v) => write('Grouping Alignment X', 'groupingAlignX', v)} />
-      <ParamRow nodeId={nodeId} path="groupingAlignY" label="Grouping Alignment Y" value={o.groupingAlignY} unit="%"
-        onStatic={stored('groupingAlignY') ? undefined : (v) => write('Grouping Alignment Y', 'groupingAlignY', v)} />
+      <ParamRow nodeId={nodeId} path="groupingAlignX" label="Grouping Alignment X" value={o.groupingAlignX} unit="%" />
+      <ParamRow nodeId={nodeId} path="groupingAlignY" label="Grouping Alignment Y" value={o.groupingAlignY} unit="%" />
       <PickRow<FillStrokeMode>
         label="Fill & Stroke"
         value={o.fillStrokeMode}

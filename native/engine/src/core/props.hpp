@@ -33,7 +33,16 @@ struct PCtx {
   ExprCache& cache;
 };
 
-enum class Special : std::uint8_t { none, sourceText, maskPath, maskMode, maskInverted, effectParam };
+/// field: a static field (fields.hpp); layerFill: the layer's own solid fill colour (layer/fill).
+enum class Special : std::uint8_t { none, sourceText, maskPath, maskMode, maskInverted, effectParam, field, layerFill };
+
+/// A field binding's storage (fields.ts FieldRef): owner is text | animator | selector | textPath | styleRuns.
+struct FieldRef {
+  std::string owner;
+  std::string key;
+  std::optional<std::string> animatorId;
+  std::optional<std::string> selectorId;
+};
 
 struct PropBinding {
   std::string path;
@@ -47,6 +56,7 @@ struct PropBinding {
   std::optional<std::string> maskId;
   std::optional<std::string> effectId;
   std::optional<std::string> paramKey;
+  std::optional<FieldRef> field;
   bool animatable = true;
   bool separated = false;
   std::string unit;

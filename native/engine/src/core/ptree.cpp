@@ -486,7 +486,8 @@ std::vector<StaticPropertyRow> build_static_property_tree(const Document& d, std
   for (auto& r : polystar_rows(n)) contents.push_back(std::move(r));
   for (auto& r : stroke_rows(n)) contents.push_back(std::move(r));
   for (auto& r : path_op_rows(n)) contents.push_back(std::move(r));
-  // gradientGeometryPropsFor(node): gradient paints on a text layer (editor-authored).
+  // A text layer's gradient geometry — fill, then stroke (gradientGeometryPropsFor).
+  for (const auto& p : gradient_geometry_props_for(n)) contents.push_back(row(&n, p, "contents", {p}));
   std::vector<StaticPropertyRow> scanned;
   for (auto& r : component_prop_rows(d, n, taken)) {
     if (!transform.empty() || r.group != "transform") scanned.push_back(std::move(r));

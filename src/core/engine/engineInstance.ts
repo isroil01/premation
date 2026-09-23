@@ -40,6 +40,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { LocalEngine, type LocalEngineOptions } from './LocalEngine';
 import { createAppProcessEngine, processEngineEnabled } from './process/processEngine';
 import { useUIStore } from '@stores/uiStore';
+import { setHistoryRoute } from '@stores/historyStore';
 import type { EnginePorts } from './ports';
 
 export interface BootEngineOptions {
@@ -90,6 +91,12 @@ function fanOut(batch: EventBatch): void {
 function install(next: LocalEngine, reason: 'opened' | 'created'): void {
   const prev = current;
   current = next;
+  // The app's Undo/Redo/History-panel jump become engine requests (G2): they
+  // are in the command log, so a keyboard-undo session replays revision-exact.
+  setHistoryRoute({
+    step: (dir) => (current ? current.execute({ type: dir }) : Promise.resolve()),
+    jump: (position) => (current ? current.execute({ type: 'jumpToHistory', position }) : Promise.resolve()),
+  });
   generation += 1;
   // The document under the old instance is already gone: abandon it (an open
   // gesture is dropped, not committed onto the new document's history).
@@ -181,6 +188,7 @@ export async function shutdownEngine(): Promise<void> {
   busSubs = [];
   const e = current;
   current = null;
+  setHistoryRoute(null);
   detachCurrent?.();
   detachCurrent = null;
   bootOpts = null;

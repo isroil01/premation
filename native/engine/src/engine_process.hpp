@@ -34,6 +34,8 @@ struct EngineOptions {
   bool noGpu = false;
   /// In-memory project files and fake media probes (the cross-engine tests).
   bool testPorts = false;
+  /// With testPorts: a directory the fake project files are mirrored to (and read from when not in memory).
+  std::string testPortsDir;
   log::Level logLevel = log::Level::info;
 };
 

@@ -14,6 +14,9 @@ import { defaultAnimation, stableKeyframeId, stableKeyframeIdSeq } from '@motion
 
 export type IdCounters = Record<string, number>;
 
+/** The counter key of gesture ids. */
+const GESTURE = 'gesture';
+
 export class IdAllocator {
   private counters: IdCounters = {};
 
@@ -52,16 +55,33 @@ export class IdAllocator {
     this.counters.k = max;
   }
 
+  /**
+   * The next gesture id (`beginGesture`'s answer). Counted here, under
+   * `gesture`, so the log header's counters carry it: a recorded
+   * `endGesture{gesture: n}` names the same gesture on replay.
+   */
+  nextGesture(): number {
+    const n = (this.counters[GESTURE] ?? 0) + 1;
+    this.counters[GESTURE] = n;
+    return n;
+  }
+
   state(): IdCounters {
     return { ...this.counters };
   }
 
+  /** Adopt a log header's counters exactly (an absent counter is 0). */
   restore(state: IdCounters): void {
     this.counters = { ...state };
   }
 
+  /**
+   * A new document's counters. The gesture counter is a SESSION counter and
+   * survives (a gesture id is never reused while the engine lives).
+   */
   reset(): void {
-    this.counters = {};
+    const g = this.counters[GESTURE];
+    this.counters = g === undefined ? {} : { [GESTURE]: g };
   }
 }
 

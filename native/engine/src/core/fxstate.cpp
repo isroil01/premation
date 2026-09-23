@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "jsmath.hpp"
 #include "scene.hpp"
@@ -861,29 +862,43 @@ Json transform_of(const Json& s) {
 }
 }  // namespace
 
-double read_paint_stroke_value(const Json& s, std::string_view key) {
+std::optional<double> read_paint_stroke_value(const Json& s, std::string_view key) {
+  // paintValues.ts readPaintStrokeValue with JavaScript arithmetic on a raw
+  // (possibly un-normalised) stroke: `x ?? fb` for the optional fields, a bare
+  // field that is absent reads undefined (nullopt), `undefined * 100` is NaN.
   const Json t = transform_of(s);
-  auto v = [&](std::string_view k, double fb) { return num_or(nn(s.at(k), Json::number(fb)), fb); };
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const auto js = [nan](const Json& v) {
+    if (v.is_number()) return v.num();
+    if (v.is_bool()) return v.b() ? 1.0 : 0.0;
+    if (v.is_null()) return 0.0;
+    return nan;
+  };
+  auto v = [&](std::string_view k, double fb) { return nn(s.at(k), Json::number(fb)).is_number() ? nn(s.at(k), Json::number(fb)).num() : js(s.at(k)); };
+  auto raw = [&](const Json& x) -> std::optional<double> {
+    if (x.is_undefined()) return std::nullopt;
+    return js(x);
+  };
   if (key == "start") return v("start", 0) * 100;
   if (key == "end") return v("end", 1) * 100;
-  if (key == "diameter") return s.at("size").num();
+  if (key == "diameter") return raw(s.at("size"));
   if (key == "angle") return v("angle", 0);
-  if (key == "hardness") return s.at("hardness").num() * 100;
+  if (key == "hardness") return js(s.at("hardness")) * 100;
   if (key == "roundness") return v("roundness", 1) * 100;
   if (key == "spacing") return v("spacing", 0.25) * 100;
-  if (key == "opacity") return s.at("opacity").num() * 100;
+  if (key == "opacity") return js(s.at("opacity")) * 100;
   if (key == "flow") return v("flow", 1) * 100;
   if (key == "clonePositionX") return first_point(s).x + v("cloneOffsetX", 0);
   if (key == "clonePositionY") return first_point(s).y + v("cloneOffsetY", 0);
   if (key == "cloneTime") return v("cloneSourceTime", 0);
   if (key == "cloneTimeShift") return v("cloneTimeShift", 0);
-  if (key == "anchorX") return t.at("anchorX").num();
-  if (key == "anchorY") return t.at("anchorY").num();
-  if (key == "positionX") return t.at("x").num();
-  if (key == "positionY") return t.at("y").num();
-  if (key == "scale") return t.at("scale").num();
-  if (key == "rotation") return t.at("rotation").num();
-  return 0;
+  if (key == "anchorX") return raw(t.at("anchorX"));
+  if (key == "anchorY") return raw(t.at("anchorY"));
+  if (key == "positionX") return raw(t.at("x"));
+  if (key == "positionY") return raw(t.at("y"));
+  if (key == "scale") return raw(t.at("scale"));
+  if (key == "rotation") return raw(t.at("rotation"));
+  return std::nullopt;
 }
 
 Json paint_stroke_patch(const Json& s, std::string_view key, double value) {
@@ -918,6 +933,71 @@ Json paint_stroke_patch(const Json& s, std::string_view key, double value) {
   return out;
 }
 
+namespace {
+
+/// @utils/lang `clamp01` (NaN → 0).
+double clamp01(double v) { return v > 0 ? (v > 1 ? 1 : v) : 0; }
+bool finite_num(const Json& v) { return v.is_number() && std::isfinite(v.num()); }
+
+/// paintStrokes.ts `normalizeStroke(raw, id)`: a full stroke in the editor's
+/// key order; v2 keys copied only when present.
+Json normalize_paint_stroke(const Json& raw, const std::string& id) {
+  Json out = Json::object();
+  const Json& rid = raw.at("id");
+  out.set("id", rid.is_undefined() || rid.is_null() ? Json::string(id) : rid);
+  out.set("points", raw.at("points"));
+  out.set("color", raw.at("color").is_string() ? raw.at("color") : Json::string("#ffffff"));
+  out.set("size", Json::number(raw.at("size").is_number() && raw.at("size").num() > 0 ? raw.at("size").num() : 12));
+  out.set("opacity", Json::number(clamp01(raw.at("opacity").is_number() ? raw.at("opacity").num() : 1)));
+  out.set("hardness", Json::number(clamp01(raw.at("hardness").is_number() ? raw.at("hardness").num() : 1)));
+  const Json& m = raw.at("mode");
+  const std::string mode = m.is_string() && (m.str() == "erase" || m.str() == "clone") ? m.str() : "paint";
+  out.set("mode", Json::string(mode));
+  if (m.is_string() && m.str() == "clone") {
+    out.set("cloneOffsetX", Json::number(raw.at("cloneOffsetX").is_number() ? raw.at("cloneOffsetX").num() : 0));
+    out.set("cloneOffsetY", Json::number(raw.at("cloneOffsetY").is_number() ? raw.at("cloneOffsetY").num() : 0));
+  }
+  if (raw.at("name").is_string() && !raw.at("name").str().empty()) out.set("name", raw.at("name"));
+  if (finite_num(raw.at("start"))) out.set("start", Json::number(clamp01(raw.at("start").num())));
+  if (finite_num(raw.at("end"))) out.set("end", Json::number(clamp01(raw.at("end").num())));
+  if (finite_num(raw.at("angle"))) out.set("angle", raw.at("angle"));
+  if (finite_num(raw.at("roundness"))) out.set("roundness", Json::number(std::max(0.01, clamp01(raw.at("roundness").num()))));
+  if (finite_num(raw.at("spacing"))) out.set("spacing", Json::number(std::max(0.01, std::min(10.0, raw.at("spacing").num()))));
+  if (finite_num(raw.at("flow"))) out.set("flow", Json::number(clamp01(raw.at("flow").num())));
+  const Json& ch = raw.at("channels");
+  if (ch.is_string() && (ch.str() == "rgb" || ch.str() == "alpha" || ch.str() == "rgba")) out.set("channels", ch);
+  if (raw.at("blend").is_string()) out.set("blend", raw.at("blend"));
+  if (mode == "erase") {
+    const Json& em = raw.at("eraseMode");
+    if (em.is_string() && (em.str() == "paintOnly" || em.str() == "lastStroke" || em.str() == "layerAndPaint")) out.set("eraseMode", em);
+    if (raw.at("eraseTargetId").is_string()) out.set("eraseTargetId", raw.at("eraseTargetId"));
+  }
+  if (finite_num(raw.at("inPoint"))) out.set("inPoint", raw.at("inPoint"));
+  if (finite_num(raw.at("outPoint"))) out.set("outPoint", raw.at("outPoint"));
+  if (raw.at("visible").is_bool() && !raw.at("visible").b()) out.set("visible", Json::boolean(false));
+  const std::size_t n = raw.at("points").is_array() ? raw.at("points").arr().size() : 0;
+  for (const char* k : {"pressure", "tiltX", "tiltY"}) {
+    if (raw.at(k).is_array() && raw.at(k).arr().size() == n) out.set(k, raw.at(k));
+  }
+  for (const char* k : {"dynamics", "transform"}) {
+    const Json& v = raw.at(k);
+    if (v.is_object()) out.set(k, spread(Json::object(), v));
+  }
+  if (mode == "clone") {
+    const Json& src = raw.at("cloneSourceId");
+    if (src.is_string() && !src.str().empty()) out.set("cloneSourceId", src);
+    if (finite_num(raw.at("cloneTimeShift")) && raw.at("cloneTimeShift").num() != 0) out.set("cloneTimeShift", raw.at("cloneTimeShift"));
+    if (raw.at("cloneLockTime").is_bool() && raw.at("cloneLockTime").b()) {
+      out.set("cloneLockTime", Json::boolean(true));
+      out.set("cloneSourceTime", finite_num(raw.at("cloneSourceTime")) ? raw.at("cloneSourceTime") : Json::number(0));
+    }
+    if (raw.at("cloneAligned").is_bool()) out.set("cloneAligned", raw.at("cloneAligned"));
+  }
+  return out;
+}
+
+}  // namespace
+
 void update_paint_stroke(Document& d, std::string_view nodeId, std::string_view strokeId, const Json& patch) {
   const Node* n = d.node(nodeId);
   if (n == nullptr) return;
@@ -928,9 +1008,15 @@ void update_paint_stroke(Document& d, std::string_view nodeId, std::string_view 
   for (Json& s : *strokes) {
     if (s.at("id").str() != strokeId) continue;
     hit = true;
-    // The editor renormalises the merged stroke (paintStrokes.normalizeStroke);
-    // a numeric patch from the property seam only ever writes normalised fields.
-    s = spread(s, patch);
+    // paintStrokes.updatePaintStroke: merge, an `undefined` in the patch clears
+    // the key, then normalizeStroke (clamps, defaults, the editor's key order).
+    Json merged = spread(s, patch);
+    if (patch.is_object()) {
+      for (const auto& m : patch.obj()) {
+        if (m.value.is_undefined()) merged.erase(m.key);
+      }
+    }
+    s = normalize_paint_stroke(merged, s.at("id").is_string() ? s.at("id").str() : std::string());
   }
   if (!hit) return;
   const bool onTransparent = raw != nullptr && raw->at("onTransparent").is_bool() && raw->at("onTransparent").b();
@@ -938,6 +1024,140 @@ void update_paint_stroke(Document& d, std::string_view nodeId, std::string_view 
   cfg.set("strokes", Json::array(std::move(*strokes)));
   if (onTransparent) cfg.set("onTransparent", Json::boolean(true));
   sg_set_fx(d, nodeId, "paint", std::move(cfg));
+}
+
+// ── gradient geometry (inspector/gradientGeometryProps.ts) ──────────────────
+
+namespace {
+
+enum class GradField : std::uint8_t { angle, cx, cy, radius };
+enum class GradChannel : std::uint8_t { fill, textStroke };
+
+struct GradLoc {
+  GradChannel channel;
+  GradField field;
+};
+
+std::optional<GradLoc> locate_gradient(std::string_view prop) {
+  for (const auto& [prefix, ch] : {std::pair<std::string_view, GradChannel>{"fill", GradChannel::fill},
+                                   std::pair<std::string_view, GradChannel>{"stroke", GradChannel::textStroke}}) {
+    if (!prop.starts_with(prefix)) continue;
+    const std::string_view rest = prop.substr(prefix.size());
+    if (rest == "Angle") return GradLoc{ch, GradField::angle};
+    if (rest == "CenterX") return GradLoc{ch, GradField::cx};
+    if (rest == "CenterY") return GradLoc{ch, GradField::cy};
+    if (rest == "Radius") return GradLoc{ch, GradField::radius};
+  }
+  return std::nullopt;
+}
+
+bool is_gradient_paint(const Json& p) {
+  return p.is_object() && p.at("type").is_string() && (p.at("type").str() == "linear" || p.at("type").str() == "radial");
+}
+
+/// fill.ts isFillPaint.
+bool is_fill_paint(const Json& p) {
+  return p.is_object() && p.at("type").is_string() &&
+         (p.at("type").str() == "solid" || p.at("type").str() == "linear" || p.at("type").str() == "radial");
+}
+
+/// The channel's gradient paint: readNodeFill (fx.fill; a legacy colour string
+/// is solid) / readTextStrokePaint (the FIRST Text component's strokePaint,
+/// with at least one stop).
+std::optional<Json> gradient_paint(const Node& n, GradChannel ch) {
+  if (ch == GradChannel::fill) {
+    const Json& f = n.fx().at("fill");
+    if (is_gradient_paint(f)) return f;
+    return std::nullopt;
+  }
+  for (const Component& c : n.components) {
+    if (c.type != "Text") continue;
+    const Json& p = c.props.at("strokePaint");
+    if (is_gradient_paint(p) && p.at("stops").is_array() && !p.at("stops").arr().empty()) return p;
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+const char* field_key(GradField f) {
+  switch (f) {
+    case GradField::angle: return "angle";
+    case GradField::cx: return "cx";
+    case GradField::cy: return "cy";
+    case GradField::radius: return "radius";
+  }
+  return "angle";
+}
+
+bool has_field(const Json& paint, GradField f) {
+  return paint.at("type").str() == "linear" ? f == GradField::angle : f != GradField::angle;
+}
+
+}  // namespace
+
+bool is_gradient_geometry_prop(std::string_view prop) { return locate_gradient(prop).has_value(); }
+
+std::optional<double> read_gradient_geometry_prop(const Node& n, std::string_view prop) {
+  const auto at = locate_gradient(prop);
+  if (!at) return std::nullopt;
+  const auto paint = gradient_paint(n, at->channel);
+  if (!paint || !has_field(*paint, at->field)) return std::nullopt;
+  const Json& v = paint->at(field_key(at->field));
+  // `(paint as Record<Field, number>)[field]`: whatever the paint holds; a
+  // non-number reads as absent here (the TS would hand it on as-is).
+  return v.is_number() ? std::optional<double>(v.num()) : std::nullopt;
+}
+
+bool write_gradient_geometry_prop(Document& d, std::string_view nodeId, std::string_view prop, double value) {
+  const Node* np = d.node(nodeId);
+  const auto at = locate_gradient(prop);
+  if (np == nullptr || !at) return false;
+  const auto paint = gradient_paint(*np, at->channel);
+  if (!paint || !has_field(*paint, at->field) || !std::isfinite(value)) return false;
+  // The renderer floors the radius at 0.01; store what it will draw.
+  const double v = at->field == GradField::radius ? std::max(0.01, value) : value;
+  Json next = *paint;
+  next.set(field_key(at->field), Json::number(v));
+  if (at->channel == GradChannel::textStroke) {
+    for (const Component& c : np->components) {
+      if (c.type == "Text") return sg_write_prop(d, nodeId, c.id, "strokePaint", std::move(next));
+    }
+    return false;
+  }
+  // fill.ts setNodeFill: with a fill STACK, the first entry is replaced.
+  const Json& stack = np->fx().at("fills");
+  std::vector<Json> valid;
+  if (stack.is_array()) {
+    for (const Json& f : stack.arr()) {
+      if (is_fill_paint(f)) valid.push_back(f);
+    }
+  }
+  if (!valid.empty()) {
+    Json fills = Json::array();
+    fills.arr_mut().push_back(next);
+    for (std::size_t i = 1; i < valid.size(); ++i) fills.arr_mut().push_back(valid[i]);
+    sg_set_fx(d, nodeId, "fills", fills.arr().size() > 1 ? fills : Json());
+  }
+  sg_set_fx(d, nodeId, "fill", std::move(next));
+  return true;
+}
+
+std::vector<std::string> gradient_geometry_props_for(const Node& n) {
+  if (n.comp("Text") == nullptr) return {};
+  std::vector<std::string> out;
+  for (const auto& [ch, prefix] : {std::pair<GradChannel, std::string>{GradChannel::fill, "fill"},
+                                   std::pair<GradChannel, std::string>{GradChannel::textStroke, "stroke"}}) {
+    const auto paint = gradient_paint(n, ch);
+    if (!paint) continue;
+    if (paint->at("type").str() == "linear") {
+      out.push_back(prefix + "Angle");
+    } else {
+      out.push_back(prefix + "CenterX");
+      out.push_back(prefix + "CenterY");
+      out.push_back(prefix + "Radius");
+    }
+  }
+  return out;
 }
 
 }  // namespace premation::doc

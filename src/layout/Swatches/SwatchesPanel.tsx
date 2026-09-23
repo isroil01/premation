@@ -21,30 +21,30 @@ import { EmptyState } from '@components/EmptyState';
 import { useSwatchStore } from '@stores/swatchStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import { batchHistory } from '@stores/historyStore';
-import { setNodeFill, solidFill } from '@core/paint/fill';
+import { solidFill } from '@core/paint/fill';
+import { edit } from '@core/engine/uiEdits';
+import { fieldCommands } from '@layout/Text/textEdits';
 import styles from './SwatchesPanel.module.css';
 
 /**
  * Paint every selected layer with `hex`.
  *
- * Routed through `setNodeFill` — the same write the Appearance section's fill
+ * Routed through `layer/fillPaint` — the same write the Appearance section's fill
  * ColorPicker uses — rather than touching the graph directly, because that
  * function is what keeps the fill STACK and the legacy single-fill slot
  * agreeing with each other. Writing `fx.props.fill` here would paint the layer
  * and leave a multi-fill layer's stack showing the old colour.
  *
- * One `batchHistory` group so painting eight layers is one undo, not eight.
+ * One engine batch so painting eight layers is one undo, not eight.
  *
  * A gradient-filled layer becomes solid. There is no unambiguous "set the
  * colour of a gradient" — which stop? — so the honest reading of "apply this
  * swatch" is the one the user can see happen and undo.
  */
 function applyToSelection(ids: readonly string[], hex: string): void {
-  // B3-legacy: engine gap — a layer's fill (the fill STACK and the legacy single-fill slot `setNodeFill` keeps agreeing) has no property path: the catalog lists no fill colour for shape, solid or text layers.
-  batchHistory(`swatch:apply:${hex}`, () => {
-    for (const id of ids) setNodeFill(id, solidFill(hex));
-  });
+  // ONE engine batch (G1): each layer's primary fill paint, `layer/fillPaint` —
+  // the engine keeps the fill stack and its single-fill slot agreeing.
+  void edit(`Apply Swatch`, ids.flatMap((id) => fieldCommands(id, 'layer/fillPaint', solidFill(hex))));
 }
 
 export function SwatchesPanel(): JSX.Element {

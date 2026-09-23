@@ -19,8 +19,125 @@ import { EFFECT_DEFS } from '@core/effects/effects';
 import { listPresets } from '@core/animation/animationPresets';
 import { LAYER_STYLE_LABEL } from '@core/effects/layerStyles';
 import { PATH_OP_CATALOG } from '@core/scene/pathOps';
+import { projectDocumentIO } from '@core/project/projectDocumentIO';
+import type { EditorDocument } from '@core/api/cloudDocument';
+import type { SceneNode } from '@core/types';
+import { makeLayerNode } from '../handlers/layerFactory';
+import { sanitizeSvg } from '@core/svg/svgSanitize';
+import { scanSvgCapabilities } from '@core/svg/svgCapabilities';
+import { makeSvgComponent } from '@core/svg/svgLayer';
 
 export type Session = (h: Harness) => Promise<void>;
+
+/** Project files a session opens that no session wrote (seeded into both engines' file ports). */
+export const FIXTURE_EXTRAS = 'C:/fixtures/extras.motion';
+export const FIXTURE_BARE = 'C:/fixtures/bare.motion';
+export const FIXTURE_GRADIENTS = 'C:/fixtures/gradients.motion';
+export const FIXTURE_SVG = 'C:/fixtures/svg.motion';
+
+const SVG_SOURCE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><defs><linearGradient id="g"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient><style>#dot { fill: blue } .x { stroke: url(#g) }</style></defs><rect id="box" width="50" height="50" fill="url(#g)"/><circle id="dot" cx="70" cy="70" r="10"><animate id="a1" attributeName="r" from="10" to="20" dur="1s"/><animate attributeName="cx" begin="a1.end" to="80" dur="1s"/></circle><use href="#box" x="10"/></svg>';
+
+/** An SVG layer sanitised by the editor (scoped to its node id), for the precompose re-scope (G2 #12). */
+function svgFixture(): EditorDocument {
+  const doc = projectDocumentIO.createEmpty('Svg');
+  const comp = doc.comps!.comp_root!;
+  const base = makeLayerNode({ kind: 'shape', id: 'layer_1', comp, name: 'Logo' });
+  const clean = sanitizeSvg(SVG_SOURCE, 'layer_1', scanSvgCapabilities(new DOMParser().parseFromString(SVG_SOURCE, 'image/svg+xml')));
+  if (!clean) throw new Error('the SVG fixture did not sanitise');
+  const t = base.components.find((c) => c.type === 'Transform')!;
+  const node: SceneNode = {
+    ...base, parent: 'comp_root',
+    components: [
+      { ...t, props: { ...t.props, __kind: 'svg', width: 100, height: 100 } },
+      makeSvgComponent('layer_1_svg', { sourceMarkup: SVG_SOURCE, sanitizedMarkup: clean.markup, size: { width: clean.width, height: clean.height, viewBox: clean.viewBox }, capabilities: scanSvgCapabilities(new DOMParser().parseFromString(SVG_SOURCE, 'image/svg+xml')), fileName: 'logo.svg' }) as SceneNode['components'][number],
+    ],
+  };
+  const scene = doc.scene as { nodes: SceneNode[] };
+  scene.nodes.find((n) => n.id === 'comp_root')!.children = ['layer_1'];
+  scene.nodes.push(node);
+  return doc;
+}
+
+/** A document carrying every extra the engines save: guides, swatches, materials, transitions, plugin storage. */
+function extrasFixture(): EditorDocument {
+  const doc = projectDocumentIO.createEmpty('Extras');
+  return {
+    ...doc,
+    guides: {
+      ...doc.guides!,
+      grid: true, rulers: true, gridSpacing: 50.4, gridSubdivisions: 99, gridStyle: 'dots', proportionalColumns: 3,
+      gridColor: '#ff000080', motionPathDots: 'large',
+      cameraBookmarks: { comp_root: [
+        { slot: 3, name: 'Three', mode: 'top', framing: { center: { x: 1, y: 2 }, zoom: 1.5 } },
+        { slot: 1.2, mode: 'nonsense', framing: { center: { x: 0, y: 0 }, zoom: 1 } },
+        { slot: 12, mode: 'active', framing: { center: { x: 0, y: 0 }, zoom: 1 } },
+      ] },
+      overlayOpacity: 0.1,
+      motionPathShow: 'window', motionPathWindowSeconds: 3,
+      userGuides: [
+        { axis: 'x', value: 120, unit: 'px', edge: 'start', color: '#e5484d', locked: true },
+        { axis: 'y', position: 40 } as never,
+        { axis: 'z', value: 1 } as never,
+      ],
+    } as EditorDocument['guides'],
+    swatches: [
+      { id: 'sw_1', name: 'Brand', hex: '#FF8800' },
+      { id: 'sw_2', name: '  ', hex: 'abcf' } as never,
+      { id: 'sw_1', name: 'Dup id', hex: '#123' },
+      { id: 'sw_3', name: 'Bad', hex: 'nothex' },
+    ] as EditorDocument['swatches'],
+    materials: [
+      { id: 'mat_1', name: ' Chrome ', swatch: '#AABBCC', params: { shading: 'pbr', metal: 150, roughness: 12, castsShadows: 2, acceptsLights: 1, toonBands: 5.6 } },
+      { id: 'builtin:gold', name: 'Fake gold', params: {} },
+    ] as unknown as EditorDocument['materials'],
+    transitions: { comp_root: [{ id: 'tr_1', kind: 'crossDissolve', duration: 0.5 }] } as unknown as EditorDocument['transitions'],
+    pluginStorage: { 'com.example.rig': { spine: 'layer_1', mode: 'fk' }, 'com.example.empty': {} },
+  };
+}
+
+/** A document stating none of the extras (absent = keep; plugin storage is assigned whole). */
+function bareFixture(): EditorDocument {
+  const { guides: _g, swatches: _s, materials: _m, transitions: _t, ...rest } = projectDocumentIO.createEmpty('Bare');
+  return rest as EditorDocument;
+}
+
+/**
+ * Text and shape layers with gradient paints (a gradient fill, a text stroke
+ * gradient, a fill STACK): the gradient geometry rows (G2 #10). No API command
+ * sets a gradient paint, so the layers arrive in a document.
+ */
+function gradientsFixture(): EditorDocument {
+  const doc = projectDocumentIO.createEmpty('Gradients');
+  const comp = doc.comps!.comp_root!;
+  const stops = [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }];
+  const radial = { type: 'radial', cx: 0.25, cy: 0.75, radius: 0.6, stops };
+  const linear = { type: 'linear', angle: 30, stops };
+  const withFx = (n: SceneNode, fx: Record<string, unknown>): SceneNode => ({ ...n, parent: 'comp_root', components: [...n.components, { id: `${n.id}_fx`, type: 'fx', props: fx }] });
+  const text1 = withFx(makeLayerNode({ kind: 'text', id: 'layer_1', comp, name: 'Radial text' }), { fill: radial });
+  const t1 = text1.components.find((c) => c.type === 'Text')!;
+  (t1.props as Record<string, unknown>).strokePaint = linear;
+  const text2 = withFx(makeLayerNode({ kind: 'text', id: 'layer_2', comp, name: 'Linear text' }), { fill: linear });
+  const shape = withFx(makeLayerNode({ kind: 'shape', id: 'layer_3', comp, name: 'Stacked shape' }), {
+    fill: radial, fills: [radial, { type: 'solid', color: '#00ff00' }, 'junk'],
+    // Paint strokes stored out of the editor's key order, with fields normalizeStroke drops or clamps.
+    paint: { strokes: [
+      { mode: 'erase', size: -4, points: [{ x: 1, y: 2 }, { x: 30, y: 40 }], id: 'ps_1', pressure: [1], eraseMode: 'lastStroke', spacing: 40, flow: 7, opacity: 2 },
+      { hardness: 0.5, points: [{ x: 5, y: 5 }], color: '#123456', id: 'ps_2', mode: 'clone', cloneLockTime: true, cloneTimeShift: 0.5, roundness: 0 },
+    ] },
+  });
+  const scene = doc.scene as { nodes: SceneNode[] };
+  const root = scene.nodes.find((n) => n.id === 'comp_root')!;
+  root.children = ['layer_3', 'layer_2', 'layer_1'];
+  scene.nodes.push(text1, text2, shape);
+  return doc;
+}
+
+export const CORPUS_FIXTURES: Record<string, () => EditorDocument> = {
+  [FIXTURE_EXTRAS]: extrasFixture,
+  [FIXTURE_BARE]: bareFixture,
+  [FIXTURE_GRADIENTS]: gradientsFixture,
+  [FIXTURE_SVG]: svgFixture,
+};
 
 const v2 = (x: number, y: number) => ({ kind: 'vec2' as const, value: { x, y } });
 const v3 = (x: number, y: number, z: number) => ({ kind: 'vec3' as const, value: { x, y, z } });
@@ -1052,6 +1169,191 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     await h.run({ type: 'redo' });
   },
 
+  // G2 #6: `time` is composition time; the keys land on each layer's own axis.
+  'G2: presets on offset, stretched and trimmed layers land at the composition time': async (h) => {
+    const comp = 'comp_root';
+    const mk = async (kind: 'solid' | 'shape' | 'text', name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
+    const A = await mk('solid', 'Offset');
+    const B = await mk('shape', 'Stretched');
+    const C = await mk('solid', 'Offset + stretched');
+    const T = await mk('text', 'Text offset');
+    await h.run({ type: 'moveLayersInTime', layers: [A, C, T], delta: sec(1), ripple: false });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: B, stretch: 2 }, { layer: C, stretch: 0.5 }] });
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Fade In', time: sec(2) });
+    await h.run({ type: 'applyPreset', layers: [B], preset: 'Pop In', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [C], preset: 'Fade In', time: sec(1.5) });
+    await h.run({ type: 'applyPreset', layers: [T], preset: 'Typewriter', time: sec(1.5) });
+    await h.run({ type: 'applyPreset', layers: [A, B], preset: 'Slide In', time: sec(0.5) });
+    for (const layer of [A, B, C, T]) await h.query({ type: 'getKeyframes', props: [{ layer, path: 'transform/opacity' }, { layer, path: 'transform/scale' }] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+
+  // G2 #9: layer spaces of 3D layers, 3D parent chains (incl. a 2D parent),
+  // cameras (one- and two-node) and lights in expressions (AE semantics:
+  // toComp projects through the active camera; fromComp hits the layer plane).
+  'G2: 3D layer spaces in expressions — toComp/fromComp/toWorld/fromWorld on 3D layers, parents, cameras, lights': async (h) => {
+    const comp = 'comp_root';
+    const mk = async (kind: 'solid' | 'shape' | 'null' | 'camera' | 'light', name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const flatParent = await mk('null', 'FlatParent');
+    const flat = await mk('shape', 'Flat');
+    const rig2d = await mk('null', 'Rig2D');
+    const rig = await mk('null', 'Rig');
+    const box = await mk('solid', 'Box');
+    const light = await mk('light', 'Light');
+    const cam = await mk('camera', 'Cam');
+    const r1 = await mk('shape', 'R1');
+    const r2 = await mk('shape', 'R2');
+    const r3 = await mk('shape', 'R3');
+    await h.run({ type: 'setLayerSwitches', layers: [rig, box], patch: { threeD: true } });
+    await h.run({ type: 'setParent', layers: [rig], parent: rig2d, keepWorldTransform: false });
+    await h.run({ type: 'setParent', layers: [box], parent: rig, keepWorldTransform: false });
+    await h.run({ type: 'setParent', layers: [flat], parent: flatParent, keepWorldTransform: false });
+    await h.run({ type: 'setProperty', prop: P(rig2d, 'transform/position'), value: v2(40, -30) });
+    await h.run({ type: 'setProperty', prop: P(rig2d, 'transform/rotation'), value: scalar(15) });
+    await h.run({ type: 'setProperty', prop: P(rig, 'transform/position'), value: v3(960, 540, 200) });
+    // Whatever 3D rotation / orientation rows the catalog has for a 3D layer.
+    const rigTree = await h.query({ type: 'getPropertyTree', layer: rig, path: '', depth: 0 });
+    for (const n of rigTree.nodes) {
+      if (n.kind !== 'property') continue;
+      if (/rotation(X|Y)$|xRotation$|yRotation$/i.test(n.path)) await h.run({ type: 'setProperty', prop: P(rig, n.path), value: scalar(25) });
+      if (/orientation$/i.test(n.path) && n.value?.kind === 'vec3') await h.run({ type: 'setProperty', prop: P(rig, n.path), value: v3(10, 0, 5) });
+    }
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: P(box, 'transform/position'), time: 0, value: v3(-100, 50, 0), spatialIn: [], spatialOut: [] },
+      { prop: P(box, 'transform/position'), time: sec(2), value: v3(150, -80, -400), spatialIn: [], spatialOut: [] },
+      { prop: P(box, 'transform/scale'), time: 0, value: v3(100, 100, 100), spatialIn: [], spatialOut: [] },
+      { prop: P(box, 'transform/scale'), time: sec(2), value: v3(150, 80, 100), spatialIn: [], spatialOut: [] },
+      { prop: P(flatParent, 'transform/rotation'), time: 0, value: scalar(0), spatialIn: [], spatialOut: [] },
+      { prop: P(flatParent, 'transform/rotation'), time: sec(2), value: scalar(90), spatialIn: [], spatialOut: [] },
+      { prop: P(cam, 'transform/position'), time: 0, value: v3(960, 540, -1500), spatialIn: [], spatialOut: [] },
+      { prop: P(cam, 'transform/position'), time: sec(2), value: v3(700, 400, -1100), spatialIn: [], spatialOut: [] },
+    ] });
+    await h.run({ type: 'setProperty', prop: P(light, 'transform/position'), value: v3(100, 200, -300) });
+    await h.run({ type: 'setProperty', prop: P(flatParent, 'transform/position'), value: v2(300, 200) });
+    await h.run({ type: 'moveLayersInTime', layers: [flat], delta: sec(0.5), ripple: false });
+    const ex = (layer: string, path: string, source: string) => h.run({ type: 'setExpression', prop: P(layer, path), source, enabled: true });
+    // An expression-driven transform on a 2D layer another layer's space reads.
+    await ex(flat, 'transform/rotation', 'time * 45');
+    await ex(r1, 'transform/position', 'thisComp.layer("Box").toComp([50, 25])');
+    await ex(r1, 'transform/rotation', 'thisComp.layer("Box").toWorld([10, 0])[2]');
+    await ex(r1, 'transform/scale', 'thisComp.layer("Box").fromComp([960, 540])');
+    await ex(r1, 'transform/anchorPoint', 'var w = thisComp.layer("Cam").toWorld([0, 0]); [w[0], w[2]]');
+    await ex(r1, 'transform/opacity', 'thisComp.layer("Light").toWorld([0, 0])[2] / 10 + 50');
+    await ex(r2, 'transform/position', 'thisComp.layer("Box").fromWorld(thisComp.layer("Rig").toWorld([0, 0]))');
+    await ex(r2, 'transform/rotation', 'thisComp.layer("Flat").toComp([5, 5])[1]');
+    await ex(r2, 'transform/scale', 'thisComp.layer("Flat").fromComp([400, 300])');
+    await ex(r2, 'transform/anchorPoint', 'thisComp.layer("Rig").fromComp(thisComp.layer("Box").toComp([0, 0]))');
+    await ex(r2, 'transform/opacity', 'thisComp.layer("Cam").fromWorld([960, 540, 0])[0] / 10');
+    await ex(r3, 'transform/position', 'thisComp.layer("Light").toComp([0, 0])');
+    await ex(r3, 'transform/rotation', 'thisComp.layer("Flat").toWorld([1, 1])[0] / 10');
+    await ex(r3, 'transform/scale', 'thisComp.layer("Rig").toComp([0, 0])');
+    const readers = [r1, r2, r3].flatMap((layer) => ['transform/position', 'transform/rotation', 'transform/scale', 'transform/opacity', 'transform/anchorPoint'].map((path) => P(layer, path)));
+    const read = async (): Promise<void> => {
+      for (const time of [0, sec(0.5), sec(1), sec(1.7)]) await h.query({ type: 'getPropertyValues', props: readers, time, evaluated: true });
+    };
+    await read();
+    // Two-node camera: a point of interest (whatever the catalog calls it).
+    const camTree = await h.query({ type: 'getPropertyTree', layer: cam, path: '', depth: 0 });
+    const poi = camTree.nodes.find((n) => n.kind === 'property' && /interest|poi/i.test(n.path));
+    if (poi?.value?.kind === 'vec3') await h.run({ type: 'setProperty', prop: P(cam, poi.path), value: v3(1000, 500, 100) });
+    else if (poi?.value?.kind === 'vec2') await h.run({ type: 'setProperty', prop: P(cam, poi.path), value: v2(1000, 500) });
+    await read();
+    // A second camera above the first takes over; hiding it hands the shot back.
+    const cam2 = await mk('camera', 'Cam2');
+    await h.run({ type: 'setProperty', prop: P(cam2, 'transform/position'), value: v3(1200, 300, -900) });
+    await read();
+    await h.run({ type: 'setLayerSwitches', layers: [cam2], patch: { visible: false } });
+    await read();
+    // No camera at all: the default camera.
+    await h.run({ type: 'deleteLayers', layers: [cam, cam2] });
+    await read();
+    await h.run({ type: 'undo' });
+    await read();
+  },
+
+  // G2 #10: gradient geometry rows (text layers) — tree, static read/write
+  // into the paint (fill stack included), keys; and paint strokes renormalised.
+  'G2: gradient geometry rows and paint stroke normalisation': async (h) => {
+    for (const [path, make] of Object.entries(CORPUS_FIXTURES)) if (!h.files.has(path)) h.files.set(path, make());
+    await h.run({ type: 'openProject', path: FIXTURE_GRADIENTS });
+    const doc = await h.query({ type: 'getDocument', includeProperties: true, includeKeyframes: true });
+    const grad = doc.propertyTrees.flatMap((t) => t.nodes.filter((n) => n.kind === 'property' && /(fill|stroke)(Angle|Center[XY]|Radius)$/.test(n.path)).map((n) => ({ layer: t.layer, path: n.path })));
+    // Every numeric paint-stroke row: a write renormalises the whole stroke.
+    const paint = doc.propertyTrees.flatMap((t) => t.nodes.filter((n) => n.kind === 'property' && n.path.startsWith('paint/') && n.value?.kind === 'scalar').map((n) => ({ layer: t.layer, path: n.path, v: n.value! })));
+    for (const p of paint) await h.run({ type: 'setProperty', prop: { layer: p.layer, path: p.path }, value: p.v }).catch(() => undefined);
+    for (const p of grad) {
+      await h.run({ type: 'setProperty', prop: p, value: scalar(p.path.endsWith('Radius') ? -3 : 0.4) }).catch(() => undefined);
+    }
+    if (grad[0]) {
+      await h.run({ type: 'addKeyframes', keys: [0, sec(1)].map((time, i) => ({ prop: grad[0]!, time, value: scalar(10 + i * 50), spatialIn: [], spatialOut: [] })) });
+      await h.query({ type: 'getPropertyValues', props: grad, time: sec(0.5), evaluated: true });
+    }
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'saveProject', path: 'C:/p/gradients-out.motion', copy: true });
+  },
+
+  // G2 #12: precompose (leave attributes) re-scopes an SVG layer's sanitised markup to the content's id.
+  'G2: precompose leave-attributes re-scopes SVG markup': async (h) => {
+    for (const [path, make] of Object.entries(CORPUS_FIXTURES)) if (!h.files.has(path)) h.files.set(path, make());
+    await h.run({ type: 'openProject', path: FIXTURE_SVG });
+    await h.run({ type: 'precompose', comp: 'comp_root', layers: ['layer_1'], name: 'Logo comp', mode: 'leaveAttributes', adjustDuration: false });
+    await h.run({ type: 'saveProject', path: 'C:/p/svg-a.motion', copy: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'saveProject', path: 'C:/p/svg-b.motion', copy: true });
+  },
+
+  // G2 #7: swatches, materials, guides, transitions and plugin storage ride
+  // through open → save → New Project → open → save in both engines
+  // (crossEngine.test.ts compares what each engine SAVED).
+  'G2: document extras survive save → New Project → open': async (h) => {
+    for (const [path, make] of Object.entries(CORPUS_FIXTURES)) if (!h.files.has(path)) h.files.set(path, make());
+    await h.run({ type: 'openProject', path: FIXTURE_EXTRAS });
+    await h.run({ type: 'saveProject', path: 'C:/p/extras-a.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'saveProject', path: 'C:/p/extras-new.motion', copy: true });
+    await h.run({ type: 'openProject', path: 'C:/p/extras-a.motion' });
+    await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'After open', init: [] });
+    await h.run({ type: 'saveProject', path: 'C:/p/extras-b.motion', copy: true });
+    // A document without the keys keeps the session's (absent = keep); plugin storage is assigned whole.
+    await h.run({ type: 'openProject', path: FIXTURE_BARE });
+    await h.run({ type: 'saveProject', path: 'C:/p/extras-c.motion', copy: true });
+  },
+
+  // G2 #1–#3: batches that create or remove across compositions; multi-entry jumps.
+  'G2: batched comp creation and cross-comp editWorkArea undo exactly; jumps report every key list': async (h) => {
+    const s = await buildScene(h);
+    await h.batch('Two comps', [
+      { type: 'createComposition', settings: { name: 'One' }, fromItems: [] },
+      { type: 'createComposition', settings: { name: 'Two', width: 640, height: 360 }, fromItems: [s.footage] },
+      { type: 'duplicateComposition', comp: s.comp2, deep: false },
+    ]);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'setWorkArea', comp: s.comp2, range: { start: 0, duration: sec(10) } });
+    await h.batch('Lift both', [
+      { type: 'editWorkArea', comp: s.comp, edit: 'lift', layers: [] },
+      { type: 'editWorkArea', comp: s.comp2, edit: 'lift', layers: [] },
+    ]);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'undo' });
+    const { position } = await h.query({ type: 'getHistory' });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: { layer: s.A, path: 'transform/opacity' }, time: sec(1), value: scalar(40), spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'moveLayersInTime', layers: [s.A], delta: sec(0.5), ripple: false });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: { layer: s.T, path: 'transform/rotation' }, time: sec(1), value: scalar(40), spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'deleteLayers', layers: [s.T] });
+    await h.run({ type: 'jumpToHistory', position });
+    await h.run({ type: 'jumpToHistory', position: position + 4 });
+    await h.run({ type: 'jumpToHistory', position });
+  },
+
   'groups: property writes and keys on created groups (effects, styles, operators, animators, selectors)': async (h) => {
     const comp = 'comp_root';
     const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'A', init: [] });
@@ -1085,6 +1387,155 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     await h.run({ type: 'undo' });
     await h.run({ type: 'redo' });
   },
+  // @@family:g1-fields
+  // G1: static fields (text / animator / selector), optional animator
+  // properties, Path Options ▸ Path, the unified wght/wdth/slnt axes, Blur Y,
+  // the layer fill colour, style runs, the comp motion-blur switch — every
+  // write, refusal, undo, and a save → open round trip in each engine.
+  'G1: text fields, animator and selector fields, optional properties, path, axes, fill, runs — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    const { layer: t3 } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T3', init: [] });
+    const { layer: s } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'S', init: [] });
+    const { layer: sh } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'Sh', init: [] });
+    await h.run({ type: 'setLayerSwitches', layers: [t3], patch: { threeD: true } });
+    const str = (value: string) => ({ kind: 'string' as const, value });
+    const choice = (value: string) => ({ kind: 'choice' as const, value });
+    const bool = (value: boolean) => ({ kind: 'bool' as const, value });
+    const color = (r: number, g: number, b: number, a = 1) => ({ kind: 'color' as const, value: { r, g, b, a } });
+    const box = (n: number) => ({ vertices: [0, 0, n, 0, n, n, 0, n], inTangents: [], outTangents: [], closed: true, featherPoints: [] });
+    // Text component fields: every value type, clear-at-default, the strokeOrder mirror, refusals.
+    await h.run({ type: 'setProperty', prop: P(t, 'text/fontFamily'), value: str('Roboto Mono') });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/align'), value: choice('center') });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/strokeOrder'), value: choice('all-strokes-over-all-fills') });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/fauxBold'), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/ligatures'), value: bool(false) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/ligatures'), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/stylisticSets'), value: { kind: 'scalars', value: { values: [1, 4] } } });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/stroke'), value: color(1, 0.5, 0) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/boxWidth'), value: scalar(420) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/tateChuYokoDigits'), value: scalar(3) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/tateChuYokoDigits'), value: scalar(9) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'text/align'), value: choice('middle') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'text/align'), value: str('center') }).catch(ignore);
+    await h.run({ type: 'setAnimated', prop: P(t, 'text/align'), animated: true, time: 0 }).catch(ignore);
+    await h.run({ type: 'setExpression', prop: P(t, 'text/fontFamily'), source: 'value', enabled: true }).catch(ignore);
+    await h.run({ type: 'resetProperty', prop: P(t, 'text/fauxBold') });
+    await h.batch('Paragraph', [
+      { type: 'setProperty', prop: P(t, 'text/direction'), value: choice('rtl') },
+      { type: 'setProperty', prop: P(t, 'text/leftIndent'), value: scalar(12) },
+      { type: 'setProperty', prop: P(t, 'text/anchorGrouping'), value: choice('word') },
+    ]);
+    // Grouping Alignment's first static write lands on the Text component (gap 1).
+    const { groups: [a1] } = await h.run({ type: 'addPropertyGroup', layer: t, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/groupingAlignX'), value: scalar(-40) });
+    await h.run({ type: 'setAnimated', prop: P(t, 'text/groupingAlignY'), animated: true, time: sec(1) });
+    // Animator fields and optional properties.
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/trackingType`), value: choice('beforeAfter') });
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/characterRange`), value: choice('full') });
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/characterRange`), value: choice('preserve') });
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/color`), value: color(1, 0, 0) }).catch(ignore);
+    const { paths } = await h.run({ type: 'addProperties', parent: P(t, `${a1}/props`), names: ['anchorX', 'color', 'axisGRAD', 'fillHue', 'anchorX'] });
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/color`), value: color(0, 1, 0.25) });
+    await h.run({ type: 'addKeyframes', keys: [0, 1].map((i) => ({ prop: P(t, paths[0]!), time: sec(i), value: scalar(10 * i), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'setAnimated', prop: P(t, paths[2]!), animated: true, time: 0 });
+    await h.run({ type: 'addProperties', parent: P(t, `${a1}/props`), names: ['anchorZ'] }).catch(ignore);
+    await h.run({ type: 'addProperties', parent: P(t, `${a1}/props`), names: ['bogus'] }).catch(ignore);
+    await h.run({ type: 'addProperties', parent: P(t, `${a1}/props`), names: [] }).catch(ignore);
+    await h.run({ type: 'addProperties', parent: P(t, `${a1}/selectors`), names: ['anchorX'] }).catch(ignore);
+    await h.run({ type: 'addProperties', parent: P(s, 'text/animators/ghost/props'), names: ['anchorX'] }).catch(ignore);
+    await h.run({ type: 'addProperties', parent: P(t, `${a1}/props`), names: ['axisAAAA', 'axisBBBB', 'axisCCCC', 'axisDDDD', 'axisEEEE', 'axisFFFF', 'axisGGGG', 'axisHHHH'] }).catch(ignore);
+    await h.run({ type: 'removeProperties', props: [P(t, paths[0]!), P(t, paths[2]!), P(t, paths[0]!)] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'removeProperties', props: [P(t, `${a1}/props/opacity`)] }).catch(ignore);
+    await h.run({ type: 'removeProperties', props: [P(t, `${a1}/props/skewAxis`)] }).catch(ignore);
+    await h.run({ type: 'removeProperties', props: [] }).catch(ignore);
+    // Blur Y: addressable before it is written (reads as Blur X), then unlinked and keyed.
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/blur`), value: scalar(6) });
+    await h.query({ type: 'getPropertyValues', props: [P(t, `${a1}/props/blurY`)], time: 0, evaluated: false });
+    await h.run({ type: 'setAnimated', prop: P(t, `${a1}/props/blurY`), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(t, `${a1}/props/blurY`), value: scalar(20), time: sec(1) });
+    // Selector fields: every kind, the kind switched in place (id kept, stale keys dropped).
+    const sel = (await h.query({ type: 'getPropertyTree', layer: t, path: `${a1}/selectors`, depth: 0 })).nodes.find((n) => n.path.split('/').length === 5)!.path;
+    await h.run({ type: 'addKeyframes', keys: [0, 2].map((i) => ({ prop: P(t, `${sel}/offset`), time: sec(i), value: scalar(50 * i), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'setExpression', prop: P(t, `${sel}/amount`), source: 'value * 0.5', enabled: true });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/basedOn`), value: choice('words') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/shape`), value: choice('rampUp') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/randomizeOrder`), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/randomSeed`), value: scalar(7) });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/kind`), value: choice('wiggly') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/lockDimensions`), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/units`), value: choice('index') }).catch(ignore);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/kind`), value: choice('expression') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/expression`), value: str('textIndex * 10') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/kind`), value: choice('range') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/kind`), value: choice('range') });
+    await h.run({ type: 'setProperty', prop: P(t, `${sel}/mode`), value: choice('subtract') });
+    // 3D layer: anchorZ is optional there.
+    const { groups: [a3] } = await h.run({ type: 'addPropertyGroup', layer: t3, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] });
+    await h.run({ type: 'addProperties', parent: P(t3, `${a3}/props`), names: ['anchorZ', 'strokeColor', 'axisopsz'] });
+    // Path Options ▸ Path: attach to a mask, move the margin, detach, refusals.
+    await h.run({ type: 'addMask', layer: t, mode: 'add', inverted: false, path: box(200) });
+    const { groups: [mk] } = await h.run({ type: 'addMask', layer: t, mode: 'none', inverted: false, path: box(90) });
+    const maskId = mk!.split('/')[1]!;
+    await h.run({ type: 'setProperty', prop: P(t, 'text/pathOptions/path'), value: str(maskId) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/pathOptions/firstMargin'), value: scalar(30) });
+    await h.run({ type: 'setAnimated', prop: P(t, 'text/pathOptions/firstMargin'), animated: true, time: sec(0.5) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/pathOptions/path'), value: str('mask_nope') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'text/pathOptions/path'), value: str('') });
+    await h.run({ type: 'undo' });
+    // wght / wdth / slnt: one path each; a string weight reads as its number, a write stores a number.
+    await h.run({ type: 'setProperty', prop: P(t, 'text/axes/wght'), value: scalar(650) });
+    await h.run({ type: 'setAnimated', prop: P(t, 'text/axes/wdth'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/axes/wdth'), value: scalar(120), time: sec(1) });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/axes/slnt'), value: scalar(-8) });
+    // Style runs (a json value) and Source Text dropping them when the text changes.
+    await h.run({ type: 'setProperty', prop: P(t, 'text/styleRuns'), value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 1, style: { fontSize: 40, fill: '#ff0000' } }]) } });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/styleRuns'), value: { kind: 'json', value: '{"no": 1}' } }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'text/styleRuns'), value: { kind: 'json', value: 'nope' } }).catch(ignore);
+    await h.batch('Retype', [
+      { type: 'setProperty', prop: P(t, 'text/sourceText'), value: str('Hello') },
+      { type: 'setProperty', prop: P(t, 'text/styleRuns'), value: { kind: 'json', value: JSON.stringify([{ start: 1, end: 3, style: { fauxItalic: true } }]) } },
+    ]);
+    // The layer's fill colour: solid, shape, text; static, keyed, un-keyed.
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fill'), value: color(0.2, 0.4, 0.6) });
+    await h.run({ type: 'setProperty', prop: P(t, 'layer/fill'), value: color(1, 1, 0) });
+    await h.run({ type: 'setAnimated', prop: P(sh, 'layer/fill'), animated: true, time: 0 });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(sh, 'layer/fill'), time: sec(1), spatialIn: [], spatialOut: [] }, { prop: P(sh, 'layer/fill'), time: sec(2), value: color(0, 0, 1, 0.5), spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'setAnimated', prop: P(sh, 'layer/fill'), animated: false, time: sec(1.5) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fill'), value: scalar(1) }).catch(ignore);
+    // Paint objects (json fields): a gradient primary fill, a fill stack, a text stroke paint, refusals.
+    const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
+    const grad = { type: 'linear', angle: 30, stops: [{ id: 'a', offset: 0, color: '#ff0000' }, { id: 'b', offset: 1, color: '#0000ff' }] };
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fillPaint'), value: json(grad) });
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fill'), value: color(1, 0, 0) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fills'), value: json([grad, { type: 'solid', color: '#00ff0080' }]) });
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fillPaint'), value: json({ type: 'solid', color: '#123456' }) });
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fillPaint'), value: json(null) });
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fillPaint'), value: json({ type: 'plaid' }) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(sh, 'layer/fills'), value: json({}) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'text/strokePaint'), value: json({ type: 'radial', cx: 0.5, cy: 0.5, radius: 0.5, stops: [] }) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'setProperty', prop: P(t3, 'text/strokePaint'), value: json(null) });
+    // The composition's motion-blur switch.
+    await h.run({ type: 'setCompositionSettings', comp, patch: { motionBlur: { shutterAngle: 270, shutterPhase: -90, samplesPerFrame: 16, adaptiveSampleLimit: 128, enabled: false } } });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Persist: save, start over, reopen — every field must come back.
+    await h.run({ type: 'saveProject', path: 'C:/p/g1.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/g1.motion' });
+    await h.query({ type: 'getPropertyTree', layer: t, path: '', depth: 0 });
+    await h.query({ type: 'getComposition', comp });
+  },
+
   // @@family:properties
   ...((): Record<string, Session> => {
     const P = (layer: string, path: string) => ({ layer, path });
@@ -1658,6 +2109,7 @@ function tweak(g: Gen, info: PropertyInfo, w: World): Value | undefined {
     case 'choice': return { kind: 'choice', value: g.pick(info.choices) ?? v.value };
     case 'string': return { kind: 'string', value: `s${g.int(100)}` };
     case 'textDocument': return { kind: 'textDocument', value: { ...v.value, text: `${v.value.text}${g.int(10)}` } };
+    case 'scalars': return { kind: 'scalars', value: { values: g.some([1, 2, 3, 5, 8, 13, 20], 3).sort((a, b) => a - b) } };
     case 'path': return { kind: 'path', value: { ...v.value, vertices: v.value.vertices.map((x) => x + g.num(-10, 10)) } };
     case 'layer': return { kind: 'layer', value: g.pick(w.layers.map((l) => l.id)) ?? '' };
     case 'none': return undefined;
@@ -1666,6 +2118,11 @@ function tweak(g: Gen, info: PropertyInfo, w: World): Value | undefined {
 }
 
 const animatable = (w: World) => w.props.filter((p) => p.info.animatable && p.info.value && p.info.value.kind !== 'none');
+/** G1: the static (non-animatable) fields — choices, switches, strings, colours, numbers, lists. */
+const staticFields = (w: World) => w.props.filter((p) => !p.info.animatable && p.info.value && ['choice', 'bool', 'string', 'scalar', 'color', 'scalars'].includes(p.info.value.kind));
+/** G1: what Add ▸ Property offers a text animator. */
+const OPTIONAL_NAMES = ['anchorX', 'anchorY', 'anchorZ', 'skewAxis', 'lineAnchor', 'characterValue', 'fillHue', 'strokeOpacity', 'color', 'strokeColor', 'axisGRAD', 'axisopsz', 'axisXTRA', 'nope'];
+const OPTIONAL_PROP = /^text\/animators\/[^/]+\/props\/(anchor[XYZ]|skewAxis|lineAnchor|characterValue|fill(Hue|Saturation|Brightness)|stroke(Opacity|Hue|Saturation|Brightness|Color)|color|axis[A-Za-z0-9]{4})$/;
 const layersOf = (w: World, comp: string) => w.layers.filter((l) => l.comp === comp);
 const ids = (ls: readonly LayerInfo[]) => ls.map((l) => l.id);
 /** Several layers of ONE composition. */
@@ -1836,7 +2293,8 @@ const BUILDERS: Record<string, Builder> = {
   sequenceLayers: (g, w) => ({ type: 'sequenceLayers', layers: sameComp(g, w, 3), overlap: sec(g.int(3) / 4), crossfade: g.coin(0.3) }),
   // ── properties ──
   setProperty: (g, w) => {
-    const p = g.pick(animatable(w));
+    // G1: now and then a static field (a choice, a switch, a string, a list…).
+    const p = (g.coin(0.25) ? g.pick(staticFields(w)) : undefined) ?? g.pick(animatable(w));
     const value = p && tweak(g, p.info, w);
     return p && value ? { type: 'setProperty', prop: ref(p), value, ...(g.coin(0.4) ? { time: g.time() } : {}) } : undefined;
   },
@@ -1923,6 +2381,14 @@ const BUILDERS: Record<string, Builder> = {
     return { type: 'addPropertyGroup', layer: l.id, parent: 'contents', matchName: `pathop:${g.pick(PATH_OP_TYPES)!}`, init: [], ...(g.coin(0.2) ? { index: 0 } : {}) };
   },
   removePropertyGroups: (g, w) => (w.groups.length ? { type: 'removePropertyGroups', groups: g.some(w.groups, 1).map(ref) } : undefined),
+  addProperties: (g, w) => {
+    const anim = g.pick(w.groups.filter((x) => /^text\/animators\/[^/]+$/.test(x.info.path)));
+    return anim ? { type: 'addProperties', parent: { layer: anim.layer, path: `${anim.info.path}/props` }, names: g.some(OPTIONAL_NAMES, 3) } : undefined;
+  },
+  removeProperties: (g, w) => {
+    const props = w.props.filter((p) => OPTIONAL_PROP.test(p.info.path));
+    return props.length ? { type: 'removeProperties', props: g.some(props, 2).map(ref) } : undefined;
+  },
   movePropertyGroup: (g, w) => { const p = g.pick(w.groups); return p ? { type: 'movePropertyGroup', group: ref(p), toIndex: g.int(3) } : undefined; },
   duplicatePropertyGroups: (g, w) => (w.groups.length ? { type: 'duplicatePropertyGroups', groups: g.some(w.groups, 1).map(ref) } : undefined),
   setGroupEnabled: (g, w) => (w.groups.length ? { type: 'setGroupEnabled', groups: g.some(w.groups, 2).map(ref), enabled: g.coin() } : undefined),
@@ -1962,14 +2428,10 @@ const BUILDERS: Record<string, Builder> = {
 /** The command types the generated corpus builds (the rest of the edit set is io, left to the scripted sessions). */
 export const GENERATED_COMMANDS: readonly string[] = Object.keys(BUILDERS);
 
-/**
- * Never batched — two reference bugs D1b reports rather than copies:
- *  - undoing a batch that creates several compositions leaves all but the last
- *    (and the batch's events omit their layers);
- *  - in a batch, an editWorkArea after another comp's editWorkArea removes a
- *    layer without journaling it (no layersRemoved; undo does not restore it).
- */
-const NO_BATCH = new Set(['createComposition', 'duplicateComposition', 'assembleComposition', 'precompose', 'importFiles', 'importProject', 'editWorkArea']);
+// Every builder may be batched. (Until G2 the creators and editWorkArea were
+// not: a batch's inverse took a part's first-seen before / last-seen after
+// from captures that did not list parts created or removed by an earlier
+// command of the batch — engineCorrectness.test.ts pins both fixes.)
 const COALESCING = new Set(['setProperty', 'setProperties', 'moveKeyframes', 'setLayerTiming', 'moveLayersInTime', 'setCompositionSettings', 'setWorkArea', 'updateKeyframes', 'moveMarkers', 'slipLayers']);
 
 async function generatedSession(h: Harness, seed: number, steps: number): Promise<void> {
@@ -2012,7 +2474,7 @@ async function generatedSession(h: Harness, seed: number, steps: number): Promis
       await h.run({ type: 'endGesture', gesture, commit: g.coin(0.8) }).catch(ignore);
       continue;
     }
-    if (roll < 22 && !NO_BATCH.has(name)) {
+    if (roll < 22) {
       const cmds: Command[] = [];
       for (let i = 0, n = 2 + g.int(2); i < n; i++) {
         const c = await make(g, w, h);

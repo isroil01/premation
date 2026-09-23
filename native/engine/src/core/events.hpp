@@ -8,6 +8,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,10 +24,21 @@ class EventBuilder {
   void reset() {
     props_.clear();
     keys_.clear();
+    dropped_.clear();
   }
   void forget(const std::string& layer) {
     props_.erase(layer);
-    keys_.erase(layer);
+    drop_keys(layer);
+  }
+  /// Re-report the layer's keyframe lists next time, remembering which paths
+  /// were reported (events.ts `dropKeys`): a path no longer animated when the
+  /// layer is next reported gets its empty list.
+  void drop_keys(const std::string& layer) {
+    const auto it = keys_.find(layer);
+    if (it == keys_.end()) return;
+    auto& paths = dropped_[layer];
+    for (const auto& [path, keys] : it->second) paths.insert(path);
+    keys_.erase(it);
   }
   /// Events for `changes` (before = changes.before, after = the live document).
   [[nodiscard]] std::vector<api::Event> build(const ChangeSet& changes, const PCtx& c);
@@ -41,6 +53,8 @@ class EventBuilder {
   };
   std::unordered_map<std::string, PropCache> props_;
   std::unordered_map<std::string, std::map<std::string, std::vector<api::Keyframe>>> keys_;
+  /// layer → paths reported before its keys_ row was dropped (removed layer, moved bar).
+  std::unordered_map<std::string, std::set<std::string>> dropped_;
 };
 
 }  // namespace premation::doc

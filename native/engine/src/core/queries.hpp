@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "catalog_data.hpp"
@@ -26,7 +27,14 @@ struct QCtx {
   std::function<std::vector<api::LogRecord>(api::Revision)> log;
   std::function<api::Capabilities()> capabilities;
   std::function<api::RenderStats()> renderStats;
+  /// Property catalogs by layer, valid until the next command (the session
+  /// clears it before any command runs): repeated queries at one revision —
+  /// a scrub, a panel re-reading its rows — build each layer's catalog once.
+  std::unordered_map<std::string, Catalog>* catalogs = nullptr;
 };
+
+/// `catalogFor(layer)` through the query's cache (require_layer first).
+[[nodiscard]] const Catalog& query_catalog(QCtx& c, const std::string& layer);
 
 /// Answer one query; throws EngineFail.
 [[nodiscard]] api::QueryResult run_query(const api::Query& q, QCtx& c);

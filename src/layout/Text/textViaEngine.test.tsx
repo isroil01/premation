@@ -124,14 +124,14 @@ describe('Character panel', () => {
     await undoRedoExact(before);
   });
 
-  test('a preset chip (size + weight + style) stays ONE entry (strings keep the legacy bag writer)', async () => {
+  test('a preset chip (size + weight + style) is ONE engine entry (G1: the weight is text/axes/wght, the style a text field)', async () => {
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Headline' }));
     await idle();
     jest.advanceTimersByTime(2000);
     await idle();
     expect(textProps(s.T).fontSize).toBe(56);
-    expect(textProps(s.T).fontWeight).toBe('700');
+    expect(textProps(s.T).fontWeight).toBe(700);
     expect(historyLabels()).toHaveLength(1);
   });
 
@@ -285,5 +285,65 @@ describe('Path Options', () => {
     expect(readTextPathConfig(defaultSceneGraph.getNode(s.T)!)!.perpendicular === true).toBe(!was);
     expect(historyLabels()).toEqual(['Set Perpendicular']);
     await undoRedoExact(before);
+  });
+});
+
+describe('G1: text fields, selector fields, optional properties, Path Options ▸ Path', () => {
+  test('Faux Bold (a text field) is ONE engine entry; undo/redo exact', async () => {
+    renderPanel();
+    const before = h.doc();
+    fireEvent.click(screen.getByRole('button', { name: 'Faux Bold' }));
+    await idle();
+    expect(textProps(s.T).fauxBold).toBe(true);
+    expect(historyLabels()).toHaveLength(1);
+    await undoRedoExact(before);
+  });
+
+  test('the Mask Path menu attaches and detaches through text/pathOptions/path', async () => {
+    const { groups: [maskPath] } = await h.run({
+      type: 'addMask', layer: s.T, mode: 'none', inverted: false,
+      path: { vertices: [0, 0, 200, 0, 200, 100], inTangents: [], outTangents: [], closed: false, featherPoints: [] },
+    });
+    getCommandSystem().getHistory().clear();
+    renderPanel();
+    const { readTextPathConfig } = await import('@core/text/textPath');
+    const before = h.doc();
+    fireEvent.change(screen.getByLabelText('Mask Path'), { target: { value: maskPath!.split('/')[1]! } });
+    await idle();
+    expect(readTextPathConfig(defaultSceneGraph.getNode(s.T)!)?.pathId).toBe(maskPath!.split('/')[1]);
+    expect(historyLabels()).toEqual(['Text on Path']);
+    await undoRedoExact(before);
+  });
+
+  test('a selector kind switch keeps its id and is ONE entry; Based On is a field write', async () => {
+    const { selectorFieldsEdit } = await import('./textEdits');
+    const sel = animators(s.T)[0]!.selectors![0]!;
+    const before = h.doc();
+    await act(async () => { await selectorFieldsEdit(s.T, s.animator, sel.id, { kind: 'wiggly' }); });
+    await act(async () => { await selectorFieldsEdit(s.T, s.animator, sel.id, { basedOn: 'words', randomSeed: 3.4 }); });
+    const now = animators(s.T)[0]!.selectors![0]!;
+    expect(now.id).toBe(sel.id);
+    expect(now.kind).toBe('wiggly');
+    expect(now.basedOn).toBe('words');
+    expect((now as { randomSeed: number }).randomSeed).toBe(3);
+    expect(historyLabels()).toEqual(['Change Selector', 'Set Selector Option']);
+    await step('undo');
+    await step('undo');
+    expect(h.doc()).toBe(before);
+  });
+
+  test('Add ▸ Property, the optional Fill Color, and removing them are engine commands', async () => {
+    const { addAnimatorPropertiesEdit, animatorColorEdit, removeAnimatorPropertyEdit } = await import('./textEdits');
+    const before = h.doc();
+    await act(async () => { await addAnimatorPropertiesEdit(s.T, s.animator, ['skewAxis', 'axisGRAD']); });
+    expect(animators(s.T)[0]!.skewAxis).toBe(0);
+    expect(animators(s.T)[0]!.axes).toEqual({ GRAD: 0 });
+    await act(async () => { await animatorColorEdit(s.T, s.animator, 'color', '#00ff00', false); });
+    expect(animators(s.T)[0]!.color).toBe('#00ff00');
+    await act(async () => { await removeAnimatorPropertyEdit(s.T, s.animator, 'skewAxis'); });
+    expect(animators(s.T)[0]!.skewAxis).toBeUndefined();
+    expect(historyLabels()).toEqual(['Add Properties', 'Add Property', 'Remove Property']);
+    for (let i = 0; i < 3; i++) await step('undo');
+    expect(h.doc()).toBe(before);
   });
 });

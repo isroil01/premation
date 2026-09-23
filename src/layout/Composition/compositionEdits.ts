@@ -11,7 +11,7 @@
  * What the API cannot say yet keeps its legacy writer at the call site,
  * marked `B3-legacy` with the gap: a gradient comp background
  * (`setCompositionSettings` refuses `backgroundGradient` until FillPaint is
- * typed), a solid's colour and a custom (off-palette) label colour.
+ * typed) and a custom (off-palette) label colour.
  *
  * Display reads stay direct until B4's mirror.
  */
@@ -235,20 +235,17 @@ export async function setAutoOrientEdit(ids: readonly string[], mode: AutoOrient
 
 /**
  * Layer / Solid Settings ▸ Apply: name, label and (solids, sized nulls and
- * adjustment layers) width/height, one entry. `legacy` when the values change
- * what the API cannot say — a solid's colour (no property path for a solid's
- * fill) or an off-palette label colour — so the caller keeps the whole apply
- * on the legacy writer (still one step).
+ * adjustment layers) width/height and a solid's colour (`layer/fill`, G1), one
+ * entry. `legacy` when the values change what the API cannot say — an
+ * off-palette label colour — so the caller keeps the whole apply on the legacy
+ * writer (still one step).
  */
 export async function layerSettingsEdit(nodeId: string, values: LayerSettingsValues): Promise<'ok' | 'gone' | 'legacy'> {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !isLayer(nodeId)) return 'gone';
   const kind = layerSettingsKind(node);
-  if (kind === 'solid' && values.color) {
-    const fill = readNodeFill(node);
-    const cur = fill && fill.type === 'solid' ? fill.color : undefined;
-    if (!cur || cur.toLowerCase() !== values.color.toLowerCase()) return 'legacy';
-  }
+  const fill = kind === 'solid' && values.color ? readNodeFill(node) : undefined;
+  const colorChanged = !!values.color && kind === 'solid' && !(fill?.type === 'solid' && fill.color.toLowerCase() === values.color.toLowerCase());
   const labelChanged = 'labelColor' in values && (values.labelColor ?? undefined) !== (node.color ?? undefined);
   if (labelChanged && values.labelColor && labelIndexOf(values.labelColor) === 0) return 'legacy';
 
@@ -264,6 +261,10 @@ export async function layerSettingsEdit(nodeId: string, values: LayerSettingsVal
     if (w !== null && w !== t?.width) size.width = w;
     if (h !== null && h !== t?.height) size.height = h;
     if (Object.keys(size).length > 0) cmds.push(...valueCommands([{ nodeId, values: size }], { seconds: playheadSeconds() }));
+  }
+  if (colorChanged && values.color) {
+    const [r, g, b, a] = parseColorChannels(values.color);
+    cmds.push({ type: 'setProperty', prop: { layer: nodeId, path: 'layer/fill' }, value: { kind: 'color', value: { r, g, b, a } }, time: compTime(playheadSeconds()) });
   }
   await edit(kind === 'solid' ? 'Solid Settings' : 'Layer Settings', cmds);
   return 'ok';

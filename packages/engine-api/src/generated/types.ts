@@ -1161,6 +1161,8 @@ export interface MotionBlurSettings {
   shutterPhase: number;
   samplesPerFrame: number;
   adaptiveSampleLimit: number;
+  /** AE's composition switch "Enable Motion Blur for all layers with Motion Blur set". Queries always report it; a patch without it leaves the switch as it is. */
+  enabled?: boolean;
 }
 
 /** A composition's settings as stored. */
@@ -1860,6 +1862,21 @@ export interface InvokeEffectAction {
   group: PropRef;
   action: string;
   payload?: string;
+}
+
+/** AE's Add ▸ Property: add OPTIONAL properties that exist only once added — a text animator's Anchor Point, Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color, Stroke Color, and Font Axis properties ('axis<TAG>'). `parent` is the property group ('text/animators/<id>/props'); `names` are the new properties' path leaves. A property already present is kept as it is (AE's menu disables it). Returns the property paths in input order. Undo removes what this added. */
+export interface AddProperties {
+  parent: PropRef;
+  names: string[];
+}
+
+/** Remove optional properties (AE: select the property ▸ Delete) with their keyframes and expressions; a font axis property frees its slot. A property that is not optional is refused (`invalidArgument`). Undo restores the properties, their keys and expressions exactly. */
+export interface RemoveProperties {
+  props: PropRef[];
+}
+
+export interface PropertyPaths {
+  paths: PropPath[];
 }
 
 /** Composition marker (no layer) or layer marker (layer time). */
@@ -3427,6 +3444,8 @@ export type Command =
   | ({ type: 'copyPropertyGroups' } & CopyPropertyGroups)
   | ({ type: 'applyPreset' } & ApplyPreset)
   | ({ type: 'invokeEffectAction' } & InvokeEffectAction)
+  | ({ type: 'addProperties' } & AddProperties)
+  | ({ type: 'removeProperties' } & RemoveProperties)
   | ({ type: 'addMarkers' } & AddMarkers)
   | ({ type: 'updateMarkers' } & UpdateMarkers)
   | ({ type: 'deleteMarkers' } & DeleteMarkers)
@@ -3552,6 +3571,8 @@ export type CommandResult =
   | ({ type: 'copyPropertyGroups' } & GroupList)
   | ({ type: 'applyPreset' } & GroupList)
   | ({ type: 'invokeEffectAction' } & Empty)
+  | ({ type: 'addProperties' } & PropertyPaths)
+  | ({ type: 'removeProperties' } & Empty)
   | ({ type: 'addMarkers' } & MarkerIds)
   | ({ type: 'updateMarkers' } & Empty)
   | ({ type: 'deleteMarkers' } & Empty)
@@ -3780,6 +3801,8 @@ export interface CommandArgs {
   copyPropertyGroups: CopyPropertyGroups;
   applyPreset: ApplyPreset;
   invokeEffectAction: InvokeEffectAction;
+  addProperties: AddProperties;
+  removeProperties: RemoveProperties;
   addMarkers: AddMarkers;
   updateMarkers: UpdateMarkers;
   deleteMarkers: DeleteMarkers;
@@ -3905,6 +3928,8 @@ export interface CommandResults {
   copyPropertyGroups: GroupList;
   applyPreset: GroupList;
   invokeEffectAction: Empty;
+  addProperties: PropertyPaths;
+  removeProperties: Empty;
   addMarkers: MarkerIds;
   updateMarkers: Empty;
   deleteMarkers: Empty;

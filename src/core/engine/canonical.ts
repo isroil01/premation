@@ -27,6 +27,16 @@ function sortKeys(v: unknown): unknown {
   return v;
 }
 
+/**
+ * One canonical JSON text for a value: every object's keys sorted (the order a
+ * JS object keeps for sorted insertion — array-index keys first), undefined
+ * members dropped. Both engines write copy/paste fragments this way, so a
+ * fragment's bytes are the same whichever engine copied (G2).
+ */
+export function canonicalStringify(v: unknown): string {
+  return JSON.stringify(sortKeys(v));
+}
+
 export function canonicalDocument(): unknown {
   const doc = structuredClone(captureDocument()) as unknown as Record<string, unknown>;
   delete doc.openTabs;

@@ -124,6 +124,7 @@ const NOT_WRITES = new Set([
   'convertFill', // core/paint/fill: returns a new FillPaint value (the caller sends it)
   'applyDeletionsToWords', // core/captions/transcriptEdit: returns the transcript words after cuts (pure)
   'applyStyleToRange', // core/text/richText: returns new style runs (pure; the caller writes them)
+  'replaceAllInString', 'replaceAllWithRuns', // core/textTools/findReplaceText: return the replaced text / shifted runs (pure; textEdits sends them)
   'applyIk', // core/rig/rigDeform: solves a pose, returns new Bone objects (pure; also used by the renderer)
   'reorderSiblings', // core/scene/parenting: returns a reordered id array (pure; the caller sends reorderLayers)
 ]);

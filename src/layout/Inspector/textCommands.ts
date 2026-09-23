@@ -21,6 +21,10 @@ import { runDocumentEdit } from '@core/commands/documentEdit';
 import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
+import { getTime } from '@stores/playbackClockStore';
+import { edit } from '@core/engine/uiEdits';
+import { fieldCommands } from '@layout/Text/textEdits';
+import { componentPropsCommands } from './useComponentProp';
 import type { SceneNode } from '@core/types';
 
 export const TEXT_SWAP_FILL_STROKE_COMMAND = asCommandId('text.swapFillStroke');
@@ -69,23 +73,30 @@ export function isTypingInField(
 export function swapTextFillStroke(nodeIds: ReadonlyArray<string>): boolean {
   const targets = nodeIds.map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return false;
-  // B3-legacy: engine gap — text component props (strings / runs) are not API properties yet.
+  const plans = targets.map(({ node, compId, props }) => {
+    const values: Record<string, unknown> = {};
+    const fill = typeof props.fill === 'string' ? props.fill : DEFAULT_TEXT_FILL;
+    const stroke = typeof props.stroke === 'string' ? props.stroke : DEFAULT_TEXT_STROKE;
+    const noFill = props.noFill === true;
+    const noStroke = props.noStroke === true;
+    values.fill = stroke;
+    values.stroke = fill;
+    if (noFill !== noStroke) {
+      values.noFill = noStroke;
+      values.noStroke = noFill;
+    }
+    if (!(typeof props.strokeWidth === 'number' && props.strokeWidth > 0)) values.strokeWidth = 2;
+    return { id: node.id, compId, values, ...componentPropsCommands(node.id, compId, values, getTime()) };
+  });
+  // Engine API (G1): layer/fill, text/stroke, text/noFill… — ONE batch.
+  if (plans.every((pl) => Object.keys(pl.rest).length === 0)) {
+    void edit('Swap Fill and Stroke', plans.flatMap((pl) => pl.cmds));
+    return true;
+  }
+  // B3-legacy: engine gap — a stroke width the text layer has never stored has no API property (layer/strokeWidth is listed only once stored).
   runDocumentEdit('Swap Fill and Stroke', () => {
-    for (const { node, compId, props } of targets) {
-      const write = (key: string, value: unknown): void => {
-        updateNodeComponentProp(defaultSceneGraph, node.id, compId, key, value);
-      };
-      const fill = typeof props.fill === 'string' ? props.fill : DEFAULT_TEXT_FILL;
-      const stroke = typeof props.stroke === 'string' ? props.stroke : DEFAULT_TEXT_STROKE;
-      const noFill = props.noFill === true;
-      const noStroke = props.noStroke === true;
-      write('fill', stroke);
-      write('stroke', fill);
-      if (noFill !== noStroke) {
-        write('noFill', noStroke);
-        write('noStroke', noFill);
-      }
-      if (!(typeof props.strokeWidth === 'number' && props.strokeWidth > 0)) write('strokeWidth', 2);
+    for (const { id, compId, values } of plans) {
+      for (const [key, value] of Object.entries(values)) updateNodeComponentProp(defaultSceneGraph, id, compId, key, value);
     }
   });
   return true;
@@ -100,12 +111,11 @@ export function toggleTextOrientation(nodeIds: ReadonlyArray<string>): 'vertical
   const targets = nodeIds.map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return null;
   const next = targets.some((t) => t.props.orientation !== 'vertical') ? 'vertical' : 'horizontal';
-  // B3-legacy: engine gap — text component props (strings / runs) are not API properties yet.
-  runDocumentEdit(next === 'vertical' ? 'Convert to Vertical Text' : 'Convert to Horizontal Text', () => {
-    for (const { node, compId } of targets) {
-      updateNodeComponentProp(defaultSceneGraph, node.id, compId, 'orientation', next);
-    }
-  });
+  // `text/orientation` (G1), one batch over the selection.
+  void edit(
+    next === 'vertical' ? 'Convert to Vertical Text' : 'Convert to Horizontal Text',
+    targets.flatMap(({ node }) => fieldCommands(node.id, 'text/orientation', next)),
+  );
   return next;
 }
 

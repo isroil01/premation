@@ -108,7 +108,7 @@ struct EditVisitor {
 
 Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
     : out_(out), sink_(sink), options_(std::move(options)) {
-  if (options_.testPorts) ports_ = std::make_unique<doc::FakePorts>();
+  if (options_.testPorts) ports_ = std::make_unique<doc::FakePorts>(options_.testPortsDir);
   else ports_ = std::make_unique<doc::FilePorts>();
   // The engine starts on a new project, as the editor does (New Project →
   // `comp_root`), at revision 0.
@@ -311,6 +311,7 @@ api::Outcome Session::handle_request_body(const api::Request& request, Clock::ti
         return o;
       }
       case api::RequestBody::Kind::command: {
+        catalogCache_.clear();
         ensure_timelines();
         const api::Command& cmd = std::get<api::Command>(request.body.v);
         api::CommandResult r;
@@ -324,6 +325,7 @@ api::Outcome Session::handle_request_body(const api::Request& request, Clock::ti
         return o;
       }
       case api::RequestBody::Kind::batch: {
+        catalogCache_.clear();
         ensure_timelines();
         const api::CommandBatch& batch = std::get<api::CommandBatch>(request.body.v);
         std::vector<const api::Command*> cmds;
@@ -628,10 +630,10 @@ struct ControlVisitor {
   }
   R operator()(const api::BeginGesture& c) const {
     if (s.gesture_) fail(ErrorCode::gesture_open, "gesture '" + s.gesture_->label + "' is already open");
-    s.gestureSeq_ += 1;
-    s.gesture_ = Session::Gesture{s.gestureSeq_, c.label, origin, {}};
+    const std::uint32_t id = s.ids_.next_gesture();  // in the id state (ids.ts)
+    s.gesture_ = Session::Gesture{id, c.label, origin, {}};
     s.emit_status();
-    return result_for<api::BeginGesture>(api::GestureRef{s.gestureSeq_});
+    return result_for<api::BeginGesture>(api::GestureRef{id});
   }
   R operator()(const api::EndGesture& c) const {
     if (!s.gesture_) fail(ErrorCode::no_gesture, "no gesture is open");
@@ -852,7 +854,7 @@ api::CommandResult Session::run_control(const api::Command& cmd, api::Origin ori
 // ── queries ─────────────────────────────────────────────────────────────────
 
 api::QueryResult Session::run_query(const api::Query& q) {
-  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}};
+  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_};
   c.revision = revision_;
   c.projectPath = projectPath_;
   c.dirty = revision_ != savedRevision_;
@@ -882,6 +884,9 @@ api::QueryResult Session::run_query(const api::Query& q) {
     st.dropped_frames = rc.dropped;
     return st;
   };
+  // Queries never write the document: bar lookups come from an index for the
+  // duration (timeline.hpp TlReadScope).
+  const doc::TlReadScope readOnly;
   return doc::run_query(q, c);
 }
 

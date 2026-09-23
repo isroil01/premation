@@ -10,6 +10,7 @@ import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeFill } from '@core/paint/fill';
 import { readAutoOrientMode } from '@core/scene/autoOrient';
 import { repairNestedTabs } from '@core/composition/compNavigation';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -96,7 +97,7 @@ it('Auto-Orient: one entry over the layers that can take the mode', async () => 
   expect(readAutoOrientMode(defaultSceneGraph.getNode(s.B)!)).toBe('path');
 });
 
-it('Solid Settings: name, label and size as one entry; a colour change stays legacy', async () => {
+it('Solid Settings: name, label, size and colour (layer/fill) as one entry', async () => {
   const label = LABEL_COLORS[2]!.color;
   let r: string | null = null;
   await oneEntry('Solid Settings', async () => {
@@ -110,9 +111,11 @@ it('Solid Settings: name, label and size as one entry; a colour change stays leg
   expect([t.width, t.height]).toEqual([640, 360]);
 
   const n = historyLabels().length;
-  expect(await layerSettingsEdit(s.A, { name: 'Backdrop', color: '#ff0000' })).toBe('legacy');
+  expect(await layerSettingsEdit(s.A, { name: 'Backdrop', color: '#ff0000' })).toBe('ok');
+  expect(readNodeFill(defaultSceneGraph.getNode(s.A)!)).toMatchObject({ type: 'solid', color: '#ff0000' });
+  expect(historyLabels().length).toBe(n + 1);
   expect(await layerSettingsEdit('nope', { name: 'x' })).toBe('gone');
-  expect(historyLabels().length).toBe(n);
+  expect(historyLabels().length).toBe(n + 1);
 });
 
 it('Start from a Video conform: the active comp takes the probed rate as one entry', async () => {

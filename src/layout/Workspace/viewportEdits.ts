@@ -245,7 +245,7 @@ export async function editPositionKeys(nodeId: string, label: string, mutate: (s
 export async function commitSourceTextEdit(
   nodeId: string,
   text: string,
-  opts: { seconds: number; label: string; rename?: string },
+  opts: { seconds: number; label: string; rename?: string; runs?: ReadonlyArray<unknown> },
 ): Promise<boolean> {
   const cmds: Command[] = [];
   if (opts.rename !== undefined) cmds.push({ type: 'renameLayer', layer: nodeId, name: opts.rename });
@@ -255,6 +255,9 @@ export async function commitSourceTextEdit(
     value: values.string(text),
     time: compTime(opts.seconds),
   });
+  // Styled text: the runs re-indexed to the new text, after it (G1 `text/styleRuns`
+  // — a static Source Text write drops the runs that indexed the old text).
+  if (opts.runs) cmds.push({ type: 'setProperty', prop: { layer: nodeId, path: paths.textProp('styleRuns') }, value: values.json(opts.runs) });
   const res = await edit(opts.label, cmds);
   return res.ok;
 }

@@ -20,9 +20,10 @@ the UI mirror · §9 wire format (decision + measurements) · §10 errors · §1
 versioning · §12 automation · §13 frames · §14 gaps against After Effects ·
 §15 B2 implementation notes (what B3 deletes) · §16 files.
 
-Schema size today: **121 commands** (91 document edits, 25 controls, 5 project
-I/O — B1 miscounted; corrected in B2 from the meta table), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 342 structs,
-11 unions, 65 enums — `SCHEMA_COUNTS` in `generated/meta.ts` (C3 added the five
+Schema size today: **123 commands** (93 document edits, 25 controls, 5 project
+I/O — B1 miscounted; corrected in B2 from the meta table; G1 added
+`addProperties` / `removeProperties`), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 350 structs,
+11 unions, 69 enums — `SCHEMA_COUNTS` in `generated/meta.ts` (C3 added the five
 frame-channel messages, their union and `PixelFormat`, §13; D2 added the
 `Render` family, `96_render.eapi` — the serialized FrameScene the C++ render
 graph consumes, a file format and in-process value, never a pipe message).
@@ -247,7 +248,10 @@ their `GroupId`, never by index.
 | Mask | `masks/<maskId>/path`, `…/feather`, `…/opacity`, `…/expansion`, `…/mode`, `…/inverted` | path: whole-mask snapshots in `fx.maskAnim` (not a track); others `mask.<pathId>.<prop>` |
 | Source text | `text/sourceText` (`textDocument` Value) | data track `text.source` + `Text.content`/`__runs` |
 | Text animator | `text/animators/<animatorId>/props/<prop>`, selector `text/animators/<animatorId>/selectors/<selectorId>/<param>` | `ta.<i>.<param>`, `ta.<i>.s<j>.<param>` |
-| Font axis | `text/axes/<tag>` | `text.axis.<tag>` |
+| Font axis | `text/axes/<tag>` — every axis, `wght` / `wdth` / `slnt` included (G1: one path each; their static value is the Text component's `fontWeight` — number or CSS weight string — / `fontWidth` / `fontSlant`) | `text.axis.<tag>`; `fontWeight`, `fontWidth`, `fontSlant` |
+| Text fields (G1, static) | `text/<key>` for the Text component's Character / Paragraph / box / More Options / OpenType fields (`fontFamily`, `fontStyle`, `stroke`, `strokeOrder`, `align`, `direction`, `orientation`, `boxWidth`, `anchorGrouping`, `ligatures`, `stylisticSets`, `strokePaint`… — `src/core/text/textFields.ts` TEXT_FIELDS); `text/styleRuns` (json, the per-character style runs); `text/pathOptions/path` (string: one of the layer's mask ids, `''` = not on a path) and `text/pathOptions/<param>` | Text component props; `__runs`; `fx.textPath` (`textPath.<param>`) |
+| Text animator / selector fields (G1, static) | `text/animators/<a>/props/trackingType`, `…/characterRange` (choices), `…/color`, `…/strokeColor` (optional colours, see `addProperties`), `…/blurY` (always present: unset = linked to Blur X); `text/animators/<a>/selectors/<s>/kind` (switched in place, id kept), `basedOn`, `mode`, `units`, `shape`, `randomizeOrder`, `lockDimensions`, `randomSeed`, `expression` (per kind) | animator / selector objects in `Text.__animators` |
+| Layer fill (G1) | `layer/fill` (colour, keyed through `fill_r/_g/_b/_a`: AE's Solid Color / Fill Color — present while the fill is solid); `layer/fillPaint`, `layer/fills` (json paint objects: the primary paint, the stack); `layer/width` / `layer/height` on text layers (the wrap box) | `fx.fill` solid paint, else the `fill` string on Style / Text; `fx.fills` |
 | Shape contents | `contents/<groupId>/…/<param>` | `pathop.<opId>.<param>`, `fx.fill(s)`, `fx.stroke(s)` |
 | 3D material / geometry | `material/<param>`, `geometry/<param>` | bare names (`metal`, `extrusionDepth`, …) |
 | Camera / light | `camera/<param>`, `light/<param>` | flat transform props |
@@ -341,7 +345,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 |---|---|
 | `createComposition` | From settings, or `fromItems` (size/rate/duration from the first item, a layer per item). Inverse: remove it. |
 | `duplicateComposition` | `deep` also duplicates nested comps. Inverse: remove the copies. |
-| `setCompositionSettings` [c] | Patch name, size, pixel aspect, rate, duration, start timecode, background (colour or gradient), transparency, work area, motion blur (shutter angle/phase, samples, adaptive limit), 3D renderer, global light, drop frame, preserve rate/resolution, world settings. Changing rate or duration never moves keyframes (times are flicks). Inverse: previous values of patched fields. **Undoable — today it is not.** |
+| `setCompositionSettings` [c] | Patch name, size, pixel aspect, rate, duration, start timecode, background (colour or gradient), transparency, work area, motion blur (shutter angle/phase, samples, adaptive limit, and — G1 — the comp's Enable Motion Blur switch, `MotionBlurSettings.enabled`), 3D renderer, global light, drop frame, preserve rate/resolution, world settings. Changing rate or duration never moves keyframes (times are flicks). Inverse: previous values of patched fields. **Undoable — today it is not.** |
 | `setWorkArea` [c] | Inverse: previous range. |
 | `precompose` | `moveAll` or `leaveAttributes` (one layer only), optional duration fit. Inverse: original layers restored exactly (ids, properties, keyframes, parenting, stack slots), new comp removed. |
 | `trimCompToWorkArea`, `cropComposition` | Inverse: previous duration/size and every shifted layer time / position. |
@@ -419,6 +423,8 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `renamePropertyGroup` | Inverse: previous name. |
 | `applyPreset` | Animation preset at `time`. Inverse: remove added groups, restore overwritten keys. |
 | `invokeEffectAction` | A plugin effect's button (param supervision). The plugin's resulting writes are one history entry; inverse is that entry. |
+| `addProperties` | G1 — AE's Add ▸ Property: OPTIONAL properties that exist only once added, under `parent` (`text/animators/<id>/props`): Anchor Point X/Y/Z (Z only on a 3D layer), Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color / Stroke Color (`color`, `strokeColor`) and Font Axis properties (`axis<TAG>`, at most 8 distinct tags per layer — `outOfRange`). A property already present keeps its value. Returns the property paths in input order. Inverse: the animator as it was. |
+| `removeProperties` | G1 — delete optional properties with their keyframes and expressions (a non-optional property: `invalidArgument`; an absent one: `notFound`). Inverse: the properties, keys and expressions back exactly. |
 
 `setEffectParam` and `setMaskPath` from the plan's §2 sketch are `setProperty`
 on an effect or mask path — one command, one inverse implementation.
@@ -901,7 +907,12 @@ SSAO), `RenderSettings.encoderOptions`, `DocumentFragment.data`,
 `EngineError.detail`, `invokeEffectAction.payload`. Properties that will use
 `Value.json` until typed: particle emitter settings, puppet rig settings
 (mesh, solver), skeleton rigs, path-operator configs, text-on-path options,
-layer-style arrays, face materials, plugin custom-layer params. Each should
+layer-style arrays, face materials, plugin custom-layer params. G1 added four
+json FIELDS (static properties, `animatable: false`): `text/styleRuns` (the
+per-character style runs, grapheme-indexed; a static Source Text change drops
+them, a client that keeps them re-sends them after it), `layer/fillPaint` and
+`layer/fills` (fill paint objects: `{type: solid | linear | radial, …}`) and
+`text/strokePaint` (a text layer's gradient stroke). Each should
 become a typed `Value` variant or a property subtree before D1; a test can
 list the remaining uses from the property catalog.
 
@@ -1099,12 +1110,132 @@ dedicated Worker (no DOM, storage or network) with one global, `premation`
 control and io commands are never available. One run = one gesture `Script: <name>`,
 origin `script`; a throw, a timeout or a crash rolls it back.
 
-Gaps found (engine side, not changed by B5): gesture ids are not in the log header's
-id counters (the recorder stores `gestureSeq`, the replay burns empty gestures to
-align); the app's Edit ▸ Undo / Ctrl+Z steps the history directly
-(`CommandSystem.undo` → `EngineHistoryEntry.undo`) instead of sending `undo`, so a
-keyboard undo moves the revision without a log record; `applyPreset` applies at comp
-seconds without converting to the layer's keyframe axis.
+Gaps B5 found on the engine side were closed in G2 (§15.8): gesture ids are in the
+id counters, the app's undo/redo/jump send engine requests, and `applyPreset`
+converts to the layer's keyframe axis.
+
+### 15.7 G1 — static fields, optional properties and the data-model gaps
+
+**Fields.** Everything a layer stores outside its keyframe tracks that the UI
+edits — a Text component's strings / choices / switches / box numbers, a text
+animator's Tracking Type and Character Range, a selector's kind / Based On /
+Mode / Units / Shape / Randomize Order / Lock Dimensions / Random Seed /
+expression, Path Options ▸ Path, style runs, fill paints — is a property of the
+catalog with `special: 'field'` (`src/core/engine/fields.ts`, C++
+`native/engine/src/core/fields.cpp`), typed by one spec table both engines read
+(`src/core/text/textFields.ts`, generated into the C++ catalog data by
+`GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`). `setProperty` /
+`setProperties` / `resetProperty` type-check a field against its spec
+(`typeMismatch`, a choice outside the list `outOfRange`, a number outside
+min..max `outOfRange`); `setAnimated` / keys / expressions refuse it
+(`notAnimatable`) — AE keys these through the TextDocument, not one by one.
+Clear-at-default fields (OpenType switches, Tracking Type, Character Range)
+store nothing at their default, the shape the editor always wrote. A
+`strokeOrder` write keeps the legacy `strokeOverFill` boolean in step. A
+selector kind switched in place keeps the selector's id, Based On, Mode and
+enable, and drops the keyframes/expressions of the parameters the new kind
+does not have.
+
+**The other G1 model changes.** The first static write of an unstored text
+property (Grouping Alignment, Font Width, a string-stored weight) lands on the
+Text component, never the Transform (both engines' static seam). `wght` /
+`wdth` / `slnt` are `text/axes/<tag>` like every other axis (static value read
+from `fontWeight` — a number, a decimal string, `normal` or `bold` — /
+`fontWidth` / `fontSlant`; a write stores a number). An animator's Blur Y is
+always addressable (unset = linked, reads as Blur X). Path Options' params
+moved to `text/pathOptions/<param>` beside `text/pathOptions/path`. A layer's
+solid fill colour is `layer/fill` (keyed through `fill_r/_g/_b/_a`, written to
+the solid `fx.fill` paint when there is one, else the `fill` string). The
+comp's motion-blur switch is `MotionBlurSettings.enabled`.
+
+**Commands.** `addProperties` / `removeProperties` (§4.7) — AE's Add ▸
+Property and deleting a property, for text animators (the only optional
+properties the model has today).
+
+**UI and AI.** `fieldCommands(nodeId, path, raw)` (layout/Text/textEdits.ts)
+and `fieldWrite` / `fieldBindingForComponentProp` (core/engine/propRefs.ts)
+turn what a panel holds into field writes; `useComponentProp` sends a Text
+component's fields and a layer's fill colour through them, so every
+`useComponentProp` row of the Character / Paragraph panels is on the engine.
+Style runs are a client macro: the panel computes the runs (pure
+`applyStyleToRange`) and sends `text/styleRuns`; Find/Replace Text and Replace
+Fonts are client macros over `text/sourceText` / `text/styleRuns` /
+`text/fontFamily` / `updateKeyframes`. The AI facades (`src/core/ai/toolContext.ts`)
+create shape / solid / text / group / light layers through `createLayer` (a
+light is ONE light — After Effects adds no ambient light beside it), write fill
+colours and text fields as fields, write a static value on an animated
+property as a key at the playhead (AE), key one member of a vector (Scale X)
+as the whole vector, pass dropdown effect params by value or label, set roving
+and remove a last key through `updateKeyframes` / `deleteKeyframes`, and set
+the comp motion blur through `setCompositionSettings`.
+
+**Still not in the API** (the reasons are at each `B3-legacy` site): the
+paint-stop keyframes (`fill.stops` data track) and gradient-geometry static
+writers inside legacy drag transactions; the shape stroke stack; the Style
+component's arbitrary props in the generic node inspector; paragraph-text
+conversions whose tests pin non-layer nodes; placement-aware inserts
+(`placeInComp`, continuous raster) of text presets; a text layer's unstored
+stroke width; puppet / polystar / skeleton rigs.
+
+### 15.8 G2 — engine-internal correctness (both engines)
+
+Every item landed in the TypeScript and the C++ engine together, with a replay
+case (`__testHelpers__/corpus.ts`, `G2: …` sessions) that the cross-engine
+replay runs against both.
+
+- **Batch inverses.** A batch's inverse keeps each part's first-seen before and
+  last-seen after, but a document-scope capture lists only the parts that exist,
+  so a part an EARLIER command of the batch created looked pre-existing (undoing
+  a batch of two `createComposition` kept the first; its layers had no events),
+  and a part an earlier command's after still held looked alive after a later
+  command removed it (an `editWorkArea` after another comp's removed a layer with
+  no `layersRemoved`, and undo did not restore it). Now a key only the after has
+  starts as absent, and a key only the before has ends as absent
+  (`LocalEngine.runEdits`; the C++ journal already did). The generated corpus now
+  batches every builder (the `NO_BATCH` exclusion is gone).
+- **Keyframe events after a dropped cache row.** The event builder forgot a
+  layer's reported keyframe lists when the layer was removed or its bar moved;
+  a later report (a multi-entry `jumpToHistory` that restores the layer AND
+  un-keys it) then never sent the empty list. Both builders remember the paths
+  they dropped and report the no-longer-animated ones empty. The replay's
+  "shared event gap" tolerance is removed: every mirror gap fails.
+- **Gesture ids** come from the id allocator (`gesture` counter, a session
+  counter that survives New Project), so a log header carries them;
+  `recordSession` no longer burns a probe gesture and `replaySession` no longer
+  burns empty gestures (a B5-format header's `gestureSeq` is read as the counter).
+- **UI undo is an engine request.** `performUndo` / `performRedo` /
+  `performJumpTo` (Ctrl+Z, Ctrl+Shift+Z, Edit ▸ Undo, the toolbar, the History
+  panel) send `undo` / `redo` / `jumpToHistory` to the session's engine
+  (`setHistoryRoute`, registered by `engineInstance`), so they are in the command
+  log and a keyboard-undo session replays revision-exact (verified in the real app).
+- **`applyPreset`** converts `time` (composition) to each layer's keyframe axis
+  (start offset, stretch); the AI facade's axis-match fallback is gone.
+- **Save/open** of guides, swatches, materials, transitions and plugin storage in
+  the C++ document (`DocExtras`, docio.cpp — the stores' sanitisers ported;
+  document entries without a usable id get `sw_doc_<n>` / `mat_doc_<n>` in BOTH
+  engines instead of a clock id). `--test-ports-dir` mirrors the C++ engine's
+  saved projects so the replay compares them.
+- **Copy fragments** are written with sorted keys in both engines
+  (`canonicalStringify`), so `copyLayers` is compared byte for byte.
+- **3D layer spaces in expressions**: `toComp` / `fromComp` / `toWorld` /
+  `fromWorld` on 3D layers, 3D parent chains through 2D parents, cameras (one-
+  and two-node) and lights, through the active camera — `layerSpaceAt` ported
+  (worldxf.cpp `layer_space_at`); 2D spaces now sample expressions and the
+  layer's keyframe axis like the TypeScript.
+- **Gradient geometry rows** (`fillAngle`, `fillCenterX|Y`, `fillRadius`,
+  `strokeAngle`…) on text layers, read from / written into the paint (fill stack
+  included); **paint strokes** are renormalised on write (`normalizeStroke`), and
+  a raw stroke's values read with JavaScript arithmetic (absent → NaN/undefined).
+- **Query path**: `getPropertyValues` over 2,000 layers × 5 properties spent its
+  time in per-property catalog builds and an O(bars) bar lookup per sample. A
+  read scope indexes bars per timeline during a query, and catalogs are cached
+  per layer until the next command. `crossEngineBench` (C++ through the pipe):
+  evaluate 10,000 values 410 → 86 ms, read them pre-expression 400 → 69 ms,
+  `getLayerTransforms` 68 → 35 ms.
+- **SVG in precompose (leave attributes)**: the content's SVG component is
+  rebuilt (`makeSvgComponent`) with its sanitised markup re-scoped to the
+  content's id — the editor re-sanitises the source; the engine rewrites the
+  `<scope>__` names the sanitiser's id scoping wrote, which is byte-identical.
 
 ## 16. Files
 
@@ -1126,6 +1257,8 @@ seconds without converting to the layer's keyframe axis.
 | `src/core/engine/props.ts` | Property catalog: API paths ⇄ today's storage; keyframe read/write. |
 | `src/core/engine/handlers/*.ts` | One handler per edit command, by family. |
 | `src/core/engine/{queries,events,model,transport,keyIndex,ids,replay,canonical}.ts` | Queries, event building, read model, transport, keyframe id index, deterministic ids, replay, canonical document. |
+| `src/core/engine/fields.ts`, `src/core/text/textFields.ts`, `native/engine/src/core/fields.cpp` | G1 static field properties (the spec table both engines read) and their C++ port. |
+| `src/core/engine/handlers/optionalProps.ts`, `native/engine/src/core/handlers_optional.cpp` | `addProperties` / `removeProperties`. |
 | `src/core/engine/__tests__/` | Per-command undo parity, controls, events + mirror, queries, defects, replay corpus. |
 | `packages/engine-api/src/*.test.ts` | Round trips for every type, staleness, doc coverage. |
 | `packages/engine-api/bench/` | `npm run engine-api:bench` (set `ENGINE_API_BENCH_EXTRA` to an adapter module to add a comparator). |
