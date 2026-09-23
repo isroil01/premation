@@ -169,8 +169,9 @@ class Device {
 
   // ── resources ──
   /// Transient target by name + size (graph targets), created on a miss.
+  /// `created` (optional) reports a miss: the target is new and holds nothing yet.
   RenderTarget& target(std::string_view name, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format,
-                       std::uint32_t samples, bool depth);
+                       std::uint32_t samples, bool depth, bool* created = nullptr);
   /// A texture holding `pixels` (rows top-down, tightly packed), keyed by content hash.
   TexRef texture(std::string_view hash, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format,
                  std::span<const std::uint8_t> pixels, bool mipmapped);
@@ -191,6 +192,15 @@ class Device {
   /// QuadRenderer.execute: bind pipelines + groups and draw every item.
   void execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::TextureFormat format,
                std::uint32_t samples);
+
+  /// Draw one quad into `target` OUTSIDE the frame's command encoder: its own
+  /// command buffer, submitted now — so it runs before the frame's — with its
+  /// own uniform buffer (the frame's arena is uploaded only at end_frame). For
+  /// one-off texture preparation (a mip chain, a colour-managed footage
+  /// conversion): once per content, never per frame, so the allocations here
+  /// are off the hot path. Safe to call while a frame render pass is open.
+  void side_draw(const wgpu::TextureView& target, wgpu::TextureFormat format, std::uint32_t w, std::uint32_t h,
+                 const DrawItem& item, std::span<const float> uniforms);
 
   /// A material not in the builtin table — a plugin effect's host-supplied WGSL
   /// with the layout its manifest implies (CompositionPass pluginMaterial).
@@ -213,6 +223,11 @@ class Device {
     std::uint64_t id = 0;
   };
   const Pipeline& pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples);
+  wgpu::BindGroup make_bind_group(const Pipeline& p, const MaterialDesc& m, const DrawItem& it, const wgpu::Buffer& uniforms,
+                                  std::uint64_t size);
+  /// Fill levels 1… of `tex` from level 0 (side draws, kMipWgsl).
+  void generate_mips(const wgpu::Texture& tex, wgpu::TextureFormat format, std::uint32_t w, std::uint32_t h,
+                     std::uint32_t levels);
   wgpu::ShaderModule& shader(std::string_view name);
   /// Reserve `bytes` of uniform space; returns (chunk, byte offset).
   std::pair<std::uint32_t, std::uint32_t> uniform_alloc(std::span<const float> data);
@@ -258,5 +273,8 @@ class Device {
 };
 
 wgpu::TextureFormat texture_format(std::string_view tsName) noexcept;
+
+/// A full mip chain's level count for w × h (WebGPUBackend `mipCount`).
+std::uint32_t mip_levels(std::uint32_t w, std::uint32_t h) noexcept;
 
 }  // namespace premation::rg

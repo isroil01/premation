@@ -64,8 +64,15 @@ export function getActiveViewerLut(): ViewerLutMeta | null {
 export function intermediateFloatFormat(caps: {
   float16Textures: boolean;
   float32Textures?: boolean;
+  float32Blendable?: boolean;
 }): TextureFormat {
-  if (active.bitDepth === 32 && caps.float32Textures) return 'rgba32float';
+  // 32 bpc needs float32 targets that can be BLENDED as well as filtered: on
+  // WebGPU without `float32-blendable` every blended pipeline into an
+  // rgba32float target is invalid ("Blending is enabled but color format
+  // RGBA32Float is not blendable"), so a 32-bpc project drew nothing. The
+  // backend now requests the feature; a device without it renders at 16.
+  // Gated by render-tests `native-float32-*` (TS vs the C++ graph, 32 bpc).
+  if (active.bitDepth === 32 && caps.float32Textures && caps.float32Blendable !== false) return 'rgba32float';
   if (caps.float16Textures) return 'rgba16float';
   return 'rgba8unorm';
 }

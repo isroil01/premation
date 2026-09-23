@@ -10,7 +10,7 @@
   ],
   "features": {
     "engine": {
-      "description": "premation-engine: Dawn (native WebGPU) with only the backend each OS ships — D3D12 / Metal / Vulkan. Enable with VCPKG_MANIFEST_FEATURES=engine (the *-engine presets).",
+      "description": "premation-engine: OpenColorIO (D3 colour management) + Dawn (native WebGPU) with only the backend each OS ships — D3D12 / Metal / Vulkan. Enable with VCPKG_MANIFEST_FEATURES=engine (the *-engine presets).",
       "dependencies": [
         {
           "name": "dawn",
@@ -21,7 +21,8 @@
             { "name": "vulkan", "platform": "linux" },
             { "name": "x11", "platform": "linux" }
           ]
-        }
+        },
+        "opencolorio"
       ]
     }
   }

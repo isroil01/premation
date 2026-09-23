@@ -33,7 +33,7 @@ constexpr std::size_t kMaxLights = 8;
 constexpr std::uint32_t kEnvSpecLevels = 5;
 constexpr double kBlurTail = 2.5;
 constexpr double kMaxFxMargin = 1.5;
-constexpr std::size_t kShadeFloats = 16 + 4 + 4 + kMaxLights * 4 * 4 + 4 + 8 + 20 + 28 * 2;
+constexpr std::size_t kShadeFloats = 16 + 4 + 4 + static_cast<std::size_t>(kMaxLights) * 4 * 4 + 4 + 8 + 20 + std::size_t{28} * 2;
 
 Blend blend_of(api::RenderBlendMode b) { return static_cast<Blend>(static_cast<std::uint32_t>(b)); }
 
@@ -160,7 +160,7 @@ void pack_shade(Packer& p, const Shade* s) {
       out.at(aoAt + 17) = 1;  // flipV (WebGPU)
     }
     const auto pack_block = [&](std::size_t at, const Shade::ShadowBlock& b) {
-      const auto it = std::find(sceneIndex.begin(), sceneIndex.end(), b.light);
+      const auto it = std::ranges::find(sceneIndex, b.light);
       if (it == sceneIndex.end()) return;
       for (std::size_t i = 0; i < 16; ++i) out.at(at + i) = b.matrix.m.at(i);
       out.at(at + 16) = f32(b.axis[0]);
@@ -210,7 +210,7 @@ double effect_spread_px(const std::vector<api::RenderEffect>& effects, double la
       const double am = a.size() > 1 ? std::max(a[0], a[1]) : 1;
       const double cm = c.size() > 2 ? std::max({c[0], c[1], c[2]}) : 1;
       s = fx.num("radiusPx") * am * cm * kBlurTail;
-    } else if (t == "beam-path") s = fx.num("spreadPx");
+    } else if (t == "beam-path" || t == "plugin") s = fx.num("spreadPx");
     else if (t == "beam") {
       const double sx = fx.num("startX"), ex = fx.num("endX"), sy = fx.num("startY"), ey = fx.num("endY");
       const double overX = std::max({0.0, -sx, -ex, sx - 1, ex - 1}) * layerW;
@@ -227,7 +227,6 @@ double effect_spread_px(const std::vector<api::RenderEffect>& effects, double la
       s = pos == 1 ? 0 : pos == 2 ? fx.num("widthPx") * 0.5 : fx.num("widthPx");
     } else if (t == "displacement-map") s = fx.num("amount");
     else if (t == "compound-blur") s = fx.num("maxRadiusPx") * kBlurTail;
-    else if (t == "plugin") s = fx.num("spreadPx");
     mx = std::max(mx, s);
   }
   return mx;
@@ -259,10 +258,10 @@ struct WorldBox {
 };
 
 void add_transformed_box(WorldBox& b, const std::vector<double>& m, const std::array<double, 3>& lo, const std::array<double, 3>& hi) {
-  for (int i = 0; i < 8; ++i) {
-    const double x = (i & 1) != 0 ? hi[0] : lo[0];
-    const double y = (i & 2) != 0 ? hi[1] : lo[1];
-    const double z = (i & 4) != 0 ? hi[2] : lo[2];
+  for (unsigned i = 0; i < 8U; ++i) {
+    const double x = (i & 1U) != 0 ? hi[0] : lo[0];
+    const double y = (i & 2U) != 0 ? hi[1] : lo[1];
+    const double z = (i & 4U) != 0 ? hi[2] : lo[2];
     const double w = m[3] * x + m[7] * y + m[11] * z + m[15];
     const double iw = std::abs(w) < 1e-9 ? 1 : 1 / w;
     b.add((m[0] * x + m[4] * y + m[8] * z + m[12]) * iw, (m[1] * x + m[5] * y + m[9] * z + m[13]) * iw,
@@ -278,7 +277,7 @@ void mesh_bounds(const api::RenderExtrudedMesh& mesh, std::array<double, 3>& lo,
   for (std::size_t i = 0; i + 2 < n; i += 8) {
     for (std::size_t a = 0; a < 3; ++a) {
       float v = 0;
-      std::memcpy(&v, mesh.vertices.data() + (i + a) * 4, 4);
+      std::memcpy(&v, std::span(mesh.vertices).subspan((i + a) * 4, 4).data(), 4);
       lo.at(a) = std::min(lo.at(a), static_cast<double>(v));
       hi.at(a) = std::max(hi.at(a), static_cast<double>(v));
     }
@@ -341,10 +340,10 @@ std::optional<ShadowCamera> shadow_camera_for(const api::RenderLight3D& light, c
   };
   const auto corners = [&](const V3& eye) {
     std::array<V3, 8> out{};
-    for (int i = 0; i < 8; ++i) {
-      const double dx = ((i & 1) != 0 ? box.maxX : box.minX) - eye[0];
-      const double dy = ((i & 2) != 0 ? box.maxY : box.minY) - eye[1];
-      const double dz = ((i & 4) != 0 ? box.maxZ : box.minZ) - eye[2];
+    for (unsigned i = 0; i < 8U; ++i) {
+      const double dx = ((i & 1U) != 0 ? box.maxX : box.minX) - eye[0];
+      const double dy = ((i & 2U) != 0 ? box.maxY : box.minY) - eye[1];
+      const double dz = ((i & 4U) != 0 ? box.maxZ : box.minZ) - eye[2];
       out.at(static_cast<std::size_t>(i)) = {r[0] * dx + r[1] * dy + r[2] * dz, u[0] * dx + u[1] * dy + u[2] * dz,
                                              f[0] * dx + f[1] * dy + f[2] * dz};
     }
@@ -559,10 +558,10 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       const double d = -(view.size() > 14 ? view[14] : 0) / (len < 1e-9 ? 1 : len);
       const V3 origin{axis[0] * d, axis[1] * d, axis[2] * d};
       double maxD = 0;
-      for (int i = 0; i < 8; ++i) {
-        const double x = ((i & 1) != 0 ? box.maxX : box.minX) - origin[0];
-        const double y = ((i & 2) != 0 ? box.maxY : box.minY) - origin[1];
-        const double z = ((i & 4) != 0 ? box.maxZ : box.minZ) - origin[2];
+      for (unsigned i = 0; i < 8U; ++i) {
+        const double x = ((i & 1U) != 0 ? box.maxX : box.minX) - origin[0];
+        const double y = ((i & 2U) != 0 ? box.maxY : box.minY) - origin[1];
+        const double z = ((i & 4U) != 0 ? box.maxZ : box.minZ) - origin[2];
         maxD = std::max(maxD, x * axis[0] + y * axis[1] + z * axis[2]);
       }
       const double far = std::max(1.0, maxD * 1.25);
@@ -710,7 +709,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
   stripped.reserve(gather ? group.size() : 0);
   for (const api::Renderable* rp0 : group) {
     const api::Renderable* rp = rp0;
-    if (gather && std::any_of(rp0->effects.begin(), rp0->effects.end(), [](const api::RenderEffect& e) {
+    if (gather && std::ranges::any_of(rp0->effects, [](const api::RenderEffect& e) {
           return e.type == "blur" && Fx(e).flag("dofSource");
         })) {
       api::Renderable c = *rp0;
@@ -777,7 +776,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
           Packer p = ctx.packer();
           pack_textured3d(p, mvp, own || !r.uv_rect ? Rect{0, 0, 1, 1} : rect_of(*r.uv_rect), tint, r.opacity,
                           color_transform(r.color_matrix), rsp, lin);
-          Mat m;
+          Mat m = Mat::TEXTURED3D_MATERIAL;
           if (pbr) {
             pbr_tail(p);
             m = lut ? Mat::MESH3D_PBR_LUT_MATERIAL : Mat::MESH3D_PBR_MATERIAL;

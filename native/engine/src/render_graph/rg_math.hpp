@@ -130,9 +130,9 @@ inline Mat4 mul(const Mat4& a, const Mat4& b) noexcept {
     for (std::size_t r = 0; r < 4; ++r) {
       double s = 0;
       for (std::size_t k = 0; k < 4; ++k) {
-        s += static_cast<double>(a.m[k * 4 + r]) * static_cast<double>(b.m[c * 4 + k]);
+        s += static_cast<double>(a.m[k * 4 + r]) * static_cast<double>(b.m[c * 4 + k]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index): < 16
       }
-      o.m[c * 4 + r] = f32(s);
+      o.m[c * 4 + r] = f32(s);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index): < 16
     }
   }
   return o;
@@ -158,14 +158,18 @@ enum class WorkingSpace : std::uint8_t { srgb_linear, aces_cg };
 enum class DisplayTransform : std::uint8_t { srgb, aces, pq, hlg };
 
 /// The active colour pipeline (colorPipeline.ts `ColorPipelineConfig`). One
-/// value per frame, carried by the RenderView; D3 adds OCIO behind `ocio`.
+/// value per frame, carried by the RenderView; D3 colour management sets `managed`.
 struct ColorPipeline {
   WorkingSpace working = WorkingSpace::srgb_linear;
   DisplayTransform display = DisplayTransform::srgb;
   std::uint32_t bitDepth = 16;
-  /// D3 hook: an OCIO config/look replaces workingToDisplay. Unset today — the
-  /// output is exactly the TS transfer functions.
-  bool ocio = false;
+  /// D3: the frame is colour-managed (RenderView.colorManagement). Authored
+  /// colours go to the working space through `fromLinear709` (OCIO's primaries
+  /// matrix), textures arrive already in working space (their input program
+  /// ran once, render_graph/color), and the display encode is an OCIO program
+  /// instead of workingToDisplay. False = the TS transfer functions, exactly.
+  bool managed = false;
+  std::array<double, 9> fromLinear709{1, 0, 0, 0, 1, 0, 0, 0, 1};
 };
 
 /// toWorkingColor: authored display-referred RGB → working-space values.
@@ -173,6 +177,10 @@ inline Color to_working(const Color& c, const ColorPipeline& p) noexcept {
   double r = srgb_to_linear(c.r);
   double g = srgb_to_linear(c.g);
   double b = srgb_to_linear(c.b);
+  if (p.managed) {
+    const auto& m = p.fromLinear709;
+    return {m[0] * r + m[1] * g + m[2] * b, m[3] * r + m[4] * g + m[5] * b, m[6] * r + m[7] * g + m[8] * b, c.a};
+  }
   if (p.working == WorkingSpace::aces_cg) {
     const double nr = 0.613097396 * r + 0.339523469 * g + 0.047379562 * b;
     const double ng = 0.070194066 * r + 0.916353879 * g + 0.013452032 * b;

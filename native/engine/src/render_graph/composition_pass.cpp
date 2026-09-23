@@ -234,7 +234,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
                            const ListState& st) {
     Commands cmds;
     if (r.motion_samples.size() > 1) {
-      const double n = static_cast<double>(r.motion_samples.size());
+      const auto n = static_cast<double>(r.motion_samples.size());
       const Blend add = Blend::add;
       for (const auto& s : r.motion_samples) {
         const Mat3 m = mat3_of(s.model_matrix);
@@ -303,6 +303,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       }
       if (c->precomp && !c->precomp->flat_width) {
         std::vector<const api::Renderable*> kids;
+        kids.reserve(c->precomp_children.size());
         for (const auto& k : c->precomp_children) kids.push_back(&k);
         x.precomp_children = reparent(kids, P);
       }
@@ -314,6 +315,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
   /// prepareIsolatedPrecomp: render the subtree offscreen and return the container as a textured renderable.
   bool prepare_isolated_precomp(PassContext& ctx, const api::Renderable& r, ListState& st, std::size_t slot,
                                 bool inlineFallback, api::Renderable& prepared) {
+    if (!r.precomp) return false;
     const auto& pre = *r.precomp;
     const bool flat = pre.flat_width.has_value();
     const Mat3 fullModel = model_from_rect(ctx.viewport.visibleWorldRect);
@@ -418,6 +420,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
   /// renderGeneratorField: draw a plugin generator's instances into
   /// GENERATOR_TARGET and hand the layer on as a plain textured renderable.
   bool render_generator_field(PassContext& ctx, const api::Renderable& r, api::Renderable& prepared) {
+    if (!r.generator) return false;
     const auto& gen = *r.generator;
     Commands cmds;
     if (gen.count > 0) {
@@ -653,7 +656,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
             p.vec4(g.rim_width, g.rim_angle, g.specular_intensity, g.specular_falloff);
             p.vec4(g.specular_angle, g.grain, 1.0 / ctx.viewport.pixelWidth, 1.0 / ctx.viewport.pixelHeight);
             DrawItem& it = st.main.add(Mat::GLASS_MATERIAL, Blend::normal, p.span());
-            it.texture = blurred;
+            it.texture = std::move(blurred);
             it.sampler = ctx.linear_clamp();
             it.mask = layerTex;
           } else {
@@ -736,7 +739,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     flush(ctx, st);
     Commands layerCmds;
     if (hasMotion) {
-      const double n = static_cast<double>(r.motion_samples.size());
+      const auto n = static_cast<double>(r.motion_samples.size());
       const Blend add = Blend::add;
       for (const auto& s : r.motion_samples) {
         const Mat3 m = mat3_of(s.model_matrix);

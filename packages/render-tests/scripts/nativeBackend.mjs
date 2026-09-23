@@ -27,6 +27,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, rmSync, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { readPng } from './comparator.mjs';
 
 const RESET = '\x1b[0m';
 const c = (code, s) => `\x1b[${code}m${s}${RESET}`;
@@ -49,12 +50,33 @@ export function findRenderExe(repoRoot) {
   return null;
 }
 
+/**
+ * The webgpu pass's measured readback table (renderEntry.ts measureReadbackTable:
+ * a 256×256 PNG, pixel (value, alpha) = what a premultiplied (value, alpha)
+ * byte becomes in a webgpu PNG) → the raw 65 536-byte table premation-render
+ * reads (index alpha·256 + value). Null when the run did not measure one.
+ */
+async function readbackTableFile(scenesDir) {
+  const png = path.join(scenesDir, 'readback-table.png');
+  if (!existsSync(png)) return null;
+  const img = await readPng(png);
+  if (img.width !== 256 || img.height !== 256) return null;
+  const table = new Uint8Array(256 * 256);
+  for (let i = 0; i < table.length; i++) table[i] = img.data[i * 4 + 1];
+  const out = path.join(scenesDir, 'readback-table.bin');
+  await fs.writeFile(out, table);
+  return out;
+}
+
 /** Render every exported frame. Resolves with the exit code. */
-export function runNativeRenderer({ exe, scenesDir, outDir, reportFile, only }) {
+export async function runNativeRenderer({ exe, scenesDir, outDir, reportFile, only }) {
   // A stale report from an earlier run must never be read as this run's.
   rmSync(reportFile, { force: true });
+  const table = await readbackTableFile(scenesDir);
+  if (!table) process.stdout.write(yellow('  ! [native] no measured readback table — low-alpha pixels may differ by 1/255 at rounding ties\n'));
   return new Promise((resolve) => {
     const args = ['--batch', scenesDir, '--out', outDir, '--report', reportFile];
+    if (table) args.push('--readback-table', table);
     if (only && only.length) args.push('--only', only.join(','));
     const child = spawn(exe, args, { stdio: ['ignore', 'inherit', 'inherit'] });
     child.on('exit', (code) => resolve(code ?? 1));
@@ -101,6 +123,7 @@ const FAMILIES = [
   ['particles-', 'generators'],
   ['plugin-', 'plugins'],
   ['video-', 'video'],
+  ['native-', 'native parity (32 bpc, overlays, viewer LUT)'],
 ];
 
 export function familyOf(id) {

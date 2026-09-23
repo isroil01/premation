@@ -139,7 +139,11 @@ switch (step) {
       process.exit(1);
     }
     // Only the library sources are tidy-gated (tests/bench/bindings are macro-heavy third-party surfaces).
-    run('run-clang-tidy', ['-p', db, '-quiet', '.*[/\\\\]native[/\\\\]libs[/\\\\].*']);
+    // An engine preset (--engine) also gates the render graph (engine/src/render_graph, its own .clang-tidy).
+    const files = rest.includes('--engine')
+      ? '.*[/\\\\]native[/\\\\](libs|engine[/\\\\]src[/\\\\]render_graph)[/\\\\].*'
+      : '.*[/\\\\]native[/\\\\]libs[/\\\\].*';
+    run('run-clang-tidy', ['-p', db, '-quiet', files]);
     break;
   }
   case 'wasm': {

@@ -45,6 +45,15 @@ enum RenderIndexFormat { uint16 = 0; uint32 = 1; }
 enum RenderWorkingSpace { srgbLinear = 0; acesCg = 1; }
 enum RenderDisplayTransform { srgb = 0; aces = 1; pq = 2; hlg = 3; }
 enum RenderSsaoQuality { half = 0; full = 1; }
+enum RenderGridStyle { lines = 0; dashed = 1; dots = 2; }
+enum RenderGuideAxis { x = 0; y = 1; }
+/// D3: a colour space by what After Effects offers (Project Settings ▸ Working Space, Interpret Footage ▸ Color, the
+/// display, the output module). Resolved to an OCIO colour space by the C++ engine (render_graph/color).
+///   srgb          sRGB-encoded Rec.709 primaries (IEC 61966-2-1)    linearSrgb     linear Rec.709 primaries
+///   rec709        Rec.709 primaries, gamma 2.4 (BT.1886 display)    acesCg         linear AP1 (ACEScg)
+///   rec2020       Rec.2020 primaries, gamma 2.4                     linearRec2020  linear Rec.2020 primaries
+///   aces2065      linear AP0 (ACES2065-1, interchange)
+enum RenderColorSpace { srgb = 0; rec709 = 1; linearSrgb = 2; acesCg = 3; rec2020 = 4; linearRec2020 = 5; aces2065 = 6; }
 /// What a RenderEffectParam carries: `number`, `numbers` (a list, a colour as [r,g,b,a], packed vec4 rows, a Float32Array), `text`, `texts`, or a boolean in `number` (0/1).
 enum RenderParamKind { number = 0; numbers = 1; text = 2; flag = 3; color = 4; texts = 5; }
 
@@ -243,6 +252,45 @@ struct RenderFrameScene {
   ssao?: RenderSsao = 11;
 }
 
+/// One user guide (OverlayPass).
+struct RenderGuide { axis: RenderGuideAxis = 1; position: f64 = 2; color?: Color = 3; }
+
+/// Viewport overlays (Viewport.overlays): the grid, the proportional grid and user guides. Editor chrome only.
+struct RenderOverlays {
+  grid: bool = 1;
+  gridSpacing: f64 = 2;
+  gridSubdivisions: f64 = 3;
+  gridStyle: RenderGridStyle = 4;
+  /// Absent = OverlayPass.gridColor.
+  gridColor?: Color = 5;
+  proportionalGrid: bool = 6;
+  proportionalColumns: f64 = 7;
+  proportionalRows: f64 = 8;
+  /// The comp rect in world units (proportional grid).
+  compRect?: Rect = 9;
+  guides: RenderGuide[] = 10;
+}
+
+/// The viewer/monitor LUT (colorPipeline.ts ViewerLutMeta), applied after the display transform on the viewport only.
+/// Its strip rides as the texture key `viewer-lut`.
+struct RenderViewerLut { size: u32 = 1; is1d: bool = 2; intensity: f64 = 3; domainMin: f64 = 4; domainMax: f64 = 5; }
+
+/// D3 colour management, After Effects' model: the project's working space (compositing is always linear light —
+/// AE's "Linearize Working Space" is always on — in the working space's primaries), each footage item's input
+/// interpretation (RenderTextureRef.inputSpace), the viewer's display transform, and the output module's transform.
+/// Applied as GPU passes built from OpenColorIO. ABSENT = today's pipeline (workingSpace/displayTransform), byte for byte.
+struct RenderColorManagement {
+  workingSpace: RenderColorSpace = 1;
+  /// The viewer's display.
+  displaySpace: RenderColorSpace = 2;
+  /// Set on an export frame: the output module's space, in place of displaySpace.
+  outputSpace?: RenderColorSpace = 3;
+  /// An OCIO view on the display (e.g. an ACES output transform); absent = the plain encode into displaySpace.
+  view?: string = 4;
+  /// OCIO config (file path or ocio:// URI); absent = OCIO's built-in CG config.
+  ocioConfig?: string = 5;
+}
+
 /// The viewport a FrameScene is drawn through, and the colour pipeline state the frame was rendered with.
 struct RenderView {
   /// CSS size and device pixel ratio (Viewport); the framebuffer is round(css × dpr).
@@ -270,6 +318,12 @@ struct RenderView {
   viewerLutActive: bool = 16;
   /// The GPU the producer rendered on (WebGPU adapter vendor, e.g. "amd", "nvidia"); a parity consumer renders on the same one.
   adapterVendor?: string = 17;
+  /// What the overlay pass draws, when overlaysActive.
+  overlays?: RenderOverlays = 18;
+  /// The viewer LUT's parameters, when viewerLutActive.
+  viewerLut?: RenderViewerLut = 19;
+  /// D3 colour management; absent = today's pipeline.
+  colorManagement?: RenderColorManagement = 20;
 }
 
 /// A texture key the scene samples → the content it resolved to when the frame was rendered.
@@ -280,6 +334,10 @@ struct RenderTextureRef {
   /// Already working-space (float EXR, graph RTs): skips the sRGB decode on sample.
   sampleLinear: bool = 3;
   ready: bool = 4;
+  /// D3: how this COLOUR texture's texels are encoded (Interpret Footage ▸ Color). Under colorManagement a tagged
+  /// texture is converted once into working-space linear light; untagged textures are data (masks, LUT strips,
+  /// displacement / normal maps) and are never converted.
+  inputSpace?: RenderColorSpace = 5;
 }
 
 /// Texel content, stored once per distinct hash. Rows top-down, tightly packed.

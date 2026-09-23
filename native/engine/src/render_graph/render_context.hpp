@@ -15,6 +15,8 @@
 
 namespace premation::rg {
 
+class ColorSystem;
+
 /// Viewport + Camera2D (viewport/Viewport.ts, camera/Camera2D.ts).
 struct ViewportState {
   double cssWidth = 1, cssHeight = 1, dpr = 1;
@@ -39,6 +41,10 @@ struct Scope3D {
   static Scope3D of(const api::RenderFrameScene& s);
 };
 
+// A per-frame VIEW over the renderer's state (RenderPassContext in the TS graph):
+// built on the stack by SceneRenderer::render, handed to each pass by reference,
+// never copied, stored or assigned — so reference members are the honest type.
+// NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
 struct PassContext {
   Device& dev;
   const api::RenderFrameFile& file;
@@ -53,10 +59,13 @@ struct PassContext {
   /// EffectPass.activeColorTarget.
   std::string activeColorTarget;
   std::vector<GraphDiagnostic>& diagnostics;
+  // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
   /// Scratch uniform floats (reused).
   std::vector<float> scratch;
   /// The current 3D scope (see Scope3D).
   Scope3D scope;
+  /// D3 colour management for this frame (nullptr / inactive = today's pipeline).
+  ColorSystem* colorSystem = nullptr;
 
   /// ctx.target(name): nullptr = the surface (or an undeclared name).
   [[nodiscard]] RenderTarget* target(std::string_view name) const {

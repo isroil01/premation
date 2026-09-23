@@ -303,9 +303,17 @@ export class WebGPUBackend implements RenderBackend {
     this.adapterVendor = String((adapter as { info?: { vendor?: string } }).info?.vendor ?? '');
 
     const hasFloat32Filterable = !!adapter.features?.has?.('float32-filterable');
+    // A 32-bit project renders into rgba32float targets, and every compositing
+    // pipeline BLENDS into them: without `float32-blendable` WebGPU refuses
+    // each of those pipelines ("RGBA32Float is not blendable"), so 32 bpc was
+    // advertised on filterable alone and then drew nothing. Both, or 16.
+    const hasFloat32Blendable = !!adapter.features?.has?.('float32-blendable');
     const requiredFeatures: string[] = [];
     if (hasFloat32Filterable) {
       requiredFeatures.push('float32-filterable');
+    }
+    if (hasFloat32Blendable) {
+      requiredFeatures.push('float32-blendable');
     }
     // GPU frame time for the HUD. Optional in the spec; SwiftShader and some
     // mobile adapters do not offer it, and without it the frame simply is not
@@ -325,6 +333,7 @@ export class WebGPUBackend implements RenderBackend {
       ...(Object.keys(requiredLimits).length > 0 ? { requiredLimits } : {}),
     });
     this.capabilities.float32Textures = hasFloat32Filterable;
+    this.capabilities.float32Blendable = hasFloat32Blendable && !!this.device.features?.has?.('float32-blendable');
     this.capabilities.maxTextureSize = this.device.limits?.maxTextureDimension2D ?? adapter.limits?.maxTextureDimension2D ?? 8192;
     // Trust the DEVICE, not the adapter: a device may come back without a
     // feature that was asked for, and a query set created then is invalid.

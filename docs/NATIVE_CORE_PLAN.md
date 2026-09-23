@@ -260,10 +260,47 @@ submit + GPU idle): heavy 1080p comp 232 vs 295 ms (TS), 1500-layer comp
 8.3 vs 26.5 ms; C++ on the RTX 4060: 64.7 / 6.0 ms. **Remaining for D2**: the
 engine producing its own FrameScene from the C++ document (with D1/E*), wiring
 the graph into the render thread behind the engine flag (replacing C2's
-compositor), the OverlayPass and viewer-LUT blit (viewport-only, no golden
-covers them), mip-mapped textures, 32-bit float intermediates, the 7 non-exact
-low-alpha frames, clang-tidy/ASan runs over the graph, and a WebGPU-free
-software parity path for CI (the gate needs a real adapter today).
+compositor), and a WebGPU-free software parity path for CI (the gate needs a
+real adapter today).
+
+**D2 leftovers + D3 (2026-09-23): 436/436 frames bit-identical, 32 bpc, OCIO.**
+*The 7 low-alpha frames were never a renderer difference*: the C++ surface
+bytes already equalled the TS surface bytes. The harness's PNG encode
+(`rgbaToPngBase64`) puts already-premultiplied bytes into a 2D canvas, which
+stores premultiplied 8-bit and takes putImageData input as straight — so every
+webgpu (and webgl2) PNG is premultiplied twice and un-premultiplied once more
+(at a = 10/255 every value < 13 stores as 0; at a = 21 only 0, 12, 24 … survive).
+Skia rounds those conversions in float, ties either way, so no closed form is
+exact; the webgpu pass now MEASURES the conversion (a 256² probe canvas through
+the same two functions, `readback-table.png`) and premation-render applies it.
+**Float intermediates**: the project bit depth picks every declared-float
+target's precision — 32 = rgba32float, no MSAA (needs float32-filterable AND
+float32-blendable); 16 = today; 8 = unorm (the TS no-float tier) —
+`render_graph/bit_depth.hpp`. The TS WebGPU 32-bpc path was broken (it never
+requested `float32-blendable`, so every blended pipeline into rgba32float was
+invalid); fixed in WebGPUBackend + `intermediateFloatFormat`. **OCIO** 2.5.2
+(vcpkg, `engine` feature), OCIO's built-in CG config pinned by version; AE's
+model: working space (compositing always linear, in its primaries), per-footage
+input interpretation (`RenderTextureRef.inputSpace`, converted once per content
+into a working-space float texture), display transform on the viewer, output
+transform on export — schema `RenderView.colorManagement`, absent = today's
+pipeline byte for byte. OCIO's LOSSLESS-optimized processor is carried into
+WGSL as an op program (matrix / exponent / moncurve / range, interpreted from a
+uniform block — no per-transform pipeline) and baked to a log2-shaped lattice
+only when it holds ops the program cannot express (ACES output views). Measured:
+op program **0.0** max error vs OCIO's CPU processor on ACEScg → sRGB (33³
+lattice 6e-2, 65³ 3e-2); GPU footage conversion 2.4e-7; same cost at 1080p
+(+0.12 ms op program, +0.14 ms lattice over the 0.73 ms plain blit, 780M).
+**Mips** (generated as exact 2×2 box chains, trilinear), **OverlayPass** and the
+**viewer-LUT blit** ported; new fidelityOnly scenes `native-float32-*`,
+`native-overlays-*`, `native-viewer-lut-*` gate them TS vs C++ (all
+bit-identical). clang-tidy clean over `render_graph` (local `.clang-tidy`
+states each disabled check); the render graph incl. Dawn + OCIO runs under
+ASan (all unit tests + all 436 frames, byte-identical). **Remaining for D3**:
+porting OCIO's fixed-function ops (ACES RRT/ODT, grading curves) into the op
+program so output views stop using the lattice (1.5e-2 in gamut at 65³ today),
+16/32-bit export (F*), and the C++ document producing `colorManagement` + footage
+`inputSpace` (the TS producer never sets them).
 
 ### Phase E — Media, audio, text, effects
 

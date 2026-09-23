@@ -260,6 +260,18 @@ const RenderSsaoQuality_TO_NUM: Record<string, number> = { 'half': 0, 'full': 1 
 const RenderSsaoQuality_FROM_NUM: readonly (T.RenderSsaoQuality | undefined)[] = ['half', 'full'];
 function enc_RenderSsaoQuality(v: T.RenderSsaoQuality): number { const n = RenderSsaoQuality_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderSsaoQuality: invalid value ' + String(v)); return n; }
 function dec_RenderSsaoQuality(n: number): T.RenderSsaoQuality { const v = RenderSsaoQuality_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderSsaoQuality: unknown value ' + n, 'badEnum'); return v; }
+const RenderGridStyle_TO_NUM: Record<string, number> = { 'lines': 0, 'dashed': 1, 'dots': 2 };
+const RenderGridStyle_FROM_NUM: readonly (T.RenderGridStyle | undefined)[] = ['lines', 'dashed', 'dots'];
+function enc_RenderGridStyle(v: T.RenderGridStyle): number { const n = RenderGridStyle_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderGridStyle: invalid value ' + String(v)); return n; }
+function dec_RenderGridStyle(n: number): T.RenderGridStyle { const v = RenderGridStyle_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderGridStyle: unknown value ' + n, 'badEnum'); return v; }
+const RenderGuideAxis_TO_NUM: Record<string, number> = { 'x': 0, 'y': 1 };
+const RenderGuideAxis_FROM_NUM: readonly (T.RenderGuideAxis | undefined)[] = ['x', 'y'];
+function enc_RenderGuideAxis(v: T.RenderGuideAxis): number { const n = RenderGuideAxis_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderGuideAxis: invalid value ' + String(v)); return n; }
+function dec_RenderGuideAxis(n: number): T.RenderGuideAxis { const v = RenderGuideAxis_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderGuideAxis: unknown value ' + n, 'badEnum'); return v; }
+const RenderColorSpace_TO_NUM: Record<string, number> = { 'srgb': 0, 'rec709': 1, 'linearSrgb': 2, 'acesCg': 3, 'rec2020': 4, 'linearRec2020': 5, 'aces2065': 6 };
+const RenderColorSpace_FROM_NUM: readonly (T.RenderColorSpace | undefined)[] = ['srgb', 'rec709', 'linearSrgb', 'acesCg', 'rec2020', 'linearRec2020', 'aces2065'];
+function enc_RenderColorSpace(v: T.RenderColorSpace): number { const n = RenderColorSpace_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderColorSpace: invalid value ' + String(v)); return n; }
+function dec_RenderColorSpace(n: number): T.RenderColorSpace { const v = RenderColorSpace_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderColorSpace: unknown value ' + n, 'badEnum'); return v; }
 const RenderParamKind_TO_NUM: Record<string, number> = { 'number': 0, 'numbers': 1, 'text': 2, 'flag': 3, 'color': 4, 'texts': 5 };
 const RenderParamKind_FROM_NUM: readonly (T.RenderParamKind | undefined)[] = ['number', 'numbers', 'text', 'flag', 'color', 'texts'];
 function enc_RenderParamKind(v: T.RenderParamKind): number { const n = RenderParamKind_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderParamKind: invalid value ' + String(v)); return n; }
@@ -10759,6 +10771,178 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
   if (v_ssao !== undefined) o.ssao = v_ssao;
   return o;
 }
+function encS_RenderGuide(w: Writer, v: T.RenderGuide): void {
+  w.byte(8); w.varint(enc_RenderGuideAxis(v.axis));
+  w.byte(17); w.f64(v.position);
+  if (v.color !== undefined) { w.byte(26); { const s = w.beginLd(); encS_Color(w, v.color); w.endLd(s); } }
+}
+function decS_RenderGuide(r: Reader, end: number, o: any): T.RenderGuide {
+  let h_axis = false;
+  let h_position = false;
+  let v_axis: T.RenderGuideAxis | undefined;
+  let v_position: number | undefined;
+  let v_color: T.Color | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_axis = dec_RenderGuideAxis(r.varint()); h_axis = true; break;
+      case 17: v_position = r.f64(); h_position = true; break;
+      case 26: v_color = decS_Color(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_axis) throw new DecodeError('RenderGuide.axis: missing', 'missingField');
+  if (!h_position) throw new DecodeError('RenderGuide.position: missing', 'missingField');
+  o.axis = v_axis;
+  o.position = v_position;
+  if (v_color !== undefined) o.color = v_color;
+  return o;
+}
+function encS_RenderOverlays(w: Writer, v: T.RenderOverlays): void {
+  w.byte(8); w.bool(v.grid);
+  w.byte(17); w.f64(v.gridSpacing);
+  w.byte(25); w.f64(v.gridSubdivisions);
+  w.byte(32); w.varint(enc_RenderGridStyle(v.gridStyle));
+  if (v.gridColor !== undefined) { w.byte(42); { const s = w.beginLd(); encS_Color(w, v.gridColor); w.endLd(s); } }
+  w.byte(48); w.bool(v.proportionalGrid);
+  w.byte(57); w.f64(v.proportionalColumns);
+  w.byte(65); w.f64(v.proportionalRows);
+  if (v.compRect !== undefined) { w.byte(74); { const s = w.beginLd(); encS_Rect(w, v.compRect); w.endLd(s); } }
+  { const a = v.guides; for (let i = 0; i < a.length; i++) { w.byte(82); { const s = w.beginLd(); encS_RenderGuide(w, a[i]!); w.endLd(s); } } }
+}
+function decS_RenderOverlays(r: Reader, end: number, o: any): T.RenderOverlays {
+  const l_guides: T.RenderGuide[] = [];
+  let h_grid = false;
+  let h_gridSpacing = false;
+  let h_gridSubdivisions = false;
+  let h_gridStyle = false;
+  let h_proportionalGrid = false;
+  let h_proportionalColumns = false;
+  let h_proportionalRows = false;
+  let v_grid: boolean | undefined;
+  let v_gridSpacing: number | undefined;
+  let v_gridSubdivisions: number | undefined;
+  let v_gridStyle: T.RenderGridStyle | undefined;
+  let v_gridColor: T.Color | undefined;
+  let v_proportionalGrid: boolean | undefined;
+  let v_proportionalColumns: number | undefined;
+  let v_proportionalRows: number | undefined;
+  let v_compRect: T.Rect | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_grid = r.bool(); h_grid = true; break;
+      case 17: v_gridSpacing = r.f64(); h_gridSpacing = true; break;
+      case 25: v_gridSubdivisions = r.f64(); h_gridSubdivisions = true; break;
+      case 32: v_gridStyle = dec_RenderGridStyle(r.varint()); h_gridStyle = true; break;
+      case 42: v_gridColor = decS_Color(r, r.ldEnd(), {}); break;
+      case 48: v_proportionalGrid = r.bool(); h_proportionalGrid = true; break;
+      case 57: v_proportionalColumns = r.f64(); h_proportionalColumns = true; break;
+      case 65: v_proportionalRows = r.f64(); h_proportionalRows = true; break;
+      case 74: v_compRect = decS_Rect(r, r.ldEnd(), {}); break;
+      case 82: l_guides.push(decS_RenderGuide(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_grid) throw new DecodeError('RenderOverlays.grid: missing', 'missingField');
+  if (!h_gridSpacing) throw new DecodeError('RenderOverlays.gridSpacing: missing', 'missingField');
+  if (!h_gridSubdivisions) throw new DecodeError('RenderOverlays.gridSubdivisions: missing', 'missingField');
+  if (!h_gridStyle) throw new DecodeError('RenderOverlays.gridStyle: missing', 'missingField');
+  if (!h_proportionalGrid) throw new DecodeError('RenderOverlays.proportionalGrid: missing', 'missingField');
+  if (!h_proportionalColumns) throw new DecodeError('RenderOverlays.proportionalColumns: missing', 'missingField');
+  if (!h_proportionalRows) throw new DecodeError('RenderOverlays.proportionalRows: missing', 'missingField');
+  o.grid = v_grid;
+  o.gridSpacing = v_gridSpacing;
+  o.gridSubdivisions = v_gridSubdivisions;
+  o.gridStyle = v_gridStyle;
+  if (v_gridColor !== undefined) o.gridColor = v_gridColor;
+  o.proportionalGrid = v_proportionalGrid;
+  o.proportionalColumns = v_proportionalColumns;
+  o.proportionalRows = v_proportionalRows;
+  if (v_compRect !== undefined) o.compRect = v_compRect;
+  o.guides = l_guides;
+  return o;
+}
+function encS_RenderViewerLut(w: Writer, v: T.RenderViewerLut): void {
+  w.byte(8); w.u32(v.size);
+  w.byte(16); w.bool(v.is1d);
+  w.byte(25); w.f64(v.intensity);
+  w.byte(33); w.f64(v.domainMin);
+  w.byte(41); w.f64(v.domainMax);
+}
+function decS_RenderViewerLut(r: Reader, end: number, o: any): T.RenderViewerLut {
+  let h_size = false;
+  let h_is1d = false;
+  let h_intensity = false;
+  let h_domainMin = false;
+  let h_domainMax = false;
+  let v_size: number | undefined;
+  let v_is1d: boolean | undefined;
+  let v_intensity: number | undefined;
+  let v_domainMin: number | undefined;
+  let v_domainMax: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_size = r.u32(); h_size = true; break;
+      case 16: v_is1d = r.bool(); h_is1d = true; break;
+      case 25: v_intensity = r.f64(); h_intensity = true; break;
+      case 33: v_domainMin = r.f64(); h_domainMin = true; break;
+      case 41: v_domainMax = r.f64(); h_domainMax = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_size) throw new DecodeError('RenderViewerLut.size: missing', 'missingField');
+  if (!h_is1d) throw new DecodeError('RenderViewerLut.is1d: missing', 'missingField');
+  if (!h_intensity) throw new DecodeError('RenderViewerLut.intensity: missing', 'missingField');
+  if (!h_domainMin) throw new DecodeError('RenderViewerLut.domainMin: missing', 'missingField');
+  if (!h_domainMax) throw new DecodeError('RenderViewerLut.domainMax: missing', 'missingField');
+  o.size = v_size;
+  o.is1d = v_is1d;
+  o.intensity = v_intensity;
+  o.domainMin = v_domainMin;
+  o.domainMax = v_domainMax;
+  return o;
+}
+function encS_RenderColorManagement(w: Writer, v: T.RenderColorManagement): void {
+  w.byte(8); w.varint(enc_RenderColorSpace(v.workingSpace));
+  w.byte(16); w.varint(enc_RenderColorSpace(v.displaySpace));
+  if (v.outputSpace !== undefined) { w.byte(24); w.varint(enc_RenderColorSpace(v.outputSpace)); }
+  if (v.view !== undefined) { w.byte(34); w.str(v.view); }
+  if (v.ocioConfig !== undefined) { w.byte(42); w.str(v.ocioConfig); }
+}
+function decS_RenderColorManagement(r: Reader, end: number, o: any): T.RenderColorManagement {
+  let h_workingSpace = false;
+  let h_displaySpace = false;
+  let v_workingSpace: T.RenderColorSpace | undefined;
+  let v_displaySpace: T.RenderColorSpace | undefined;
+  let v_outputSpace: T.RenderColorSpace | undefined;
+  let v_view: string | undefined;
+  let v_ocioConfig: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_workingSpace = dec_RenderColorSpace(r.varint()); h_workingSpace = true; break;
+      case 16: v_displaySpace = dec_RenderColorSpace(r.varint()); h_displaySpace = true; break;
+      case 24: v_outputSpace = dec_RenderColorSpace(r.varint()); break;
+      case 34: v_view = r.str(); break;
+      case 42: v_ocioConfig = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_workingSpace) throw new DecodeError('RenderColorManagement.workingSpace: missing', 'missingField');
+  if (!h_displaySpace) throw new DecodeError('RenderColorManagement.displaySpace: missing', 'missingField');
+  o.workingSpace = v_workingSpace;
+  o.displaySpace = v_displaySpace;
+  if (v_outputSpace !== undefined) o.outputSpace = v_outputSpace;
+  if (v_view !== undefined) o.view = v_view;
+  if (v_ocioConfig !== undefined) o.ocioConfig = v_ocioConfig;
+  return o;
+}
 function encS_RenderView(w: Writer, v: T.RenderView): void {
   w.byte(9); w.f64(v.cssWidth);
   w.byte(17); w.f64(v.cssHeight);
@@ -10777,6 +10961,9 @@ function encS_RenderView(w: Writer, v: T.RenderView): void {
   w.byte(120); w.varint(enc_RenderTextureFormat(v.surfaceFormat));
   w.varint(128); w.bool(v.viewerLutActive);
   if (v.adapterVendor !== undefined) { w.varint(138); w.str(v.adapterVendor); }
+  if (v.overlays !== undefined) { w.varint(146); { const s = w.beginLd(); encS_RenderOverlays(w, v.overlays); w.endLd(s); } }
+  if (v.viewerLut !== undefined) { w.varint(154); { const s = w.beginLd(); encS_RenderViewerLut(w, v.viewerLut); w.endLd(s); } }
+  if (v.colorManagement !== undefined) { w.varint(162); { const s = w.beginLd(); encS_RenderColorManagement(w, v.colorManagement); w.endLd(s); } }
 }
 function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let h_cssWidth = false;
@@ -10811,6 +10998,9 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let v_surfaceFormat: T.RenderTextureFormat | undefined;
   let v_viewerLutActive: boolean | undefined;
   let v_adapterVendor: string | undefined;
+  let v_overlays: T.RenderOverlays | undefined;
+  let v_viewerLut: T.RenderViewerLut | undefined;
+  let v_colorManagement: T.RenderColorManagement | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -10831,6 +11021,9 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
       case 120: v_surfaceFormat = dec_RenderTextureFormat(r.varint()); h_surfaceFormat = true; break;
       case 128: v_viewerLutActive = r.bool(); h_viewerLutActive = true; break;
       case 138: v_adapterVendor = r.str(); break;
+      case 146: v_overlays = decS_RenderOverlays(r, r.ldEnd(), {}); break;
+      case 154: v_viewerLut = decS_RenderViewerLut(r, r.ldEnd(), {}); break;
+      case 162: v_colorManagement = decS_RenderColorManagement(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -10867,6 +11060,9 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   o.surfaceFormat = v_surfaceFormat;
   o.viewerLutActive = v_viewerLutActive;
   if (v_adapterVendor !== undefined) o.adapterVendor = v_adapterVendor;
+  if (v_overlays !== undefined) o.overlays = v_overlays;
+  if (v_viewerLut !== undefined) o.viewerLut = v_viewerLut;
+  if (v_colorManagement !== undefined) o.colorManagement = v_colorManagement;
   return o;
 }
 function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {
@@ -10874,6 +11070,7 @@ function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {
   w.byte(18); w.str(v.hash);
   w.byte(24); w.bool(v.sampleLinear);
   w.byte(32); w.bool(v.ready);
+  if (v.inputSpace !== undefined) { w.byte(40); w.varint(enc_RenderColorSpace(v.inputSpace)); }
 }
 function decS_RenderTextureRef(r: Reader, end: number, o: any): T.RenderTextureRef {
   let h_key = false;
@@ -10884,6 +11081,7 @@ function decS_RenderTextureRef(r: Reader, end: number, o: any): T.RenderTextureR
   let v_hash: string | undefined;
   let v_sampleLinear: boolean | undefined;
   let v_ready: boolean | undefined;
+  let v_inputSpace: T.RenderColorSpace | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -10891,6 +11089,7 @@ function decS_RenderTextureRef(r: Reader, end: number, o: any): T.RenderTextureR
       case 18: v_hash = r.str(); h_hash = true; break;
       case 24: v_sampleLinear = r.bool(); h_sampleLinear = true; break;
       case 32: v_ready = r.bool(); h_ready = true; break;
+      case 40: v_inputSpace = dec_RenderColorSpace(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -10903,6 +11102,7 @@ function decS_RenderTextureRef(r: Reader, end: number, o: any): T.RenderTextureR
   o.hash = v_hash;
   o.sampleLinear = v_sampleLinear;
   o.ready = v_ready;
+  if (v_inputSpace !== undefined) o.inputSpace = v_inputSpace;
   return o;
 }
 function encS_RenderBlob(w: Writer, v: T.RenderBlob): void {
@@ -12339,6 +12539,10 @@ export const codecs = {
   RenderPrecompFrame: mk<T.RenderPrecompFrame>(encS_RenderPrecompFrame, (r, e) => decS_RenderPrecompFrame(r, e, {})),
   Renderable: mk<T.Renderable>(encS_Renderable, (r, e) => decS_Renderable(r, e, {})),
   RenderFrameScene: mk<T.RenderFrameScene>(encS_RenderFrameScene, (r, e) => decS_RenderFrameScene(r, e, {})),
+  RenderGuide: mk<T.RenderGuide>(encS_RenderGuide, (r, e) => decS_RenderGuide(r, e, {})),
+  RenderOverlays: mk<T.RenderOverlays>(encS_RenderOverlays, (r, e) => decS_RenderOverlays(r, e, {})),
+  RenderViewerLut: mk<T.RenderViewerLut>(encS_RenderViewerLut, (r, e) => decS_RenderViewerLut(r, e, {})),
+  RenderColorManagement: mk<T.RenderColorManagement>(encS_RenderColorManagement, (r, e) => decS_RenderColorManagement(r, e, {})),
   RenderView: mk<T.RenderView>(encS_RenderView, (r, e) => decS_RenderView(r, e, {})),
   RenderTextureRef: mk<T.RenderTextureRef>(encS_RenderTextureRef, (r, e) => decS_RenderTextureRef(r, e, {})),
   RenderBlob: mk<T.RenderBlob>(encS_RenderBlob, (r, e) => decS_RenderBlob(r, e, {})),

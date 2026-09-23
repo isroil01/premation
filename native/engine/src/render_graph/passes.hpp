@@ -27,6 +27,8 @@ inline constexpr std::array<std::string_view, 4> kPrecompTargets = {"precomp-tar
                                                                     "precomp-target-2", "precomp-target-3"};
 inline constexpr std::uint32_t kBackdropDownscale = 2;
 inline constexpr std::uint32_t kMsaaSamples = 4;
+/// EffectPass VIEWER_LUT_TEXTURE_KEY: the viewer LUT strip's texture key.
+inline constexpr std::string_view kViewerLutKey = "viewer-lut";
 
 /// clear → background → composition → effect (scene-colour blit to the surface),
 /// with every transient target the TS graph declares. EffectPass is always on:
@@ -37,5 +39,7 @@ std::unique_ptr<RenderPass> make_clear_pass();
 std::unique_ptr<RenderPass> make_background_pass();
 std::unique_ptr<RenderPass> make_composition_pass();
 std::unique_ptr<RenderPass> make_effect_pass();
+/// Grid / proportional grid / guides onto the surface (viewport-only chrome).
+std::unique_ptr<RenderPass> make_overlay_pass();
 
 }  // namespace premation::rg

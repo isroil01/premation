@@ -97,4 +97,29 @@ describe('frameSceneExport', () => {
     expect(file.blobs).toHaveLength(1);
     expect(file.blobs[0]!.hash).toBe(contentHash(1, 1, 'rgba8unorm', px));
   });
+
+  it('carries the overlay parameters and the viewer LUT (meta + strip key) for the viewport-only passes', () => {
+    const scene: FrameScene = { composition: { id: 'c', size: { width: 320, height: 240 } }, renderables: [rect('a')] };
+    const cap = capture(scene);
+    cap.view.overlaysActive = true;
+    cap.view.overlays = {
+      grid: true, gridSpacing: 40, gridSubdivisions: 4, gridStyle: 'dashed', gridColor: { r: 1, g: 0, b: 0, a: 0.5 },
+      proportionalGrid: true, proportionalColumns: 3, proportionalRows: 3, compRect: { x: 0, y: 0, width: 320, height: 240 },
+      guides: [{ axis: 'y', position: 20 }],
+    };
+    cap.viewerLutActive = true;
+    cap.viewerLut = { size: 33, is1d: false, intensity: 1, domainMin: 0, domainMax: 1 };
+    const { file, keys } = frameSceneToWire(cap, 's', 0);
+    const round = codecs.RenderFrameFile.decode(codecs.RenderFrameFile.encode(file));
+    expect(round.view.overlays).toMatchObject({ gridSpacing: 40, gridStyle: 'dashed', proportionalColumns: 3, guides: [{ axis: 'y', position: 20 }] });
+    expect(round.view.overlays!.gridColor).toEqual({ r: 1, g: 0, b: 0, a: 0.5 });
+    expect(round.view.viewerLut).toEqual({ size: 33, is1d: false, intensity: 1, domainMin: 0, domainMax: 1 });
+    expect(keys).toContain('viewer-lut');
+    // Off = absent: an export frame carries neither (and today's files decode unchanged).
+    const plain = frameSceneToWire(capture(scene), 's', 0);
+    expect(plain.file.view.overlays).toBeUndefined();
+    expect(plain.file.view.viewerLut).toBeUndefined();
+    expect(plain.file.view.colorManagement).toBeUndefined();
+    expect(plain.keys).not.toContain('viewer-lut');
+  });
 });

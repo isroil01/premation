@@ -186,6 +186,15 @@ ipcMain.handle('harness:scene-file', (_e, p) => {
   fs.writeFileSync(path.join(dir, `${p.frame}.pfs`), Buffer.from(p.bytes));
 });
 
+// <SCENE_OUT>/readback-table.png: what this machine's webgpu readback + PNG
+// encode does to each premultiplied (value, alpha) pair (renderEntry.ts
+// measureReadbackTable); nativeBackend.mjs hands it to premation-render.
+ipcMain.handle('harness:readback-table', (_e, p) => {
+  if (!SCENE_OUT) return;
+  fs.mkdirSync(SCENE_OUT, { recursive: true });
+  fs.writeFileSync(path.join(SCENE_OUT, 'readback-table.png'), Buffer.from(p.pngBase64, 'base64'));
+});
+
 ipcMain.handle('harness:manifest', (_e, scenes) => {
   if (MANIFEST_OUT) {
     fs.mkdirSync(path.dirname(MANIFEST_OUT), { recursive: true });

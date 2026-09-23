@@ -3,16 +3,23 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <limits>
 #include <mutex>
+#include <span>
 
+#include "color/color_system.hpp"
 #include "passes.hpp"
 #include "render_context.hpp"
 
 namespace premation::rg {
 namespace {
 
-std::mutex g_errorMutex;
-std::string g_firstError;  // guarded by g_errorMutex
+// Dawn's uncaptured-error and device-lost callbacks are process-wide and may
+// fire on Dawn's own threads; the first error is parked here (under the mutex)
+// and taken by the frame that submitted it.
+std::mutex g_errorMutex;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+std::string g_firstError;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): guarded by g_errorMutex
 
 std::string_view view_of(wgpu::StringView s) {
   if (s.data == nullptr) return {};
@@ -20,12 +27,12 @@ std::string_view view_of(wgpu::StringView s) {
 }
 
 void record_error(std::string_view msg) {
-  const std::lock_guard lock(g_errorMutex);
+  const std::scoped_lock lock(g_errorMutex);
   if (g_firstError.empty()) g_firstError = std::string(msg);
 }
 
 std::string take_error() {
-  const std::lock_guard lock(g_errorMutex);
+  const std::scoped_lock lock(g_errorMutex);
   std::string e = std::move(g_firstError);
   g_firstError.clear();
   return e;
@@ -91,7 +98,12 @@ std::unique_ptr<SceneRenderer> SceneRenderer::create(const RendererOptions& opti
   }
   std::vector<wgpu::FeatureName> features;
   // WebGPUBackend.initialize asks for float32-filterable when offered; so do we.
-  if (adapter.HasFeature(wgpu::FeatureName::Float32Filterable)) features.push_back(wgpu::FeatureName::Float32Filterable);
+  // 32-bit intermediates (project bit depth 32) also need float32-blendable:
+  // without it no blended pipeline may target rgba32float at all.
+  const bool f32Filter = adapter.HasFeature(wgpu::FeatureName::Float32Filterable);
+  const bool f32Blend = adapter.HasFeature(wgpu::FeatureName::Float32Blendable);
+  if (f32Filter) features.push_back(wgpu::FeatureName::Float32Filterable);
+  if (f32Blend) features.push_back(wgpu::FeatureName::Float32Blendable);
   wgpu::DeviceDescriptor dd{};
   dd.requiredFeatureCount = features.size();
   dd.requiredFeatures = features.data();
@@ -116,6 +128,8 @@ std::unique_ptr<SceneRenderer> SceneRenderer::create(const RendererOptions& opti
   wgpu::Queue queue = device.GetQueue();
   r->dev_ = std::make_unique<Device>(instance, device, queue);
   r->graph_ = build_default_graph();
+  r->colorSystem_ = std::make_unique<ColorSystem>(*r->dev_);
+  r->float32_ = f32Filter && f32Blend;
   r->adapter_ = std::string(view_of(info.device));
   r->backend_ = info.backendType == wgpu::BackendType::D3D12 ? "D3D12"
                 : info.backendType == wgpu::BackendType::Metal ? "Metal"
@@ -177,15 +191,35 @@ bool SceneRenderer::render(const api::RenderFrameFile& file, Frame* readback, Fr
     wgpu::RenderPassEncoder p = dev_->begin_pass(att, vp.pixelWidth, vp.pixelHeight, surfaceView_, surfaceFormat, nullptr, false);
     p.End();
   }
-  // resolveTargets: every active declared target, float where declared float.
+  // resolveTargets: every active declared target, float where declared float,
+  // in the precision the project bit depth asks for (intermediate_format).
+  const IntermediatePrecision inter =
+      select_intermediate({file.view.bit_depth, file.view.float16_textures, file.view.float32_textures, float32_});
+  ctx.color.bitDepth = bits_of(inter);
+  precision_ = inter;
+  const wgpu::TextureFormat interFormat = inter == IntermediatePrecision::float32   ? wgpu::TextureFormat::RGBA32Float
+                                          : inter == IntermediatePrecision::float16 ? wgpu::TextureFormat::RGBA16Float
+                                                                                    : wgpu::TextureFormat::RGBA8Unorm;
   for (const auto& [name, desc] : graph_->active_targets(vp.pixelWidth, vp.pixelHeight)) {
-    const wgpu::TextureFormat fmt = desc.format == "rgba16float" || desc.format == "rgba32float"
-                                        ? wgpu::TextureFormat::RGBA16Float
-                                        : wgpu::TextureFormat::RGBA8Unorm;
-    RenderTarget& t = dev_->target(name, desc.width, desc.height, fmt, desc.samples, desc.depth);
+    const bool wantsFloat = desc.format == "rgba16float" || desc.format == "rgba32float";
+    const wgpu::TextureFormat fmt = wantsFloat ? interFormat : wgpu::TextureFormat::RGBA8Unorm;
+    // RenderGraph.resolveTargets: rgba32float targets are never multisampled.
+    const std::uint32_t samples = fmt == wgpu::TextureFormat::RGBA32Float ? 1 : desc.samples;
+    RenderTarget& t = dev_->target(name, desc.width, desc.height, fmt, samples, desc.depth);
     ctx.targets.emplace(name, &t);
   }
+  // D3: a colour-managed frame (RenderView.colorManagement) builds its OCIO
+  // programs here; an unmanaged one leaves ctx.color exactly as above.
+  {
+    std::string cmError;
+    if (colorSystem_->begin_frame(file.view, inter, ctx.color, cmError)) {
+      ctx.colorSystem = colorSystem_.get();
+    } else {
+      stats.diagnostics.push_back({"color-management", cmError});
+    }
+  }
   graph_->execute(ctx, nullptr, stats.diagnostics);
+  lastTargets_ = std::move(ctx.targets);
 
   // Readback copy rides the frame's own command buffer.
   wgpu::Buffer staging;
@@ -242,6 +276,90 @@ bool SceneRenderer::render(const api::RenderFrameFile& file, Frame* readback, Fr
     }
     staging.Unmap();
   }
+  return true;
+}
+
+namespace {
+
+/// IEEE 754 binary16 → float (exact).
+float half_to_float(std::uint16_t h) noexcept {
+  const std::uint32_t bits = h;
+  const std::uint32_t sign = (bits >> 15U) & 1U;
+  const std::uint32_t exp = (bits >> 10U) & 0x1FU;
+  const std::uint32_t man = bits & 0x3FFU;
+  float v = 0;
+  if (exp == 0) {
+    v = std::ldexp(static_cast<float>(man), -24);
+  } else if (exp == 31) {
+    v = man == 0 ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+  } else {
+    v = std::ldexp(static_cast<float>(man | 0x400U), static_cast<int>(exp) - 25);
+  }
+  return sign != 0 ? -v : v;
+}
+
+}  // namespace
+
+bool SceneRenderer::read_target(std::string_view name, TargetPixels& out, std::string& error) {
+  const auto it = lastTargets_.find(std::string(name));
+  if (it == lastTargets_.end() || it->second == nullptr) {
+    error = "no target '" + std::string(name) + "' in the last frame";
+    return false;
+  }
+  const RenderTarget& t = *it->second;
+  std::uint32_t bpp = 4;
+  if (t.format == wgpu::TextureFormat::RGBA16Float) bpp = 8;
+  else if (t.format == wgpu::TextureFormat::RGBA32Float) bpp = 16;
+  const std::uint32_t rowBytes = t.width * bpp;
+  const std::uint32_t bytesPerRow = (rowBytes + 255) / 256 * 256;
+  wgpu::BufferDescriptor bd{};
+  bd.size = std::uint64_t{bytesPerRow} * t.height;
+  bd.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+  wgpu::Buffer staging = dev_->device().CreateBuffer(&bd);
+  wgpu::CommandEncoder enc = dev_->device().CreateCommandEncoder();
+  wgpu::TexelCopyTextureInfo src{};
+  src.texture = t.texture;
+  wgpu::TexelCopyBufferInfo dst{};
+  dst.buffer = staging;
+  dst.layout.bytesPerRow = bytesPerRow;
+  dst.layout.rowsPerImage = t.height;
+  const wgpu::Extent3D size{t.width, t.height, 1};
+  enc.CopyTextureToBuffer(&src, &dst, &size);
+  wgpu::CommandBuffer cb = enc.Finish();
+  dev_->queue().Submit(1, &cb);
+  bool mapped = false;
+  dev_->instance().WaitAny(staging.MapAsync(wgpu::MapMode::Read, 0, staging.GetSize(), wgpu::CallbackMode::WaitAnyOnly,
+                                            [&mapped](wgpu::MapAsyncStatus s, wgpu::StringView) {
+                                              mapped = s == wgpu::MapAsyncStatus::Success;
+                                            }),
+                           UINT64_MAX);
+  if (!mapped) {
+    error = "target readback failed";
+    return false;
+  }
+  const auto* bytes = static_cast<const std::uint8_t*>(staging.GetConstMappedRange(0, staging.GetSize()));
+  const std::span<const std::uint8_t> all(bytes, staging.GetSize());
+  out.width = t.width;
+  out.height = t.height;
+  out.format = t.format;
+  out.rgba.assign(std::size_t{t.width} * t.height * 4, 0.0F);
+  for (std::uint32_t y = 0; y < t.height; ++y) {
+    const auto row = all.subspan(std::size_t{y} * bytesPerRow, rowBytes);
+    for (std::uint32_t i = 0; i < t.width * 4; ++i) {
+      float v = 0;
+      if (bpp == 16) {
+        std::memcpy(&v, row.subspan(std::size_t{i} * 4, 4).data(), 4);
+      } else if (bpp == 8) {
+        std::uint16_t h = 0;
+        std::memcpy(&h, row.subspan(std::size_t{i} * 2, 2).data(), 2);
+        v = half_to_float(h);
+      } else {
+        v = static_cast<float>(row[i]) / 255.0F;
+      }
+      out.rgba[std::size_t{y} * t.width * 4 + i] = v;
+    }
+  }
+  staging.Unmap();
   return true;
 }
 

@@ -15,7 +15,9 @@
 
 namespace premation::rg {
 
-enum class BindingType : std::uint8_t { uniform, storage, texture, sampler, depth };
+/// `unfilterable`: a float texture read with textureLoad only (engine-owned
+/// shaders: rgba32float LUT lattices, exact mip taps) — needs no float32-filterable.
+enum class BindingType : std::uint8_t { uniform, storage, texture, sampler, depth, unfilterable };
 inline constexpr std::uint8_t kStageVertex = 1;
 inline constexpr std::uint8_t kStageFragment = 2;
 inline constexpr std::uint8_t kStageCompute = 4;
@@ -35,8 +37,8 @@ struct VertexAttr {
 };
 
 struct VertexLayout {
-  std::uint32_t stride;
-  bool instance;
+  std::uint32_t stride = 0;
+  bool instance = false;
   std::span<const VertexAttr> attributes;
 };
 
@@ -46,14 +48,15 @@ struct MaterialDesc {
   std::span<const LayoutEntry> layout;
   /// Empty = the shared unit quad (QUAD_LAYOUT).
   std::span<const VertexLayout> buffers;
-  bool hasDepth;
-  bool depthTest;
-  bool depthWrite;
+  bool hasDepth = false;
+  bool depthTest = false;
+  bool depthWrite = false;
 };
 
 #include "materials.inc"  // NOLINT(bugprone-suspicious-include) — generated data table
 
-[[nodiscard]] inline const MaterialDesc& material(Mat m) noexcept { return kMaterials[static_cast<std::size_t>(m)]; }
+/// The builtin material m (m < Mat::Count_; dynamic materials resolve through Device::material_of).
+[[nodiscard]] inline const MaterialDesc& material(Mat m) noexcept { return std::span(kMaterials)[static_cast<std::size_t>(m)]; }
 
 /// One BUILTIN_SHADERS entry: WGSL split into raw-string pieces (see extract.mjs).
 struct BuiltinShader {

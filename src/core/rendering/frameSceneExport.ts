@@ -24,6 +24,7 @@ import {
   type RenderEnvMap,
   type RenderFrameFile,
   type RenderLight3D,
+  type RenderOverlays,
   type RenderTextureFormat,
   type RenderTextureRef,
   type Renderable as WireRenderable,
@@ -45,13 +46,45 @@ export interface FrameCaptureView {
   clearColor: { r: number; g: number; b: number; a: number };
   frameClip: { x: number; y: number; width: number; height: number } | null;
   overlaysActive: boolean;
+  /** What OverlayPass draws (Viewport.overlays), when overlaysActive. */
+  overlays?: CapturedOverlays;
 }
+
+type CapturedColor = { r: number; g: number; b: number; a: number };
+
+/** The OverlayPass inputs of Viewport.overlays. */
+export interface CapturedOverlays {
+  grid: boolean;
+  gridSpacing: number;
+  gridSubdivisions: number;
+  gridStyle: 'lines' | 'dashed' | 'dots';
+  gridColor?: CapturedColor;
+  proportionalGrid: boolean;
+  proportionalColumns: number;
+  proportionalRows: number;
+  compRect: { x: number; y: number; width: number; height: number } | null;
+  guides: Array<{ axis: 'x' | 'y'; position: number; color?: CapturedColor }>;
+}
+
+/** colorPipeline.ts ViewerLutMeta. */
+export interface CapturedViewerLut {
+  size: number;
+  is1d: boolean;
+  intensity: number;
+  domainMin: number;
+  domainMax: number;
+}
+
+/** The texture key the viewer LUT strip is registered under (EffectPass VIEWER_LUT_TEXTURE_KEY). */
+export const VIEWER_LUT_KEY = 'viewer-lut';
 
 export interface FrameCapture {
   scene: FrameScene;
   view: FrameCaptureView;
   colorPipeline: { workingSpace: 'srgb-linear' | 'aces-cg'; displayTransform: 'srgb' | 'aces' | 'pq' | 'hlg'; bitDepth: 16 | 32 };
   viewerLutActive: boolean;
+  /** The viewer LUT's parameters when active (its strip is the texture VIEWER_LUT_KEY). */
+  viewerLut?: CapturedViewerLut | null;
   capabilities: { float16Textures: boolean; float32Textures: boolean };
   surfaceFormat: string;
   /** WebGPU adapter vendor ('amd', 'nvidia', …), empty when unknown. */
@@ -356,6 +389,21 @@ export function contentHash(width: number, height: number, format: string, data:
   return `${format}:${width}x${height}:${hex(h1)}${hex(h2)}:${data.length}`;
 }
 
+function overlaysToWire(o: CapturedOverlays): RenderOverlays {
+  return {
+    grid: o.grid,
+    gridSpacing: o.gridSpacing,
+    gridSubdivisions: o.gridSubdivisions,
+    gridStyle: o.gridStyle,
+    ...(o.gridColor ? { gridColor: { ...o.gridColor } } : {}),
+    proportionalGrid: o.proportionalGrid,
+    proportionalColumns: o.proportionalColumns,
+    proportionalRows: o.proportionalRows,
+    ...(o.compRect ? { compRect: { ...o.compRect } } : {}),
+    guides: o.guides.map((g) => ({ axis: g.axis, position: g.position, ...(g.color ? { color: { ...g.color } } : {}) })),
+  };
+}
+
 /** Everything the scene references, before any texture is read. */
 export function frameSceneToWire(capture: FrameCapture, sceneId: string, frame: number): {
   file: RenderFrameFile;
@@ -366,6 +414,8 @@ export function frameSceneToWire(capture: FrameCapture, sceneId: string, frame: 
   const shaders = new Set<string>();
   const s = capture.scene;
   const v = capture.view;
+  const lut = capture.viewerLutActive ? capture.viewerLut ?? null : null;
+  if (lut) keys.add(VIEWER_LUT_KEY);
   const file: RenderFrameFile = {
     formatVersion: FRAME_FILE_FORMAT_VERSION,
     sceneId,
@@ -388,6 +438,10 @@ export function frameSceneToWire(capture: FrameCapture, sceneId: string, frame: 
       surfaceFormat: wireFormat(capture.surfaceFormat),
       viewerLutActive: capture.viewerLutActive,
       ...(capture.adapterVendor ? { adapterVendor: capture.adapterVendor } : {}),
+      ...(v.overlaysActive && v.overlays ? { overlays: overlaysToWire(v.overlays) } : {}),
+      ...(lut
+        ? { viewerLut: { size: lut.size, is1d: lut.is1d, intensity: lut.intensity, domainMin: lut.domainMin, domainMax: lut.domainMax } }
+        : {}),
     },
     scene: {
       compositionId: s.composition.id,

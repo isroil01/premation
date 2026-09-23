@@ -289,6 +289,36 @@ large, so `motion_tests` links with a 16 MB stack.
 | 2 000-deep chain | 0.11 ms | 0.59 ms |
 | `composeNodeWorld3d` × 2 000 | 0.23 ms | 0.37 ms |
 
+## The render graph (engine/src/render_graph, D2 + D3)
+
+`premation-render` renders exported FrameScenes (`npm run render-tests` runs it
+as the `native` backend: 436/436 frames bit-identical to the TS WebGPU frame).
+Its PNGs pass through the webgpu pass's MEASURED readback table
+(`--readback-table`, see `harness_readback` in tools/premation_render.cpp):
+the harness's PNG encode re-quantises low-alpha pixels, and a native PNG must
+carry the same re-quantisation to be comparable byte for byte. `--raw 1`
+writes the surface bytes untouched.
+
+- **Bit depth** (`bit_depth.hpp`): project 32 → rgba32float intermediates (no
+  MSAA; the device must filter and blend rgba32float), 16 → today, 8 → unorm.
+- **Colour management** (`color/`): OpenColorIO 2.5 (vcpkg `engine` feature,
+  only `ocio_ffi.cpp` includes it). Programs are OCIO's LOSSLESS-optimized op
+  list interpreted in WGSL (`shaders/color_wgsl.hpp`, CPU twin
+  `color_program.cpp`), or a baked log2-shaped lattice for ops the list cannot
+  express. `test_render_graph_gpu_d3.cpp [measure]` prints the error and cost
+  of both routes.
+- **clang-tidy**: `node scripts/native.mjs tidy --engine` gates
+  `engine/src/render_graph` too (its `.clang-tidy` states each disabled check).
+- **ASan with Dawn + OCIO**: the render graph links uninstrumented vcpkg Dawn
+  and OCIO under clang-cl ASan (same container-annotation rule as Catch2
+  above). Configure an engine tree with the sanitizer on, e.g.
+  `cmake --preset windows-clang-cl-engine -B build/windows-clang-cl-engine-asan -DMOTION_SANITIZE=asan-ubsan -DCMAKE_BUILD_TYPE=RelWithDebInfo`,
+  build `premation-render engine_gpu_tests`, and put the clang resource
+  directory's `lib/windows` on PATH. Verified 2026-09-23 in a tree built with
+  exactly these flags (cmake/sanitizers.cmake over the render-graph targets):
+  every render-graph test and all 436 golden FrameScenes run clean and
+  byte-identical under ASan.
+
 ## Adding a library (N2+)
 
 `libs/<name>/CMakeLists.txt` with a `STATIC` target linking `motion::options`

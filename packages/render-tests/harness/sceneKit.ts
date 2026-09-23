@@ -13,7 +13,7 @@ import type { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import type { SsaoConfig } from '@core/rendering/RenderBackend';
+import type { RenderOverlays, SsaoConfig } from '@core/rendering/RenderBackend';
 
 export interface SceneComp {
   width: number;
@@ -151,6 +151,23 @@ export interface SceneMeta {
    *  `animates` scene (default 0.002 = 0.2%). Raise for a property whose visible
    *  effect is genuinely small; never lower it to nothing. */
   animatesMinChange?: number;
+  /**
+   * Render state the harness applies around THIS scene only (and restores
+   * after), for paths no committed golden covers but the `native` backend must
+   * match byte for byte: the 32-bpc project depth, viewport overlays (grid,
+   * proportional grid), the viewer/monitor LUT. Such scenes are `fidelityOnly`
+   * — their gate is C++ vs TS WebGPU on the same FrameScene, not a reference.
+   */
+  nativeSetup?: NativeSetup;
+}
+
+export interface NativeSetup {
+  /** Project bit depth for this scene (colorManagementStore). */
+  bitDepth?: 16 | 32;
+  /** Snapshot overlays (buildSnapshot's `overlays`). */
+  overlays?: RenderOverlays;
+  /** A .cube LUT loaded as the viewer LUT (viewerLutStore) for this scene. */
+  viewerLutCube?: string;
 }
 
 export interface Scene extends SceneMeta {

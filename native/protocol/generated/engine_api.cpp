@@ -1323,6 +1323,60 @@ bool from_u32(std::uint32_t n, RenderSsaoQuality& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(RenderGridStyle v) noexcept {
+  switch (v) {
+    case RenderGridStyle::lines: return "lines";
+    case RenderGridStyle::dashed: return "dashed";
+    case RenderGridStyle::dots: return "dots";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderGridStyle& out) noexcept {
+  switch (n) {
+    case 0: out = RenderGridStyle::lines; return true;
+    case 1: out = RenderGridStyle::dashed; return true;
+    case 2: out = RenderGridStyle::dots; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderGuideAxis v) noexcept {
+  switch (v) {
+    case RenderGuideAxis::x: return "x";
+    case RenderGuideAxis::y: return "y";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderGuideAxis& out) noexcept {
+  switch (n) {
+    case 0: out = RenderGuideAxis::x; return true;
+    case 1: out = RenderGuideAxis::y; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderColorSpace v) noexcept {
+  switch (v) {
+    case RenderColorSpace::srgb: return "srgb";
+    case RenderColorSpace::rec709: return "rec709";
+    case RenderColorSpace::linear_srgb: return "linearSrgb";
+    case RenderColorSpace::aces_cg: return "acesCg";
+    case RenderColorSpace::rec2020: return "rec2020";
+    case RenderColorSpace::linear_rec2020: return "linearRec2020";
+    case RenderColorSpace::aces2065: return "aces2065";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderColorSpace& out) noexcept {
+  switch (n) {
+    case 0: out = RenderColorSpace::srgb; return true;
+    case 1: out = RenderColorSpace::rec709; return true;
+    case 2: out = RenderColorSpace::linear_srgb; return true;
+    case 3: out = RenderColorSpace::aces_cg; return true;
+    case 4: out = RenderColorSpace::rec2020; return true;
+    case 5: out = RenderColorSpace::linear_rec2020; return true;
+    case 6: out = RenderColorSpace::aces2065; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(RenderParamKind v) noexcept {
   switch (v) {
     case RenderParamKind::number: return "number";
@@ -19649,6 +19703,246 @@ Status decode(wire::Reader& r, RenderFrameScene& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const RenderGuide& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.axis));
+  w.varint(17U); w.f64(v.position);
+  if (v.color.has_value()) { w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, *v.color); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderGuide& out) {
+  bool has_axis = false;
+  bool has_position = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.axis)) return Status::bad_enum; }
+        has_axis = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.position)) return Status::truncated;
+        has_position = true;
+        break;
+      }
+      case 26U: {
+        Color e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.color = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_axis) return Status::missing_field;
+  if (!has_position) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderOverlays& v) {
+  w.varint(8U); w.boolean(v.grid);
+  w.varint(17U); w.f64(v.grid_spacing);
+  w.varint(25U); w.f64(v.grid_subdivisions);
+  w.varint(32U); w.varint(static_cast<std::uint32_t>(v.grid_style));
+  if (v.grid_color.has_value()) { w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, *v.grid_color); w.end_ld(s); } }
+  w.varint(48U); w.boolean(v.proportional_grid);
+  w.varint(57U); w.f64(v.proportional_columns);
+  w.varint(65U); w.f64(v.proportional_rows);
+  if (v.comp_rect.has_value()) { w.varint(74U); { const std::size_t s = w.begin_ld(); encode(w, *v.comp_rect); w.end_ld(s); } }
+  for (const auto& e : v.guides) { w.varint(82U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderOverlays& out) {
+  bool has_grid = false;
+  bool has_grid_spacing = false;
+  bool has_grid_subdivisions = false;
+  bool has_grid_style = false;
+  bool has_proportional_grid = false;
+  bool has_proportional_columns = false;
+  bool has_proportional_rows = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.boolean(out.grid)) return Status::truncated;
+        has_grid = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.grid_spacing)) return Status::truncated;
+        has_grid_spacing = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.grid_subdivisions)) return Status::truncated;
+        has_grid_subdivisions = true;
+        break;
+      }
+      case 32U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.grid_style)) return Status::bad_enum; }
+        has_grid_style = true;
+        break;
+      }
+      case 42U: {
+        Color e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.grid_color = std::move(e);
+        break;
+      }
+      case 48U: {
+        if (!r.boolean(out.proportional_grid)) return Status::truncated;
+        has_proportional_grid = true;
+        break;
+      }
+      case 57U: {
+        if (!r.f64(out.proportional_columns)) return Status::truncated;
+        has_proportional_columns = true;
+        break;
+      }
+      case 65U: {
+        if (!r.f64(out.proportional_rows)) return Status::truncated;
+        has_proportional_rows = true;
+        break;
+      }
+      case 74U: {
+        Rect e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.comp_rect = std::move(e);
+        break;
+      }
+      case 82U: {
+        auto& e = out.guides.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_grid) return Status::missing_field;
+  if (!has_grid_spacing) return Status::missing_field;
+  if (!has_grid_subdivisions) return Status::missing_field;
+  if (!has_grid_style) return Status::missing_field;
+  if (!has_proportional_grid) return Status::missing_field;
+  if (!has_proportional_columns) return Status::missing_field;
+  if (!has_proportional_rows) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderViewerLut& v) {
+  w.varint(8U); w.varint(v.size);
+  w.varint(16U); w.boolean(v.is1d);
+  w.varint(25U); w.f64(v.intensity);
+  w.varint(33U); w.f64(v.domain_min);
+  w.varint(41U); w.f64(v.domain_max);
+}
+
+Status decode(wire::Reader& r, RenderViewerLut& out) {
+  bool has_size = false;
+  bool has_is1d = false;
+  bool has_intensity = false;
+  bool has_domain_min = false;
+  bool has_domain_max = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.size)) return Status::bad_value;
+        has_size = true;
+        break;
+      }
+      case 16U: {
+        if (!r.boolean(out.is1d)) return Status::truncated;
+        has_is1d = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.intensity)) return Status::truncated;
+        has_intensity = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.domain_min)) return Status::truncated;
+        has_domain_min = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.domain_max)) return Status::truncated;
+        has_domain_max = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_size) return Status::missing_field;
+  if (!has_is1d) return Status::missing_field;
+  if (!has_intensity) return Status::missing_field;
+  if (!has_domain_min) return Status::missing_field;
+  if (!has_domain_max) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderColorManagement& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.working_space));
+  w.varint(16U); w.varint(static_cast<std::uint32_t>(v.display_space));
+  if (v.output_space.has_value()) { w.varint(24U); w.varint(static_cast<std::uint32_t>(*v.output_space)); }
+  if (v.view.has_value()) { w.varint(34U); w.str(*v.view); }
+  if (v.ocio_config.has_value()) { w.varint(42U); w.str(*v.ocio_config); }
+}
+
+Status decode(wire::Reader& r, RenderColorManagement& out) {
+  bool has_working_space = false;
+  bool has_display_space = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.working_space)) return Status::bad_enum; }
+        has_working_space = true;
+        break;
+      }
+      case 16U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.display_space)) return Status::bad_enum; }
+        has_display_space = true;
+        break;
+      }
+      case 24U: {
+        RenderColorSpace e = RenderColorSpace::srgb;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.output_space = std::move(e);
+        break;
+      }
+      case 34U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.view = std::move(e);
+        break;
+      }
+      case 42U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.ocio_config = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_working_space) return Status::missing_field;
+  if (!has_display_space) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const RenderView& v) {
   w.varint(9U); w.f64(v.css_width);
   w.varint(17U); w.f64(v.css_height);
@@ -19667,6 +19961,9 @@ void encode(wire::Writer& w, const RenderView& v) {
   w.varint(120U); w.varint(static_cast<std::uint32_t>(v.surface_format));
   w.varint(128U); w.boolean(v.viewer_lut_active);
   if (v.adapter_vendor.has_value()) { w.varint(138U); w.str(*v.adapter_vendor); }
+  if (v.overlays.has_value()) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, *v.overlays); w.end_ld(s); } }
+  if (v.viewer_lut.has_value()) { w.varint(154U); { const std::size_t s = w.begin_ld(); encode(w, *v.viewer_lut); w.end_ld(s); } }
+  if (v.color_management.has_value()) { w.varint(162U); { const std::size_t s = w.begin_ld(); encode(w, *v.color_management); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, RenderView& out) {
@@ -19776,6 +20073,24 @@ Status decode(wire::Reader& r, RenderView& out) {
         out.adapter_vendor = std::move(e);
         break;
       }
+      case 146U: {
+        RenderOverlays e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.overlays = std::move(e);
+        break;
+      }
+      case 154U: {
+        RenderViewerLut e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.viewer_lut = std::move(e);
+        break;
+      }
+      case 162U: {
+        RenderColorManagement e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.color_management = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -19804,6 +20119,7 @@ void encode(wire::Writer& w, const RenderTextureRef& v) {
   w.varint(18U); w.str(v.hash);
   w.varint(24U); w.boolean(v.sample_linear);
   w.varint(32U); w.boolean(v.ready);
+  if (v.input_space.has_value()) { w.varint(40U); w.varint(static_cast<std::uint32_t>(*v.input_space)); }
 }
 
 Status decode(wire::Reader& r, RenderTextureRef& out) {
@@ -19833,6 +20149,12 @@ Status decode(wire::Reader& r, RenderTextureRef& out) {
       case 32U: {
         if (!r.boolean(out.ready)) return Status::truncated;
         has_ready = true;
+        break;
+      }
+      case 40U: {
+        RenderColorSpace e = RenderColorSpace::srgb;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.input_space = std::move(e);
         break;
       }
       default:
@@ -20028,7 +20350,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 353> kNames = {
+constexpr std::array<std::string_view, 357> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -20372,6 +20694,10 @@ constexpr std::array<std::string_view, 353> kNames = {
     "RenderPrecompFrame",
     "Renderable",
     "RenderFrameScene",
+    "RenderGuide",
+    "RenderOverlays",
+    "RenderViewerLut",
+    "RenderColorManagement",
     "RenderView",
     "RenderTextureRef",
     "RenderBlob",
@@ -20731,6 +21057,10 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "RenderPrecompFrame") return roundtrip<RenderPrecompFrame>(bytes, out);
   if (type == "Renderable") return roundtrip<Renderable>(bytes, out);
   if (type == "RenderFrameScene") return roundtrip<RenderFrameScene>(bytes, out);
+  if (type == "RenderGuide") return roundtrip<RenderGuide>(bytes, out);
+  if (type == "RenderOverlays") return roundtrip<RenderOverlays>(bytes, out);
+  if (type == "RenderViewerLut") return roundtrip<RenderViewerLut>(bytes, out);
+  if (type == "RenderColorManagement") return roundtrip<RenderColorManagement>(bytes, out);
   if (type == "RenderView") return roundtrip<RenderView>(bytes, out);
   if (type == "RenderTextureRef") return roundtrip<RenderTextureRef>(bytes, out);
   if (type == "RenderBlob") return roundtrip<RenderBlob>(bytes, out);

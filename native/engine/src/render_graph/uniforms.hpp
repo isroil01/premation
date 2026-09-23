@@ -59,11 +59,14 @@ class Packer {
   }
   /// packColorRows: three (m row, offset) vec4s.
   Packer& color_rows(const ColorTransform& ct) {
-    for (std::size_t r = 0; r < 3; ++r) vec4(ct.m[r * 3], ct.m[r * 3 + 1], ct.m[r * 3 + 2], ct.offset[r]);
+    for (std::size_t r = 0; r < 3; ++r) vec4(ct.m[r * 3], ct.m[r * 3 + 1], ct.m[r * 3 + 2], ct.offset[r]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index): r < 3
     return *this;
   }
   /// packSrcSpaceFlags: x=sampleLinear, y=aces working, z=display mode.
   Packer& src_space(bool sampleLinear) {
+    // Colour-managed: textures are pre-converted and the display encode is the
+    // OCIO pass, so no shader applies the TS ACES matrix or ODT.
+    if (color_->managed) return vec4(sampleLinear ? 1 : 0, 0, 0, 0);
     double display = 0;
     switch (color_->display) {
       case DisplayTransform::aces: display = 1; break;

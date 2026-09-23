@@ -15,7 +15,7 @@ bool RenderGraph::add_pass(std::unique_ptr<RenderPass> p) {
 }
 
 bool RenderGraph::remove_pass(std::string_view name) {
-  const auto it = std::find_if(passes_.begin(), passes_.end(), [&](const auto& p) { return p->name() == name; });
+  const auto it = std::ranges::find_if(passes_, [&](const auto& p) { return p->name() == name; });
   if (it == passes_.end()) return false;
   passes_.erase(it);
   compiled_.reset();
@@ -63,7 +63,7 @@ bool RenderGraph::compile(std::vector<RenderPass*>& order, std::string& error) {
   const auto link = [&](std::size_t from, std::size_t to) {
     if (from == to) return;
     auto& out = adj[from];
-    if (std::find(out.begin(), out.end(), to) != out.end()) return;
+    if (std::ranges::find(out, to) != out.end()) return;
     out.push_back(to);
     ++indeg[to];
   };
@@ -95,7 +95,7 @@ bool RenderGraph::compile(std::vector<RenderPass*>& order, std::string& error) {
   if (result.size() != n) {
     error = "cycle in render graph among:";
     for (std::size_t i = 0; i < n; ++i) {
-      if (std::find(result.begin(), result.end(), active[i]) == result.end()) {
+      if (std::ranges::find(result, active[i]) == result.end()) {
         error += ' ';
         error += active[i]->name();
       }
@@ -135,6 +135,7 @@ std::vector<std::pair<std::string, TargetDesc>> RenderGraph::active_targets(std:
 
 std::vector<std::string> RenderGraph::pass_names() const {
   std::vector<std::string> out;
+  out.reserve(passes_.size());
   for (const auto& p : passes_) out.emplace_back(p->name());
   return out;
 }

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "engine_api.hpp"
+#include "resource_pool.hpp"
 #include "rg_math.hpp"
 
 namespace premation::rg {
@@ -22,13 +24,13 @@ bool decode_frame_file(std::span<const std::uint8_t> bytes, api::RenderFrameFile
 
 inline Mat3 mat3_of(const std::vector<double>& v) noexcept {
   Mat3 m;
-  for (std::size_t i = 0; i < 9 && i < v.size(); ++i) m.m[i] = f32(v[i]);
+  for (std::size_t i = 0; i < 9 && i < v.size(); ++i) m.m[i] = f32(v[i]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index): i < 9
   return m;
 }
 
 inline Mat4 mat4_of(const std::vector<double>& v) noexcept {
   Mat4 m;
-  for (std::size_t i = 0; i < 16; ++i) m.m[i] = i < v.size() ? f32(v[i]) : 0.0F;
+  for (std::size_t i = 0; i < 16; ++i) m.m[i] = i < v.size() ? f32(v[i]) : 0.0F;  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index): i < 16
   return m;
 }
 
@@ -84,16 +86,18 @@ struct ResolvedBlob {
   bool sampleLinear = false;
   /// The provider's own "these are the real pixels" (a placeholder is not ready).
   bool ready = false;
+  /// D3: a colour texture's interpretation (RenderTextureRef.inputSpace); absent = data.
+  std::optional<api::RenderColorSpace> inputSpace;
 };
 
 /// Key → blob index for one frame file.
 class TextureTable {
  public:
   void build(const api::RenderFrameFile& file);
-  [[nodiscard]] ResolvedBlob resolve(std::string_view key) const noexcept;
+  [[nodiscard]] ResolvedBlob resolve(std::string_view key) const;
 
  private:
-  std::unordered_map<std::string, ResolvedBlob> byKey_;
+  std::unordered_map<std::string, ResolvedBlob, KeyHash, std::equal_to<>> byKey_;  // heterogeneous: find(string_view) allocates nothing
 };
 
 }  // namespace premation::rg

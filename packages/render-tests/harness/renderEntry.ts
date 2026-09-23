@@ -20,6 +20,8 @@ import { SCENES } from './scenes/registry';
 import type { Scene } from './sceneKit';
 import { registeredEffects } from '@core/plugins/pluginEffects';
 import { BENCH_SCENES } from './benchScenes';
+import { useColorManagementStore } from '@stores/colorManagementStore';
+import { useViewerLutStore } from '@stores/viewerLutStore';
 
 /**
  * Block until no registered plugin effect is still `pending`.
@@ -50,6 +52,8 @@ interface HarnessBridge {
    * renderer to draw again. Present only when main was asked to export.
    */
   sceneFile?: (payload: { sceneId: string; frame: number; bytes: Uint8Array }) => Promise<void>;
+  /** The measured readback table for the native backend (see measureReadbackTable). */
+  readbackTable?: (payload: { pngBase64: string }) => Promise<void>;
   /** Sends one rendered frame to main. Resolves when written. */
   frame: (payload: {
     sceneId: string;
@@ -169,6 +173,72 @@ function rgbaToPngBase64(rgba: RGBA): string {
   return c.toDataURL('image/png').split(',')[1]!;
 }
 
+/**
+ * What this machine's readback + PNG encode does to every premultiplied
+ * (value, alpha) byte pair — measured, for the `native` backend
+ * (docs/NATIVE_CORE_PLAN.md D2).
+ *
+ * A webgpu PNG is not the surface bytes: readCanvasRGBA un-premultiplies through
+ * getImageData and re-premultiplies, and rgbaToPngBase64 then puts those bytes
+ * into a 2D canvas — which STORES PREMULTIPLIED 8-bit and takes putImageData
+ * input as straight, so they are premultiplied a second time — and toDataURL
+ * un-premultiplies once more. At low alpha that is heavy re-quantisation (at
+ * a = 10/255 every value under 13 stores as 0), and it was the whole of the
+ * D2 "7 low-alpha frames": the C++ surface bytes already equalled the TS
+ * surface bytes. Skia's conversions round in float (and ties go either way),
+ * so no closed form reproduces them on every machine; this table is the
+ * conversion itself, run through the SAME two functions every frame uses, on
+ * this run's Chromium. premation-render applies it to its surface bytes
+ * (--readback-table), so a native frame is compared byte for byte with the
+ * webgpu frame of the same FrameScene.
+ *
+ * Layout: a 256×256 webgpu canvas whose pixel (x = value, y = alpha) holds the
+ * premultiplied grey (v, v, v, a) for v ≤ a, sent as the PNG it becomes.
+ */
+async function measureReadbackTable(): Promise<void> {
+  if (!window.harnessBridge.readbackTable || !navigator.gpu) return;
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) return;
+  const device = await adapter.requestDevice();
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    // The DOM lib types getContext('webgpu') as the 2D union; these two calls are all this needs.
+    type WebGpuCanvas = {
+      configure(c: { device: unknown; format: string; alphaMode: 'premultiplied'; usage: number }): void;
+      getCurrentTexture(): unknown;
+    };
+    const ctx = canvas.getContext('webgpu') as unknown as WebGpuCanvas | null;
+    if (!ctx) return;
+    const RENDER_ATTACHMENT = 0x10; // GPUTextureUsage
+    const COPY_DST = 0x02;
+    ctx.configure({
+      device,
+      format: navigator.gpu.getPreferredCanvasFormat(),
+      alphaMode: 'premultiplied',
+      usage: RENDER_ATTACHMENT | COPY_DST,
+    });
+    // Grey texels, so the canvas's channel order (bgra/rgba) is irrelevant.
+    const texels = new Uint8Array(256 * 256 * 4);
+    for (let a = 0; a < 256; a++) {
+      for (let v = 0; v <= a; v++) {
+        const i = (a * 256 + v) * 4;
+        texels[i] = v;
+        texels[i + 1] = v;
+        texels[i + 2] = v;
+        texels[i + 3] = a;
+      }
+    }
+    device.queue.writeTexture({ texture: ctx.getCurrentTexture() } as never, texels, { bytesPerRow: 256 * 4 }, { width: 256, height: 256 } as never);
+    // Read in the same task, as renderScene does after renderFrame.
+    const rgba = readCanvasRGBA(canvas, 'webgpu');
+    await window.harnessBridge.readbackTable({ pngBase64: rgbaToPngBase64(rgba) });
+  } finally {
+    device.destroy();
+  }
+}
+
 /** Render one scene on one backend for all its frames, streaming each out. */
 /** One backend announcement per process, not one per scene. */
 let announcedBackend = false;
@@ -204,8 +274,45 @@ function buildSceneOrThrow(scene: Scene): { graph: SceneGraph; anim: AnimationEn
   return { graph, anim };
 }
 
+/**
+ * Apply a scene's `nativeSetup` (project bit depth, viewer LUT) for the length
+ * of its render; returns the undo. Stores are module state shared by every
+ * scene in this page, so a setup that leaked would silently re-render every
+ * later scene at 32 bpc or through a LUT.
+ */
+function applyNativeSetup(scene: Scene): () => void {
+  const setup = scene.nativeSetup;
+  if (!setup) return () => {};
+  const color = useColorManagementStore.getState();
+  const prevDepth = color.bitDepth;
+  if (setup.bitDepth) useColorManagementStore.setState({ bitDepth: setup.bitDepth });
+  if (setup.viewerLutCube) {
+    if (!useViewerLutStore.getState().loadFromText(setup.viewerLutCube, `${scene.id}.cube`)) {
+      throw new Error(`${scene.id}: its viewer LUT did not parse`);
+    }
+  }
+  return () => {
+    useColorManagementStore.setState({ bitDepth: prevDepth });
+    if (setup.viewerLutCube) useViewerLutStore.getState().clear();
+  };
+}
+
 async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
   const { graph, anim } = buildSceneOrThrow(scene);
+  const undoSetup = applyNativeSetup(scene);
+  try {
+    await renderSceneFrames(scene, backend, graph, anim);
+  } finally {
+    undoSetup();
+  }
+}
+
+async function renderSceneFrames(
+  scene: Scene,
+  backend: BackendChoice,
+  graph: ReturnType<typeof buildSceneOrThrow>['graph'],
+  anim: ReturnType<typeof buildSceneOrThrow>['anim'],
+): Promise<void> {
 
   const { w, h } = scene.size;
   const canvas = document.createElement('canvas');
@@ -319,7 +426,7 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
         anim,
         t,
         undefined,
-        undefined,
+        scene.nativeSetup?.overlays,
         exportView(w, h, scene.comp),
         scene.motionBlur,
         scene.comp,
@@ -522,6 +629,14 @@ async function main(): Promise<void> {
       mistake `svgHybridImport`'s linearity check made.
     */
     const timings: Array<{ id: string; backend: string; ms: number }> = [];
+    if (backends.includes('webgpu') && window.harnessBridge.config.exportScenes) {
+      try {
+        await measureReadbackTable();
+      } catch (err) {
+        // The native gate falls back to its closed-form model (≤ 1/255 off at ties).
+        console.warn(`[harness] readback table not measured: ${(err as Error)?.message ?? err}`);
+      }
+    }
     for (const scene of toRender) {
       for (const backend of backends) {
         const startedAt = Date.now();

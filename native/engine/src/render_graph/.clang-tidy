@@ -1,0 +1,33 @@
+# The render graph's clang-tidy config: native/.clang-tidy (cppcoreguidelines,
+# bugprone, performance, modernize — every warning an error) plus this
+# directory's headers, minus the checks below, each disabled for a stated reason.
+#
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#       operator[] on std::array / std::vector / std::span. The graph's inner
+#       loops are the TS renderer's uniform packing, matrix products and pixel
+#       copies, ported index for index so they stay reviewable against
+#       packages/renderer; `.at()` there puts a branch and a throw path into
+#       every draw of every frame (the per-frame hot path CLAUDE.md guards).
+#       Indices are loop-bounded by the container's own size or fixed by the
+#       std140 layout; ASan (the sanitizer presets) covers them at runtime.
+#   modernize-use-designated-initializers
+#       Rect / Color / Vec4 / TexRef are value tuples mirroring the TS object
+#       literals ({x, y, width, height}); naming every field at each of ~160
+#       sites doubles the line without catching anything the distinct types
+#       do not already catch.
+#   clang-analyzer-optin.core.EnumCastOutOfRange
+#       Device::dynamic_material hands out Mat values PAST Mat::Count_ on
+#       purpose — plugin-effect and engine-owned materials share the pipeline
+#       cache with the extracted builtin table (material_of checks the range).
+#   bugprone-float-loop-counter, clang-analyzer-security.FloatLoopCounter
+#       OverlayPass gridLines accumulates its line positions in a double loop
+#       counter because the TS does (`x += spacing`): the same float
+#       accumulation is what makes the same lines land on the same pixels.
+Checks: >
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -modernize-use-designated-initializers,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -bugprone-float-loop-counter,
+  -clang-analyzer-security.FloatLoopCounter
+InheritParentConfig: true
+HeaderFilterRegex: '.*(native[/\\](include|libs)|render_graph)[/\\].*'

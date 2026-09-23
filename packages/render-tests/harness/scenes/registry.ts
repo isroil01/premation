@@ -35,6 +35,7 @@ import { extrusionScenes } from './extrusion';
 import { primitiveScenes } from './primitives';
 import { modelMapScenes } from './modelMaps';
 import { videoScenes } from './video';
+import { nativeParityScenes } from './nativeParity';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -100,4 +101,7 @@ export const SCENES: Scene[] = [
   // exist — they are the only scenes that render content the host did not
   // write, and unit tests cannot tell "drew nothing" from "drew correctly".
   ...generatorLayerScenes,
+  // D2/D3 native parity: 32 bpc, viewport overlays, the viewer LUT. No
+  // references (fidelityOnly) — the gate is C++ vs TS WebGPU on the same FrameScene.
+  ...nativeParityScenes,
 ];

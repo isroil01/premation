@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "color/color_system.hpp"
+
 namespace premation::rg {
 
 bool decode_frame_file(std::span<const std::uint8_t> bytes, api::RenderFrameFile& out, std::string& error) {
@@ -24,12 +26,13 @@ void TextureTable::build(const api::RenderFrameFile& file) {
     if (!t.hash.empty() && it != byHash.end()) rb.blob = it->second;
     rb.sampleLinear = t.sample_linear;
     rb.ready = t.ready;
+    rb.inputSpace = t.input_space;
     byKey_.emplace(t.key, rb);
   }
 }
 
-ResolvedBlob TextureTable::resolve(std::string_view key) const noexcept {
-  const auto it = byKey_.find(std::string(key));
+ResolvedBlob TextureTable::resolve(std::string_view key) const {
+  const auto it = byKey_.find(key);
   return it == byKey_.end() ? ResolvedBlob{} : it->second;
 }
 
@@ -76,6 +79,9 @@ TexRef PassContext::texture(std::string_view key) {
   const api::RenderBlob& b = *rb.blob;
   TexRef t = dev.texture(b.hash, b.width, b.height, blob_format(b.format), b.pixels, b.mipmapped);
   t.sampleLinear = rb.sampleLinear;
+  // D3: a colour texture under colour management is sampled as its working-
+  // space conversion (made once per content + interpretation), already linear.
+  if (colorSystem != nullptr && colorSystem->active() && rb.inputSpace) return colorSystem->input(t, b.hash, *rb.inputSpace);
   return t;
 }
 

@@ -538,6 +538,35 @@ export type RenderSsaoQuality =
   | 'full';
 export const RenderSsaoQualityValues = ['half', 'full'] as const;
 
+export type RenderGridStyle =
+  | 'lines'
+  | 'dashed'
+  | 'dots';
+export const RenderGridStyleValues = ['lines', 'dashed', 'dots'] as const;
+
+export type RenderGuideAxis =
+  | 'x'
+  | 'y';
+export const RenderGuideAxisValues = ['x', 'y'] as const;
+
+/**
+ * D3: a colour space by what After Effects offers (Project Settings ▸ Working Space, Interpret Footage ▸ Color, the
+ * display, the output module). Resolved to an OCIO colour space by the C++ engine (render_graph/color).
+ *   srgb          sRGB-encoded Rec.709 primaries (IEC 61966-2-1)    linearSrgb     linear Rec.709 primaries
+ *   rec709        Rec.709 primaries, gamma 2.4 (BT.1886 display)    acesCg         linear AP1 (ACEScg)
+ *   rec2020       Rec.2020 primaries, gamma 2.4                     linearRec2020  linear Rec.2020 primaries
+ *   aces2065      linear AP0 (ACES2065-1, interchange)
+ */
+export type RenderColorSpace =
+  | 'srgb'
+  | 'rec709'
+  | 'linearSrgb'
+  | 'acesCg'
+  | 'rec2020'
+  | 'linearRec2020'
+  | 'aces2065';
+export const RenderColorSpaceValues = ['srgb', 'rec709', 'linearSrgb', 'acesCg', 'rec2020', 'linearRec2020', 'aces2065'] as const;
+
 /** What a RenderEffectParam carries: `number`, `numbers` (a list, a colour as [r,g,b,a], packed vec4 rows, a Float32Array), `text`, `texts`, or a boolean in `number` (0/1). */
 export type RenderParamKind =
   | 'number'
@@ -3125,6 +3154,59 @@ export interface RenderFrameScene {
   ssao?: RenderSsao;
 }
 
+/** One user guide (OverlayPass). */
+export interface RenderGuide {
+  axis: RenderGuideAxis;
+  position: number;
+  color?: Color;
+}
+
+/** Viewport overlays (Viewport.overlays): the grid, the proportional grid and user guides. Editor chrome only. */
+export interface RenderOverlays {
+  grid: boolean;
+  gridSpacing: number;
+  gridSubdivisions: number;
+  gridStyle: RenderGridStyle;
+  /** Absent = OverlayPass.gridColor. */
+  gridColor?: Color;
+  proportionalGrid: boolean;
+  proportionalColumns: number;
+  proportionalRows: number;
+  /** The comp rect in world units (proportional grid). */
+  compRect?: Rect;
+  guides: RenderGuide[];
+}
+
+/**
+ * The viewer/monitor LUT (colorPipeline.ts ViewerLutMeta), applied after the display transform on the viewport only.
+ * Its strip rides as the texture key `viewer-lut`.
+ */
+export interface RenderViewerLut {
+  size: number;
+  is1d: boolean;
+  intensity: number;
+  domainMin: number;
+  domainMax: number;
+}
+
+/**
+ * D3 colour management, After Effects' model: the project's working space (compositing is always linear light —
+ * AE's "Linearize Working Space" is always on — in the working space's primaries), each footage item's input
+ * interpretation (RenderTextureRef.inputSpace), the viewer's display transform, and the output module's transform.
+ * Applied as GPU passes built from OpenColorIO. ABSENT = today's pipeline (workingSpace/displayTransform), byte for byte.
+ */
+export interface RenderColorManagement {
+  workingSpace: RenderColorSpace;
+  /** The viewer's display. */
+  displaySpace: RenderColorSpace;
+  /** Set on an export frame: the output module's space, in place of displaySpace. */
+  outputSpace?: RenderColorSpace;
+  /** An OCIO view on the display (e.g. an ACES output transform); absent = the plain encode into displaySpace. */
+  view?: string;
+  /** OCIO config (file path or ocio:// URI); absent = OCIO's built-in CG config. */
+  ocioConfig?: string;
+}
+
 /** The viewport a FrameScene is drawn through, and the colour pipeline state the frame was rendered with. */
 export interface RenderView {
   /** CSS size and device pixel ratio (Viewport); the framebuffer is round(css × dpr). */
@@ -3152,6 +3234,12 @@ export interface RenderView {
   viewerLutActive: boolean;
   /** The GPU the producer rendered on (WebGPU adapter vendor, e.g. "amd", "nvidia"); a parity consumer renders on the same one. */
   adapterVendor?: string;
+  /** What the overlay pass draws, when overlaysActive. */
+  overlays?: RenderOverlays;
+  /** The viewer LUT's parameters, when viewerLutActive. */
+  viewerLut?: RenderViewerLut;
+  /** D3 colour management; absent = today's pipeline. */
+  colorManagement?: RenderColorManagement;
 }
 
 /** A texture key the scene samples → the content it resolved to when the frame was rendered. */
@@ -3162,6 +3250,12 @@ export interface RenderTextureRef {
   /** Already working-space (float EXR, graph RTs): skips the sRGB decode on sample. */
   sampleLinear: boolean;
   ready: boolean;
+  /**
+   * D3: how this COLOUR texture's texels are encoded (Interpret Footage ▸ Color). Under colorManagement a tagged
+   * texture is converted once into working-space linear light; untagged textures are data (masks, LUT strips,
+   * displacement / normal maps) and are never converted.
+   */
+  inputSpace?: RenderColorSpace;
 }
 
 /** Texel content, stored once per distinct hash. Rows top-down, tightly packed. */

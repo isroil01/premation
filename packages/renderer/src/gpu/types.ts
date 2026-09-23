@@ -395,5 +395,9 @@ export interface BackendCapabilities {
   storageBuffers: boolean;
   float16Textures: boolean;
   float32Textures: boolean;
+  /** rgba32float may be a BLENDED render target (WebGPU `float32-blendable`).
+   *  32 bpc intermediates need it: every compositing pipeline blends. Absent =
+   *  the backend does not say (WebGL2 float32 targets carry their own check). */
+  float32Blendable?: boolean;
   timestampQueries: boolean;
 }

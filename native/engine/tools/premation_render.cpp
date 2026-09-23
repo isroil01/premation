@@ -6,6 +6,7 @@
 //                    [--only a,b]                               (the render-tests `native` backend)
 //   premation-render --bench <file.pfs> [--frames N]            frame time of one scene
 //   common: [--gpu-vendor N] (default: the adapter the TS frame was rendered on)
+//           [--raw 1] (PNG = the surface bytes, without the harness readback emulation)
 //
 // A frame using a feature the graph has not ported is reported `not-ported`
 // with the reasons and is not rendered. Exit: 0 ran (even with not-ported
@@ -75,10 +76,34 @@ std::uint32_t vendor_id(std::string_view v) {
   return 0;
 }
 
-/// The harness's WebGPU readback: drawImage → getImageData (straight, rounded)
-/// → re-premultiply with Math.round. Applied so a native PNG and a webgpu PNG
-/// of the same surface bytes are the same bytes.
-void harness_readback(std::vector<std::uint8_t>& rgba) {
+/// The harness's WebGPU readback AND its PNG encode, byte for byte, so a
+/// native PNG and a webgpu PNG of the same surface bytes are the same bytes
+/// (packages/render-tests/harness/renderEntry.ts):
+///
+///   1. readCanvasRGBA: drawImage → getImageData (straight: p·255/a, rounded)
+///      → re-premultiply with Math.round(s·a/255).
+///   2. rgbaToPngBase64: putImageData(those bytes) → toDataURL. A 2D canvas
+///      STORES PREMULTIPLIED 8-bit, and putImageData takes its input as
+///      straight — so the already-premultiplied bytes are premultiplied a
+///      second time into 8-bit storage (round(q·a/255)), and toDataURL
+///      un-premultiplies them again for the PNG (round(r·255/a)).
+///
+/// Step 2 is lossy at low alpha: at a = 10/255 every q < 13 stores as 0, at
+/// a = 21 the only colours that survive are 0, 12, 24, … It is the whole of
+/// the D2 "7 low-alpha frames" (stencil/silhouette/preserve-transparency/
+/// alpha-add-seam, ≤ 11/255): the C++ surface bytes were already identical to
+/// the TS surface bytes; only the webgpu PNG carried this re-quantisation and
+/// the native PNG did not. It is a property of the harness's PNG encoding (the
+/// webgl2 references carry it too), not of either renderer.
+///
+/// Skia does these conversions in float and its ties round either way, so the
+/// integer model below is exact except at ties (≤ 1/255 on ~0.3 % of low-alpha
+/// pairs). The gate therefore passes `table`: the conversion MEASURED by the
+/// webgpu pass on this run's Chromium (index a·256 + p → PNG byte), which makes
+/// the comparison exact on any machine.
+void harness_readback(std::vector<std::uint8_t>& rgba, std::span<const std::uint8_t> table) {
+  const auto div_round = [](unsigned num, unsigned den) { return (num + den / 2U) / den; };
+  const bool measured = table.size() == 256U * 256U;
   for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) {
     const unsigned a = rgba[i + 3];
     if (a == 255) continue;
@@ -88,8 +113,14 @@ void harness_readback(std::vector<std::uint8_t>& rgba) {
         continue;
       }
       const unsigned p = rgba[i + c];
-      const unsigned s = std::min(255U, (p * 255U + a / 2U) / a);
-      rgba[i + c] = static_cast<std::uint8_t>((s * a + 127U) / 255U);
+      if (measured) {
+        rgba[i + c] = table[std::size_t{a} * 256U + std::min(p, a)];
+        continue;
+      }
+      const unsigned s = std::min(255U, div_round(p * 255U, a));  // getImageData
+      const unsigned q = div_round(s * a, 255U);                  // Math.round(s·a/255)
+      const unsigned r = div_round(q * a, 255U);                  // putImageData: premultiply into storage
+      rgba[i + c] = static_cast<std::uint8_t>(std::min(255U, div_round(r * 255U, a)));  // toDataURL: un-premultiply
     }
   }
 }
@@ -121,7 +152,12 @@ std::unique_ptr<premation::rg::SceneRenderer> make_renderer(std::uint32_t vendor
   return premation::rg::SceneRenderer::create(o, err);
 }
 
-FrameReport render_one(premation::rg::SceneRenderer& r, const RenderFrameFile& f, const fs::path& png) {
+struct OutputMode {
+  bool raw = false;                    // --raw 1
+  std::vector<std::uint8_t> table;     // --readback-table
+};
+
+FrameReport render_one(premation::rg::SceneRenderer& r, const RenderFrameFile& f, const fs::path& png, const OutputMode& mode) {
   FrameReport rep;
   rep.scene = f.scene_id;
   rep.frame = f.frame;
@@ -144,7 +180,7 @@ FrameReport render_one(premation::rg::SceneRenderer& r, const RenderFrameFile& f
     rep.error = "GPU validation: " + stats.gpuError;
     return rep;
   }
-  harness_readback(out.rgba);
+  if (!mode.raw) harness_readback(out.rgba, mode.table);
   if (!write_file(png, premation::tools::encode_png(out.width, out.height, out.rgba))) {
     rep.status = "error";
     rep.error = "cannot write " + png.string();
@@ -175,6 +211,17 @@ int run(int argc, char** argv) {
     const bool hex = s.rfind("0x", 0) == 0;
     std::from_chars(s.data() + (hex ? 2 : 0), s.data() + s.size(), vendor, hex ? 16 : 10);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   }
+  // --raw 1: write the surface bytes as rendered (premultiplied), without the
+  // harness readback/PNG emulation — for diagnosing a divergence.
+  OutputMode mode;
+  mode.raw = opt.count("raw") != 0 && opt["raw"] == "1";
+  // --readback-table F: the webgpu pass's measured readback (65 536 bytes).
+  if (const auto it = opt.find("readback-table"); it != opt.end()) {
+    if (!read_file(it->second, mode.table) || mode.table.size() != 256U * 256U) {
+      std::fprintf(stderr, "premation-render: --readback-table %s is not a 65536-byte table\n", it->second.c_str());
+      return 64;
+    }
+  }
 
   if (const auto it = opt.find("scene"); it != opt.end()) {
     RenderFrameFile f;
@@ -188,7 +235,7 @@ int run(int argc, char** argv) {
       std::fprintf(stderr, "premation-render: %s\n", err.c_str());
       return 1;
     }
-    const FrameReport rep = render_one(*r, f, opt.count("out") != 0 ? fs::path(opt["out"]) : fs::path("out.png"));
+    const FrameReport rep = render_one(*r, f, opt.count("out") != 0 ? fs::path(opt["out"]) : fs::path("out.png"), mode);
     std::printf("%s %s", rep.status.c_str(), rep.error.c_str());
     for (const auto& reason : rep.reasons) std::printf(" [%s]", reason.c_str());
     std::printf("\n");
@@ -290,7 +337,7 @@ int run(int argc, char** argv) {
       const fs::path png = outDir / f.scene_id / (std::to_string(f.frame) + ".png");
       // Per-frame isolation: one frame that throws is an error row, not a lost batch.
       try {
-        reports.push_back(render_one(*r, f, png));
+        reports.push_back(render_one(*r, f, png, mode));
       } catch (const std::exception& ex) {
         FrameReport rep;
         rep.scene = f.scene_id;

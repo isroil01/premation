@@ -7,7 +7,9 @@
 #include "passes.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <memory>
 #include <cmath>
 #include <numbers>
 #include <string>
@@ -45,8 +47,8 @@ struct FxEntry {
 Term parse_term(std::string_view t) {
   Term out;
   double v = 0;
-  const auto r = std::from_chars(t.data(), t.data() + t.size(), v);
-  if (r.ec == std::errc() && r.ptr == t.data() + t.size()) {
+  const auto r = std::from_chars(std::to_address(t.begin()), std::to_address(t.end()), v);
+  if (r.ec == std::errc() && r.ptr == std::to_address(t.end())) {
     out.isLiteral = true;
     out.literal = v;
     return out;
@@ -55,13 +57,14 @@ Term parse_term(std::string_view t) {
   const std::size_t bar = name.find('|');
   if (bar != std::string_view::npos) {
     const std::string_view d = name.substr(bar + 1);
-    std::from_chars(d.data(), d.data() + d.size(), out.def);
+    std::from_chars(std::to_address(d.begin()), std::to_address(d.end()), out.def);
     name = name.substr(0, bar);
   }
   const std::size_t br = name.find('[');
   if (br != std::string_view::npos) {
     int idx = 0;
-    std::from_chars(name.data() + br + 1, name.data() + name.size() - 1, idx);
+    const std::string_view inner = name.substr(br + 1, name.size() - br - 2);
+    std::from_chars(std::to_address(inner.begin()), std::to_address(inner.end()), idx);
     out.index = idx;
     name = name.substr(0, br);
   }
@@ -288,7 +291,7 @@ std::array<double, 4> ramp_points(double angleDeg, const Rect& box, double w, do
 }
 
 bool known_single(std::string_view t) {
-  static const char* const kSpecial[] = {"gradient-ramp", "fractal-noise", "displacement-map", "compound-blur",
+  static constexpr auto kSpecial = std::to_array<std::string_view>({"gradient-ramp", "fractal-noise", "displacement-map", "compound-blur",
                                          "set-matte",     "motion-tile",   "fill",             "stroke",
                                          "sharpen",       "noise",         "apply-color-lut", "bevel-alpha",
                                          "bevel-edges",   "beam",          "light-sweep",      "lens-flare",
@@ -296,11 +299,8 @@ bool known_single(std::string_view t) {
                                          "channel-blur", "minimax",       "cross-blur",       "unsharp-mask",
                                          "shadow-highlight", "equalize", "auto-levels",     "auto-contrast",
                                          "auto-color",   "plastic",       "glass",            "vector-blur",
-                                         "radial-shadow", "plugin"};
-  for (const char* s : kSpecial) {
-    if (t == s) return true;
-  }
-  return false;
+                                         "radial-shadow", "plugin"});
+  return std::ranges::find(kSpecial, t) != kSpecial.end();
 }
 
 }  // namespace
@@ -331,7 +331,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
   const Rect fxBox = space != nullptr ? space->box : renderable_box(ctx, self == byId.end() ? nullptr : self->second);
   const double pw = vp.pixelWidth;
   const double ph = vp.pixelHeight;
-  const bool poolHasMatte = std::find(pool.begin(), pool.end(), kMatteTarget) != pool.end();
+  const bool poolHasMatte = std::ranges::find(pool, kMatteTarget) != pool.end();
 
   TexRef curTex = std::move(input);
   std::string_view curName = pool[0];
@@ -846,7 +846,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         Packer hp = ctx.packer();
         hp.mat3(mvp).rect(targetUv);
         const auto head = hp.span();
-        std::copy(head.begin(), head.end(), block.begin());
+        std::ranges::copy(head, block.begin());
         const double tw = std::max(1.0, std::floor(pw * scale));
         const double th = std::max(1.0, std::floor(ph * scale));
         const auto host = [&](std::string_view k, double def) { return fx.num(std::string("hostInputs.") + std::string(k), def); };

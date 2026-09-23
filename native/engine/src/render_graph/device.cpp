@@ -4,11 +4,13 @@
 #include <array>
 #include <cstring>
 
+#include "color_wgsl.hpp"
+
 namespace premation::rg {
 namespace {
 
 /// Uniform arena chunk; dynamic offsets are 256-byte aligned (minUniformBufferOffsetAlignment).
-constexpr std::uint32_t kChunkBytes = 4U << 20;
+constexpr std::uint32_t kChunkBytes = 4U << 20U;
 constexpr std::uint32_t kUniformAlign = 256;
 
 /// WebGPUBackend.ts `blendState` — premultiplied source-over by default.
@@ -51,10 +53,10 @@ std::uint32_t bytes_per_texel(wgpu::TextureFormat f) {
 void append_u64(std::string& s, std::uint64_t v) {
   std::array<char, 24> buf{};
   std::size_t n = 0;
-  do {
+  for (bool first = true; (first || v != 0) && n < buf.size(); first = false) {
     buf.at(n++) = static_cast<char>('0' + v % 10);
     v /= 10;
-  } while (v != 0 && n < buf.size());
+  }
   while (n > 0) s.push_back(buf.at(--n));
 }
 
@@ -106,17 +108,26 @@ std::size_t Device::end_frame() {
 }
 
 RenderTarget& Device::target(std::string_view name, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format,
-                             std::uint32_t samples, bool depth) {
+                             std::uint32_t samples, bool depth, bool* created) {
+  const std::uint32_t sampleCount = samples >= 4 ? 4 : 1;
+  // Name + size, as the TS key — plus format and samples, because the project
+  // bit depth (16 ↔ 32 float, 32 = no MSAA) can change between two frames of
+  // the same size and a pooled target must never be reused in the wrong format.
   key_.assign("graph-target:");
   key_ += name;
   key_ += ':';
   append_u64(key_, w);
   key_ += 'x';
   append_u64(key_, h);
-  const std::uint32_t sampleCount = samples >= 4 ? 4 : 1;
+  key_ += ':';
+  append_u64(key_, static_cast<std::uint64_t>(format));
+  key_ += ':';
+  append_u64(key_, sampleCount);
+  if (depth) key_ += ":d";
   const bool hit = targets_.has(key_);
   if (hit) ++stats_.targetHits;
   else ++stats_.targetMisses;
+  if (created != nullptr) *created = !hit;
   return targets_.acquire(
       key_, frame_,
       [&] {
@@ -157,16 +168,23 @@ RenderTarget& Device::target(std::string_view name, std::uint32_t w, std::uint32
 
 TexRef Device::texture(std::string_view hash, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format,
                        std::span<const std::uint8_t> pixels, bool mipmapped) {
-  (void)mipmapped;  // level 0 only: the exporter reports mipmapped blobs and support.cpp refuses them
   const std::uint32_t bpp = bytes_per_texel(format);
   const std::uint64_t bytes = std::uint64_t{w} * h * bpp;
+  // A mipmapped blob carries level 0 only (the TS texture's chain is never
+  // uploaded — WebGPUBackend allocates levels and nothing fills them); the chain
+  // is regenerated here, level by level, as exact 2×2 box averages of the
+  // premultiplied texels (kMipWgsl), and linear samplers filter between levels.
+  const std::uint32_t levels = mipmapped ? mip_levels(w, h) : 1;
+  const std::uint64_t charged = levels > 1 ? bytes + bytes / 3 : bytes;  // gpuMemory.ts mipChainBytes ≈ 4/3
   return textures_.acquire(
       hash, frame_,
       [&] {
         wgpu::TextureDescriptor td{};
         td.size = {std::max(1U, w), std::max(1U, h), 1};
         td.format = format;
-        td.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+        td.mipLevelCount = levels;
+        td.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst |
+                   (levels > 1 ? wgpu::TextureUsage::RenderAttachment : wgpu::TextureUsage::None);
         wgpu::Texture tex = device_.CreateTexture(&td);
         if (pixels.size() >= bytes && bytes > 0) {
           wgpu::TexelCopyTextureInfo dst{};
@@ -176,12 +194,45 @@ TexRef Device::texture(std::string_view hash, std::uint32_t w, std::uint32_t h, 
           layout.rowsPerImage = h;
           const wgpu::Extent3D size{w, h, 1};
           queue_.WriteTexture(&dst, pixels.data(), bytes, &layout, &size);
+          if (levels > 1) generate_mips(tex, format, w, h, levels);
         }
         TexRef ref{tex.CreateView(), nextId_++, w, h, false};
         textureObjects_.acquire(hash, frame_, [&] { return tex; });
         return ref;
       },
-      bytes);
+      charged);
+}
+
+std::uint32_t mip_levels(std::uint32_t w, std::uint32_t h) noexcept {
+  std::uint32_t n = 1;
+  for (std::uint32_t s = std::max(w, h); s > 1; s >>= 1U) ++n;
+  return n;
+}
+
+void Device::generate_mips(const wgpu::Texture& tex, wgpu::TextureFormat format, std::uint32_t w, std::uint32_t h,
+                           std::uint32_t levels) {
+  static constexpr std::array<LayoutEntry, 2> kLayout{{{0, BindingType::uniform, kStageVertex | kStageFragment},
+                                                       {1, BindingType::unfilterable, kStageFragment}}};
+  const Mat mat = dynamic_material("rg-mip", shaders::kMipWgsl, kLayout);
+  std::uint32_t sw = std::max(1U, w);
+  std::uint32_t sh = std::max(1U, h);
+  for (std::uint32_t level = 1; level < levels; ++level) {
+    wgpu::TextureViewDescriptor src{};
+    src.baseMipLevel = level - 1;
+    src.mipLevelCount = 1;
+    wgpu::TextureViewDescriptor dst{};
+    dst.baseMipLevel = level;
+    dst.mipLevelCount = 1;
+    const std::uint32_t dw = std::max(1U, sw / 2);
+    const std::uint32_t dh = std::max(1U, sh / 2);
+    DrawItem it;
+    it.material = mat;
+    it.texture = {tex.CreateView(&src), 0, sw, sh, false};
+    const std::array<float, 4> u = {static_cast<float>(sw), static_cast<float>(sh), 0, 0};
+    side_draw(tex.CreateView(&dst), format, dw, dh, it, u);
+    sw = dw;
+    sh = dh;
+  }
 }
 
 SamplerRef Device::sampler(std::string_view key, wgpu::FilterMode filter, wgpu::AddressMode address) {
@@ -191,6 +242,9 @@ SamplerRef Device::sampler(std::string_view key, wgpu::FilterMode filter, wgpu::
         wgpu::SamplerDescriptor sd{};
         sd.magFilter = filter;
         sd.minFilter = filter;
+        // Trilinear on a mipmapped texture; on a single-level texture (every
+        // texture the TS renderer samples) the LOD clamps to 0 and this is inert.
+        sd.mipmapFilter = filter == wgpu::FilterMode::Linear ? wgpu::MipmapFilterMode::Linear : wgpu::MipmapFilterMode::Nearest;
         sd.addressModeU = address;
         sd.addressModeV = address;
         return SamplerRef{device_.CreateSampler(&sd), nextId_++};
@@ -272,6 +326,7 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
               le.texture.viewDimension = wgpu::TextureViewDimension::e2D;
               break;
             case BindingType::depth:
+            case BindingType::unfilterable:
               le.texture.sampleType = wgpu::TextureSampleType::UnfilterableFloat;
               le.texture.viewDimension = wgpu::TextureViewDimension::e2D;
               break;
@@ -364,7 +419,7 @@ std::pair<std::uint32_t, std::uint32_t> Device::uniform_alloc(std::span<const fl
     UniformChunk& c = chunks_[chunk_];
     if (c.used + span <= kChunkBytes) {
       const std::uint32_t off = c.used;
-      std::memcpy(c.cpu.data() + off, data.data(), bytes);
+      std::memcpy(std::span(c.cpu).subspan(off, bytes).data(), data.data(), bytes);
       c.used += span;
       return {chunk_, off};
     }
@@ -442,36 +497,8 @@ void Device::execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::
     const bool hit = bindGroups_.has(key_);
     if (hit) ++stats_.bindGroupHits;
     else ++stats_.bindGroupMisses;
-    const wgpu::BindGroup& bg = bindGroups_.acquire(key_, frame_, [&] {
-      std::vector<wgpu::BindGroupEntry> entries;
-      for (const LayoutEntry& e : m.layout) {
-        wgpu::BindGroupEntry be{};
-        be.binding = e.binding;
-        const DrawItem::Extra* ex = nullptr;
-        for (std::uint8_t k = 0; k < it.extraCount; ++k) {
-          if (it.extra.at(k).binding == e.binding) ex = &it.extra.at(k);
-        }
-        if (ex != nullptr) {
-          if (e.type == BindingType::sampler) be.sampler = ex->smp.sampler;
-          else be.textureView = ex->tex.view;
-        } else if (e.type == BindingType::uniform) {
-          be.buffer = chunks_[chunk].buffer;
-          be.offset = 0;
-          be.size = size;
-        } else if (e.type == BindingType::sampler) {
-          be.sampler = it.sampler.sampler;
-        } else {
-          const TexRef& t = e.binding == 1 ? it.texture : e.binding == 3 ? it.mask : it.origin;
-          be.textureView = t.view;
-        }
-        entries.push_back(be);
-      }
-      wgpu::BindGroupDescriptor bgd{};
-      bgd.layout = p.layout;
-      bgd.entryCount = entries.size();
-      bgd.entries = entries.data();
-      return device_.CreateBindGroup(&bgd);
-    });
+    const wgpu::BindGroup& bg =
+        bindGroups_.acquire(key_, frame_, [&] { return make_bind_group(p, m, it, chunks_[chunk].buffer, size); });
     pass.SetBindGroup(0, bg, 1, &offset);
     const bool instanced = it.instanceBuffer != nullptr;
     const std::uint32_t instances = instanced ? it.instanceCount : 1;
@@ -487,6 +514,78 @@ void Device::execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::
     }
     ++stats_.draws;
   }
+}
+
+wgpu::BindGroup Device::make_bind_group(const Pipeline& p, const MaterialDesc& m, const DrawItem& it,
+                                        const wgpu::Buffer& uniforms, std::uint64_t size) {
+  std::vector<wgpu::BindGroupEntry> entries;
+  for (const LayoutEntry& e : m.layout) {
+    wgpu::BindGroupEntry be{};
+    be.binding = e.binding;
+    const DrawItem::Extra* ex = nullptr;
+    for (std::uint8_t k = 0; k < it.extraCount; ++k) {
+      if (it.extra.at(k).binding == e.binding) ex = &it.extra.at(k);
+    }
+    if (ex != nullptr) {
+      if (e.type == BindingType::sampler) be.sampler = ex->smp.sampler;
+      else be.textureView = ex->tex.view;
+    } else if (e.type == BindingType::uniform) {
+      be.buffer = uniforms;
+      be.offset = 0;
+      be.size = size;
+    } else if (e.type == BindingType::sampler) {
+      be.sampler = it.sampler.sampler;
+    } else {
+      const TexRef& t = e.binding == 1 ? it.texture : e.binding == 3 ? it.mask : it.origin;
+      be.textureView = t.view;
+    }
+    entries.push_back(be);
+  }
+  wgpu::BindGroupDescriptor bgd{};
+  bgd.layout = p.layout;
+  bgd.entryCount = entries.size();
+  bgd.entries = entries.data();
+  return device_.CreateBindGroup(&bgd);
+}
+
+void Device::side_draw(const wgpu::TextureView& target, wgpu::TextureFormat format, std::uint32_t w, std::uint32_t h,
+                       const DrawItem& item, std::span<const float> uniforms) {
+  const Pipeline& p = pipeline(item.material, Blend::none, format, 1);
+  const MaterialDesc& m = material_of(item.material);
+  // Its own uniform buffer: the frame arena is uploaded only at end_frame,
+  // after this command buffer has already been submitted.
+  const std::uint64_t size = std::max<std::uint64_t>(16, (uniforms.size_bytes() + 15) & ~std::uint64_t{15});
+  wgpu::BufferDescriptor bd{};
+  bd.size = size;
+  bd.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+  bd.label = "side-draw-uniforms";
+  const wgpu::Buffer ubuf = device_.CreateBuffer(&bd);
+  std::vector<float> padded(size / sizeof(float), 0.0F);
+  std::ranges::copy(uniforms, padded.begin());
+  queue_.WriteBuffer(ubuf, 0, padded.data(), size);
+  const wgpu::BindGroup bg = make_bind_group(p, m, item, ubuf, size);
+
+  wgpu::CommandEncoder enc = device_.CreateCommandEncoder();
+  wgpu::RenderPassColorAttachment ca{};
+  ca.view = target;
+  ca.loadOp = wgpu::LoadOp::Clear;
+  ca.storeOp = wgpu::StoreOp::Store;
+  ca.clearValue = {0, 0, 0, 0};
+  wgpu::RenderPassDescriptor rp{};
+  rp.colorAttachmentCount = 1;
+  rp.colorAttachments = &ca;
+  wgpu::RenderPassEncoder pass = enc.BeginRenderPass(&rp);
+  pass.SetViewport(0, 0, static_cast<float>(std::max(1U, w)), static_cast<float>(std::max(1U, h)), 0, 1);
+  pass.SetPipeline(p.pipeline);
+  const std::uint32_t zero = 0;
+  pass.SetBindGroup(0, bg, 1, &zero);
+  pass.SetVertexBuffer(0, quad_);
+  pass.Draw(6, 1);
+  pass.End();
+  const wgpu::CommandBuffer cb = enc.Finish();
+  queue_.Submit(1, &cb);
+  ++stats_.passes;
+  ++stats_.draws;
 }
 
 Mat Device::dynamic_material(std::string_view name, std::string_view wgsl, std::span<const LayoutEntry> layout) {

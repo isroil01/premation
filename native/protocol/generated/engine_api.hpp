@@ -690,6 +690,33 @@ enum class RenderSsaoQuality : std::uint32_t {
 [[nodiscard]] std::string_view to_string(RenderSsaoQuality v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, RenderSsaoQuality& out) noexcept;
 
+enum class RenderGridStyle : std::uint32_t {
+  lines = 0,
+  dashed = 1,
+  dots = 2,
+};
+[[nodiscard]] std::string_view to_string(RenderGridStyle v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderGridStyle& out) noexcept;
+
+enum class RenderGuideAxis : std::uint32_t {
+  x = 0,
+  y = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderGuideAxis v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderGuideAxis& out) noexcept;
+
+enum class RenderColorSpace : std::uint32_t {
+  srgb = 0,
+  rec709 = 1,
+  linear_srgb = 2,
+  aces_cg = 3,
+  rec2020 = 4,
+  linear_rec2020 = 5,
+  aces2065 = 6,
+};
+[[nodiscard]] std::string_view to_string(RenderColorSpace v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderColorSpace& out) noexcept;
+
 enum class RenderParamKind : std::uint32_t {
   number = 0,
   numbers = 1,
@@ -1049,6 +1076,10 @@ struct RenderSsao;
 struct RenderPrecompFrame;
 struct Renderable;
 struct RenderFrameScene;
+struct RenderGuide;
+struct RenderOverlays;
+struct RenderViewerLut;
+struct RenderColorManagement;
 struct RenderView;
 struct RenderTextureRef;
 struct RenderBlob;
@@ -4096,6 +4127,45 @@ struct RenderFrameScene {
   bool operator==(const RenderFrameScene&) const = default;
 };
 
+struct RenderGuide {
+  RenderGuideAxis axis = RenderGuideAxis::x;
+  double position = 0.0;
+  std::optional<Color> color;
+  bool operator==(const RenderGuide&) const = default;
+};
+
+struct RenderOverlays {
+  bool grid = false;
+  double grid_spacing = 0.0;
+  double grid_subdivisions = 0.0;
+  RenderGridStyle grid_style = RenderGridStyle::lines;
+  std::optional<Color> grid_color;
+  bool proportional_grid = false;
+  double proportional_columns = 0.0;
+  double proportional_rows = 0.0;
+  std::optional<Rect> comp_rect;
+  std::vector<RenderGuide> guides;
+  bool operator==(const RenderOverlays&) const = default;
+};
+
+struct RenderViewerLut {
+  std::uint32_t size = 0;
+  bool is1d = false;
+  double intensity = 0.0;
+  double domain_min = 0.0;
+  double domain_max = 0.0;
+  bool operator==(const RenderViewerLut&) const = default;
+};
+
+struct RenderColorManagement {
+  RenderColorSpace working_space = RenderColorSpace::srgb;
+  RenderColorSpace display_space = RenderColorSpace::srgb;
+  std::optional<RenderColorSpace> output_space;
+  std::optional<std::string> view;
+  std::optional<std::string> ocio_config;
+  bool operator==(const RenderColorManagement&) const = default;
+};
+
 struct RenderView {
   double css_width = 0.0;
   double css_height = 0.0;
@@ -4114,6 +4184,9 @@ struct RenderView {
   RenderTextureFormat surface_format = RenderTextureFormat::rgba8unorm;
   bool viewer_lut_active = false;
   std::optional<std::string> adapter_vendor;
+  std::optional<RenderOverlays> overlays;
+  std::optional<RenderViewerLut> viewer_lut;
+  std::optional<RenderColorManagement> color_management;
   bool operator==(const RenderView&) const = default;
 };
 
@@ -4122,6 +4195,7 @@ struct RenderTextureRef {
   std::string hash;
   bool sample_linear = false;
   bool ready = false;
+  std::optional<RenderColorSpace> input_space;
   bool operator==(const RenderTextureRef&) const = default;
 };
 
@@ -4849,6 +4923,14 @@ void encode(wire::Writer& w, const Renderable& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Renderable& out);
 void encode(wire::Writer& w, const RenderFrameScene& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderFrameScene& out);
+void encode(wire::Writer& w, const RenderGuide& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderGuide& out);
+void encode(wire::Writer& w, const RenderOverlays& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderOverlays& out);
+void encode(wire::Writer& w, const RenderViewerLut& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderViewerLut& out);
+void encode(wire::Writer& w, const RenderColorManagement& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderColorManagement& out);
 void encode(wire::Writer& w, const RenderView& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderView& out);
 void encode(wire::Writer& w, const RenderTextureRef& v);
