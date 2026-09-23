@@ -267,8 +267,12 @@ describeEngine('premation-engine — scripted session over the real pipes', () =
     expect(welcome.engine).toBe('premation-engine');
 
     const comp = ok(await run({ type: 'createComposition', settings: { width: 1920, height: 1080, frameRate: { num: 60, den: 1 }, duration: 10 * FLICKS }, fromItems: [] })).item as string;
+    // A new project's active composition is its 30 fps `comp_root`; play this 60 fps one.
+    ok(await run({ type: 'setActiveComposition', comp }));
     const layer = ok(
-      await run({ type: 'createLayer', comp, kind: 'solid', init: [{ path: 'layer/size', value: { kind: 'vec2', value: { x: 400, y: 300 } } }] }),
+      // The document's default solid: `layer/size` was the N-stage scaffold's
+      // path, never a property of the real document (either engine).
+      await run({ type: 'createLayer', comp, kind: 'solid', init: [] }),
     ).layer as string;
     for (const [t, x] of [[0, 200], [1, 1700], [2, 960]] as const) {
       ok(await run({ type: 'addKeyframes', keys: [{ prop: { layer, path: 'transform/position' }, time: t * FLICKS, value: { kind: 'vec2', value: { x, y: 540 } }, spatialIn: [], spatialOut: [] }] }));

@@ -15,6 +15,7 @@
 #include "core/log.hpp"
 #include "core/session.hpp"
 #include "core/simulated_sink.hpp"
+#include "core/values.hpp"
 #include "premation/protocol/framing.hpp"
 
 namespace premation::test {
@@ -35,15 +36,15 @@ api::Query qry(T x) {
   return q;
 }
 
-inline api::Value vec2(double x, double y) { return doc::make_vec2(x, y); }
-inline api::Value scalar(double x) { return doc::make_scalar(x); }
+inline api::Value vec2(double x, double y) { return doc::v_vec2(x, y); }
+inline api::Value scalar(double x) { return doc::v_scalar(x); }
 
 class Harness final : public Outbox {
  public:
   using Clock = Session::Clock;
 
   explicit Harness(std::uint32_t slots = 3)
-      : sink([this](const frames::Message& m) { frameMsgs.push_back(m); }, slots), session(*this, sink, {}) {
+      : sink([this](const frames::Message& m) { frameMsgs.push_back(m); }, slots), session(*this, sink, SessionOptions{.testPorts = true}) {
     log::set_min_level(log::Level::error);  // corrupted traffic logs a warning per message
   }
 

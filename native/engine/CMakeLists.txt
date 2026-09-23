@@ -32,11 +32,9 @@ endif()
 # ── core ────────────────────────────────────────────────────────────────────
 set(ENGINE_CORE_SOURCES
   src/core/log.cpp
-  src/core/document.cpp
-  src/core/evaluate.cpp
   src/core/history.cpp
   src/core/session.cpp
-)
+)  # the D1b document model adds its sources in its own block at the end
 add_library(engine_core STATIC ${ENGINE_CORE_SOURCES})
 target_include_directories(engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 target_link_libraries(engine_core PUBLIC engine_protocol motion::eval PRIVATE motion::options)
@@ -217,5 +215,91 @@ if(MOTION_BUILD_TESTS)
   target_sources(engine_tests PRIVATE tests/test_render_graph_color.cpp)
   if(TARGET engine_gpu_tests)
     target_sources(engine_gpu_tests PRIVATE tests/test_render_graph_gpu_d3.cpp)
+  endif()
+endif()
+
+# ── D1b: the document model — the second implementation of the engine API ───
+# (src/core; kept in its own block, apart from the targets above)
+#   model/json/anim/timeline/scene   the TS document model (scene graph, anim
+#                                    stores, timelines, comps, items)
+#   handlers_*                       one family of edit commands each
+#   props/meta/ptree/readmodel       the property catalog + read model
+#   queries/events/docio             queries, change events, save/open
+#   catalog_data                     registries generated from the TS
+#                                    (crossEngineCatalog.test.ts)
+set(ENGINE_DOC_SOURCES
+  src/core/anim.cpp
+  src/core/anim_json.cpp
+  src/core/catalog_data.cpp
+  src/core/docexpr.cpp
+  src/core/docio.cpp
+  src/core/engine_ctx.cpp
+  src/core/events.cpp
+  src/core/fxstate.cpp
+  src/core/handlers_common.cpp
+  src/core/handlers_comps.cpp
+  src/core/handlers_groups.cpp
+  src/core/handlers_items.cpp
+  src/core/handlers_layers.cpp
+  src/core/handlers_layers2.cpp
+  src/core/handlers_layertime.cpp
+  src/core/handlers_markers.cpp
+  src/core/handlers_misc.cpp
+  src/core/handlers_precompose.cpp
+  src/core/handlers_properties.cpp
+  src/core/json.cpp
+  src/core/layer_clone.cpp
+  src/core/meta.cpp
+  src/core/model.cpp
+  src/core/parenting.cpp
+  src/core/props.cpp
+  src/core/ptree.cpp
+  src/core/queries.cpp
+  src/core/readmodel.cpp
+  src/core/scene.cpp
+  src/core/scene_build.cpp
+  src/core/timeline.cpp
+  src/core/worldxf.cpp
+)
+target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
+target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
+# anim.cpp samples keyframes through motion_eval's C++ entry points (eval.hpp,
+# the same code its C ABI wraps) — in-process, so the ABI's copies are skipped.
+target_include_directories(engine_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)
+if(WIN32)
+  # The expression interpreter and the scene/property walks recurse; a deep
+  # (fuzzed or user-authored) expression needs more than the 1 MB default.
+  set(_doc_stack "LINKER:/STACK:16777216")
+  if(TARGET premation-engine)
+    target_link_options(premation-engine PRIVATE ${_doc_stack})
+  endif()
+  if(TARGET engine_tests)
+    target_link_options(engine_tests PRIVATE ${_doc_stack})
+  endif()
+endif()
+if(TARGET engine_tests)
+  # The replay corpus (tests/data/replay_corpus.bin, dumped by crossEngine.test.ts).
+  target_compile_definitions(engine_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()
+if(TARGET engine_fuzz)
+  # engine_fuzz compiles everything in (one static CRT, see above).
+  set(_libs_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
+  file(GLOB _doc_fuzz_expr ${_libs_dir}/motion_expr/*.cpp)
+  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} ${_doc_fuzz_expr}
+                 ${_libs_dir}/motion_jsmath/fdlibm.cpp ${_libs_dir}/motion_jsmath/numconv.cpp
+                 ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
+  target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
+                             ${_libs_dir}/motion_transform)
+  if(WIN32)
+    target_link_options(engine_fuzz PRIVATE ${_doc_stack})
+  endif()
+  if(MSVC)
+    # clang-cl + the /MT libFuzzer runtime: the trace-cmp and indirect-calls
+    # coverage hooks break C++ exception dispatch (a thrown-and-caught exception
+    # aborts with exit 3 — trace-cmp reproduced with a 10-line target,
+    # indirect-calls on a throw through a std::function). The document core
+    # reports refusals by throwing EngineFail, so keep edge coverage only.
+    target_compile_options(engine_fuzz PRIVATE -fno-sanitize-coverage=trace-cmp -fno-sanitize-coverage=indirect-calls)
+    target_compile_definitions(engine_fuzz PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv/fopen in the harness
   endif()
 endif()

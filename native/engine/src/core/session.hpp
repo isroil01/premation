@@ -6,6 +6,11 @@
 // thread and single order are what make the engine deterministic: the same
 // request stream produces the same revisions, events and frames.
 //
+// D1b: the request loop is the TypeScript LocalEngine's (src/core/engine/
+// LocalEngine.ts) over the C++ document model (model.hpp): edits run through
+// the handlers (handlers_*.cpp) inside one journal per request, the journal's
+// ChangeSet is the history entry, and events come from the EventBuilder.
+//
 // I/O is injected: `Outbox` receives outgoing messages (the process encodes
 // and queues them for the writer threads; tests capture them), `FrameSink`
 // receives evaluated frames (the render thread; a null sink in tests and in
@@ -15,17 +20,22 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "document.hpp"
+#include "docexpr.hpp"
 #include "engine_api.hpp"
-#include "evaluate.hpp"
+#include "engine_ctx.hpp"
+#include "events.hpp"
 #include "frame_scene.hpp"
 #include "history.hpp"
+#include "model.hpp"
 #include "premation/protocol/frame_channel.hpp"
+#include "timeline.hpp"
 
 namespace premation {
 
@@ -48,8 +58,10 @@ class Outbox {
 };
 
 struct SessionOptions {
-  std::string engineVersion = "0.2.0-c2";
+  std::string engineVersion = "0.3.0-d1b";
   std::string sessionId = "s1";
+  /// The test harness's ports (in-memory projects, deterministic fake media).
+  bool testPorts = false;
 };
 
 class Session {
@@ -57,6 +69,11 @@ class Session {
   using Clock = std::chrono::steady_clock;
 
   Session(Outbox& out, FrameSink& sink, SessionOptions options);
+  ~Session();
+  Session(const Session&) = delete;
+  Session& operator=(const Session&) = delete;
+  Session(Session&&) = delete;
+  Session& operator=(Session&&) = delete;
 
   /// One framed payload from the command pipe (decoded here, so a malformed
   /// frame becomes a typed error instead of reaching the dispatcher).
@@ -77,6 +94,7 @@ class Session {
   [[nodiscard]] bool playing() const noexcept { return playing_; }
   [[nodiscard]] const doc::Document& document() const noexcept { return doc_; }
   [[nodiscard]] api::Time time() const noexcept { return time_; }
+  [[nodiscard]] const doc::EditorView& view() const noexcept { return view_; }
 
   /// Say goodbye (engine shutting down) and close.
   void close(api::GoodbyeReason reason, std::string message);
@@ -84,59 +102,56 @@ class Session {
  private:
   enum class Phase : std::uint8_t { awaiting_hello, open, closed };
 
-  enum class OutcomeKind : std::uint8_t {
-    control,       // no document change (transport, viewport, gesture bookkeeping)
-    edit,          // changed the document through txn_: one revision, one history entry
-    history_move,  // undo / redo / jump / cancelled gesture: `moved` holds what was applied
-    reset,         // the document was replaced (newProject)
-  };
-
-  struct Outcome {
-    std::optional<api::EngineError> error;
-    api::CommandResult result;
-    OutcomeKind kind = OutcomeKind::control;
-    std::string label;             // history label for edits
-    doc::ChangeSet moved;          // history_move only
-    bool historyChanged = false;   // control that changed history state (gestures, clear, limit)
-  };
-
   // ── envelope ──
   void handle_hello(const api::Hello& hello);
   void handle_request(api::Request request, Clock::time_point now);
-  void handle_request_body(api::Request request, Clock::time_point now);
+  api::Outcome handle_request_body(const api::Request& request, Clock::time_point now);
   void respond(api::Seq seq, api::Outcome outcome);
-  void respond_error(api::Seq seq, api::EngineError error);
   void send_events(api::Revision from, api::Revision to, std::vector<api::Event> events, std::optional<api::Seq> seq,
                    api::Origin origin);
   void send_engine_error(api::ErrorCode code, std::string message, bool fatal);
 
   // ── commands ──
-  friend struct CommandVisitor;
+  friend struct ControlVisitor;
+  friend struct EditVisitor;
   friend struct QueryVisitor;
-  Outcome run_command(const api::Command& cmd, api::Origin origin, Clock::time_point now);
-  void finish_edit(api::Seq seq, api::Origin origin, const std::string& label, api::Outcome outcome);
-  void finish_history_move(api::Seq seq, api::Origin origin, const doc::ChangeSet& applied, api::Outcome outcome);
-  std::optional<api::EngineError> write_property(const api::PropRef& ref, const api::Value& value,
-                                                 std::optional<api::Time> time, std::optional<api::KeyframeId>& key);
+  [[nodiscard]] bool is_edit(const api::Command& cmd) const;
+  std::vector<api::CommandResult> run_edits(const std::vector<const api::Command*>& commands, api::Origin origin,
+                                            const std::optional<std::string>& batchLabel);
+  api::CommandResult run_control(const api::Command& cmd, api::Origin origin, Clock::time_point now);
+  doc::HCtx handler_ctx(api::Origin origin);
+  doc::PCtx pctx();
+  void ensure_timelines();
+  void stamp_missing_key_ids(const doc::ChangeSet& touched, doc::HCtx& x);
+
+  // ── history ──
+  void apply_history(const doc::ChangeSet& target);
+  api::HistoryState history_state() const;
+  void emit_status();
+  void emit_changes(api::Revision from, const doc::ChangeSet& changes);
+  /// New Project (`createEmpty` + loadDocument). `emit` false at construction (before Welcome).
+  void load_new_project(api::ResetReason reason, bool emit = true);
+  /// loadDocument(doc, {resetWorkspace: true}) for a project file.
+  void load_document(const doc::Json& file, api::ResetReason reason);
+  /// The document's state after a load: history, ids, caches, revision, reset event.
+  void after_load(api::ResetReason reason, bool emit);
+  [[nodiscard]] doc::Json capture_document() const;
 
   // ── queries ──
-  api::QueryResult query_document(const api::GetDocument& q);
-
-  // ── events ──
-  void append_change_events(const doc::ChangeSet& changes, std::vector<api::Event>& events);
-  api::Event history_event() const;
+  api::QueryResult run_query(const api::Query& q);
 
   // ── transport ──
   void start_playback(Clock::time_point now, std::optional<api::Time> from);
   void stop_playback();
   void rebase_playback(Clock::time_point now);
   void set_time(api::Time t);
+  void seek_to(api::Time t);
   void emit_transport();
   void emit_playhead();
   void request_render() noexcept { renderDirty_ = true; }
   void flush_render();
   void submit_frame(std::uint32_t clockDropped);
-  [[nodiscard]] const doc::Comp* active_comp() const;
+  [[nodiscard]] std::optional<std::string> active_comp() const;
   [[nodiscard]] api::Time frame_dur() const;
   struct Range {
     std::int64_t first = 0;  // first frame index
@@ -150,11 +165,34 @@ class Session {
   SessionOptions options_;
   Phase phase_ = Phase::awaiting_hello;
 
+  // ── the document and what edits it ──
   doc::Document doc_;
+  doc::EditorView view_;
+  doc::IdAllocator ids_;
+  doc::KeyIndex keys_;
+  doc::EventBuilder builder_;
+  doc::ExprCache exprCache_;
+  doc::DocExprEnv exprEnv_{doc_, view_, exprCache_};
+  std::unique_ptr<doc::Ports> ports_;
   doc::History history_;
+  struct Gesture {
+    std::uint32_t id = 0;
+    std::string label;
+    api::Origin origin = api::Origin::ui;
+    doc::ChangeSet changes;
+  };
+  std::optional<Gesture> gesture_;
+  std::uint32_t gestureSeq_ = 0;
   api::Revision revision_ = 0;
-  eval::Scratch scratch_;
-  doc::ChangeSet txn_;  // the changes of the request being applied
+  api::Revision savedRevision_ = 0;
+  std::string projectPath_;
+  std::vector<api::LogRecord> log_;
+  struct Autosave {
+    bool enabled = false;
+    std::uint32_t intervalSeconds = 0;
+    std::uint32_t keep = 0;
+  } autosave_;
+  std::vector<std::string> lastMissing_;
 
   // One EventBatch per request (ENGINE_API.md §8.1): while a request is being
   // handled, every send_events folds into `pending_` (causedBy = the request),
@@ -169,13 +207,16 @@ class Session {
 
   // transport (engine-owned clock, never document state)
   std::optional<api::ItemId> activeComp_;
-  api::Time time_ = 0;
+  api::Time time_ = 0;          // the render clock's time (frame-aligned, clamped to the comp)
+  api::Time apiTime_ = 0;       // the TypeScript transport's `time` (what handlers see)
   std::int64_t frame_ = 0;
   bool playing_ = false;
+  api::TransportState transportState_ = api::TransportState::stopped;
   double rate_ = 1.0;
   api::LoopMode loop_ = api::LoopMode::loop;
   api::PlayRange rangeKind_ = api::PlayRange::all;
   api::TimeRange customRange_;
+  std::set<std::uint32_t> viewports_;
   Clock::time_point playBase_{};
   std::int64_t playBaseU_ = 0;   // unfolded frame position (relative to range.first) at playBase_
   std::int64_t lastK_ = 0;       // clock steps since playBase_ already shown
@@ -188,7 +229,6 @@ class Session {
   ViewportConfig viewport_;
   double resolution_ = 1.0;
   bool renderDirty_ = false;
-  FrameScene sceneScratch_;
 };
 
 /// The seq of a Request inside an EngineMessage that failed to decode (so

@@ -24,6 +24,8 @@
  */
 
 import {
+  COMMANDS,
+  encodeEngineMessage,
   IdMap,
   commandKind,
   ProcessEngineClient,
@@ -32,14 +34,29 @@ import {
   type Keyframe,
   type LayerInfo,
   type PropertyInfo,
-  type LogRecord,
-    type Request,
+  type Request,
   type Response,
   type Value,
 } from '@motion/engine-api';
-import { CORPUS } from '../__testHelpers__/corpus';
+import { writeFileSync } from 'node:fs';
+import { CORPUS as B2_CORPUS, FAMILY_CORPUS, GENERATED_CORPUS } from '../__testHelpers__/corpus';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../__testHelpers__/nativeEngine';
+// Both TS engines evaluate expressions with the app's providers, as the C++ engine does.
+import { installAppExpressionProviders } from './crossEngineProviders.test';
+
+// B2's replay corpus, the D1b family sessions and the D1b generated sessions.
+const CORPUS = { ...B2_CORPUS, ...FAMILY_CORPUS, ...GENERATED_CORPUS };
+/** Every command type the recorded sessions sent (batch members included) — the coverage report. */
+const ISSUED = new Set<string>();
+/**
+ * PREMATION_DUMP_REPLAY=<file>: write every request each session sent to the C++
+ * engine — the native stress test's and the fuzzer's seed corpus
+ * (native/engine/tests/data/replay_corpus.bin). Format, little-endian: u32
+ * session count; per session u32 request count; per request u32 byte length +
+ * an encoded EngineMessage{request}.
+ */
+const DUMP: Uint8Array[][] = [];
 
 // The TS harness runs under fake timers (the 700 ms recorder must not fire on
 // its own); the engine supervisor keeps REAL timers (nativeEngine.ts captures them).
@@ -51,6 +68,11 @@ if (!exe) console.warn('[C3 cross-engine] premation-engine is not built — `nod
 
 const TRANSFORM = ['transform/anchorPoint', 'transform/position', 'transform/scale', 'transform/rotation', 'transform/opacity'];
 const TIMES = [0, sec(0.5), sec(1), sec(1.5)];
+/** Queries whose answers are facts about the engine, not the document. */
+// copyLayers: an opaque fragment; the C++ engine writes keyframe objects in one
+// canonical key order (the TS in creation order) — pasting either engine's
+// fragment into either engine is what the replay checks.
+const QUERY_EXEMPT = new Set(['getCapabilities', 'getRenderStats', 'getCommandLog', 'getJobs', 'listFonts', 'copyLayers']);
 /** Document events (§8.1): the kinds both engines must agree on per request. */
 const DOC_EVENTS = new Set(['documentReset', 'itemsChanged', 'itemsRemoved', 'compositionChanged', 'layersChanged', 'layersRemoved', 'layerOrderChanged', 'propertiesChanged', 'keyframesChanged']);
 
@@ -65,9 +87,13 @@ interface SessionReport {
   catalogDiffs: string[];
   /** Undo/redo/jumps over entries only the TS engine has (not sent). */
   tsOnlyHistory: number;
+  /** Event-mirror gaps both engines show identically (the reference's; reported, not failed). */
+  sharedEventGaps: string[];
   finalLayers: number;
   finalValues: number;
   finalKeys: number;
+  /** Layers whose whole property tree was compared. */
+  finalTrees: number;
 }
 
 function numbers(v: Value | undefined): number[] {
@@ -75,12 +101,46 @@ function numbers(v: Value | undefined): number[] {
   switch (v.kind) {
     case 'scalar': case 'int': return [v.value];
     case 'vec2': return [v.value.x, v.value.y];
-    case 'vec3': return [v.value.x, v.value.y];  // C2's engine is 2D: compare x, y
+    case 'vec3': return [v.value.x, v.value.y, v.value.z];
+    case 'vec4': return [v.value.x, v.value.y, v.value.z, v.value.w];
+    case 'color': return [v.value.r, v.value.g, v.value.b, v.value.a];
     default: return [];
   }
 }
 
 const close = (a: number[], b: number[]): boolean => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]!) <= 1e-6 * Math.max(1, Math.abs(x)));
+
+/**
+ * Where two query results differ (paths, capped): strings and booleans exact,
+ * numbers within 1e-9 relative (bit-exact is the goal; the tolerance only
+ * keeps a last-ulp formatting difference from hiding the real ones), absent
+ * and `undefined` equal.
+ */
+function diffDeep(a: unknown, b: unknown, path: string, out: string[] = []): string[] {
+  if (out.length > 16) return out;
+  if (typeof a === 'number' && typeof b === 'number') {
+    const same = a === b || (Number.isNaN(a) && Number.isNaN(b)) || Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a));
+    if (!same) out.push(`final: ${path}: ts ${a} c++ ${b}`);
+    return out;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) {
+      out.push(`final: ${path}: ts length ${a.length} c++ length ${b.length} (ts ${JSON.stringify(a).slice(0, 300)} | c++ ${JSON.stringify(b).slice(0, 300)})`);
+      return out;
+    }
+    a.forEach((x, i) => diffDeep(x, b[i], `${path}[${i}]`, out));
+    return out;
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !(a instanceof Uint8Array)) {
+    const keys = new Set([...Object.keys(a as object), ...Object.keys(b as object)]);
+    const label = (x: unknown): string => (x && typeof x === 'object' && 'path' in (x as object) ? `(${String((x as { path: unknown }).path)})` : '');
+    for (const k of keys) diffDeep((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}${label(a)}.${k}`, out);
+    return out;
+  }
+  if (a === undefined && b === undefined) return out;
+  if (JSON.stringify(a) !== JSON.stringify(b)) out.push(`final: ${path}: ts ${JSON.stringify(a)?.slice(0, 200)} c++ ${JSON.stringify(b)?.slice(0, 200)}`);
+  return out;
+}
 
 /** Layer ids a request references (`layer`, `layers`, PropRef.layer…). */
 function layerRefs(value: unknown, key = ''): string[] {
@@ -116,7 +176,13 @@ class Mirror {
     for (const e of b.events) {
       switch (e.type) {
         case 'documentReset':
+          // A client re-reads the whole document after a reset (§8.2); what it
+          // knew before is gone, so the mirror only vouches for later events.
           this.resets += 1;
+          this.layers.clear();
+          this.order.clear();
+          this.props.clear();
+          this.keys.clear();
           break;
         case 'layersChanged':
           for (const l of e.layers) this.layers.set(l.id, l);
@@ -152,13 +218,18 @@ async function mirrorMismatches(label: string, mirror: Mirror, client: EngineCli
     const r = await client.query({ type: 'getLayers', layers: [layer] });
     if (!r.ok) continue;
     const ml = mirror.layers.get(layer);
-    if (!ml) out.push(`${label} mirror: never told about layer ${layer}`);
+    if (!ml) {
+      if (mirror.resets === 0) out.push(`${label} mirror: never told about layer ${layer}`);
+    }
     else if (ml.name !== r.value.layers[0]!.name) out.push(`${label} mirror: name of ${layer} '${ml.name}' ≠ '${r.value.layers[0]!.name}'`);
     for (const path of TRANSFORM) {
       const k = await client.query({ type: 'getKeyframes', props: [{ layer, path }] });
       if (!k.ok) continue;
       const keys = k.value.sets[0]?.keyframes ?? [];
-      const mk = mirror.keys.get(`${layer}|${path}`) ?? [];
+      const told = mirror.keys.get(`${layer}|${path}`);
+      // After a reset the client re-read everything; only later events are checked.
+      if (!told && mirror.resets > 0) continue;
+      const mk = told ?? [];
       const f = (ks: Keyframe[]): string => ks.map((x) => `${x.id}@${x.time}=${numbers(x.value).join('/')}`).join(' ');
       if (f(keys) !== f(mk)) out.push(`${label} mirror: keys of ${layer} ${path} [${f(mk)}] ≠ [${f(keys)}]`);
       if (keys.length === 0) {
@@ -174,24 +245,42 @@ async function mirrorMismatches(label: string, mirror: Mirror, client: EngineCli
 }
 
 async function replaySession(name: string): Promise<SessionReport> {
-  // 1. Record the session on the TypeScript engine.
+  // 1. Record the session on the TypeScript engine. EVERY request is captured
+  //    (D1b): queries and failed commands too — the command log only keeps
+  //    commands that succeeded, and parity of the refusals and of every query
+  //    answer is half of what this test is for.
   const rec: Harness = await setupEngine();
-  let log: { header: ReturnType<Harness['engine']['commandLog']>['header']; records: LogRecord[] };
+  installAppExpressionProviders();
+  let log: { header: ReturnType<Harness['engine']['commandLog']>['header']; records: Array<{ request: Request }> };
   try {
+    const captured: Array<{ request: Request }> = [];
+    const original = rec.engine.request.bind(rec.engine);
+    rec.engine.request = (req: Request): Promise<Response> => {
+      captured.push({ request: JSON.parse(JSON.stringify(req, (_k, v: unknown) => (v instanceof Uint8Array ? { __bytes: [...v] } : v)), (_k, v: unknown) => (v && typeof v === 'object' && '__bytes' in (v as object) ? Uint8Array.from((v as { __bytes: number[] }).__bytes) : v)) as Request });
+      return original(req);
+    };
+    const header = rec.engine.commandLog().header;
     await CORPUS[name]!(rec);
-    log = rec.engine.commandLog();
+    for (const { request: r } of captured) {
+      if (r.body.kind === 'command') ISSUED.add(r.body.value.type);
+      else if (r.body.kind === 'batch') for (const c of r.body.value.commands) ISSUED.add(c.type);
+    }
+    log = { header, records: captured };
   } finally {
     await rec.dispose();
   }
 
   // 2. A fresh TS engine at the log's header, and a fresh C++ engine process.
   const ts = await setupEngine();
+  installAppExpressionProviders();
   ts.engine.loadDocument(log.header.document, { ids: log.header.ids, revision: log.header.revision, reason: 'resync', resetWorkspace: true });
   let native: NativeEngine | null = null;
   let cxx: ProcessEngineClient | null = null;
-  const report: SessionReport = { records: log.records.length, compared: 0, unsupported: {}, dependent: 0, mismatches: [], eventKindDiffs: [], catalogDiffs: [], tsOnlyHistory: 0, finalLayers: 0, finalValues: 0, finalKeys: 0 };
+  const report: SessionReport = { records: log.records.length, compared: 0, unsupported: {}, dependent: 0, mismatches: [], eventKindDiffs: [], catalogDiffs: [], tsOnlyHistory: 0, sharedEventGaps: [], finalLayers: 0, finalValues: 0, finalKeys: 0, finalTrees: 0 };
   try {
-    native = await startNativeEngine();
+    // --test-ports: the C++ twin of the harness's fakePorts (in-memory project
+    // files, deterministic fake media), so io commands replay too.
+    native = await startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] });
     cxx = new ProcessEngineClient(native.bridge);
     await cxx.whenReady();
     const cxxBatches: EventBatch[] = [];
@@ -205,11 +294,19 @@ async function replaySession(name: string): Promise<SessionReport> {
     const map = new IdMap();
     const tainted = new Set<string>();
 
-    // 3. Seed the header's compositions into the C++ engine (it starts empty).
+    // 3. Seed the header's compositions into the C++ engine. New Project gives
+    //    both engines the same `comp_root` (the header is taken right after the
+    //    harness's newProject); any other header comp is created.
     const tsDoc = await ts.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
     map.noteIds(tsDoc.comps.map((c) => c.id));
     map.noteIds(tsDoc.layers.map((l) => l.id));
+    const fresh = await cxx.execute({ type: 'newProject' });
+    if (!fresh.ok) throw new Error(`newProject on the C++ engine: ${fresh.error.message}`);
     for (const c of tsDoc.comps) {
+      if (c.id === 'comp_root') {
+        map.pair('comp_root', 'comp_root');
+        continue;
+      }
       const s = c.settings;
       const r = await cxx.execute({ type: 'createComposition', settings: { name: s.name, width: s.width, height: s.height, frameRate: s.frameRate, duration: s.duration, pixelAspect: s.pixelAspect }, fromItems: [] });
       if (!r.ok) throw new Error(`seeding comp ${c.id}: ${r.error.message}`);
@@ -225,6 +322,8 @@ async function replaySession(name: string): Promise<SessionReport> {
     // skipped: the C++ stack is the TS stack minus the TS-only entries, so an
     // undo/redo of a TS-only entry is not sent (the C++ document never had
     // that change), and a jump's position is translated to the C++ stack.
+    const sentToCxx: Uint8Array[] = [];
+    DUMP.push(sentToCxx);
     const stack: Array<{ cxx: boolean }> = [];
     let pos = 0;
     let gesture: { ts: boolean; cxx: boolean } | null = null;
@@ -257,6 +356,8 @@ async function replaySession(name: string): Promise<SessionReport> {
       const skipDependent = (): void => {
         report.dependent += 1;
         for (const id of map.unmapped(req.body)) tainted.add(id);
+        // The layers it edited changed on the TS side only, too.
+        for (const id of layerRefs(req.body)) tainted.add(id);
         map.noteSource(tsRes.outcome);
         tsOnlyEdit();
       };
@@ -292,6 +393,7 @@ async function replaySession(name: string): Promise<SessionReport> {
         cxxReq = map.translate(req);
       }
 
+      sentToCxx.push(encodeEngineMessage({ kind: 'request', value: cxxReq }));
       const cxxBefore = cxxBatches.length;
       const cxxRes: Response = await cxx.request(cxxReq);
       const cxxMine = cxxBatches.slice(cxxBefore).filter((b) => b.causedBy === cxxReq.seq);
@@ -313,6 +415,11 @@ async function replaySession(name: string): Promise<SessionReport> {
       const cxxErr = cxxRes.outcome.kind === 'error' ? cxxRes.outcome.value.code : null;
       if (tsErr !== cxxErr) report.mismatches.push(`${where}: outcome ts=${tsErr ?? 'ok'} c++=${cxxErr ?? 'ok'}${cxxRes.outcome.kind === 'error' ? ` (${cxxRes.outcome.value.message})` : ''}`);
       else if (!tsErr) map.learn((tsRes.outcome as { value: unknown }).value, (cxxRes.outcome as { value: unknown }).value);
+      // A query's ANSWER must agree too, once both documents are the same
+      // document (nothing skipped yet); engine-specific facts are exempt.
+      if (req.body.kind === 'query' && !tsErr && !cxxErr && !QUERY_EXEMPT.has(type) && tainted.size === 0 && report.dependent === 0 && Object.keys(report.unsupported).length === 0) {
+        report.mismatches.push(...diffDeep(map.translate((tsRes.outcome as { value: unknown }).value), (cxxRes.outcome as { value: unknown }).value, where).slice(0, 8));
+      }
 
       // History bookkeeping for what both applied.
       let revisionComparable = true;
@@ -339,7 +446,26 @@ async function replaySession(name: string): Promise<SessionReport> {
       if (dCxx > 0 && !cxxMine.some((b) => b.toRevision === cxxRes.revision)) report.mismatches.push(`${where}: c++ moved the revision without a batch`);
       const kTs = docKinds(tsMine).join(',');
       const kCxx = docKinds(cxxMine).join(',');
-      if (kTs !== kCxx) report.eventKindDiffs.push(`${where}: ts [${kTs}] c++ [${kCxx}]`);
+      if (kTs !== kCxx) {
+        const detail = (bs: EventBatch[]): string => JSON.stringify(bs.flatMap((b) => b.events).filter((e) => DOC_EVENTS.has(e.type)).map((e) => (e.type === 'layersRemoved' ? { removed: e.layers } : e.type === 'layersChanged' ? { changed: e.layers.map((l) => l.id) } : e.type)));
+        report.eventKindDiffs.push(`${where}: ts [${kTs}] c++ [${kCxx}] — ts ${detail(tsMine).slice(0, 400)} c++ ${detail(cxxMine).slice(0, 400)}`);
+      }
+      // CE_TRACE=1: one line per replayed request (debugging a divergence).
+      if (process.env.CE_TRACE) console.log(`${where} ts +${dTs}${tsErr ? ` ${tsErr}` : ''} c++ +${dCxx}${cxxErr ? ` ${cxxErr}` : ''} [${kTs}|${kCxx}] ${JSON.stringify(req.body.value).slice(0, 160)}`);
+    }
+
+    // Ids no result ever named (layers inside a duplicated, assembled or
+    // imported composition): both engines mint in the same order, so an
+    // unpaired id both documents hold is the same entity.
+    {
+      const tsAll = await ts.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+      const cxxAll = await cxx.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+      if (cxxAll.ok) {
+        const cxxIds = new Set([...cxxAll.value.layers.map((l) => l.id), ...cxxAll.value.comps.map((c) => c.id), ...cxxAll.value.items.map((i) => i.id)]);
+        for (const id of [...tsAll.layers.map((l) => l.id), ...tsAll.comps.map((c) => c.id), ...tsAll.items.map((i) => i.id)]) {
+          if (!map.get(id) && cxxIds.has(id) && !map.sourceOf(id)) map.pair(id, id);
+        }
+      }
     }
 
     // 5. Each engine's events rebuilt its document (a mirror per engine).
@@ -347,10 +473,15 @@ async function replaySession(name: string): Promise<SessionReport> {
     const tsFinal = await ts.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
     const sharedLayers = tsFinal.layers.map((l) => l.id).filter((id) => !tainted.has(id) && map.get(id));
     const sharedComps = tsFinal.comps.map((c) => c.id).filter((id) => map.get(id));
-    report.mismatches.push(
-      ...(await mirrorMismatches('ts', tsMirror, ts.engine, sharedComps, sharedLayers)),
-      ...(await mirrorMismatches('c++', cxxMirror, cxx, sharedComps.map((c) => map.get(c)!), sharedLayers.map((l) => map.get(l)!))),
-    );
+    // A gap BOTH mirrors show identically is the reference's own event gap (the
+    // C++ engine ports events.ts): reported, not a parity mismatch.
+    const tsGaps = await mirrorMismatches('ts', tsMirror, ts.engine, sharedComps, sharedLayers);
+    const cxxGaps = await mirrorMismatches('c++', cxxMirror, cxx, sharedComps.map((c) => map.get(c)!), sharedLayers.map((l) => map.get(l)!));
+    const body = (s: string): string => s.replace(/^(ts|c\+\+) mirror: /, '');
+    const cxxBodies = new Set(cxxGaps.map(body));
+    const tsBodies = new Set(tsGaps.map(body));
+    report.sharedEventGaps = tsGaps.filter((s) => cxxBodies.has(body(s))).map(body);
+    report.mismatches.push(...tsGaps.filter((s) => !cxxBodies.has(body(s))), ...cxxGaps.filter((s) => !tsBodies.has(body(s))));
 
     // 6. The documents: every comp both have, every layer neither side tainted.
     const tsComps = (await ts.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false })).comps;
@@ -417,7 +548,58 @@ async function replaySession(name: string): Promise<SessionReport> {
           const fb = b.map((k) => `${k.time}:${numbers(k.value).map((x) => x.toFixed(6)).join('/')}:${k.id}`).join(' ');
           if (fa !== fb) report.mismatches.push(`final: keys of ${layer} ${p}: ts ${fa} | c++ ${fb}`);
         }
+
+        // D1b: the WHOLE layer, not just its transform — the header, the
+        // property catalog (every group and property record), every
+        // property's keyframes and every numeric property's evaluated value.
+        if (cxl.ok) {
+          const d = diffDeep(map.translate(tl.layers[0]!), cxl.value.layers[0]!, `layer ${layer}`);
+          report.mismatches.push(...d.slice(0, 8));
+        }
+        const tt = await ts.engine.query({ type: 'getPropertyTree', layer, path: '', depth: 0 });
+        const ct = await cxx.query({ type: 'getPropertyTree', layer: cl, path: '', depth: 0 });
+        if (tt.ok !== ct.ok) {
+          report.mismatches.push(`final: property tree of ${layer}: ts ${tt.ok ? 'ok' : 'error'} c++ ${ct.ok ? 'ok' : ct.error.message}`);
+        } else if (tt.ok && ct.ok) {
+          report.finalTrees += 1;
+          report.mismatches.push(...diffDeep(map.translate(tt.value.nodes), ct.value.nodes, `tree ${layer}`).slice(0, 8));
+          const props = tt.value.nodes.filter((n) => n.kind === 'property').map((n) => n.path);
+          const tk = await ts.engine.query({ type: 'getKeyframes', props: props.map((path) => ({ layer, path })) });
+          const ck = await cxx.query({ type: 'getKeyframes', props: props.map((path) => ({ layer: cl, path: map.translate(path) })) });
+          if (tk.ok && ck.ok) {
+            tk.value.sets.forEach((s, i) => {
+              const c = ck.value.sets[i]?.keyframes ?? [];
+              s.keyframes.forEach((k, j) => {
+                if (map.get(k.id) === undefined && c[j] && c[j]!.time === k.time) map.pair(k.id, c[j]!.id);
+              });
+            });
+            report.mismatches.push(...diffDeep(map.translate(tk.value.sets), ck.value.sets, `keys ${layer}`).slice(0, 8));
+          }
+          const numeric = tt.value.nodes.filter((n) => n.kind === 'property' && n.dimensions > 0 && ['scalar', 'vec2', 'vec3', 'vec4', 'color'].includes(n.valueType)).map((n) => n.path);
+          for (const time of TIMES) {
+            const tv = await ts.engine.query({ type: 'getPropertyValues', props: numeric.map((path) => ({ layer, path })), time, evaluated: true });
+            const cv = await cxx.query({ type: 'getPropertyValues', props: numeric.map((path) => ({ layer: cl, path: map.translate(path) })), time, evaluated: true });
+            if (tv.ok && cv.ok) {
+              report.finalValues += numeric.length;
+              report.mismatches.push(...diffDeep(map.translate(tv.value.values), cv.value.values, `values ${layer} @${time / sec(1)}s`).slice(0, 8));
+            } else if (tv.ok !== cv.ok) {
+              report.mismatches.push(`final: values of ${layer}: ts ${tv.ok ? 'ok' : tv.error.message} c++ ${cv.ok ? 'ok' : cv.error.message}`);
+            }
+          }
+        }
       }
+      // The composition record itself.
+      report.mismatches.push(...diffDeep(map.translate(comp.settings), cxxInfo.value.comp.settings, `comp ${comp.id}`).slice(0, 8));
+      report.mismatches.push(...diffDeep(map.translate(comp.markers), cxxInfo.value.comp.markers, `comp markers ${comp.id}`).slice(0, 8));
+    }
+    // Items both engines hold, project settings, the render queue.
+    const cxxDoc = await cxx.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    if (cxxDoc.ok) {
+      const tsItems = tsFinal.items.filter((i) => map.get(i.id) !== undefined || i.id === 'comp_root');
+      const cxxItems = cxxDoc.value.items.filter((i) => tsItems.some((t) => (map.get(t.id) ?? t.id) === i.id));
+      report.mismatches.push(...diffDeep(map.translate(tsItems), cxxItems, 'items').slice(0, 8));
+      report.mismatches.push(...diffDeep(tsFinal.settings, cxxDoc.value.settings, 'project settings').slice(0, 8));
+      report.mismatches.push(...diffDeep(map.translate(tsFinal.renderQueue), cxxDoc.value.renderQueue, 'render queue').slice(0, 8));
     }
     return report;
   } finally {
@@ -431,19 +613,35 @@ describeNative('C3: the replay corpus against both engines', () => {
   const reports: Record<string, SessionReport> = {};
 
   afterAll(() => {
+    const dumpTo = process.env.PREMATION_DUMP_REPLAY;
+    if (dumpTo) {
+      const u32 = (n: number): Uint8Array => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; };
+      const parts: Uint8Array[] = [u32(DUMP.length)];
+      for (const session of DUMP) {
+        parts.push(u32(session.length));
+        for (const m of session) parts.push(u32(m.length), m);
+      }
+      writeFileSync(dumpTo, Buffer.concat(parts));
+    }
     const rows = Object.entries(reports).map(([n, r]) => {
       const unsupported = Object.values(r.unsupported).reduce((a, b) => a + b, 0);
-      return `${n.slice(0, 48).padEnd(48)} records ${String(r.records).padStart(3)} · compared ${String(r.compared).padStart(3)} · unsupported ${String(unsupported).padStart(3)} · dependent ${String(r.dependent).padStart(3)} · final layers ${r.finalLayers}, values ${r.finalValues}, keys ${r.finalKeys} · ts-only history ${r.tsOnlyHistory} · catalog diffs ${r.catalogDiffs.length} · mismatches ${r.mismatches.length} · event-kind diffs ${r.eventKindDiffs.length}`;
+      return `${n.slice(0, 48).padEnd(48)} records ${String(r.records).padStart(3)} · compared ${String(r.compared).padStart(3)} · unsupported ${String(unsupported).padStart(3)} · dependent ${String(r.dependent).padStart(3)} · final layers ${r.finalLayers}, trees ${r.finalTrees}, values ${r.finalValues}, keys ${r.finalKeys} · ts-only history ${r.tsOnlyHistory} · shared event gaps ${r.sharedEventGaps.length} · catalog diffs ${r.catalogDiffs.length} · mismatches ${r.mismatches.length} · event-kind diffs ${r.eventKindDiffs.length}`;
     });
     const unsupportedByType: Record<string, number> = {};
     for (const r of Object.values(reports)) for (const [t, n] of Object.entries(r.unsupported)) unsupportedByType[t] = (unsupportedByType[t] ?? 0) + n;
-    console.log(`[C3 cross-engine]\n${rows.join('\n')}\nunsupported by command: ${JSON.stringify(unsupportedByType)}`);
+    const edits = Object.entries(COMMANDS).filter(([, c]) => c.kind === 'edit').map(([t]) => t);
+    const never = edits.filter((t) => !ISSUED.has(t));
+    const totals = Object.values(reports).reduce((a, r) => ({ records: a.records + r.records, compared: a.compared + r.compared, dependent: a.dependent + r.dependent, mismatches: a.mismatches + r.mismatches.length }), { records: 0, compared: 0, dependent: 0, mismatches: 0 });
+    const gaps = Object.entries(reports).flatMap(([n, r]) => [...r.sharedEventGaps, ...r.eventKindDiffs].map((g) => `  ${n}: ${g}`));
+    console.log(`[C3 cross-engine]\n${rows.join('\n')}\nunsupported by command: ${JSON.stringify(unsupportedByType)}\ntotals: ${JSON.stringify(totals)}\nedit commands issued ${edits.length - never.length}/${edits.length}; never issued: ${JSON.stringify(never)}${gaps.length ? `\nevent gaps the TS reference shows too:\n${gaps.join('\n')}` : ''}`);
   });
 
   test.each(Object.keys(CORPUS))('%s', async (name) => {
     const r = await replaySession(name);
     reports[name] = r;
     expect(r.mismatches).toEqual([]);
+    // Per request, both engines send the same document event kinds (§8.1).
+    expect(r.eventKindDiffs).toEqual([]);
     if (name.startsWith('native subset')) {
       // Built from C2's command set: every request must be compared.
       expect(r.unsupported).toEqual({});

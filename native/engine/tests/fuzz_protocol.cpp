@@ -14,7 +14,11 @@
 // Build: engine_fuzz (clang only; see CMakeLists). Run:
 //   engine_fuzz -max_total_time=300 -max_len=4096 -rss_limit_mb=2048 corpus/
 
+#include <csignal>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -29,6 +33,16 @@ namespace {
 
 [[noreturn]] void violated() { __builtin_trap(); }
 
+// std::terminate / abort() would end the process without libFuzzer saving the
+// input (it does not catch SIGABRT on Windows): turn both into a trap it reports.
+[[noreturn]] void on_terminate() { __builtin_trap(); }
+extern "C" void on_abort(int /*sig*/) { __builtin_trap(); }
+const bool kHandlers = [] {
+  std::set_terminate(on_terminate);
+  (void)std::signal(SIGABRT, on_abort);
+  return true;
+}();
+
 void check(Harness& h) {
   if (h.decodeFailures != 0) violated();
   std::string why;
@@ -42,6 +56,15 @@ void check(Harness& h) {
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (size == 0) return 0;
+  // PREMATION_FUZZ_LAST=<file>: keep the input being run, for a death libFuzzer
+  // cannot report (a process exit without a signal it handles).
+  static const char* const last = std::getenv("PREMATION_FUZZ_LAST");  // NOLINT(concurrency-mt-unsafe): read once
+  if (last != nullptr) {
+    if (std::FILE* f = std::fopen(last, "wb")) {  // NOLINT(cppcoreguidelines-owning-memory): closed right below
+      (void)std::fwrite(data, 1, size, f);
+      (void)std::fclose(f);
+    }
+  }
   auto h = std::make_unique<Harness>(3);
   const std::uint8_t mode = data[0];
   if ((mode & 2U) == 0) (void)h->hello();

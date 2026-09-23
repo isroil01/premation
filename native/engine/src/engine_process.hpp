@@ -32,6 +32,8 @@ namespace premation {
 struct EngineOptions {
   render::RenderOptions render;
   bool noGpu = false;
+  /// In-memory project files and fake media probes (the cross-engine tests).
+  bool testPorts = false;
   log::Level logLevel = log::Level::info;
 };
 

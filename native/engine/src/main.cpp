@@ -8,6 +8,7 @@
 //                    [--power low|high]    adapter preference when no vendor is given (default high)
 //                    [--slots N]           frame-slot ring size (default 3, C1's measured value)
 //                    [--no-gpu]            no Dawn: frames are simulated (protocol work, CI)
+//                    [--test-ports]        in-memory projects + fake media (cross-engine tests)
 //                    [--log-level debug|info|warn|error]
 //                    [--version]
 //
@@ -41,6 +42,11 @@ int run(int argc, char** argv) {
       return 0;
     } else if (k == "--no-gpu") {
       o.noGpu = true;
+      continue;
+    } else if (k == "--test-ports") {
+      // Tests only: in-memory project files and deterministic fake media
+      // (the TypeScript harness's `fakePorts`), for the cross-engine replay.
+      o.testPorts = true;
       continue;
     } else if (k == "--host-pid") {
       ok = parse_u32(v, o.render.hostPid);

@@ -8,6 +8,17 @@
 import type { Harness } from './harness';
 import { sec } from './harness';
 import { buildScene } from './scene';
+import {
+  AlphaModeValues, AutoOrientValues, BitDepthValues, BlendModeValues, ColorWorkingSpaceValues, EasingValues, EdgeValues, ExpressionEngineValues,
+  FieldOrderValues, FrameBlendValues, LayerConversionValues, LayerKindValues, LayerQualityValues, MaskModeValues, MatteModeValues,
+  PrecomposeModeValues, Renderer3dValues, RetimeModeValues, SpatialInterpValues, TimeDisplayValues, WorkAreaEditValues,
+  type Command, type CompSettingsPatch, type InterpretationPatch, type KeyframePatch, type KeyframeSet, type LayerInfo, type LayerSwitchesPatch,
+  type Marker, type MarkerPatch, type ProjectSettingsPatch, type PropertyInfo, type Value,
+} from '@motion/engine-api';
+import { EFFECT_DEFS } from '@core/effects/effects';
+import { listPresets } from '@core/animation/animationPresets';
+import { LAYER_STYLE_LABEL } from '@core/effects/layerStyles';
+import { PATH_OP_CATALOG } from '@core/scene/pathOps';
 
 export type Session = (h: Harness) => Promise<void>;
 
@@ -225,3 +236,1801 @@ export const CORPUS: Record<string, Session> = {
     await h.run({ type: 'setCompositionSettings', comp, patch: { name: 'Parity 2' } });
   },
 };
+
+/**
+ * D1b: focused sessions per command family, written while porting each family
+ * to the C++ engine (crossEngine.test.ts replays them against both engines).
+ * Each family keeps its sessions under its own marker comment.
+ */
+export const FAMILY_CORPUS: Record<string, Session> = {
+  // @@family:comps-layers
+  'catalog: every layer kind, footage, precomp, 2D and 3D': async (h) => {
+    const comp = 'comp_root';
+    const kinds = ['null', 'solid', 'shape', 'rectangle', 'ellipse', 'polygon', 'path', 'text', 'camera', 'light', 'group', 'particle', 'model3d', 'adjustment'] as const;
+    const ids: string[] = [];
+    for (const kind of kinds) ids.push((await h.run({ type: 'createLayer', comp, kind, name: `K ${kind}`, init: [] })).layer);
+    const { items: [clip, still, sound] } = await h.run({
+      type: 'importFiles',
+      files: [
+        { path: 'C:/m/clip.mp4', asSequence: false, createComposition: false },
+        { path: 'C:/m/still.png', asSequence: false, createComposition: false },
+        { path: 'C:/m/sound.wav', asSequence: false, createComposition: false },
+      ],
+    });
+    await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, init: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'image', source: still!, init: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'audio', source: sound!, init: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'sequence', source: still!, name: 'Seq', init: [] });
+    const { item: inner } = await h.run({ type: 'createComposition', settings: { name: 'Inner', width: 640, height: 480 }, fromItems: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'precomp', source: inner, init: [] });
+    await h.run({ type: 'setLayerSwitches', layers: [ids[1]!, ids[2]!, ids[7]!, ids[0]!], patch: { threeD: true } });
+    await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'Init', init: [{ path: 'transform/opacity', value: scalar(40) }, { path: 'transform/position', value: v2(10, 20) }], index: 2 });
+    await h.run({ type: 'createLayer', comp, kind: 'null', name: 'Child', parent: ids[0]!, init: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'Timed', inPoint: sec(1), outPoint: sec(3), startTime: sec(0.5), init: [] });
+  },
+
+  'compositions: create, settings, work area, trim, crop, duplicate, assemble': async (h) => {
+    const comp = 'comp_root';
+    const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: { layer: a, path: 'transform/position' }, time: 0, value: v2(100, 100), spatialIn: [], spatialOut: [] },
+      { prop: { layer: a, path: 'transform/position' }, time: sec(2), value: v2(500, 300), spatialIn: [], spatialOut: [] },
+    ] });
+    const { item: c2 } = await h.run({ type: 'createComposition', settings: { name: 'Settings', width: 1280, height: 720, frameRate: { num: 24, den: 1 }, duration: sec(6), background: { r: 1, g: 0, b: 0, a: 1 }, transparent: true }, fromItems: [] });
+    await h.run({ type: 'createLayer', comp: c2, kind: 'shape', name: 'S', init: [] });
+    await h.run({ type: 'setCompositionSettings', comp: c2, patch: { frameRate: { num: 30000, den: 1001 }, pixelAspect: 0.9, globalLightAngle: 30, globalLightAltitude: 60, renderer3d: 'advanced', dropFrame: true } });
+    await h.run({ type: 'setCompositionSettings', comp, patch: { duration: sec(8), workArea: { start: sec(1), duration: sec(4) }, startTimecode: sec(1) } });
+    await h.run({ type: 'setCompositionSettings', comp, patch: { motionBlur: { shutterAngle: 90, shutterPhase: -45, samplesPerFrame: 4, adaptiveSampleLimit: 64 } } });
+    await h.run({ type: 'setWorkArea', comp: c2, range: { start: sec(0.5), duration: sec(2) } });
+    await h.run({ type: 'trimCompToWorkArea', comp });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'trimCompToWorkArea', comp });
+    await h.run({ type: 'cropComposition', comp, region: { x: 100, y: 50, width: 800, height: 600 } });
+    const { item: dup } = await h.run({ type: 'duplicateComposition', comp, deep: false });
+    await h.run({ type: 'createLayer', comp: dup, kind: 'precomp', source: c2, init: [] });
+    await h.run({ type: 'duplicateComposition', comp: dup, deep: true });
+    await h.run({ type: 'setCompositionSettings', comp: c2, patch: { width: 3 } }).catch(() => undefined);
+    await h.run({ type: 'setWorkArea', comp, range: { start: sec(100), duration: sec(1) } }).catch(() => undefined);
+    const { items: [f1, f2] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/one.mp4', asSequence: false, createComposition: false }, { path: 'C:/m/two.mp4', asSequence: false, createComposition: false }] });
+    await h.run({ type: 'assembleComposition', items: [f1!, f2!], name: 'Cut', overlap: sec(0.5) });
+    await h.run({ type: 'createComposition', settings: {}, fromItems: [f2!] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+  // @@family:items-markers-misc
+  'project items: folders, assignment, interpretation survive save → New Project → open (674bf37d)': async (h) => {
+    const comp = 'comp_root';
+    const { items: [clip, still, sound] } = await h.run({ type: 'importFiles', files: [
+      { path: 'C:/m/plate.mp4', asSequence: false, createComposition: false },
+      { path: 'C:/m/logo.png', asSequence: false, createComposition: false },
+      { path: 'C:/m/vo.wav', asSequence: false, createComposition: false },
+    ] });
+    const { item: f1 } = await h.run({ type: 'createFolder', name: 'Footage' });
+    const { item: f2 } = await h.run({ type: 'createFolder', name: 'Plates', parent: f1 });
+    await h.run({ type: 'moveItems', items: [clip!], folder: f2 });
+    await h.run({ type: 'moveItems', items: [still!], folder: f1 });
+    await h.run({ type: 'setInterpretation', items: [clip!], patch: { conformFrameRate: { num: 24, den: 1 }, alpha: 'premultiplied', fieldOrder: 'upperFirst', loops: 3, pixelAspect: 2 } });
+    await h.run({ type: 'setItemLabel', items: [clip!, sound!], label: 5 });
+    await h.run({ type: 'setItemTags', item: clip!, tags: ['hero', 'plate'] });
+    await h.run({ type: 'setItemComment', item: still!, comment: 'approved' });
+    await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, init: [] });
+    await h.run({ type: 'saveProject', path: 'C:/p/items.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    // New Project starts with no items and no folders.
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    // An EMPTY project saves a stated-empty item list, and reopens empty.
+    await h.run({ type: 'saveProject', path: 'C:/p/empty.motion', copy: true });
+    await h.run({ type: 'openProject', path: 'C:/p/items.motion' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    // Organisation changed after the save is not kept on reopen: the document decides.
+    await h.run({ type: 'moveItems', items: [clip!] });
+    await h.run({ type: 'setInterpretation', items: [clip!], patch: { clearConform: true, loops: 1 } });
+    // Fields the document leaves OUT are cleared on reopen, not kept from the session.
+    await h.run({ type: 'moveItems', items: [sound!], folder: f1 });
+    await h.run({ type: 'setItemComment', item: sound!, comment: 'late' });
+    await h.run({ type: 'setItemTags', item: sound!, tags: ['late'] });
+    await h.run({ type: 'setInterpretation', items: [sound!], patch: { loops: 2 } });
+    await h.run({ type: 'openProject', path: 'C:/p/items.motion' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await h.run({ type: 'openProject', path: 'C:/p/empty.motion' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await h.run({ type: 'openProject', path: 'C:/p/items.motion' });
+  },
+  'items: import, folders, move, rename, interpret, label, tags, comment, proxy, relink, remove': async (h) => {
+    const comp = 'comp_root';
+    const fail = (p: Promise<unknown>): Promise<unknown> => p.catch(() => undefined);
+    await fail(h.run({ type: 'importFiles', files: [] }));
+    await fail(h.run({ type: 'importFiles', files: [{ path: 'C:/m/a.mp4', asSequence: false, folder: 'nope', createComposition: false }] }));
+    await fail(h.run({ type: 'importFiles', files: [{ path: 'C:/m/a.mp4', asSequence: false, createComposition: true }] }));
+    await fail(h.run({ type: 'importFiles', files: [{ path: 'C:/m/a.mp4', asSequence: false, createComposition: false, interpretation: { alpha: 'ignore' } }] }));
+    const { item: bin } = await h.run({ type: 'createFolder', name: '  Bin  ' });
+    const { item: sub } = await h.run({ type: 'createFolder', name: '', parent: bin });
+    await fail(h.run({ type: 'createFolder', name: 'X', parent: 'nope' }));
+    const { items: [clip, still, sound] } = await h.run({
+      type: 'importFiles',
+      files: [
+        { path: 'C:/m/clip.mp4', asSequence: false, createComposition: false, folder: bin, interpretation: { conformFrameRate: { num: 24, den: 1 }, pixelAspect: 2, fieldOrder: 'upperFirst', loops: 2 } },
+        { path: 'C:/m/still.png', asSequence: false, createComposition: false },
+        { path: 'C:/m/sound.wav', asSequence: false, createComposition: false },
+      ],
+    });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, init: [] });
+    await h.run({ type: 'renameItem', item: clip!, name: 'Hero clip' });
+    await h.run({ type: 'renameItem', item: sub, name: 'Sub' });
+    await h.run({ type: 'renameItem', item: comp, name: 'Main' });
+    await fail(h.run({ type: 'renameItem', item: still!, name: '   ' }));
+    await fail(h.run({ type: 'renameItem', item: 'nope', name: 'x' }));
+    await h.run({ type: 'moveItems', items: [still!, comp], folder: sub });
+    await h.run({ type: 'moveItems', items: [comp] });
+    await fail(h.run({ type: 'moveItems', items: [bin], folder: sub }));
+    await fail(h.run({ type: 'moveItems', items: [still!], folder: 'nope' }));
+    await h.run({ type: 'setInterpretation', items: [clip!, still!], patch: { alpha: 'straight', fieldOrder: 'progressive', clearConform: true } });
+    await h.run({ type: 'setInterpretation', items: [still!], patch: { alpha: 'auto', loops: 3 } });
+    await fail(h.run({ type: 'setInterpretation', items: [comp], patch: { loops: 1 } }));
+    await fail(h.run({ type: 'setInterpretation', items: [still!], patch: { pixelAspect: 0 } }));
+    await fail(h.run({ type: 'setInterpretation', items: [still!], patch: { invertAlpha: true } }));
+    await fail(h.run({ type: 'setInterpretation', items: [still!], patch: { colorProfile: 'sRGB' } }));
+    await fail(h.run({ type: 'setInterpretation', items: [still!], patch: { conformFrameRate: { num: 0, den: 1 } } }));
+    await h.run({ type: 'setItemLabel', items: [clip!, comp], label: 3 });
+    await h.run({ type: 'setItemLabel', items: [clip!], label: 0 });
+    await fail(h.run({ type: 'setItemLabel', items: [bin], label: 1 }));
+    await fail(h.run({ type: 'setItemLabel', items: [clip!], label: 99 }));
+    await h.run({ type: 'setItemTags', item: still!, tags: ['bg', 'plate'] });
+    await h.run({ type: 'setItemTags', item: still!, tags: [] });
+    await h.run({ type: 'setItemTags', item: sound!, tags: ['vo'] });
+    await fail(h.run({ type: 'setItemTags', item: comp, tags: ['x'] }));
+    await h.run({ type: 'setItemComment', item: clip!, comment: 'hero' });
+    await h.run({ type: 'setItemComment', item: comp, comment: 'main comp' });
+    await h.run({ type: 'setItemComment', item: comp, comment: '' });
+    await fail(h.run({ type: 'setItemComment', item: bin, comment: 'x' }));
+    await h.run({ type: 'setProxy', item: clip!, path: 'C:/p/clip_proxy.mp4', enabled: true });
+    await h.run({ type: 'setProxy', item: clip!, enabled: false });
+    await h.run({ type: 'setProxy', item: still!, path: 'C:/p/still_proxy.png', enabled: false });
+    await h.run({ type: 'setProxy', item: still!, enabled: false });
+    await fail(h.run({ type: 'setProxy', item: comp, enabled: true }));
+    await h.run({ type: 'relinkItem', item: clip!, path: 'D:/moved/clip.mp4', keepInterpretation: true });
+    await h.run({ type: 'relinkItem', item: still!, path: 'D:/moved/still.png', keepInterpretation: false });
+    await fail(h.run({ type: 'relinkItem', item: comp, path: 'D:/x.mp4', keepInterpretation: false }));
+    await fail(h.run({ type: 'relinkItem', item: still!, path: '  ', keepInterpretation: false }));
+    await h.batch('Organise', [
+      { type: 'renameItem', item: sound!, name: 'VO' },
+      { type: 'moveItems', items: [sound!], folder: bin },
+      { type: 'setItemLabel', items: [sound!], label: 5 },
+    ]);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await fail(h.run({ type: 'removeItems', items: [], removeUsingLayers: false }));
+    await fail(h.run({ type: 'removeItems', items: [clip!], removeUsingLayers: false }));
+    await h.run({ type: 'removeItems', items: [bin], removeUsingLayers: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'removeUnusedItems' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'removeItems', items: [clip!, still!], removeUsingLayers: true });
+    await h.run({ type: 'undo' });
+    const { item: c2 } = await h.run({ type: 'createComposition', settings: { name: 'Inner' }, fromItems: [] });
+    await h.run({ type: 'createLayer', comp: c2, kind: 'solid', name: 'S', init: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'precomp', source: c2, init: [] });
+    await fail(h.run({ type: 'removeItems', items: [c2], removeUsingLayers: false }));
+    await h.run({ type: 'removeItems', items: [c2], removeUsingLayers: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+  },
+
+  'render queue: add, settings, queue state, reorder, remove, refusals': async (h) => {
+    const comp = 'comp_root';
+    const fail = (p: Promise<unknown>): Promise<unknown> => p.catch(() => undefined);
+    const { item: c2 } = await h.run({ type: 'createComposition', settings: { name: 'Two', duration: sec(4) }, fromItems: [] });
+    await fail(h.run({ type: 'addRenderItems', comps: [], settings: {} }));
+    await fail(h.run({ type: 'addRenderItems', comps: ['nope'], settings: {} }));
+    const { items: [r1, r2] } = await h.run({ type: 'addRenderItems', comps: [comp, c2], settings: { format: 'png-seq', width: 640, quality: 50 } });
+    const { items: [r3] } = await h.run({ type: 'addRenderItems', comps: [c2], settings: {} });
+    await h.run({ type: 'setRenderItem', item: r1!, patch: { outputPath: 'C:/out/a', bitDepth: 'u16', frameRate: { num: 25, den: 1 }, encoderOptions: '{"crf":18}' } });
+    await h.run({ type: 'setRenderItem', item: r2!, patch: {}, queued: false });
+    await h.run({ type: 'setRenderItem', item: r2!, patch: { includeAlpha: true }, queued: true });
+    await fail(h.run({ type: 'setRenderItem', item: 'nope', patch: {} }));
+    await h.run({ type: 'reorderRenderItems', items: [r3!], toIndex: 0 });
+    await h.run({ type: 'reorderRenderItems', items: [r3!, r1!], toIndex: 3 });
+    await h.run({ type: 'reorderRenderItems', items: [r2!], toIndex: 1 });
+    await fail(h.run({ type: 'reorderRenderItems', items: [r2!], toIndex: 9 }));
+    await fail(h.run({ type: 'reorderRenderItems', items: ['nope'], toIndex: 0 }));
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.query({ type: 'getRenderQueue' }).catch(() => undefined);
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await fail(h.run({ type: 'removeRenderItems', items: [r1!, 'nope'] }));
+    await h.run({ type: 'removeRenderItems', items: [r1!, r3!] });
+    await h.run({ type: 'undo' });
+    await h.batch('Queue', [
+      { type: 'setRenderItem', item: r3!, patch: { quality: 99 } },
+      { type: 'removeRenderItems', items: [r1!] },
+    ]);
+    await h.run({ type: 'removeItems', items: [c2], removeUsingLayers: true });
+  },
+
+  'markers: composition and layer markers, update, move, delete, refusals': async (h) => {
+    const comp = 'comp_root';
+    const fail = (p: Promise<unknown>): Promise<unknown> => p.catch(() => undefined);
+    const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    const { item: c2 } = await h.run({ type: 'createComposition', settings: { name: 'C24', frameRate: { num: 24, den: 1 } }, fromItems: [] });
+    const { layer: b } = await h.run({ type: 'createLayer', comp: c2, kind: 'shape', name: 'B', init: [] });
+    await fail(h.run({ type: 'addMarkers', markers: [] }));
+    await fail(h.run({ type: 'addMarkers', markers: [{ owner: { comp: 'nope' }, time: 0, duration: 0, name: '', comment: '', label: 0 }] }));
+    await fail(h.run({ type: 'addMarkers', markers: [{ owner: { comp, layer: b }, time: 0, duration: 0, name: '', comment: '', label: 0 }] }));
+    await fail(h.run({ type: 'addMarkers', markers: [{ owner: { comp }, time: 0, duration: -5, name: '', comment: '', label: 0 }] }));
+    await fail(h.run({ type: 'addMarkers', markers: [{ owner: { comp }, time: 0, duration: 0, name: '', comment: '', label: 42 }] }));
+    const { ids: [m1, m2, m3] } = await h.run({ type: 'addMarkers', markers: [
+      { owner: { comp }, time: sec(3), duration: sec(1), name: 'Chorus', comment: 'loud', label: 2 },
+      { owner: { comp }, time: sec(1), duration: 0, name: 'Intro', comment: '', label: 0 },
+      { owner: { comp, layer: a }, time: sec(0.5), duration: 0, name: 'hit', comment: '', label: 7 },
+    ] });
+    const { ids: [m4] } = await h.run({ type: 'addMarkers', markers: [{ owner: { comp: c2, layer: b }, time: sec(2), duration: sec(0.5), name: 'b', comment: '', label: 1 }] });
+    await h.run({ type: 'addMarkers', markers: [{ owner: { comp: c2 }, time: sec(1), duration: 0, name: 'c2', comment: '', label: 0 }] });
+    await h.query({ type: 'getMarkers', owner: { comp } });
+    await h.query({ type: 'getMarkers', owner: { comp, layer: a } });
+    await h.run({ type: 'updateMarkers', patches: [
+      { id: m1!, time: sec(0.25), name: 'Chorus 2', label: 0, chapter: 'Ch 1', url: 'https://example.com', cuePoint: 'cue', protectedRegion: true },
+      { id: m3!, duration: sec(2), comment: 'note', label: 4 },
+      { id: m4!, time: sec(0.5) },
+    ] });
+    await fail(h.run({ type: 'updateMarkers', patches: [] }));
+    await fail(h.run({ type: 'updateMarkers', patches: [{ id: 'nope', name: 'x' }] }));
+    await fail(h.run({ type: 'updateMarkers', patches: [{ id: m1!, duration: -1 }] }));
+    await fail(h.run({ type: 'updateMarkers', patches: [{ id: m1!, label: 77 }] }));
+    await h.run({ type: 'moveMarkers', ids: [m2!, m4!], delta: sec(2) });
+    await h.run({ type: 'moveMarkers', ids: [m1!], delta: -sec(0.1) });
+    await fail(h.run({ type: 'moveMarkers', ids: ['nope'], delta: sec(1) }));
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.batch('Marker pass', [
+      { type: 'addMarkers', markers: [{ owner: { comp }, time: sec(5), duration: 0, name: 'Out', comment: '', label: 3 }] },
+      { type: 'updateMarkers', patches: [{ id: m2!, name: 'Start' }] },
+    ]);
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await fail(h.run({ type: 'deleteMarkers', ids: [] }));
+    await fail(h.run({ type: 'deleteMarkers', ids: [m2!, 'nope'] }));
+    await h.run({ type: 'deleteMarkers', ids: [m2!, m3!] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'deleteMarkers', ids: [m4!] });
+    await h.query({ type: 'getComposition', comp: c2 });
+  },
+
+  'project: settings, plugin data, save → open → revert, import project, jobs': async (h) => {
+    const comp = 'comp_root';
+    const fail = (p: Promise<unknown>): Promise<unknown> => p.catch(() => undefined);
+    await fail(h.run({ type: 'setProjectSettings', patch: { framesStartAt: 2 } }));
+    await fail(h.run({ type: 'setProjectSettings', patch: { audioSampleRate: 100 } }));
+    await h.run({ type: 'setProjectSettings', patch: { bitDepth: 'f32', workingSpace: 'acescg', timeDisplay: 'frames', framesStartAt: 1 } });
+    await h.run({ type: 'setProjectSettings', patch: { bitDepth: 'u16', audioSampleRate: 44100, linearBlending: true } });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await fail(h.run({ type: 'applyJobResult', job: 'job_1' }));
+    const { items: [clip, still] } = await h.run({ type: 'importFiles', files: [
+      { path: 'C:/m/clip.mp4', asSequence: false, createComposition: false },
+      { path: 'C:/m/still.png', asSequence: false, createComposition: false },
+    ] });
+    const { item: bin } = await h.run({ type: 'createFolder', name: 'Bin' });
+    await h.run({ type: 'moveItems', items: [still!], folder: bin });
+    await h.run({ type: 'setItemTags', item: still!, tags: ['t'] });
+    const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    const { layer: v } = await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, init: [] });
+    await h.run({ type: 'addKeyframes', keys: [0, 1].map((i) => ({ prop: { layer: a, path: 'transform/position' }, time: sec(i), value: v2(100 + i * 300, 200), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'setPluginData', layer: a, group: 'effects/x', key: 'k', data: new Uint8Array([1, 2, 3, 250]) });
+    await h.run({ type: 'setPluginData', layer: a, group: 'effects/x', key: 'j', data: new Uint8Array([7]) });
+    await h.run({ type: 'setPluginData', layer: a, group: 'effects/x', key: 'k', data: new Uint8Array([]) });
+    await fail(h.run({ type: 'setPluginData', layer: a, group: 'g', key: '', data: new Uint8Array([1]) }));
+    await fail(h.run({ type: 'setPluginData', layer: 'nope', group: 'g', key: 'k', data: new Uint8Array([1]) }));
+    await h.run({ type: 'addMarkers', markers: [{ owner: { comp }, time: sec(1), duration: 0, name: 'M', comment: '', label: 1 }, { owner: { comp, layer: v }, time: sec(0.5), duration: 0, name: 'L', comment: '', label: 0 }] });
+    await h.run({ type: 'setWorkArea', comp, range: { start: sec(1), duration: sec(2) } });
+    const { items: [rq] } = await h.run({ type: 'addRenderItems', comps: [comp], settings: { format: 'png-seq' } });
+    await h.run({ type: 'setRenderItem', item: rq!, patch: { quality: 70 }, queued: false });
+    const { item: inner } = await h.run({ type: 'createComposition', settings: { name: 'Inner', width: 640, height: 360 }, fromItems: [] });
+    await h.run({ type: 'createLayer', comp: inner, kind: 'text', name: 'Title', init: [] });
+    await h.run({ type: 'createLayer', comp, kind: 'precomp', source: inner, init: [] });
+    await h.run({ type: 'saveProject', path: 'C:/p/a.motion', copy: false });
+    await h.run({ type: 'renameLayer', layer: a, name: 'Changed' });
+    await h.run({ type: 'setProjectSettings', patch: { timeDisplay: 'timecode' } });
+    await h.run({ type: 'revertProject' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await h.run({ type: 'importProject', path: 'C:/p/a.motion', folder: bin });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await fail(h.run({ type: 'importProject', path: 'C:/p/missing.motion' }));
+    await fail(h.run({ type: 'importProject', path: 'C:/p/a.aep' }));
+    await fail(h.run({ type: 'importProject', path: 'C:/p/a.motion', folder: 'nope' }));
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    // Footage the session no longer holds reopens as a missing placeholder.
+    await h.run({ type: 'removeItems', items: [still!], removeUsingLayers: true });
+    await h.run({ type: 'openProject', path: 'C:/p/a.motion' });
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    await h.run({ type: 'relinkItem', item: still!, path: 'E:/found/still.png', keepInterpretation: true });
+    await h.run({ type: 'saveProject', path: 'C:/p/b.motion', copy: true });
+    const { items: imported } = await h.run({ type: 'importProject', path: 'C:/p/b.motion' });
+    await fail(h.run({ type: 'openProject', path: 'C:/p/none.motion' }));
+    await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    // Imported layers are minted without appearing in any result (the replay's
+    // id map cannot pair them), so the session removes what it imported.
+    await h.run({ type: 'removeItems', items: imported, removeUsingLayers: true });
+    // documentReset carries no layer records: restate the name the mirrors hold.
+    await h.run({ type: 'renameLayer', layer: a, name: 'Final' });
+  },
+  // @@family:layertime
+  'layer time: timing, stretch, move, trim, slip, slide, roll, ripple, refusals': async (h) => {
+    const comp = 'comp_root';
+    const mk = async (name: string) => (await h.run({ type: 'createLayer', comp, kind: 'solid', name, init: [] })).layer;
+    const A = await mk('A');
+    const B = await mk('B');
+    const C = await mk('C');
+    const D = await mk('D');
+    const { items: [clip] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/clip.mp4', asSequence: false, createComposition: false }] });
+    const { layer: V } = await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, name: 'V', init: [] });
+    const { item: c2 } = await h.run({ type: 'createComposition', settings: { name: 'Other', width: 640, height: 360 }, fromItems: [] });
+    const { layer: O } = await h.run({ type: 'createLayer', comp: c2, kind: 'solid', name: 'O', init: [] });
+    await h.run({ type: 'addKeyframes', keys: [0, 1, 2].map((i) => ({ prop: { layer: B, path: 'transform/position' }, time: sec(2 + i), value: v2(100 * i, 50), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, inPoint: 0, outPoint: sec(2) }, { layer: B, inPoint: sec(2), outPoint: sec(4) }, { layer: C, inPoint: sec(4), outPoint: sec(6) }, { layer: D, inPoint: sec(7), outPoint: sec(8) }] });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: V, startTime: sec(1) }, { layer: B, stretch: 0.5 }, { layer: C, stretch: -2 }] });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: V, inPoint: sec(1.5), outPoint: sec(4) }, { layer: D, startTime: sec(6), stretch: 1 }] });
+    // Refusals.
+    await h.run({ type: 'setLayerTiming', items: [] }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: 'layer_nope', inPoint: 0 }] }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, stretch: 0 }] }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, stretch: 20 }] }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, inPoint: sec(3) }] }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: V, outPoint: sec(9) }] }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: V, inPoint: 0 }] }).catch(() => undefined);
+    // Move (+ ripple), trim (+ ripple), slip.
+    await h.run({ type: 'moveLayersInTime', layers: [A], delta: sec(0.5), ripple: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'moveLayersInTime', layers: [A, B], delta: sec(-0.25), ripple: false });
+    await h.run({ type: 'moveLayersInTime', layers: [A, O], delta: sec(1), ripple: false }).catch(() => undefined);
+    await h.run({ type: 'moveLayersInTime', layers: [A, A], delta: sec(1), ripple: false }).catch(() => undefined);
+    await h.run({ type: 'moveLayersInTime', layers: [], delta: sec(1), ripple: false }).catch(() => undefined);
+    await h.run({ type: 'trimLayers', layers: [B], edge: 'in', time: sec(2.5), ripple: true });
+    await h.run({ type: 'trimLayers', layers: [A], edge: 'out', time: sec(1.5), ripple: true });
+    await h.run({ type: 'trimLayers', layers: [C], edge: 'out', time: sec(7.5), ripple: false });
+    await h.run({ type: 'trimLayers', layers: [C, D], edge: 'out', time: sec(7.5), ripple: false }).catch(() => undefined);
+    await h.run({ type: 'trimLayers', layers: [A], edge: 'in', time: sec(5), ripple: false }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'slipLayers', layers: [V], delta: sec(0.25) });
+    await h.run({ type: 'slipLayers', layers: [V], delta: sec(-5) }).catch(() => undefined);
+    await h.run({ type: 'slipLayers', layers: [V], delta: sec(5) }).catch(() => undefined);
+    await h.run({ type: 'slipLayers', layers: [A, B], delta: sec(1) });
+    // Slide between neighbours, roll a cut.
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, inPoint: 0, outPoint: sec(2) }, { layer: B, inPoint: sec(2), outPoint: sec(4) }, { layer: C, inPoint: sec(4), outPoint: sec(6) }] });
+    await h.run({ type: 'slideLayer', layer: B, delta: sec(0.25) });
+    await h.run({ type: 'slideLayer', layer: B, delta: sec(-5) }).catch(() => undefined);
+    await h.run({ type: 'rollEdit', left: B, right: C, delta: sec(-0.5) });
+    await h.run({ type: 'rollEdit', left: A, right: C, delta: sec(0.5) }).catch(() => undefined);
+    await h.run({ type: 'rollEdit', left: A, right: B, delta: sec(-3) }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.batch('Nudge Cut', [
+      { type: 'moveLayersInTime', layers: [D], delta: sec(0.5), ripple: false },
+      { type: 'trimLayers', layers: [D], edge: 'in', time: sec(6.75), ripple: false },
+      { type: 'slipLayers', layers: [V], delta: sec(0.1) },
+    ]);
+    await h.batch('Bad Batch', [
+      { type: 'moveLayersInTime', layers: [D], delta: sec(0.5), ripple: false },
+      { type: 'trimLayers', layers: [D], edge: 'out', time: 0, ripple: false },
+    ]).catch(() => undefined);
+    await h.query({ type: 'getLayers', layers: [A, B, C, D, V] });
+  },
+
+  'layer time: split, ripple delete, work area, insert gap, sequence': async (h) => {
+    const comp = 'comp_root';
+    const mk = async (name: string, kind: 'solid' | 'shape' | 'null' = 'solid') => (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
+    const A = await mk('A');
+    const B = await mk('B', 'shape');
+    const C = await mk('C');
+    const N = await mk('N', 'null');
+    const { items: [clip] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/clip.mp4', asSequence: false, createComposition: false }] });
+    const { layer: V } = await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, name: 'V', init: [] });
+    const { layer: K } = await h.run({ type: 'createLayer', comp, kind: 'null', name: 'Kid', parent: B, init: [] });
+    await h.run({ type: 'addKeyframes', keys: [0, 1, 2].map((i) => ({ prop: { layer: A, path: 'transform/position' }, time: sec(i), value: v2(100 + 100 * i, 300), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'addKeyframes', keys: [0, 2].map((i) => ({ prop: { layer: A, path: 'transform/opacity' }, time: sec(i), value: scalar(100 - 40 * i), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'setExpression', prop: { layer: A, path: 'transform/rotation' }, source: 'time * 10', enabled: true });
+    await h.run({ type: 'setLayerSwitches', layers: [A], patch: { shy: true, solo: true, label: 3 } });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, inPoint: 0, outPoint: sec(3) }, { layer: B, inPoint: sec(3), outPoint: sec(5) }, { layer: C, inPoint: sec(5), outPoint: sec(8) }, { layer: N, inPoint: sec(8), outPoint: sec(9) }] });
+    // Split: some cut, one not, one footage; a time that cuts nothing.
+    const { layers: halves } = await h.run({ type: 'splitLayers', layers: [A, V, N], time: sec(1) });
+    await h.run({ type: 'setProperty', prop: { layer: halves[0]!, path: 'transform/position' }, value: v2(1, 2), time: sec(2) });
+    await h.run({ type: 'splitLayers', layers: [N], time: sec(2) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'splitLayers', layers: [B, C], time: sec(6) });
+    // Ripple delete: a layer with a child, a refusal on a locked layer.
+    await h.run({ type: 'rippleDeleteLayers', layers: [B] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'rippleDeleteLayers', layers: [B, N] });
+    await h.run({ type: 'setLayerSwitches', layers: [C], patch: { locked: true } });
+    await h.run({ type: 'rippleDeleteLayers', layers: [C] }).catch(() => undefined);
+    await h.run({ type: 'setLayerSwitches', layers: [C], patch: { locked: false } });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    // Work area lift / extract (all layers, and a subset); refusals.
+    await h.run({ type: 'setWorkArea', comp, range: { start: sec(0.5), duration: sec(1) } });
+    await h.run({ type: 'editWorkArea', comp, edit: 'lift', layers: [] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'editWorkArea', comp, edit: 'extract', layers: [] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'editWorkArea', comp, edit: 'extract', layers: [A, K] });
+    const { item: c2 } = await h.run({ type: 'createComposition', settings: { name: 'Other' }, fromItems: [] });
+    await h.run({ type: 'editWorkArea', comp: c2, edit: 'lift', layers: [A] }).catch(() => undefined);
+    await h.run({ type: 'editWorkArea', comp: 'comp_nope', edit: 'lift', layers: [] }).catch(() => undefined);
+    await h.run({ type: 'editWorkArea', comp: c2, edit: 'lift', layers: [] });
+    // Insert gap.
+    await h.run({ type: 'insertGap', comp, time: sec(2), duration: sec(1) });
+    await h.run({ type: 'insertGap', comp, time: sec(50), duration: sec(1) });
+    await h.run({ type: 'insertGap', comp, time: sec(2), duration: 0 }).catch(() => undefined);
+    await h.run({ type: 'insertGap', comp: 'comp_nope', time: 0, duration: sec(1) }).catch(() => undefined);
+    // Sequence with crossfades (keys onto layers that have none and one that has).
+    await h.run({ type: 'sequenceLayers', layers: [C, A, N, V], overlap: sec(0.5), crossfade: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'sequenceLayers', layers: [N, C], overlap: 0, crossfade: true });
+    await h.run({ type: 'sequenceLayers', layers: [A, B], overlap: sec(-1), crossfade: false });
+    await h.run({ type: 'sequenceLayers', layers: [A, K], overlap: sec(0.25), crossfade: true }).catch(() => undefined);
+    await h.batch('Split and Close', [
+      { type: 'splitLayers', layers: [C], time: sec(3) },
+      { type: 'insertGap', comp, time: sec(1), duration: sec(0.5) },
+    ]);
+  },
+
+  'layer time: reverse, time remap, freeze, retime speed and frame conversions': async (h) => {
+    const comp = 'comp_root';
+    const { items: [clip] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/clip.mp4', asSequence: false, createComposition: false }] });
+    const { layer: V } = await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, name: 'V', init: [] });
+    const { layer: W } = await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, name: 'W', init: [] });
+    const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    await h.run({ type: 'addKeyframes', keys: [0, 1, 3].map((i) => ({ prop: { layer: A, path: 'transform/rotation' }, time: sec(i), value: scalar(i * 30), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'addKeyframes', keys: [0.5, 2].map((i) => ({ prop: { layer: V, path: 'transform/opacity' }, time: sec(i), value: scalar(i * 20), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: V, inPoint: sec(0.5), outPoint: sec(3.5) }, { layer: W, startTime: sec(1) }] });
+    // Reverse on and off.
+    await h.run({ type: 'timeReverseLayers', layers: [V, A] });
+    await h.run({ type: 'timeReverseLayers', layers: [A] });
+    await h.run({ type: 'timeReverseLayers', layers: ['layer_nope'] }).catch(() => undefined);
+    // Time remap on / off / off-again.
+    await h.run({ type: 'setTimeRemap', layer: W, enabled: true });
+    await h.run({ type: 'setTimeRemap', layer: W, enabled: true });
+    await h.run({ type: 'setTimeRemap', layer: W, enabled: false });
+    await h.run({ type: 'setTimeRemap', layer: A, enabled: false });
+    await h.run({ type: 'setTimeRemap', layer: A, enabled: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'setTimeRemap', layer: 'layer_nope', enabled: true }).catch(() => undefined);
+    // Freeze: last frame, at a time, default.
+    await h.run({ type: 'freezeFrame', layer: A, time: sec(1.5), lastFrame: false });
+    await h.run({ type: 'freezeFrame', layer: V, lastFrame: true });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'freezeFrame', layer: W, lastFrame: false });
+    await h.run({ type: 'freezeFrame', layer: 'layer_nope', lastFrame: true }).catch(() => undefined);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: A, stretch: 1.5 }] });
+    // Retime: normal → speed → frames → speed → normal, and the refusals.
+    await h.run({ type: 'setRetime', layer: V, mode: 'speed' });
+    await h.run({ type: 'setRetime', layer: V, mode: 'speed', speed: 50 });
+    await h.run({ type: 'setRetime', layer: V, mode: 'speed', speed: 5000 });
+    await h.run({ type: 'setRetime', layer: V, mode: 'frames' });
+    await h.run({ type: 'setRetime', layer: V, mode: 'speed' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'setRetime', layer: V, mode: 'normal' });
+    await h.run({ type: 'setRetime', layer: V, mode: 'normal' });
+    await h.run({ type: 'setRetime', layer: V, mode: 'frames', speed: 50 }).catch(() => undefined);
+    await h.run({ type: 'setRetime', layer: V, mode: 'speed', speed: Number.NaN }).catch(() => undefined);
+    await h.run({ type: 'setRetime', layer: 'layer_nope', mode: 'speed' }).catch(() => undefined);
+    // A shaped speed curve (hold, linear, eased) baked to frames and back.
+    await h.run({ type: 'setRetime', layer: W, mode: 'speed', speed: 100 });
+    const { ids: sk } = await h.run({ type: 'addKeyframes', keys: [[1.5, 40], [2.5, 250], [3.5, 80]].map(([t, v]) => ({ prop: { layer: W, path: 'layer/timeSpeed' }, time: sec(t!), value: scalar(v!), spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'updateKeyframes', patches: [{ id: sk[0]!, easing: 'hold', spatialIn: [], spatialOut: [] }, { id: sk[1]!, easing: 'easeInOut', spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'setRetime', layer: W, mode: 'frames' });
+    await h.run({ type: 'setRetime', layer: W, mode: 'speed' });
+    await h.run({ type: 'setRetime', layer: W, mode: 'frames' });
+    await h.run({ type: 'setTimeRemap', layer: W, enabled: false });
+    await h.run({ type: 'setRetime', layer: A, mode: 'frames' });
+    await h.run({ type: 'setRetime', layer: A, mode: 'speed', speed: -200 });
+    // Keyframes survive a retime of the bar (move, split, stretch).
+    await h.run({ type: 'moveLayersInTime', layers: [A, V], delta: sec(0.5), ripple: false });
+    await h.run({ type: 'splitLayers', layers: [A, V], time: sec(2) });
+    await h.batch('Retime Both', [
+      { type: 'setRetime', layer: V, mode: 'speed', speed: 150 },
+      { type: 'timeReverseLayers', layers: [W] },
+      { type: 'freezeFrame', layer: A, lastFrame: true },
+    ]);
+  },
+  // @@family:groups
+  'groups: effects — add with params, index, many layers, move, duplicate, copy, enable, rename, remove, refusals': async (h) => {
+    const comp = 'comp_root';
+    const mk = async (kind: 'solid' | 'shape' | 'text' | 'null', name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
+    const A = await mk('solid', 'A');
+    const B = await mk('shape', 'B');
+    const N = await mk('null', 'N');
+    const { groups: [g1, g2] } = await h.run({ type: 'addEffect', layers: [A, B], effect: 'deep-glow', params: [
+      { path: 'radius', value: scalar(40) },
+      { path: 'tint', value: { kind: 'color', value: { r: 1, g: 0.5, b: 0.25, a: 1 } } },
+      { path: 'glowOnly', value: { kind: 'bool', value: true } },
+      { path: 'quality', value: { kind: 'choice', value: 'High (8 octaves)' } },
+    ] });
+    await h.run({ type: 'addEffect', layers: [A], effect: 'set-matte', index: 0, params: [
+      { path: 'matteLayerId', value: { kind: 'layer', value: B } },
+      { path: 'invert', value: { kind: 'bool', value: true } },
+    ] });
+    await h.run({ type: 'addEffect', layers: [A], effect: 'vegas', params: [] });
+    await h.run({ type: 'addEffect', layers: [A], effect: 'write-on', index: 1, params: [] });
+    await h.run({ type: 'addEffect', layers: [N], effect: 'drop-shadow', params: [] });
+    // refusals
+    await h.run({ type: 'addEffect', layers: [], effect: 'glow', params: [] }).catch(() => undefined);
+    await h.run({ type: 'addEffect', layers: [A], effect: 'no-such-effect', params: [] }).catch(() => undefined);
+    await h.run({ type: 'addEffect', layers: [A, 'ghost'], effect: 'glow', params: [] }).catch(() => undefined);
+    await h.run({ type: 'addEffect', layers: [B, A], effect: 'glow', index: 3, params: [] }).catch(() => undefined);
+    await h.run({ type: 'addEffect', layers: [A], effect: 'glow', params: [{ path: 'nope', value: scalar(1) }] }).catch(() => undefined);
+    await h.run({ type: 'addEffect', layers: [A], effect: 'deep-glow', params: [{ path: 'quality', value: { kind: 'choice', value: 'Ultra' } }] }).catch(() => undefined);
+    await h.run({ type: 'addEffect', layers: [A], effect: 'deep-glow', params: [{ path: 'glowOnly', value: scalar(1) }] }).catch(() => undefined);
+    // move
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: g1! }, toIndex: 0 });
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: g1! }, toIndex: 3 });
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: g1! }, toIndex: 9 }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: 'effects/ghost' }, toIndex: 0 }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: 'ghost', path: g1! }, toIndex: 0 }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: 'bogus/x/y' }, toIndex: 0 }).catch(() => undefined);
+    // duplicate / copy
+    const { groups: [dup] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: A, path: g1! }] });
+    await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: A, path: g1! }, { layer: B, path: g2! }] });
+    await h.run({ type: 'duplicatePropertyGroups', groups: [] }).catch(() => undefined);
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: g1! }, { layer: A, path: dup! }], toLayers: [B, N] });
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: g1! }], toLayers: [] }).catch(() => undefined);
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: g1! }], toLayers: ['ghost'] }).catch(() => undefined);
+    // enable / rename
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: g1! }, { layer: B, path: g2! }], enabled: false });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: g1! }], enabled: true });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: g1! }], enabled: true });
+    await h.run({ type: 'setGroupEnabled', groups: [], enabled: true }).catch(() => undefined);
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: g1! }, name: 'Bloom' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: dup! }, name: 'Second Bloom' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: dup! }, name: '   ' });
+    await h.run({ type: 'invokeEffectAction', group: { layer: A, path: g1! }, action: 'reset' }).catch(() => undefined);
+    await h.run({ type: 'invokeEffectAction', group: { layer: A, path: 'effects/ghost' }, action: 'reset' }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // remove
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: g1! }, { layer: B, path: g2! }] });
+    await h.run({ type: 'removePropertyGroups', groups: [] }).catch(() => undefined);
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: g1! }] }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.batch('Effect Batch', [
+      { type: 'addEffect', layers: [N], effect: 'gaussian-blur', params: [] },
+      { type: 'setGroupEnabled', groups: [{ layer: A, path: dup! }], enabled: false },
+      { type: 'renamePropertyGroup', group: { layer: B, path: g2! }, name: 'B glow' },
+    ]);
+    await h.batch('Bad Effect Batch', [
+      { type: 'addEffect', layers: [N], effect: 'gaussian-blur', params: [] },
+      { type: 'removePropertyGroups', groups: [{ layer: N, path: 'effects/ghost' }] },
+    ]).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+
+  'groups: masks — add at index, modes, names, move, duplicate, copy, enable (mode none), rename, remove, animated shapes': async (h) => {
+    const comp = 'comp_root';
+    const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'B', init: [] });
+    const square = { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [] };
+    const curve = { vertices: [0, 0, 50, 80, 120, 10], inTangents: [0, 0, -10, 0, 0, 0], outTangents: [0, 0, 10, 0, 0, 0], closed: false, featherPoints: [] };
+    const { groups: [m1] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false });
+    const { groups: [m2] } = await h.run({ type: 'addMask', layer: A, path: curve, mode: 'subtract', inverted: true, name: 'Cut' });
+    const { groups: [m3] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'intersect', inverted: false, index: 0, name: '' });
+    await h.run({ type: 'addMask', layer: B, path: square, mode: 'difference', inverted: false });
+    await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false, index: 7 }).catch(() => undefined);
+    await h.run({ type: 'addMask', layer: A, path: { ...square, inTangents: [1, 2] }, mode: 'add', inverted: false }).catch(() => undefined);
+    await h.run({ type: 'addMask', layer: 'ghost', path: square, mode: 'add', inverted: false }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: m1! }, toIndex: 2 });
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: m1! }, toIndex: 3 }).catch(() => undefined);
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: m2! }, { layer: A, path: m3! }], enabled: false });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: m2! }], enabled: false });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: m2! }], enabled: true });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: m1! }, name: 'Window' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: m2! }, name: '' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: 'masks/ghost' }, name: 'x' }).catch(() => undefined);
+    const { groups: [d1] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: A, path: m1! }] });
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: m1! }, { layer: A, path: m3! }], toLayers: [B] });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: d1! }, { layer: A, path: m3! }] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: B, path: 'masks/ghost' }] }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+
+  'groups: masks with keyframed shapes and tracks — duplicate, copy, move, remove carry them': async (h) => {
+    const comp = 'comp_root';
+    const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'B', init: [] });
+    const square = { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [] };
+    const { groups: [m1] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false });
+    const { groups: [m2] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false });
+    await h.run({ type: 'setAnimated', prop: { layer: A, path: `${m1}/path` }, animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: { layer: A, path: `${m1}/path` }, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 200, 0, 200, 200, 0, 200], inTangents: [], outTangents: [], closed: true, featherPoints: [] } } });
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: { layer: A, path: `${m1}/feather` }, time: 0, value: scalar(0), spatialIn: [], spatialOut: [] },
+      { prop: { layer: A, path: `${m1}/feather` }, time: sec(1), value: scalar(20), spatialIn: [], spatialOut: [] },
+    ] });
+    const { groups: [d] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: A, path: m1! }] });
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: m1! }], toLayers: [B] });
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: m2! }, toIndex: 0 });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: d! }], enabled: false });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: m1! }] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: m1! }, { layer: A, path: m2! }, { layer: A, path: d! }] });
+    await h.run({ type: 'undo' });
+  },
+
+  'groups: text animators and selectors — every selector kind, indices, move, duplicate, enable, rename, remove, refusals': async (h) => {
+    const comp = 'comp_root';
+    const { layer: T } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    const { layer: S } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'S', init: [] });
+    const add = (parent: string, matchName: string, extra: { index?: number; name?: string; init?: Array<{ path: string; value: ReturnType<typeof scalar> }> } = {}) =>
+      h.run({
+        type: 'addPropertyGroup', layer: T, parent, matchName, init: extra.init ?? [],
+        ...(extra.index !== undefined ? { index: extra.index } : {}),
+        ...(extra.name !== undefined ? { name: extra.name } : {}),
+      });
+    const { groups: [a1] } = await add('text/animators', 'ADBE Text Animator');
+    const { groups: [a2] } = await add('text/animators', 'ADBE Text Animator', { name: 'Second', init: [{ path: 'props/opacity', value: scalar(0) }] });
+    const { groups: [a0] } = await add('text/animators', 'ADBE Text Animator', { index: 0, name: '' });
+    await add('text/animators', 'ADBE Text Animator', { index: 9 }).catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: S, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] }).catch(() => undefined);
+    const a2id = a2!.split('/')[2]!;
+    const a1id = a1!.split('/')[2]!;
+    const { groups: [sw] } = await add(`text/animators/${a2id}/selectors`, 'ADBE Text Wiggly Selector');
+    const { groups: [se] } = await add(`text/animators/${a2id}/selectors`, 'ADBE Text Expressible Selector', { index: 0 });
+    const { groups: [sr] } = await add(`text/animators/${a1id}/selectors`, 'ADBE Text Selector', { index: 1 });
+    await add(`text/animators/${a2id}/selectors`, 'ADBE Text Selector', { index: 7 }).catch(() => undefined);
+    await add('text/animators/ghost/selectors', 'ADBE Text Selector').catch(() => undefined);
+    await add(`text/animators/${a2id}/selectors`, 'ADBE Text Bogus Selector').catch(() => undefined);
+    await add('text', 'ADBE Text Animator').catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: 'ghost', parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] }).catch(() => undefined);
+    // tracks under index-addressed animators move with their animator
+    await h.run({ type: 'setAnimated', prop: { layer: T, path: `${a2}/props/opacity` }, animated: true, time: 0 }).catch(() => undefined);
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: { layer: T, path: `${a2}/props/scale` }, time: 0, value: scalar(50), spatialIn: [], spatialOut: [] },
+      { prop: { layer: T, path: `${sw}/maxAmount` }, time: sec(1), value: scalar(40), spatialIn: [], spatialOut: [] },
+    ] }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: T, path: a2! }, toIndex: 0 });
+    await h.run({ type: 'movePropertyGroup', group: { layer: T, path: sw! }, toIndex: 0 });
+    await h.run({ type: 'movePropertyGroup', group: { layer: T, path: se! }, toIndex: 5 }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: T, path: a0! }, toIndex: 3 }).catch(() => undefined);
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: T, path: a1! }, { layer: T, path: se! }], enabled: false });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: T, path: a1! }], enabled: true });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: T, path: a1! }, name: 'First' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: T, path: sr! }, name: 'Range 2' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: T, path: sr! }, name: ' ' });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: T, path: `${a1}/selectors/ghost` }, name: 'x' }).catch(() => undefined);
+    const { groups: [dupA] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: T, path: a2! }] });
+    await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: T, path: sw! }] }).catch(() => undefined);
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: T, path: a1! }], toLayers: [S] }).catch(() => undefined);
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: se! }, { layer: T, path: a0! }] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    const a0sel = (await h.query({ type: 'getPropertyTree', layer: T, path: a1!, depth: 0 }).catch(() => null));
+    void a0sel;
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: `${a0}/selectors/x` }] }).catch(() => undefined);
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: dupA! }, { layer: T, path: a1! }] });
+    await h.run({ type: 'undo' });
+    await h.batch('Animator Batch', [
+      { type: 'addPropertyGroup', layer: T, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] },
+      { type: 'movePropertyGroup', group: { layer: T, path: a1! }, toIndex: 0 },
+      { type: 'setGroupEnabled', groups: [{ layer: T, path: a2! }], enabled: false },
+    ]);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+
+  'groups: text selectors — removing the last selector is refused; removing others re-keys': async (h) => {
+    const comp = 'comp_root';
+    const { layer: T } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    const { groups: [a] } = await h.run({ type: 'addPropertyGroup', layer: T, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] });
+    const tree = await h.query({ type: 'getPropertyTree', layer: T, path: '', depth: 0 });
+    const sel0 = tree.nodes.map((n) => n.path).find((p) => p.startsWith(`${a}/selectors/`) && p.split('/').length === 5);
+    if (sel0) await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: sel0 }] }).catch(() => undefined);
+    const { groups: [s1] } = await h.run({ type: 'addPropertyGroup', layer: T, parent: `${a}/selectors`, matchName: 'ADBE Text Wiggly Selector', init: [] });
+    const { groups: [s2] } = await h.run({ type: 'addPropertyGroup', layer: T, parent: `${a}/selectors`, matchName: 'ADBE Text Expressible Selector', init: [] });
+    if (sel0) await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: sel0 }, { layer: T, path: s2! }] });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: s1! }] }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+  },
+
+  'groups: layer styles (all ten) and shape operators (every type) — add, init, enable, duplicate, copy, move, remove, refusals': async (h) => {
+    const comp = 'comp_root';
+    const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'A', init: [] });
+    const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'rectangle', name: 'B', init: [] });
+    const styles = ['glass', 'dropShadow', 'outerGlow', 'innerShadow', 'innerGlow', 'satin', 'bevel', 'colorOverlay', 'gradientOverlay', 'stroke'];
+    for (const s of styles) await h.run({ type: 'addPropertyGroup', layer: A, parent: 'styles', matchName: `style:${s}`, init: [] });
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'styles', matchName: 'style:dropShadow', init: [{ path: 'distance', value: scalar(25) }] }).catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'styles', matchName: 'style:stroke', init: [] });
+    await h.run({ type: 'addPropertyGroup', layer: A, parent: 'styles', matchName: 'style:dropShadow', init: [] }).catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: A, parent: 'styles', matchName: 'style:sparkle', init: [] }).catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: A, parent: 'styles', matchName: 'dropShadow', init: [] }).catch(() => undefined);
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: 'styles/bevel' }, { layer: A, path: 'styles/glass' }], enabled: false });
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: A, path: 'styles/bevel' }], enabled: true });
+    await h.run({ type: 'movePropertyGroup', group: { layer: A, path: 'styles/bevel' }, toIndex: 0 }).catch(() => undefined);
+    await h.run({ type: 'renamePropertyGroup', group: { layer: A, path: 'styles/bevel' }, name: 'x' }).catch(() => undefined);
+    await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: A, path: 'styles/satin' }] }).catch(() => undefined);
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: 'styles/satin' }, { layer: A, path: 'styles/innerGlow' }], toLayers: [B] });
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: 'styles/stroke' }], toLayers: [B] }).catch(() => undefined);
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: 'styles/glass' }, { layer: A, path: 'styles/gradientOverlay' }] });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: 'styles/glass' }] }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // shape operators
+    const ops = ['zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater', 'wiggleTransform'];
+    const paths: string[] = [];
+    for (const t of ops) paths.push((await h.run({ type: 'addPropertyGroup', layer: B, parent: 'contents', matchName: `pathop:${t}`, init: [] })).groups[0]!);
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'contents', matchName: 'pathop:trim', index: 0, init: [{ path: 'end', value: scalar(50) }] });
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'contents', matchName: 'pathop:none', index: 2, init: [] });
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'contents', matchName: 'pathop:mystery', init: [] });
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'contents', matchName: 'pathop:trim', index: 99, init: [] }).catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'contents', matchName: 'repeater', init: [] }).catch(() => undefined);
+    await h.run({ type: 'addPropertyGroup', layer: B, parent: 'bogus', matchName: 'pathop:trim', init: [] }).catch(() => undefined);
+    await h.run({ type: 'movePropertyGroup', group: { layer: B, path: paths[0]! }, toIndex: 5 });
+    await h.run({ type: 'movePropertyGroup', group: { layer: B, path: paths[0]! }, toIndex: 50 }).catch(() => undefined);
+    await h.run({ type: 'setGroupEnabled', groups: [{ layer: B, path: paths[6]! }], enabled: false });
+    await h.run({ type: 'renamePropertyGroup', group: { layer: B, path: paths[6]! }, name: 'x' }).catch(() => undefined);
+    const { groups: [dupOp] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: B, path: paths[6]! }, { layer: B, path: paths[7]! }] });
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: B, path: paths[6]! }, { layer: B, path: dupOp! }], toLayers: [A] });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: B, path: paths[1]! }, { layer: B, path: paths[2]! }] });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: B, path: 'contents/ghost' }] }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+
+  'groups: presets — keyframed, relative units, 3D, text rigs, effects, behaviours, camera and dolly zoom, refusals': async (h) => {
+    const comp = 'comp_root';
+    const mk = async (kind: 'solid' | 'shape' | 'text' | 'camera' | 'light' | 'null', name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
+    const A = await mk('solid', 'A');
+    const B = await mk('shape', 'B');
+    const T = await mk('text', 'T');
+    const T2 = await mk('text', 'T2');
+    const C = await mk('camera', 'Cam');
+    const L = await mk('light', 'Light');
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: { layer: B, path: 'transform/position' }, time: 0, value: v2(100, 100), spatialIn: [], spatialOut: [] },
+      { prop: { layer: B, path: 'transform/position' }, time: sec(2), value: v2(300, 200), spatialIn: [], spatialOut: [] },
+    ] });
+    await h.run({ type: 'applyPreset', layers: [A, B], preset: 'Fade In', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [B], preset: 'Slide In', time: sec(0.5) });
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Rise Up', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Pop In', time: sec(2) });
+    await h.run({ type: 'applyPreset', layers: [B], preset: 'Shake', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Depth Push In', time: sec(3) });
+    await h.run({ type: 'applyPreset', layers: [L], preset: 'Cinematic Pan 3D', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [B], preset: '3D Twirl In', time: sec(0.25) });
+    await h.run({ type: 'applyPreset', layers: [T], preset: 'Typewriter', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [T], preset: 'Cascade', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [T], preset: 'Word Rise', time: sec(2) });
+    await h.run({ type: 'applyPreset', layers: [T2], preset: 'Spotlight', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [T2], preset: 'Jitter', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [T2], preset: 'Inch Worm', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Wipe In', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Broadcast Interference', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [B], preset: 'Teal & Orange', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [B], preset: 'Drift', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [B], preset: 'Fade In+Out', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [C], preset: 'Push In', time: sec(1) });
+    await h.run({ type: 'applyPreset', layers: [C], preset: 'Orbit Sweep', time: 0 });
+    await h.run({ type: 'applyPreset', layers: [C], preset: 'Dolly Zoom (Vertigo)', time: sec(2) });
+    await h.run({ type: 'applyPreset', layers: [C], preset: 'Handheld', time: 0 });
+    // refusals
+    await h.run({ type: 'applyPreset', layers: [], preset: 'Fade In', time: 0 }).catch(() => undefined);
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'No Such Preset', time: 0 }).catch(() => undefined);
+    await h.run({ type: 'applyPreset', layers: [A, 'ghost'], preset: 'Fade In', time: 0 }).catch(() => undefined);
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Typewriter', time: 0 }).catch(() => undefined);
+    await h.run({ type: 'applyPreset', layers: [T, A], preset: 'Push In', time: 0 }).catch(() => undefined);
+    await h.run({ type: 'applyPreset', layers: [A], preset: 'Dolly Zoom (Vertigo)', time: 0 }).catch(() => undefined);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.batch('Preset Batch', [
+      { type: 'applyPreset', layers: [A], preset: 'Spin', time: 0 },
+      { type: 'applyPreset', layers: [T], preset: 'Wave', time: 0 },
+      { type: 'applyPreset', layers: [A], preset: 'Iris In', time: sec(1) },
+    ]);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+
+  'groups: property writes and keys on created groups (effects, styles, operators, animators, selectors)': async (h) => {
+    const comp = 'comp_root';
+    const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'A', init: [] });
+    const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'B', init: [] });
+    const { layer: T } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    const { groups: [fx] } = await h.run({ type: 'addEffect', layers: [A], effect: 'deep-glow', params: [] });
+    await h.run({ type: 'addPropertyGroup', layer: A, parent: 'styles', matchName: 'style:dropShadow', init: [] });
+    const { groups: [op] } = await h.run({ type: 'addPropertyGroup', layer: A, parent: 'contents', matchName: 'pathop:trim', init: [] });
+    const { groups: [an] } = await h.run({ type: 'addPropertyGroup', layer: T, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] });
+    const { groups: [sw] } = await h.run({ type: 'addPropertyGroup', layer: T, parent: `${an}/selectors`, matchName: 'ADBE Text Wiggly Selector', init: [] });
+    await h.run({ type: 'setProperty', prop: { layer: A, path: `${fx}/radius` }, value: scalar(33) });
+    await h.run({ type: 'setProperty', prop: { layer: A, path: `${fx}/quality` }, value: { kind: 'choice', value: 'Low (4 octaves)' } });
+    await h.run({ type: 'setProperty', prop: { layer: A, path: 'styles/dropShadow/distance' }, value: scalar(12) });
+    await h.run({ type: 'setProperty', prop: { layer: A, path: `${op}/end` }, value: scalar(70) });
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: { layer: A, path: `${fx}/radius` }, time: 0, value: scalar(10), spatialIn: [], spatialOut: [] },
+      { prop: { layer: A, path: `${fx}/radius` }, time: sec(1), value: scalar(80), spatialIn: [], spatialOut: [] },
+      { prop: { layer: A, path: 'styles/dropShadow/distance' }, time: 0, value: scalar(4), spatialIn: [], spatialOut: [] },
+      { prop: { layer: A, path: `${op}/end` }, time: sec(1), value: scalar(20), spatialIn: [], spatialOut: [] },
+      { prop: { layer: T, path: `${an}/props/opacity` }, time: 0, value: scalar(0), spatialIn: [], spatialOut: [] },
+      { prop: { layer: T, path: `${sw}/maxAmount` }, time: sec(1), value: scalar(60), spatialIn: [], spatialOut: [] },
+    ] });
+    await h.run({ type: 'setExpression', prop: { layer: A, path: `${fx}/exposure` }, source: 'time * 2', enabled: true }).catch(() => undefined);
+    const { groups: [fx2] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: A, path: fx! }] });
+    await h.run({ type: 'copyPropertyGroups', groups: [{ layer: A, path: fx! }, { layer: A, path: 'styles/dropShadow' }, { layer: A, path: op! }], toLayers: [B] });
+    const { groups: [an2] } = await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: T, path: an! }] });
+    await h.run({ type: 'movePropertyGroup', group: { layer: T, path: an2! }, toIndex: 0 });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: A, path: fx2! }, { layer: A, path: op! }, { layer: A, path: 'styles/dropShadow' }] });
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: T, path: an! }] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+  // @@family:properties
+  ...((): Record<string, Session> => {
+    const P = (layer: string, path: string) => ({ layer, path });
+    const doc = (text: string) => ({ kind: 'textDocument' as const, value: { text, runs: [], paragraphs: [], orientation: 'horizontal' as const, kerning: 'metrics' } });
+    const square = (s: number) => ({ kind: 'path' as const, value: { vertices: [0, 0, s, 0, s, s, 0, s], inTangents: [], outTangents: [], closed: true, featherPoints: [] } });
+    const ignore = (): undefined => undefined;
+    /**
+     * Every property of a layer: read the tree, write a new value to each
+     * (static), then — keyed — two keys on every animatable numeric one, a
+     * refused un-timed write, a timed write between them, and reads of the
+     * evaluated values and the keys.
+     */
+    const sweep = async (h: Harness, layer: string, keyed: boolean, k = 0): Promise<void> => {
+      const tree = await h.query({ type: 'getPropertyTree', layer, path: '', depth: 0 });
+      type N = (typeof tree.nodes)[number];
+      type V = NonNullable<N['value']>;
+      const bump = (n: N, j: number): V | undefined => {
+        const v = n.value;
+        if (!v) return undefined;
+        const clamp = (x: number): number => Math.min(n.max ?? Infinity, Math.max(n.min ?? -Infinity, x));
+        switch (v.kind) {
+          case 'scalar': return { kind: 'scalar', value: n.min !== undefined && n.max !== undefined ? n.min + (n.max - n.min) * (0.3 + 0.2 * j) : clamp(v.value + 7 * (j + 1)) };
+          case 'vec2': return { kind: 'vec2', value: { x: v.value.x + 11 * (j + 1), y: v.value.y - 5 * (j + 1) } };
+          case 'vec3': return { kind: 'vec3', value: { x: v.value.x + 11 * (j + 1), y: v.value.y - 5 * (j + 1), z: v.value.z + 13 * (j + 1) } };
+          case 'color': return { kind: 'color', value: { r: 0.25 + 0.5 * j, g: 0.5, b: 0.75 - 0.5 * j, a: 1 } };
+          case 'bool': return { kind: 'bool', value: !v.value };
+          case 'choice': return n.choices.length > 0 ? { kind: 'choice', value: n.choices[(n.choices.indexOf(v.value) + 1 + j) % n.choices.length]! } : v;
+          case 'textDocument': return doc(`Text ${j}`);
+          case 'path': return square(50 + 25 * j);
+          default: return v;
+        }
+      };
+      const props = tree.nodes.filter((n) => n.kind === 'property');
+      for (const n of props) {
+        const v = bump(n, k);
+        if (v) await h.run({ type: 'setProperty', prop: P(layer, n.path), value: v }).catch(ignore);
+      }
+      if (keyed) {
+        const numeric = props.filter((n) => n.animatable && ['scalar', 'vec2', 'vec3', 'color', 'path', 'textDocument'].includes(n.valueType));
+        for (const n of numeric) {
+          const a = bump(n, 0);
+          const b = bump(n, 1);
+          if (!a || !b) continue;
+          await h.run({ type: 'addKeyframes', keys: [
+            { prop: P(layer, n.path), time: 0, value: a, spatialIn: [], spatialOut: [] },
+            { prop: P(layer, n.path), time: sec(1), value: b, spatialIn: [], spatialOut: [] },
+          ] }).catch(ignore);
+          await h.run({ type: 'setProperty', prop: P(layer, n.path), value: a }).catch(ignore);
+          await h.run({ type: 'setProperty', prop: P(layer, n.path), value: b, time: sec(0.5) }).catch(ignore);
+        }
+      }
+      const paths = props.map((n) => P(layer, n.path));
+      await h.query({ type: 'getPropertyValues', props: paths, time: sec(0.25), evaluated: true }).catch(ignore);
+      await h.query({ type: 'getPropertyValues', props: paths, time: sec(0.75), evaluated: false }).catch(ignore);
+      await h.query({ type: 'getKeyframes', props: paths }).catch(ignore);
+      await h.query({ type: 'getPropertyTree', layer, path: '', depth: 0 }).catch(ignore);
+    };
+    const kinds = ['null', 'solid', 'shape', 'rectangle', 'ellipse', 'polygon', 'path', 'text', 'camera', 'light', 'group', 'particle', 'model3d', 'adjustment'] as const;
+
+    return {
+      'properties: every property of every layer kind, static then keyed': async (h) => {
+        const comp = 'comp_root';
+        const ids: string[] = [];
+        for (const kind of kinds) ids.push((await h.run({ type: 'createLayer', comp, kind, name: `K ${kind}`, init: [] })).layer);
+        await h.run({ type: 'setLayerSwitches', layers: [ids[1]!, ids[2]!, ids[7]!], patch: { threeD: true } });
+        for (const id of ids) await sweep(h, id, false, 0);
+        for (const id of ids) await sweep(h, id, true, 1);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+      },
+
+      'properties: effects of every param type, masks, layer styles, path ops, text animators': async (h) => {
+        const comp = 'comp_root';
+        const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+        const { layer: s } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'S', init: [] });
+        const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+        for (const effect of ['glow', 'satin', 'set-matte', 'spotlight', 'arithmetic', 'audio-spectrum', 'curves', 'drop-shadow']) {
+          await h.run({ type: 'addEffect', layers: [a], effect, params: [] }).catch(ignore);
+        }
+        await h.run({ type: 'addMask', layer: a, mode: 'add', inverted: false, path: square(100).value }).catch(ignore);
+        await h.run({ type: 'addMask', layer: a, mode: 'subtract', inverted: true, path: square(40).value }).catch(ignore);
+        for (const style of ['dropShadow', 'stroke', 'colorOverlay', 'bevel', 'outerGlow']) {
+          await h.run({ type: 'addPropertyGroup', layer: s, parent: 'styles', matchName: `style:${style}`, init: [] }).catch(ignore);
+        }
+        for (const op of ['trim', 'zigzag', 'roundCorners', 'repeater', 'offset']) {
+          await h.run({ type: 'addPropertyGroup', layer: s, parent: 'contents', matchName: `pathop:${op}`, init: [] }).catch(ignore);
+        }
+        const an = await h.run({ type: 'addPropertyGroup', layer: t, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] }).catch(ignore);
+        if (an) await h.run({ type: 'addPropertyGroup', layer: t, parent: `${an.groups[0]!}/selectors`, matchName: 'ADBE Text Wiggly Selector', init: [] }).catch(ignore);
+        for (const id of [a, s, t]) await sweep(h, id, false, 0);
+        for (const id of [a, s, t]) await sweep(h, id, true, 1);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+      },
+
+      'properties: footage and precomp layers — video, image, audio levels and pan, time remap': async (h) => {
+        const comp = 'comp_root';
+        const { items: [clip, still, sound] } = await h.run({ type: 'importFiles', files: [
+          { path: 'C:/m/clip.mp4', asSequence: false, createComposition: false },
+          { path: 'C:/m/still.png', asSequence: false, createComposition: false },
+          { path: 'C:/m/sound.wav', asSequence: false, createComposition: false },
+        ] });
+        const { item: inner } = await h.run({ type: 'createComposition', settings: { name: 'Inner', width: 640, height: 480 }, fromItems: [] });
+        const ids: string[] = [];
+        ids.push((await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, init: [] })).layer);
+        ids.push((await h.run({ type: 'createLayer', comp, kind: 'image', source: still!, init: [] })).layer);
+        ids.push((await h.run({ type: 'createLayer', comp, kind: 'audio', source: sound!, init: [] })).layer);
+        ids.push((await h.run({ type: 'createLayer', comp, kind: 'precomp', source: inner, init: [] })).layer);
+        for (const id of ids) await sweep(h, id, false, 0);
+        for (const id of ids) await sweep(h, id, true, 1);
+        await h.run({ type: 'setProperty', prop: P(ids[2]!, 'audio/levels'), value: v2(-6, 3), time: sec(2) }).catch(ignore);
+        await h.run({ type: 'setExpression', prop: P(ids[2]!, 'audio/levels'), source: 'value - [time, time]', enabled: true }).catch(ignore);
+        await h.run({ type: 'setTimeRemap', layer: ids[0]!, enabled: true }).catch(ignore);
+        await sweep(h, ids[0]!, true, 0);
+      },
+
+      'properties: text animators with every selector kind, 2D and 3D, keyed and expressed': async (h) => {
+        const comp = 'comp_root';
+        const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+        const { layer: t3 } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T3', init: [] });
+        await h.run({ type: 'setLayerSwitches', layers: [t3], patch: { threeD: true } });
+        for (const layer of [t, t3]) {
+          const a1 = await h.run({ type: 'addPropertyGroup', layer, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] }).catch(ignore);
+          const a2 = await h.run({ type: 'addPropertyGroup', layer, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [], name: 'Second' }).catch(ignore);
+          if (a1) await h.run({ type: 'addPropertyGroup', layer, parent: `${a1.groups[0]!}/selectors`, matchName: 'ADBE Text Expressible Selector', init: [] }).catch(ignore);
+          if (a2) await h.run({ type: 'addPropertyGroup', layer, parent: `${a2.groups[0]!}/selectors`, matchName: 'ADBE Text Wiggly Selector', init: [] }).catch(ignore);
+          if (a2) await h.run({ type: 'addPropertyGroup', layer, parent: `${a2.groups[0]!}/selectors`, matchName: 'ADBE Text Selector', init: [] }).catch(ignore);
+        }
+        for (const id of [t, t3]) await sweep(h, id, false, 0);
+        for (const id of [t, t3]) await sweep(h, id, true, 1);
+        const tree = await h.query({ type: 'getPropertyTree', layer: t, path: 'text', depth: 0 });
+        const animProps = tree.nodes.filter((n) => n.kind === 'property' && n.path.startsWith('text/animators/') && n.valueType === 'scalar').map((n) => n.path);
+        for (const [i, path] of animProps.slice(0, 6).entries()) await h.run({ type: 'setExpression', prop: P(t, path), source: `time * ${i + 1}`, enabled: true }).catch(ignore);
+        await h.query({ type: 'getPropertyValues', props: animProps.map((path) => P(t, path)), time: sec(0.4), evaluated: true });
+        if (animProps[0]) await h.run({ type: 'convertExpressionToKeyframes', prop: P(t, animProps[0]), range: { start: 0, duration: sec(0.3) }, step: 0 }).catch(ignore);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+      },
+
+      'properties: every shape operator and layer style, static then keyed': async (h) => {
+        const comp = 'comp_root';
+        const { layer: s } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'S', init: [] });
+        const { layer: x } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'X', init: [] });
+        for (const op of ['zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater', 'wiggleTransform', 'none', 'mystery']) {
+          await h.run({ type: 'addPropertyGroup', layer: s, parent: 'contents', matchName: `pathop:${op}`, init: [] }).catch(ignore);
+        }
+        for (const style of ['glass', 'dropShadow', 'outerGlow', 'innerShadow', 'innerGlow', 'satin', 'bevel', 'colorOverlay', 'gradientOverlay', 'stroke']) {
+          await h.run({ type: 'addPropertyGroup', layer: x, parent: 'styles', matchName: `style:${style}`, init: [] }).catch(ignore);
+        }
+        for (const id of [s, x]) await sweep(h, id, false, 0);
+        for (const id of [s, x]) await sweep(h, id, true, 1);
+      },
+
+      'properties: set, reset, animate, separate, batches, gestures and every refusal': async (h) => {
+        const comp = 'comp_root';
+        const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+        const { layer: n } = await h.run({ type: 'createLayer', comp, kind: 'null', name: 'N', init: [] });
+        const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+        const { layer: m } = await h.run({ type: 'createLayer', comp, kind: 'model3d', name: 'M', init: [] });
+        // Refusals, in the TS engine's check order.
+        await h.run({ type: 'setProperty', prop: P('nope', 'transform/position'), value: v2(1, 2) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/nope'), value: v2(1, 2) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/position'), value: scalar(1) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: v2(1, 2) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: { kind: 'color', value: { r: 1, g: 0, b: 0, a: 1 } } }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: { kind: 'string', value: 'x' } }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: { kind: 'bool', value: true } }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: { kind: 'int', value: 40 } }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/position'), value: v3(1, 2, 3) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/position'), value: v2(5, 6) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(t, 'text/sourceText'), value: scalar(1) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(t, 'text/sourceText'), value: { kind: 'string', value: 'Plain' } }).catch(ignore);
+        await h.run({ type: 'setAnimated', prop: P(t, 'text/fontSize'), animated: true, time: 0 });
+        await h.run({ type: 'setAnimated', prop: P(t, 'text/fontSize'), animated: true, time: sec(1) });
+        // Static writes of each kind, then reset.
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/scale'), value: v2(250, 50) });
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/rotation'), value: scalar(-720.5) });
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/orientation'), value: v3(10, 20, 30) });
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/xRotation'), value: scalar(45) });
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/scale'), value: v3(10, 20, 30) });
+        await h.run({ type: 'resetProperty', prop: P(a, 'transform/scale') }).catch(ignore);
+        await h.run({ type: 'resetProperty', prop: P(a, 'transform/rotation') }).catch(ignore);
+        await h.run({ type: 'resetProperty', prop: P(m, 'transform/orientation') }).catch(ignore);
+        await h.run({ type: 'resetProperty', prop: P(t, 'text/sourceText') }).catch(ignore);
+        await h.run({ type: 'resetProperty', prop: P(a, 'transform/nope') }).catch(ignore);
+        // Animate / stop animating (value kept at the stop time), animated writes need a time.
+        await h.run({ type: 'setAnimated', prop: P(a, 'transform/position'), animated: true, time: sec(0.5) });
+        await h.run({ type: 'setAnimated', prop: P(a, 'transform/position'), animated: true, time: sec(1) });
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/position'), value: v2(1, 2) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/position'), value: v2(700, 20), time: sec(2) });
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/position'), value: v2(710, 30), time: sec(2) });
+        await h.run({ type: 'resetProperty', prop: P(a, 'transform/position'), time: sec(1) }).catch(ignore);
+        await h.run({ type: 'resetProperty', prop: P(a, 'transform/position') }).catch(ignore);
+        await h.run({ type: 'setAnimated', prop: P(a, 'transform/position'), animated: false, time: sec(1.25) });
+        await h.run({ type: 'setAnimated', prop: P(a, 'transform/position'), animated: false, time: sec(1.25) });
+        await h.run({ type: 'setAnimated', prop: P(t, 'text/sourceText'), animated: true, time: 0 });
+        await h.run({ type: 'setProperty', prop: P(t, 'text/sourceText'), value: doc('Later'), time: sec(1) });
+        await h.run({ type: 'setProperty', prop: P(t, 'text/sourceText'), value: doc('Now') }).catch(ignore);
+        await h.run({ type: 'setAnimated', prop: P(t, 'text/sourceText'), animated: false, time: sec(1.5) });
+        await h.run({ type: 'setAnimated', prop: P(a, 'transform/opacity'), animated: true, time: 0 });
+        await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: scalar(10), time: sec(1) });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+        // Separate dimensions: separated position, its combined row, then merge.
+        await h.run({ type: 'setDimensionsSeparated', layer: n, path: 'transform/scale', separated: true }).catch(ignore);
+        await h.run({ type: 'setDimensionsSeparated', layer: 'nope', path: 'transform/position', separated: true }).catch(ignore);
+        await h.run({ type: 'addKeyframes', keys: [{ prop: P(n, 'transform/position'), time: 0, value: v2(0, 0), spatialIn: [], spatialOut: [] }, { prop: P(n, 'transform/position'), time: sec(2), value: v2(200, 100), spatialIn: [], spatialOut: [] }] });
+        await h.run({ type: 'setDimensionsSeparated', layer: n, path: 'transform/position', separated: true });
+        await h.query({ type: 'getPropertyTree', layer: n, path: 'transform', depth: 0 });
+        await h.run({ type: 'setProperty', prop: P(n, 'transform/position'), value: v2(3, 4) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(n, 'transform/position/x'), value: scalar(33), time: sec(1) });
+        await h.run({ type: 'setProperty', prop: P(n, 'transform/position/y'), value: scalar(44), time: sec(0.5) });
+        await h.run({ type: 'addKeyframes', keys: [{ prop: P(n, 'transform/position'), time: sec(3), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        await h.query({ type: 'getKeyframes', props: [P(n, 'transform/position/x'), P(n, 'transform/position/y'), P(n, 'transform/position')] }).catch(ignore);
+        await h.run({ type: 'setDimensionsSeparated', layer: n, path: 'transform/position', separated: false });
+        await h.query({ type: 'getKeyframes', props: [P(n, 'transform/position')] });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'setDimensionsSeparated', layer: m, path: 'transform/position', separated: true });
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/position/z'), value: scalar(-50) });
+        await h.run({ type: 'setDimensionsSeparated', layer: m, path: 'transform/position', separated: false });
+        // setProperties: a batch of writes, one entry; empty refused; any failure refuses the whole.
+        await h.run({ type: 'setProperties', writes: [] }).catch(ignore);
+        await h.run({ type: 'setProperties', writes: [{ prop: P(a, 'transform/rotation'), value: scalar(5) }, { prop: P(a, 'transform/rotation'), value: scalar(6) }, { prop: P(n, 'transform/scale'), value: v2(50, 60) }] });
+        await h.run({ type: 'setProperties', writes: [{ prop: P(a, 'transform/rotation'), value: scalar(7) }, { prop: P(a, 'transform/opacity'), value: scalar(8) }] }).catch(ignore);
+        await h.run({ type: 'setProperties', writes: [{ prop: P(a, 'transform/opacity'), value: scalar(20), time: sec(1) }, { prop: P(a, 'transform/opacity'), value: scalar(30), time: sec(1) }] });
+        // A gesture of animated writes, and a cancelled one.
+        const { gesture } = await h.run({ type: 'beginGesture', label: 'Scrub Opacity' });
+        for (let i = 0; i < 8; i++) await h.run({ type: 'setProperty', prop: P(a, 'transform/opacity'), value: scalar(10 * i), time: sec(0.5) });
+        await h.run({ type: 'endGesture', gesture, commit: true });
+        const g2 = (await h.run({ type: 'beginGesture', label: 'Esc' })).gesture;
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/xRotation'), value: scalar(90) });
+        await h.run({ type: 'setProperty', prop: P(m, 'transform/xRotation'), value: scalar(91) });
+        await h.run({ type: 'endGesture', gesture: g2, commit: false });
+        await h.batch('Mixed', [
+          { type: 'setProperty', prop: P(n, 'transform/rotation'), value: scalar(12) },
+          { type: 'setAnimated', prop: P(n, 'transform/rotation'), animated: true, time: sec(1) },
+          { type: 'resetProperty', prop: P(m, 'transform/scale') },
+        ]);
+        await h.batch('Refused', [
+          { type: 'setProperty', prop: P(n, 'transform/rotation'), value: scalar(99) },
+          { type: 'setProperty', prop: P(n, 'transform/nope'), value: scalar(99) },
+        ]).catch(ignore);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+      },
+
+      'keyframes: add, update, move, scale, reverse, delete, paste — easing, bezier, spatial, roving, labels': async (h) => {
+        const comp = 'comp_root';
+        const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+        const { layer: b } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'B', init: [] });
+        const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+        const { layer: l } = await h.run({ type: 'createLayer', comp, kind: 'light', name: 'L', init: [] });
+        const masks: string[] = [];
+        const pos = P(a, 'transform/position');
+        // Refusals.
+        await h.run({ type: 'addKeyframes', keys: [] }).catch(ignore);
+        await h.run({ type: 'addKeyframes', keys: [{ prop: P(a, 'transform/nope'), time: 0, spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        await h.run({ type: 'addKeyframes', keys: [{ prop: pos, time: 0, value: scalar(3), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        if (masks[0]) await h.run({ type: 'addKeyframes', keys: [{ prop: P(a, masks[0].replace(/path$/, 'inverted')), time: 0, spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        // Keys with every field: easing kinds, bezier, roving, spatial interp + tangents.
+        const easings = ['linear', 'hold', 'bezier', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'autoBezier', 'continuousBezier'] as const;
+        const { ids } = await h.run({ type: 'addKeyframes', keys: easings.map((easing, i) => ({
+          prop: pos, time: sec(i * 0.25), value: v2(100 + 40 * i, 200 + 15 * (i % 3)), easing,
+          ...(easing === 'bezier' ? { bezier: { x1: 0.2, y1: 0, x2: 0.3, y2: 1 } } : {}),
+          ...(i === 3 ? { roving: true } : {}),
+          ...(i === 4 ? { spatialInterp: 'bezier' as const } : {}),
+          spatialIn: i === 2 ? [5, -5] : [], spatialOut: i === 2 ? [-5, 5] : [],
+        })) });
+        // Absent value = the evaluated value there; an existing time keeps its id.
+        await h.run({ type: 'addKeyframes', keys: [{ prop: pos, time: sec(0.1), spatialIn: [], spatialOut: [] }, { prop: pos, time: sec(0.25), spatialIn: [], spatialOut: [] }, { prop: P(a, 'transform/opacity'), time: sec(1), spatialIn: [], spatialOut: [] }, { prop: P(a, 'transform/scale'), time: sec(2), value: v2(50, 150), spatialIn: [], spatialOut: [] }] });
+        await h.run({ type: 'addKeyframes', keys: [{ prop: P(t, 'text/sourceText'), time: 0, value: doc('One'), spatialIn: [], spatialOut: [] }, { prop: P(t, 'text/sourceText'), time: sec(1), spatialIn: [], spatialOut: [] }, { prop: P(t, 'text/sourceText'), time: sec(2), value: { kind: 'string', value: 'Three' }, easing: 'hold', spatialIn: [], spatialOut: [] }] });
+        await h.run({ type: 'addKeyframes', keys: [{ prop: P(l, 'transform/orientation'), time: 0, value: v3(0, 90, 0), spatialIn: [], spatialOut: [] }, { prop: P(l, 'light/intensity'), time: sec(1), value: scalar(250), easing: 'easeOut', spatialIn: [], spatialOut: [] }, { prop: P(l, 'transform/scale'), time: sec(1), spatialIn: [], spatialOut: [] }] });
+        const maskIds: string[] = [];
+        for (const mp of masks) {
+          const r = await h.run({ type: 'addKeyframes', keys: [{ prop: P(a, mp), time: 0, spatialIn: [], spatialOut: [] }, { prop: P(a, mp), time: sec(1), value: square(180), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+          if (r) maskIds.push(...r.ids);
+        }
+        const all = async () => (await h.query({ type: 'getKeyframes', props: [pos, P(a, 'transform/opacity'), P(a, 'transform/scale'), P(t, 'text/sourceText'), P(l, 'transform/orientation'), P(l, 'light/intensity'), ...masks.map((mp) => P(a, mp))] })).sets;
+        await all();
+        // updateKeyframes: every field, clears, retime by time, refusals.
+        await h.run({ type: 'updateKeyframes', patches: [] }).catch(ignore);
+        await h.run({ type: 'updateKeyframes', patches: [{ id: 'k999999', spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        await h.run({ type: 'updateKeyframes', patches: [{ id: ids[0]!, value: scalar(1), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        await h.run({ type: 'updateKeyframes', patches: [
+          { id: ids[0]!, value: v2(1, 2), easing: 'easeInOut', label: 3, spatialIn: [], spatialOut: [] },
+          { id: ids[1]!, bezier: { x1: 0.1, y1: 0.2, x2: 0.8, y2: 0.9 }, continuous: true, spatialIn: [1, 2], spatialOut: [3, 4] },
+          { id: ids[2]!, clearBezier: true, clearSpatial: true, roving: true, spatialInterp: 'linear', spatialIn: [], spatialOut: [] },
+          { id: ids[3]!, roving: false, label: 0, spatialInterp: 'legacy', spatialIn: [], spatialOut: [] },
+          { id: ids[4]!, time: sec(3.5), easing: 'hold', spatialIn: [], spatialOut: [] },
+          { id: ids[5]!, time: sec(0), spatialIn: [], spatialOut: [] },
+        ] });
+        if (maskIds[0]) await h.run({ type: 'updateKeyframes', patches: [{ id: maskIds[0], value: square(20), easing: 'easeIn', label: 2, spatialIn: [], spatialOut: [] }, { id: maskIds[1]!, time: sec(1.5), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        const ks = await all();
+        const textIds = ks[3]!.keyframes.map((k) => k.id);
+        await h.run({ type: 'updateKeyframes', patches: [{ id: textIds[1]!, value: doc('Two!'), easing: 'linear', spatialIn: [], spatialOut: [] }, { id: textIds[0]!, value: scalar(4), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        await h.run({ type: 'updateKeyframes', patches: [{ id: textIds[1]!, value: doc('Two!'), label: 5, spatialIn: [], spatialOut: [] }] });
+        // move / scale / reverse across properties and layers.
+        const now = await all();
+        const posIds = now[0]!.keyframes.map((k) => k.id);
+        await h.run({ type: 'moveKeyframes', ids: [], delta: sec(1) });
+        await h.run({ type: 'moveKeyframes', ids: ['nope'], delta: sec(1) }).catch(ignore);
+        await h.run({ type: 'moveKeyframes', ids: [posIds[1]!, posIds[2]!, posIds[2]!, textIds[0]!], delta: sec(0.3) });
+        await h.run({ type: 'moveKeyframes', ids: [posIds[3]!], delta: -sec(0.75) });
+        await h.run({ type: 'moveKeyframes', ids: [posIds[0]!], delta: sec(0.25) });
+        if (maskIds[1]) await h.run({ type: 'moveKeyframes', ids: [maskIds[1], maskIds[3] ?? maskIds[1]], delta: sec(0.5) }).catch(ignore);
+        await h.run({ type: 'scaleKeyframes', ids: posIds.slice(0, 5), pivot: sec(1), factor: 0 }).catch(ignore);
+        await h.run({ type: 'scaleKeyframes', ids: posIds.slice(0, 5), pivot: sec(1), factor: -2 }).catch(ignore);
+        await h.run({ type: 'scaleKeyframes', ids: posIds.slice(0, 5), pivot: sec(1), factor: 1.7 });
+        await h.run({ type: 'scaleKeyframes', ids: [...posIds.slice(2), ...textIds], pivot: sec(0.1), factor: 0.37 });
+        await h.run({ type: 'reverseKeyframes', ids: posIds });
+        await h.run({ type: 'reverseKeyframes', ids: [...textIds, ...maskIds] }).catch(ignore);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+        const after = await all();
+        // paste onto another layer's property, onto itself (existing times keep ids), onto the wrong type.
+        await h.run({ type: 'pasteKeyframes', prop: P(b, 'transform/position'), time: sec(1), keys: after[0]!.keyframes });
+        await h.run({ type: 'pasteKeyframes', prop: P(b, 'transform/position'), time: sec(1), keys: after[0]!.keyframes.slice(0, 3) });
+        await h.run({ type: 'pasteKeyframes', prop: P(b, 'transform/opacity'), time: 0, keys: after[0]!.keyframes }).catch(ignore);
+        await h.run({ type: 'pasteKeyframes', prop: P(b, 'transform/opacity'), time: 0, keys: [] }).catch(ignore);
+        await h.run({ type: 'pasteKeyframes', prop: P(b, 'transform/opacity'), time: sec(0.5), keys: after[1]!.keyframes });
+        await h.run({ type: 'pasteKeyframes', prop: P(b, 'transform/scale'), time: sec(0.5), keys: after[2]!.keyframes });
+        await h.run({ type: 'pasteKeyframes', prop: P(t, 'text/sourceText'), time: sec(4), keys: after[3]!.keyframes });
+        if (masks[1] && after[6]) await h.run({ type: 'pasteKeyframes', prop: P(a, masks[1]), time: sec(2), keys: after[6].keyframes }).catch(ignore);
+        // delete: partial, a whole property (the static value stays at the last key), refusals.
+        await h.run({ type: 'deleteKeyframes', ids: [] }).catch(ignore);
+        await h.run({ type: 'deleteKeyframes', ids: ['k424242'] }).catch(ignore);
+        const fin = await all();
+        await h.run({ type: 'deleteKeyframes', ids: [fin[0]!.keyframes[1]!.id, fin[0]!.keyframes[1]!.id, fin[4]!.keyframes[0]!.id] });
+        await h.run({ type: 'deleteKeyframes', ids: fin[2]!.keyframes.map((k) => k.id) });
+        await h.run({ type: 'deleteKeyframes', ids: fin[3]!.keyframes.map((k) => k.id) });
+        await h.run({ type: 'deleteKeyframes', ids: fin[5]!.keyframes.map((k) => k.id) });
+        if (fin[6]) await h.run({ type: 'deleteKeyframes', ids: fin[6].keyframes.map((k) => k.id) }).catch(ignore);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+        await all();
+        await h.query({ type: 'getKeyframes', props: [P(b, 'transform/position'), P(b, 'transform/opacity'), P(b, 'transform/scale')], range: { start: sec(0.5), duration: sec(1) } });
+      },
+
+      'properties and keyframes on masks: path, mode, inverted, feather, opacity, expansion, shape keys': async (h) => {
+        const comp = 'comp_root';
+        const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+        const { layer: b } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'B', init: [] });
+        await h.run({ type: 'addMask', layer: a, mode: 'add', inverted: false, path: square(100).value });
+        await h.run({ type: 'addMask', layer: a, mode: 'add', inverted: false, path: square(60).value });
+        await h.run({ type: 'addMask', layer: b, mode: 'add', inverted: false, path: square(80).value });
+        const masks = (await h.query({ type: 'getPropertyTree', layer: a, path: '', depth: 0 })).nodes.filter((x) => x.path.startsWith('masks/') && x.path.endsWith('/path')).map((x) => x.path);
+        const bMask = (await h.query({ type: 'getPropertyTree', layer: b, path: '', depth: 0 })).nodes.find((x) => x.path.startsWith('masks/') && x.path.endsWith('/path'))!.path;
+        const [m0, m1] = [masks[0]!, masks[1]!];
+        const sib = (p: string, k: string): string => p.replace(/path$/, k);
+        await h.run({ type: 'setProperty', prop: P(a, m0), value: scalar(1) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'mode')), value: { kind: 'choice', value: 'bogus' } }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'mode')), value: scalar(2) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'mode')), value: { kind: 'choice', value: 'subtract' } });
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'inverted')), value: { kind: 'bool', value: true } });
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'feather')), value: scalar(12) });
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'opacity')), value: scalar(55) });
+        await h.run({ type: 'setProperty', prop: P(a, sib(m1, 'expansion')), value: scalar(-4) });
+        await h.run({ type: 'setAnimated', prop: P(a, sib(m0, 'mode')), animated: true, time: 0 }).catch(ignore);
+        await h.run({ type: 'setAnimated', prop: P(a, m0), animated: true, time: 0 });
+        await h.run({ type: 'setProperty', prop: P(a, m0), value: square(300) }).catch(ignore);
+        await h.run({ type: 'setProperty', prop: P(a, m0), value: square(300), time: sec(2) });
+        await h.run({ type: 'setProperty', prop: P(a, m1), value: square(33), time: sec(1) });
+        await h.run({ type: 'setProperty', prop: P(a, sib(m0, 'mode')), value: { kind: 'choice', value: 'intersect' } });
+        await h.run({ type: 'setProperty', prop: P(a, sib(m1, 'inverted')), value: { kind: 'bool', value: true } });
+        const { ids } = await h.run({ type: 'addKeyframes', keys: [{ prop: P(a, m0), time: sec(0.5), spatialIn: [], spatialOut: [] }, { prop: P(a, m1), time: sec(1.5), value: square(180), easing: 'hold', spatialIn: [], spatialOut: [] }, { prop: P(a, sib(m0, 'feather')), time: sec(1), value: scalar(30), spatialIn: [], spatialOut: [] }] });
+        const all = async () => (await h.query({ type: 'getKeyframes', props: [P(a, m0), P(a, m1), P(a, sib(m0, 'feather')), P(b, bMask)] })).sets;
+        const k0 = await all();
+        await h.run({ type: 'updateKeyframes', patches: [{ id: ids[0]!, value: square(20), easing: 'easeIn', label: 2, spatialIn: [], spatialOut: [] }, { id: ids[1]!, time: sec(2.5), bezier: { x1: 0, y1: 0, x2: 1, y2: 1 }, spatialIn: [], spatialOut: [] }] });
+        await h.run({ type: 'updateKeyframes', patches: [{ id: ids[0]!, value: v2(1, 2), spatialIn: [], spatialOut: [] }] }).catch(ignore);
+        await all();
+        await h.run({ type: 'moveKeyframes', ids: [k0[0]!.keyframes[0]!.id, ids[1]!], delta: sec(0.5) }).catch(ignore);
+        await h.run({ type: 'moveKeyframes', ids: [k0[0]!.keyframes[0]!.id], delta: sec(0.5) }).catch(ignore);
+        await h.run({ type: 'scaleKeyframes', ids: k0[0]!.keyframes.map((k) => k.id), pivot: 0, factor: 0.5 }).catch(ignore);
+        await h.run({ type: 'reverseKeyframes', ids: [...k0[0]!.keyframes.map((k) => k.id), ...k0[1]!.keyframes.map((k) => k.id)] }).catch(ignore);
+        const k1 = await all();
+        await h.run({ type: 'pasteKeyframes', prop: P(b, bMask), time: sec(1), keys: k1[0]!.keyframes });
+        await h.run({ type: 'pasteKeyframes', prop: P(b, bMask), time: sec(1), keys: k1[2]!.keyframes }).catch(ignore);
+        await h.run({ type: 'pasteKeyframes', prop: P(a, sib(m1, 'inverted')), time: sec(1), keys: k1[0]!.keyframes }).catch(ignore);
+        await h.run({ type: 'setExpression', prop: P(a, m0), source: 'value', enabled: true }).catch(ignore);
+        await h.run({ type: 'setExpression', prop: P(a, sib(m0, 'feather')), source: 'time * 10', enabled: true });
+        await h.query({ type: 'getPropertyValues', props: [P(a, m0), P(a, m1), P(a, sib(m0, 'feather')), P(a, sib(m0, 'mode'))], time: sec(0.75), evaluated: true });
+        await h.run({ type: 'deleteKeyframes', ids: [k1[0]!.keyframes[0]!.id] });
+        await h.run({ type: 'setAnimated', prop: P(a, m0), animated: false, time: sec(1) });
+        await h.run({ type: 'deleteKeyframes', ids: k1[1]!.keyframes.map((k) => k.id) }).catch(ignore);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'deleteKeyframes', ids: k1[1]!.keyframes.map((k) => k.id) }).catch(ignore);
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+        await all();
+      },
+
+      'expressions: set, invalid, enable, link, bake — thisComp, thisLayer, time, wiggle, valueAtTime, ctrl': async (h) => {
+        const comp = 'comp_root';
+        const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+        const { layer: b } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'B', init: [] });
+        const { layer: n } = await h.run({ type: 'createLayer', comp, kind: 'null', name: 'Ctl', init: [] });
+        const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+        await h.run({ type: 'addKeyframes', keys: [
+          { prop: P(b, 'transform/position'), time: 0, value: v2(100, 100), spatialIn: [], spatialOut: [] },
+          { prop: P(b, 'transform/position'), time: sec(2), value: v2(500, 300), easing: 'easeInOut', spatialIn: [], spatialOut: [] },
+          { prop: P(b, 'transform/rotation'), time: 0, value: scalar(0), spatialIn: [], spatialOut: [] },
+          { prop: P(b, 'transform/rotation'), time: sec(1), value: scalar(90), spatialIn: [], spatialOut: [] },
+        ] });
+        const ex = (layer: string, path: string, source: string, enabled = true) => h.run({ type: 'setExpression', prop: P(layer, path), source, enabled }).catch(ignore);
+        await ex(a, 'transform/rotation', 'time * 30');
+        await ex(a, 'transform/position', '[thisComp.width / 2, thisComp.height / 2 + time * 10]');
+        await ex(a, 'transform/opacity', 'wiggle(2, 20)');
+        await ex(a, 'transform/scale', '[thisLayer.width / 10, thisComp.numLayers * 10]');
+        await ex(a, 'transform/anchorPoint', 'thisComp.layer("B").transform.position.valueAtTime(time - 0.5)');
+        await ex(n, 'transform/rotation', 'ctrl("Speed") + thisComp.duration + thisComp.frameDuration');
+        await ex(n, 'transform/position', 'value + [Math.sin(time) * 100, 0]');
+        await ex(n, 'transform/scale', 'thisComp.layer("B").transform.rotation.value');
+        await ex(b, 'transform/opacity', 'thisComp.layer("Missing").transform.opacity');
+        await ex(b, 'transform/scale', 'this is ( not valid');
+        await ex(b, 'transform/anchorPoint', '[1, 2', false);
+        await ex(t, 'transform/rotation', 'linear(time, 0, 1, 0, 360)');
+        await ex(t, 'text/sourceText', '"Frame " + timeToFrames(time)');
+        await ex(t, 'transform/opacity', 'loopOut()');
+        await ex(a, 'transform/nope', 'time');
+        await ex('nope', 'transform/rotation', 'time');
+        const all = [a, b, n, t].flatMap((layer) => ['transform/position', 'transform/rotation', 'transform/scale', 'transform/opacity', 'transform/anchorPoint'].map((path) => P(layer, path)));
+        for (const time of [0, sec(0.25), sec(1), sec(1.5)]) {
+          await h.query({ type: 'getPropertyValues', props: all.filter((p) => p.layer !== n || p.path !== 'transform/opacity'), time, evaluated: true }).catch(ignore);
+          await h.query({ type: 'getPropertyValues', props: all.filter((p) => p.layer !== n || p.path !== 'transform/opacity'), time, evaluated: false }).catch(ignore);
+        }
+        await h.query({ type: 'getPropertyTree', layer: a, path: 'transform', depth: 0 });
+        await h.query({ type: 'getPropertyTree', layer: b, path: 'transform', depth: 0 });
+        // Enable/disable, refusals.
+        await h.run({ type: 'setExpressionEnabled', props: [], enabled: false }).catch(ignore);
+        await h.run({ type: 'setExpressionEnabled', props: [P(n, 'transform/opacity')], enabled: false }).catch(ignore);
+        await h.run({ type: 'setExpressionEnabled', props: [P(b, 'transform/rotation')], enabled: false }).catch(ignore);
+        await h.run({ type: 'setExpressionEnabled', props: [P(a, 'transform/rotation'), P(a, 'transform/position')], enabled: false });
+        await h.run({ type: 'setExpressionEnabled', props: [P(b, 'transform/scale')], enabled: true });
+        await h.run({ type: 'setExpressionEnabled', props: [P(a, 'transform/rotation')], enabled: true });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+        // Link (pick whip) and its refusals.
+        await h.run({ type: 'linkProperty', prop: P(n, 'transform/anchorPoint'), target: P(b, 'transform/position') });
+        await h.run({ type: 'linkProperty', prop: P(n, 'transform/opacity'), target: P(b, 'transform/rotation') }).catch(ignore);
+        await h.run({ type: 'linkProperty', prop: P(t, 'transform/scale'), target: P(b, 'transform/rotation') }).catch(ignore);
+        await h.run({ type: 'linkProperty', prop: P(t, 'text/sourceText'), target: P(b, 'transform/rotation') }).catch(ignore);
+        await h.run({ type: 'linkProperty', prop: P(t, 'transform/rotation'), target: P('nope', 'transform/rotation') }).catch(ignore);
+        await h.run({ type: 'linkProperty', prop: P(t, 'transform/rotation'), target: P(b, 'transform/rotation') });
+        // Bake: ranges, steps, refusals.
+        await h.run({ type: 'convertExpressionToKeyframes', prop: P(b, 'transform/position'), step: 0 }).catch(ignore);
+        await h.run({ type: 'convertExpressionToKeyframes', prop: P(t, 'text/sourceText'), step: 0 }).catch(ignore);
+        await h.run({ type: 'convertExpressionToKeyframes', prop: P(a, 'transform/rotation'), range: { start: sec(5), duration: 0 }, step: 0 }).catch(ignore);
+        await h.run({ type: 'convertExpressionToKeyframes', prop: P(a, 'transform/rotation'), range: { start: 0, duration: sec(1) }, step: sec(0.2) });
+        await h.run({ type: 'convertExpressionToKeyframes', prop: P(a, 'transform/opacity'), range: { start: sec(0.5), duration: sec(0.5) }, step: 0 });
+        await h.run({ type: 'convertExpressionToKeyframes', prop: P(n, 'transform/anchorPoint'), step: sec(1) });
+        await h.run({ type: 'undo' });
+        await h.run({ type: 'redo' });
+        // Remove (blank source) and replace.
+        await ex(n, 'transform/rotation', '   ');
+        await ex(n, 'transform/scale', '[time * 100, 50]');
+        await ex(b, 'transform/rotation', 'value * 2');
+        for (const time of [0, sec(0.5), sec(1)]) await h.query({ type: 'getPropertyValues', props: all.filter((p) => p.layer !== n || p.path !== 'transform/opacity'), time, evaluated: true }).catch(ignore);
+      },
+    };
+  })(),
+};
+
+// ─── The generated corpus (D1b) ──────────────────────────────────────────────
+// Seeded random sessions over EVERY edit command family: each step reads the
+// document back (getDocument with trees, keyframes and markers — itself
+// replayed and compared), then issues a command built from what is really
+// there (valid ids, values of the property's own type, the property's own
+// choices), sometimes inside a gesture or a batch, sometimes undone/redone.
+// Refusals are part of the corpus: both engines must refuse identically.
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class Gen {
+  constructor(private readonly r: () => number) {}
+  int(n: number): number { return Math.floor(this.r() * n); }
+  coin(p = 0.5): boolean { return this.r() < p; }
+  pick<T>(xs: readonly T[]): T | undefined { return xs.length ? xs[this.int(xs.length)] : undefined; }
+  some<T>(xs: readonly T[], max = 3): T[] {
+    const pool = [...xs];
+    const out: T[] = [];
+    const n = 1 + this.int(Math.max(1, Math.min(max, pool.length)));
+    for (let i = 0; i < n && pool.length; i++) out.push(pool.splice(this.int(pool.length), 1)[0]!);
+    return out;
+  }
+  /** A frame-aligned time (30 fps) in [0, maxFrames). */
+  time(maxFrames = 150): number { return sec(this.int(maxFrames) / 30); }
+  /** A frame-aligned signed delta. */
+  delta(maxFrames = 30): number { return sec((this.int(2 * maxFrames + 1) - maxFrames) / 30); }
+  num(lo: number, hi: number, step = 0.5): number { return lo + Math.round((this.r() * (hi - lo)) / step) * step; }
+}
+
+interface Prop { layer: string; info: PropertyInfo }
+interface World {
+  comps: string[];
+  layers: LayerInfo[];
+  props: Prop[];
+  groups: Prop[];
+  keys: Array<{ layer: string; path: string; id: string }>;
+  keySets: KeyframeSet[];
+  markers: Marker[];
+  footage: string[];
+  compItems: string[];
+  folders: string[];
+  items: string[];
+  renderItems: string[];
+}
+
+const GROUP_PATH = /^(effects|masks|contents|styles)\/[^/]+$|^text\/animators\/[^/]+(\/selectors\/[^/]+)?$/;
+
+async function observe(h: Harness): Promise<World> {
+  const doc = await h.query({ type: 'getDocument', includeProperties: true, includeKeyframes: true });
+  const props: Prop[] = [];
+  const groups: Prop[] = [];
+  for (const t of doc.propertyTrees) {
+    for (const n of t.nodes) {
+      if (n.kind === 'property') props.push({ layer: t.layer, info: n });
+      else if (GROUP_PATH.test(n.path)) groups.push({ layer: t.layer, info: n });
+    }
+  }
+  return {
+    props, groups,
+    keys: doc.keyframes.flatMap((s) => s.keyframes.map((k) => ({ layer: s.prop.layer, path: s.prop.path, id: k.id }))),
+    keySets: doc.keyframes,
+    markers: [...doc.comps.flatMap((c) => c.markers), ...doc.layers.flatMap((l) => l.markers)],
+    comps: doc.comps.map((c) => c.id),
+    layers: doc.layers,
+    footage: doc.items.filter((i) => i.kind === 'footage').map((i) => i.id),
+    compItems: doc.items.filter((i) => i.kind === 'composition').map((i) => i.id),
+    folders: doc.items.filter((i) => i.kind === 'folder').map((i) => i.id),
+    items: doc.items.map((i) => i.id),
+    renderItems: doc.renderQueue.map((r) => r.id),
+  };
+}
+
+const EXPRESSIONS_SCALAR = ['time * 30', 'value + 10', 'value * 0.5', 'Math.sin(time * 2) * 20 + value', 'index * 5', 'thisComp.width / 100'];
+const EXPRESSIONS_ANY = ['value', 'valueAtTime(time - 0.5)', 'loopOut()'];
+const GENERATED_SAVE = 'C:/p/generated.motion';
+const FILES = ['C:/g/a.mp4', 'C:/g/b.png', 'C:/g/c.wav', 'C:/g/d.mp4', 'C:/g/e.jpg'];
+const FOOTAGE_KINDS: Partial<Record<string, true>> = { image: true, video: true, audio: true, sequence: true, svg: true };
+const EFFECT_TYPES = EFFECT_DEFS.map((d) => d.type as string);
+const PRESET_NAMES = listPresets().map((p) => p.name);
+const STYLE_KEYS = Object.keys(LAYER_STYLE_LABEL);
+const PATH_OP_TYPES = PATH_OP_CATALOG.map((p) => p.type as string);
+
+function tweak(g: Gen, info: PropertyInfo, w: World): Value | undefined {
+  const v = info.value;
+  if (!v) return undefined;
+  const clamp = (x: number) => Math.min(info.max ?? Infinity, Math.max(info.min ?? -Infinity, x));
+  switch (v.kind) {
+    case 'scalar': return { kind: 'scalar', value: clamp(v.value + g.num(-20, 20)) };
+    case 'int': return { kind: 'int', value: clamp(v.value + 1) };
+    case 'vec2': return { kind: 'vec2', value: { x: v.value.x + g.num(-50, 50), y: v.value.y + g.num(-50, 50) } };
+    case 'vec3': return { kind: 'vec3', value: { x: v.value.x + g.num(-50, 50), y: v.value.y + g.num(-50, 50), z: v.value.z + g.num(-50, 50) } };
+    case 'vec4': return { kind: 'vec4', value: { x: v.value.x + g.num(-5, 5), y: v.value.y + g.num(-5, 5), z: v.value.z + g.num(-5, 5), w: v.value.w + g.num(-5, 5) } };
+    case 'color': return { kind: 'color', value: { r: g.num(0, 1, 0.125), g: g.num(0, 1, 0.125), b: g.num(0, 1, 0.125), a: 1 } };
+    case 'bool': return { kind: 'bool', value: !v.value };
+    case 'choice': return { kind: 'choice', value: g.pick(info.choices) ?? v.value };
+    case 'string': return { kind: 'string', value: `s${g.int(100)}` };
+    case 'textDocument': return { kind: 'textDocument', value: { ...v.value, text: `${v.value.text}${g.int(10)}` } };
+    case 'path': return { kind: 'path', value: { ...v.value, vertices: v.value.vertices.map((x) => x + g.num(-10, 10)) } };
+    case 'layer': return { kind: 'layer', value: g.pick(w.layers.map((l) => l.id)) ?? '' };
+    case 'none': return undefined;
+    default: return v;
+  }
+}
+
+const animatable = (w: World) => w.props.filter((p) => p.info.animatable && p.info.value && p.info.value.kind !== 'none');
+const layersOf = (w: World, comp: string) => w.layers.filter((l) => l.comp === comp);
+const ids = (ls: readonly LayerInfo[]) => ls.map((l) => l.id);
+/** Several layers of ONE composition. */
+function sameComp(g: Gen, w: World, max = 3): string[] {
+  const l = g.pick(w.layers);
+  return l ? g.some(ids(layersOf(w, l.comp)), max) : [];
+}
+const ref = (p: Prop) => ({ layer: p.layer, path: p.info.path });
+const compOf = (w: World, layer: string | undefined) => w.layers.find((l) => l.id === layer)?.comp;
+
+type Built = Command | undefined;
+type Builder = (g: Gen, w: World, h: Harness) => Built | Promise<Built>;
+
+/** One builder per edit command (plus setProjectSettings). */
+const BUILDERS: Record<string, Builder> = {
+  // ── items ──
+  importFiles: (g, w) => ({ type: 'importFiles', files: g.some(FILES, 2).map((path) => ({ path, asSequence: false, createComposition: g.coin(0.15), ...(g.coin(0.2) && w.folders.length ? { folder: g.pick(w.folders)! } : {}) })) }),
+  relinkItem: (g, w) => { const item = g.pick(w.footage); return item ? { type: 'relinkItem', item, path: g.pick(FILES)!.replace('/g/', '/r/'), keepInterpretation: g.coin() } : undefined; },
+  removeItems: (g, w) => (g.coin(0.3) && w.footage.length + w.folders.length ? { type: 'removeItems', items: g.some([...w.footage, ...w.folders], 1), removeUsingLayers: g.coin() } : undefined),
+  renameItem: (g, w) => { const item = g.pick(w.items); return item ? { type: 'renameItem', item, name: `Item ${g.int(50)}` } : undefined; },
+  createFolder: (g, w) => ({ type: 'createFolder', name: `Folder ${g.int(20)}`, ...(g.coin(0.3) && w.folders.length ? { parent: g.pick(w.folders)! } : {}) }),
+  moveItems: (g, w) => ({ type: 'moveItems', items: g.some(w.items, 2), ...(g.coin(0.7) && w.folders.length ? { folder: g.pick(w.folders)! } : {}) }),
+  setInterpretation: (g, w) => {
+    const patches: InterpretationPatch[] = [
+      { alpha: g.pick(AlphaModeValues)! }, { pixelAspect: g.pick([1, 0.9, 2])! }, { loops: g.int(4) + 1 }, { invertAlpha: g.coin() },
+      { conformFrameRate: { num: g.pick([24, 25, 60])!, den: 1 } }, { clearConform: true }, { fieldOrder: g.pick(FieldOrderValues)! }, { startTimecode: g.time() },
+    ];
+    return w.footage.length ? { type: 'setInterpretation', items: g.some(w.footage, 2), patch: g.pick(patches)! } : undefined;
+  },
+  setItemLabel: (g, w) => ({ type: 'setItemLabel', items: g.some(w.items, 2), label: g.int(17) }),
+  removeUnusedItems: (g) => (g.coin(0.2) ? { type: 'removeUnusedItems' } : undefined),
+  setProxy: (g, w) => { const item = g.pick(w.footage); return item ? { type: 'setProxy', item, ...(g.coin(0.7) ? { path: 'C:/g/proxy.mp4' } : {}), enabled: g.coin() } : undefined; },
+  setItemComment: (g, w) => { const item = g.pick(w.items); return item ? { type: 'setItemComment', item, comment: `c${g.int(9)}` } : undefined; },
+  setItemTags: (g, w) => { const item = g.pick(w.items); return item ? { type: 'setItemTags', item, tags: g.some(['a', 'b', 'hero', 'bg'], 2) } : undefined; },
+  // ── compositions ──
+  createComposition: (g, w) => ({
+    type: 'createComposition',
+    settings: {
+      name: `Comp ${g.int(30)}`,
+      ...(g.coin() ? { width: g.pick([640, 1280, 1920])!, height: g.pick([360, 720, 1080])! } : {}),
+      ...(g.coin(0.3) ? { frameRate: { num: g.pick([24, 25, 30, 60])!, den: 1 } } : {}),
+      ...(g.coin(0.3) ? { duration: sec(g.int(8) + 2) } : {}),
+    },
+    fromItems: g.coin(0.2) && w.footage.length ? g.some(w.footage, 1) : [],
+  }),
+  duplicateComposition: (g, w) => ({ type: 'duplicateComposition', comp: g.pick(w.comps)!, deep: g.coin() }),
+  setCompositionSettings: (g, w) => {
+    const patches: CompSettingsPatch[] = [
+      { name: `Renamed ${g.int(9)}` }, { width: g.pick([800, 1280, 1920])! }, { height: g.pick([600, 720, 1080])! },
+      { frameRate: { num: g.pick([24, 25, 30, 60])!, den: 1 } }, { duration: sec(g.int(10) + 2) }, { startTimecode: g.time() },
+      { background: { r: g.num(0, 1, 0.25), g: g.num(0, 1, 0.25), b: g.num(0, 1, 0.25), a: 1 } }, { transparent: g.coin() },
+      { workArea: { start: g.time(60), duration: sec(1 + g.int(3)) } }, { pixelAspect: g.pick([1, 0.9, 1.5])! },
+      { motionBlur: { shutterAngle: g.pick([90, 180, 360])!, shutterPhase: -45, samplesPerFrame: 8, adaptiveSampleLimit: 64 } },
+      { renderer3d: g.pick(Renderer3dValues)! }, { globalLightAngle: g.int(180) }, { dropFrame: g.coin() },
+    ];
+    return { type: 'setCompositionSettings', comp: g.pick(w.comps)!, patch: g.pick(patches)! };
+  },
+  setWorkArea: (g, w) => ({ type: 'setWorkArea', comp: g.pick(w.comps)!, range: { start: g.time(90), duration: sec(1 + g.int(4)) } }),
+  precompose: (g, w) => {
+    const layers = sameComp(g, w, 2);
+    const comp = compOf(w, layers[0]);
+    return comp ? { type: 'precompose', comp, layers, name: g.coin() ? '' : `Pre ${g.int(9)}`, mode: g.pick(PrecomposeModeValues)!, adjustDuration: g.coin() } : undefined;
+  },
+  trimCompToWorkArea: (g, w) => ({ type: 'trimCompToWorkArea', comp: g.pick(w.comps)! }),
+  cropComposition: (g, w) => ({ type: 'cropComposition', comp: g.pick(w.comps)!, region: { x: g.int(200), y: g.int(200), width: 200 + g.int(600), height: 200 + g.int(400) } }),
+  assembleComposition: (g, w) => (w.footage.length ? { type: 'assembleComposition', items: g.some(w.footage, 3), name: `Cut ${g.int(9)}`, overlap: sec(g.int(3) / 4) } : undefined),
+  addRenderItems: (g, w) => ({ type: 'addRenderItems', comps: g.some(w.comps, 2), settings: g.coin() ? {} : { format: 'mp4', quality: g.int(100) } }),
+  setRenderItem: (g, w) => {
+    const item = g.pick(w.renderItems);
+    return item ? { type: 'setRenderItem', item, patch: g.coin() ? { outputPath: 'C:/out/x.mp4' } : { includeAudio: g.coin(), width: 1280 }, ...(g.coin() ? { queued: g.coin() } : {}) } : undefined;
+  },
+  removeRenderItems: (g, w) => (w.renderItems.length ? { type: 'removeRenderItems', items: g.some(w.renderItems, 1) } : undefined),
+  reorderRenderItems: (g, w) => (w.renderItems.length ? { type: 'reorderRenderItems', items: g.some(w.renderItems, 1), toIndex: g.int(w.renderItems.length + 1) } : undefined),
+  setProjectSettings: (g) => {
+    const patches: ProjectSettingsPatch[] = [
+      { bitDepth: g.pick(BitDepthValues)! }, { workingSpace: g.pick(ColorWorkingSpaceValues)! }, { linearBlending: g.coin() },
+      { timeDisplay: g.pick(TimeDisplayValues)! }, { framesStartAt: g.int(2) }, { audioSampleRate: g.pick([44100, 48000])! },
+      { expressionEngine: g.pick(ExpressionEngineValues)! },
+    ];
+    return { type: 'setProjectSettings', patch: g.pick(patches)! };
+  },
+  // ── layers ──
+  createLayer: (g, w) => {
+    if (w.layers.length > 45) return undefined;
+    const comp = g.pick(w.comps)!;
+    const kind = g.pick(LayerKindValues)!;
+    const source = FOOTAGE_KINDS[kind] ? g.pick(w.footage) : kind === 'precomp' ? g.pick(w.compItems.filter((c) => c !== comp)) : undefined;
+    const siblings = layersOf(w, comp);
+    return {
+      type: 'createLayer', comp, kind,
+      ...(g.coin(0.7) ? { name: `${kind} ${g.int(99)}` } : {}),
+      ...(source ? { source } : {}),
+      ...(g.coin(0.15) && siblings.length ? { parent: g.pick(siblings)!.id } : {}),
+      ...(g.coin(0.2) ? { index: g.int(siblings.length + 1) } : {}),
+      ...(g.coin(0.2) ? { inPoint: g.time(30), outPoint: sec(2 + g.int(3)) } : {}),
+      init: g.coin(0.3) ? [{ path: 'transform/opacity', value: { kind: 'scalar', value: g.int(101) } }] : [],
+    };
+  },
+  deleteLayers: (g, w) => (g.coin(0.4) && w.layers.length > 6 ? { type: 'deleteLayers', layers: g.some(ids(w.layers), 1) } : undefined),
+  duplicateLayers: (g, w) => (w.layers.length < 45 ? { type: 'duplicateLayers', layers: sameComp(g, w, 2) } : undefined),
+  reorderLayers: (g, w) => {
+    const layers = sameComp(g, w, 2);
+    const comp = compOf(w, layers[0]);
+    return comp ? { type: 'reorderLayers', comp, layers, toIndex: g.int(layersOf(w, comp).length) } : undefined;
+  },
+  setParent: (g, w) => {
+    const layers = sameComp(g, w, 2);
+    const comp = compOf(w, layers[0]);
+    const parent = comp && g.coin(0.75) ? g.pick(layersOf(w, comp))?.id : undefined;
+    return layers.length ? { type: 'setParent', layers, ...(parent ? { parent } : {}), keepWorldTransform: g.coin() } : undefined;
+  },
+  renameLayer: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'renameLayer', layer: l.id, name: `L${g.int(99)}` } : undefined; },
+  setLayerSwitches: (g, w) => {
+    const patches: LayerSwitchesPatch[] = [
+      { visible: g.coin() }, { solo: g.coin() }, { shy: g.coin() }, { locked: g.coin(0.15) }, { collapse: g.coin() },
+      { quality: g.pick(LayerQualityValues)! }, { effectsEnabled: g.coin() }, { motionBlur: g.coin() },
+      { adjustment: g.coin() }, { threeD: g.coin() }, { guide: g.coin() }, { frameBlend: g.pick(FrameBlendValues)! },
+      { autoOrient: g.pick(AutoOrientValues)! }, { preserveTransparency: g.coin() }, { label: g.int(17) }, { audioEnabled: g.coin() },
+    ];
+    return { type: 'setLayerSwitches', layers: g.some(ids(w.layers), 2), patch: { ...g.pick(patches)!, ...(g.coin(0.3) ? g.pick(patches)! : {}) } };
+  },
+  setBlendMode: (g, w) => ({ type: 'setBlendMode', layers: g.some(ids(w.layers), 2), mode: g.pick(BlendModeValues)! }),
+  setTrackMatte: (g, w) => {
+    const layers = sameComp(g, w, 2);
+    return layers[0] ? { type: 'setTrackMatte', layer: layers[0], matte: { ...(layers[1] && g.coin(0.8) ? { layer: layers[1] } : {}), mode: g.pick(MatteModeValues)! } } : undefined;
+  },
+  replaceLayerSource: (g, w) => {
+    const l = g.pick(w.layers.filter((x) => FOOTAGE_KINDS[x.kind] || x.kind === 'precomp'));
+    const source = g.pick([...w.footage, ...w.compItems]);
+    return l && source ? { type: 'replaceLayerSource', layer: l.id, source, keepSize: g.coin() } : undefined;
+  },
+  groupLayers: (g, w) => ({ type: 'groupLayers', layers: sameComp(g, w, 3), name: `G${g.int(9)}` }),
+  ungroupLayer: (g, w) => { const l = g.pick(w.layers.filter((x) => x.kind === 'group')); return l ? { type: 'ungroupLayer', group: l.id } : undefined; },
+  convertLayer: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'convertLayer', layer: l.id, conversion: g.pick(LayerConversionValues)! } : undefined; },
+  pasteLayers: async (g, w, h) => {
+    const layers = sameComp(g, w, 2);
+    if (!layers.length || w.layers.length > 45) return undefined;
+    const fragment = await h.query({ type: 'copyLayers', layers }).catch(() => undefined);
+    return fragment ? { type: 'pasteLayers', comp: g.pick(w.comps)!, fragment, ...(g.coin() ? { time: g.time(60) } : {}), ...(g.coin(0.3) ? { index: 0 } : {}) } : undefined;
+  },
+  separateLayer: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'separateLayer', layer: l.id } : undefined; },
+  autoTrace: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'autoTrace', layer: l.id, range: { start: 0, duration: sec(1) }, channel: 'alpha', threshold: 50, tolerance: 1 } : undefined; },
+  setLayerComment: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'setLayerComment', layer: l.id, comment: `note ${g.int(9)}` } : undefined; },
+  // ── layer time ──
+  setLayerTiming: (g, w) => ({
+    type: 'setLayerTiming',
+    items: g.some(w.layers, 2).map((l) => {
+      const which = g.int(4);
+      return which === 0 ? { layer: l.id, inPoint: g.time(60) }
+        : which === 1 ? { layer: l.id, outPoint: sec(2) + g.time(90) }
+          : which === 2 ? { layer: l.id, startTime: g.delta(45) }
+            : { layer: l.id, stretch: g.pick([50, 100, 200, -100])! };
+    }),
+  }),
+  moveLayersInTime: (g, w) => ({ type: 'moveLayersInTime', layers: sameComp(g, w, 2), delta: g.delta(), ripple: g.coin(0.3) }),
+  trimLayers: (g, w) => ({ type: 'trimLayers', layers: sameComp(g, w, 2), edge: g.pick(EdgeValues)!, time: g.time(), ripple: g.coin(0.3) }),
+  slipLayers: (g, w) => ({ type: 'slipLayers', layers: sameComp(g, w, 2), delta: g.delta() }),
+  slideLayer: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'slideLayer', layer: l.id, delta: g.delta() } : undefined; },
+  rollEdit: (g, w) => { const ls = sameComp(g, w, 2); return ls.length === 2 ? { type: 'rollEdit', left: ls[0]!, right: ls[1]!, delta: g.delta(10) } : undefined; },
+  splitLayers: (g, w) => (w.layers.length < 45 ? { type: 'splitLayers', layers: sameComp(g, w, 2), time: g.time() } : undefined),
+  rippleDeleteLayers: (g, w) => (g.coin(0.3) && w.layers.length > 6 ? { type: 'rippleDeleteLayers', layers: sameComp(g, w, 1) } : undefined),
+  editWorkArea: (g, w) => { const comp = g.pick(w.comps)!; return { type: 'editWorkArea', comp, edit: g.pick(WorkAreaEditValues)!, layers: g.coin() ? [] : g.some(ids(layersOf(w, comp)), 2) }; },
+  insertGap: (g, w) => ({ type: 'insertGap', comp: g.pick(w.comps)!, time: g.time(), duration: sec(g.int(8) / 4) }),
+  timeReverseLayers: (g, w) => ({ type: 'timeReverseLayers', layers: sameComp(g, w, 2) }),
+  setTimeRemap: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'setTimeRemap', layer: l.id, enabled: g.coin(0.7) } : undefined; },
+  freezeFrame: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'freezeFrame', layer: l.id, ...(g.coin() ? { time: g.time(60) } : {}), lastFrame: g.coin(0.3) } : undefined; },
+  setRetime: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'setRetime', layer: l.id, mode: g.pick(RetimeModeValues)!, ...(g.coin(0.7) ? { speed: g.pick([50, 150, 200, 25])! } : {}) } : undefined; },
+  sequenceLayers: (g, w) => ({ type: 'sequenceLayers', layers: sameComp(g, w, 3), overlap: sec(g.int(3) / 4), crossfade: g.coin(0.3) }),
+  // ── properties ──
+  setProperty: (g, w) => {
+    const p = g.pick(animatable(w));
+    const value = p && tweak(g, p.info, w);
+    return p && value ? { type: 'setProperty', prop: ref(p), value, ...(g.coin(0.4) ? { time: g.time() } : {}) } : undefined;
+  },
+  setProperties: (g, w) => {
+    const writes = g.some(animatable(w), 3).flatMap((p) => {
+      const value = tweak(g, p.info, w);
+      return value ? [{ prop: ref(p), value, ...(g.coin(0.3) ? { time: g.time() } : {}) }] : [];
+    });
+    return writes.length ? { type: 'setProperties', writes } : undefined;
+  },
+  resetProperty: (g, w) => { const p = g.pick(w.props); return p ? { type: 'resetProperty', prop: ref(p), ...(g.coin(0.3) ? { time: g.time() } : {}) } : undefined; },
+  setAnimated: (g, w) => { const p = g.pick(animatable(w)); return p ? { type: 'setAnimated', prop: ref(p), animated: g.coin(0.7), time: g.time() } : undefined; },
+  setDimensionsSeparated: (g, w) => {
+    const l = g.pick(w.layers);
+    return l ? { type: 'setDimensionsSeparated', layer: l.id, path: g.pick(['transform/position', 'transform/scale', 'transform/orientation'])!, separated: g.coin(0.6) } : undefined;
+  },
+  setExpression: (g, w) => {
+    const p = g.pick(animatable(w));
+    if (!p) return undefined;
+    const source = p.info.value?.kind === 'scalar' && g.coin(0.7) ? g.pick(EXPRESSIONS_SCALAR)! : g.pick(EXPRESSIONS_ANY)!;
+    return { type: 'setExpression', prop: ref(p), source: g.coin(0.1) ? '' : source, enabled: g.coin(0.85) };
+  },
+  setExpressionEnabled: (g, w) => ({ type: 'setExpressionEnabled', props: g.some(animatable(w), 2).map(ref), enabled: g.coin() }),
+  convertExpressionToKeyframes: (g, w) => {
+    const p = g.pick(animatable(w));
+    return p ? { type: 'convertExpressionToKeyframes', prop: ref(p), ...(g.coin() ? { range: { start: 0, duration: sec(0.5) } } : {}), step: g.coin() ? 0 : sec(2 / 30) } : undefined;
+  },
+  linkProperty: (g, w) => {
+    const p = g.pick(animatable(w));
+    const t = p && g.pick(animatable(w).filter((q) => q.info.valueType === p.info.valueType && (q.layer !== p.layer || q.info.path !== p.info.path)));
+    return p && t ? { type: 'linkProperty', prop: ref(p), target: ref(t) } : undefined;
+  },
+  addKeyframes: (g, w) => {
+    const keys = g.some(animatable(w), 2).flatMap((p) => Array.from({ length: 1 + g.int(3) }, () => {
+      const value = g.coin(0.85) ? tweak(g, p.info, w) : undefined;
+      return {
+        prop: ref(p), time: g.time(), spatialIn: [], spatialOut: [],
+        ...(value ? { value } : {}),
+        ...(g.coin(0.3) ? { easing: g.pick(EasingValues)! } : {}),
+        ...(g.coin(0.15) ? { bezier: { x1: 0.3, y1: 0, x2: 0.7, y2: 1 } } : {}),
+        ...(g.coin(0.1) ? { roving: g.coin() } : {}),
+        ...(g.coin(0.15) ? { spatialInterp: g.pick(SpatialInterpValues)! } : {}),
+      };
+    }));
+    return keys.length ? { type: 'addKeyframes', keys } : undefined;
+  },
+  deleteKeyframes: (g, w) => (w.keys.length ? { type: 'deleteKeyframes', ids: g.some(w.keys.map((k) => k.id), 2) } : undefined),
+  moveKeyframes: (g, w) => (w.keys.length ? { type: 'moveKeyframes', ids: g.some(w.keys.map((k) => k.id), 3), delta: g.delta() } : undefined),
+  updateKeyframes: (g, w) => {
+    if (!w.keys.length) return undefined;
+    const patches: Array<Omit<KeyframePatch, 'id' | 'spatialIn' | 'spatialOut'>> = [
+      { easing: g.pick(EasingValues)! }, { time: g.time() }, { roving: g.coin() }, { continuous: g.coin() }, { label: g.int(17) },
+      { bezier: { x1: 0.2, y1: 0.1, x2: 0.8, y2: 0.9 } }, { clearBezier: true }, { spatialInterp: g.pick(SpatialInterpValues)! }, { clearSpatial: true },
+    ];
+    return { type: 'updateKeyframes', patches: g.some(w.keys, 2).map((k) => ({ id: k.id, spatialIn: [], spatialOut: [], ...g.pick(patches)! })) };
+  },
+  scaleKeyframes: (g, w) => (w.keys.length ? { type: 'scaleKeyframes', ids: g.some(w.keys.map((k) => k.id), 3), pivot: g.time(30), factor: g.pick([0.5, 2, 1.5, -1])! } : undefined),
+  reverseKeyframes: (g, w) => (w.keys.length ? { type: 'reverseKeyframes', ids: g.some(w.keys.map((k) => k.id), 3) } : undefined),
+  pasteKeyframes: (g, w) => {
+    const set = g.pick(w.keySets.filter((s) => s.keyframes.length));
+    const type = set && w.props.find((x) => x.layer === set.prop.layer && x.info.path === set.prop.path)?.info.valueType;
+    const p = type && g.pick(animatable(w).filter((q) => q.info.valueType === type));
+    return set && p ? { type: 'pasteKeyframes', prop: ref(p), time: g.time(60), keys: set.keyframes } : undefined;
+  },
+  addEffect: (g, w) => ({ type: 'addEffect', layers: g.some(ids(w.layers), 2), effect: g.pick(EFFECT_TYPES)!, ...(g.coin(0.2) ? { index: 0 } : {}), params: [] }),
+  addMask: (g, w) => {
+    const l = g.pick(w.layers);
+    const x = g.int(100);
+    return l ? {
+      type: 'addMask', layer: l.id, mode: g.pick(MaskModeValues)!, inverted: g.coin(0.2), ...(g.coin(0.3) ? { name: `Mask ${g.int(9)}` } : {}),
+      path: { vertices: [x, 0, x + 100, 0, x + 100, 100, x, 100], inTangents: [], outTangents: [], closed: g.coin(0.9), featherPoints: [] },
+    } : undefined;
+  },
+  addPropertyGroup: (g, w) => {
+    const l = g.pick(w.layers);
+    if (!l) return undefined;
+    const anim = g.pick(w.groups.filter((x) => x.layer === l.id && /^text\/animators\/[^/]+$/.test(x.info.path)));
+    const choice = g.int(4);
+    if (choice === 0) return { type: 'addPropertyGroup', layer: l.id, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] };
+    if (choice === 1 && anim) {
+      return { type: 'addPropertyGroup', layer: l.id, parent: `${anim.info.path}/selectors`, matchName: g.pick(['ADBE Text Selector', 'ADBE Text Wiggly Selector', 'ADBE Text Expressible Selector'])!, init: [] };
+    }
+    if (choice === 2) return { type: 'addPropertyGroup', layer: l.id, parent: 'styles', matchName: `style:${g.pick(STYLE_KEYS)!}`, init: [] };
+    return { type: 'addPropertyGroup', layer: l.id, parent: 'contents', matchName: `pathop:${g.pick(PATH_OP_TYPES)!}`, init: [], ...(g.coin(0.2) ? { index: 0 } : {}) };
+  },
+  removePropertyGroups: (g, w) => (w.groups.length ? { type: 'removePropertyGroups', groups: g.some(w.groups, 1).map(ref) } : undefined),
+  movePropertyGroup: (g, w) => { const p = g.pick(w.groups); return p ? { type: 'movePropertyGroup', group: ref(p), toIndex: g.int(3) } : undefined; },
+  duplicatePropertyGroups: (g, w) => (w.groups.length ? { type: 'duplicatePropertyGroups', groups: g.some(w.groups, 1).map(ref) } : undefined),
+  setGroupEnabled: (g, w) => (w.groups.length ? { type: 'setGroupEnabled', groups: g.some(w.groups, 2).map(ref), enabled: g.coin() } : undefined),
+  renamePropertyGroup: (g, w) => { const p = g.pick(w.groups); return p ? { type: 'renamePropertyGroup', group: ref(p), name: `N${g.int(9)}` } : undefined; },
+  copyPropertyGroups: (g, w) => (w.groups.length ? { type: 'copyPropertyGroups', groups: g.some(w.groups, 1).map(ref), toLayers: g.some(ids(w.layers), 2) } : undefined),
+  applyPreset: (g, w) => ({ type: 'applyPreset', layers: g.some(ids(w.layers), 2), preset: g.pick(PRESET_NAMES)!, time: g.time(60) }),
+  invokeEffectAction: (g, w) => {
+    const p = g.pick(w.groups.filter((x) => x.info.path.startsWith('effects/')));
+    return p ? { type: 'invokeEffectAction', group: ref(p), action: g.pick(['reset', 'nope'])! } : undefined;
+  },
+  setPluginData: (g, w) => { const l = g.pick(w.layers); return l && g.coin(0.2) ? { type: 'setPluginData', layer: l.id, group: 'effects/none', key: 'k', data: new Uint8Array([1, 2, 3]) } : undefined; },
+  // ── markers ──
+  addMarkers: (g, w) => {
+    const comp = g.pick(w.comps)!;
+    const layer = g.coin(0.4) ? g.pick(layersOf(w, comp)) : undefined;
+    return {
+      type: 'addMarkers',
+      markers: [{ owner: { comp, ...(layer ? { layer: layer.id } : {}) }, time: g.time(), duration: g.coin(0.3) ? sec(0.5) : 0, name: `M${g.int(9)}`, comment: g.coin() ? '' : 'c', label: g.int(17) }],
+    };
+  },
+  updateMarkers: (g, w) => {
+    if (!w.markers.length) return undefined;
+    const patches: Array<Omit<MarkerPatch, 'id'>> = [
+      { time: g.time() }, { duration: sec(1) }, { name: 'Renamed' }, { comment: 'x' }, { label: g.int(17) },
+      { chapter: 'ch' }, { url: 'https://x' }, { cuePoint: 'cue' }, { protectedRegion: g.coin() },
+    ];
+    return { type: 'updateMarkers', patches: g.some(w.markers, 2).map((m) => ({ id: m.id, ...g.pick(patches)! })) };
+  },
+  deleteMarkers: (g, w) => (w.markers.length ? { type: 'deleteMarkers', ids: g.some(w.markers.map((m) => m.id), 1) } : undefined),
+  moveMarkers: (g, w) => (w.markers.length ? { type: 'moveMarkers', ids: g.some(w.markers.map((m) => m.id), 2), delta: g.delta() } : undefined),
+  // ── jobs ──
+  applyJobResult: (g) => (g.coin(0.2) ? { type: 'applyJobResult', job: 'job_none' } : undefined),
+  // ── project ── (the session saves a copy of itself first)
+  importProject: (g, w) => (g.coin(0.3) ? { type: 'importProject', path: GENERATED_SAVE, ...(g.coin(0.3) && w.folders.length ? { folder: g.pick(w.folders)! } : {}) } : undefined),
+};
+
+/** The command types the generated corpus builds (the rest of the edit set is io, left to the scripted sessions). */
+export const GENERATED_COMMANDS: readonly string[] = Object.keys(BUILDERS);
+
+/**
+ * Never batched — two reference bugs D1b reports rather than copies:
+ *  - undoing a batch that creates several compositions leaves all but the last
+ *    (and the batch's events omit their layers);
+ *  - in a batch, an editWorkArea after another comp's editWorkArea removes a
+ *    layer without journaling it (no layersRemoved; undo does not restore it).
+ */
+const NO_BATCH = new Set(['createComposition', 'duplicateComposition', 'assembleComposition', 'precompose', 'importFiles', 'importProject', 'editWorkArea']);
+const COALESCING = new Set(['setProperty', 'setProperties', 'moveKeyframes', 'setLayerTiming', 'moveLayersInTime', 'setCompositionSettings', 'setWorkArea', 'updateKeyframes', 'moveMarkers', 'slipLayers']);
+
+async function generatedSession(h: Harness, seed: number, steps: number): Promise<void> {
+  const g = new Gen(mulberry32(seed));
+  const ignore = () => undefined;
+  // A varied start: the standard scene plus a precomp and a few more kinds.
+  const s = await buildScene(h);
+  await h.run({ type: 'createLayer', comp: s.comp, kind: 'precomp', source: s.comp2, init: [] });
+  for (const kind of ['camera', 'light', 'ellipse', 'group'] as const) await h.run({ type: 'createLayer', comp: s.comp, kind, init: [] });
+  await h.run({ type: 'saveProject', path: GENERATED_SAVE, copy: true });
+  const names = Object.keys(BUILDERS);
+  // Round-robin from a seed-dependent start, with jitter: a short run still reaches every family.
+  let cursor = g.int(names.length);
+  for (let step = 0; step < steps; step++) {
+    const w = await observe(h);
+    const roll = g.int(100);
+    if (roll < 6) {
+      await h.run({ type: 'undo' }).catch(ignore);
+      if (g.coin()) await h.run({ type: 'redo' }).catch(ignore);
+      continue;
+    }
+    if (roll < 8) {
+      const hist = await h.query({ type: 'getHistory' });
+      await h.run({ type: 'jumpToHistory', position: g.int(hist.entries.length + 1) }).catch(ignore);
+      continue;
+    }
+    if (roll < 10) {
+      await h.run({ type: 'seek', time: g.time(), mode: 'exact' }).catch(ignore);
+      if (g.coin(0.3)) await h.run({ type: 'setActiveComposition', comp: g.pick(w.comps)! }).catch(ignore);
+      continue;
+    }
+    const name = g.coin(0.6) ? names[cursor++ % names.length]! : g.pick(names)!;
+    const make = BUILDERS[name]!;
+    if (roll < 16 && COALESCING.has(name)) {
+      const { gesture } = await h.run({ type: 'beginGesture', label: `Drag ${name}` });
+      for (let i = 0, n = 1 + g.int(4); i < n; i++) {
+        const c = await make(g, await observe(h), h);
+        if (c) await h.run(c as never).catch(ignore);
+      }
+      await h.run({ type: 'endGesture', gesture, commit: g.coin(0.8) }).catch(ignore);
+      continue;
+    }
+    if (roll < 22 && !NO_BATCH.has(name)) {
+      const cmds: Command[] = [];
+      for (let i = 0, n = 2 + g.int(2); i < n; i++) {
+        const c = await make(g, w, h);
+        if (c) cmds.push(c);
+      }
+      if (cmds.length) await h.batch(`Batch ${name}`, cmds).catch(ignore);
+      continue;
+    }
+    const c = await make(g, w, h);
+    if (c) await h.run(c as never).catch(ignore);
+  }
+  const w = await observe(h);
+  for (const time of [0, sec(0.5), sec(1.5)]) {
+    await h.query({ type: 'getPropertyValues', props: animatable(w).slice(0, 300).map(ref), time, evaluated: true }).catch(ignore);
+  }
+}
+
+/** Seeded sessions: with 160 steps each, every builder runs several times per seed. */
+export const GENERATED_CORPUS: Record<string, Session> = Object.fromEntries(
+  [11, 23, 37, 41, 59, 67].map((seed) => [`generated: seed ${seed}`, (h: Harness) => generatedSession(h, seed, 160)]),
+);

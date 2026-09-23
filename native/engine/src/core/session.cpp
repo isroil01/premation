@@ -2,118 +2,30 @@
 
 #include <algorithm>
 #include <cmath>
-#include <set>
 #include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
+#include "catalog_data.hpp"
+#include "docio.hpp"
+#include "fail.hpp"
+#include "fxstate.hpp"
+#include "handlers.hpp"
 #include "log.hpp"
+#include "queries.hpp"
+#include "readmodel.hpp"
+#include "scene_build.hpp"
+#include "time_conv.hpp"
+#include "variant_util.hpp"
 
 namespace premation {
 namespace {
 
 using api::ErrorCode;
 using Clock = Session::Clock;
-
-// ── variant helpers ─────────────────────────────────────────────────────────
-
-template <class T, class V>
-struct IndexOf;
-template <class T, class... Ts>
-struct IndexOf<T, std::variant<Ts...>> {
-  static constexpr std::size_t value = [] {
-    constexpr bool same[] = {std::is_same_v<T, Ts>...};
-    for (std::size_t i = 0; i < sizeof...(Ts); ++i) {
-      if (same[i]) return i;
-    }
-    return sizeof...(Ts);
-  }();
-};
-
-using CommandVariant = decltype(api::Command::v);
-using QueryVariant = decltype(api::Query::v);
-
-/// The CommandResult for command type `Cmd`. The generated CommandResult union
-/// has one alternative per command, in the SAME order as Command's, with
-/// repeated payload types (many are Empty) — so it can only be built by index.
-template <class Cmd, class... Args>
-api::CommandResult result_for(Args&&... args) {
-  constexpr std::size_t i = IndexOf<Cmd, CommandVariant>::value;
-  static_assert(i < std::variant_size_v<CommandVariant>);
-  api::CommandResult r;
-  r.v.template emplace<i>(std::forward<Args>(args)...);
-  return r;
-}
-
-template <class Q, class... Args>
-api::QueryResult query_result_for(Args&&... args) {
-  constexpr std::size_t i = IndexOf<Q, QueryVariant>::value;
-  static_assert(i < std::variant_size_v<QueryVariant>);
-  api::QueryResult r;
-  r.v.template emplace<i>(std::forward<Args>(args)...);
-  return r;
-}
-
-template <class... Ts>
-struct TypeList {};
-template <class T, class L>
-struct Contains;
-template <class T, class... Ts>
-struct Contains<T, TypeList<Ts...>> : std::bool_constant<(std::is_same_v<T, Ts> || ...)> {};
-
-// ── The command set, classified ─────────────────────────────────────────────
-//
-// Every alternative of api::Command is handled by exactly one of:
-//   • an explicit CommandVisitor overload (implemented in C2), or
-//   • this list (answered with a typed `unsupported` "not implemented yet").
-// std::visit refuses to compile if a command is in neither, so a command added
-// to the schema breaks the engine build until someone decides what it does.
-using NotYetCommands = TypeList<
-    api::OpenProject, api::SaveProject, api::ImportProject, api::SetProjectSettings, api::RevertProject,
-    api::CollectFiles, api::SetAutosave, api::ImportFiles, api::RelinkItem, api::ReloadItems, api::RemoveItems,
-    api::RenameItem, api::CreateFolder, api::MoveItems, api::SetInterpretation, api::SetItemLabel,
-    api::RemoveUnusedItems, api::SetProxy, api::SetItemComment, api::SetItemTags, api::DuplicateComposition,
-    api::SetWorkArea, api::Precompose, api::TrimCompToWorkArea, api::CropComposition, api::AssembleComposition,
-    api::AddRenderItems, api::SetRenderItem, api::RemoveRenderItems, api::ReorderRenderItems, api::DuplicateLayers,
-    api::SetParent, api::SetLayerSwitches, api::SetBlendMode, api::SetTrackMatte, api::ReplaceLayerSource,
-    api::GroupLayers, api::UngroupLayer, api::ConvertLayer, api::PasteLayers, api::SeparateLayer, api::AutoTrace,
-    api::SetLayerComment, api::SetLayerTiming, api::MoveLayersInTime, api::TrimLayers, api::SlipLayers,
-    api::SlideLayer, api::RollEdit, api::SplitLayers, api::RippleDeleteLayers, api::EditWorkArea, api::InsertGap,
-    api::TimeReverseLayers, api::SetTimeRemap, api::FreezeFrame, api::SetRetime, api::SequenceLayers,
-    api::ResetProperty, api::SetDimensionsSeparated, api::SetExpression, api::SetExpressionEnabled,
-    api::ConvertExpressionToKeyframes, api::LinkProperty, api::MoveKeyframes, api::UpdateKeyframes,
-    api::ScaleKeyframes, api::ReverseKeyframes, api::PasteKeyframes, api::AddEffect, api::AddMask,
-    api::AddPropertyGroup, api::RemovePropertyGroups, api::MovePropertyGroup, api::DuplicatePropertyGroups,
-    api::SetGroupEnabled, api::RenamePropertyGroup, api::CopyPropertyGroups, api::ApplyPreset,
-    api::InvokeEffectAction, api::AddMarkers, api::UpdateMarkers, api::DeleteMarkers, api::MoveMarkers,
-    api::SetAudioPreview, api::SetCacheBudget, api::PurgeCache, api::StartJob, api::CancelJob, api::ApplyJobResult,
-    api::SetPluginEnabled, api::SetPluginData>;
-
-/// Implemented commands that are edits (may appear in a batch, enter history).
-using EditCommands = TypeList<api::CreateComposition, api::SetCompositionSettings, api::CreateLayer,
-                              api::DeleteLayers, api::ReorderLayers, api::RenameLayer, api::SetProperty,
-                              api::SetProperties, api::SetAnimated, api::AddKeyframes, api::DeleteKeyframes>;
-
-using NotYetQueries = TypeList<api::SampleProperty, api::GetMotionPath, api::GetMarkers, api::CopyLayers,
-                               api::GetWaveform, api::ListFonts, api::GetItems, api::GetThumbnail, api::ListEffects,
-                               api::ListGroupTypes, api::ListPresets, api::HitTest, api::GetLayerBounds,
-                               api::GetTextLayout, api::EvaluateExpression, api::ReadPixels, api::FindLayers,
-                               api::GetDependencies, api::GetJobs, api::GetRenderQueue, api::GetCommandLog>;
-
-template <class T>
-concept NotYetCommand = Contains<T, NotYetCommands>::value;
-template <class T>
-concept NotYetQuery = Contains<T, NotYetQueries>::value;
-
-bool is_edit(const api::Command& c) {
-  return std::visit([](const auto& x) { return Contains<std::decay_t<decltype(x)>, EditCommands>::value; }, c.v);
-}
-bool is_not_yet(const api::Command& c) {
-  return std::visit([](const auto& x) { return Contains<std::decay_t<decltype(x)>, NotYetCommands>::value; }, c.v);
-}
-
-// ── errors ──────────────────────────────────────────────────────────────────
+using doc::EngineFail;
+using doc::fail;
 
 api::EngineError err(ErrorCode code, std::string message) {
   api::EngineError e;
@@ -122,43 +34,11 @@ api::EngineError err(ErrorCode code, std::string message) {
   return e;
 }
 
-api::EngineError layer_not_found(const api::LayerId& id) {
-  api::EngineError e = err(ErrorCode::not_found, "no layer '" + id + "'");
-  e.layer = id;
-  return e;
-}
-
-api::EngineError comp_not_found(const api::ItemId& id) {
-  api::EngineError e = err(ErrorCode::not_found, "no composition '" + id + "'");
-  e.item = id;
-  return e;
-}
-
-api::EngineError not_implemented(std::uint32_t id, std::string_view what) {
-  api::EngineError e = err(ErrorCode::unsupported, std::string(what) + " " + std::to_string(id) +
-                                                       " is not implemented yet in premation-engine");
-  e.detail = "{\"notImplemented\":true,\"id\":" + std::to_string(id) + "}";
-  return e;
-}
-
 api::EngineError decode_error(wire::Status s) {
   api::EngineError e = err(s == wire::Status::unknown_variant ? ErrorCode::unsupported : ErrorCode::decode,
                            "could not decode the message: " + std::string(wire::to_string(s)));
   e.detail = "{\"status\":\"" + std::string(wire::to_string(s)) + "\"}";
   return e;
-}
-
-// ── events ──────────────────────────────────────────────────────────────────
-
-template <std::size_t I, class Payload>
-api::Event event_of(Payload p) {
-  api::Event e;
-  e.v.template emplace<I>(std::move(p));
-  return e;
-}
-template <class Payload>
-api::Event make_event(Payload p) {
-  return event_of<IndexOf<Payload, decltype(api::Event::v)>::value>(std::move(p));
 }
 
 double resolution_factor(api::PreviewResolution r) {
@@ -181,661 +61,63 @@ std::int64_t mod_pos(std::int64_t a, std::int64_t b) {
   return m < 0 ? m + b : m;
 }
 
-std::string label_for_property(const doc::Layer& layer, std::string_view path) {
-  if (const doc::PropertySpec* s = doc::find_spec(layer.kind, path)) return "Set " + std::string(s->name);
-  return "Set Property";
+std::uint32_t command_id(const api::Command& c) { return static_cast<std::uint32_t>(c.kind()); }
+
+std::string command_name(const api::Command& c) {
+  const auto& names = doc::registry().commandNames;
+  const auto it = names.find(command_id(c));
+  return it != names.end() ? it->second : "command " + std::to_string(command_id(c));
 }
 
-std::string default_layer_name(api::LayerKind kind, const doc::Comp& comp) {
-  std::string base;
-  switch (kind) {
-    case api::LayerKind::solid: base = "Solid"; break;
-    case api::LayerKind::shape: base = "Shape Layer"; break;
-    case api::LayerKind::rectangle: base = "Rectangle"; break;
-    case api::LayerKind::null: base = "Null"; break;
-    default: base = "Layer"; break;
+/// `humanize(type)`: 'createLayer' → 'Create Layer'.
+std::string humanize(const std::string& type) {
+  std::string out;
+  for (std::size_t i = 0; i < type.size(); ++i) {
+    const char ch = type[i];
+    if (ch >= 'A' && ch <= 'Z') out.push_back(' ');
+    out.push_back(ch);
   }
-  return base + " " + std::to_string(comp.layers.size() + 1);
+  if (!out.empty() && out[0] >= 'a' && out[0] <= 'z') out[0] = static_cast<char>(out[0] - 'a' + 'A');
+  return out;
 }
 
-std::optional<api::EngineError> validate_comp_patch(const api::CompSettingsPatch& p) {
-  if (p.width && (*p.width < 1 || *p.width > 30000)) return err(ErrorCode::out_of_range, "width must be 1..30000");
-  if (p.height && (*p.height < 1 || *p.height > 30000)) {
-    return err(ErrorCode::out_of_range, "height must be 1..30000");
-  }
-  if (p.frame_rate) {
-    const double fps = doc::fps_of(*p.frame_rate);
-    if (fps <= 0.0 || fps > 1000.0) return err(ErrorCode::out_of_range, "frame rate must be > 0 and <= 1000 fps");
-  }
-  if (p.duration && (*p.duration <= 0 || *p.duration > 1000LL * 3600LL * doc::kFlicksPerSecond)) {
-    return err(ErrorCode::out_of_range, "duration must be > 0 and at most 1000 hours");
-  }
-  if (p.pixel_aspect && !(*p.pixel_aspect > 0.0 && std::isfinite(*p.pixel_aspect))) {
-    return err(ErrorCode::out_of_range, "pixel aspect must be > 0");
-  }
-  if (p.background_gradient || p.clear_background_gradient || p.motion_blur || p.renderer3d ||
-      p.global_light_angle || p.global_light_altitude || p.world || p.start_timecode || p.drop_frame ||
-      p.preserve_frame_rate || p.preserve_resolution) {
-    return err(ErrorCode::unsupported, "only name, size, pixel aspect, frame rate, duration, background, "
-                                       "transparency and work area are implemented yet in premation-engine");
-  }
-  return std::nullopt;
-}
-
-void apply_comp_patch(api::CompSettings& s, const api::CompSettingsPatch& p) {
-  if (p.name) s.name = *p.name;
-  if (p.width) s.width = *p.width;
-  if (p.height) s.height = *p.height;
-  if (p.pixel_aspect) s.pixel_aspect = *p.pixel_aspect;
-  if (p.frame_rate) s.frame_rate = *p.frame_rate;
-  if (p.duration) {
-    s.duration = *p.duration;
-    if (!p.work_area) s.work_area = api::TimeRange{0, s.duration};
-  }
-  if (p.background) s.background = *p.background;
-  if (p.transparent) s.transparent = *p.transparent;
-  if (p.work_area) s.work_area = *p.work_area;
+api::EngineError with_index(api::EngineError e, std::optional<std::uint32_t> index) {
+  if (index && !e.command_index) e.command_index = index;
+  return e;
 }
 
 }  // namespace
 
-// ── Command dispatch ────────────────────────────────────────────────────────
+// ── Edit dispatch ───────────────────────────────────────────────────────────
 
-struct CommandVisitor {
-  Session& s;
-  api::Origin origin;
-  Clock::time_point now;
-  using Outcome = Session::Outcome;
+struct EditVisitor {
+  doc::HCtx& x;
+  const std::string& name;
 
-  static Outcome fail(api::EngineError e) {
-    Outcome o;
-    o.error = std::move(e);
-    return o;
-  }
-  template <class Cmd, class... Args>
-  static Outcome ok(Session::OutcomeKind kind, std::string label, Args&&... args) {
-    Outcome o;
-    o.kind = kind;
-    o.label = std::move(label);
-    o.result = result_for<Cmd>(std::forward<Args>(args)...);
-    return o;
-  }
-  template <class Cmd, class... Args>
-  static Outcome control(Args&&... args) {
-    return ok<Cmd>(Session::OutcomeKind::control, {}, std::forward<Args>(args)...);
-  }
-  template <class Cmd, class... Args>
-  static Outcome edit(std::string label, Args&&... args) {
-    return ok<Cmd>(Session::OutcomeKind::edit, std::move(label), std::forward<Args>(args)...);
-  }
-
-  template <NotYetCommand T>
-  Outcome operator()(const T&) const {
-    return fail(not_implemented(static_cast<std::uint32_t>(api::Command{CommandVariant{T{}}}.kind()), "command"));
-  }
-
-  // ── history ──
-  Outcome operator()(const api::Undo&) const {
-    if (s.history_.gesture_open()) return fail(err(ErrorCode::gesture_open, "undo while a gesture is open"));
-    const doc::Entry* e = s.history_.step_back();
-    if (e == nullptr) return fail(err(ErrorCode::nothing_to_undo, "nothing to undo"));
-    e->changes.apply_before(s.doc_);
-    Outcome o = ok<api::Undo>(Session::OutcomeKind::history_move, {},
-                              api::HistoryStep{e->label, static_cast<std::uint32_t>(s.history_.position())});
-    o.moved = e->changes.reversed();
-    return o;
-  }
-  Outcome operator()(const api::Redo&) const {
-    if (s.history_.gesture_open()) return fail(err(ErrorCode::gesture_open, "redo while a gesture is open"));
-    const doc::Entry* e = s.history_.step_forward();
-    if (e == nullptr) return fail(err(ErrorCode::nothing_to_redo, "nothing to redo"));
-    e->changes.apply_after(s.doc_);
-    Outcome o = ok<api::Redo>(Session::OutcomeKind::history_move, {},
-                              api::HistoryStep{e->label, static_cast<std::uint32_t>(s.history_.position())});
-    o.moved = e->changes;
-    return o;
-  }
-  Outcome operator()(const api::JumpToHistory& c) const {
-    if (s.history_.gesture_open()) return fail(err(ErrorCode::gesture_open, "history jump while a gesture is open"));
-    if (c.position > s.history_.state().entries.size()) {
-      return fail(err(ErrorCode::out_of_range, "history position past the last entry"));
-    }
-    doc::ChangeSet moved;
-    std::string label;
-    while (s.history_.position() > c.position) {
-      const doc::Entry* e = s.history_.step_back();
-      e->changes.apply_before(s.doc_);
-      moved.merge(e->changes.reversed());
-      label = e->label;
-    }
-    while (s.history_.position() < c.position) {
-      const doc::Entry* e = s.history_.step_forward();
-      e->changes.apply_after(s.doc_);
-      moved.merge(e->changes);
-      label = e->label;
-    }
-    Outcome o = ok<api::JumpToHistory>(Session::OutcomeKind::history_move, {},
-                                       api::HistoryStep{label, static_cast<std::uint32_t>(s.history_.position())});
-    o.moved = std::move(moved);
-    return o;
-  }
-  Outcome operator()(const api::BeginGesture& c) const {
-    if (s.history_.gesture_open()) return fail(err(ErrorCode::gesture_open, "a gesture is already open"));
-    const std::uint32_t id = s.history_.begin_gesture(c.label.empty() ? "Edit" : c.label, origin);
-    Outcome o = control<api::BeginGesture>(api::GestureRef{id});
-    o.historyChanged = true;
-    return o;
-  }
-  Outcome operator()(const api::EndGesture& c) const {
-    if (!s.history_.gesture_open() || (c.gesture != 0 && c.gesture != s.history_.gesture_id())) {
-      return fail(err(ErrorCode::no_gesture, "no open gesture with that id"));
-    }
-    doc::Entry entry = s.history_.end_gesture();
-    entry.changes.prune();
-    if (c.commit) {
-      s.history_.record(entry.label, entry.origin, entry.changes);
-      Outcome o = control<api::EndGesture>();
-      o.historyChanged = true;
-      return o;
-    }
-    // Cancel: put every touched entity back exactly as it was (Esc mid-drag).
-    entry.changes.apply_before(s.doc_);
-    Outcome o = ok<api::EndGesture>(Session::OutcomeKind::history_move, {});
-    o.moved = entry.changes.reversed();
-    return o;
-  }
-  Outcome operator()(const api::ClearHistory&) const {
-    s.history_.clear();
-    Outcome o = control<api::ClearHistory>();
-    o.historyChanged = true;
-    return o;
-  }
-  Outcome operator()(const api::SetHistoryLimit& c) const {
-    s.history_.set_limit(c.entries);
-    Outcome o = control<api::SetHistoryLimit>();
-    o.historyChanged = true;
-    return o;
-  }
-
-  // ── project ──
-  Outcome operator()(const api::NewProject& c) const {
-    if (c.template_) return fail(err(ErrorCode::unsupported, "project templates are not implemented yet"));
-    s.stop_playback();
-    s.doc_ = doc::Document{};
-    s.history_.clear();
-    if (s.history_.gesture_open()) (void)s.history_.end_gesture();
-    s.activeComp_.reset();
-    s.time_ = 0;
-    s.frame_ = 0;
-    return ok<api::NewProject>(Session::OutcomeKind::reset, {});
-  }
-
-  // ── compositions ──
-  Outcome operator()(const api::CreateComposition& c) const {
-    if (!c.from_items.empty()) return fail(err(ErrorCode::unsupported, "createComposition fromItems is not implemented yet"));
-    if (c.folder) return fail(err(ErrorCode::unsupported, "folders are not implemented yet"));
-    if (auto e = validate_comp_patch(c.settings)) return fail(std::move(*e));
-    doc::Comp comp;
-    comp.id = s.doc_.mint_comp_id();
-    comp.settings = doc::default_comp_settings();
-    comp.settings.name = "Comp " + std::to_string(s.doc_.comps.size() + 1);
-    apply_comp_patch(comp.settings, c.settings);
-    s.txn_.touch_comp(s.doc_, comp.id);
-    const std::string id = comp.id;
-    s.doc_.comps.emplace(id, std::move(comp));
-    s.doc_.itemOrder.push_back(id);
-    return edit<api::CreateComposition>("New Composition", api::ItemRef{id});
-  }
-  Outcome operator()(const api::SetCompositionSettings& c) const {
-    doc::Comp* comp = s.doc_.comp(c.comp);
-    if (comp == nullptr) return fail(comp_not_found(c.comp));
-    if (auto e = validate_comp_patch(c.patch)) return fail(std::move(*e));
-    s.txn_.touch_comp(s.doc_, c.comp);
-    apply_comp_patch(comp->settings, c.patch);
-    return edit<api::SetCompositionSettings>("Composition Settings");
-  }
-
-  // ── layers ──
-  Outcome operator()(const api::CreateLayer& c) const {
-    doc::Comp* comp = s.doc_.comp(c.comp);
-    if (comp == nullptr) return fail(comp_not_found(c.comp));
-    if (!doc::kind_supported(c.kind)) {
-      return fail(err(ErrorCode::unsupported,
-                      "layer kind '" + std::string(api::to_string(c.kind)) + "' is not implemented yet in premation-engine"));
-    }
-    if (c.parent) return fail(err(ErrorCode::unsupported, "parenting is not implemented yet in premation-engine"));
-    if (c.source) return fail(err(ErrorCode::unsupported, "layer sources are not implemented yet in premation-engine"));
-    if (c.generator) return fail(err(ErrorCode::unsupported, "generator layers are not implemented yet"));
-    const std::size_t index = c.index.value_or(0);
-    if (index > comp->layers.size()) return fail(err(ErrorCode::out_of_range, "stack index past the bottom"));
-
-    const std::string id = s.doc_.mint_layer_id();
-    doc::Layer layer = doc::make_layer(c.kind, *comp, id, c.name.value_or(default_layer_name(c.kind, *comp)));
-    if (c.in_point) layer.timing.in_point = *c.in_point;
-    if (c.out_point) layer.timing.out_point = *c.out_point;
-    if (c.start_time) layer.timing.start_time = *c.start_time;
-    if (layer.timing.out_point <= layer.timing.in_point) {
-      return fail(err(ErrorCode::invalid_argument, "out point must be after in point"));
-    }
-    s.txn_.touch_comp(s.doc_, c.comp);
-    s.txn_.touch_layer(s.doc_, id);
-    comp->layers.insert(comp->layers.begin() + static_cast<std::ptrdiff_t>(index), id);
-    s.doc_.layers.emplace(id, std::move(layer));
-    // Layer space is centre-origin: a new layer's anchor (0,0) is its centre
-    // whatever size `init` gives it — nothing to re-centre.
-    for (std::size_t i = 0; i < c.init.size(); ++i) {
-      std::optional<api::KeyframeId> key;
-      if (auto e = s.write_property(api::PropRef{id, c.init[i].path}, c.init[i].value, std::nullopt, key)) {
-        return fail(std::move(*e));
-      }
-    }
-    return edit<api::CreateLayer>("New Layer", api::LayerRef{id});
-  }
-  Outcome operator()(const api::DeleteLayers& c) const {
-    std::set<std::string, std::less<>> seen;
-    for (const auto& id : c.layers) {
-      if (!seen.insert(id).second) continue;
-      doc::Layer* layer = s.doc_.layer(id);
-      if (layer == nullptr) return fail(layer_not_found(id));
-      s.txn_.touch_comp(s.doc_, layer->comp);
-      s.txn_.touch_layer(s.doc_, id);
-      if (doc::Comp* comp = s.doc_.comp(layer->comp)) std::erase(comp->layers, id);
-      s.doc_.layers.erase(id);
-    }
-    return edit<api::DeleteLayers>(seen.size() == 1 ? "Delete Layer" : "Delete Layers");
-  }
-  Outcome operator()(const api::ReorderLayers& c) const {
-    doc::Comp* comp = s.doc_.comp(c.comp);
-    if (comp == nullptr) return fail(comp_not_found(c.comp));
-    std::vector<api::LayerId> moving;
-    for (const auto& id : comp->layers) {  // keep their relative (stack) order
-      if (std::find(c.layers.begin(), c.layers.end(), id) != c.layers.end()) moving.push_back(id);
-    }
-    for (const auto& id : c.layers) {
-      if (std::find(comp->layers.begin(), comp->layers.end(), id) == comp->layers.end()) return fail(layer_not_found(id));
-    }
-    std::vector<api::LayerId> rest;
-    for (const auto& id : comp->layers) {
-      if (std::find(moving.begin(), moving.end(), id) == moving.end()) rest.push_back(id);
-    }
-    if (c.to_index > rest.size()) return fail(err(ErrorCode::out_of_range, "toIndex past the bottom of the stack"));
-    s.txn_.touch_comp(s.doc_, c.comp);
-    rest.insert(rest.begin() + static_cast<std::ptrdiff_t>(c.to_index), moving.begin(), moving.end());
-    comp->layers = std::move(rest);
-    return edit<api::ReorderLayers>("Reorder Layers");
-  }
-  Outcome operator()(const api::RenameLayer& c) const {
-    doc::Layer* layer = s.doc_.layer(c.layer);
-    if (layer == nullptr) return fail(layer_not_found(c.layer));
-    s.txn_.touch_layer(s.doc_, c.layer);
-    layer->name = c.name;
-    return edit<api::RenameLayer>("Rename Layer");
-  }
-
-  // ── properties and keyframes ──
-  Outcome operator()(const api::SetProperty& c) const {
-    std::optional<api::KeyframeId> key;
-    if (auto e = s.write_property(c.prop, c.value, c.time, key)) return fail(std::move(*e));
-    const doc::Layer* layer = s.doc_.layer(c.prop.layer);
-    return edit<api::SetProperty>(label_for_property(*layer, c.prop.path), api::PropertyWriteResult{key});
-  }
-  Outcome operator()(const api::SetProperties& c) const {
-    for (std::size_t i = 0; i < c.writes.size(); ++i) {
-      std::optional<api::KeyframeId> key;
-      if (auto e = s.write_property(c.writes[i].prop, c.writes[i].value, c.writes[i].time, key)) {
-        e->detail = "{\"writeIndex\":" + std::to_string(i) + "}";
-        return fail(std::move(*e));
-      }
-    }
-    return edit<api::SetProperties>("Set Properties");
-  }
-  Outcome operator()(const api::SetAnimated& c) const {
-    doc::Layer* layer = s.doc_.layer(c.prop.layer);
-    if (layer == nullptr) return fail(layer_not_found(c.prop.layer));
-    const doc::PropertySpec* spec = doc::find_spec(layer->kind, c.prop.path);
-    const auto it = layer->props.find(c.prop.path);
-    if (spec == nullptr || it == layer->props.end()) {
-      api::EngineError e = err(ErrorCode::not_found, "no property '" + c.prop.path + "'");
-      e.layer = c.prop.layer;
-      e.path = c.prop.path;
-      return fail(std::move(e));
-    }
-    if (!spec->animatable) {
-      api::EngineError e = err(ErrorCode::not_animatable, "'" + c.prop.path + "' cannot be keyframed");
-      e.path = c.prop.path;
-      return fail(std::move(e));
-    }
-    s.txn_.touch_layer(s.doc_, c.prop.layer);
-    doc::Property& prop = it->second;
-    std::optional<api::KeyframeId> keyId;
-    const api::Value current = eval::value_at(prop, c.time, s.scratch_);
-    if (c.animated) {
-      if (prop.keys.empty()) {
-        api::Keyframe k;
-        k.id = s.doc_.mint_key_id();
-        k.time = c.time;
-        k.value = current;
-        keyId = k.id;
-        prop.keys.push_back(std::move(k));
-      }
+  template <class T>
+  api::CommandResult operator()(const T& c) const {
+    if constexpr (requires(const T& cmd, doc::HCtx& ctx) { doc::handle(cmd, ctx); }) {
+      return result_for<T>(doc::handle(c, x));
     } else {
-      prop.value = current;
-      prop.keys.clear();
+      fail(ErrorCode::unsupported, "'" + name + "' is not implemented by this engine");
     }
-    return edit<api::SetAnimated>(c.animated ? "Enable Keyframes" : "Disable Keyframes", api::PropertyWriteResult{keyId});
-  }
-  Outcome operator()(const api::AddKeyframes& c) const {
-    api::KeyframeIds ids;
-    for (const api::KeyframeInsert& ins : c.keys) {
-      doc::Layer* layer = s.doc_.layer(ins.prop.layer);
-      if (layer == nullptr) return fail(layer_not_found(ins.prop.layer));
-      const doc::PropertySpec* spec = doc::find_spec(layer->kind, ins.prop.path);
-      const auto it = layer->props.find(ins.prop.path);
-      if (spec == nullptr || it == layer->props.end()) {
-        api::EngineError e = err(ErrorCode::not_found, "no property '" + ins.prop.path + "'");
-        e.layer = ins.prop.layer;
-        e.path = ins.prop.path;
-        return fail(std::move(e));
-      }
-      if (!spec->animatable) {
-        api::EngineError e = err(ErrorCode::not_animatable, "'" + ins.prop.path + "' cannot be keyframed");
-        e.layer = ins.prop.layer;
-        e.path = ins.prop.path;
-        return fail(std::move(e));
-      }
-      doc::Property& prop = it->second;
-      api::Value value = ins.value ? *ins.value : eval::value_at(prop, ins.time, s.scratch_);
-      if (doc::value_type_of(value) != prop.type) {
-        api::EngineError e = err(ErrorCode::type_mismatch, "'" + ins.prop.path + "' takes a " +
-                                                               std::string(api::to_string(prop.type)));
-        e.path = ins.prop.path;
-        e.detail = "{\"expected\":\"" + std::string(api::to_string(prop.type)) + "\"}";
-        return fail(std::move(e));
-      }
-      if (!doc::all_finite(value)) return fail(err(ErrorCode::invalid_argument, "keyframe value is not finite"));
-      if (ins.bezier && !(std::isfinite(ins.bezier->x1) && std::isfinite(ins.bezier->y1) &&
-                          std::isfinite(ins.bezier->x2) && std::isfinite(ins.bezier->y2))) {
-        return fail(err(ErrorCode::invalid_argument, "bezier handles are not finite"));
-      }
-      s.txn_.touch_layer(s.doc_, ins.prop.layer);
-      auto pos = std::lower_bound(prop.keys.begin(), prop.keys.end(), ins.time,
-                                  [](const api::Keyframe& k, api::Time t) { return k.time < t; });
-      api::Keyframe* key = nullptr;
-      if (pos != prop.keys.end() && pos->time == ins.time) {
-        key = &*pos;  // replaced — keeps its id (§4.6)
-      } else {
-        api::Keyframe k;
-        k.id = s.doc_.mint_key_id();
-        k.time = ins.time;
-        key = &*prop.keys.insert(pos, std::move(k));
-      }
-      key->value = std::move(value);
-      if (ins.easing) key->easing = *ins.easing;
-      if (ins.bezier) key->bezier = ins.bezier;
-      if (ins.roving) key->roving = *ins.roving;
-      if (ins.spatial_interp) key->spatial_interp = *ins.spatial_interp;
-      if (!ins.spatial_in.empty()) key->spatial_in = ins.spatial_in;
-      if (!ins.spatial_out.empty()) key->spatial_out = ins.spatial_out;
-      ids.ids.push_back(key->id);
-    }
-    return edit<api::AddKeyframes>(c.keys.size() == 1 ? "Add Keyframe" : "Add Keyframes", std::move(ids));
-  }
-  Outcome operator()(const api::DeleteKeyframes& c) const {
-    for (const auto& id : c.ids) {
-      bool found = false;
-      for (auto& [layerId, layer] : s.doc_.layers) {
-        for (auto& [path, prop] : layer.props) {
-          const auto k = std::find_if(prop.keys.begin(), prop.keys.end(),
-                                      [&id](const api::Keyframe& key) { return key.id == id; });
-          if (k == prop.keys.end()) continue;
-          s.txn_.touch_layer(s.doc_, layerId);
-          if (prop.keys.size() == 1) prop.value = k->value;  // last key: static at its value
-          prop.keys.erase(k);
-          found = true;
-          break;
-        }
-        if (found) break;
-      }
-      if (!found) return fail(err(ErrorCode::not_found, "no keyframe '" + id + "'"));
-    }
-    return edit<api::DeleteKeyframes>(c.ids.size() == 1 ? "Delete Keyframe" : "Delete Keyframes");
-  }
-
-  // ── transport and viewport (controls) ──
-  Outcome operator()(const api::Play& c) const {
-    if (s.active_comp() == nullptr) return fail(err(ErrorCode::invalid_argument, "no active composition"));
-    const double rate = c.rate == 0.0 ? 1.0 : c.rate;
-    if (!std::isfinite(rate) || std::abs(rate) > 4.0) return fail(err(ErrorCode::out_of_range, "rate must be within ±4"));
-    if (c.range == api::PlayRange::custom && (!c.custom || c.custom->duration <= 0)) {
-      return fail(err(ErrorCode::invalid_argument, "a custom range needs a positive duration"));
-    }
-    s.rate_ = rate;
-    s.rangeKind_ = c.range;
-    if (c.custom) s.customRange_ = *c.custom;
-    s.start_playback(now, c.from);
-    return control<api::Play>();
-  }
-  Outcome operator()(const api::Pause& c) const {
-    const bool was = s.playing_;
-    s.stop_playback();
-    if (c.return_to_start) s.set_time(s.playFrom_);
-    if (was || c.return_to_start) {
-      s.emit_transport();
-      s.emit_playhead();
-      s.request_render();
-    }
-    return control<api::Pause>();
-  }
-  Outcome operator()(const api::Seek& c) const {
-    if (s.active_comp() == nullptr) return fail(err(ErrorCode::invalid_argument, "no active composition"));
-    s.set_time(c.time);
-    if (s.playing_) s.rebase_playback(now);
-    s.emit_playhead();
-    s.request_render();
-    return control<api::Seek>();
-  }
-  Outcome operator()(const api::Step& c) const {
-    if (s.active_comp() == nullptr) return fail(err(ErrorCode::invalid_argument, "no active composition"));
-    if (s.playing_) {
-      s.stop_playback();
-      s.emit_transport();
-    }
-    s.set_time((s.frame_ + c.frames) * s.frame_dur());
-    s.emit_playhead();
-    s.request_render();
-    return control<api::Step>();
-  }
-  Outcome operator()(const api::SetLoop& c) const {
-    s.loop_ = c.mode;
-    s.emit_transport();
-    return control<api::SetLoop>();
-  }
-  Outcome operator()(const api::SetPreviewQuality& c) const {
-    s.resolution_ = resolution_factor(c.resolution);
-    if (s.viewport_.open) {
-      s.viewport_.resolution = s.resolution_;
-      s.sink_.configure(s.viewport_);
-      s.request_render();
-    }
-    return control<api::SetPreviewQuality>();
-  }
-  Outcome operator()(const api::SetActiveComposition& c) const {
-    if (s.doc_.comp(c.comp) == nullptr) return fail(comp_not_found(c.comp));
-    if (s.activeComp_ && *s.activeComp_ == c.comp) return control<api::SetActiveComposition>();
-    s.stop_playback();
-    s.activeComp_ = c.comp;
-    s.set_time(0);
-    s.emit_transport();
-    s.emit_playhead();
-    s.request_render();
-    return control<api::SetActiveComposition>();
-  }
-  Outcome operator()(const api::SetViewport& c) const {
-    if (c.layer) return fail(err(ErrorCode::unsupported, "single-layer viewports are not implemented yet"));
-    const double dpr = c.device_pixel_ratio > 0.0 && std::isfinite(c.device_pixel_ratio) ? c.device_pixel_ratio : 1.0;
-    const double w = std::round(static_cast<double>(c.width) * dpr);
-    const double h = std::round(static_cast<double>(c.height) * dpr);
-    if (c.width == 0 || c.height == 0 || w > 16384.0 || h > 16384.0 || dpr > 8.0) {
-      return fail(err(ErrorCode::out_of_range, "viewport must be 1..16384 physical pixels per side"));
-    }
-    ViewportConfig v;
-    v.viewport = c.viewport;
-    v.width = static_cast<std::uint32_t>(w);
-    v.height = static_cast<std::uint32_t>(h);
-    v.resolution = s.resolution_;
-    v.open = true;
-    if (!(v == s.viewport_)) {
-      s.viewport_ = v;
-      s.sink_.configure(v);
-    }
-    s.request_render();
-    return control<api::SetViewport>();
-  }
-  Outcome operator()(const api::CloseViewport& c) const {
-    if (s.viewport_.open && s.viewport_.viewport == c.viewport) {
-      s.viewport_.open = false;
-      s.sink_.configure(s.viewport_);
-    }
-    return control<api::CloseViewport>();
-  }
-  Outcome operator()(const api::SetInteracting&) const {
-    // A hint (draft quality while dragging); C2 renders every frame at the
-    // chosen preview resolution anyway.
-    return control<api::SetInteracting>();
-  }
-};
-
-// ── Query dispatch ──────────────────────────────────────────────────────────
-
-struct QueryVisitor {
-  Session& s;
-  using Result = std::pair<std::optional<api::EngineError>, api::QueryResult>;
-
-  static Result fail(api::EngineError e) { return {std::move(e), {}}; }
-
-  template <NotYetQuery T>
-  Result operator()(const T&) const {
-    return fail(not_implemented(static_cast<std::uint32_t>(api::Query{QueryVariant{T{}}}.kind()), "query"));
-  }
-
-  Result operator()(const api::GetDocument& q) const { return {std::nullopt, s.query_document(q)}; }
-  Result operator()(const api::GetComposition& q) const {
-    const doc::Comp* comp = s.doc_.comp(q.comp);
-    if (comp == nullptr) return fail(comp_not_found(q.comp));
-    api::CompositionDetails d;
-    d.comp = doc::comp_info(*comp);
-    for (const auto& id : comp->layers) {
-      if (const doc::Layer* l = s.doc_.layer(id)) d.layers.push_back(doc::layer_info(*l));
-    }
-    return {std::nullopt, query_result_for<api::GetComposition>(std::move(d))};
-  }
-  Result operator()(const api::GetLayers& q) const {
-    api::LayerDetails d;
-    for (const auto& id : q.layers) {
-      const doc::Layer* l = s.doc_.layer(id);
-      if (l == nullptr) return fail(layer_not_found(id));
-      d.layers.push_back(doc::layer_info(*l));
-    }
-    return {std::nullopt, query_result_for<api::GetLayers>(std::move(d))};
-  }
-  Result operator()(const api::GetPropertyTree& q) const {
-    const doc::Layer* l = s.doc_.layer(q.layer);
-    if (l == nullptr) return fail(layer_not_found(q.layer));
-    const api::Time t = q.time.value_or(s.time_);
-    api::PropertyTree tree;
-    tree.layer = l->id;
-    for (const doc::PropertySpec& spec : doc::catalog_for(l->kind)) {
-      const std::string path(spec.path);
-      if (!q.path.empty() && !(path == q.path || (path.starts_with(q.path) && path[q.path.size()] == '/'))) continue;
-      const doc::Property& prop = l->props.at(path);
-      tree.nodes.push_back(doc::property_info(*l, path, prop, eval::value_at(prop, t, s.scratch_)));
-    }
-    return {std::nullopt, query_result_for<api::GetPropertyTree>(std::move(tree))};
-  }
-  Result operator()(const api::GetPropertyValues& q) const {
-    api::PropertyValues values;
-    for (const auto& ref : q.props) {
-      const doc::Layer* l = s.doc_.layer(ref.layer);
-      if (l == nullptr) return fail(layer_not_found(ref.layer));
-      const auto it = l->props.find(ref.path);
-      if (it == l->props.end()) {
-        api::EngineError e = err(ErrorCode::not_found, "no property '" + ref.path + "'");
-        e.layer = ref.layer;
-        e.path = ref.path;
-        return fail(std::move(e));
-      }
-      values.values.push_back(api::PropertyValue{ref, eval::value_at(it->second, q.time, s.scratch_)});
-    }
-    return {std::nullopt, query_result_for<api::GetPropertyValues>(std::move(values))};
-  }
-  Result operator()(const api::GetKeyframes& q) const {
-    api::KeyframeSets sets;
-    for (const auto& ref : q.props) {
-      const doc::Layer* l = s.doc_.layer(ref.layer);
-      if (l == nullptr) return fail(layer_not_found(ref.layer));
-      const auto it = l->props.find(ref.path);
-      if (it == l->props.end()) {
-        api::EngineError e = err(ErrorCode::not_found, "no property '" + ref.path + "'");
-        e.layer = ref.layer;
-        e.path = ref.path;
-        return fail(std::move(e));
-      }
-      api::KeyframeSet set = doc::keyframe_set(*l, ref.path, it->second);
-      if (q.range) {
-        const api::Time a = q.range->start;
-        const api::Time b = q.range->start + q.range->duration;
-        std::erase_if(set.keyframes, [a, b](const api::Keyframe& k) { return k.time < a || k.time >= b; });
-      }
-      sets.sets.push_back(std::move(set));
-    }
-    return {std::nullopt, query_result_for<api::GetKeyframes>(std::move(sets))};
-  }
-  Result operator()(const api::GetCapabilities&) const {
-    api::Capabilities c;
-    c.gpu_adapter = s.sink_.adapter();
-    c.gpu_backend = s.sink_.backend();
-    c.cpu_threads = std::thread::hardware_concurrency();
-    c.expression_engines = {};
-    return {std::nullopt, query_result_for<api::GetCapabilities>(std::move(c))};
-  }
-  Result operator()(const api::GetLayerTransforms& q) const {
-    api::LayerTransformList list;
-    for (const auto& id : q.layers) {
-      const doc::Layer* l = s.doc_.layer(id);
-      if (l == nullptr) return fail(layer_not_found(id));
-      const auto m = eval::layer_matrix(*l, q.time, s.scratch_);
-      api::LayerTransform t;
-      t.layer = id;
-      // 4×4, column-major, layer px → comp px (z untouched in 2D).
-      t.matrix = {m[0], m[1], 0, 0, m[2], m[3], 0, 0, 0, 0, 1, 0, m[4], m[5], 0, 1};
-      std::array<double, 4> anchor{};
-      (void)eval::components_at(l->props.at("transform/anchorPoint"), q.time, s.scratch_, anchor);
-      t.anchor = api::Vec3{anchor[0], anchor[1], 0.0};
-      list.transforms.push_back(std::move(t));
-    }
-    return {std::nullopt, query_result_for<api::GetLayerTransforms>(std::move(list))};
-  }
-  Result operator()(const api::GetHistory&) const {
-    return {std::nullopt, query_result_for<api::GetHistory>(s.history_.state())};
-  }
-  Result operator()(const api::GetRenderStats&) const {
-    const RenderCounters c = s.sink_.counters();
-    api::RenderStats st;
-    st.gpu_frame_ms = c.gpuFrameMs;
-    st.fps = c.fps;
-    st.dropped_frames = c.dropped;
-    return {std::nullopt, query_result_for<api::GetRenderStats>(st)};
-  }
-  Result operator()(const api::GetLayerErrors&) const {
-    // No layer can fail to render in C2's catalog (solids and rectangles).
-    return {std::nullopt, query_result_for<api::GetLayerErrors>(api::LayerErrorList{})};
   }
 };
 
 // ── Session ─────────────────────────────────────────────────────────────────
 
 Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
-    : out_(out), sink_(sink), options_(std::move(options)) {}
+    : out_(out), sink_(sink), options_(std::move(options)) {
+  if (options_.testPorts) ports_ = std::make_unique<doc::FakePorts>();
+  else ports_ = std::make_unique<doc::FilePorts>();
+  // The engine starts on a new project, as the editor does (New Project →
+  // `comp_root`), at revision 0.
+  load_new_project(api::ResetReason::created, false);
+  revision_ = 0;
+  savedRevision_ = 0;
+}
+
+Session::~Session() = default;
 
 void Session::on_frame(std::span<const std::uint8_t> payload, Clock::time_point now) {
   if (phase_ == Phase::closed) return;
@@ -849,7 +131,11 @@ void Session::on_frame(std::span<const std::uint8_t> payload, Clock::time_point 
       return;
     }
     if (const auto seq = peek_request_seq(payload)) {
-      respond_error(*seq, decode_error(st));
+      scope_ = RequestScope{*seq, api::Origin::ui, std::nullopt};
+      api::Outcome o;
+      o.v = decode_error(st);
+      respond(*seq, std::move(o));
+      scope_.reset();
     } else {
       send_engine_error(ErrorCode::decode, "undecodable message: " + std::string(wire::to_string(st)), false);
     }
@@ -935,10 +221,12 @@ void Session::close(api::GoodbyeReason reason, std::string message) {
 }
 
 void Session::on_disconnect() {
-  if (history_.gesture_open()) {
-    doc::Entry e = history_.end_gesture();
-    e.changes.prune();
-    history_.record(e.label, e.origin, std::move(e.changes));
+  // A gesture still open when the client goes away is COMMITTED (§5.1).
+  if (gesture_) {
+    Gesture g = std::move(*gesture_);
+    gesture_.reset();
+    g.changes.prune();
+    if (!g.changes.empty()) history_.push(doc::Entry{g.label, g.origin, std::move(g.changes)});
   }
   stop_playback();
 }
@@ -962,18 +250,11 @@ void Session::flush_scope() {
   out_.send(m);
 }
 
-void Session::respond_error(api::Seq seq, api::EngineError error) {
-  api::Outcome o;
-  o.v = std::move(error);
-  respond(seq, std::move(o));
-}
-
 void Session::send_events(api::Revision from, api::Revision to, std::vector<api::Event> events,
                           std::optional<api::Seq> seq, api::Origin origin) {
-  if (events.empty()) return;
+  if (events.empty() && from == to) return;
   if (scope_) {
-    // Inside a request: fold into its single batch, attributed to it — a seek's
-    // playhead event is caused by the seek (TS engine parity).
+    // Inside a request: fold into its single batch, attributed to it.
     if (scope_->pending) {
       api::EventBatch& p = *scope_->pending;
       p.to_revision = std::max(p.to_revision, to);
@@ -1006,352 +287,631 @@ void Session::send_engine_error(ErrorCode code, std::string message, bool fatal)
   send_events(revision_, revision_, std::move(ev), std::nullopt, api::Origin::engine);
 }
 
-api::Event Session::history_event() const {
-  return make_event(api::HistoryChangedEvent{history_.state(), history_.undo_label(), history_.redo_label()});
-}
-
-Session::Outcome Session::run_command(const api::Command& cmd, api::Origin origin, Clock::time_point now) {
-  return std::visit(CommandVisitor{*this, origin, now}, cmd.v);
-}
+// ── the request loop (LocalEngine.handle) ───────────────────────────────────
 
 void Session::handle_request(api::Request request, Clock::time_point now) {
   scope_ = RequestScope{request.seq, request.origin, std::nullopt};
-  handle_request_body(std::move(request), now);
-  flush_scope();  // anything emitted after the response (nothing, by design) still goes out
+  api::Outcome o = handle_request_body(request, now);
+  respond(request.seq, std::move(o));
   scope_.reset();
-}
-
-void Session::handle_request_body(api::Request request, Clock::time_point now) {
-  const api::Seq seq = request.seq;
-  if (request.base_revision && *request.base_revision != revision_) {
-    api::EngineError e = err(ErrorCode::conflict, "the document is at revision " + std::to_string(revision_));
-    e.detail = "{\"revision\":" + std::to_string(revision_) + "}";
-    respond_error(seq, std::move(e));
-    return;
-  }
-  switch (request.body.kind()) {
-    case api::RequestBody::Kind::query: {
-      auto [error, result] = std::visit(QueryVisitor{*this}, std::get<api::Query>(request.body.v).v);
-      api::Outcome o;
-      if (error) {
-        o.v = std::move(*error);
-      } else {
-        o.v = std::move(result);
-      }
-      respond(seq, std::move(o));
-      return;
-    }
-    case api::RequestBody::Kind::command: {
-      const api::Command& cmd = std::get<api::Command>(request.body.v);
-      txn_ = doc::ChangeSet{};
-      Outcome out = run_command(cmd, request.origin, now);
-      if (out.error) {
-        txn_.apply_before(doc_);  // a failed request changed NOTHING (§10)
-        txn_ = doc::ChangeSet{};
-        respond_error(seq, std::move(*out.error));
-        break;
-      }
-      api::Outcome o;
-      o.v = std::move(out.result);
-      switch (out.kind) {
-        case OutcomeKind::edit:
-          finish_edit(seq, request.origin, out.label, std::move(o));
-          break;
-        case OutcomeKind::history_move:
-          finish_history_move(seq, request.origin, out.moved, std::move(o));
-          break;
-        case OutcomeKind::reset: {
-          const api::Revision from = revision_;
-          ++revision_;
-          std::vector<api::Event> ev;
-          ev.push_back(make_event(api::DocumentResetEvent{revision_, api::ResetReason::created}));
-          ev.push_back(history_event());
-          send_events(from, revision_, std::move(ev), seq, request.origin);
-          emit_transport();  // before the response: same batch (§8.1)
-          respond(seq, std::move(o));
-          request_render();
-          break;
-        }
-        case OutcomeKind::control:
-          if (out.historyChanged) {
-            std::vector<api::Event> ev;
-            ev.push_back(history_event());
-            send_events(revision_, revision_, std::move(ev), seq, request.origin);
-          }
-          respond(seq, std::move(o));
-          break;
-      }
-      break;
-    }
-    case api::RequestBody::Kind::batch: {
-      const api::CommandBatch& batch = std::get<api::CommandBatch>(request.body.v);
-      txn_ = doc::ChangeSet{};
-      api::BatchResult results;
-      for (std::size_t i = 0; i < batch.commands.size(); ++i) {
-        const api::Command& cmd = batch.commands[i];
-        std::optional<api::EngineError> error;
-        if (!is_edit(cmd) && !is_not_yet(cmd)) {
-          error = err(ErrorCode::invalid_argument, "only edit commands can be batched (controls never enter history)");
-        } else {
-          Outcome out = run_command(cmd, request.origin, now);
-          if (out.error) {
-            error = std::move(out.error);
-          } else {
-            results.results.push_back(std::move(out.result));
-          }
-        }
-        if (error) {
-          txn_.apply_before(doc_);
-          txn_ = doc::ChangeSet{};
-          error->command_index = static_cast<std::uint32_t>(i);
-          respond_error(seq, std::move(*error));
-          flush_render();
-          return;
-        }
-      }
-      api::Outcome o;
-      o.v = std::move(results);
-      finish_edit(seq, request.origin, batch.label.empty() ? "Batch" : batch.label, std::move(o));
-      break;
-    }
-  }
   flush_render();
 }
 
-void Session::finish_edit(api::Seq seq, api::Origin origin, const std::string& label, api::Outcome outcome) {
-  txn_.seal(doc_);
-  txn_.prune();
-  if (txn_.empty()) {  // an edit that changed nothing: no revision, no entry, no events
-    respond(seq, std::move(outcome));
-    return;
+api::Outcome Session::handle_request_body(const api::Request& request, Clock::time_point now) {
+  api::Outcome o;
+  try {
+    if (request.base_revision && *request.base_revision != revision_) {
+      fail(ErrorCode::conflict,
+           "the document is at revision " + std::to_string(revision_) + ", not " + std::to_string(*request.base_revision),
+           {.detail = "{\"revision\":" + std::to_string(revision_) + "}"});
+    }
+    switch (request.body.kind()) {
+      case api::RequestBody::Kind::query: {
+        o.v = run_query(std::get<api::Query>(request.body.v));
+        return o;
+      }
+      case api::RequestBody::Kind::command: {
+        ensure_timelines();
+        const api::Command& cmd = std::get<api::Command>(request.body.v);
+        api::CommandResult r;
+        if (is_edit(cmd)) {
+          r = std::move(run_edits({&cmd}, request.origin, std::nullopt).at(0));
+        } else {
+          r = run_control(cmd, request.origin, now);
+        }
+        log_.push_back(api::LogRecord{request, revision_, 0});
+        o.v = std::move(r);
+        return o;
+      }
+      case api::RequestBody::Kind::batch: {
+        ensure_timelines();
+        const api::CommandBatch& batch = std::get<api::CommandBatch>(request.body.v);
+        std::vector<const api::Command*> cmds;
+        for (std::size_t i = 0; i < batch.commands.size(); ++i) {
+          const api::Command& c = batch.commands[i];
+          if (!doc::registry().commandKinds.contains(command_id(c))) {
+            fail(ErrorCode::unsupported, "unknown command", {.commandIndex = static_cast<std::uint32_t>(i)});
+          }
+          if (!is_edit(c)) {
+            fail(ErrorCode::invalid_argument,
+                 "'" + command_name(c) + "' is a " + doc::registry().commandKinds.at(command_id(c)) +
+                     " command and cannot be part of a batch",
+                 {.commandIndex = static_cast<std::uint32_t>(i)});
+          }
+          cmds.push_back(&c);
+        }
+        api::BatchResult results;
+        if (!cmds.empty()) results.results = run_edits(cmds, request.origin, batch.label);
+        log_.push_back(api::LogRecord{request, revision_, 0});
+        o.v = std::move(results);
+        return o;
+      }
+    }
+  } catch (const EngineFail& f) {
+    o.v = f.error;
+  } catch (const std::exception& e) {
+    o.v = err(ErrorCode::internal, e.what());
   }
+  return o;
+}
+
+bool Session::is_edit(const api::Command& cmd) const {
+  const auto& kinds = doc::registry().commandKinds;
+  const auto it = kinds.find(command_id(cmd));
+  return it != kinds.end() && it->second == "edit";
+}
+
+doc::PCtx Session::pctx() { return doc::PCtx{doc_, view_, exprEnv_, exprCache_}; }
+
+doc::HCtx Session::handler_ctx(api::Origin origin) {
+  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt};
+}
+
+void Session::ensure_timelines() {
+  // Every composition's timeline exists before a command runs (outside the
+  // journal: a structural mirror, not an edit — LocalEngine.ensureTimelines).
+  for (const auto& comp : doc::comp_item_ids(doc_)) {
+    if (doc_.timeline(comp) == nullptr) (void)doc::tl_ensure(doc_, comp);
+  }
+}
+
+void Session::stamp_missing_key_ids(const doc::ChangeSet& touched, doc::HCtx& x) {
+  // stamp.ts: any key in the edited scope without an id gets one, tracks and
+  // keys in engine order, inside the command (part of its inverse).
+  for (const auto& [id, before] : touched.before.anims) {
+    const doc::NodeAnim* a = doc_.anim(id);
+    if (a == nullptr) continue;
+    bool missing = false;
+    for (const auto& [prop, keys] : a->tracks) {
+      for (const doc::Key& k : keys) missing = missing || !k.id;
+    }
+    for (const auto& [prop, t] : a->data) {
+      for (const doc::DataKey& k : t.keys) missing = missing || !k.id;
+    }
+    if (!missing) continue;
+    doc::NodeAnim snap = *a;
+    for (auto& [prop, keys] : snap.tracks) {
+      for (doc::Key& k : keys) {
+        if (!k.id) k.id = x.mint_key_id();
+      }
+    }
+    for (auto& [prop, t] : snap.data) {
+      for (doc::DataKey& k : t.keys) {
+        if (!k.id) k.id = x.mint_key_id();
+      }
+    }
+    doc_.set_anim(id, std::move(snap));
+  }
+  for (const auto& [id, before] : touched.before.nodes) {
+    const doc::Node* n = doc_.node(id);
+    if (n == nullptr) continue;
+    std::vector<doc::Json> anim = doc::read_node_mask_anim(*n);
+    const bool missing = std::any_of(anim.begin(), anim.end(), [](const doc::Json& k) {
+      return !(k.at("id").is_string() && !k.at("id").str().empty());
+    });
+    if (!missing) continue;
+    for (doc::Json& k : anim) {
+      if (!(k.at("id").is_string() && !k.at("id").str().empty())) k.set("id", doc::Json::string(x.mint_key_id()));
+    }
+    doc::set_mask_anim(doc_, id, std::move(anim));
+  }
+}
+
+std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::Command*>& commands, api::Origin origin,
+                                                   const std::optional<std::string>& batchLabel) {
+  std::vector<api::CommandResult> results;
+  std::string label = batchLabel.value_or("");
+  const bool indexed = commands.size() > 1 || batchLabel.has_value();
+  doc_.begin();
+  for (std::size_t i = 0; i < commands.size(); ++i) {
+    const api::Command& cmd = *commands[i];
+    const std::string name = command_name(cmd);
+    doc::HCtx x = handler_ctx(origin);
+    const std::optional<std::uint32_t> index = indexed ? std::optional<std::uint32_t>(static_cast<std::uint32_t>(i)) : std::nullopt;
+    // The failure is recorded and re-thrown OUTSIDE the handler: a throw from
+    // inside a catch funclet crashes the clang-cl ASan runtime's SEH handler.
+    std::optional<api::EngineError> failed;
+    try {
+      api::CommandResult r = std::visit(EditVisitor{x, name}, cmd.v);
+      // stampMissingKeyIds over what this command touched, then syncTimelines.
+      doc::ChangeSet sofar;
+      doc_.peek_journal(sofar.before);
+      stamp_missing_key_ids(sofar, x);
+      doc::tl_sync_all(doc_);
+      results.push_back(std::move(r));
+      if (!batchLabel) label = x.label ? *x.label : humanize(name);
+      keys_.invalidate();
+    } catch (const EngineFail& f) {
+      failed = with_index(f.error, index);
+    } catch (const std::exception& e) {
+      failed = with_index(err(ErrorCode::internal, e.what()), index);
+    }
+    if (failed) {
+      doc_.rollback();
+      keys_.invalidate();
+      throw EngineFail{std::move(*failed)};
+    }
+  }
+  doc::ChangeSet changes = doc_.commit();
+  if (changes.empty()) return results;
   const api::Revision from = revision_;
   ++revision_;
+  std::vector<api::Event> events = builder_.build(changes, pctx());
+  if (gesture_) {
+    gesture_->changes.merge(changes);
+  } else {
+    history_.push(doc::Entry{label, origin, std::move(changes)});
+  }
+  send_events(from, revision_, std::move(events), std::nullopt, origin);
+  emit_status();
+  request_render();
+  return results;
+}
+
+// ── history and controls ────────────────────────────────────────────────────
+
+void Session::apply_history(const doc::ChangeSet& target) {
+  doc_.apply(target.after);
+  keys_.invalidate();
+}
+
+api::HistoryState Session::history_state() const {
+  api::HistoryState s;
+  for (const doc::Entry* e : history_.entries()) s.entries.push_back(api::HistoryEntry{e->label, e->origin});
+  s.position = static_cast<std::uint32_t>(history_.index() + 1);
+  s.can_undo = history_.can_undo();
+  s.can_redo = history_.can_redo();
+  s.gesture_open = gesture_.has_value();
+  s.limit = history_.capacity();
+  return s;
+}
+
+void Session::emit_status() {
   std::vector<api::Event> ev;
-  append_change_events(txn_, ev);
-  history_.record(label, origin, std::move(txn_));
-  txn_ = doc::ChangeSet{};
-  ev.push_back(history_event());
-  // Events before the response: when the client's await resumes, its mirror
-  // already shows the change.
-  send_events(from, revision_, std::move(ev), seq, origin);
-  respond(seq, std::move(outcome));
+  const doc::Entry* top = history_.top();
+  const doc::Entry* next = history_.next();
+  ev.push_back(make_event(api::HistoryChangedEvent{history_state(), top != nullptr ? top->label : "",
+                                                   next != nullptr ? next->label : ""}));
+  ev.push_back(make_event(api::DirtyChangedEvent{revision_ != savedRevision_, projectPath_}));
+  send_events(revision_, revision_, std::move(ev), std::nullopt, api::Origin::engine);
+}
+
+void Session::emit_changes(api::Revision from, const doc::ChangeSet& changes) {
+  std::vector<api::Event> events = builder_.build(changes, pctx());
+  send_events(from, revision_, std::move(events), std::nullopt, api::Origin::engine);
+}
+
+void Session::load_new_project(api::ResetReason reason, bool emit) {
+  // projectDocumentIO.createEmpty('Untitled') + restoreDocument: one empty
+  // composition, `comp_root`, and its timeline.
+  doc_ = doc::Document{};
+  doc::Node root;
+  root.id = "comp_root";
+  root.name = "Composition 1";
+  root.components.push_back(doc::Component{"comp_root_meta", "group", [] {
+                                              doc::Json p = doc::Json::object();
+                                              p.set("__kind", doc::Json::string("group"));
+                                              return p;
+                                            }()});
+  doc::sg_add_node(doc_, std::move(root));
+  doc::Json& rec = doc_.comp_mut("comp_root");
+  rec.set("id", doc::Json::string("comp_root"));
+  rec.set("name", doc::Json::string("Composition 1"));
+  rec.set("pristine", doc::Json::boolean(true));
+  rec.set("width", doc::Json::number(1920));
+  rec.set("height", doc::Json::number(1080));
+  rec.set("fps", doc::Json::number(30));
+  rec.set("durationSeconds", doc::Json::number(10));
+  rec.set("background", doc::Json::string("#101014"));
+  rec.set("transparent", doc::Json::boolean(false));
+  rec.set("startFrame", doc::Json::number(0));
+  view_ = doc::EditorView{};
+  projectPath_.clear();
+  after_load(reason, emit);
+}
+
+void Session::after_load(api::ResetReason reason, bool emit) {
+  ensure_timelines();
+  history_.clear();
+  gesture_.reset();
+  ids_.reset();
+  ids_.seed_keyframes(doc::all_keyframe_ids(doc_));
+  keys_.invalidate();
+  builder_.reset();
+  exprCache_.clear();
+  const api::Revision from = revision_;
+  ++revision_;
+  savedRevision_ = revision_;
+  if (!emit) return;
+  std::vector<api::Event> ev;
+  ev.push_back(make_event(api::DocumentResetEvent{revision_, reason}));
+  send_events(from, revision_, std::move(ev), std::nullopt, api::Origin::engine);
+  emit_status();
+}
+
+void Session::load_document(const doc::Json& file, api::ResetReason reason) {
+  const std::vector<doc::Json> session = doc_.items().assets;
+  const doc::RestoreResult r = doc::restore_document(doc_, view_, file, session);
+  lastMissing_ = r.missing;
+  after_load(reason, true);
   request_render();
 }
 
-void Session::finish_history_move(api::Seq seq, api::Origin origin, const doc::ChangeSet& applied,
-                                  api::Outcome outcome) {
-  std::vector<api::Event> ev;
-  const api::Revision from = revision_;
-  if (!applied.empty()) {
-    ++revision_;
-    append_change_events(applied, ev);
-    request_render();
+doc::Json Session::capture_document() const { return doc::capture_document(doc_, view_); }
+
+struct ControlVisitor {
+  Session& s;
+  api::Origin origin;
+  Clock::time_point now;
+  const std::string& name;
+  using R = api::CommandResult;
+
+  template <class T>
+  R operator()(const T&) const {
+    fail(ErrorCode::unsupported, "control '" + name + "' is not implemented");
   }
-  // The active comp may have been undone out of existence.
-  if (activeComp_ && doc_.comp(*activeComp_) == nullptr) {
-    stop_playback();
-    activeComp_.reset();
+
+  static void no_gesture_for(const Session& s, const char* what) {
+    if (s.gesture_) fail(ErrorCode::gesture_open, what);
   }
-  ev.push_back(history_event());
-  send_events(from, revision_, std::move(ev), seq, origin);
-  respond(seq, std::move(outcome));
+
+  R history_step(bool undo) const {
+    if (s.gesture_) fail(ErrorCode::gesture_open, std::string("'") + (undo ? "undo" : "redo") + "' is refused while a gesture is open");
+    if (undo && !s.history_.can_undo()) fail(ErrorCode::nothing_to_undo, "nothing to undo");
+    if (!undo && !s.history_.can_redo()) fail(ErrorCode::nothing_to_redo, "nothing to redo");
+    const doc::Entry* e = undo ? s.history_.undo() : s.history_.redo();
+    const doc::ChangeSet step = undo ? e->changes.reversed() : e->changes;
+    const std::string label = e->label;
+    s.apply_history(step);
+    const api::Revision from = s.revision_;
+    ++s.revision_;
+    s.emit_changes(from, step);
+    s.emit_status();
+    s.request_render();
+    return undo ? result_for<api::Undo>(api::HistoryStep{label, static_cast<std::uint32_t>(s.history_.index() + 1)})
+                : result_for<api::Redo>(api::HistoryStep{label, static_cast<std::uint32_t>(s.history_.index() + 1)});
+  }
+
+  R operator()(const api::Undo&) const { return history_step(true); }
+  R operator()(const api::Redo&) const { return history_step(false); }
+  R operator()(const api::JumpToHistory& c) const {
+    no_gesture_for(s, "close the gesture before moving through history");
+    const auto entries = s.history_.entries();
+    if (c.position > entries.size()) fail(ErrorCode::out_of_range, "history has " + std::to_string(entries.size()) + " entries");
+    const std::int64_t target = static_cast<std::int64_t>(c.position) - 1;
+    std::string label;
+    doc::ChangeSet folded;
+    while (s.history_.index() > target) {
+      const doc::Entry* e = s.history_.undo();
+      label = e->label;
+      const doc::ChangeSet step = e->changes.reversed();
+      s.apply_history(step);
+      folded.merge(step);
+    }
+    while (s.history_.index() < target) {
+      const doc::Entry* e = s.history_.redo();
+      label = e->label;
+      s.apply_history(e->changes);
+      folded.merge(e->changes);
+    }
+    // One revision for the whole jump (first-seen from, last-seen to per part).
+    folded.after = s.doc_.current_of(folded.before);
+    folded.prune();
+    if (!folded.empty()) {
+      const api::Revision from = s.revision_;
+      ++s.revision_;
+      s.emit_changes(from, folded);
+      s.request_render();
+    }
+    s.emit_status();
+    return result_for<api::JumpToHistory>(api::HistoryStep{label, static_cast<std::uint32_t>(s.history_.index() + 1)});
+  }
+  R operator()(const api::BeginGesture& c) const {
+    if (s.gesture_) fail(ErrorCode::gesture_open, "gesture '" + s.gesture_->label + "' is already open");
+    s.gestureSeq_ += 1;
+    s.gesture_ = Session::Gesture{s.gestureSeq_, c.label, origin, {}};
+    s.emit_status();
+    return result_for<api::BeginGesture>(api::GestureRef{s.gestureSeq_});
+  }
+  R operator()(const api::EndGesture& c) const {
+    if (!s.gesture_) fail(ErrorCode::no_gesture, "no gesture is open");
+    if (c.gesture != 0 && c.gesture != s.gesture_->id) {
+      fail(ErrorCode::invalid_argument, "gesture " + std::to_string(c.gesture) + " is not the open gesture (" +
+                                            std::to_string(s.gesture_->id) + ")");
+    }
+    Session::Gesture g = std::move(*s.gesture_);
+    s.gesture_.reset();
+    g.changes.prune();
+    if (g.changes.empty()) {
+      s.emit_status();
+      return result_for<api::EndGesture>();
+    }
+    if (c.commit) {
+      s.history_.push(doc::Entry{g.label, g.origin, std::move(g.changes)});
+    } else {
+      // Esc: every edit of the gesture reverts; a new revision with events.
+      const doc::ChangeSet back = g.changes.reversed();
+      s.apply_history(back);
+      const api::Revision from = s.revision_;
+      ++s.revision_;
+      s.emit_changes(from, back);
+      s.request_render();
+    }
+    s.emit_status();
+    return result_for<api::EndGesture>();
+  }
+  R operator()(const api::ClearHistory&) const {
+    no_gesture_for(s, "close the gesture first");
+    s.history_.clear();
+    s.emit_status();
+    return result_for<api::ClearHistory>();
+  }
+  R operator()(const api::SetHistoryLimit& c) const {
+    if (!(c.entries > 0)) fail(ErrorCode::out_of_range, "the history limit must be at least 1");
+    s.history_.set_capacity(c.entries);
+    s.emit_status();
+    return result_for<api::SetHistoryLimit>();
+  }
+  R operator()(const api::SetAutosave& c) const {
+    s.autosave_ = Session::Autosave{c.enabled, c.interval_seconds, c.keep};
+    return result_for<api::SetAutosave>();
+  }
+  R operator()(const api::NewProject&) const {
+    no_gesture_for(s, "close the gesture first");
+    s.load_new_project(api::ResetReason::created);
+    s.emit_status();
+    s.request_render();
+    return result_for<api::NewProject>();
+  }
+  R operator()(const api::OpenProject& c) const {
+    no_gesture_for(s, "close the gesture first");
+    if (!s.ports_->has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
+    doc::Json file = s.ports_->read_project(c.path);
+    s.load_document(file, api::ResetReason::opened);
+    s.projectPath_ = c.path;
+    s.emit_status();
+    api::OpenProjectResult r;
+    r.missing_items = s.lastMissing_;
+    return result_for<api::OpenProject>(std::move(r));
+  }
+  R operator()(const api::RevertProject&) const {
+    no_gesture_for(s, "close the gesture first");
+    if (!s.ports_->has_projects() || s.projectPath_.empty()) {
+      fail(ErrorCode::unsupported, "nothing to revert to: no saved project path or file port");
+    }
+    doc::Json file = s.ports_->read_project(s.projectPath_);
+    s.load_document(file, api::ResetReason::reverted);
+    return result_for<api::RevertProject>();
+  }
+  R operator()(const api::SaveProject& c) const {
+    if (!s.ports_->has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
+    const std::string path = c.path ? *c.path : s.projectPath_;
+    if (path.empty()) fail(ErrorCode::invalid_argument, "the project has no path yet; pass one");
+    const std::uint64_t bytes = s.ports_->write_project(path, s.capture_document());
+    if (!c.copy) {
+      s.projectPath_ = path;
+      s.savedRevision_ = s.revision_;
+      std::vector<api::Event> ev;
+      ev.push_back(make_event(api::ProjectSavedEvent{path, s.revision_}));
+      s.send_events(s.revision_, s.revision_, std::move(ev), std::nullopt, api::Origin::engine);
+      s.emit_status();
+    }
+    return result_for<api::SaveProject>(api::SaveProjectResult{path, bytes});
+  }
+  R operator()(const api::CollectFiles&) const {
+    fail(ErrorCode::unsupported, "no collect-files port is attached to this engine");
+  }
+  R operator()(const api::ReloadItems&) const { return result_for<api::ReloadItems>(); }
+  R operator()(const api::StartJob&) const {
+    fail(ErrorCode::unsupported, "jobs run in the editor today (tracking, stabilize, object matte, transcription, render); "
+                                 "they move into the engine in phase E/F");
+  }
+  R operator()(const api::CancelJob& c) const { fail(ErrorCode::not_found, "no job '" + c.job + "'"); }
+  R operator()(const api::SetPluginEnabled& c) const {
+    // No plugin is installed in the engine process (plugins host in the editor).
+    fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
+  }
+
+  // ── transport (transport.ts semantics, the C2 clock underneath) ──
+  R operator()(const api::SetActiveComposition& c) const {
+    if (!doc::is_comp_item(s.doc_, c.comp)) fail(ErrorCode::not_found, "no composition '" + c.comp + "'", {.item = c.comp});
+    if (!(s.activeComp_ && *s.activeComp_ == c.comp)) {
+      s.stop_playback();
+      s.activeComp_ = c.comp;
+      s.set_time(s.time_);
+      s.request_render();
+    }
+    s.emit_transport();
+    s.emit_playhead();
+    return result_for<api::SetActiveComposition>();
+  }
+  R operator()(const api::Play& c) const {
+    const auto comp = s.active_comp();
+    if (!comp) fail(ErrorCode::not_found, "no composition to play");
+    if (!(std::abs(c.rate) > 0 && std::abs(c.rate) <= 4)) fail(ErrorCode::out_of_range, "rate must be within ±4 and not 0");
+    if (c.range == api::PlayRange::custom && (!c.custom || c.custom->duration <= 0)) {
+      fail(ErrorCode::invalid_argument, "a custom range needs a positive duration");
+    }
+    s.rate_ = c.rate;
+    s.rangeKind_ = c.range;
+    if (c.custom) s.customRange_ = *c.custom;
+    if (c.from) s.seek_to(*c.from);
+    s.transportState_ = c.cache_first ? api::TransportState::caching : api::TransportState::playing;
+    s.start_playback(now, std::nullopt);
+    return result_for<api::Play>();
+  }
+  R operator()(const api::Pause& c) const {
+    s.stop_playback();
+    s.transportState_ = api::TransportState::stopped;
+    if (c.return_to_start && s.active_comp()) {
+      s.seek_to(s.customRange_.duration > 0 ? s.customRange_.start : 0);
+    }
+    s.emit_transport();
+    s.emit_playhead();
+    s.request_render();
+    return result_for<api::Pause>();
+  }
+  R operator()(const api::Seek& c) const {
+    if (!s.active_comp()) fail(ErrorCode::not_found, "no composition to seek");
+    s.seek_to(c.time);
+    if (s.playing_) s.rebase_playback(now);
+    s.emit_transport();
+    s.emit_playhead();
+    s.request_render();
+    return result_for<api::Seek>();
+  }
+  R operator()(const api::Step& c) const {
+    const auto comp = s.active_comp();
+    if (!comp) fail(ErrorCode::not_found, "no composition to step");
+    const double fps = doc::comp_fps(s.doc_, *comp);
+    s.seek_to(doc::frames_to_flicks(doc::flicks_to_frames(s.apiTime_, fps) + c.frames, fps));
+    if (s.playing_) s.rebase_playback(now);
+    s.emit_transport();
+    s.emit_playhead();
+    s.request_render();
+    return result_for<api::Step>();
+  }
+  R operator()(const api::SetLoop& c) const {
+    s.loop_ = c.mode;
+    s.emit_transport();
+    s.emit_playhead();
+    return result_for<api::SetLoop>();
+  }
+  R operator()(const api::SetPreviewQuality& c) const {
+    s.resolution_ = resolution_factor(c.resolution);
+    if (s.viewport_.open) {
+      s.viewport_.resolution = s.resolution_;
+      s.sink_.configure(s.viewport_);
+      s.request_render();
+    }
+    return result_for<api::SetPreviewQuality>();
+  }
+  R operator()(const api::SetAudioPreview& c) const {
+    if (!(c.volume >= 0)) fail(ErrorCode::out_of_range, "volume must be ≥ 0");
+    return result_for<api::SetAudioPreview>();
+  }
+  R operator()(const api::SetViewport& c) const {
+    if (!(c.width > 0 && c.height > 0)) fail(ErrorCode::out_of_range, "viewport size must be positive");
+    const double dpr = c.device_pixel_ratio > 0.0 && std::isfinite(c.device_pixel_ratio) ? c.device_pixel_ratio : 1.0;
+    const double w = std::round(static_cast<double>(c.width) * dpr);
+    const double h = std::round(static_cast<double>(c.height) * dpr);
+    s.viewports_.insert(c.viewport);
+    if (c.layer || w > 16384.0 || h > 16384.0 || dpr > 8.0) return result_for<api::SetViewport>();  // state kept; not rendered
+    ViewportConfig v;
+    v.viewport = c.viewport;
+    v.width = static_cast<std::uint32_t>(w);
+    v.height = static_cast<std::uint32_t>(h);
+    v.resolution = s.resolution_;
+    v.open = true;
+    if (!(v == s.viewport_)) {
+      s.viewport_ = v;
+      s.sink_.configure(v);
+    }
+    s.request_render();
+    return result_for<api::SetViewport>();
+  }
+  R operator()(const api::CloseViewport& c) const {
+    if (s.viewports_.erase(c.viewport) == 0) fail(ErrorCode::not_found, "no viewport " + std::to_string(c.viewport));
+    if (s.viewport_.open && s.viewport_.viewport == c.viewport) {
+      s.viewport_.open = false;
+      s.sink_.configure(s.viewport_);
+    }
+    return result_for<api::CloseViewport>();
+  }
+  R operator()(const api::SetCacheBudget&) const { return result_for<api::SetCacheBudget>(); }
+  R operator()(const api::PurgeCache&) const { return result_for<api::PurgeCache>(); }
+  R operator()(const api::SetInteracting&) const { return result_for<api::SetInteracting>(); }
+};
+
+api::CommandResult Session::run_control(const api::Command& cmd, api::Origin origin, Clock::time_point now) {
+  const std::string name = command_name(cmd);
+  if (!doc::registry().commandKinds.contains(command_id(cmd))) fail(ErrorCode::unsupported, "unknown command '" + name + "'");
+  return std::visit(ControlVisitor{*this, origin, now, name}, cmd.v);
 }
 
-std::optional<api::EngineError> Session::write_property(const api::PropRef& ref, const api::Value& value,
-                                                        std::optional<api::Time> time,
-                                                        std::optional<api::KeyframeId>& key) {
-  doc::Layer* layer = doc_.layer(ref.layer);
-  if (layer == nullptr) return layer_not_found(ref.layer);
-  const doc::PropertySpec* spec = doc::find_spec(layer->kind, ref.path);
-  const auto it = layer->props.find(ref.path);
-  if (spec == nullptr || it == layer->props.end()) {
-    api::EngineError e = err(ErrorCode::not_found, "no property '" + ref.path + "' on a " +
-                                                       std::string(api::to_string(layer->kind)) + " layer");
-    e.layer = ref.layer;
-    e.path = ref.path;
-    return e;
-  }
-  doc::Property& prop = it->second;
-  if (doc::value_type_of(value) != prop.type) {
-    api::EngineError e =
-        err(ErrorCode::type_mismatch, "'" + ref.path + "' takes a " + std::string(api::to_string(prop.type)));
-    e.layer = ref.layer;
-    e.path = ref.path;
-    e.detail = "{\"expected\":\"" + std::string(api::to_string(prop.type)) + "\"}";
-    return e;
-  }
-  if (!doc::all_finite(value)) {
-    api::EngineError e = err(ErrorCode::invalid_argument, "value is not finite");
-    e.path = ref.path;
-    return e;
-  }
-  // Clamp to the property's range (AE clamps opacity 0..100 as you type).
-  api::Value v = value;
-  if (spec->min || spec->max) {
-    std::array<double, 4> c{};
-    const std::size_t n = doc::components(v, c);
-    for (std::size_t i = 0; i < n; ++i) {
-      if (spec->min) c[i] = std::max(c[i], *spec->min);
-      if (spec->max) c[i] = std::min(c[i], *spec->max);
-    }
-    v = doc::from_components(prop.type, std::span<const double>(c.data(), n));
-  }
-  txn_.touch_layer(doc_, ref.layer);
-  if (prop.keys.empty()) {
-    prop.value = std::move(v);
-    return std::nullopt;
-  }
-  if (!time) {
-    api::EngineError e = err(ErrorCode::animated, "'" + ref.path + "' is animated: setProperty needs a time");
-    e.layer = ref.layer;
-    e.path = ref.path;
-    return e;
-  }
-  auto pos = std::lower_bound(prop.keys.begin(), prop.keys.end(), *time,
-                              [](const api::Keyframe& k, api::Time t) { return k.time < t; });
-  if (pos != prop.keys.end() && pos->time == *time) {
-    pos->value = std::move(v);
-    key = pos->id;
-  } else {
-    api::Keyframe k;
-    k.id = doc_.mint_key_id();
-    k.time = *time;
-    k.value = std::move(v);
-    key = k.id;
-    prop.keys.insert(pos, std::move(k));
-  }
-  return std::nullopt;
-}
+// ── queries ─────────────────────────────────────────────────────────────────
 
-api::QueryResult Session::query_document(const api::GetDocument& q) {
-  api::DocumentSnapshot d;
-  d.revision = revision_;
-  d.settings.bit_depth = api::BitDepth::u8;
-  d.settings.working_space = api::ColorWorkingSpace::srgb;
-  d.settings.audio_sample_rate = 48000;
-  for (const auto& id : doc_.itemOrder) {
-    const doc::Comp* comp = doc_.comp(id);
-    if (comp == nullptr) continue;
-    d.items.push_back(doc::comp_item_info(*comp));
-    d.comps.push_back(doc::comp_info(*comp));
-    for (const auto& lid : comp->layers) {
-      const doc::Layer* l = doc_.layer(lid);
-      if (l == nullptr) continue;
-      d.layers.push_back(doc::layer_info(*l));
-      if (q.include_properties) {
-        api::PropertyTree tree;
-        tree.layer = l->id;
-        for (const doc::PropertySpec& spec : doc::catalog_for(l->kind)) {
-          const std::string path(spec.path);
-          const doc::Property& prop = l->props.at(path);
-          tree.nodes.push_back(doc::property_info(*l, path, prop, eval::value_at(prop, time_, scratch_)));
-        }
-        d.property_trees.push_back(std::move(tree));
-      }
-      if (q.include_keyframes) {
-        for (const auto& [path, prop] : l->props) {
-          if (!prop.keys.empty()) d.keyframes.push_back(doc::keyframe_set(*l, path, prop));
-        }
-      }
+api::QueryResult Session::run_query(const api::Query& q) {
+  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}};
+  c.revision = revision_;
+  c.projectPath = projectPath_;
+  c.dirty = revision_ != savedRevision_;
+  c.history = [this] { return history_state(); };
+  c.log = [this](api::Revision from) {
+    std::vector<api::LogRecord> out;
+    for (const auto& r : log_) {
+      if (r.revision_after > from) out.push_back(r);
     }
-  }
-  return query_result_for<api::GetDocument>(std::move(d));
-}
-
-void Session::append_change_events(const doc::ChangeSet& changes, std::vector<api::Event>& events) {
-  api::ItemsChangedEvent items;
-  std::vector<api::ItemId> itemsRemoved;
-  std::vector<api::Event> compEvents;
-  std::vector<api::Event> orderEvents;
-  for (const auto& c : changes.comps) {
-    if (!c.after) {
-      if (c.before) itemsRemoved.push_back(c.id);
-      continue;
-    }
-    const bool added = !c.before;
-    if (added || c.before->settings.name != c.after->settings.name) items.items.push_back(doc::comp_item_info(*c.after));
-    if (added || !(c.before->settings == c.after->settings)) {
-      compEvents.push_back(make_event(api::CompositionChangedEvent{c.id, c.after->settings}));
-    }
-    if (added || c.before->layers != c.after->layers) {
-      orderEvents.push_back(make_event(api::LayerOrderChangedEvent{c.id, c.after->layers}));
-    }
-  }
-  api::LayersChangedEvent layersChanged;
-  std::vector<api::Event> propEvents;
-  api::KeyframesChangedEvent keys;
-  std::vector<std::pair<api::ItemId, api::LayerId>> removed;
-  for (const auto& c : changes.layers) {
-    if (!c.after) {
-      if (c.before) removed.emplace_back(c.before->comp, c.id);
-      continue;
-    }
-    const doc::Layer& after = *c.after;
-    const doc::Layer* before = c.before ? &*c.before : nullptr;
-    const api::LayerInfo info = doc::layer_info(after);
-    if (before == nullptr || !(doc::layer_info(*before) == info)) layersChanged.layers.push_back(info);
-    api::PropertiesChangedEvent props;
-    props.layer = after.id;
-    for (const auto& [path, prop] : after.props) {
-      const doc::Property* old = nullptr;
-      if (before != nullptr) {
-        const auto it = before->props.find(path);
-        if (it != before->props.end()) old = &it->second;
-      }
-      if (old != nullptr && *old == prop) continue;
-      props.properties.push_back(doc::property_info(after, path, prop, eval::value_at(prop, time_, scratch_)));
-      if ((old == nullptr && !prop.keys.empty()) || (old != nullptr && old->keys != prop.keys)) {
-        keys.sets.push_back(doc::keyframe_set(after, path, prop));
-      }
-    }
-    if (!props.properties.empty()) propEvents.push_back(make_event(std::move(props)));
-  }
-  if (!items.items.empty()) events.push_back(make_event(std::move(items)));
-  for (auto& e : compEvents) events.push_back(std::move(e));
-  if (!layersChanged.layers.empty()) events.push_back(make_event(std::move(layersChanged)));
-  for (auto& e : propEvents) events.push_back(std::move(e));
-  if (!keys.sets.empty()) events.push_back(make_event(std::move(keys)));
-  // One layersRemoved per composition.
-  std::sort(removed.begin(), removed.end());
-  for (std::size_t i = 0; i < removed.size();) {
-    api::LayersRemovedEvent r;
-    r.comp = removed[i].first;
-    while (i < removed.size() && removed[i].first == r.comp) r.layers.push_back(removed[i++].second);
-    events.push_back(make_event(std::move(r)));
-  }
-  for (auto& e : orderEvents) events.push_back(std::move(e));
-  if (!itemsRemoved.empty()) events.push_back(make_event(api::ItemsRemovedEvent{std::move(itemsRemoved)}));
+    return out;
+  };
+  c.capabilities = [this] {
+    api::Capabilities cap;
+    cap.gpu_adapter = sink_.adapter();
+    cap.gpu_backend = sink_.backend();
+    cap.export_formats = {"mp4-h264", "mov-prores", "webm-vp9", "png-seq", "gif"};
+    cap.color_management = true;
+    cap.expression_engines = {"premation"};
+    cap.cpu_threads = std::thread::hardware_concurrency();
+    return cap;
+  };
+  c.renderStats = [this] {
+    const RenderCounters rc = sink_.counters();
+    api::RenderStats st;
+    st.gpu_frame_ms = rc.gpuFrameMs;
+    st.fps = rc.fps;
+    st.dropped_frames = rc.dropped;
+    return st;
+  };
+  return doc::run_query(q, c);
 }
 
 // ── transport ───────────────────────────────────────────────────────────────
 
-const doc::Comp* Session::active_comp() const {
-  if (!activeComp_) {
-    // No explicit choice yet: the first composition (what AE opens).
-    for (const auto& id : doc_.itemOrder) {
-      if (const doc::Comp* c = doc_.comp(id)) return c;
-    }
-    return nullptr;
-  }
-  return doc_.comp(*activeComp_);
+std::optional<std::string> Session::active_comp() const {
+  if (activeComp_ && doc::is_comp_item(doc_, *activeComp_)) return *activeComp_;
+  if (doc::is_comp_item(doc_, view_.tabComp)) return view_.tabComp;
+  const auto ids = doc::comp_item_ids(doc_);
+  if (!ids.empty()) return ids.front();
+  return std::nullopt;
 }
 
 api::Time Session::frame_dur() const {
-  const doc::Comp* c = active_comp();
-  const api::Time d = c != nullptr ? doc::frame_duration(c->settings.frame_rate) : 0;
-  return d > 0 ? d : doc::kFlicksPerSecond / 30;
+  const auto c = active_comp();
+  const double fps = c ? doc::comp_fps(doc_, *c) : 30.0;
+  const api::Time d = doc::frames_to_flicks(1, fps);
+  return d > 0 ? d : static_cast<api::Time>(doc::kFlicks / 30);
 }
 
 Session::Range Session::play_range() const {
-  const doc::Comp* c = active_comp();
+  const auto c = active_comp();
   const api::Time fd = frame_dur();
-  api::TimeRange r{0, c != nullptr ? c->settings.duration : fd};
-  if (rangeKind_ == api::PlayRange::work_area && c != nullptr && c->settings.work_area.duration > 0) {
-    r = c->settings.work_area;
-  } else if (rangeKind_ == api::PlayRange::custom && customRange_.duration > 0) {
-    r = customRange_;
+  api::TimeRange r{0, fd};
+  if (c) {
+    const api::CompSettings cs = doc::comp_settings(doc_, *c);
+    r = api::TimeRange{0, cs.duration};
+    if (rangeKind_ == api::PlayRange::work_area && cs.work_area.duration > 0) r = cs.work_area;
   }
+  if (rangeKind_ == api::PlayRange::custom && customRange_.duration > 0) r = customRange_;
   Range out;
   out.first = std::max<std::int64_t>(0, floor_div(r.start + fd - 1, fd));
   out.last = std::max(out.first, floor_div(r.start + r.duration + fd - 1, fd) - 1);
@@ -1359,11 +919,21 @@ Session::Range Session::play_range() const {
 }
 
 void Session::set_time(api::Time t) {
-  const doc::Comp* c = active_comp();
+  const auto c = active_comp();
   const api::Time fd = frame_dur();
-  const api::Time maxT = c != nullptr ? std::max<api::Time>(0, c->settings.duration - fd) : 0;
+  const api::Time dur = c ? doc::comp_settings(doc_, *c).duration : fd;
+  const api::Time maxT = std::max<api::Time>(0, dur - fd);
   time_ = std::clamp<api::Time>(t, 0, maxT);
   frame_ = floor_div(time_, fd);
+}
+
+void Session::seek_to(api::Time flicks) {
+  const auto comp = active_comp();
+  const double fps = comp ? doc::comp_fps(doc_, *comp) : 30.0;
+  // Frame-exact, like the editor's clock mirror (transport.ts seekTo).
+  apiTime_ = doc::frames_to_flicks(doc::flicks_to_frames(std::max<api::Time>(0, flicks), fps), fps);
+  if (comp && *comp == view_.tabComp) view_.tabTime = doc::flicks_to_seconds(apiTime_);
+  set_time(apiTime_);
 }
 
 void Session::start_playback(Clock::time_point now, std::optional<api::Time> from) {
@@ -1399,13 +969,14 @@ void Session::rebase_playback(Clock::time_point now) {
 void Session::stop_playback() {
   if (!playing_) return;
   playing_ = false;
+  transportState_ = api::TransportState::stopped;
 }
 
 std::optional<Clock::time_point> Session::next_deadline() const {
   if (!playing_) return std::nullopt;
-  const doc::Comp* c = active_comp();
-  if (c == nullptr) return std::nullopt;
-  const double fps = doc::fps_of(c->settings.frame_rate) * std::abs(rate_);
+  const auto c = active_comp();
+  if (!c) return std::nullopt;
+  const double fps = doc::comp_fps(doc_, *c) * std::abs(rate_);
   if (fps <= 0) return std::nullopt;
   const auto step = std::chrono::duration<double>(static_cast<double>(lastK_ + 1) / fps);
   return playBase_ + std::chrono::duration_cast<Clock::duration>(step);
@@ -1413,13 +984,13 @@ std::optional<Clock::time_point> Session::next_deadline() const {
 
 void Session::tick(Clock::time_point now) {
   if (!playing_ || phase_ != Phase::open) return;
-  const doc::Comp* c = active_comp();
-  if (c == nullptr) {
+  const auto c = active_comp();
+  if (!c) {
     stop_playback();
     emit_transport();
     return;
   }
-  const double fps = doc::fps_of(c->settings.frame_rate) * std::abs(rate_);
+  const double fps = doc::comp_fps(doc_, *c) * std::abs(rate_);
   // Wall time only PACES the clock (which frame is due); what a frame shows is
   // a pure function of its frame index. Late → frames are skipped, never
   // stretched (AE: video drops frames rather than drifting).
@@ -1484,11 +1055,10 @@ void Session::emit_stats(Clock::time_point now) {
 
 void Session::emit_transport() {
   if (phase_ != Phase::open) return;
-  const doc::Comp* c = active_comp();
   api::TransportChangedEvent t;
-  t.state = playing_ ? api::TransportState::playing : api::TransportState::stopped;
-  t.comp = c != nullptr ? c->id : std::string();
-  t.time = time_;
+  t.state = playing_ ? transportState_ : api::TransportState::stopped;
+  t.comp = active_comp().value_or("");
+  t.time = playing_ ? time_ : apiTime_;
   t.rate = rate_;
   t.loop = loop_;
   const Range r = play_range();
@@ -1507,11 +1077,10 @@ void Session::emit_playhead() {
     ++playheadSkipped_;
     return;
   }
-  const doc::Comp* c = active_comp();
   api::PlayheadEvent p;
-  p.comp = c != nullptr ? c->id : std::string();
-  p.time = time_;
-  p.frame = frame_;
+  p.comp = active_comp().value_or("");
+  p.time = playing_ ? time_ : apiTime_;
+  p.frame = playing_ ? frame_ : doc::to_i64(doc::flicks_to_frames(apiTime_, p.comp.empty() ? 30.0 : doc::comp_fps(doc_, p.comp)));
   p.dropped_frames = clockDropped_;
   std::vector<api::Event> ev;
   ev.push_back(make_event(std::move(p)));
@@ -1526,14 +1095,13 @@ void Session::flush_render() {
 
 void Session::submit_frame(std::uint32_t clockDropped) {
   if (!viewport_.open) return;
-  const doc::Comp* c = active_comp();
-  if (c == nullptr) return;
+  const auto c = active_comp();
+  if (!c) return;
   RenderJob job;
   // The scene's quad vector changes hands (core → render thread) once per
   // frame: one small allocation per frame, deliberately, so the two threads
-  // never share a buffer. Recycling it is a later optimisation if it ever
-  // shows up in the frame profile.
-  eval::build_scene(doc_, *c, time_, scratch_, job.scene);
+  // never share a buffer.
+  doc::build_frame_scene(pctx(), *c, time_, job.scene);
   job.viewport = viewport_.viewport;
   job.frame = frame_;
   job.time = time_;

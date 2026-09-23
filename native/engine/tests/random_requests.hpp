@@ -15,6 +15,8 @@
 
 namespace premation::test {
 
+inline constexpr api::Time kFlicksPerSecond = 705'600'000;
+
 class RandomTraffic {
  public:
   explicit RandomTraffic(std::uint64_t seed) : rng_(seed) {}
@@ -34,21 +36,25 @@ class RandomTraffic {
 
   api::Time time() {
     switch (u(10)) {
-      case 0: return -doc::kFlicksPerSecond;
+      case 0: return -kFlicksPerSecond;
       case 1: return std::numeric_limits<api::Time>::max() / 4;
-      default: return static_cast<api::Time>(u(12 * 30)) * (doc::kFlicksPerSecond / 30);
+      default: return static_cast<api::Time>(u(12 * 30)) * (kFlicksPerSecond / 30);
     }
   }
 
-  std::string layer_id() { return coin(0.9) ? "L" + std::to_string(u(12) + 1) : junk_string(); }
-  std::string comp_id() { return coin(0.9) ? "C" + std::to_string(u(3) + 1) : junk_string(); }
-  std::string key_id() { return "K" + std::to_string(u(60) + 1); }
+  // The ids the engine mints (IdAllocator: layer_<n>, comp_<n>, k<n>; New Project is comp_root).
+  std::string layer_id() { return coin(0.9) ? "layer_" + std::to_string(u(12) + 1) : junk_string(); }
+  std::string comp_id() {
+    if (!coin(0.9)) return junk_string();
+    return coin(0.5) ? std::string("comp_root") : "comp_" + std::to_string(u(3) + 1);
+  }
+  std::string key_id() { return "k" + std::to_string(u(60) + 1); }
 
   std::string path() {
     static const char* const kPaths[] = {"transform/anchorPoint", "transform/position", "transform/scale",
-                                         "transform/rotation",    "transform/opacity",  "layer/color",
-                                         "layer/size",            "transform",          "",
-                                         "effects/x/y"};
+                                         "transform/rotation",    "transform/opacity",  "text/sourceText",
+                                         "contents/size",         "transform",          "",
+                                         "effects/x/y",           "masks/mask_1/path",  "styles/dropShadow/distance"};
     return kPaths[u(std::size(kPaths))];
   }
 
@@ -226,6 +232,7 @@ class RandomTraffic {
       r.body.v = std::move(b);
     }
     if (coin(0.05)) r.base_revision = u(50);
+    r.origin = static_cast<api::Origin>(u(6));
     api::EngineMessage m;
     m.v = std::move(r);
     return m;
