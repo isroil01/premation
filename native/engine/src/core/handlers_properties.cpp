@@ -8,6 +8,7 @@
 #include "docexpr.hpp"
 #include "fxstate.hpp"
 #include "readmodel.hpp"
+#include "strokes.hpp"
 #include "time_conv.hpp"
 
 namespace premation::doc {
@@ -119,6 +120,8 @@ PlannedWrite plan_write(HCtx& x, const std::string& layer, const PropBinding& b,
   return p;
 }
 
+void rerove_keys(HCtx& x, const std::string& layer, const PropBinding& b);
+
 std::optional<std::string> apply_write(HCtx& x, const PlannedWrite& p) {
   if (!p.keyed) {
     write_static(x.d, p.layer, p.b, p.value);
@@ -129,6 +132,7 @@ std::optional<std::string> apply_write(HCtx& x, const PlannedWrite& p) {
   w.id = p.id;
   w.value = p.value;
   put_keys(x.pc(), p.layer, p.b, {w});
+  rerove_keys(x, p.layer, p.b);
   return p.id;
 }
 
@@ -196,11 +200,107 @@ void retime(HCtx& x, const std::string& layer, const PropBinding& b, const TimeM
     anim_set_data_track(d, layer, *b.dataTrack, std::move(next));
     return;
   }
+  // The whole key moves: a lone member key gets its siblings first (§3.3).
+  std::vector<double> froms;
+  for (const auto& [f, t] : map.e) froms.push_back(f);
+  normalize_keys_at(x.pc(), layer, b, froms);
   for (const std::string& m : b.members) {
     const auto* kfs = anim_track(d, layer, m);
     if (kfs == nullptr) continue;
     anim_set_track(d, layer, m, move_list(*kfs, map, [](const Key& k) { return k.t; }, [](Key& k, double t) { k.t = t; }));
   }
+}
+
+/// properties.ts `ROVE_SAMPLES`.
+constexpr int kRoveSamples = 64;
+
+/// properties.ts `reroveKeys`: Rove Across Time — same arithmetic, same order.
+void rerove_keys(HCtx& x, const std::string& layer, const PropBinding& b) {
+  if (b.members.empty() || b.special == Special::maskPath || b.dataTrack) return;
+  std::vector<std::vector<Key>> tracks;
+  for (const auto& m : b.members) {
+    const auto* tr = anim_track(x.d, layer, m);
+    tracks.push_back(tr != nullptr ? *tr : std::vector<Key>{});
+  }
+  const bool anyRoving = std::any_of(tracks.begin(), tracks.end(), [](const std::vector<Key>& tr) {
+    return std::any_of(tr.begin(), tr.end(), [](const Key& k) { return k.roving.value_or(false); });
+  });
+  if (!anyRoving) return;
+  std::set<double> timeSet;
+  for (const auto& tr : tracks) {
+    for (const Key& k : tr) timeSet.insert(k.t);
+  }
+  const std::vector<double> times(timeSet.begin(), timeSet.end());
+  if (times.size() < 3) return;
+  std::vector<bool> roving;
+  for (const double t : times) {
+    const Key* lead = nullptr;
+    for (const auto& tr : tracks) {
+      for (const Key& k : tr) {
+        if (k.t == t) {
+          lead = &k;
+          break;
+        }
+      }
+      if (lead != nullptr) break;
+    }
+    roving.push_back(lead != nullptr && lead->roving.value_or(false));
+  }
+  const auto at = [&](std::size_t i, double t) -> double {
+    if (tracks[i].empty()) return 0;
+    return sample_keys(tracks[i], t).value_or(0);
+  };
+  const auto seg_len = [&](std::size_t k) -> double {
+    const double t0 = times[k];
+    const double t1 = times[k + 1];
+    if (b.members.size() == 1) return std::abs(at(0, t1) - at(0, t0));
+    double len = 0;
+    std::vector<double> prev;
+    for (int s = 0; s <= kRoveSamples; ++s) {
+      const double tt = t0 + ((t1 - t0) * s) / kRoveSamples;
+      std::vector<double> cur;
+      cur.reserve(b.members.size());
+      for (std::size_t i = 0; i < b.members.size(); ++i) cur.push_back(at(i, tt));
+      if (s > 0) {
+        double sq = 0;
+        for (std::size_t i = 0; i < cur.size(); ++i) sq += (cur[i] - prev[i]) * (cur[i] - prev[i]);
+        len += std::sqrt(sq);
+      }
+      prev = std::move(cur);
+    }
+    return len;
+  };
+  TimeMap map;
+  std::size_t i = 0;
+  while (i < times.size()) {
+    if (!roving[i]) {
+      ++i;
+      continue;
+    }
+    std::size_t j = i;
+    while (j < times.size() && roving[j]) ++j;
+    if (i == 0 || j >= times.size()) {
+      i = j;
+      continue;
+    }
+    const std::size_t start = i - 1;
+    double total = 0;
+    std::vector<double> cum{0};
+    for (std::size_t k = start; k < j; ++k) {
+      total += seg_len(k);
+      cum.push_back(total);
+    }
+    const double a = times[start];
+    const double span = times[j] - a;
+    const std::size_t run = j - i;
+    for (std::size_t k = 0; k < run; ++k) {
+      const double frac = total > 0 ? cum[k + 1] / total : static_cast<double>(k + 1) / static_cast<double>(run + 1);
+      const double nt = a + frac * span;
+      if (nt != times[i + k]) map.set(times[i + k], nt);
+    }
+    i = j;
+  }
+  if (!map.empty()) retime(x, layer, b, map);
 }
 
 // ── locating keys ───────────────────────────────────────────────────────
@@ -253,8 +353,22 @@ std::optional<std::array<double, 4>> to_bezier(const std::optional<api::CubicBez
   return std::array<double, 4>{b->x1, b->y1, b->x2, b->y2};
 }
 
-/// `exprMembers(b)`: expressions live per member track.
-std::vector<std::string> expr_members(const PropBinding& b) {
+/// properties.ts `dimsWrite(k)`.
+void set_dims(KeyWrite& w, const api::Keyframe& k) {
+  if (k.dims.empty()) return;
+  std::vector<KeyDimAt> dims;
+  for (const api::KeyframeDim& dm : k.dims) dims.push_back(KeyDimAt{dm.easing, to_bezier(dm.bezier), dm.continuous});
+  w.dims = std::move(dims);
+}
+
+/// `exprMembers(b, member)`: expressions live per member track; `member` = one dimension.
+std::vector<std::string> expr_members(const PropBinding& b, std::optional<std::uint32_t> member = std::nullopt) {
+  if (member) {
+    if (b.members.size() < 2 || *member >= b.members.size()) {
+      fail(ErrorCode::out_of_range, "'" + b.path + "' has no dimension " + std::to_string(*member), {.path = b.path});
+    }
+    return {b.members[*member]};
+  }
   if (!b.members.empty()) return b.members;
   if (b.dataTrack) return {*b.dataTrack};
   fail(ErrorCode::not_animatable, "'" + b.path + "' cannot carry an expression", {.path = b.path});
@@ -322,7 +436,10 @@ ResultOf<api::SetAnimated> handle(const api::SetAnimated& c, HCtx& x) {
   std::vector<double> times;
   for (const KeyAt& k : read_keys(x.d, layer, b)) times.push_back(k.t);
   drop_keys(pc, layer, b, times);
-  if (value && !b.dataTrack && b.special != Special::maskPath) write_static(x.d, layer, b, *value);
+  if (value && ((!b.dataTrack && b.special != Special::maskPath) || b.special == Special::rig ||
+                (b.special == Special::fillStops && has_gradient_fill(*x.d.node(layer))))) {
+    write_static(x.d, layer, b, *value);
+  }
   return r;
 }
 
@@ -373,7 +490,7 @@ ResultOf<api::SetDimensionsSeparated> handle(const api::SetDimensionsSeparated& 
 
 ResultOf<api::SetExpression> handle(const api::SetExpression& c, HCtx& x) {
   const Bound bd = bind(x, c.prop);
-  const std::vector<std::string> members = expr_members(bd.b);
+  const std::vector<std::string> members = expr_members(bd.b, c.member);
   const bool blank = js_blank(c.source);
   x.label = blank ? "Remove Expression" : "Set Expression";
   const std::string& layer = c.prop.layer;
@@ -385,8 +502,7 @@ ResultOf<api::SetExpression> handle(const api::SetExpression& c, HCtx& x) {
   }
   for (const auto& m : members) anim_set_expr_state(x.d, layer, m, ExprState{c.source, c.enabled});
   if (const auto err = anim_expr_error(x.d, x.cache, layer, members[0])) {
-    // AE: a failing expression is stored, disabled.
-    for (const auto& m : members) anim_set_expr_enabled(x.d, layer, m, false);
+    // After Effects (since CC 2019): stored as given and left on; the error is reported.
     r.ok = false;
     r.diagnostics.push_back(api::ExpressionDiagnostic{*err, 0, 0});
     return r;
@@ -400,7 +516,7 @@ ResultOf<api::SetExpressionEnabled> handle(const api::SetExpressionEnabled& c, H
   std::vector<std::pair<std::string, std::vector<std::string>>> plans;
   for (const api::PropRef& p : c.props) {
     const Bound bd = bind(x, p);
-    std::vector<std::string> members = expr_members(bd.b);
+    std::vector<std::string> members = expr_members(bd.b, c.member);
     if (std::none_of(members.begin(), members.end(), [&](const std::string& m) { return anim_has_expr(x.d, p.layer, m); })) {
       fail(ErrorCode::not_found, "'" + bd.b.path + "' has no expression", {.layer = p.layer, .path = bd.b.path});
     }
@@ -419,7 +535,9 @@ ResultOf<api::ConvertExpressionToKeyframes> handle(const api::ConvertExpressionT
   const PropBinding& b = bd.b;
   const std::string& layer = c.prop.layer;
   if (b.members.empty()) fail(ErrorCode::unsupported, "'" + b.path + "' cannot be baked in this engine", {.path = b.path});
-  if (std::none_of(b.members.begin(), b.members.end(), [&](const std::string& m) { return anim_expr_enabled(d, layer, m); })) {
+  // `member`: one dimension of an unseparated vector (its own expression); the others are untouched.
+  const std::vector<std::string> members = c.member ? expr_members(b, c.member) : b.members;
+  if (std::none_of(members.begin(), members.end(), [&](const std::string& m) { return anim_expr_enabled(d, layer, m); })) {
     fail(ErrorCode::invalid_argument, "'" + b.path + "' has no enabled expression", {.path = b.path});
   }
   check_time(c.step, "step");
@@ -433,25 +551,29 @@ ResultOf<api::ConvertExpressionToKeyframes> handle(const api::ConvertExpressionT
   if (f1 <= f0) fail(ErrorCode::out_of_range, "the bake range is empty");
   std::vector<double> frames;
   for (double f = f0; f < f1; f += stepFrames) frames.push_back(f);
-  std::vector<std::string> ids;
-  ids.reserve(frames.size());
-  for (std::size_t i = 0; i < frames.size(); ++i) ids.push_back(x.mint_key_id());
-  x.label = "Convert Expression to Keyframes";
   const PCtx pc = x.pc();
+  // Composition frames that map to ONE layer time keep the first.
+  std::vector<double> times;
+  for (const double f : frames) {
+    const double t = flicks_to_key_time(pc, layer, b, frames_to_flicks(f, fps));
+    if (std::find(times.begin(), times.end(), t) == times.end()) times.push_back(t);
+  }
+  std::vector<std::string> ids;
+  ids.reserve(times.size());
+  for (std::size_t i = 0; i < times.size(); ++i) ids.push_back(x.mint_key_id());
+  x.label = "Convert Expression to Keyframes";
   struct Sample {
     double t;
     std::vector<double> nums;
   };
   std::vector<Sample> samples;
-  samples.reserve(frames.size());
-  for (const double f : frames) {
-    const double t = flicks_to_key_time(pc, layer, b, frames_to_flicks(f, fps));
+  samples.reserve(times.size());
+  for (const double t : times) {
     Sample s{t, {}};
-    for (const auto& m : b.members) s.nums.push_back(anim_sample(d, x.expr, x.cache, layer, m, t).value_or(0));
+    for (const auto& m : members) s.nums.push_back(anim_sample(d, x.expr, x.cache, layer, m, t).value_or(0));
     samples.push_back(std::move(s));
   }
-  for (const auto& m : b.members) anim_set_expr_state(d, layer, m, std::nullopt);
-  for (std::size_t i = 0; i < b.members.size(); ++i) {
+  for (std::size_t i = 0; i < members.size(); ++i) {
     std::vector<Key> keys;
     keys.reserve(samples.size());
     for (std::size_t j = 0; j < samples.size(); ++j) {
@@ -462,7 +584,11 @@ ResultOf<api::ConvertExpressionToKeyframes> handle(const api::ConvertExpressionT
       k.easing = api::Easing::linear;
       keys.push_back(std::move(k));
     }
-    anim_set_track(d, layer, b.members[i], std::move(keys));
+    anim_set_track(d, layer, members[i], std::move(keys));
+  }
+  // After Effects: the expression is DISABLED, not removed.
+  for (const auto& m : members) {
+    if (anim_has_expr(d, layer, m)) anim_set_expr_enabled(d, layer, m, false);
   }
   api::KeyframeIds r;
   r.ids = std::move(ids);
@@ -527,6 +653,7 @@ ResultOf<api::AddKeyframes> handle(const api::AddKeyframes& c, HCtx& x) {
     }
     put_keys(pc, p.layer, p.b, {p.w});
   }
+  for (const Plan& p : plans) rerove_keys(x, p.layer, p.b);
   api::KeyframeIds r;
   for (const Plan& p : plans) r.ids.push_back(p.w.id);
   return r;
@@ -542,6 +669,7 @@ ResultOf<api::DeleteKeyframes> handle(const api::DeleteKeyframes& c, HCtx& x) {
     for (const Located& k : g.keys) times.push_back(k.t);
     drop_keys(pc, g.layer, g.b, times);
   }
+  for (const KeyGroup& g : groups) rerove_keys(x, g.layer, g.b);
   return {};
 }
 
@@ -555,6 +683,7 @@ ResultOf<api::MoveKeyframes> handle(const api::MoveKeyframes& c, HCtx& x) {
     for (const Located& k : g.keys) map.set(k.t, flicks_to_key_time(pc, g.layer, g.b, key_time_to_flicks(pc, g.layer, g.b, k.t) + c.delta));
     retime(x, g.layer, g.b, map);
   }
+  for (const KeyGroup& g : groups) rerove_keys(x, g.layer, g.b);
   return {};
 }
 
@@ -573,6 +702,7 @@ ResultOf<api::ScaleKeyframes> handle(const api::ScaleKeyframes& c, HCtx& x) {
     }
     retime(x, g.layer, g.b, map);
   }
+  for (const KeyGroup& g : groups) rerove_keys(x, g.layer, g.b);
   return {};
 }
 
@@ -580,15 +710,27 @@ ResultOf<api::ReverseKeyframes> handle(const api::ReverseKeyframes& c, HCtx& x) 
   const std::vector<KeyGroup> groups = group_keys(x, c.ids);
   x.label = "Time-Reverse Keyframes";
   const PCtx pc = x.pc();
+  // After Effects: ONE block, mirrored within the span of the whole selection.
+  std::vector<std::vector<api::Time>> all;
+  api::Time lo = std::numeric_limits<api::Time>::max();
+  api::Time hi = std::numeric_limits<api::Time>::min();
   for (const KeyGroup& g : groups) {
     std::vector<api::Time> times;
-    for (const Located& k : g.keys) times.push_back(key_time_to_flicks(pc, g.layer, g.b, k.t));
-    const api::Time lo = *std::min_element(times.begin(), times.end());
-    const api::Time hi = *std::max_element(times.begin(), times.end());
+    for (const Located& k : g.keys) {
+      const api::Time ct = key_time_to_flicks(pc, g.layer, g.b, k.t);
+      lo = std::min(lo, ct);
+      hi = std::max(hi, ct);
+      times.push_back(ct);
+    }
+    all.push_back(std::move(times));
+  }
+  for (std::size_t gi = 0; gi < groups.size(); ++gi) {
+    const KeyGroup& g = groups[gi];
     TimeMap map;
-    for (std::size_t i = 0; i < g.keys.size(); ++i) map.set(g.keys[i].t, flicks_to_key_time(pc, g.layer, g.b, lo + hi - times[i]));
+    for (std::size_t i = 0; i < g.keys.size(); ++i) map.set(g.keys[i].t, flicks_to_key_time(pc, g.layer, g.b, lo + hi - all[gi][i]));
     retime(x, g.layer, g.b, map);
   }
+  for (const KeyGroup& g : groups) rerove_keys(x, g.layer, g.b);
   return {};
 }
 
@@ -599,6 +741,9 @@ ResultOf<api::UpdateKeyframes> handle(const api::UpdateKeyframes& c, HCtx& x) {
     Located l = locate(x, p.id);
     if (p.value) check_value(l.b, *p.value);
     if (p.time) check_time(*p.time);
+    if (p.dim && *p.dim >= std::max<std::size_t>(1, l.b.members.size())) {
+      fail(ErrorCode::out_of_range, "'" + l.b.path + "' has no dimension " + std::to_string(*p.dim), {.layer = l.layer, .path = l.b.path});
+    }
     plans.emplace_back(std::move(l), &p);
   }
   x.label = "Edit " + plural(plans.size(), "Keyframe");
@@ -622,12 +767,20 @@ ResultOf<api::UpdateKeyframes> handle(const api::UpdateKeyframes& c, HCtx& x) {
     if (!p.spatial_in.empty()) w.spatialIn.emplace(p.spatial_in);
     if (!p.spatial_out.empty()) w.spatialOut.emplace(p.spatial_out);
     if (p.label) w.label = static_cast<double>(*p.label);
+    if (p.dim && l.b.members.size() > 1) w.dim = *p.dim;
     if (l.b.special == Special::maskPath || l.b.dataTrack || !l.b.members.empty()) put_keys(pc, l.layer, l.b, {w});
     if (p.time) {
       TimeMap map;
       map.set(l.t, flicks_to_key_time(pc, l.layer, l.b, *p.time));
       retime(x, l.layer, l.b, map);
     }
+  }
+  std::vector<std::string> seen;
+  for (const auto& [l, pp] : plans) {
+    const std::string key = l.layer + "|" + l.b.path;
+    if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+    seen.push_back(key);
+    rerove_keys(x, l.layer, l.b);
   }
   return {};
 }
@@ -660,10 +813,67 @@ ResultOf<api::PasteKeyframes> handle(const api::PasteKeyframes& c, HCtx& x) {
     w.spatialIn.emplace(k.spatial_in.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_in});
     w.spatialOut.emplace(k.spatial_out.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_out});
     w.label = static_cast<double>(k.label);
+    set_dims(w, k);
     writes.push_back(std::move(w));
   }
   x.label = "Paste " + plural(writes.size(), "Keyframe");
   put_keys(pc, layer, b, writes);
+  rerove_keys(x, layer, b);
+  api::KeyframeIds r;
+  for (const KeyWrite& w : writes) r.ids.push_back(w.id);
+  return r;
+}
+
+ResultOf<api::SetKeyframes> handle(const api::SetKeyframes& c, HCtx& x) {
+  const Bound bd = bind(x, c.prop);
+  const PropBinding& b = bd.b;
+  if (!b.animatable) fail(ErrorCode::not_animatable, "'" + b.path + "' cannot take keyframes", {.path = b.path});
+  if (c.keys.empty()) fail(ErrorCode::invalid_argument, "no keyframes given (setAnimated removes them all)", {.path = b.path});
+  const std::string& layer = c.prop.layer;
+  const PCtx pc = x.pc();
+  std::vector<std::string> known;
+  for (const KeyAt& k : read_keys(x.d, layer, b)) {
+    if (!k.id.starts_with("@")) known.push_back(k.id);
+  }
+  std::vector<std::string> used;
+  std::vector<double> times;
+  std::vector<KeyWrite> writes;
+  for (const api::Keyframe& k : c.keys) {
+    check_time(k.time);
+    check_value(b, k.value);
+    const double t = flicks_to_key_time(pc, layer, b, k.time);
+    if (std::find(times.begin(), times.end(), t) != times.end()) {
+      fail(ErrorCode::invalid_argument, "two keyframes of '" + b.path + "' land on one time", {.path = b.path});
+    }
+    times.push_back(t);
+    const bool keep = std::find(known.begin(), known.end(), k.id) != known.end() && std::find(used.begin(), used.end(), k.id) == used.end();
+    KeyWrite w;
+    w.t = t;
+    w.id = keep ? k.id : new_key_id(b, x);
+    used.push_back(w.id);
+    w.value = k.value;
+    w.easing = k.easing;
+    w.bezier.emplace(to_bezier(k.bezier));
+    w.continuous = k.continuous;
+    w.roving = k.roving;
+    w.spatialInterp = k.spatial_interp;
+    w.spatialIn.emplace(k.spatial_in.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_in});
+    w.spatialOut.emplace(k.spatial_out.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_out});
+    w.label = static_cast<double>(k.label);
+    set_dims(w, k);
+    writes.push_back(std::move(w));
+  }
+  x.label = "Set " + b.name + " Keyframes";
+  // clearKeys: every keyframe of the property gone, nothing else touched.
+  if (b.special == Special::maskPath) {
+    set_mask_anim(x.d, layer, std::nullopt);
+  } else if (b.dataTrack) {
+    anim_set_data_track(x.d, layer, *b.dataTrack, std::nullopt);
+  } else {
+    for (const auto& m : b.members) anim_set_track(x.d, layer, m, {});
+  }
+  put_keys(pc, layer, b, writes);
+  rerove_keys(x, layer, b);
   api::KeyframeIds r;
   for (const KeyWrite& w : writes) r.ids.push_back(w.id);
   return r;

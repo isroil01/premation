@@ -11,15 +11,28 @@ import { getTemplate } from '@core/template/registry';
 import { readTemplateFieldValue, writeTemplateField } from '@core/template/templateFields';
 import { readAuthoredFields } from '@core/template/templateAuthoring';
 import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import type { Command } from '@motion/engine-api';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { liveKf } from '@core/template/templates/builders';
+import { engine } from '@core/engine/engineInstance';
+import { reportEngineError } from '@core/engine/uiEdits';
+import { buildLayerFragment } from '@core/engine/offDocument';
+import { layerIdsOfComp } from '@core/engine/doc';
+import { compTime } from '@core/engine/propRefs';
+import { hexToColor } from '@core/engine/model';
+import { useSelectionStore } from './selectionStore';
 
 interface TemplateState {
   /** The template currently loaded for fill-in editing, or null (gallery view). */
   active: TemplateDefinition | null;
   /** Current value per field id (controlled-input source of truth). */
   values: Record<string, string | number>;
-  apply: (id: string) => void;
+  /**
+   * Replace the active composition's contents with a template (one undo
+   * entry): its layers go, the template's comp settings and layers come in.
+   */
+  apply: (id: string) => Promise<void>;
   /** Enter fill-in mode for the CURRENT composition using the fields the user
    *  authored on it (no rebuild — the scene already exists). No-op if none. */
   previewAuthored: () => void;
@@ -31,27 +44,73 @@ interface TemplateState {
 export const useTemplateStore = create<TemplateState>((set, get) => ({
   active: null,
   values: {},
-  apply: (id) => {
+  apply: async (id) => {
     const t = getTemplate(id);
     if (!t) return;
-    t.build();
-    // Bring the timeline in step with the freshly-built scene: match the comp's
-    // fps/duration, then rebuild tracks/clips/keyframes from the scene (same
-    // flow the example-scene loaders use). Without this the layers render but
-    // the timeline stays empty.
-    const c = useCompositionStore.getState();
-    const tc = getTimelineController();
-    // B3-legacy: engine gap — a template's `build()` constructs a whole scene with the legacy
-    // helpers (rich createLayer: styled text, paints, rigs); these two re-sync the timeline mirror
-    // to the comp record that build wrote, and go with it.
-    tc.setFrameRate(c.fps);
-    tc.setDurationSeconds(c.durationSeconds);
-    tc.syncFromScene();
-    bumpScene();
+    // B3z: ONE gesture = one undo entry, through the engine. The legacy
+    // `build()` cleared the WHOLE scene graph (every composition's layers) and
+    // wrote the comp record; here the ACTIVE composition's layers are deleted,
+    // the template's settings sent as `setCompositionSettings`, and its layout +
+    // choreography built off-document and pasted (offDocument.ts). The build
+    // needs the emptied comp (its layers carry fixed `tpl_*` ids), so it runs
+    // between the two steps of the gesture.
+    const comp = activeCompRootId();
+    const label = `Apply ${t.name}`;
+    const client = engine();
+    const opened = await client.beginGesture(label);
+    if (!opened.ok) {
+      reportEngineError(label, opened.error);
+      return;
+    }
+    let fields = t.fields;
+    const run = async (): Promise<boolean> => {
+      const old = layerIdsOfComp(comp);
+      if (old.length > 0) {
+        const del = await client.batch(label, [{ type: 'deleteLayers', layers: old } as Command]);
+        if (!del.ok) { reportEngineError(label, del.error); return false; }
+      }
+      let built;
+      try {
+        built = buildLayerFragment(comp, () => {
+          (t.layout as (g: typeof defaultSceneGraph, rootId: string) => void)(defaultSceneGraph, comp);
+          t.animate?.(liveKf);
+        });
+      } catch (err) {
+        reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
+        return false;
+      }
+      const cmds: Command[] = [];
+      if (t.settings) {
+        cmds.push({
+          type: 'setCompositionSettings', comp,
+          patch: {
+            width: t.width, height: t.height,
+            frameRate: { num: t.settings.fps, den: 1 },
+            duration: compTime(t.settings.durationSeconds),
+            background: hexToColor(t.settings.background),
+          },
+        } as Command);
+      }
+      if (built) cmds.push({ type: 'pasteLayers', comp, fragment: built.fragment, index: 0 } as Command);
+      const res = await client.batch(label, cmds);
+      if (!res.ok) { reportEngineError(label, res.error); return false; }
+      if (built) {
+        // The fields target the template's authored ids; the engine minted new ones.
+        const ids = ((res.value.at(-1) as { layers?: string[] } | undefined)?.layers) ?? [];
+        const map = new Map(built.scratchIds.map((s, i) => [s, ids[i]!]));
+        fields = t.fields.map((f) => (map.has(f.target.nodeId) ? { ...f, target: { ...f.target, nodeId: map.get(f.target.nodeId)! } } : f));
+        useSelectionStore.getState().set([]);
+      }
+      return true;
+    };
+    const ok = await run();
+    const closed = await client.endGesture(opened.value.gesture, ok);
+    if (!closed.ok) reportEngineError(label, closed.error);
+    if (!ok) return;
 
     const values: Record<string, string | number> = {};
-    for (const f of t.fields) values[f.id] = f.default;
-    set({ active: t, values });
+    for (const f of fields) values[f.id] = f.default;
+    set({ active: { ...t, fields }, values });
   },
   previewAuthored: () => {
     const fields = readAuthoredFields();

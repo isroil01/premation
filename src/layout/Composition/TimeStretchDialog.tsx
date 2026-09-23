@@ -15,8 +15,8 @@ import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { timeStretchEdit } from '@layout/Timeline/timelineEdits';
 import {
-  applyTimeStretch,
   clampSignedStretch,
   isRetimableLayer,
   stretchValueOf,
@@ -105,9 +105,9 @@ function TimeStretchDialog({ ids, close }: { ids: string[]; close: () => void })
       return;
     }
     remembered.hold = hold;
-    // One undo entry; the edit is applied synchronously inside, so closing now is safe.
-    // B3-legacy: engine gap — `setLayerTiming.stretch` sets only the factor: no Hold in Place (bar scaled about the in point / current frame / out point with sourceIn re-solved), no non-footage bake (bar + keyframes + layer markers scaled, negative = reversed).
-    void applyTimeStretch(ids, clampSignedStretch(percent), hold);
+    // One undo entry: `timeStretchLayers` (B3z) — Hold in Place, footage rate
+    // or the non-footage bake (bar + keys + layer markers, negative = reversed).
+    void timeStretchEdit(ids, clampSignedStretch(percent), hold);
     close();
   };
   useDialogPrimaryAction(submit);

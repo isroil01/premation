@@ -34,7 +34,7 @@ import { graph, compOfLayer, requireLayer, requireComp, layerIdsOfComp, isCompIt
 import { K, documentScope, newScope, scopeLayer, scopeTimeline } from '../state';
 import { catalogFor, requireBinding, writeStatic } from '../props';
 import { labelColorOf, barsOf } from '../model';
-import { flicksToFrames, compFps, checkTime } from '../time';
+import { flicksToFrames, compFps, checkTime, flicksToSeconds } from '../time';
 import type { HandlerTable, HandlerCtx } from '../handler';
 import { ensureTimeline, geomsOf, writeGeoms, layersScope, requireLayersInOneComp, moveInStack, plural, remintKeyIds } from './common';
 import { makeLayerNode } from './layerFactory';
@@ -207,7 +207,9 @@ export const layerHandlers: HandlerTable = {
       apply: () => {
         for (const id of cmd.layers) {
           if ((apiParentOf(id) ?? null) === (cmd.parent ?? null)) continue;
-          if (!reparentNode(id, cmd.parent ?? null, { preserveWorld: cmd.keepWorldTransform })) {
+          // B3z: Parent & Link JUMP (Shift) — relink, then land on the parent's anchor at `time`.
+          const opts = cmd.jump && cmd.parent ? { jump: true, time: flicksToSeconds(cmd.time ?? 0) } : { preserveWorld: cmd.keepWorldTransform };
+          if (!reparentNode(id, cmd.parent ?? null, opts)) {
             fail('cycle', `could not parent '${id}'`, { layer: id });
           }
         }
@@ -276,8 +278,9 @@ export const layerHandlers: HandlerTable = {
     const node = requireLayer(cmd.layer);
     void node;
     const m = cmd.matte;
-    if (m.mode !== 'none') {
-      if (!m.layer) fail('invalidArgument', 'a track matte needs a source layer (matte by reference)');
+    // B3z: no `matte.layer` = AE's classic positional matte (the layer directly
+    // above in the stack), stored without a sourceId.
+    if (m.mode !== 'none' && m.layer) {
       requireLayer(m.layer);
       if (m.layer === cmd.layer) fail('invalidArgument', 'a layer cannot be its own matte');
       if (compOfLayer(m.layer) !== compOfLayer(cmd.layer)) fail('invalidArgument', 'the matte must be in the same composition', { layer: m.layer });
@@ -290,7 +293,7 @@ export const layerHandlers: HandlerTable = {
         else setNodeMatte(cmd.layer, {
           mode: m.mode.startsWith('luma') ? 'luma' : 'alpha',
           inverted: m.mode.endsWith('Inverted'),
-          sourceId: m.layer!,
+          ...(m.layer ? { sourceId: m.layer } : {}),
         });
         return {};
       },
@@ -409,6 +412,11 @@ export const layerHandlers: HandlerTable = {
     for (const l of frag.layers) {
       if (l.row.components.some((c) => (c.props as Record<string, unknown>)[COMP_REF_PROP] === cmd.comp)) fail('cycle', 'a pasted precomp layer would contain its own composition');
     }
+    if (cmd.parent !== undefined) {
+      requireLayer(cmd.parent);
+      if (compOfLayer(cmd.parent) !== cmd.comp) fail('invalidArgument', 'the parent must be a layer of the same composition', { layer: cmd.parent });
+    }
+    const root = cmd.parent ?? cmd.comp;
     const idMap = new Map<string, string>();
     for (const l of frag.layers) idMap.set(l.row.id, ctx.mintId('layer_'));
     return {
@@ -419,19 +427,32 @@ export const layerHandlers: HandlerTable = {
         const minIn = Math.min(...frag.layers.map((l) => l.bars[0]?.start ?? 0));
         const shift = cmd.time !== undefined ? flicksToFrames(cmd.time, fps) - (Number.isFinite(minIn) ? minIn : 0) : 0;
         // Parents before children (fragment order is stack/tree order).
+        const siblings = new Map<string, string[]>();
         for (const l of frag.layers) {
           const id = idMap.get(l.row.id)!;
-          const parent = l.row.parent && idMap.has(l.row.parent) ? idMap.get(l.row.parent)! : cmd.comp;
+          const parent = l.row.parent && idMap.has(l.row.parent) ? idMap.get(l.row.parent)! : root;
+          const components = l.row.components.map((c) => ({ ...structuredClone(c), id: `${id}_${c.type}` }));
+          for (const c of components) remapLayerRefs(c, idMap);
           const row: SceneNode = {
             ...structuredClone(l.row),
             id,
             parent,
             children: [],
-            components: l.row.components.map((c) => ({ ...structuredClone(c), id: `${id}_${c.type}` })),
+            components,
           };
           graph.addChild(parent, row);
           if (l.anim) defaultAnimation.restoreNode(id, remapAnim(l.anim, id));
           remintKeyIds(id, ctx);
+          siblings.set(parent, [...(siblings.get(parent) ?? []), id]);
+        }
+        // Fragment order is FRONT-first (copyLayers visits children front to
+        // back); addChild appended each one in front of the last, which
+        // reversed the stacking. Put every pasted sibling run back: the first
+        // in the fragment is the front-most (AE keeps the copied stacking).
+        for (const [parent, run] of siblings) {
+          const pasted = new Set(run);
+          const others = graph.getChildOrder(parent).filter((c) => !pasted.has(c));
+          graph.setChildOrder(parent, [...others, ...[...run].reverse()]);
         }
         getTimeline().syncFromScene(cmd.comp);
         for (const l of frag.layers) {
@@ -439,7 +460,7 @@ export const layerHandlers: HandlerTable = {
           if (l.bars.length > 0) writeGeoms(cmd.comp, id, l.bars.map((b) => ({ ...b, start: b.start + shift })));
         }
         const tops = frag.layers.filter((l) => !l.row.parent || !idMap.has(l.row.parent)).map((l) => idMap.get(l.row.id)!);
-        if (tops.length > 0) moveInStack(cmd.comp, tops, cmd.index ?? 0);
+        if (tops.length > 0) moveInStack(cmd.comp, tops, cmd.index ?? 0, new Set(idMap.values()));
         return { layers: frag.layers.map((l) => idMap.get(l.row.id)!) };
       },
     };
@@ -545,6 +566,59 @@ function decodeFragment(f: DocumentFragment): FragmentData {
   } catch (err) {
     if (err instanceof Error && err.name === 'EngineFail') throw err;
     return fail('decode', 'the fragment is not a copyLayers payload');
+  }
+}
+
+/**
+ * pasteLayers: references BETWEEN pasted layers follow the copies (AE does
+ * this for parenting and track mattes). Parenting is the row's `parent`
+ * (nesting); every other stored layer reference lives in a component's props,
+ * at exactly these places (any component — the stores do not depend on its
+ * type, except the last):
+ *
+ *   matte.sourceId                      track matte source (fx)
+ *   effects[*].params[*]                a string param (the layer-valued params:
+ *                                       Set Matte, Displacement Map, Compound
+ *                                       Blur, audio effects, plugin `layer`
+ *                                       params, Layer Control) — by VALUE, since
+ *                                       plugin schemas are not in every engine
+ *   __cloner.pathLayerId                cloner path layer
+ *   __cloner.falloff.layerId            cloner falloff field layer
+ *   __audioDriver[*].sourceLayerId      audio-driven property source
+ *   paint.strokes[*].cloneSourceId      clone-stamp source layer
+ *   pluginLayer:* component, top-level  a plugin layer's `layer` props
+ *     string props not named `__…`
+ *
+ * A value is replaced only when it is a string equal to the id of a layer IN
+ * the fragment; references to other layers are kept. Expressions address
+ * layers by NAME (AE) and are not rewritten. native handlers_layers2.cpp
+ * `remap_layer_refs` is the same walk.
+ */
+export function remapLayerRefs(c: { type: string; props: unknown }, idMap: ReadonlyMap<string, string>): void {
+  const p = c.props as Record<string, unknown> | null;
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return;
+  const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+  const swap = (o: Record<string, unknown> | null, k: string): void => {
+    if (!o) return;
+    const v = o[k];
+    if (typeof v === 'string' && idMap.has(v)) o[k] = idMap.get(v)!;
+  };
+  swap(obj(p.matte), 'sourceId');
+  if (Array.isArray(p.effects)) {
+    for (const e of p.effects) {
+      const params = obj(obj(e)?.params);
+      if (params) for (const k of Object.keys(params)) swap(params, k);
+    }
+  }
+  const cloner = obj(p.__cloner);
+  swap(cloner, 'pathLayerId');
+  swap(obj(cloner?.falloff), 'layerId');
+  const drivers = obj(p.__audioDriver);
+  if (drivers) for (const k of Object.keys(drivers)) swap(obj(drivers[k]), 'sourceLayerId');
+  const strokes = obj(p.paint)?.strokes;
+  if (Array.isArray(strokes)) for (const s of strokes) swap(obj(s), 'cloneSourceId');
+  if (c.type.startsWith('pluginLayer:')) {
+    for (const k of Object.keys(p)) if (!k.startsWith('__')) swap(p, k);
   }
 }
 

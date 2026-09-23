@@ -345,6 +345,19 @@ ResultOf<api::SetWorkArea> handle(const api::SetWorkArea& c, HCtx& x) {
   return {};
 }
 
+ResultOf<api::ClearWorkArea> handle(const api::ClearWorkArea& c, HCtx& x) {
+  Document& d = x.d;
+  require_comp(d, c.comp);
+  ensure_timeline(d, c.comp);
+  x.label = "Clear Work Area";
+  if (!tl_ensure(d, c.comp)) return {};
+  Timeline& t = d.timeline_mut(c.comp);
+  t.workArea = std::nullopt;
+  // comps.ts clearWorkArea: a loop that follows the work area covers the whole comp again.
+  if (t.loop) t.loop = FrameRange{0, t.duration};
+  return {};
+}
+
 ResultOf<api::TrimCompToWorkArea> handle(const api::TrimCompToWorkArea& c, HCtx& x) {
   Document& d = x.d;
   require_comp(d, c.comp);

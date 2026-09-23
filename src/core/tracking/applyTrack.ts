@@ -17,9 +17,9 @@
  * target's current transform into the answer and the applied motion would be
  * offset by wherever the target happened to be.
  *
- * Keyframe times go through `compToKeyframeTime(target)` — the only axis the
- * engine samples — and the write splices into existing tracks the way Motion
- * Sketch does: keyframes outside the tracked span survive.
+ * Plans carry COMPOSITION times; the writer converts to the target's keyframe
+ * axis (the engine API does it per layer) and splices into existing tracks the
+ * way Motion Sketch does: keyframes outside the tracked span survive.
  *
  * Coasted samples (occlusion predictions) are written too: dropping them
  * would leave a hole the interpolator fills with a straight line anyway, and
@@ -29,27 +29,95 @@
 
 import { defaultAnimation, type Keyframe } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { spliceRecordedRange } from '@core/animation/motionSketch';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { layerSpaceAt } from '@core/scene/layerSpace';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { readGeometry } from '@core/workspace/geometry';
 import { addEffect, getNodeEffects, effectPropPath } from '@core/effects/effects';
-import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 import { fitHomography, projectHomography } from '@motion/renderer';
 import { Project3D } from '@motion/scene';
 import { flattenComposition } from '@core/scene/sceneDerive';
-import { insertCamera } from '@core/scene/sceneInsert';
 import { fitHomographyRansac, smoothHomographySequence } from './planarFit';
 import { solvePlanarPose, unwrapDegrees, type PlanarPose } from './planarPose';
 import { solveSfmCameraPath } from './sfmCamera';
 import type { CompTrackSample } from './trackVideoLayer';
 import { applySim, simRotation, simScale, type Sim } from './globalMotion';
 import { sampleSubspace, type SubspaceCell } from './subspaceWarp';
+
+// ── Plans (B3z) ─────────────────────────────────────────────────────────────
+//
+// Tracking is ANALYSIS; its result is keyframes. Every apply below is a PLAN —
+// pure data, nothing written: per legacy track (`x`, `rotation`, `poiX`, an
+// effect param…) the keys at COMPOSITION seconds, spliced into the existing
+// track the Motion Sketch way (keys inside the tracked span replaced, keys
+// outside kept). The Track Motion section sends a plan through the engine API
+// as one undo entry (layout/Inspector/trackMotion/trackApplyEdits.ts); the
+// dense stabilizer (smoothStabilize.ts) still writes its plans with
+// `writeTrackPlanLegacy` until it moves onto the API with the other jobs.
+
+/** Keys for one legacy track, at composition seconds. */
+export interface TrackWrite {
+  track: string;
+  keys: Array<{ compTime: number; value: number }>;
+}
+
+export interface TrackPlan {
+  /** The undo entry's name. */
+  label: string;
+  /** The layer that receives the keys. */
+  layer: string;
+  /** Plain tracks, or — with `effectType` — param keys of that effect. */
+  writes: TrackWrite[];
+  /** The writes are params of the target's first effect of this type (added when it has none). */
+  effectType?: string;
+  /** What the apply reports (keyframes written per axis, points planned…). */
+  count: number;
+}
+
+/** A plan's first-key-to-last-key splice, written straight to the animation engine (pre-API writer). */
+export function writeTrackPlanLegacy(plan: TrackPlan, effectIdHint = 'fx_track'): number {
+  let effectId: string | undefined;
+  if (plan.effectType) {
+    effectId = getNodeEffects(plan.layer).find((e) => e.type === plan.effectType)?.id;
+    if (!effectId) {
+      addEffect(plan.layer, plan.effectType as Parameters<typeof addEffect>[1], `${effectIdHint}_${Math.random().toString(36).slice(2, 8)}`);
+      effectId = getNodeEffects(plan.layer).find((e) => e.type === plan.effectType)?.id;
+      if (!effectId) return 0;
+    }
+  }
+  const existingOf = (prop: string): readonly Keyframe[] =>
+    defaultAnimation.tracksFor(plan.layer).find((tr) => tr.prop === prop)?.keyframes ?? [];
+  runAnimEdit(plan.label, () => {
+    defaultAnimation.batch(() => {
+      for (const w of plan.writes) {
+        if (w.keys.length === 0) continue;
+        const prop = effectId ? effectPropPath(effectId, w.track) : w.track;
+        const kfs: Keyframe[] = w.keys.map((k) => ({ t: compToKeyframeTime(plan.layer, k.compTime), value: k.value, easing: 'linear' }));
+        defaultAnimation.setKeyframes(plan.layer, prop, spliceRecordedRange(existingOf(prop), kfs));
+      }
+    });
+  });
+  return plan.count;
+}
+
+/** Keys helper: one list per track name, in insertion order. */
+function trackBuckets(names: readonly string[]): { add: (track: string, compTime: number, value: number) => void; writes: () => TrackWrite[] } {
+  const map = new Map<string, TrackWrite>(names.map((n) => [n, { track: n, keys: [] }]));
+  return {
+    add: (track, compTime, value) => {
+      let w = map.get(track);
+      if (!w) {
+        w = { track, keys: [] };
+        map.set(track, w);
+      }
+      w.keys.push({ compTime, value });
+    },
+    writes: () => [...map.values()].filter((w) => w.keys.length > 0),
+  };
+}
 
 export interface ApplyTrackOptions {
   /** The tracked video layer — the space the samples were measured in. */
@@ -87,17 +155,16 @@ export function trackSampleToComp(
 }
 
 /**
- * Write the track as x/y keyframes on the target. Returns the number of
- * keyframes written per axis (0 = nothing usable, nothing written).
+ * The track as x/y keyframes on the target (count = keyframes per axis; null =
+ * nothing usable).
  */
-export function applyTrackToLayer(opts: ApplyTrackOptions): number {
+export function planTrackToLayer(opts: ApplyTrackOptions): TrackPlan | null {
   const target = defaultSceneGraph.getNode(opts.targetNodeId);
-  if (!target || opts.samples.length === 0) return 0;
+  if (!target || opts.samples.length === 0) return null;
 
   const parentId = target.parent ?? null;
-
-  const xKfs: Keyframe[] = [];
-  const yKfs: Keyframe[] = [];
+  const b = trackBuckets(['x', 'y']);
+  let n = 0;
   for (const s of opts.samples) {
     const compPt = trackSampleToComp(
       opts.videoNodeId, s.x, s.y, s.compTime, opts.sourceWidth, opts.sourceHeight, opts.comp,
@@ -110,22 +177,12 @@ export function applyTrackToLayer(opts: ApplyTrackOptions): number {
       if (!parentSpace) continue;
       [px, py] = parentSpace.fromComp([compPt.x, compPt.y]);
     }
-    const t = compToKeyframeTime(opts.targetNodeId, s.compTime);
-    xKfs.push({ t, value: px, easing: 'linear' });
-    yKfs.push({ t, value: py, easing: 'linear' });
+    b.add('x', s.compTime, px);
+    b.add('y', s.compTime, py);
+    n++;
   }
-  if (xKfs.length === 0) return 0;
-
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Apply Motion Track', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
-    });
-  });
-  return xKfs.length;
+  if (n === 0) return null;
+  return { label: 'Apply Motion Track', layer: opts.targetNodeId, writes: b.writes(), count: n };
 }
 
 export interface StabilizeOptions {
@@ -150,22 +207,22 @@ export interface StabilizeOptions {
  * position at that time, so stabilizing footage that already has position
  * animation composes instead of overwriting it.
  */
-export function applyStabilizeToLayer(opts: StabilizeOptions): number {
+export function planStabilize(opts: StabilizeOptions): TrackPlan | null {
   const node = defaultSceneGraph.getNode(opts.videoNodeId);
-  if (!node || opts.samples.length === 0) return 0;
+  if (!node || opts.samples.length === 0) return null;
   const g = readGeometry(node);
-  if (!g) return 0;
+  if (!g) return null;
   const parentId = node.parent ?? null;
 
   const first = opts.samples[0]!;
   const p0 = trackSampleToComp(
     opts.videoNodeId, first.x, first.y, first.compTime, opts.sourceWidth, opts.sourceHeight, opts.comp,
   );
-  if (!p0) return 0;
+  if (!p0) return null;
 
   // Plan everything against the original transform, then write once.
-  const xKfs: Keyframe[] = [];
-  const yKfs: Keyframe[] = [];
+  const b = trackBuckets(['x', 'y']);
+  let n = 0;
   for (const s of opts.samples) {
     const p = trackSampleToComp(
       opts.videoNodeId, s.x, s.y, s.compTime, opts.sourceWidth, opts.sourceHeight, opts.comp,
@@ -177,28 +234,19 @@ export function applyStabilizeToLayer(opts: StabilizeOptions): number {
       const parentSpace = layerSpaceAt(parentId, s.compTime, opts.comp);
       if (!parentSpace) continue;
       const a = parentSpace.fromComp([p0.x, p0.y]);
-      const b = parentSpace.fromComp([p.x, p.y]);
-      dx = a[0] - b[0];
-      dy = a[1] - b[1];
+      const c = parentSpace.fromComp([p.x, p.y]);
+      dx = a[0] - c[0];
+      dy = a[1] - c[1];
     }
     const t = compToKeyframeTime(opts.videoNodeId, s.compTime);
     const baseX = defaultAnimation.sample(opts.videoNodeId, 'x', t) ?? g.x;
     const baseY = defaultAnimation.sample(opts.videoNodeId, 'y', t) ?? g.y;
-    xKfs.push({ t, value: baseX + dx, easing: 'linear' });
-    yKfs.push({ t, value: baseY + dy, easing: 'linear' });
+    b.add('x', s.compTime, baseX + dx);
+    b.add('y', s.compTime, baseY + dy);
+    n++;
   }
-  if (xKfs.length === 0) return 0;
-
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.videoNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Stabilize Motion', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
-    });
-  });
-  return xKfs.length;
+  if (n === 0) return null;
+  return { label: 'Stabilize Motion', layer: opts.videoNodeId, writes: b.writes(), count: n };
 }
 
 export interface TransformTrackOptions {
@@ -240,11 +288,11 @@ export interface TransformTrackOptions {
  * params — position keyframes without matching rotation keyframes would
  * shear the motion apart at the exact frames where tracking was weakest.
  */
-export function applyTransformTrack(opts: TransformTrackOptions): number {
+export function planTransformTrack(opts: TransformTrackOptions): TrackPlan | null {
   const target = defaultSceneGraph.getNode(opts.targetNodeId);
-  if (!target || opts.tracks.length !== 2) return 0;
+  if (!target || opts.tracks.length !== 2) return null;
   const g = readGeometry(target);
-  if (!g) return 0;
+  if (!g) return null;
   const wantRotation = opts.rotation ?? true;
   const wantScale = opts.scale ?? true;
   const parentId = target.parent ?? null;
@@ -261,11 +309,8 @@ export function applyTransformTrack(opts: TransformTrackOptions): number {
     return space ? space.fromComp([c.x, c.y]) : null;
   };
 
-  const xKfs: Keyframe[] = [];
-  const yKfs: Keyframe[] = [];
-  const rotKfs: Keyframe[] = [];
-  const sxKfs: Keyframe[] = [];
-  const syKfs: Keyframe[] = [];
+  const bk = trackBuckets(['x', 'y', 'rotation', 'scaleX', 'scaleY']);
+  let n = 0;
   let baseAngle: number | null = null;
   let baseLength: number | null = null;
   let prevAngleDelta = 0;
@@ -292,38 +337,22 @@ export function applyTransformTrack(opts: TransformTrackOptions): number {
     const scaleRatio = len / baseLength;
 
     const t = compToKeyframeTime(opts.targetNodeId, a.compTime);
-    xKfs.push({ t, value: pa[0], easing: 'linear' });
-    yKfs.push({ t, value: pa[1], easing: 'linear' });
+    bk.add('x', a.compTime, pa[0]);
+    bk.add('y', a.compTime, pa[1]);
+    n++;
     if (wantRotation) {
       const baseRot = defaultAnimation.sample(opts.targetNodeId, 'rotation', t) ?? g.rotationDeg ?? 0;
-      rotKfs.push({ t, value: baseRot + angleDelta, easing: 'linear' });
+      bk.add('rotation', a.compTime, baseRot + angleDelta);
     }
     if (wantScale) {
       const baseSx = defaultAnimation.sample(opts.targetNodeId, 'scaleX', t) ?? g.scaleX ?? 1;
       const baseSy = defaultAnimation.sample(opts.targetNodeId, 'scaleY', t) ?? g.scaleY ?? 1;
-      sxKfs.push({ t, value: baseSx * scaleRatio, easing: 'linear' });
-      syKfs.push({ t, value: baseSy * scaleRatio, easing: 'linear' });
+      bk.add('scaleX', a.compTime, baseSx * scaleRatio);
+      bk.add('scaleY', a.compTime, baseSy * scaleRatio);
     }
   }
-  if (xKfs.length === 0) return 0;
-
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Apply Motion Track (rotation & scale)', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
-      if (rotKfs.length > 0) {
-        defaultAnimation.setKeyframes(opts.targetNodeId, 'rotation', spliceRecordedRange(existingOf('rotation'), rotKfs));
-      }
-      if (sxKfs.length > 0) {
-        defaultAnimation.setKeyframes(opts.targetNodeId, 'scaleX', spliceRecordedRange(existingOf('scaleX'), sxKfs));
-        defaultAnimation.setKeyframes(opts.targetNodeId, 'scaleY', spliceRecordedRange(existingOf('scaleY'), syKfs));
-      }
-    });
-  });
-  return xKfs.length;
+  if (n === 0) return null;
+  return { label: 'Apply Motion Track (rotation & scale)', layer: opts.targetNodeId, writes: bk.writes(), count: n };
 }
 
 export interface SmoothStabilizeOptions {
@@ -346,28 +375,25 @@ export interface SmoothStabilizeOptions {
  * ORIGINAL transform on both sides (the planExpressionBake discipline all the
  * apply paths share), converted to parent space by differencing `fromComp`
  * points. Rotation and scale are deltas composed onto the layer's own sampled
- * base, exactly as `applyTransformTrack` composes its two-point solve.
+ * base, exactly as `planTransformTrack` composes its two-point solve.
  *
  * The correction similarity pivots at the source frame's centre; the layer's
  * rotation/scale pivot at its ANCHOR. For the default centred anchor the two
  * coincide and the mapping is exact; a re-anchored layer gets first-order
  * accuracy, which is a documented approximation, not a surprise.
  */
-export function applySmoothStabilize(opts: SmoothStabilizeOptions): number {
+export function planSmoothStabilize(opts: SmoothStabilizeOptions): TrackPlan | null {
   const node = defaultSceneGraph.getNode(opts.videoNodeId);
-  if (!node || opts.corrections.length === 0) return 0;
-  if (opts.corrections.length !== opts.compFrames.length) return 0;
+  if (!node || opts.corrections.length === 0) return null;
+  if (opts.corrections.length !== opts.compFrames.length) return null;
   const g = readGeometry(node);
-  if (!g) return 0;
+  if (!g) return null;
   const parentId = node.parent ?? null;
   const cx = opts.sourceWidth / 2;
   const cy = opts.sourceHeight / 2;
 
-  const xKfs: Keyframe[] = [];
-  const yKfs: Keyframe[] = [];
-  const rotKfs: Keyframe[] = [];
-  const sxKfs: Keyframe[] = [];
-  const syKfs: Keyframe[] = [];
+  const bk = trackBuckets(['x', 'y', 'rotation', 'scaleX', 'scaleY']);
+  let n = 0;
   let prevRotDelta = 0;
   for (let i = 0; i < opts.corrections.length; i++) {
     const corr = opts.corrections[i]!;
@@ -399,27 +425,21 @@ export function applySmoothStabilize(opts: SmoothStabilizeOptions): number {
     const baseRot = defaultAnimation.sample(opts.videoNodeId, 'rotation', t) ?? g.rotationDeg ?? 0;
     const baseSx = defaultAnimation.sample(opts.videoNodeId, 'scaleX', t) ?? g.scaleX ?? 1;
     const baseSy = defaultAnimation.sample(opts.videoNodeId, 'scaleY', t) ?? g.scaleY ?? 1;
-    xKfs.push({ t, value: baseX + dx, easing: 'linear' });
-    yKfs.push({ t, value: baseY + dy, easing: 'linear' });
-    rotKfs.push({ t, value: baseRot + rotDelta, easing: 'linear' });
-    sxKfs.push({ t, value: baseSx * k, easing: 'linear' });
-    syKfs.push({ t, value: baseSy * k, easing: 'linear' });
+    bk.add('x', compTime, baseX + dx);
+    bk.add('y', compTime, baseY + dy);
+    bk.add('rotation', compTime, baseRot + rotDelta);
+    bk.add('scaleX', compTime, baseSx * k);
+    bk.add('scaleY', compTime, baseSy * k);
+    n++;
   }
-  if (xKfs.length === 0) return 0;
+  if (n === 0) return null;
+  return { label: 'Smooth Stabilize', layer: opts.videoNodeId, writes: bk.writes(), count: n };
+}
 
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.videoNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Smooth Stabilize', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'rotation', spliceRecordedRange(existingOf('rotation'), rotKfs));
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'scaleX', spliceRecordedRange(existingOf('scaleX'), sxKfs));
-      defaultAnimation.setKeyframes(opts.videoNodeId, 'scaleY', spliceRecordedRange(existingOf('scaleY'), syKfs));
-    });
-  });
-  return xKfs.length;
+/** The dense stabilizer's write (smoothStabilize.ts; pre-API — see the Plans note). */
+export function applySmoothStabilize(opts: SmoothStabilizeOptions): number {
+  const plan = planSmoothStabilize(opts);
+  return plan ? writeTrackPlanLegacy(plan) : 0;
 }
 
 /** Corner Pin param keys in the tracker's corner order (TL, TR, BR, BL) and
@@ -446,27 +466,24 @@ export interface CornerPinTrackOptions {
 
 /**
  * Corner / planar pin: keyframe the target's Corner Pin EFFECT so its four
- * corners ride the tracked surface.
+ * corners ride the tracked surface (the target's first Corner Pin, else a new
+ * one).
  *
  * With exactly four tracks this is the classic independent-corner path.
  * With N>4, each frame fits a least-squares homography from the seed
  * positions → current samples and evaluates it at the four corner seeds —
  * Mocha-style planar overdetermined fit, still stored as 4-corner pin.
  */
-export function applyCornerPinTrack(opts: CornerPinTrackOptions): number {
+export function planCornerPinTrack(opts: CornerPinTrackOptions): TrackPlan | null {
   const target = defaultSceneGraph.getNode(opts.targetNodeId);
-  if (!target || opts.tracks.length < 4) return 0;
+  if (!target || opts.tracks.length < 4) return null;
   const g = readGeometry(target);
-  if (!g) return 0;
+  if (!g) return null;
 
-  const kfsByKey = new Map<string, Keyframe[]>();
-  for (const { xKey, yKey } of CORNER_KEYS) {
-    kfsByKey.set(xKey, []);
-    kfsByKey.set(yKey, []);
-  }
+  const bk = trackBuckets(CORNER_KEYS.flatMap(({ xKey, yKey }) => [xKey, yKey]));
 
   const nFrames = Math.min(...opts.tracks.map((t) => t.length));
-  if (nFrames === 0) return 0;
+  if (nFrames === 0) return null;
   const seeds = opts.tracks.map((t) => t[0]!);
   let planned = 0;
 
@@ -487,9 +504,8 @@ export function applyCornerPinTrack(opts: CornerPinTrackOptions): number {
     const [lx, ly] = space.fromComp([compPt.x, compPt.y]);
     const ex = lx + g.width / 2 - rest.x;
     const ey = ly + g.height / 2 - rest.y;
-    const t = compToKeyframeTime(opts.targetNodeId, compTime);
-    kfsByKey.get(spec.xKey)!.push({ t, value: ex, easing: 'linear' });
-    kfsByKey.get(spec.yKey)!.push({ t, value: ey, easing: 'linear' });
+    bk.add(spec.xKey, compTime, ex);
+    bk.add(spec.yKey, compTime, ey);
     planned += 1;
   };
 
@@ -536,49 +552,23 @@ export function applyCornerPinTrack(opts: CornerPinTrackOptions): number {
       }
     }
   }
-  if (planned === 0) return 0;
-
-  // Reuse an existing corner pin on the target, else add one with a known id.
-  let effectId = getNodeEffects(opts.targetNodeId).find((e) => e.type === 'corner-pin')?.id;
-  if (!effectId) {
-    effectId = `fx_cptrack_${Math.random().toString(36).slice(2, 8)}`;
-    addEffect(opts.targetNodeId, 'corner-pin', effectId);
-    const added = getNodeEffects(opts.targetNodeId).find((e) => e.type === 'corner-pin');
-    if (!added) return 0;
-    effectId = added.id;
-  }
-
-  const existingOf = (path: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === path)?.keyframes ?? [];
-
-  runAnimEdit('Apply Corner Pin Track', () => {
-    defaultAnimation.batch(() => {
-      for (const [key, kfs] of kfsByKey) {
-        if (kfs.length === 0) continue;
-        const path = effectPropPath(effectId!, key);
-        defaultAnimation.setKeyframes(opts.targetNodeId, path, spliceRecordedRange(existingOf(path), kfs));
-      }
-    });
-  });
-  return planned;
+  if (planned === 0) return null;
+  return { label: 'Apply Corner Pin Track', layer: opts.targetNodeId, writes: bk.writes(), effectType: 'corner-pin', count: planned };
 }
 
 /**
- * Apply a follow track to a camera: write x/y (and keep z) so the eye rides
- * the feature, and poiX/poiY so the look-at stays locked on the same point —
- * a practical 2.5D camera track without a full 3D solve.
+ * A follow track on a camera: x/y (z kept) so the eye rides the feature, and
+ * poiX/poiY so the look-at stays locked on the same point — a practical 2.5D
+ * camera track without a full 3D solve.
  */
-export function applyTrackToCamera(opts: ApplyTrackOptions): number {
+export function planTrackToCamera(opts: ApplyTrackOptions): TrackPlan | null {
   const target = defaultSceneGraph.getNode(opts.targetNodeId);
-  if (!target || opts.samples.length === 0) return 0;
-  if (readNodeKind(target) !== 'camera') return 0;
+  if (!target || opts.samples.length === 0) return null;
+  if (readNodeKind(target) !== 'camera') return null;
 
   const parentId = target.parent ?? null;
-  const xKfs: Keyframe[] = [];
-  const yKfs: Keyframe[] = [];
-  const poiXKfs: Keyframe[] = [];
-  const poiYKfs: Keyframe[] = [];
-
+  const bk = trackBuckets(['x', 'y', 'poiX', 'poiY']);
+  let n = 0;
   for (const s of opts.samples) {
     const compPt = trackSampleToComp(
       opts.videoNodeId, s.x, s.y, s.compTime, opts.sourceWidth, opts.sourceHeight, opts.comp,
@@ -591,39 +581,28 @@ export function applyTrackToCamera(opts: ApplyTrackOptions): number {
       if (!parentSpace) continue;
       [px, py] = parentSpace.fromComp([compPt.x, compPt.y]);
     }
-    const t = compToKeyframeTime(opts.targetNodeId, s.compTime);
-    xKfs.push({ t, value: px, easing: 'linear' });
-    yKfs.push({ t, value: py, easing: 'linear' });
+    bk.add('x', s.compTime, px);
+    bk.add('y', s.compTime, py);
     // Look-at the tracked point in the same parent/comp space.
-    poiXKfs.push({ t, value: px, easing: 'linear' });
-    poiYKfs.push({ t, value: py, easing: 'linear' });
+    bk.add('poiX', s.compTime, px);
+    bk.add('poiY', s.compTime, py);
+    n++;
   }
-  if (xKfs.length === 0) return 0;
-
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Apply Camera Track', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'poiX', spliceRecordedRange(existingOf('poiX'), poiXKfs));
-      defaultAnimation.setKeyframes(opts.targetNodeId, 'poiY', spliceRecordedRange(existingOf('poiY'), poiYKfs));
-    });
-  });
-  return xKfs.length;
+  if (n === 0) return null;
+  return { label: 'Apply Camera Track', layer: opts.targetNodeId, writes: bk.writes(), count: n };
 }
 
 /**
- * 2-point camera solve (MVP): position from the anchor, orientationZ from the
- * anchor→reference vector. Not a full SfM / 3D camera tracker — a practical
- * tripod pan/tilt proxy from planar footage.
+ * 2-point camera solve (MVP): position + look-at from the anchor (the follow
+ * track), orientationZ from the anchor→reference vector. Not a full SfM / 3D
+ * camera tracker — a practical tripod pan/tilt proxy from planar footage.
+ * ONE plan (the pre-API writer made two undo entries of it).
  */
-export function applyCameraSolveTrack(opts: TransformTrackOptions): number {
+export function planCameraSolveTrack(opts: TransformTrackOptions): TrackPlan | null {
   const target = defaultSceneGraph.getNode(opts.targetNodeId);
-  if (!target || readNodeKind(target) !== 'camera' || opts.tracks.length < 2) return 0;
+  if (!target || readNodeKind(target) !== 'camera' || opts.tracks.length < 2) return null;
 
-  const n = applyTrackToCamera({
+  const follow = planTrackToCamera({
     videoNodeId: opts.videoNodeId,
     targetNodeId: opts.targetNodeId,
     samples: opts.tracks[0] ?? [],
@@ -631,11 +610,11 @@ export function applyCameraSolveTrack(opts: TransformTrackOptions): number {
     sourceHeight: opts.sourceHeight,
     comp: opts.comp,
   });
-  if (n === 0) return 0;
+  if (!follow) return null;
 
   const refByTime = new Map<number, CompTrackSample>();
   for (const s of opts.tracks[1]!) refByTime.set(s.compTime, s);
-  const oriKfs: Keyframe[] = [];
+  const ori: TrackWrite = { track: 'orientationZ', keys: [] };
   let baseAngle: number | null = null;
   let prevDelta = 0;
   for (const a of opts.tracks[0]!) {
@@ -647,24 +626,19 @@ export function applyCameraSolveTrack(opts: TransformTrackOptions): number {
     while (delta - prevDelta > 180) delta -= 360;
     while (delta - prevDelta < -180) delta += 360;
     prevDelta = delta;
-    const t = compToKeyframeTime(opts.targetNodeId, a.compTime);
-    oriKfs.push({ t, value: delta, easing: 'linear' });
+    ori.keys.push({ compTime: a.compTime, value: delta });
   }
-  if (oriKfs.length === 0) return n;
-
-  const existing = defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === 'orientationZ')?.keyframes ?? [];
-  runAnimEdit('Apply Camera Solve (orientation)', () => {
-    defaultAnimation.setKeyframes(
-      opts.targetNodeId,
-      'orientationZ',
-      spliceRecordedRange(existing, oriKfs),
-    );
-  });
-  return n + oriKfs.length;
+  return {
+    label: 'Apply Camera Solve',
+    layer: opts.targetNodeId,
+    writes: ori.keys.length > 0 ? [...follow.writes, ori] : follow.writes,
+    count: follow.count + ori.keys.length,
+  };
 }
 
 /**
- * Drive Mesh Warp's 4×4 lattice from the tracked plane.
+ * Drive Mesh Warp's 4×4 lattice from the tracked plane (the target's first
+ * Mesh Warp, else a new one).
  *
  * With exactly four corner tracks the interior is bilinearly filled. With a
  * dense grid (the corner mode's "Dense grid" setting) each frame fits a
@@ -672,14 +646,14 @@ export function applyCameraSolveTrack(opts: TransformTrackOptions): number {
  * lattice seeds — perspective-true interior motion that survives occluded
  * features, not a bilinear guess between four corners.
  */
-export function applyMeshWarpTrack(opts: CornerPinTrackOptions): number {
+export function planMeshWarpTrack(opts: CornerPinTrackOptions): TrackPlan | null {
   const target = defaultSceneGraph.getNode(opts.targetNodeId);
-  if (!target || opts.tracks.length < 4) return 0;
+  if (!target || opts.tracks.length < 4) return null;
   const g = readGeometry(target);
-  if (!g) return 0;
+  if (!g) return null;
 
   const nFrames = Math.min(...opts.tracks.slice(0, 4).map((t) => t.length));
-  if (nFrames === 0) return 0;
+  if (nFrames === 0) return null;
   const dense = opts.tracks.length > 4;
   const denseFrames = dense ? Math.min(...opts.tracks.map((t) => t.length)) : nFrames;
   const seeds = opts.tracks.map((t) => t[0]!);
@@ -697,11 +671,9 @@ export function applyMeshWarpTrack(opts: CornerPinTrackOptions): number {
     }
   }
 
-  const kfsByKey = new Map<string, Keyframe[]>();
-  for (let i = 0; i < 16; i++) {
-    kfsByKey.set(`v${i}X`, []);
-    kfsByKey.set(`v${i}Y`, []);
-  }
+  const names: string[] = [];
+  for (let i = 0; i < 16; i++) names.push(`v${i}X`, `v${i}Y`);
+  const bk = trackBuckets(names);
 
   const cornerRest = [
     { x: 0, y: 0 },
@@ -713,7 +685,6 @@ export function applyMeshWarpTrack(opts: CornerPinTrackOptions): number {
   let planned = 0;
   for (let fi = 0; fi < nFrames; fi++) {
     const compTime = opts.tracks[0]![fi]!.compTime;
-    const t = compToKeyframeTime(opts.targetNodeId, compTime);
     const space = layerSpaceAt(opts.targetNodeId, compTime, opts.comp);
     if (!space) continue;
 
@@ -738,8 +709,8 @@ export function applyMeshWarpTrack(opts: CornerPinTrackOptions): number {
           if (!compPt) continue;
           const [lx, ly] = space.fromComp([compPt.x, compPt.y]);
           const rest = { x: ((idx % 4) / 3) * g.width, y: (Math.floor(idx / 4) / 3) * g.height };
-          kfsByKey.get(`v${idx}X`)!.push({ t, value: lx + g.width / 2 - rest.x, easing: 'linear' });
-          kfsByKey.get(`v${idx}Y`)!.push({ t, value: ly + g.height / 2 - rest.y, easing: 'linear' });
+          bk.add(`v${idx}X`, compTime, lx + g.width / 2 - rest.x);
+          bk.add(`v${idx}Y`, compTime, ly + g.height / 2 - rest.y);
           wrote += 1;
         }
         if (wrote > 0) {
@@ -777,144 +748,84 @@ export function applyMeshWarpTrack(opts: CornerPinTrackOptions): number {
         const ox = top.x + (bot.x - top.x) * v;
         const oy = top.y + (bot.y - top.y) * v;
         const idx = row * 4 + col;
-        kfsByKey.get(`v${idx}X`)!.push({ t, value: ox, easing: 'linear' });
-        kfsByKey.get(`v${idx}Y`)!.push({ t, value: oy, easing: 'linear' });
+        bk.add(`v${idx}X`, compTime, ox);
+        bk.add(`v${idx}Y`, compTime, oy);
         planned += 1;
       }
     }
   }
-  if (planned === 0) return 0;
+  if (planned === 0) return null;
+  return { label: 'Apply Mesh Warp Track', layer: opts.targetNodeId, writes: bk.writes(), effectType: 'mesh-warp', count: planned };
+}
 
-  let effectId = getNodeEffects(opts.targetNodeId).find((e) => e.type === 'mesh-warp')?.id;
-  if (!effectId) {
-    effectId = `fx_meshtrack_${Math.random().toString(36).slice(2, 8)}`;
-    addEffect(opts.targetNodeId, 'mesh-warp', effectId);
-    const added = getNodeEffects(opts.targetNodeId).find((e) => e.type === 'mesh-warp');
-    if (!added) return 0;
-    effectId = added.id;
-  }
+// ── Create Null & Apply ────────────────────────────────────────────────────
 
-  const existingOf = (path: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === path)?.keyframes ?? [];
+export type NullTrackMode = 'follow' | 'transform' | 'corner';
 
-  runAnimEdit('Apply Mesh Warp Track', () => {
-    defaultAnimation.batch(() => {
-      for (const [key, kfs] of kfsByKey) {
-        if (kfs.length === 0) continue;
-        const path = effectPropPath(effectId!, key);
-        defaultAnimation.setKeyframes(opts.targetNodeId, path, spliceRecordedRange(existingOf(path), kfs));
-      }
-    });
+/** "Tracked Null", "Tracked Null 2", … — the button is easy to press twice, and
+ *  two layers with byte-identical names cannot be told apart in the timeline
+ *  or the parent dropdown. */
+export function nextTrackedNullName(): string {
+  let priorNulls = 0;
+  defaultSceneGraph.traverse((n) => {
+    if (/^Tracked Null( \d+)?$/.test(n.name ?? '')) priorNulls++;
   });
-  return planned;
+  return priorNulls === 0 ? 'Tracked Null' : `Tracked Null ${priorNulls + 1}`;
 }
 
 /**
- * Create a sibling null under the video's parent, seed it on the first track
- * sample, and apply the track in ONE undo step (AE's Create Null & Apply).
+ * Where AE's Create Null & Apply puts the null: beside the video (its parent),
+ * seeded on the first usable sample in that parent's space. Null when the
+ * video is gone or there is nothing to apply.
  */
-export function createNullAndApplyTrack(opts: {
+export function trackedNullSeed(opts: {
   videoNodeId: string;
-  mode: 'follow' | 'transform' | 'corner';
+  mode: NullTrackMode;
   samples: readonly CompTrackSample[];
   tracks: readonly (readonly CompTrackSample[])[];
   sourceWidth: number;
   sourceHeight: number;
   comp: { width: number; height: number; rootId?: string };
-}): { nullId: string; keyframes: number } | null {
+}): { parentId: string; x: number; y: number } | null {
   const video = defaultSceneGraph.getNode(opts.videoNodeId);
   if (!video) return null;
-  const usable = opts.mode === 'corner'
-    ? (opts.tracks[0] ?? [])
-    : opts.samples;
+  const usable = opts.mode === 'corner' ? (opts.tracks[0] ?? []) : opts.samples;
   if (usable.length === 0) return null;
-
-  return runDocumentEdit('Create Null & Apply Track', () => {
-    const parentId = video.parent ?? opts.comp.rootId ?? 'comp_root';
-    const nullId = `null_track_${Math.random().toString(36).slice(2, 8)}`;
-    // "Tracked Null", "Tracked Null 2", … — the button is easy to press
-    // twice, and two layers with byte-identical names cannot be told apart
-    // in the timeline or the parent dropdown.
-    let priorNulls = 0;
-    defaultSceneGraph.traverse((n) => {
-      if (/^Tracked Null( \d+)?$/.test(n.name ?? '')) priorNulls++;
-    });
-    const nullName = priorNulls === 0 ? 'Tracked Null' : `Tracked Null ${priorNulls + 1}`;
-    // Seed at the first sample's position in parent space (not a hardcoded corner).
-    let x = 160;
-    let y = 120;
-    const first = usable[0]!;
-    const compPt = trackSampleToComp(
-      opts.videoNodeId, first.x, first.y, first.compTime,
-      opts.sourceWidth, opts.sourceHeight, opts.comp,
-    );
-    if (compPt) {
-      if (parentId) {
-        const parentSpace = layerSpaceAt(parentId, first.compTime, opts.comp);
-        if (parentSpace) {
-          [x, y] = parentSpace.fromComp([compPt.x, compPt.y]);
-        } else {
-          x = compPt.x;
-          y = compPt.y;
-        }
-      } else {
-        x = compPt.x;
-        y = compPt.y;
-      }
+  const parentId = video.parent ?? opts.comp.rootId ?? 'comp_root';
+  let x = 160;
+  let y = 120;
+  const first = usable[0]!;
+  const compPt = trackSampleToComp(opts.videoNodeId, first.x, first.y, first.compTime, opts.sourceWidth, opts.sourceHeight, opts.comp);
+  if (compPt) {
+    const parentSpace = parentId ? layerSpaceAt(parentId, first.compTime, opts.comp) : null;
+    if (parentSpace) [x, y] = parentSpace.fromComp([compPt.x, compPt.y]);
+    else {
+      x = compPt.x;
+      y = compPt.y;
     }
-    const node: SceneNode = {
-      id: nullId,
-      name: nullName,
-      parent: parentId,
-      children: [],
-      transform: { position: { x, y }, rotation: 0, scale: { x: 1, y: 1 } },
-      visible: true,
-      locked: false,
-      components: [
-        {
-          id: `${nullId}_t`,
-          type: 'Transform',
-          props: { [SCENE_KIND_PROP]: 'null', x, y, rotation: 0 },
-        },
-      ],
-    };
-    defaultSceneGraph.addChild(parentId, node);
-
-    let keyframes = 0;
-    if (opts.mode === 'follow') {
-      keyframes = applyTrackToLayer({
-        videoNodeId: opts.videoNodeId,
-        targetNodeId: nullId,
-        samples: opts.samples,
-        sourceWidth: opts.sourceWidth,
-        sourceHeight: opts.sourceHeight,
-        comp: opts.comp,
-      });
-    } else if (opts.mode === 'transform') {
-      keyframes = applyTransformTrack({
-        videoNodeId: opts.videoNodeId,
-        targetNodeId: nullId,
-        tracks: opts.tracks,
-        sourceWidth: opts.sourceWidth,
-        sourceHeight: opts.sourceHeight,
-        comp: opts.comp,
-      });
-    } else {
-      keyframes = applyCornerPinTrack({
-        videoNodeId: opts.videoNodeId,
-        targetNodeId: nullId,
-        tracks: opts.tracks,
-        sourceWidth: opts.sourceWidth,
-        sourceHeight: opts.sourceHeight,
-        comp: opts.comp,
-      });
-    }
-    useSelectionStore.getState().set([nullId]);
-    return { nullId, keyframes };
-  });
+  }
+  return { parentId, x, y };
 }
 
-/** Marker prop identifying the camera a planar solve owns (re-runs reuse it). */
+/** The plan Create Null & Apply keys onto the (new) null `nullId`. */
+export function planOntoNull(nullId: string, opts: {
+  videoNodeId: string;
+  mode: NullTrackMode;
+  samples: readonly CompTrackSample[];
+  tracks: readonly (readonly CompTrackSample[])[];
+  sourceWidth: number;
+  sourceHeight: number;
+  comp: { width: number; height: number; rootId?: string };
+}): TrackPlan | null {
+  const base = { videoNodeId: opts.videoNodeId, targetNodeId: nullId, sourceWidth: opts.sourceWidth, sourceHeight: opts.sourceHeight, comp: opts.comp };
+  if (opts.mode === 'follow') return planTrackToLayer({ ...base, samples: opts.samples });
+  if (opts.mode === 'transform') return planTransformTrack({ ...base, tracks: opts.tracks });
+  return planCornerPinTrack({ ...base, tracks: opts.tracks });
+}
+
+// ── 3D camera solves ───────────────────────────────────────────────────────
+
+/** Marker prop identifying the camera a planar solve owns (re-runs reuse it). API: `camera/trackerSolve`. */
 export const PLANAR_SOLVE_CAMERA_PROP = '__planarSolveCamera';
 
 export interface PlanarCameraSolveOptions {
@@ -935,9 +846,45 @@ export interface PlanarCameraSolveResult {
   totalFrames: number;
 }
 
+/** A solve's plan plus what the section reports. */
+export interface CameraSolvePlan {
+  plan: TrackPlan;
+  result: PlanarCameraSolveResult;
+}
+
+/** True when a camera solve has something to solve (four tracks, at least one frame). */
+export function canSolveCamera(opts: PlanarCameraSolveOptions): boolean {
+  return opts.tracks.length >= 4 && Math.min(...opts.tracks.map((t) => t.length)) > 0;
+}
+
+/** The camera a previous solve made in this composition (tagged `camera/trackerSolve`), or null. */
+export function findSolveCamera(comp: { rootId?: string }): string | null {
+  const scope = comp.rootId
+    ? flattenComposition(defaultSceneGraph, comp.rootId)
+    : (() => {
+        const all: SceneNode[] = [];
+        defaultSceneGraph.traverse((n) => { all.push(n); });
+        return all;
+      })();
+  const camera = scope.find((n) => {
+    if (readNodeKind(n) !== 'camera') return false;
+    const tp = n.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
+    return tp?.[PLANAR_SOLVE_CAMERA_PROP] === true;
+  });
+  return camera?.id ?? null;
+}
+
+function cameraFocal(camId: string, comp: { width: number; height: number }): number {
+  const camera = defaultSceneGraph.getNode(camId);
+  const camTransform = camera?.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
+  return typeof camTransform?.focalLength === 'number' && camTransform.focalLength > 0
+    ? camTransform.focalLength
+    : Project3D.defaultCamera(comp.width, comp.height).focalLength;
+}
+
 /**
  * 3D camera from the tracked plane — homography-decomposition pose per frame
- * (see planarPose.ts), keyframed onto a one-node camera as x/y/z +
+ * (see planarPose.ts), keyed onto the one-node camera `camId` as x/y/z +
  * orientationX/Y/Z.
  *
  * The tracked surface is taken to BE the comp plane (z = 0), with the footage
@@ -946,14 +893,12 @@ export interface PlanarCameraSolveResult {
  * `focalLength` prop (default lens on first run), so re-solving after editing
  * the focal re-interprets the same track through the new lens.
  *
- * The camera is created once and tagged (PLANAR_SOLVE_CAMERA_PROP); re-runs
- * re-keyframe the same node. It is a ONE-NODE camera on purpose: a POI camera
- * re-aims itself, which would fight the solved orientation.
+ * The camera is ONE-NODE on purpose: a POI camera re-aims itself, which would
+ * fight the solved orientation.
  */
-export function applyPlanarCameraSolve(opts: PlanarCameraSolveOptions): PlanarCameraSolveResult | null {
-  if (opts.tracks.length < 4) return null;
+export function planPlanarCameraSolve(opts: PlanarCameraSolveOptions, camId: string): CameraSolvePlan | null {
+  if (!canSolveCamera(opts)) return null;
   const nFrames = Math.min(...opts.tracks.map((t) => t.length));
-  if (nFrames === 0) return null;
 
   // Footage → comp-plane mapping: contain-fit, centred. The solve treats the
   // footage's pixel grid as a window onto the comp plane.
@@ -963,39 +908,12 @@ export function applyPlanarCameraSolve(opts: PlanarCameraSolveOptions): PlanarCa
   const toComp = (p: { x: number; y: number }): { x: number; y: number } =>
     ({ x: ox + p.x * s, y: oy + p.y * s });
 
-  // Find (or mint) the solve camera.
-  const scope = opts.comp.rootId
-    ? flattenComposition(defaultSceneGraph, opts.comp.rootId)
-    : (() => {
-        const all: SceneNode[] = [];
-        defaultSceneGraph.traverse((n) => { all.push(n); });
-        return all;
-      })();
-  let camera = scope.find((n) => {
-    if (readNodeKind(n) !== 'camera') return false;
-    const tp = n.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
-    return tp?.[PLANAR_SOLVE_CAMERA_PROP] === true;
-  }) ?? null;
-  if (!camera) {
-    insertCamera({ name: 'Solved Camera' });
-    const id = useSelectionStore.getState().ids[0];
-    camera = (id ? defaultSceneGraph.getNode(id) : null) ?? null;
-    if (!camera || readNodeKind(camera) !== 'camera') return null;
-    const tr = camera.components.find((c) => c.type === 'Transform');
-    if (tr) defaultSceneGraph.writeProp(camera.id, tr.id, PLANAR_SOLVE_CAMERA_PROP, true);
-  }
-  const camId = camera.id;
-  const camTransform = camera.components.find((c) => c.type === 'Transform')?.props as
-    | Record<string, unknown>
-    | undefined;
-  const focal = typeof camTransform?.focalLength === 'number' && camTransform.focalLength > 0
-    ? camTransform.focalLength
-    : Project3D.defaultCamera(opts.comp.width, opts.comp.height).focalLength;
+  const focal = cameraFocal(camId, opts.comp);
   const cx = opts.comp.width / 2;
   const cy = opts.comp.height / 2;
 
   const seeds = opts.tracks.map((t) => toComp(t[0]!));
-  const series: Array<{ t: number; pose: PlanarPose }> = [];
+  const series: Array<{ compTime: number; pose: PlanarPose }> = [];
   let rmsSum = 0;
 
   for (let fi = 0; fi < nFrames; fi++) {
@@ -1026,7 +944,7 @@ export function applyPlanarCameraSolve(opts: PlanarCameraSolveOptions): PlanarCa
     }
     const pose = solvePlanarPose(plane, img, focal, cx, cy);
     if (!pose) continue;
-    series.push({ t: compToKeyframeTime(camId, compTime), pose });
+    series.push({ compTime, pose });
     rmsSum += pose.rmsPx;
   }
   if (series.length === 0) return null;
@@ -1035,74 +953,36 @@ export function applyPlanarCameraSolve(opts: PlanarCameraSolveOptions): PlanarCa
   const yaws = unwrapDegrees(series.map((e) => e.pose.yawDeg));
   const pitches = unwrapDegrees(series.map((e) => e.pose.pitchDeg));
   const rolls = unwrapDegrees(series.map((e) => e.pose.rollDeg));
-
-  const kf = (values: number[]): Keyframe[] =>
-    series.map((e, i) => ({ t: e.t, value: values[i]!, easing: 'linear' as const }));
-  const tracksToWrite: Array<[string, Keyframe[]]> = [
-    ['x', kf(series.map((e) => e.pose.position.x))],
-    ['y', kf(series.map((e) => e.pose.position.y))],
-    ['z', kf(series.map((e) => e.pose.position.z))],
-    ['orientationX', kf(pitches)],
-    ['orientationY', kf(yaws)],
-    ['orientationZ', kf(rolls)],
+  const w = (track: string, vals: number[]): TrackWrite => ({ track, keys: series.map((e, i) => ({ compTime: e.compTime, value: vals[i]! })) });
+  const writes = [
+    w('x', series.map((e) => e.pose.position.x)),
+    w('y', series.map((e) => e.pose.position.y)),
+    w('z', series.map((e) => e.pose.position.z)),
+    w('orientationX', pitches),
+    w('orientationY', yaws),
+    w('orientationZ', rolls),
   ];
-
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(camId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Apply Planar Camera Solve', () => {
-    defaultAnimation.batch(() => {
-      for (const [prop, kfs] of tracksToWrite) {
-        defaultAnimation.setKeyframes(camId, prop, spliceRecordedRange(existingOf(prop), kfs));
-      }
-    });
-  });
-
   return {
-    cameraId: camId,
-    keyframes: series.length * tracksToWrite.length,
-    meanRmsPx: rmsSum / series.length,
-    solvedFrames: series.length,
-    totalFrames: nFrames,
+    plan: { label: 'Apply Planar Camera Solve', layer: camId, writes, count: series.length * writes.length },
+    result: {
+      cameraId: camId,
+      keyframes: series.length * writes.length,
+      meanRmsPx: rmsSum / series.length,
+      solvedFrames: series.length,
+      totalFrames: nFrames,
+    },
   };
 }
 
 /**
- * Full SfM / planar-hybrid camera solve from dense tracks (see sfmCamera.ts).
- * Uses all tracked points; prefers planar when the first four form a quad.
+ * Full SfM / planar-hybrid camera solve from dense tracks (see sfmCamera.ts)
+ * onto the one-node camera `camId`. Uses all tracked points; prefers planar
+ * when the first four form a quad.
  */
-export function applySfmCameraSolve(opts: PlanarCameraSolveOptions): PlanarCameraSolveResult | null {
-  if (opts.tracks.length < 4) return null;
+export function planSfmCameraSolve(opts: PlanarCameraSolveOptions, camId: string): CameraSolvePlan | null {
+  if (!canSolveCamera(opts)) return null;
   const nFrames = Math.min(...opts.tracks.map((t) => t.length));
-  if (nFrames === 0) return null;
-
-  const scope = opts.comp.rootId
-    ? flattenComposition(defaultSceneGraph, opts.comp.rootId)
-    : (() => {
-        const all: SceneNode[] = [];
-        defaultSceneGraph.traverse((n) => { all.push(n); });
-        return all;
-      })();
-  let camera = scope.find((n) => {
-    if (readNodeKind(n) !== 'camera') return false;
-    const tp = n.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
-    return tp?.[PLANAR_SOLVE_CAMERA_PROP] === true;
-  }) ?? null;
-  if (!camera) {
-    insertCamera({ name: '3D Camera Tracker' });
-    const id = useSelectionStore.getState().ids[0];
-    camera = (id ? defaultSceneGraph.getNode(id) : null) ?? null;
-    if (!camera || readNodeKind(camera) !== 'camera') return null;
-    const tr = camera.components.find((c) => c.type === 'Transform');
-    if (tr) defaultSceneGraph.writeProp(camera.id, tr.id, PLANAR_SOLVE_CAMERA_PROP, true);
-  }
-  const camId = camera.id;
-  const camTransform = camera.components.find((c) => c.type === 'Transform')?.props as
-    | Record<string, unknown>
-    | undefined;
-  const focal = typeof camTransform?.focalLength === 'number' && camTransform.focalLength > 0
-    ? camTransform.focalLength
-    : Project3D.defaultCamera(opts.comp.width, opts.comp.height).focalLength;
+  const focal = cameraFocal(camId, opts.comp);
 
   const frames = [];
   for (let fi = 0; fi < nFrames; fi++) {
@@ -1116,76 +996,38 @@ export function applySfmCameraSolve(opts: PlanarCameraSolveOptions): PlanarCamer
     height: opts.sourceHeight,
   });
 
-  const mk = (values: number[]): Keyframe[] =>
-    values.map((value, i) => ({
-      t: compToKeyframeTime(camId, opts.tracks[0]![i]!.compTime),
-      value,
-      easing: 'linear' as const,
-    }));
-
-  const tracksToWrite: Array<[string, Keyframe[]]> = [
-    ['x', mk(path.map((p) => p.x))],
-    ['y', mk(path.map((p) => p.y))],
-    ['z', mk(path.map((p) => p.z))],
-    ['orientationX', mk(path.map((p) => p.pitchDeg))],
-    ['orientationY', mk(path.map((p) => p.yawDeg))],
-    ['orientationZ', mk(path.map((p) => p.rollDeg))],
-  ];
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(camId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Apply 3D Camera Tracker (SfM)', () => {
-    defaultAnimation.batch(() => {
-      for (const [prop, kfs] of tracksToWrite) {
-        defaultAnimation.setKeyframes(camId, prop, spliceRecordedRange(existingOf(prop), kfs));
-      }
-    });
+  const w = (track: string, vals: number[]): TrackWrite => ({
+    track,
+    keys: vals.map((value, i) => ({ compTime: opts.tracks[0]![i]!.compTime, value })),
   });
-
+  const writes = [
+    w('x', path.map((p) => p.x)),
+    w('y', path.map((p) => p.y)),
+    w('z', path.map((p) => p.z)),
+    w('orientationX', path.map((p) => p.pitchDeg)),
+    w('orientationY', path.map((p) => p.yawDeg)),
+    w('orientationZ', path.map((p) => p.rollDeg)),
+  ];
   const meanErr = path.reduce((s, p) => s + p.error, 0) / Math.max(1, path.length);
   return {
-    cameraId: camId,
-    keyframes: path.length * tracksToWrite.length,
-    meanRmsPx: meanErr,
-    solvedFrames: path.length,
-    totalFrames: nFrames,
+    plan: { label: 'Apply 3D Camera Tracker (SfM)', layer: camId, writes, count: path.length * writes.length },
+    result: {
+      cameraId: camId,
+      keyframes: path.length * writes.length,
+      meanRmsPx: meanErr,
+      solvedFrames: path.length,
+      totalFrames: nFrames,
+    },
   };
 }
 
-export function createNullsForPlanes(opts: {
-  videoNodeId: string;
-  tracks: readonly (readonly CompTrackSample[])[];
-  sourceWidth: number;
-  sourceHeight: number;
-  comp: { width: number; height: number; rootId?: string };
-}): { nullIds: string[]; keyframes: number } {
-  const nullIds: string[] = [];
-  let keyframes = 0;
-  const planeCount = Math.floor(opts.tracks.length / 4);
-  for (let p = 0; p < planeCount; p++) {
-    const slice = opts.tracks.slice(p * 4, p * 4 + 4);
-    const r = createNullAndApplyTrack({
-      videoNodeId: opts.videoNodeId,
-      mode: 'corner',
-      samples: slice[0] ?? [],
-      tracks: slice,
-      sourceWidth: opts.sourceWidth,
-      sourceHeight: opts.sourceHeight,
-      comp: opts.comp,
-    });
-    if (r) {
-      nullIds.push(r.nullId);
-      keyframes += r.keyframes;
-    }
-  }
-  return { nullIds, keyframes };
-}
+// ── Warp Stabilizer's mesh path (smoothStabilize.ts, pre-API) ──────────────
 
 /**
- * Write Mesh Warp lattice keyframes for every frame in a subspace stabilize path.
+ * Mesh Warp lattice keyframes for every frame in a subspace stabilize path.
  * `frames[i].cells` is rows×cols from {@link fitSubspaceWarp}.
  */
-export function applySubspaceMeshSequence(opts: {
+export function planSubspaceMeshSequence(opts: {
   targetNodeId: string;
   frames: ReadonlyArray<{
     cells: readonly SubspaceCell[];
@@ -1197,41 +1039,28 @@ export function applySubspaceMeshSequence(opts: {
   fieldH: number;
   layerW: number;
   layerH: number;
-}): number {
-  if (opts.frames.length === 0) return 0;
-  let effectId = getNodeEffects(opts.targetNodeId).find((e) => e.type === 'mesh-warp')?.id;
-  if (!effectId) {
-    effectId = `mw_sub_${Math.random().toString(36).slice(2, 8)}`;
-    addEffect(opts.targetNodeId, 'mesh-warp', effectId);
-  }
-  const byProp = new Map<string, Keyframe[]>();
-  for (let i = 0; i < 16; i++) {
-    byProp.set(effectPropPath(effectId, `v${i}X`), []);
-    byProp.set(effectPropPath(effectId, `v${i}Y`), []);
-  }
+}): TrackPlan | null {
+  if (opts.frames.length === 0) return null;
+  const names: string[] = [];
+  for (let i = 0; i < 16; i++) names.push(`v${i}X`, `v${i}Y`);
+  const bk = trackBuckets(names);
   for (const fr of opts.frames) {
-    const t = compToKeyframeTime(opts.targetNodeId, fr.compTime);
     for (let i = 0; i < 16; i++) {
       const u = (i % 4) / 3;
       const v = Math.floor(i / 4) / 3;
       const x = u * opts.fieldW;
       const y = v * opts.fieldH;
       const [wx, wy] = sampleSubspace(fr.cells, opts.rows, opts.cols, x, y, opts.fieldW, opts.fieldH);
-      const dx = (wx - x) * (opts.layerW / Math.max(1e-6, opts.fieldW));
-      const dy = (wy - y) * (opts.layerH / Math.max(1e-6, opts.fieldH));
-      byProp.get(effectPropPath(effectId, `v${i}X`))!.push({ t, value: dx, easing: 'linear' });
-      byProp.get(effectPropPath(effectId, `v${i}Y`))!.push({ t, value: dy, easing: 'linear' });
+      bk.add(`v${i}X`, fr.compTime, (wx - x) * (opts.layerW / Math.max(1e-6, opts.fieldW)));
+      bk.add(`v${i}Y`, fr.compTime, (wy - y) * (opts.layerH / Math.max(1e-6, opts.fieldH)));
     }
   }
-  runAnimEdit('Apply Subspace Mesh Path', () => {
-    defaultAnimation.batch(() => {
-      for (const [prop, frames] of byProp) {
-        const existing = defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
-        defaultAnimation.setKeyframes(opts.targetNodeId, prop, spliceRecordedRange(existing, frames));
-      }
-    });
-  });
-  return opts.frames.length * 32;
+  return { label: 'Apply Subspace Mesh Path', layer: opts.targetNodeId, writes: bk.writes(), effectType: 'mesh-warp', count: opts.frames.length * 32 };
+}
+
+export function applySubspaceMeshSequence(opts: Parameters<typeof planSubspaceMeshSequence>[0]): number {
+  const plan = planSubspaceMeshSequence(opts);
+  return plan ? writeTrackPlanLegacy(plan, 'mw_sub') : 0;
 }
 
 /** @deprecated Prefer {@link applySubspaceMeshSequence} for full Warp Stabilizer paths. */

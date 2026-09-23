@@ -25,11 +25,11 @@ import {
   detectSilences,
   loadNodeMono,
   pairedAudioNodeIds,
-  removeSilences,
   totalSilenceSec,
   DEFAULT_SILENCE_OPTIONS,
   type SilenceRange,
 } from '@core/audio/silenceRemoval';
+import { removeSilencesEdit } from './audioEdits';
 import styles from './AudioToolDialog.module.css';
 
 interface Props {
@@ -94,8 +94,7 @@ export function SilenceRemovalDialog({ nodeId, onDone }: Props): JSX.Element {
   const apply = async (): Promise<void> => {
     setBusy(true);
     try {
-      // B3-legacy: engine gap — silence removal (analysis → split/ripple) has no API command.
-      const result = await removeSilences(paired, ranges);
+      const result = await removeSilencesEdit(paired, ranges);
       useUIStore.getState().notify(
         result.error
           ? { level: 'warning', message: result.error, durationMs: 5000 }

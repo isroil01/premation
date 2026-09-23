@@ -1231,8 +1231,8 @@ Json capture_project_storage(const Json& store) {
   return out;
 }
 
-/// restoreDocument's extras: present keys replace (swatches, materials,
-/// transitions) or merge (guides) over what the session held; plugin storage
+/// restoreDocument's extras: present keys replace (swatches, materials) or
+/// merge (guides) over what the session held; plugin storage
 /// is assigned unconditionally.
 DocExtras restore_extras(const DocExtras& prev, const Json& doc) {
   DocExtras x = prev;
@@ -1240,7 +1240,6 @@ DocExtras restore_extras(const DocExtras& prev, const Json& doc) {
   if (truthy(doc.at("guides"))) x.guides = restore_guides(prev.guides, doc.at("guides"));
   if (truthy(doc.at("swatches"))) x.swatches = normalize_swatches(doc.at("swatches"));
   if (truthy(doc.at("materials"))) x.materials = normalize_materials(doc.at("materials"));
-  if (truthy(doc.at("transitions"))) x.transitions = doc.at("transitions");
   return x;
 }
 
@@ -1270,7 +1269,6 @@ DocExtras default_doc_extras() {
   x.guides = std::move(g);
   x.swatches = Json::array();
   x.materials = Json::array();
-  x.transitions = Json::object();
   x.pluginStorage = Json::object();
   return x;
 }
@@ -1308,7 +1306,7 @@ Json capture_document(const Document& d, const EditorView& v) {
   doc.set("colorManagement", std::move(cmj));
   doc.set("swatches", d.extras().swatches);
   doc.set("materials", d.extras().materials);
-  doc.set("transitions", d.extras().transitions);
+  doc.set("transitions", d.transitions());
   doc.set("openTabs", open_tabs_json(d, v));
   // Absent when empty (captureProjectStorage), so such a document reads back byte-identical.
   if (Json ps = capture_project_storage(d.extras().pluginStorage); !ps.obj().empty()) doc.set("pluginStorage", std::move(ps));
@@ -1504,6 +1502,8 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& input, co
     }
   }
   nd.extras_mut() = restore_extras(d.extras(), doc);
+  // transitionStore.restore: a present map replaces, an absent one keeps what the session held.
+  nd.transitions_mut() = truthy(doc.at("transitions")) ? doc.at("transitions") : d.transitions();
   d = std::move(nd);
   return result;
 }

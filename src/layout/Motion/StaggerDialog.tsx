@@ -34,7 +34,7 @@ import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { moveBars } from '@layout/Timeline/timelineEdits';
-import { sequenceLayers } from '@core/animation/keyframeAssistants';
+import { staggerKeyframesEdit } from '@layout/Menu/appEdits';
 import {
   clampOffsetsToStart,
   quantizeOffsets,
@@ -103,13 +103,12 @@ function StaggerBody({ nodeIds, close, onDone }: StaggerBodyProps): JSX.Element 
     const controller = getTimelineController();
 
     if (target === 'animation') {
-      // The assistant walks the layers itself and applies the same pattern to
-      // each one's keyframes, as one undoable command.
-      // B3-legacy: engine gap — it shifts whole tracks in STORED time (sub-frame
-      // offsets, times before 0); `moveKeyframes` moves through comp time, which
-      // frame-quantizes inside a clip.
-      const ok = sequenceLayers(nodeIds, step, undefined, { mode, reverse, balance, seed });
-      onDone(ok ? `Animation staggered across ${nodeIds.length} layers` : null);
+      // The same pattern on each layer's keyframes, one undo entry:
+      // `shiftLayerKeyframes` (B3z) moves whole tracks in LAYER time — sub-frame
+      // offsets and times before 0 included, as the assistant always did.
+      void staggerKeyframesEdit(nodeIds, { mode, step, reverse, balance, seed }).then((res) => {
+        onDone(res === true ? `Animation staggered across ${nodeIds.length} layers` : null);
+      });
       close();
       return;
     }

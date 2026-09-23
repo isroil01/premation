@@ -26,6 +26,7 @@ import { setLocalBlobResolver } from '@core/rendering/localBlobSource';
 import { createBlobStore } from '@core/assets/local/blobStoreEnv';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';
+import { rememberEditorView, recallEditorView } from '@core/project/editorView';
 
 export function registerCoreServices(container: ServiceContainer): CoreServiceRefs {
   const logger = getLogger();
@@ -40,7 +41,11 @@ export function registerCoreServices(container: ServiceContainer): CoreServiceRe
     new FileProjectStorage(projectService, files),
     new BundleProjectStorage(),
   );
-  const project = new ProjectManager({ service: projectService, files, recent, logger, storage });
+  const project = new ProjectManager({
+    service: projectService, files, recent, logger, storage,
+    // Tabs, playhead and timeline zoom live beside the file, not in it (B4).
+    editorView: { remember: rememberEditorView, recall: recallEditorView },
+  });
 
   container.register(CoreService.Logger, logger);
   container.register(CoreService.Loading, loading);

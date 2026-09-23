@@ -60,3 +60,32 @@ export function createCustomLayerFromMenu(kind: string): string | null {
 
   return id;
 }
+
+/**
+ * The menu insert's BUILDER alone (B3z): add a layer of `kind` to `parentId`
+ * (the active composition) and select it, with no undo scope and no plugin
+ * wake-up — the UI runs it off-document and inserts the result as one
+ * `pasteLayers` (offDocument.ts `insertBuiltLayers`), then calls
+ * {@link wakeCustomLayerKind}. Unlike the legacy path above it lands INSIDE the
+ * composition, as every other New ▸ layer does (AE: the active comp).
+ * Null when the kind is not registered.
+ */
+export function buildCustomLayerInto(kind: string, parentId: string): string | null {
+  const entry = findLayerKind(kind);
+  if (!entry) return null;
+  const node = buildCustomLayerNode(`n_${Math.random().toString(36).slice(2, 10)}`, entry.pluginId, entry.kind);
+  defaultSceneGraph.addChild(parentId, node);
+  useSelectionStore.getState().set([node.id]);
+  return node.id;
+}
+
+/** The menu label of a registered kind ("New Depth Image"), or null. */
+export function customLayerLabel(kind: string): string | null {
+  const entry = findLayerKind(kind);
+  return entry ? `New ${entry.kind.label}` : null;
+}
+
+/** Wake the plugin that owns `kind` once its layer exists (outside the undo entry, see above). */
+export function wakeCustomLayerKind(kind: string): void {
+  pluginHost.activateForDocument([kind]);
+}

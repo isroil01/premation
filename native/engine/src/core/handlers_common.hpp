@@ -2,6 +2,7 @@
 // doc.ts's `require*` validators.
 #pragma once
 
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,7 +36,9 @@ std::string require_layers_in_one_comp(const Document& d, const std::vector<std:
 /// `remintKeyIds(layer)`: every stable key id a copied layer carries gets a fresh one.
 void remint_key_ids(HCtx& x, std::string_view layer);
 /// `moveInStack(comp, ids, toIndex)`.
-void move_in_stack(Document& d, std::string_view comp, const std::vector<std::string>& ids, std::size_t toIndex);
+/// `ignore`: layers that do not count toward `toIndex` (pasteLayers: the pasted tops' own descendants).
+void move_in_stack(Document& d, std::string_view comp, const std::vector<std::string>& ids, std::size_t toIndex,
+                   const std::set<std::string>* ignore = nullptr);
 
 /// `Math.round` of a flicks value in frames (`flicksToFrames`) at the comp's rate.
 [[nodiscard]] double comp_frames(const Document& d, std::string_view comp, api::Time flicks);

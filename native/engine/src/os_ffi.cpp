@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -92,6 +93,21 @@ bool write_stdout(const void* data, std::size_t bytes) {
     bytes -= static_cast<std::size_t>(n);
   }
   return true;
+#endif
+}
+
+std::optional<std::string> env_var(const char* name) {
+#ifdef _WIN32
+  char* value = nullptr;
+  std::size_t len = 0;
+  if (_dupenv_s(&value, &len, name) != 0 || value == nullptr) return std::nullopt;
+  std::string out(value);
+  std::free(value);  // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): _dupenv_s allocates with malloc
+  return out;
+#else
+  const char* value = std::getenv(name);  // NOLINT(concurrency-mt-unsafe): read at startup
+  if (value == nullptr) return std::nullopt;
+  return std::string(value);
 #endif
 }
 

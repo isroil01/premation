@@ -139,10 +139,11 @@ switch (step) {
       process.exit(1);
     }
     // Only the library sources are tidy-gated (tests/bench/bindings are macro-heavy third-party surfaces).
-    // An engine preset (--engine) also gates the render graph, media, raster and audio (engine/src/render_graph,
-    // engine/src/media, engine/src/raster, engine/src/audio — each with its own .clang-tidy).
+    // An engine preset (--engine) also gates the render graph, media, raster, audio and the scene builder
+    // (engine/src/render_graph, engine/src/media, engine/src/raster, engine/src/audio, engine/src/scene —
+    // each with its own .clang-tidy).
     const files = rest.includes('--engine')
-      ? '.*[/\\\\]native[/\\\\](libs|engine[/\\\\]src[/\\\\](render_graph|media|raster|audio))[/\\\\].*'
+      ? '.*[/\\\\]native[/\\\\](libs|engine[/\\\\]src[/\\\\](render_graph|media|raster|audio|scene))[/\\\\].*'
       : '.*[/\\\\]native[/\\\\]libs[/\\\\].*';
     run('run-clang-tidy', ['-p', db, '-quiet', files]);
     break;

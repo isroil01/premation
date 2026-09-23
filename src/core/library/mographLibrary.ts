@@ -945,8 +945,20 @@ export function mographRestTime(item: MographItem): number {
 let seq = 0;
 
 /** Insert a motion-graphics item at (x, y) — comp centre when omitted —
- *  starting at the playhead. Returns the group node id, or null. */
+ *  starting at the playhead, then preview it. Returns the group node id, or null. */
 export function insertMographItem(mgId: string, x?: number, y?: number): string | null {
+  const id = buildMographItem(mgId, x, y);
+  if (id) previewMographItem(mgId);
+  return id;
+}
+
+/**
+ * The BUILDER alone (B3z): the item's layer set, keys, expressions and bar,
+ * selected — no preview. The editor runs it off-document and inserts the
+ * result as ONE `pasteLayers` (offDocument.ts), then calls
+ * {@link previewMographItem}.
+ */
+export function buildMographItem(mgId: string, x?: number, y?: number): string | null {
   const item = getMographItem(mgId);
   if (!item) return null;
   const comp = useCompositionStore.getState();
@@ -1006,7 +1018,15 @@ export function insertMographItem(mgId: string, x?: number, y?: number): string 
   */
   if (!item.loop) setInsertedClipWindow(baseId, t0, mographDuration(item));
   bumpScene();
+  return baseId;
+}
 
+/** Play a just-inserted item's choreography from the playhead (transport only). */
+export function previewMographItem(mgId: string): void {
+  const item = getMographItem(mgId);
+  if (!item) return;
+  const ws = useWorkspaceStore.getState();
+  const t0 = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
   // The choreography starts HERE, so the frame the user is on is its opening
   // keyframe — for most items every layer at opacity 0 / scale 0. Play it once
   // and rest on a frame that shows the element, or the insert reads as a no-op.
@@ -1014,8 +1034,6 @@ export function insertMographItem(mgId: string, x?: number, y?: number): string 
   // over their declared card window.
   const span = item.loop ? item.previewSeconds ?? 4 : mographDuration(item);
   previewChoreography({ from: t0, to: t0 + span, restAt: t0 + mographRestTime(item) });
-
-  return baseId;
 }
 
 // ── Animated card preview (isolated; same build + choreography) ──────

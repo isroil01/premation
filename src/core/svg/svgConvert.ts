@@ -139,65 +139,104 @@ export function describeConversion(data: SvgLayerData): string[] {
  * Returns the new group's id, or null when the file has no vector geometry the
  * parser can reach (an SVG that is just an embedded bitmap, for instance).
  */
+/** What `buildSvgShapeGroup` produced. */
+export interface BuiltSvgShapes {
+  groupId: string;
+  /** Parts converted (one layer each). */
+  count: number;
+  data: SvgLayerData;
+}
+
+/**
+ * The BUILD half of the conversion: parse the SVG layer's original markup and
+ * add the editable group (carrying the layer's transform / appearance and the
+ * retained source) to the active composition. Leaves the SVG layer in place and
+ * changes nothing else — the UI runs it off-document (`buildLayerFragment`) and
+ * sends the result as `pasteLayers` + `deleteLayers` (B3z, svgLayerActions.ts).
+ * Null when the layer is not an SVG or has no vector geometry the parser reaches.
+ */
+export function buildSvgShapeGroup(nodeId: string): BuiltSvgShapes | null {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return null;
+  const data = readSvgLayer(node);
+  if (!data) return null;
+  const carry = carryFrom(nodeId);
+  const shapes = parseSvgToShapes(data.sourceMarkup, {
+    maxDurationSeconds: useCompositionStore.getState().durationSeconds,
+    measureText: measureSvgText,
+    intersectPaths: intersectSvgPaths,
+  });
+  if (shapes.length === 0) return null;
+
+  const groupId = insertSvgShapeGroup(data.sourceMarkup, data.fileName, {
+    x: carry.x,
+    y: carry.y,
+    targetSize: Math.max(data.intrinsicWidth, data.intrinsicHeight),
+    shapes,
+  });
+  if (!groupId) return null;
+
+  applyCarry(groupId, carry);
+
+  // Retain the original on the group so Revert works and a future parser can
+  // re-run against untouched source. Opt-out honoured, though the cost is
+  // negligible next to any raster asset.
+  if (getRetainOriginalSvg()) {
+    const src = node.components.find((c) => c.type === SVG_COMPONENT);
+    if (src) {
+      defaultSceneGraph.addComponent(groupId, {
+        id: `${groupId}_svgsrc`,
+        type: SVG_COMPONENT,
+        props: stripToRetainedSource({ ...(src.props as Record<string, unknown>) }),
+      });
+    }
+  }
+  return { groupId, count: shapes.length, data };
+}
+
+/** The user-facing notices of a conversion (no geometry / approximated animation). */
+export function notifyNoSvgGeometry(fileName: string): void {
+  useUIStore.getState().notify({
+    level: 'warning',
+    message: `“${fileName}” has no vector paths to convert — it stays an SVG layer.`,
+    durationMs: 6000,
+  });
+}
+
+export function notifySvgConverted(data: SvgLayerData, count: number): void {
+  if (isAnimatedSvg(data.capabilities)) {
+    useUIStore.getState().notify({
+      level: 'info',
+      message: `“${data.fileName}” converted to ${count} editable layers. Its animation was approximated as keyframes.`,
+      durationMs: 6000,
+    });
+  }
+}
+
+/**
+ * Legacy one-shot conversion (the AI tool handler and tests): build + remove
+ * the SVG layer in one `runDocumentEdit`. The editor UI goes through the engine
+ * (svgLayerActions.ts).
+ */
 export function convertSvgLayerToShapes(nodeId: string): string | null {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const data = readSvgLayer(node);
   if (!data) return null;
 
-  const carry = carryFrom(nodeId);
-
   return runDocumentEdit('Convert SVG to Editable Shapes', () => {
-    const shapes = parseSvgToShapes(data.sourceMarkup, {
-      maxDurationSeconds: useCompositionStore.getState().durationSeconds,
-      measureText: measureSvgText,
-      intersectPaths: intersectSvgPaths,
-    });
-    if (shapes.length === 0) {
-      useUIStore.getState().notify({
-        level: 'warning',
-        message: `“${data.fileName}” has no vector paths to convert — it stays an SVG layer.`,
-        durationMs: 6000,
-      });
+    const built = buildSvgShapeGroup(nodeId);
+    if (!built) {
+      notifyNoSvgGeometry(data.fileName);
       return null;
     }
-
-    const groupId = insertSvgShapeGroup(data.sourceMarkup, data.fileName, {
-      x: carry.x,
-      y: carry.y,
-      targetSize: Math.max(data.intrinsicWidth, data.intrinsicHeight),
-      shapes,
-    });
-    if (!groupId) return null;
-
-    applyCarry(groupId, carry);
-
-    // Retain the original on the group so Revert works and a future parser can
-    // re-run against untouched source. Opt-out honoured, though the cost is
-    // negligible next to any raster asset.
-    if (getRetainOriginalSvg()) {
-      const src = node.components.find((c) => c.type === SVG_COMPONENT);
-      if (src) {
-        defaultSceneGraph.addComponent(groupId, {
-          id: `${groupId}_svgsrc`,
-          type: SVG_COMPONENT,
-          props: stripToRetainedSource({ ...(src.props as Record<string, unknown>) }),
-        });
-      }
-    }
+    const { groupId } = built;
 
     forgetSvgLayerSrc(nodeId);
     defaultSceneGraph.removeNode(nodeId);
     useSelectionStore.getState().set([groupId]);
     bumpScene();
-
-    if (isAnimatedSvg(data.capabilities)) {
-      useUIStore.getState().notify({
-        level: 'info',
-        message: `“${data.fileName}” converted to ${shapes.length} editable layers. Its animation was approximated as keyframes.`,
-        durationMs: 6000,
-      });
-    }
+    notifySvgConverted(data, built.count);
     return groupId;
   });
 }

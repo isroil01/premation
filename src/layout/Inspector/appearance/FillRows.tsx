@@ -16,7 +16,6 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import {
   getNodeFill,
-  setNodeFill,
   getNodeFills,
   convertFill,
   sortedStops,
@@ -47,21 +46,16 @@ import styles from '../TransformSection.module.css';
 import effStyles from '../../Effects/EffectsPanel.module.css';
 
 /**
- * Per-node accessors for the gradient geometry — module constants so their
- * identity is stable across renders (the row memoises its aggregate on them).
- * A layer whose fill is not of the right type has no such value.
+ * Per-node READ accessors for the gradient geometry — module constants so
+ * their identity is stable across renders (the row memoises its aggregate on
+ * them). A layer whose fill is not of the right type has no such value. The
+ * writes are the engine's `layer/fillAngle` / `fillCenterX|Y` / `fillRadius`
+ * (static value inside the paint; latentPropSpecs.ts on a shape).
  */
 const FILL_ANGLE: PropertyAccess = {
   read: (id) => {
     const f = getNodeFill(id);
     return f?.type === 'linear' ? f.angle : undefined;
-  },
-  writeStatic: (id, angle) => {
-    const f = getNodeFill(id);
-    if (f?.type !== 'linear') return false;
-    // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
-    setNodeFill(id, { ...f, angle });
-    return true;
   },
 };
 
@@ -70,13 +64,6 @@ function radialAccess(field: 'cx' | 'cy' | 'radius'): PropertyAccess {
     read: (id) => {
       const f = getNodeFill(id);
       return f?.type === 'radial' ? f[field] : undefined;
-    },
-    writeStatic: (id, v) => {
-      const f = getNodeFill(id);
-      if (f?.type !== 'radial') return false;
-      // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
-      setNodeFill(id, { ...f, [field]: v });
-      return true;
     },
   };
 }

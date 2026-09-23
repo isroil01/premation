@@ -360,6 +360,29 @@ export const SPEED_PRESETS: ReadonlyArray<SpeedPreset> = [
   },
 ];
 
+/**
+ * A preset's speed keys for one layer at COMPOSITION seconds (B3z: the
+ * inspector sends them as the layer's whole `layer/timeSpeed` track), or null
+ * when the layer has no bar to shape it across / the preset is unknown.
+ */
+export function planSpeedPreset(
+  nodeId: string,
+  presetId: string,
+): { preset: SpeedPreset; keys: Array<{ seconds: number; value: number; easing: EasingKind }> } | null {
+  const preset = SPEED_PRESETS.find((p) => p.id === presetId);
+  const bar = retimeBarInfo(nodeId);
+  if (!preset || !bar) return null;
+  const span = bar.outSec - bar.inSec;
+  return {
+    preset,
+    keys: preset.points.map(([pos, speed, style]) => ({
+      seconds: Math.min(bar.inSec + pos * span, bar.outSec - 1 / bar.fps),
+      value: speed,
+      easing: RAMP_STYLE_EASING[style],
+    })),
+  };
+}
+
 export function applySpeedPreset(ids: ReadonlyArray<string>, presetId: string): number {
   const preset = SPEED_PRESETS.find((p) => p.id === presetId);
   if (!preset) return 0;
@@ -425,15 +448,30 @@ export function retimeSummary(nodeId: string): RetimeSummary | null {
  * Scale the whole speed curve so the bar ends exactly on the footage's last
  * frame. Linear in the speeds, so one factor does it for any shape.
  */
-export function fitSpeedToFootage(nodeId: string): boolean {
+/**
+ * The factor Fit to Footage scales every speed key by (B3z: the inspector
+ * sends the scaled values as `updateKeyframes`), or null when there is nothing
+ * to fit (no bar, unknown file length, no source advance).
+ */
+export function fitSpeedFactor(nodeId: string): number | null {
   const bar = retimeBarInfo(nodeId);
-  if (!bar || bar.sourceDurationSec === null) return false;
+  if (!bar || bar.sourceDurationSec === null) return null;
   const uIn = bar.inSec + bar.clip.offsetSec;
   const uOut = bar.outSec + bar.clip.offsetSec;
   const used = speedAdvance(defaultAnimation, nodeId, uIn, uOut);
   const available = bar.sourceDurationSec - bar.sourceInSec - 1 / bar.sourceFps;
-  if (!(used > 1e-6) || !(available > 0)) return false;
-  const k = available / used;
+  if (!(used > 1e-6) || !(available > 0)) return null;
+  return available / used;
+}
+
+/** A speed key's value after Fit to Footage's scaling (clamped, 0.1 % steps). */
+export function fittedSpeed(value: number, factor: number): number {
+  return Math.round(clampSpeedPercent(value * factor) * 10) / 10;
+}
+
+export function fitSpeedToFootage(nodeId: string): boolean {
+  const k = fitSpeedFactor(nodeId);
+  if (k === null) return false;
   runAnimEdit('Fit speed to footage', () => {
     defaultAnimation.setKeyframes(nodeId, SPEED_PROP, speedTrack(nodeId).map((kf) => ({
       ...kf,

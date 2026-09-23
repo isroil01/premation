@@ -1,6 +1,6 @@
 /** Properties, expressions and keyframes (ENGINE_API.md §4.6). */
 
-import { defaultAnimation, type Keyframe as TsKeyframe, type DataKeyframe } from '@motion/animation';
+import { defaultAnimation, sampleTrack, type Keyframe as TsKeyframe, type DataKeyframe } from '@motion/animation';
 import type { PropRef, Value, KeyframeInsert, KeyframePatch, Keyframe } from '@motion/engine-api';
 import { readNodeMaskAnim } from '@core/effects/mask';
 import type { MaskKeyframe } from '@core/effects/mask';
@@ -22,10 +22,19 @@ import {
   apiUnitFactor,
   flicksToKeyTime,
   keyTimeToFlicks,
+  normalizeKeysAt,
   type PropBinding,
   type KeyWrite,
   type Catalog,
 } from '../props';
+import { pinKeyToApi } from '../rigProps';
+import { fillStopsKeyToApi } from '../fillStops';
+
+/** The layer's primary fill is a gradient (Colors has a static home). */
+function hasGradientFill(layer: string): boolean {
+  const t = (graph.getNode(layer)?.components.find((c) => c.type === 'fx')?.props.fill as { type?: unknown } | undefined)?.type;
+  return t === 'linear' || t === 'radial';
+}
 import { checkTime, compFps, framesToFlicks, flicksToFrames } from '../time';
 import { compDurationFrames, layerTiming } from '../model';
 import type { HandlerTable, HandlerCtx } from '../handler';
@@ -77,6 +86,7 @@ function planWrite(layer: string, b: PropBinding, value: Value, time: number | u
   const id = existing?.id.startsWith('@') || !existing ? newKeyId(b, ctx) : existing.id;
   return () => {
     putKeys(layer, b, [{ t, id, value }]);
+    reroveKeys(layer, b);
     return id;
   };
 }
@@ -109,11 +119,83 @@ function retime(layer: string, b: PropBinding, map: Map<number, number>): void {
     defaultAnimation.setDataTrack(layer, b.dataTrack, { ...track, keyframes: moveList(track.keyframes as DataKeyframe[]) });
     return;
   }
+  // The whole key moves: a lone member key gets its siblings first (§3.3).
+  normalizeKeysAt(layer, b, [...map.keys()]);
   for (const m of b.members) {
     const kfs = defaultAnimation.getTrackKeyframes(layer, m);
     if (!kfs) continue;
     defaultAnimation.setTrackKeyframes(layer, m, moveList(kfs as TsKeyframe[]));
   }
+}
+
+/** Samples per segment when measuring a vector's path for roving (the legacy spatial rove's density). */
+const ROVE_SAMPLES = 64;
+
+/**
+ * Rove Across Time (After Effects): each run of roving keys between two
+ * non-roving keys is re-timed so the value travels at constant speed across
+ * the run — each key sits at the fraction of the span equal to the distance
+ * travelled to it. A scalar measures |Δvalue|; a vector the length of its path
+ * through the dimensions (sampled, easing and spatial tangents included).
+ * Values never change; the ends never rove. The C++ engine does the same
+ * arithmetic in the same order (handlers_properties.cpp `rerove_keys`).
+ */
+export function reroveKeys(layer: string, b: PropBinding): void {
+  if (b.members.length === 0 || b.special === 'maskPath' || b.dataTrack) return;
+  const tracks = b.members.map((m) => defaultAnimation.getTrackKeyframes(layer, m) ?? []);
+  if (!tracks.some((tr) => tr.some((k) => k.roving === true))) return;
+  const times = [...new Set(tracks.flatMap((tr) => tr.map((k) => k.t)))].sort((x, y) => x - y);
+  if (times.length < 3) return;
+  const leadAt = (t: number): TsKeyframe => tracks.map((tr) => tr.find((k) => k.t === t)).find((k) => k !== undefined)!;
+  const roving = times.map((t) => leadAt(t).roving === true);
+  const at = (i: number, t: number): number => {
+    const tr = tracks[i]!;
+    if (tr.length === 0) return 0;
+    return sampleTrack({ nodeId: layer, prop: b.members[i]!, keyframes: tr }, t) ?? 0;
+  };
+  const segLen = (k: number): number => {
+    const t0 = times[k]!;
+    const t1 = times[k + 1]!;
+    if (b.members.length === 1) return Math.abs(at(0, t1) - at(0, t0));
+    let len = 0;
+    let prev: number[] = [];
+    for (let s = 0; s <= ROVE_SAMPLES; s++) {
+      const tt = t0 + ((t1 - t0) * s) / ROVE_SAMPLES;
+      const cur = b.members.map((_m, i) => at(i, tt));
+      if (s > 0) {
+        let sq = 0;
+        for (let i = 0; i < cur.length; i++) sq += (cur[i]! - prev[i]!) * (cur[i]! - prev[i]!);
+        len += Math.sqrt(sq);
+      }
+      prev = cur;
+    }
+    return len;
+  };
+  const map = new Map<number, number>();
+  let i = 0;
+  while (i < times.length) {
+    if (!roving[i]) { i++; continue; }
+    const start = i - 1;
+    let j = i;
+    while (j < times.length && roving[j]) j++;
+    if (start < 0 || j >= times.length) { i = j; continue; }
+    let total = 0;
+    const cum: number[] = [0];
+    for (let k = start; k < j; k++) {
+      total += segLen(k);
+      cum.push(total);
+    }
+    const a = times[start]!;
+    const span = times[j]! - a;
+    const run = j - i;
+    for (let k = 0; k < run; k++) {
+      const frac = total > 0 ? cum[k + 1]! / total : (k + 1) / (run + 1);
+      const nt = a + frac * span;
+      if (nt !== times[i + k]) map.set(times[i + k]!, nt);
+    }
+    i = j;
+  }
+  if (map.size > 0) retime(layer, b, map);
 }
 
 interface Located {
@@ -157,8 +239,18 @@ function toBezier(b: { x1: number; y1: number; x2: number; y2: number } | undefi
   return b ? [b.x1, b.y1, b.x2, b.y2] : undefined;
 }
 
-/** Expressions live per member track (a vector's source is set on each dimension; each picks its component). */
-function exprMembers(b: PropBinding): string[] {
+/**
+ * Expressions live per member track (a vector's source is set on each dimension;
+ * each picks its component). `member` (setExpression / setExpressionEnabled):
+ * just that dimension of an unseparated vector.
+ */
+function exprMembers(b: PropBinding, member?: number): string[] {
+  if (member !== undefined) {
+    if (b.members.length < 2 || member >= b.members.length) {
+      fail('outOfRange', `'${b.path}' has no dimension ${member}`, { path: b.path });
+    }
+    return [b.members[member]!];
+  }
   if (b.members.length > 0) return b.members;
   if (b.dataTrack) return [b.dataTrack];
   return fail('notAnimatable', `'${b.path}' cannot carry an expression`, { path: b.path });
@@ -221,7 +313,7 @@ export const propertyHandlers: HandlerTable = {
         const value = valueAt(layer, b, t);
         const times = readKeys(layer, b).map((k) => k.t);
         dropKeys(layer, b, times);
-        if (value && !b.dataTrack && b.special !== 'maskPath') writeStatic(layer, b, value);
+        if (value && ((!b.dataTrack && b.special !== 'maskPath') || b.special === 'rig' || (b.special === 'fillStops' && hasGradientFill(layer)))) writeStatic(layer, b, value);
         return {};
       },
     };
@@ -265,7 +357,7 @@ export const propertyHandlers: HandlerTable = {
 
   setExpression: (cmd) => {
     const { b } = bind(cmd.prop);
-    const members = exprMembers(b);
+    const members = exprMembers(b, cmd.member);
     return {
       scope: propScope(newScope(), cmd.prop.layer),
       label: cmd.source.trim() === '' ? 'Remove Expression' : 'Set Expression',
@@ -276,12 +368,11 @@ export const propertyHandlers: HandlerTable = {
           return { ok: true, diagnostics: [] };
         }
         for (const m of members) defaultAnimation.setExpressionState(layer, m, { src: cmd.source, enabled: cmd.enabled });
+        // After Effects (since CC 2019): a failing expression is stored as given
+        // and stays on — the property shows its pre-expression value — and the
+        // error is reported, not acted on.
         const err = defaultAnimation.getExpressionError(layer, members[0]!);
-        if (err) {
-          // AE: a failing expression is stored, disabled.
-          for (const m of members) defaultAnimation.setExpressionEnabled(layer, m, false);
-          return { ok: false, diagnostics: [{ message: err, line: 0, column: 0 }] };
-        }
+        if (err) return { ok: false, diagnostics: [{ message: err, line: 0, column: 0 }] };
         return { ok: true, diagnostics: [] };
       },
     };
@@ -291,7 +382,7 @@ export const propertyHandlers: HandlerTable = {
     if (cmd.props.length === 0) fail('invalidArgument', 'no properties given');
     const plans = cmd.props.map((p) => {
       const { b } = bind(p);
-      const members = exprMembers(b);
+      const members = exprMembers(b, cmd.member);
       if (!members.some((m) => defaultAnimation.hasExpression(p.layer, m))) fail('notFound', `'${b.path}' has no expression`, { layer: p.layer, path: b.path });
       return { layer: p.layer, members };
     });
@@ -311,7 +402,9 @@ export const propertyHandlers: HandlerTable = {
     const { b } = bind(cmd.prop);
     const layer = cmd.prop.layer;
     if (b.members.length === 0) fail('unsupported', `'${b.path}' cannot be baked in this engine`, { path: b.path });
-    if (!b.members.some((m) => defaultAnimation.isExpressionEnabled(layer, m))) fail('invalidArgument', `'${b.path}' has no enabled expression`, { path: b.path });
+    // `member`: one dimension of an unseparated vector (its own expression); the others are untouched.
+    const members = cmd.member !== undefined ? exprMembers(b, cmd.member) : b.members;
+    if (!members.some((m) => defaultAnimation.isExpressionEnabled(layer, m))) fail('invalidArgument', `'${b.path}' has no enabled expression`, { path: b.path });
     checkTime(cmd.step, 'step');
     const comp = compOfLayer(layer)!;
     const fps = compFps(comp);
@@ -323,19 +416,25 @@ export const propertyHandlers: HandlerTable = {
     if (f1 <= f0) fail('outOfRange', 'the bake range is empty');
     const frames: number[] = [];
     for (let f = f0; f < f1; f += stepFrames) frames.push(f);
-    const ids = frames.map(() => ctx.mintKeyId());
+    // Composition frames that map to ONE layer time (a hold, a freeze, a
+    // stretch below 100 %) keep the first — the earliest frame that reaches it.
+    const times: number[] = [];
+    for (const f of frames) {
+      const t = flicksToKeyTime(layer, b, framesToFlicks(f, fps));
+      if (!times.includes(t)) times.push(t);
+    }
+    const ids = times.map(() => ctx.mintKeyId());
     return {
       scope: propScope(newScope(), layer),
       label: 'Convert Expression to Keyframes',
       apply: () => {
-        const samples = frames.map((f) => {
-          const t = flicksToKeyTime(layer, b, framesToFlicks(f, fps));
-          return { t, nums: b.members.map((m) => defaultAnimation.sample(layer, m, t) ?? 0) };
-        });
-        for (const m of b.members) defaultAnimation.setExpressionState(layer, m, null);
-        b.members.forEach((m, i) => {
+        // Sample everything first: the expression may read its own keys.
+        const samples = times.map((t) => ({ t, nums: members.map((m) => defaultAnimation.sample(layer, m, t) ?? 0) }));
+        members.forEach((m, i) => {
           defaultAnimation.setTrackKeyframes(layer, m, samples.map((s, j) => ({ id: ids[j]!, t: s.t, value: s.nums[i]!, easing: 'linear' as const })));
         });
+        // After Effects: the expression is DISABLED, not removed.
+        for (const m of members) if (defaultAnimation.hasExpression(layer, m)) defaultAnimation.setExpressionEnabled(layer, m, false);
         return { ids };
       },
     };
@@ -397,6 +496,7 @@ export const propertyHandlers: HandlerTable = {
           }
           putKeys(p.layer, p.b, [p.w]);
         }
+        for (const p of plans) reroveKeys(p.layer, p.b);
         return { ids: plans.map((p) => p.w.id) };
       },
     };
@@ -410,6 +510,7 @@ export const propertyHandlers: HandlerTable = {
       label: `Delete ${plural(cmd.ids.length, 'Keyframe')}`,
       apply: () => {
         for (const g of groups.values()) dropKeys(g.layer, g.b, g.keys.map((k) => k.t));
+        for (const g of groups.values()) reroveKeys(g.layer, g.b);
         return {};
       },
     };
@@ -427,6 +528,7 @@ export const propertyHandlers: HandlerTable = {
           for (const k of g.keys) map.set(k.t, flicksToKeyTime(g.layer, g.b, keyTimeToFlicks(g.layer, g.b, k.t) + cmd.delta));
           retime(g.layer, g.b, map);
         }
+        for (const g of groups.values()) reroveKeys(g.layer, g.b);
         return {};
       },
     };
@@ -448,6 +550,7 @@ export const propertyHandlers: HandlerTable = {
           }
           retime(g.layer, g.b, map);
         }
+        for (const g of groups.values()) reroveKeys(g.layer, g.b);
         return {};
       },
     };
@@ -459,14 +562,19 @@ export const propertyHandlers: HandlerTable = {
       scope: keysScope(groups.values()),
       label: 'Time-Reverse Keyframes',
       apply: () => {
-        for (const g of groups.values()) {
-          const times = g.keys.map((k) => keyTimeToFlicks(g.layer, g.b, k.t));
-          const lo = Math.min(...times);
-          const hi = Math.max(...times);
+        // After Effects: the keys are ONE block, mirrored within the span of the
+        // whole selection (keys of different properties keep their arrangement).
+        const list = [...groups.values()];
+        const all = list.map((g) => g.keys.map((k) => keyTimeToFlicks(g.layer, g.b, k.t)));
+        const flat = all.flat();
+        const lo = Math.min(...flat);
+        const hi = Math.max(...flat);
+        list.forEach((g, gi) => {
           const map = new Map<number, number>();
-          g.keys.forEach((k, i) => map.set(k.t, flicksToKeyTime(g.layer, g.b, lo + hi - times[i]!)));
+          g.keys.forEach((k, i) => map.set(k.t, flicksToKeyTime(g.layer, g.b, lo + hi - all[gi]![i]!)));
           retime(g.layer, g.b, map);
-        }
+        });
+        for (const g of list) reroveKeys(g.layer, g.b);
         return {};
       },
     };
@@ -478,6 +586,9 @@ export const propertyHandlers: HandlerTable = {
       const l = locate(p.id, ctx.keys);
       if (p.value) checkValue(l.b, p.value);
       if (p.time !== undefined) checkTime(p.time);
+      if (p.dim !== undefined && p.dim >= Math.max(1, l.b.members.length)) {
+        fail('outOfRange', `'${l.b.path}' has no dimension ${p.dim}`, { layer: l.layer, path: l.b.path });
+      }
       return { l, p };
     });
     return {
@@ -499,9 +610,16 @@ export const propertyHandlers: HandlerTable = {
             ...(p.spatialIn.length > 0 ? { spatialIn: p.spatialIn } : {}),
             ...(p.spatialOut.length > 0 ? { spatialOut: p.spatialOut } : {}),
             ...(p.label !== undefined ? { label: p.label } : {}),
+            ...(p.dim !== undefined && l.b.members.length > 1 ? { dim: p.dim } : {}),
           };
           if (l.b.special === 'maskPath' || l.b.dataTrack || l.b.members.length > 0) putKeys(l.layer, l.b, [w]);
           if (p.time !== undefined) retime(l.layer, l.b, new Map([[l.t, flicksToKeyTime(l.layer, l.b, p.time)]]));
+        }
+        const seen = new Set<string>();
+        for (const { l } of plans) {
+          if (seen.has(`${l.layer}|${l.b.path}`)) continue;
+          seen.add(`${l.layer}|${l.b.path}`);
+          reroveKeys(l.layer, l.b);
         }
         return {};
       },
@@ -525,6 +643,7 @@ export const propertyHandlers: HandlerTable = {
         continuous: k.continuous, roving: k.roving, spatialInterp: k.spatialInterp,
         spatialIn: k.spatialIn.length > 0 ? k.spatialIn : null, spatialOut: k.spatialOut.length > 0 ? k.spatialOut : null,
         label: k.label,
+        ...dimsWrite(k),
       };
       return w;
     });
@@ -533,11 +652,68 @@ export const propertyHandlers: HandlerTable = {
       label: `Paste ${plural(writes.length, 'Keyframe')}`,
       apply: () => {
         putKeys(layer, b, writes);
+        reroveKeys(layer, b);
+        return { ids: writes.map((w) => w.id) };
+      },
+    };
+  },
+
+  setKeyframes: (cmd, ctx) => {
+    const { b } = bind(cmd.prop);
+    if (!b.animatable) fail('notAnimatable', `'${b.path}' cannot take keyframes`, { path: b.path });
+    if (cmd.keys.length === 0) fail('invalidArgument', 'no keyframes given (setAnimated removes them all)', { path: b.path });
+    const layer = cmd.prop.layer;
+    const known = new Set(readKeys(layer, b).map((k) => k.id).filter((id) => !id.startsWith('@')));
+    const used = new Set<string>();
+    const times = new Set<number>();
+    const writes = cmd.keys.map((k: Keyframe) => {
+      checkTime(k.time);
+      checkValue(b, k.value);
+      const t = flicksToKeyTime(layer, b, k.time);
+      if (times.has(t)) fail('invalidArgument', `two keyframes of '${b.path}' land on one time`, { path: b.path });
+      times.add(t);
+      const id = known.has(k.id) && !used.has(k.id) ? k.id : newKeyId(b, ctx);
+      used.add(id);
+      const w: KeyWrite = {
+        t, id, value: k.value, easing: k.easing, bezier: toBezier(k.bezier) ?? null,
+        continuous: k.continuous, roving: k.roving, spatialInterp: k.spatialInterp,
+        spatialIn: k.spatialIn.length > 0 ? k.spatialIn : null, spatialOut: k.spatialOut.length > 0 ? k.spatialOut : null,
+        label: k.label,
+        ...dimsWrite(k),
+      };
+      return w;
+    });
+    return {
+      scope: propScope(newScope(), layer),
+      label: `Set ${b.name} Keyframes`,
+      apply: () => {
+        clearKeys(layer, b);
+        putKeys(layer, b, writes);
+        reroveKeys(layer, b);
         return { ids: writes.map((w) => w.id) };
       },
     };
   },
 };
+
+/** A pasted / set key's per-dimension temporal fields as a KeyWrite's `dims`. */
+function dimsWrite(k: Keyframe): Pick<KeyWrite, 'dims'> {
+  if (k.dims.length === 0) return {};
+  return { dims: k.dims.map((d) => ({ easing: d.easing, ...(d.bezier ? { bezier: toBezier(d.bezier)! } : {}), continuous: d.continuous })) };
+}
+
+/** Every keyframe of a property gone, nothing else touched (setKeyframes writes the new list next). */
+function clearKeys(layer: string, b: PropBinding): void {
+  if (b.special === 'maskPath') {
+    graph.setMaskAnim(layer, undefined);
+    return;
+  }
+  if (b.dataTrack) {
+    defaultAnimation.setDataTrack(layer, b.dataTrack, null);
+    return;
+  }
+  for (const m of b.members) defaultAnimation.setTrackKeyframes(layer, m, null);
+}
 
 /** A property's value at stored time `t` (keys sampled, else static). */
 export function valueAt(layer: string, b: PropBinding, t: number): Value | undefined {
@@ -550,6 +726,8 @@ export function valueAt(layer: string, b: PropBinding, t: number): Value | undef
     const v = defaultAnimation.sampleData(layer, b.dataTrack, t);
     if (v === undefined) return readStatic(layer, b).kind === 'none' ? undefined : readStatic(layer, b);
     if (b.special === 'sourceText') return { kind: 'textDocument', value: { text: String(v), runs: [], paragraphs: [], orientation: 'horizontal', kerning: 'metrics' } };
+    if (b.special === 'rig') return pinKeyToApi(v);
+    if (b.special === 'fillStops') return fillStopsKeyToApi(graph.getNode(layer)!, v);
     return typeof v === 'string' ? { kind: 'string', value: v } : typeof v === 'number' ? { kind: 'scalar', value: v } : undefined;
   }
   if (b.members.length === 0) return readStatic(layer, b);

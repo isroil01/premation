@@ -102,7 +102,7 @@ export function buildTranscriptCommands(): ReadonlyArray<Command> {
       description: 'One text layer per segment, timed to the edited transcript.',
       icon: 'type',
       enabled: () => currentWords().length > 0,
-      execute: () => { addTranscriptAsCaptions(); },
+      execute: () => { void addTranscriptAsCaptions(); },
     },
     {
       id: asCommandId('transcript.exportSrt'),

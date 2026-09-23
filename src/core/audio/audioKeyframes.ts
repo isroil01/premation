@@ -336,6 +336,29 @@ export function applyAudioKeyframes(
 }
 
 /**
+ * The conversion as DATA (B3z): decode if needed, then the envelope's keys at
+ * COMPOSITION seconds (the engine converts to the layer's keyframe axis; keys
+ * landing on one layer time are deduped by the sender). Empty when the layer
+ * has no decodable audio. The inspector sends it as `opts.prop`'s track
+ * (`layer/audioAmplitude` … see ENGINE_API.md §15.9), replacing the old one.
+ */
+export async function planAudioKeyframeTrack(
+  nodeId: string,
+  opts: AudioKeyframeOptions = DEFAULT_AUDIO_KEYFRAME_OPTIONS,
+): Promise<Array<{ seconds: number; value: number }>> {
+  const buffer = await ensureAudioBuffer(nodeId);
+  if (!buffer) return [];
+  const fps = getTimelineController().fps || 30;
+  const out: Array<{ seconds: number; value: number }> = [];
+  for (const k of planAudioKeyframes(amplitudeEnvelope(buffer, fps), opts)) {
+    const compTime = sourceFrameToCompTime(nodeId, k.frame, fps);
+    if (compTime === null) continue;
+    out.push({ seconds: compTime, value: k.value });
+  }
+  return out;
+}
+
+/**
  * Decode-if-needed, then write the keyframes. The async entry point the
  * inspector uses; resolves to the number of keyframes written, or 0 when the
  * layer has no decodable audio.

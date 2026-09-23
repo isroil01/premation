@@ -9,6 +9,7 @@
 #include "fxstate.hpp"
 #include "meta.hpp"
 #include "scene.hpp"
+#include "strokes.hpp"
 #include "strutil.hpp"
 
 namespace premation::doc {
@@ -321,6 +322,170 @@ bool contains_str(const Json& list, std::string_view v) {
   return false;
 }
 
+// ── layer fields (B3z, layerFieldSpecs.ts) ───────────────────────────────
+
+const Json* layer_spec(std::string_view path) {
+  const Json& list = fields_of("layer");
+  if (!list.is_array()) return nullptr;
+  for (const Json& s : list.arr()) {
+    if (s.at("path").is_string() && s.at("path").str() == path) return &s;
+  }
+  return nullptr;
+}
+
+std::vector<std::string> component_types(const Json& store) {
+  const Json& c = store.at("component");
+  std::vector<std::string> out;
+  if (c.is_string()) out.push_back(c.str());
+  else if (c.is_array()) {
+    for (const Json& t : c.arr()) {
+      if (t.is_string()) out.push_back(t.str());
+    }
+  }
+  return out;
+}
+
+/// The component a store names (the first of its types the layer carries).
+const Component* store_component(const Node& n, const Json& store) {
+  for (const auto& t : component_types(store)) {
+    if (const Component* c = n.comp(t)) return c;
+  }
+  return nullptr;
+}
+
+bool layer_field_present(const Node& n, const Json& spec) {
+  const Json& store = spec.at("store");
+  if (!store.at("component").is_undefined() && store_component(n, store) == nullptr) return false;
+  if (store.at("fx").is_string() && store.at("key").is_string() && !n.fx().at(store.at("fx").str()).is_object()) return false;
+  const Json& w = spec.at("when");
+  if (!w.is_object()) return true;
+  if (w.at("component").is_string() && n.comp(w.at("component").str()) == nullptr) return false;
+  if (w.at("fx").is_string() && n.fx().at(w.at("fx").str()).is_undefined()) return false;
+  if (w.at("threeD").is_bool() && w.at("threeD").b() && !is_3d_enabled(n)) return false;
+  if (w.at("kinds").is_array() || w.at("notKinds").is_array()) {
+    const std::string kind = n.kind();
+    if (w.at("kinds").is_array() && !contains_str(w.at("kinds"), kind)) return false;
+    if (w.at("notKinds").is_array() && contains_str(w.at("notKinds"), kind)) return false;
+  }
+  return true;
+}
+
+Json read_stored(const Node& n, const Json& store) {
+  if (store.at("fx").is_string()) {
+    const Json& v = n.fx().at(store.at("fx").str());
+    if (!store.at("key").is_string()) return v;
+    return v.is_object() ? v.at(store.at("key").str()) : Json();
+  }
+  const Component* c = store_component(n, store);
+  return c != nullptr ? c->props.at(store.at("key").str()) : Json();
+}
+
+void write_stored(Document& d, std::string_view layer, const Json& store, Json raw, const std::string& path) {
+  const std::string L(layer);
+  if (store.at("fx").is_string()) {
+    const std::string& fxKey = store.at("fx").str();
+    if (!store.at("key").is_string()) {
+      sg_set_fx(d, layer, fxKey, std::move(raw));
+      return;
+    }
+    const Json cur = d.node(layer)->fx().at(fxKey);
+    if (!cur.is_object()) fail(ErrorCode::not_found, "layer '" + L + "' has no " + fxKey, {.layer = L, .path = path});
+    Json next = cur;
+    if (raw.is_undefined()) next.erase(store.at("key").str());
+    else next.set(store.at("key").str(), std::move(raw));
+    sg_set_fx(d, layer, fxKey, std::move(next));
+    return;
+  }
+  const Component* c = store_component(*d.node(layer), store);
+  if (c == nullptr) {
+    std::string types;
+    for (const auto& t : component_types(store)) types += (types.empty() ? "" : " / ") + t;
+    fail(ErrorCode::not_found, "layer '" + L + "' has no " + types + " component", {.layer = L, .path = path});
+  }
+  const std::string cid = c->id;
+  (void)sg_write_prop(d, layer, cid, store.at("key").str(), std::move(raw));
+}
+
+/// fields.ts `sameRaw`: stored `null` in a pair = absent (or null).
+bool same_raw(const Json& stored, const Json& raw) {
+  if (raw.is_null()) return stored.is_undefined() || stored.is_null();
+  if (stored.is_undefined()) return false;
+  return stringify(stored) == stringify(raw);
+}
+
+api::Value read_layer_field(const Node& n, const Json& spec) {
+  const Json stored = read_stored(n, spec.at("store"));
+  const Json& enc = spec.at("encode");
+  if (enc.is_array()) {
+    for (const Json& pair : enc.arr()) {
+      if (same_raw(stored, pair.arr()[1])) return spec_value(spec, pair.arr()[0]);
+    }
+    return spec_value(spec, Json());
+  }
+  return spec_value(spec, stored.is_null() ? Json() : stored);
+}
+
+void write_layer_field(Document& d, std::string_view layer, const PropBinding& b, const Json& spec, const api::Value& value) {
+  Json raw = stored_value(b, spec, value);
+  const Json& shape = spec.at("json");
+  if (shape.is_string() && !raw.is_undefined()) {
+    const bool ok = shape.str() == "array" ? raw.is_array() : raw.is_object();
+    if (!ok) fail(ErrorCode::invalid_argument, "'" + b.path + "' takes null or a JSON " + shape.str(), {.path = b.path});
+  }
+  const Json& enc = spec.at("encode");
+  if (enc.is_array()) {
+    const Json api = raw.is_undefined() ? spec.at("default") : raw;
+    for (const Json& pair : enc.arr()) {
+      if (pair.arr()[0] == api) {
+        raw = pair.arr()[1].is_null() ? Json() : pair.arr()[1];
+        break;
+      }
+    }
+  }
+  write_stored(d, layer, spec.at("store"), raw, b.path);
+  if (spec.at("mirror").is_object()) write_stored(d, layer, spec.at("mirror"), raw, b.path);
+}
+
+// ── effect fields (B3z, effectFieldSpecs.ts) ─────────────────────────────
+
+/// fields.ts `writeEffectField`: Effect Mask ('' = whole layer, else one of the
+/// layer's masks) and the label colour ('' = none, else #rrggbb); '' removes the key.
+void write_effect_field(Document& d, std::string_view layer, const PropBinding& b, const FieldRef& f, const api::Value& value) {
+  const std::string L(layer);
+  if (value.kind() != VK::string) {
+    fail(ErrorCode::type_mismatch, "'" + b.path + "' takes a string, got " + std::string(kind_name(value.kind())),
+         {.path = b.path, .detail = "{\"expected\":\"string\"}"});
+  }
+  const std::string& v = get<VK::string>(value);
+  const std::string effectId = f.animatorId.value_or("");
+  std::vector<Json> effects = get_node_effects(d, layer);
+  if (find_by_id(effects, effectId) == nullptr) {
+    fail(ErrorCode::not_found, "layer '" + L + "' has no effect '" + effectId + "'", {.layer = L, .path = b.path});
+  }
+  if (!v.empty() && f.key == "maskId") {
+    const auto mask = read_node_mask(*d.node(layer));
+    bool found = false;
+    if (mask) {
+      for (const Json& p : mask->at("paths").arr()) found = found || (p.at("id").is_string() && p.at("id").str() == v);
+    }
+    if (!found) fail(ErrorCode::not_found, "layer '" + L + "' has no mask '" + v + "'", {.layer = L, .path = b.path});
+  }
+  if (!v.empty() && f.key == "labelColor") {
+    bool ok = v.size() == 7 && v[0] == '#';
+    for (std::size_t i = 1; ok && i < v.size(); ++i) {
+      const char c = v[i];
+      ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+    if (!ok) fail(ErrorCode::invalid_argument, "'" + b.path + "' takes '' or a #rrggbb colour", {.path = b.path});
+  }
+  for (Json& e : effects) {
+    if (!(e.at("id").is_string() && e.at("id").str() == effectId)) continue;
+    if (v.empty()) e.erase(f.key);
+    else e.set(f.key, Json::string(v));
+  }
+  write_node_effects(d, layer, std::move(effects));
+}
+
 }  // namespace
 
 const Json* field_spec(const FieldRef& f) {
@@ -330,7 +495,29 @@ const Json* field_spec(const FieldRef& f) {
     return spec_in(fields_of("animatorOptional"), f.key);
   }
   if (f.owner == "selector") return spec_in(fields_of("selector"), f.key);
+  if (f.owner == "layer") return layer_spec(f.key);
+  // B3z (shapeFieldSpecs.ts): a path operator's field (FieldRef.animatorId = the operator id) / the Polystar's.
+  if (f.owner == "pathOp") return spec_in(fields_of("pathOp"), f.key);
+  if (f.owner == "polystar") return spec_in(fields_of("polystar"), f.key);
+  if (f.owner == "effect") return spec_in(fields_of("effect"), f.key);
+  if (f.owner == "style") {
+    // FieldRef.animatorId carries the style key (fields.ts FieldRef.groupId).
+    for (const Json& s : fields_of("style").arr()) {
+      if (s.at("style").str() == f.animatorId.value_or("") && s.at("key").str() == f.key) return &s;
+    }
+  }
   return nullptr;
+}
+
+PropBinding effect_field_binding(const std::string& effectId, const Json& spec) {
+  const std::string key = spec.at("key").str();
+  return field_binding("effects/" + effectId + "/" + spec.at("path").str(), spec, FieldRef{"effect", key, effectId, std::nullopt});
+}
+
+PropBinding style_field_binding(const Json& spec) {
+  const std::string style = spec.at("style").str();
+  const std::string key = spec.at("key").str();
+  return field_binding("styles/" + style + "/" + key, spec, FieldRef{"style", key, style, std::nullopt});
 }
 
 void add_field_bindings(const Node& node, std::string_view layerId, const std::vector<Json>& animators,
@@ -458,6 +645,32 @@ void add_field_bindings(const Node& node, std::string_view layerId, const std::v
       add(std::move(b));
     }
   }
+  if (has_stroke_host(node, has_paint_host(node))) {
+    // B3z: the shape STROKE stack (fx.stroke / fx.strokes) — strokes.cpp.
+    PropBinding b;
+    b.path = "layer/strokes";
+    b.name = "Strokes";
+    b.matchName = "strokes";
+    b.valueType = ValueType::json;
+    b.special = Special::field;
+    b.field = FieldRef{"strokes", "", std::nullopt, std::nullopt};
+    b.animatable = false;
+    b.defaultValue = v_json("[]");
+    add(std::move(b));
+  }
+  if ((node.kind() == "camera" || node.kind() == "light") && node.comp("Transform") != nullptr) {
+    // B3z: AE's Auto-Orientation ▸ Orient Towards Point of Interest (strokes.cpp).
+    PropBinding b;
+    b.path = std::string(kPoiPath);
+    b.name = "Orient Towards Point of Interest";
+    b.matchName = "orientTowardsPointOfInterest";
+    b.valueType = ValueType::bool_;
+    b.special = Special::field;
+    b.field = FieldRef{"poi", "", std::nullopt, std::nullopt};
+    b.animatable = false;
+    b.defaultValue = v_bool(false);
+    add(std::move(b));
+  }
   if (has_fill_color(node)) {
     PropBinding b;
     b.path = "layer/fill";
@@ -468,6 +681,30 @@ void add_field_bindings(const Node& node, std::string_view layerId, const std::v
     b.colorBase = "fill";
     b.special = Special::layerFill;
     add(std::move(b));
+  }
+  // B3z: the layer fields (layerFieldSpecs.ts), in table order.
+  for (const Json& spec : fields_of("layer").arr()) {
+    const std::string& path = spec.at("path").str();
+    if (has(path) || !layer_field_present(node, spec)) continue;
+    add(field_binding(path, spec, FieldRef{"layer", path, std::nullopt, std::nullopt}));
+  }
+  // B3z: path-operator and Polystar fields (shapeFieldSpecs.ts), operators in chain order.
+  for (const Json& op : read_path_ops(node)) {
+    const std::string id = op.at("id").str();
+    const std::string type = op.at("type").str();
+    for (const Json& spec : fields_of("pathOp").arr()) {
+      const std::string key = spec.at("key").str();
+      std::string path = "contents/" + id + "/" + key;
+      if (!contains_str(spec.at("ops"), type) || has(path)) continue;
+      add(field_binding(std::move(path), spec, FieldRef{"pathOp", key, id, std::nullopt}));
+    }
+  }
+  if (read_node_polystar(node)) {
+    for (const Json& spec : fields_of("polystar").arr()) {
+      std::string path = "contents/polystar/" + spec.at("path").str();
+      if (has(path)) continue;
+      add(field_binding(std::move(path), spec, FieldRef{"polystar", spec.at("key").str(), std::nullopt, std::nullopt}));
+    }
   }
 }
 
@@ -488,6 +725,8 @@ api::Value read_field(const Node& node, const PropBinding& b) {
     const Json& stack = node.fx().at("fills");
     return v_json(stack.is_array() ? stringify(stack) : std::string("[]"));
   }
+  if (f.owner == "strokes") return read_stroke_stack(node);
+  if (f.owner == "poi") return read_point_of_interest(node);
   if (f.owner == "textPath") {
     const auto cfg = read_text_path_config(node);
     if (!cfg) return v_string("");
@@ -502,6 +741,23 @@ api::Value read_field(const Node& node, const PropBinding& b) {
   }
   const Json* spec = field_spec(f);
   if (spec == nullptr) return v_none();
+  if (f.owner == "layer") return read_layer_field(node, *spec);
+  if (f.owner == "pathOp") {
+    const std::vector<Json> ops = read_path_ops(node);
+    const Json* op = find_by_id(ops, f.animatorId.value_or(""));
+    return spec_value(*spec, op != nullptr ? op->at(f.key) : Json());
+  }
+  if (f.owner == "polystar") {
+    const auto ps = read_node_polystar(node);
+    return spec_value(*spec, ps ? ps->at(f.key) : Json());
+  }
+  if (f.owner == "effect") {
+    const std::vector<Json> effects = read_node_effects(node);
+    const Json* e = find_by_id(effects, f.animatorId.value_or(""));
+    const Json raw = e != nullptr && e->at(f.key).is_string() ? e->at(f.key) : Json();
+    return spec_value(*spec, raw);
+  }
+  if (f.owner == "style") return spec_value(*spec, get_node_layer_styles(node).at(f.animatorId.value_or("")).at(f.key));
   if (f.owner == "text") return spec_value(*spec, tp.at(f.key));
   const AnimLoc loc = locate_animator(node, f);
   if (f.owner == "animator") {
@@ -514,6 +770,8 @@ api::Value read_field(const Node& node, const PropBinding& b) {
   }
   return v_none();
 }
+
+void set_primary_fill_paint(Document& d, std::string_view layer, const Json& paint) { set_primary_fill(d, layer, paint); }
 
 void drop_track_props(Document& d, std::string_view layer, const std::set<std::string>& props) {
   const NodeAnim* a = d.anim(layer);
@@ -562,6 +820,14 @@ void write_field(Document& d, std::string_view layer, const PropBinding& b, cons
     (void)sg_write_prop(d, layer, textId, "__runs", std::move(*runs));
     return;
   }
+  if (f.owner == "strokes") {
+    write_stroke_stack(d, layer, b.path, value);
+    return;
+  }
+  if (f.owner == "poi") {
+    write_point_of_interest(d, layer, value);
+    return;
+  }
   if (f.owner == "fillPaint" || f.owner == "fills") {
     if (value.kind() != VK::json) {
       fail(ErrorCode::type_mismatch, "'" + b.path + "' takes json, got " + std::string(kind_name(value.kind())),
@@ -607,7 +873,45 @@ void write_field(Document& d, std::string_view layer, const PropBinding& b, cons
   }
   const Json* spec = field_spec(f);
   if (spec == nullptr) fail(ErrorCode::unsupported, "'" + b.path + "' has no writer", {.path = b.path});
+  if (f.owner == "layer") {
+    write_layer_field(d, layer, b, *spec, value);
+    return;
+  }
+  if (f.owner == "effect") {
+    write_effect_field(d, layer, b, f, value);
+    return;
+  }
   Json raw = stored_value(b, *spec, value);
+  if (f.owner == "pathOp") {
+    // The chain re-validated whole, as the editor's picker wrote it (pathOps.ts updatePathOp).
+    const std::string opId = f.animatorId.value_or("");
+    const std::vector<Json> ops = read_path_ops(node);
+    if (find_by_id(ops, opId) == nullptr) {
+      fail(ErrorCode::not_found, "layer '" + L + "' has no path operator '" + opId + "'", {.layer = L, .path = b.path});
+    }
+    Json patch = Json::object();
+    patch.set(f.key, std::move(raw));
+    update_path_op(d, layer, opId, patch);
+    return;
+  }
+  if (f.owner == "polystar") {
+    if (!read_node_polystar(node)) fail(ErrorCode::not_found, "layer '" + L + "' has no polystar", {.layer = L, .path = b.path});
+    Json patch = Json::object();
+    patch.set(f.key, std::move(raw));
+    (void)update_node_polystar(d, layer, patch);
+    return;
+  }
+  if (f.owner == "style") {
+    const std::string style = f.animatorId.value_or("");
+    Json styles = get_node_layer_styles(node);
+    const Json& st = styles.at(style);
+    if (!st.is_object()) fail(ErrorCode::not_found, "layer '" + L + "' has no " + style + " style", {.layer = L, .path = b.path});
+    Json next = st;
+    next.set(f.key, std::move(raw));
+    styles.set(style, std::move(next));
+    set_layer_styles(d, layer, styles);
+    return;
+  }
   if (f.owner == "text") {
     if (text == nullptr) fail(ErrorCode::not_found, "not a text layer", {.layer = L});
     const bool strokeOrder = f.key == "strokeOrder";

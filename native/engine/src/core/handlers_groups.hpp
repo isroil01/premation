@@ -24,6 +24,8 @@ ResultOf<api::DuplicatePropertyGroups> handle(const api::DuplicatePropertyGroups
 ResultOf<api::SetGroupEnabled> handle(const api::SetGroupEnabled& c, HCtx& x);
 ResultOf<api::RenamePropertyGroup> handle(const api::RenamePropertyGroup& c, HCtx& x);
 ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx& x);
+/// B3z — paste captured effects (the editor's CopiedEffect[] JSON) onto layers (groups.ts pasteEffects).
+ResultOf<api::PasteEffects> handle(const api::PasteEffects& c, HCtx& x);
 ResultOf<api::ApplyPreset> handle(const api::ApplyPreset& c, HCtx& x);
 ResultOf<api::InvokeEffectAction> handle(const api::InvokeEffectAction& c, HCtx& x);
 

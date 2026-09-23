@@ -35,9 +35,13 @@ import {
   type CommandResult,
   type CommandType,
   type EngineError,
+  type EngineResult,
   type Event,
   type EventBatch,
   type EventListener,
+  type QueryOf,
+  type QueryResults,
+  type QueryType,
   type HistoryState,
   type LogRecord,
   type Origin,
@@ -203,17 +207,125 @@ export class LocalEngine extends EngineClientBase {
   attachBus(): void {
     for (const d of this.busDisposers) d.dispose();
     const bus = getEventBus();
-    const mark = (): void => {
-      if (this.applying === 0) this.stale = true;
+    // A document change made AROUND the engine (a legacy writer). The mirror
+    // (B4, src/stores/documentMirror.ts) must hear about it without waiting
+    // for the next request: `flushExternal` runs on the next microtask and
+    // reports it — incrementally when the bus named the one layer it touched
+    // (the drag hot path: `AnimationChanged{nodeId}` / `NodeUpdated{nodeId}`),
+    // as `documentReset{resync}` otherwise.
+    const mark = (nodeId?: string): void => {
+      if (this.applying !== 0) return;
+      this.stale = true;
+      const ext = this.external ?? (this.external = { nodes: new Set<string>(), all: false });
+      if (nodeId) ext.nodes.add(nodeId);
+      else ext.all = true;
+      // An attributed write is reported NOW (as the legacy bus listeners
+      // re-rendered synchronously, so does the mirror); a structural one is
+      // coalesced to the next microtask — a legacy edit often announces
+      // several, and each would refetch the whole document.
+      if (nodeId && !ext.all && this.inFlight === 0) this.flushExternal();
+      else this.scheduleExternalFlush();
     };
     this.busDisposers = [
-      bus.on('SceneGraphChanged', mark),
-      bus.on('NodeUpdated', mark),
+      bus.on('SceneGraphChanged', () => mark()),
+      bus.on('NodeUpdated', (p) => mark(p?.nodeId || undefined)),
       bus.on('AnimationChanged', (p) => {
-        if (!isMediaDecodeRepaint(p as never)) mark();
+        if (!isMediaDecodeRepaint(p as never)) mark(p?.nodeId || undefined);
       }),
-      bus.on('DocumentChanged', mark),
+      bus.on('DocumentChanged', () => mark()),
     ];
+  }
+
+  /** Writes made around the engine since the last flush (see `attachBus`). */
+  private external: { nodes: Set<string>; all: boolean } | null = null;
+  private externalScheduled = false;
+  /** Requests between the start of `handle` and their response (a command may await its `prepare`). */
+  private inFlight = 0;
+
+  private scheduleExternalFlush(): void {
+    if (this.externalScheduled || this.closed) return;
+    this.externalScheduled = true;
+    // A promise microtask, not queueMicrotask/setTimeout: fake timers never hold it.
+    void Promise.resolve().then(() => {
+      this.externalScheduled = false;
+      this.flushExternal();
+    });
+  }
+
+  /**
+   * Report the writes made around the engine as a revision of their own
+   * (origin `engine`, no `causedBy` — `isWriteAroundEngine` recognises it).
+   * While a request runs, the request's own start (`resyncIfStale`) or the
+   * next idle moment reports them instead.
+   */
+  flushExternal(): void {
+    if (!this.external || this.closed) return;
+    if (this.inFlight > 0 || this.applying > 0) {
+      void this.queue.then(() => this.scheduleExternalFlush());
+      return;
+    }
+    const ext = this.external;
+    this.external = null;
+    if (!this.stale) return; // a request already resynced
+    if (ext.all) {
+      this.resyncIfStale();
+      this.emitStatus();
+      return;
+    }
+    this.stale = false;
+    this.keyIndex.invalidate();
+    const keys: string[] = [];
+    for (const id of ext.nodes) {
+      if (!idTaken(id)) continue;
+      keys.push(`node:${id}`, `anim:${id}`);
+    }
+    if (keys.length === 0) return;
+    let events: Event[];
+    try {
+      events = this.builder.build(keys, new Map(), new Map());
+    } catch {
+      // Cannot describe it incrementally: the mirror refetches.
+      this.stale = true;
+      this.resyncIfStale();
+      return;
+    }
+    if (events.length === 0) return;
+    const prev = this.docRevision;
+    this.docRevision += 1;
+    this.emitBatch(prev, this.docRevision, events);
+    this.emitStatus();
+  }
+
+  /**
+   * Answer a query synchronously when no request is running (the in-process
+   * backend's fast path for the document mirror, B4): the document is then
+   * exactly at `documentRevision` and every event up to it has been delivered.
+   * Null while a request is in flight — ask asynchronously then.
+   */
+  querySync<T extends QueryType>(query: QueryOf<T>): EngineResult<QueryResults[T]> | null {
+    if (this.inFlight > 0 || this.applying > 0 || this.closed) return null;
+    this.flushExternal();
+    try {
+      const { type: _type, ...value } = runQuery(query, this.queryCtx()) as unknown as Record<string, unknown>;
+      return { ok: true, value: value as unknown as QueryResults[T], revision: this.docRevision };
+    } catch (err) {
+      return { ok: false, error: toEngineError(err), revision: this.docRevision };
+    }
+  }
+
+  /**
+   * Run `fn` with the external-change detector held: the document changes it
+   * makes are NOT a write around the engine. Only for code that restores the
+   * document exactly before returning — the off-document builders
+   * (offDocument.ts), whose net change reaches the document as a command.
+   */
+  holdDetection<T>(fn: () => T): T {
+    this.applying += 1;
+    try {
+      return fn();
+    } finally {
+      this.applying -= 1;
+    }
   }
 
   subscribe(listener: EventListener): () => void {
@@ -266,7 +378,13 @@ export class LocalEngine extends EngineClientBase {
   request(req: Request): Promise<Response> {
     const run = async (): Promise<Response> => {
       const r = this.options.wire ? roundTrip('Request', req) : req;
-      const res = await this.handle(r);
+      this.inFlight += 1;
+      let res: Response;
+      try {
+        res = await this.handle(r);
+      } finally {
+        this.inFlight -= 1;
+      }
       return this.options.wire ? roundTrip('Response', res) : res;
     };
     const p = this.queue.then(run, run);
@@ -313,6 +431,7 @@ export class LocalEngine extends EngineClientBase {
     this.keyIndex.invalidate();
     this.builder.reset();
     this.stale = false;
+    this.external = null;
     const from = this.docRevision;
     this.docRevision = opts.revision ?? this.docRevision + 1;
     this.savedRevision = this.docRevision;
@@ -472,6 +591,7 @@ export class LocalEngine extends EngineClientBase {
   private resyncIfStale(): void {
     if (!this.stale) return;
     this.stale = false;
+    this.external = null;
     this.keyIndex.invalidate();
     this.builder.reset();
     const from = this.docRevision;

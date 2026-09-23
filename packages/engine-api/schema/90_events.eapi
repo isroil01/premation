@@ -28,6 +28,8 @@ event propertyGroupsChanged = 2010 { layer: LayerId = 1; parent: PropPath = 2; c
 /// All markers of one owner (full replacement).
 event markersChanged = 2011 { owner: MarkerOwner = 1; markers: Marker[] = 2; }
 event renderQueueChanged = 2012 { items: RenderItemInfo[] = 1; }
+/// B3z — every transition of one composition (full replacement), after a transition command or its undo.
+event transitionsChanged = 2013 { comp: ItemId = 1; transitions: Transition[] = 2; }
 
 family "StatusEvents";
 

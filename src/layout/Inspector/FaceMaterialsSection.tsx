@@ -23,14 +23,18 @@ import { readNodeFill, sortedStops } from '@core/paint/fill';
 import { readNodeLayerStyles, styledSurfaceFill } from '@core/effects/layerStyles';
 import { EXTRUSION_WALL_FALLBACK_FILL } from '@core/scene/extrusion';
 import type { SceneNode } from '@core/types';
+import type { Command } from '@motion/engine-api';
 import {
   getNodeFaceMaterials,
-  setNodeFaceMaterial,
-  clearNodeFaceMaterials,
+  nextFaceMaterials,
   DEFAULT_FACE_GAIN,
   type FaceKind,
+  type FaceMaterial,
 } from '@core/scene/faceMaterials';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
+import { values } from '@core/engine/propRefs';
+import { fieldCommands, hasPath } from './materialEdits';
+import { useEngineEdit } from './useEngineEdit';
 import styles from './ParentControl.module.css';
 
 type EditableKind = Exclude<FaceKind, 'front'>;
@@ -66,8 +70,16 @@ function derivedLayerFill(node: SceneNode): string {
   return styledSurfaceFill(readNodeLayerStyles(node), hex).slice(0, 7);
 }
 
+/** The layer's overrides after one patch, as the `material/faceMaterials` json write. */
+function faceCommands(nodeId: string, kind: EditableKind, patch: FaceMaterial | null): Command[] {
+  return fieldCommands([nodeId], 'material/faceMaterials', values.json(nextFaceMaterials(getNodeFaceMaterials(nodeId), kind, patch)));
+}
+
 export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
+  // B3z: every write is `material/faceMaterials` (a json layer field, the whole
+  // overrides object); a colour drag or a brightness scrub is ONE gesture.
+  const e = useEngineEdit();
   const faceSel = useFaceSelectionStore();
   const pickMode = faceSel.enabled;
   const node = defaultSceneGraph.getNode(nodeId);
@@ -110,8 +122,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
           <Button
             size="xs"
             variant="ghost"
-            // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
-            onClick={() => clearNodeFaceMaterials(nodeId)}
+            onClick={() => e.send('Reset Face Materials', fieldCommands([nodeId], 'material/faceMaterials', values.json(null)))}
             title="Back to one colour for the whole object"
           >
             Reset
@@ -130,6 +141,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
         const m = mats[kind];
         const custom = typeof m?.fill === 'string';
         const picked = pickedKind === kind;
+        const on = (): boolean => hasPath(nodeId, 'material/faceMaterials');
         return (
           <div
             key={kind}
@@ -140,20 +152,18 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
               : undefined}
           >
             <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)', fontWeight: picked ? 600 : undefined }}>{label}</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }} {...e.press(`Set ${label} face colour`, on)}>
               <ColorPicker
                 compact
                 value={custom ? m!.fill! : layerFill}
-                // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
-                onChange={(hex) => setNodeFaceMaterial(nodeId, kind, { fill: hex })}
+                onChange={(hex) => e.send(`Set ${label} face colour`, faceCommands(nodeId, kind, { fill: hex }))}
                 aria-label={`${label} face color`}
               />
               {custom ? (
                 <Button
                   size="xs"
                   variant="ghost"
-                  // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
-                  onClick={() => setNodeFaceMaterial(nodeId, kind, null)}
+                  onClick={() => e.send(`Reset ${label} face colour`, faceCommands(nodeId, kind, null))}
                   title={`Track the layer fill again instead of a fixed ${label.toLowerCase()} colour`}
                   aria-label={`Reset ${label.toLowerCase()} face colour`}
                 >
@@ -166,8 +176,8 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   unit="%"
                   min={0}
                   max={200}
-                  // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
-                  onChange={(v) => setNodeFaceMaterial(nodeId, kind, { gain: Number(v) / 100 })}
+                  onChange={(v) => e.send(`Set ${label} face brightness`, faceCommands(nodeId, kind, { gain: Number(v) / 100 }))}
+                  {...e.scrub(`Set ${label} face brightness`, on)}
                   aria-label={`${label} face brightness`}
                 />
               )}

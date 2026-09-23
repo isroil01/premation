@@ -20,7 +20,8 @@ import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { canCreateMasksFromText, createMasksFromText } from '@core/scene/masksFromText';
+import { canCreateMasksFromText } from '@core/scene/masksFromText';
+import { masksFromTextEdit } from './textEdits';
 import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -81,9 +82,7 @@ export function buildTextToolCommands(): ReadonlyArray<Command> {
       execute: async () => {
         const id = selectedTextLayer();
         if (!id) return;
-        // B3-legacy: engine gap — the outline solid's colour is a fill paint (no API property / createLayer init);
-        // the rest (createLayer, addMask per glyph, hiding the text) is expressible, the colour is not.
-        const made = await createMasksFromText(id);
+        const made = await masksFromTextEdit(id);
         if (!made) {
           notify('Could not outline this text — is it empty?', 'warning');
           return;

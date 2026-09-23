@@ -95,6 +95,23 @@ export function resolveFaceMaterial(
   return { fill: m?.fill ?? layerFill, gain };
 }
 
+/**
+ * The overrides after patching one face kind (`null` drops the kind), or null
+ * when every kind is back to default — the value to store (null = absent, so an
+ * untouched layer adds no bytes to the file). Pure: the engine route sends it as
+ * `material/faceMaterials` (a json layer field).
+ */
+export function nextFaceMaterials(
+  cur: FaceMaterials,
+  kind: Exclude<FaceKind, 'front'>,
+  patch: FaceMaterial | null,
+): FaceMaterials | null {
+  const next: FaceMaterials = { ...cur };
+  if (patch === null) delete next[kind];
+  else next[kind] = { ...cur[kind], ...patch };
+  return Object.keys(next).length === 0 ? null : next;
+}
+
 /** Patch one face kind. Passing `{}` for a kind clears it back to the default. */
 export function setNodeFaceMaterial(
   nodeId: string,

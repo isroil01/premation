@@ -24,7 +24,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareAgainstReference, readPng, compareFrames } from './comparator.mjs';
-import { findRenderExe, findRasterExe, runNativeRenderer, runNativeRaster, gateNative } from './nativeBackend.mjs';
+import { findRenderExe, findRasterExe, findSceneExe, runNativeRenderer, runNativeRaster, runNativeScene, reportNativeSceneStructure, gateNative } from './nativeBackend.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG = path.resolve(__dirname, '..');
@@ -51,6 +51,13 @@ const NATIVE_RASTER_BACKEND = 'native-raster';
 const RASTER_SCENES_OUT = path.join(ARTIFACTS, 'scenes-native-raster');
 const NATIVE_RASTER_REPORT = path.join(ARTIFACTS, 'native-raster-report.json');
 const NATIVE_RASTER_RENDER_REPORT = path.join(ARTIFACTS, 'native-raster-render-report.json');
+/**
+ * D2w (docs/NATIVE_CORE_PLAN.md): the C++ engine builds its OWN FrameScene from
+ * each scene's project document (premation-scene) — structure diffed against the
+ * TS-exported FrameScene, pixels gated against the webgpu frame.
+ */
+const NATIVE_SCENE_BACKEND = 'native-scene';
+const NATIVE_SCENE_REPORT = path.join(ARTIFACTS, 'native-scene-report.json');
 /** The faces renderEntry.ts registers (premation-raster --fonts). */
 const HARNESS_FONTS = path.join(PKG, 'harness', 'fonts', 'fonts.json');
 /** Set per run: whether the webgpu pass must export its FrameScenes. */
@@ -812,9 +819,11 @@ async function main() {
   // rasters substituted (premation-raster --emit). Asked for explicitly (or
   // HARNESS_NATIVE_RASTER=1); it implies `native`.
   const wantNativeRaster = requested.includes(NATIVE_RASTER_BACKEND) || process.env.HARNESS_NATIVE_RASTER === '1';
-  const nativeExplicit = requested.includes(NATIVE_BACKEND) || wantNativeRaster;
+  // D2w: `native-scene` (or HARNESS_NATIVE_SCENE=1) — the engine's own FrameScene; it implies `native`.
+  const wantNativeScene = requested.includes(NATIVE_SCENE_BACKEND) || process.env.HARNESS_NATIVE_SCENE === '1';
+  const nativeExplicit = requested.includes(NATIVE_BACKEND) || wantNativeRaster || wantNativeScene;
   const wantNative = nativeExplicit || (!process.env.HARNESS_BACKENDS && !!nativeExe);
-  const backends = requested.filter((b) => b !== NATIVE_BACKEND && b !== NATIVE_RASTER_BACKEND);
+  const backends = requested.filter((b) => b !== NATIVE_BACKEND && b !== NATIVE_RASTER_BACKEND && b !== NATIVE_SCENE_BACKEND);
   if (wantNative && !backends.includes('webgpu')) backends.push('webgpu');
   if (!backends.includes(GATE_BACKEND)) backends.unshift(GATE_BACKEND);
   exportScenesForNative = wantNative;
@@ -873,6 +882,26 @@ async function main() {
     });
     nativeRasterRan = true;
     if (rc !== 0) process.stdout.write(red(`  x [native-raster] premation-render exited ${rc}\n`));
+  }
+
+  let nativeSceneRan = false;
+  if (wantNativeScene && nativeRan) {
+    const sceneExe = findSceneExe(REPO_ROOT);
+    if (!sceneExe) {
+      process.stdout.write(red('  ! [native-scene] premation-scene not built (node scripts/native.mjs build --engine).\n'));
+      process.exit(1);
+    }
+    process.stdout.write(dim(`· building FrameScenes from the project documents in C++ [native-scene] with ${path.relative(REPO_ROOT, sceneExe)}…\n`));
+    const code = await runNativeScene({
+      exe: sceneExe,
+      scenesDir: SCENES_OUT,
+      outDir: path.join(ACTUAL, NATIVE_SCENE_BACKEND),
+      fontsFile: HARNESS_FONTS,
+      reportFile: NATIVE_SCENE_REPORT,
+      only: sceneOnly ? [sceneOnly] : [],
+    });
+    nativeSceneRan = true;
+    if (code !== 0) process.stdout.write(red(`  x [native-scene] premation-scene exited ${code}\n`));
   }
 
   const scenes = await loadManifest();
@@ -983,6 +1012,25 @@ async function main() {
       tighten: BACKEND_RATCHET_TIGHTEN,
       backendDir: NATIVE_RASTER_BACKEND,
       title: 'native-raster parity (C++ render graph + C++ text/vector rasters vs the TS WebGPU frame of the same FrameScene)',
+    });
+  }
+
+  if (nativeSceneRan) {
+    const { structFail } = await reportNativeSceneStructure(NATIVE_SCENE_REPORT);
+    backendFail += structFail;
+    backendFail += await gateNative(scenes, {
+      actualDir: ACTUAL,
+      referencesDir: REFERENCES,
+      reportFile: NATIVE_SCENE_REPORT,
+      baselineFile: backendBaselinePath(NATIVE_SCENE_BACKEND),
+      updateBaseline: updateBackendBaselineMode,
+      compareFrames,
+      readPngSafe,
+      tolerance: BACKEND_TOLERANCE,
+      slack: BACKEND_RATCHET_SLACK,
+      tighten: BACKEND_RATCHET_TIGHTEN,
+      backendDir: NATIVE_SCENE_BACKEND,
+      title: "native-scene parity (the C++ engine's OWN FrameScene, built from the project document, vs the TS WebGPU frame)",
     });
   }
 

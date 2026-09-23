@@ -27,5 +27,6 @@ ResultOf<api::UpdateKeyframes> handle(const api::UpdateKeyframes& c, HCtx& x);
 ResultOf<api::ScaleKeyframes> handle(const api::ScaleKeyframes& c, HCtx& x);
 ResultOf<api::ReverseKeyframes> handle(const api::ReverseKeyframes& c, HCtx& x);
 ResultOf<api::PasteKeyframes> handle(const api::PasteKeyframes& c, HCtx& x);
+ResultOf<api::SetKeyframes> handle(const api::SetKeyframes& c, HCtx& x);
 
 }  // namespace premation::doc

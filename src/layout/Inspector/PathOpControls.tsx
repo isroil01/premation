@@ -13,10 +13,10 @@ import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { edit } from '@core/engine/uiEdits';
-import { paths } from '@core/engine/propRefs';
+import { paths, values } from '@core/engine/propRefs';
+import type { Command } from '@motion/engine-api';
 import {
   readPathOps,
-  updatePathOp,
   pathOpPropPath,
   pathOpParamSpecs,
   type PathOp,
@@ -29,6 +29,7 @@ import styles from './TextAnimatorControls.module.css';
 import { AnimToggle } from './AnimToggle';
 import { InspectorSection } from './InspectorSection';
 import { useKeyedParam } from './useKeyedParam';
+import { useEngineEdit } from './useEngineEdit';
 
 /** Reorder / remove an operator: the API's property-group commands on `contents/<opId>`. */
 function moveOp(nodeId: string, opId: string, toIndex: number): void {
@@ -36,6 +37,22 @@ function moveOp(nodeId: string, opId: string, toIndex: number): void {
 }
 function removeOp(nodeId: string, opId: string): void {
   void edit('Remove Path Operator', { type: 'removePropertyGroups', groups: [{ layer: nodeId, path: paths.contents(opId) }] });
+}
+
+/**
+ * An operator's discrete field — Type, Composite, Line Join, Trim Multiple
+ * Shapes, Random Seed — as `setProperty` on `contents/<opId>/<key>` (static
+ * fields, shapeFieldSpecs.ts).
+ */
+function opFieldCommand(nodeId: string, opId: string, key: string, value: string | number): Command {
+  return {
+    type: 'setProperty',
+    prop: { layer: nodeId, path: paths.contents(opId, key) },
+    value: typeof value === 'number' ? values.scalar(value) : values.choice(value),
+  };
+}
+function setOpField(label: string, nodeId: string, opId: string, key: string, value: string): void {
+  void edit(label, opFieldCommand(nodeId, opId, key, value));
 }
 
 const TYPES: { id: PathOpType; label: string }[] = [
@@ -160,14 +177,16 @@ function PathOpCard({
   index: number;
   count: number;
 }): JSX.Element {
+  const eng = useEngineEdit();
   const typeLabel = TYPES.find((t) => t.id === op.type)?.label ?? 'Zig-Zag';
-  const items: DropdownItem[] = TYPES.map((t) => ({
+  // The picker lists the deformers only (Trim and the Repeater have no type
+  // picker — see below); the engine's `contents/<opId>/type` takes the same set.
+  const items: DropdownItem[] = TYPES.filter((t) => t.id !== 'trim' && t.id !== 'repeater').map((t) => ({
     type: 'item',
     id: t.id,
     label: t.label,
     icon: t.id === op.type ? 'check' : undefined,
-    // B3-legacy: engine gap — an operator's TYPE (and composite / line join / trim mode / seed below) are not catalog properties of `contents/<opId>`.
-    onSelect: () => updatePathOp(nodeId, op.id, { type: t.id }),
+    onSelect: () => setOpField('Set Path Operator Type', nodeId, op.id, 'type', t.id),
   }));
 
   return (
@@ -253,8 +272,7 @@ function PathOpCard({
               id: c.id,
               label: c.label,
               icon: (op.composite ?? 'above') === c.id ? 'check' : undefined,
-              // B3-legacy: engine gap — Repeater composite (enum) is not a catalog property.
-              onSelect: () => updatePathOp(nodeId, op.id, { composite: c.id }),
+              onSelect: () => setOpField('Set Composite', nodeId, op.id, 'composite', c.id),
             }))}
           />
         </div>
@@ -277,8 +295,7 @@ function PathOpCard({
               id: j.id,
               label: j.label,
               icon: (op.lineJoin ?? 'miter') === j.id ? 'check' : undefined,
-              // B3-legacy: engine gap — Offset Paths line join (enum) is not a catalog property.
-              onSelect: () => updatePathOp(nodeId, op.id, { lineJoin: j.id }),
+              onSelect: () => setOpField('Set Line Join', nodeId, op.id, 'lineJoin', j.id),
             }))}
           />
         </div>
@@ -301,8 +318,7 @@ function PathOpCard({
               // Same fallback as the label above and `readPathOps`: absent is
               // Simultaneously, so the checkmark and the trigger always agree.
               icon: (op.trimMultipleShapes ?? 'simultaneously') === c.id ? 'check' : undefined,
-              // B3-legacy: engine gap — Trim Paths "Trim Multiple Shapes" (enum) is not a catalog property.
-              onSelect: () => updatePathOp(nodeId, op.id, { trimMultipleShapes: c.id }),
+              onSelect: () => setOpField('Set Trim Multiple Shapes', nodeId, op.id, 'trimMultipleShapes', c.id),
             }))}
           />
         </div>
@@ -362,8 +378,8 @@ function PathOpCard({
             <span className={styles.paramLabel}>Random Seed</span>
             <ValueField
               value={op.seed ?? 0}
-              // B3-legacy: engine gap — Wiggle seed is a non-keyframeable integer the catalog does not list.
-              onChange={(v) => updatePathOp(nodeId, op.id, { seed: Math.round(v) })}
+              {...eng.scrub('Set Random Seed')}
+              onChange={(v) => eng.send('Set Random Seed', opFieldCommand(nodeId, op.id, 'seed', Math.max(0, Math.round(v))))}
               min={0}
               aria-label="Random Seed"
             />

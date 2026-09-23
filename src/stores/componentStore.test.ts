@@ -41,21 +41,7 @@ describe('component library', () => {
     expect(defs[0]!.root.children).toHaveLength(2);
   });
 
-  it('inserts an independent copy with fresh ids', () => {
-    useSelectionStore.getState().set(['card']);
-    const defId = useComponentStore.getState().saveFromSelection('Card')!;
-    const before = defaultSceneGraph.size;
-    const newId = useComponentStore.getState().insert(defId)!;
-
-    // group + 2 children added
-    expect(defaultSceneGraph.size).toBe(before + 3);
-    // the new root is NOT the original, and has 2 children
-    expect(newId).not.toBe('card');
-    expect(defaultSceneGraph.getNode(newId)!.parent).toBe('comp_root');
-    expect(defaultSceneGraph.getChildren(newId)).toHaveLength(2);
-    // it's selected
-    expect(useSelectionStore.getState().ids).toContain(newId);
-  });
+  // Insert (an engine pasteLayers) is covered by componentStoreInsert.test.ts.
 
   it('saves a multi-selection wrapped in one group', () => {
     useSelectionStore.getState().set(['panel', 'title']);

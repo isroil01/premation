@@ -15,14 +15,18 @@
  *   - Where the footage runs out the graph tints the rest of the bar, so the
  *     cost of a speed-up is visible before it is a frozen frame in the render.
  *
- * Pure UI: every write goes through `retimeCommands`, one undo step per drag.
+ * Pure UI: the section computes the commands (`retimeEdits`); a point drag is
+ * ONE engine gesture of absolute `updateKeyframes` — one undo step per drag.
  */
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
+import type { Command } from '@motion/engine-api';
+import { useGesture } from '@hooks/useGesture';
 import styles from './RetimeSection.module.css';
 
 export interface RetimeGraphKey {
+  /** The engine's keyframe id (stable across the drag). */
+  id: string;
   /** Stored keyframe time (the track's own axis). */
   t: number;
   /** Comp seconds where the key takes effect. */
@@ -43,18 +47,21 @@ export interface RetimeGraphProps {
   /** Frames kind: the top of the axis (source length in frames). */
   maxValue?: number;
   runsOutAtSec?: number | null;
-  selectedT: number | null;
-  onSelect: (t: number | null) => void;
+  /** Selected key id. */
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
   /**
-   * Mutate (unrecorded) — called on every pointer move; the drag records one
-   * step. Returns the key's new STORED time, which the next move addresses.
+   * The commands that put key `id` at (comp `compT`, `value`) — ABSOLUTE,
+   * sent once per pointer move into the drag's gesture (ONE undo entry,
+   * named `dragLabel`).
    */
-  onMove: (fromT: number, compT: number, value: number) => number;
+  moveCommands: (id: string, compT: number, value: number) => Command[];
+  dragLabel: string;
   onAdd: (compT: number, value: number) => void;
-  onRemove: (t: number) => void;
+  onRemove: (id: string) => void;
   onSeek: (compT: number) => void;
-  /** Recorded nudge from the keyboard. */
-  onNudge: (t: number, compT: number, value: number) => void;
+  /** A keyboard nudge (one entry). */
+  onNudge: (id: string, compT: number, value: number) => void;
   ariaLabel: string;
 }
 
@@ -77,12 +84,13 @@ function formatSec(s: number): string {
 export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
   const {
     kind, inSec, outSec, fps, time, keys, sample, maxValue, runsOutAtSec,
-    selectedT, onSelect, onMove, onAdd, onRemove, onSeek, onNudge, ariaLabel,
+    selectedId, onSelect, moveCommands, dragLabel, onAdd, onRemove, onSeek, onNudge, ariaLabel,
   } = props;
+  const gesture = useGesture();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(280);
-  const [dragT, setDragT] = useState<number | null>(null);
-  const drag = useRef<{ t: number; tx: ReturnType<typeof beginAnimEdit>; lo: number; hi: number } | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const drag = useRef<{ id: string; lo: number; hi: number } | null>(null);
   const scrubbing = useRef(false);
 
   useEffect(() => {
@@ -141,22 +149,20 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
   const onPointerDown = (e: PointerEvent<SVGSVGElement>): void => {
     if (e.button !== 0) return;
     const target = e.target as SVGElement;
-    const keyT = target.dataset.keyT;
+    const keyId = target.dataset.keyId;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    if (keyT !== undefined) {
-      const t = Number(keyT);
-      const idx = keys.findIndex((k) => k.t === t);
+    if (keyId !== undefined) {
+      const idx = keys.findIndex((k) => k.id === keyId);
       const prev = keys[idx - 1];
       const next = keys[idx + 1];
-      onSelect(t);
+      onSelect(keyId);
       drag.current = {
-        t,
-        // B3-legacy: engine gap — retime graph point drags need retime-key semantics (speed integration) the API's updateKeyframes does not apply.
-        tx: beginAnimEdit(),
+        id: keyId,
         lo: prev ? prev.compT + 1 / fps : inSec,
         hi: next ? next.compT - 1 / fps : outSec - 1 / fps,
       };
-      setDragT(t);
+      gesture.begin(dragLabel);
+      setDragId(keyId);
       return;
     }
     onSelect(null);
@@ -169,10 +175,8 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
     if (drag.current) {
       const d = drag.current;
       const compT = Math.round(Math.max(d.lo, Math.min(d.hi, tOf(p.x))) * fps) / fps;
-      // The stored time moves with the drag. Take it from the write itself:
-      // the `keys` prop only catches up on the next render, and a fast drag
-      // delivers several moves before that.
-      d.t = onMove(d.t, compT, vOf(p.y));
+      // The key keeps its id through the drag; every message is absolute.
+      gesture.send(moveCommands(d.id, compT, vOf(p.y)));
       return;
     }
     if (scrubbing.current) onSeek(snapTime(tOf(p.x)));
@@ -181,16 +185,15 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
   const endPointer = (e: PointerEvent<SVGSVGElement>): void => {
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag.current) {
-      // B3-legacy: engine gap — retime graph point drags need retime-key semantics (speed integration) the API's updateKeyframes does not apply.
-      recordAnimEdit(drag.current.tx.commit(kind === 'speed' ? 'Move speed point' : 'Move frame key'));
+      void gesture.end();
       drag.current = null;
-      setDragT(null);
+      setDragId(null);
     }
     scrubbing.current = false;
   };
 
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>): void => {
-    if ((e.target as SVGElement).dataset.keyT !== undefined) return;
+    if ((e.target as SVGElement).dataset.keyId !== undefined) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const t = snapTime(tOf(e.clientX - rect.left));
     onAdd(t, Math.round(sample(t)));
@@ -200,16 +203,16 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
     const big = e.shiftKey;
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
-      onRemove(k.t);
+      onRemove(k.id);
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
       const dir = e.key === 'ArrowUp' ? 1 : -1;
       const step = kind === 'speed' ? (big ? 25 : 5) : (big ? 10 : 1);
-      onNudge(k.t, k.compT, Math.max(kind === 'speed' ? 1 : 0, k.value + dir * step));
+      onNudge(k.id, k.compT, Math.max(kind === 'speed' ? 1 : 0, k.value + dir * step));
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
       const dir = e.key === 'ArrowRight' ? 1 : -1;
-      onNudge(k.t, snapTime(k.compT + (dir * (big ? 10 : 1)) / fps), k.value);
+      onNudge(k.id, snapTime(k.compT + (dir * (big ? 10 : 1)) / fps), k.value);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       onSeek(k.compT);
@@ -260,11 +263,11 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
         )}
         {keys.map((k) => (
           <circle
-            key={k.t}
+            key={k.id}
             className={styles.key}
-            data-key-t={k.t}
-            data-selected={selectedT === k.t || undefined}
-            data-dragging={dragT === k.t || undefined}
+            data-key-id={k.id}
+            data-selected={selectedId === k.id || undefined}
+            data-dragging={dragId === k.id || undefined}
             cx={xOf(k.compT)}
             cy={yOf(k.value)}
             r={5}
@@ -273,7 +276,7 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
             aria-label={kind === 'speed'
               ? `Speed point ${Math.round(k.value)}% at ${formatSec(k.compT)}`
               : `Source frame ${Math.round(k.value)} at ${formatSec(k.compT)}`}
-            onFocus={() => onSelect(k.t)}
+            onFocus={() => onSelect(k.id)}
             onKeyDown={(e) => onKeyDown(e, k)}
           />
         ))}

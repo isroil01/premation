@@ -317,6 +317,27 @@ export type WorkAreaEdit =
   | 'extract';
 export const WorkAreaEditValues = ['lift', 'extract'] as const;
 
+/** Where Time Stretch holds the layer (AE's Hold in Place). */
+export type StretchHold =
+  | 'inPoint'
+  | 'currentFrame'
+  | 'outPoint';
+export const StretchHoldValues = ['inPoint', 'currentFrame', 'outPoint'] as const;
+
+export type TransitionKind =
+  | 'crossDissolve'
+  | 'dipToBlack'
+  | 'dipToWhite'
+  | 'wipe';
+export const TransitionKindValues = ['crossDissolve', 'dipToBlack', 'dipToWhite', 'wipe'] as const;
+
+/** Where a transition sits relative to its cut. */
+export type TransitionAlignment =
+  | 'centred'
+  | 'startAtCut'
+  | 'endAtCut';
+export const TransitionAlignmentValues = ['centred', 'startAtCut', 'endAtCut'] as const;
+
 export type MaskMode =
   | 'none'
   | 'add'
@@ -668,7 +689,7 @@ export interface BezierPath {
   inTangents: number[];
   outTangents: number[];
   closed: boolean;
-  /** Per-vertex feather (AE variable-width mask feather), optional. */
+  /** Per-vertex feather (AE variable-width mask feather). Masks (B3z): a vertex's own feather is a point {segment: vertex, t: 0, radius: feather, tension: 0}; reads list one per vertex that has one. On a write an EMPTY list keeps each vertex's current feather (by index); a non-empty list is authoritative — an unlisted vertex, or one listed with radius < 0, has none. t ≠ 0 / tension ≠ 0 are `unsupported` (one feather per vertex). */
   featherPoints: FeatherPoint[];
 }
 
@@ -787,7 +808,20 @@ export interface CubicBezier {
   y2: number;
 }
 
-/** A keyframe as the engine stores it. */
+/**
+ * One dimension's temporal interpolation of a vector / colour keyframe (After Effects' per-dimension
+ * temporal ease of a non-spatial property: Scale X eased apart from Scale Y). See ENGINE_API.md §3.3.
+ */
+export interface KeyframeDim {
+  easing: Easing;
+  bezier?: CubicBezier;
+  continuous: boolean;
+}
+
+/**
+ * A keyframe as the engine stores it. A vector or colour property has ONE keyframe per time for all its
+ * dimensions (After Effects; ENGINE_API.md §3.3) — only a separated dimension has keys of its own.
+ */
 export interface Keyframe {
   id: KeyframeId;
   time: Time;
@@ -802,6 +836,12 @@ export interface Keyframe {
   spatialOut: number[];
   /** AE keyframe colour label (0 = none). */
   label: number;
+  /**
+   * Per-dimension temporal interpolation, one entry per dimension, when the dimensions' easing / handles /
+   * continuity differ; empty = every dimension uses `easing`, `bezier` and `continuous` above (which are
+   * then the first dimension's).
+   */
+  dims: KeyframeDim[];
 }
 
 /** A property + layer pair: the address of every animatable or static value. */
@@ -1239,6 +1279,11 @@ export interface SetWorkArea {
   range: TimeRange;
 }
 
+/** B3z — reset the work area to the whole composition (Shift+B). After Effects always has a work area; the document stores "none", which reads back as [0, duration] and FOLLOWS later duration changes (setWorkArea pins a range). A preview loop following the work area follows it too. Inverse: the previous range. */
+export interface ClearWorkArea {
+  comp: ItemId;
+}
+
 /** Replace `layers` with one layer of a new composition that contains them. Undo restores the layers exactly and deletes the new item. */
 export interface Precompose {
   comp: ItemId;
@@ -1396,7 +1441,7 @@ export interface LayerTimingPatch {
 }
 
 export interface TrackMatte {
-  /** The matte source layer (AE 2023 matte-by-reference; any layer, not only the one above). */
+  /** The matte source layer (AE 2023 matte-by-reference; any layer, not only the one above). B3z: absent with a mode other than none = the classic positional matte (the layer directly above in the stack; stored without a source). */
   layer?: LayerId;
   mode: MatteMode;
 }
@@ -1441,6 +1486,10 @@ export interface SetParent {
   layers: LayerId[];
   parent?: LayerId;
   keepWorldTransform: boolean;
+  /** B3z — Parent & Link JUMP (AE's Shift-pickwhip): relink WITHOUT compensation, then move each child onto the parent's anchor: its Position becomes 0,0 in the parent's layer space at `time` (an animated Position is re-based rigidly by the same offset, keeping its motion). Ignored when un-parenting. `keepWorldTransform` is not read when set. */
+  jump?: boolean;
+  /** The composition time the jump measures an animated Position at (AE: the current time). Absent = 0. */
+  time?: Time;
 }
 
 export interface RenameLayer {
@@ -1487,12 +1536,15 @@ export interface ConvertLayer {
   conversion: LayerConversion;
 }
 
-/** Paste a document fragment (from copyLayers) into a composition at `time`. */
+/** Paste a document fragment (from copyLayers) into a composition at `time`. References BETWEEN pasted layers follow the copies (AE: parenting, track mattes): a matte source, a layer-valued effect parameter, a cloner's path/falloff layer, an audio driver's source layer, a clone-stamp stroke's source layer and a plugin layer's layer-valued prop that name a layer of the fragment name its copy; references to layers outside the fragment are kept as they are (ENGINE_API.md §4.4). Returns the new ids in fragment order. */
 export interface PasteLayers {
   comp: ItemId;
   fragment: DocumentFragment;
   time?: Time;
+  /** Stack index (0 = top) among the composition's layers, as createLayer's `index`. */
   index?: number;
+  /** Paste INTO this layer of `comp` (Premation groups nest): the fragment's top-level layers become its children. Absent = the composition itself. */
+  parent?: LayerId;
 }
 
 /** Split a camera/text/shape into per-part layers (Create Shapes → Separate, Break Apart text). */
@@ -1631,6 +1683,78 @@ export interface SequenceLayers {
   crossfade: boolean;
 }
 
+/** B3z — AE's Time Stretch dialog. `stretch` is the layer's NEW absolute stretch (1 = 100 %, rounded to whole percent, |stretch| within 0.01…10). Footage, audio and precomps change their playback rate and the bar scales about the Hold in Place frame with the source frame there unchanged (stretch must be positive: footage reverses with timeReverseLayers). Any other layer has no source to resample: its bar(s), every keyframe and its layer markers are scaled about the hold frame by the ratio to its current stretch, a negative value reverses them, and the value is recorded as the layer's stretch. Locked bars are left alone. `time` (comp) is required for currentFrame. Inverse: the previous bars, keys, markers and stretch. */
+export interface TimeStretchLayers {
+  layers: LayerId[];
+  stretch: number;
+  hold: StretchHold;
+  time?: Time;
+}
+
+/** B3z — remove Freeze Frame from layers (the layer plays its source again). A layer that is not frozen is left as it is. Inverse: the previous freeze and freeze time. */
+export interface UnfreezeLayers {
+  layers: LayerId[];
+}
+
+/** B3z — delete a composition TIME RANGE and close the gap (transcript editing, a range extract): every unlocked layer of `layers` (empty = every layer of the comp) that crosses an edge of `range` is split there, the parts inside are deleted, then EVERY unlocked layer starting at or after the range end moves left by the range's length. Locked layers are never cut, deleted or moved. Returns the layers the splits created. Inverse: the layers, bars and every shifted timing restored exactly. */
+export interface RippleDeleteRange {
+  comp: ItemId;
+  range: TimeRange;
+  layers: LayerId[];
+}
+
+/** One layer's keyframe shift (shiftLayerKeyframes). */
+export interface LayerKeyShift {
+  layer: LayerId;
+  /** In LAYER time (the axis keyframes are stored on; = comp time for an unstretched layer). May be fractional frames and may move keys before 0. */
+  delta: Time;
+}
+
+/** B3z — move EVERY keyframe a layer owns by a layer-time delta (Stagger / Sequence animation): every animated property, the data tracks (Source Text, gradient stops, mask shapes) — not the time-remap / speed tracks, which live on the composition axis. Unlike moveKeyframes it neither frame-quantises through the bar nor needs keyframe ids for properties outside the catalog. Inverse: the previous keys (same ids). */
+export interface ShiftLayerKeyframes {
+  items: LayerKeyShift[];
+}
+
+/** A cut transition (the timeline's bracket): a record on the composition, MATERIALISED into the two layers — the overlapping kinds (crossDissolve, wipe) extend the left bar's tail and the right bar's head into their source handles; crossDissolve / dipToBlack ramp Opacity, dipToWhite ramps a white Fill effect, wipe ramps a Linear Wipe on the incoming layer. */
+export interface Transition {
+  id: string;
+  comp: ItemId;
+  /** The layer whose bar ends at the cut. */
+  left: LayerId;
+  /** The layer whose bar starts at the cut. */
+  right: LayerId;
+  kind: TransitionKind;
+  /** Whole frames of the composition. */
+  duration: Time;
+  alignment: TransitionAlignment;
+}
+
+export interface TransitionRef {
+  transition: string;
+}
+
+/** B3z — add a transition on the cut between two layers of one composition (replacing any transition already on that cut). Refused (`outOfRange`, with the frames the handles lack) when a source cannot pay for the overlap, `invalidArgument` when the layers do not meet at a cut, `locked` for a locked layer. `duration` rounds to whole frames (≥ 1). Returns the new transition's id. Inverse: the cut, the bars, the keys and effects exactly as they were, and the record gone. */
+export interface AddTransition {
+  left: LayerId;
+  right: LayerId;
+  kind: TransitionKind;
+  duration: Time;
+  alignment: TransitionAlignment;
+}
+
+/** B3z — change a transition's kind, length or alignment (the bracket drag, the alignment menu): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised. */
+export interface SetTransition {
+  transition: string;
+  kind?: TransitionKind;
+  duration?: Time;
+  alignment?: TransitionAlignment;
+}
+
+/** B3z — remove transitions: each cut is put back exactly as it was before the transition was applied (bars, the ramped keys, the effect stack). Hand edits made to those tracks afterwards are discarded with it (transitions.ts). Inverse: the records and their materialisation. */
+export interface RemoveTransitions {
+  transitions: string[];
+}
+
 /** One property write inside setProperties. */
 export interface PropertyWrite {
   prop: PropRef;
@@ -1675,23 +1799,41 @@ export interface SetDimensionsSeparated {
   separated: boolean;
 }
 
-/** Set or replace an expression. An empty source removes it. The result carries compile errors (the expression is still stored, disabled on error like AE). */
+/**
+ * Set or replace an expression. An empty source removes it. The expression is stored as given, `enabled` as
+ * asked, even when it fails to compile (After Effects since CC 2019: an erroring expression stays on, the
+ * property shows its pre-expression value and the error is reported); the result carries the diagnostics.
+ * `member`: Premation's per-dimension expression on an UNSEPARATED vector (one axis's field in the inspector) —
+ * only that dimension carries the source (its number, or component `member` of a vector result); absent = the
+ * property's expression, on every dimension. A separated dimension is its own property (`transform/position/x`).
+ */
 export interface SetExpression {
   prop: PropRef;
   source: string;
   enabled: boolean;
+  member?: number;
 }
 
+/** Enable / disable expressions (the `=` switch). `member`: only that dimension's expression (see setExpression). */
 export interface SetExpressionEnabled {
   props: PropRef[];
   enabled: boolean;
+  member?: number;
 }
 
-/** Bake an expression (or an evaluated property) to keyframes over `range`, one per `step` (0 = every frame). */
+/**
+ * Animation ▸ Keyframe Assistant ▸ Convert Expression to Keyframes (After Effects): sample the property once per
+ * `step` (0 = every frame) over `range` (absent = the layer's in → out, clamped to the composition), write the
+ * samples as linear keyframes on EVERY dimension (replacing the property's keys; composition frames that map to
+ * one layer time keep the first), and DISABLE the expression — it is kept, so it can be switched back on.
+ * `member`: only that dimension of an UNSEPARATED vector (its per-dimension expression — a modifier stack on X
+ * Position); the other dimensions keep their keys and expressions. Absent = every dimension.
+ */
 export interface ConvertExpressionToKeyframes {
   prop: PropRef;
   range?: TimeRange;
   step: Time;
+  member?: number;
 }
 
 /** Link: set a pickwhip expression on `prop` that reads `target`. */
@@ -1729,7 +1871,12 @@ export interface KeyframeInsert {
   spatialOut: number[];
 }
 
-/** Only present fields change. `time` moves this one key (moveKeyframes moves many by a delta). */
+/**
+ * Only present fields change. `time` moves this one key (moveKeyframes moves many by a delta); a key moved onto
+ * another key of its property replaces it. `dim`: `easing`, `bezier`, `clearBezier` and `continuous` apply to that
+ * dimension only (After Effects' per-dimension temporal ease — the graph editor's Scale X handle); every other
+ * field is the whole keyframe's.
+ */
 export interface KeyframePatch {
   id: KeyframeId;
   time?: Time;
@@ -1744,6 +1891,7 @@ export interface KeyframePatch {
   spatialOut: number[];
   clearSpatial?: boolean;
   label?: number;
+  dim?: number;
 }
 
 /** Add keyframes (replacing any at the same time on the same property — the replaced key keeps its id). Returns ids in input order. */
@@ -1762,7 +1910,12 @@ export interface MoveKeyframes {
   delta: Time;
 }
 
-/** Patch keyframes (value, easing, handles, tangents, roving, label). Undo restores every patched field. */
+/**
+ * Patch keyframes (value, easing, handles, tangents, roving, label). Undo restores every patched field.
+ * Roving keys (Rove Across Time) are re-timed for constant speed whenever a keyframe command changes their
+ * property: each run of roving keys between two non-roving keys is spread over that span by the distance the
+ * value travels (a vector: the length of its path through the dimensions). Ends never rove.
+ */
 export interface UpdateKeyframes {
   patches: KeyframePatch[];
 }
@@ -1774,7 +1927,11 @@ export interface ScaleKeyframes {
   factor: number;
 }
 
-/** Time-reverse keyframes within their span. */
+/**
+ * Animation ▸ Keyframe Assistant ▸ Time-Reverse Keyframes: the given keys, as ONE block, are mirrored within the
+ * span from the earliest to the latest of them (After Effects) — keys of different properties keep their
+ * arrangement, mirrored.
+ */
 export interface ReverseKeyframes {
   ids: KeyframeId[];
 }
@@ -1783,6 +1940,17 @@ export interface ReverseKeyframes {
 export interface PasteKeyframes {
   prop: PropRef;
   time: Time;
+  keys: Keyframe[];
+}
+
+/**
+ * Replace ALL of a property's keyframes with `keys` (a keyframe assistant's result: The Smoother, The Wiggler,
+ * Exponential Scale, Bounce — and their live previews, as a gesture). A key whose `id` names one of the
+ * property's keys keeps that id; any other id (or '') gets a new one. Times must be distinct; at least one key
+ * (the stopwatch, `setAnimated`, removes them all). Expressions are untouched. Returns the ids in input order.
+ */
+export interface SetKeyframes {
+  prop: PropRef;
   keys: Keyframe[];
 }
 
@@ -1875,6 +2043,19 @@ export interface RemoveProperties {
   props: PropRef[];
 }
 
+/** B3z — AE Edit ▸ Paste of copied effects from a captured SNAPSHOT (the source may since have been edited or deleted), and applying a saved effect preset. `effects` is a JSON array of captured effects — the editor's CopiedEffect: `{effect: <Effect object: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix after 'effect.<id>.'>: Keyframe[]}}` (suffix '' = the legacy single-scalar track `effect.<id>`). Every target layer gets each effect with a FRESH engine-minted id (`fx_<n>`) and fresh keyframe ids, inserted in order at stack `index` (absent = end; past the stack = `outOfRange`). The keys are written at their captured times on each target's keyframe axis (layer time — no playhead shift; the editor's paste has always done this). Returns 'effects/<id>' per pasted effect, layer-major. Undo removes them. */
+export interface PasteEffects {
+  layers: LayerId[];
+  effects: string;
+  index?: number;
+}
+
+/** B3z — delete Contents ▸ Stroke N of a shape's stroke stack (`layer/strokes`): the stroke and its keyframe tracks and expressions go, and the tracks of every stroke above it move down one index (strokes bind their tracks by stack index, strokeTracks.ts). `index` is 0-based; out of range is `outOfRange`. Inverse: the stack and the tracks exactly as they were. */
+export interface RemoveStroke {
+  layer: LayerId;
+  index: number;
+}
+
 export interface PropertyPaths {
   paths: PropPath[];
 }
@@ -1899,6 +2080,8 @@ export interface Marker {
   cuePoint: string;
   /** Protected region (time-stretch of a precomp leaves it untouched). */
   protectedRegion: boolean;
+  /** B3z — the stored colour exactly (a timeline swatch token such as `var(--color-timeline-marker-blue)`, or a hex); empty = none. `label` is this colour's index in the LAYER label palette, 0 when it is not one of them. */
+  color: string;
 }
 
 export interface MarkerInsert {
@@ -1908,6 +2091,8 @@ export interface MarkerInsert {
   name: string;
   comment: string;
   label: number;
+  /** B3z — the marker's colour as stored (a timeline swatch token or a hex, at most 128 characters); wins over `label`. Empty = no colour. */
+  color?: string;
 }
 
 export interface MarkerPatch {
@@ -1921,6 +2106,8 @@ export interface MarkerPatch {
   url?: string;
   cuePoint?: string;
   protectedRegion?: boolean;
+  /** B3z — as MarkerInsert.color (wins over `label`). */
+  color?: string;
 }
 
 export interface AddMarkers {
@@ -2177,6 +2364,8 @@ export interface CompInfo {
   /** Layer ids, top of the stack first. */
   layers: LayerId[];
   markers: Marker[];
+  /** B3z — the composition's cut transitions, in the order they were added. */
+  transitions: Transition[];
 }
 
 /** The layer header the timeline and layer panel draw (no property tree). */
@@ -2760,6 +2949,12 @@ export interface MarkersChangedEvent {
 
 export interface RenderQueueChangedEvent {
   items: RenderItemInfo[];
+}
+
+/** B3z — every transition of one composition (full replacement), after a transition command or its undo. */
+export interface TransitionsChangedEvent {
+  comp: ItemId;
+  transitions: Transition[];
 }
 
 export interface HistoryChangedEvent {
@@ -3377,6 +3572,7 @@ export type Command =
   | ({ type: 'duplicateComposition' } & DuplicateComposition)
   | ({ type: 'setCompositionSettings' } & SetCompositionSettings)
   | ({ type: 'setWorkArea' } & SetWorkArea)
+  | ({ type: 'clearWorkArea' } & ClearWorkArea)
   | ({ type: 'precompose' } & Precompose)
   | ({ type: 'trimCompToWorkArea' } & TrimCompToWorkArea)
   | ({ type: 'cropComposition' } & CropComposition)
@@ -3417,6 +3613,13 @@ export type Command =
   | ({ type: 'freezeFrame' } & FreezeFrame)
   | ({ type: 'setRetime' } & SetRetime)
   | ({ type: 'sequenceLayers' } & SequenceLayers)
+  | ({ type: 'timeStretchLayers' } & TimeStretchLayers)
+  | ({ type: 'unfreezeLayers' } & UnfreezeLayers)
+  | ({ type: 'rippleDeleteRange' } & RippleDeleteRange)
+  | ({ type: 'shiftLayerKeyframes' } & ShiftLayerKeyframes)
+  | ({ type: 'addTransition' } & AddTransition)
+  | ({ type: 'setTransition' } & SetTransition)
+  | ({ type: 'removeTransitions' } & RemoveTransitions)
   | ({ type: 'setProperty' } & SetProperty)
   | ({ type: 'setProperties' } & SetProperties)
   | ({ type: 'resetProperty' } & ResetProperty)
@@ -3433,6 +3636,7 @@ export type Command =
   | ({ type: 'scaleKeyframes' } & ScaleKeyframes)
   | ({ type: 'reverseKeyframes' } & ReverseKeyframes)
   | ({ type: 'pasteKeyframes' } & PasteKeyframes)
+  | ({ type: 'setKeyframes' } & SetKeyframes)
   | ({ type: 'addEffect' } & AddEffect)
   | ({ type: 'addMask' } & AddMask)
   | ({ type: 'addPropertyGroup' } & AddPropertyGroup)
@@ -3446,6 +3650,8 @@ export type Command =
   | ({ type: 'invokeEffectAction' } & InvokeEffectAction)
   | ({ type: 'addProperties' } & AddProperties)
   | ({ type: 'removeProperties' } & RemoveProperties)
+  | ({ type: 'pasteEffects' } & PasteEffects)
+  | ({ type: 'removeStroke' } & RemoveStroke)
   | ({ type: 'addMarkers' } & AddMarkers)
   | ({ type: 'updateMarkers' } & UpdateMarkers)
   | ({ type: 'deleteMarkers' } & DeleteMarkers)
@@ -3504,6 +3710,7 @@ export type CommandResult =
   | ({ type: 'duplicateComposition' } & ItemRef)
   | ({ type: 'setCompositionSettings' } & Empty)
   | ({ type: 'setWorkArea' } & Empty)
+  | ({ type: 'clearWorkArea' } & Empty)
   | ({ type: 'precompose' } & PrecomposeResult)
   | ({ type: 'trimCompToWorkArea' } & Empty)
   | ({ type: 'cropComposition' } & Empty)
@@ -3544,6 +3751,13 @@ export type CommandResult =
   | ({ type: 'freezeFrame' } & Empty)
   | ({ type: 'setRetime' } & Empty)
   | ({ type: 'sequenceLayers' } & Empty)
+  | ({ type: 'timeStretchLayers' } & Empty)
+  | ({ type: 'unfreezeLayers' } & Empty)
+  | ({ type: 'rippleDeleteRange' } & LayerList)
+  | ({ type: 'shiftLayerKeyframes' } & Empty)
+  | ({ type: 'addTransition' } & TransitionRef)
+  | ({ type: 'setTransition' } & Empty)
+  | ({ type: 'removeTransitions' } & Empty)
   | ({ type: 'setProperty' } & PropertyWriteResult)
   | ({ type: 'setProperties' } & Empty)
   | ({ type: 'resetProperty' } & Empty)
@@ -3560,6 +3774,7 @@ export type CommandResult =
   | ({ type: 'scaleKeyframes' } & Empty)
   | ({ type: 'reverseKeyframes' } & Empty)
   | ({ type: 'pasteKeyframes' } & KeyframeIds)
+  | ({ type: 'setKeyframes' } & KeyframeIds)
   | ({ type: 'addEffect' } & GroupList)
   | ({ type: 'addMask' } & GroupList)
   | ({ type: 'addPropertyGroup' } & GroupList)
@@ -3573,6 +3788,8 @@ export type CommandResult =
   | ({ type: 'invokeEffectAction' } & Empty)
   | ({ type: 'addProperties' } & PropertyPaths)
   | ({ type: 'removeProperties' } & Empty)
+  | ({ type: 'pasteEffects' } & GroupList)
+  | ({ type: 'removeStroke' } & Empty)
   | ({ type: 'addMarkers' } & MarkerIds)
   | ({ type: 'updateMarkers' } & Empty)
   | ({ type: 'deleteMarkers' } & Empty)
@@ -3684,6 +3901,7 @@ export type Event =
   | ({ type: 'propertyGroupsChanged' } & PropertyGroupsChangedEvent)
   | ({ type: 'markersChanged' } & MarkersChangedEvent)
   | ({ type: 'renderQueueChanged' } & RenderQueueChangedEvent)
+  | ({ type: 'transitionsChanged' } & TransitionsChangedEvent)
   | ({ type: 'historyChanged' } & HistoryChangedEvent)
   | ({ type: 'dirtyChanged' } & DirtyChangedEvent)
   | ({ type: 'transportChanged' } & TransportChangedEvent)
@@ -3734,6 +3952,7 @@ export interface CommandArgs {
   duplicateComposition: DuplicateComposition;
   setCompositionSettings: SetCompositionSettings;
   setWorkArea: SetWorkArea;
+  clearWorkArea: ClearWorkArea;
   precompose: Precompose;
   trimCompToWorkArea: TrimCompToWorkArea;
   cropComposition: CropComposition;
@@ -3774,6 +3993,13 @@ export interface CommandArgs {
   freezeFrame: FreezeFrame;
   setRetime: SetRetime;
   sequenceLayers: SequenceLayers;
+  timeStretchLayers: TimeStretchLayers;
+  unfreezeLayers: UnfreezeLayers;
+  rippleDeleteRange: RippleDeleteRange;
+  shiftLayerKeyframes: ShiftLayerKeyframes;
+  addTransition: AddTransition;
+  setTransition: SetTransition;
+  removeTransitions: RemoveTransitions;
   setProperty: SetProperty;
   setProperties: SetProperties;
   resetProperty: ResetProperty;
@@ -3790,6 +4016,7 @@ export interface CommandArgs {
   scaleKeyframes: ScaleKeyframes;
   reverseKeyframes: ReverseKeyframes;
   pasteKeyframes: PasteKeyframes;
+  setKeyframes: SetKeyframes;
   addEffect: AddEffect;
   addMask: AddMask;
   addPropertyGroup: AddPropertyGroup;
@@ -3803,6 +4030,8 @@ export interface CommandArgs {
   invokeEffectAction: InvokeEffectAction;
   addProperties: AddProperties;
   removeProperties: RemoveProperties;
+  pasteEffects: PasteEffects;
+  removeStroke: RemoveStroke;
   addMarkers: AddMarkers;
   updateMarkers: UpdateMarkers;
   deleteMarkers: DeleteMarkers;
@@ -3861,6 +4090,7 @@ export interface CommandResults {
   duplicateComposition: ItemRef;
   setCompositionSettings: Empty;
   setWorkArea: Empty;
+  clearWorkArea: Empty;
   precompose: PrecomposeResult;
   trimCompToWorkArea: Empty;
   cropComposition: Empty;
@@ -3901,6 +4131,13 @@ export interface CommandResults {
   freezeFrame: Empty;
   setRetime: Empty;
   sequenceLayers: Empty;
+  timeStretchLayers: Empty;
+  unfreezeLayers: Empty;
+  rippleDeleteRange: LayerList;
+  shiftLayerKeyframes: Empty;
+  addTransition: TransitionRef;
+  setTransition: Empty;
+  removeTransitions: Empty;
   setProperty: PropertyWriteResult;
   setProperties: Empty;
   resetProperty: Empty;
@@ -3917,6 +4154,7 @@ export interface CommandResults {
   scaleKeyframes: Empty;
   reverseKeyframes: Empty;
   pasteKeyframes: KeyframeIds;
+  setKeyframes: KeyframeIds;
   addEffect: GroupList;
   addMask: GroupList;
   addPropertyGroup: GroupList;
@@ -3930,6 +4168,8 @@ export interface CommandResults {
   invokeEffectAction: Empty;
   addProperties: PropertyPaths;
   removeProperties: Empty;
+  pasteEffects: GroupList;
+  removeStroke: Empty;
   addMarkers: MarkerIds;
   updateMarkers: Empty;
   deleteMarkers: Empty;
@@ -4041,6 +4281,7 @@ export interface EventPayloads {
   propertyGroupsChanged: PropertyGroupsChangedEvent;
   markersChanged: MarkersChangedEvent;
   renderQueueChanged: RenderQueueChangedEvent;
+  transitionsChanged: TransitionsChangedEvent;
   historyChanged: HistoryChangedEvent;
   dirtyChanged: DirtyChangedEvent;
   transportChanged: TransportChangedEvent;

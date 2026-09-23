@@ -131,11 +131,17 @@ export function nextSolidName(): string {
  * the new layer's id (it is also selected), or null.
  */
 export function createSolidLayer(values: LayerSettingsValues): string | null {
-  return runDocumentEdit('New Solid', () => {
-    insertSolid(values.color ?? DEFAULT_SOLID_COLOR);
-    const id = useSelectionStore.getState().ids[0];
-    if (!id) return null;
-    writeSettings(id, 'solid', values, 'New Solid');
-    return id;
-  });
+  return runDocumentEdit('New Solid', () => buildSolidLayer(values));
+}
+
+/**
+ * The New Solid builder alone (no undo scope): the UI runs it off-document
+ * and inserts the result as one `pasteLayers` (offDocument.ts).
+ */
+export function buildSolidLayer(values: LayerSettingsValues): string | null {
+  insertSolid(values.color ?? DEFAULT_SOLID_COLOR);
+  const id = useSelectionStore.getState().ids[0];
+  if (!id) return null;
+  writeSettings(id, 'solid', values, 'New Solid');
+  return id;
 }

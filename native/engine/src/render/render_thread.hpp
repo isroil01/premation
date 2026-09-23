@@ -26,8 +26,29 @@
 
 namespace premation::render {
 
+/// D2w: draws a frame the engine's scene builder produced (core/frame_scene.hpp
+/// `RenderJob::built`) into a slot through the render graph. Created and used
+/// on the render thread only, on the render thread's device; implemented in
+/// engine_frames (scene/engine_frames.cpp) so this library stays free of the
+/// render graph, the rasters and the media code.
+class BuiltFrameDrawer {
+ public:
+  BuiltFrameDrawer() = default;
+  virtual ~BuiltFrameDrawer() = default;
+  BuiltFrameDrawer(const BuiltFrameDrawer&) = delete;
+  BuiltFrameDrawer& operator=(const BuiltFrameDrawer&) = delete;
+  BuiltFrameDrawer(BuiltFrameDrawer&&) = delete;
+  BuiltFrameDrawer& operator=(BuiltFrameDrawer&&) = delete;
+
+  /// Encode + submit the frame into `target` (RGBA8Unorm, width × height).
+  virtual bool draw(const BuiltFrame& frame, const wgpu::TextureView& target, std::uint32_t width,
+                    std::uint32_t height, std::string& error) = 0;
+};
+
 struct RenderOptions {
   std::uint32_t slots = 3;
+  /// Makes the drawer for built frames on the render thread's device (null = C2's quads only).
+  std::function<std::unique_ptr<BuiltFrameDrawer>(const Gpu& gpu, std::string& error)> makeDrawer;
   std::uint32_t hostPid = 0;     // Electron main; shared handles are duplicated into it
   std::uint32_t vendorId = 0;    // Chromium's GPU (PCI vendor id); 0 = power preference decides
   bool highPerformance = false;
@@ -85,6 +106,7 @@ class RenderThread final : public FrameSink {
   // Render-thread-only state.
   std::optional<Gpu> gpu_;
   std::unique_ptr<Compositor> compositor_;
+  std::unique_ptr<BuiltFrameDrawer> drawer_;
   std::unique_ptr<SlotSet> slots_;
   std::vector<std::unique_ptr<SlotSet>> retired_;
   std::uint32_t generation_ = 0;

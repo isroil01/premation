@@ -33,12 +33,13 @@ import { ValueField } from '@components/ValueField';
 import { PropertyRow, KeyframeLane, type PropertyRowLayout } from '@components/PropertyRow';
 import { PickWhip } from '@components/PickWhip';
 import { cn } from '@utils/cn';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompFps } from '@hooks/useMirror';
 import { ExpressionEditor } from '@layout/Motion/ExpressionEditor';
 import { type PropertyAccess } from '@core/inspector/multiSelection';
 import { useInspectorHosted } from './inspectorSelection';
 import { ModifierChips } from './ModifierChips';
 import { useMultiPropertyField } from './useMultiPropertyField';
+import { useActiveCompDurationSeconds } from './inspectorMirror';
 import styles from './MultiPropertyRow.module.css';
 
 export interface MultiPropertyRowProps {
@@ -94,8 +95,8 @@ function MultiPropertyRowInner({
 }: MultiPropertyRowProps): JSX.Element | null {
   const f = useMultiPropertyField(nodeId, prop, { access, linkedProp, label: labelOverride });
   const hosted = useInspectorHosted();
-  const fps = useCompositionStore((c) => c.fps) || 30;
-  const duration = useCompositionStore((c) => c.durationSeconds) || 0;
+  const fps = useActiveCompFps();
+  const duration = useActiveCompDurationSeconds();
 
   // Single render guard, AFTER every hook.
   if (!f.exists) return null;

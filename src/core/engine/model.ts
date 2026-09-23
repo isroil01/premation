@@ -17,6 +17,7 @@ import type {
   PropertyInfo,
   KeyframeSet,
   CompInfo,
+  Transition,
   DocumentSnapshot,
   Color,
   LayerQuality,
@@ -31,12 +32,15 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from '@stores/projectStore';
 import { useAssetStore, type ImportedAsset, type AssetFolder } from '@stores/assetStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useTransitionStore } from '@stores/transitionStore';
+import type { TransitionRecord, TransitionKind, TransitionAlignment } from '@core/timeline/transitionModel';
 import { readLayerFlag } from '@core/scene/layerFlags';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { getNodeLayerTime } from '@core/scene/layerTime';
 import { readAutoOrientMode } from '@core/scene/autoOrient';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMatte } from '@core/effects/matte';
+import { readNodeMaskAnim } from '@core/effects/mask';
 import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { parseColorChannels } from '@core/effects/effects';
@@ -77,9 +81,48 @@ export function labelColorOf(index: number): string | undefined {
 
 // ── Timing ───────────────────────────────────────────────────────────
 
+/**
+ * While a whole-document read runs (`withBarIndex`), each composition's bars
+ * are grouped by layer ONCE: `barsOf` per layer was a filter over every bar of
+ * the comp, so a 2,000-layer `getDocument` (the B4 mirror's load and every
+ * refetch) was quadratic — 360 ms for the headers alone.
+ */
+let barIndex: Map<string, Map<string, TimelineBar[]>> | null = null;
+
+/** Run `fn` with the per-composition bar index (reads only; nothing may edit inside). */
+export function withBarIndex<T>(fn: () => T): T {
+  if (barIndex) return fn();
+  barIndex = new Map();
+  try {
+    return fn();
+  } finally {
+    barIndex = null;
+  }
+}
+
+function indexedBars(comp: string): Map<string, TimelineBar[]> | null {
+  if (!barIndex) return null;
+  let m = barIndex.get(comp);
+  if (!m) {
+    m = new Map();
+    const reg = getTimelineController().peekTimeline(comp);
+    const track = reg?.timeline.getTrack(reg.trackId);
+    for (const l of track?.layers ?? []) {
+      const list = m.get(l.sourceId);
+      if (list) list.push(l);
+      else m.set(l.sourceId, [l]);
+    }
+    for (const list of m.values()) list.sort((a, b) => a.start - b.start);
+    barIndex.set(comp, m);
+  }
+  return m;
+}
+
 /** A layer's bars in its OWN composition's timeline, in start order. */
 export function barsOf(layerId: string, comp = compOfLayer(layerId)): TimelineBar[] {
   if (!comp) return [];
+  const idx = indexedBars(comp);
+  if (idx) return [...(idx.get(layerId) ?? [])];
   const reg = getTimelineController().peekTimeline(comp);
   const track = reg?.timeline.getTrack(reg.trackId);
   if (!track) return [];
@@ -172,6 +215,7 @@ function markerFromData(m: MarkerData, owner: MarkerOwner, fps: number): Marker 
     url: m.url ?? '',
     cuePoint: m.cuePoint ?? '',
     protectedRegion: m.protectedRegion === true,
+    color: m.color ?? '',
   };
 }
 
@@ -275,7 +319,34 @@ export function compSettings(compId: string): CompSettings {
 }
 
 export function compInfo(compId: string): CompInfo {
-  return { id: compId, settings: compSettings(compId), layers: layerIdsOfComp(compId), markers: compMarkers(compId) };
+  return { id: compId, settings: compSettings(compId), layers: layerIdsOfComp(compId), markers: compMarkers(compId), transitions: transitionsOf(compId) };
+}
+
+// ── Transitions (B3z) ────────────────────────────────────────────────
+
+const TRANSITION_KINDS: readonly TransitionKind[] = ['crossDissolve', 'dipToBlack', 'dipToWhite', 'wipe'];
+const TRANSITION_ALIGNMENTS: readonly TransitionAlignment[] = ['centred', 'startAtCut', 'endAtCut'];
+
+/** A stored record as the API reports it (malformed legacy records read with defaults). */
+export function transitionInfo(comp: string, rec: TransitionRecord): Transition {
+  const r = rec as unknown as Record<string, unknown>;
+  const kind = TRANSITION_KINDS.includes(r.kind as TransitionKind) ? (r.kind as Transition['kind']) : 'crossDissolve';
+  const alignment = TRANSITION_ALIGNMENTS.includes(r.alignment as TransitionAlignment) ? (r.alignment as Transition['alignment']) : 'centred';
+  const frames = typeof r.durationFrames === 'number' && Number.isFinite(r.durationFrames) ? Math.round(r.durationFrames) : 0;
+  return {
+    id: typeof r.id === 'string' ? r.id : '',
+    comp,
+    left: typeof r.leftNodeId === 'string' ? r.leftNodeId : '',
+    right: typeof r.rightNodeId === 'string' ? r.rightNodeId : '',
+    kind,
+    duration: framesToFlicks(frames, compFps(comp)),
+    alignment,
+  };
+}
+
+/** Every transition of a composition, in the order added. */
+export function transitionsOf(comp: string): Transition[] {
+  return (useTransitionStore.getState().byComp[comp] ?? []).map((rec) => transitionInfo(comp, rec));
 }
 
 // ── Items ────────────────────────────────────────────────────────────
@@ -427,6 +498,14 @@ export function propertyTree(layerId: string, cat = catalogFor(layerId), root = 
   return out;
 }
 
+/** False only when the layer certainly has no keyframes (no animation track, data track or mask key). */
+export function mayHaveKeys(layerId: string): boolean {
+  if (defaultAnimation.animatedProps(layerId).length > 0) return true;
+  if (defaultAnimation.dataTracksFor(layerId).length > 0) return true;
+  const node = graph.getNode(layerId);
+  return node ? readNodeMaskAnim(node).length > 0 : false;
+}
+
 export function keyframeSets(layerId: string, cat = catalogFor(layerId)): KeyframeSet[] {
   const out: KeyframeSet[] = [];
   for (const b of cat.props) {
@@ -445,11 +524,23 @@ export function documentSnapshot(
   includeProperties: boolean,
   includeKeyframes: boolean,
 ): DocumentSnapshot {
+  return withBarIndex(() => documentSnapshotIndexed(revision, projectPath, dirty, includeProperties, includeKeyframes));
+}
+
+function documentSnapshotIndexed(
+  revision: number,
+  projectPath: string,
+  dirty: boolean,
+  includeProperties: boolean,
+  includeKeyframes: boolean,
+): DocumentSnapshot {
   const comps = compItemIds();
   const layers: LayerInfo[] = [];
   for (const c of comps) for (const id of layerIdsOfComp(c)) layers.push(layerInfo(id));
   const propertyTrees = includeProperties ? layers.map((l) => ({ layer: l.id, nodes: propertyTree(l.id) })) : [];
-  const keyframes = includeKeyframes ? layers.flatMap((l) => keyframeSets(l.id)) : [];
+  // A layer with no track, data track or mask keyframe has no keyframe set:
+  // skip its catalog build (the bulk of a 2,000-layer snapshot otherwise).
+  const keyframes = includeKeyframes ? layers.flatMap((l) => (mayHaveKeys(l.id) ? keyframeSets(l.id) : [])) : [];
   return {
     revision,
     projectPath,

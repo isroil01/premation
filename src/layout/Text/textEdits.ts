@@ -15,7 +15,8 @@
  *   typewriterEdit         the Auto-Animate Typing rig as ONE entry
  *   textPresetEdit         a text style preset over the selection, one entry
  *
- * Reads stay direct (B4's mirror replaces them). What the API cannot address
+ * Current values are read from the document mirror (B4, `./textMirror`); the
+ * `B4-gap` sites say what it does not carry yet. What the API cannot address
  * yet funnels through the `legacy*` functions at the bottom, each marked with
  * its gap, so the remaining direct writes of this area live in few places.
  */
@@ -23,25 +24,37 @@
 import type { Command, PropRef, Value } from '@motion/engine-api';
 import { catalogFor } from '@core/engine/props';
 import { parseColorChannels } from '@core/effects/effects';
-import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { isLayer } from '@core/engine/doc';
+import { compOfLayer, isLayer } from '@core/engine/doc';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, paths, values as apiValues, fieldValue } from '@core/engine/propRefs';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { readPropertyValue } from '@core/inspector/multiSelection';
-import { applyTextPreset } from '@core/inspector/sectionPresets';
-import { readAnimatorData, type SelectorKind } from '@core/text/textAnimators';
-import { readRuns } from '@core/text/richText';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { strokeOverFillFor } from '@core/text/textFields';
+import { planMasksFromText, buildMasksFromTextSolid, type MasksFromTextResult } from '@core/scene/masksFromText';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import type { SelectorKind } from '@core/text/textAnimators';
 import { remapRunFonts } from '@core/fonts/replaceFonts';
 import { familyKey } from '@core/fonts/missingFonts';
-import { textLayersInScope, countInLayer, type FindScope, type ScopeCount } from '@core/textTools/textFindReplace';
+import type { FindScope, ScopeCount } from '@core/textTools/textFindReplace';
 import { replaceAllInString, replaceAllWithRuns, type FindOptions } from '@core/textTools/findReplaceText';
-import type { SceneNode } from '@core/types';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { useSelectionStore } from '@stores/selectionStore';
+import {
+  activeCompIdNow,
+  currentRuns,
+  hasMirrorStyleRuns,
+  isSourceTextAnimated,
+  mirrorCountInLayer,
+  mirrorTextLayersInScope,
+  SOURCE_TEXT_PATH,
+  sourceTextOf,
+  textField,
+} from './textMirror';
 import type { PresetValues } from '@stores/sectionPresetStore';
-import { useActiveWorkspace } from '@stores/projectStore';
-import { getTime } from '@stores/playbackClockStore';
+import { getTime, useThrottledTime } from '@stores/playbackClockStore';
 import { componentPropsCommands } from '@layout/Inspector/useComponentProp';
 import { scalarValueCommands, stopwatchCommands, trackRef } from '@layout/Inspector/inspectorEdits';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
@@ -77,10 +90,15 @@ export function useTextParam(
   staticValue: number,
   customStatic?: (v: number) => void,
 ): TextParam {
-  const time = useActiveWorkspace()?.time ?? 0;
+  // B4: the value comes from the document mirror — this track's info, keys and
+  // value at the (throttled) playhead wake the row; a track the layer's tree does
+  // not list shows the caller's static value.
+  const time = useThrottledTime();
   const e = useEngineEdit();
-  const animated = defaultAnimation.isAnimated(nodeId, track);
-  const display = readPropertyValue(nodeId, track, time, { read: () => staticValue }) ?? staticValue;
+  useMirrorTrackWatch([nodeId], [track]); // keys compare by content
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, track);
+  const display = readTrack(m, nodeId, track, time) ?? staticValue;
   const onEngine = (): boolean => trackRef(nodeId, track) !== null && (animated || !customStatic);
   return {
     animated,
@@ -103,8 +121,7 @@ export function useTextParam(
 
 /** The layer's style runs index its text: a content change through the API would drop them. */
 export function hasStyleRuns(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return !!node && readRuns(node).length > 0;
+  return hasMirrorStyleRuns(documentMirror(), nodeId);
 }
 
 /**
@@ -113,8 +130,8 @@ export function hasStyleRuns(nodeId: string): boolean {
  * keeps them (G1 `text/styleRuns`).
  */
 function keepRunsCommands(nodeId: string): Command[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node && readRuns(node).length > 0 ? fieldCommands(nodeId, paths.textProp('styleRuns'), readRuns(node)) : [];
+  const runs = currentRuns(nodeId);
+  return runs.length > 0 ? fieldCommands(nodeId, paths.textProp('styleRuns'), runs) : [];
 }
 
 /**
@@ -124,7 +141,7 @@ function keepRunsCommands(nodeId: string): Command[] {
  */
 export function sourceTextCommand(nodeId: string, text: string, seconds: number): Command[] | null {
   if (!isLayer(nodeId)) return null;
-  const keyed = defaultAnimation.isDataAnimated(nodeId, 'text.source');
+  const keyed = isSourceTextAnimated(documentMirror(), nodeId);
   const set: Command = { type: 'setProperty', prop: { layer: nodeId, path: paths.sourceText() }, value: apiValues.string(text), time: compTime(seconds) };
   return keyed ? [set] : [set, ...keepRunsCommands(nodeId)];
 }
@@ -205,8 +222,12 @@ export async function typewriterEdit(nodeId: string, seconds: number, durationSe
   if (!added.ok) reportEngineError(label, added.error);
   else {
     const animatorId = ((added.value as { groups?: string[] }).groups?.[0] ?? '').split('/')[2] ?? '';
-    const node = defaultSceneGraph.getNode(nodeId);
-    const selectorId = node ? readAnimatorData(node).find((a) => a.id === animatorId)?.selectors?.[0]?.id : undefined;
+    // The new animator's range selector id, asked of the engine (a query for a
+    // write, B4_MIRROR.md §2): the mirror may not have applied the add yet.
+    const selBase = `${paths.animatorGroup(animatorId)}/selectors/`;
+    const tree = await client.query({ type: 'getPropertyTree', layer: nodeId, path: `${paths.animatorGroup(animatorId)}/selectors`, depth: 0 });
+    const selPath = tree.ok ? tree.value.nodes.find((n) => n.path.startsWith(selBase) && !n.path.slice(selBase.length).includes('/'))?.path : undefined;
+    const selectorId = selPath?.slice(selBase.length);
     if (selectorId) {
       const start: PropRef = { layer: nodeId, path: paths.selectorParam(animatorId, selectorId, 'start') };
       const res = await client.batch(label, [
@@ -289,31 +310,80 @@ function fieldValueOfHex(hex: string): Value {
 // ── Presets ─────────────────────────────────────────────────────────────
 
 /**
+ * A preset's values in the form the engine addresses them on this layer: a CSS
+ * keyword weight is its number (`text/axes/wght` stores numbers; 'bold' ≡ 700),
+ * the legacy `strokeOverFill` boolean is the Fill and Stroke order
+ * (`text/strokeOrder`, which keeps the boolean in step), `content` is Source Text.
+ */
+function presetForEngine(props: Readonly<Record<string, unknown>>, values: PresetValues): { bag: Record<string, unknown>; content?: string } {
+  const bag: Record<string, unknown> = {};
+  let content: string | undefined;
+  for (const [key, v] of Object.entries(values)) {
+    if (key === 'fontWeight' && typeof v === 'string' && /^(normal|bold)$/i.test(v.trim())) {
+      bag.fontWeight = v.trim().toLowerCase() === 'bold' ? 700 : 400;
+    } else if (key === 'strokeOverFill' && typeof v === 'boolean') {
+      const current = typeof props.strokeOrder === 'string' ? props.strokeOrder : props.strokeOverFill === true ? 'stroke-over-fill' : 'fill-over-stroke';
+      bag.strokeOrder = strokeOverFillFor(current) === v ? current : v ? 'stroke-over-fill' : 'fill-over-stroke';
+    } else if (key === 'content' && typeof v === 'string') {
+      content = v;
+    } else {
+      bag[key] = v;
+    }
+  }
+  return { bag, ...(content !== undefined ? { content } : {}) };
+}
+
+/**
  * A text style preset (or a Character panel preset chip) onto every text layer
- * of the selection, ONE entry. Through the engine when it addresses every
- * value on every layer (numbers the catalog lists: Font Size, Tracking…);
- * a preset that also carries a family / weight / style (strings — no API
- * property yet) keeps the pre-API bag writer for the WHOLE preset, so it stays
- * one undo entry instead of splitting in two.
+ * of the selection, ONE entry: numbers through their properties (Font Size,
+ * Tracking, Leading, Stroke Width…), strings / choices / switches through the
+ * Text fields (G1), a colour through `layer/fill` / `text/stroke`. A value no
+ * layer can take is reported, not written around the engine.
  */
 export function textPresetEdit(nodeIds: ReadonlyArray<string>, values: PresetValues, label = 'Apply Text preset'): void {
   const seconds = getTime();
   const cmds: Command[] = [];
-  let legacy = false;
+  const skipped = new Set<string>();
   for (const id of nodeIds) {
+    if (!isLayer(id)) continue;
+    // B4-gap: the Text component's id and stored props — `componentPropsCommands` (the Inspector's
+    // shared write composer) is keyed by component id, which the API does not carry.
     const comp = defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Text');
     if (!comp) continue;
-    const r = componentPropsCommands(id, comp.id, values, seconds);
-    if (Object.keys(r.rest).length > 0) { legacy = true; break; }
+    const { bag, content } = presetForEngine(comp.props as Record<string, unknown>, values);
+    const r = componentPropsCommands(id, comp.id, bag, seconds);
+    for (const k of Object.keys(r.rest)) skipped.add(k);
     cmds.push(...r.cmds);
+    if (content !== undefined) cmds.push(...(sourceTextCommand(id, content, seconds) ?? []));
   }
-  if (legacy) {
-    legacyTextPreset(nodeIds, values);
-    return;
-  }
-  void edit(label, cmds);
+  if (skipped.size > 0) console.warn(`[textPresetEdit] values the engine does not address were not applied: ${[...skipped].join(', ')}`);
+  if (cmds.length > 0) void edit(label, cmds);
 }
 
+
+// ── Create Masks from Text ──────────────────────────────────────────────
+
+/**
+ * AE's Layer ▸ Create ▸ Create Masks from Text through the engine: the glyph
+ * outlines need the editor's fonts (asynchronous), so the solid and its masks
+ * are BUILT off-document (`buildMasksFromTextSolid`) and sent as ONE batch —
+ * `pasteLayers` (the comp-sized solid in the text colour, one mask per contour)
+ * + `setLayerSwitches{visible:false}` on the text (AE hides it). One undo entry;
+ * the new solid is selected. Null when the text cannot be outlined.
+ */
+export async function masksFromTextEdit(nodeId: string, seconds: number = getTime()): Promise<MasksFromTextResult | null> {
+  const comp = isLayer(nodeId) ? compOfLayer(nodeId) : null;
+  if (!comp) return null;
+  const plan = await planMasksFromText(nodeId, seconds);
+  if (!plan) return null;
+  let made: MasksFromTextResult | null = null;
+  const ids = await insertBuiltLayers('Create Masks from Text', comp, () => { made = buildMasksFromTextSolid(plan); }, {
+    after: [{ type: 'setLayerSwitches', layers: [nodeId], patch: { visible: false } }],
+  });
+  const r = made as MasksFromTextResult | null;
+  if (!ids || ids.length === 0 || !r) return null;
+  return { ...r, id: ids[0]! };
+}
 
 // ── Document-wide text macros (client macros over the API, ONE entry each) ──
 
@@ -326,17 +396,18 @@ export async function replaceFontFamiliesEdit(replacements: ReadonlyMap<string, 
   const map = new Map<string, string>();
   for (const [from, to] of replacements) if (to.trim()) map.set(familyKey(from), to.trim());
   if (map.size === 0) return 0;
-  const texts: SceneNode[] = [];
-  defaultSceneGraph.traverse((n) => { if (readNodeKind(n) === 'text' && isLayer(n.id)) texts.push(n); });
+  // B4: every text layer of the project, and its family, from the mirror.
+  const m = documentMirror();
+  const texts = m.layerIds().filter((id) => uiKindOf(m.layer(id)) === 'text' && isLayer(id));
   const cmds: Command[] = [];
   let layers = 0;
-  for (const node of texts) {
+  for (const id of texts) {
     const before = cmds.length;
-    const family = (node.components.find((c) => c.type === 'Text')?.props as Record<string, unknown> | undefined)?.fontFamily;
+    const family = textField(m, id, 'fontFamily');
     const next = typeof family === 'string' ? map.get(familyKey(family)) : undefined;
-    if (next !== undefined && next !== family) cmds.push(...fieldCommands(node.id, paths.textProp('fontFamily'), next));
-    const runs = remapRunFonts(readRuns(node), map);
-    if (runs.changed) cmds.push(...fieldCommands(node.id, paths.textProp('styleRuns'), runs.runs));
+    if (next !== undefined && next !== family) cmds.push(...fieldCommands(id, paths.textProp('fontFamily'), next));
+    const runs = remapRunFonts(currentRuns(id), map);
+    if (runs.changed) cmds.push(...fieldCommands(id, paths.textProp('styleRuns'), runs.runs));
     if (cmds.length > before) layers += 1;
   }
   if (cmds.length === 0) return 0;
@@ -352,18 +423,20 @@ export async function replaceFontFamiliesEdit(replacements: ReadonlyMap<string, 
  */
 export async function replaceTextEdit(scope: FindScope, find: string, replacement: string, opts: FindOptions): Promise<ScopeCount> {
   if (!find) return { matches: 0, layers: 0 };
-  const targets = textLayersInScope(scope).filter((n) => isLayer(n.id) && countInLayer(n, find, opts) > 0);
+  // B4: scope, text, keyframes (API ids) from the mirror at call time.
+  const m = documentMirror();
+  const targets = mirrorTextLayersInScope(m, scope, useSelectionStore.getState().ids, activeCompIdNow())
+    .filter((id) => isLayer(id) && mirrorCountInLayer(m, id, find, opts) > 0);
   if (targets.length === 0) return { matches: 0, layers: 0 };
   const cmds: Command[] = [];
   let matches = 0;
-  for (const node of targets) {
-    const ref: PropRef = { layer: node.id, path: paths.sourceText() };
-    if (defaultAnimation.isDataAnimated(node.id, 'text.source')) {
-      const q = await engine().query({ type: 'getKeyframes', props: [ref] });
-      if (!q.ok) continue;
-      const patches = (q.value.sets[0]?.keyframes ?? []).flatMap((k) => {
-        if (k.value.kind !== 'textDocument') return [];
-        const r = replaceAllInString(k.value.value.text, find, replacement, opts);
+  for (const id of targets) {
+    const ref: PropRef = { layer: id, path: paths.sourceText() };
+    if (isSourceTextAnimated(m, id)) {
+      const patches = m.keyframes(id, SOURCE_TEXT_PATH).flatMap((k) => {
+        const text = sourceTextOf(k.value);
+        if (text === undefined) return [];
+        const r = replaceAllInString(text, find, replacement, opts);
         if (r.count === 0) return [];
         matches += r.count;
         return [{ id: k.id, value: apiValues.string(r.text), spatialIn: [], spatialOut: [] }];
@@ -371,23 +444,17 @@ export async function replaceTextEdit(scope: FindScope, find: string, replacemen
       if (patches.length > 0) cmds.push({ type: 'updateKeyframes', patches });
       continue;
     }
-    const content = (node.components.find((c) => c.type === 'Text')?.props as Record<string, unknown> | undefined)?.content;
-    if (typeof content !== 'string') continue;
-    const runs = readRuns(node);
+    const content = sourceTextOf(m.property(id, SOURCE_TEXT_PATH)?.value);
+    if (content === undefined) continue;
+    const runs = currentRuns(id);
     const r = replaceAllWithRuns(content, runs, find, replacement, opts);
     if (r.count === 0) continue;
     matches += r.count;
     cmds.push({ type: 'setProperty', prop: ref, value: apiValues.string(r.text) });
-    if (runs.length > 0) cmds.push(...fieldCommands(node.id, paths.textProp('styleRuns'), r.runs));
+    if (runs.length > 0) cmds.push(...fieldCommands(id, paths.textProp('styleRuns'), r.runs));
   }
   if (cmds.length === 0) return { matches: 0, layers: 0 };
   const res = await edit('Replace Text', cmds);
   return res.ok ? { matches, layers: targets.length } : { matches: 0, layers: 0 };
 }
-// ── Legacy funnels (engine gaps) ────────────────────────────────────────
 
-/** A text preset with values the API cannot address (see `textPresetEdit`). */
-function legacyTextPreset(nodeIds: ReadonlyArray<string>, values: PresetValues): void {
-  // B3-legacy: engine gap — Text component string props (fontFamily / fontWeight / fontStyle / align …) have no API property; one batchHistory entry.
-  applyTextPreset(nodeIds, values);
-}

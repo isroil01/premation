@@ -1128,10 +1128,13 @@ export function createToolContext(
 // ── The synchronous document context (importers, not AI turns) ────────
 
 /**
- * What the Lottie importer writes through. It is a document BUILDER run inside
- * one `beginDocumentTransaction` snapshot entry, not an AI turn, and it keeps
- * the pre-engine synchronous writers until importers move onto the API
- * (report B5: importers are the next automation client).
+ * What the Lottie importer writes through. It is a document BUILDER, not an AI
+ * turn: since B3z (WS-L1) it only ever runs OFF-document — inside
+ * `buildLayerFragment` / `insertBuiltLayers` (offDocument.ts) — so these
+ * synchronous writers touch a scratch state and the result reaches the
+ * document as ONE engine `pasteLayers` (layout/EditorLayout/lottieInsertEdits.ts).
+ * `comp.update` must not be used there (`updateComp: false`): a composition
+ * change is its own command.
  */
 export interface LegacyDocumentContext {
   scene: {

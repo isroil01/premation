@@ -24,6 +24,7 @@ import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
 import { setRasterCapture } from '@core/rendering/raster/rasterCapture';
 import { createRasterRecorder } from './rasterRecorder';
+import { sceneToProject } from './sceneProject';
 
 /**
  * Block until no registered plugin effect is still `pending`.
@@ -56,6 +57,12 @@ interface HarnessBridge {
   sceneFile?: (payload: { sceneId: string; frame: number; bytes: Uint8Array }) => Promise<void>;
   /** The measured readback table for the native backend (see measureReadbackTable). */
   readbackTable?: (payload: { pngBase64: string }) => Promise<void>;
+  /**
+   * D2w `native-scene`: the scene as a project DOCUMENT (sceneProject.ts), so
+   * the C++ engine can build its own FrameScene from it and be diffed against
+   * the exported TS one. Written once per scene, beside its .pfs files.
+   */
+  sceneProject?: (payload: { sceneId: string; json: string; media: Array<{ name: string; bytes: Uint8Array }> }) => Promise<void>;
   /** Sends one rendered frame to main. Resolves when written. */
   frame: (payload: {
     sceneId: string;
@@ -326,6 +333,11 @@ async function renderSceneFrames(
   be.setExactMediaTiming?.(true);
   const exporting = backend === 'webgpu' && !!window.harnessBridge.config.exportScenes && !!window.harnessBridge.sceneFile;
   if (exporting) be.captureFrameScenes = true;
+  if (exporting && window.harnessBridge.sceneProject) {
+    // Before the first frame: the document is the scene as authored (t-independent).
+    const exp = sceneToProject(scene, graph, anim);
+    await window.harnessBridge.sceneProject({ sceneId: scene.id, json: JSON.stringify(exp.document), media: exp.media });
+  }
   if (be.readyPromise) await be.readyPromise;
 
   /*

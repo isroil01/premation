@@ -2,12 +2,11 @@ import { InspectorRow } from './Inspector';
 import { propertyRegistry } from './PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useComponentProp } from '@layout/Inspector/useComponentProp';
 import { stopwatchCommands, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { useSceneRevision } from '@stores/sceneStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
@@ -27,6 +26,14 @@ import { Checkbox } from '../Checkbox';
  * scene value. Non‑animated edits go to the base value as before.
  *
  * Isolated into its own component so hooks stay stable as the selection changes.
+ *
+ * B3z: every write goes through the engine API. A numeric prop or a colour the
+ * catalog addresses (stored numbers with property metadata, the latent numbers
+ * of latentPropSpecs.ts, a layer's fill colour, a stroke colour…) writes
+ * `valueCommands` (a key at the playhead where animated / under auto-keyframe)
+ * and has a stopwatch (`setAnimated`); any other prop writes through
+ * `useComponentProp` (a field, or refused with a toast when the engine gives
+ * it no meaning — then the row has no stopwatch either).
  */
 function PropertyRow({
   nodeId,
@@ -42,11 +49,8 @@ function PropertyRow({
   const [baseVal, setBaseVal] = useComponentProp(nodeId, componentId, propName);
   const e = useEngineEdit();
   const rawTime = useActiveWorkspace()?.time ?? 0;
-  // Already layer-local: this is the axis the renderer samples on, and the
-  // axis the legacy writes below use. Calling toLayerTime on top of it
-  // subtracted the clip start twice (the ghost-drag bug's root cause).
-  // B3-legacy: display read + the legacy key axis; the engine route takes comp time.
-  const time = compToKeyframeTime(nodeId, rawTime, propName);
+  // Display only: the playhead on this track's keyframe axis (writes take comp time).
+  const time = keyAxisTimeForDisplay(nodeId, rawTime, propName);
   // Subscribe to the revision so the row re-renders on keyframe/scene changes.
   useSceneRevision((s) => s.rev);
   useAnimationRevision();
@@ -79,7 +83,7 @@ function PropertyRow({
   const onEngine = ref !== null && (numeric ? ref.valueType !== 'color' : ref.valueType === 'color');
 
   const onChange = (v: unknown): void => {
-    if (onEngine && (animated || autoKeyframe)) {
+    if (onEngine) {
       const vals: Record<string, number> | null = typeof v === 'number'
         ? { [propName]: v }
         : typeof v === 'string' && isColor
@@ -90,75 +94,20 @@ function PropertyRow({
         return;
       }
     }
-    if ((animated || autoKeyframe) && typeof v === 'number') {
-      // B3-legacy: engine gap — a numeric component prop outside the catalog.
-      // Reversible keyframe edit. A scrub fires onChange many times for the same
-      // (node, prop, time); the merge key collapses them into one undo step.
-      runAnimEdit(
-        `Set ${propName}`,
-        () => defaultAnimation.setKeyframe(nodeId, propName, time, v),
-        `set:${nodeId}:${propName}:${time}`,
-      );
-    } else if ((animated || autoKeyframe) && isColor && typeof v === 'string') {
-      // B3-legacy: engine gap — a colour outside the catalog (a layer's own Style fill).
-      const c = Color.fromHex(v);
-      runAnimEdit(
-        `Set ${propName}`,
-        () => {
-          defaultAnimation.setKeyframe(nodeId, `${propName}_r`, time, c.r);
-          // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
-          defaultAnimation.setKeyframe(nodeId, `${propName}_g`, time, c.g);
-          defaultAnimation.setKeyframe(nodeId, `${propName}_b`, time, c.b);
-          defaultAnimation.setKeyframe(nodeId, `${propName}_a`, time, c.a);
-        },
-        `set:${nodeId}:${propName}:${time}`,
-      );
-    } else {
-      setBaseVal(v);
-    }
+    // A field, or a prop the engine gives no meaning (useComponentProp refuses it with a toast).
+    setBaseVal(v);
   };
 
   const toggleAnim = (): void => {
     if (onEngine && engineTrack) {
       e.send(animated ? `Remove ${propName} animation` : `Animate ${propName}`, stopwatchCommands([nodeId], [engineTrack], rawTime));
-      return;
-    }
-    // B3-legacy: engine gap — same (props / colours outside the catalog).
-    if (animated) {
-      if (numeric) {
-        runAnimEdit(`Remove ${propName} animation`, () =>
-          defaultAnimation.removeTrack(nodeId, propName),
-        );
-      } else if (isColor) {
-        // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
-        runAnimEdit(`Remove ${propName} animation`, () => {
-          defaultAnimation.removeTrack(nodeId, `${propName}_r`);
-          defaultAnimation.removeTrack(nodeId, `${propName}_g`);
-          defaultAnimation.removeTrack(nodeId, `${propName}_b`);
-          defaultAnimation.removeTrack(nodeId, `${propName}_a`);
-        });
-      }
-    } else if (numeric) {
-      // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
-      runAnimEdit(`Animate ${propName}`, () =>
-        defaultAnimation.setKeyframe(nodeId, propName, time, Number(baseVal)),
-      );
-    } else if (isColor) {
-      const c = Color.fromHex(String(baseVal));
-      // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
-      runAnimEdit(`Animate ${propName}`, () => {
-        defaultAnimation.setKeyframe(nodeId, `${propName}_r`, time, c.r);
-        defaultAnimation.setKeyframe(nodeId, `${propName}_g`, time, c.g);
-        defaultAnimation.setKeyframe(nodeId, `${propName}_b`, time, c.b);
-        defaultAnimation.setKeyframe(nodeId, `${propName}_a`, time, c.a);
-      });
     }
   };
 
   return (
     <InspectorRow label={propName} align="center">
       <div className={styles.control}>
-        {numeric || isColor ? (
+        {(numeric || isColor) && onEngine ? (
           <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
           <Checkbox 
             checked={animated} 

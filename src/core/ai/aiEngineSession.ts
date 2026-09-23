@@ -27,6 +27,7 @@ import type {
   QueryType,
 } from '@motion/engine-api';
 import { AiEngineError, type AiEngineSession } from '@motion/ai-tools';
+import { isWriteAroundEngine } from '@core/engine/externalWrites';
 
 /** The gap recorded when the engine itself saw a write it did not make. */
 export const RESYNC_GAP = 'a document write outside the engine (the engine resynced)';
@@ -51,9 +52,7 @@ export class EngineTurnSession implements AiEngineSession {
   watch(): void {
     if (this.unsubscribe) return;
     this.unsubscribe = this.client.subscribe((batch) => {
-      for (const ev of batch.events) {
-        if (ev.type === 'documentReset' && ev.reason === 'resync') this.resynced = true;
-      }
+      if (isWriteAroundEngine(batch)) this.resynced = true;
     });
   }
 

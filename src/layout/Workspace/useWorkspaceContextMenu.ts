@@ -39,7 +39,8 @@ import { type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { renameLayer } from '@core/scene/renameLayer';
-import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
+import { getNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
+import { unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
@@ -167,9 +168,7 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         label: time.freeze ? 'Un-freeze Frame' : 'Freeze Frame at Playhead',
         onSelect: () => {
           if (time.freeze) {
-            // B3-legacy: engine gap — `freezeFrame` only sets a freeze; there is no command (or
-            // `setLayerTiming` field) that clears one. Un-freeze keeps the legacy layer-time write.
-            updateNodeLayerTime(id, { freeze: false });
+            void unfreezeEdit([id]);
             return;
           }
           // The engine stores the freeze on the layer's keyframe axis (the frame under the

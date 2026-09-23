@@ -9,9 +9,12 @@ import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { PropertyRow } from '@components/PropertyRow';
 import { Icon } from '@components/Icon';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeClonerRaw, CLONER_PROP } from '@core/scene/clonerExpand';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { useMirrorSiblings } from '@hooks/useMirrorSiblings';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from './useEngineEdit';
+import { jsonFieldCommands } from './layerFieldEdits';
 import {
   cloneCount,
   MAX_CLONES,
@@ -36,42 +39,58 @@ const FALLOFFS: ReadonlyArray<{ value: FalloffShape; label: string }> = [
   { value: 'radial', label: 'Radial' },
 ];
 
+const CLONER_PATH = 'layer/cloner';
+const EDIT_LABEL = 'Edit Cloner';
+
+/**
+ * The stored config including a disabled one, over the defaults — nested
+ * objects merge too, or a config saved before a field existed would arrive
+ * with `step`/`random`/`falloff` partially undefined (clonerExpand's
+ * `readNodeClonerRaw` rule, applied to the mirror's json value).
+ */
+function clonerConfigOf(raw: Partial<ClonerConfig> | undefined): ClonerConfig {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_CLONER };
+  const cfg = { ...DEFAULT_CLONER, ...raw };
+  cfg.step = { ...DEFAULT_CLONER.step, ...(cfg.step ?? {}) };
+  cfg.random = { ...DEFAULT_CLONER.random, ...(cfg.random ?? {}) };
+  cfg.falloff = { ...DEFAULT_CLONER.falloff, ...(cfg.falloff ?? {}) };
+  return cfg;
+}
+
 export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const cfg = readNodeClonerRaw(node);
+  const eng = useEngineEdit();
+  // B4: the layer header, its `layer/cloner` json field and its siblings (the
+  // path / field layer pickers) from the document mirror.
+  const layer = useMirrorLayer(nodeId);
+  const cfg = clonerConfigOf(useMirrorJson<Partial<ClonerConfig>>(nodeId, CLONER_PATH));
+  const siblings = useMirrorSiblings(nodeId);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [stepCollapsed, setStepCollapsed] = useState(false);
   const [randomCollapsed, setRandomCollapsed] = useState(false);
   const [falloffCollapsed, setFalloffCollapsed] = useState(false);
 
-  if (!node) return null;
+  if (!layer) return null;
 
   const off = !cfg.enabled;
 
-  const write = (patch: Partial<ClonerConfig>): void => {
-    // B3-legacy: engine gap — cloner config (fx key) is a structured value with no API property.
-    defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, { ...cfg, ...patch });
-    bumpScene();
+  // `layer/cloner` (json, fx.__cloner): the whole next config per write; a
+  // scrub is one gesture, a typed value / pick / checkbox one entry.
+  const write = (patch: Partial<ClonerConfig>, label = EDIT_LABEL): void => {
+    eng.send(label, jsonFieldCommands(nodeId, CLONER_PATH, { ...cfg, ...patch }));
   };
 
   const removeCloner = (): void => {
-    // B3-legacy: engine gap — cloner config (fx key) is a structured value with no API property.
-    defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, undefined);
-    bumpScene();
+    void edit('Remove Cloner', jsonFieldCommands(nodeId, CLONER_PATH, null));
   };
 
+  // AE's Reset restores the parameters, not the effect switch: `enabled` is kept.
   const resetCloner = (): void => {
-    // B3-legacy: engine gap — cloner config (fx key) is a structured value with no API property.
-    defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, DEFAULT_CLONER);
-    bumpScene();
+    void edit('Reset Cloner', jsonFieldCommands(nodeId, CLONER_PATH, { ...DEFAULT_CLONER, enabled: cfg.enabled }));
   };
+  const scrub = eng.scrub(EDIT_LABEL);
 
   const count = cloneCount({ ...cfg, enabled: true });
   const capped = count >= MAX_CLONES;
-
-  const siblings = (node.parent ? defaultSceneGraph.getChildren(node.parent) : [])
-    .filter((s) => s.id !== nodeId);
 
   return (
     <div className={panel.effectCardItem}>
@@ -91,7 +110,7 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
         <Checkbox
           checked={!off}
-          onChange={(e) => write({ enabled: e.target.checked })}
+          onChange={(ev) => write({ enabled: ev.target.checked }, ev.target.checked ? 'Enable Cloner' : 'Disable Cloner')}
           title={off ? 'Enable cloner' : 'Disable cloner'}
           style={{ width: 15, height: 15, flexShrink: 0 }}
         />
@@ -143,19 +162,19 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
           {cfg.mode === 'grid' ? (
             <>
-              <PropertyRow label="Columns" compact><ValueField value={cfg.countX} min={0} precision={0} onChange={(v) => write({ countX: v })} aria-label="Columns" /></PropertyRow>
-              <PropertyRow label="Rows" compact><ValueField value={cfg.countY} min={0} precision={0} onChange={(v) => write({ countY: v })} aria-label="Rows" /></PropertyRow>
-              <PropertyRow label="Cell X" compact><ValueField value={cfg.offsetX} precision={1} onChange={(v) => write({ offsetX: v })} aria-label="Cell width" /></PropertyRow>
-              <PropertyRow label="Cell Y" compact><ValueField value={cfg.offsetY} precision={1} onChange={(v) => write({ offsetY: v })} aria-label="Cell height" /></PropertyRow>
+              <PropertyRow label="Columns" compact><ValueField value={cfg.countX} min={0} precision={0} {...scrub} onChange={(v) => write({ countX: v })} aria-label="Columns" /></PropertyRow>
+              <PropertyRow label="Rows" compact><ValueField value={cfg.countY} min={0} precision={0} {...scrub} onChange={(v) => write({ countY: v })} aria-label="Rows" /></PropertyRow>
+              <PropertyRow label="Cell X" compact><ValueField value={cfg.offsetX} precision={1} {...scrub} onChange={(v) => write({ offsetX: v })} aria-label="Cell width" /></PropertyRow>
+              <PropertyRow label="Cell Y" compact><ValueField value={cfg.offsetY} precision={1} {...scrub} onChange={(v) => write({ offsetY: v })} aria-label="Cell height" /></PropertyRow>
             </>
           ) : (
-            <PropertyRow label="Count" compact><ValueField value={cfg.count} min={0} precision={0} onChange={(v) => write({ count: v })} aria-label="Clone count" /></PropertyRow>
+            <PropertyRow label="Count" compact><ValueField value={cfg.count} min={0} precision={0} {...scrub} onChange={(v) => write({ count: v })} aria-label="Clone count" /></PropertyRow>
           )}
 
           {cfg.mode === 'linear' && (
             <>
-              <PropertyRow label="Offset X" compact><ValueField value={cfg.offsetX} precision={1} onChange={(v) => write({ offsetX: v })} aria-label="Offset X" /></PropertyRow>
-              <PropertyRow label="Offset Y" compact><ValueField value={cfg.offsetY} precision={1} onChange={(v) => write({ offsetY: v })} aria-label="Offset Y" /></PropertyRow>
+              <PropertyRow label="Offset X" compact><ValueField value={cfg.offsetX} precision={1} {...scrub} onChange={(v) => write({ offsetX: v })} aria-label="Offset X" /></PropertyRow>
+              <PropertyRow label="Offset Y" compact><ValueField value={cfg.offsetY} precision={1} {...scrub} onChange={(v) => write({ offsetY: v })} aria-label="Offset Y" /></PropertyRow>
             </>
           )}
 
@@ -185,9 +204,9 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
           {cfg.mode === 'radial' && (
             <>
-              <PropertyRow label="Radius" compact><ValueField value={cfg.radius} precision={1} onChange={(v) => write({ radius: v })} aria-label="Radius" /></PropertyRow>
-              <PropertyRow label="Start" compact><ValueField value={cfg.startAngle} unit="°" precision={1} onChange={(v) => write({ startAngle: v })} aria-label="Start angle" /></PropertyRow>
-              <PropertyRow label="Arc" compact><ValueField value={cfg.arc} unit="°" precision={1} onChange={(v) => write({ arc: v })} aria-label="Arc" /></PropertyRow>
+              <PropertyRow label="Radius" compact><ValueField value={cfg.radius} precision={1} {...scrub} onChange={(v) => write({ radius: v })} aria-label="Radius" /></PropertyRow>
+              <PropertyRow label="Start" compact><ValueField value={cfg.startAngle} unit="°" precision={1} {...scrub} onChange={(v) => write({ startAngle: v })} aria-label="Start angle" /></PropertyRow>
+              <PropertyRow label="Arc" compact><ValueField value={cfg.arc} unit="°" precision={1} {...scrub} onChange={(v) => write({ arc: v })} aria-label="Arc" /></PropertyRow>
               <PropertyRow label="Face Out" compact>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
                   <Checkbox checked={cfg.alignToRadius} onChange={(e) => write({ alignToRadius: e.target.checked })} aria-label="Align to radius" />
@@ -208,12 +227,12 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             </button>
             {!stepCollapsed && (
               <div className={panel.paramGroupBody}>
-                <PropertyRow label="Position X" compact><ValueField value={cfg.step.x} precision={1} onChange={(v) => write({ step: { ...cfg.step, x: v } })} aria-label="Step position X" /></PropertyRow>
-                <PropertyRow label="Position Y" compact><ValueField value={cfg.step.y} precision={1} onChange={(v) => write({ step: { ...cfg.step, y: v } })} aria-label="Step position Y" /></PropertyRow>
-                <PropertyRow label="Rotation" compact><ValueField value={cfg.step.rotation} unit="°" precision={1} onChange={(v) => write({ step: { ...cfg.step, rotation: v } })} aria-label="Step rotation" /></PropertyRow>
-                <PropertyRow label="Scale" compact><ValueField value={cfg.step.scale} precision={2} onChange={(v) => write({ step: { ...cfg.step, scale: v } })} aria-label="Step scale" /></PropertyRow>
-                <PropertyRow label="Opacity" compact><ValueField value={cfg.step.opacity} unit="%" precision={0} onChange={(v) => write({ step: { ...cfg.step, opacity: v } })} aria-label="Step opacity" /></PropertyRow>
-                <PropertyRow label="Time (Cascade)" compact><ValueField value={cfg.step.time} unit="s" precision={2} onChange={(v) => write({ step: { ...cfg.step, time: v } })} aria-label="Step time (cascade)" /></PropertyRow>
+                <PropertyRow label="Position X" compact><ValueField value={cfg.step.x} precision={1} {...scrub} onChange={(v) => write({ step: { ...cfg.step, x: v } })} aria-label="Step position X" /></PropertyRow>
+                <PropertyRow label="Position Y" compact><ValueField value={cfg.step.y} precision={1} {...scrub} onChange={(v) => write({ step: { ...cfg.step, y: v } })} aria-label="Step position Y" /></PropertyRow>
+                <PropertyRow label="Rotation" compact><ValueField value={cfg.step.rotation} unit="°" precision={1} {...scrub} onChange={(v) => write({ step: { ...cfg.step, rotation: v } })} aria-label="Step rotation" /></PropertyRow>
+                <PropertyRow label="Scale" compact><ValueField value={cfg.step.scale} precision={2} {...scrub} onChange={(v) => write({ step: { ...cfg.step, scale: v } })} aria-label="Step scale" /></PropertyRow>
+                <PropertyRow label="Opacity" compact><ValueField value={cfg.step.opacity} unit="%" precision={0} {...scrub} onChange={(v) => write({ step: { ...cfg.step, opacity: v } })} aria-label="Step opacity" /></PropertyRow>
+                <PropertyRow label="Time (Cascade)" compact><ValueField value={cfg.step.time} unit="s" precision={2} {...scrub} onChange={(v) => write({ step: { ...cfg.step, time: v } })} aria-label="Step time (cascade)" /></PropertyRow>
               </div>
             )}
           </div>
@@ -230,10 +249,10 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             </button>
             {!randomCollapsed && (
               <div className={panel.paramGroupBody}>
-                <PropertyRow label="Seed" compact><ValueField value={cfg.random.seed} precision={0} onChange={(v) => write({ random: { ...cfg.random, seed: v } })} aria-label="Random seed" /></PropertyRow>
-                <PropertyRow label="Position" compact><ValueField value={cfg.random.position} min={0} precision={1} onChange={(v) => write({ random: { ...cfg.random, position: v } })} aria-label="Random position" /></PropertyRow>
-                <PropertyRow label="Rotation" compact><ValueField value={cfg.random.rotation} min={0} unit="°" precision={1} onChange={(v) => write({ random: { ...cfg.random, rotation: v } })} aria-label="Random rotation" /></PropertyRow>
-                <PropertyRow label="Scale" compact><ValueField value={cfg.random.scale} min={0} precision={2} onChange={(v) => write({ random: { ...cfg.random, scale: v } })} aria-label="Random scale" /></PropertyRow>
+                <PropertyRow label="Seed" compact><ValueField value={cfg.random.seed} precision={0} {...scrub} onChange={(v) => write({ random: { ...cfg.random, seed: v } })} aria-label="Random seed" /></PropertyRow>
+                <PropertyRow label="Position" compact><ValueField value={cfg.random.position} min={0} precision={1} {...scrub} onChange={(v) => write({ random: { ...cfg.random, position: v } })} aria-label="Random position" /></PropertyRow>
+                <PropertyRow label="Rotation" compact><ValueField value={cfg.random.rotation} min={0} unit="°" precision={1} {...scrub} onChange={(v) => write({ random: { ...cfg.random, rotation: v } })} aria-label="Random rotation" /></PropertyRow>
+                <PropertyRow label="Scale" compact><ValueField value={cfg.random.scale} min={0} precision={2} {...scrub} onChange={(v) => write({ random: { ...cfg.random, scale: v } })} aria-label="Random scale" /></PropertyRow>
               </div>
             )}
           </div>
@@ -287,13 +306,13 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                             {siblings.map((s) => <option key={s.id} value={s.id}>{s.name ?? s.id}</option>)}
                           </select>
                         </PropertyRow>
-                        <PropertyRow label="Radius" compact><ValueField value={cfg.falloff.radius} min={0} precision={1} onChange={(v) => write({ falloff: { ...cfg.falloff, radius: v } })} aria-label="Field radius" /></PropertyRow>
-                        <PropertyRow label="Push" compact><ValueField value={cfg.falloff.push} precision={1} onChange={(v) => write({ falloff: { ...cfg.falloff, push: v } })} aria-label="Field push" /></PropertyRow>
+                        <PropertyRow label="Radius" compact><ValueField value={cfg.falloff.radius} min={0} precision={1} {...scrub} onChange={(v) => write({ falloff: { ...cfg.falloff, radius: v } })} aria-label="Field radius" /></PropertyRow>
+                        <PropertyRow label="Push" compact><ValueField value={cfg.falloff.push} precision={1} {...scrub} onChange={(v) => write({ falloff: { ...cfg.falloff, push: v } })} aria-label="Field push" /></PropertyRow>
                       </>
                     ) : (
                       <>
-                        <PropertyRow label="Center" compact><ValueField value={cfg.falloff.position} min={0} max={1} precision={2} onChange={(v) => write({ falloff: { ...cfg.falloff, position: v } })} aria-label="Falloff center" /></PropertyRow>
-                        <PropertyRow label="Width" compact><ValueField value={cfg.falloff.width} min={0} max={1} precision={2} onChange={(v) => write({ falloff: { ...cfg.falloff, width: v } })} aria-label="Falloff width" /></PropertyRow>
+                        <PropertyRow label="Center" compact><ValueField value={cfg.falloff.position} min={0} max={1} precision={2} {...scrub} onChange={(v) => write({ falloff: { ...cfg.falloff, position: v } })} aria-label="Falloff center" /></PropertyRow>
+                        <PropertyRow label="Width" compact><ValueField value={cfg.falloff.width} min={0} max={1} precision={2} {...scrub} onChange={(v) => write({ falloff: { ...cfg.falloff, width: v } })} aria-label="Falloff width" /></PropertyRow>
                       </>
                     )}
                     <PropertyRow label="Invert" compact>

@@ -104,6 +104,19 @@ std::optional<Gpu> create_gpu(bool wantSharedTexture, bool highPerformance, std:
     features.push_back(wgpu::FeatureName::SharedFenceDXGISharedHandle);
     gpu.sharedTextureCapable = true;
   }
+  // D2w: the render graph (float32 working space, rendering.ts's float32 path)
+  // and E1's footage conversion (multi-planar NV12/P010 import, R16 planes) run
+  // on this device when the adapter offers them; every one is optional.
+  if (gpu.adapter.HasFeature(wgpu::FeatureName::Float32Filterable) &&
+      gpu.adapter.HasFeature(wgpu::FeatureName::Float32Blendable)) {
+    features.push_back(wgpu::FeatureName::Float32Filterable);
+    features.push_back(wgpu::FeatureName::Float32Blendable);
+    gpu.float32 = true;
+  }
+  for (const wgpu::FeatureName f : {wgpu::FeatureName::DawnMultiPlanarFormats, wgpu::FeatureName::MultiPlanarFormatP010,
+                                    wgpu::FeatureName::Unorm16TextureFormats}) {
+    if (gpu.adapter.HasFeature(f)) features.push_back(f);
+  }
 
   wgpu::DeviceDescriptor deviceDesc{};
   deviceDesc.requiredFeatureCount = features.size();

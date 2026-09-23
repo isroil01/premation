@@ -6,6 +6,7 @@
 
 #include "catalog_data.hpp"
 #include "fxstate.hpp"
+#include "jsmath.hpp"
 #include "scene.hpp"
 #include "time_conv.hpp"
 
@@ -265,6 +266,7 @@ api::Marker marker_from_data(const TMarker& m, api::MarkerOwner owner, double fp
   out.url = m.url;
   out.cue_point = m.cuePoint;
   out.protected_region = m.protectedRegion;
+  out.color = m.color.value_or("");
   return out;
 }
 
@@ -370,12 +372,43 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   return s;
 }
 
+api::Transition transition_info(const Document& d, std::string_view comp, const Json& rec) {
+  api::Transition t;
+  const auto str = [&](std::string_view k) { return rec.at(k).is_string() ? rec.at(k).str() : std::string(); };
+  t.id = str("id");
+  t.comp = std::string(comp);
+  t.left = str("leftNodeId");
+  t.right = str("rightNodeId");
+  const std::string kind = str("kind");
+  t.kind = kind == "dipToBlack" ? api::TransitionKind::dip_to_black
+           : kind == "dipToWhite" ? api::TransitionKind::dip_to_white
+           : kind == "wipe"       ? api::TransitionKind::wipe
+                                  : api::TransitionKind::cross_dissolve;
+  const std::string al = str("alignment");
+  t.alignment = al == "startAtCut" ? api::TransitionAlignment::start_at_cut
+                : al == "endAtCut" ? api::TransitionAlignment::end_at_cut
+                                   : api::TransitionAlignment::centred;
+  const Json& df = rec.at("durationFrames");
+  const double frames = df.is_number() && std::isfinite(df.num()) ? motion::js::round(df.num()) : 0;
+  t.duration = frames_to_flicks(frames, comp_fps(d, comp));
+  return t;
+}
+
+std::vector<api::Transition> transitions_of(const Document& d, std::string_view comp) {
+  std::vector<api::Transition> out;
+  const Json& list = d.transitions().at(comp);
+  if (!list.is_array()) return out;
+  for (const Json& rec : list.arr()) out.push_back(transition_info(d, comp, rec));
+  return out;
+}
+
 api::CompInfo comp_info(const Document& d, std::string_view comp) {
   api::CompInfo info;
   info.id = std::string(comp);
   info.settings = comp_settings(d, comp);
   info.layers = layer_ids_of_comp(d, comp);
   info.markers = comp_markers(d, comp);
+  info.transitions = transitions_of(d, comp);
   return info;
 }
 

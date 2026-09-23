@@ -30,18 +30,19 @@ import { PropertyRow, KeyframeLane } from '@components/PropertyRow';
 import { PickWhip } from '@components/PickWhip';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { whipExpression } from '@core/whip/whipTarget';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
 import { openContextMenu } from '@stores/contextMenuStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompFps } from '@hooks/useMirror';
+import { useActiveCompDurationSeconds } from './inspectorMirror';
 import { ExpressionEditor } from '@layout/Motion/ExpressionEditor';
 import { ModifierChips } from './ModifierChips';
 import { edit } from '@core/engine/uiEdits';
-import { expressionCommands, moveKeysCommands } from './inspectorEdits';
+import { moveKeysCommands } from './inspectorEdits';
 import {
   groupNavigatorState,
-  legacyExpressions,
+  linkExpressions,
   toggleAnimationGroupEach,
   toggleKeyframeGroup,
   useMultiPropertyField,
@@ -124,8 +125,8 @@ function MultiPropertyPairRowInner({
     access: s2?.access,
     enabled: s2 !== undefined,
   });
-  const fps = useCompositionStore((c) => c.fps) || 30;
-  const duration = useCompositionStore((c) => c.durationSeconds) || 0;
+  const fps = useActiveCompFps();
+  const duration = useActiveCompDurationSeconds();
 
   const slots: Slot[] = [];
   if (s0) slots.push({ spec: s0, field: f0 });
@@ -147,15 +148,13 @@ function MultiPropertyPairRowInner({
   const error = slots.map((s) => s.field.exprError).find((e) => e) ?? null;
 
   const onWhip = (target: { nodeId: string; prop?: string }): void => {
-    const name = defaultSceneGraph.getNode(target.nodeId)?.name;
+    const name = documentMirror().layer(target.nodeId)?.name;
     if (!name) return;
     // ONE undo step for the whole row. A drop on a layer links each member to
     // the same-named property there; a drop on a property links every member
     // to that one property.
     const list = memberProps.flatMap((p) => nodeIds.map((id) => ({ nodeId: id, prop: p, src: whipExpression(name, target.prop ?? p) })));
-    const cmds = expressionCommands(list.map((x) => ({ nodeId: x.nodeId, track: x.prop, source: x.src })));
-    if (cmds) void edit(`Link ${group}`, cmds);
-    else legacyExpressions(`Link ${group}`, list);
+    linkExpressions(`Link ${group}`, list);
     for (const s of slots) s.field.setExprOpen(true);
   };
 

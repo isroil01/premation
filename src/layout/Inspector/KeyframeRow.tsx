@@ -12,6 +12,11 @@
  * stopwatch (or Auto-Keyframe on) the edit lands as a keyframe at the playhead,
  * otherwise it writes the static prop — because a base-only write is invisible on
  * an animated property, the renderer having sampled the track first.
+ *
+ * B3z: all through the engine API — the camera / light numerics a layer has
+ * not stored yet are catalog properties too (latentPropSpecs.ts), so there is
+ * no pre-API fallback. A prop the engine does not address on this node (not a
+ * layer) gets `onStatic` only and no stopwatch.
  */
 
 import { ValueField } from '@components/ValueField';
@@ -19,8 +24,7 @@ import { AnimToggle } from './AnimToggle';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { allAddressable, scalarValueCommands, stopwatchCommands } from './inspectorEdits';
@@ -55,8 +59,8 @@ export function KeyframeRow({
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const animated = defaultAnimation.isAnimated(nodeId, prop);
-  // B3-legacy: display read (the value at the playhead) + the legacy key axis below; B4's mirror replaces it.
-  const layerT = compToKeyframeTime(nodeId, time);
+  // Display read (the value at the playhead); B4's mirror replaces it.
+  const layerT = keyAxisTimeForDisplay(nodeId, time, prop);
   const display = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
   // B3: through the engine API when it addresses this property on this layer.
   const onEngine = (): boolean => allAddressable([nodeId], [prop]);
@@ -67,16 +71,7 @@ export function KeyframeRow({
       e.send(`Set ${label}`, scalarValueCommands(prop, [{ nodeId, value: v }], { seconds: time, autoKeyframe }));
       return;
     }
-    if (animated || autoKeyframe) {
-      // B3-legacy: engine gap — a component prop the catalog does not list yet (camera orbit / POI / DOF before their first write).
-      runAnimEdit(
-        `Set ${prop}`,
-        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, v),
-        `set:${nodeId}:${prop}:${layerT}`,
-      );
-    } else {
-      onStatic(v);
-    }
+    onStatic(v);
   };
 
   const round = (v: number): number =>
@@ -92,13 +87,7 @@ export function KeyframeRow({
           animated={animated}
           values={() => [display]}
           onToggle={() => {
-            if (onEngine()) {
-              void edit(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
-              return;
-            }
-            // B3-legacy: engine gap — same (a prop outside the catalog; an animated one is always listed, so only "start" lands here).
-            if (animated) runAnimEdit(`Remove ${prop} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
-            else runAnimEdit(`Animate ${prop}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
+            if (onEngine()) void edit(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
           }}
         />
         <span className={styles.popoverLabel}>{label}</span>

@@ -52,7 +52,7 @@ struct BezierPath {
   inTangents: f64[] = 2;
   outTangents: f64[] = 3;
   closed: bool = 4;
-  /// Per-vertex feather (AE variable-width mask feather), optional.
+  /// Per-vertex feather (AE variable-width mask feather). Masks (B3z): a vertex's own feather is a point {segment: vertex, t: 0, radius: feather, tension: 0}; reads list one per vertex that has one. On a write an EMPTY list keeps each vertex's current feather (by index); a non-empty list is authoritative — an unlisted vertex, or one listed with radius < 0, has none. t ≠ 0 / tension ≠ 0 are `unsupported` (one feather per vertex).
   featherPoints: FeatherPoint[] = 5;
 }
 
@@ -184,7 +184,16 @@ enum SpatialInterp { legacy = 0; linear = 1; bezier = 2; continuous = 3; auto = 
 /// Cubic-bezier easing handles [x1, y1, x2, y2] for Easing.bezier (x in 0..1, y may overshoot).
 struct CubicBezier { x1: f64 = 1; y1: f64 = 2; x2: f64 = 3; y2: f64 = 4; }
 
-/// A keyframe as the engine stores it.
+/// One dimension's temporal interpolation of a vector / colour keyframe (After Effects' per-dimension
+/// temporal ease of a non-spatial property: Scale X eased apart from Scale Y). See ENGINE_API.md §3.3.
+struct KeyframeDim {
+  easing: Easing = 1;
+  bezier?: CubicBezier = 2;
+  continuous: bool = 3;
+}
+
+/// A keyframe as the engine stores it. A vector or colour property has ONE keyframe per time for all its
+/// dimensions (After Effects; ENGINE_API.md §3.3) — only a separated dimension has keys of its own.
 struct Keyframe {
   id: KeyframeId = 1;
   time: Time = 2;
@@ -199,6 +208,10 @@ struct Keyframe {
   spatialOut: f64[] = 10;
   /// AE keyframe colour label (0 = none).
   label: u32 = 11;
+  /// Per-dimension temporal interpolation, one entry per dimension, when the dimensions' easing / handles /
+  /// continuity differ; empty = every dimension uses `easing`, `bezier` and `continuous` above (which are
+  /// then the first dimension's).
+  dims: KeyframeDim[] = 12;
 }
 
 /// A property + layer pair: the address of every animatable or static value.

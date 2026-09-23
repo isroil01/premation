@@ -100,6 +100,12 @@ export interface ProjectManagerDeps {
   storage?: ProjectStorage;
   now?: () => number;
   newId?: () => string;
+  /**
+   * Editor state kept beside a project FILE (tabs, playhead, timeline zoom —
+   * never in the document, B4): remembered on save and close, recalled on open.
+   * The app passes core/project/editorView.ts.
+   */
+  editorView?: { remember(path: string | null): void; recall(path: string | null): void };
 }
 
 export class ProjectManager {
@@ -107,7 +113,7 @@ export class ProjectManager {
   private io: ProjectDocumentIO;
   private readonly storage: ProjectStorage;
   private readonly listeners = new Set<(s: ProjectState) => void>();
-  private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io' | 'storage'>> & Pick<ProjectManagerDeps, 'logger'>;
+  private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io' | 'storage' | 'editorView'>> & Pick<ProjectManagerDeps, 'logger' | 'editorView'>;
 
   constructor(deps: ProjectManagerDeps) {
     this.io = deps.io ?? emptyDocumentIO;
@@ -116,6 +122,7 @@ export class ProjectManager {
       files: deps.files,
       recent: deps.recent,
       logger: deps.logger,
+      editorView: deps.editorView,
       now: deps.now ?? (() => Date.now()),
       newId: deps.newId ?? (() => `proj_${Math.random().toString(36).slice(2, 10)}`),
     };
@@ -194,6 +201,7 @@ export class ProjectManager {
    * (portable `.motion` zip, relink). Does not touch the scene graph.
    */
   adopt(name: string, path: string | null): ProjectRef {
+    this.deps.editorView?.recall(path);
     const ref: ProjectRef = { id: this.deps.newId(), name, path };
     this.state = { current: ref };
     this.emit();
@@ -219,6 +227,9 @@ export class ProjectManager {
   private applyLoadedDoc(file: VersionedDocument, name: string, path: string | null): ProjectRef | null {
     try {
       this.io.restore(file);
+      // B4: tabs / playhead / timeline zoom are editor state kept beside the
+      // file on this machine, not in it (core/project/editorView.ts).
+      this.deps.editorView?.recall(path);
       const ref: ProjectRef = { id: this.deps.newId(), name, path };
       this.state = { current: ref };
       this.emit();
@@ -303,6 +314,7 @@ export class ProjectManager {
     try {
       const file = this.io.capture();
       await this.storage.save(path, file);
+      this.deps.editorView?.remember(path);
       const saved: ProjectRef = { ...ref, path };
       this.state = { current: saved };
       this.emit();
@@ -331,6 +343,7 @@ export class ProjectManager {
    */
   close(): void {
     const prev = this.state.current;
+    this.deps.editorView?.remember(prev?.path ?? null);
     try {
       if (this.io.unload) this.io.unload();
       else this.io.restore(this.io.createEmpty('Untitled'));

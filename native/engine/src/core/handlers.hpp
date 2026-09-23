@@ -10,3 +10,4 @@
 #include "handlers_misc.hpp"
 #include "handlers_optional.hpp"
 #include "handlers_properties.hpp"
+#include "handlers_strokes.hpp"

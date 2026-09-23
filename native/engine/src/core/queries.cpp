@@ -12,6 +12,7 @@
 #include "handlers_common.hpp"
 #include "handlers_layers.hpp"
 #include "readmodel.hpp"
+#include "rig.hpp"
 #include "scene.hpp"
 #include "strutil.hpp"
 #include "time_conv.hpp"
@@ -74,6 +75,7 @@ std::vector<GroupType> group_types() {
   for (const auto& m : registry().layerStyles.at("defaults").obj()) {
     out.push_back({"styles", "style:" + m.key, m.key, "styles"});
   }
+  for (const auto& t : rig_group_types()) out.push_back({t.parent, t.matchName, t.displayName, "rig"});
   for (const char* t : {"zigzag", "roundCorners", "pucker", "twist", "offset", "roughen", "trim", "repeater", "wiggleTransform"}) {
     out.push_back({"contents", std::string("pathop:") + t, t, "contents"});
   }

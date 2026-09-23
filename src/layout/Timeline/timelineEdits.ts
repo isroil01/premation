@@ -30,6 +30,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useAssetStore } from '@stores/assetStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isReplaceableLayer } from '@core/scene/replaceSourceDrop';
+import { isLayer } from '@core/engine/doc';
 
 // ── Reads (display facts a write needs) ──────────────────────────────
 
@@ -85,13 +86,13 @@ function sameClip(a: ClipData, b: ClipData): boolean {
 }
 
 /**
- * Whether the API can express this geometry. It cannot yet put an UNBOUNDED
- * source's in point before source frame 0 (`sourceIn < 0`: a shape or text
- * layer whose head was extended past where it began) — the engine's bar
- * validation refuses it, while the legacy clip math allows it.
+ * Whether the API can express this geometry: at least a frame long. An
+ * UNBOUNDED source's in point may sit before its source frame 0 (B3z: a shape
+ * or text layer whose head was extended past where it began — AE allows it);
+ * a footage bar cannot, and the `Clip` clamps never produce one.
  */
 function expressible(to: ClipData): boolean {
-  return to.sourceIn >= 0 && to.duration >= 1;
+  return to.duration >= 1;
 }
 
 /** One `setLayerTiming` for a set of (node, new geometry) — or null when nothing changes. */
@@ -147,10 +148,7 @@ export async function moveBars(
     changes.push({ nodeId: bar.nodeId, from: bar.clip, to: { ...bar.clip, start } });
   }
   const name = changes.length === 1 && moves.length === 1 ? 'Move Layer' : label;
-  if (!(await sendGeometry(name, changes))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().setClipStarts(moves.map((m) => ({ layerId: m.clipId, startSeconds: m.start })), name);
-  }
+  await sendGeometry(name, changes);
 }
 
 /**
@@ -172,10 +170,7 @@ export async function trimBar(
   if (edge === 'start') trial.trimStart(frame);
   else trial.trimEnd(frame);
   const to = trial.toJSON();
-  if (!expressible(to) || !expressible(bar.clip)) {
-    legacyTrim(clipId, edge, seconds, opts.ripple === true);
-    return false;
-  }
+  if (!expressible(to) || !expressible(bar.clip)) return false;
   if (!opts.ripple) {
     return sendGeometry('Trim Layer', [{ nodeId: bar.nodeId, from: bar.clip, to }]);
   }
@@ -192,14 +187,6 @@ export async function trimBar(
   return true;
 }
 
-/** B3-legacy: engine gap — the trim for a bar the API cannot express (see `expressible`). */
-function legacyTrim(clipId: string, edge: 'start' | 'end', seconds: number, ripple: boolean): void {
-  const c = getTimelineController();
-  if (ripple && edge === 'end') c.rippleTrimClipEnd(clipId, seconds);
-  else if (ripple) c.rippleTrimClipStart(clipId, seconds);
-  else c.trimClipTo(clipId, edge, seconds);
-}
-
 /** Slip: the source under a fixed bar, to `sourceInSec` (clamped like `Clip.slip`). */
 export async function slipBar(clipId: string, sourceInSec: number): Promise<void> {
   const bar = barOf(clipId);
@@ -207,10 +194,7 @@ export async function slipBar(clipId: string, sourceInSec: number): Promise<void
   const rate = fps();
   const trial = Clip.fromJSON(bar.clip);
   trial.slip(Math.round(sourceInSec * rate) - bar.clip.sourceIn);
-  if (!(await sendGeometry('Slip Layer', [{ nodeId: bar.nodeId, from: bar.clip, to: trial.toJSON() }]))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().slipClip(clipId, sourceInSec - bar.clip.sourceIn / rate);
-  }
+  await sendGeometry('Slip Layer', [{ nodeId: bar.nodeId, from: bar.clip, to: trial.toJSON() }]);
 }
 
 /**
@@ -262,10 +246,7 @@ export async function slideBar(clipId: string, startSec: number): Promise<void> 
     n.trimStart(n.start + d, minDuration);
     changes.push({ nodeId: next.sourceId, from: next.clip.toJSON(), to: n.toJSON() });
   }
-  if (!(await sendGeometry('Slide Layer', changes))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().slideClip(clipId, startSec - bar.clip.start / rate);
-  }
+  await sendGeometry('Slide Layer', changes);
 }
 
 /**
@@ -281,14 +262,10 @@ export async function rollBars(leftClipId: string, rightClipId: string, deltaSec
   const r = Clip.fromJSON(right.clip);
   const applied = rollClips(l, r, Math.round(deltaSeconds * fps()));
   if (applied === 0) return;
-  const ok = await sendGeometry('Roll Edit', [
+  await sendGeometry('Roll Edit', [
     { nodeId: left.nodeId, from: left.clip, to: l.toJSON() },
     { nodeId: right.nodeId, from: right.clip, to: r.toJSON() },
   ]);
-  if (!ok) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().rollEditSeconds(left.nodeId, right.nodeId, deltaSeconds);
-  }
 }
 
 // ── Split / ripple delete ─────────────────────────────────────────────
@@ -328,6 +305,30 @@ export async function splitLayersAt(nodeIds: readonly string[], seconds: number,
 export function splitSelectedAtPlayhead(nodeIds: readonly string[]): Promise<string[]> {
   const c = getTimelineController();
   return splitLayersAt(nodeIds, Math.round(c.timeline.currentFrame) / fps(), { selectRight: true });
+}
+
+/**
+ * The clip menu's Ripple Trim In / Out to Playhead. A composition has ONE
+ * track, so "later clips on the clip's track" is the comp's later layers —
+ * exactly `trimLayers{ripple}`'s set (B3z; the legacy entries were the same
+ * walk through the timeline controller).
+ */
+export function rippleTrimToPlayhead(clipId: string, edge: 'start' | 'end'): Promise<boolean> {
+  return trimBar(clipId, edge, Math.round(getTimelineController().timeline.currentFrame) / fps(), { ripple: true });
+}
+
+/** Ripple Insert Gap at the playhead: every layer starting at/after it moves right (`insertGap`). */
+export async function rippleInsertGapAtPlayhead(clipId: string, seconds = 1): Promise<void> {
+  const bar = barOf(clipId);
+  if (!bar) return;
+  const rate = fps();
+  const at = Math.round(getTimelineController().timeline.currentFrame);
+  const d = Math.max(1, Math.round(seconds * rate));
+  const c = getTimelineController();
+  const layer = c.timeline.getLayer(clipId);
+  // Nothing later on the track: nothing to push (the legacy edit recorded nothing either).
+  if (!layer || !c.timeline.getTrack(layer.trackId)?.layers.some((l) => l.start >= at)) return;
+  await edit('Ripple Insert Gap', { type: 'insertGap', comp: activeCompId(), time: framesToFlicks(at, rate), duration: framesToFlicks(d, rate) });
 }
 
 /** Ripple-delete layers (the gap closes). */
@@ -371,10 +372,7 @@ export async function trimSelectedStartToPlayhead(nodeIds: readonly string[]): P
     c.trimStart(f);
     return c.toJSON();
   });
-  if (!(await sendGeometry('Trim Layer', changes))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().trimSelectedStartToPlayhead(nodeIds);
-  }
+  await sendGeometry('Trim Layer', changes);
 }
 
 /** Alt+] — trim the out points of the selected layers to the playhead. */
@@ -386,20 +384,14 @@ export async function trimSelectedEndToPlayhead(nodeIds: readonly string[]): Pro
     c.trimEnd(f);
     return c.toJSON();
   });
-  if (!(await sendGeometry('Trim Layer', changes))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().trimSelectedEndToPlayhead(nodeIds);
-  }
+  await sendGeometry('Trim Layer', changes);
 }
 
 /** `[` — move the selected layers so their in points sit on the playhead. */
 export async function moveSelectedStartToPlayhead(nodeIds: readonly string[]): Promise<void> {
   const f = Math.max(0, playheadFrame());
   const changes = perNode(barsOf(nodeIds), (b) => ({ ...b.clip, start: f }));
-  if (!(await sendGeometry('Move Layer', changes))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().moveSelectedStartToPlayhead(nodeIds);
-  }
+  await sendGeometry('Move Layer', changes);
 }
 
 /** Floor for a move that may hang off the front of the comp (`allowNegative`). */
@@ -411,10 +403,7 @@ function negativeFloor(b: ClipData): number {
 export async function moveSelectedEndToPlayhead(nodeIds: readonly string[]): Promise<void> {
   const f = playheadFrame();
   const changes = perNode(barsOf(nodeIds), (b) => ({ ...b.clip, start: Math.max(negativeFloor(b.clip), f - b.clip.duration) }));
-  if (!(await sendGeometry('Move Layer Out Point', changes))) {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    getTimelineController().moveSelectedEndToPlayhead(nodeIds);
-  }
+  await sendGeometry('Move Layer Out Point', changes);
 }
 
 /**
@@ -430,11 +419,40 @@ export function nudgeSelectedLayers(nodeIds: readonly string[], deltaFrames: num
     return start === b.clip.start ? null : { ...b.clip, start };
   });
   if (changes.length === 0) return false;
-  void sendGeometry(changes.length > 1 ? 'Nudge Layers' : 'Nudge Layer', changes).then((ok) => {
-    // B3-legacy: engine gap — a bar whose source starts before frame 0 (see `expressible`).
-    if (!ok) getTimelineController().nudgeSelectedLayers(nodeIds, delta);
-  });
+  void sendGeometry(changes.length > 1 ? 'Nudge Layers' : 'Nudge Layer', changes);
   return true;
+}
+
+// ── Layer ▸ Time (B3z) ────────────────────────────────────────────────
+
+/**
+ * AE's Time Stretch (the dialog, the clip menu's prompt): `timeStretchLayers`
+ * — footage changes rate with the bar scaled about the Hold in Place frame, any
+ * other layer bakes bar + keys + layer markers (negative = reversed). One entry.
+ */
+export async function timeStretchEdit(
+  ids: readonly string[],
+  percent: number,
+  hold: 'in' | 'current' | 'out',
+  seconds: number = getTimelineController().currentSeconds,
+): Promise<boolean> {
+  const layers = [...new Set(ids)].filter((id) => isLayer(id));
+  if (layers.length === 0 || !Number.isFinite(percent) || percent === 0) return false;
+  const res = await edit('Time Stretch', {
+    type: 'timeStretchLayers',
+    layers,
+    stretch: percent / 100,
+    hold: hold === 'in' ? 'inPoint' : hold === 'out' ? 'outPoint' : 'currentFrame',
+    time: compTime(seconds),
+  });
+  return res.ok;
+}
+
+/** Unfreeze Frame: the frozen layers play their source again (`unfreezeLayers`). */
+export async function unfreezeEdit(ids: readonly string[]): Promise<void> {
+  const layers = [...new Set(ids)].filter((id) => isLayer(id));
+  if (layers.length === 0) return;
+  await edit('Unfreeze Frame', { type: 'unfreezeLayers', layers });
 }
 
 // ── Replace source (Alt-drop an asset on a lane) ──────────────────────
@@ -471,6 +489,15 @@ export async function setWorkArea(startSeconds: number, endSeconds: number): Pro
   const endF = Math.min(c.timeline.duration, Math.round(endSeconds * rate));
   if (endF <= startF) return;
   await sendWorkArea(startF, endF);
+}
+
+/**
+ * Shift+B — clear the work area: it covers the whole composition again and
+ * follows its duration (`clearWorkArea`, B3z).
+ */
+export async function clearWorkArea(): Promise<void> {
+  if (!getTimelineController().timeline.getRanges().workArea) return;
+  await edit('Clear Work Area', { type: 'clearWorkArea', comp: activeCompId() });
 }
 
 async function sendWorkArea(startF: number, endF: number): Promise<void> {
@@ -529,7 +556,7 @@ export interface MarkerEditPatch {
  * The engine patch for a marker edit, or null when nothing changes. Times are
  * comp seconds in; a LAYER marker is stored layer-relative (API: layer time),
  * so its time goes through `toLayerTime`, the inverse of what the lanes draw.
- * Colour is not part of it — see `markerPatchNeedsLegacy`.
+ * The colour is the stored swatch token (Marker/patch `color`, B3z).
  */
 export function markerPatch(id: string, patch: MarkerEditPatch): MarkerPatch | null {
   const c = getTimelineController();
@@ -540,6 +567,8 @@ export function markerPatch(id: string, patch: MarkerEditPatch): MarkerPatch | n
   let changed = false;
   if (patch.label !== undefined && patch.label !== m.name) { out.name = patch.label; changed = true; }
   if (patch.comment !== undefined && patch.comment !== m.comment) { out.comment = patch.comment; changed = true; }
+  // B3z: the colour is stored as given (a swatch token), '' = none.
+  if (patch.color !== undefined && (m.color ?? null) !== patch.color) { out.color = patch.color ?? ''; changed = true; }
   if (patch.duration !== undefined) {
     const d = Math.max(0, Math.round(patch.duration * rate));
     if (d !== m.duration) { out.duration = framesToFlicks(d, rate); changed = true; }
@@ -553,18 +582,7 @@ export function markerPatch(id: string, patch: MarkerEditPatch): MarkerPatch | n
   return changed ? out : null;
 }
 
-/**
- * A marker's colour is a timeline swatch TOKEN (MARKER_COLORS); the API's
- * marker `label` is an index into the LAYER label palette, which has none of
- * them. A colour change therefore cannot go through the engine yet.
- */
-export function markerPatchNeedsLegacy(id: string, patch: MarkerEditPatch): boolean {
-  if (patch.color === undefined) return false;
-  const m = getTimelineController().timeline.getMarker(id);
-  return !!m && (m.color ?? null) !== patch.color;
-}
-
-/** Engine half of a marker edit (no colour). Label: Move Marker for a pure move. */
+/** A marker edit — one entry. Label: Move Marker for a pure move. */
 export async function editMarker(id: string, patch: MarkerEditPatch): Promise<void> {
   const p = markerPatch(id, patch);
   if (!p) return;

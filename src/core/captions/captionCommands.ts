@@ -83,10 +83,9 @@ async function importCaptions(): Promise<void> {
   // Replacing, not adding. A second import over an unremoved first is forty
   // layers of doubled text, which reads as a rendering bug rather than as the
   // user's own second import.
-  const existing = captionNodes().length;
-  if (existing > 0) removeCaptionLayers();
-
-  const result = insertCaptionLayers(cues);
+  // (insertCaptionLayers replaces them: one entry for the delete + the paste.)
+  const result = await insertCaptionLayers(cues);
+  const existing = result.removed;
   const skipped = result.skipped > 0 ? `, ${result.skipped} overlapping cue(s) dropped` : '';
   const replaced = existing > 0 ? ` (replaced ${existing})` : '';
   notify(`Added ${result.nodeIds.length} caption layer(s) from ${picked.name}${replaced}${skipped}`);
@@ -105,9 +104,8 @@ async function generateCaptions(): Promise<void> {
 
   try {
     const cues = await transcribeComposition({ startSec, endSec, rootId: activeCompRootId() });
-    const existing = captionNodes().length;
-    if (existing > 0) removeCaptionLayers();
-    const result = insertCaptionLayers(cues);
+    // Replaces the existing captions (one entry).
+    const result = await insertCaptionLayers(cues);
     useUIStore.getState().finishJob('transcribe', {
       status: 'done',
       message: `Generated ${result.nodeIds.length} caption layer(s)`,
@@ -134,8 +132,8 @@ function exportCaptions(format: 'srt' | 'vtt'): void {
   notify(`Exported ${cues.length} caption(s)`);
 }
 
-function clearCaptions(): void {
-  const removed = removeCaptionLayers();
+async function clearCaptions(): Promise<void> {
+  const removed = await removeCaptionLayers();
   notify(removed === 0 ? 'There were no caption layers to remove.' : `Removed ${removed} caption layer(s)`, removed === 0 ? 'info' : 'success');
 }
 

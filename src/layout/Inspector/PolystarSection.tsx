@@ -6,7 +6,8 @@
  * keyframe time (`compToKeyframeTime`), an animated row keyframes through
  * `runAnimEdit`, and a static edit is one undo entry through
  * `runDocumentEdit`. The TYPE is discrete (a dropdown, no stopwatch) —
- * interpolating polygon → star has no meaning.
+ * interpolating polygon → star has no meaning; it is the static field
+ * `contents/polystar/type` (shapeFieldSpecs.ts).
  */
 
 import { Icon } from '@components/Icon';
@@ -15,14 +16,14 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { runDocumentEdit } from '@core/commands/documentEdit';
+import { edit } from '@core/engine/uiEdits';
+import { values } from '@core/engine/propRefs';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import {
   getNodePolystar,
   polystarParamSpecs,
   polystarPropPath,
   readNodePolystar,
-  updateNodePolystar,
   type PolystarParam,
   type PolystarType,
 } from '@core/scene/polystar';
@@ -83,9 +84,11 @@ export function PolystarSection({ nodeId }: { nodeId: string }): JSX.Element | n
     id: t.id,
     label: t.label,
     icon: t.id === ps.starType ? 'check' : undefined,
-    // B3-legacy: engine gap — the Polystar TYPE (polygon / star, an enum) is not a catalog property of `contents/polystar`.
-    onSelect: () =>
-      runDocumentEdit(`Set Polystar Type`, () => updateNodePolystar(nodeId, { starType: t.id })),
+    onSelect: () => {
+      void edit('Set Polystar Type', {
+        type: 'setProperty', prop: { layer: nodeId, path: 'contents/polystar/type' }, value: values.choice(t.id),
+      });
+    },
   }));
 
   return (

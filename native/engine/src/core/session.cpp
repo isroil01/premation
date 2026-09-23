@@ -957,6 +957,16 @@ void Session::start_playback(Clock::time_point now, std::optional<api::Time> fro
   lastU_ = playBaseU_;
   clockDropped_ = 0;
   lastStats_ = now;
+  if (mediaClock_ != nullptr) {  // E2: the audio clock starts with the transport
+    sync_audio();
+    const double fd = doc::flicks_to_seconds(frame_dur());
+    const MediaClock::Loop lp = loop_ == api::LoopMode::once        ? MediaClock::Loop::once
+                                : loop_ == api::LoopMode::ping_pong ? MediaClock::Loop::pingPong
+                                                                    : MediaClock::Loop::loop;
+    mediaClock_->play(doc::flicks_to_seconds(time_), rate_, lp, static_cast<double>(r.first) * fd,
+                      static_cast<double>(r.last + 1) * fd);
+    mediaPaced_ = false;
+  }
   emit_transport();
   emit_playhead();
   submit_frame(0);
@@ -969,12 +979,23 @@ void Session::rebase_playback(Clock::time_point now) {
   playBaseU_ = frame_ - r.first;
   lastK_ = 0;
   lastU_ = playBaseU_;
+  if (mediaClock_ != nullptr) {  // a seek while playing restarts the audio clock there
+    const double fd = doc::flicks_to_seconds(frame_dur());
+    const MediaClock::Loop lp = loop_ == api::LoopMode::once        ? MediaClock::Loop::once
+                                : loop_ == api::LoopMode::ping_pong ? MediaClock::Loop::pingPong
+                                                                    : MediaClock::Loop::loop;
+    mediaClock_->play(doc::flicks_to_seconds(time_), rate_, lp, static_cast<double>(r.first) * fd,
+                      static_cast<double>(r.last + 1) * fd);
+    mediaPaced_ = false;
+  }
 }
 
 void Session::stop_playback() {
   if (!playing_) return;
   playing_ = false;
   transportState_ = api::TransportState::stopped;
+  if (mediaClock_ != nullptr) mediaClock_->pause();
+  mediaPaced_ = false;
 }
 
 std::optional<Clock::time_point> Session::next_deadline() const {
@@ -983,6 +1004,15 @@ std::optional<Clock::time_point> Session::next_deadline() const {
   if (!c) return std::nullopt;
   const double fps = doc::comp_fps(doc_, *c) * std::abs(rate_);
   if (fps <= 0) return std::nullopt;
+  if (mediaPaced_) {
+    // E2: predict when the audio clock reaches the next frame from its last
+    // reading; never sooner than 1 ms after it (the device clock advances in
+    // buffer steps — polling faster would spin).
+    const double compFps = doc::comp_fps(doc_, *c);
+    const double ahead = (static_cast<double>(lastK_ + 1) / compFps - mediaElapsed_) / std::abs(rate_);
+    const auto wait = std::chrono::duration<double>(std::max(ahead, 0.001));
+    return mediaReadAt_ + std::chrono::duration_cast<Clock::duration>(wait);
+  }
   const auto step = std::chrono::duration<double>(static_cast<double>(lastK_ + 1) / fps);
   return playBase_ + std::chrono::duration_cast<Clock::duration>(step);
 }
@@ -999,8 +1029,23 @@ void Session::tick(Clock::time_point now) {
   // Wall time only PACES the clock (which frame is due); what a frame shows is
   // a pure function of its frame index. Late → frames are skipped, never
   // stretched (AE: video drops frames rather than drifting).
-  const double elapsed = std::chrono::duration<double>(now - playBase_).count();
-  const auto k = static_cast<std::int64_t>(std::floor(elapsed * fps + 1e-9));
+  //
+  // E2 (audio/transport_clock.hpp): while the document's audio plays, the
+  // AUDIO clock paces — frames follow the samples the device consumed, so
+  // picture and sound never drift. Until the clock locks, the wall clock does.
+  if (mediaClock_ != nullptr && revision_ != audioRevision_) sync_audio();
+  const std::optional<double> media = mediaClock_ != nullptr ? mediaClock_->media_elapsed(now) : std::nullopt;
+  std::int64_t k = 0;
+  if (media) {
+    mediaPaced_ = true;
+    mediaElapsed_ = *media;
+    mediaReadAt_ = now;
+    k = static_cast<std::int64_t>(std::floor(*media * doc::comp_fps(doc_, *c) + 1e-9));
+  } else {
+    mediaPaced_ = false;
+    const double elapsed = std::chrono::duration<double>(now - playBase_).count();
+    k = static_cast<std::int64_t>(std::floor(elapsed * fps + 1e-9));
+  }
   if (k <= lastK_) {
     if (now - lastStats_ >= std::chrono::seconds(1)) emit_stats(now);
     return;
@@ -1103,16 +1148,43 @@ void Session::submit_frame(std::uint32_t clockDropped) {
   const auto c = active_comp();
   if (!c) return;
   RenderJob job;
+  if (frameBuilder_ != nullptr) {
+    // D2w: the engine's own scene builder (scene/snapshot_build.cpp) — the
+    // document through the render graph. Per-layer failures and features
+    // outside the port come back as layerErrors, never as a blank frame.
+    std::vector<api::LayerError> errors;
+    job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, *c, time_, viewport_, playing_, errors);
+    announce_layer_errors(*c, std::move(errors));
+  }
   // The scene's quad vector changes hands (core → render thread) once per
   // frame: one small allocation per frame, deliberately, so the two threads
   // never share a buffer.
-  doc::build_frame_scene(pctx(), *c, time_, job.scene);
+  if (!job.built) doc::build_frame_scene(pctx(), *c, time_, job.scene);
   job.viewport = viewport_.viewport;
   job.frame = frame_;
   job.time = time_;
   job.revision = revision_;
   job.clockDropped = clockDropped;
   sink_.submit(std::move(job));
+}
+
+void Session::announce_layer_errors(const std::string& comp, std::vector<api::LayerError> errors) {
+  if (comp == layerErrorsComp_ && errors == layerErrors_) return;  // announce changes only
+  layerErrorsComp_ = comp;
+  layerErrors_ = errors;
+  if (phase_ != Phase::open) return;
+  std::vector<api::Event> ev;
+  ev.push_back(make_event(api::LayerErrorsEvent{comp, std::move(errors)}));
+  send_events(revision_, revision_, std::move(ev), std::nullopt, api::Origin::engine);
+}
+
+void Session::sync_audio() {
+  if (mediaClock_ == nullptr) return;
+  const std::string comp = active_comp().value_or("");
+  if (revision_ == audioRevision_ && comp == audioComp_) return;
+  audioRevision_ = revision_;
+  audioComp_ = comp;
+  mediaClock_->set_document(doc_, view_, exprEnv_, exprCache_, comp);
 }
 
 // ── seq peek for undecodable requests ──────────────────────────────────────

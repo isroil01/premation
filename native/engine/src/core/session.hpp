@@ -35,6 +35,7 @@
 #include "history.hpp"
 #include "model.hpp"
 #include "premation/protocol/frame_channel.hpp"
+#include "scene/session_hooks.hpp"
 #include "timeline.hpp"
 
 namespace premation {
@@ -100,6 +101,13 @@ class Session {
 
   /// Say goodbye (engine shutting down) and close.
   void close(api::GoodbyeReason reason, std::string message);
+
+  /// D2w: build viewport frames from the document with the engine's scene
+  /// builder (render graph) instead of C2's quad scene. Null = C2's scene.
+  void set_frame_builder(FrameBuilder* builder) noexcept { frameBuilder_ = builder; }
+  /// E2: the audio master clock + the document's sound (audio/transport_clock.hpp's
+  /// seam). Null = the wall clock paces playback, no sound.
+  void set_media_clock(MediaClock* clock) noexcept { mediaClock_ = clock; }
 
  private:
   enum class Phase : std::uint8_t { awaiting_hello, open, closed };
@@ -232,6 +240,19 @@ class Session {
   ViewportConfig viewport_;
   double resolution_ = 1.0;
   bool renderDirty_ = false;
+
+  // D2w / E2 hooks (session_hooks.hpp) and their bookkeeping.
+  FrameBuilder* frameBuilder_ = nullptr;
+  MediaClock* mediaClock_ = nullptr;
+  std::vector<api::LayerError> layerErrors_;   // the set last announced (layerErrors event)
+  std::string layerErrorsComp_;
+  api::Revision audioRevision_ = ~api::Revision{0};  // document revision the audio program was built from
+  std::string audioComp_;
+  bool mediaPaced_ = false;           // the last tick was paced by the audio clock
+  double mediaElapsed_ = 0;           // …and read this many media seconds
+  Clock::time_point mediaReadAt_{};   // …at this time
+  void sync_audio();
+  void announce_layer_errors(const std::string& comp, std::vector<api::LayerError> errors);
 };
 
 /// The seq of a Request inside an EngineMessage that failed to decode (so

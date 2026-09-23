@@ -149,6 +149,15 @@ void RenderThread::run(std::promise<std::string>& ready) {
       ready.set_value("compositor pipelines failed to build");
       return;
     }
+    if (options_.makeDrawer) {
+      // D2w: the render graph over the engine's own document. A drawer that
+      // cannot start leaves C2's quad compositor in charge (logged, not fatal).
+      std::string error;
+      drawer_ = options_.makeDrawer(*gpu_, error);
+      if (!drawer_) {
+        PREMATION_LOG(warn, "scene_drawer_failed").kv("error", error);
+      }
+    }
     const std::lock_guard<std::mutex> lock(m_);
     adapter_ = gpu_->adapterName;
     backend_ = gpu_->backend;
@@ -206,6 +215,7 @@ void RenderThread::run(std::promise<std::string>& ready) {
   if (gpu_) wait_idle(*gpu_);
   slots_.reset();
   retired_.clear();
+  drawer_.reset();
   compositor_.reset();
   gpu_.reset();
 }
@@ -289,10 +299,21 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
     return;
   }
 #endif
-  wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
-  compositor_->encode(enc, job.scene, set.views[slot], set.width, set.height, config.resolution);
-  const wgpu::CommandBuffer cb = enc.Finish();
-  gpu_->queue.Submit(1, &cb);
+  bool drawn = false;
+  if (job.built && drawer_) {
+    std::string error;
+    drawn = drawer_->draw(*job.built, set.views[slot], set.width, set.height, error);
+    if (!drawn) {
+      PREMATION_LOG(error, "scene_draw_failed").kv("error", error).kv("frame", job.frame);
+    }
+  }
+  if (!drawn) {
+    // C2's quads (a built frame that failed to draw has none: the slot clears to black).
+    wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
+    compositor_->encode(enc, job.scene, set.views[slot], set.width, set.height, config.resolution);
+    const wgpu::CommandBuffer cb = enc.Finish();
+    gpu_->queue.Submit(1, &cb);
+  }
 #ifdef _WIN32
   if (shared != nullptr) (void)set.pool->end_access(*shared);
 #endif

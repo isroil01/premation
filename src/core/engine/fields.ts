@@ -52,13 +52,31 @@ import {
 } from '@core/text/textFields';
 import { readTextPathConfig, setTextPath, updateTextPath } from '@core/text/textPath';
 import { readNodeMask } from '@core/effects/mask';
-import { parseColorChannels, channelsToColor } from '@core/effects/effects';
+import { parseColorChannels, channelsToColor, getNodeEffects, writeNodeEffects } from '@core/effects/effects';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { is3DEnabled } from '@core/scene/threeD';
 import { fail } from './errors';
+import { hasStrokeHost, readStrokeStack, writeStrokeStack } from './strokeStack';
+import { POI_PATH, readPointOfInterest, writePointOfInterest } from './pointOfInterest';
 import type { PropBinding } from './props';
+import { LAYER_FIELDS, type LayerFieldSpec, type LayerFieldStore } from './layerFieldSpecs';
+import { EFFECT_FIELDS, STYLE_FIELDS, type EffectFieldSpec, type StyleFieldSpec } from './effectFieldSpecs';
+import { PATHOP_FIELDS, POLYSTAR_FIELDS } from './shapeFieldSpecs';
+import { readPathOps, updatePathOp, type PathOp } from '@core/scene/pathOps';
+import { readNodePolystar, updateNodePolystar, type Polystar } from '@core/scene/polystar';
+import { readPluginField, writePluginField } from './pluginProps';
+import { getNodeLayerStyles, setLayerStyles, type LayerStyles } from '@core/effects/layerStyles';
 
-export type FieldOwner = 'text' | 'animator' | 'selector' | 'textPath' | 'styleRuns' | 'fillPaint' | 'fills';
+/**
+ * `layer`: a LAYER field (B3z, layerFieldSpecs.ts) — `key` is its API path.
+ */
+export type FieldOwner = 'text' | 'animator' | 'selector' | 'textPath' | 'styleRuns' | 'fillPaint' | 'fills' | 'strokes' | 'poi' | 'layer' | 'effect' | 'style'
+  /** B3z (shapeFieldSpecs.ts): a path operator's field (`groupId` = the operator id) / the Polystar's. */
+  | 'pathOp' | 'polystar'
+  /** B3z (pluginProps.ts): a plugin's non-numeric stored value (`groupId` = the component TYPE, `key` its prop). */
+  | 'plugin';
 
 export interface FieldRef {
   owner: FieldOwner;
@@ -66,6 +84,8 @@ export interface FieldRef {
   key: string;
   animatorId?: string;
   selectorId?: string;
+  /** `effect`: the effect id; `style`: the style key (effectFieldSpecs.ts). The C++ port keeps it in `animatorId`. */
+  groupId?: string;
 }
 
 const HEX = /^#?[0-9a-fA-F]{3,8}$/;
@@ -76,7 +96,27 @@ export function fieldSpec(f: FieldRef): TextFieldSpec | undefined {
   if (f.owner === 'text') return TEXT_FIELDS.find((s) => s.key === f.key);
   if (f.owner === 'animator') return ANIMATOR_FIELDS.find((s) => s.key === f.key) ?? ANIMATOR_OPTIONAL_FIELDS.find((s) => s.key === f.key);
   if (f.owner === 'selector') return SELECTOR_FIELDS.find((s) => s.key === f.key);
+  if (f.owner === 'layer') return layerFieldSpec(f.key) as TextFieldSpec | undefined;
+  if (f.owner === 'effect') return EFFECT_FIELDS.find((s) => s.key === f.key) as TextFieldSpec | undefined;
+  if (f.owner === 'style') return STYLE_FIELDS.find((s) => s.style === f.groupId && s.key === f.key) as TextFieldSpec | undefined;
+  if (f.owner === 'pathOp') return PATHOP_FIELDS.find((s) => s.key === f.key) as TextFieldSpec | undefined;
+  if (f.owner === 'polystar') return POLYSTAR_FIELDS.find((s) => s.key === f.key) as TextFieldSpec | undefined;
   return undefined;
+}
+
+/** `effects/<id>/<spec.path>` — an applied effect's field (B3z, effectFieldSpecs.ts). */
+export function effectFieldBinding(effectId: string, spec: EffectFieldSpec): PropBinding {
+  return fieldBinding(`effects/${effectId}/${spec.path}`, spec as TextFieldSpec, { owner: 'effect', key: spec.key, groupId: effectId });
+}
+
+/** `styles/<style>/<key>` — a layer-style switch (B3z, effectFieldSpecs.ts). */
+export function styleFieldBinding(spec: StyleFieldSpec): PropBinding {
+  return fieldBinding(`styles/${spec.style}/${spec.key}`, spec as TextFieldSpec, { owner: 'style', key: spec.key, groupId: spec.style });
+}
+
+/** The layer field spec at an API path. */
+export function layerFieldSpec(path: string): LayerFieldSpec | undefined {
+  return LAYER_FIELDS.find((s) => s.path === path);
 }
 
 function valueTypeOf(spec: TextFieldSpec): ValueType {
@@ -211,12 +251,136 @@ export function addFieldBindings(
       special: 'field', field: { owner: 'fills', key: '' }, animatable: false, unit: '', defaultValue: { kind: 'json', value: '[]' },
     });
   }
+  if (hasStrokeHost(node, hasPaintHost(node))) {
+    // B3z: the shape STROKE stack (fx.stroke / fx.strokes) — strokeStack.ts.
+    add({
+      path: 'layer/strokes', name: 'Strokes', matchName: 'strokes', valueType: 'json', members: [],
+      special: 'field', field: { owner: 'strokes', key: '' }, animatable: false, unit: '', defaultValue: { kind: 'json', value: '[]' },
+    });
+  }
+  const kind = readNodeKind(node);
+  if ((kind === 'camera' || kind === 'light') && node.components.some((c) => c.type === 'Transform')) {
+    // B3z: AE's Auto-Orientation ▸ Orient Towards Point of Interest (pointOfInterest.ts).
+    add({
+      path: POI_PATH, name: 'Orient Towards Point of Interest', matchName: 'orientTowardsPointOfInterest', valueType: 'bool', members: [],
+      special: 'field', field: { owner: 'poi', key: '' }, animatable: false, unit: '', defaultValue: { kind: 'bool', value: false },
+    });
+  }
   if (hasFillColor(node)) {
     add({
       path: 'layer/fill', name: 'Fill Color', matchName: 'ADBE Fill Color', valueType: 'color',
       members: ['fill_r', 'fill_g', 'fill_b', 'fill_a'], colorBase: 'fill', special: 'layerFill', animatable: true, unit: '',
     });
   }
+  // B3z: the layer fields (layerFieldSpecs.ts), in table order.
+  for (const spec of LAYER_FIELDS) {
+    if (has(spec.path) || !layerFieldPresent(node, spec)) continue;
+    add(fieldBinding(spec.path, spec as TextFieldSpec, { owner: 'layer', key: spec.path }));
+  }
+  // B3z: path-operator and Polystar fields (shapeFieldSpecs.ts), operators in chain order.
+  for (const op of readPathOps(node)) {
+    for (const spec of PATHOP_FIELDS) {
+      const path = `contents/${op.id}/${spec.key}`;
+      if (!spec.ops.includes(op.type) || has(path)) continue;
+      add(fieldBinding(path, spec as TextFieldSpec, { owner: 'pathOp', key: spec.key, groupId: op.id }));
+    }
+  }
+  if (readNodePolystar(node)) {
+    for (const spec of POLYSTAR_FIELDS) {
+      const path = `contents/polystar/${spec.path}`;
+      if (has(path)) continue;
+      add(fieldBinding(path, spec as TextFieldSpec, { owner: 'polystar', key: spec.key }));
+    }
+  }
+}
+
+// ── Layer fields (B3z) ───────────────────────────────────────────────
+
+function componentTypes(store: LayerFieldStore): readonly string[] {
+  if (store.component === undefined) return [];
+  return typeof store.component === 'string' ? [store.component] : store.component;
+}
+
+/** The component a store names (the first of its types the layer carries). */
+function storeComponent(node: SceneNode, store: LayerFieldStore): SceneNode['components'][number] | undefined {
+  for (const t of componentTypes(store)) {
+    const c = node.components.find((x) => x.type === t);
+    if (c) return c;
+  }
+  return undefined;
+}
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+export function layerFieldPresent(node: SceneNode, spec: LayerFieldSpec): boolean {
+  const w = spec.when;
+  if (spec.store.component !== undefined && !storeComponent(node, spec.store)) return false;
+  if (spec.store.fx !== undefined && spec.store.key !== undefined && !isPlainObject(fxOf(node)?.[spec.store.fx])) return false;
+  if (!w) return true;
+  if (w.component !== undefined && !node.components.some((c) => c.type === w.component)) return false;
+  if (w.fx !== undefined && fxOf(node)?.[w.fx] === undefined) return false;
+  if (w.threeD && !is3DEnabled(node)) return false;
+  if (w.kinds || w.notKinds) {
+    const kind = readNodeKind(node);
+    if (w.kinds && !w.kinds.includes(kind)) return false;
+    if (w.notKinds && w.notKinds.includes(kind)) return false;
+  }
+  return true;
+}
+
+function readStored(node: SceneNode, store: LayerFieldStore): unknown {
+  if (store.fx !== undefined) {
+    const v = fxOf(node)?.[store.fx];
+    if (store.key === undefined) return v;
+    return isPlainObject(v) ? v[store.key] : undefined;
+  }
+  return (storeComponent(node, store)?.props as Record<string, unknown> | undefined)?.[store.key!];
+}
+
+function writeStored(layerId: string, node: SceneNode, store: LayerFieldStore, raw: unknown, path: string): void {
+  if (store.fx !== undefined) {
+    if (store.key === undefined) {
+      defaultSceneGraph.setFxKey(layerId, store.fx, raw);
+      return;
+    }
+    const cur = fxOf(node)?.[store.fx];
+    if (!isPlainObject(cur)) fail('notFound', `layer '${layerId}' has no ${store.fx}`, { layer: layerId, path });
+    const next: Record<string, unknown> = { ...cur };
+    if (raw === undefined) delete next[store.key];
+    else next[store.key] = raw;
+    defaultSceneGraph.setFxKey(layerId, store.fx, next);
+    return;
+  }
+  const c = storeComponent(node, store);
+  if (!c) fail('notFound', `layer '${layerId}' has no ${componentTypes(store).join(' / ')} component`, { layer: layerId, path });
+  defaultSceneGraph.writeProp(layerId, c.id, store.key!, raw);
+}
+
+const sameRaw = (stored: unknown, raw: unknown): boolean =>
+  (raw === null ? stored === undefined || stored === null : JSON.stringify(stored) === JSON.stringify(raw));
+
+function readLayerField(node: SceneNode, spec: LayerFieldSpec): Value {
+  const stored = readStored(node, spec.store);
+  if (spec.encode) {
+    const hit = spec.encode.find(([, raw]) => sameRaw(stored, raw));
+    return specValue(spec as TextFieldSpec, hit ? hit[0] : undefined);
+  }
+  return specValue(spec as TextFieldSpec, stored === null ? undefined : stored);
+}
+
+function writeLayerField(layerId: string, node: SceneNode, b: PropBinding, spec: LayerFieldSpec, value: Value): void {
+  let raw = storedValue(b, spec as TextFieldSpec, value);
+  if (spec.json && raw !== undefined) {
+    const ok = spec.json === 'array' ? Array.isArray(raw) : isPlainObject(raw);
+    if (!ok) fail('invalidArgument', `'${b.path}' takes null or a JSON ${spec.json}`, { path: b.path });
+  }
+  if (spec.encode) {
+    const api = raw === undefined ? spec.default : raw;
+    const hit = spec.encode.find(([v]) => v === api);
+    raw = hit ? (hit[1] === null ? undefined : hit[1]) : raw;
+  }
+  writeStored(layerId, node, spec.store, raw, b.path);
+  if (spec.mirror) writeStored(layerId, node, spec.mirror, raw, b.path);
 }
 
 // ── The layer's fill colour ──────────────────────────────────────────
@@ -246,7 +410,7 @@ function parseJsonOrFail(b: PropBinding, text: string): unknown {
 }
 
 /** fill.ts `setNodeFill`: the primary fill; with a stack, its first entry (undefined drops it from the stack). */
-function setPrimaryFill(layerId: string, node: SceneNode, paint: unknown): void {
+export function setPrimaryFill(layerId: string, node: SceneNode, paint: unknown): void {
   const stack = fxOf(node)?.fills;
   const valid = Array.isArray(stack) ? stack.filter((p) => paintType(p) !== undefined) : [];
   if (valid.length > 0) {
@@ -341,6 +505,12 @@ export function readField(node: SceneNode, b: PropBinding): Value {
       const stack = fxOf(node)?.fills;
       return { kind: 'json', value: JSON.stringify(Array.isArray(stack) ? stack : []) };
     }
+    case 'strokes':
+      return readStrokeStack(node);
+    case 'poi':
+      return readPointOfInterest(node);
+    case 'plugin':
+      return readPluginField(node, b);
     case 'textPath': {
       const cfg = readTextPathConfig(node);
       if (!cfg) return { kind: 'string', value: '' };
@@ -356,6 +526,31 @@ export function readField(node: SceneNode, b: PropBinding): Value {
       const { data, index, sel } = locateAnimator(node, f);
       const s = index >= 0 && sel >= 0 ? (data[index]!.selectors![sel] as unknown as Record<string, unknown>) : undefined;
       return specValue(fieldSpec(f)!, s?.[f.key]);
+    }
+    case 'layer': {
+      const spec = layerFieldSpec(f.key);
+      return spec ? readLayerField(node, spec) : { kind: 'none' };
+    }
+    case 'effect': {
+      const spec = fieldSpec(f);
+      const e = getNodeEffects(node.id).find((x) => x.id === f.groupId) as unknown as Record<string, unknown> | undefined;
+      const raw = e?.[f.key];
+      return spec ? specValue(spec, typeof raw === 'string' ? raw : undefined) : { kind: 'none' };
+    }
+    case 'style': {
+      const spec = fieldSpec(f);
+      const st = (getNodeLayerStyles(node.id) as Record<string, Record<string, unknown> | undefined>)[f.groupId!];
+      return spec ? specValue(spec, st?.[f.key]) : { kind: 'none' };
+    }
+    case 'pathOp': {
+      const spec = fieldSpec(f);
+      const op = readPathOps(node).find((o) => o.id === f.groupId) as unknown as Record<string, unknown> | undefined;
+      return spec ? specValue(spec, op?.[f.key]) : { kind: 'none' };
+    }
+    case 'polystar': {
+      const spec = fieldSpec(f);
+      const ps = readNodePolystar(node) as unknown as Record<string, unknown> | null;
+      return spec ? specValue(spec, ps?.[f.key]) : { kind: 'none' };
     }
     default:
       return { kind: 'none' };
@@ -466,6 +661,15 @@ export function writeField(layerId: string, node: SceneNode, b: PropBinding, val
       defaultSceneGraph.writeProp(layerId, text.id, '__runs', runs);
       return;
     }
+    case 'strokes':
+      writeStrokeStack(layerId, node, b.path, value);
+      return;
+    case 'poi':
+      writePointOfInterest(layerId, node, value);
+      return;
+    case 'plugin':
+      writePluginField(layerId, node, b, value);
+      return;
     case 'fillPaint':
     case 'fills': {
       if (value.kind !== 'json') fail('typeMismatch', `'${b.path}' takes json, got ${value.kind}`, { path: b.path, detail: JSON.stringify({ expected: 'json' }) });
@@ -530,9 +734,74 @@ export function writeField(layerId: string, node: SceneNode, b: PropBinding, val
       updateSelector(layerId, index, sel, { [f.key]: raw });
       return;
     }
+    case 'layer': {
+      const spec = layerFieldSpec(f.key);
+      if (!spec) fail('unsupported', `'${b.path}' has no writer`, { path: b.path });
+      writeLayerField(layerId, node, b, spec, value);
+      return;
+    }
+    case 'effect':
+      writeEffectField(layerId, node, b, f, value);
+      return;
+    case 'style': {
+      const spec = fieldSpec(f);
+      if (!spec) fail('unsupported', `'${b.path}' has no writer`, { path: b.path });
+      const raw = storedValue(b, spec, value);
+      const styles = getNodeLayerStyles(layerId) as Record<string, Record<string, unknown> | undefined>;
+      const st = styles[f.groupId!];
+      if (!st) fail('notFound', `layer '${layerId}' has no ${f.groupId} style`, { layer: layerId, path: b.path });
+      setLayerStyles(layerId, { ...styles, [f.groupId!]: { ...st, [f.key]: raw } } as LayerStyles);
+      return;
+    }
+    case 'pathOp': {
+      // The chain re-validated whole, as the editor's picker wrote it (pathOps.ts updatePathOp).
+      const spec = fieldSpec(f);
+      if (!spec) fail('unsupported', `'${b.path}' has no writer`, { path: b.path });
+      const raw = storedValue(b, spec, value);
+      if (!readPathOps(node).some((o) => o.id === f.groupId)) fail('notFound', `layer '${layerId}' has no path operator '${f.groupId}'`, { layer: layerId, path: b.path });
+      updatePathOp(layerId, f.groupId!, { [f.key]: raw } as Partial<PathOp>);
+      return;
+    }
+    case 'polystar': {
+      const spec = fieldSpec(f);
+      if (!spec) fail('unsupported', `'${b.path}' has no writer`, { path: b.path });
+      const raw = storedValue(b, spec, value);
+      if (!readNodePolystar(node)) fail('notFound', `layer '${layerId}' has no polystar`, { layer: layerId, path: b.path });
+      updateNodePolystar(layerId, { [f.key]: raw } as Partial<Polystar>);
+      return;
+    }
     default:
       fail('unsupported', `'${b.path}' has no writer`, { path: b.path });
   }
+}
+
+// ── Effect fields (B3z) ──────────────────────────────────────────────
+
+const LABEL_HEX = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Effect Mask ('' = whole layer; else one of the layer's mask ids, notFound
+ * otherwise) and the label colour ('' = none; else a #rrggbb hex). '' removes
+ * the stored key, as setEffectMaskId / setEffectLabelColor did.
+ */
+function writeEffectField(layerId: string, node: SceneNode, b: PropBinding, f: FieldRef, value: Value): void {
+  if (value.kind !== 'string') fail('typeMismatch', `'${b.path}' takes a string, got ${value.kind}`, { path: b.path, detail: JSON.stringify({ expected: 'string' }) });
+  const v = value.value;
+  const effects = getNodeEffects(layerId);
+  if (!effects.some((e) => e.id === f.groupId)) fail('notFound', `layer '${layerId}' has no effect '${f.groupId}'`, { layer: layerId, path: b.path });
+  if (v !== '' && f.key === 'maskId' && !(readNodeMask(node)?.paths ?? []).some((p) => p.id === v)) {
+    fail('notFound', `layer '${layerId}' has no mask '${v}'`, { layer: layerId, path: b.path });
+  }
+  if (v !== '' && f.key === 'labelColor' && !LABEL_HEX.test(v)) {
+    fail('invalidArgument', `'${b.path}' takes '' or a #rrggbb colour`, { path: b.path });
+  }
+  writeNodeEffects(layerId, effects.map((e) => {
+    if (e.id !== f.groupId) return e;
+    const next = { ...e } as unknown as Record<string, unknown>;
+    if (v === '') delete next[f.key];
+    else next[f.key] = v;
+    return next as unknown as typeof e;
+  }));
 }
 
 /** The fields' storage never takes keys: a field is static by definition. */

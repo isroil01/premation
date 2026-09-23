@@ -10,10 +10,14 @@
  */
 
 import { ValueField } from '@components/ValueField';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import type { LayerInfo } from '@motion/engine-api';
+import type { SceneNode } from '@core/types';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { compLayersDeep } from '@core/mirror/layerFields';
 import {
+  AUDIO_WAVEFORM_FX_KEY,
   readNodeAudioWaveform,
   setAudioWaveform,
   updateAudioWaveform,
@@ -22,15 +26,29 @@ import {
 } from '@core/audio/audioWaveformGen';
 import styles from './TransformSection.module.css';
 
-export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const cfg = readNodeAudioWaveform(node);
-  if (!cfg) return null;
+/**
+ * Every audio layer of every composition (the source list), from the mirror.
+ * Re-renders when a comp's stack, the layer set or a listed layer's header (a
+ * rename) changes.
+ */
+function useAudioLayers(): LayerInfo[] {
+  const m = documentMirror();
+  const list = m.compIds.flatMap((c) => compLayersDeep(m, c)).filter((l) => l.kind === 'audio');
+  useMirrorKeys(['comps', 'layers', ...m.compIds.map((c) => `order:${c}`), ...list.map((l) => `layer:${l.id}`)]);
+  return list;
+}
 
+export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Element | null {
+  // `layer/audioWaveform` — the fx block, raw json (null when the layer has none).
+  const raw = useMirrorJson<unknown>(nodeId, 'layer/audioWaveform');
   // Honest source list: only real audio-kind layers.
-  const audioLayers = flattenScene(defaultSceneGraph).filter((n) => readNodeKind(n) === 'audio');
+  const audioLayers = useAudioLayers();
+  // Normalised exactly as the generator normalises it — a pure use of
+  // `readNodeAudioWaveform` over the mirror's value (it reads only `components`).
+  const cfg = raw === undefined
+    ? null
+    : readNodeAudioWaveform({ components: [{ type: 'fx', props: { [AUDIO_WAVEFORM_FX_KEY]: raw } }] } as unknown as SceneNode);
+  if (!cfg) return null;
 
   const set = <K extends keyof AudioWaveformConfig>(key: K, value: AudioWaveformConfig[K]): void => {
     // B3-legacy: engine gap — the audio-waveform generator config is a structured value with no API property.

@@ -10,11 +10,11 @@
  */
 
 import { memo, useCallback } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { captureTextPreset } from '@core/inspector/sectionPresets';
 import type { PresetValues } from '@stores/sectionPresetStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { hasTextLayer } from '@layout/Text/textMirror';
 import { TextSettingsBody } from './CharacterPanel';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
@@ -27,16 +27,18 @@ import { textPresetEdit } from '@layout/Text/textEdits';
  */
 export function hasTextSection(nodeId: string): boolean {
   try {
-    const node = defaultSceneGraph.getNode(nodeId);
-    if (!node) return false;
-    return readNodeKind(node) === 'text' || node.components.some((c) => c.type === 'Text');
+    // B4: the layer's kind and its property tree's Text group, from the mirror.
+    return hasTextLayer(documentMirror(), nodeId);
   } catch {
     return false;
   }
 }
 
 function TextSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // B4: wake when the layer's header or property tree changes (the body
+  // subscribes to its own values).
+  useMirrorLayer(nodeId);
+  useMirrorTree(nodeId);
   const nodeIds = useInspectorSelection(nodeId);
   // After every hook: the node can vanish between renders (a deleted layer).
   if (!hasTextSection(nodeId)) return null;
@@ -45,7 +47,7 @@ function TextSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
 
 /*
  * Memoized like every registry section — see `inspectorRenderScope.test.tsx`.
- * The body subscribes to the scene revision itself, so a parent re-render with
+ * The body subscribes to the document mirror itself, so a parent re-render with
  * the same `nodeId` has nothing to tell it.
  */
 export const TextSection = memo(TextSectionInner);
@@ -60,6 +62,9 @@ export function TextPresetAction({
 }): JSX.Element {
   const selection = useInspectorSelection(nodeId);
   const targets = nodeIds && nodeIds.length > 0 ? nodeIds : selection;
+  // B4-gap: a text style preset captures the props the layer STORES, in their stored forms (an unset
+  // Leading stays Auto, `fill` / `stroke` hex strings, `strokeOverFill`); the API reports every field
+  // with its default filled in and colours as channels, so a mirror capture would change what a preset holds.
   const capture = useCallback(() => captureTextPreset(nodeId), [nodeId]);
   const apply = useCallback((values: PresetValues) => { textPresetEdit(targets, values); }, [targets]);
   return <SectionPresetMenu sectionId="text" label="Text style presets" capture={capture} apply={apply} />;

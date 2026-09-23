@@ -28,7 +28,7 @@ import type { SceneNode } from '@core/types';
 
 import { MOGRAPH_ITEMS, insertMographItem, mographDuration } from './mographLibrary';
 import { TRANSITION_ITEMS, applyTransitionItem } from './transitionLibrary';
-import { LOTTIE_ITEMS, insertLottieItem } from './lottieLibrary';
+import { LOTTIE_ITEMS, buildLottieItem } from './lottieLibrary';
 
 const COMP = { width: 1920, height: 1080, background: '#101014', rootId: 'comp_root' };
 
@@ -401,7 +401,8 @@ describe('Lottie — inserting a card lands drawable layers', () => {
   it.each(LOTTIE_ITEMS.map((i) => [i.id, i] as const))(
     '%s inserts layers the snapshot draws',
     (id) => {
-      const ids = insertLottieItem(id);
+      // The builder the editor runs off-document (lottieInsertEdits.ts pastes its result).
+      const ids = buildLottieItem(id);
       expect(ids.length).toBeGreaterThan(0);
       const drawn = new Set(snapAt(0).layers.map((l) => l.id));
       // At least the inserted roots must survive into the snapshot.

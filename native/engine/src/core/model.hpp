@@ -244,8 +244,6 @@ struct DocExtras {
   Json swatches;
   /// materialStore.list(): project materials only.
   Json materials;
-  /// transitionStore.capture(): comp id → transition records.
-  Json transitions;
   /// pluginStorage (project scope): plugin id → key → string.
   Json pluginStorage;
 };
@@ -275,6 +273,8 @@ struct Parts {
   std::optional<Ptr<RenderQueue>> rq;
   std::optional<Ptr<MotionBlur>> mb;
   std::optional<Ptr<ColorMgmt>> cm;
+  /// B3z: the transition records (transitionStore.capture(): comp id → records) — the `tx` part.
+  std::optional<Ptr<Json>> tx;
   [[nodiscard]] bool empty() const noexcept;
 };
 
@@ -308,7 +308,9 @@ class Document {
   [[nodiscard]] const RenderQueue& render_queue() const noexcept { return *rq_; }
   [[nodiscard]] const MotionBlur& motion_blur() const noexcept { return *mb_; }
   [[nodiscard]] const ColorMgmt& color() const noexcept { return *cm_; }
-  /// Swatches, materials, guides, transitions, plugin storage (not journaled).
+  /// B3z: transitionStore — comp id → transition records (journaled: the `tx` part).
+  [[nodiscard]] const Json& transitions() const noexcept { return *tx_; }
+  /// Swatches, materials, guides, plugin storage (not journaled).
   [[nodiscard]] const DocExtras& extras() const noexcept { return extras_; }
   DocExtras& extras_mut() noexcept { return extras_; }
   [[nodiscard]] const OrderedMap<Ptr<Node>>& nodes() const noexcept { return nodes_; }
@@ -334,6 +336,7 @@ class Document {
   RenderQueue& render_queue_mut();
   MotionBlur& motion_blur_mut();
   ColorMgmt& color_mut();
+  Json& transitions_mut();
   /// Reorder the node insertion order (the saved order).
   void reorder_nodes(const IdList& order);
 
@@ -388,6 +391,7 @@ class Document {
   Ptr<RenderQueue> rq_;
   Ptr<MotionBlur> mb_;
   Ptr<ColorMgmt> cm_;
+  Ptr<Json> tx_;
   DocExtras extras_ = default_doc_extras();
   std::unique_ptr<Parts> journal_;
   std::unordered_set<std::string> tlTouched_;

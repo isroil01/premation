@@ -24,7 +24,7 @@ import { memo, useCallback, type ComponentType } from 'react';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { EmptyState } from '@components/EmptyState';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { InspectorSection } from './InspectorSection';
 import { CompositionSummary } from './CompositionSummary';
 import {
@@ -56,8 +56,8 @@ function matchesQuery(def: InspectorSectionDef, nodeId: string, q: string): bool
  * keystroke in the search box, a rename in the selection header, the ⋯ menu
  * hand-off — and every re-render used to rebuild every section's element tree
  * and run every section's render. With the host memoised, a section renders
- * again only when its own node's revision moves (`useNodeRevision` inside it)
- * or when the node it is drawn for changes.
+ * again only when a mirror record it subscribes to changes (its own
+ * `useMirror*` hooks) or when the node it is drawn for changes.
  */
 const SectionHost = memo(function SectionHost({
   Component,
@@ -159,7 +159,7 @@ export interface InspectorContentProps {
 export function InspectorContent({ nodeId, query = '', nodeIds }: InspectorContentProps): JSX.Element {
   if (!nodeId) return <CompositionSummary />;
 
-  if (!defaultSceneGraph.getNode(nodeId)) return <div className={styles.empty}>No node data</div>;
+  if (!documentMirror().layer(nodeId)) return <div className={styles.empty}>No node data</div>;
 
   // Primary first whatever order the caller passed — the registry reads the
   // first id as the layer the sections are drawn for.

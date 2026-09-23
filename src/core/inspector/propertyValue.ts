@@ -33,6 +33,8 @@ import {
   effectDefFor,
   paramsOf,
   updateEffectParam,
+  setEffectOpacity,
+  EFFECT_OPACITY_KEY,
 } from '@core/effects/effects';
 import {
   LAYER_STYLE_NUMBER_PARAMS,
@@ -59,11 +61,62 @@ import {
 } from '@core/text/textPath';
 import { parseAxisPropPath, readFontAxesProp } from '@core/text/fontAxes';
 import { resolvePropertyMeta } from './propertyMeta';
-import { parseMaskPropPath, getNodeMask, updateMaskPath } from '@core/effects/mask';
+import { parseMaskPropPath, getNodeMask, updateMaskPath, readNodeMaskAnim } from '@core/effects/mask';
+import { GLASS_PARAMS, GLASS_COLOR_PARAMS } from '@core/effects/glassResolve';
 import { parsePaintColorPath, parsePaintPropPath } from '@core/paint/paintProps';
 import { readNodePaint, updatePaintStroke } from '@core/paint/paintStrokes';
 import { paintStrokePatch, readPaintStrokeValue } from '@core/paint/paintValues';
 import { isGradientGeometryProp, readGradientGeometryProp, writeGradientGeometryProp } from './gradientGeometryProps';
+import { parseStrokeTrackPath } from '@core/rendering/strokeTracks';
+import { readStrokeParam, strokeEntryAt, withStrokeParam } from '@core/paint/strokeValues';
+import { storeNodeStrokeAt } from '@core/paint/stroke';
+import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP, percentToDb } from '@core/audio/audioParams';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { readPluginStatic, writePluginStatic } from '@core/engine/pluginProps';
+
+// ── Material Options switches (B3z) ──────────────────────────────────
+
+/**
+ * AE's Material Options ▸ Accepts Lights (Off/On) and Casts / Accepts Shadows
+ * (Off/On/Only) are enum properties: their TRACKS hold hold-friendly numbers
+ * (acceptsLights 0/1; shadows 0 Off, 1 On, 2 Only — material.ts
+ * MATERIAL_ANIMATABLE), but their STATIC value keeps the legacy form every
+ * reader and every saved document uses: acceptsLights `true` | absent; a shadow
+ * mode absent (On) | `false` (Off) | `'only'`. The seam translates both ways, so
+ * a scalar write stores the legacy form and reads back as the number.
+ * (native/engine/src/core/props.cpp ports this.)
+ */
+const MATERIAL_SWITCHES = new Set(['acceptsLights', 'castsShadows', 'acceptsShadows']);
+
+function readMaterialSwitch(node: SceneNode, prop: string): number {
+  const v = (node.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined)?.[prop];
+  if (typeof v === 'number') return v;
+  if (prop === 'acceptsLights') return v === true ? 1 : 0;
+  if (v === 'only') return 2;
+  return v === false || v === 'off' ? 0 : 1;
+}
+
+/** The legacy static form of a switch value (`undefined` = absent). */
+function materialSwitchRaw(prop: string, value: number): unknown {
+  if (prop === 'acceptsLights') return value >= 0.5 ? true : undefined;
+  return value >= 1.5 ? 'only' : value >= 0.5 ? undefined : false;
+}
+import { readParticleStatic, writeParticleStatic } from '@core/engine/particleProps';
+import { readNodePolystar, updateNodePolystar, type Polystar } from '@core/scene/polystar';
+
+/**
+ * Where Audio Levels / Pan live (B3z): the Audio component of an audio layer,
+ * the Transform of a video layer — what the mixer reads (`audioScene`). A
+ * layer that never stored one must still get it THERE: the generic fallback
+ * put it on an audio layer's Transform, where nothing plays it.
+ */
+function audioHomeFor(node: SceneNode, prop: string): SceneNode['components'][number] | undefined {
+  if (prop !== AUDIO_LEVEL_DB_PROP && prop !== AUDIO_PAN_PROP) return undefined;
+  const kind = readNodeKind(node);
+  if (kind === 'audio') return node.components.find((c) => c.type === 'Audio');
+  if (kind === 'video') return node.components.find((c) => c.type === 'Transform');
+  return undefined;
+}
 
 /** `#rrggbb` (or `#rgb`) → the normalized channel a colour track carries. */
 function channelOf(color: string, suffix: string): number | undefined {
@@ -83,6 +136,22 @@ function channelOf(color: string, suffix: string): number | undefined {
 function splitChannel(prop: string): { base: string; suffix: string } | null {
   const m = /^(.*)(_r|_g|_b|_a)$/.exec(prop);
   return m ? { base: m[1]!, suffix: m[2]! } : null;
+}
+
+// ── Glass (B3z: a first-class layer style) ───────────────────────────
+
+/** `glass.<param>` (numeric) or `glass.<colour>_r/_g/_b/_a` (a colour channel). */
+function parseGlassPath(prop: string): { param: string; channel: string | null } | null {
+  const m = /^glass.([A-Za-z]+)(_r|_g|_b|_a)?$/.exec(prop);
+  if (!m) return null;
+  const param = m[1]!;
+  const channel = m[2] ?? null;
+  if (channel) return (GLASS_COLOR_PARAMS as readonly string[]).includes(param) ? { param, channel } : null;
+  return (GLASS_PARAMS as readonly string[]).includes(param) ? { param, channel: null } : null;
+}
+
+function glassStyleOf(nodeId: string): Record<string, unknown> | undefined {
+  return (getNodeLayerStyles(nodeId) as Record<string, Record<string, unknown> | undefined>).glass;
 }
 
 // ── Effect params (including layer styles) ──────────────────────────
@@ -135,6 +204,9 @@ function readEffectValue(nodeId: string, ref: EffectRef): number | undefined {
 
   const effect = getNodeEffects(nodeId).find((e) => e.id === ref.effectId);
   if (!effect) return undefined;
+  // Compositing Options ▸ Effect Opacity is the instance field, not a param
+  // (see `Effect.opacity`): absent = 100.
+  if (ref.key === EFFECT_OPACITY_KEY) return typeof effect.opacity === 'number' && Number.isFinite(effect.opacity) ? effect.opacity : 100;
   const params = paramsOf(effect) as Record<string, unknown>;
   if (channel) {
     const color = params[channel.base];
@@ -168,6 +240,11 @@ function writeEffectValue(nodeId: string, ref: EffectRef, value: number): boolea
 
   const effect = getNodeEffects(nodeId).find((e) => e.id === ref.effectId);
   if (!effect) return false;
+  // Effect Opacity: `setEffectOpacity` clamps to 0..100 and clears the field at ≥ 100.
+  if (ref.key === EFFECT_OPACITY_KEY) {
+    setEffectOpacity(nodeId, ref.effectId, value);
+    return true;
+  }
   const def = effectDefFor(effect.type);
   const param = def?.params.find((p) => p.key === ref.key);
   if (param && param.type !== 'number' && param.type !== 'checkbox' && param.type !== 'enum') return false;
@@ -234,8 +311,32 @@ export function readStaticPropertyValue(nodeId: string, prop: string): number | 
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return undefined;
 
+  if (MATERIAL_SWITCHES.has(prop)) return readMaterialSwitch(node, prop);
+  // A plugin layer kind's prop / a contributed panel's param (pluginProps.ts).
+  const plugin = readPluginStatic(node, prop);
+  if (plugin !== null) return plugin;
+
+  // A particle emitter's number (`particle.<key>`): the fx.particle config, else its default.
+  if (prop.startsWith('particle.')) {
+    const pv = readParticleStatic(node, prop);
+    if (pv !== undefined) return pv;
+  }
+  // A Polystar parameter (`polystar.<param>`): the validated fx.polystar config.
+  if (prop.startsWith('polystar.')) {
+    const v = (readNodePolystar(node) as unknown as Record<string, unknown> | null)?.[prop.slice(9)];
+    if (typeof v === 'number') return v;
+  }
+
   const effect = parseEffectPath(prop);
   if (effect) return readEffectValue(nodeId, effect);
+
+  const glass = parseGlassPath(prop);
+  if (glass) {
+    const g = glassStyleOf(nodeId);
+    const v = g?.[glass.param];
+    if (glass.channel) return typeof v === 'string' ? channelOf(v, glass.channel) : undefined;
+    return typeof v === 'number' ? v : undefined;
+  }
 
   // Paint ▸ Brush N Stroke Options / Transform, and its colour channels.
   const pp = parsePaintPropPath(prop);
@@ -305,11 +406,31 @@ export function readStaticPropertyValue(nodeId: string, prop: string): number | 
   // Gradient geometry lives inside a paint object (a fill, a text stroke).
   if (isGradientGeometryProp(prop)) return readGradientGeometryProp(node, prop);
 
+  // A shape stroke's parameter lives in its stroke stack entry (strokeValues.ts).
+  const st = strokeTrackOf(node, prop);
+  if (st) {
+    const s = strokeEntryAt(node, st.index);
+    if (s) return st.channel ? channelOf(s.color, st.channel) : readStrokeParam(node, s, st.param);
+  }
+
   // wght: the Text component stores its weight as a number OR as a CSS weight
   // string ('700', 'bold') — the Character panel's font menu writes strings.
   if (prop === 'fontWeight') {
     const w = textFontWeight(node);
     if (w !== undefined) return w;
+  }
+
+  // Audio Levels: an unstored dB level is the legacy percent (`__level` on an
+  // audio layer's Audio component, `audioLevel` on a video layer's Transform) —
+  // what the mixer plays (audioScene `staticLevelDb`).
+  if (prop === AUDIO_LEVEL_DB_PROP) {
+    const home = audioHomeFor(node, prop);
+    if (home) {
+      const p = home.props as Record<string, unknown>;
+      if (typeof p[prop] === 'number') return p[prop] as number;
+      const legacy = p[readNodeKind(node) === 'audio' ? '__level' : 'audioLevel'];
+      if (typeof legacy === 'number') return percentToDb(legacy);
+    }
   }
 
   // Flat component prop — the ordinary case, and the one the transform,
@@ -335,11 +456,52 @@ export function writeStaticPropertyValue(nodeId: string, prop: string, value: nu
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return false;
 
+  if (MATERIAL_SWITCHES.has(prop)) {
+    const t = node.components.find((c) => c.type === 'Transform');
+    if (!t) return false;
+    updateNodeComponentProp(defaultSceneGraph, nodeId, t.id, prop, materialSwitchRaw(prop, value));
+    return true;
+  }
+  const plugin = writePluginStatic(nodeId, node, prop, value);
+  if (plugin !== null) return plugin;
+
   // Gradient geometry is written back into its paint (a fill, a text stroke).
   if (isGradientGeometryProp(prop)) return writeGradientGeometryProp(nodeId, node, prop, value);
 
+  // A particle emitter's number: into the fx.particle config.
+  const particle = writeParticleStatic(nodeId, node, prop, value);
+  if (particle !== null) return particle;
+
+  // A Polystar parameter: into fx.polystar, re-validated whole. It used to fall
+  // through to the Transform (a dead `polystar.points` prop nothing reads).
+  if (prop.startsWith('polystar.') && readNodePolystar(node)) {
+    updateNodePolystar(nodeId, { [prop.slice(9)]: value } as Partial<Polystar>);
+    return true;
+  }
+
+  // A shape stroke's parameter: into its stroke stack entry (a colour channel
+  // has no scalar base, as for effect colours).
+  const st = strokeTrackOf(node, prop);
+  if (st) {
+    const s = strokeEntryAt(node, st.index);
+    if (s) {
+      const next = st.channel ? undefined : withStrokeParam(node, s, st.param, value);
+      if (!next) return false;
+      storeNodeStrokeAt(nodeId, st.index, next);
+      return true;
+    }
+  }
+
   const effect = parseEffectPath(prop);
   if (effect) return writeEffectValue(nodeId, effect, value);
+
+  const glass = parseGlassPath(prop);
+  if (glass) {
+    const styles = getNodeLayerStyles(nodeId) as Record<string, Record<string, unknown> | undefined>;
+    if (glass.channel || !styles.glass) return false;
+    setLayerStyles(nodeId, { ...(styles as LayerStyles), glass: { ...styles.glass, [glass.param]: value } } as unknown as LayerStyles);
+    return true;
+  }
 
   const pp = parsePaintPropPath(prop);
   if (pp) {
@@ -352,7 +514,18 @@ export function writeStaticPropertyValue(nodeId: string, prop: string, value: nu
   const mk = parseMaskPropPath(prop);
   if (mk) {
     if (!getNodeMask(nodeId).paths.some((p) => p.id === mk.pathId)) return false;
-    updateMaskPath(nodeId, mk.pathId, { [mk.key]: mk.key === 'opacity' ? value / 100 : value });
+    const stored = mk.key === 'opacity' ? value / 100 : value;
+    updateMaskPath(nodeId, mk.pathId, { [mk.key]: stored });
+    // AE: Feather / Opacity / Expansion are properties of their own, not part of
+    // the shape — a static value holds across every whole-mask shape keyframe
+    // (fx.maskAnim), exactly as Mode / Inverted do (engine props.ts writeStatic).
+    const anim = readNodeMaskAnim(node);
+    if (anim.length > 0) {
+      defaultSceneGraph.setMaskAnim(nodeId, anim.map((k) => ({
+        ...k,
+        mask: { paths: k.mask.paths.map((p) => (p.id === mk.pathId ? { ...p, [mk.key]: stored } : p)) },
+      })));
+    }
     return true;
   }
 
@@ -389,6 +562,15 @@ export function writeStaticPropertyValue(nodeId: string, prop: string, value: nu
     if (slot) updateSelector(nodeId, ta.index, slot.selector, { [slot.param]: value } as never);
     else if (tag) updateAnimator(nodeId, ta.index, { axes: { ...(cur.axes ?? {}), [tag]: value } });
     else updateAnimator(nodeId, ta.index, { [ta.param]: value } as Partial<TextAnimatorData>);
+    return true;
+  }
+
+  // Audio Levels / Pan: on their home component, and a centred pan is stored as
+  // ABSENT (the Audio panel's rule, `panOf`) so an untouched document stays
+  // byte-identical.
+  const audioHome = audioHomeFor(node, prop);
+  if (audioHome) {
+    updateNodeComponentProp(defaultSceneGraph, nodeId, audioHome.id, prop, prop === AUDIO_PAN_PROP && value === 0 ? undefined : value);
     return true;
   }
 
@@ -443,10 +625,24 @@ function textFontWeight(node: SceneNode): number | undefined {
   return /^\d+(\.\d+)?$/.test(s) ? Number(s) : undefined;
 }
 
+/**
+ * The shape-stroke parameter a track names (strokeTracks.ts), or null. A text
+ * layer's primary names (`strokeWidth`, `stroke_r`…) are its Text component's
+ * stroke, not a stack entry, so they stay with the flat scan.
+ */
+function strokeTrackOf(node: SceneNode, prop: string): ReturnType<typeof parseStrokeTrackPath> {
+  const st = parseStrokeTrackPath(prop);
+  if (!st || (st.index === 0 && node.components.some((c) => c.type === 'Text'))) return null;
+  return st;
+}
+
 /** True when {@link writeStaticPropertyValue} has somewhere to put a value. */
 export function canWriteStaticPropertyValue(nodeId: string, prop: string): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return false;
+
+  const glass = parseGlassPath(prop);
+  if (glass) return !glass.channel && glassStyleOf(nodeId) !== undefined;
 
   const effect = parseEffectPath(prop);
   if (effect) {
@@ -472,6 +668,8 @@ export function canWriteStaticPropertyValue(nodeId: string, prop: string): boole
   const op = parsePathOpPath(prop);
   if (op) return readPathOps(node).some((o) => o.id === op.opId);
 
+  const st = strokeTrackOf(node, prop);
+  if (st && strokeEntryAt(node, st.index)) return !st.channel && withStrokeParam(node, strokeEntryAt(node, st.index)!, st.param, readStrokeParam(node, strokeEntryAt(node, st.index)!, st.param) ?? 0) !== undefined;
   if (parseTextPathPropPath(prop)) return readTextPathConfig(node) !== null;
   if (parseAxisPropPath(prop)) return node.components.some((c) => c.type === 'Text');
 

@@ -16,7 +16,9 @@ import {
   usePreferenceStore,
 } from '@stores/preferenceStore';
 import { allLayerKinds } from '@core/plugins/layerKindRegistry';
-import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
+import { buildCustomLayerInto, customLayerLabel, wakeCustomLayerKind } from '@core/plugins/createCustomLayerFromMenu';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { isPickArmed } from '@stores/trackerStore';
@@ -116,7 +118,7 @@ import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { resolveLayerRef, defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
-import { applyRigPreset } from '@core/rig/skeletonCommands';
+import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { readGeometry } from '@core/workspace/geometry';
 import { isAudioNode } from '@core/audio/audioScene';
 import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
@@ -129,7 +131,6 @@ import {
 import {
   timeReverseKeyframes,
   easyEaseAll,
-  sequenceLayers,
 } from '@core/animation/keyframeAssistants';
 import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
 import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
@@ -1195,10 +1196,9 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
           notify('Overlap must be a number of seconds, 0 or more', 'warning');
           return;
         }
-        // `sequenceLayers` through the engine (B3): bars and cross-dissolves, ONE entry.
-        const sequenced = await sequenceLayerBarsEdit(selectedIds, overlap, overlap > 0);
-        // B3-legacy: engine gap — `sequenceLayers` takes the layers of ONE composition; a selection spanning comps keeps the timeline controller's walk.
-        const ok = sequenced === false ? getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 }) : sequenced === true;
+        // `sequenceLayers` through the engine (B3): bars and cross-dissolves, ONE
+        // entry — one command per composition when the selection spans several (B3z).
+        const ok = (await sequenceLayerBarsEdit(selectedIds, overlap, overlap > 0)) === true;
         if (!ok) {
           notify('Select 2+ layers with timeline bars', 'warning');
           return;
@@ -1246,9 +1246,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const ids = useSelectionStore.getState().ids;
         void staggerAnimationsEdit(ids, 0.3).then((done) => {
-          // B3-legacy: engine gap — an animated property outside the API catalog.
-          const ok = done === false ? sequenceLayers(ids, 0.3) : done === true;
-          if (ok) notify('Animations staggered', 'success');
+          if (done === true) notify('Animations staggered', 'success');
           else notify('Select 2+ animated layers first', 'warning');
         });
       },
@@ -1480,7 +1478,7 @@ function buildRigPresetCommands(): ReadonlyArray<Command> {
     label: `Auto-Rig: ${RIG_PRESET_LABELS[id]}`,
     icon: 'bone' as const,
     enabled: () => useSelectionStore.getState().count() > 0,
-    execute: () => {
+    execute: async () => {
       const nodeId = useSelectionStore.getState().ids[0];
       if (!nodeId) return;
       const node = defaultSceneGraph.getNode(nodeId);
@@ -1489,8 +1487,8 @@ function buildRigPresetCommands(): ReadonlyArray<Command> {
       // reports the UNSCALED size, which is what keeps a scaled layer from getting
       // a differently-proportioned skeleton.
       const geom = readGeometry(node);
-      // B3-legacy: engine gap — skeleton / bones / IK have no API groups or commands.
-      const problems = applyRigPreset(
+      // One entry: a whole-rig `layer/skeleton` write (ENGINE_API.md §15.9).
+      const problems = await applyRigPresetEdit(
         nodeId,
         RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
         `Auto-Rig ${RIG_PRESET_LABELS[id]}`,
@@ -1724,8 +1722,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Text',
       shortcut: { key: 't', meta: true, alt: true, shift: true },
       enabled: () => true,
-      // B3-legacy: engine gap — `createLayer{text}` places at the comp centre with the default size; the insert places at the pointer, scaled to the comp (`placeInComp`).
-      execute: () => insertPrimitive('text', 'Text'),
+      // The insert (pointer placement, comp-scaled size) runs off-document → ONE pasteLayers entry.
+      execute: () => { void insertBuiltLayers('New Text Layer', activeCompRootId(), () => insertPrimitive('text', 'Text')); },
     },
     {
       id: asCommandId('layer.newSolid'),
@@ -2777,8 +2775,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               label: `New ${entry.kind.label}`,
               icon: (entry.kind.icon as never) ?? 'plugin',
               enabled: () => true,
-              // B3-legacy: engine gap — a plugin layer kind (`createLayer{component}`) is refused by the TS engine; the plugin's own factory builds it.
-              execute: () => { void createCustomLayerFromMenu(kind); },
+              // The plugin kind's schema builder runs off-document → ONE pasteLayers entry into the
+              // active comp; the plugin wakes after, outside the entry (createCustomLayerFromMenu.ts).
+              execute: async () => {
+                const label = customLayerLabel(kind);
+                if (!label) return;
+                const ids = await insertBuiltLayers(label, activeCompRootId(), () => buildCustomLayerInto(kind, activeCompRootId()));
+                if (ids && ids.length > 0) wakeCustomLayerKind(kind);
+              },
             });
           }
 

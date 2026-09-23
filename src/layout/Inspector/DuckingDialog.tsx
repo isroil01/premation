@@ -23,17 +23,15 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
 import {
-  applyDucking,
   computeDuckEnvelope,
   duckableLayers,
   readDucking,
-  reduck,
-  removeDucking,
   thinLevels,
   DEFAULT_DUCKING,
   type ApplyDuckingResult,
   type DuckingParams,
 } from '@core/audio/ducking';
+import { duckEdit, reduckEdit, removeDuckingEdit } from './audioEdits';
 import styles from './AudioToolDialog.module.css';
 
 interface Props {
@@ -126,8 +124,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
   const drop = async (): Promise<void> => {
     setBusy(true);
     try {
-      // B3-legacy: engine gap — ducking is an editor-side analysis that bakes keys; needs startJob/applyJobResult.
-      const ok = await removeDucking(nodeId);
+      const ok = await removeDuckingEdit(nodeId);
       useUIStore.getState().notify({
         level: ok ? 'success' : 'warning',
         message: ok ? 'Ducking removed, level track cleared.' : 'This layer has no ducking to remove.',
@@ -262,7 +259,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
         <div className={styles.actionsLeft}>
           {stored ? (
             <>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => reduck(nodeId), 'Re-ducked')}>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => reduckEdit(nodeId), 'Re-ducked')}>
                 Re-duck
               </Button>
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => void drop()}>
@@ -280,8 +277,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
             variant="primary"
             loading={busy}
             disabled={busy || !voiceNodeId}
-            // B3-legacy: engine gap — ducking is an editor-side analysis that bakes keys; needs startJob/applyJobResult.
-            onClick={() => void run(() => applyDucking(nodeId, voiceNodeId, params), 'Ducked')}
+            onClick={() => void run(() => duckEdit(nodeId, voiceNodeId, params), 'Ducked')}
           >
             {busy ? 'Applying…' : 'Apply'}
           </Button>

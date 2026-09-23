@@ -56,6 +56,58 @@ import {
 
 // ── Types ───────────────────────────────────────────────────────────
 
+/**
+ * What a few resolvers need to know about the LAYER a path is on (its effect
+ * types, mask names, animators…). Given a node id, these are read from the
+ * scene graph (`graphFacts`); the UI passes facts built from the document
+ * mirror instead (src/core/mirror/metaFacts.ts, B4), so labels and ranges are
+ * the same whichever engine owns the document.
+ */
+export interface MetaNodeFacts {
+  /** The layer id — only the legacy JS plugin params read through it. */
+  nodeId?: string;
+  kind?: string;
+  effectType?(effectId: string): string | undefined;
+  pathOpType?(opId: string): string | undefined;
+  paintStrokeName?(strokeId: string): string | undefined;
+  maskName?(pathId: string): string | undefined;
+  animators?(): Array<{ name?: string; selectors?: Array<{ kind?: string }> }>;
+  strokeAt?(index: number): { taper?: { lengthUnits?: string }; wave?: { units?: string } } | undefined;
+}
+
+/** A node id (read from the scene graph) or ready-made facts. */
+export type MetaNode = string | MetaNodeFacts;
+
+function graphFacts(nodeId: string): MetaNodeFacts {
+  const fxOf = (): Record<string, unknown> | undefined =>
+    defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
+  return {
+    nodeId,
+    get kind() {
+      const node = defaultSceneGraph.getNode(nodeId);
+      return node ? readNodeKind(node) : undefined;
+    },
+    effectType: (id) => getNodeEffects(nodeId).find((e) => e.id === id)?.type,
+    pathOpType: (id) => ((fxOf() as { pathOps?: Array<{ id?: string; type?: string }> } | undefined)?.pathOps ?? []).find((o) => o.id === id)?.type,
+    paintStrokeName: (id) => {
+      const strokes = (fxOf()?.paint as { strokes?: Array<{ id: string; mode: 'paint' | 'erase' | 'clone'; name?: string }> } | undefined)?.strokes;
+      return Array.isArray(strokes) ? strokeDisplayNames(strokes).get(id) : undefined;
+    },
+    maskName: (id) => {
+      const paths = (fxOf()?.mask as { paths?: Array<{ id: string; name?: string }> } | undefined)?.paths ?? [];
+      const idx = paths.findIndex((p) => p.id === id);
+      return idx >= 0 ? paths[idx]!.name ?? `Mask ${idx + 1}` : undefined;
+    },
+    animators: () => readAnimatorsForMeta(nodeId),
+    strokeAt: (index) => storedStrokeAt(nodeId, index),
+  };
+}
+
+function factsOf(node: MetaNode | undefined): MetaNodeFacts | undefined {
+  if (node === undefined) return undefined;
+  return typeof node === 'string' ? graphFacts(node) : node;
+}
+
 export type PropertyValueType =
   | 'number'
   | 'percent'
@@ -715,7 +767,8 @@ function fromEffectParam(path: string, effectLabel: string, p: EffectParamDef): 
  * behaviour a log axis is asked for (fine near the bottom, coarse near the top)
  * with no new mode in a control every panel in the editor shares.
  */
-function resolvePluginParam(path: string, nodeId?: string): PropertyMeta | null {
+function resolvePluginParam(path: string, node?: MetaNode): PropertyMeta | null {
+  const nodeId = factsOf(node)?.nodeId;
   const ref = findPluginParamByPath(path);
   if (!ref) return null;
   const { schema, axis } = ref;
@@ -757,7 +810,7 @@ function resolvePluginParam(path: string, nodeId?: string): PropertyMeta | null 
   };
 }
 
-function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null {
+function resolveEffectParam(path: string, node?: MetaNode): PropertyMeta | null {
   const m = /^effect\.([^.]+)(?:\.(.+))?$/.exec(path);
   if (!m) return null;
   const [, effectId, rawKey] = m;
@@ -774,14 +827,13 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
       const type = LAYER_STYLE_EFFECT_TYPE[styleKey];
       return type ? effectDefFor(type) : undefined;
     }
-    if (!nodeId) return undefined;
-    const fx = getNodeEffects(nodeId).find((e) => e.id === effectId);
+    const type = factsOf(node)?.effectType?.(effectId);
     // `effectDefFor`, not a scan of `EFFECT_DEFS` — that array is the built-ins
     // and a plugin's effect is not in it. Left as a scan, every parameter of a
     // plugin effect fell through to the key-matching fallback below and was
     // described by whichever BUILT-IN effect happened to declare the same key
     // first: a plugin's `radius` labelled and ranged as some other effect's.
-    return fx ? effectDefFor(fx.type) : undefined;
+    return type ? effectDefFor(type) : undefined;
   })();
 
   // AE's Compositing Options -> Effect Opacity. A reserved key rather than a
@@ -914,20 +966,13 @@ const REPEATER_PARAM_META: Record<string, { unit?: string; min?: number; max?: n
   offsetOpacity: { min: 0, max: 1, step: 0.02, precision: 2, defaultValue: 1 },
 };
 
-function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null {
+function resolvePathOpParam(path: string, node?: MetaNode): PropertyMeta | null {
   const m = /^pathop\.([^.]+)\.(.+)$/.exec(path);
   if (!m) return null;
   const [, opId, param] = m;
   if (!opId || !param) return null;
 
-  let type = 'none';
-  if (nodeId) {
-    const node = defaultSceneGraph.getNode(nodeId);
-    const ops = (node?.components.find((c) => c.type === 'fx')?.props as
-      | { pathOps?: Array<{ id?: string; type?: string }> }
-      | undefined)?.pathOps;
-    type = ops?.find((o) => o.id === opId)?.type ?? 'none';
-  }
+  const type = factsOf(node)?.pathOpType?.(opId) ?? 'none';
   const label = PATHOP_PARAM_LABEL[type]?.[param] ?? titleCase(param);
   // Trim's three are percentages of path length; `offset` wraps, so the range
   // is deliberately wider than 0..100 — that is how a chase runs past the end.
@@ -1016,19 +1061,14 @@ function resolvePolystarParam(path: string): PropertyMeta | null {
  * node is known ("Brush 2 Opacity"), in the units the timeline animates
  * (see `core/paint/paintProps.ts`).
  */
-function resolvePaintProperty(path: string, nodeId?: string): PropertyMeta | null {
+function resolvePaintProperty(path: string, node?: MetaNode): PropertyMeta | null {
   if (!path.startsWith('paint.')) return null;
   const num = parsePaintPropPath(path);
   const col = num ? null : parsePaintColorPath(path);
   const pathRow = !num && !col ? /^paint\.([^.]+)\.path$/.exec(path) : null;
   const strokeId = num?.strokeId ?? col?.strokeId ?? pathRow?.[1];
   if (!strokeId) return null;
-  let name = 'Paint';
-  if (nodeId) {
-    const fx = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'fx');
-    const strokes = (fx?.props.paint as { strokes?: Array<{ id: string; mode: 'paint' | 'erase' | 'clone'; name?: string }> } | undefined)?.strokes;
-    if (Array.isArray(strokes)) name = strokeDisplayNames(strokes).get(strokeId) ?? name;
-  }
+  const name = factsOf(node)?.paintStrokeName?.(strokeId) ?? 'Paint';
   const base = { path, group: 'effects' as const, resettable: true, order: ORDER.effects };
   if (pathRow) {
     return { ...base, label: `${name} Path`, type: 'path', unit: '', step: 1, precision: 0, defaultValue: null, resettable: false };
@@ -1055,18 +1095,11 @@ function resolvePaintProperty(path: string, nodeId?: string): PropertyMeta | nul
   return { ...base, label, type: 'number', unit, ...(key === 'diameter' ? { min: 0.1 } : {}), step: 1, precision: 1, defaultValue: key === 'diameter' ? 12 : 0, resettable: key === 'diameter' };
 }
 
-function resolveMaskProperty(path: string, nodeId?: string): PropertyMeta | null {
+function resolveMaskProperty(path: string, node?: MetaNode): PropertyMeta | null {
   const m = /^mask\.([^.]+)\.(feather|opacity|expansion)$/.exec(path);
   if (!m) return null;
   const [, pathId, key] = m as unknown as [string, string, 'feather' | 'opacity' | 'expansion'];
-  let maskName = 'Mask';
-  if (nodeId) {
-    const node = defaultSceneGraph.getNode(nodeId);
-    const fx = node?.components.find((c) => c.type === 'fx');
-    const paths = (fx?.props.mask as { paths?: Array<{ id: string; name?: string }> } | undefined)?.paths ?? [];
-    const idx = paths.findIndex((p) => p.id === pathId);
-    if (idx >= 0) maskName = paths[idx]!.name ?? `Mask ${idx + 1}`;
-  }
+  const maskName = factsOf(node)?.maskName?.(pathId) ?? 'Mask';
   const base = { path, group: 'other' as const, resettable: true, order: ORDER.other };
   if (key === 'opacity') {
     return { ...base, label: `${maskName} Opacity`, type: 'percent', unit: '%', min: 0, max: 100, step: 1, precision: 1, defaultValue: 100 };
@@ -1078,7 +1111,7 @@ function resolveMaskProperty(path: string, nodeId?: string): PropertyMeta | null
 }
 
 /** `<base>_r` / `_g` / `_b` / `_a` — one channel of a decomposed colour track. */
-function resolveColorChannel(path: string, nodeId?: string): PropertyMeta | null {
+function resolveColorChannel(path: string, nodeId?: MetaNode): PropertyMeta | null {
   const m = /^(.+)(_[rgba])$/.exec(path);
   if (!m) return null;
   const [, base, suffix] = m;
@@ -1117,10 +1150,9 @@ function resolveColorChannel(path: string, nodeId?: string): PropertyMeta | null
  * heading. On any other kind these fall through to the raw-path fallback,
  * exactly as they did before lights were registered.
  */
-function resolveLightOption(path: string, nodeId?: string): PropertyMeta | null {
+function resolveLightOption(path: string, node?: MetaNode): PropertyMeta | null {
   if (path !== 'intensity' && path !== 'radius') return null;
-  const node = nodeId ? defaultSceneGraph.getNode(nodeId) : undefined;
-  if (!node || readNodeKind(node) !== 'light') return null;
+  if (factsOf(node)?.kind !== 'light') return null;
   return path === 'intensity'
     ? {
         // Unbounded above on purpose: over-driving a light past 100% is a look.
@@ -1140,11 +1172,10 @@ function resolveLightOption(path: string, nodeId?: string): PropertyMeta | null 
  * "Camera Options" on a camera, "Light Options" on a light. Without a node
  * the camera reading wins — cameras are where a POI is most often keyframed.
  */
-function resolvePointOfInterest(path: string, nodeId?: string): PropertyMeta | null {
+function resolvePointOfInterest(path: string, node?: MetaNode): PropertyMeta | null {
   const axis = path === 'poiX' ? 'X' : path === 'poiY' ? 'Y' : path === 'poiZ' ? 'Z' : null;
   if (!axis) return null;
-  const node = nodeId ? defaultSceneGraph.getNode(nodeId) : undefined;
-  const kind = node ? readNodeKind(node) : undefined;
+  const kind = factsOf(node)?.kind;
   const group: PropertyGroup = kind === 'light' ? 'light' : 'camera';
   return {
     path,
@@ -1300,7 +1331,7 @@ const LEGACY_SELECTOR_PARAMS = new Set(['start', 'end', 'offset', 'wiggleFreq'])
  * row reading "Animator 1 Range Selector 1 Offset" when there is only one
  * selector is noise, not information.
  */
-function resolveTextAnimator(path: string, nodeId?: string): PropertyMeta | null {
+function resolveTextAnimator(path: string, node?: MetaNode): PropertyMeta | null {
   const m = /^ta\.(\d+)\.(?:s(\d+)\.)?([A-Za-z][A-Za-z0-9]*)$/.exec(path);
   if (!m) return null;
   const animIndex = Number(m[1]);
@@ -1311,7 +1342,7 @@ function resolveTextAnimator(path: string, nodeId?: string): PropertyMeta | null
   const explicit = m[2] !== undefined ? Number(m[2]) : undefined;
   const selIndex = explicit ?? (LEGACY_SELECTOR_PARAMS.has(param) ? 0 : undefined);
 
-  const animators = nodeId ? readAnimatorsForMeta(nodeId) : [];
+  const animators = factsOf(node)?.animators?.() ?? [];
   const animator = animators[animIndex];
   const animLabel = animator?.name ?? `Animator ${animIndex + 1}`;
 
@@ -1368,7 +1399,7 @@ function readAnimatorsForMeta(
  * `resolveControl` runs before the channel resolver so a control literally
  * named `a`/`r`/`g`/`b` isn't mistaken for a colour channel of `ctrl`.
  */
-const RESOLVERS: ReadonlyArray<(path: string, nodeId?: string) => PropertyMeta | null> = [
+const RESOLVERS: ReadonlyArray<(path: string, node?: MetaNode) => PropertyMeta | null> = [
   // Before `resolveColorChannel`: `stroke.1.color_r` must be named for its
   // stroke, not title-cased as a channel of an unknown base.
   resolveStrokeStackParam,
@@ -1404,7 +1435,7 @@ const RESOLVERS: ReadonlyArray<(path: string, nodeId?: string) => PropertyMeta |
  * reads "Stroke 2 Dash Offset". Deriving rather than duplicating the table is
  * what keeps a range or unit fix on the primary from missing its siblings.
  */
-function resolveStrokeStackParam(path: string, nodeId?: string): PropertyMeta | null {
+function resolveStrokeStackParam(path: string, nodeId?: MetaNode): PropertyMeta | null {
   if (!path.startsWith('stroke.')) return null;
   const parsed = parseStrokeTrackPath(path);
   if (!parsed || parsed.index === 0) return null;
@@ -1434,17 +1465,18 @@ function storedStrokeAt(
  * px or a cycle count (AE's Wave Units). Without this a pixel taper's row reads
  * "%" and scales by 100 — a field that means the wrong thing.
  */
-function withStrokeUnits(meta: PropertyMeta, nodeId: string): PropertyMeta {
+function withStrokeUnits(meta: PropertyMeta, node: MetaNode): PropertyMeta {
   const parsed = parseStrokeTrackPath(meta.path);
   if (!parsed) return meta;
   const { param, index } = parsed;
+  const strokeAt = (i: number): ReturnType<typeof storedStrokeAt> => factsOf(node)?.strokeAt?.(i);
   if (param === 'waveWavelength') {
-    return storedStrokeAt(nodeId, index)?.wave?.units === 'cycles'
+    return strokeAt(index)?.wave?.units === 'cycles'
       ? { ...meta, label: meta.label.replace(/Wavelength$/, 'Cycles'), unit: '', min: 0, step: 0.1, precision: 1 }
       : meta;
   }
   if (param !== 'taperStartLength' && param !== 'taperEndLength') return meta;
-  if (storedStrokeAt(nodeId, index)?.taper?.lengthUnits !== 'pixels') return meta;
+  if (strokeAt(index)?.taper?.lengthUnits !== 'pixels') return meta;
   const { displayScale: _scale, max: _max, ...rest } = meta;
   return { ...rest, type: 'number', unit: 'px', min: 0, step: 1, precision: 1 };
 }
@@ -1459,14 +1491,16 @@ function withStrokeUnits(meta: PropertyMeta, nodeId: string): PropertyMeta {
  * `nodeId` is optional and only sharpens paths whose meaning depends on the
  * layer (effect params resolve their effect's definition through it).
  */
-export function resolvePropertyMeta(path: string, nodeId?: string): PropertyMeta {
+export function resolvePropertyMeta(path: string, node?: MetaNode): PropertyMeta {
   const exact = STATIC[path];
   if (exact) {
     // A stroke entry's unit can depend on the layer (see withStrokeUnits).
-    return nodeId && exact.group === 'stroke' ? withStrokeUnits({ path, ...exact }, nodeId) : { path, ...exact };
+    return node && exact.group === 'stroke' ? withStrokeUnits({ path, ...exact }, node) : { path, ...exact };
   }
+  // Built once per call, not per resolver (a node id reads the graph lazily).
+  const facts = factsOf(node);
   for (const r of RESOLVERS) {
-    const hit = r(path, nodeId);
+    const hit = r(path, facts);
     if (hit) return hit;
   }
   return {
@@ -1484,24 +1518,25 @@ export function resolvePropertyMeta(path: string, nodeId?: string): PropertyMeta
 }
 
 /** Display label for a prop path. */
-export function propertyLabel(path: string, nodeId?: string): string {
+export function propertyLabel(path: string, nodeId?: MetaNode): string {
   return resolvePropertyMeta(path, nodeId).label;
 }
 
 /** Unit suffix for a prop path (`''` when unitless). */
-export function propertyUnit(path: string, nodeId?: string): string {
+export function propertyUnit(path: string, nodeId?: MetaNode): string {
   return resolvePropertyMeta(path, nodeId).unit;
 }
 
 /** Sort position of a prop path within a layer's property tree. */
-export function propertyOrder(path: string, nodeId?: string): number {
+export function propertyOrder(path: string, nodeId?: MetaNode): number {
   return resolvePropertyMeta(path, nodeId).order;
 }
 
 /** True when the registry describes this path explicitly (not via fallback). */
-export function hasPropertyMeta(path: string, nodeId?: string): boolean {
+export function hasPropertyMeta(path: string, nodeId?: MetaNode): boolean {
   if (STATIC[path]) return true;
-  return RESOLVERS.some((r) => r(path, nodeId) !== null);
+  const facts = factsOf(nodeId);
+  return RESOLVERS.some((r) => r(path, facts) !== null);
 }
 
 /** Every statically-described path — the registry's own inventory, for tests. */

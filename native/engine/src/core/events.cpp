@@ -312,6 +312,23 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
     }
   }
   if (rqDirty) events.push_back(make_event(api::RenderQueueChangedEvent{d.render_queue()}));
+  // B3z: the transition records (events.ts `tx`): every comp whose list changed, sorted.
+  if (before.tx && after.tx && *before.tx && *after.tx) {
+    const Json& b = **before.tx;
+    const Json& a = **after.tx;
+    std::set<std::string> comps;
+    if (b.is_object()) {
+      for (const auto& m : b.obj()) comps.insert(m.key);
+    }
+    if (a.is_object()) {
+      for (const auto& m : a.obj()) comps.insert(m.key);
+    }
+    const auto listOf = [](const Json& v) { return v.is_undefined() || v.is_null() ? std::string("[]") : stringify(v); };
+    for (const auto& comp : comps) {
+      if (listOf(b.at(comp)) == listOf(a.at(comp))) continue;
+      if (is_comp_item(d, comp)) events.push_back(make_event(api::TransitionsChangedEvent{comp, transitions_of(d, comp)}));
+    }
+  }
   return events;
 }
 

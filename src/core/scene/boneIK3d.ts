@@ -257,9 +257,43 @@ export function bakeIk3D(
   fps: number,
   opts?: IkOptions,
 ): number {
-  if (chainIds.length < 2 || !(fps > 0) || t1 < t0) return 0;
+  const plan = planIk3DBake(chainIds, targetLayerId, t0, t1, fps, opts);
+  if (!plan) return 0;
+  plan.joints.forEach((j) => {
+    defaultAnimation.setTrackKeyframes(j.id, 'rotationX', j.rx);
+    defaultAnimation.setTrackKeyframes(j.id, 'rotationY', j.ry);
+    defaultAnimation.setTrackKeyframes(j.id, 'rotation', j.rz);
+  });
+  bumpScene();
+  return plan.frames;
+}
+
+/** One solved joint of a bake: its X / Y / Z rotation keys (t = composition seconds). */
+export interface Ik3DBakeJoint {
+  id: string;
+  rx: Keyframe[];
+  ry: Keyframe[];
+  rz: Keyframe[];
+}
+
+/**
+ * The bake WITHOUT writing it: every joint but the tip, with one linear key
+ * per frame in [t0, t1] (composition seconds). Pure over the document (reads
+ * only), so the inspector sends the result as ONE engine batch — a client
+ * macro (ENGINE_API.md §1 rule 7). Null when the chain or target cannot
+ * resolve.
+ */
+export function planIk3DBake(
+  chainIds: string[],
+  targetLayerId: string,
+  t0: number,
+  t1: number,
+  fps: number,
+  opts?: IkOptions,
+): { frames: number; joints: Ik3DBakeJoint[] } | null {
+  if (chainIds.length < 2 || !(fps > 0) || t1 < t0) return null;
   const targetNode = defaultSceneGraph.getNode(targetLayerId);
-  if (!targetNode) return 0;
+  if (!targetNode) return null;
   const frameCount = Math.max(1, Math.round((t1 - t0) * fps) + 1);
   const tracks = chainIds.slice(0, -1).map(() => ({
     rx: [] as Keyframe[], ry: [] as Keyframe[], rz: [] as Keyframe[],
@@ -269,7 +303,7 @@ export function bakeIk3D(
     const t = t0 + f / fps;
     const targetM = nodeWorldWithParents3d(targetNode, t);
     const locals = chainLocals(chainIds, t, prevTotals);
-    if (!targetM || !locals) return 0;
+    if (!targetM || !locals) return null;
     const target = { x: targetM[12]!, y: targetM[13]!, z: targetM[14]! };
     const totals = solveCcdChain(locals, parentWorldMatrixAt(chainIds[0]!, t), target, opts);
     prevTotals = totals;
@@ -280,11 +314,5 @@ export function bakeIk3D(
       tr.rz.push({ t, value: totals[i]!.z - locals[i]!.orientationZ, easing: 'linear' });
     }
   }
-  for (let i = 0; i < chainIds.length - 1; i++) {
-    defaultAnimation.setTrackKeyframes(chainIds[i]!, 'rotationX', tracks[i]!.rx);
-    defaultAnimation.setTrackKeyframes(chainIds[i]!, 'rotationY', tracks[i]!.ry);
-    defaultAnimation.setTrackKeyframes(chainIds[i]!, 'rotation', tracks[i]!.rz);
-  }
-  bumpScene();
-  return frameCount;
+  return { frames: frameCount, joints: tracks.map((tr, i) => ({ id: chainIds[i]!, ...tr })) };
 }

@@ -10,30 +10,36 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
+import { useSelectionStore } from '@stores/selectionStore';
 import { useTrackerStore, type AutoPhase, type TrackerMode, type TrackerResult } from '@stores/trackerStore';
 import type { CompositionSettings } from '@stores/compositionStore';
 import { trackVideoLayerPoints } from '@core/tracking/trackVideoLayer';
 import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { smoothStabilizeVideoLayer } from '@core/tracking/smoothStabilize';
 import {
-  applyTrackToLayer,
-  applyStabilizeToLayer,
-  applyCornerPinTrack,
-  applyTransformTrack,
-  applyTrackToCamera,
-  applyCameraSolveTrack,
-  applyMeshWarpTrack,
-  applyPlanarCameraSolve,
-  applySfmCameraSolve,
-  createNullAndApplyTrack,
-  createNullsForPlanes,
+  planCameraSolveTrack,
+  planCornerPinTrack,
+  planMeshWarpTrack,
+  planStabilize,
+  planTrackToCamera,
+  planTrackToLayer,
+  planTransformTrack,
+  type TrackPlan,
 } from '@core/tracking/applyTrack';
-import { reparentNode } from '@core/scene/parenting';
+import { canReparent } from '@core/scene/parenting';
 import { matteToPath } from '@core/tracking/rotoMatte';
 import { grabCutMatte } from '@core/tracking/grabCut';
 import { segmentSamSync } from '@core/tracking/samSegment';
-import { addMaskPath, type MaskPath } from '@core/effects/mask';
+import { edit } from '@core/engine/uiEdits';
+import { isLayer } from '@core/engine/doc';
+import { values } from '@core/engine/propRefs';
+import {
+  applyTrackPlanEdit,
+  createNullAndApplyEdit,
+  createNullsForPlanesEdit,
+  solveCameraEdit,
+} from './trackApplyEdits';
+import { inOneEntry } from '../keySpliceEdits';
 import { runRotoBrush } from '@core/tracking/rotoBrush';
 import { runContentAwareFill } from '@core/effects/contentAwareFillVideo';
 import { trackLayerMask } from '@core/tracking/maskTrack';
@@ -121,13 +127,12 @@ export function trackMotionActions(ctx: TrackMotionContext) {
    * the primary, so rotation and scale come from a walk that already happened
    * rather than a second pass over the clip.
    */
-  const onCreateNullAndApply = (asTransform = false): void => {
+  const onCreateNullAndApply = async (asTransform = false): Promise<void> => {
     if (!result) return;
     const applyMode = asTransform ? 'transform' : mode;
     if (applyMode !== 'follow' && applyMode !== 'transform' && applyMode !== 'corner') return;
     if (applyMode === 'transform' && result.tracks.length < 2) return;
-    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-    const out = createNullAndApplyTrack({
+    const out = await createNullAndApplyEdit({
       videoNodeId: nodeId,
       mode: applyMode,
       samples: result.tracks[0] ?? [],
@@ -140,6 +145,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       store.getState().finishTracking(result, 'Could not create null.');
       return;
     }
+    useSelectionStore.getState().set([out.nullId]);
     setTargetId(out.nullId);
     ctx.onNullCreated?.(out.nullId);
     store.getState().finishTracking(
@@ -150,14 +156,14 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   /**
    * The step the note used to ASK the user to do: parent a layer to the
-   * tracked null. `reparentNode` preserves the child's world pose (the same
-   * path the timeline's Parent & Link uses), so attaching never jumps the
-   * layer — it simply starts following.
+   * tracked null. `setParent{keepWorldTransform}` preserves the child's world
+   * pose (AE's default Parent & Link), so attaching never jumps the layer — it
+   * simply starts following.
    */
-  const onAttachToNull = (childId: string, nullId: string): void => {
+  const onAttachToNull = async (childId: string, nullId: string): Promise<void> => {
     const nullName = defaultSceneGraph.getNode(nullId)?.name || nullId;
-    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-    const ok = reparentNode(childId, nullId);
+    const ok = isLayer(childId) && isLayer(nullId) && canReparent(childId, nullId)
+      && (await edit('Parent', { type: 'setParent', layers: [childId], parent: nullId, keepWorldTransform: true }, { quiet: true })).ok;
     store.getState().finishTracking(
       result,
       ok
@@ -249,17 +255,16 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     if (needsSelfApplyConfirm({ mode, targetId, sourceId: nodeId })) {
       const copy = selfApplyConfirmCopy({ mode, layerName: targetName(targetId) });
       const makeNull = await customConfirm(copy.title, copy.message, { confirmLabel: copy.confirmLabel });
-      if (makeNull) onCreateNullAndApply();
+      if (makeNull) await onCreateNullAndApply();
       else store.getState().finishTracking(result, 'Not applied — choose another layer to receive the track.');
       return;
     }
-    let n = 0;
+    let plan: TrackPlan | null = null;
     let what = '';
     if (mode === 'follow') {
       const targetNode = defaultSceneGraph.getNode(targetId);
       if (targetNode && readNodeKind(targetNode) === 'camera') {
-        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-        n = applyTrackToCamera({
+        plan = planTrackToCamera({
           videoNodeId: nodeId,
           targetNodeId: targetId,
           samples: result.tracks[0] ?? [],
@@ -269,8 +274,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         });
         what = `camera position + look-at to “${targetName(targetId)}”`;
       } else {
-        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-        n = applyTrackToLayer({
+        plan = planTrackToLayer({
           videoNodeId: nodeId,
           targetNodeId: targetId,
           samples: result.tracks[0] ?? [],
@@ -283,8 +287,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     } else if (mode === 'transform') {
       const targetNode = defaultSceneGraph.getNode(targetId);
       if (targetNode && readNodeKind(targetNode) === 'camera') {
-        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-        n = applyCameraSolveTrack({
+        plan = planCameraSolveTrack({
           videoNodeId: nodeId,
           targetNodeId: targetId,
           tracks: result.tracks,
@@ -294,8 +297,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         });
         what = `camera solve (position + orientation) to “${targetName(targetId)}”`;
       } else {
-        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-        n = applyTransformTrack({
+        plan = planTransformTrack({
           videoNodeId: nodeId,
           targetNodeId: targetId,
           tracks: result.tracks,
@@ -306,8 +308,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         what = `position/rotation/scale keyframes to “${targetName(targetId)}”`;
       }
     } else if (mode === 'stabilize') {
-      // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-      n = applyStabilizeToLayer({
+      plan = planStabilize({
         videoNodeId: nodeId,
         samples: result.tracks[0] ?? [],
         sourceWidth: result.sourceWidth,
@@ -316,8 +317,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       });
       what = 'stabilizing keyframes to this layer';
     } else if (mode === 'corner') {
-      // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-      n = applyCornerPinTrack({
+      plan = planCornerPinTrack({
         videoNodeId: nodeId,
         targetNodeId: targetId,
         tracks: result.tracks,
@@ -327,43 +327,36 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       });
       what = `corner-pin keyframes to “${targetName(targetId)}”`;
     }
+    const n = await applyTrackPlanEdit(plan);
     store.getState().finishTracking(result, n > 0 ? `Applied ${n} ${what}.` : 'Nothing to apply.');
   };
 
-  const onApplyMesh = (): void => {
+  const onApplyMesh = async (): Promise<void> => {
     if (!result || mode !== 'corner') return;
-    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-    const n = applyMeshWarpTrack({
+    const n = await applyTrackPlanEdit(planMeshWarpTrack({
       videoNodeId: nodeId,
       targetNodeId: targetId,
       tracks: result.tracks,
       sourceWidth: result.sourceWidth,
       sourceHeight: result.sourceHeight,
       comp,
-    });
+    }));
     store.getState().finishTracking(
       result,
       n > 0 ? `Applied ${n} mesh-warp keyframes to “${targetName(targetId)}”.` : 'Nothing to apply.',
     );
   };
 
-  const onSolveCamera = (): void => {
+  const onSolveCamera = async (): Promise<void> => {
     if (!result || mode !== 'corner') return;
-    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-    const out = applySfmCameraSolve({
-      videoNodeId: nodeId,
-      tracks: result.tracks,
-      sourceWidth: result.sourceWidth,
-      sourceHeight: result.sourceHeight,
-      comp,
-    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-    }) ?? applyPlanarCameraSolve({
+    const out = await solveCameraEdit({
       videoNodeId: nodeId,
       tracks: result.tracks,
       sourceWidth: result.sourceWidth,
       sourceHeight: result.sourceHeight,
       comp,
     });
+    if (out) useSelectionStore.getState().set([out.cameraId]);
     store.getState().finishTracking(
       result,
       out
@@ -421,10 +414,9 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     }
   };
 
-  const onCreateNullsForPlanes = (): void => {
+  const onCreateNullsForPlanes = async (): Promise<void> => {
     if (!result || mode !== 'corner' || result.tracks.length < 8) return;
-    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-    const out = createNullsForPlanes({
+    const out = await createNullsForPlanesEdit({
       videoNodeId: nodeId,
       tracks: result.tracks,
       sourceWidth: result.sourceWidth,
@@ -472,8 +464,8 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     );
   };
 
-  /** SAM-class click segment → writes an Add mask path on this layer. */
-  const onSegmentSam = (): void => {
+  /** SAM-class click segment → an Add mask on this layer (`addMask` + its 2 px feather, one entry). */
+  const onSegmentSam = async (): Promise<void> => {
     const target = defaultSceneGraph.getNode(nodeId);
     const g = target ? readGeometry(target) : null;
     const w = src?.width ?? 64;
@@ -508,27 +500,23 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       featherPx: 2,
     });
     const pts = matteToPath(segment.mask, w, h);
-    if (pts.length >= 3 && g) {
+    if (pts.length >= 3 && g && isLayer(nodeId)) {
       const layerW = g.width;
       const layerH = g.height;
-      const path: MaskPath = {
-        id: `sam_${Date.now().toString(36)}`,
-        name: 'Segment (SAM-class)',
-        mode: 'add',
-        closed: true,
-        points: pts.map((p) => {
-          const lx = (p.x / w - 0.5) * layerW;
-          const ly = (p.y / h - 0.5) * layerH;
-          return { x: lx, y: ly, inX: lx, inY: ly, outX: lx, outY: ly };
-        }),
-        feather: 2,
-        opacity: 1,
-        expansion: 0,
-        inverted: false,
-      };
-      // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
-      addMaskPath(nodeId, path);
-      bumpScene();
+      const vertices: number[] = [];
+      for (const p of pts) vertices.push((p.x / w - 0.5) * layerW, (p.y / h - 0.5) * layerH);
+      // Corner vertices (no tangents); the engine mints the mask id.
+      // ONE entry: the mask, then its 2 px feather (the id comes back from addMask).
+      await inOneEntry('New Mask', [
+        () => [{
+          type: 'addMask', layer: nodeId, mode: 'add', name: 'Segment (SAM-class)', inverted: false,
+          path: { vertices, inTangents: vertices.map(() => 0), outTangents: vertices.map(() => 0), closed: true, featherPoints: [] },
+        }],
+        (earlier) => {
+          const group = (earlier[0]?.[0] as { groups?: string[] } | undefined)?.groups?.[0];
+          return group ? [{ type: 'setProperty', prop: { layer: nodeId, path: `${group}/feather` }, value: values.scalar(2) }] : [];
+        },
+      ]);
     }
     store.getState().finishTracking(
       null,

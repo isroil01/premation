@@ -12,6 +12,7 @@
 #include "fxstate.hpp"
 #include "handlers_layers.hpp"
 #include "jsmath.hpp"
+#include "rig.hpp"
 #include "strutil.hpp"
 
 namespace premation::doc {
@@ -256,7 +257,8 @@ const Node& text_node_or_fail(const Document& d, const std::string& layer) {
 
 // ── group addressing ──────────────────────────────────────────────────────
 
-enum class GK : std::uint8_t { effect, mask, animator, selector, style, pathop };
+/// rig: a puppet / skeleton group (rig.hpp).
+enum class GK : std::uint8_t { effect, mask, animator, selector, style, pathop, rig };
 
 struct GroupRef {
   GK kind = GK::effect;
@@ -265,6 +267,7 @@ struct GroupRef {
   std::string animator;  ///< selector: its animator's id
   int animIndex = -1;    ///< selector
   int index = 0;         ///< animator / selector index (`'index' in r`)
+  std::optional<RigGroupRef> rig;  ///< GK::rig
   [[nodiscard]] bool has_index() const { return kind == GK::animator || kind == GK::selector; }
 };
 
@@ -292,6 +295,11 @@ GroupRef resolve_group(const Document& d, const api::PropRef& ref) {
   };
   auto at = [&](std::size_t i) -> std::string { return i < seg.size() ? seg[i] : std::string(); };
   const bool has1 = seg.size() > 1;
+  if (auto rig = resolve_rig_group(node, ref.layer, ref.path)) {
+    GroupRef r = gref(GK::rig, ref.layer, rig_group_path(*rig));
+    r.rig = std::move(rig);
+    return r;
+  }
   if (seg[0] == "effects" && seg.size() == 2) {
     if (find_by_id(read_node_effects(node), seg[1]) == nullptr) nf();
     return gref(GK::effect, ref.layer, seg[1]);
@@ -339,16 +347,22 @@ std::string group_path(const GroupRef& g) {
     case GK::selector: return "text/animators/" + g.animator + "/selectors/" + g.id;
     case GK::style: return "styles/" + g.id;
     case GK::pathop: return "contents/" + g.id;
+    case GK::rig: return rig_group_path(*g.rig);
   }
   return {};
 }
 
 /// Track-name prefix a group's scalar tracks live under (nullopt = index-addressed text animators).
+/// A layer style's tracks: Glass keys `glass.<param>` (glassResolve.ts), the rest their compiled effect's.
+std::string style_track_prefix(const std::string& style) {
+  return style == "glass" ? std::string("glass.") : "effect.layerstyle:" + style + ".";
+}
+
 std::optional<std::string> track_prefix(const GroupRef& g) {
   switch (g.kind) {
     case GK::effect: return "effect." + g.id;
     case GK::mask: return "mask." + g.id + ".";
-    case GK::style: return "effect.layerstyle:" + g.id + ".";
+    case GK::style: return style_track_prefix(g.id);
     case GK::pathop: return "pathop." + g.id + ".";
     default: return std::nullopt;
   }
@@ -428,6 +442,9 @@ void write_inits(Document& d, const std::string& layer, const std::string& prefi
 
 void remove_group(Document& d, const GroupRef& r) {
   switch (r.kind) {
+    case GK::rig:
+      remove_rig_group(d, *r.rig);
+      return;
     case GK::effect: {
       std::vector<Json> list = get_node_effects(d, r.layer);
       std::erase_if(list, [&](const Json& e) { return id_is(e, r.id); });
@@ -497,6 +514,9 @@ void remove_group(Document& d, const GroupRef& r) {
 
 void set_enabled(Document& d, const GroupRef& r, bool on) {
   switch (r.kind) {
+    case GK::rig:
+      set_rig_group_enabled(d, *r.rig, on);
+      return;
     case GK::effect: {
       std::vector<Json> list = get_node_effects(d, r.layer);
       for (Json& e : list) {
@@ -581,6 +601,7 @@ std::string mint_for(HCtx& x, const GroupRef& r, const std::string& layer) {
     case GK::animator: return x.mint_group_id("anim_", [](const std::string&) { return false; });
     case GK::selector: return x.mint_group_id("sel_", [](const std::string&) { return false; });
     case GK::style: return r.id;
+    case GK::rig: fail(ErrorCode::unsupported, "rig groups cannot be copied");
   }
   return {};
 }
@@ -615,7 +636,7 @@ std::string copy_group(HCtx& x, const GroupRef& r, const std::string& to, const 
       Json styles = get_node_layer_styles(*d.node(to));
       styles.set(r.id, src);
       set_layer_styles(d, to, styles);
-      const std::string p = "effect.layerstyle:" + r.id + ".";
+      const std::string p = style_track_prefix(r.id);
       copy_group_tracks(x, r.layer, p, p, to);
       return "styles/" + r.id;
     }
@@ -670,6 +691,7 @@ std::string copy_group(HCtx& x, const GroupRef& r, const std::string& to, const 
       return "text/animators/" + newId;
     }
     case GK::selector: fail(ErrorCode::unsupported, "duplicate the animator to copy its selectors");
+    case GK::rig: fail(ErrorCode::unsupported, "rig groups cannot be copied");
   }
   return {};
 }
@@ -1313,6 +1335,16 @@ ResultOf<api::AddPropertyGroup> handle(const api::AddPropertyGroup& c, HCtx& x) 
       set_path_ops(d, layer, next);
       return "contents/" + id;
     };
+  } else if (auto rigPlan = plan_rig_add(d, layer, parent, c.match_name, c.index, c.name, c.init,
+                                           [&x](std::string_view prefix, const std::function<bool(const std::string&)>& taken) {
+                                             return x.mint_group_id(prefix, taken);
+                                           })) {
+    // Rig groups write their own init (a new group's values, no bind-pose capture).
+    x.label = "Add " + c.match_name;
+    rigPlan->run();
+    api::GroupList out;
+    out.groups.push_back(rigPlan->path);
+    return out;
   } else {
     fail(ErrorCode::unsupported,
          "'" + c.match_name + "' under '" + parent + "' is not a group this engine can add (listGroupTypes lists what it can)",
@@ -1404,6 +1436,7 @@ ResultOf<api::MovePropertyGroup> handle(const api::MovePropertyGroup& c, HCtx& x
       break;
     }
     case GK::style: fail(ErrorCode::unsupported, "layer styles have a fixed order");
+    case GK::rig: move_rig_group(d, *r.rig, to); break;
   }
   return {};
 }
@@ -1415,6 +1448,9 @@ ResultOf<api::DuplicatePropertyGroups> handle(const api::DuplicatePropertyGroups
   for (const auto& g : c.groups) refs.push_back(resolve_group(d, g));
   for (const auto& r : refs) {
     if (r.kind == GK::style) fail(ErrorCode::unsupported, "a layer has at most one style of each kind");
+  }
+  for (const auto& r : refs) {
+    if (r.kind == GK::rig) fail(ErrorCode::unsupported, "rig groups are duplicated by adding a new pin / bone in this engine");
   }
   std::vector<std::string> newIds;
   for (const auto& r : refs) newIds.push_back(mint_for(x, r, r.layer));
@@ -1440,7 +1476,14 @@ ResultOf<api::RenamePropertyGroup> handle(const api::RenamePropertyGroup& c, HCt
   if (r.kind == GK::style || r.kind == GK::pathop) {
     fail(ErrorCode::unsupported, "'" + group_path(r) + "' cannot be renamed in this engine");
   }
+  if (r.kind == GK::rig && r.rig->kind != "pin" && r.rig->kind != "bone" && r.rig->kind != "controller") {
+    fail(ErrorCode::unsupported, "'" + group_path(r) + "' cannot be renamed");
+  }
   x.label = "Rename Group";
+  if (r.kind == GK::rig) {
+    rename_rig_group(d, *r.rig, c.name);
+    return {};
+  }
   const std::optional<std::string> name = blank_js(c.name) ? std::nullopt : std::optional<std::string>(c.name);
   if (r.kind == GK::effect) {
     std::vector<Json> list = get_node_effects(d, r.layer);
@@ -1478,6 +1521,109 @@ ResultOf<api::RenamePropertyGroup> handle(const api::RenamePropertyGroup& c, HCt
   return {};
 }
 
+namespace {
+
+struct CapturedEffect {
+  Json effect;
+  std::vector<std::pair<std::string, std::vector<Key>>> tracks;
+};
+
+/// groups.ts `capturedKey`: the fields the animation engine stores (key_from_json), a
+/// bezier only when its first four entries are numbers.
+Key captured_key(const Json& k) {
+  auto key = key_from_json(k);
+  if (!key || !std::isfinite(key->t) || !std::isfinite(key->value)) {
+    fail(ErrorCode::invalid_argument, "a captured keyframe needs a finite t and value");
+  }
+  const Json& bz = k.at("bezier");
+  bool okBezier = bz.is_array() && bz.arr().size() >= 4;
+  for (std::size_t i = 0; okBezier && i < 4; ++i) okBezier = bz.arr()[i].is_finite_number();
+  if (!okBezier) key->bezier.reset();
+  if (key->label && !std::isfinite(*key->label)) key->label.reset();
+  key->id.reset();
+  return *key;
+}
+
+/// groups.ts `parseCapturedEffects`.
+std::vector<CapturedEffect> parse_captured_effects(const std::string& json) {
+  const auto v = js::parse(json);
+  if (!v) fail(ErrorCode::invalid_argument, "effects: invalid json");
+  if (!v->is_array() || v->arr().empty()) fail(ErrorCode::invalid_argument, "effects: a non-empty JSON array of captured effects is required");
+  std::vector<CapturedEffect> out;
+  for (const Json& it : v->arr()) {
+    const Json& e = it.at("effect");
+    if (!it.is_object() || !e.is_object() || !e.at("type").is_string() || e.at("type").str().empty()) {
+      fail(ErrorCode::invalid_argument, "a captured effect is {effect: {type, …}, tracks: {…}}");
+    }
+    const Json& tr = it.at("tracks");
+    if (!tr.is_undefined() && !tr.is_object()) fail(ErrorCode::invalid_argument, "the tracks of a captured effect is an object of keyframe arrays");
+    CapturedEffect c{e, {}};
+    if (tr.is_object()) {
+      for (const auto& m : tr.obj()) {
+        if (!m.value.is_array()) fail(ErrorCode::invalid_argument, "track '" + m.key + "' is not a keyframe array");
+        if (m.value.arr().empty()) continue;
+        std::vector<Key> keys;
+        for (const Json& k : m.value.arr()) keys.push_back(captured_key(k));
+        std::stable_sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) { return a.t < b.t; });
+        c.tracks.emplace_back(m.key, std::move(keys));
+      }
+    }
+    out.push_back(std::move(c));
+  }
+  return out;
+}
+
+}  // namespace
+
+ResultOf<api::PasteEffects> handle(const api::PasteEffects& c, HCtx& x) {
+  Document& d = x.d;
+  if (c.layers.empty()) fail(ErrorCode::invalid_argument, "no layers given");
+  const std::vector<CapturedEffect> items = parse_captured_effects(c.effects);
+  for (const auto& layer : c.layers) {
+    (void)require_layer(d, layer);
+    const std::size_t count = get_node_effects(d, layer).size();
+    if (c.index && *c.index > count) {
+      fail(ErrorCode::out_of_range,
+           "index " + std::to_string(*c.index) + " is past the " + std::to_string(count) + " effects of '" + layer + "'",
+           {.layer = layer});
+    }
+  }
+  std::vector<std::vector<std::string>> ids;
+  for (const auto& layer : c.layers) {
+    std::vector<std::string> row;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      row.push_back(x.mint_group_id("fx_", [&](const std::string& id) { return find_by_id(get_node_effects(d, layer), id) != nullptr; }));
+    }
+    ids.push_back(std::move(row));
+  }
+  x.label = "Paste " + plural(items.size(), "Effect");
+  api::GroupList out;
+  for (std::size_t li = 0; li < c.layers.size(); ++li) {
+    const std::string& layer = c.layers[li];
+    std::vector<Json> effects = get_node_effects(d, layer);
+    std::size_t at = c.index ? *c.index : effects.size();
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      Json e = items[i].effect;
+      e.set("id", str(ids[li][i]));
+      insert_at(effects, at++, std::move(e));
+    }
+    write_node_effects(d, layer, std::move(effects));
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      const std::string& id = ids[li][i];
+      for (const auto& [suffix, keys] : items[i].tracks) {
+        const std::string prop = suffix.empty() ? "effect." + id : "effect." + id + "." + suffix;
+        std::vector<Key> fresh = keys;
+        for (Key& k : fresh) k.id = x.mint_key_id();
+        NodeAnim target = snapshot_node(d, layer).value_or(NodeAnim{});
+        target.tracks.set(prop, std::move(fresh));
+        restore_node(d, layer, std::move(target));
+      }
+      out.groups.push_back("effects/" + id);
+    }
+  }
+  return out;
+}
+
 ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx& x) {
   Document& d = x.d;
   if (c.groups.empty() || c.to_layers.empty()) fail(ErrorCode::invalid_argument, "groups and target layers are required");
@@ -1487,6 +1633,9 @@ ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx&
     if (r.kind == GK::animator || r.kind == GK::selector) {
       fail(ErrorCode::unsupported, "text animators are copied with their layer in this engine");
     }
+  }
+  for (const auto& r : refs) {
+    if (r.kind == GK::rig) fail(ErrorCode::unsupported, "a rig is copied whole through layer/puppet or layer/skeleton in this engine");
   }
   for (const auto& l : c.to_layers) (void)require_layer(d, l);
   struct Plan {

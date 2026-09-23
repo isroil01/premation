@@ -19,13 +19,103 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { fail } from '../errors';
 import { graph, compOfLayer, requireLayer, requireComp, layerIdsOfComp } from '../doc';
-import { documentScope, type Scope } from '../state';
+import { documentScope, scopeLayer, type Scope } from '../state';
+import { isPrecomp } from '@core/scene/precomp';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import type { SceneNode } from '@core/types';
+import {
+  clampStretch,
+  clampSignedStretch,
+  holdFrameFor,
+  stretchClipGeometry,
+  bakeStretchGeometry,
+  retimeLayerKeyframes,
+  readBakedStretch,
+  writeBakedStretch,
+  type StretchHold,
+} from '@core/animation/timeStretch';
 import { compFps, flicksToFrames, checkTime, flicksToSeconds } from '../time';
-import { compDurationFrames } from '../model';
+import { compDurationFrames, barsOf } from '../model';
 import type { HandlerTable, HandlerCtx } from '../handler';
 import { ensureTimeline, geomsOf, writeGeoms, layersScope, requireLayersInOneComp, plural, remintKeyIds } from './common';
 
 type Geo = ClipGeometry;
+
+// ── Time Stretch (B3z; layerTimeCommands.ts applyTimeStretch on the layer's own comp) ──
+
+/** Footage, audio and precomps resample their source; everything else bakes. */
+function isRetimable(node: SceneNode): boolean {
+  const kind = readNodeKind(node);
+  return kind === 'video' || kind === 'audio' || isPrecomp(node);
+}
+
+/**
+ * `moveLayerMarkers`: a layer marker is relative to the layer's FIRST bar —
+ * to comp frames with the anchor from before the edit, through `place`, back
+ * with the anchor after it; a span scales, reversed its END lands at the start.
+ */
+function moveMarkersWith(layer: string, comp: string, anchorBefore: number, place: (f: number) => number, scale: number, reversed: boolean): void {
+  const bars = barsOf(layer, comp);
+  const anchorAfter = bars[0]?.start ?? anchorBefore;
+  const reg = getTimelineController().peekTimeline(comp);
+  const run = (fn: () => void): void => { if (reg) reg.timeline.history.silently(fn); else fn(); };
+  run(() => {
+    for (const bar of bars) {
+      const markers = bar.markers.list();
+      if (markers.length === 0) continue;
+      for (const m of markers) {
+        const from = anchorBefore + m.frame;
+        const start = reversed ? place(from + m.duration) : place(from);
+        m.frame = Math.max(0, Math.round(start) - anchorAfter);
+        m.duration = Math.max(0, Math.round(m.duration * Math.abs(scale)));
+      }
+      bar.markers.reindex();
+    }
+  });
+}
+
+function holdFrameOf(g: Geo[], hold: StretchHold, time: number | undefined, fps: number): number {
+  const s = { start: Math.min(...g.map((b) => b.start)), end: Math.max(...g.map((b) => b.start + b.duration)) };
+  return holdFrameFor(s, hold, time === undefined ? 0 : flicksToFrames(time, fps));
+}
+
+/** Footage: a new playback rate, the bar scaled about the hold frame (source frame there kept). */
+function footageStretch(id: string, comp: string, stretch: number, hold: StretchHold, time: number | undefined): void {
+  if (graph.getNode(id)?.locked) return;
+  const old = getNodeLayerTime(id).stretch;
+  if (old === stretch) return;
+  const g = geomsOf(id, comp);
+  if (g.length > 0) {
+    const fps = compFps(comp);
+    const H = holdFrameOf(g, hold, time, fps);
+    const a = defaultAnimation.timeSpan(id)?.start ?? 0;
+    const r = stretch / (old > 0 ? old : 100);
+    const anchor = g[0]!.start;
+    const next = g.map((b) => ({ ...b, ...stretchClipGeometry(b, old, stretch, H, fps, a, b.sourceDuration !== null) }));
+    const s = next[0]!.start - (H - (H - g[0]!.start) * r);
+    writeGeoms(comp, id, next);
+    moveMarkersWith(id, comp, anchor, (f) => H + (f - H) * r + s, r, false);
+  }
+  updateNodeLayerTime(id, { stretch });
+}
+
+/** Any other layer: bar(s), keyframes and markers scaled about the hold frame; negative reverses. */
+function bakeStretch(id: string, comp: string, target: number, hold: StretchHold, time: number | undefined): void {
+  if (graph.getNode(id)?.locked) return;
+  const factor = target / readBakedStretch(id);
+  if (!Number.isFinite(factor) || factor === 0 || factor === 1) return;
+  const g = geomsOf(id, comp);
+  if (g.length === 0) return;
+  const fps = compFps(comp);
+  const H = holdFrameOf(g, hold, time, fps);
+  const plan = bakeStretchGeometry(g, factor, H, fps);
+  if (!plan) return;
+  const anchor = g[0]!.start;
+  writeGeoms(comp, id, g.map((b, i) => ({ ...b, ...plan.bars[i]! })));
+  moveMarkersWith(id, comp, anchor, plan.place, factor, factor < 0);
+  retimeLayerKeyframes(id, plan.keyScale, plan.keyOffset);
+  writeBakedStretch(id, target);
+}
 
 function span(g: Geo[]): { in: number; out: number } {
   return { in: g[0]!.start, out: g[g.length - 1]!.start + g[g.length - 1]!.duration };
@@ -39,7 +129,9 @@ function barsOrFail(layer: string, comp: string): Geo[] {
 
 function validBar(layer: string, g: Geo): void {
   if (g.duration < 1) fail('outOfRange', `layer '${layer}' would be shorter than one frame`, { layer });
-  if (g.sourceIn < 0) fail('outOfRange', `layer '${layer}' would start before its source`, { layer });
+  // B3z: an UNBOUNDED source (shape, text, solid, null…) may start before its
+  // frame 0 — AE extends such a layer's in point past its start time freely.
+  if (g.sourceIn < 0 && g.sourceDuration !== null) fail('outOfRange', `layer '${layer}' would start before its source`, { layer });
   if (g.sourceDuration !== null && g.sourceIn + g.duration > g.sourceDuration) {
     fail('outOfRange', `layer '${layer}' would run past the end of its footage`, { layer });
   }
@@ -496,13 +588,151 @@ export const layerTimeHandlers: HandlerTable = {
           const t0 = (p.start) / fps;
           const t1 = (p.end) / fps;
           const o0 = compToKeyframeTime(p.out, t0);
-          const o1 = compToKeyframeTime(p.out, t1);
+          // B3z: `t1` is the outgoing bar's EXCLUSIVE end, which no clip covers:
+          // map the last frame inside it and step one frame on (transitions.ts
+          // kfTime) — the fade ends at its out point on a bar that moved.
+          const o1 = compToKeyframeTime(p.out, (p.end - 1) / fps) + 1 / fps;
           const i0 = compToKeyframeTime(p.inn, t0);
           const i1 = compToKeyframeTime(p.inn, t1);
           defaultAnimation.setKeyframe(p.out, 'opacity', o0, 100);
           defaultAnimation.setKeyframe(p.out, 'opacity', o1, 0);
           defaultAnimation.setKeyframe(p.inn, 'opacity', i0, 0);
           defaultAnimation.setKeyframe(p.inn, 'opacity', i1, 100);
+        }
+        return {};
+      },
+    };
+  },
+  // ── B3z ─────────────────────────────────────────────────────────────
+
+  unfreezeLayers: (cmd) => {
+    if (cmd.layers.length === 0) fail('invalidArgument', 'no layers given');
+    if (new Set(cmd.layers).size !== cmd.layers.length) fail('invalidArgument', 'a layer is listed twice');
+    const scope: Scope = { document: false, keys: new Set() };
+    for (const id of cmd.layers) {
+      requireLayer(id);
+      compScope(compOfLayer(id)!, [id]).keys.forEach((k) => scope.keys.add(k));
+    }
+    return {
+      scope,
+      label: 'Unfreeze Frame',
+      apply: () => {
+        for (const id of cmd.layers) if (getNodeLayerTime(id).freeze) updateNodeLayerTime(id, { freeze: false });
+        return {};
+      },
+    };
+  },
+
+  timeStretchLayers: (cmd) => {
+    if (cmd.layers.length === 0) fail('invalidArgument', 'no layers given');
+    if (new Set(cmd.layers).size !== cmd.layers.length) fail('invalidArgument', 'a layer is listed twice');
+    const whole = Number.isFinite(cmd.stretch) ? Math.round(Math.abs(cmd.stretch) * 100) : 0;
+    if (!(whole >= 1 && whole <= 1000)) fail('outOfRange', 'stretch must be within ±0.01…±10 and not 0');
+    if (cmd.hold === 'currentFrame' && cmd.time === undefined) fail('invalidArgument', 'holding the current frame needs a time');
+    if (cmd.time !== undefined) checkTime(cmd.time);
+    const pct = clampSignedStretch(cmd.stretch * 100);
+    const hold: StretchHold = cmd.hold === 'inPoint' ? 'in' : cmd.hold === 'outPoint' ? 'out' : 'current';
+    const plans: Array<{ id: string; comp: string; footage: boolean }> = [];
+    const scope: Scope = { document: false, keys: new Set() };
+    for (const id of cmd.layers) {
+      const node = requireLayer(id);
+      const comp = compOfLayer(id)!;
+      const footage = isRetimable(node);
+      if (footage && pct < 0) fail('outOfRange', 'footage cannot take a negative stretch (reverse it with Time-Reverse Layer)', { layer: id });
+      plans.push({ id, comp, footage });
+      compScope(comp, [id]).keys.forEach((k) => scope.keys.add(k));
+    }
+    return {
+      scope,
+      label: 'Time Stretch',
+      apply: () => {
+        // The legacy order: every baked (non-footage) layer, then the footage.
+        for (const p of plans) if (!p.footage) bakeStretch(p.id, p.comp, pct, hold, cmd.time);
+        for (const p of plans) if (p.footage) footageStretch(p.id, p.comp, clampStretch(pct), hold, cmd.time);
+        return {};
+      },
+    };
+  },
+
+  rippleDeleteRange: (cmd, ctx) => {
+    requireComp(cmd.comp);
+    checkTime(cmd.range.start, 'start');
+    checkTime(cmd.range.duration, 'duration');
+    if (cmd.range.duration <= 0 || cmd.range.start < 0) fail('outOfRange', 'the range must be a positive span of the composition');
+    if (cmd.layers.length > 0 && requireLayersInOneComp(cmd.layers) !== cmd.comp) fail('invalidArgument', 'the layers are not in that composition');
+    ensureTimeline(cmd.comp);
+    const fps = compFps(cmd.comp);
+    const s = flicksToFrames(cmd.range.start, fps);
+    const e = flicksToFrames(cmd.range.start + cmd.range.duration, fps);
+    const restrict = cmd.layers.length > 0 ? new Set(cmd.layers) : null;
+    const cuttable = (id: string): boolean => !graph.getNode(id)?.locked && (!restrict || restrict.has(id));
+    const newIds = new Map<string, string>();
+    if (e > s) {
+      for (const id of layerIdsOfComp(cmd.comp)) {
+        const g = geomsOf(id, cmd.comp);
+        if (g.length === 0 || !cuttable(id)) continue;
+        const sp = span(g);
+        if (sp.in < s && sp.out > e) newIds.set(id, ctx.mintId('layer_'));
+      }
+    }
+    return {
+      scope: documentScope(),
+      label: 'Delete Time Range',
+      apply: () => {
+        if (e <= s) return { layers: [] };
+        for (const id of layerIdsOfComp(cmd.comp)) {
+          if (!graph.getNode(id)) continue;
+          const g = geomsOf(id, cmd.comp);
+          if (g.length === 0 || !cuttable(id)) continue;
+          const sp = span(g);
+          if (sp.out <= s || sp.in >= e) continue;
+          if (sp.in >= s && sp.out <= e) {
+            deleteLayerNode(id);
+            continue;
+          }
+          if (sp.in < s && sp.out > e) {
+            const newId = newIds.get(id)!;
+            cloneLayerNode(id, newId);
+            remintKeyIds(newId, ctx);
+            getTimelineController().syncFromScene(cmd.comp);
+            writeGeoms(cmd.comp, id, trimOut(g, s));
+            writeGeoms(cmd.comp, newId, trimIn(g, e));
+            continue;
+          }
+          if (sp.in < s) writeGeoms(cmd.comp, id, trimOut(g, s));
+          else writeGeoms(cmd.comp, id, trimIn(g, e));
+        }
+        // The ripple, once, over every unlocked layer at/after the range end.
+        const width = e - s;
+        for (const id of layerIdsOfComp(cmd.comp)) {
+          if (graph.getNode(id)?.locked) continue;
+          const g = geomsOf(id, cmd.comp);
+          if (g.length === 0 || g[0]!.start < e) continue;
+          writeGeoms(cmd.comp, id, shift(g, -width));
+        }
+        return { layers: [...newIds.values()] };
+      },
+    };
+  },
+
+  shiftLayerKeyframes: (cmd) => {
+    if (cmd.items.length === 0) fail('invalidArgument', 'no layers given');
+    const scope: Scope = { document: false, keys: new Set() };
+    const seen = new Set<string>();
+    for (const it of cmd.items) {
+      requireLayer(it.layer);
+      checkTime(it.delta, 'delta');
+      if (seen.has(it.layer)) fail('invalidArgument', 'a layer is listed twice', { layer: it.layer });
+      seen.add(it.layer);
+      scopeLayer(scope, it.layer);
+    }
+    return {
+      scope,
+      label: 'Shift Keyframes',
+      apply: () => {
+        for (const it of cmd.items) {
+          const dt = flicksToSeconds(it.delta);
+          if (dt !== 0) retimeLayerKeyframes(it.layer, 1, dt);
         }
         return {};
       },

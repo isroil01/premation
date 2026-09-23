@@ -36,8 +36,16 @@ void add_field_bindings(const Node& node, std::string_view layerId, const std::v
 /// Write a `field` / `layerFill` binding (type-checked; typeMismatch / outOfRange / notFound).
 void write_field(Document& d, std::string_view layer, const PropBinding& b, const api::Value& value);
 
+/// fields.ts `setPrimaryFill`: the primary fill paint (with a stack, its first entry).
+void set_primary_fill_paint(Document& d, std::string_view layer, const Json& paint);
+
 /// Drop every track, expression and data track named in `props` (fields.ts `dropTrackProps`).
 void drop_track_props(Document& d, std::string_view layer, const std::set<std::string>& props);
+
+/// B3z (effectFieldSpecs.ts): `effects/<id>/<spec.path>` — Effect Mask / label colour of one effect.
+[[nodiscard]] PropBinding effect_field_binding(const std::string& effectId, const Json& spec);
+/// B3z: `styles/<style>/<key>` — a layer-style switch (FieldRef.animatorId carries the style key).
+[[nodiscard]] PropBinding style_field_binding(const Json& spec);
 
 /// The field spec (a TEXT_FIELDS / ANIMATOR_FIELDS / … entry) for a binding, or nullptr.
 [[nodiscard]] const Json* field_spec(const FieldRef& f);

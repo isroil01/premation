@@ -132,6 +132,18 @@ const WorkAreaEdit_TO_NUM: Record<string, number> = { 'lift': 0, 'extract': 1 };
 const WorkAreaEdit_FROM_NUM: readonly (T.WorkAreaEdit | undefined)[] = ['lift', 'extract'];
 function enc_WorkAreaEdit(v: T.WorkAreaEdit): number { const n = WorkAreaEdit_TO_NUM[v]; if (n === undefined) throw new RangeError('WorkAreaEdit: invalid value ' + String(v)); return n; }
 function dec_WorkAreaEdit(n: number): T.WorkAreaEdit { const v = WorkAreaEdit_FROM_NUM[n]; if (v === undefined) throw new DecodeError('WorkAreaEdit: unknown value ' + n, 'badEnum'); return v; }
+const StretchHold_TO_NUM: Record<string, number> = { 'inPoint': 0, 'currentFrame': 1, 'outPoint': 2 };
+const StretchHold_FROM_NUM: readonly (T.StretchHold | undefined)[] = ['inPoint', 'currentFrame', 'outPoint'];
+function enc_StretchHold(v: T.StretchHold): number { const n = StretchHold_TO_NUM[v]; if (n === undefined) throw new RangeError('StretchHold: invalid value ' + String(v)); return n; }
+function dec_StretchHold(n: number): T.StretchHold { const v = StretchHold_FROM_NUM[n]; if (v === undefined) throw new DecodeError('StretchHold: unknown value ' + n, 'badEnum'); return v; }
+const TransitionKind_TO_NUM: Record<string, number> = { 'crossDissolve': 0, 'dipToBlack': 1, 'dipToWhite': 2, 'wipe': 3 };
+const TransitionKind_FROM_NUM: readonly (T.TransitionKind | undefined)[] = ['crossDissolve', 'dipToBlack', 'dipToWhite', 'wipe'];
+function enc_TransitionKind(v: T.TransitionKind): number { const n = TransitionKind_TO_NUM[v]; if (n === undefined) throw new RangeError('TransitionKind: invalid value ' + String(v)); return n; }
+function dec_TransitionKind(n: number): T.TransitionKind { const v = TransitionKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TransitionKind: unknown value ' + n, 'badEnum'); return v; }
+const TransitionAlignment_TO_NUM: Record<string, number> = { 'centred': 0, 'startAtCut': 1, 'endAtCut': 2 };
+const TransitionAlignment_FROM_NUM: readonly (T.TransitionAlignment | undefined)[] = ['centred', 'startAtCut', 'endAtCut'];
+function enc_TransitionAlignment(v: T.TransitionAlignment): number { const n = TransitionAlignment_TO_NUM[v]; if (n === undefined) throw new RangeError('TransitionAlignment: invalid value ' + String(v)); return n; }
+function dec_TransitionAlignment(n: number): T.TransitionAlignment { const v = TransitionAlignment_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TransitionAlignment: unknown value ' + n, 'badEnum'); return v; }
 const MaskMode_TO_NUM: Record<string, number> = { 'none': 0, 'add': 1, 'subtract': 2, 'intersect': 3, 'lighten': 4, 'darken': 5, 'difference': 6 };
 const MaskMode_FROM_NUM: readonly (T.MaskMode | undefined)[] = ['none', 'add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'];
 function enc_MaskMode(v: T.MaskMode): number { const n = MaskMode_TO_NUM[v]; if (n === undefined) throw new RangeError('MaskMode: invalid value ' + String(v)); return n; }
@@ -924,6 +936,34 @@ function decS_CubicBezier(r: Reader, end: number, o: any): T.CubicBezier {
   o.y2 = v_y2;
   return o;
 }
+function encS_KeyframeDim(w: Writer, v: T.KeyframeDim): void {
+  w.byte(8); w.varint(enc_Easing(v.easing));
+  if (v.bezier !== undefined) { w.byte(18); { const s = w.beginLd(); encS_CubicBezier(w, v.bezier); w.endLd(s); } }
+  w.byte(24); w.bool(v.continuous);
+}
+function decS_KeyframeDim(r: Reader, end: number, o: any): T.KeyframeDim {
+  let h_easing = false;
+  let h_continuous = false;
+  let v_easing: T.Easing | undefined;
+  let v_bezier: T.CubicBezier | undefined;
+  let v_continuous: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_easing = dec_Easing(r.varint()); h_easing = true; break;
+      case 18: v_bezier = decS_CubicBezier(r, r.ldEnd(), {}); break;
+      case 24: v_continuous = r.bool(); h_continuous = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_easing) throw new DecodeError('KeyframeDim.easing: missing', 'missingField');
+  if (!h_continuous) throw new DecodeError('KeyframeDim.continuous: missing', 'missingField');
+  o.easing = v_easing;
+  if (v_bezier !== undefined) o.bezier = v_bezier;
+  o.continuous = v_continuous;
+  return o;
+}
 function encS_Keyframe(w: Writer, v: T.Keyframe): void {
   w.byte(10); w.str(v.id);
   w.byte(16); w.i64(v.time);
@@ -936,10 +976,12 @@ function encS_Keyframe(w: Writer, v: T.Keyframe): void {
   { const a = v.spatialIn; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.spatialOut; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   w.byte(88); w.u32(v.label);
+  { const a = v.dims; for (let i = 0; i < a.length; i++) { w.byte(98); { const s = w.beginLd(); encS_KeyframeDim(w, a[i]!); w.endLd(s); } } }
 }
 function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
   const l_spatialIn: number[] = [];
   const l_spatialOut: number[] = [];
+  const l_dims: T.KeyframeDim[] = [];
   let h_id = false;
   let h_time = false;
   let h_value = false;
@@ -971,6 +1013,7 @@ function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
       case 74: { const e = r.ldEnd(); while (r.pos < e) l_spatialIn.push(r.f64()); r.expectAt(e); break; }
       case 82: { const e = r.ldEnd(); while (r.pos < e) l_spatialOut.push(r.f64()); r.expectAt(e); break; }
       case 88: v_label = r.u32(); h_label = true; break;
+      case 98: l_dims.push(decS_KeyframeDim(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -994,6 +1037,7 @@ function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
   o.spatialIn = l_spatialIn;
   o.spatialOut = l_spatialOut;
   o.label = v_label;
+  o.dims = l_dims;
   return o;
 }
 function encS_PropRef(w: Writer, v: T.PropRef): void {
@@ -2659,6 +2703,24 @@ function decS_SetWorkArea(r: Reader, end: number, o: any): T.SetWorkArea {
   o.range = v_range;
   return o;
 }
+function encS_ClearWorkArea(w: Writer, v: T.ClearWorkArea): void {
+  w.byte(10); w.str(v.comp);
+}
+function decS_ClearWorkArea(r: Reader, end: number, o: any): T.ClearWorkArea {
+  let h_comp = false;
+  let v_comp: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('ClearWorkArea.comp: missing', 'missingField');
+  o.comp = v_comp;
+  return o;
+}
 function encS_Precompose(w: Writer, v: T.Precompose): void {
   w.byte(10); w.str(v.comp);
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
@@ -3465,18 +3527,24 @@ function encS_SetParent(w: Writer, v: T.SetParent): void {
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   if (v.parent !== undefined) { w.byte(18); w.str(v.parent); }
   w.byte(24); w.bool(v.keepWorldTransform);
+  if (v.jump !== undefined) { w.byte(32); w.bool(v.jump); }
+  if (v.time !== undefined) { w.byte(40); w.i64(v.time); }
 }
 function decS_SetParent(r: Reader, end: number, o: any): T.SetParent {
   const l_layers: string[] = [];
   let h_keepWorldTransform = false;
   let v_parent: string | undefined;
   let v_keepWorldTransform: boolean | undefined;
+  let v_jump: boolean | undefined;
+  let v_time: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: l_layers.push(r.str()); break;
       case 18: v_parent = r.str(); break;
       case 24: v_keepWorldTransform = r.bool(); h_keepWorldTransform = true; break;
+      case 32: v_jump = r.bool(); break;
+      case 40: v_time = r.i64(); break;
       default: r.skip(key);
     }
   }
@@ -3485,6 +3553,8 @@ function decS_SetParent(r: Reader, end: number, o: any): T.SetParent {
   o.layers = l_layers;
   if (v_parent !== undefined) o.parent = v_parent;
   o.keepWorldTransform = v_keepWorldTransform;
+  if (v_jump !== undefined) o.jump = v_jump;
+  if (v_time !== undefined) o.time = v_time;
   return o;
 }
 function encS_RenameLayer(w: Writer, v: T.RenameLayer): void {
@@ -3678,6 +3748,7 @@ function encS_PasteLayers(w: Writer, v: T.PasteLayers): void {
   w.byte(18); { const s = w.beginLd(); encS_DocumentFragment(w, v.fragment); w.endLd(s); }
   if (v.time !== undefined) { w.byte(24); w.i64(v.time); }
   if (v.index !== undefined) { w.byte(32); w.u32(v.index); }
+  if (v.parent !== undefined) { w.byte(42); w.str(v.parent); }
 }
 function decS_PasteLayers(r: Reader, end: number, o: any): T.PasteLayers {
   let h_comp = false;
@@ -3686,6 +3757,7 @@ function decS_PasteLayers(r: Reader, end: number, o: any): T.PasteLayers {
   let v_fragment: T.DocumentFragment | undefined;
   let v_time: number | undefined;
   let v_index: number | undefined;
+  let v_parent: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3693,6 +3765,7 @@ function decS_PasteLayers(r: Reader, end: number, o: any): T.PasteLayers {
       case 18: v_fragment = decS_DocumentFragment(r, r.ldEnd(), {}); h_fragment = true; break;
       case 24: v_time = r.i64(); break;
       case 32: v_index = r.u32(); break;
+      case 42: v_parent = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -3703,6 +3776,7 @@ function decS_PasteLayers(r: Reader, end: number, o: any): T.PasteLayers {
   o.fragment = v_fragment;
   if (v_time !== undefined) o.time = v_time;
   if (v_index !== undefined) o.index = v_index;
+  if (v_parent !== undefined) o.parent = v_parent;
   return o;
 }
 function encS_SeparateLayer(w: Writer, v: T.SeparateLayer): void {
@@ -4237,6 +4311,282 @@ function decS_SequenceLayers(r: Reader, end: number, o: any): T.SequenceLayers {
   o.crossfade = v_crossfade;
   return o;
 }
+function encS_TimeStretchLayers(w: Writer, v: T.TimeStretchLayers): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(17); w.f64(v.stretch);
+  w.byte(24); w.varint(enc_StretchHold(v.hold));
+  if (v.time !== undefined) { w.byte(32); w.i64(v.time); }
+}
+function decS_TimeStretchLayers(r: Reader, end: number, o: any): T.TimeStretchLayers {
+  const l_layers: string[] = [];
+  let h_stretch = false;
+  let h_hold = false;
+  let v_stretch: number | undefined;
+  let v_hold: T.StretchHold | undefined;
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 17: v_stretch = r.f64(); h_stretch = true; break;
+      case 24: v_hold = dec_StretchHold(r.varint()); h_hold = true; break;
+      case 32: v_time = r.i64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_stretch) throw new DecodeError('TimeStretchLayers.stretch: missing', 'missingField');
+  if (!h_hold) throw new DecodeError('TimeStretchLayers.hold: missing', 'missingField');
+  o.layers = l_layers;
+  o.stretch = v_stretch;
+  o.hold = v_hold;
+  if (v_time !== undefined) o.time = v_time;
+  return o;
+}
+function encS_UnfreezeLayers(w: Writer, v: T.UnfreezeLayers): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_UnfreezeLayers(r: Reader, end: number, o: any): T.UnfreezeLayers {
+  const l_layers: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
+  return o;
+}
+function encS_RippleDeleteRange(w: Writer, v: T.RippleDeleteRange): void {
+  w.byte(10); w.str(v.comp);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(26); w.str(a[i]!); } }
+}
+function decS_RippleDeleteRange(r: Reader, end: number, o: any): T.RippleDeleteRange {
+  const l_layers: string[] = [];
+  let h_comp = false;
+  let h_range = false;
+  let v_comp: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 26: l_layers.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('RippleDeleteRange.comp: missing', 'missingField');
+  if (!h_range) throw new DecodeError('RippleDeleteRange.range: missing', 'missingField');
+  o.comp = v_comp;
+  o.range = v_range;
+  o.layers = l_layers;
+  return o;
+}
+function encS_LayerKeyShift(w: Writer, v: T.LayerKeyShift): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(16); w.i64(v.delta);
+}
+function decS_LayerKeyShift(r: Reader, end: number, o: any): T.LayerKeyShift {
+  let h_layer = false;
+  let h_delta = false;
+  let v_layer: string | undefined;
+  let v_delta: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 16: v_delta = r.i64(); h_delta = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('LayerKeyShift.layer: missing', 'missingField');
+  if (!h_delta) throw new DecodeError('LayerKeyShift.delta: missing', 'missingField');
+  o.layer = v_layer;
+  o.delta = v_delta;
+  return o;
+}
+function encS_ShiftLayerKeyframes(w: Writer, v: T.ShiftLayerKeyframes): void {
+  { const a = v.items; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LayerKeyShift(w, a[i]!); w.endLd(s); } } }
+}
+function decS_ShiftLayerKeyframes(r: Reader, end: number, o: any): T.ShiftLayerKeyframes {
+  const l_items: T.LayerKeyShift[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_items.push(decS_LayerKeyShift(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.items = l_items;
+  return o;
+}
+function encS_Transition(w: Writer, v: T.Transition): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.comp);
+  w.byte(26); w.str(v.left);
+  w.byte(34); w.str(v.right);
+  w.byte(40); w.varint(enc_TransitionKind(v.kind));
+  w.byte(48); w.i64(v.duration);
+  w.byte(56); w.varint(enc_TransitionAlignment(v.alignment));
+}
+function decS_Transition(r: Reader, end: number, o: any): T.Transition {
+  let h_id = false;
+  let h_comp = false;
+  let h_left = false;
+  let h_right = false;
+  let h_kind = false;
+  let h_duration = false;
+  let h_alignment = false;
+  let v_id: string | undefined;
+  let v_comp: string | undefined;
+  let v_left: string | undefined;
+  let v_right: string | undefined;
+  let v_kind: T.TransitionKind | undefined;
+  let v_duration: number | undefined;
+  let v_alignment: T.TransitionAlignment | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_comp = r.str(); h_comp = true; break;
+      case 26: v_left = r.str(); h_left = true; break;
+      case 34: v_right = r.str(); h_right = true; break;
+      case 40: v_kind = dec_TransitionKind(r.varint()); h_kind = true; break;
+      case 48: v_duration = r.i64(); h_duration = true; break;
+      case 56: v_alignment = dec_TransitionAlignment(r.varint()); h_alignment = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('Transition.id: missing', 'missingField');
+  if (!h_comp) throw new DecodeError('Transition.comp: missing', 'missingField');
+  if (!h_left) throw new DecodeError('Transition.left: missing', 'missingField');
+  if (!h_right) throw new DecodeError('Transition.right: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('Transition.kind: missing', 'missingField');
+  if (!h_duration) throw new DecodeError('Transition.duration: missing', 'missingField');
+  if (!h_alignment) throw new DecodeError('Transition.alignment: missing', 'missingField');
+  o.id = v_id;
+  o.comp = v_comp;
+  o.left = v_left;
+  o.right = v_right;
+  o.kind = v_kind;
+  o.duration = v_duration;
+  o.alignment = v_alignment;
+  return o;
+}
+function encS_TransitionRef(w: Writer, v: T.TransitionRef): void {
+  w.byte(10); w.str(v.transition);
+}
+function decS_TransitionRef(r: Reader, end: number, o: any): T.TransitionRef {
+  let h_transition = false;
+  let v_transition: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_transition = r.str(); h_transition = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_transition) throw new DecodeError('TransitionRef.transition: missing', 'missingField');
+  o.transition = v_transition;
+  return o;
+}
+function encS_AddTransition(w: Writer, v: T.AddTransition): void {
+  w.byte(10); w.str(v.left);
+  w.byte(18); w.str(v.right);
+  w.byte(24); w.varint(enc_TransitionKind(v.kind));
+  w.byte(32); w.i64(v.duration);
+  w.byte(40); w.varint(enc_TransitionAlignment(v.alignment));
+}
+function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
+  let h_left = false;
+  let h_right = false;
+  let h_kind = false;
+  let h_duration = false;
+  let h_alignment = false;
+  let v_left: string | undefined;
+  let v_right: string | undefined;
+  let v_kind: T.TransitionKind | undefined;
+  let v_duration: number | undefined;
+  let v_alignment: T.TransitionAlignment | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_left = r.str(); h_left = true; break;
+      case 18: v_right = r.str(); h_right = true; break;
+      case 24: v_kind = dec_TransitionKind(r.varint()); h_kind = true; break;
+      case 32: v_duration = r.i64(); h_duration = true; break;
+      case 40: v_alignment = dec_TransitionAlignment(r.varint()); h_alignment = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_left) throw new DecodeError('AddTransition.left: missing', 'missingField');
+  if (!h_right) throw new DecodeError('AddTransition.right: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('AddTransition.kind: missing', 'missingField');
+  if (!h_duration) throw new DecodeError('AddTransition.duration: missing', 'missingField');
+  if (!h_alignment) throw new DecodeError('AddTransition.alignment: missing', 'missingField');
+  o.left = v_left;
+  o.right = v_right;
+  o.kind = v_kind;
+  o.duration = v_duration;
+  o.alignment = v_alignment;
+  return o;
+}
+function encS_SetTransition(w: Writer, v: T.SetTransition): void {
+  w.byte(10); w.str(v.transition);
+  if (v.kind !== undefined) { w.byte(16); w.varint(enc_TransitionKind(v.kind)); }
+  if (v.duration !== undefined) { w.byte(24); w.i64(v.duration); }
+  if (v.alignment !== undefined) { w.byte(32); w.varint(enc_TransitionAlignment(v.alignment)); }
+}
+function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
+  let h_transition = false;
+  let v_transition: string | undefined;
+  let v_kind: T.TransitionKind | undefined;
+  let v_duration: number | undefined;
+  let v_alignment: T.TransitionAlignment | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_transition = r.str(); h_transition = true; break;
+      case 16: v_kind = dec_TransitionKind(r.varint()); break;
+      case 24: v_duration = r.i64(); break;
+      case 32: v_alignment = dec_TransitionAlignment(r.varint()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_transition) throw new DecodeError('SetTransition.transition: missing', 'missingField');
+  o.transition = v_transition;
+  if (v_kind !== undefined) o.kind = v_kind;
+  if (v_duration !== undefined) o.duration = v_duration;
+  if (v_alignment !== undefined) o.alignment = v_alignment;
+  return o;
+}
+function encS_RemoveTransitions(w: Writer, v: T.RemoveTransitions): void {
+  { const a = v.transitions; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_RemoveTransitions(r: Reader, end: number, o: any): T.RemoveTransitions {
+  const l_transitions: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_transitions.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.transitions = l_transitions;
+  return o;
+}
 function encS_PropertyWrite(w: Writer, v: T.PropertyWrite): void {
   w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
   w.byte(18); { const s = w.beginLd(); encU_Value(w, v.value); w.endLd(s); }
@@ -4395,6 +4745,7 @@ function encS_SetExpression(w: Writer, v: T.SetExpression): void {
   w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
   w.byte(18); w.str(v.source);
   w.byte(24); w.bool(v.enabled);
+  if (v.member !== undefined) { w.byte(32); w.u32(v.member); }
 }
 function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   let h_prop = false;
@@ -4403,12 +4754,14 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   let v_prop: T.PropRef | undefined;
   let v_source: string | undefined;
   let v_enabled: boolean | undefined;
+  let v_member: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_prop = decS_PropRef(r, r.ldEnd(), {}); h_prop = true; break;
       case 18: v_source = r.str(); h_source = true; break;
       case 24: v_enabled = r.bool(); h_enabled = true; break;
+      case 32: v_member = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -4419,21 +4772,25 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   o.prop = v_prop;
   o.source = v_source;
   o.enabled = v_enabled;
+  if (v_member !== undefined) o.member = v_member;
   return o;
 }
 function encS_SetExpressionEnabled(w: Writer, v: T.SetExpressionEnabled): void {
   { const a = v.props; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_PropRef(w, a[i]!); w.endLd(s); } } }
   w.byte(16); w.bool(v.enabled);
+  if (v.member !== undefined) { w.byte(24); w.u32(v.member); }
 }
 function decS_SetExpressionEnabled(r: Reader, end: number, o: any): T.SetExpressionEnabled {
   const l_props: T.PropRef[] = [];
   let h_enabled = false;
   let v_enabled: boolean | undefined;
+  let v_member: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: l_props.push(decS_PropRef(r, r.ldEnd(), {})); break;
       case 16: v_enabled = r.bool(); h_enabled = true; break;
+      case 24: v_member = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -4441,12 +4798,14 @@ function decS_SetExpressionEnabled(r: Reader, end: number, o: any): T.SetExpress
   if (!h_enabled) throw new DecodeError('SetExpressionEnabled.enabled: missing', 'missingField');
   o.props = l_props;
   o.enabled = v_enabled;
+  if (v_member !== undefined) o.member = v_member;
   return o;
 }
 function encS_ConvertExpressionToKeyframes(w: Writer, v: T.ConvertExpressionToKeyframes): void {
   w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
   if (v.range !== undefined) { w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); } }
   w.byte(24); w.i64(v.step);
+  if (v.member !== undefined) { w.byte(32); w.u32(v.member); }
 }
 function decS_ConvertExpressionToKeyframes(r: Reader, end: number, o: any): T.ConvertExpressionToKeyframes {
   let h_prop = false;
@@ -4454,12 +4813,14 @@ function decS_ConvertExpressionToKeyframes(r: Reader, end: number, o: any): T.Co
   let v_prop: T.PropRef | undefined;
   let v_range: T.TimeRange | undefined;
   let v_step: number | undefined;
+  let v_member: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_prop = decS_PropRef(r, r.ldEnd(), {}); h_prop = true; break;
       case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); break;
       case 24: v_step = r.i64(); h_step = true; break;
+      case 32: v_member = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -4469,6 +4830,7 @@ function decS_ConvertExpressionToKeyframes(r: Reader, end: number, o: any): T.Co
   o.prop = v_prop;
   if (v_range !== undefined) o.range = v_range;
   o.step = v_step;
+  if (v_member !== undefined) o.member = v_member;
   return o;
 }
 function encS_LinkProperty(w: Writer, v: T.LinkProperty): void {
@@ -4629,6 +4991,7 @@ function encS_KeyframePatch(w: Writer, v: T.KeyframePatch): void {
   { const a = v.spatialOut; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   if (v.clearSpatial !== undefined) { w.byte(96); w.bool(v.clearSpatial); }
   if (v.label !== undefined) { w.byte(104); w.u32(v.label); }
+  if (v.dim !== undefined) { w.byte(112); w.u32(v.dim); }
 }
 function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
   const l_spatialIn: number[] = [];
@@ -4645,6 +5008,7 @@ function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
   let v_spatialInterp: T.SpatialInterp | undefined;
   let v_clearSpatial: boolean | undefined;
   let v_label: number | undefined;
+  let v_dim: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -4661,6 +5025,7 @@ function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
       case 90: { const e = r.ldEnd(); while (r.pos < e) l_spatialOut.push(r.f64()); r.expectAt(e); break; }
       case 96: v_clearSpatial = r.bool(); break;
       case 104: v_label = r.u32(); break;
+      case 112: v_dim = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -4679,6 +5044,7 @@ function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
   o.spatialOut = l_spatialOut;
   if (v_clearSpatial !== undefined) o.clearSpatial = v_clearSpatial;
   if (v_label !== undefined) o.label = v_label;
+  if (v_dim !== undefined) o.dim = v_dim;
   return o;
 }
 function encS_AddKeyframes(w: Writer, v: T.AddKeyframes): void {
@@ -4820,6 +5186,28 @@ function decS_PasteKeyframes(r: Reader, end: number, o: any): T.PasteKeyframes {
   if (!h_time) throw new DecodeError('PasteKeyframes.time: missing', 'missingField');
   o.prop = v_prop;
   o.time = v_time;
+  o.keys = l_keys;
+  return o;
+}
+function encS_SetKeyframes(w: Writer, v: T.SetKeyframes): void {
+  w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
+  { const a = v.keys; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_Keyframe(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetKeyframes(r: Reader, end: number, o: any): T.SetKeyframes {
+  const l_keys: T.Keyframe[] = [];
+  let h_prop = false;
+  let v_prop: T.PropRef | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_prop = decS_PropRef(r, r.ldEnd(), {}); h_prop = true; break;
+      case 18: l_keys.push(decS_Keyframe(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_prop) throw new DecodeError('SetKeyframes.prop: missing', 'missingField');
+  o.prop = v_prop;
   o.keys = l_keys;
   return o;
 }
@@ -5171,6 +5559,56 @@ function decS_RemoveProperties(r: Reader, end: number, o: any): T.RemoveProperti
   o.props = l_props;
   return o;
 }
+function encS_PasteEffects(w: Writer, v: T.PasteEffects): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.effects);
+  if (v.index !== undefined) { w.byte(24); w.u32(v.index); }
+}
+function decS_PasteEffects(r: Reader, end: number, o: any): T.PasteEffects {
+  const l_layers: string[] = [];
+  let h_effects = false;
+  let v_effects: string | undefined;
+  let v_index: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 18: v_effects = r.str(); h_effects = true; break;
+      case 24: v_index = r.u32(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_effects) throw new DecodeError('PasteEffects.effects: missing', 'missingField');
+  o.layers = l_layers;
+  o.effects = v_effects;
+  if (v_index !== undefined) o.index = v_index;
+  return o;
+}
+function encS_RemoveStroke(w: Writer, v: T.RemoveStroke): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(16); w.u32(v.index);
+}
+function decS_RemoveStroke(r: Reader, end: number, o: any): T.RemoveStroke {
+  let h_layer = false;
+  let h_index = false;
+  let v_layer: string | undefined;
+  let v_index: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 16: v_index = r.u32(); h_index = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('RemoveStroke.layer: missing', 'missingField');
+  if (!h_index) throw new DecodeError('RemoveStroke.index: missing', 'missingField');
+  o.layer = v_layer;
+  o.index = v_index;
+  return o;
+}
 function encS_PropertyPaths(w: Writer, v: T.PropertyPaths): void {
   { const a = v.paths; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
 }
@@ -5221,6 +5659,7 @@ function encS_Marker(w: Writer, v: T.Marker): void {
   w.byte(74); w.str(v.url);
   w.byte(82); w.str(v.cuePoint);
   w.byte(88); w.bool(v.protectedRegion);
+  w.byte(98); w.str(v.color);
 }
 function decS_Marker(r: Reader, end: number, o: any): T.Marker {
   let h_id = false;
@@ -5234,6 +5673,7 @@ function decS_Marker(r: Reader, end: number, o: any): T.Marker {
   let h_url = false;
   let h_cuePoint = false;
   let h_protectedRegion = false;
+  let h_color = false;
   let v_id: string | undefined;
   let v_owner: T.MarkerOwner | undefined;
   let v_time: number | undefined;
@@ -5245,6 +5685,7 @@ function decS_Marker(r: Reader, end: number, o: any): T.Marker {
   let v_url: string | undefined;
   let v_cuePoint: string | undefined;
   let v_protectedRegion: boolean | undefined;
+  let v_color: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5259,6 +5700,7 @@ function decS_Marker(r: Reader, end: number, o: any): T.Marker {
       case 74: v_url = r.str(); h_url = true; break;
       case 82: v_cuePoint = r.str(); h_cuePoint = true; break;
       case 88: v_protectedRegion = r.bool(); h_protectedRegion = true; break;
+      case 98: v_color = r.str(); h_color = true; break;
       default: r.skip(key);
     }
   }
@@ -5274,6 +5716,7 @@ function decS_Marker(r: Reader, end: number, o: any): T.Marker {
   if (!h_url) throw new DecodeError('Marker.url: missing', 'missingField');
   if (!h_cuePoint) throw new DecodeError('Marker.cuePoint: missing', 'missingField');
   if (!h_protectedRegion) throw new DecodeError('Marker.protectedRegion: missing', 'missingField');
+  if (!h_color) throw new DecodeError('Marker.color: missing', 'missingField');
   o.id = v_id;
   o.owner = v_owner;
   o.time = v_time;
@@ -5285,6 +5728,7 @@ function decS_Marker(r: Reader, end: number, o: any): T.Marker {
   o.url = v_url;
   o.cuePoint = v_cuePoint;
   o.protectedRegion = v_protectedRegion;
+  o.color = v_color;
   return o;
 }
 function encS_MarkerInsert(w: Writer, v: T.MarkerInsert): void {
@@ -5294,6 +5738,7 @@ function encS_MarkerInsert(w: Writer, v: T.MarkerInsert): void {
   w.byte(34); w.str(v.name);
   w.byte(42); w.str(v.comment);
   w.byte(48); w.u32(v.label);
+  if (v.color !== undefined) { w.byte(58); w.str(v.color); }
 }
 function decS_MarkerInsert(r: Reader, end: number, o: any): T.MarkerInsert {
   let h_owner = false;
@@ -5308,6 +5753,7 @@ function decS_MarkerInsert(r: Reader, end: number, o: any): T.MarkerInsert {
   let v_name: string | undefined;
   let v_comment: string | undefined;
   let v_label: number | undefined;
+  let v_color: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5317,6 +5763,7 @@ function decS_MarkerInsert(r: Reader, end: number, o: any): T.MarkerInsert {
       case 34: v_name = r.str(); h_name = true; break;
       case 42: v_comment = r.str(); h_comment = true; break;
       case 48: v_label = r.u32(); h_label = true; break;
+      case 58: v_color = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -5333,6 +5780,7 @@ function decS_MarkerInsert(r: Reader, end: number, o: any): T.MarkerInsert {
   o.name = v_name;
   o.comment = v_comment;
   o.label = v_label;
+  if (v_color !== undefined) o.color = v_color;
   return o;
 }
 function encS_MarkerPatch(w: Writer, v: T.MarkerPatch): void {
@@ -5346,6 +5794,7 @@ function encS_MarkerPatch(w: Writer, v: T.MarkerPatch): void {
   if (v.url !== undefined) { w.byte(66); w.str(v.url); }
   if (v.cuePoint !== undefined) { w.byte(74); w.str(v.cuePoint); }
   if (v.protectedRegion !== undefined) { w.byte(80); w.bool(v.protectedRegion); }
+  if (v.color !== undefined) { w.byte(90); w.str(v.color); }
 }
 function decS_MarkerPatch(r: Reader, end: number, o: any): T.MarkerPatch {
   let h_id = false;
@@ -5359,6 +5808,7 @@ function decS_MarkerPatch(r: Reader, end: number, o: any): T.MarkerPatch {
   let v_url: string | undefined;
   let v_cuePoint: string | undefined;
   let v_protectedRegion: boolean | undefined;
+  let v_color: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5372,6 +5822,7 @@ function decS_MarkerPatch(r: Reader, end: number, o: any): T.MarkerPatch {
       case 66: v_url = r.str(); break;
       case 74: v_cuePoint = r.str(); break;
       case 80: v_protectedRegion = r.bool(); break;
+      case 90: v_color = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -5387,6 +5838,7 @@ function decS_MarkerPatch(r: Reader, end: number, o: any): T.MarkerPatch {
   if (v_url !== undefined) o.url = v_url;
   if (v_cuePoint !== undefined) o.cuePoint = v_cuePoint;
   if (v_protectedRegion !== undefined) o.protectedRegion = v_protectedRegion;
+  if (v_color !== undefined) o.color = v_color;
   return o;
 }
 function encS_AddMarkers(w: Writer, v: T.AddMarkers): void {
@@ -6456,10 +6908,12 @@ function encS_CompInfo(w: Writer, v: T.CompInfo): void {
   w.byte(18); { const s = w.beginLd(); encS_CompSettings(w, v.settings); w.endLd(s); }
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(26); w.str(a[i]!); } }
   { const a = v.markers; for (let i = 0; i < a.length; i++) { w.byte(34); { const s = w.beginLd(); encS_Marker(w, a[i]!); w.endLd(s); } } }
+  { const a = v.transitions; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_Transition(w, a[i]!); w.endLd(s); } } }
 }
 function decS_CompInfo(r: Reader, end: number, o: any): T.CompInfo {
   const l_layers: string[] = [];
   const l_markers: T.Marker[] = [];
+  const l_transitions: T.Transition[] = [];
   let h_id = false;
   let h_settings = false;
   let v_id: string | undefined;
@@ -6471,6 +6925,7 @@ function decS_CompInfo(r: Reader, end: number, o: any): T.CompInfo {
       case 18: v_settings = decS_CompSettings(r, r.ldEnd(), {}); h_settings = true; break;
       case 26: l_layers.push(r.str()); break;
       case 34: l_markers.push(decS_Marker(r, r.ldEnd(), {})); break;
+      case 42: l_transitions.push(decS_Transition(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -6481,6 +6936,7 @@ function decS_CompInfo(r: Reader, end: number, o: any): T.CompInfo {
   o.settings = v_settings;
   o.layers = l_layers;
   o.markers = l_markers;
+  o.transitions = l_transitions;
   return o;
 }
 function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
@@ -9044,6 +9500,28 @@ function decS_RenderQueueChangedEvent(r: Reader, end: number, o: any): T.RenderQ
   o.items = l_items;
   return o;
 }
+function encS_TransitionsChangedEvent(w: Writer, v: T.TransitionsChangedEvent): void {
+  w.byte(10); w.str(v.comp);
+  { const a = v.transitions; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_Transition(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TransitionsChangedEvent(r: Reader, end: number, o: any): T.TransitionsChangedEvent {
+  const l_transitions: T.Transition[] = [];
+  let h_comp = false;
+  let v_comp: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 18: l_transitions.push(decS_Transition(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('TransitionsChangedEvent.comp: missing', 'missingField');
+  o.comp = v_comp;
+  o.transitions = l_transitions;
+  return o;
+}
 function encS_HistoryChangedEvent(w: Writer, v: T.HistoryChangedEvent): void {
   w.byte(10); { const s = w.beginLd(); encS_HistoryState(w, v.state); w.endLd(s); }
   w.byte(18); w.str(v.undoLabel);
@@ -11603,6 +12081,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'trimCompToWorkArea': w.varint(842); { const s = w.beginLd(); encS_TrimCompToWorkArea(w, v); w.endLd(s); } return;
     case 'cropComposition': w.varint(850); { const s = w.beginLd(); encS_CropComposition(w, v); w.endLd(s); } return;
     case 'assembleComposition': w.varint(858); { const s = w.beginLd(); encS_AssembleComposition(w, v); w.endLd(s); } return;
+    case 'clearWorkArea': w.varint(962); { const s = w.beginLd(); encS_ClearWorkArea(w, v); w.endLd(s); } return;
     case 'addRenderItems': w.varint(1202); { const s = w.beginLd(); encS_AddRenderItems(w, v); w.endLd(s); } return;
     case 'setRenderItem': w.varint(1210); { const s = w.beginLd(); encS_SetRenderItem(w, v); w.endLd(s); } return;
     case 'removeRenderItems': w.varint(1218); { const s = w.beginLd(); encS_RemoveRenderItems(w, v); w.endLd(s); } return;
@@ -11639,6 +12118,13 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'freezeFrame': w.varint(2498); { const s = w.beginLd(); encS_FreezeFrame(w, v); w.endLd(s); } return;
     case 'setRetime': w.varint(2506); { const s = w.beginLd(); encS_SetRetime(w, v); w.endLd(s); } return;
     case 'sequenceLayers': w.varint(2514); { const s = w.beginLd(); encS_SequenceLayers(w, v); w.endLd(s); } return;
+    case 'timeStretchLayers': w.varint(2642); { const s = w.beginLd(); encS_TimeStretchLayers(w, v); w.endLd(s); } return;
+    case 'unfreezeLayers': w.varint(2650); { const s = w.beginLd(); encS_UnfreezeLayers(w, v); w.endLd(s); } return;
+    case 'rippleDeleteRange': w.varint(2658); { const s = w.beginLd(); encS_RippleDeleteRange(w, v); w.endLd(s); } return;
+    case 'shiftLayerKeyframes': w.varint(2666); { const s = w.beginLd(); encS_ShiftLayerKeyframes(w, v); w.endLd(s); } return;
+    case 'addTransition': w.varint(2674); { const s = w.beginLd(); encS_AddTransition(w, v); w.endLd(s); } return;
+    case 'setTransition': w.varint(2682); { const s = w.beginLd(); encS_SetTransition(w, v); w.endLd(s); } return;
+    case 'removeTransitions': w.varint(2690); { const s = w.beginLd(); encS_RemoveTransitions(w, v); w.endLd(s); } return;
     case 'setProperty': w.varint(3202); { const s = w.beginLd(); encS_SetProperty(w, v); w.endLd(s); } return;
     case 'setProperties': w.varint(3210); { const s = w.beginLd(); encS_SetProperties(w, v); w.endLd(s); } return;
     case 'resetProperty': w.varint(3218); { const s = w.beginLd(); encS_ResetProperty(w, v); w.endLd(s); } return;
@@ -11655,6 +12141,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'scaleKeyframes': w.varint(4034); { const s = w.beginLd(); encS_ScaleKeyframes(w, v); w.endLd(s); } return;
     case 'reverseKeyframes': w.varint(4042); { const s = w.beginLd(); encS_ReverseKeyframes(w, v); w.endLd(s); } return;
     case 'pasteKeyframes': w.varint(4050); { const s = w.beginLd(); encS_PasteKeyframes(w, v); w.endLd(s); } return;
+    case 'setKeyframes': w.varint(4162); { const s = w.beginLd(); encS_SetKeyframes(w, v); w.endLd(s); } return;
     case 'addEffect': w.varint(4802); { const s = w.beginLd(); encS_AddEffect(w, v); w.endLd(s); } return;
     case 'addMask': w.varint(4810); { const s = w.beginLd(); encS_AddMask(w, v); w.endLd(s); } return;
     case 'addPropertyGroup': w.varint(4818); { const s = w.beginLd(); encS_AddPropertyGroup(w, v); w.endLd(s); } return;
@@ -11668,6 +12155,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'invokeEffectAction': w.varint(4882); { const s = w.beginLd(); encS_InvokeEffectAction(w, v); w.endLd(s); } return;
     case 'addProperties': w.varint(4890); { const s = w.beginLd(); encS_AddProperties(w, v); w.endLd(s); } return;
     case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_RemoveProperties(w, v); w.endLd(s); } return;
+    case 'pasteEffects': w.varint(4906); { const s = w.beginLd(); encS_PasteEffects(w, v); w.endLd(s); } return;
+    case 'removeStroke': w.varint(4914); { const s = w.beginLd(); encS_RemoveStroke(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_AddMarkers(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_UpdateMarkers(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_DeleteMarkers(w, v); w.endLd(s); } return;
@@ -11735,6 +12224,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 842: out = decS_TrimCompToWorkArea(r, r.ldEnd(), { type: 'trimCompToWorkArea' }) as T.Command; break;
       case 850: out = decS_CropComposition(r, r.ldEnd(), { type: 'cropComposition' }) as T.Command; break;
       case 858: out = decS_AssembleComposition(r, r.ldEnd(), { type: 'assembleComposition' }) as T.Command; break;
+      case 962: out = decS_ClearWorkArea(r, r.ldEnd(), { type: 'clearWorkArea' }) as T.Command; break;
       case 1202: out = decS_AddRenderItems(r, r.ldEnd(), { type: 'addRenderItems' }) as T.Command; break;
       case 1210: out = decS_SetRenderItem(r, r.ldEnd(), { type: 'setRenderItem' }) as T.Command; break;
       case 1218: out = decS_RemoveRenderItems(r, r.ldEnd(), { type: 'removeRenderItems' }) as T.Command; break;
@@ -11771,6 +12261,13 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 2498: out = decS_FreezeFrame(r, r.ldEnd(), { type: 'freezeFrame' }) as T.Command; break;
       case 2506: out = decS_SetRetime(r, r.ldEnd(), { type: 'setRetime' }) as T.Command; break;
       case 2514: out = decS_SequenceLayers(r, r.ldEnd(), { type: 'sequenceLayers' }) as T.Command; break;
+      case 2642: out = decS_TimeStretchLayers(r, r.ldEnd(), { type: 'timeStretchLayers' }) as T.Command; break;
+      case 2650: out = decS_UnfreezeLayers(r, r.ldEnd(), { type: 'unfreezeLayers' }) as T.Command; break;
+      case 2658: out = decS_RippleDeleteRange(r, r.ldEnd(), { type: 'rippleDeleteRange' }) as T.Command; break;
+      case 2666: out = decS_ShiftLayerKeyframes(r, r.ldEnd(), { type: 'shiftLayerKeyframes' }) as T.Command; break;
+      case 2674: out = decS_AddTransition(r, r.ldEnd(), { type: 'addTransition' }) as T.Command; break;
+      case 2682: out = decS_SetTransition(r, r.ldEnd(), { type: 'setTransition' }) as T.Command; break;
+      case 2690: out = decS_RemoveTransitions(r, r.ldEnd(), { type: 'removeTransitions' }) as T.Command; break;
       case 3202: out = decS_SetProperty(r, r.ldEnd(), { type: 'setProperty' }) as T.Command; break;
       case 3210: out = decS_SetProperties(r, r.ldEnd(), { type: 'setProperties' }) as T.Command; break;
       case 3218: out = decS_ResetProperty(r, r.ldEnd(), { type: 'resetProperty' }) as T.Command; break;
@@ -11787,6 +12284,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4034: out = decS_ScaleKeyframes(r, r.ldEnd(), { type: 'scaleKeyframes' }) as T.Command; break;
       case 4042: out = decS_ReverseKeyframes(r, r.ldEnd(), { type: 'reverseKeyframes' }) as T.Command; break;
       case 4050: out = decS_PasteKeyframes(r, r.ldEnd(), { type: 'pasteKeyframes' }) as T.Command; break;
+      case 4162: out = decS_SetKeyframes(r, r.ldEnd(), { type: 'setKeyframes' }) as T.Command; break;
       case 4802: out = decS_AddEffect(r, r.ldEnd(), { type: 'addEffect' }) as T.Command; break;
       case 4810: out = decS_AddMask(r, r.ldEnd(), { type: 'addMask' }) as T.Command; break;
       case 4818: out = decS_AddPropertyGroup(r, r.ldEnd(), { type: 'addPropertyGroup' }) as T.Command; break;
@@ -11800,6 +12298,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4882: out = decS_InvokeEffectAction(r, r.ldEnd(), { type: 'invokeEffectAction' }) as T.Command; break;
       case 4890: out = decS_AddProperties(r, r.ldEnd(), { type: 'addProperties' }) as T.Command; break;
       case 4898: out = decS_RemoveProperties(r, r.ldEnd(), { type: 'removeProperties' }) as T.Command; break;
+      case 4906: out = decS_PasteEffects(r, r.ldEnd(), { type: 'pasteEffects' }) as T.Command; break;
+      case 4914: out = decS_RemoveStroke(r, r.ldEnd(), { type: 'removeStroke' }) as T.Command; break;
       case 5602: out = decS_AddMarkers(r, r.ldEnd(), { type: 'addMarkers' }) as T.Command; break;
       case 5610: out = decS_UpdateMarkers(r, r.ldEnd(), { type: 'updateMarkers' }) as T.Command; break;
       case 5618: out = decS_DeleteMarkers(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.Command; break;
@@ -11867,6 +12367,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'trimCompToWorkArea': w.varint(842); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'cropComposition': w.varint(850); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'assembleComposition': w.varint(858); { const s = w.beginLd(); encS_ItemRef(w, v); w.endLd(s); } return;
+    case 'clearWorkArea': w.varint(962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addRenderItems': w.varint(1202); { const s = w.beginLd(); encS_RenderItemList(w, v); w.endLd(s); } return;
     case 'setRenderItem': w.varint(1210); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'removeRenderItems': w.varint(1218); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -11903,6 +12404,13 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'freezeFrame': w.varint(2498); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setRetime': w.varint(2506); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'sequenceLayers': w.varint(2514); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'timeStretchLayers': w.varint(2642); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'unfreezeLayers': w.varint(2650); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'rippleDeleteRange': w.varint(2658); { const s = w.beginLd(); encS_LayerList(w, v); w.endLd(s); } return;
+    case 'shiftLayerKeyframes': w.varint(2666); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'addTransition': w.varint(2674); { const s = w.beginLd(); encS_TransitionRef(w, v); w.endLd(s); } return;
+    case 'setTransition': w.varint(2682); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'removeTransitions': w.varint(2690); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setProperty': w.varint(3202); { const s = w.beginLd(); encS_PropertyWriteResult(w, v); w.endLd(s); } return;
     case 'setProperties': w.varint(3210); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'resetProperty': w.varint(3218); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -11919,6 +12427,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'scaleKeyframes': w.varint(4034); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'reverseKeyframes': w.varint(4042); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'pasteKeyframes': w.varint(4050); { const s = w.beginLd(); encS_KeyframeIds(w, v); w.endLd(s); } return;
+    case 'setKeyframes': w.varint(4162); { const s = w.beginLd(); encS_KeyframeIds(w, v); w.endLd(s); } return;
     case 'addEffect': w.varint(4802); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'addMask': w.varint(4810); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'addPropertyGroup': w.varint(4818); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
@@ -11932,6 +12441,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'invokeEffectAction': w.varint(4882); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addProperties': w.varint(4890); { const s = w.beginLd(); encS_PropertyPaths(w, v); w.endLd(s); } return;
     case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'pasteEffects': w.varint(4906); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
+    case 'removeStroke': w.varint(4914); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_MarkerIds(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -11999,6 +12510,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 842: out = decS_Empty(r, r.ldEnd(), { type: 'trimCompToWorkArea' }) as T.CommandResult; break;
       case 850: out = decS_Empty(r, r.ldEnd(), { type: 'cropComposition' }) as T.CommandResult; break;
       case 858: out = decS_ItemRef(r, r.ldEnd(), { type: 'assembleComposition' }) as T.CommandResult; break;
+      case 962: out = decS_Empty(r, r.ldEnd(), { type: 'clearWorkArea' }) as T.CommandResult; break;
       case 1202: out = decS_RenderItemList(r, r.ldEnd(), { type: 'addRenderItems' }) as T.CommandResult; break;
       case 1210: out = decS_Empty(r, r.ldEnd(), { type: 'setRenderItem' }) as T.CommandResult; break;
       case 1218: out = decS_Empty(r, r.ldEnd(), { type: 'removeRenderItems' }) as T.CommandResult; break;
@@ -12035,6 +12547,13 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 2498: out = decS_Empty(r, r.ldEnd(), { type: 'freezeFrame' }) as T.CommandResult; break;
       case 2506: out = decS_Empty(r, r.ldEnd(), { type: 'setRetime' }) as T.CommandResult; break;
       case 2514: out = decS_Empty(r, r.ldEnd(), { type: 'sequenceLayers' }) as T.CommandResult; break;
+      case 2642: out = decS_Empty(r, r.ldEnd(), { type: 'timeStretchLayers' }) as T.CommandResult; break;
+      case 2650: out = decS_Empty(r, r.ldEnd(), { type: 'unfreezeLayers' }) as T.CommandResult; break;
+      case 2658: out = decS_LayerList(r, r.ldEnd(), { type: 'rippleDeleteRange' }) as T.CommandResult; break;
+      case 2666: out = decS_Empty(r, r.ldEnd(), { type: 'shiftLayerKeyframes' }) as T.CommandResult; break;
+      case 2674: out = decS_TransitionRef(r, r.ldEnd(), { type: 'addTransition' }) as T.CommandResult; break;
+      case 2682: out = decS_Empty(r, r.ldEnd(), { type: 'setTransition' }) as T.CommandResult; break;
+      case 2690: out = decS_Empty(r, r.ldEnd(), { type: 'removeTransitions' }) as T.CommandResult; break;
       case 3202: out = decS_PropertyWriteResult(r, r.ldEnd(), { type: 'setProperty' }) as T.CommandResult; break;
       case 3210: out = decS_Empty(r, r.ldEnd(), { type: 'setProperties' }) as T.CommandResult; break;
       case 3218: out = decS_Empty(r, r.ldEnd(), { type: 'resetProperty' }) as T.CommandResult; break;
@@ -12051,6 +12570,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4034: out = decS_Empty(r, r.ldEnd(), { type: 'scaleKeyframes' }) as T.CommandResult; break;
       case 4042: out = decS_Empty(r, r.ldEnd(), { type: 'reverseKeyframes' }) as T.CommandResult; break;
       case 4050: out = decS_KeyframeIds(r, r.ldEnd(), { type: 'pasteKeyframes' }) as T.CommandResult; break;
+      case 4162: out = decS_KeyframeIds(r, r.ldEnd(), { type: 'setKeyframes' }) as T.CommandResult; break;
       case 4802: out = decS_GroupList(r, r.ldEnd(), { type: 'addEffect' }) as T.CommandResult; break;
       case 4810: out = decS_GroupList(r, r.ldEnd(), { type: 'addMask' }) as T.CommandResult; break;
       case 4818: out = decS_GroupList(r, r.ldEnd(), { type: 'addPropertyGroup' }) as T.CommandResult; break;
@@ -12064,6 +12584,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4882: out = decS_Empty(r, r.ldEnd(), { type: 'invokeEffectAction' }) as T.CommandResult; break;
       case 4890: out = decS_PropertyPaths(r, r.ldEnd(), { type: 'addProperties' }) as T.CommandResult; break;
       case 4898: out = decS_Empty(r, r.ldEnd(), { type: 'removeProperties' }) as T.CommandResult; break;
+      case 4906: out = decS_GroupList(r, r.ldEnd(), { type: 'pasteEffects' }) as T.CommandResult; break;
+      case 4914: out = decS_Empty(r, r.ldEnd(), { type: 'removeStroke' }) as T.CommandResult; break;
       case 5602: out = decS_MarkerIds(r, r.ldEnd(), { type: 'addMarkers' }) as T.CommandResult; break;
       case 5610: out = decS_Empty(r, r.ldEnd(), { type: 'updateMarkers' }) as T.CommandResult; break;
       case 5618: out = decS_Empty(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.CommandResult; break;
@@ -12272,6 +12794,7 @@ function encU_Event(w: Writer, v: T.Event): void {
     case 'propertyGroupsChanged': w.varint(16082); { const s = w.beginLd(); encS_PropertyGroupsChangedEvent(w, v); w.endLd(s); } return;
     case 'markersChanged': w.varint(16090); { const s = w.beginLd(); encS_MarkersChangedEvent(w, v); w.endLd(s); } return;
     case 'renderQueueChanged': w.varint(16098); { const s = w.beginLd(); encS_RenderQueueChangedEvent(w, v); w.endLd(s); } return;
+    case 'transitionsChanged': w.varint(16106); { const s = w.beginLd(); encS_TransitionsChangedEvent(w, v); w.endLd(s); } return;
     case 'historyChanged': w.varint(16402); { const s = w.beginLd(); encS_HistoryChangedEvent(w, v); w.endLd(s); } return;
     case 'dirtyChanged': w.varint(16410); { const s = w.beginLd(); encS_DirtyChangedEvent(w, v); w.endLd(s); } return;
     case 'transportChanged': w.varint(16418); { const s = w.beginLd(); encS_TransportChangedEvent(w, v); w.endLd(s); } return;
@@ -12308,6 +12831,7 @@ function decU_Event(r: Reader, end: number): T.Event {
       case 16082: out = decS_PropertyGroupsChangedEvent(r, r.ldEnd(), { type: 'propertyGroupsChanged' }) as T.Event; break;
       case 16090: out = decS_MarkersChangedEvent(r, r.ldEnd(), { type: 'markersChanged' }) as T.Event; break;
       case 16098: out = decS_RenderQueueChangedEvent(r, r.ldEnd(), { type: 'renderQueueChanged' }) as T.Event; break;
+      case 16106: out = decS_TransitionsChangedEvent(r, r.ldEnd(), { type: 'transitionsChanged' }) as T.Event; break;
       case 16402: out = decS_HistoryChangedEvent(r, r.ldEnd(), { type: 'historyChanged' }) as T.Event; break;
       case 16410: out = decS_DirtyChangedEvent(r, r.ldEnd(), { type: 'dirtyChanged' }) as T.Event; break;
       case 16418: out = decS_TransportChangedEvent(r, r.ldEnd(), { type: 'transportChanged' }) as T.Event; break;
@@ -12361,6 +12885,7 @@ export const codecs = {
   Value: mk<T.Value>(encU_Value, decU_Value),
   F64List: mk<T.F64List>(encS_F64List, (r, e) => decS_F64List(r, e, {})),
   CubicBezier: mk<T.CubicBezier>(encS_CubicBezier, (r, e) => decS_CubicBezier(r, e, {})),
+  KeyframeDim: mk<T.KeyframeDim>(encS_KeyframeDim, (r, e) => decS_KeyframeDim(r, e, {})),
   Keyframe: mk<T.Keyframe>(encS_Keyframe, (r, e) => decS_Keyframe(r, e, {})),
   PropRef: mk<T.PropRef>(encS_PropRef, (r, e) => decS_PropRef(r, e, {})),
   PropertyInit: mk<T.PropertyInit>(encS_PropertyInit, (r, e) => decS_PropertyInit(r, e, {})),
@@ -12423,6 +12948,7 @@ export const codecs = {
   DuplicateComposition: mk<T.DuplicateComposition>(encS_DuplicateComposition, (r, e) => decS_DuplicateComposition(r, e, {})),
   SetCompositionSettings: mk<T.SetCompositionSettings>(encS_SetCompositionSettings, (r, e) => decS_SetCompositionSettings(r, e, {})),
   SetWorkArea: mk<T.SetWorkArea>(encS_SetWorkArea, (r, e) => decS_SetWorkArea(r, e, {})),
+  ClearWorkArea: mk<T.ClearWorkArea>(encS_ClearWorkArea, (r, e) => decS_ClearWorkArea(r, e, {})),
   Precompose: mk<T.Precompose>(encS_Precompose, (r, e) => decS_Precompose(r, e, {})),
   TrimCompToWorkArea: mk<T.TrimCompToWorkArea>(encS_TrimCompToWorkArea, (r, e) => decS_TrimCompToWorkArea(r, e, {})),
   CropComposition: mk<T.CropComposition>(encS_CropComposition, (r, e) => decS_CropComposition(r, e, {})),
@@ -12476,6 +13002,16 @@ export const codecs = {
   FreezeFrame: mk<T.FreezeFrame>(encS_FreezeFrame, (r, e) => decS_FreezeFrame(r, e, {})),
   SetRetime: mk<T.SetRetime>(encS_SetRetime, (r, e) => decS_SetRetime(r, e, {})),
   SequenceLayers: mk<T.SequenceLayers>(encS_SequenceLayers, (r, e) => decS_SequenceLayers(r, e, {})),
+  TimeStretchLayers: mk<T.TimeStretchLayers>(encS_TimeStretchLayers, (r, e) => decS_TimeStretchLayers(r, e, {})),
+  UnfreezeLayers: mk<T.UnfreezeLayers>(encS_UnfreezeLayers, (r, e) => decS_UnfreezeLayers(r, e, {})),
+  RippleDeleteRange: mk<T.RippleDeleteRange>(encS_RippleDeleteRange, (r, e) => decS_RippleDeleteRange(r, e, {})),
+  LayerKeyShift: mk<T.LayerKeyShift>(encS_LayerKeyShift, (r, e) => decS_LayerKeyShift(r, e, {})),
+  ShiftLayerKeyframes: mk<T.ShiftLayerKeyframes>(encS_ShiftLayerKeyframes, (r, e) => decS_ShiftLayerKeyframes(r, e, {})),
+  Transition: mk<T.Transition>(encS_Transition, (r, e) => decS_Transition(r, e, {})),
+  TransitionRef: mk<T.TransitionRef>(encS_TransitionRef, (r, e) => decS_TransitionRef(r, e, {})),
+  AddTransition: mk<T.AddTransition>(encS_AddTransition, (r, e) => decS_AddTransition(r, e, {})),
+  SetTransition: mk<T.SetTransition>(encS_SetTransition, (r, e) => decS_SetTransition(r, e, {})),
+  RemoveTransitions: mk<T.RemoveTransitions>(encS_RemoveTransitions, (r, e) => decS_RemoveTransitions(r, e, {})),
   PropertyWrite: mk<T.PropertyWrite>(encS_PropertyWrite, (r, e) => decS_PropertyWrite(r, e, {})),
   SetProperty: mk<T.SetProperty>(encS_SetProperty, (r, e) => decS_SetProperty(r, e, {})),
   SetProperties: mk<T.SetProperties>(encS_SetProperties, (r, e) => decS_SetProperties(r, e, {})),
@@ -12498,6 +13034,7 @@ export const codecs = {
   ScaleKeyframes: mk<T.ScaleKeyframes>(encS_ScaleKeyframes, (r, e) => decS_ScaleKeyframes(r, e, {})),
   ReverseKeyframes: mk<T.ReverseKeyframes>(encS_ReverseKeyframes, (r, e) => decS_ReverseKeyframes(r, e, {})),
   PasteKeyframes: mk<T.PasteKeyframes>(encS_PasteKeyframes, (r, e) => decS_PasteKeyframes(r, e, {})),
+  SetKeyframes: mk<T.SetKeyframes>(encS_SetKeyframes, (r, e) => decS_SetKeyframes(r, e, {})),
   KeyframeIds: mk<T.KeyframeIds>(encS_KeyframeIds, (r, e) => decS_KeyframeIds(r, e, {})),
   AddEffect: mk<T.AddEffect>(encS_AddEffect, (r, e) => decS_AddEffect(r, e, {})),
   AddMask: mk<T.AddMask>(encS_AddMask, (r, e) => decS_AddMask(r, e, {})),
@@ -12512,6 +13049,8 @@ export const codecs = {
   InvokeEffectAction: mk<T.InvokeEffectAction>(encS_InvokeEffectAction, (r, e) => decS_InvokeEffectAction(r, e, {})),
   AddProperties: mk<T.AddProperties>(encS_AddProperties, (r, e) => decS_AddProperties(r, e, {})),
   RemoveProperties: mk<T.RemoveProperties>(encS_RemoveProperties, (r, e) => decS_RemoveProperties(r, e, {})),
+  PasteEffects: mk<T.PasteEffects>(encS_PasteEffects, (r, e) => decS_PasteEffects(r, e, {})),
+  RemoveStroke: mk<T.RemoveStroke>(encS_RemoveStroke, (r, e) => decS_RemoveStroke(r, e, {})),
   PropertyPaths: mk<T.PropertyPaths>(encS_PropertyPaths, (r, e) => decS_PropertyPaths(r, e, {})),
   MarkerOwner: mk<T.MarkerOwner>(encS_MarkerOwner, (r, e) => decS_MarkerOwner(r, e, {})),
   Marker: mk<T.Marker>(encS_Marker, (r, e) => decS_Marker(r, e, {})),
@@ -12645,6 +13184,7 @@ export const codecs = {
   PropertyGroupsChangedEvent: mk<T.PropertyGroupsChangedEvent>(encS_PropertyGroupsChangedEvent, (r, e) => decS_PropertyGroupsChangedEvent(r, e, {})),
   MarkersChangedEvent: mk<T.MarkersChangedEvent>(encS_MarkersChangedEvent, (r, e) => decS_MarkersChangedEvent(r, e, {})),
   RenderQueueChangedEvent: mk<T.RenderQueueChangedEvent>(encS_RenderQueueChangedEvent, (r, e) => decS_RenderQueueChangedEvent(r, e, {})),
+  TransitionsChangedEvent: mk<T.TransitionsChangedEvent>(encS_TransitionsChangedEvent, (r, e) => decS_TransitionsChangedEvent(r, e, {})),
   HistoryChangedEvent: mk<T.HistoryChangedEvent>(encS_HistoryChangedEvent, (r, e) => decS_HistoryChangedEvent(r, e, {})),
   DirtyChangedEvent: mk<T.DirtyChangedEvent>(encS_DirtyChangedEvent, (r, e) => decS_DirtyChangedEvent(r, e, {})),
   TransportChangedEvent: mk<T.TransportChangedEvent>(encS_TransportChangedEvent, (r, e) => decS_TransportChangedEvent(r, e, {})),

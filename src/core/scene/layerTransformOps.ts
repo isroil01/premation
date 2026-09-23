@@ -146,7 +146,7 @@ const RESET_ALIASES: Readonly<Record<string, readonly string[]>> = { scaleX: ['s
  * Reset one layer's Transform group: remove its keyframes and write the
  * defaults. Expressions are left alone — AE's Reset keeps them too.
  */
-function resetInputFor(nodeId: string, node: SceneNode, comp: { width: number; height: number }): ResetTransformInput {
+export function resetInputFor(nodeId: string, node: SceneNode, comp: { width: number; height: number }): ResetTransformInput {
   // Comp centre → parent space: `x`/`y` are parent-space values. Identity on an
   // unparented layer.
   const inv = Matrix.invert(parentWorld2DAt(nodeId, playheadCompTime()));

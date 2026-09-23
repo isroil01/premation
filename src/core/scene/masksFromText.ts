@@ -54,18 +54,25 @@ export interface MasksFromTextResult {
   masks: number;
 }
 
+/** The asynchronous half: the text's outlines and placement, read at `compTime`. */
+export interface MasksFromTextPlan {
+  nodeId: string;
+  compTime: number;
+  outlines: NonNullable<Awaited<ReturnType<typeof outlineTextNode>>>;
+  comp: ReturnType<typeof activeCompSize>;
+  textSpace: NonNullable<ReturnType<typeof layerSpaceAt>>;
+}
+
 /**
- * Build the solid and its masks, hide the text. One undo entry. Resolves null
- * when the text cannot be outlined or placed.
- *
- * `compTime` is the composition time the text's placement is read at (the
- * playhead by default) — an animated text layer is captured where it is now,
- * as AE does.
+ * Outline the text (fonts are loaded asynchronously) and read where it sits.
+ * Null when the text cannot be outlined or placed. `compTime` is the
+ * composition time the text's placement is read at (the playhead by default) —
+ * an animated text layer is captured where it is now, as AE does.
  */
-export async function createMasksFromText(
+export async function planMasksFromText(
   nodeId: string,
   compTime: number = getTimelineController().currentSeconds,
-): Promise<MasksFromTextResult | null> {
+): Promise<MasksFromTextPlan | null> {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || readNodeKind(node) !== 'text') return null;
   const outlines = await outlineTextNode(node, compTime);
@@ -73,37 +80,66 @@ export async function createMasksFromText(
   const comp = activeCompSize();
   const textSpace = layerSpaceAt(nodeId, compTime, comp);
   if (!textSpace) return null;
+  return { nodeId, compTime, outlines, comp, textSpace };
+}
 
+/**
+ * The synchronous BUILD: add the comp-sized solid (in the text's colour, beside
+ * the text in its parent) with one mask per glyph contour. Changes nothing
+ * else — the editor runs it off-document and sends the solid as `pasteLayers`
+ * (+ hiding the text) in one batch (layout/Text/textEdits.ts
+ * `masksFromTextEdit`). Null when the solid cannot be placed.
+ */
+export function buildMasksFromTextSolid(plan: MasksFromTextPlan): MasksFromTextResult | null {
+  const node = defaultSceneGraph.getNode(plan.nodeId);
+  if (!node) return null;
+  const { outlines, comp, textSpace, compTime } = plan;
+  const solid = makeNode('shape', `${node.name ?? 'Text'} Outlines`);
+  const t = solid.components.find((c) => c.type === 'Transform');
+  if (t) {
+    Object.assign(t.props, {
+      x: comp.width / 2, y: comp.height / 2, width: comp.width, height: comp.height,
+      anchorX: 0, anchorY: 0, rotation: 0, scaleX: 1, scaleY: 1,
+    });
+  }
+  solid.transform.position.x = comp.width / 2;
+  solid.transform.position.y = comp.height / 2;
+  const parent = node.parent && defaultSceneGraph.getNode(node.parent) ? node.parent : activeCompRootId();
+  defaultSceneGraph.addChild(parent, solid);
+  defaultSceneGraph.setSolid(solid.id, true);
+  defaultSceneGraph.setFill(solid.id, { type: 'solid', color: textFillOf(node) });
+  const solidSpace = layerSpaceAt(solid.id, compTime, comp);
+  if (!solidSpace) return null;
+  const paths = glyphContoursToMaskPaths(
+    outlines.runs,
+    (x, y) => solidSpace.fromComp(textSpace.toComp([x, y])),
+    (i) => `mask_text_${solid.id}_${i}`,
+  );
+  for (const p of paths) addMaskPath(solid.id, p);
+  return { id: solid.id, source: outlines.source, masks: paths.length };
+}
+
+/**
+ * Legacy one-shot form (pre-API callers): build the solid and its masks, hide
+ * the text, one `runDocumentEdit`. The editor's command goes through the
+ * engine (`masksFromTextEdit`).
+ */
+export async function createMasksFromText(
+  nodeId: string,
+  compTime: number = getTimelineController().currentSeconds,
+): Promise<MasksFromTextResult | null> {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node || readNodeKind(node) !== 'text') return null;
+  const plan = await planMasksFromText(nodeId, compTime);
+  if (!plan) return null;
   return runDocumentEdit('Create Masks from Text', () => {
-    const solid = makeNode('shape', `${node.name ?? 'Text'} Outlines`);
-    const t = solid.components.find((c) => c.type === 'Transform');
-    if (t) {
-      Object.assign(t.props, {
-        x: comp.width / 2, y: comp.height / 2, width: comp.width, height: comp.height,
-        anchorX: 0, anchorY: 0, rotation: 0, scaleX: 1, scaleY: 1,
-      });
-    }
-    solid.transform.position.x = comp.width / 2;
-    solid.transform.position.y = comp.height / 2;
-    const parent = node.parent && defaultSceneGraph.getNode(node.parent) ? node.parent : activeCompRootId();
-    defaultSceneGraph.addChild(parent, solid);
-    defaultSceneGraph.setSolid(solid.id, true);
-    defaultSceneGraph.setFill(solid.id, { type: 'solid', color: textFillOf(node) });
-
-    const solidSpace = layerSpaceAt(solid.id, compTime, comp);
-    if (!solidSpace) return null;
-    const paths = glyphContoursToMaskPaths(
-      outlines.runs,
-      (x, y) => solidSpace.fromComp(textSpace.toComp([x, y])),
-      (i) => `mask_text_${solid.id}_${i}`,
-    );
-    for (const p of paths) addMaskPath(solid.id, p);
-
+    const made = buildMasksFromTextSolid(plan);
+    if (!made) return null;
     // AE hides the source text rather than deleting it: the text is still the
     // editable truth, the masks a derivative of one moment of it.
     const src = defaultSceneGraph.getNode(nodeId);
     if (src) src.visible = false;
-    useSelectionStore.getState().set([solid.id]);
-    return { id: solid.id, source: outlines.source, masks: paths.length };
+    useSelectionStore.getState().set([made.id]);
+    return made;
   });
 }

@@ -15,12 +15,12 @@
 
 import { ValueField } from '@components/ValueField';
 import { Switch } from '@components/Switch';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { useMirrorProperty } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
 import {
+  AUDIO_EFFECTS_PROP,
   AUDIO_EFFECT_DEFS,
   AUDIO_EFFECT_FLAGS,
-  AUDIO_EFFECTS_PROP,
   AUDIO_WAVEFORMS,
   DISTORTION_CURVES,
   WAVE_EFFECTS,
@@ -32,41 +32,45 @@ import {
   type DistortionCurve,
 } from '@core/audio/audioEffects';
 import { shortId } from '@utils/lang';
+import { values } from '@core/engine/propRefs';
+import { isLayer } from '@core/engine/doc';
+import { useEngineEdit, type EngineEdit } from './useEngineEdit';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
 
 const TYPES = Object.keys(AUDIO_EFFECT_DEFS) as AudioEffectType[];
 
-/** Read → transform → write the whole chain. The props object is shared with
- *  the stored document, so an in-place mutation would not be seen. */
-function writeChain(nodeId: string, next: AudioEffect[]): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const fx = node?.components.find((c) => c.type === 'fx');
-  if (!fx) return;
-  // B3-legacy: engine gap — declared WebAudio effect chains (audio effects list on the layer) have no API group.
-  defaultSceneGraph.writeProp(nodeId, fx.id, AUDIO_EFFECTS_PROP, next);
-  bumpScene();
+/**
+ * Read → transform → send the whole chain: the `audio/effects` json field
+ * (the fx component's `audioEffects`), one entry per action; a param
+ * scrub is one gesture of absolute chains.
+ */
+function writeChain(e: EngineEdit, nodeId: string, label: string, next: AudioEffect[]): void {
+  if (!isLayer(nodeId)) return;
+  e.send(label, { type: 'setProperty', prop: { layer: nodeId, path: 'audio/effects' }, value: values.json(next) });
 }
 
 export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  // An `fx` component is where the chain lives; without one there is nowhere to
-  // write, so the section would be a control that cannot take effect.
-  if (!node.components.some((c) => c.type === 'fx')) return null;
+  const fxEdit = useEngineEdit();
+  // `audio/effects` exists only on a layer that carries sound; without it there
+  // is nowhere to write, so the section would be a control that cannot take effect.
+  const info = useMirrorProperty(nodeId, 'audio/effects');
+  const raw = useMirrorJson<unknown>(nodeId, 'audio/effects');
+  if (!info) return null;
 
-  const chain = readAudioEffects(node) ?? [];
+  // The document's chain, validated the way the audio graph builder validates
+  // it (a pure use of `readAudioEffects` over the mirror's json value).
+  const chain = readAudioEffects({ components: [{ type: 'fx', props: { [AUDIO_EFFECTS_PROP]: raw } }] }) ?? [];
 
   const add = (type: AudioEffectType): void => {
     const params: Record<string, number> = {};
     for (const p of AUDIO_EFFECT_DEFS[type].params) params[p.key] = p.default;
-    writeChain(nodeId, [...chain, { id: shortId('afx'), type, params }]);
+    writeChain(fxEdit, nodeId, 'Add audio effect', [...chain, { id: shortId('afx'), type, params }]);
   };
   const update = (id: string, patch: Partial<AudioEffect>): void =>
-    writeChain(nodeId, chain.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+    writeChain(fxEdit, nodeId, 'Audio effect', chain.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   const setParam = (id: string, key: string, v: number): void =>
-    writeChain(nodeId, chain.map((e) => (e.id === id ? { ...e, params: { ...e.params, [key]: v } } : e)));
+    writeChain(fxEdit, nodeId, 'Audio effect parameter', chain.map((e) => (e.id === id ? { ...e, params: { ...e.params, [key]: v } } : e)));
   /**
    * Set or clear a boolean option.
    *
@@ -75,14 +79,14 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
    * round-trips byte for byte — the same rule the pan prop follows.
    */
   const setFlag = (id: string, flag: string, on: boolean): void =>
-    writeChain(nodeId, chain.map((e) => {
+    writeChain(fxEdit, nodeId, 'Audio effect', chain.map((e) => {
       if (e.id !== id) return e;
       const next = (e.flags ?? []).filter((f) => f !== flag);
       if (on) next.push(flag);
       const { flags: _drop, ...rest } = e;
       return next.length > 0 ? { ...rest, flags: next } : rest;
     }));
-  const remove = (id: string): void => writeChain(nodeId, chain.filter((e) => e.id !== id));
+  const remove = (id: string): void => writeChain(fxEdit, nodeId, 'Remove audio effect', chain.filter((e) => e.id !== id));
   const move = (id: string, delta: number): void => {
     // Order is audible: an EQ before a delay colours the echoes too, after it
     // colours only the dry signal.
@@ -91,7 +95,7 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
     if (i < 0 || j < 0 || j >= chain.length) return;
     const next = [...chain];
     [next[i], next[j]] = [next[j]!, next[i]!];
-    writeChain(nodeId, next);
+    writeChain(fxEdit, nodeId, 'Reorder audio effects', next);
   };
 
   return (
@@ -230,6 +234,7 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
               <ValueField
                 value={e.params?.[p.key] ?? p.default}
                 onChange={(v) => setParam(e.id, p.key, v)}
+                {...fxEdit.scrub('Audio effect parameter')}
                 unit={p.unit}
                 min={p.min}
                 max={p.max}

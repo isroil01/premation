@@ -32,7 +32,7 @@ import type {
   BezierPath,
   Color,
 } from '@motion/engine-api';
-import { buildStaticPropertyTree, MASK_ANIM_PROP, type StaticPropertyRow } from '@core/timeline/propertyTree';
+import { buildStaticPropertyTree, groupForProp, MASK_ANIM_PROP, type StaticPropertyRow } from '@core/timeline/propertyTree';
 import { readStaticPropertyValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
 import { resolvePropertyMeta, GROUP_PLACEHOLDER_PREFIX } from '@core/inspector/propertyMeta';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
@@ -45,7 +45,7 @@ import {
   channelsToColor,
   EFFECT_OPACITY_KEY,
 } from '@core/effects/effects';
-import { styleKeyFromEffectId, getNodeLayerStyles, setLayerStyles, LAYER_STYLE_COLOR_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
+import { styleKeyFromEffectId, getNodeLayerStyles, setLayerStyles, defaultGlassStyle, LAYER_STYLE_COLOR_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
 import {
   readNodeMask,
   readNodeMaskAnim,
@@ -60,12 +60,38 @@ import { readPathOps } from '@core/scene/pathOps';
 import { is3DEnabled } from '@core/scene/threeD';
 import { SOURCE_TEXT_PROP } from '@motion/animation';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
+import { readNodeKind } from '@core/scene/sceneDerive';
+
+/** audioKeyframes.ts AUDIO_AMPLITUDE_PROP (Convert Audio to Keyframes' track; not imported: that module pulls the audio engine in). */
+const AUDIO_AMPLITUDE_TRACK = 'audioAmplitude';
+/** A camera's Point of Interest tracks (camera3d.ts). */
+const CAMERA_POI_TRACKS = ['poiX', 'poiY', 'poiZ'] as const;
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
 import { fail } from './errors';
 import { secondsToFlicks, flicksToSeconds } from './time';
-import { addFieldBindings, readField, writeField, type FieldRef } from './fields';
+import { addFieldBindings, readField, writeField, effectFieldBinding, styleFieldBinding, setPrimaryFill, type FieldRef } from './fields';
+import { fillStopsBinding, readFillStopsStatic, writeFillStopsStatic, fillStopsKeyToApi, apiToFillStopsKey } from './fillStops';
+import { EFFECT_FIELDS, STYLE_FIELDS, GLASS_PROPERTIES } from './effectFieldSpecs';
 import { parseTextPathPropPath } from '@core/text/textPath';
+import { latentMembers } from './latentProps';
+import { addPluginBindings, pluginApiPath, pluginPanelGroupPaths } from './pluginProps';
+import { parseStrokeTrackPath } from '@core/rendering/strokeTracks';
+import { strokeEntryAt } from '@core/paint/strokeValues';
+import { normalizeStroke, storeNodeStrokeAt } from '@core/paint/stroke';
+import {
+  addRigBindings,
+  rigGroupInfo,
+  rigGroupPaths,
+  rigMemberFactor,
+  readRigStatic,
+  writeRigStatic,
+  pinKeyToApi,
+  apiToPinKey,
+  pinKeySpatial,
+  type RigRef,
+} from './rigProps';
+import { addParticleBindings, readParticleColor, writeParticleColor } from './particleProps';
 
 /** The registered variable-font axes and the Text props their static values and keys live in (fontAxes.ts). */
 const AXIS_OF_MEMBER: Readonly<Record<string, string>> = { fontWeight: 'wght', fontWidth: 'wdth', fontSlant: 'slnt' };
@@ -81,7 +107,11 @@ export type Special =
   /** A static field (fields.ts): text / animator / selector fields, style runs, the text path's mask. */
   | 'field'
   /** The layer's own solid fill colour (`layer/fill`, fields.ts), keyed through fill_r/_g/_b/_a. */
-  | 'layerFill';
+  | 'layerFill'
+  /** The primary fill's colour stops (`layer/fillStops`, fillStops.ts): static on the paint, keys on `fill.stops`. */
+  | 'fillStops'
+  /** A puppet / skeleton property (rigProps.ts): static value on the rig, keys on its tracks. */
+  | 'rig';
 
 export interface PropBinding {
   path: string;
@@ -101,6 +131,14 @@ export interface PropBinding {
   paramKey?: string;
   /** A `field` binding's storage (fields.ts). */
   field?: FieldRef;
+  /**
+   * A LATENT binding (latentPropSpecs.ts): the component type(s) its first
+   * static write stores on when no component carries the member yet ([] = the
+   * static seam owns it). Absent = the Transform (every other binding).
+   */
+  home?: readonly string[];
+  /** A `rig` binding's storage (rigProps.ts). */
+  rig?: RigRef;
   animatable: boolean;
   separated?: boolean;
   unit: string;
@@ -176,6 +214,8 @@ function apiPathFor(
     if (eff[2] === EFFECT_OPACITY_KEY) return `effects/${eff[1]}/compositing/opacity`;
     return `effects/${eff[1]}/${eff[2]}`;
   }
+  const glass = /^glass\.([A-Za-z]+)$/.exec(prop);
+  if (glass) return `styles/glass/${glass[1]}`;
   const legacyEff = /^effect\.([^.]+)$/.exec(prop);
   if (legacyEff) return `effects/${legacyEff[1]}/amount`;
   const mask = /^mask\.([^.]+)\.(.+)$/.exec(prop);
@@ -205,6 +245,9 @@ function apiPathFor(
   if (prop === AUDIO_PAN_PROP) return 'audio/pan';
   if (prop === 'timeRemap') return 'timeRemap';
   if (prop === 'timeSpeed') return 'layer/timeSpeed';
+  // B3z: a plugin layer kind's prop / a contributed panel's param (pluginProps.ts).
+  const plugin = pluginApiPath(prop);
+  if (plugin) return plugin;
   const group = row?.group;
   if (group === 'material' || group === 'geometry' || group === 'camera' || group === 'light') return `${group}/${prop}`;
   if (group === 'text' && prop !== 'animators' && prop !== 'sourceText' && prop !== 'axes') return `text/${prop}`;
@@ -216,6 +259,9 @@ function valueTypeForMembers(n: number, color: boolean): ValueType {
   if (color) return 'color';
   return n <= 1 ? 'scalar' : n === 2 ? 'vec2' : n === 3 ? 'vec3' : 'vec4';
 }
+
+/** A timeline row of an effect's Compositing Options ▸ Effect Opacity. */
+const EFFECT_OPACITY_ROW = /^effect\.(?!layerstyle:)[^.]+\.fx\.opacity$/;
 
 const MASK_MODES: MaskMode[] = ['none', 'add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'];
 
@@ -239,8 +285,18 @@ export function catalogFor(layerId: string): Catalog {
 
   const mask = readNodeMask(node);
   const is3D = is3DEnabled(node);
+  const addCompositing = (effectId: string): void => {
+    add({
+      path: `effects/${effectId}/compositing/opacity`, name: 'Effect Opacity', matchName: 'ADBE Effect Mask Opacity', valueType: 'scalar',
+      members: [`effect.${effectId}.${EFFECT_OPACITY_KEY}`], animatable: true, unit: '%', min: 0, max: 100,
+      defaultValue: { kind: 'scalar', value: 100 },
+    });
+    for (const spec of EFFECT_FIELDS) add(effectFieldBinding(effectId, spec));
+  };
 
   for (const row of rows) {
+    // Effect Opacity is listed for EVERY effect below (B3z), not only once touched.
+    if (EFFECT_OPACITY_ROW.test(row.prop)) continue;
     if (row.maskTrack || row.prop === MASK_ANIM_PROP) {
       // One Mask Path property per mask (whole-mask snapshots in fx.maskAnim).
       for (const p of mask?.paths ?? []) addMaskProps(p, add);
@@ -312,10 +368,15 @@ export function catalogFor(layerId: string): Catalog {
     });
   }
 
-  // Effects: the non-numeric params the timeline rows omit.
+  // Effects: the non-numeric params the timeline rows omit, then AE's
+  // Compositing Options (B3z) — Effect Opacity (keyed on effect.<id>.fx.opacity,
+  // static = Effect.opacity), Effect Mask and the label colour — on every effect.
   for (const effect of getNodeEffects(layerId)) {
     const edef = effectDefFor(effect.type);
-    if (!edef) continue;
+    if (!edef) {
+      addCompositing(effect.id);
+      continue;
+    }
     for (const p of edef.params) {
       if (p.type === 'number' || p.type === 'color' || p.type === 'resolved') continue;
       const vt: ValueType = p.type === 'checkbox' ? 'bool' : p.type === 'enum' ? 'choice' : p.type === 'layer' ? 'layer' : p.type === 'maskPath' ? 'string' : 'json';
@@ -325,7 +386,30 @@ export function catalogFor(layerId: string): Catalog {
         ...(p.type === 'enum' ? { choices: (p.options ?? []).map((o) => o.label) } : {}),
       });
     }
+    addCompositing(effect.id);
   }
+
+  // Layer styles (B3z): Glass as a first-class style (styles/glass/<param> on the
+  // glass.<param> tracks) and the styles' switches (effectFieldSpecs.ts).
+  const layerStyles = getNodeLayerStyles(layerId) as Record<string, object | undefined>;
+  if (layerStyles.glass) {
+    const gd = defaultGlassStyle() as unknown as Record<string, unknown>;
+    for (const g of GLASS_PROPERTIES) {
+      const m = `glass.${g.key}`;
+      if (g.type === 'color') {
+        add({
+          path: `styles/glass/${g.key}`, name: g.label, matchName: m, valueType: 'color',
+          members: [`${m}_r`, `${m}_g`, `${m}_b`, `${m}_a`], colorBase: m, animatable: true, unit: '',
+        });
+      } else {
+        add({
+          path: `styles/glass/${g.key}`, name: g.label, matchName: m, valueType: 'scalar', members: [m], animatable: true, unit: '',
+          defaultValue: { kind: 'scalar', value: gd[g.key] as number },
+        });
+      }
+    }
+  }
+  for (const spec of STYLE_FIELDS) if (layerStyles[spec.style]) add(styleFieldBinding(spec));
 
   // Masks without a mask-shape row (no rows are built for a mask with no paths).
   for (const p of mask?.paths ?? []) addMaskProps(p, add);
@@ -334,6 +418,38 @@ export function catalogFor(layerId: string): Catalog {
   // Options ▸ Path), Blur Y, the registered font axes and the layer's fill
   // colour — before the unclaimed tracks below, which they claim.
   addFieldBindings(node, layerId, animators, add, (p) => byPath.has(p));
+
+  // B3z WS-R: puppet pins and skeletons (rigProps.ts) — they claim the
+  // puppet.* / bone.* / ikTarget.* / ikPole.* / ikMode.* tracks.
+  addRigBindings(node, layerId, add);
+
+  // B3z: Gradient Fill ▸ Colors (fillStops.ts) — claims the fill.stops data track.
+  const stops = fillStopsBinding(node, layerId);
+  if (stops) add(stops);
+
+  // B3z: a particle emitter's keyframeable numbers and colours (particleProps.ts).
+  addParticleBindings(node, layerId, add, (m) => byMember.has(m));
+
+  // B3z: LATENT numeric properties (latentPropSpecs.ts) — keyframeable
+  // numbers the layer has before it stores them; same path as when stored.
+  for (const l of latentMembers(node)) {
+    if (byMember.has(l.member)) continue;
+    const meta = resolvePropertyMeta(l.member, layerId);
+    const path = apiPathFor(l.member, { prop: l.member, label: meta.label, group: groupForProp(l.member, layerId), members: [l.member], valueProps: [l.member] }, node, animIds, selIds);
+    if (byPath.has(path)) continue;
+    add({
+      path, name: meta.label, matchName: l.member, valueType: 'scalar', members: [l.member],
+      animatable: meta.keyframeable !== false, unit: meta.unit ?? '', home: l.home,
+      ...(meta.min !== undefined ? { min: meta.min } : {}),
+      ...(meta.max !== undefined ? { max: meta.max } : {}),
+      ...(typeof meta.defaultValue === 'number' ? { defaultValue: { kind: 'scalar', value: meta.defaultValue * apiUnitFactor(l.member) } as Value } : {}),
+    });
+  }
+
+  // B3z: PLUGIN properties (pluginProps.ts) — a plugin layer kind's props and
+  // each contributed inspector panel's params, typed by what is stored; they
+  // claim the plugin.* / pluginUi.* tracks.
+  addPluginBindings(node, Object.keys(defaultAnimation.snapshotNode(layerId)?.tracks ?? {}), add);
 
   // Animated tracks the tree did not describe.
   const snap = defaultAnimation.snapshotNode(layerId);
@@ -344,6 +460,26 @@ export function catalogFor(layerId: string): Catalog {
       path: apiPathFor(prop, null, node, animIds, selIds), name: meta.label || prop, matchName: prop,
       valueType: 'scalar', members: [prop], animatable: true, unit: meta.unit ?? '',
     });
+  }
+  // Convert Audio to Keyframes' track (B3z): an audio layer's `audioAmplitude`
+  // (0–100) is addressable BEFORE its first key, so the conversion is a
+  // keyframe command — the same binding the loop above gives it once keyed.
+  if (readNodeKind(node) === 'audio' && !byMember.has(AUDIO_AMPLITUDE_TRACK)) {
+    const meta = resolvePropertyMeta(AUDIO_AMPLITUDE_TRACK, layerId);
+    add({
+      path: apiPathFor(AUDIO_AMPLITUDE_TRACK, null, node, animIds, selIds), name: meta.label || AUDIO_AMPLITUDE_TRACK, matchName: AUDIO_AMPLITUDE_TRACK,
+      valueType: 'scalar', members: [AUDIO_AMPLITUDE_TRACK], animatable: true, unit: meta.unit ?? '',
+    });
+  }
+  // A ONE-node camera's Point of Interest (B3z): keying it aims the camera at
+  // a point (camera3d `hasPOI`) — what Track Motion's camera follow writes.
+  // A two-node camera lists these through its stored props already.
+  if (readNodeKind(node) === 'camera') {
+    for (const m of CAMERA_POI_TRACKS) {
+      if (byMember.has(m)) continue;
+      const meta = resolvePropertyMeta(m, layerId);
+      add({ path: `camera/${m}`, name: meta.label || m, matchName: m, valueType: 'scalar', members: [m], animatable: true, unit: meta.unit ?? '' });
+    }
   }
   for (const prop of Object.keys(snap?.data ?? {})) {
     if (byMember.has(prop)) continue;
@@ -362,11 +498,16 @@ export function catalogFor(layerId: string): Catalog {
   const styles = getNodeLayerStyles(layerId) as Record<string, { enabled?: boolean } | undefined>;
   const ops = readPathOps(node);
   const groupName = (path: string): { name: string; matchName: string; enabled: boolean; kind: PropertyKind } => {
+    const rig = rigGroupInfo(node, path);
+    if (rig) return rig;
     const seg = path.split('/');
     if (seg.length === 1) return { name: ROOT_NAMES[seg[0]!] ?? seg[0]!, matchName: seg[0]!, enabled: true, kind: INDEXED_ROOTS.has(seg[0]!) || path === 'text/animators' ? 'indexedGroup' : 'group' };
     if (seg[0] === 'effects' && seg.length === 2) {
       const e = effects.find((x) => x.id === seg[1]);
       return { name: e ? (effectDefFor(e.type)?.label ?? e.type) : seg[1]!, matchName: e?.type ?? seg[1]!, enabled: e?.enabled !== false, kind: 'group' };
+    }
+    if (seg[0] === 'effects' && seg.length === 3 && seg[2] === 'compositing') {
+      return { name: 'Compositing Options', matchName: 'ADBE Effect Built In Params', enabled: true, kind: 'group' };
     }
     if (seg[0] === 'masks' && seg.length === 2) {
       const i = mask?.paths.findIndex((p) => p.id === seg[1]) ?? -1;
@@ -416,6 +557,8 @@ export function catalogFor(layerId: string): Catalog {
     for (const s of a.selectors ?? []) ensureGroup(`text/animators/${a.id}/selectors/${s.id}`);
   }
   for (const o of ops) ensureGroup(`contents/${o.id}`);
+  for (const g of rigGroupPaths(node)) ensureGroup(g);
+  for (const g of pluginPanelGroupPaths(node)) ensureGroup(g);
   for (const b of props) {
     const slash = b.path.lastIndexOf('/');
     if (slash < 0) {
@@ -474,7 +617,10 @@ const PERCENT_MULTIPLIER_MEMBERS = new Set(['scale', 'scaleX', 'scaleY', 'scaleZ
 
 /** API value = stored value × this, for one member track. */
 export function apiUnitFactor(member: string | undefined): number {
-  return member !== undefined && PERCENT_MULTIPLIER_MEMBERS.has(member) ? 100 : 1;
+  if (member === undefined) return 1;
+  if (PERCENT_MULTIPLIER_MEMBERS.has(member)) return 100;
+  // A pin's / bone's scale (multiplier → %), a bone's rotation (radians → °).
+  return rigMemberFactor(member) ?? 1;
 }
 
 /** Stored member numbers → API numbers (colours are never scaled). */
@@ -533,8 +679,27 @@ function colorOfString(s: unknown): Color | undefined {
   return { r, g, b, a };
 }
 
+/**
+ * The shape-stroke stack index a colour base names (`stroke`, `stroke.<i>.color`,
+ * strokeTracks.ts) when the layer has that stroke — its colour lives in the
+ * stack entry (`fx.stroke(s)`), not in a component string. A text layer's
+ * `stroke` is its Text component's colour (the component scan below).
+ */
+function strokeColorIndex(node: SceneNode, base: string): number | undefined {
+  const st = parseStrokeTrackPath(`${base}_r`);
+  if (!st || st.param !== 'color') return undefined;
+  if (st.index === 0 && node.components.some((c) => c.type === 'Text')) return undefined;
+  return strokeEntryAt(node, st.index) ? st.index : undefined;
+}
+
 /** The stored hex behind a colour property's base path. */
 function readColorBase(node: SceneNode, base: string): Color | undefined {
+  const particle = readParticleColor(node, base);
+  if (particle !== undefined) return colorOfString(particle);
+  const si = strokeColorIndex(node, base);
+  if (si !== undefined) return colorOfString(strokeEntryAt(node, si)!.color);
+  const gl = /^glass\.(tintColor|rimColor)$/.exec(base);
+  if (gl) return colorOfString((getNodeLayerStyles(node.id) as Record<string, Record<string, unknown> | undefined>).glass?.[gl[1]!]);
   const eff = /^effect\.([^.]+)\.(.+)$/.exec(base);
   if (eff) {
     const styleKey = styleKeyFromEffectId(eff[1]!);
@@ -556,6 +721,20 @@ function readColorBase(node: SceneNode, base: string): Color | undefined {
 
 function writeColorBase(node: SceneNode, base: string, c: Color): boolean {
   const hex = channelsToColor(c.r, c.g, c.b, c.a);
+  const particle = writeParticleColor(node.id, node, base, hex);
+  if (particle !== null) return particle;
+  const si = strokeColorIndex(node, base);
+  if (si !== undefined) {
+    storeNodeStrokeAt(node.id, si, normalizeStroke({ ...strokeEntryAt(node, si)!, color: hex }));
+    return true;
+  }
+  const gl = /^glass\.(tintColor|rimColor)$/.exec(base);
+  if (gl) {
+    const styles = getNodeLayerStyles(node.id) as Record<string, Record<string, unknown> | undefined>;
+    if (!styles.glass) return false;
+    setLayerStyles(node.id, { ...(styles as LayerStyles), glass: { ...styles.glass, [gl[1]!]: hex } } as LayerStyles);
+    return true;
+  }
   const eff = /^effect\.([^.]+)\.(.+)$/.exec(base);
   if (eff) {
     const styleKey = styleKeyFromEffectId(eff[1]!);
@@ -587,13 +766,44 @@ export function maskToBezier(p: MaskPath): BezierPath {
     inT.push(pt.inX - pt.x, pt.inY - pt.y);
     outT.push(pt.outX - pt.x, pt.outY - pt.y);
   }
-  return { vertices, inTangents: inT, outTangents: outT, closed: p.closed, featherPoints: [] };
+  // Variable-width feather (B3z): a vertex's own feather is a feather point AT
+  // that vertex (segment i, t 0); a vertex without one has none.
+  const featherPoints: BezierPath['featherPoints'] = [];
+  p.points.forEach((pt, i) => {
+    if (typeof pt.feather === 'number') featherPoints.push({ segment: i, t: 0, radius: pt.feather, tension: 0 });
+  });
+  return { vertices, inTangents: inT, outTangents: outT, closed: p.closed, featherPoints };
+}
+
+/**
+ * The per-vertex feathers a path's feather points say (B3z), or null for an
+ * EMPTY list — which keeps each vertex's current feather by index (`prev`),
+ * what a path write did before feather points existed (the viewport's reshape
+ * and every client that builds a BezierPath without them rely on it). A
+ * non-empty list is the whole answer: a vertex it does not list — or lists with
+ * a negative radius, the "none" marker (`[{segment: 0, t: 0, radius: -1,
+ * tension: 0}]` clears every vertex) — has no feather of its own. The model
+ * holds one feather per VERTEX: `t` ≠ 0 or `tension` ≠ 0 is `unsupported`.
+ */
+function featherByVertex(b: BezierPath, n: number): Map<number, number | null> | null {
+  const fps = b.featherPoints ?? [];
+  if (fps.length === 0) return null;
+  const out = new Map<number, number | null>();
+  for (const f of fps) {
+    if (!Number.isInteger(f.segment) || f.segment < 0 || f.segment >= n) fail('invalidArgument', `feather point segment ${f.segment} is not a vertex of the ${n}-vertex path`);
+    if (!Number.isFinite(f.radius) || !Number.isFinite(f.t) || !Number.isFinite(f.tension)) fail('invalidArgument', 'feather point values must be finite');
+    if (f.t !== 0 || f.tension !== 0) fail('unsupported', 'this engine stores one feather per vertex: feather points need t = 0 and tension = 0');
+    if (out.has(f.segment)) fail('invalidArgument', `two feather points at vertex ${f.segment}`);
+    out.set(f.segment, f.radius < 0 ? null : f.radius);
+  }
+  return out;
 }
 
 export function bezierToPoints(b: BezierPath, prev?: ReadonlyArray<MaskPoint>): MaskPoint[] {
   const n = Math.floor(b.vertices.length / 2);
   if (b.inTangents.length !== b.vertices.length && b.inTangents.length !== 0) fail('invalidArgument', 'path tangents must match vertices');
   if (b.outTangents.length !== b.vertices.length && b.outTangents.length !== 0) fail('invalidArgument', 'path tangents must match vertices');
+  const feathers = featherByVertex(b, n);
   const out: MaskPoint[] = [];
   for (let i = 0; i < n; i++) {
     const x = b.vertices[2 * i]!;
@@ -603,8 +813,13 @@ export function bezierToPoints(b: BezierPath, prev?: ReadonlyArray<MaskPoint>): 
       inX: x + (b.inTangents[2 * i] ?? 0), inY: y + (b.inTangents[2 * i + 1] ?? 0),
       outX: x + (b.outTangents[2 * i] ?? 0), outY: y + (b.outTangents[2 * i + 1] ?? 0),
     };
-    const old = prev?.[i];
-    if (old?.feather !== undefined) pt.feather = old.feather;
+    if (feathers) {
+      const f = feathers.get(i);
+      if (typeof f === 'number') pt.feather = f;
+    } else {
+      const old = prev?.[i];
+      if (old?.feather !== undefined) pt.feather = old.feather;
+    }
     out.push(pt);
   }
   return out;
@@ -647,6 +862,10 @@ export function readStatic(layerId: string, b: PropBinding): Value {
     case 'field':
     case 'layerFill':
       return readField(node, b);
+    case 'rig':
+      return readRigStatic(node, b);
+    case 'fillStops':
+      return readFillStopsStatic(node);
     default: break;
   }
   if (b.colorBase) {
@@ -755,6 +974,12 @@ export function writeStatic(layerId: string, b: PropBinding, value: Value): void
     case 'layerFill':
       writeField(layerId, node, b, value);
       return;
+    case 'rig':
+      writeRigStatic(layerId, node, b, value);
+      return;
+    case 'fillStops':
+      writeFillStopsStatic(layerId, node, b, value, setPrimaryFill);
+      return;
     default: break;
   }
   if (b.dataTrack) fail('unsupported', `'${b.path}' has no static value in this engine; key it instead`, { path: b.path });
@@ -767,8 +992,10 @@ export function writeStatic(layerId: string, b: PropBinding, value: Value): void
   for (let i = 0; i < nums.length; i++) {
     const m = b.members[i]!;
     if (!writeStaticPropertyValue(layerId, m, nums[i]!)) {
-      // A member no component carries yet: the Transform component takes it.
-      const t = node.components.find((c) => c.type === 'Transform');
+      // A member no component carries yet: its HOME takes it (a latent
+      // binding's, latentPropSpecs.ts), else the Transform component.
+      const homes = b.home ?? ['Transform'];
+      const t = homes.map((type) => node.components.find((c) => c.type === type)).find((c) => c !== undefined);
       if (!t) fail('notFound', `nowhere to store '${b.path}'`, { path: b.path });
       defaultSceneGraph.writeProp(layerId, t.id, m, nums[i]);
     }
@@ -791,6 +1018,30 @@ export interface KeyAt {
   spatialIn: number[];
   spatialOut: number[];
   label: number;
+  /** Per-dimension temporal interpolation when the dimensions differ (Keyframe.dims); empty = uniform. */
+  dims: KeyDimAt[];
+}
+
+/** One dimension's temporal fields (the API's KeyframeDim). */
+export interface KeyDimAt {
+  easing: Easing;
+  bezier?: [number, number, number, number];
+  continuous: boolean;
+}
+
+function dimOf(k: TsKeyframe | undefined, lead: TsKeyframe): KeyDimAt {
+  const src = k ?? lead;
+  return {
+    easing: toEasing(src.easing),
+    ...(src.bezier ? { bezier: [...src.bezier] as [number, number, number, number] } : {}),
+    continuous: src.continuous === true,
+  };
+}
+
+function sameDim(a: KeyDimAt, b: KeyDimAt): boolean {
+  if (a.easing !== b.easing || a.continuous !== b.continuous) return false;
+  if (!a.bezier || !b.bezier) return !a.bezier && !b.bezier;
+  return a.bezier.every((x, i) => x === b.bezier![i]);
 }
 
 /** The positional fallback id for a key that has no stable id yet (legacy / pre-API writes). */
@@ -831,8 +1082,11 @@ export function readKeys(layerId: string, b: PropBinding): KeyAt[] {
   }
   if (b.dataTrack) {
     const track = defaultAnimation.getDataTrack(layerId, b.dataTrack);
-    return (track?.keyframes ?? []).map((k) =>
-      baseKey(k.t, k.id ?? fallbackKeyId(layerId, b.dataTrack!, k.t), dataValueToApi(b, k.value), k));
+    return (track?.keyframes ?? []).map((k) => {
+      const key = baseKey(k.t, k.id ?? fallbackKeyId(layerId, b.dataTrack!, k.t), dataValueToApi(b, k.value, layerId), k);
+      // A puppet pin's position key: its spatial tangents are the data key's si/so of point 0.
+      return b.special === 'rig' ? { ...key, ...pinKeySpatial(k) } : key;
+    });
   }
   const tracks = b.members.map((m) => defaultAnimation.getTrackKeyframes(layerId, m) ?? []);
   const times = new Set<number>();
@@ -853,12 +1107,15 @@ export function readKeys(layerId: string, b: PropBinding): KeyAt[] {
     const spatialIn: number[] = [];
     const spatialOut: number[] = [];
     let anySpatial = false;
+    const dims: KeyDimAt[] = [];
     b.members.forEach((_m, i) => {
       const k = tracks[i]!.find((x) => x.t === t);
       spatialIn.push(k?.si ?? 0);
       spatialOut.push(k?.so ?? 0);
       if (k?.si !== undefined || k?.so !== undefined) anySpatial = true;
+      dims.push(dimOf(k, l));
     });
+    const uniform = dims.every((d) => sameDim(d, dims[0]!));
     return {
       t,
       id: l.id ?? fallbackKeyId(layerId, leadMember, t),
@@ -871,6 +1128,7 @@ export function readKeys(layerId: string, b: PropBinding): KeyAt[] {
       spatialIn: anySpatial ? spatialIn : [],
       spatialOut: anySpatial ? spatialOut : [],
       label: l.label ?? 0,
+      dims: uniform ? [] : dims,
     };
   });
 }
@@ -892,7 +1150,7 @@ function baseKey(t: number, id: string, value: Value, k: { easing?: EasingKind; 
     t, id, value,
     easing: toEasing(k.easing),
     ...(k.bezier ? { bezier: [...k.bezier] as [number, number, number, number] } : {}),
-    continuous: false, roving: false, spatialInterp: 'legacy', spatialIn: [], spatialOut: [], label: k.label ?? 0,
+    continuous: false, roving: false, spatialInterp: 'legacy', spatialIn: [], spatialOut: [], label: k.label ?? 0, dims: [],
   };
 }
 
@@ -901,7 +1159,9 @@ export function maskKeyId(layerId: string, k: MaskKeyframe, maskId: string): str
   return id ? `${id}@${maskId}` : fallbackKeyId(layerId, `mask:${maskId}`, k.t);
 }
 
-function dataValueToApi(b: PropBinding, v: unknown): Value {
+function dataValueToApi(b: PropBinding, v: unknown, layerId?: string): Value {
+  if (b.special === 'rig') return pinKeyToApi(v);
+  if (b.special === 'fillStops') return fillStopsKeyToApi(nodeOf(layerId!), v);
   if (b.special === 'sourceText') {
     return { kind: 'textDocument', value: { text: typeof v === 'string' ? v : '', runs: [], paragraphs: [], orientation: 'horizontal', kerning: 'metrics' } };
   }
@@ -921,6 +1181,8 @@ function dataValueToApi(b: PropBinding, v: unknown): Value {
 
 /** API value → a data keyframe value for this property's data track. */
 export function apiToDataValue(b: PropBinding, value: Value): unknown {
+  if (b.special === 'rig') return apiToPinKey(b, value);
+  if (b.special === 'fillStops') return apiToFillStopsKey(b, value);
   if (b.special === 'sourceText') {
     if (value.kind === 'textDocument') return value.value.text;
     if (value.kind === 'string') return value.value;
@@ -958,6 +1220,11 @@ export function keyAtToApi(layerId: string, b: PropBinding, k: KeyAt): Keyframe 
     spatialIn: k.spatialIn,
     spatialOut: k.spatialOut,
     label: k.label,
+    dims: k.dims.map((d) => ({
+      easing: d.easing,
+      ...(d.bezier ? { bezier: { x1: d.bezier[0], y1: d.bezier[1], x2: d.bezier[2], y2: d.bezier[3] } } : {}),
+      continuous: d.continuous,
+    })),
   };
 }
 
@@ -976,6 +1243,14 @@ export interface KeyWrite {
   spatialIn?: number[] | null;
   spatialOut?: number[] | null;
   label?: number;
+  /**
+   * Per-dimension temporal fields (Keyframe.dims): member i takes dims[i]'s easing,
+   * handles (absent = cleared) and continuity instead of `easing` / `bezier` /
+   * `continuous`. Ignored unless it has one entry per member.
+   */
+  dims?: ReadonlyArray<{ easing: Easing; bezier?: [number, number, number, number]; continuous: boolean }>;
+  /** KeyframePatch.dim: `easing` / `bezier` / `continuous` reach only this member. */
+  dim?: number;
 }
 
 const toTsEasing = (e: Easing): EasingKind => e as EasingKind;
@@ -1003,13 +1278,20 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
   if (b.special === 'maskPath') return putMaskKeys(layerId, b, writes);
   if (b.dataTrack) {
     const track = defaultAnimation.getDataTrack(layerId, b.dataTrack);
-    const kind = track?.kind ?? (b.special === 'sourceText' ? 'text' : b.valueType === 'path' ? 'points' : b.valueType === 'gradient' ? 'gradientStops' : 'number');
+    const kind = track?.kind ?? (b.special === 'sourceText' ? 'text' : b.valueType === 'path' || b.special === 'rig' ? 'points' : b.valueType === 'gradient' ? 'gradientStops' : 'number');
     let keys: DataKeyframe[] = track ? track.keyframes.map((k) => ({ ...k })) : [];
     for (const w of writes) {
       const existing = keys.find((k) => k.t === w.t);
       const value = w.value ? apiToDataValue(b, w.value) : existing?.value ?? currentDataValue(layerId, b, w.t);
       const base: DataKeyframe = existing ? { ...existing } : { t: w.t, value: value as DataKeyframe['value'] };
       const next = applyKeyFields({ ...base, id: existing?.id ?? w.id, t: w.t, value: value as DataKeyframe['value'] }, w);
+      if (b.special === 'rig') {
+        // A pin's spatial tangents: per-dimension API lists ⇄ the data key's si/so of point 0.
+        if (w.spatialIn === null) delete next.si;
+        else if (w.spatialIn && w.spatialIn.length >= 2) next.si = [{ x: w.spatialIn[0]!, y: w.spatialIn[1]! }];
+        if (w.spatialOut === null) delete next.so;
+        else if (w.spatialOut && w.spatialOut.length >= 2) next.so = [{ x: w.spatialOut[0]!, y: w.spatialOut[1]! }];
+      }
       keys = keys.filter((k) => k.t !== w.t).concat(next);
     }
     keys.sort((x, y) => x.t - y.t);
@@ -1018,18 +1300,36 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
   }
   if (b.members.length === 0) fail('notAnimatable', `'${b.path}' cannot take keyframes`, { path: b.path });
   const tracks = b.members.map((m) => (defaultAnimation.getTrackKeyframes(layerId, m) ?? []).map((k) => ({ ...k })));
+  const perDim = (w: KeyWrite): boolean => !!w.dims && w.dims.length === b.members.length;
   for (const w of writes) {
     const nums = w.value
       ? (b.colorBase && w.value.kind !== 'color' ? fail('typeMismatch', `'${b.path}' takes a color`, { path: b.path }) : fromApiNums(b, numbersOf(b, w.value)))
       : null;
+    // ONE key per time for every member (ENGINE_API.md §3.3): a member with no
+    // key here (a lone member key of a legacy document) gets one, carrying the
+    // keyed member's temporal fields — the whole key the API reported.
+    const lead = tracks.map((list) => list.find((k) => k.t === w.t)).find((k) => k !== undefined);
     b.members.forEach((m, i) => {
       const list = tracks[i]!;
       const existing = list.find((k) => k.t === w.t);
       const v = nums ? nums[i] ?? existing?.value ?? 0 : existing?.value ?? sampleMember(layerId, m, w.t, staticNum(layerId, b, i));
-      let next: TsKeyframe = existing ? { ...existing, value: v } : { t: w.t, value: v };
-      next.id = existing?.id ?? w.id;
-      next = applyKeyFields(next, w);
-      if (w.continuous !== undefined) next.continuous = w.continuous;
+      let next: TsKeyframe = existing ? { ...existing, value: v } : lead ? fillFrom(lead, w.t, v) : { t: w.t, value: v };
+      const id = existing?.id ?? lead?.id ?? w.id;
+      if (id) next.id = id;
+      else delete next.id;
+      if (w.dim === undefined || w.dim === i) {
+        next = applyKeyFields(next, w);
+        if (w.continuous !== undefined) next.continuous = w.continuous;
+      } else if (w.label !== undefined) {
+        next = applyKeyFields(next, { t: w.t, id: w.id, label: w.label });
+      }
+      if (perDim(w)) {
+        const d = w.dims![i]!;
+        next.easing = toTsEasing(d.easing);
+        if (d.bezier) next.bezier = [...d.bezier];
+        else delete next.bezier;
+        next.continuous = d.continuous;
+      }
       if (w.roving !== undefined) next.roving = w.roving;
       if (w.spatialInterp !== undefined) {
         const s = toTsSpatial(w.spatialInterp);
@@ -1046,10 +1346,37 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
   b.members.forEach((m, i) => defaultAnimation.setTrackKeyframes(layerId, m, tracks[i]!));
 }
 
+/** A member key filled in beside `lead` (the key the other members have at `t`): its temporal fields, this value. */
+function fillFrom(lead: TsKeyframe, t: number, value: number): TsKeyframe {
+  const k: TsKeyframe = { t, value };
+  if (lead.easing !== undefined) k.easing = lead.easing;
+  if (lead.bezier) k.bezier = [...lead.bezier];
+  if (lead.continuous !== undefined) k.continuous = lead.continuous;
+  if (lead.roving !== undefined) k.roving = lead.roving;
+  if (lead.spatialInterp !== undefined) k.spatialInterp = lead.spatialInterp;
+  if (lead.label !== undefined) k.label = lead.label;
+  return k;
+}
+
+/**
+ * Give every member a key at each of `times` where another member has one
+ * (putKeys' fill, with no field written) — before a command moves those keys,
+ * so the whole key moves (ENGINE_API.md §3.3).
+ */
+export function normalizeKeysAt(layerId: string, b: PropBinding, times: readonly number[]): void {
+  if (b.members.length < 2 || b.special === 'maskPath' || b.dataTrack) return;
+  const tracks = b.members.map((m) => defaultAnimation.getTrackKeyframes(layerId, m) ?? []);
+  const lone = times.filter((t) => tracks.some((tr) => tr.some((k) => k.t === t)) && tracks.some((tr) => !tr.some((k) => k.t === t)));
+  if (lone.length === 0) return;
+  putKeys(layerId, b, lone.map((t) => ({ t, id: '' })));
+}
+
 function staticNum(layerId: string, b: PropBinding, i: number): number {
   // The layer's fill colour is a hex string on a component (or a paint object):
   // its channels have no numeric static seam.
   if (b.special === 'layerFill') return numbersOfLoose(readStatic(layerId, b))[i] ?? 0;
+  // A rig property's static value lives on the rig (rigProps.ts), in API units.
+  if (b.special === 'rig') return (numbersOfLoose(readStatic(layerId, b))[i] ?? 0) / apiUnitFactor(b.members[i]);
   const v = readStaticPropertyValue(layerId, b.members[i]!);
   return v ?? 0;
 }
@@ -1061,6 +1388,8 @@ function currentDataValue(layerId: string, b: PropBinding, t: number): unknown {
     const s = readStatic(layerId, b);
     return s.kind === 'textDocument' ? s.value.text : '';
   }
+  // The first Colors key holds the paint's own stops.
+  if (b.special === 'fillStops') return apiToFillStopsKey(b, readStatic(layerId, b));
   return fail('invalidArgument', `'${b.path}' needs a value for its first keyframe`, { path: b.path });
 }
 
@@ -1088,6 +1417,17 @@ export function dropKeys(layerId: string, b: PropBinding, times: number[]): void
       const last = track.keyframes.find((k) => drop.has(k.t));
       if (last && typeof last.value === 'string') writeStatic(layerId, b, { kind: 'string', value: last.value });
     }
+    if (keep.length === 0 && b.special === 'rig') {
+      // AE: deleting a pin's last Position key leaves the pin where that key held it.
+      const last = track.keyframes.find((k) => drop.has(k.t));
+      if (last) writeStatic(layerId, b, pinKeyToApi(last.value));
+    }
+    if (keep.length === 0 && b.special === 'fillStops') {
+      // AE: deleting the last Colors key leaves the gradient at that key's stops.
+      const last = track.keyframes.find((k) => drop.has(k.t));
+      const paint = nodeOf(layerId).components.find((c) => c.type === 'fx')?.props.fill as { type?: unknown } | undefined;
+      if (last && (paint?.type === 'linear' || paint?.type === 'radial')) writeStatic(layerId, b, fillStopsKeyToApi(nodeOf(layerId), last.value));
+    }
     defaultAnimation.setDataTrack(layerId, b.dataTrack, keep.length > 0 ? { ...track, keyframes: keep } : null);
     return;
   }
@@ -1102,7 +1442,12 @@ export function dropKeys(layerId: string, b: PropBinding, times: number[]): void
     }
     defaultAnimation.setTrackKeyframes(layerId, m, keep.length > 0 ? keep : null);
   });
-  if (emptied && !b.colorBase) {
+  if (emptied && b.special === 'rig') {
+    // AE: static at the last key's value — written on the rig (a bone's pose, an IK goal).
+    const stat = numbersOfLoose(readStatic(layerId, b));
+    const nums = b.members.map((m, i) => (lastValues[i] !== undefined ? lastValues[i]! * apiUnitFactor(m) : stat[i] ?? 0));
+    writeStatic(layerId, b, vectorValue(b.valueType, nums));
+  } else if (emptied && !b.colorBase) {
     // AE: deleting the last key leaves the property static at that key's value.
     b.members.forEach((m, i) => {
       if (lastValues[i] !== undefined) writeStaticPropertyValue(layerId, m, lastValues[i]!);

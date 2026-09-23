@@ -53,8 +53,10 @@ export function resolveLivePins(
   anim: PinSampler,
 ): DeformPin[] {
   return pins.map((pin) => {
-    let px = pin.x;
-    let py = pin.y;
+    // The static Position (engine API `puppet/pins/<id>/position`), else the rest anchor.
+    const stat = pin.kind !== 'bend' && pin.position ? pin.position : null;
+    let px = stat ? stat.x : pin.x;
+    let py = stat ? stat.y : pin.y;
     if (pin.kind !== 'bend') {
       const livePos = anim.sampleData(nodeId, pinPropPath(pin.id, 'position'), timeSec);
       if (

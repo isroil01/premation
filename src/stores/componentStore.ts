@@ -18,7 +18,8 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from './selectionStore';
 import { useCompositionStore } from './compositionStore';
-import { bumpScene } from './sceneStore';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { setNodeWorldPosition } from '@core/scene/sceneInsert';
 
 interface SerializedNode {
   name: string;
@@ -51,8 +52,8 @@ function serialize(nodeId: string): SerializedNode | null {
   };
 }
 
-// ── instantiate a template into the live scene with fresh ids ─────────
-function instantiate(def: SerializedNode, parentId: string, pos: { x: number; y: number } | null): string {
+// ── a template as fresh nodes (parents first); the insert adds them ───
+function instantiate(def: SerializedNode, parentId: string, pos: { x: number; y: number } | null, out: SceneNode[] = []): SceneNode[] {
   const id = `cmp_${(seq += 1)}_${rand()}`;
   const components: Component[] = def.components.map((c) => ({
     id: `${id}_${c.type}_${rand()}`,
@@ -67,12 +68,9 @@ function instantiate(def: SerializedNode, parentId: string, pos: { x: number; y:
     if (t) { (t.props as Record<string, unknown>).x = pos.x; (t.props as Record<string, unknown>).y = pos.y; }
   }
   const node: SceneNode = { id, name: def.name, parent: parentId, children: [], visible: true, locked: false, transform, components } as unknown as SceneNode;
-  // B3-legacy: engine gap — instantiating a saved component (a serialized layer tree with its
-  // components) has no command: `createLayer` takes a kind + init values, and `pasteLayers` only a
-  // fragment minted by the `copyLayers` query from live layers.
-  defaultSceneGraph.addChild(parentId, node);
-  for (const child of def.children) instantiate(child, id, null);
-  return id;
+  out.push(node);
+  for (const child of def.children) instantiate(child, id, null, out);
+  return out;
 }
 
 function rootId(): string {
@@ -99,8 +97,13 @@ interface ComponentState {
 interface ComponentActions {
   /** Save the current selection as a named component. Returns the def id (or null). */
   saveFromSelection: (name: string) => string | null;
-  /** Insert a copy of a saved component at the composition centre; selects it. */
-  insert: (id: string) => string | null;
+  /**
+   * Insert a copy of a saved component at the composition centre (or at the
+   * world point `at`, a canvas drop); selects it. ONE undo entry: the tree is
+   * built off-document and lands as one `pasteLayers` (offDocument.ts).
+   * Resolves to the new root layer id, or null.
+   */
+  insert: (id: string, at?: { x: number; y: number }) => Promise<string | null>;
   remove: (id: string) => void;
 }
 
@@ -133,13 +136,17 @@ export const useComponentStore = create<ComponentState & ComponentActions>((set,
     return def.id;
   },
 
-  insert: (id) => {
+  insert: async (id, at) => {
     const def = get().components.find((c) => c.id === id);
     if (!def) return null;
-    const gid = instantiate(def.root, rootId(), compCenter());
-    useSelectionStore.getState().set([gid]);
-    bumpScene();
-    return gid;
+    const comp = rootId();
+    const nodes = instantiate(def.root, comp, compCenter());
+    const ids = await insertBuiltLayers(`Insert ${def.name}`, comp, () => {
+      for (const node of nodes) defaultSceneGraph.addChild(node.parent!, node);
+      if (at) setNodeWorldPosition(nodes[0]!.id, at.x, at.y);
+      useSelectionStore.getState().set([nodes[0]!.id]);
+    });
+    return ids?.[0] ?? null;
   },
 
   remove: (id) => {

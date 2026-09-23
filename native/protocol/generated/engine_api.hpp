@@ -406,6 +406,31 @@ enum class WorkAreaEdit : std::uint32_t {
 [[nodiscard]] std::string_view to_string(WorkAreaEdit v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, WorkAreaEdit& out) noexcept;
 
+enum class StretchHold : std::uint32_t {
+  in_point = 0,
+  current_frame = 1,
+  out_point = 2,
+};
+[[nodiscard]] std::string_view to_string(StretchHold v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, StretchHold& out) noexcept;
+
+enum class TransitionKind : std::uint32_t {
+  cross_dissolve = 0,
+  dip_to_black = 1,
+  dip_to_white = 2,
+  wipe = 3,
+};
+[[nodiscard]] std::string_view to_string(TransitionKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, TransitionKind& out) noexcept;
+
+enum class TransitionAlignment : std::uint32_t {
+  centred = 0,
+  start_at_cut = 1,
+  end_at_cut = 2,
+};
+[[nodiscard]] std::string_view to_string(TransitionAlignment v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, TransitionAlignment& out) noexcept;
+
 enum class MaskMode : std::uint32_t {
   none = 0,
   add = 1,
@@ -755,6 +780,7 @@ struct TextDocument;
 struct F64List;
 struct Value;
 struct CubicBezier;
+struct KeyframeDim;
 struct Keyframe;
 struct PropRef;
 struct PropertyInit;
@@ -797,6 +823,7 @@ struct CreateComposition;
 struct DuplicateComposition;
 struct SetCompositionSettings;
 struct SetWorkArea;
+struct ClearWorkArea;
 struct Precompose;
 struct TrimCompToWorkArea;
 struct CropComposition;
@@ -842,6 +869,14 @@ struct SetTimeRemap;
 struct FreezeFrame;
 struct SetRetime;
 struct SequenceLayers;
+struct TimeStretchLayers;
+struct UnfreezeLayers;
+struct RippleDeleteRange;
+struct LayerKeyShift;
+struct ShiftLayerKeyframes;
+struct AddTransition;
+struct SetTransition;
+struct RemoveTransitions;
 struct SetProperty;
 struct PropertyWrite;
 struct SetProperties;
@@ -861,6 +896,7 @@ struct UpdateKeyframes;
 struct ScaleKeyframes;
 struct ReverseKeyframes;
 struct PasteKeyframes;
+struct SetKeyframes;
 struct AddEffect;
 struct AddMask;
 struct AddPropertyGroup;
@@ -874,6 +910,8 @@ struct ApplyPreset;
 struct InvokeEffectAction;
 struct AddProperties;
 struct RemoveProperties;
+struct PasteEffects;
+struct RemoveStroke;
 struct MarkerOwner;
 struct MarkerInsert;
 struct AddMarkers;
@@ -958,6 +996,7 @@ struct RenderItemList;
 struct LayerRef;
 struct LayerList;
 struct GroupList;
+struct TransitionRef;
 struct PropertyWriteResult;
 struct ExpressionDiagnostic;
 struct ExpressionResult;
@@ -971,6 +1010,7 @@ struct Interpretation;
 struct ItemInfo;
 struct CompSettings;
 struct Marker;
+struct Transition;
 struct CompInfo;
 struct LayerSwitches;
 struct LayerTiming;
@@ -1040,6 +1080,7 @@ struct KeyframesChangedEvent;
 struct PropertyGroupsChangedEvent;
 struct MarkersChangedEvent;
 struct RenderQueueChangedEvent;
+struct TransitionsChangedEvent;
 struct HistoryChangedEvent;
 struct DirtyChangedEvent;
 struct TransportChangedEvent;
@@ -1277,6 +1318,13 @@ struct CubicBezier {
   bool operator==(const CubicBezier&) const = default;
 };
 
+struct KeyframeDim {
+  Easing easing = Easing::linear;
+  std::optional<CubicBezier> bezier;
+  bool continuous = false;
+  bool operator==(const KeyframeDim&) const = default;
+};
+
 struct Keyframe {
   KeyframeId id;
   Time time = 0;
@@ -1289,6 +1337,7 @@ struct Keyframe {
   std::vector<double> spatial_in;
   std::vector<double> spatial_out;
   std::uint32_t label = 0;
+  std::vector<KeyframeDim> dims;
   bool operator==(const Keyframe&) const = default;
 };
 
@@ -1570,6 +1619,11 @@ struct SetWorkArea {
   bool operator==(const SetWorkArea&) const = default;
 };
 
+struct ClearWorkArea {
+  ItemId comp;
+  bool operator==(const ClearWorkArea&) const = default;
+};
+
 struct Precompose {
   ItemId comp;
   std::vector<LayerId> layers;
@@ -1675,6 +1729,8 @@ struct SetParent {
   std::vector<LayerId> layers;
   std::optional<LayerId> parent;
   bool keep_world_transform = false;
+  std::optional<bool> jump;
+  std::optional<Time> time;
   bool operator==(const SetParent&) const = default;
 };
 
@@ -1763,6 +1819,7 @@ struct PasteLayers {
   DocumentFragment fragment;
   std::optional<Time> time;
   std::optional<std::uint32_t> index;
+  std::optional<LayerId> parent;
   bool operator==(const PasteLayers&) const = default;
 };
 
@@ -1891,6 +1948,59 @@ struct SequenceLayers {
   bool operator==(const SequenceLayers&) const = default;
 };
 
+struct TimeStretchLayers {
+  std::vector<LayerId> layers;
+  double stretch = 0.0;
+  StretchHold hold = StretchHold::in_point;
+  std::optional<Time> time;
+  bool operator==(const TimeStretchLayers&) const = default;
+};
+
+struct UnfreezeLayers {
+  std::vector<LayerId> layers;
+  bool operator==(const UnfreezeLayers&) const = default;
+};
+
+struct RippleDeleteRange {
+  ItemId comp;
+  TimeRange range;
+  std::vector<LayerId> layers;
+  bool operator==(const RippleDeleteRange&) const = default;
+};
+
+struct LayerKeyShift {
+  LayerId layer;
+  Time delta = 0;
+  bool operator==(const LayerKeyShift&) const = default;
+};
+
+struct ShiftLayerKeyframes {
+  std::vector<LayerKeyShift> items;
+  bool operator==(const ShiftLayerKeyframes&) const = default;
+};
+
+struct AddTransition {
+  LayerId left;
+  LayerId right;
+  TransitionKind kind = TransitionKind::cross_dissolve;
+  Time duration = 0;
+  TransitionAlignment alignment = TransitionAlignment::centred;
+  bool operator==(const AddTransition&) const = default;
+};
+
+struct SetTransition {
+  std::string transition;
+  std::optional<TransitionKind> kind;
+  std::optional<Time> duration;
+  std::optional<TransitionAlignment> alignment;
+  bool operator==(const SetTransition&) const = default;
+};
+
+struct RemoveTransitions {
+  std::vector<std::string> transitions;
+  bool operator==(const RemoveTransitions&) const = default;
+};
+
 struct SetProperty {
   PropRef prop;
   Value value;
@@ -1934,12 +2044,14 @@ struct SetExpression {
   PropRef prop;
   std::string source;
   bool enabled = false;
+  std::optional<std::uint32_t> member;
   bool operator==(const SetExpression&) const = default;
 };
 
 struct SetExpressionEnabled {
   std::vector<PropRef> props;
   bool enabled = false;
+  std::optional<std::uint32_t> member;
   bool operator==(const SetExpressionEnabled&) const = default;
 };
 
@@ -1947,6 +2059,7 @@ struct ConvertExpressionToKeyframes {
   PropRef prop;
   std::optional<TimeRange> range;
   Time step = 0;
+  std::optional<std::uint32_t> member;
   bool operator==(const ConvertExpressionToKeyframes&) const = default;
 };
 
@@ -1999,6 +2112,7 @@ struct KeyframePatch {
   std::vector<double> spatial_out;
   std::optional<bool> clear_spatial;
   std::optional<std::uint32_t> label;
+  std::optional<std::uint32_t> dim;
   bool operator==(const KeyframePatch&) const = default;
 };
 
@@ -2024,6 +2138,12 @@ struct PasteKeyframes {
   Time time = 0;
   std::vector<Keyframe> keys;
   bool operator==(const PasteKeyframes&) const = default;
+};
+
+struct SetKeyframes {
+  PropRef prop;
+  std::vector<Keyframe> keys;
+  bool operator==(const SetKeyframes&) const = default;
 };
 
 struct AddEffect {
@@ -2113,6 +2233,19 @@ struct RemoveProperties {
   bool operator==(const RemoveProperties&) const = default;
 };
 
+struct PasteEffects {
+  std::vector<LayerId> layers;
+  std::string effects;
+  std::optional<std::uint32_t> index;
+  bool operator==(const PasteEffects&) const = default;
+};
+
+struct RemoveStroke {
+  LayerId layer;
+  std::uint32_t index = 0;
+  bool operator==(const RemoveStroke&) const = default;
+};
+
 struct MarkerOwner {
   ItemId comp;
   std::optional<LayerId> layer;
@@ -2126,6 +2259,7 @@ struct MarkerInsert {
   std::string name;
   std::string comment;
   std::uint32_t label = 0;
+  std::optional<std::string> color;
   bool operator==(const MarkerInsert&) const = default;
 };
 
@@ -2145,6 +2279,7 @@ struct MarkerPatch {
   std::optional<std::string> url;
   std::optional<std::string> cue_point;
   std::optional<bool> protected_region;
+  std::optional<std::string> color;
   bool operator==(const MarkerPatch&) const = default;
 };
 
@@ -2409,6 +2544,7 @@ struct Command {
     duplicate_composition = 101,
     set_composition_settings = 102,
     set_work_area = 103,
+    clear_work_area = 120,
     precompose = 104,
     trim_comp_to_work_area = 105,
     crop_composition = 106,
@@ -2449,6 +2585,13 @@ struct Command {
     freeze_frame = 312,
     set_retime = 313,
     sequence_layers = 314,
+    time_stretch_layers = 330,
+    unfreeze_layers = 331,
+    ripple_delete_range = 332,
+    shift_layer_keyframes = 333,
+    add_transition = 334,
+    set_transition = 335,
+    remove_transitions = 336,
     set_property = 400,
     set_properties = 401,
     reset_property = 402,
@@ -2465,6 +2608,7 @@ struct Command {
     scale_keyframes = 504,
     reverse_keyframes = 505,
     paste_keyframes = 506,
+    set_keyframes = 520,
     add_effect = 600,
     add_mask = 601,
     add_property_group = 602,
@@ -2478,6 +2622,8 @@ struct Command {
     invoke_effect_action = 610,
     add_properties = 611,
     remove_properties = 612,
+    paste_effects = 613,
+    remove_stroke = 614,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -2501,7 +2647,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -2822,6 +2968,11 @@ struct GroupList {
   bool operator==(const GroupList&) const = default;
 };
 
+struct TransitionRef {
+  std::string transition;
+  bool operator==(const TransitionRef&) const = default;
+};
+
 struct PropertyWriteResult {
   std::optional<KeyframeId> keyframe;
   bool operator==(const PropertyWriteResult&) const = default;
@@ -2894,6 +3045,7 @@ struct CommandResult {
     duplicate_composition = 101,
     set_composition_settings = 102,
     set_work_area = 103,
+    clear_work_area = 120,
     precompose = 104,
     trim_comp_to_work_area = 105,
     crop_composition = 106,
@@ -2934,6 +3086,13 @@ struct CommandResult {
     freeze_frame = 312,
     set_retime = 313,
     sequence_layers = 314,
+    time_stretch_layers = 330,
+    unfreeze_layers = 331,
+    ripple_delete_range = 332,
+    shift_layer_keyframes = 333,
+    add_transition = 334,
+    set_transition = 335,
+    remove_transitions = 336,
     set_property = 400,
     set_properties = 401,
     reset_property = 402,
@@ -2950,6 +3109,7 @@ struct CommandResult {
     scale_keyframes = 504,
     reverse_keyframes = 505,
     paste_keyframes = 506,
+    set_keyframes = 520,
     add_effect = 600,
     add_mask = 601,
     add_property_group = 602,
@@ -2963,6 +3123,8 @@ struct CommandResult {
     invoke_effect_action = 610,
     add_properties = 611,
     remove_properties = 612,
+    paste_effects = 613,
+    remove_stroke = 614,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -2986,7 +3148,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -3079,7 +3241,19 @@ struct Marker {
   std::string url;
   std::string cue_point;
   bool protected_region = false;
+  std::string color;
   bool operator==(const Marker&) const = default;
+};
+
+struct Transition {
+  std::string id;
+  ItemId comp;
+  LayerId left;
+  LayerId right;
+  TransitionKind kind = TransitionKind::cross_dissolve;
+  Time duration = 0;
+  TransitionAlignment alignment = TransitionAlignment::centred;
+  bool operator==(const Transition&) const = default;
 };
 
 struct CompInfo {
@@ -3087,6 +3261,7 @@ struct CompInfo {
   CompSettings settings;
   std::vector<LayerId> layers;
   std::vector<Marker> markers;
+  std::vector<Transition> transitions;
   bool operator==(const CompInfo&) const = default;
 };
 
@@ -3668,6 +3843,12 @@ struct RenderQueueChangedEvent {
   bool operator==(const RenderQueueChangedEvent&) const = default;
 };
 
+struct TransitionsChangedEvent {
+  ItemId comp;
+  std::vector<Transition> transitions;
+  bool operator==(const TransitionsChangedEvent&) const = default;
+};
+
 struct HistoryChangedEvent {
   HistoryState state;
   std::string undo_label;
@@ -3772,6 +3953,7 @@ struct Event {
     property_groups_changed = 2010,
     markers_changed = 2011,
     render_queue_changed = 2012,
+    transitions_changed = 2013,
     history_changed = 2050,
     dirty_changed = 2051,
     transport_changed = 2052,
@@ -3787,7 +3969,7 @@ struct Event {
     fonts_changed = 2062,
     autosaved = 2063,
   };
-  std::variant<DocumentResetEvent, ProjectSettingsChangedEvent, ItemsChangedEvent, ItemsRemovedEvent, CompositionChangedEvent, LayersChangedEvent, LayersRemovedEvent, LayerOrderChangedEvent, PropertiesChangedEvent, KeyframesChangedEvent, PropertyGroupsChangedEvent, MarkersChangedEvent, RenderQueueChangedEvent, HistoryChangedEvent, DirtyChangedEvent, TransportChangedEvent, PlayheadEvent, RenderStatsUpdatedEvent, CacheChangedEvent, EngineErrorEvent, LayerErrorsEvent, JobProgressEvent, JobFinishedEvent, ProjectSavedEvent, AssetStatusChangedEvent, FontsChangedEvent, AutosavedEvent> v;
+  std::variant<DocumentResetEvent, ProjectSettingsChangedEvent, ItemsChangedEvent, ItemsRemovedEvent, CompositionChangedEvent, LayersChangedEvent, LayersRemovedEvent, LayerOrderChangedEvent, PropertiesChangedEvent, KeyframesChangedEvent, PropertyGroupsChangedEvent, MarkersChangedEvent, RenderQueueChangedEvent, TransitionsChangedEvent, HistoryChangedEvent, DirtyChangedEvent, TransportChangedEvent, PlayheadEvent, RenderStatsUpdatedEvent, CacheChangedEvent, EngineErrorEvent, LayerErrorsEvent, JobProgressEvent, JobFinishedEvent, ProjectSavedEvent, AssetStatusChangedEvent, FontsChangedEvent, AutosavedEvent> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Event&) const = default;
 };
@@ -4313,6 +4495,8 @@ void encode(wire::Writer& w, const Value& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Value& out);
 void encode(wire::Writer& w, const CubicBezier& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CubicBezier& out);
+void encode(wire::Writer& w, const KeyframeDim& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, KeyframeDim& out);
 void encode(wire::Writer& w, const Keyframe& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Keyframe& out);
 void encode(wire::Writer& w, const PropRef& v);
@@ -4397,6 +4581,8 @@ void encode(wire::Writer& w, const SetCompositionSettings& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetCompositionSettings& out);
 void encode(wire::Writer& w, const SetWorkArea& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetWorkArea& out);
+void encode(wire::Writer& w, const ClearWorkArea& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ClearWorkArea& out);
 void encode(wire::Writer& w, const Precompose& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Precompose& out);
 void encode(wire::Writer& w, const TrimCompToWorkArea& v);
@@ -4487,6 +4673,22 @@ void encode(wire::Writer& w, const SetRetime& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetRetime& out);
 void encode(wire::Writer& w, const SequenceLayers& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SequenceLayers& out);
+void encode(wire::Writer& w, const TimeStretchLayers& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TimeStretchLayers& out);
+void encode(wire::Writer& w, const UnfreezeLayers& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, UnfreezeLayers& out);
+void encode(wire::Writer& w, const RippleDeleteRange& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RippleDeleteRange& out);
+void encode(wire::Writer& w, const LayerKeyShift& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, LayerKeyShift& out);
+void encode(wire::Writer& w, const ShiftLayerKeyframes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ShiftLayerKeyframes& out);
+void encode(wire::Writer& w, const AddTransition& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AddTransition& out);
+void encode(wire::Writer& w, const SetTransition& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetTransition& out);
+void encode(wire::Writer& w, const RemoveTransitions& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RemoveTransitions& out);
 void encode(wire::Writer& w, const SetProperty& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetProperty& out);
 void encode(wire::Writer& w, const PropertyWrite& v);
@@ -4525,6 +4727,8 @@ void encode(wire::Writer& w, const ReverseKeyframes& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ReverseKeyframes& out);
 void encode(wire::Writer& w, const PasteKeyframes& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PasteKeyframes& out);
+void encode(wire::Writer& w, const SetKeyframes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetKeyframes& out);
 void encode(wire::Writer& w, const AddEffect& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AddEffect& out);
 void encode(wire::Writer& w, const AddMask& v);
@@ -4551,6 +4755,10 @@ void encode(wire::Writer& w, const AddProperties& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AddProperties& out);
 void encode(wire::Writer& w, const RemoveProperties& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RemoveProperties& out);
+void encode(wire::Writer& w, const PasteEffects& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PasteEffects& out);
+void encode(wire::Writer& w, const RemoveStroke& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RemoveStroke& out);
 void encode(wire::Writer& w, const MarkerOwner& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerOwner& out);
 void encode(wire::Writer& w, const MarkerInsert& v);
@@ -4719,6 +4927,8 @@ void encode(wire::Writer& w, const LayerList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerList& out);
 void encode(wire::Writer& w, const GroupList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GroupList& out);
+void encode(wire::Writer& w, const TransitionRef& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TransitionRef& out);
 void encode(wire::Writer& w, const PropertyWriteResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PropertyWriteResult& out);
 void encode(wire::Writer& w, const ExpressionDiagnostic& v);
@@ -4745,6 +4955,8 @@ void encode(wire::Writer& w, const CompSettings& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CompSettings& out);
 void encode(wire::Writer& w, const Marker& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Marker& out);
+void encode(wire::Writer& w, const Transition& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, Transition& out);
 void encode(wire::Writer& w, const CompInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CompInfo& out);
 void encode(wire::Writer& w, const LayerSwitches& v);
@@ -4883,6 +5095,8 @@ void encode(wire::Writer& w, const MarkersChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkersChangedEvent& out);
 void encode(wire::Writer& w, const RenderQueueChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderQueueChangedEvent& out);
+void encode(wire::Writer& w, const TransitionsChangedEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TransitionsChangedEvent& out);
 void encode(wire::Writer& w, const HistoryChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, HistoryChangedEvent& out);
 void encode(wire::Writer& w, const DirtyChangedEvent& v);

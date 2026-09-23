@@ -13,7 +13,7 @@
  * never half of it. Display reads stay direct until B4.
  */
 
-import type { Command, KeyframePatch, LayerKind, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
+import type { Command, LayerKind, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
 import { defaultAnimation, expandKeyframeProp, type EasingKind } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
@@ -33,7 +33,7 @@ import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
 import { compTime, type TrackRef } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
 import { readTransformProp } from '@core/scene/transformWrite';
-import { staggerOffsets } from '@core/animation/staggerOffsets';
+import { staggerOffsets, type StaggerOptions } from '@core/animation/staggerOffsets';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { engine } from '@core/engine/engineInstance';
 import { computeFit, intrinsicSizeOf, type FitMode, type Size } from '@core/source/fitCommands';
@@ -44,7 +44,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { easePatch, keyIdsAt, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 import { reorderCommands } from '@layout/Workspace/layerMenuEdits';
-import { easeKeyframes, easeKindOnKeys, resolveKeyIds } from '@layout/Timeline/keyframeEdits';
+import { easeKeyframes, easeKindOnKeys, setRovingOnKeys } from '@layout/Timeline/keyframeEdits';
 import { rippleDeleteLayers } from '@layout/Timeline/timelineEdits';
 
 function notify(message: string, level: 'info' | 'success' | 'warning' = 'info', durationMs = 3200): void {
@@ -315,25 +315,16 @@ export async function addKeyframesForSelectionEdit(nodeIds: readonly string[], t
 /**
  * One interpolation kind on one timeline key (the diamond's Keyframe
  * Interpolation submenu). Hold goes through `easeKeyframes`, which spells it
- * the way the key's track stores it. `legacy` runs when the API cannot address
- * the key alone.
+ * the way the key's track stores it.
  */
-export function setKeyInterpolationEdit(uiId: string, kind: EasingKind, label: string, legacy: () => void): Promise<void> {
-  if (kind === 'hold') return easeKeyframes([uiId], { easing: 'hold' }, label, legacy);
-  // Its own legacy path is the same per-track `setEasing` the menu used.
+export function setKeyInterpolationEdit(uiId: string, kind: EasingKind, label: string): Promise<void> {
+  if (kind === 'hold') return easeKeyframes([uiId], { easing: 'hold' }, label);
   return easeKindOnKeys([uiId], kind);
 }
 
-/** Rove Across Time on one timeline key. `legacy` when the API cannot address it alone. */
-export async function setKeyRovingEdit(uiId: string, roving: boolean, legacy: () => void): Promise<void> {
-  const ids = await resolveKeyIds([uiId]);
-  const id = ids?.get(uiId);
-  if (!ids || !id) {
-    legacy();
-    return;
-  }
-  const patch: KeyframePatch = { id, roving, spatialIn: [], spatialOut: [] };
-  await edit(roving ? 'Enable roving keyframe' : 'Disable roving keyframe', { type: 'updateKeyframes', patches: [patch] });
+/** Rove Across Time on one timeline key: the engine re-times the roving run for constant speed. */
+export function setKeyRovingEdit(uiId: string, roving: boolean): Promise<void> {
+  return setRovingOnKeys([uiId], roving);
 }
 
 // ── The clip context menu ─────────────────────────────────────────────
@@ -464,43 +455,60 @@ export async function easyEaseAllEdit(nodeId: string): Promise<boolean | 'none'>
   return true;
 }
 
+/** Whether a layer owns any keyframe (scalar tracks, data tracks) — display read. */
+function hasKeys(nodeId: string): boolean {
+  return defaultAnimation.animatedProps(nodeId).some((p) => (defaultAnimation.getTrackKeyframes(nodeId, p)?.length ?? 0) > 0)
+    || defaultAnimation.getDataAnimatedPropPaths(nodeId).length > 0;
+}
+
 /**
- * Stagger Animations: shift each animated layer's keys by the cascade offset
- * (`staggerOffsets`, the timeline's own pattern maths) — one `moveKeyframes`
- * per layer, one entry. Resolves to 'none' with fewer than two animated
- * layers, false when a layer's keys are not addressable (legacy).
+ * Stagger animations: shift EVERY keyframe of each animated layer by its
+ * pattern offset (`staggerOffsets`, the timeline's own maths) in LAYER time —
+ * `shiftLayerKeyframes` (B3z): sub-frame offsets, keys before 0 and properties
+ * outside the catalog included, the way the legacy assistant shifted whole
+ * tracks. One entry. Resolves to 'none' with fewer than two animated layers.
  */
-export async function staggerAnimationsEdit(nodeIds: readonly string[], intervalSec: number): Promise<boolean | 'none'> {
-  const animated: Array<{ id: string; ids: string[] }> = [];
-  for (const id of nodeIds) {
-    const sets = await layerKeys(id);
-    if (!sets) return false;
-    const ids = sets.flatMap((s) => s.keys.map((k) => k.id));
-    if (ids.length > 0) animated.push({ id, ids });
-  }
+export async function staggerKeyframesEdit(
+  nodeIds: readonly string[],
+  pattern: StaggerOptions,
+  label = 'Sequence layers',
+): Promise<boolean | 'none'> {
+  const animated = [...new Set(nodeIds)].filter((id) => isLayer(id) && hasKeys(id));
   if (animated.length < 2) return 'none';
-  const offsets = staggerOffsets(animated.length, { mode: 'cascade', step: intervalSec, reverse: false, balance: false, seed: 1 });
-  const cmds: Command[] = [];
-  animated.forEach((a, i) => {
-    const delta = compTime(offsets[i] ?? 0);
-    if (delta !== 0) cmds.push({ type: 'moveKeyframes', ids: a.ids, delta });
-  });
-  if (cmds.length > 0) await edit('Sequence layers', cmds);
+  const offsets = staggerOffsets(animated.length, pattern);
+  const items = animated
+    .map((layer, i) => ({ layer, delta: compTime(offsets[i] ?? 0) }))
+    .filter((it) => it.delta !== 0);
+  if (items.length > 0) await edit(label, { type: 'shiftLayerKeyframes', items });
   return true;
+}
+
+/** Stagger Animations: the 0.3 s cascade (the no-questions version of the dialog). */
+export function staggerAnimationsEdit(nodeIds: readonly string[], intervalSec: number): Promise<boolean | 'none'> {
+  return staggerKeyframesEdit(nodeIds, { mode: 'cascade', step: intervalSec, reverse: false, balance: false, seed: 1 });
 }
 
 /**
  * Sequence Layers (bars end to end, optional opacity cross-dissolve over the
- * overlap): the engine's `sequenceLayers`, one entry including the fades.
- * Only the selected layers that have bars in ONE composition; false when the
- * selection spans compositions (legacy), 'none' with fewer than two.
+ * overlap): the engine's `sequenceLayers`, one entry including the fades. A
+ * selection spanning compositions sends one command per composition in the
+ * same batch (B3z), each in selection order. 'none' when no composition has
+ * two selected layers with bars.
  */
 export async function sequenceLayerBarsEdit(nodeIds: readonly string[], overlapSeconds: number, crossfade: boolean): Promise<boolean | 'none'> {
   const layers = nodeIds.filter((id) => isLayer(id) && getTimelineController().getLayersForNode(id).length > 0);
-  if (layers.length < 2) return 'none';
-  const comps = new Set(layers.map((id) => compOfLayer(id)));
-  if (comps.size !== 1) return false;
-  const res = await edit('Sequence Layers', { type: 'sequenceLayers', layers, overlap: compTime(overlapSeconds), crossfade });
+  const byComp = new Map<string, string[]>();
+  for (const id of layers) {
+    const comp = compOfLayer(id)!;
+    const list = byComp.get(comp) ?? [];
+    if (!list.includes(id)) list.push(id);
+    byComp.set(comp, list);
+  }
+  const cmds: Command[] = [...byComp.values()]
+    .filter((list) => list.length >= 2)
+    .map((list) => ({ type: 'sequenceLayers', layers: list, overlap: compTime(overlapSeconds), crossfade }));
+  if (cmds.length === 0) return 'none';
+  const res = await edit('Sequence Layers', cmds);
   return res.ok;
 }
 

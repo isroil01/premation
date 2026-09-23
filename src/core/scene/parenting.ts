@@ -242,6 +242,8 @@ export interface ReparentOptions {
    * position becomes the parent's anchor point.
    */
   jump?: boolean;
+  /** Composition seconds the jump measures an animated Position at (default: the playhead). */
+  time?: number;
 }
 
 /**
@@ -277,10 +279,10 @@ export function parentOptionsFor(
  * PLAYHEAD. An animated position is re-based rigidly, keeping its motion
  * relative to the new home rather than being flattened to one keyframe.
  */
-function jumpToParent(childId: string): void {
+function jumpToParent(childId: string, time: number): void {
   const node = defaultSceneGraph.getNode(childId);
   if (!node) return;
-  const have = localTransformAt(childId, playheadCompTime()) ?? baseLocal(node);
+  const have = localTransformAt(childId, time) ?? baseLocal(node);
   const dx = -have.x;
   const dy = -have.y;
   const comp = node.components.find((c) => typeof (c.props as Record<string, unknown>).x === 'number');
@@ -344,7 +346,7 @@ export function reparentNode(
     // child on the parent's anchor. "None" has no anchor to jump to, so it
     // falls through to the ordinary compensated un-parent below.
     defaultSceneGraph.setParent(childId, target, { preserveWorld: false });
-    jumpToParent(childId);
+    jumpToParent(childId, options.time ?? playheadCompTime());
   } else if (options.preserveWorld ?? true) {
     setParentPreservingWorld(childId, target);
   } else {

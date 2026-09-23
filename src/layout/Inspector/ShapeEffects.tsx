@@ -8,20 +8,21 @@
 
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { readNodeAudioWaveform, setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
 import { AudioWaveformSection } from './AudioWaveformSection';
 import { InspectorSection } from './InspectorSection';
 import styles from './TextAnimatorControls.module.css';
 
 export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || readNodeKind(node) !== 'shape') return null;
+  const layer = useMirrorLayer(nodeId);
+  // `layer/audioWaveform` (the fx block; null when the layer has none).
+  const wave = useMirrorJson<unknown>(nodeId, 'layer/audioWaveform');
+  if (!layer || uiKindOf(layer) !== 'shape') return null;
 
-  const hasAudioWave = !!readNodeAudioWaveform(node);
+  const hasAudioWave = typeof wave === 'object' && wave !== null;
 
   const items: DropdownItem[] = [
     {

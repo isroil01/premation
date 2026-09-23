@@ -18,6 +18,7 @@ import { buildTextCommands, TEXT_TOGGLE_ORIENTATION_COMMAND, toggleTextOrientati
 import { convertToPointText, setBoxAutoSize } from './paragraphTextCommands';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
+import { getTimelineController } from '@core/timeline/TimelineController';
 
 beforeAll(() => {
   const services: any = {
@@ -31,6 +32,12 @@ beforeAll(() => {
 });
 
 const ID = 'dir1';
+
+/** The conversions are engine batches (B3z): the text is a LAYER of the app's composition. */
+function addLayer(node: SceneNode): void {
+  defaultSceneGraph.addChild('comp_root', { ...node, parent: 'comp_root' } as SceneNode);
+  getTimelineController().syncFromScene();
+}
 
 function textNode(textProps: Record<string, unknown>, transform: Record<string, number> = {}): SceneNode {
   return {
@@ -114,8 +121,11 @@ describe('Convert to Vertical/Horizontal Text', () => {
 const maybe = hasCanvas ? describe : describe.skip;
 
 maybe('Convert to Point Text — keyframed Source Text', () => {
-  it('rewrites every Source Text keyframe: soft wraps become returns, per keyframe text', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'static words that wrap in the box', boxWidth: 120 }));
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
+  it('rewrites every Source Text keyframe: soft wraps become returns, per keyframe text', async () => {
+    addLayer(textNode({ content: 'static words that wrap in the box', boxWidth: 120 }));
     const node = defaultSceneGraph.getNode(ID)!;
     const values = ['alpha beta gamma delta epsilon', 'one two three four five six seven', 'short'];
     values.forEach((v, i) => defaultAnimation.setDataKeyframe(ID, 'text.source', 'text', i, v));
@@ -123,23 +133,31 @@ maybe('Convert to Point Text — keyframed Source Text', () => {
     expect(expected[0]).toContain('\n');
     expect(expected[1]).toContain('\n');
 
-    expect(convertToPointText([ID])).toEqual([ID]);
+    const entries = historyLabels().length;
+    expect(await convertToPointText([ID])).toEqual([ID]);
+    expect(historyLabels()).toHaveLength(entries + 1);
 
     const track = defaultAnimation.getDataTrack(ID, 'text.source')!;
     expect(track.keyframes.map((k) => k.value)).toEqual(expected);
     // Same length, one-for-one: character indices (runs, selectors) survive.
     track.keyframes.forEach((k, i) => expect(String(k.value).length).toBe(values[i]!.length));
     expect(readParagraphBox(defaultSceneGraph.getNode(ID)!)).toBeNull();
-    expect(String(textProps().content)).toContain('\n');
+    // Keyed Source Text IS its keys (AE has no separate static text while the
+    // stopwatch is on; turning it off takes the value at the playhead): the
+    // engine batch rewrites the keys only.
+    expect(String(textProps().content)).toBe('static words that wrap in the box');
   });
 });
 
 maybe('Box Auto-Size — the text does not move', () => {
-  it('fixed (top) → Auto Height keeps the authored top edge and the lines', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'one\ntwo', boxWidth: 200, boxHeight: 160, boxAutoSize: 'off' }));
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
+  it('fixed (top) → Auto Height keeps the authored top edge and the lines', async () => {
+    addLayer(textNode({ content: 'one\ntwo', boxWidth: 200, boxHeight: 160, boxAutoSize: 'off' }));
     const before = drawnLines();
     const p0 = pos();
-    expect(setBoxAutoSize(ID, 'height')).toBe(true);
+    expect(await setBoxAutoSize(ID, 'height')).toBe(true);
     const box = measureTextNodeParagraphBox(defaultSceneGraph.getNode(ID)!)!;
     expect(box.fixedHeight).toBe(false);
     expect(textProps().boxHeight).toBe(160);
@@ -150,23 +168,23 @@ maybe('Box Auto-Size — the text does not move', () => {
     after.forEach((l, i) => expect(l.y).toBeCloseTo(before[i]!.y, 3));
   });
 
-  it('anchored Auto Height → Off takes the text height and holds the lines still via Position', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'one\ntwo\nthree\nfour', boxWidth: 200, boxHeight: 30, boxAutoSize: 'height' }));
+  it('anchored Auto Height → Off takes the text height and holds the lines still via Position', async () => {
+    addLayer(textNode({ content: 'one\ntwo\nthree\nfour', boxWidth: 200, boxHeight: 30, boxAutoSize: 'height' }));
     const before = drawnLines();
     const offset = measureTextNodeParagraphBox(defaultSceneGraph.getNode(ID)!)!.lineOffsetY;
     expect(offset).toBeGreaterThan(0);
     const p0 = pos();
-    setBoxAutoSize(ID, 'off');
+    await setBoxAutoSize(ID, 'off');
     expect(readParagraphBox(defaultSceneGraph.getNode(ID)!)!.fixedHeight).toBe(true);
     expect(pos().y).toBeCloseTo(p0.y + offset, 6);
     const after = drawnLines();
     after.forEach((l, i) => expect(l.y).toBeCloseTo(before[i]!.y, 3));
   });
 
-  it('Auto Height on a box that never had a height records one, without moving', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'one\ntwo', boxWidth: 200 }));
+  it('Auto Height on a box that never had a height records one, without moving', async () => {
+    addLayer(textNode({ content: 'one\ntwo', boxWidth: 200 }));
     const p0 = pos();
-    setBoxAutoSize(ID, 'height');
+    await setBoxAutoSize(ID, 'height');
     expect(Number(textProps().boxHeight)).toBeGreaterThan(0);
     expect(measureTextNodeParagraphBox(defaultSceneGraph.getNode(ID)!)!.lineOffsetY).toBeCloseTo(0, 9);
     expect(pos()).toEqual(p0);

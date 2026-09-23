@@ -21,7 +21,6 @@ import { reconcileActiveWorkspace } from '@core/layout/workspaceManager';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
-import { applyEasingToKeyframes } from '@core/animation/keyframeAssistants';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { createViewportDiskCache } from '@core/rendering/frameDiskCache';
@@ -37,7 +36,11 @@ import { deleteKeyframesUi, easePresetOnKeys, moveKeyframesTo, parseUiKey, paste
 import {
   moveBar,
   moveBars,
+  rippleInsertGapAtPlayhead,
+  rippleTrimToPlayhead,
   setWorkArea as setTimelineWorkArea,
+  timeStretchEdit,
+  unfreezeEdit,
   slideBar,
   slipBar,
   splitLayersAt,
@@ -63,11 +66,12 @@ import {
   toggleTrackSwitchEdit,
 } from '@layout/Menu/appEdits';
 import { edit } from '@core/engine/uiEdits';
+import { compTime } from '@core/engine/propRefs';
 import { useGesture } from '@hooks/useGesture';
 import type { Command } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
-import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
-import { staticOrDefaultValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
+import { getTimelineController, getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { PATH_ANIM_PROP, togglePathAnimation } from '@core/workspace/pathCommands';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
@@ -76,11 +80,7 @@ import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
 import { installModelHydration } from '@core/scene/modelHydrate';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
-import {
-  moveMaskKeyframe,
-  removeMaskKeyframe,
-  readNodeMaskAnim,
-} from '@core/effects/mask';
+import { readNodeMaskAnim } from '@core/effects/mask';
 import { EditorLayout } from '@layout/EditorLayout';
 
 import { EditorStatusBar } from '@layout/StatusBar';
@@ -102,12 +102,9 @@ import {
   POSITION_PSEUDO_PROP,
   type EasingKind,
 } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { openKeyframeVelocityDialog } from '@layout/Timeline/KeyframeVelocityDialog';
+import { addTransitionEdit, removeTransitionsEdit, setTransitionEdit } from '@layout/Timeline/transitionEdits';
 import {
-  addTransition,
-  removeTransition,
-  setTransition,
   transitionAtCut,
   compIdForTransition,
   DEFAULT_TRANSITION_FRAMES,
@@ -125,11 +122,10 @@ import {
 } from '@layout/Timeline/timelineEditMode';
 import { useCompositionStore } from '@stores/compositionStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { applyTimeStretch, isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
+import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
 import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
-import { reparentNode } from '@core/scene/parenting';
 import { renameLayer } from '@core/scene/renameLayer';
 import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
@@ -137,10 +133,9 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { useResponsiveLayout } from '@hooks/useResponsiveLayout';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
-import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
+import { getNodeLayerTime } from '@core/scene/layerTime';
 import { useAssetStore } from '@stores/assetStore';
 import { customPrompt, customAlert } from '@components/Modal';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 
 /**
  * The value a property HAS at `layerT`: the sampled keyframe when the property
@@ -162,9 +157,6 @@ function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
   // three, so a stopwatch on a 40px Glow radius used to key it to 0.
   return staticOrDefaultValue(nodeId, prop);
 }
-
-/** Times within this many seconds of each other are the same keyframe. */
-const KEYFRAME_EPSILON = 1e-4;
 
 function setNodeColor(nodeId: string, color: string): void {
   // The label switch through the engine (B3); the API's label is an index
@@ -921,84 +913,17 @@ function EditorShellInner(): JSX.Element {
     handleScrub(keyframeToCompTime(ref.nodeId, ref.t, ref.prop));
     setSelected([ref.nodeId]);
   };
-  // B3-legacy: the writers below run only when the engine API cannot address a
-  // key (a lone member of a grouped property keyed with its sibling — see
-  // layout/Timeline/keyframeEdits). Everything else goes through the engine.
-  const legacyKeyframeMove = (kfId: string, time: number): void => {
-    const ref = parseUiKey(kfId);
-    // The timeline commits once on release, so one move = one undoable command.
-    if (ref) {
-      // Mask keyframes live on the scene graph as whole-shape snapshots, so
-      // they retime through the mask store. Same gesture, different owner.
-      // runDocumentEdit, not runAnimEdit: the shapes are SCENE state, and an
-      // animation-only diff recorded nothing (ENGINE_API.md §2.5 #7).
-      if (ref.prop === MASK_ANIM_PROP) {
-        if (time < 0) {
-          runDocumentEdit('Delete mask keyframe', () => removeMaskKeyframe(ref.nodeId, ref.t));
-        } else {
-          runDocumentEdit('Move mask keyframe', () =>
-            moveMaskKeyframe(ref.nodeId, ref.t, compToKeyframeTime(ref.nodeId, time, ref.prop)),
-          );
-        }
-        return;
-      }
-      // Non-scalar (data) tracks — Source Text / gradient stops — have their
-      // own keyframe store; route by which store actually holds the prop.
-      if (defaultAnimation.isDataAnimated(ref.nodeId, ref.prop)) {
-        if (time < 0) {
-          runAnimEdit('Delete keyframe', () => defaultAnimation.removeDataKeyframe(ref.nodeId, ref.prop, ref.t));
-        } else {
-          runAnimEdit('Move keyframe', () => defaultAnimation.moveDataKeyframe(ref.nodeId, ref.prop, ref.t, compToKeyframeTime(ref.nodeId, time, ref.prop)));
-        }
-        return;
-      }
-      const props = expandKeyframeProp(ref.prop);
-      if (time < 0) {
-        runAnimEdit('Delete keyframe', () => {
-          for (const p of props) defaultAnimation.removeKeyframe(ref.nodeId, p, ref.t);
-        });
-      } else {
-        // `time` is the drop's comp time — store the keyframe on the canonical
-        // axis so the diamond re-draws exactly where it was dropped.
-        runAnimEdit('Move keyframe', () => {
-          const layerT = compToKeyframeTime(ref.nodeId, time, ref.prop);
-          for (const p of props) defaultAnimation.moveKeyframe(ref.nodeId, p, ref.t, layerT);
-        });
-      }
-    }
-  };
-  const legacyKeyframesDelete = (keyframeIds: ReadonlyArray<string>): void => {
-    const refs = keyframeIds
-      .map((id) => parseUiKey(id))
-      .filter((ref): ref is NonNullable<ReturnType<typeof parseUiKey>> => ref !== null);
-    if (refs.length === 0) return;
-    runAnimEdit(refs.length === 1 ? 'Delete keyframe' : 'Delete keyframes', () => {
-      for (const ref of refs) {
-        if (ref.prop === MASK_ANIM_PROP) {
-          removeMaskKeyframe(ref.nodeId, ref.t);
-        } else if (defaultAnimation.isDataAnimated(ref.nodeId, ref.prop)) {
-          defaultAnimation.removeDataKeyframe(ref.nodeId, ref.prop, ref.t);
-        } else {
-          for (const prop of expandKeyframeProp(ref.prop)) {
-            defaultAnimation.removeKeyframe(ref.nodeId, prop, ref.t);
-          }
-        }
-      }
-    });
-  };
-  // Through the engine API (B3): one undo entry per release / delete.
+  // Through the engine API (B3): one undo entry per release / delete. A key on
+  // a member row (Scale X) is its property's whole key (ENGINE_API.md §3.3).
   const handleKeyframeMove = (kfId: string, time: number): void => {
-    if (time < 0) void deleteKeyframesUi([kfId], () => legacyKeyframeMove(kfId, time));
-    else void moveKeyframesTo([{ id: kfId, time }], () => legacyKeyframeMove(kfId, time));
+    if (time < 0) void deleteKeyframesUi([kfId]);
+    else void moveKeyframesTo([{ id: kfId, time }]);
   };
   const handleKeyframesMove = (moves: ReadonlyArray<{ keyframeId: string; time: number }>): void => {
-    void moveKeyframesTo(
-      moves.map((m) => ({ id: m.keyframeId, time: m.time })),
-      () => { for (const m of moves) legacyKeyframeMove(m.keyframeId, m.time); },
-    );
+    void moveKeyframesTo(moves.map((m) => ({ id: m.keyframeId, time: m.time })));
   };
   const handleKeyframesDelete = (keyframeIds: ReadonlyArray<string>): void => {
-    void deleteKeyframesUi(keyframeIds, () => legacyKeyframesDelete(keyframeIds));
+    void deleteKeyframesUi(keyframeIds);
   };
   /**
    * The keyframe navigator's diamond — the only affordance that creates a
@@ -1010,41 +935,9 @@ function EditorShellInner(): JSX.Element {
     // Read the playhead at event time — same store field the navigator draws
     // from, so what it shows and what this writes can't disagree.
     const now = playheadNow();
-    void propertyKeyToggleEdit(trackId, prop, now).then((done) => {
-      if (!done) legacyPropertyKeyframeToggle(trackId, prop, now);
-    });
-  };
-  /** B3-legacy: engine gap — a property row whose tracks the API catalog does not address. */
-  const legacyPropertyKeyframeToggle = (trackId: string, prop: string, now: number): void => {
-    const layerT = getRemappedTime(trackId, now);
-    const at = (p: string) =>
-      (defaultAnimation.getTrackKeyframes(trackId, p) ?? []).find(
-        (k) => Math.abs(k.t - layerT) < KEYFRAME_EPSILON,
-      );
-    // 'Position' is a pseudo-property merging x/y/z; z only exists on 3D layers.
-    const props = expandKeyframeProp(prop).filter((p) =>
-      defaultAnimation.getTrackKeyframes(trackId, p),
-    );
-    if (props.length === 0) return;
-
-    const existing = props.filter((p) => at(p));
-    if (existing.length > 0) {
-      runAnimEdit('Remove keyframe', () => {
-        for (const p of existing) {
-          const kf = at(p);
-          if (kf) defaultAnimation.removeKeyframe(trackId, p, kf.t);
-        }
-      });
-      return;
-    }
-    // Hold whatever the property currently evaluates to at the playhead.
-    const values = defaultAnimation.evaluateNode(trackId, layerT);
-    runAnimEdit('Add keyframe', () => {
-      for (const p of props) {
-        const v = values.get(p);
-        if (v !== undefined) defaultAnimation.setKeyframe(trackId, p, layerT, v);
-      }
-    });
+    // Every row the timeline draws is a catalog property (verified for every
+    // layer kind); a row that is not (a stale row of a vanished node) does nothing.
+    void propertyKeyToggleEdit(trackId, prop, now);
   };
   /**
    * A static property row's stopwatch (the AE gesture): create the first
@@ -1073,22 +966,7 @@ function EditorShellInner(): JSX.Element {
     // The stopwatch is lit when animated, so clicking it means "turn this off" —
     // the same control both ways, as in AE. It used to only ever create, so the
     // timeline could start an animation but never end one.
-    void propertyStopwatchEdit(trackId, props, now).then((done) => {
-      if (!done) legacyPropertyStopwatch(trackId, props, now);
-    });
-  };
-  /** B3-legacy: engine gap — a property row whose tracks the API catalog does not address. */
-  const legacyPropertyStopwatch = (trackId: string, props: ReadonlyArray<string>, now: number): void => {
-    if (props.some((p) => defaultAnimation.isAnimated(trackId, p))) {
-      runAnimEdit('Disable animation', () => {
-        for (const p of props) defaultAnimation.removeTrack(trackId, p);
-      });
-      return;
-    }
-    const layerT = getRemappedTime(trackId, now);
-    runAnimEdit('Enable animation', () => {
-      for (const p of props) defaultAnimation.setKeyframe(trackId, p, layerT, propertyValueAt(trackId, p, layerT));
-    });
+    void propertyStopwatchEdit(trackId, props, now);
   };
 
   /**
@@ -1147,19 +1025,16 @@ function EditorShellInner(): JSX.Element {
    * `handlePropertyScrubEnd` — so a drag is one undo entry however many moves
    * (the legacy path glued them with a merge key). Each message carries the
    * absolute values for the current pointer position; a distributed scrub
-   * sends every layer's write in one message. Falls back to the legacy writer
-   * for the whole action when a track is not addressable.
+   * sends every layer's write in one message.
    */
   const writePropertyValues = (writes: ReadonlyArray<{ nodeId: string; prop: string; value: number }>, scrubbing: boolean): void => {
     const seconds = playheadNow();
     const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
     const cmds: Command[] = [];
     for (const w of writes) {
+      // Null: not a property of that layer any more (a stale row) — nothing to write.
       const c = propertyValueCommands(w.nodeId, w.prop, w.value, seconds, autoKeyframe);
-      if (c === null) {
-        for (const x of writes) legacyWritePropertyValue(x.nodeId, x.prop, x.value);
-        return;
-      }
+      if (c === null) return;
       cmds.push(...c);
     }
     if (cmds.length === 0) return;
@@ -1170,31 +1045,6 @@ function EditorShellInner(): JSX.Element {
       return;
     }
     void edit(label, cmds);
-  };
-
-  /** B3-legacy: engine gap — a value row whose track the API catalog does not address. */
-  const legacyWritePropertyValue = (trackId: string, prop: string, value: number): void => {
-    const node = defaultSceneGraph.getNode(trackId);
-    if (!node || node.locked) return;
-    const layerT = getRemappedTime(trackId, playheadNow());
-    // Same contract as the inspector: an animated property keyframes at the
-    // playhead; an un-animated one edits its static base.
-    if (defaultAnimation.isAnimated(trackId, prop) || usePreferenceStore.getState().timelineAutoKeyframe) {
-      runAnimEdit(
-        `Set ${prop}`,
-        () => defaultAnimation.setKeyframe(trackId, prop, layerT, value),
-        // Merge key carries the CANONICAL written time, so scrubs at one comp
-        // time coalesce iff they land on the same keyframe.
-        `set:${trackId}:${prop}:${layerT}`,
-      );
-      return;
-    }
-    // One writer, which knows where a structured path stores its value — an
-    // effect param, a path operator, a text animator — not just flat component
-    // props. Rows whose base cannot be written carry no value field at all
-    // (see `placeholderRow`), so a false here is a stale row, not a swallowed
-    // edit.
-    writeStaticPropertyValue(trackId, prop, value);
   };
 
   const handlePropertyValueChange = (trackId: string, prop: string, value: number): void => {
@@ -1226,14 +1076,11 @@ function EditorShellInner(): JSX.Element {
     const isHold = currentKf?.easing === 'hold' || currentKf?.easing === 'step';
     const isRoving = currentKf?.roving === true;
 
-    const props = expandKeyframeProp(ref.prop);
-
     // Easing entries act on the whole keyframe selection when the clicked
     // keyframe is part of it (AE behavior), else on just this keyframe.
     const selectedKfIds = useKeyframeSelectionStore.getState().ids;
     const easeTargets: string[] = selectedKfIds.has(kfId) ? [...selectedKfIds] : [kfId];
-    // `updateKeyframes` through the engine (B3); the helper keeps the legacy
-    // preset writer for a key the API cannot address alone.
+    // `updateKeyframes` through the engine (B3) — the whole key, as in AE.
     const ease = (preset: EasingPreset) => () => { void easePresetOnKeys(easeTargets, preset); };
 
     /**
@@ -1247,11 +1094,7 @@ function EditorShellInner(): JSX.Element {
      * keyframe would stop auto-adjusting to its neighbours.
      */
     const setInterp = (kind: EasingKind, label: string) => () => {
-      // B3-legacy: engine gap — a lone member key of a grouped property (keyframeEdits header): Hold keeps the preset writer.
-      void setKeyInterpolationEdit(kfId, kind, label, () => {
-        applyEasingToKeyframes([kfId], 'Hold');
-        bumpScene();
-      });
+      void setKeyInterpolationEdit(kfId, kind, label);
     };
 
     openContextMenu(x, y, [
@@ -1299,16 +1142,8 @@ function EditorShellInner(): JSX.Element {
             id: 'interp-roving',
             label: isRoving ? 'Rove Across Time ✓' : 'Rove Across Time',
             onSelect: () => {
-              void setKeyRovingEdit(kfId, !isRoving, () => {
-                // B3-legacy: engine gap — a lone member key of a grouped property (keyframeEdits header).
-                runAnimEdit(isRoving ? 'Disable roving keyframe' : 'Enable roving keyframe', () => {
-                  for (const p of props) {
-                    if (defaultAnimation.isAnimated(ref.nodeId, p)) {
-                      defaultAnimation.setRoving(ref.nodeId, p, ref.t, !isRoving);
-                    }
-                  }
-                });
-              });
+              // The engine re-times the roving run for constant speed.
+              void setKeyRovingEdit(kfId, !isRoving);
             },
           },
         ],
@@ -1363,7 +1198,7 @@ function EditorShellInner(): JSX.Element {
         id: 'delete',
         label: 'Delete keyframe',
         danger: true,
-        onSelect: () => { void deleteKeyframesUi([kfId], () => legacyKeyframesDelete([kfId])); },
+        onSelect: () => { void deleteKeyframesUi([kfId]); },
       },
     ]);
   };
@@ -1469,64 +1304,46 @@ function EditorShellInner(): JSX.Element {
         id: 'split',
         label: 'Split Layer at Playhead (Ctrl+Shift+D)',
         onSelect: () => {
-          if (nodeId) {
-            void splitLayersAt([nodeId], c.currentSeconds);
-            return;
-          }
-          // B3-legacy: engine gap — a bar with no scene node behind it is not a layer the API addresses.
-          c.splitClip(clipId, c.currentSeconds);
-          bumpScene();
+          // Every bar has a layer behind it (syncFromScene seeds bars only from
+          // layers, and removes a bar whose layer goes), so there is no bar-only path.
+          if (nodeId) void splitLayersAt([nodeId], c.currentSeconds);
         },
       },
       {
         id: 'trim-in',
         label: 'Trim In to Playhead (Alt+[)',
         onSelect: () => {
-          if (nodeId) {
-            void trimSelectedStartToPlayhead([nodeId]);
-            return;
-          }
-          // B3-legacy: engine gap — a bar with no scene node behind it is not a layer the API addresses.
-          c.trimClipTo(clipId, 'start', c.currentSeconds);
-          bumpScene();
+          if (nodeId) void trimSelectedStartToPlayhead([nodeId]);
         },
       },
       {
         id: 'trim-out',
         label: 'Trim Out to Playhead (Alt+])',
         onSelect: () => {
-          if (nodeId) {
-            void trimSelectedEndToPlayhead([nodeId]);
-            return;
-          }
-          // B3-legacy: engine gap — a bar with no scene node behind it is not a layer the API addresses.
-          c.trimClipTo(clipId, 'end', c.currentSeconds);
-          bumpScene();
+          if (nodeId) void trimSelectedEndToPlayhead([nodeId]);
         },
       },
       {
         id: 'ripple-trim-out',
         label: 'Ripple Trim Out to Playhead',
         onSelect: () => {
-          // B3-legacy: engine gap — `trimLayers{ripple}` / `insertGap` ripple every later layer of the COMPOSITION; these three entries ripple only the bars on the clip's own TRACK.
-          c.rippleTrimClipEnd(clipId, c.currentSeconds);
-          bumpScene();
+          // A composition has ONE track, so the clip's track IS the comp: the
+          // engine's ripple set (every later layer) is the legacy one.
+          void rippleTrimToPlayhead(clipId, 'end');
         },
       },
       {
         id: 'ripple-trim-in',
         label: 'Ripple Trim In to Playhead',
         onSelect: () => {
-          c.rippleTrimClipStart(clipId, c.currentSeconds);
-          bumpScene();
+          void rippleTrimToPlayhead(clipId, 'start');
         },
       },
       {
         id: 'ripple-insert',
         label: 'Ripple Insert 1s Gap at Playhead',
         onSelect: () => {
-          c.rippleInsertGapAt(clipId, c.currentSeconds, 1);
-          bumpScene();
+          void rippleInsertGapAtPlayhead(clipId, 1);
         },
       },
       { id: 'sep-remove', separator: true },
@@ -1554,9 +1371,7 @@ function EditorShellInner(): JSX.Element {
             // keys and markers (negative = reverse). One undo step either way.
             const allowed = isRetimableLayer(nodeId) ? parsed >= 1 : parsed !== 0;
             if (!isNaN(parsed) && allowed && Math.abs(parsed) <= 1000) {
-              // B3-legacy: engine gap — `setLayerTiming.stretch` sets only the factor: no Hold in Place, no non-footage bake (bar + keyframes + layer markers scaled, negative = reversed) — see TimeStretchDialog.
-              void applyTimeStretch([nodeId], parsed, 'in');
-              bumpScene();
+              void timeStretchEdit([nodeId], parsed, 'in', c.currentSeconds);
             }
           }
         },
@@ -1580,9 +1395,7 @@ function EditorShellInner(): JSX.Element {
             void freezeFrameEdit(nodeId, c.currentSeconds);
             return;
           }
-          // B3-legacy: engine gap — `freezeFrame` can only turn a freeze ON; Unfreeze has no API form.
-          updateNodeLayerTime(nodeId, { freeze: false });
-          bumpScene();
+          void unfreezeEdit([nodeId]);
         },
       },
       ...(asset
@@ -1629,8 +1442,7 @@ function EditorShellInner(): JSX.Element {
           label: TRANSITION_LABEL[kind],
           onSelect: () => {
             if (!cut) return;
-            // B3-legacy: engine gap — transitions (cut records + their materialized opacity/effect keys) have no API commands.
-            void addTransition(
+            void addTransitionEdit(
               cut.leftNodeId,
               cut.rightNodeId,
               kind,
@@ -1665,8 +1477,7 @@ function EditorShellInner(): JSX.Element {
                 }`,
                 onSelect: () => {
                   if (existingTransition.alignment === alignment) return;
-                  // B3-legacy: engine gap — transitions have no API commands.
-                  void setTransition(compIdForTransition(cut), existingTransition.id, {
+                  void setTransitionEdit(existingTransition.leftNodeId, existingTransition.id, {
                     alignment,
                   }).then((res) => {
                     if (!res.ok) void customAlert('Transition', res.reason);
@@ -1678,8 +1489,7 @@ function EditorShellInner(): JSX.Element {
               id: 'remove-transition',
               label: `Remove ${TRANSITION_LABEL[existingTransition.kind]}`,
               onSelect: () => {
-                // B3-legacy: engine gap — transitions have no API commands.
-                void removeTransition(compIdForTransition(cut), existingTransition.id);
+                void removeTransitionsEdit([existingTransition.id]);
               },
             },
           ]
@@ -1725,10 +1535,7 @@ function EditorShellInner(): JSX.Element {
         label: 'Delete Layer (Del)',
         danger: true,
         onSelect: () => {
-          void deleteClipLayerEdit(nodeId, false).then((done) => {
-            // B3-legacy: engine gap — a bar with no scene node behind it is not a layer the API addresses.
-            if (!done) c.deleteLayerForClip(clipId, { ripple: false });
-          });
+          void deleteClipLayerEdit(nodeId, false);
         },
       },
       {
@@ -1739,10 +1546,7 @@ function EditorShellInner(): JSX.Element {
         // the space. Otherwise it is the entry above under a longer name.
         disabled: !hasLaterClipOnTrack(clipId),
         onSelect: () => {
-          void deleteClipLayerEdit(nodeId, true).then((done) => {
-            // B3-legacy: engine gap — a bar with no scene node behind it is not a layer the API addresses.
-            if (!done) c.deleteLayerForClip(clipId, { ripple: true });
-          });
+          void deleteClipLayerEdit(nodeId, true);
         },
       },
     ]);
@@ -1780,19 +1584,16 @@ function EditorShellInner(): JSX.Element {
                 setLayerMatte(trackId, matte);
               }}
               onTrackParentChange={(trackId, parentId, options?: { preserveWorld?: boolean; jump?: boolean }) => {
-                if (options?.jump && parentId !== null) {
-                  // B3-legacy: engine gap — `setParent` has no Parent & Link JUMP mode (Shift): relink + land on the parent's anchor.
-                  reparentNode(trackId, parentId, options);
-                  bumpScene();
-                  return;
-                }
                 // `setParent` (B3): the pick-whip / dropdown keep the world pose
-                // unless the row asked otherwise (Alt).
+                // unless the row asked otherwise (Alt); Shift = Parent & Link JUMP
+                // (B3z: onto the parent's anchor at the playhead).
+                const jump = options?.jump === true && parentId !== null;
                 void edit(parentId ? 'Parent' : 'Unparent', {
                   type: 'setParent',
                   layers: [trackId],
                   ...(parentId ? { parent: parentId } : {}),
                   keepWorldTransform: options?.preserveWorld ?? true,
+                  ...(jump ? { jump: true, time: compTime(getTimelineController().currentSeconds) } : {}),
                 });
               }}
               onTrackToggleFlag={(trackId, flag) => {

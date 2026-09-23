@@ -20,7 +20,12 @@ import { Input } from '@components/Input';
 import { ColorPicker } from '@components/ColorPicker';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { writeTemplateField } from '@core/template/templateFields';
+import type { Command } from '@motion/engine-api';
+import { fieldWrite } from '@core/engine/propRefs';
+import { getTime } from '@stores/playbackClockStore';
+import { useGesture } from '@hooks/useGesture';
+import { sourceTextCommand } from '@layout/Text/textEdits';
+import { useEngineEdit } from './useEngineEdit';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { findMographRoot, mographIdOf, readMographFields } from '@core/library/mographParams';
@@ -118,26 +123,55 @@ function currentValue(field: TemplateField): string {
   return v === undefined || v === null ? String(field.default ?? '') : String(v);
 }
 
+/**
+ * The engine commands for "field := value": a text part is the child layer's
+ * Source Text (`text/sourceText`, style runs kept — sourceTextCommand), a
+ * colour its fill (`layer/fill`; a key at the playhead when the fill is
+ * animated, AE). [] when the child is not an addressable layer.
+ */
+function templateFieldCommands(field: TemplateField, value: string): Command[] {
+  const { nodeId, componentType, prop } = field.target;
+  const seconds = getTime();
+  if (componentType === 'Text' && prop === 'content') return sourceTextCommand(nodeId, value, seconds) ?? [];
+  if (prop === 'fill') {
+    const comp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === componentType);
+    const w = comp ? fieldWrite(nodeId, comp.id, 'fill', value, seconds) : null;
+    return w ? [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) }] : [];
+  }
+  return [];
+}
+
 function FieldRow({ field }: { field: TemplateField }): JSX.Element {
   useSceneRevision(); // re-read after any scene write
   const value = currentValue(field);
+  const eng = useEngineEdit();
+  // A typing session (first keystroke → blur) is ONE undo entry; the canvas
+  // follows every keystroke.
+  const typing = useGesture();
+  const label = `Edit ${field.label}`;
 
   return (
     <label className={styles.field}>
       <span className={styles.fieldLabel}>{field.label}</span>
       {field.kind === 'color' ? (
-        <ColorPicker
-          value={value || '#ffffff'}
-          // B3-legacy: engine gap — Mograph template fields are not catalog properties.
-          onChange={(hex) => writeTemplateField(field, hex)}
-          aria-label={field.label}
-        />
+        <span style={{ display: 'contents' }} {...eng.press(label)}>
+          <ColorPicker
+            value={value || '#ffffff'}
+            onChange={(hex) => eng.send(label, templateFieldCommands(field, hex))}
+            aria-label={field.label}
+          />
+        </span>
       ) : (
         <Input
           value={value}
           size="sm"
-          // B3-legacy: engine gap — Mograph template fields are not catalog properties.
-          onChange={(e) => writeTemplateField(field, e.target.value)}
+          onChange={(e) => {
+            const cmds = templateFieldCommands(field, e.target.value);
+            if (cmds.length === 0) return;
+            if (!typing.isActive()) typing.begin(label);
+            typing.send(cmds);
+          }}
+          onBlur={() => { void typing.end(); }}
           aria-label={field.label}
         />
       )}

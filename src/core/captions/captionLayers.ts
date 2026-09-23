@@ -32,7 +32,9 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { makeNode } from '@core/scene/sceneInsert';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { beginDocumentTransaction } from '@core/ai/aiTransaction';
+import type { Command } from '@motion/engine-api';
+import { buildLayerFragment } from '@core/engine/offDocument';
+import { edit } from '@core/engine/uiEdits';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { batchScene, bumpScene } from '@stores/sceneStore';
@@ -179,18 +181,17 @@ export interface InsertCaptionsResult {
 }
 
 /**
- * Insert one text layer per cue into the active composition, timed to its cue.
- *
- * One undo entry for the whole set. Importing forty captions and having to
- * press undo forty times is the sort of thing that makes a feature not worth
- * using, and it is the repo's standing one-action-one-undo contract.
+ * The caption BUILDER (B3z): one text layer per cue into `target` (default:
+ * the active composition), each clip bar timed to its cue, selected. No undo
+ * scope — {@link insertCaptionLayers} runs it off-document and sends the
+ * result as ONE `pasteLayers` (offDocument.ts).
  *
  * Cues past the end of the composition are still created — the layer simply
  * sits beyond the current duration, exactly as it would if the user dragged a
  * bar out there — because silently dropping words is worse than a caption the
  * user has to lengthen the comp to see.
  */
-export function insertCaptionLayers(
+export function buildCaptionLayers(
   cues: readonly Cue[],
   style: CaptionStyle = DEFAULT_CAPTION_STYLE,
   target?: CaptionTarget,
@@ -201,76 +202,109 @@ export function insertCaptionLayers(
   const active = target ?? null;
   const rootId = active?.rootId ?? activeCompRootId();
   const comp = active ?? useCompositionStore.getState().comp();
-  const transaction = beginDocumentTransaction(
-    `Add ${usable.length} caption${usable.length === 1 ? '' : 's'}`,
-  );
   const nodeIds: string[] = [];
 
-  try {
-    // One scene notification for the whole set, not one per caption: the
-    // listener walks the entire scene to resync the timeline, so forty
-    // captions would otherwise be forty full walks.
-    batchScene(() => {
-      for (const [index, cue] of usable.entries()) {
-        const node = makeCaptionNode(cue, style, comp, index);
-        defaultSceneGraph.addChild(rootId, node);
-        nodeIds.push(node.id);
-      }
-    });
-
-    // New nodes get a full-length bar from this; the timings below narrow them.
-    const controller = getTimelineController();
-    // The comp the captions went into, not "the active one" — with an explicit
-    // target these can differ, and syncing the wrong timeline leaves every new
-    // caption without a clip bar to trim.
-    controller.syncFromScene(rootId);
+  // One scene notification for the whole set, not one per caption: the
+  // listener walks the entire scene to resync the timeline, so forty
+  // captions would otherwise be forty full walks.
+  batchScene(() => {
     for (const [index, cue] of usable.entries()) {
-      const nodeId = nodeIds[index];
-      if (!nodeId) continue;
-      const layer = controller.getLayersForNode(nodeId)[0];
-      if (!layer) continue;
-      // End before start, always: moving the head first can invert the clip
-      // momentarily, which the timeline clamps — and the clamp is what silently
-      // produced one-frame captions.
-      controller.trimClipTo(layer.id, 'end', cue.end);
-      controller.trimClipTo(layer.id, 'start', cue.start);
+      const node = makeCaptionNode(cue, style, comp, index);
+      defaultSceneGraph.addChild(rootId, node);
+      nodeIds.push(node.id);
     }
-    controller.invalidateLayerIndex();
+  });
 
-    useSelectionStore.getState().set(nodeIds);
-    bumpScene();
-    transaction.commit();
-  } catch (err) {
-    transaction.rollback();
-    throw err;
+  // New nodes get a full-length bar from this; the timings below narrow them.
+  const controller = getTimelineController();
+  // The comp the captions went into, not "the active one" — with an explicit
+  // target these can differ, and syncing the wrong timeline leaves every new
+  // caption without a clip bar to trim.
+  controller.syncFromScene(rootId);
+  for (const [index, cue] of usable.entries()) {
+    const nodeId = nodeIds[index];
+    if (!nodeId) continue;
+    const layer = controller.getLayersForNode(nodeId)[0];
+    if (!layer) continue;
+    // End before start, always: moving the head first can invert the clip
+    // momentarily, which the timeline clamps — and the clamp is what silently
+    // produced one-frame captions.
+    controller.trimClipTo(layer.id, 'end', cue.end);
+    controller.trimClipTo(layer.id, 'start', cue.start);
   }
+  controller.invalidateLayerIndex();
 
+  useSelectionStore.getState().set(nodeIds);
+  bumpScene();
   return { nodeIds, skipped: cues.length - usable.length };
 }
 
+export interface CaptionEdit {
+  /** The commands of the edit (send them as ONE batch). */
+  commands: Command[];
+  /** Captions the edit adds / removes. */
+  added: number;
+  removed: number;
+  /** Cues dropped because they overlapped into nothing. */
+  skipped: number;
+  /** Scratch ids of the added captions in paste order, to map the result through. */
+  scratchIds: string[];
+}
+
 /**
- * Remove every caption layer from the composition, as one undo entry.
- *
- * The counterpart to import, and the thing that makes re-importing safe: a
- * second import over an unremoved first one is forty layers of doubled text
- * that read as a rendering bug.
+ * The engine commands that REPLACE the composition's captions with `cues`:
+ * `deleteLayers` of the existing caption layers, then ONE `pasteLayers` of the
+ * built ones (a second import over an unremoved first is doubled text on
+ * screen, which reads as a renderer bug). Nothing is sent here.
  */
-export function removeCaptionLayers(rootId: string = activeCompRootId()): number {
-  const nodes = captionNodes(rootId);
-  if (nodes.length === 0) return 0;
-  const transaction = beginDocumentTransaction(
-    `Remove ${nodes.length} caption${nodes.length === 1 ? '' : 's'}`,
-  );
-  try {
-    batchScene(() => {
-      for (const node of nodes) defaultSceneGraph.removeNode(node.id);
-    });
-    getTimelineController().syncFromScene();
-    bumpScene();
-    transaction.commit();
-  } catch (err) {
-    transaction.rollback();
-    throw err;
-  }
-  return nodes.length;
+export function captionEditCommands(
+  cues: readonly Cue[],
+  style: CaptionStyle = DEFAULT_CAPTION_STYLE,
+  target?: CaptionTarget,
+): CaptionEdit {
+  const rootId = target?.rootId ?? activeCompRootId();
+  const old = captionNodes(rootId).map((n) => n.id);
+  let skipped = 0;
+  const built = buildLayerFragment(rootId, () => { skipped = buildCaptionLayers(cues, style, target).skipped; });
+  const commands: Command[] = [];
+  if (old.length > 0) commands.push({ type: 'deleteLayers', layers: old } as Command);
+  // The builder appends the captions at the FRONT of the comp (index 0), which
+  // the deletion before the paste does not move.
+  if (built) commands.push({ type: 'pasteLayers', comp: rootId, fragment: built.fragment, index: 0 } as Command);
+  if (built === null && cues.length > 0) skipped = cues.length;
+  return { commands, added: built?.scratchIds.length ?? 0, removed: old.length, skipped, scratchIds: built?.scratchIds ?? [] };
+}
+
+/**
+ * Replace the composition's captions with one text layer per cue, timed to
+ * its cue — ONE undo entry for the whole set (importing forty captions and
+ * pressing undo forty times is the sort of thing that makes a feature not
+ * worth using). Resolves to the new layer ids (selected) and the dropped-cue
+ * count; `nodeIds` is empty when the engine refused (toasted).
+ */
+export async function insertCaptionLayers(
+  cues: readonly Cue[],
+  style: CaptionStyle = DEFAULT_CAPTION_STYLE,
+  target?: CaptionTarget,
+): Promise<InsertCaptionsResult & { removed: number }> {
+  const e = captionEditCommands(cues, style, target);
+  if (e.commands.length === 0) return { nodeIds: [], skipped: e.skipped, removed: 0 };
+  const res = await edit(`Add ${e.added} caption${e.added === 1 ? '' : 's'}`, e.commands);
+  if (!res.ok) return { nodeIds: [], skipped: e.skipped, removed: 0 };
+  const nodeIds = e.added > 0 ? ((res.value.at(-1) as { layers?: string[] } | undefined)?.layers ?? []) : [];
+  if (nodeIds.length > 0) useSelectionStore.getState().set(nodeIds);
+  return { nodeIds, skipped: e.skipped, removed: e.removed };
+}
+
+/**
+ * Remove every caption layer from the composition, as one undo entry
+ * (`deleteLayers`). Resolves to the count removed.
+ *
+ * The counterpart to import, and the thing that makes re-importing safe.
+ */
+export async function removeCaptionLayers(rootId: string = activeCompRootId()): Promise<number> {
+  const ids = captionNodes(rootId).map((n) => n.id);
+  if (ids.length === 0) return 0;
+  const res = await edit(`Remove ${ids.length} caption${ids.length === 1 ? '' : 's'}`, [{ type: 'deleteLayers', layers: ids } as Command]);
+  return res.ok ? ids.length : 0;
 }

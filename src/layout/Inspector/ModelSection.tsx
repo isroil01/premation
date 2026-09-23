@@ -11,11 +11,12 @@
  * feature.
  *
  * Rows are label + slider + scrubbable number + stopwatch, and the write path
- * is exactly `KeyframeRow`'s: with a lit stopwatch (or Auto-Keyframe on) the
- * edit lands as a keyframe at the playhead on the `compToKeyframeTime` axis,
- * otherwise it writes the static prop. A base-only write is invisible on an
- * animated property — the renderer having sampled the track first — so the
- * two cases cannot be collapsed.
+ * is the engine API's (B3z): each weight is a LATENT numeric property of the
+ * layer (latentPropSpecs.ts `morph` rows — addressable before it is stored).
+ * With a lit stopwatch the edit is a key at the playhead (AE
+ * setValueAtTime), with Auto-Keyframe on an unanimated weight gets its first
+ * key, otherwise the static value — one `setProperties` / `addKeyframes`; a
+ * slider or field drag is ONE gesture; the stopwatch is `setAnimated`.
  *
  * LABELS come from the file. glTF has no first-class slot for blend-shape
  * names, so every exporter writes `extras.targetNames`; the importer now
@@ -33,10 +34,11 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { edit } from '@core/engine/uiEdits';
 import { MORPH_PROP_PREFIX, morphTargetLabels } from '@core/scene/modelMorph';
+import { scalarValueCommands, stopwatchCommands, trackRef, valueCommands } from './inspectorEdits';
+import { useEngineEdit, type EngineEdit } from './useEngineEdit';
 import s from './ModelSection.module.css';
 
 /** Weights are 0…1 in the spec's blend; the slider steps at 1%. */
@@ -50,9 +52,13 @@ interface MorphRowProps {
   componentId: string;
   index: number;
   label: string;
-  /** Playhead on this layer's own keyframe axis. */
+  /** The playhead, comp seconds (what commands take). */
+  time: number;
+  /** The playhead on this layer's keyframe axis — for DRAWING the sampled value only. */
   layerT: number;
   autoKeyframe: boolean;
+  /** The section's send half: a drag of any row is one gesture. */
+  e: EngineEdit;
 }
 
 /**
@@ -60,7 +66,7 @@ interface MorphRowProps {
  * the selected layer, and a hook inside a list whose length changes is the
  * exact crash `conditionalHooks.test.tsx` exists to catch.
  */
-function MorphRow({ nodeId, componentId, index, label, layerT, autoKeyframe }: MorphRowProps): JSX.Element {
+function MorphRow({ nodeId, componentId, index, label, time, layerT, autoKeyframe, e }: MorphRowProps): JSX.Element {
   const prop = `${MORPH_PROP_PREFIX}${index}`;
   const animated = defaultAnimation.isAnimated(nodeId, prop);
   const node = defaultSceneGraph.getNode(nodeId);
@@ -71,18 +77,9 @@ function MorphRow({ nodeId, componentId, index, label, layerT, autoKeyframe }: M
   const write = (v: number): void => {
     if (!Number.isFinite(v)) return;
     const clamped = Math.max(MIN, Math.min(MAX, v));
-    if (animated || autoKeyframe) {
-      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
-      runAnimEdit(
-        `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, clamped),
-        `set:${nodeId}:${prop}:${layerT}`,
-      );
-    } else {
-      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
-      updateNodeComponentProp(defaultSceneGraph, nodeId, componentId, prop, clamped);
-    }
+    e.send(`Set ${label}`, scalarValueCommands(prop, [{ nodeId, value: clamped }], { seconds: time, autoKeyframe }));
   };
+  const on = (): boolean => trackRef(nodeId, prop) !== null;
 
   return (
     <div className={s.row}>
@@ -93,13 +90,12 @@ function MorphRow({ nodeId, componentId, index, label, layerT, autoKeyframe }: M
         animated={animated}
         values={() => [value]}
         onToggle={() => {
-          // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
-          if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
-          else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
+          void edit(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
         }}
       />
       <span className={`${s.label}${animated ? ` ${s.labelAnimated}` : ''}`} title={label}>{label}</span>
       <input
+        {...e.press(`Set ${label}`, on)}
         type="range"
         className={s.slider}
         min={MIN}
@@ -117,6 +113,7 @@ function MorphRow({ nodeId, componentId, index, label, layerT, autoKeyframe }: M
           step={STEP}
           precision={2}
           onChange={write}
+          {...e.scrub(`Set ${label}`, on)}
           aria-label={label}
         />
       </span>
@@ -135,6 +132,7 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
   useAnimationRevision();
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((st) => st.timelineAutoKeyframe);
+  const e = useEngineEdit();
 
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
@@ -144,36 +142,17 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const labels = morphTargetLabels(node);
   if (labels.length === 0) return null;
 
-  // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
-  const layerT = compToKeyframeTime(nodeId, time);
+  // Display only (the sampled weight under a lit stopwatch): never sent.
+  const layerT = keyAxisTimeForDisplay(nodeId, time);
 
   /**
-   * Every weight back to 0, in ONE history entry.
-   *
-   * Keyframed targets are batched inside a single `runAnimEdit` — N separate
-   * calls would record N undo steps for one click, and the batch also holds
-   * the engine's change notification until every track has moved. Un-keyframed
-   * targets write their static prop, which the debounced scene snapshot picks
-   * up as the same one step.
+   * Every weight back to 0, in ONE history entry: one batch — keyed targets
+   * (and, under Auto-Keyframe, every target) get a key at the playhead, the
+   * rest their static value.
    */
   const resetAll = (): void => {
-    const keyed = labels
-      .map((_, i) => `${MORPH_PROP_PREFIX}${i}`)
-      .filter((prop) => autoKeyframe || defaultAnimation.isAnimated(nodeId, prop));
-    if (keyed.length > 0) {
-      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
-      runAnimEdit('Reset morph targets', () => {
-        defaultAnimation.batch(() => {
-          for (const prop of keyed) defaultAnimation.setKeyframe(nodeId, prop, layerT, 0);
-        });
-      });
-    }
-    for (let i = 0; i < labels.length; i++) {
-      const prop = `${MORPH_PROP_PREFIX}${i}`;
-      if (keyed.includes(prop)) continue;
-      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
-      updateNodeComponentProp(defaultSceneGraph, nodeId, transform.id, prop, 0);
-    }
+    const values = Object.fromEntries(labels.map((_, i) => [`${MORPH_PROP_PREFIX}${i}`, 0]));
+    void edit('Reset morph targets', valueCommands([{ nodeId, values }], { seconds: time, autoKeyframe }));
   };
 
   return (
@@ -199,8 +178,10 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
             componentId={transform.id}
             index={i}
             label={label}
+            time={time}
             layerT={layerT}
             autoKeyframe={autoKeyframe}
+            e={e}
           />
         ))}
       </div>

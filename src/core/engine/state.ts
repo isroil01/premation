@@ -16,6 +16,7 @@
  *   rq           the render queue saved with the project
  *   mb           project motion-blur settings
  *   cm           project colour management (working space, bit depth)
+ *   tx           the cut-transition records, comp id → records (B3z)
  *
  * A command handler declares the parts it may touch (its SCOPE); the engine
  * captures them before and after applying, and the changed ones ARE the
@@ -39,6 +40,8 @@ import { useAssetStore, replaceProjectItems, type ImportedAsset, type AssetFolde
 import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
 import { bumpScene } from '@stores/sceneStore';
+import { useTransitionStore } from '@stores/transitionStore';
+import type { TransitionRecord } from '@core/timeline/transitionModel';
 import { getEventBus } from '@core/events/EventBus';
 import {
   getProjectSettings,
@@ -96,6 +99,8 @@ export const K = {
   rq: 'rq',
   mb: 'mb',
   cm: 'cm',
+  /** B3z: the cut-transition records (transitionStore), comp id → records. */
+  tx: 'tx',
 } as const;
 
 /** A layer's node + animation. */
@@ -176,6 +181,7 @@ function captureOne(key: string, clipsCache: { v?: Record<string, Record<string,
     case 'rq': return getRenderQueue();
     case 'mb': return structuredClone(useMotionBlurStore.getState().settings());
     case 'cm': return structuredClone(useColorManagementStore.getState().settings());
+    case 'tx': return useTransitionStore.getState().capture();
     default: throw new Error(`unknown part key '${key}'`);
   }
 }
@@ -195,7 +201,7 @@ export function allPartKeys(): string[] {
   for (const c of comps) {
     keys.push(K.comp(c), K.clips(c), K.tl(c));
   }
-  keys.push(K.order, K.items, K.project, K.rq, K.mb, K.cm);
+  keys.push(K.order, K.items, K.project, K.rq, K.mb, K.cm, K.tx);
   return keys;
 }
 
@@ -366,6 +372,7 @@ export function applyParts(parts: Parts): void {
   if (parts.has(K.rq)) setRenderQueueState((parts.get(K.rq) as ReturnType<typeof getRenderQueue>) ?? []);
   const mb = parts.get(K.mb) as MotionBlurSettings | undefined;
   if (mb) useMotionBlurStore.getState().restore(structuredClone(mb));
+  if (parts.has(K.tx)) useTransitionStore.getState().restore((parts.get(K.tx) as Record<string, TransitionRecord[]> | undefined) ?? {});
   const cm = parts.get(K.cm) as ColorManagementSettings | undefined;
   if (cm) useColorManagementStore.getState().restore(structuredClone(cm));
 

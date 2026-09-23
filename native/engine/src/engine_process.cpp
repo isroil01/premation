@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <memory>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -17,6 +18,10 @@
 #include "io/pipe_ffi.hpp"
 #include "os_ffi.hpp"
 #include "premation/protocol/framing.hpp"
+
+#if defined(PREMATION_HAVE_SCENE)
+#include "scene/engine_frames.hpp"
+#endif
 
 namespace premation {
 namespace {
@@ -143,11 +148,29 @@ int run_engine(const EngineOptions& options) {
   std::unique_ptr<render::RenderThread> gpuSink;
   std::unique_ptr<SimulatedSink> simSink;
   FrameSink* sink = nullptr;
+  render::RenderOptions renderOptions = options.render;
+#if defined(PREMATION_HAVE_SCENE)
+  // D2w: the viewport draws the engine's own document through the render
+  // graph (scene/engine_frames.hpp). PREMATION_ENGINE_SCENE=0 keeps C2's quads.
+  const bool useScene = !options.noGpu && os::env_var("PREMATION_ENGINE_SCENE").value_or("1") != "0";
+  scene::EngineFramesOptions sceneOptions;
+  sceneOptions.fontsManifest = os::env_var("PREMATION_FONTS_MANIFEST").value_or("");
+  std::unique_ptr<FrameBuilder> frameBuilder;
+  std::unique_ptr<MediaClock> mediaClock;
+  if (useScene) {
+    renderOptions.makeDrawer = scene::make_drawer_factory(sceneOptions);
+    frameBuilder = scene::make_frame_builder(sceneOptions);
+    // E2: the document's sound, and the audio clock pacing playback.
+    // PREMATION_AUDIO_DEVICE=null plays through the steady-clock NullDevice.
+    std::string audioError;
+    mediaClock = scene::make_media_clock(os::env_var("PREMATION_AUDIO_DEVICE").value_or("") != "null", audioError);
+  }
+#endif
   if (options.noGpu) {
     simSink = std::make_unique<SimulatedSink>(sendFrames, options.render.slots);
     sink = simSink.get();
   } else {
-    gpuSink = std::make_unique<render::RenderThread>(options.render, sendFrames, [&queue](const std::string& why) {
+    gpuSink = std::make_unique<render::RenderThread>(renderOptions, sendFrames, [&queue](const std::string& why) {
       (void)queue.push(CoreItem{CoreItem::Kind::fatal, {}, 0, why});
     });
     if (!gpuSink->start(error)) {
@@ -183,6 +206,10 @@ int run_engine(const EngineOptions& options) {
   sessionOptions.testPorts = options.testPorts;
   sessionOptions.testPortsDir = options.testPortsDir;
   Session session(outbox, *sink, sessionOptions);
+#if defined(PREMATION_HAVE_SCENE)
+  session.set_frame_builder(frameBuilder.get());
+  session.set_media_clock(mediaClock.get());
+#endif
   int exitCode = kExitOk;
   bool running = true;
   while (running && !session.finished()) {

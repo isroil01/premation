@@ -16,6 +16,8 @@ struct Gpu {
   std::string adapterName;
   std::string backend;
   bool sharedTextureCapable = false;  // DXGI shared-handle import + fences
+  /// Float32Filterable + Float32Blendable on (the render graph's float32 working space).
+  bool float32 = false;
 };
 
 // D3D12 on Windows, Metal on macOS, Vulkan on Linux. `wantSharedTexture`

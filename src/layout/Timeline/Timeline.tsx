@@ -51,15 +51,11 @@ import {
 import { installTransitionCommands } from './transitionCommands';
 import {
   useTransitionStore,
-  addTransition,
-  removeTransition,
-  setTransition,
-  previewTransition,
-  commitTransitionPreview,
-  compIdForTransition,
   DEFAULT_TRANSITION_FRAMES,
   TRANSITION_LABEL,
+  type TransitionKind,
 } from '@core/timeline/transitions';
+import { addTransitionEdit, setTransitionEdit, removeTransitionsEdit, TransitionLengthDrag } from './transitionEdits';
 import { registerTimelineScroll, setTimelineLaneGeometry, setTimelineViewportWidth } from './timelineViewport';
 import { zoomAroundTime, zoomStep } from './zoomAnchor';
 import { resolveTrackSelection, selectIntentFor, type SelectModifiers } from './trackRangeSelect';
@@ -109,7 +105,8 @@ import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
 import { DragHud, type DragHudState } from './DragHudOverlay';
 import { Minimap, Ruler, generateRulerTicks, rulerProgressWidth } from './RulerStack';
 import { TrackHeader, PropertyHeader, TrackCategoryHeader } from './TrackHeaderColumn';
-import { canResetProperties, resetProperties, resetTransforms } from '@core/scene/layerTransformOps';
+import { canResetProperties } from '@core/scene/layerTransformOps';
+import { resetPropertiesEdit, resetTransformEdit } from './resetEdits';
 import { expressionMenuItems } from '@core/animation/expressionCommands';
 import { useCompositionStore } from '@stores/compositionStore';
 import { TrackContent, LaneRow } from './Lanes';
@@ -1483,13 +1480,11 @@ function Timeline({
    * clips are already at their ends.
    */
   const applyTransition = useCallback(
-    (cut: ClipCut, kind: Parameters<typeof addTransition>[2]): void => {
-      // B3-legacy: engine gap — no transition command (an overlap + a dissolve
-      // record on two layers); the transition helpers keep their writer.
-      void addTransition(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred').then(
+    (cut: ClipCut, kind: TransitionKind): void => {
+      void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred').then(
         (res) => {
           if (!res.ok) setTransitionError(res.reason);
-          else setSelectedTransitionId(res.record.id);
+          else setSelectedTransitionId(res.id);
         },
       );
     },
@@ -1601,15 +1596,14 @@ function Timeline({
   /**
    * Live resize of a transition by dragging one of its ends.
    *
-   * The preview goes through the SAME materialise path the commit does — not a
-   * cheaper approximation drawn over the top — so what you see mid-drag is the
-   * edit, including the point at which the handles run out and the bracket stops
-   * growing. `previewTransition` records nothing; `commitTransitionPreview`
-   * rewinds to where the drag began and re-applies the final duration as one
-   * undo entry.
+   * ONE engine gesture (B3z): every move sends `setTransition` with the
+   * absolute length, which the engine materialises — so what you see mid-drag
+   * is the edit, including the point at which the handles run out (a longer
+   * length is refused and the last good one stays). Release commits one undo
+   * entry; the gesture ends on pointer up.
    */
   const transitionDrag = useRef<
-    null | { id: string; compId: string; edge: 'start' | 'end'; box: TransitionBox; frames: number }
+    null | { id: string; edge: 'start' | 'end'; box: TransitionBox; frames: number; drag: TransitionLengthDrag }
   >(null);
 
   const onTransitionEdgeDown = useCallback(
@@ -1621,10 +1615,10 @@ function Timeline({
       setSelectedTransitionId(box.id);
       transitionDrag.current = {
         id: box.id,
-        compId: compIdForTransition(rec),
         edge,
         box,
         frames: rec.durationFrames,
+        drag: new TransitionLengthDrag(rec.leftNodeId, rec.id, rec.durationFrames),
       };
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'ew-resize';
@@ -1643,7 +1637,7 @@ function Timeline({
       const frames = durationFromEdgeDrag(d.box, d.edge, time, rec.alignment, fpsRef.current);
       if (frames === d.frames) return;
       d.frames = frames;
-      previewTransition(d.compId, d.id, frames);
+      d.drag.move(frames);
       setDragHud({
         x: e.clientX,
         y: e.clientY,
@@ -1657,8 +1651,7 @@ function Timeline({
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
       if (!d) return;
-      // B3-legacy: engine gap — no transition command (see applyTransition).
-      void commitTransitionPreview(d.compId, d.id, d.frames);
+      void d.drag.end(true);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1682,8 +1675,7 @@ function Timeline({
       const rec = allTransitions.find((t) => t.id === id);
       if (!rec) return;
       setSelectedTransitionId(id);
-      // B3-legacy: engine gap — no transition command (see applyTransition).
-      void setTransition(compIdForTransition(rec), rec.id, {
+      void setTransitionEdit(rec.leftNodeId, rec.id, {
         alignment: nextTransitionAlignment(rec.alignment),
       }).then((res) => {
         if (!res.ok) setTransitionError(res.reason);
@@ -1711,8 +1703,7 @@ function Timeline({
       e.preventDefault();
       e.stopPropagation();
       setSelectedTransitionId(null);
-      // B3-legacy: engine gap — no transition command (see applyTransition).
-      void removeTransition(compIdForTransition(rec), rec.id);
+      void removeTransitionsEdit([rec.id]);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -2278,11 +2269,7 @@ function Timeline({
                     // AE's Transform group "Reset": keyframes off, defaults back.
                     onReset={
                       row.categoryKey === 'transform'
-                        // B3-legacy: shared with the Inspector's Reset (layerTransformOps): AE's
-                        // Transform Reset turns keyframes OFF and writes the group defaults (Position =
-                        // comp centre); the API's resetProperty keys an animated property instead, so
-                        // this becomes a setAnimated+setProperty macro when that helper migrates.
-                        ? () => { resetTransforms([row.track.id], useCompositionStore.getState()); }
+                        ? () => { void resetTransformEdit([row.track.id], useCompositionStore.getState()); }
                         : undefined
                     }
                   />
@@ -2358,8 +2345,7 @@ function Timeline({
                         label: 'Reset',
                         disabled: !canResetProperties(row.track.id, props),
                         onSelect: () => {
-                          // B3-legacy: shared Reset helper (see the Transform group's Reset above).
-                          resetProperties(row.track.id, props, useCompositionStore.getState(), `Reset ${row.prop.label}`);
+                          void resetPropertiesEdit(row.track.id, props, useCompositionStore.getState(), `Reset ${row.prop.label}`);
                         },
                       },
                       { id: 'expr-sep', separator: true },
@@ -2400,8 +2386,7 @@ function Timeline({
                 }
                 onReset={
                   stickyCategory.row.categoryKey === 'transform'
-                    // B3-legacy: shared Reset helper (see the Transform group's Reset above).
-                    ? () => { resetTransforms([stickyCategory.row.track.id], useCompositionStore.getState()); }
+                    ? () => { void resetTransformEdit([stickyCategory.row.track.id], useCompositionStore.getState()); }
                     : undefined
                 }
               />

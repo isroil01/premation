@@ -42,7 +42,6 @@ import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } fr
 import { clampPps, TIMELINE_PPS_MAX } from './zoomAnchor';
 import { Icon } from '@components/Icon';
 import { defaultAnimation, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
-import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
 import { easeKindOnKeys, easePresetOnKeys } from './keyframeEdits';
@@ -54,12 +53,24 @@ import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { bumpScene } from '@stores/sceneStore';
 import { EaseLibrarySection } from '@layout/Motion/EaseLibrarySection';
-import { compToKeyframeTime, getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
-import type { KeyframePatch, ValueType } from '@motion/engine-api';
+import { getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import type { KeyframePatch } from '@motion/engine-api';
 import { GestureSession, edit } from '@core/engine/uiEdits';
-import { propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
-import { apiUnitFactor } from '@core/engine/props';
-import { memberAddressable, memberKeyPatches, toCubic } from './keyframeEdits';
+import { engineIdle } from '@core/engine/engineInstance';
+import { compTime } from '@core/engine/propRefs';
+import {
+  keyTimeById,
+  memberKeyPatches,
+  memberKeyStart,
+  memberKeyValue,
+  memberPatchFields,
+  resolveKeyIds,
+  resolveKeysForGesture,
+  setRovingOnKeys,
+  toCubic,
+  type MemberKeyStart,
+  type MemberKeyWrite,
+} from './keyframeEdits';
 import { parseUiKey, uiKeyId } from './keyframeSelectionIds';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
@@ -211,15 +222,21 @@ interface DragState {
   maxV: number;
   mode: 'value' | 'speed';
   moved: boolean;
-  tx?: ReturnType<typeof beginAnimEdit>;
   /**
-   * Handle drags on a track the API addresses on its own: the drag is ONE
-   * engine gesture, every move sending the absolute handles it computed.
-   * `keyIds` (stored time → engine keyframe id) arrives asynchronously; moves
-   * before it are dropped (the next one carries the whole state anyway).
+   * Every keyframe drag (diamond or handle) is ONE engine gesture, every move
+   * sending the ABSOLUTE state it computed. `keyIds` (handles: stored time →
+   * engine keyframe id) and `groupEids` (diamonds: per group member) arrive
+   * asynchronously; moves before them are dropped (the next one carries the
+   * whole state anyway).
    */
   gesture?: GestureSession;
   keyIds?: Map<number, string>;
+  /** Diamond drag: each group member's engine key id (parallel to `group`). */
+  groupEids?: Array<string | undefined>;
+  /** Diamond drag: each member's whole key at pointer-down (absolute value writes). */
+  startKeys?: Array<MemberKeyStart | null>;
+  /** Diamond drag: each member's nearest keys that do NOT move with it (comp seconds). */
+  neighbours?: Array<{ prev?: number; next?: number }>;
   /** Live box-zoom corner (svg); start corner is ox/oy. */
   boxX?: number;
   boxY?: number;
@@ -285,68 +302,46 @@ function bezierWrite(kf: { t: number; continuous?: boolean }, bz: Bezier, contin
   return { t: kf.t, bezier: bz, continuous: continuous ?? kf.continuous ?? true };
 }
 
+function toMemberKeyWrite(w: MemberWrite): MemberKeyWrite {
+  return {
+    t: w.t,
+    ...(w.bezier ? { easing: 'bezier' as const, bezier: toCubic(w.bezier) } : {}),
+    ...(w.continuous !== undefined ? { continuous: w.continuous } : {}),
+    ...(w.value !== undefined ? { value: w.value } : {}),
+  };
+}
+
 /**
- * A handle drag's writes for the current pointer position: into the drag's
- * engine gesture (absolute handles, one entry for the drag), or — for a track
- * the API cannot address alone — straight into the legacy transaction.
+ * A handle drag's writes for the current pointer position, into the drag's
+ * engine gesture (absolute handles, one entry for the drag). On one dimension
+ * of a vector (Scale X, one axis of Position) they are that dimension's ease
+ * (`KeyframePatch.dim` — AE's per-dimension temporal ease).
  */
 function sendHandleWrites(d: DragState, writes: ReadonlyArray<MemberWrite>): void {
-  if (writes.length === 0) return;
-  if (!d.gesture) {
-    applyMemberWritesLegacy(d.nodeId, d.prop, writes);
-    return;
-  }
-  if (!d.keyIds) return;
+  if (writes.length === 0 || !d.gesture || !d.keyIds) return;
   const patches: KeyframePatch[] = [];
   for (const w of writes) {
     const id = d.keyIds.get(w.t);
     if (!id) return;
-    patches.push({ id, ...memberPatch(d.nodeId, d.prop, w), spatialIn: [], spatialOut: [] });
+    patches.push({ id, ...memberPatchFields(d.nodeId, d.prop, toMemberKeyWrite(w)), spatialIn: [], spatialOut: [] });
   }
   d.gesture.send({ type: 'updateKeyframes', patches });
 }
 
-/**
- * B3-legacy: the member-level writer — for a track the API cannot address on
- * its own (one axis of a merged Position, Scale X, a colour channel: an API
- * keyframe patch reaches every member), and inside the diamond drag, which
- * retimes in stored time (see `moveKeyframe`).
- */
-function applyMemberWritesLegacy(nodeId: string, prop: string, writes: ReadonlyArray<MemberWrite>): void {
-  for (const w of writes) {
-    if (w.bezier) defaultAnimation.setBezier(nodeId, prop, w.t, w.bezier, w.continuous);
-    else if (w.value !== undefined || w.continuous !== undefined) {
-      defaultAnimation.updateKeyframe(nodeId, prop, w.t, {
-        ...(w.value !== undefined ? { value: w.value } : {}),
-        ...(w.continuous !== undefined ? { continuous: w.continuous } : {}),
-      });
-    }
-  }
-}
-
-function valueTypeOf(nodeId: string, prop: string): ValueType {
-  return propRefForTrack(nodeId, prop)?.valueType ?? 'scalar';
-}
-
-function memberPatch(nodeId: string, prop: string, w: MemberWrite): Omit<KeyframePatch, 'id' | 'spatialIn' | 'spatialOut'> {
-  return {
-    ...(w.bezier ? { easing: 'bezier' as const, bezier: toCubic(w.bezier) } : {}),
-    ...(w.continuous !== undefined ? { continuous: w.continuous } : {}),
-    ...(w.value !== undefined ? { value: valueOfNumbers(valueTypeOf(nodeId, prop), [w.value * apiUnitFactor(prop)]) } : {}),
-  };
-}
-
-/** One click / typed field = one undo entry, through the engine when it can address the track. */
+/** One click / typed field = one undo entry (`updateKeyframes`). */
 async function commitMemberWrites(label: string, nodeId: string, prop: string, writes: ReadonlyArray<MemberWrite>): Promise<void> {
   if (writes.length === 0) return;
-  const patches = memberAddressable(nodeId, prop)
-    ? await memberKeyPatches(nodeId, prop, writes.map((w) => ({ t: w.t, patch: memberPatch(nodeId, prop, w) })))
-    : null;
-  if (patches) {
-    await edit(label, { type: 'updateKeyframes', patches });
-    return;
-  }
-  runAnimEdit(label, () => applyMemberWritesLegacy(nodeId, prop, writes));
+  const patches = await memberKeyPatches(nodeId, prop, writes.map(toMemberKeyWrite));
+  if (patches && patches.length > 0) await edit(label, { type: 'updateKeyframes', patches });
+}
+
+/** A key's time clamped a frame short of the keys that do not move with it (comp seconds). */
+function clampToNeighbours(t: number, nb: { prev?: number; next?: number } | undefined, start: number, frame: number): number {
+  const gap = frame > 0 ? frame : 1e-3;
+  const lo = nb?.prev !== undefined ? nb.prev + gap : -Infinity;
+  const hi = nb?.next !== undefined ? nb.next - gap : Infinity;
+  if (lo > hi) return start;
+  return clamp(t, lo, hi);
 }
 
 /**
@@ -901,15 +896,8 @@ export function GraphEditor({
       // rather than emptying it: shift-click on empty space is "add nothing".
       setBoxSelect(null);
     } else if (d.gesture) {
-      // Nothing sent (a click on a handle) → nothing recorded.
+      // Nothing sent (a click on a diamond or a handle) → nothing recorded.
       void (d.moved ? d.gesture.end() : d.gesture.cancel());
-    } else if (d.tx) {
-      // B3-legacy: the legacy drag transactions (the diamond drag; a handle drag
-      // on one axis of a grouped property) — see their pointer-down handlers.
-      if (d.moved) {
-        const label = d.kind === 'kf' ? 'Move Keyframe' : 'Edit Curve';
-        recordAnimEdit(d.tx.commit(label));
-      }
     }
     try {
       if (svgRef.current?.hasPointerCapture(d.pointerId)) svgRef.current.releasePointerCapture(d.pointerId);
@@ -966,9 +954,26 @@ export function GraphEditor({
           maxV: point.maxV,
         });
       }
+      if (group.length === 0) {
+        group.push({ nodeId: kf.nodeId, prop: kf.prop, startT: kf.t, startCompT: kf.tAbs, startValue: kf.value, minV: kf.minV, maxV: kf.maxV });
+      }
       const grabIndex = Math.max(0, group.findIndex(
         (m) => m.nodeId === kf.nodeId && m.prop === kf.prop && Math.abs(m.startT - kf.t) < 1e-9,
       ));
+      // The keys each member may not cross: its track's nearest keys that are
+      // not moving with it, in comp time (the API moves keys in comp time).
+      const moving = new Set(group.map((m) => `${m.nodeId}|${m.prop}|${m.startT}`));
+      const neighbours = group.map((m) => {
+        const kfs = defaultAnimation.getTrackKeyframes(m.nodeId, m.prop) ?? [];
+        const fixed = kfs.filter((k) => !moving.has(`${m.nodeId}|${m.prop}|${k.t}`));
+        const prev = [...fixed].reverse().find((k) => k.t < m.startT);
+        const next = fixed.find((k) => k.t > m.startT);
+        return {
+          ...(prev ? { prev: keyframeToCompTime(m.nodeId, prev.t, m.prop) } : {}),
+          ...(next ? { next: keyframeToCompTime(m.nodeId, next.t, m.prop) } : {}),
+        };
+      });
+      const gesture = new GestureSession('Move Keyframe');
 
       const { x, y } = svgCoords(e);
       beginDrag(e, {
@@ -984,14 +989,19 @@ export function GraphEditor({
         minV: kf.minV,
         maxV: kf.maxV,
         mode,
-        // B3-legacy: engine gap — the diamond drag clamps each key half a frame
-        // short of its neighbours in STORED time; an API move is comp time,
-        // re-quantized to the frame grid inside a clip, and could land the key
-        // ON its neighbour (which `updateKeyframes` would then replace).
-        tx: beginAnimEdit(),
-        group: group.length > 0 ? group : undefined,
+        gesture,
+        group,
         grabIndex,
-        groupCurrentT: group.length > 0 ? group.map((m) => m.startT) : undefined,
+        groupCurrentT: group.map((m) => m.startT),
+        startKeys: group.map((m) => memberKeyStart(m.nodeId, m.prop, m.startT)),
+        neighbours,
+      });
+      // The engine ids of the moving keys (stamped first if a pre-API writer
+      // left them unnamed — resolveKeysForGesture).
+      void resolveKeysForGesture(gesture, group.map((m, i) => ({ id: String(i), nodeId: m.nodeId, prop: m.prop, t: m.startT }))).then((ids) => {
+        const d = dragRef.current;
+        if (!ids || !d || d.gesture !== gesture) return;
+        d.groupEids = group.map((_m, i) => ids.get(String(i)));
       });
     },
     [svgCoords, beginDrag, pps, mode, selectedKfIds, setSelectedKfIds, sampledPaths],
@@ -1030,23 +1040,18 @@ export function GraphEditor({
     (e: React.PointerEvent<SVGElement>, kf: KfPoint, which: 'handle-in' | 'handle-out', hx: number, hy: number) => {
       if (e.button !== 0) return;
       const { x, y } = svgCoords(e);
-      // Through the engine when the track is its own property. B3-legacy: one
-      // axis of a grouped property keeps the legacy transaction (an API keyframe
-      // patch would reach the other axes too — see applyMemberWritesLegacy).
-      const viaEngine = memberAddressable(kf.nodeId, kf.prop);
-      const gesture = viaEngine ? new GestureSession('Edit Curve') : undefined;
-      const tx = viaEngine ? undefined : beginAnimEdit();
-      if (gesture) {
-        // The keys a handle drag can touch: this one and its two neighbours.
-        const kfs = defaultAnimation.getTrackKeyframes(kf.nodeId, kf.prop) ?? [];
-        const i = findKfIndex(kfs, kf.t);
-        const near = [kfs[i - 1], kfs[i], kfs[i + 1]].filter((k): k is NonNullable<typeof k> => !!k);
-        void memberKeyPatches(kf.nodeId, kf.prop, near.map((k) => ({ t: k.t, patch: {} }))).then((patches) => {
-          const d = dragRef.current;
-          if (!patches || !d || d.gesture !== gesture) return;
-          d.keyIds = new Map(near.map((k, n) => [k.t, patches[n]!.id]));
-        });
-      }
+      // One engine gesture; on one dimension of a vector the handles are that
+      // dimension's ease (`KeyframePatch.dim`).
+      const gesture = new GestureSession('Edit Curve');
+      // The keys a handle drag can touch: this one and its two neighbours.
+      const kfs = defaultAnimation.getTrackKeyframes(kf.nodeId, kf.prop) ?? [];
+      const i = findKfIndex(kfs, kf.t);
+      const near = [kfs[i - 1], kfs[i], kfs[i + 1]].filter((k): k is NonNullable<typeof k> => !!k);
+      void memberKeyPatches(kf.nodeId, kf.prop, near.map((k) => ({ t: k.t }))).then((patches) => {
+        const d = dragRef.current;
+        if (!patches || !d || d.gesture !== gesture) return;
+        d.keyIds = new Map(near.map((k, n) => [k.t, patches[n]!.id]));
+      });
       beginDrag(e, {
         kind: which,
         nodeId: kf.nodeId,
@@ -1060,8 +1065,7 @@ export function GraphEditor({
         minV: kf.minV,
         maxV: kf.maxV,
         mode,
-        ...(tx ? { tx } : {}),
-        ...(gesture ? { gesture } : {}),
+        gesture,
       });
     },
     [svgCoords, beginDrag, mode],
@@ -1137,42 +1141,64 @@ export function GraphEditor({
   );
 
   // ── Drag: keyframe diamond ────────────────────────────────────
-  // B3-legacy: engine gap — every write below is the legacy drag transaction
-  // (opened in onKfPointerDown): the retime clamps each key half a frame short
-  // of its neighbours in STORED time, which an API move (comp time, re-quantized
-  // to frames inside a clip) cannot express without risking landing ON the
-  // neighbour, which `updateKeyframes` would replace.
+  // One engine gesture (opened in onKfPointerDown). Every move sends each
+  // moving key's ABSOLUTE comp time and whole value; a key stops a frame short
+  // of the keys that do not move with it (`clampToNeighbours` — the API moves
+  // keys in comp time, quantized to frames inside a clip, so a sub-frame gap
+  // could land it ON its neighbour, which would replace it). The selection's
+  // positional ids follow the keys by their engine ids once the move landed.
+  const relocateKeys = useCallback((d: DragState) => {
+    if (!d.group || !d.groupEids || !d.groupCurrentT) return;
+    for (let i = 0; i < d.group.length; i++) {
+      const m = d.group[i]!;
+      const eid = d.groupEids[i];
+      const t = eid ? keyTimeById(m.nodeId, m.prop, eid) : null;
+      const from = d.groupCurrentT[i]!;
+      if (t === null || t === from) continue;
+      d.groupCurrentT[i] = t;
+      rewriteSelectedKeyframeId(uiKeyId(m.nodeId, m.prop, from), uiKeyId(m.nodeId, m.prop, t));
+      if (i === d.grabIndex) {
+        d.kfT = t;
+        setSelectedKf({ nodeId: m.nodeId, prop: m.prop, t });
+      }
+    }
+  }, []);
+
   const moveKeyframe = useCallback(
     (d: DragState, ex: number, ey: number, e: React.PointerEvent) => {
+      if (!d.group || !d.groupCurrentT || d.grabIndex === undefined) return;
       const frameDur = frameRate > 0 ? 1 / frameRate : 0;
       const rawComp = clamp((d.ox + ex) / pps, 0, duration);
       const range = Math.max(1e-9, d.maxV - d.minV);
       const pixelsPerUnit = INNER_H / range;
+      const group = d.group;
+      const moving = new Set(group.map((m, i) => uiKeyId(m.nodeId, m.prop, d.groupCurrentT![i]!)));
 
-      const collectOtherValues = (movingIds: ReadonlySet<string>): number[] => {
+      const collectOtherValues = (): number[] => {
         const vals: number[] = [];
         for (const p of sampledPaths) {
           for (const k of p.keyframes) {
-            const id = uiKeyId(p.nodeId, p.prop, k.t);
-            if (!movingIds.has(id)) vals.push(k.value);
+            if (!moving.has(uiKeyId(p.nodeId, p.prop, k.t))) vals.push(k.value);
           }
         }
         return vals;
       };
 
-      // Multi-select body: move every selected diamond by the same time (and
-      // value) delta. Single-diamond path below stays the neighbour-clamped one.
-      if (d.group && d.group.length > 1 && d.groupCurrentT && d.grabIndex !== undefined) {
-        const moving = new Set(d.group.map((m, i) => uiKeyId(m.nodeId, m.prop, d.groupCurrentT![i]!)));
+      let compTimes: number[];
+      let values: Array<number | undefined>;
+      let timeTarget: SnapTarget | null;
+      let valueSnap: ValueSnapTarget | null = null;
+      if (group.length > 1) {
+        // Multi-select body: every selected diamond by the same time (and
+        // value) delta.
         const otherTimes: number[] = [];
         for (const p of sampledPaths) {
           for (const k of p.keyframes) {
-            const id = uiKeyId(p.nodeId, p.prop, k.t);
-            if (!moving.has(id)) otherTimes.push(k.tAbs);
+            if (!moving.has(uiKeyId(p.nodeId, p.prop, k.t))) otherTimes.push(k.tAbs);
           }
         }
         const plan = planGraphGroupTimes({
-          members: d.group,
+          members: group,
           grabIndex: d.grabIndex,
           rawGrabCompT: rawComp,
           duration,
@@ -1182,130 +1208,89 @@ export function GraphEditor({
           otherCompTimes: otherTimes,
           disableSnap: e.altKey,
         });
-        const grab = d.group[d.grabIndex]!;
-        let valueSnap: ValueSnapTarget | null = null;
-        let snappedGrabValue: number | null = null;
+        timeTarget = plan.snapTarget;
+        compTimes = plan.compTimes.map((t, i) => clampToNeighbours(t, d.neighbours?.[i], group[i]!.startCompT, frameDur));
+        const grab = group[d.grabIndex]!;
         if (d.mode === 'value') {
-          const rawV = yToValue(d.oy + ey, d.minV, d.maxV, INNER_H);
-          const snapped = snapKeyframeValue(rawV, {
+          const snapped = snapKeyframeValue(yToValue(d.oy + ey, d.minV, d.maxV, INNER_H), {
             pixelsPerUnit,
-            keyframeValues: collectOtherValues(moving),
+            keyframeValues: collectOtherValues(),
             disabled: e.altKey,
           });
-          snappedGrabValue = snapped.value;
           valueSnap = snapped.target;
+          values = group.map((m) => applyGroupValueDelta(m, grab, snapped.value));
+        } else {
+          values = group.map((m) => m.startValue);
         }
-
-        setGraphSnap({
-          time: plan.snapTarget?.kind === 'frame' ? null : plan.snapTarget,
-          value: valueSnap,
-          minV: d.minV,
-          maxV: d.maxV,
-        });
-
-        for (let i = 0; i < d.group.length; i++) {
-          const m = d.group[i]!;
-          const fromT = d.groupCurrentT[i]!;
-          let newT = compToKeyframeTime(m.nodeId, plan.compTimes[i]!, m.prop);
-          const kfs = defaultAnimation.getTrackKeyframes(m.nodeId, m.prop);
-          if (!kfs) continue;
-          const idx = findKfIndex(kfs, fromT);
-          if (idx < 0) continue;
-          const prev = kfs[idx - 1];
-          const next = kfs[idx + 1];
-          if (prev) {
-            const gap = Math.min(frameDur || 1e-3, (fromT - prev.t) / 2);
-            newT = Math.max(newT, prev.t + gap);
-          }
-          if (next) {
-            const gap = Math.min(frameDur || 1e-3, (next.t - fromT) / 2);
-            newT = Math.min(newT, next.t - gap);
-          }
-          if (d.mode === 'value' && snappedGrabValue !== null) {
-            const newV = applyGroupValueDelta(m, grab, snappedGrabValue);
-            defaultAnimation.updateKeyframe(m.nodeId, m.prop, fromT, { t: newT, value: newV });
-          } else {
-            defaultAnimation.updateKeyframe(m.nodeId, m.prop, fromT, { t: newT, value: m.startValue });
-            if (d.mode === 'speed' && i === d.grabIndex) {
-              const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
-              applyMemberWritesLegacy(m.nodeId, m.prop, speedWrites(m.nodeId, m.prop, newT, speed, 'linked'));
-            }
-          }
-          const oldId = uiKeyId(m.nodeId, m.prop, fromT);
-          d.groupCurrentT[i] = newT;
-          rewriteSelectedKeyframeId(oldId, uiKeyId(m.nodeId, m.prop, newT));
-          if (i === d.grabIndex) {
-            d.kfT = newT;
-            setSelectedKf({ nodeId: m.nodeId, prop: m.prop, t: newT });
-          }
+      } else {
+        // One diamond: snapped to the playhead / other curves' keys / frames.
+        const m = group[0]!;
+        const otherTimes: number[] = [];
+        for (const p of sampledPaths) {
+          if (p.nodeId === m.nodeId && p.prop === m.prop) continue;
+          for (const k of p.keyframes) otherTimes.push(k.tAbs);
         }
-        return;
-      }
-
-      const kfs = defaultAnimation.getTrackKeyframes(d.nodeId, d.prop);
-      if (!kfs) return;
-      const idx = findKfIndex(kfs, d.kfT);
-      if (idx < 0) return;
-      const prev = kfs[idx - 1];
-      const next = kfs[idx + 1];
-
-      // Time (comp) = origin + delta, snapped to playhead / other keys / frames.
-      const otherTimes: number[] = [];
-      for (const p of sampledPaths) {
-        for (const k of p.keyframes) {
-          if (p.nodeId === d.nodeId && p.prop === d.prop) continue;
-          otherTimes.push(k.tAbs);
-        }
-      }
-      const timeSnap = snapKeyframeTime(rawComp, {
-        pixelsPerSecond: pps,
-        frameDuration: frameDur,
-        playheadTime: currentTime,
-        keyframeTimes: otherTimes,
-        disabled: e.altKey,
-      });
-      let newT = compToKeyframeTime(d.nodeId, clamp(timeSnap.time, 0, duration), d.prop);
-
-      // Never cross (or land on) a neighbour — upsert would swallow it.
-      if (prev) {
-        const gap = Math.min(frameDur || 1e-3, (d.kfT - prev.t) / 2);
-        newT = Math.max(newT, prev.t + gap);
-      }
-      if (next) {
-        const gap = Math.min(frameDur || 1e-3, (next.t - d.kfT) / 2);
-        newT = Math.min(newT, next.t - gap);
-      }
-
-      let valueSnap: ValueSnapTarget | null = null;
-      if (d.mode === 'value') {
-        const rawV = yToValue(d.oy + ey, d.minV, d.maxV, INNER_H);
-        const moving = new Set([uiKeyId(d.nodeId, d.prop, d.kfT)]);
-        const snapped = snapKeyframeValue(rawV, {
-          pixelsPerUnit,
-          keyframeValues: collectOtherValues(moving),
+        const timeSnap = snapKeyframeTime(rawComp, {
+          pixelsPerSecond: pps,
+          frameDuration: frameDur,
+          playheadTime: currentTime,
+          keyframeTimes: otherTimes,
           disabled: e.altKey,
         });
-        valueSnap = snapped.target;
-        defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.kfT, { t: newT, value: snapped.value });
-      } else {
-        defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.kfT, { t: newT, value: d.origValue });
-        const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
-        applyMemberWritesLegacy(d.nodeId, d.prop, speedWrites(d.nodeId, d.prop, newT, speed, 'linked'));
+        timeTarget = timeSnap.target;
+        compTimes = [clampToNeighbours(clamp(timeSnap.time, 0, duration), d.neighbours?.[0], m.startCompT, frameDur)];
+        if (d.mode === 'value') {
+          const snapped = snapKeyframeValue(yToValue(d.oy + ey, d.minV, d.maxV, INNER_H), {
+            pixelsPerUnit,
+            keyframeValues: collectOtherValues(),
+            disabled: e.altKey,
+          });
+          valueSnap = snapped.target;
+          values = [snapped.value];
+        } else {
+          values = [m.startValue];
+        }
       }
 
       setGraphSnap({
-        time: timeSnap.target?.kind === 'frame' ? null : timeSnap.target,
+        time: timeTarget?.kind === 'frame' ? null : timeTarget,
         value: valueSnap,
         minV: d.minV,
         maxV: d.maxV,
       });
 
-      const oldId = uiKeyId(d.nodeId, d.prop, d.kfT);
-      d.kfT = newT;
-      setSelectedKf({ nodeId: d.nodeId, prop: d.prop, t: newT });
-      rewriteSelectedKeyframeId(oldId, uiKeyId(d.nodeId, d.prop, newT));
+      if (!d.gesture || !d.groupEids || !d.startKeys) return;
+      // One patch per engine key: two member rows of one key (X and Y diamonds
+      // of a Position key) are ONE key — their values combine.
+      const byId = new Map<string, { time: number; start: MemberKeyStart; rep: Map<number, number> }>();
+      group.forEach((_m, i) => {
+        const eid = d.groupEids![i];
+        const start = d.startKeys![i];
+        if (!eid || !start) return;
+        const x = byId.get(eid) ?? { time: compTimes[i]!, start, rep: new Map<number, number>() };
+        const v = values[i];
+        if (v !== undefined) x.rep.set(start.index, v);
+        byId.set(eid, x);
+      });
+      const patches: KeyframePatch[] = [...byId].map(([id, x]) => ({
+        id, time: compTime(x.time), value: memberKeyValue(x.start, x.rep), spatialIn: [], spatialOut: [],
+      }));
+      if (d.mode === 'speed') {
+        // The grabbed key's speed, both sides (linked), on its own dimension.
+        const g = group[d.grabIndex]!;
+        const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
+        const liveT = d.groupCurrentT[d.grabIndex]!;
+        const kfs = defaultAnimation.getTrackKeyframes(g.nodeId, g.prop) ?? [];
+        for (const w of speedWrites(g.nodeId, g.prop, liveT, speed, 'linked')) {
+          const id = kfs.find((k) => k.t === w.t)?.id;
+          if (id) patches.push({ id, ...memberPatchFields(g.nodeId, g.prop, toMemberKeyWrite(w)), spatialIn: [], spatialOut: [] });
+        }
+      }
+      if (patches.length === 0) return;
+      d.gesture.send({ type: 'updateKeyframes', patches });
+      void engineIdle().then(() => relocateKeys(d));
     },
-    [pps, duration, INNER_H, frameRate, currentTime, sampledPaths],
+    [pps, duration, INNER_H, frameRate, currentTime, sampledPaths, relocateKeys],
   );
 
   // ── Drag: Bézier handle ───────────────────────────────────────
@@ -1553,39 +1538,33 @@ export function GraphEditor({
   const toggleRoving = useCallback(() => {
     if (targetKfIds.length === 0) return;
     const next = !selectedKfData?.roving;
-    const rewrites: Array<[string, string]> = [];
-    // B3-legacy: engine gap — `updateKeyframes{roving}` sets the flag but does
-    // not re-solve the roving key's TIME (AnimationEngine.setRoving /
-    // applyRoving[Spatial]); roving would silently stop moving the key.
-    runAnimEdit(next ? 'Rove Across Time' : 'Stop Roving', () => {
-      for (const id of targetKfIds) {
-        const ref = parseUiKey(id);
-        if (!ref) continue;
-        let movedTo: number | null = null;
-        for (const prop of expandKeyframeProp(ref.prop)) {
-          const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, prop);
-          if (!kfs) continue;
-          const i = kfs.findIndex((k) => Math.abs(k.t - ref.t) < 1e-6);
-          // Ends have nothing to rove between; skipping them is why a
-          // whole-track selection can be roved in one click.
-          if (i <= 0 || i >= kfs.length - 1) continue;
-          defaultAnimation.setRoving(ref.nodeId, prop, kfs[i]!.t, next);
-          movedTo = defaultAnimation.getTrackKeyframes(ref.nodeId, prop)?.[i]?.t ?? null;
-        }
-        if (movedTo !== null && Math.abs(movedTo - ref.t) > 1e-9) {
-          rewrites.push([id, uiKeyId(ref.nodeId, ref.prop, movedTo)]);
-        }
-      }
+    // Ends have nothing to rove between; skipping them is why a whole-track
+    // selection can be roved in one click.
+    const inner = targetKfIds.filter((id) => {
+      const ref = parseUiKey(id);
+      const kfs = ref ? defaultAnimation.getTrackKeyframes(ref.nodeId, expandKeyframeProp(ref.prop)[0]!) : null;
+      const i = kfs ? kfs.findIndex((k) => Math.abs(k.t - ref!.t) < 1e-6) : -1;
+      return !!kfs && i > 0 && i < kfs.length - 1;
     });
-    for (const [oldId, newId] of rewrites) rewriteSelectedKeyframeId(oldId, newId);
-    const focused = rewrites.find(([oldId]) =>
-      selectedKf && oldId === uiKeyId(selectedKf.nodeId, selectedKf.prop, selectedKf.t));
-    if (focused && selectedKf) {
-      const t = parseUiKey(focused[1])?.t;
-      if (t !== undefined) setSelectedKf({ ...selectedKf, t });
-    }
-    bumpScene();
-  }, [targetKfIds, selectedKfData, selectedKf]);
+    if (inner.length === 0) return;
+    void (async () => {
+      const ids = await resolveKeyIds(inner);
+      if (!ids) return;
+      // The engine re-times the roving run (updateKeyframes{roving}); the
+      // selection follows each key by its engine id.
+      await setRovingOnKeys(inner, next);
+      for (const id of inner) {
+        const ref = parseUiKey(id);
+        const eid = ids.get(id);
+        if (!ref || !eid) continue;
+        const t = keyTimeById(ref.nodeId, expandKeyframeProp(ref.prop)[0]!, eid);
+        if (t === null || Math.abs(t - ref.t) < 1e-9) continue;
+        const newId = uiKeyId(ref.nodeId, ref.prop, t);
+        rewriteSelectedKeyframeId(id, newId);
+        setSelectedKf((cur) => (cur && cur.nodeId === ref.nodeId && cur.prop === ref.prop && Math.abs(cur.t - ref.t) < 1e-9 ? { ...cur, t } : cur));
+      }
+    })();
+  }, [targetKfIds, selectedKfData]);
 
   // Deselecting takes the whole tool group away with it, so the popover must
   // not still be "open" when the next keyframe is picked — it would appear
@@ -1895,24 +1874,27 @@ export function GraphEditor({
             <div style={{ width: 62 }}>
               <span className={styles.fieldLabel}>t=</span>
               <ValueField
-                value={selectedKfData.t}
+                value={keyframeToCompTime(selectedKfData.nodeId, selectedKfData.t, selectedKfData.prop)}
                 unit="s"
                 precision={2}
                 min={0}
                 max={duration}
-                onChange={(newT: number) => {
-                  const oldT = selectedKfData.t;
-                  // B3-legacy: engine gap — this field types a STORED (layer)
-                  // time; API moves are comp time, re-quantized to the frame
-                  // grid inside a clip, so a typed 1.23 s would not land at 1.23.
-                  runAnimEdit('Move Keyframe', () => {
-                    defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, oldT, { t: newT });
-                  });
-                  setSelectedKf(selectedKf ? { ...selectedKf, t: newT } : null);
-                  rewriteSelectedKeyframeId(
-                    uiKeyId(selectedKfData.nodeId, selectedKfData.prop, oldT),
-                    uiKeyId(selectedKfData.nodeId, selectedKfData.prop, newT),
-                  );
+                onChange={(newCompT: number) => {
+                  // COMP time, as the diamond is drawn (the API moves keys in
+                  // comp time; the engine maps it onto the layer's key axis).
+                  const { nodeId, prop, t: oldT } = selectedKfData;
+                  const uiId = uiKeyId(nodeId, prop, oldT);
+                  void (async () => {
+                    const ids = await resolveKeyIds([uiId]);
+                    const eid = ids?.get(uiId);
+                    if (!eid) return;
+                    const res = await edit('Move Keyframe', { type: 'updateKeyframes', patches: [{ id: eid, time: compTime(Math.max(0, newCompT)), spatialIn: [], spatialOut: [] }] });
+                    if (!res.ok) return;
+                    const t = keyTimeById(nodeId, prop, eid);
+                    if (t === null || t === oldT) return;
+                    setSelectedKf((cur) => (cur ? { ...cur, t } : null));
+                    rewriteSelectedKeyframeId(uiId, uiKeyId(nodeId, prop, t));
+                  })();
                 }}
               />
             </div>
@@ -2373,14 +2355,19 @@ function KeyframeNumericStrip({
               void commitMemberWrites('Set Keyframe Value', kf.nodeId, members[0]!, [{ t: kf.t, value: v }]);
               return;
             }
-            // B3-legacy: the merged Position row sets ONE number on every axis —
-            // a member-level write the API cannot express (it takes the vec2).
-            runAnimEdit('Set Keyframe Value', () => {
-              for (const prop of members) {
-                defaultAnimation.updateKeyframe(kf.nodeId, prop, kf.t, { value: v });
-              }
+            // The merged Position row sets ONE number on every axis (the strip
+            // shows one field) — the whole key's value, every member replaced.
+            const start = memberKeyStart(kf.nodeId, members[0]!, kf.t);
+            if (!start) return;
+            const uiId = uiKeyId(kf.nodeId, kf.prop, kf.t);
+            void resolveKeyIds([uiId]).then((ids) => {
+              const eid = ids?.get(uiId);
+              if (!eid) return;
+              void edit('Set Keyframe Value', {
+                type: 'updateKeyframes',
+                patches: [{ id: eid, value: memberKeyValue(start, new Map(start.members.map((_m, i) => [i, v]))), spatialIn: [], spatialOut: [] }],
+              });
             });
-            bumpScene();
           }}
         />
       </label>

@@ -11,7 +11,9 @@ import { Switch } from '@components/Switch';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { isPrecomp, setPrecomp } from '@core/scene/precomp';
+import { isPrecomp } from '@core/scene/precomp';
+import { edit } from '@core/engine/uiEdits';
+import { boolFieldCommands } from './layerFieldEdits';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { setLayersSwitch } from './inspectorEdits';
 import { readCompCollapse } from '@core/scene/compInstance';
@@ -95,8 +97,8 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
         <span className={styles.label}>Precompose</span>
         <Switch
           checked={on}
-          // B3-legacy: engine gap — a GROUP's Precompose switch (composite as one unit, isPrecomp) has no API form; `precompose` makes a new composition instead.
-          onChange={(e) => setPrecomp(nodeId, e.currentTarget.checked)}
+          // `layer/precompose` (bool field, fx.precomp): composite the group as one unit — not the `precompose` command, which makes a new composition.
+          onChange={(e) => { void edit('Precompose', boolFieldCommands(nodeId, 'layer/precompose', e.currentTarget.checked)); }}
           aria-label="Precompose (composite group as one unit)"
         />
       </div>

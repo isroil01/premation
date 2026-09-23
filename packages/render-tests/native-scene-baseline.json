@@ -1,0 +1,8 @@
+{
+  "_comment": "Ceilings for how far the C++ engine's OWN frame (FrameScene built from the scene's project document by premation-scene, D2w) may differ from the TS WebGPU frame. A LIST OF DEBTS, meant to be removed. video-decoded-frame: the FrameScene is structurally identical and the native backend draws the TS-uploaded texel bit-identically; the difference is the decode itself — E1's ffmpeg YUV->RGB conversion (chroma siting / matrix rounding) vs Chromium's WebCodecs/VideoFrame decode of the same H.264 frame. Fixing it belongs to E1's conversion parity, not the scene builder. Frames not ported yet are not listed (reported as not-ported, never failed).",
+  "tolerance": 0.01,
+  "frames": {
+    "video-decoded-frame#5": 0.10694,
+    "video-decoded-frame#13": 0.10672
+  }
+}

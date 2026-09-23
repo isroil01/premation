@@ -5,6 +5,7 @@
 #include "catalog_data.hpp"
 #include "fields.hpp"
 #include "fxstate.hpp"
+#include "rig.hpp"
 #include "scene.hpp"
 #include "strutil.hpp"
 
@@ -100,6 +101,15 @@ ResultOf<api::AddProperties> handle(const api::AddProperties& c, HCtx& x) {
   const std::string layer = c.parent.layer;
   (void)require_layer(d, layer);
   if (c.names.empty()) fail(ErrorCode::invalid_argument, "no property names given", {.layer = layer, .path = c.parent.path});
+  if (ik_parent_of(c.parent.path)) {
+    // An IK goal's optional Pole (rig.hpp).
+    const auto run = plan_ik_add_properties(d, layer, c.parent.path, c.names);
+    x.label = "Add Property";
+    run();
+    api::PropertyPaths out;
+    for (const auto& n : c.names) out.paths.push_back(c.parent.path + "/" + n);
+    return out;
+  }
   const AnimatorAt at = animator_of(d, layer, c.parent.path);
   const Node& node = *d.node(layer);
   const Json cur = at.data[at.index];
@@ -156,8 +166,15 @@ ResultOf<api::RemoveProperties> handle(const api::RemoveProperties& c, HCtx& x) 
     Optional o;
   };
   std::vector<Plan> plans;
+  std::vector<IkRemovePlan> rigRuns;
   for (const auto& p : c.props) {
     (void)require_layer(d, p.layer);
+    if (auto ik = plan_ik_remove_property(d, p.layer, p.path)) {
+      bool seen = false;
+      for (const auto& r : rigRuns) seen = seen || r.key == ik->key;
+      if (!seen) rigRuns.push_back(std::move(*ik));
+      continue;
+    }
     const std::size_t slash = p.path.rfind('/');
     const std::string parent = slash == std::string::npos ? std::string() : p.path.substr(0, slash);
     const std::string name = slash == std::string::npos ? p.path : p.path.substr(slash + 1);
@@ -177,7 +194,8 @@ ResultOf<api::RemoveProperties> handle(const api::RemoveProperties& c, HCtx& x) 
     if (dup) continue;
     plans.push_back(Plan{p.layer, aid, std::move(*o)});
   }
-  x.label = plans.size() == 1 ? "Remove Property" : "Remove Properties";
+  x.label = plans.size() + rigRuns.size() == 1 ? "Remove Property" : "Remove Properties";
+  for (const auto& r : rigRuns) r.run();
   for (const auto& plan : plans) {
     const std::vector<Json> data = read_animator_data(*d.node(plan.layer));
     std::size_t index = 0;

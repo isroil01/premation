@@ -4,15 +4,19 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <set>
 
 #include "catalog_data.hpp"
 #include "fail.hpp"
 #include "fields.hpp"
+#include "rig.hpp"
+#include "particle_props.hpp"
 #include "fxstate.hpp"
 #include "meta.hpp"
 #include "ptree.hpp"
 #include "scene.hpp"
+#include "strokes.hpp"
 #include "strutil.hpp"
 #include "time_conv.hpp"
 
@@ -35,6 +39,21 @@ std::string detail_expected(api::ValueType t) {
 
 // ── apiPathFor ───────────────────────────────────────────────────────────
 
+/// `glass.<letters>` → the param name (props.ts apiPathFor's /^glass.([A-Za-z]+)$/).
+std::optional<std::string> glass_member(std::string_view prop) {
+  if (!prop.starts_with("glass.") || prop.size() == 6) return std::nullopt;
+  for (const char c : prop.substr(6)) {
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return std::nullopt;
+  }
+  return std::string(prop.substr(6));
+}
+
+/// props.ts EFFECT_OPACITY_ROW: `effect.<id>.fx.opacity` of a real effect (not a layer style).
+bool effect_opacity_row(std::string_view prop) {
+  const auto eff = parse_prefixed_id_rest(prop, "effect.");
+  return eff && eff->rest == kEffectOpacityKey && !eff->id.starts_with("layerstyle:");
+}
+
 std::string api_path_for(std::string_view prop, const StaticPropertyRow* row, const std::vector<std::string>& animIds,
                          const std::vector<std::vector<std::string>>& selIds) {
   if (prop.starts_with(kGroupPlaceholderPrefix)) {
@@ -56,6 +75,7 @@ std::string api_path_for(std::string_view prop, const StaticPropertyRow* row, co
     if (eff->rest == kEffectOpacityKey) return "effects/" + eff->id + "/compositing/opacity";
     return "effects/" + eff->id + "/" + eff->rest;
   }
+  if (auto g = glass_member(prop)) return "styles/glass/" + *g;
   if (prop.starts_with("effect.") && prop.size() > 7 && prop.substr(7).find('.') == std::string_view::npos) {
     return "effects/" + std::string(prop.substr(7)) + "/amount";
   }
@@ -203,7 +223,25 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     add(std::move(inv));
   };
 
+  // Compositing Options (B3z): Effect Opacity (keyed on effect.<id>.fx.opacity,
+  // static = Effect.opacity), Effect Mask and the label colour — every effect.
+  auto add_compositing = [&](const std::string& effectId) {
+    PropBinding b;
+    b.path = "effects/" + effectId + "/compositing/opacity";
+    b.name = "Effect Opacity";
+    b.matchName = "ADBE Effect Mask Opacity";
+    b.valueType = ValueType::scalar;
+    b.members = {"effect." + effectId + "." + std::string(kEffectOpacityKey)};
+    b.unit = "%";
+    b.min = 0.0;
+    b.max = 100.0;
+    b.defaultValue = v_scalar(100);
+    add(std::move(b));
+    for (const Json& spec : registry().fields.at("effect").arr()) add(effect_field_binding(effectId, spec));
+  };
   for (const StaticPropertyRow& row : rows) {
+    // Effect Opacity is listed for EVERY effect below (B3z), not only once touched.
+    if (effect_opacity_row(row.prop)) continue;
     if (row.maskTrack || row.prop == kMaskAnimProp) {
       if (mask) {
         for (const Json& p : mask->at("paths").arr()) add_mask_props(p);
@@ -295,8 +333,11 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
   const std::vector<Json> effects = read_node_effects(node);
   for (const Json& effect : effects) {
     const EffectDef* edef = registry().effect(effect.at("type").str());
-    if (edef == nullptr) continue;
     const std::string eid = effect.at("id").is_string() ? effect.at("id").str() : "undefined";
+    if (edef == nullptr) {
+      add_compositing(eid);
+      continue;
+    }
     for (const auto& p : edef->params) {
       if (p.type == "number" || p.type == "color" || p.type == "resolved") continue;
       PropBinding b;
@@ -319,6 +360,39 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       }
       add(std::move(b));
     }
+    add_compositing(eid);
+  }
+
+  // Layer styles (B3z): Glass as a first-class style (styles/glass/<param> on the
+  // glass.<param> tracks) and the styles' switches (effectFieldSpecs.ts).
+  {
+    const Json lstyles = get_node_layer_styles(node);
+    const Json& glass = lstyles.at("glass");
+    if (!glass.is_undefined() && !glass.is_null() && !(glass.is_bool() && !glass.b())) {
+      const Json& gd = registry().layerStyles.at("defaults").at("glass");
+      for (const Json& g : registry().fields.at("glass").arr()) {
+        const std::string key = g.at("key").str();
+        const std::string m = "glass." + key;
+        PropBinding b;
+        b.path = "styles/glass/" + key;
+        b.name = g.at("label").str();
+        b.matchName = m;
+        if (g.at("type").str() == "color") {
+          b.valueType = ValueType::color;
+          b.members = {m + "_r", m + "_g", m + "_b", m + "_a"};
+          b.colorBase = m;
+        } else {
+          b.valueType = ValueType::scalar;
+          b.members = {m};
+          b.defaultValue = v_scalar(gd.at(key).num());
+        }
+        add(std::move(b));
+      }
+    }
+    for (const Json& spec : registry().fields.at("style").arr()) {
+      const Json& st = lstyles.at(spec.at("style").str());
+      if (!st.is_undefined() && !st.is_null() && !(st.is_bool() && !st.b())) add(style_field_binding(spec));
+    }
   }
 
   if (mask) {
@@ -328,6 +402,42 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
   // G1: static fields, Blur Y, the registered font axes and the layer's fill
   // colour — before the unclaimed tracks below, which they claim (fields.ts).
   add_field_bindings(node, layerId, animators, add, [&cat](std::string_view p) { return cat.byPath.contains(p); });
+
+  // B3z WS-R: puppet pins and skeletons (rig.hpp) — they claim the puppet.* /
+  // bone.* / ikTarget.* / ikPole.* / ikMode.* tracks.
+  add_rig_bindings(d, node, layerId, add);
+
+  // B3z: Gradient Fill ▸ Colors (strokes.cpp) — claims the fill.stops data track.
+  if (auto stops = fill_stops_binding(d, node, layerId)) add(std::move(*stops));
+
+  // B3z: a particle emitter's keyframeable numbers and colours (particle_props.cpp).
+  add_particle_bindings(node, add, [&cat](std::string_view m) { return cat.byMember.contains(m); });
+
+  // B3z: LATENT numeric properties (latentPropSpecs.ts) — keyframeable
+  // numbers the layer has before it stores them; same path as when stored.
+  for (LatentMember& l : latent_members(node)) {
+    if (cat.byMember.contains(l.member)) continue;
+    const PropertyMeta meta = resolve_property_meta(l.member, &node);
+    StaticPropertyRow row;
+    row.prop = l.member;
+    row.label = meta.label;
+    row.group = group_for_prop(d, l.member, &node);
+    row.members = {l.member};
+    PropBinding b;
+    b.path = api_path_for(l.member, &row, animIds, selIds);
+    if (cat.byPath.contains(b.path)) continue;
+    b.name = meta.label;
+    b.matchName = l.member;
+    b.valueType = ValueType::scalar;
+    b.members = {l.member};
+    b.animatable = meta.keyframeable;
+    b.unit = meta.unit;
+    b.home = std::move(l.home);
+    b.min = meta.min;
+    b.max = meta.max;
+    if (meta.defaultValue.is_number()) b.defaultValue = v_scalar(meta.defaultValue.num() * api_unit_factor(l.member));
+    add(std::move(b));
+  }
 
   if (const NodeAnim* an = d.anim(layerId)) {
     for (const auto& [prop, keys] : an->tracks) {
@@ -342,6 +452,37 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       b.unit = meta.unit;
       add(std::move(b));
     }
+  }
+  // Convert Audio to Keyframes' track (B3z): an audio layer's `audioAmplitude`
+  // is addressable BEFORE its first key — the binding the loop above gives it.
+  if (node.kind() == "audio" && !cat.byMember.contains("audioAmplitude")) {
+    const PropertyMeta meta = resolve_property_meta("audioAmplitude", &node);
+    PropBinding b;
+    b.path = api_path_for("audioAmplitude", nullptr, animIds, selIds);
+    b.name = meta.label.empty() ? "audioAmplitude" : meta.label;
+    b.matchName = "audioAmplitude";
+    b.valueType = ValueType::scalar;
+    b.members = {"audioAmplitude"};
+    b.unit = meta.unit;
+    add(std::move(b));
+  }
+  // A ONE-node camera's Point of Interest (B3z): keying it aims the camera at a
+  // point — what Track Motion's camera follow writes (props.ts).
+  if (node.kind() == "camera") {
+    for (const std::string m : {"poiX", "poiY", "poiZ"}) {
+      if (cat.byMember.contains(m)) continue;
+      const PropertyMeta meta = resolve_property_meta(m, &node);
+      PropBinding b;
+      b.path = "camera/" + m;
+      b.name = meta.label.empty() ? m : meta.label;
+      b.matchName = m;
+      b.valueType = ValueType::scalar;
+      b.members = {m};
+      b.unit = meta.unit;
+      add(std::move(b));
+    }
+  }
+  if (const NodeAnim* an = d.anim(layerId)) {
     for (const auto& [prop, track] : an->data) {
       if (cat.byMember.contains(prop)) continue;
       PropBinding b;
@@ -363,6 +504,10 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
   auto group_name = [&](const std::string& path) -> GroupBinding {
     GroupBinding g;
     g.path = path;
+    if (auto rig = rig_group_info(node, path)) {
+      rig->path = path;
+      return *rig;
+    }
     const std::vector<std::string> seg = split(path, '/');
     auto str_or = [](const Json& v, const std::string& fb) {
       if (v.is_undefined() || v.is_null()) return fb;
@@ -396,6 +541,11 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
         g.name = seg[1];
         g.matchName = seg[1];
       }
+      return g;
+    }
+    if (seg[0] == "effects" && seg.size() == 3 && seg[2] == "compositing") {
+      g.name = "Compositing Options";
+      g.matchName = "ADBE Effect Built In Params";
       return g;
     }
     if (seg[0] == "masks" && seg.size() == 2) {
@@ -498,6 +648,7 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     for (const auto& sid : selIds[i]) ensure_group("text/animators/" + animIds[i] + "/selectors/" + sid);
   }
   for (const Json& o : ops) ensure_group("contents/" + o.at("id").str());
+  for (const auto& g : rig_group_paths(node)) ensure_group(g);
   for (const PropBinding& b : cat.props) {
     const std::size_t slash = b.path.rfind('/');
     if (slash == std::string::npos) {
@@ -524,7 +675,9 @@ const PropBinding& require_binding(const Catalog& cat, std::string_view path) {
 // ── values ──────────────────────────────────────────────────────────────
 
 double api_unit_factor(std::string_view member) noexcept {
-  return member == "scale" || member == "scaleX" || member == "scaleY" || member == "scaleZ" ? 100.0 : 1.0;
+  if (member == "scale" || member == "scaleX" || member == "scaleY" || member == "scaleZ") return 100.0;
+  // A pin's / bone's scale (multiplier → %), a bone's rotation (radians → °).
+  return rig_member_factor(member).value_or(1.0);
 }
 
 std::vector<double> to_api_nums(const PropBinding& b, std::vector<double> nums) {
@@ -634,6 +787,32 @@ std::optional<ChannelSplit> split_channel(std::string_view prop) {
   return ChannelSplit{std::string(prop.substr(0, prop.size() - 2)), std::string(suffix)};
 }
 
+struct GlassProp {
+  std::string param;
+  std::string channel;  ///< "_r" … "_a", or "" for a numeric param
+};
+/// propertyValue.ts `parseGlassPath`: `glass.<numeric param>` or `glass.<colour>_r/_g/_b/_a`.
+std::optional<GlassProp> glass_prop(std::string_view prop) {
+  if (!prop.starts_with("glass.")) return std::nullopt;
+  std::string rest(prop.substr(6));
+  std::string channel;
+  if (const auto sc = split_channel(rest)) {
+    rest = sc->base;
+    channel = sc->suffix;
+  }
+  if (rest.empty()) return std::nullopt;
+  for (const char c : rest) {
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return std::nullopt;
+  }
+  for (const Json& g : registry().fields.at("glass").arr()) {
+    if (g.at("key").str() != rest) continue;
+    const bool color = g.at("type").str() == "color";
+    if (color != !channel.empty()) return std::nullopt;
+    return GlassProp{rest, channel};
+  }
+  return std::nullopt;
+}
+
 std::optional<double> read_effect_value(const Node& n, const std::string& effectId, const std::string& key) {
   const auto channel = split_channel(key);
   if (auto styleKey = style_key_from_effect_id(effectId)) {
@@ -662,6 +841,8 @@ std::optional<double> read_effect_value(const Node& n, const std::string& effect
   const std::vector<Json> effects = read_node_effects(n);
   const Json* effect = find_by_id(effects, effectId);
   if (effect == nullptr) return std::nullopt;
+  // Compositing Options ▸ Effect Opacity is the instance field (absent = 100), B3z.
+  if (key == kEffectOpacityKey) return effect->at("opacity").is_finite_number() ? effect->at("opacity").num() : 100.0;
   const Json params = params_of(*effect);
   if (channel) {
     const Json& c = params.at(channel->base);
@@ -694,6 +875,17 @@ bool write_effect_value(Document& d, std::string_view nodeId, const std::string&
   const std::vector<Json> effects = read_node_effects(n);
   const Json* effect = find_by_id(effects, effectId);
   if (effect == nullptr) return false;
+  if (key == kEffectOpacityKey) {
+    // effects.ts setEffectOpacity: clamp 0..100, and ≥ 100 (or not finite) CLEARS the field.
+    std::vector<Json> next = get_node_effects(d, nodeId);
+    for (Json& e : next) {
+      if (!(e.at("id").is_string() && e.at("id").str() == effectId)) continue;
+      if (!std::isfinite(value) || value >= 100) e.erase("opacity");
+      else e.set("opacity", Json::number(std::max(0.0, std::min(100.0, value))));
+    }
+    write_node_effects(d, nodeId, std::move(next));
+    return true;
+  }
   const EffectDef* def = registry().effect(effect->at("type").str());
   const EffectParamDef* param = def != nullptr ? def->param(key) : nullptr;
   if (param != nullptr && param->type != "number" && param->type != "checkbox" && param->type != "enum") return false;
@@ -730,11 +922,55 @@ std::optional<double> text_font_weight(const Node& n) {
 
 }  // namespace
 
+namespace {
+/// propertyValue.ts `audioHomeFor` (B3z): Audio Levels / Pan live on an audio
+/// layer's Audio component and on a video layer's Transform — what the mixer
+/// reads — never on an audio layer's Transform.
+const Component* audio_home_for(const Node& n, std::string_view prop) {
+  if (prop != kAudioLevelDbProp && prop != kAudioPanProp) return nullptr;
+  const std::string kind = n.kind();
+  if (kind == "audio") return n.comp("Audio");
+  if (kind == "video") return n.comp("Transform");
+  return nullptr;
+}
+
+/// audioParams.ts `percentToDb`: the legacy percent level as decibels.
+double legacy_percent_to_db(double percent) {
+  if (!std::isfinite(percent) || percent <= 0) return -60;
+  return std::max(-60.0, 20 * std::log10(percent / 100));
+}
+}  // namespace
+
 std::optional<double> read_static_property_value(const Document& d, std::string_view nodeId, std::string_view prop) {
   const Node* np = d.node(nodeId);
   if (np == nullptr) return std::nullopt;
   const Node& n = *np;
+  // A particle emitter's number (`particle.<key>`): the fx.particle config, else its default.
+  if (prop.starts_with("particle.")) {
+    if (auto pv = read_particle_static(n, prop)) return pv;
+  }
+  // A Polystar parameter (`polystar.<param>`): the validated fx.polystar config.
+  if (prop.starts_with("polystar.")) {
+    const auto ps = read_node_polystar(n);
+    const Json& v = ps ? ps->at(prop.substr(9)) : Json::null();
+    if (v.is_number()) return v.num();
+  }
+  // Audio Levels: an unstored dB level is the legacy percent (`__level` on an
+  // audio layer's Audio component, `audioLevel` on a video layer's Transform).
+  if (prop == kAudioLevelDbProp) {
+    if (const Component* home = audio_home_for(n, prop)) {
+      const Json* v = home->props.find(prop);
+      if (v != nullptr && v->is_number()) return v->num();
+      const Json* legacy = home->props.find(n.kind() == "audio" ? "__level" : "audioLevel");
+      if (legacy != nullptr && legacy->is_number()) return legacy_percent_to_db(legacy->num());
+    }
+  }
   if (auto eff = parse_prefixed_id_rest(prop, "effect.")) return read_effect_value(n, eff->id, eff->rest);
+  if (auto g = glass_prop(prop)) {
+    const Json& v = get_node_layer_styles(n).at("glass").at(g->param);
+    if (!g->channel.empty()) return v.is_string() ? channel_of(v.str(), g->channel) : std::nullopt;
+    return v.is_number() ? std::optional<double>(v.num()) : std::nullopt;
+  }
   if (auto pp = parse_paint_prop_path(prop)) {
     if (auto strokes = read_node_paint(n)) {
       if (const Json* s = find_by_id(*strokes, pp->strokeId)) return read_paint_stroke_value(*s, pp->key);
@@ -815,6 +1051,14 @@ std::optional<double> read_static_property_value(const Document& d, std::string_
   }
   // Gradient geometry lives inside a paint object (a fill, a text stroke).
   if (is_gradient_geometry_prop(prop)) return read_gradient_geometry_prop(n, prop);
+  // A shape stroke's parameter lives in its stroke stack entry (strokes.cpp).
+  if (auto st = stroke_track_hit(n, prop)) {
+    if (!st->channel.empty()) {
+      const Json& col = st->stroke.at("color");
+      return channel_of(col.is_string() ? col.str() : stringify(col), st->channel);
+    }
+    return read_stroke_track(n, *st);
+  }
   for (const Component& c : n.components) {
     const Json* v = c.props.find(prop);
     if (v != nullptr && v->is_number()) return v->num();
@@ -829,7 +1073,27 @@ bool write_static_property_value(Document& d, std::string_view nodeId, std::stri
   if (np == nullptr) return false;
   // Gradient geometry is written back into its paint (a fill, a text stroke).
   if (is_gradient_geometry_prop(prop)) return write_gradient_geometry_prop(d, nodeId, prop, value);
+  // A particle emitter's number: into the fx.particle config.
+  if (auto particle = write_particle_static(d, nodeId, prop, value)) return *particle;
+  // A Polystar parameter: into fx.polystar, re-validated whole (updateNodePolystar).
+  if (prop.starts_with("polystar.") && read_node_polystar(*np)) {
+    Json patch = Json::object();
+    patch.set(prop.substr(9), Json::number(value));
+    return update_node_polystar(d, nodeId, patch);
+  }
+  // A shape stroke's parameter: into its stroke stack entry (a colour channel has no scalar base).
+  if (auto st = stroke_track_hit(*np, prop)) return write_stroke_track(d, nodeId, *st, value);
   if (auto eff = parse_prefixed_id_rest(prop, "effect.")) return write_effect_value(d, nodeId, eff->id, eff->rest, value);
+  if (auto g = glass_prop(prop)) {
+    Json styles = get_node_layer_styles(*np);
+    const Json& glass = styles.at("glass");
+    if (!g->channel.empty() || glass.is_undefined() || glass.is_null() || (glass.is_bool() && !glass.b())) return false;
+    Json next = glass;
+    next.set(g->param, Json::number(value));
+    styles.set("glass", std::move(next));
+    set_layer_styles(d, nodeId, styles);
+    return true;
+  }
   if (auto pp = parse_paint_prop_path(prop)) {
     const auto strokes = read_node_paint(*np);
     const Json* s = strokes ? find_by_id(*strokes, pp->strokeId) : nullptr;
@@ -841,8 +1105,29 @@ bool write_static_property_value(Document& d, std::string_view nodeId, std::stri
     const Json mask = get_node_mask(*np);
     if (mask_path_by_id(mask, mk->pathId) == nullptr) return false;
     Json patch = Json::object();
-    patch.set(mk->key, Json::number(mk->key == "opacity" ? value / 100 : value));
+    const double stored = mk->key == "opacity" ? value / 100 : value;
+    patch.set(mk->key, Json::number(stored));
     update_mask_path(d, nodeId, mk->pathId, patch);
+    // AE: Feather / Opacity / Expansion hold across every whole-mask shape
+    // keyframe, like Mode / Inverted (propertyValue.ts, B3z).
+    std::vector<Json> anim = read_node_mask_anim(*d.node(nodeId));
+    if (!anim.empty()) {
+      for (Json& k : anim) {
+        Json m = Json::object();
+        Json paths = Json::array();
+        const Json& src = k.at("mask").at("paths");
+        if (src.is_array()) {
+          for (const Json& p : src.arr()) {
+            Json q = p;
+            if (p.at("id").is_string() && p.at("id").str() == mk->pathId) q.set(mk->key, Json::number(stored));
+            paths.arr_mut().push_back(std::move(q));
+          }
+        }
+        m.set("paths", std::move(paths));
+        k.set("mask", std::move(m));
+      }
+      set_mask_anim(d, nodeId, std::move(anim));
+    }
     return true;
   }
   if (auto op = parse_prefixed_id_rest(prop, "pathop.")) {
@@ -893,6 +1178,12 @@ bool write_static_property_value(Document& d, std::string_view nodeId, std::stri
     }
     return true;
   }
+  // Audio Levels / Pan: on their home component; a centred pan is stored as
+  // ABSENT (the Audio panel's rule) so an untouched document stays identical.
+  if (const Component* home = audio_home_for(*np, prop)) {
+    const std::string hid = home->id;
+    return sg_write_prop(d, nodeId, hid, prop, prop == kAudioPanProp && value == 0 ? Json() : Json::number(value));
+  }
   const Component* comp = nullptr;
   for (const Component& c : np->components) {
     const Json* v = c.props.find(prop);
@@ -930,10 +1221,41 @@ api::BezierPath mask_to_bezier(const Json& p) {
       b.out_tangents.push_back(pt.at("outX").num() - x);
       b.out_tangents.push_back(pt.at("outY").num() - y);
     }
+    // Variable-width feather (B3z): a vertex's own feather is a point AT that vertex.
+    for (std::size_t i = 0; i < pts.arr().size(); ++i) {
+      const Json& f = pts.arr()[i].at("feather");
+      if (f.is_number()) b.feather_points.push_back(api::FeatherPoint{static_cast<std::uint32_t>(i), 0.0, f.num(), 0.0});
+    }
   }
   b.closed = p.at("closed").is_bool() && p.at("closed").b();
   return b;
 }
+
+namespace {
+
+/// props.ts `featherByVertex`: nullopt = an EMPTY list (keep each vertex's feather
+/// by index); otherwise vertex → radius, or nullopt for the negative "none" marker.
+std::optional<std::map<std::size_t, std::optional<double>>> feather_by_vertex(const api::BezierPath& b, std::size_t n) {
+  if (b.feather_points.empty()) return std::nullopt;
+  std::map<std::size_t, std::optional<double>> out;
+  for (const api::FeatherPoint& f : b.feather_points) {
+    if (f.segment >= n) {
+      fail(ErrorCode::invalid_argument, "feather point segment " + std::to_string(f.segment) + " is not a vertex of the " +
+                                            std::to_string(n) + "-vertex path");
+    }
+    if (!std::isfinite(f.radius) || !std::isfinite(f.t) || !std::isfinite(f.tension)) {
+      fail(ErrorCode::invalid_argument, "feather point values must be finite");
+    }
+    if (f.t != 0.0 || f.tension != 0.0) {
+      fail(ErrorCode::unsupported, "this engine stores one feather per vertex: feather points need t = 0 and tension = 0");
+    }
+    if (out.contains(f.segment)) fail(ErrorCode::invalid_argument, "two feather points at vertex " + std::to_string(f.segment));
+    out[f.segment] = f.radius < 0 ? std::nullopt : std::optional<double>(f.radius);
+  }
+  return out;
+}
+
+}  // namespace
 
 Json bezier_to_points(const api::BezierPath& b, const Json* prev) {
   const std::size_t n = b.vertices.size() / 2;
@@ -943,6 +1265,7 @@ Json bezier_to_points(const api::BezierPath& b, const Json* prev) {
   if (b.out_tangents.size() != b.vertices.size() && !b.out_tangents.empty()) {
     fail(ErrorCode::invalid_argument, "path tangents must match vertices");
   }
+  const auto feathers = feather_by_vertex(b, n);
   Json out = Json::array();
   auto tan = [](const std::vector<double>& v, std::size_t i) { return i < v.size() ? v[i] : 0.0; };
   for (std::size_t i = 0; i < n; ++i) {
@@ -955,7 +1278,10 @@ Json bezier_to_points(const api::BezierPath& b, const Json* prev) {
     pt.set("inY", Json::number(y + tan(b.in_tangents, 2 * i + 1)));
     pt.set("outX", Json::number(x + tan(b.out_tangents, 2 * i)));
     pt.set("outY", Json::number(y + tan(b.out_tangents, 2 * i + 1)));
-    if (prev != nullptr && prev->is_array() && i < prev->arr().size()) {
+    if (feathers) {
+      const auto it = feathers->find(i);
+      if (it != feathers->end() && it->second) pt.set("feather", Json::number(*it->second));
+    } else if (prev != nullptr && prev->is_array() && i < prev->arr().size()) {
       const Json& f = prev->arr()[i].at("feather");
       if (!f.is_undefined()) pt.set("feather", f);
     }
@@ -984,6 +1310,12 @@ std::optional<std::string> style_color_field(std::string_view styleKey, std::str
 }
 
 std::optional<api::Color> read_color_base(const Node& n, const std::string& base) {
+  if (auto hex = read_particle_color(n, base)) return color_of_string(Json::string(*hex));
+  // A shape stroke's colour lives in its stack entry (strokes.cpp), not a component string.
+  if (auto si = stroke_color_index(n, base)) return color_of_string(Json::string(stroke_color_at(n, *si)));
+  if (base == "glass.tintColor" || base == "glass.rimColor") {
+    return color_of_string(get_node_layer_styles(n).at("glass").at(base.substr(6)));
+  }
   if (auto eff = parse_prefixed_id_rest(base, "effect.")) {
     if (auto styleKey = style_key_from_effect_id(eff->id)) {
       const Json styles = get_node_layer_styles(n);
@@ -1002,7 +1334,22 @@ std::optional<api::Color> read_color_base(const Node& n, const std::string& base
 
 bool write_color_base(Document& d, std::string_view nodeId, const std::string& base, const api::Color& c) {
   const std::string hex = channels_to_color(c.r, c.g, c.b, c.a);
+  if (auto particle = write_particle_color(d, nodeId, base, hex)) return *particle;
   const Node& n = *d.node(nodeId);
+  if (auto si = stroke_color_index(n, base)) {
+    set_stroke_color_at(d, nodeId, *si, hex);
+    return true;
+  }
+  if (base == "glass.tintColor" || base == "glass.rimColor") {
+    Json styles = get_node_layer_styles(n);
+    const Json& glass = styles.at("glass");
+    if (glass.is_undefined() || glass.is_null() || (glass.is_bool() && !glass.b())) return false;
+    Json next = glass;
+    next.set(base.substr(6), Json::string(hex));
+    styles.set("glass", std::move(next));
+    set_layer_styles(d, nodeId, styles);
+    return true;
+  }
   if (auto eff = parse_prefixed_id_rest(base, "effect.")) {
     if (auto styleKey = style_key_from_effect_id(eff->id)) {
       Json styles = get_node_layer_styles(n);
@@ -1094,6 +1441,10 @@ api::Value read_static(const Document& d, std::string_view layer, const PropBind
     case Special::field:
     case Special::layerFill:
       return read_field(n, b);
+    case Special::rig:
+      return read_rig_static(n, b);
+    case Special::fillStops:
+      return read_fill_stops_static(n);
     case Special::none: break;
   }
   if (b.colorBase) {
@@ -1250,6 +1601,12 @@ void write_static(Document& d, std::string_view layer, const PropBinding& b, con
     case Special::layerFill:
       write_field(d, layer, b, value);
       return;
+    case Special::rig:
+      write_rig_static(d, layer, b, value);
+      return;
+    case Special::fillStops:
+      write_fill_stops_static(d, layer, b, value);
+      return;
     case Special::none: break;
   }
   if (b.dataTrack) {
@@ -1266,7 +1623,12 @@ void write_static(Document& d, std::string_view layer, const PropBinding& b, con
   for (std::size_t i = 0; i < nums.size(); ++i) {
     const std::string& m = b.members[i];
     if (!write_static_property_value(d, layer, m, nums[i])) {
-      const Component* t = d.node(layer)->comp("Transform");
+      // A member no component carries yet: its HOME takes it (a latent
+      // binding's, latentPropSpecs.ts), else the Transform component.
+      const Component* t = nullptr;
+      for (const std::string& type : b.home.value_or(std::vector<std::string>{"Transform"})) {
+        if ((t = d.node(layer)->comp(type)) != nullptr) break;
+      }
       if (t == nullptr) fail(ErrorCode::not_found, "nowhere to store '" + b.path + "'", {.path = b.path});
       const std::string cid = t->id;
       (void)sg_write_prop(d, layer, cid, m, Json::number(nums[i]));
@@ -1347,7 +1709,9 @@ KeyAt base_key(double t, std::string id, api::Value value, std::optional<api::Ea
   return k;
 }
 
-api::Value data_value_to_api(const PropBinding& b, const Json& v) {
+api::Value data_value_to_api(const PropBinding& b, const Json& v, const Node& n) {
+  if (b.special == Special::rig) return pin_key_to_api(v);
+  if (b.special == Special::fillStops) return fill_stops_key_to_api(n, v);
   if (b.special == Special::sourceText) return v_text(v.is_string() ? v.str() : "");
   if (v.is_string()) return v_string(v.str());
   if (v.is_number()) return v_scalar(v.num());
@@ -1370,6 +1734,8 @@ api::Value data_value_to_api(const PropBinding& b, const Json& v) {
 }
 
 Json api_to_data_value(const PropBinding& b, const api::Value& value) {
+  if (b.special == Special::rig) return api_to_pin_key(b, value);
+  if (b.special == Special::fillStops) return api_to_fill_stops_key(b, value);
   if (b.special == Special::sourceText) {
     if (value.kind() == VK::text_document) return Json::string(get<VK::text_document>(value).text);
     if (value.kind() == VK::string) return Json::string(get<VK::string>(value));
@@ -1421,8 +1787,10 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
   if (b.dataTrack) {
     if (const DataTrack* tr = anim_data_track(d, layer, *b.dataTrack)) {
       for (const DataKey& k : tr->keys) {
-        out.push_back(base_key(k.t, k.id ? *k.id : fallback_key_id(layer, *b.dataTrack, k.t), data_value_to_api(b, k.value),
+        out.push_back(base_key(k.t, k.id ? *k.id : fallback_key_id(layer, *b.dataTrack, k.t), data_value_to_api(b, k.value, *d.node(layer)),
                                k.easing, k.bezier, k.label));
+        // A puppet pin's position key: its spatial tangents are the data key's si/so of point 0.
+        if (b.special == Special::rig) pin_key_spatial(k.si, k.so, out.back().spatialIn, out.back().spatialOut);
       }
     }
     return out;
@@ -1446,6 +1814,7 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
     std::vector<double> sIn;
     std::vector<double> sOut;
     bool anySpatial = false;
+    std::vector<const Key*> at(b.members.size(), nullptr);
     for (std::size_t i = 0; i < b.members.size(); ++i) {
       const Key* k = nullptr;
       if (tracks[i] != nullptr) {
@@ -1456,6 +1825,7 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
           }
         }
       }
+      at[i] = k;
       if (k != nullptr && lead == nullptr) {
         lead = k;
         leadMember = b.members[i];
@@ -1464,6 +1834,18 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
       sIn.push_back(k != nullptr && k->si ? *k->si : 0.0);
       sOut.push_back(k != nullptr && k->so ? *k->so : 0.0);
       if (k != nullptr && (k->si || k->so)) anySpatial = true;
+    }
+    // props.ts `dimOf` / `sameDim`: a member with no key here reads as the lead.
+    std::vector<KeyDimAt> dims;
+    bool uniform = true;
+    for (std::size_t i = 0; i < b.members.size(); ++i) {
+      const Key& src = at[i] != nullptr ? *at[i] : *lead;
+      KeyDimAt dm{src.easing.value_or(api::Easing::linear), src.bezier, src.continuous.value_or(false)};
+      if (!dims.empty()) {
+        const KeyDimAt& f = dims[0];
+        if (dm.easing != f.easing || dm.continuous != f.continuous || dm.bezier != f.bezier) uniform = false;
+      }
+      dims.push_back(std::move(dm));
     }
     KeyAt ka;
     ka.t = t;
@@ -1479,6 +1861,7 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
       ka.spatialOut = std::move(sOut);
     }
     ka.label = lead->label.value_or(0);
+    if (!uniform) ka.dims = std::move(dims);
     out.push_back(std::move(ka));
   }
   return out;
@@ -1505,6 +1888,13 @@ api::Keyframe key_at_to_api(const PCtx& c, std::string_view layer, const PropBin
   out.spatial_in = k.spatialIn;
   out.spatial_out = k.spatialOut;
   out.label = k.label > 0 && k.label < 4294967296.0 ? static_cast<std::uint32_t>(k.label) : 0U;
+  for (const KeyDimAt& dm : k.dims) {
+    api::KeyframeDim o;
+    o.easing = dm.easing;
+    if (dm.bezier) o.bezier = api::CubicBezier{(*dm.bezier)[0], (*dm.bezier)[1], (*dm.bezier)[2], (*dm.bezier)[3]};
+    o.continuous = dm.continuous;
+    out.dims.push_back(o);
+  }
   return out;
 }
 
@@ -1591,6 +1981,20 @@ void put_mask_keys(const PCtx& c, std::string_view layer, const PropBinding& b, 
   set_mask_anim(c.d, layer, std::move(anim));
 }
 
+/// props.ts `fillFrom`: a member key filled in beside `lead` — its temporal fields, this value.
+Key fill_from(const Key& lead, double t, double value) {
+  Key k;
+  k.t = t;
+  k.value = value;
+  k.easing = lead.easing;
+  k.bezier = lead.bezier;
+  k.continuous = lead.continuous;
+  k.roving = lead.roving;
+  k.spatial = lead.spatial;
+  k.label = lead.label;
+  return k;
+}
+
 double static_num(const Document& d, std::string_view layer, const PropBinding& b, std::size_t i) {
   // The layer's fill colour is a hex string on a component (or a paint object):
   // its channels have no numeric static seam.
@@ -1600,6 +2004,11 @@ double static_num(const Document& d, std::string_view layer, const PropBinding& 
     const api::Color& c = get<VK::color>(v);
     const std::array<double, 4> ch{c.r, c.g, c.b, c.a};
     return i < ch.size() ? ch[i] : 0;
+  }
+  // A rig property's static value lives on the rig (rig.hpp), in API units.
+  if (b.special == Special::rig) {
+    const std::vector<double> v = numbers_loose(read_static(d, layer, b));
+    return (i < v.size() ? v[i] : 0.0) / api_unit_factor(b.members[i]);
   }
   return read_static_property_value(d, layer, b.members[i]).value_or(0);
 }
@@ -1612,6 +2021,8 @@ Json current_data_value(const PCtx& c, std::string_view layer, const PropBinding
     const api::Value s = read_static(c.d, layer, b);
     return Json::string(s.kind() == VK::text_document ? get<VK::text_document>(s).text : "");
   }
+  // The first Colors key holds the paint's own stops.
+  if (b.special == Special::fillStops) return api_to_fill_stops_key(b, read_static(c.d, layer, b));
   fail(ErrorCode::invalid_argument, "'" + b.path + "' needs a value for its first keyframe", {.path = b.path});
 }
 
@@ -1628,7 +2039,7 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
     const DataTrack* track = anim_data_track(d, layer, *b.dataTrack);
     const std::string kind = track != nullptr ? track->kind
                              : b.special == Special::sourceText   ? "text"
-                             : b.valueType == ValueType::path     ? "points"
+                             : b.valueType == ValueType::path || b.special == Special::rig ? "points"
                              : b.valueType == ValueType::gradient ? "gradientStops"
                                                                   : "number";
     std::vector<DataKey> keys = track != nullptr ? track->keys : std::vector<DataKey>{};
@@ -1646,6 +2057,25 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
       next.t = w.t;
       next.value = std::move(value);
       apply_key_fields(next, w);
+      if (b.special == Special::rig) {
+        // A pin's spatial tangents: per-dimension API lists ⇄ the data key's si/so of point 0.
+        auto tangent = [](const std::vector<double>& v) {
+          Json p = Json::object();
+          p.set("x", Json::number(v[0]));
+          p.set("y", Json::number(v[1]));
+          Json a = Json::array();
+          a.arr_mut().push_back(std::move(p));
+          return a;
+        };
+        if (w.spatialIn) {
+          if (!*w.spatialIn) next.si.reset();
+          else if ((*w.spatialIn)->size() >= 2) next.si = tangent(**w.spatialIn);
+        }
+        if (w.spatialOut) {
+          if (!*w.spatialOut) next.so.reset();
+          else if ((*w.spatialOut)->size() >= 2) next.so = tangent(**w.spatialOut);
+        }
+      }
       std::erase_if(keys, [&](const DataKey& k) { return k.t == w.t; });
       keys.push_back(std::move(next));
     }
@@ -1662,6 +2092,7 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
     const auto* tr = anim_track(d, layer, m);
     tracks.push_back(tr != nullptr ? *tr : std::vector<Key>{});
   }
+  const auto perDim = [&](const KeyWrite& w) { return w.dims && w.dims->size() == b.members.size(); };
   for (const KeyWrite& w : writes) {
     std::optional<std::vector<double>> nums;
     if (w.value) {
@@ -1669,6 +2100,17 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
         fail(ErrorCode::type_mismatch, "'" + b.path + "' takes a color", {.path = b.path});
       }
       nums = from_api_nums(b, numbers_of(b, *w.value));
+    }
+    // ONE key per time for every member: the first member keyed at w.t leads.
+    std::optional<Key> lead;
+    for (const auto& list : tracks) {
+      for (const Key& k : list) {
+        if (k.t == w.t) {
+          lead = k;
+          break;
+        }
+      }
+      if (lead) break;
     }
     for (std::size_t i = 0; i < b.members.size(); ++i) {
       std::vector<Key>& list = tracks[i];
@@ -1685,12 +2127,27 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
       } else {
         v = existing != nullptr ? existing->value : sample_member(d, layer, b.members[i], w.t, static_num(d, layer, b, i));
       }
-      Key next = existing != nullptr ? *existing : Key{};
+      Key next = existing != nullptr ? *existing : lead ? fill_from(*lead, w.t, v) : Key{};
       next.t = w.t;
       next.value = v;
-      next.id = existing != nullptr && existing->id ? *existing->id : w.id;
-      apply_key_fields(next, w);
-      if (w.continuous) next.continuous = *w.continuous;
+      const std::optional<std::string> id = existing != nullptr && existing->id ? existing->id
+                                            : lead && lead->id                  ? lead->id
+                                            : !w.id.empty()                     ? std::optional<std::string>(w.id)
+                                                                                : std::nullopt;
+      next.id = id;
+      if (!w.dim || *w.dim == i) {
+        apply_key_fields(next, w);
+        if (w.continuous) next.continuous = *w.continuous;
+      } else if (w.label) {
+        if (*w.label != 0) next.label = *w.label;
+        else next.label.reset();
+      }
+      if (perDim(w)) {
+        const KeyDimAt& dm = (*w.dims)[i];
+        next.easing = dm.easing;
+        next.bezier = dm.bezier;
+        next.continuous = dm.continuous;
+      }
       if (w.roving) next.roving = *w.roving;
       if (w.spatialInterp) {
         if (*w.spatialInterp == api::SpatialInterp::legacy) next.spatial.reset();
@@ -1710,6 +2167,26 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
     }
   }
   for (std::size_t i = 0; i < b.members.size(); ++i) anim_set_track(d, layer, b.members[i], std::move(tracks[i]));
+}
+
+void normalize_keys_at(const PCtx& c, std::string_view layer, const PropBinding& b, const std::vector<double>& times) {
+  if (b.members.size() < 2 || b.special == Special::maskPath || b.dataTrack) return;
+  std::vector<const std::vector<Key>*> tracks;
+  for (const auto& m : b.members) tracks.push_back(anim_track(c.d, layer, m));
+  const auto has = [](const std::vector<Key>* tr, double t) {
+    return tr != nullptr && std::any_of(tr->begin(), tr->end(), [&](const Key& k) { return k.t == t; });
+  };
+  std::vector<KeyWrite> lone;
+  for (const double t : times) {
+    const bool some = std::any_of(tracks.begin(), tracks.end(), [&](const auto* tr) { return has(tr, t); });
+    const bool missing = std::any_of(tracks.begin(), tracks.end(), [&](const auto* tr) { return !has(tr, t); });
+    if (some && missing) {
+      KeyWrite w;
+      w.t = t;
+      lone.push_back(std::move(w));
+    }
+  }
+  if (!lone.empty()) put_keys(c, layer, b, lone);
 }
 
 void drop_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const std::vector<double>& times) {
@@ -1749,6 +2226,24 @@ void drop_keys(const PCtx& c, std::string_view layer, const PropBinding& b, cons
         }
       }
     }
+    if (keep.empty() && b.special == Special::fillStops && has_gradient_fill(*d.node(layer))) {
+      // AE: deleting the last Colors key leaves the gradient at that key's stops.
+      for (const DataKey& k : track->keys) {
+        if (dropped(k.t)) {
+          write_static(d, layer, b, fill_stops_key_to_api(*d.node(layer), k.value));
+          break;
+        }
+      }
+    }
+    if (keep.empty() && b.special == Special::rig) {
+      // AE: deleting a pin's last Position key leaves the pin where that key held it.
+      for (const DataKey& k : track->keys) {
+        if (dropped(k.t)) {
+          write_static(d, layer, b, pin_key_to_api(k.value));
+          break;
+        }
+      }
+    }
     next.keys = std::move(keep);
     anim_set_data_track(d, layer, *b.dataTrack, next.keys.empty() ? std::nullopt : std::optional<DataTrack>(std::move(next)));
     return;
@@ -1773,7 +2268,15 @@ void drop_keys(const PCtx& c, std::string_view layer, const PropBinding& b, cons
     }
     anim_set_track(d, layer, b.members[i], std::move(keep));
   }
-  if (emptied && !b.colorBase) {
+  if (emptied && b.special == Special::rig) {
+    // AE: static at the last key's value — written on the rig (a bone's pose, an IK goal).
+    const std::vector<double> stat = numbers_loose(read_static(d, layer, b));
+    std::vector<double> nums;
+    for (std::size_t i = 0; i < b.members.size(); ++i) {
+      nums.push_back(lastValues[i] ? *lastValues[i] * api_unit_factor(b.members[i]) : i < stat.size() ? stat[i] : 0.0);
+    }
+    write_static(d, layer, b, vector_value(b.valueType, nums));
+  } else if (emptied && !b.colorBase) {
     for (std::size_t i = 0; i < b.members.size(); ++i) {
       if (lastValues[i]) (void)write_static_property_value(d, layer, b.members[i], *lastValues[i]);
     }
@@ -1805,6 +2308,8 @@ std::optional<api::Value> value_at(const PCtx& c, std::string_view layer, const 
       return s;
     }
     if (b.special == Special::sourceText) return v_text(string_of(*v));
+    if (b.special == Special::rig) return pin_key_to_api(*v);
+    if (b.special == Special::fillStops) return fill_stops_key_to_api(*d.node(layer), *v);
     if (v->is_string()) return v_string(v->str());
     if (v->is_number()) return v_scalar(v->num());
     return std::nullopt;

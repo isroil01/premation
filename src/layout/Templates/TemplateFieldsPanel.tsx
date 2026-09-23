@@ -22,6 +22,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { TEMPLATES } from '@core/template/registry';
 import { templateThumbnail, createTemplatePlayer } from '@core/template/templatePreview';
 import { ANIM_PRESETS, insertAnimPreset, animPresetThumbnail, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { activeCompRootId } from '@core/scene/activeComp';
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
 import {
   readAuthoredFields, exposeNodeAsField, removeAuthoredField, renameAuthoredField,
@@ -54,12 +56,12 @@ function TemplateGallery(): JSX.Element {
     if (defaultSceneGraph.size > 1) {
       const ok = await customConfirm(
         'Apply template?',
-        'This replaces everything in the current composition and cannot be undone.',
+        'This replaces everything in the current composition (Edit ▸ Undo brings it back).',
         { confirmLabel: 'Apply', isDanger: true },
       );
       if (!ok) return;
     }
-    apply(id);
+    await apply(id);
   };
 
   return (
@@ -115,8 +117,8 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
       title={`${preset.name} — click to add, drag to place`}
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'animPreset', presetId: preset.id })}
-      // B3-legacy: engine gap — an animation preset from the LIBRARY inserts a whole styled layer tree (rich createLayer / library items).
-      onClick={() => insertAnimPreset(preset.id)}
+      // The preset's styled layer tree is built off-document → ONE pasteLayers entry.
+      onClick={() => { void insertBuiltLayers(`Insert ${preset.name}`, activeCompRootId(), () => insertAnimPreset(preset.id)); }}
     >
       <span className={styles.previewFrame} data-aspect="16:9">
         {poster && <img className={styles.poster} src={poster} alt="" aria-hidden />}

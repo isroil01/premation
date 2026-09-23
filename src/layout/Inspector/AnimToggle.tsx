@@ -20,7 +20,7 @@ import { StopwatchButton, KeyframeNavigator, type KeyframeNavigatorProps } from 
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { trackNavigatorState, toggleKeyframeAtPlayhead } from '@core/inspector/keyframeNavigator';
+import { trackNavigatorState } from '@core/inspector/keyframeNavigator';
 import { defaultAnimation } from '@motion/animation';
 import { edit } from '@core/engine/uiEdits';
 import { allAddressable, keyToggleCommands } from './inspectorEdits';
@@ -36,7 +36,8 @@ export function useTrackNavigator(
   nodeId: string,
   tracks: ReadonlyArray<string>,
   label: string,
-  values?: () => ReadonlyArray<number | undefined>,
+  // Kept for callers: the engine's added key holds the evaluated value, which is what the row displays.
+  _values?: () => ReadonlyArray<number | undefined>,
 ): TrackNavigator {
   const time = useActiveWorkspace()?.time ?? 0;
   const fps = useCompositionStore((c) => c.fps) || 30;
@@ -53,15 +54,12 @@ export function useTrackNavigator(
     onNext: () => { if (nav.nextT !== null) seek(nav.nextT); },
     onToggleKeyframe: () => {
       // The diamond acts on the ANIMATED tracks only; an animated track is
-      // always in the engine's catalog, so this is the API path in practice.
+      // always in the engine's catalog. A node that is not a layer of a
+      // composition has no API address and no keyframes to toggle here (B3z).
       const live = tracks.filter((p) => defaultAnimation.isAnimated(nodeId, p));
-      if (live.length > 0 && allAddressable([nodeId], live)) {
-        const label2 = nav.atKeyframe ? `Remove ${label} keyframe` : `Add ${label} keyframe`;
-        void keyToggleCommands([nodeId], live, time).then((cmds) => edit(label2, cmds));
-        return;
-      }
-      // B3-legacy: engine gap — a track the catalog cannot address (a node that is not a layer of a composition).
-      toggleKeyframeAtPlayhead(nodeId, tracks, time, label, values);
+      if (live.length === 0 || !allAddressable([nodeId], live)) return;
+      const label2 = nav.atKeyframe ? `Remove ${label} keyframe` : `Add ${label} keyframe`;
+      void keyToggleCommands([nodeId], live, time).then((cmds) => edit(label2, cmds));
     },
   };
 }

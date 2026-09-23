@@ -12,7 +12,9 @@
  */
 
 import type { EasingKind, BezierHandles, SpatialInterp } from '@motion/animation';
-import { defaultAnimation, parseKeyframeId, expandKeyframeProp } from '@motion/animation';
+import { defaultAnimation, parseKeyframeId, expandKeyframeProp, sampleTrack } from '@motion/animation';
+import { propRefForTrack } from '@core/engine/propRefs';
+import { readStaticPropertyValue } from '@core/inspector/propertyValue';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
@@ -58,16 +60,50 @@ export function clearClipboard(): void {
  * copy silently collected nothing.
  */
 export function copyKeyframes(ids: ReadonlySet<string>): void {
-  const entries: ClipboardEntry[] = [];
+  const refs: Array<{ nodeId: string; prop: string; t: number }> = [];
   for (const id of ids) {
     const ref = parseKeyframeId(id);
-    if (!ref) continue;
-    // A selected "Position" row stands for the underlying x/y/z tracks.
-    for (const prop of expandKeyframeProp(ref.prop)) {
-      const { nodeId, t } = ref;
+    if (ref) refs.push(ref);
+  }
+  copyKeyframeRefs(refs);
+}
+
+/**
+ * Copy the key of `prop` at STORED time `t` (the layer's keyframe axis) — the
+ * inspector row menu's Copy Keyframe, which holds a property and the playhead
+ * rather than a timeline selection. A clipboard read, not a document write.
+ */
+export function copyKeyframeAt(nodeId: string, prop: string, t: number): void {
+  copyKeyframeRefs([{ nodeId, prop, t }]);
+}
+
+function copyKeyframeRefs(refs: ReadonlyArray<{ nodeId: string; prop: string; t: number }>): void {
+  const entries: ClipboardEntry[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    // A selected "Position" row stands for the underlying x/y/z tracks; a
+    // member row (Scale X, a colour channel) for its whole property — AE has
+    // ONE key per time for every dimension (ENGINE_API.md §3.3), so Copy takes
+    // them all. A member with no key there (a legacy document) is copied at
+    // its value, with the keyed member's easing.
+    const tracks = expandKeyframeProp(ref.prop).flatMap((p) => {
+      const members = propRefForTrack(ref.nodeId, p)?.members ?? [];
+      return members.length > 1 ? members : [p];
+    });
+    const { nodeId, t } = ref;
+    const at = (prop: string) => defaultAnimation.getTrackKeyframes(nodeId, prop)?.find((k) => Math.abs(k.t - t) < 1e-6);
+    const lead = tracks.map(at).find((k) => k !== undefined);
+    if (!lead) continue;
+    for (const prop of tracks) {
+      if (seen.has(`${nodeId}|${prop}|${lead.t}`)) continue;
+      seen.add(`${nodeId}|${prop}|${lead.t}`);
       const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-      const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-      if (!kf) continue;
+      const kf = at(prop) ?? {
+        ...lead,
+        value: kfs && kfs.length > 0 ? sampleTrack({ nodeId, prop, keyframes: kfs }, lead.t) ?? 0 : readStaticPropertyValue(nodeId, prop) ?? 0,
+        si: undefined,
+        so: undefined,
+      };
       entries.push({
         nodeId,
         prop,

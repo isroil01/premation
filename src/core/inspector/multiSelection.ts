@@ -40,6 +40,7 @@
  */
 
 import { defaultAnimation } from '@motion/animation';
+import type { Command } from '@motion/engine-api';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { batchHistory } from '@stores/historyStore';
@@ -73,6 +74,16 @@ export interface PropertyAccess {
   read?: (nodeId: string) => number | undefined;
   /** Static write on one node. Return false when nothing could take it. */
   writeStatic?: (nodeId: string, value: number) => boolean;
+  /**
+   * B3z: the ENGINE route of a property the catalog may not list yet (a plugin
+   * panel's param before its panel group exists — layout/Inspector/
+   * pluginParamEdits.ts): the commands for per-layer values (stored units) and
+   * for the stopwatch ON, addressed by path and self-seeding.
+   */
+  engine?: {
+    commands: (writes: ReadonlyArray<{ nodeId: string; value: number }>, opts: { seconds: number; autoKeyframe: boolean }) => Command[];
+    stopwatchOn: (nodeIds: ReadonlyArray<string>, seconds: number) => Command[];
+  };
 }
 
 export interface ApplyOptions extends PropertyAccess {

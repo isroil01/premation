@@ -7,6 +7,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 
 const applyTimeStretch = jest.fn();
 
+// B3z: OK sends `timeStretchLayers` through the timeline's edit helper.
+jest.mock('@layout/Timeline/timelineEdits', () => ({
+  timeStretchEdit: (...args: unknown[]) => applyTimeStretch(...args),
+}));
+
 jest.mock('@core/timeline/TimelineController', () => ({
   getTimelineController: () => ({
     timeline: { getFrameRate: () => ({ fps: 30 }) },
@@ -20,7 +25,6 @@ jest.mock('@core/scene/layerTime', () => ({
 jest.mock('@core/animation/layerTimeCommands', () => {
   const clamp = (p: number): number => Math.max(1, Math.min(1000, Math.round(p)));
   return {
-    applyTimeStretch: (...args: unknown[]) => applyTimeStretch(...args),
     clampStretch: clamp,
     clampSignedStretch: (p: number) => (p < 0 ? -clamp(-p) : clamp(p)),
     // 'solid' has no source — every other id stands in for footage.

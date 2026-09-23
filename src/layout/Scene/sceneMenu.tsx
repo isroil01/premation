@@ -38,7 +38,7 @@ import {
   ungroupSelectedEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout/Inspector/inspectorEdits';
-import { splitSelectedAtPlayhead } from '@layout/Timeline/timelineEdits';
+import { splitSelectedAtPlayhead, unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { liveMergeSelectedPaths, mergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { createNullsFromPathUndoable } from '@core/scene/nullsFromPaths';
@@ -51,7 +51,7 @@ import { readNodeBlend, type LayerBlendMode } from '@core/effects/blendMode';
 import { blendModeLabel, blendModeSections } from '@layout/Inspector/blendMenu';
 import { MATTE_OPTIONS, applyMatteOption, matteOptionId } from '@components/MatteControl/matteMenu';
 import { readNodeMatte } from '@core/effects/matte';
-import { isRetimableLayer, toggleFreeze } from '@core/animation/layerTimeCommands';
+import { isRetimableLayer } from '@core/animation/layerTimeCommands';
 import { getTime } from '@stores/playbackClockStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
@@ -346,10 +346,9 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
           disabled: !retimable,
           onSelect: () => {
             const at = getTime();
+            // Every layer already frozen → the toggle unfreezes them (`unfreezeLayers`, B3z).
             void freezeLayersEdit(ids, at).then((done) => {
-              // B3-legacy: engine gap — `freezeFrame` only sets a freeze; nothing clears one, so
-              // un-freezing (every layer already frozen) keeps the legacy layer-time write.
-              if (!done) toggleFreeze(ids, at);
+              if (!done) void unfreezeEdit(ids);
             });
           },
         },

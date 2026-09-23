@@ -71,6 +71,7 @@ struct Registry {
   Json fields;         ///< G1 textFields.ts: {text, animator, animatorOptional, selector, selectorKindParams}
   Json paint;
   Json strokeTracks;
+  Json latent;         ///< B3z latentPropSpecs.ts LATENT_PROPS
   std::vector<std::string> maskKeys;
   std::vector<std::string> textPathParams;
   std::vector<std::string> labelColors;  ///< LABEL_COLORS[i].color

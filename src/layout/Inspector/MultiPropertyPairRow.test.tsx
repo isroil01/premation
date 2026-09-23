@@ -199,6 +199,10 @@ describe('menus and expressions stay per property', () => {
   });
 
   it('an Edit Expression request for one member opens that member under the row', () => {
+    // B4: the row reads the document mirror, and the API has one expression
+    // per PROPERTY (Position), reported from its lead member — so the fixture
+    // puts it on the property, not on Y alone.
+    defaultAnimation.setExpression(A, 'x', 'value');
     defaultAnimation.setExpression(A, 'y', 'value');
     render(position());
     const mark = screen.getByRole('button', { name: /Position expressions/ });

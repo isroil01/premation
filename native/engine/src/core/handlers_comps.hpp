@@ -21,6 +21,7 @@ ResultOf<api::CreateComposition> handle(const api::CreateComposition& c, HCtx& x
 ResultOf<api::DuplicateComposition> handle(const api::DuplicateComposition& c, HCtx& x);
 ResultOf<api::SetCompositionSettings> handle(const api::SetCompositionSettings& c, HCtx& x);
 ResultOf<api::SetWorkArea> handle(const api::SetWorkArea& c, HCtx& x);
+ResultOf<api::ClearWorkArea> handle(const api::ClearWorkArea& c, HCtx& x);
 ResultOf<api::TrimCompToWorkArea> handle(const api::TrimCompToWorkArea& c, HCtx& x);
 ResultOf<api::CropComposition> handle(const api::CropComposition& c, HCtx& x);
 ResultOf<api::Precompose> handle(const api::Precompose& c, HCtx& x);

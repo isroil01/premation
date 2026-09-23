@@ -39,7 +39,7 @@ import {
   type BatchRenderSummary,
 } from '@core/template/batchRender';
 import { parseCaptions, toSrt, toVtt } from '@core/captions/captionFormat';
-import { DEFAULT_CAPTION_STYLE, insertCaptionLayers, removeCaptionLayers } from '@core/captions/captionLayers';
+import { DEFAULT_CAPTION_STYLE, insertCaptionLayers } from '@core/captions/captionLayers';
 import { transcribeComposition } from '@core/captions/transcribe';
 import { ASPECT_PRESETS, autoReframeComposition, targetSizeFor } from '@core/reframe/autoReframe';
 import { localEngine } from '@core/engine/engineInstance';
@@ -402,12 +402,12 @@ async function prepareComposition(
     const cues = parseCaptions(req.captions.text);
     // Replacing, not adding — the same rule the editor's import follows. A
     // pipeline that re-runs would otherwise stack a second set of layers on
-    // top of the first and deliver doubled text.
-    removeCaptionLayers(comp.id);
+    // top of the first and deliver doubled text. insertCaptionLayers replaces
+    // the existing captions (one engine batch: deleteLayers + pasteLayers).
     // TARGETED at the composition being rendered. Headless has no active tab to
     // speak of, and the store's fallback is a 1920×1080 default — which placed
     // captions off the bottom of any smaller frame, silently.
-    const inserted = insertCaptionLayers(cues, DEFAULT_CAPTION_STYLE, {
+    const inserted = await insertCaptionLayers(cues, DEFAULT_CAPTION_STYLE, {
       rootId: comp.id,
       width: comp.width,
       height: comp.height,

@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <string>
 
 namespace premation::os {
 
@@ -31,5 +33,8 @@ double epoch_us();
 
 // Blocking write of the whole buffer to stdout. False when the reader is gone.
 bool write_stdout(const void* data, std::size_t bytes);
+
+// An environment variable (nullopt when unset). Read at startup, before threads.
+[[nodiscard]] std::optional<std::string> env_var(const char* name);
 
 }  // namespace premation::os

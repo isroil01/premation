@@ -116,6 +116,8 @@ const NOT_WRITES = new Set([
   'clearRestMeshCache', // render cache
   'setFocusedExpressionRow', // which row has keyboard focus (editor state)
   'mergeRanges', // pure range arithmetic
+  'mergeIntervals', // core/audio/silenceRemoval: unions comp-time intervals (pure; audioEdits sends the cuts)
+  'fitSpeedFactor', // core/animation/retimeCommands: returns Fit to Footage's scale factor (pure; retimeEdits sends the keys)
   'applyTextPath', // pure glyph layout along a path (core/text/textPath)
   'resetProjectWorkspace', // project lifecycle (tabs/timelines), not an edit
   'deleteEffectPreset', 'deletePreset', 'importPresets', 'importPresetObjects', // preset LIBRARY, not the document
@@ -140,6 +142,30 @@ const NOT_WRITE_SHAPE = /^create\w*(Player|Renderer|Painter|Port|Cache|Backend|S
  * called WITHOUT a scratch engine default to `defaultAnimation` and still count.
  */
 const SCRATCH_ENGINE_ARG = 'scratch';
+
+/**
+ * Off-document builders (src/core/engine/offDocument.ts): a function passed to
+ * one of these runs against a SCRATCH state of the document that is restored
+ * exactly before the call returns (and the call fails if the builder changed
+ * anything but new layers); the net change reaches the document only as the
+ * `pasteLayers` command the caller sends. Writer calls lexically inside such a
+ * callback are scratch writes, like a helper called with a `scratch` engine.
+ */
+const OFF_DOCUMENT_BUILDERS = new Set(['buildLayerFragment', 'insertBuiltLayers', 'offDocument']);
+
+function insideOffDocumentBuilder(context, node) {
+  const ancestors = context.sourceCode.getAncestors(node);
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const a = ancestors[i];
+    if (a.type !== 'ArrowFunctionExpression' && a.type !== 'FunctionExpression') continue;
+    const call = ancestors[i - 1];
+    if (!call || call.type !== 'CallExpression' || !call.arguments.includes(a)) continue;
+    const callee = unwrap(call.callee);
+    const name = callee.type === 'Identifier' ? callee.name : propName(callee);
+    if (name && OFF_DOCUMENT_BUILDERS.has(name)) return true;
+  }
+  return false;
+}
 
 /**
  * Modules that ARE a counted writer: their body's call of the underlying
@@ -236,7 +262,10 @@ const rule = {
     const rel = relPathOf(context);
     if (WRITER_MODULES.has(rel)) return {};
     const imports = new Map(); // local name → { source, imported }
-    const report = (node, kind, what) => context.report({ node, messageId: 'write', data: { kind, what } });
+    const report = (node, kind, what) => {
+      if (insideOffDocumentBuilder(context, node)) return;
+      context.report({ node, messageId: 'write', data: { kind, what } });
+    };
 
     const writerName = (imp, local) => {
       const named = NAMED_WRITERS[imp.source];
@@ -372,3 +401,7 @@ export function areaOf(relPath) {
   for (const [name, re] of AREAS) if (re.test(relPath)) return name;
   return 'other';
 }
+
+// Shared with the B4 read ratchet (scripts/lint/engineReadsRule.mjs): a call
+// this rule counts as a WRITE is not counted there as a read too.
+export { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB, STORE_WRITES };

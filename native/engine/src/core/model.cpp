@@ -61,7 +61,7 @@ api::ProjectSettings default_project_settings() {
 
 bool Parts::empty() const noexcept {
   return nodes.empty() && anims.empty() && comps.empty() && timelines.empty() && !nodeOrder && !compOrder &&
-         !tlOrder && !items && !project && !rq && !mb && !cm;
+         !tlOrder && !items && !project && !rq && !mb && !cm && !tx;
 }
 
 namespace {
@@ -126,6 +126,7 @@ void ChangeSet::merge(const ChangeSet& later) {
   merge_opt_before(before.rq, later.before.rq);
   merge_opt_before(before.mb, later.before.mb);
   merge_opt_before(before.cm, later.before.cm);
+  merge_opt_before(before.tx, later.before.tx);
   merge_map_after(after.nodes, later.after.nodes);
   merge_map_after(after.anims, later.after.anims);
   merge_map_after(after.comps, later.after.comps);
@@ -138,6 +139,7 @@ void ChangeSet::merge(const ChangeSet& later) {
   merge_opt_after(after.rq, later.after.rq);
   merge_opt_after(after.mb, later.after.mb);
   merge_opt_after(after.cm, later.after.cm);
+  merge_opt_after(after.tx, later.after.tx);
 }
 
 void ChangeSet::prune() {
@@ -153,6 +155,7 @@ void ChangeSet::prune() {
   prune_opt(before.rq, after.rq);
   prune_opt(before.mb, after.mb);
   prune_opt(before.cm, after.cm);
+  prune_opt(before.tx, after.tx);
 }
 
 ChangeSet ChangeSet::reversed() const {
@@ -176,6 +179,7 @@ std::vector<std::string> ChangeSet::keys() const {
   if (before.rq) out.emplace_back("rq");
   if (before.mb) out.emplace_back("mb");
   if (before.cm) out.emplace_back("cm");
+  if (before.tx) out.emplace_back("tx");
   return out;
 }
 
@@ -186,7 +190,8 @@ Document::Document()
       project_(std::make_shared<api::ProjectSettings>(default_project_settings())),
       rq_(std::make_shared<RenderQueue>()),
       mb_(std::make_shared<MotionBlur>()),
-      cm_(std::make_shared<ColorMgmt>()) {}
+      cm_(std::make_shared<ColorMgmt>()),
+      tx_(std::make_shared<Json>(Json::object())) {}
 
 const Node* Document::node(std::string_view id) const {
   const auto* p = nodes_.find(id);
@@ -323,6 +328,10 @@ ColorMgmt& Document::color_mut() {
   if (journal_ && !journal_->cm) journal_->cm = cm_;
   return unshare(cm_);
 }
+Json& Document::transitions_mut() {
+  if (journal_ && !journal_->tx) journal_->tx = tx_;
+  return unshare(tx_);
+}
 
 void Document::reorder_nodes(const IdList& order) {
   note_node_order();
@@ -357,6 +366,7 @@ Parts Document::current_of(const Parts& keys) const {
   if (keys.rq) out.rq = rq_;
   if (keys.mb) out.mb = mb_;
   if (keys.cm) out.cm = cm_;
+  if (keys.tx) out.tx = tx_;
   return out;
 }
 
@@ -447,6 +457,10 @@ void Document::apply(const Parts& p) {
     if (journal_ && !journal_->cm) journal_->cm = cm_;
     cm_ = *p.cm;
   }
+  if (p.tx && *p.tx) {
+    if (journal_ && !journal_->tx) journal_->tx = tx_;
+    tx_ = *p.tx;
+  }
 }
 
 Parts Document::capture_all() const {
@@ -463,6 +477,7 @@ Parts Document::capture_all() const {
   out.rq = rq_;
   out.mb = mb_;
   out.cm = cm_;
+  out.tx = tx_;
   return out;
 }
 

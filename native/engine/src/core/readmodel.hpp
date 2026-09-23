@@ -46,6 +46,10 @@ struct MatteState {
 
 [[nodiscard]] api::CompSettings comp_settings(const Document& d, std::string_view comp);
 [[nodiscard]] api::CompInfo comp_info(const Document& d, std::string_view comp);
+/// B3z: a stored transition record as the API reports it (model.ts transitionInfo).
+[[nodiscard]] api::Transition transition_info(const Document& d, std::string_view comp, const Json& rec);
+/// model.ts `transitionsOf(comp)`.
+[[nodiscard]] std::vector<api::Transition> transitions_of(const Document& d, std::string_view comp);
 
 [[nodiscard]] api::ItemInfo footage_info(const Json& asset);
 [[nodiscard]] api::ItemInfo folder_info(const Folder& f);

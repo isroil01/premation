@@ -142,6 +142,23 @@ export function mergeFade(existing: readonly Keyframe[], fade: readonly Keyframe
 }
 
 /**
+ * A fade as DATA (B3z): its two keys at COMPOSITION seconds — the engine
+ * converts to the layer's keyframe axis. Empty when there is nothing to fade
+ * (no audible span, or a retime maps both ends onto one layer time). The
+ * Audio panel sends these as a splice of `audio/levels` (keys inside the fade
+ * window dropped, the rest kept — {@link mergeFade}'s rule).
+ */
+export function planFadeKeys(nodeId: string, side: FadeSide, durationSec = DEFAULT_FADE_SEC): Array<{ seconds: number; value: number }> {
+  const span = audibleSpan(nodeId);
+  if (!span) return [];
+  const keys = planFade(span, side, durationSec, staticLevelDbOf(nodeId), (t) => t);
+  if (keys.length !== 2) return [];
+  const axis = (t: number): number => compToKeyframeTime(nodeId, t, AUDIO_LEVEL_DB_PROP);
+  if (axis(keys[0]!.t) === axis(keys[1]!.t)) return [];
+  return keys.map((k) => ({ seconds: k.t, value: k.value as number }));
+}
+
+/**
  * Apply a fade to one layer. Returns false when the layer has no audible span
  * (so the caller can skip opening a history entry for a no-op).
  *

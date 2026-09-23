@@ -306,6 +306,49 @@ export interface ApplyDuckingResult {
  * been pulled to −6 dB back up to unity between phrases — the layer would get
  * LOUDER where nobody is talking, which is the opposite of the feature.
  */
+/**
+ * The ducking as DATA, nothing written (B3z): the level keys at COMPOSITION
+ * seconds (the engine converts to the music layer's keyframe axis) and the
+ * record to remember. The Ducking dialog sends it as one engine entry
+ * (`audio/ducking` + `audio/levels`); {@link applyDucking} is the pre-API writer.
+ */
+export interface DuckingPlan {
+  record: DuckingRecord;
+  keys: Array<{ seconds: number; value: number }>;
+  peakDuckDb: number;
+  error?: string;
+}
+
+export async function planDucking(
+  musicNodeId: string,
+  voiceNodeId: string,
+  params: DuckingParams,
+): Promise<DuckingPlan> {
+  const record: DuckingRecord = { ...params, voiceNodeId };
+  const none = (error: string): DuckingPlan => ({ record, keys: [], peakDuckDb: 0, error });
+  if (!defaultSceneGraph.getNode(musicNodeId) || !defaultSceneGraph.getNode(voiceNodeId)) return none('That layer is gone.');
+  if (musicNodeId === voiceNodeId) return none('A layer cannot duck under itself.');
+  const range = driverRange();
+  const env = await computeDuckEnvelope(voiceNodeId, params, range);
+  if (!env) return none('That layer’s audio has not decoded (or has no sound in this range).');
+  const base = staticLevelDbOf(musicNodeId);
+  const levels = new Float32Array(env.gainDb.length);
+  let peak = 0;
+  for (let f = 0; f < env.gainDb.length; f++) {
+    const g = env.gainDb[f] ?? 0;
+    if (g < peak) peak = g;
+    levels[f] = Math.max(MIN_LEVEL_DB, base + g);
+  }
+  const keys: Array<{ seconds: number; value: number }> = [];
+  for (const f of thinLevels(levels)) {
+    const compTime = range.start + f / range.fps;
+    if (compTime > range.end + 1e-9) break;
+    keys.push({ seconds: compTime, value: Math.round((levels[f] ?? 0) * 100) / 100 });
+  }
+  if (keys.length === 0) return none('Nothing to write in this range.');
+  return { record, keys, peakDuckDb: Math.round(peak * 10) / 10 };
+}
+
 export async function applyDucking(
   musicNodeId: string,
   voiceNodeId: string,

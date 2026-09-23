@@ -12,6 +12,7 @@
  */
 
 import { captureDocument, restoreDocument } from './cloudDocument';
+import { captureOpenTabs, recallEditorView, rememberEditorView } from '@core/project/editorView';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
@@ -255,24 +256,43 @@ describe('captureDocument → restoreDocument', () => {
     expect(defaultAnimation.sample('layer_b', 'rotation', 2)).toBeCloseTo(180);
   });
 
-  it('preserves which composition tabs were open', () => {
+  it('keeps editor state OUT of the document; the tabs travel beside the file (B4)', () => {
     const actions = useProjectStore.getState().actions;
     actions.openTab('comp_second', ['comp_root', 'comp_second'], 'Lower Third');
     const before = useProjectStore.getState();
     expect(before.tabOrder.length).toBeGreaterThan(1);
-    const opened = before.activeTabId;
-    expect(opened).toBeTruthy();
-    expect(before.tabs[opened!]?.compositionId).toBe('comp_second');
+    expect(before.tabs[before.activeTabId!]?.compositionId).toBe('comp_second');
 
+    // No open tabs, no playhead, no timeline zoom/scroll in the document.
     const doc = structuredClone(captureDocument());
+    expect(doc.openTabs).toBeUndefined();
+    for (const t of Object.values(doc.timelines ?? {})) {
+      expect((t as unknown as Record<string, unknown>).view).toBeUndefined();
+      expect((t as unknown as Record<string, unknown>).currentFrame).toBeUndefined();
+    }
+
+    // …they are remembered per project FILE and put back when it opens.
+    rememberEditorView('C:/p/tabs.motion');
     actions.resetTabs();
     expect(useProjectStore.getState().tabOrder).toHaveLength(1);
-
     restoreDocument(doc);
-
+    expect(useProjectStore.getState().tabOrder).toHaveLength(1); // the document said nothing about tabs
+    recallEditorView('C:/p/tabs.motion');
     const after = useProjectStore.getState();
     expect(after.tabOrder.length).toBe(before.tabOrder.length);
     expect(after.tabs[after.activeTabId ?? '']?.compositionId).toBe('comp_second');
+  });
+
+  it('migrates a pre-B4 document: its saved tabs still restore once', () => {
+    const actions = useProjectStore.getState().actions;
+    actions.openTab('comp_second', ['comp_root', 'comp_second'], 'Lower Third');
+    const legacy = { ...structuredClone(captureDocument()), openTabs: captureOpenTabs() };
+    actions.resetTabs();
+    restoreDocument(legacy);
+    const after = useProjectStore.getState();
+    expect(after.tabs[after.activeTabId ?? '']?.compositionId).toBe('comp_second');
+    // The next capture drops them.
+    expect(captureDocument().openTabs).toBeUndefined();
   });
 
   it('migrates a legacy gridDivisions onto the PROPORTIONAL grid', () => {

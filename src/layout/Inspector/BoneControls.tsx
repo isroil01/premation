@@ -1,16 +1,19 @@
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorLayersWatch } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { rigPaths } from '@core/engine/rigPaths';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode, bindPoseBones } from '@core/rig/skeletonCommands';
+import { updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode, bindPoseBones, type SkeletonRig } from '@core/rig/skeletonCommands';
 import { chainModeOf, resolveActiveIkTargets } from '@core/rig/liveIkTargets';
 import { applyRigPreset } from '@core/rig/skeletonCommands';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { readGeometry } from '@core/workspace/geometry';
 import { MESH_DENSITY_DEFAULT, MESH_EXPANSION_DEFAULT } from '@core/rig/rigMeshInputs';
-import { chainModePropPath, type ChainMode } from '@core/rig/ikfk';
+import type { ChainMode } from '@core/rig/ikfk';
 import { defaultAnimation } from '@motion/animation';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -20,7 +23,7 @@ import {
   defaultControllerFor, CONTROLLER_SHAPES, CONTROLLER_SIDES,
   type ControllerShape, type ControllerSide,
 } from '@core/rig/controllers';
-import { readNodePuppet } from '@core/rig/puppet';
+import type { PuppetRig } from '@core/rig/puppet';
 import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding } from '@core/rig/rigDeform';
 import { applyIk, ikChainIds } from '@core/rig/rigDeform';
@@ -46,7 +49,13 @@ const selectStyle: React.CSSProperties = {
 };
 
 export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // B4: re-render on this layer's header / property tree / keyframes (the live
+  // pose below follows bone keys), and read the rigs from the document mirror.
+  useMirrorLayersWatch([nodeId]);
+  const layer = useMirrorLayer(nodeId);
+  // `layer/skeleton` / `layer/puppet` are fx.skeleton / fx.puppet verbatim (rigProps wholeRig codec).
+  const skel = useMirrorJson<SkeletonRig>(nodeId, 'layer/skeleton');
+  const puppet = useMirrorJson<PuppetRig>(nodeId, 'layer/puppet');
   // EVERY hook above the `!node` guard. React counts hooks per render, so a
   // hook below an early return runs on one pass and not the next — "Rendered
   // fewer hooks than expected", which unmounts the tree and takes the editor
@@ -58,10 +67,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
   const selectedBoneId = useRigSelectionStore((s) => s.boneId);
   const selectedControllerId = useRigSelectionStore((s) => s.controllerId);
+  // B4-gap: the scene node for readGeometry / nodeRestMesh (the skinning mesh and the auto-rig size are computed over the scene graph's drawn geometry) — no mirror twin.
   const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
+  if (!layer || !node) return null;
 
-  const skel = readNodeSkeleton(node);
   const bones = skel?.bones ?? [];
   const ikTargets = skel?.ikTargets ?? [];
   const controllers = skel?.controllers ?? [];
@@ -75,10 +84,12 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // renderer samples, so a mode keyframe lands where the pose does.
   // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
   const layerT = compToKeyframeTime(nodeId, workspaceTime);
+  // B4-gap: the live bone pose — bone.<id>.* tracks sampled on the layer's keyframe axis by the animation engine (resolveLiveBones' sampler); the mirror has no rig-track sampler.
   const liveBones = resolveLiveBones(bones, nodeId, layerT, defaultAnimation);
+  // B4-gap: active IK goals (ikTarget/ikPole/ikMode tracks sampled by the animation engine) — same sampler gap.
   const posedBones = applyIk(liveBones, resolveActiveIkTargets(skel, nodeId, layerT));
   const posedWorld = computeWorldTransforms({ bones: posedBones });
-  const hasPuppet = ((readNodePuppet(node)?.pins ?? []).length ?? 0) > 0;
+  const hasPuppet = (puppet?.pins ?? []).length > 0;
 
   const effectorFor = (boneId: string): { x: number; y: number } => {
     const bone = posedBones.find((candidate) => candidate.id === boneId);
@@ -145,8 +156,11 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
    */
   const renderVertexWeights = (): JSX.Element | null => {
     if (selectedVertex === null || bones.length === 0) return null;
+    // B4-gap: the layer's drawn geometry (readGeometry over the scene node) — the rest mesh is built from it.
     const geom = readGeometry(node);
     if (!geom) return null;
+    // B4-gap: the rest (skinning) mesh — nodeRestMesh triangulates the scene node, and reads the source
+    // asset's decoded alpha (useAssetStore record) for the outline; neither is in the API.
     const restMesh = nodeRestMesh(node, geom, (id) =>
       useAssetStore.getState().assets.find((a) => a.id === id));
     const numVerts = restMesh.vertices.length / 4;
@@ -279,6 +293,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           onChange={(e) => {
             const id = e.target.value as RigPresetId;
             if (!id) return;
+            // B4-gap: the layer's drawn size (readGeometry: text/group/shape bounds over the scene node) sizes the preset.
             const geom = readGeometry(node);
             // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
             const problems = applyRigPreset(
@@ -602,6 +617,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   Chain Mode
                 </span>
                 <select
+                  // B4-gap: the chain mode at the playhead samples the ikMode.<bone> track through the animation engine (rig-track sampler gap).
                   value={chainModeOf({ boneId: bone.id, ikMode: ik?.ikMode }, nodeId, layerT)}
                   aria-label={`${bone.name || bone.id} chain mode`}
                   onChange={(e) =>
@@ -610,7 +626,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                       layerT,
                       keyframe:
                         usePreferenceStore.getState().timelineAutoKeyframe ||
-                        defaultAnimation.isAnimated(nodeId, chainModePropPath(bone.id)),
+                        // The mode property (track ikMode.<bone>) is keyframed — read at call time from the mirror.
+                        documentMirror().keyframes(nodeId, rigPaths.ikProp(bone.id, 'mode')).length > 0,
                     })
                   }
                   style={selectStyle}

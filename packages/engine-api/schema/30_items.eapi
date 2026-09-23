@@ -140,6 +140,8 @@ command duplicateComposition = 101 { comp: ItemId = 1; deep: bool = 2; } -> Item
 /// Change composition settings. Undo restores exactly the patched fields. Changing duration/rate never moves keyframes (times are flicks).
 command setCompositionSettings = 102 [coalesce] { comp: ItemId = 1; patch: CompSettingsPatch = 2; }
 command setWorkArea = 103 [coalesce] { comp: ItemId = 1; range: TimeRange = 2; }
+/// B3z — reset the work area to the whole composition (Shift+B). After Effects always has a work area; the document stores "none", which reads back as [0, duration] and FOLLOWS later duration changes (setWorkArea pins a range). A preview loop following the work area follows it too. Inverse: the previous range.
+command clearWorkArea = 120 { comp: ItemId = 1; }
 
 enum PrecomposeMode {
   /// Move all attributes into the new composition (AE default for several layers).

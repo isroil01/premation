@@ -17,7 +17,6 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
   getNodeFill,
-  setNodeFill,
   convertFill,
   solidFill,
   sortedStops,
@@ -27,10 +26,11 @@ import {
   type RadialFill,
 } from '@core/paint/fill';
 import { readTextStrokePaint } from '@core/text/textExtras';
-import { readGradientGeometryProp, writeGradientGeometryProp } from '@core/inspector/gradientGeometryProps';
+import { readGradientGeometryProp } from '@core/inspector/gradientGeometryProps';
 import { ColorPicker } from '@components/ColorPicker';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
-import { setFillPaintEdit, setTextStrokePaintEdit } from './appearance/paintEdits';
+import { setFillPaintEdit, textStrokePaintCommands } from './appearance/paintEdits';
+import { useEngineEdit } from './useEngineEdit';
 import { useGradientEditStore } from '@layout/Workspace/gradientEditStore';
 import { Icon } from '@components/Icon';
 import { AnimatablePaintRow } from './appearance/AnimatablePaintRow';
@@ -50,32 +50,20 @@ function gradientOf(nodeId: string): Exclude<FillPaint, { type: 'solid' }> | nul
   return f && f.type !== 'solid' ? f : null;
 }
 
-// B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
+// READ accessors; the writes are the engine's gradient geometry properties
+// (`layer/fillAngle`, `fillCenterX|Y`, `fillRadius` — static value inside the paint).
 const ANGLE: PropertyAccess = {
   read: (id) => {
     const f = gradientOf(id);
     return f?.type === 'linear' ? f.angle : undefined;
   },
-  writeStatic: (id, angle) => {
-    const f = gradientOf(id);
-    if (f?.type !== 'linear') return false;
-    setNodeFill(id, { ...f, angle });
-    return true;
-  },
 };
 
-// B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
 function radial(field: 'cx' | 'cy' | 'radius'): PropertyAccess {
   return {
     read: (id) => {
       const f = gradientOf(id);
       return f?.type === 'radial' ? f[field] : undefined;
-    },
-    writeStatic: (id, v) => {
-      const f = gradientOf(id);
-      if (f?.type !== 'radial') return false;
-      setNodeFill(id, { ...f, [field]: v });
-      return true;
     },
   };
 }
@@ -167,16 +155,13 @@ type StrokeGradient = LinearFill | RadialFill;
  * gradient gizmo's Fill/Stroke chip, or "Edit on canvas" here, arms it on the
  * stroke.
  */
-// B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
+// The stroke gradient's geometry — the engine's `layer/strokeAngle` / … (the
+// static value inside `Text.strokePaint`); this is the READ.
 function strokeGeometry(prop: 'strokeAngle' | 'strokeCenterX' | 'strokeCenterY' | 'strokeRadius'): PropertyAccess {
   return {
     read: (id) => {
       const n = defaultSceneGraph.getNode(id);
       return n ? readGradientGeometryProp(n, prop) : undefined;
-    },
-    writeStatic: (id, v) => {
-      const n = defaultSceneGraph.getNode(id);
-      return !!n && writeGradientGeometryProp(id, n, prop, v);
     },
   };
 }
@@ -190,6 +175,7 @@ export function TextStrokeRows({ nodeId, strokeColor }: { nodeId: string; stroke
   const armedTarget = useGradientEditStore((s) => s.target);
   const arm = useGradientEditStore((s) => s.arm);
   const disarm = useGradientEditStore((s) => s.disarm);
+  const engineEdit = useEngineEdit();
   const node = defaultSceneGraph.getNode(nodeId);
   const tc = node?.components.find((c) => c.type === 'Text');
   if (!node || !tc) return null;
@@ -199,7 +185,8 @@ export function TextStrokeRows({ nodeId, strokeColor }: { nodeId: string; stroke
 
   const write = (label: string, next: FillPaint | undefined): void => {
     // `text/strokePaint` (G1): the whole paint, one entry.
-    void setTextStrokePaintEdit(label, nodeId, next);
+    // A stop colour drag is one gesture (the picker's press below).
+    engineEdit.send(label, textStrokePaintCommands(nodeId, next));
   };
   const setType = (next: TextFillType): void => {
     if (next === type) return;
@@ -256,12 +243,14 @@ export function TextStrokeRows({ nodeId, strokeColor }: { nodeId: string; stroke
         <div className={styles.metricGrid}>
           {stops.map((s) => (
             <div key={s.id} className={styles.metricCell}>
-              <ColorPicker
-                value={s.color}
-                compact
-                aria-label="Stroke Gradient Stop Color"
-                onChange={(color) => setStops(stops.map((o) => (o.id === s.id ? { ...o, color } : o)))}
-              />
+              <span style={{ display: 'contents' }} {...engineEdit.press('Text Stroke Gradient Stops')}>
+                <ColorPicker
+                  value={s.color}
+                  compact
+                  aria-label="Stroke Gradient Stop Color"
+                  onChange={(color) => setStops(stops.map((o) => (o.id === s.id ? { ...o, color } : o)))}
+                />
+              </span>
               <input
                 type="number"
                 aria-label="Stroke Gradient Stop Position"

@@ -464,6 +464,20 @@ std::optional<Json> read_node_polystar(const Node& n) {
   return out;
 }
 
+bool update_node_polystar(Document& d, std::string_view nodeId, const Json& patch) {
+  const Node* n = d.node(nodeId);
+  const auto current = n != nullptr ? read_node_polystar(*n) : std::nullopt;
+  if (!current) return false;
+  // polystar.ts updateNodePolystar: {...current, ...patch}, re-validated whole.
+  Json next = spread(*current, patch);
+  const auto fin = [](const Json& v, double fb) { return v.is_finite_number() ? v.num() : fb; };
+  next.set("points", Json::number(std::max(3.0, motion::js::round(fin(next.at("points"), current->at("points").num())))));
+  next.set("outerRadius", Json::number(std::max(0.0, fin(next.at("outerRadius"), current->at("outerRadius").num()))));
+  next.set("innerRadius", Json::number(std::max(0.0, fin(next.at("innerRadius"), current->at("innerRadius").num()))));
+  sg_set_fx(d, nodeId, "polystar", std::move(next));
+  return true;
+}
+
 std::vector<std::string> polystar_params(std::string_view starType) {
   std::vector<std::string> out;
   const Json& specs = registry().polystar.at(starType == "polygon" ? "polygon" : "star");

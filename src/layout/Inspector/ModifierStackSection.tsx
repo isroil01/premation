@@ -23,13 +23,16 @@
  * driver runs an FFT over the work area and writes a keyframe per frame;
  * applying a stack recompiles a string. So a stack edit can be live, which is
  * what makes dragging a wiggle's amplitude feel like a slider instead of like a
- * form submission. `applyModifierStack` passes a merge key, so a drag is one
- * undo step rather than forty.
+ * form submission. A scrub is ONE engine gesture (one undo step rather than
+ * forty); every other edit is one batch of the stack record and the compiled
+ * expression (modifierEdits.ts).
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import type { Command } from '@motion/engine-api';
 import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
+import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
 import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
@@ -46,22 +49,21 @@ import {
   MODIFIER_HINTS,
   MODIFIER_KINDS,
   MODIFIER_LABELS,
-  applyBehaviorRecipe,
-  applyModifierStack,
-  bakeModifierStack,
   defaultModifier,
   describeModifier,
   moveModifier,
   patchModifier,
   readModifierStacks,
   removeModifier,
-  removeModifierStack,
   type AudioBandName,
   type LoopModeName,
   type Modifier,
   type ModifierKind,
 } from '@core/animation/modifierStack';
 import { compileModifierStack, modifierCompileError, modifierWarning } from '@core/animation/modifierCompile';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from './useEngineEdit';
+import { behaviorRecipeCommands, bakeModifierStackCommands, modifierStackCommands } from './modifierEdits';
 import styles from './ModifierStackSection.module.css';
 
 /** Property value types a numeric modifier chain can sensibly drive. */
@@ -155,6 +157,12 @@ function ExpressionInput({
   );
 }
 
+/** The scrub half of a ValueField (useEngineEdit().scrub). */
+export interface ModifierScrub {
+  onScrubStart: () => void;
+  onScrubEnd: () => void;
+}
+
 /** A labelled number, the width of the panel's gutter. */
 function Field({
   label,
@@ -164,6 +172,7 @@ function Field({
   max,
   step,
   unit,
+  scrub,
 }: {
   label: string;
   value: number;
@@ -172,12 +181,15 @@ function Field({
   max?: number;
   step?: number;
   unit?: string;
+  /** A scrub = one gesture (useEngineEdit().scrub). */
+  scrub?: ModifierScrub;
 }): JSX.Element {
   return (
     <span className={styles.field}>
       <span className={styles.fieldLabel}>{label}</span>
       <ValueField
         value={value}
+        {...scrub}
         onChange={(v) => onChange(Number(v))}
         min={min}
         max={max}
@@ -194,11 +206,14 @@ export function ModifierParams({
   modifier,
   list,
   onPatch,
+  scrub,
 }: {
   modifier: Modifier;
   /** The whole stack, because a patch produces a new LIST, not a new row. */
   list: readonly Modifier[];
   onPatch: (next: Modifier[]) => void;
+  /** Scrub props every number field takes: a scrub is one gesture. */
+  scrub?: ModifierScrub;
 }): JSX.Element | null {
   const m = modifier;
   // `patchModifier` is given the ROW, so `patch` is checked against this
@@ -209,44 +224,44 @@ export function ModifierParams({
 
   switch (m.kind) {
     case 'offset':
-      return <div className={styles.params}><Field label="Amount" value={m.amount} onChange={(v) => set(m, { amount: v })} /></div>;
+      return <div className={styles.params}><Field scrub={scrub} label="Amount" value={m.amount} onChange={(v) => set(m, { amount: v })} /></div>;
     case 'multiply':
-      return <div className={styles.params}><Field label="Factor" value={m.factor} step={0.1} onChange={(v) => set(m, { factor: v })} /></div>;
+      return <div className={styles.params}><Field scrub={scrub} label="Factor" value={m.factor} step={0.1} onChange={(v) => set(m, { factor: v })} /></div>;
     case 'clamp':
       return (
         <div className={styles.params}>
-          <Field label="Min" value={m.min} onChange={(v) => set(m, { min: v })} />
-          <Field label="Max" value={m.max} onChange={(v) => set(m, { max: v })} />
+          <Field scrub={scrub} label="Min" value={m.min} onChange={(v) => set(m, { min: v })} />
+          <Field scrub={scrub} label="Max" value={m.max} onChange={(v) => set(m, { max: v })} />
         </div>
       );
     case 'wiggle':
       return (
         <div className={styles.params}>
-          <Field label="Frequency" value={m.freq} min={0} step={0.1} unit="Hz" onChange={(v) => set(m, { freq: v })} />
-          <Field label="Amplitude" value={m.amp} onChange={(v) => set(m, { amp: v })} />
-          <Field label="Octaves" value={m.octaves} min={1} max={8} step={1} onChange={(v) => set(m, { octaves: Math.max(1, Math.round(v)) })} />
-          <Field label="Seed" value={m.seed} step={1} onChange={(v) => set(m, { seed: Math.round(v) })} />
+          <Field scrub={scrub} label="Frequency" value={m.freq} min={0} step={0.1} unit="Hz" onChange={(v) => set(m, { freq: v })} />
+          <Field scrub={scrub} label="Amplitude" value={m.amp} onChange={(v) => set(m, { amp: v })} />
+          <Field scrub={scrub} label="Octaves" value={m.octaves} min={1} max={8} step={1} onChange={(v) => set(m, { octaves: Math.max(1, Math.round(v)) })} />
+          <Field scrub={scrub} label="Seed" value={m.seed} step={1} onChange={(v) => set(m, { seed: Math.round(v) })} />
         </div>
       );
     case 'oscillate':
       return (
         <div className={styles.params}>
-          <Field label="Rate" value={m.freq} min={0} step={0.05} unit="Hz" onChange={(v) => set(m, { freq: v })} />
-          <Field label="Amplitude" value={m.amp} onChange={(v) => set(m, { amp: v })} />
-          <Field label="Phase" value={m.phase} step={0.1} onChange={(v) => set(m, { phase: v })} />
+          <Field scrub={scrub} label="Rate" value={m.freq} min={0} step={0.05} unit="Hz" onChange={(v) => set(m, { freq: v })} />
+          <Field scrub={scrub} label="Amplitude" value={m.amp} onChange={(v) => set(m, { amp: v })} />
+          <Field scrub={scrub} label="Phase" value={m.phase} step={0.1} onChange={(v) => set(m, { phase: v })} />
         </div>
       );
     case 'spring':
       return (
         <div className={styles.params}>
-          <Field label="Frequency" value={m.frequency} min={0} step={0.1} unit="Hz" onChange={(v) => set(m, { frequency: v })} />
-          <Field label="Decay" value={m.decay} min={0} step={0.5} onChange={(v) => set(m, { decay: v })} />
+          <Field scrub={scrub} label="Frequency" value={m.frequency} min={0} step={0.1} unit="Hz" onChange={(v) => set(m, { frequency: v })} />
+          <Field scrub={scrub} label="Decay" value={m.decay} min={0} step={0.5} onChange={(v) => set(m, { decay: v })} />
         </div>
       );
     case 'smooth':
-      return <div className={styles.params}><Field label="Window" value={m.windowSec} min={0} step={0.01} unit="s" onChange={(v) => set(m, { windowSec: v })} /></div>;
+      return <div className={styles.params}><Field scrub={scrub} label="Window" value={m.windowSec} min={0} step={0.01} unit="s" onChange={(v) => set(m, { windowSec: v })} /></div>;
     case 'delay':
-      return <div className={styles.params}><Field label="Seconds" value={m.seconds} step={0.05} unit="s" onChange={(v) => set(m, { seconds: v })} /></div>;
+      return <div className={styles.params}><Field scrub={scrub} label="Seconds" value={m.seconds} step={0.05} unit="s" onChange={(v) => set(m, { seconds: v })} /></div>;
     case 'loop':
       return (
         <div className={styles.params}>
@@ -271,8 +286,8 @@ export function ModifierParams({
           >
             {AUDIO_BANDS.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
-          <Field label="Min" value={m.min} onChange={(v) => set(m, { min: v })} />
-          <Field label="Max" value={m.max} onChange={(v) => set(m, { max: v })} />
+          <Field scrub={scrub} label="Min" value={m.min} onChange={(v) => set(m, { min: v })} />
+          <Field scrub={scrub} label="Max" value={m.max} onChange={(v) => set(m, { max: v })} />
         </div>
       );
     case 'expression':
@@ -308,12 +323,15 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
 
   const modifiers = useMemo(() => stacks[activePath]?.modifiers ?? [], [stacks, activePath]);
 
-  const commit = useCallback((next: Modifier[]): void => {
+  const eng = useEngineEdit();
+  // One batch (or, inside a scrub, one gesture message): the `layer/modifiers`
+  // record + the compiled expression on the property (modifierEdits.ts).
+  const commit = useCallback((next: Modifier[] | null, label = 'Edit Modifier Stack'): void => {
     if (!activePath) return;
-    // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-    applyModifierStack(nodeId, activePath, next);
+    eng.send(label, modifierStackCommands(nodeId, activePath, next));
     setNote(null);
-  }, [nodeId, activePath]);
+  }, [nodeId, activePath, eng]);
+  const scrub = useMemo(() => eng.scrub('Edit Modifier Stack'), [eng]);
 
   const compiled = useMemo(() => compileModifierStack(modifiers), [modifiers]);
   const error = useMemo(() => modifierCompileError(modifiers), [modifiers]);
@@ -362,8 +380,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
               onDragStart={() => setDragFrom(i)}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => {
-                // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-                if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i));
+                if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i), 'Reorder Modifier');
                 setDragFrom(null);
               }}
             >
@@ -383,26 +400,23 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   className={styles.iconBtn}
                   aria-label={`Move ${label} up`}
                   disabled={i === 0}
-                  // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-                  onClick={() => commit(moveModifier(modifiers, i, i - 1))}
+                  onClick={() => commit(moveModifier(modifiers, i, i - 1), 'Reorder Modifier')}
                 >▲</button>
                 <button
                   type="button"
                   className={styles.iconBtn}
                   aria-label={`Move ${label} down`}
                   disabled={i === modifiers.length - 1}
-                  // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-                  onClick={() => commit(moveModifier(modifiers, i, i + 1))}
+                  onClick={() => commit(moveModifier(modifiers, i, i + 1), 'Reorder Modifier')}
                 >▼</button>
                 <button
                   type="button"
                   className={styles.iconBtn}
                   aria-label={`Remove ${label}`}
-                  // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-                  onClick={() => commit(removeModifier(modifiers, m.id))}
+                  onClick={() => commit(removeModifier(modifiers, m.id), 'Remove Modifier')}
                 >✕</button>
               </div>
-              <ModifierParams modifier={m} list={modifiers} onPatch={commit} />
+              <ModifierParams modifier={m} list={modifiers} onPatch={commit} scrub={scrub} />
               <p className={styles.rowHint}>{MODIFIER_HINTS[m.kind]}</p>
               {warning && <p className={styles.warn}>Note — {warning}.</p>}
             </li>
@@ -419,7 +433,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           onChange={(e) => {
             const kind = e.target.value as ModifierKind;
             if (!kind) return;
-            commit([...modifiers, defaultModifier(kind)]);
+            commit([...modifiers, defaultModifier(kind)], 'Add Modifier');
           }}
         >
           <option value="">Add modifier…</option>
@@ -438,10 +452,14 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           onChange={(e) => {
             const recipe = BEHAVIOR_RECIPES.find((r) => r.preset === e.target.value);
             if (!recipe) return;
-            // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-            const done = applyBehaviorRecipe(nodeId, recipe);
-            setProp(done[0] ?? activePath);
-            setNote(`${recipe.label} added as an editable stack on ${done.join(', ')}.`);
+            // Every stack of the recipe in ONE batch: one undo entry.
+            const { commands, tracks } = behaviorRecipeCommands(nodeId, recipe);
+            if (tracks.length === 0) return;
+            void edit(`Add ${recipe.label}`, commands).then((r) => {
+              if (!r.ok) return;
+              setProp(tracks[0] ?? activePath);
+              setNote(`${recipe.label} added as an editable stack on ${tracks.join(', ')}.`);
+            });
           }}
         >
           <option value="">Add behaviour…</option>
@@ -466,13 +484,16 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           variant="secondary"
           disabled={!hasStack}
           onClick={() => {
-            // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-            const result = bakeModifierStack(nodeId, activePath);
-            setNote(
-              result.refusal
-                ? BAKE_REFUSAL_TEXT[result.refusal]
-                : `Baked ${result.written.get(activePath) ?? 0} keyframes — the expression is now off, the rows are kept.`,
-            );
+            const cmds: Command[] | null = bakeModifierStackCommands(nodeId, activePath);
+            if (!cmds) { setNote(BAKE_REFUSAL_TEXT['no-expression']); return; }
+            void edit('Bake Modifier Stack', cmds, { quiet: true }).then((r) => {
+              if (!r.ok) {
+                setNote(BAKE_REFUSAL_TEXT[r.error.code === 'outOfRange' ? 'empty-range' : defaultAnimation.hasExpression(nodeId, activePath) ? 'expression-disabled' : 'no-expression']);
+                return;
+              }
+              const res = r.value[0] as { ids?: string[] } | undefined;
+              setNote(`Baked ${res?.ids?.length ?? 0} keyframes — the expression is now off, the rows are kept.`);
+            });
           }}
         >
           Bake to keyframes
@@ -482,9 +503,9 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           variant="secondary"
           disabled={!hasStack}
           onClick={() => {
-            // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
-            removeModifierStack(nodeId, activePath);
-            setNote('Stack removed — any expression that was there first is back.');
+            void edit('Remove Modifier Stack', modifierStackCommands(nodeId, activePath, null)).then((r) => {
+              if (r.ok) setNote('Stack removed — any expression that was there first is back.');
+            });
           }}
         >
           Remove stack

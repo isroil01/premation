@@ -36,15 +36,14 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { runAsOneHistoryEntry } from '@core/composition/compositeEdit';
+import type { Command } from '@motion/engine-api';
+import { framesToFlicks } from '@core/engine/time';
+import { compOfLayer } from '@core/engine/doc';
 import { downloadBlob } from '@core/export/exportManager';
 import { toSrt, toVtt, type Cue } from '@core/captions/captionFormat';
-import {
-  captionNodes,
-  insertCaptionLayers,
-  readCaptionCues,
-  removeCaptionLayers,
-} from '@core/captions/captionLayers';
+import { captionEditCommands, DEFAULT_CAPTION_STYLE, readCaptionCues } from '@core/captions/captionLayers';
+import { edit } from '@core/engine/uiEdits';
+import { useProjectStore } from '@stores/projectStore';
 import {
   TranscribeError,
   transcribeCompositionDetailed,
@@ -218,11 +217,9 @@ export interface DeleteRangesResult {
 /**
  * Remove `ranges` from the active composition's timeline, closing the gaps.
  *
- * One undo entry for the whole thing, via `runAsOneHistoryEntry` — which is the
- * right tool here rather than a hand-written inverse for the reason its own
- * header gives: this touches clip geometry (invisible to the scene snapshot),
- * scene nodes (deleted layers) and, through the splits, nodes that did not
- * exist before the operation started.
+ * One undo entry for the whole thing: one engine `rippleDeleteRange` per range
+ * in one batch (B3z) — the engine records the exact inverse of the clip
+ * geometry, the deleted layers and the layers the cuts create.
  *
  * `nodeIds`, when given, restricts which layers are CUT. The default — no
  * `nodeIds` — is every layer with a clip overlapping the range, which is what
@@ -247,51 +244,40 @@ export async function deleteTimeRanges(
     ? 'Delete Transcript Selection'
     : `Delete ${merged.length} Transcript Selections`;
 
-  // B3-legacy: engine gap — a TIME-RANGE ripple delete: cut only the unlocked (optionally restricted) bars at both edges, delete what lies inside, then close the gap ONCE over every unlocked bar. `editWorkArea{extract}` works on the work area only, ignores locks and ripples only the layers it cuts.
-  return runAsOneHistoryEntry(label, () => {
-    const result: DeleteRangesResult = { removedSeconds: deletedDuration(merged), splits: 0, deletedClips: 0 };
-    const fps = controller.fps;
-
-    for (const range of [...merged].reverse()) {
-      const startF = Math.round(range.start * fps);
-      const endF = Math.round(range.end * fps);
-      // Sub-frame ranges exist — a single short word can be one — and there is
-      // nothing to cut in less than a frame. Skipping is better than rounding
-      // up into the word beside it.
-      if (endF <= startF) continue;
-
-      // Two passes rather than one: splitting at the IN point creates the bar
-      // that then has to be split at the OUT point, and a single pass over a
-      // snapshot of the list would never see it.
-      for (const edge of [startF, endF]) {
-        for (const layer of [...controller.layersOfComp(rootId)]) {
-          if (layer.locked || !cuttable(layer.sourceId)) continue;
-          if (layer.start < edge && layer.end > edge) {
-            if (controller.splitClip(layer.id, edge / fps)) result.splits += 1;
-          }
-        }
-      }
-
-      for (const layer of [...controller.layersOfComp(rootId)]) {
-        if (layer.locked || !cuttable(layer.sourceId)) continue;
-        if (layer.start >= startF && layer.end <= endF) {
-          if (controller.deleteLayerForClip(layer.id, { ripple: false })) result.deletedClips += 1;
-        }
-      }
-
-      // The ripple, once, over EVERY clip — see the header. Locked bars are
-      // left where they are: the engine refuses to move them anyway, and
-      // pretending otherwise would report a shift that did not happen.
-      const gap = endF - startF;
-      for (const layer of [...controller.layersOfComp(rootId)]) {
-        if (layer.locked || layer.start < endF) continue;
-        controller.setClipStart(layer.id, Math.max(0, layer.start - gap) / fps);
-      }
+  // `rippleDeleteRange` (B3z) per range, last-first so every range is measured
+  // in the ORIGINAL time base, ONE entry: cut the unlocked (optionally
+  // restricted) layers at both edges, delete what lies inside, close the gap
+  // once over every unlocked layer. The counts are the legacy ones (a layer
+  // cut at both edges is two splits and one deleted piece).
+  const result: DeleteRangesResult = { removedSeconds: deletedDuration(merged), splits: 0, deletedClips: 0 };
+  const fps = controller.fps;
+  const only = restrict ? [...restrict].filter((id) => compOfLayer(id) === rootId) : [];
+  const cmds: Command[] = [];
+  for (const range of [...merged].reverse()) {
+    const startF = Math.round(range.start * fps);
+    const endF = Math.round(range.end * fps);
+    // Sub-frame ranges exist — a single short word can be one — and there is
+    // nothing to cut in less than a frame. Skipping is better than rounding
+    // up into the word beside it.
+    if (endF <= startF) continue;
+    if (restrict && only.length === 0) continue;
+    for (const layer of controller.layersOfComp(rootId)) {
+      if (layer.locked || !cuttable(layer.sourceId)) continue;
+      if (layer.end <= startF || layer.start >= endF) continue;
+      if (layer.start < startF) result.splits += 1;
+      if (layer.end > endF) result.splits += 1;
+      result.deletedClips += 1;
     }
-
-    controller.invalidateLayerIndex();
-    return result;
-  });
+    cmds.push({
+      type: 'rippleDeleteRange',
+      comp: rootId,
+      range: { start: framesToFlicks(startF, fps), duration: framesToFlicks(endF - startF, fps) },
+      layers: only,
+    });
+  }
+  if (cmds.length === 0) return { ...result, splits: 0, deletedClips: 0 };
+  const res = await edit(label, cmds);
+  return res.ok ? result : empty;
 }
 
 /**
@@ -349,29 +335,34 @@ export function transcriptCues(rootId: string = activeCompRootId()): Cue[] {
 /**
  * Turn the (edited) transcript into caption text layers.
  *
- * Straight through `insertCaptionLayers` — the same path the import and the
+ * Straight through `captionEditCommands` — the same build the import and the
  * generate commands use, so a caption made this way is an ordinary text layer
  * with `__caption` on it, stylable and re-timable like any other, and readable
  * back by the existing export.
  */
-export function addTranscriptAsCaptions(rootId: string = activeCompRootId()): number {
+export async function addTranscriptAsCaptions(rootId: string = activeCompRootId()): Promise<number> {
   const cues = transcriptCues(rootId);
   if (cues.length === 0) {
     notify('There is no transcript to add. Transcribe the composition first.', 'warning');
     return 0;
   }
-  const existing = captionNodes(rootId).length;
   // Replacing, not adding — the same argument `captionCommands.importCaptions`
   // makes: a second pass over an unremoved first is doubled text on screen,
   // which reads as a renderer bug rather than as the user's own second click.
-  // B3-legacy: engine gap — caption layers are styled text layers (`__caption`, caption style); rich createLayer (text styles) is not in the API yet.
-  if (existing > 0) removeCaptionLayers(rootId);
-  const result = insertCaptionLayers(cues);
+  // ONE entry: `deleteLayers` of the old captions + one `pasteLayers` of the
+  // styled caption layers built off-document.
+  const c = useProjectStore.getState().comps[rootId];
+  const e = captionEditCommands(cues, DEFAULT_CAPTION_STYLE, c ? { rootId, width: c.width, height: c.height } : undefined);
+  if (e.commands.length === 0) return 0;
+  const res = await edit(`Add ${e.added} caption${e.added === 1 ? '' : 's'}`, e.commands);
+  if (!res.ok) return 0;
+  const ids = e.added > 0 ? ((res.value.at(-1) as { layers?: string[] } | undefined)?.layers ?? []) : [];
+  if (ids.length > 0) useSelectionStore.getState().set(ids);
   notify(
-    `Added ${result.nodeIds.length} caption layer(s) from the transcript`
-    + (existing > 0 ? ` (replaced ${existing})` : ''),
+    `Added ${ids.length} caption layer(s) from the transcript`
+    + (e.removed > 0 ? ` (replaced ${e.removed})` : ''),
   );
-  return result.nodeIds.length;
+  return ids.length;
 }
 
 /** Write the transcript out through the existing SubRip / WebVTT writers. */

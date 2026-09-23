@@ -4,24 +4,31 @@
  * After Effects' Puppet panel is short: mesh density, then the pins you placed,
  * each showing only the properties its tool owns. Solver / rotation refinement
  * stay available but are not the first thing you see.
+ *
+ * Writes go through the engine API on the rig paths (rigEdits.ts,
+ * ENGINE_API.md §15.9): `puppet/mesh/<field>`, `puppet/pins/<pin>/<prop>`.
+ * A scrub or a slider drag is ONE gesture; a click / pick / typed value one entry.
  */
 
 import { Slider } from '@components/Slider';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { useActiveWorkspace } from '@stores/projectStore';
+import { edit } from '@core/engine/uiEdits';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
 import {
-  readNodePuppet,
   PIN_KIND_CATALOG,
   pinKindOf,
   pinColor,
   type PinKind,
+  type PuppetRig,
 } from '@core/rig/puppet';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
-import { updatePuppetSettings, updatePuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
+import { useEngineEdit } from './useEngineEdit';
+import { deletePinCommands, pinKindCommands, pinPropCommands, puppetMeshCommands } from './rigEdits';
 import styles from './BoneControls.module.css';
 
 /** Shared <select> chrome — every dropdown here must look identical. */
@@ -39,11 +46,18 @@ function pinCountLabel(n: number): string {
 }
 
 export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
+  const time = useActiveWorkspace()?.time ?? 0;
+  const eng = useEngineEdit();
+  // B4: the layer header and its whole rig (`layer/puppet` = fx.puppet verbatim) from the document mirror.
+  const layer = useMirrorLayer(nodeId);
+  const rig = useMirrorJson<PuppetRig>(nodeId, 'layer/puppet');
+  if (!layer) return null;
 
-  const rig = readNodePuppet(node);
+  const mesh = (label: string, patch: Parameters<typeof puppetMeshCommands>[1]): void =>
+    eng.send(label, puppetMeshCommands(nodeId, patch));
+  const pinProp = (pinId: string, prop: Parameters<typeof pinPropCommands>[2], v: number): void =>
+    eng.send('Edit Puppet Pin', pinPropCommands(nodeId, pinId, prop, v, time));
+
   const density = rig?.meshDensity ?? 22;
   const expansion = rig?.meshExpansion ?? 0;
   const solver = rig?.solver ?? 'arap';
@@ -84,12 +98,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 // 10, and any stiffness lowers the ARAP exact-solve cap to 21 —
                 // a 22 preset silently landed every anchored character in the
                 // approximate Gauss–Seidel solve.
-                // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                updatePuppetSettings(nodeId, {
-                  meshExpansion: 0,
-                  meshDensity: 20,
-                  meshMode: 'silhouette',
-                })
+                mesh('Edit Puppet Mesh', { expansion: 0, density: 20, mode: 'silhouette' })
               }
             >
               <Icon name="user" size="sm" />
@@ -100,12 +109,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
               className={`${styles.presetButton} ${meshMode !== 'silhouette' ? styles.presetButtonActive : ''}`}
               title="Softer mesh with padding — ideal for shapes and banners"
               onClick={() =>
-                // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                updatePuppetSettings(nodeId, {
-                  meshExpansion: 6,
-                  meshDensity: 16,
-                  meshMode: 'grid',
-                })
+                mesh('Edit Puppet Mesh', { expansion: 6, density: 16, mode: 'grid' })
               }
             >
               <Icon name="shape" size="sm" />
@@ -127,6 +131,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
               </span>
             )}
           </span>
+          <span style={{ display: 'contents' }} {...eng.press('Edit Puppet Mesh')}>
           <Slider
             value={density}
             min={2}
@@ -135,9 +140,9 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             showValue
             size="sm"
             label="Mesh density"
-            // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-            onChange={(v) => updatePuppetSettings(nodeId, { meshDensity: Math.round(v) })}
+            onChange={(v) => mesh('Edit Puppet Mesh', { density: Math.round(v) })}
           />
+          </span>
         </div>
 
         {costly && (
@@ -162,10 +167,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           <select
             value={rig?.meshMode ?? 'grid'}
             aria-label="Puppet mesh mode"
-            onChange={(e) =>
-              // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-              updatePuppetSettings(nodeId, { meshMode: e.target.value as 'grid' | 'silhouette' })
-            }
+            onChange={(e) => mesh('Edit Puppet Mesh', { mode: e.target.value as 'grid' | 'silhouette' })}
             style={selectStyle}
           >
             <option value="grid">Grid</option>
@@ -180,6 +182,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           >
             Expansion
           </span>
+          <span style={{ display: 'contents' }} {...eng.press('Edit Puppet Mesh')}>
           <Slider
             value={expansion}
             min={0}
@@ -188,9 +191,9 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             showValue
             size="sm"
             label="Mesh expansion"
-            // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-            onChange={(v) => updatePuppetSettings(nodeId, { meshExpansion: Math.round(v) })}
+            onChange={(v) => mesh('Edit Puppet Mesh', { expansion: Math.round(v) })}
           />
+          </span>
         </div>
 
         <div className={styles.paramRow}>
@@ -198,10 +201,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           <select
             value={solver}
             aria-label="Puppet deform solver"
-            onChange={(e) =>
-              // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-              updatePuppetSettings(nodeId, { solver: e.target.value as 'lbs' | 'arap' })
-            }
+            onChange={(e) => mesh('Edit Puppet Mesh', { solver: e.target.value as 'lbs' | 'arap' })}
             style={selectStyle}
           >
             <option value="arap">ARAP</option>
@@ -217,12 +217,9 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             value={rig?.maxRotationDeg ?? 0}
             min={0}
             unit="°"
-            onChange={(v) =>
-              // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-              updatePuppetSettings(nodeId, {
-                maxRotationDeg: v <= 0 ? undefined : Math.max(0, v),
-              })
-            }
+            {...eng.scrub('Edit Puppet Mesh')}
+            // 0 = unlimited (stored as absent).
+            onChange={(v) => mesh('Edit Puppet Mesh', { rotationRefinement: Math.max(0, v) })}
             aria-label="Mesh rotation refinement"
           />
         </div>
@@ -280,12 +277,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                   type="button"
                   className={`${styles.anchorToggle} ${isAnchored ? styles.anchorToggleActive : ''}`}
                   title={isAnchored ? 'Anchor lock active (body stays rigid)' : 'Lock as rigid anchor (Stiffness: 10)'}
-                  onClick={() =>
-                    // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                    updatePuppetPin(nodeId, pin.id, {
-                      stiffness: isAnchored ? 0 : 10,
-                    })
-                  }
+                  onClick={() => pinProp(pin.id, 'stiffness', isAnchored ? 0 : 10)}
                 >
                   <Icon
                     name={isAnchored ? 'lock' : 'anchor'}
@@ -297,8 +289,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 <Button
                   size="sm"
                   variant="ghost"
-                  // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                  onClick={() => deletePuppetPin(nodeId, pin.id)}
+                  onClick={() => { void edit('Delete Puppet Pin', deletePinCommands(nodeId, pin.id)); }}
                   aria-label={`Delete pin ${pin.name || pin.id}`}
                   title="Delete pin"
                 >
@@ -312,10 +303,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
               <select
                 value={kind}
                 aria-label={`${pin.name || pin.id} pin type`}
-                onChange={(e) =>
-                  // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                  updatePuppetPin(nodeId, pin.id, { kind: e.target.value as PinKind })
-                }
+                onChange={(e) => { void edit('Edit Puppet Pin', pinKindCommands(nodeId, pin.id, e.target.value as PinKind)); }}
                 style={selectStyle}
               >
                 {PIN_KIND_CATALOG.map((k) => (
@@ -348,8 +336,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 <ValueField
                   value={pin.rotation ?? 0}
                   unit="°"
-                  // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                  onChange={(v) => updatePuppetPin(nodeId, pin.id, { rotation: v })}
+                  {...eng.scrub('Edit Puppet Pin')}
+                  onChange={(v) => pinProp(pin.id, 'rotation', v)}
                   aria-label={`${pin.name || pin.id} rotation`}
                 />
               </div>
@@ -361,8 +349,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 <ValueField
                   value={pin.stiffness ?? 0}
                   min={0}
-                  // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                  onChange={(v) => updatePuppetPin(nodeId, pin.id, { stiffness: Math.max(0, v) })}
+                  {...eng.scrub('Edit Puppet Pin')}
+                  onChange={(v) => pinProp(pin.id, 'stiffness', Math.max(0, v))}
                   aria-label={`${pin.name || pin.id} stiffness`}
                 />
               </div>
@@ -374,8 +362,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 <ValueField
                   value={pin.scale ?? 1}
                   min={0.01}
-                  // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                  onChange={(v) => updatePuppetPin(nodeId, pin.id, { scale: Math.max(0.01, v) })}
+                  {...eng.scrub('Edit Puppet Pin')}
+                  onChange={(v) => pinProp(pin.id, 'scale', Math.max(0.01, v))}
                   aria-label={`${pin.name || pin.id} scale`}
                 />
               </div>
@@ -393,12 +381,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                   value={pin.overlap ?? 0}
                   min={-100}
                   max={100}
-                  onChange={(v) =>
-                    // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                    updatePuppetPin(nodeId, pin.id, {
-                      overlap: v === 0 ? undefined : Math.max(-100, Math.min(100, v)),
-                    })
-                  }
+                  {...eng.scrub('Edit Puppet Pin')}
+                  onChange={(v) => pinProp(pin.id, 'overlap', Math.max(-100, Math.min(100, v)))}
                   aria-label={`${pin.name || pin.id} overlap`}
                 />
               </div>
@@ -410,10 +394,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 <ValueField
                   value={pin.overlapExtent ?? 1}
                   min={0.05}
-                  onChange={(v) =>
-                    // B3-legacy: engine gap — puppet settings/pins are not catalog properties (`puppet/<pin>/…` unmapped).
-                    updatePuppetPin(nodeId, pin.id, { overlapExtent: Math.max(0.05, v) })
-                  }
+                  {...eng.scrub('Edit Puppet Pin')}
+                  onChange={(v) => pinProp(pin.id, 'overlapExtent', Math.max(0.05, v))}
                   aria-label={`${pin.name || pin.id} overlap extent`}
                 />
               </div>

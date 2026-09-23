@@ -22,11 +22,18 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
+import type { Command as ApiCommand } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { readTransformProp, writeTransformProps } from '@core/scene/transformWrite';
+import { readTransformProp } from '@core/scene/transformWrite';
+import { isLayer } from '@core/engine/doc';
+import { engine } from '@core/engine/engineInstance';
+import { paths, values as apiValues } from '@core/engine/propRefs';
+import { edit } from '@core/engine/uiEdits';
+import { getTime } from '@stores/playbackClockStore';
+import { sourceTextCommand } from '@layout/Text/textEdits';
+import { componentPropsCommands } from './useComponentProp';
+import { trackWrites } from './inspectorEdits';
 import {
   measureParagraphBox,
   measureTextSize,
@@ -103,12 +110,19 @@ function poseOf(id: string): { x: number; y: number; rotationDeg: number; scaleX
   };
 }
 
-function holdStill(id: string, before: Vec2, after: Vec2, label: string): void {
+/** The Position write that holds the text still when its line block moves inside the layer. */
+function holdStillCommands(id: string, before: Vec2, after: Vec2, seconds: number): ApiCommand[] {
   const shift = { x: after.x - before.x, y: after.y - before.y };
-  if (Math.abs(shift.x) < 1e-6 && Math.abs(shift.y) < 1e-6) return;
+  if (Math.abs(shift.x) < 1e-6 && Math.abs(shift.y) < 1e-6) return [];
   const next = compensatePosition(poseOf(id), shift);
-  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-  writeTransformProps(id, [{ prop: 'x', value: next.x }, { prop: 'y', value: next.y }], label);
+  // Keyed at the playhead where Position is animated (AE setValueAtTime), else static.
+  const writes = trackWrites(id, { x: next.x, y: next.y }, seconds);
+  return writes.length > 0 ? [{ type: 'setProperties', writes }] : [];
+}
+
+/** Text component props → field / property writes (every one addressed by the engine). */
+function textPropCommands(id: string, tcId: string, values: Readonly<Record<string, unknown>>, seconds: number): ApiCommand[] {
+  return componentPropsCommands(id, tcId, values, seconds).cmds;
 }
 
 /**
@@ -123,99 +137,100 @@ export function selectedTextLayers(kind: 'point' | 'paragraph'): string[] {
   });
 }
 
-/** Point text → paragraph text with a box that fits it. Returns the converted ids. */
-export function convertToParagraphText(ids: ReadonlyArray<string>): string[] {
+/**
+ * Point text → paragraph text with a box that fits it: ONE engine batch — the
+ * box fields (`text/boxWidth`, `text/boxHeight`, `text/boxAutoSize`) and the
+ * compensating Position. Resolves the converted ids.
+ */
+export async function convertToParagraphText(ids: ReadonlyArray<string>, seconds: number = getTime()): Promise<string[]> {
   const done: string[] = [];
-  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-  runDocumentEdit('Convert to Paragraph Text', () => {
-    for (const id of ids) {
-      const node = defaultSceneGraph.getNode(id);
-      const tc = textComponent(node);
-      // Text on a path is point text: it has no box to convert into.
-      if (!node || !tc || node.locked || hasTextPath(node) || readParagraphBox(node)) continue;
-      const style = readMeasuredTextStyle(node);
-      const size = style ? measureTextSize(style) : null;
-      if (!style || !size) continue;
-      const align = alignOf(node);
-      const dir = directionOf(node);
-      const before = lineBlockPlacement(style, align, dir);
-      const tr = textStyleTransform(style);
-      // The render box's content width, unscaled — at least as wide as every
-      // line, so the new box does not re-wrap the text it was made from.
-      const boxWidth = Math.max(MIN_BOX_SIZE, Math.ceil((size.w - 2 * TEXT_PAD_X) / (tr.sx || 1)) + CONVERT_BOX_PADDING);
-      const auto = measureParagraphBox({ ...style, boxWidth });
-      const boxHeight = Math.max(MIN_BOX_SIZE, Math.ceil(auto?.contentHeight ?? style.fontSize * style.lineHeight) + CONVERT_BOX_PADDING);
-      const override = { boxWidth, boxHeight, boxAutoSize: 'off' };
-      const afterStyle = readMeasuredTextStyle(node, override);
-      const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
-      // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-      updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxWidth', boxWidth);
-      updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxHeight', boxHeight);
-      updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxAutoSize', 'off');
-      if (before && after) holdStill(id, before, after, 'Convert to Paragraph Text');
-      done.push(id);
-    }
-  });
-  return done;
+  const cmds: ApiCommand[] = [];
+  for (const id of ids) {
+    const node = defaultSceneGraph.getNode(id);
+    const tc = textComponent(node);
+    // Text on a path is point text: it has no box to convert into.
+    if (!node || !tc || !isLayer(id) || node.locked || hasTextPath(node) || readParagraphBox(node)) continue;
+    const style = readMeasuredTextStyle(node);
+    const size = style ? measureTextSize(style) : null;
+    if (!style || !size) continue;
+    const align = alignOf(node);
+    const dir = directionOf(node);
+    const before = lineBlockPlacement(style, align, dir);
+    const tr = textStyleTransform(style);
+    // The render box's content width, unscaled — at least as wide as every
+    // line, so the new box does not re-wrap the text it was made from.
+    const boxWidth = Math.max(MIN_BOX_SIZE, Math.ceil((size.w - 2 * TEXT_PAD_X) / (tr.sx || 1)) + CONVERT_BOX_PADDING);
+    const auto = measureParagraphBox({ ...style, boxWidth });
+    const boxHeight = Math.max(MIN_BOX_SIZE, Math.ceil(auto?.contentHeight ?? style.fontSize * style.lineHeight) + CONVERT_BOX_PADDING);
+    const override = { boxWidth, boxHeight, boxAutoSize: 'off' };
+    const afterStyle = readMeasuredTextStyle(node, override);
+    const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
+    cmds.push(...textPropCommands(id, tc.id, override, seconds));
+    if (before && after) cmds.push(...holdStillCommands(id, before, after, seconds));
+    done.push(id);
+  }
+  if (cmds.length === 0) return [];
+  const res = await edit('Convert to Paragraph Text', cmds);
+  return res.ok ? done : [];
 }
 
-/** Paragraph text → point text: soft wraps become returns, the box goes. */
-export function convertToPointText(ids: ReadonlyArray<string>): string[] {
+/**
+ * Paragraph text → point text: soft wraps become returns, the box goes — ONE
+ * engine batch: Source Text (static: the text + its style runs re-sent, which
+ * index the same characters because each wrap replaces one space; keyed: every
+ * Source Text key's own wrap through `updateKeyframes`), a Fit Text to Box
+ * scale baked into Font Size / Tracking / Paragraph spacing, the box fields
+ * cleared, and the compensating Position. Resolves the converted ids.
+ */
+export async function convertToPointText(ids: ReadonlyArray<string>, seconds: number = getTime()): Promise<string[]> {
   const done: string[] = [];
-  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-  runDocumentEdit('Convert to Point Text', () => {
-    for (const id of ids) {
-      const node = defaultSceneGraph.getNode(id);
-      const tc = textComponent(node);
-      if (!node || !tc || node.locked || !readParagraphBox(node)) continue;
-      const style = readMeasuredTextStyle(node);
-      if (!style) continue;
-      const align = alignOf(node);
-      const dir = directionOf(node);
-      const before = lineBlockPlacement(style, align, dir);
-      const k = style.fitScale && style.fitScale > 0 ? style.fitScale : 1;
-      // The wrapped content is the raw content with each soft-wrap space
-      // replaced by '\n' one-for-one, so character runs keep their indices.
-      const raw = typeof tc.props.content === 'string' ? tc.props.content : style.content;
-      const content = style.content.length !== raw.length ? raw : style.content;
-      // Keyframed Source Text: every hold keyframe's text is wrapped through
-      // the same box it rendered in (its OWN wrap, taken while the box still
-      // exists) and its soft wraps become returns — in the same undo step.
-      const track = defaultAnimation.isDataAnimated(id, 'text.source')
-        ? defaultAnimation.getDataTrack(id, 'text.source')
-        : null;
-      if (track) {
-        let changed = false;
-        const keyframes = track.keyframes.map((kf) => {
-          if (typeof kf.value !== 'string') return kf;
-          const wrapped = readMeasuredTextStyle(node, { content: kf.value })?.content;
-          if (wrapped === undefined || wrapped === kf.value || wrapped.length !== kf.value.length) return kf;
-          changed = true;
-          return { ...kf, value: wrapped };
-        });
-        // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-        if (changed) defaultAnimation.setDataTrack(id, 'text.source', { ...track, keyframes });
-      }
-      const bake: Record<string, number> = {};
-      if (k < 1) {
-        bake.fontSize = style.fontSize * k;
-        if (style.letterSpacing) bake.letterSpacing = style.letterSpacing * k;
-        if (style.paragraphSpacing) bake.paragraphSpacing = style.paragraphSpacing * k;
-      }
-      const afterStyle = readMeasuredTextStyle(node, { content, boxWidth: 0, boxHeight: 0, ...bake });
-      const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
-      // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-      if (content !== raw) updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'content', content);
-      for (const [key, value] of Object.entries(bake)) updateNodeComponentProp(defaultSceneGraph, id, tc.id, key, value);
-      updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxWidth', 0);
-      if (typeof tc.props.boxHeight === 'number' && tc.props.boxHeight !== 0) {
-        updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxHeight', 0);
-      }
-      if (before && after) holdStill(id, before, after, 'Convert to Point Text');
-      done.push(id);
+  const cmds: ApiCommand[] = [];
+  for (const id of ids) {
+    const node = defaultSceneGraph.getNode(id);
+    const tc = textComponent(node);
+    if (!node || !tc || !isLayer(id) || node.locked || !readParagraphBox(node)) continue;
+    const style = readMeasuredTextStyle(node);
+    if (!style) continue;
+    const align = alignOf(node);
+    const dir = directionOf(node);
+    const before = lineBlockPlacement(style, align, dir);
+    const k = style.fitScale && style.fitScale > 0 ? style.fitScale : 1;
+    // The wrapped content is the raw content with each soft-wrap space
+    // replaced by '\n' one-for-one, so character runs keep their indices.
+    const raw = typeof tc.props.content === 'string' ? tc.props.content : style.content;
+    const content = style.content.length !== raw.length ? raw : style.content;
+    if (defaultAnimation.isDataAnimated(id, 'text.source')) {
+      // Keyframed Source Text: every key's text is wrapped through the same box
+      // it rendered in (its OWN wrap, taken while the box still exists).
+      const q = await engine().query({ type: 'getKeyframes', props: [{ layer: id, path: paths.sourceText() }] });
+      const patches = q.ok ? (q.value.sets[0]?.keyframes ?? []).flatMap((kf) => {
+        if (kf.value.kind !== 'textDocument') return [];
+        const text = kf.value.value.text;
+        const wrapped = readMeasuredTextStyle(node, { content: text })?.content;
+        if (wrapped === undefined || wrapped === text || wrapped.length !== text.length) return [];
+        return [{ id: kf.id, value: apiValues.string(wrapped), spatialIn: [], spatialOut: [] }];
+      }) : [];
+      if (patches.length > 0) cmds.push({ type: 'updateKeyframes', patches });
+    } else if (content !== raw) {
+      cmds.push(...(sourceTextCommand(id, content, seconds) ?? []));
     }
-  });
-  return done;
+    const bake: Record<string, number> = {};
+    if (k < 1) {
+      bake.fontSize = style.fontSize * k;
+      if (style.letterSpacing) bake.letterSpacing = style.letterSpacing * k;
+      if (style.paragraphSpacing) bake.paragraphSpacing = style.paragraphSpacing * k;
+    }
+    const afterStyle = readMeasuredTextStyle(node, { content, boxWidth: 0, boxHeight: 0, ...bake });
+    const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
+    const box: Record<string, unknown> = { ...bake, boxWidth: 0 };
+    if (typeof tc.props.boxHeight === 'number' && tc.props.boxHeight !== 0) box.boxHeight = 0;
+    cmds.push(...textPropCommands(id, tc.id, box, seconds));
+    if (before && after) cmds.push(...holdStillCommands(id, before, after, seconds));
+    done.push(id);
+  }
+  if (cmds.length === 0) return [];
+  const res = await edit('Convert to Point Text', cmds);
+  return res.ok ? done : [];
 }
 
 /**
@@ -228,34 +243,29 @@ export function convertToPointText(ids: ReadonlyArray<string>): string[] {
  *     the text's current height).
  *
  * Whatever moves the line block inside the layer (vertical alignment, the
- * anchor) is compensated through Position, in the same undo step.
+ * anchor) is compensated through Position — ONE engine batch.
  */
-export function setBoxAutoSize(id: string, mode: BoxAutoSize): boolean {
+export async function setBoxAutoSize(id: string, mode: BoxAutoSize, seconds: number = getTime()): Promise<boolean> {
   const node = defaultSceneGraph.getNode(id);
   const tc = textComponent(node);
   const box = node ? readParagraphBox(node) : null;
-  if (!node || !tc || !box) return false;
-  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-  runDocumentEdit('Box Auto-Size', () => {
-    const align = alignOf(node);
-    const dir = directionOf(node);
-    const style = readMeasuredTextStyle(node);
-    const before = style ? lineBlockPlacement(style, align, dir) : null;
-    const m = style ? measureParagraphBox(style) : null;
-    // Exactly the text's height, not rounded: a top-aligned box one fraction
-    // of a pixel taller than its lines would nudge them up by half of it.
-    const contentH = Math.max(MIN_BOX_SIZE, m?.contentHeight ?? (style ? style.fontSize * style.lineHeight : MIN_BOX_SIZE));
-    if (mode !== 'height' ? !box.fixedHeight : !(box.boxHeight > 0)) {
-      // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
-      updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxHeight', contentH);
-    }
-    updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxAutoSize', mode);
-    const afterNode = defaultSceneGraph.getNode(id);
-    const afterStyle = afterNode ? readMeasuredTextStyle(afterNode) : null;
-    const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
-    if (before && after) holdStill(id, before, after, 'Box Auto-Size');
-  });
-  return true;
+  if (!node || !tc || !box || !isLayer(id)) return false;
+  const align = alignOf(node);
+  const dir = directionOf(node);
+  const style = readMeasuredTextStyle(node);
+  const before = style ? lineBlockPlacement(style, align, dir) : null;
+  const m = style ? measureParagraphBox(style) : null;
+  // Exactly the text's height, not rounded: a top-aligned box one fraction
+  // of a pixel taller than its lines would nudge them up by half of it.
+  const contentH = Math.max(MIN_BOX_SIZE, m?.contentHeight ?? (style ? style.fontSize * style.lineHeight : MIN_BOX_SIZE));
+  const patch: Record<string, unknown> = {};
+  if (mode !== 'height' ? !box.fixedHeight : !(box.boxHeight > 0)) patch.boxHeight = contentH;
+  patch.boxAutoSize = mode;
+  const afterStyle = readMeasuredTextStyle(node, patch);
+  const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
+  const cmds = [...textPropCommands(id, tc.id, patch, seconds), ...(before && after ? holdStillCommands(id, before, after, seconds) : [])];
+  const res = await edit('Box Auto-Size', cmds);
+  return res.ok;
 }
 
 export function buildParagraphTextCommands(): ReadonlyArray<Command> {
@@ -266,7 +276,7 @@ export function buildParagraphTextCommands(): ReadonlyArray<Command> {
       description: 'Turn the selected point text into paragraph (box) text without moving it.',
       enabled: () => selectedTextLayers('point').length > 0,
       execute: () => {
-        convertToParagraphText(selectedTextLayers('point'));
+        void convertToParagraphText(selectedTextLayers('point'));
       },
     },
     {
@@ -275,7 +285,7 @@ export function buildParagraphTextCommands(): ReadonlyArray<Command> {
       description: 'Turn the selected paragraph text into point text; each wrapped line ends in a return.',
       enabled: () => selectedTextLayers('paragraph').length > 0,
       execute: () => {
-        convertToPointText(selectedTextLayers('paragraph'));
+        void convertToPointText(selectedTextLayers('paragraph'));
       },
     },
   ];

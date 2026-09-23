@@ -17,8 +17,10 @@ namespace premation::doc {
 [[nodiscard]] bool can_reparent(const Document& d, std::string_view child, const std::optional<std::string>& newParent);
 /// `setParentPreservingWorld(child, target)`.
 void set_parent_preserving_world(const PCtx& c, const std::string& child, const std::string& target);
-/// `reparentNode(child, newParent, {preserveWorld})`; false when refused.
-bool reparent_node(const PCtx& c, const std::string& child, const std::optional<std::string>& newParent, bool preserveWorld);
+/// `reparentNode(child, newParent, {preserveWorld, jump, time})`; false when refused.
+/// `jumpAt` (comp seconds) = Parent & Link JUMP (ignored when un-parenting).
+bool reparent_node(const PCtx& c, const std::string& child, const std::optional<std::string>& newParent, bool preserveWorld,
+                   std::optional<double> jumpAt = std::nullopt);
 /// `deleteLayerNode(id)`: the node, its subtree and their animation; false for a root or a locked layer.
 bool delete_layer_node(Document& d, std::string_view id);
 

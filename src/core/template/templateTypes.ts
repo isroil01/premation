@@ -88,6 +88,9 @@ export interface TemplateDefinition {
   /** Clears the live scene graph, runs layout into it, applies the animation,
    *  sets the composition and bumps the scene. */
   build: () => void;
+  /** The composition settings `build` gives the comp (the engine-API apply sends them as
+   *  `setCompositionSettings`; templateStore). Absent = leave the comp as it is. */
+  settings?: { fps: number; durationSeconds: number; background: string };
   /** The template's motion, defined ONCE against an abstract keyframe setter so
    *  the SAME choreography drives the live apply (build → liveKf) AND the
    *  isolated gallery-card animation (a throwaway preview engine). Node ids match

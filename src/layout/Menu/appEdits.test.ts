@@ -170,18 +170,14 @@ describe('keyframe menu', () => {
   const uiId = (t: number) => makeKeyframeId(s.B, 'Position', t);
 
   it('interpolation kinds and hold, one entry each', async () => {
-    const legacy = jest.fn();
-    await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'linear', 'Linear interpolation', legacy), 'Set keyframe easing: Linear');
-    await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'hold', 'Enable hold keyframe', legacy), 'Enable hold keyframe');
+    await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'linear', 'Linear interpolation'), 'Set keyframe easing: Linear');
+    await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'hold', 'Enable hold keyframe'), 'Enable hold keyframe');
     // Scalar tracks spell hold 'step' (the sampler treats both as a hold).
     expect(['hold', 'step']).toContain(defaultAnimation.getTrackKeyframes(s.B, 'x')![0]!.easing);
-    expect(legacy).not.toHaveBeenCalled();
   });
 
   it('roving', async () => {
-    const legacy = jest.fn();
-    await roundTrip(() => setKeyRovingEdit(uiId(0), true, legacy), 'Enable roving keyframe');
-    expect(legacy).not.toHaveBeenCalled();
+    await roundTrip(() => setKeyRovingEdit(uiId(0), true), 'Enable roving keyframe');
   });
 });
 

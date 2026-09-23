@@ -23,6 +23,8 @@ import {
   TEXT_CONVERT_TO_PARAGRAPH_COMMAND,
   TEXT_CONVERT_TO_POINT_COMMAND,
 } from './paragraphTextCommands';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { getTimelineController } from '@core/timeline/TimelineController';
 
 beforeAll(() => {
   const services: any = {
@@ -36,6 +38,14 @@ beforeAll(() => {
 });
 
 const ID = 'conv1';
+
+// The conversions are engine batches (B3z): the text is a LAYER of the app's
+// composition, added the way a legacy document loads (the engine resyncs).
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+function addLayer(node: SceneNode): void {
+  defaultSceneGraph.addChild('comp_root', { ...node, parent: 'comp_root' } as SceneNode);
+  getTimelineController().syncFromScene();
+}
 
 function textNode(textProps: Record<string, unknown>): SceneNode {
   return {
@@ -95,20 +105,21 @@ function expectSamePlaces(a: ReturnType<typeof drawnLines>, b: ReturnType<typeof
   });
 }
 
-beforeEach(() => {
-  try { defaultSceneGraph.removeNode(ID); } catch { /* ignore */ }
+beforeEach(async () => {
+  h = await setupAppEngine();
   useSelectionStore.setState({ ids: [] });
 });
+afterEach(async () => { await h.dispose(); });
 
 const maybe = hasCanvas ? describe : describe.skip;
 
 describe('text on a path', () => {
-  it('is point text: Convert to Paragraph Text skips it and adds no box', () => {
+  it('is point text: Convert to Paragraph Text skips it and adds no box', async () => {
     const node = textNode({ content: 'Riding a path' });
     node.components.push({ id: `${ID}_fx`, type: 'fx', props: { textPath: { pathId: '', firstMargin: 0, reversed: false, perpendicular: false } } } as never);
-    defaultSceneGraph.addNode(node);
+    addLayer(node);
     useSelectionStore.setState({ ids: [ID] });
-    expect(convertToParagraphText([ID])).toEqual([]);
+    expect(await convertToParagraphText([ID])).toEqual([]);
     expect(textProps().boxWidth).toBeUndefined();
     expect(readParagraphBox(defaultSceneGraph.getNode(ID)!)).toBeNull();
     const convert = buildParagraphTextCommands().find((c) => c.id === TEXT_CONVERT_TO_PARAGRAPH_COMMAND)!;
@@ -117,21 +128,32 @@ describe('text on a path', () => {
 });
 
 maybe('Convert to Paragraph / Point Text — no visual jump', () => {
-  it.each(['left', 'center', 'right'])('point → paragraph (%s aligned, rotated + scaled layer)', (align) => {
-    defaultSceneGraph.addNode(textNode({ content: 'Hello there\nsecond line', align }));
+  it.each(['left', 'center', 'right'])('point → paragraph (%s aligned, rotated + scaled layer)', async (align) => {
+    addLayer(textNode({ content: 'Hello there\nsecond line', align }));
     const before = drawnLines();
-    expect(convertToParagraphText([ID])).toEqual([ID]);
+    const entries = historyLabels().length;
+    const doc0 = h.doc();
+    expect(await convertToParagraphText([ID])).toEqual([ID]);
+    expect(historyLabels()).toHaveLength(entries + 1);
+    expect(historyLabels().at(-1)).toBe('Convert to Paragraph Text');
+    const doc1 = h.doc();
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toEqual(doc0);
+    await h.run({ type: 'redo' });
+    expect(h.doc()).toEqual(doc1);
     const box = readParagraphBox(defaultSceneGraph.getNode(ID)!)!;
     expect(box).toMatchObject({ fixedHeight: true, autoSize: 'off' });
     expectSamePlaces(before, drawnLines());
   });
 
-  it.each(['left', 'center', 'right'])('paragraph → point turns soft wraps into returns (%s aligned)', (align) => {
+  it.each(['left', 'center', 'right'])('paragraph → point turns soft wraps into returns (%s aligned)', async (align) => {
     const content = 'alpha beta gamma delta epsilon zeta';
-    defaultSceneGraph.addNode(textNode({ content, align, boxWidth: 180, boxHeight: 400, boxVerticalAlign: 'center' }));
+    addLayer(textNode({ content, align, boxWidth: 180, boxHeight: 400, boxVerticalAlign: 'center' }));
     const before = drawnLines();
     expect(before.length).toBeGreaterThan(1); // it really wrapped
-    expect(convertToPointText([ID])).toEqual([ID]);
+    const entries = historyLabels().length;
+    expect(await convertToPointText([ID])).toEqual([ID]);
+    expect(historyLabels()).toHaveLength(entries + 1);
     const p = textProps();
     expect(p.boxWidth).toBe(0);
     expect(String(p.content).split('\n')).toHaveLength(before.length);
@@ -140,18 +162,19 @@ maybe('Convert to Paragraph / Point Text — no visual jump', () => {
     expectSamePlaces(before, drawnLines());
   });
 
-  it('round-trips point → paragraph → point in place', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'Round\ntrip', align: 'right' }));
+  it('round-trips point → paragraph → point in place', async () => {
+    addLayer(textNode({ content: 'Round\ntrip', align: 'right' }));
     const before = drawnLines();
-    convertToParagraphText([ID]);
-    convertToPointText([ID]);
+    await convertToParagraphText([ID]);
+    await convertToPointText([ID]);
     expectSamePlaces(before, drawnLines());
   });
 
-  it('switching an auto-height box to a fixed mode keeps the text where it is', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'alpha beta gamma delta', boxWidth: 160 }));
+  it('switching an auto-height box to a fixed mode keeps the text where it is', async () => {
+    addLayer(textNode({ content: 'alpha beta gamma delta', boxWidth: 160 }));
     const before = drawnLines();
-    expect(setBoxAutoSize(ID, 'off')).toBe(true);
+    expect(await setBoxAutoSize(ID, 'off')).toBe(true);
+    expect(historyLabels().at(-1)).toBe('Box Auto-Size');
     expect(textProps().boxHeight).toBeGreaterThan(0);
     expectSamePlaces(before, drawnLines());
   });
@@ -163,15 +186,15 @@ describe('convert commands', () => {
   const toPoint = commands.find((c) => c.id === TEXT_CONVERT_TO_POINT_COMMAND)!;
 
   it('are enabled for the matching kind of selected text only', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'x' }));
+    addLayer(textNode({ content: 'x' }));
     expect(toPara.enabled?.()).toBe(false);
     useSelectionStore.setState({ ids: [ID] });
     expect(toPara.enabled?.()).toBe(true);
     expect(toPoint.enabled?.()).toBe(false);
   });
 
-  it('leave point text alone when asked to make it point text', () => {
-    defaultSceneGraph.addNode(textNode({ content: 'x' }));
-    expect(convertToPointText([ID])).toEqual([]);
+  it('leave point text alone when asked to make it point text', async () => {
+    addLayer(textNode({ content: 'x' }));
+    expect(await convertToPointText([ID])).toEqual([]);
   });
 });

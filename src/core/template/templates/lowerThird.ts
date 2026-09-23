@@ -55,6 +55,7 @@ export const lowerThirdTemplate: TemplateDefinition = {
   description: 'A broadcast name-and-role caption that slides in from the left.',
   layout: layoutLowerThird,
   build: buildLowerThird,
+  settings: { fps: 60, durationSeconds: 5, background: '#0b1020' },
   animate: animateLowerThird,
   previewTime: 1.3,
   fields: [

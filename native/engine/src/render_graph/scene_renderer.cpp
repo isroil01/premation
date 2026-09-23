@@ -142,15 +142,48 @@ std::unique_ptr<SceneRenderer> SceneRenderer::create(const RendererOptions& opti
 
 SceneRenderer::~SceneRenderer() = default;
 
+std::unique_ptr<SceneRenderer> SceneRenderer::create_on(wgpu::Instance instance, const wgpu::Adapter& adapter,
+                                                       wgpu::Device device, bool float32, std::string& error) {
+  if (device == nullptr) {
+    error = "no device";
+    return nullptr;
+  }
+  std::unique_ptr<SceneRenderer> r(new SceneRenderer());  // NOLINT(cppcoreguidelines-owning-memory): private ctor
+  wgpu::Queue queue = device.GetQueue();
+  r->dev_ = std::make_unique<Device>(std::move(instance), std::move(device), queue);
+  r->graph_ = build_default_graph();
+  r->colorSystem_ = std::make_unique<ColorSystem>(*r->dev_);
+  r->float32_ = float32;
+  wgpu::AdapterInfo info{};
+  if (adapter != nullptr) adapter.GetInfo(&info);
+  r->adapter_ = std::string(view_of(info.device));
+  r->backend_ = info.backendType == wgpu::BackendType::D3D12 ? "D3D12"
+                : info.backendType == wgpu::BackendType::Metal ? "Metal"
+                : "Vulkan";
+  return r;
+}
+
 bool SceneRenderer::render(const api::RenderFrameFile& file, Frame* readback, FrameStats& stats, std::string& error) {
+  return render_impl(file, nullptr, wgpu::TextureFormat::Undefined, readback, stats, error);
+}
+
+bool SceneRenderer::render_into(const api::RenderFrameFile& file, const wgpu::TextureView& target,
+                                wgpu::TextureFormat format, FrameStats& stats, std::string& error) {
+  return render_impl(file, &target, format, nullptr, stats, error);
+}
+
+bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::TextureView* target,
+                                wgpu::TextureFormat targetFormat, Frame* readback, FrameStats& stats,
+                                std::string& error) {
   using Clock = std::chrono::steady_clock;
   const auto t0 = Clock::now();
   const ViewportState vp = ViewportState::from(file.view);
   const wgpu::TextureFormat surfaceFormat =
-      file.view.surface_format == api::RenderTextureFormat::rgba8unorm ? wgpu::TextureFormat::RGBA8Unorm
-                                                                      : wgpu::TextureFormat::BGRA8Unorm;
-  if (surface_ == nullptr || surfaceW_ != vp.pixelWidth || surfaceH_ != vp.pixelHeight ||
-      surface_.GetFormat() != surfaceFormat) {
+      target != nullptr ? targetFormat
+      : file.view.surface_format == api::RenderTextureFormat::rgba8unorm ? wgpu::TextureFormat::RGBA8Unorm
+                                                                          : wgpu::TextureFormat::BGRA8Unorm;
+  if (target == nullptr && (surface_ == nullptr || surfaceW_ != vp.pixelWidth || surfaceH_ != vp.pixelHeight ||
+                            surface_.GetFormat() != surfaceFormat)) {
     wgpu::TextureDescriptor td{};
     td.size = {vp.pixelWidth, vp.pixelHeight, 1};
     td.format = surfaceFormat;
@@ -162,10 +195,11 @@ bool SceneRenderer::render(const api::RenderFrameFile& file, Frame* readback, Fr
     surfaceH_ = vp.pixelHeight;
   }
 
+  const wgpu::TextureView& outView = target != nullptr ? *target : surfaceView_;
   TextureTable textures;
   textures.build(file);
   dev_->begin_frame();
-  PassContext ctx{*dev_, file, textures, vp, {}, {}, surfaceView_, surfaceFormat, std::nullopt,
+  PassContext ctx{*dev_, file, textures, vp, {}, {}, outView, surfaceFormat, std::nullopt,
                   std::string(kSceneColor), stats.diagnostics, {}, Scope3D::of(file.scene)};
   ctx.color.working = file.view.working_space == api::RenderWorkingSpace::aces_cg ? WorkingSpace::aces_cg : WorkingSpace::srgb_linear;
   switch (file.view.display_transform) {
@@ -192,7 +226,7 @@ bool SceneRenderer::render(const api::RenderFrameFile& file, Frame* readback, Fr
   {
     Attachment att;
     att.clear = true;
-    wgpu::RenderPassEncoder p = dev_->begin_pass(att, vp.pixelWidth, vp.pixelHeight, surfaceView_, surfaceFormat, nullptr, false);
+    wgpu::RenderPassEncoder p = dev_->begin_pass(att, vp.pixelWidth, vp.pixelHeight, outView, surfaceFormat, nullptr, false);
     p.End();
   }
   // resolveTargets: every active declared target, float where declared float,

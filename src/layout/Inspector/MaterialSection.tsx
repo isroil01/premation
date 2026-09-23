@@ -36,22 +36,18 @@ import { canBe3D, is3DEnabled } from '@core/scene/threeD';
 import {
   readNodeMaterial,
   materialParamsOf,
-  setNodeAcceptsLights,
-  setNodeShadowMode,
-  setNodeShadingModel,
-  setNodeToonBands,
-  setNodeHeightMap,
-  setNodeDisplacementSubdivisions,
   type MaterialParams,
 } from '@core/scene/material';
 import { useAssetStore } from '@stores/assetStore';
 import {
   useMaterialStore,
-  applyMaterialToNodes,
   builtinMaterials,
   type NamedMaterial,
 } from '@stores/materialStore';
-import { applyMaterialPreset, captureMaterialPreset } from '@core/inspector/sectionPresets';
+import { captureMaterialPreset } from '@core/inspector/sectionPresets';
+import { edit } from '@core/engine/uiEdits';
+import { values } from '@core/engine/propRefs';
+import { fieldCommands, hasPath, materialCommands, shadowModeValue } from './materialEdits';
 import { FaceMaterialsSection } from './FaceMaterialsSection';
 import { getTime } from '@stores/playbackClockStore';
 import { scalarValueCommands } from './inspectorEdits';
@@ -182,6 +178,7 @@ function MaterialRow({
   unit = '%',
   onChange,
   engineProp,
+  field,
 }: {
   label: string;
   value: number;
@@ -198,18 +195,28 @@ function MaterialRow({
    * invisible under a live track) — and a slider or field drag is ONE gesture.
    */
   engineProp?: { nodeId: string; prop: string };
+  /**
+   * B3z: a static (not keyframeable) Material Option — a LAYER FIELD
+   * (`material/toonBands`, `material/displacementSubdivisions`): an integer
+   * `setProperty`, a drag is ONE gesture.
+   */
+  field?: { nodeId: string; path: string };
 }): JSX.Element {
   const e = useEngineEdit();
   const write = (v: number): void => {
     if (!Number.isFinite(v)) return;
+    const clamped = Math.max(min, Math.min(max, v));
     if (engineProp) {
-      const clamped = Math.max(min, Math.min(max, v));
       e.send(`Set ${label}`, scalarValueCommands(engineProp.prop, [{ nodeId: engineProp.nodeId, value: clamped }], { seconds: getTime() }));
+      return;
+    }
+    if (field) {
+      e.send(`Set ${label}`, fieldCommands([field.nodeId], field.path, values.scalar(Math.round(clamped))));
       return;
     }
     onChange?.(v);
   };
-  const on = (): boolean => engineProp !== undefined;
+  const on = (): boolean => engineProp !== undefined || (field !== undefined && hasPath(field.nodeId, field.path));
   return (
     <div className={s.row} {...e.press(`Set ${label}`, on)}>
       <span className={s.label}>{label}</span>
@@ -325,10 +332,12 @@ export function MaterialPresetAction({
     : (selectedIds.includes(nodeId) ? selectedIds : [nodeId]);
 
   const capturePreset = useCallback(() => captureMaterialPreset(nodeId), [nodeId]);
+  // One batch over every target (materialEdits.ts): one undo entry.
   const applyPreset = useCallback(
-    (values: Readonly<Record<string, number | string | boolean>>) =>
-      // B3-legacy: engine gap — a material preset bag mixes numbers with shading / shadow-mode / bool fields that have no API property (see the Material Options gaps).
-      applyMaterialPreset(effectiveTargets, values),
+    (bag: Readonly<Record<string, number | string | boolean>>) => {
+      const cmds = materialCommands(effectiveTargets, bag, getTime());
+      if (cmds.length > 0) void edit('Apply Material preset', cmds);
+    },
     [effectiveTargets],
   );
 
@@ -421,7 +430,10 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           <MaterialChip
             key={m.id}
             material={m}
-            onApply={() => applyMaterialToNodes(targets, m.id)}
+            onApply={() => {
+              const cmds = materialCommands(targets, m.params, getTime());
+              if (cmds.length > 0) void edit(`Apply material ${m.name}`, cmds);
+            }}
             onRename={(name) => renameMaterial(m.id, name)}
             onDelete={() => removeMaterial(m.id)}
           />
@@ -451,11 +463,11 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             <select
               className={s.select}
               value={material.shading}
-              // B3-legacy: engine gap — Shading model (phong / pbr / toon) is not a `material/shading` choice property.
-              onChange={(e) => setNodeShadingModel(
-                nodeId,
-                e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong',
-              )}
+              // `material/shading` (a layer field): one edit.
+              onChange={(e) => {
+                const v = e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong';
+                void edit('Set Shading', fieldCommands([nodeId], 'material/shading', values.choice(v)));
+              }}
               aria-label="Shading model"
             >
               <option value="phong">Phong</option>
@@ -467,8 +479,10 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             <span className={s.label}>Accepts Lights</span>
             <Switch
               checked={material.acceptsLights}
-              // B3-legacy: engine gap — Accepts Lights is a scalar row in the catalog but stored as a boolean; a bool write through `material/acceptsLights` would store 1/0.
-              onChange={(e) => setNodeAcceptsLights(nodeId, e.currentTarget.checked)}
+              // `material/acceptsLights` (0 / 1; keyed at the playhead when animated).
+              onChange={(e) => {
+                void edit('Set Accepts Lights', scalarValueCommands('acceptsLights', [{ nodeId, value: e.currentTarget.checked ? 1 : 0 }], { seconds: getTime() }));
+              }}
               aria-label="Accepts lights"
             />
           </span>
@@ -534,8 +548,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           min={2}
           max={8}
           unit=""
-          // B3-legacy: engine gap — Toon Bands is not a catalog property (`material/toonBands`).
-          onChange={(v) => setNodeToonBands(nodeId, v)}
+          field={{ nodeId, path: 'material/toonBands' }}
         />
       )}
       {material.shading === 'toon' && material.specular === 0 && (
@@ -629,8 +642,8 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <select
           className={s.select}
           value={material.heightMapAssetId ?? ''}
-          // B3-legacy: engine gap — the height-map asset (an item reference) has no `material/heightMap` item property.
-          onChange={(e) => setNodeHeightMap(nodeId, e.target.value || undefined)}
+          // `material/heightMap` (a layer field: the item id, '' = none).
+          onChange={(e) => { void edit('Set Height Map', fieldCommands([nodeId], 'material/heightMap', values.string(e.target.value))); }}
           aria-label="Height map asset"
         >
           <option value="">None</option>
@@ -655,8 +668,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             min={0}
             max={3}
             unit=""
-            // B3-legacy: engine gap — Displacement Subdivisions is not a catalog property (`material/displacementSubdivisions`).
-            onChange={(v) => setNodeDisplacementSubdivisions(nodeId, v)}
+            field={{ nodeId, path: 'material/displacementSubdivisions' }}
           />
         </>
       )}
@@ -673,8 +685,8 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <select
           className={s.select}
           value={material.castsShadowsMode}
-          // B3-legacy: engine gap — the tri-state shadow modes (off / on / only) are scalar rows in the catalog, stored as booleans + 'only'.
-          onChange={(e) => setNodeShadowMode(nodeId, 'castsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
+          // `material/castsShadows` (0 Off / 1 On / 2 Only; keyed at the playhead when animated).
+          onChange={(e) => { void edit('Set Casts Shadows', scalarValueCommands('castsShadows', [{ nodeId, value: shadowModeValue(e.currentTarget.value as 'off' | 'on' | 'only') }], { seconds: getTime() })); }}
           aria-label="Casts shadows"
         >
           <option value="off">Off</option>
@@ -687,8 +699,8 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <select
           className={s.select}
           value={material.acceptsShadowsMode}
-          // B3-legacy: engine gap — same (tri-state Accepts Shadows).
-          onChange={(e) => setNodeShadowMode(nodeId, 'acceptsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
+          // `material/acceptsShadows` (0 Off / 1 On / 2 Only).
+          onChange={(e) => { void edit('Set Accepts Shadows', scalarValueCommands('acceptsShadows', [{ nodeId, value: shadowModeValue(e.currentTarget.value as 'off' | 'on' | 'only') }], { seconds: getTime() })); }}
           aria-label="Accepts shadows"
         >
           <option value="off">Off</option>

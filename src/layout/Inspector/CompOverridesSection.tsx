@@ -20,7 +20,7 @@
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Input } from '@components/Input';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
@@ -31,14 +31,17 @@ import {
   readEssentialProps,
   overrideKey,
   parseOverrideKey,
-  setCompOverride,
-  clearCompOverridesFor,
   isOverridableProp,
+  isValidOverrideValue,
   OVERRIDE_PROP_KINDS,
   type OverridableProp,
   type OverrideValue,
 } from '@core/scene/compInstanceOverrides';
 import type { SceneNode } from '@core/types';
+import { edit } from '@core/engine/uiEdits';
+import { useGesture } from '@hooks/useGesture';
+import { useEngineEdit } from './useEngineEdit';
+import { jsonFieldCommands } from './layerFieldEdits';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
 
@@ -110,6 +113,31 @@ function inheritedValue(source: SceneNode, prop: OverridableProp, t: number): Ov
 
 type LayerRow = { source: SceneNode; props: OverridableProp[] };
 
+const OVERRIDES_PATH = 'layer/compOverrides';
+
+/**
+ * `layer/compOverrides` (json, fx.__compOverrides) with the instance's current
+ * overrides changed by `change` — the whole next record; empty clears it.
+ */
+function overridesCommands(
+  instance: SceneNode,
+  change: (next: Record<string, OverrideValue>) => void,
+): ReturnType<typeof jsonFieldCommands> {
+  const next: Record<string, OverrideValue> = {};
+  for (const [k, v] of readCompOverrides(instance)) next[k] = v;
+  change(next);
+  return jsonFieldCommands(instance.id, OVERRIDES_PATH, Object.keys(next).length > 0 ? next : null);
+}
+
+/** One override set (a value that fails the property's validation is dropped) or cleared (`undefined`). */
+function overrideCommands(instance: SceneNode, origId: string, prop: OverridableProp, value: OverrideValue | undefined): ReturnType<typeof jsonFieldCommands> {
+  return overridesCommands(instance, (next) => {
+    const key = overrideKey(origId, prop);
+    if (value === undefined || !isValidOverrideValue(prop, value)) delete next[key];
+    else next[key] = value;
+  });
+}
+
 function rowsForInstance(ref: string, promoted: ReadonlySet<string>): LayerRow[] {
   if (promoted.size > 0) {
     // Curated list — group promoted keys by source node, keep document order
@@ -144,6 +172,9 @@ function rowsForInstance(ref: string, promoted: ReadonlySet<string>): LayerRow[]
 
 export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
+  const eng = useEngineEdit();
+  // A text override's typing session (first keystroke → blur) is one entry.
+  const typing = useGesture();
   const time = useActiveWorkspace()?.time ?? 0;
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
@@ -192,8 +223,11 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   type="button"
                   className={styles.select}
                   style={{ width: 'auto', padding: '0 8px', fontSize: 'var(--font-size-micro)' }}
-                  // B3-legacy: engine gap — precomp property overrides (essential props per instance) have no API commands.
-                  onClick={() => { clearCompOverridesFor(nodeId, source.id); bumpScene(); }}
+                  onClick={() => {
+                    void edit('Reset Overrides', overridesCommands(node, (next) => {
+                      for (const k of Object.keys(next)) if (parseOverrideKey(k)?.origNodeId === source.id) delete next[k];
+                    }));
+                  }}
                   aria-label={`Reset all overrides on ${source.name ?? source.id}`}
                 >
                   Reset
@@ -211,8 +245,9 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                 <div className={ta.paramRow} key={prop}>
                   <button
                     type="button"
-                    // B3-legacy: engine gap — precomp property overrides (essential props per instance) have no API commands.
-                    onClick={() => setCompOverride(nodeId, source.id, prop, overridden ? undefined : value)}
+                    onClick={() => {
+                      void edit(overridden ? 'Clear Override' : 'Override Property', overrideCommands(node, source.id, prop, overridden ? undefined : value));
+                    }}
                     title={overridden ? 'Clear override (inherit from the source comp)' : 'Override for this instance only'}
                     aria-label={`${overridden ? 'Clear' : 'Set'} ${LABEL[prop]} override on ${source.name ?? source.id}`}
                     style={{
@@ -225,17 +260,17 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   {kind === 'number' ? (
                     <ValueField
                       value={value as number}
-                      // B3-legacy: engine gap — precomp property overrides (essential props per instance) have no API commands.
-                      onChange={(v) => setCompOverride(nodeId, source.id, prop, v)}
+                      {...eng.scrub(`Override ${LABEL[prop]}`)}
+                      onChange={(v) => eng.send(`Override ${LABEL[prop]}`, overrideCommands(node, source.id, prop, v))}
                       unit={UNIT[prop]}
                       precision={2}
                       aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
                     />
                   ) : kind === 'color' ? (
+                    <div {...eng.press(`Override ${LABEL[prop]}`)} style={{ display: 'contents' }}>
                     <ColorPicker
                       value={String(value)}
-                      // B3-legacy: engine gap — precomp property overrides (essential props per instance) have no API commands.
-                      onChange={(hex) => setCompOverride(nodeId, source.id, prop, hex)}
+                      onChange={(hex) => eng.send(`Override ${LABEL[prop]}`, overrideCommands(node, source.id, prop, hex))}
                       compact
                       // No alpha: the override is written back as the layer's
                       // colour string, and the renderer's colour channels carry
@@ -244,12 +279,16 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                       alpha={false}
                       aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
                     />
+                    </div>
                   ) : (
                     <Input
                       size="sm"
                       value={String(value)}
-                      // B3-legacy: engine gap — precomp property overrides (essential props per instance) have no API commands.
-                      onChange={(e) => setCompOverride(nodeId, source.id, prop, e.target.value)}
+                      onChange={(e) => {
+                        if (!typing.isActive()) typing.begin(`Override ${LABEL[prop]}`);
+                        typing.send(overrideCommands(node, source.id, prop, e.target.value));
+                      }}
+                      onBlur={() => { void typing.end(); }}
                       fullWidth
                       aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
                     />

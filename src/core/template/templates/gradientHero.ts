@@ -57,6 +57,7 @@ export const gradientHeroTemplate: TemplateDefinition = {
   description: 'A full-bleed gradient hero with eyebrow, big two-line headline and CTA.',
   layout: layoutGradientHero,
   build: buildGradientHero,
+  settings: { fps: 60, durationSeconds: 5, background: '#0b1020' },
   animate: animateGradientHero,
   previewTime: 1.7,
   fields: [

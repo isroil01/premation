@@ -53,6 +53,7 @@ export const titleCardTemplate: TemplateDefinition = {
   description: 'A bold centered headline with subtitle and an animated accent bar.',
   layout: layoutTitleCard,
   build: buildTitleCard,
+  settings: { fps: 60, durationSeconds: 5, background: '#0e0e1c' },
   animate: animateTitleCard,
   previewTime: 1.3,
   fields: [

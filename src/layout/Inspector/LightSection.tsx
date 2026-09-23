@@ -23,15 +23,18 @@
 
 import { useEffect, useMemo } from 'react';
 import { MAX_LIGHTS3D } from '@motion/renderer';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useActiveCompLayers } from '@hooks/useMirrorFields';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { useActiveCompSize } from './inspectorMirror';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
 import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
-import { useSceneRevision } from '@stores/sceneStore';
-import { batchHistory } from '@stores/historyStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { getTime } from '@stores/playbackClockStore';
+import { edit } from '@core/engine/uiEdits';
+import { values } from '@core/engine/propRefs';
+import { POI_PATH } from '@core/engine/pointOfInterest';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { LIGHT_DEFAULTS, type LightType, type LightFalloff } from '@core/scene/light';
 import {
@@ -46,7 +49,12 @@ import {
 import { ensureEnvironmentSh } from '@core/scene/environmentImage';
 import { useAssetStore } from '@stores/assetStore';
 import { kelvinToHex, nearestKelvin, KELVIN_MIN, KELVIN_MAX } from '@core/scene/colorTemperature';
-import { legacyComponentWrite, useComponentProp, writeComponentProps } from './useComponentProp';
+import {
+  componentPropCommands,
+  componentPropsCommands,
+  reportUnaddressed,
+  useComponentProp,
+} from './useComponentProp';
 import styles from './TransformSection.module.css';
 import { KeyframeRow as KfRow } from './KeyframeRow';
 
@@ -87,7 +95,10 @@ function coerceLightType(v: unknown): LightType {
 }
 
 export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // The layer's header and the active comp from the document mirror (B4).
+  const layer = useMirrorLayer(nodeId);
+  const compLayers = useActiveCompLayers();
+  // B4-gap: component ids for the write path (useComponentProp/componentPropsCommands address a component) — B3z
   const node = defaultSceneGraph.getNode(nodeId);
   const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
   const sComp = useMemo(() => node?.components.find((c) => c.type === 'Style'), [node]);
@@ -114,11 +125,11 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [envPresetRaw, setEnvPreset] = useComponentProp(nodeId, tComp?.id, 'envPreset');
   const [envRotationRaw, setEnvRotation] = useComponentProp(nodeId, tComp?.id, 'envRotation');
   const [envReflRaw, setEnvRefl] = useComponentProp(nodeId, tComp?.id, 'envReflections');
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
   // one would be a fresh reference on every store read, which re-renders
   // forever) and narrowed in a memo — the same shape the other asset rows use.
+  // B4-gap: an item's media type (still image vs video) — ItemInfo is `footage` with no still/moving flag (duration 0 is also "unknown")
   const assets = useAssetStore((s) => s.assets);
   const imageAssets = useMemo(() => assets.filter((a) => a.type === 'image'), [assets]);
   /**
@@ -132,7 +143,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   useEffect(() => {
     if (envAssetId) void ensureEnvironmentSh(envAssetId);
   }, [envAssetId]);
-  if (!node || !tComp) return null;
+  if (!layer || !node || !tComp) return null;
 
   const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
   const intensity = num(intensityRaw, LIGHT_DEFAULTS.intensity);
@@ -185,30 +196,40 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   );
 
   /**
-   * Apply a whole look as ONE undoable edit.
-   *
-   * `batchHistory` is load-bearing, not decoration: the debounced recorder
-   * splits on a change of target, so six prop writes would otherwise land as
-   * six undo steps for one menu pick — the same trap the linked corner radii
-   * hit (`inspectorHistoryGranularity.test.tsx` measures it).
+   * Transform-component props (+ the light's Style fill) as ONE engine batch —
+   * one undo entry for one menu pick. Refused whole when any prop is not an
+   * engine property of this light (nothing half-applied).
+   */
+  const sendLook = (label: string, t: Record<string, unknown>, fill?: string): void => {
+    const seconds = getTime();
+    const { cmds, rest } = componentPropsCommands(nodeId, tComp.id, t, seconds);
+    const fillCmds = fill !== undefined && sComp ? componentPropCommands(nodeId, sComp.id, 'fill', fill, seconds) : [];
+    const missing = [...Object.keys(rest), ...(fillCmds === null ? ['fill'] : [])];
+    if (missing.length > 0) {
+      reportUnaddressed(nodeId, missing, label);
+      return;
+    }
+    void edit(label, [...cmds, ...(fillCmds ?? [])]);
+  };
+
+  /**
+   * Apply a whole look as ONE undoable edit: `light/lightType` and
+   * `light/falloff` (layer fields), Intensity and the cone (keyed at the
+   * playhead where animated), and the colour (`layer/fill`).
    */
   const applyPreset = (label: string): void => {
     const p = LIGHT_PRESETS.find((x) => x.label === label);
     if (!p) return;
-    const t = (k: string, v: unknown): void => { legacyComponentWrite(nodeId, tComp.id, k, v); };
-    // B3-legacy: engine gap — a light look writes `lightType` / `falloff` (strings) and the Style fill colour, none of which the API addresses; kept whole on the legacy writer so the pick stays ONE undo step.
-    batchHistory(`light-preset:${nodeId}`, () => {
-      t('lightType', p.type);
-      t('intensity', p.intensity);
-      if (sComp) legacyComponentWrite(nodeId, sComp.id, 'fill', kelvinToHex(p.kelvin));
+    sendLook(`Light Preset: ${p.label}`, {
+      lightType: p.type,
+      intensity: p.intensity,
       // Stored explicitly, `none` included: an ABSENT falloff is what the
       // 1.7.0 → 1.8.0 migration reads as the old radius ramp.
-      t('falloff', p.falloff);
-      if (p.type === 'spot') {
-        t('lightCone', p.cone ?? LIGHT_DEFAULTS.cone);
-        t('lightConeFeather', p.coneFeather ?? LIGHT_DEFAULTS.coneFeather);
-      }
-    });
+      falloff: p.falloff,
+      ...(p.type === 'spot'
+        ? { lightCone: p.cone ?? LIGHT_DEFAULTS.cone, lightConeFeather: p.coneFeather ?? LIGHT_DEFAULTS.coneFeather }
+        : {}),
+    }, kelvinToHex(p.kelvin));
   };
 
   // The GPU uploads at most MAX_LIGHTS3D lights per draw (uniforms.ts caps the
@@ -219,8 +240,8 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // scene-revision subscription above, so this adds no new per-frame work.
   // (An environment light expands into an ambient + up-to-six-parallel rig, so
   // the true uploaded count can be higher still — the count here is the floor.)
-  const lightLayerCount = flattenComposition(defaultSceneGraph, activeCompRootId())
-    .filter((n) => readNodeKind(n) === 'light' && n.visible !== false).length;
+  const lightLayerCount = compLayers
+    .filter((l) => uiKindOf(l) === 'light' && l.switches.visible).length;
 
   return (
     <div className={styles.section}>
@@ -263,18 +284,15 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             onChange={(e) => {
               const next = coerceLightType(e.target.value);
               // One menu pick = one undo step, even though becoming an
-              // environment light writes three props.
-              // B3-legacy: engine gap — `lightType` / `envPreset` are strings the API does not address; the whole pick stays on the legacy writer (one step).
-              batchHistory(`light-type:${nodeId}`, () => {
-                legacyComponentWrite(nodeId, tComp.id, 'lightType', next);
-                // Switching TO environment has to land on a real sky:
-                // `envPreset` is what selects the SH probe, and an undefined
-                // one would leave the light silently reading the fallback with
-                // a menu that could not show which preset was in force.
-                if (next === 'environment') {
-                  if (!isEnvironmentSky(envPresetRaw)) legacyComponentWrite(nodeId, tComp.id, 'envPreset', DEFAULT_ENVIRONMENT_PRESET);
-                  if (typeof envRotationRaw !== 'number') legacyComponentWrite(nodeId, tComp.id, 'envRotation', 0);
-                }
+              // environment light writes three props. Switching TO environment
+              // has to land on a real sky: `envPreset` is what selects the SH
+              // probe, and an undefined one would leave the light silently
+              // reading the fallback with a menu that could not show which
+              // preset was in force.
+              sendLook('Set Light Type', {
+                lightType: next,
+                ...(next === 'environment' && !isEnvironmentSky(envPresetRaw) ? { envPreset: DEFAULT_ENVIRONMENT_PRESET } : {}),
+                ...(next === 'environment' && typeof envRotationRaw !== 'number' ? { envRotation: 0 } : {}),
               });
             }}
             aria-label="Light type"
@@ -448,7 +466,8 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <Button
                   size="xs"
                   variant="ghost"
-                  onClick={() => writeComponentProps(nodeId, tComp.id, { poiX: undefined, poiY: undefined, poiZ: undefined }, 'Remove Point of Interest')}
+                  // AE's Orient Towards Point of Interest off (`transform/orientTowardsPointOfInterest`).
+                  onClick={() => { void edit('Remove Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(false) }); }}
                 >
                   Remove target (aim by angle)
                 </Button>
@@ -463,7 +482,8 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <Button
                   size="xs"
                   variant="secondary"
-                  onClick={() => writeComponentProps(nodeId, tComp.id, { poiX: compWidth / 2, poiY: compHeight / 2, poiZ: 0 }, 'Enable Point of Interest')}
+                  // On: the target lands at the composition centre (w/2, h/2, 0).
+                  onClick={() => { void edit('Enable Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(true) }); }}
                 >
                   Add target
                 </Button>

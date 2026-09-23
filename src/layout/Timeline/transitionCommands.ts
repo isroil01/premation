@@ -28,9 +28,8 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { addTransitionEdit, removeTransitionsEdit } from './transitionEdits';
 import {
-  addTransition,
-  removeTransition,
   transitionAtCut,
   compIdForTransition,
   DEFAULT_TRANSITION_FRAMES,
@@ -88,9 +87,7 @@ export function buildTransitionCommands(): ReadonlyArray<Command> {
     execute: () => {
       const cut = cutNearestPlayhead();
       if (!cut) return;
-      // B3-legacy: engine gap — the API has no transition command (an overlap
-      // plus a dissolve record on two layers).
-      void addTransition(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred');
+      void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred');
     },
   }));
 
@@ -111,8 +108,7 @@ export function buildTransitionCommands(): ReadonlyArray<Command> {
         if (!cut) return;
         const compId = compIdForTransition(cut);
         const existing = transitionAtCut(compId, cut.leftNodeId, cut.rightNodeId);
-        // B3-legacy: engine gap — no transition command (see above).
-        if (existing) void removeTransition(compId, existing.id);
+        if (existing) void removeTransitionsEdit([existing.id]);
       },
     },
   ];

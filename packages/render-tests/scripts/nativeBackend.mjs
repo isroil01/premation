@@ -120,6 +120,76 @@ export async function runNativeRaster({ exe, scenesDir, outScenesDir, fontsFile,
   });
 }
 
+/**
+ * D2w `native-scene` backend: `premation-scene` (native/engine/tools/premation_scene.cpp)
+ * — NATIVE_SCENE_EXE, else the engine preset builds.
+ */
+export function findSceneExe(repoRoot) {
+  if (process.env.NATIVE_SCENE_EXE) return existsSync(process.env.NATIVE_SCENE_EXE) ? process.env.NATIVE_SCENE_EXE : null;
+  const exe = process.platform === 'win32' ? 'premation-scene.exe' : 'premation-scene';
+  for (const p of ['windows-clang-cl-engine', 'linux-clang-engine', 'macos-clang-engine']) {
+    const f = path.join(repoRoot, 'native', 'build', p, 'engine', exe);
+    if (existsSync(f)) return f;
+  }
+  return null;
+}
+
+/**
+ * D2w `native-scene`: the C++ engine opens each scene's PROJECT DOCUMENT
+ * (harness/sceneProject.ts writes <scenes>/<scene>/project.json beside the
+ * FrameScenes), builds its own FrameScene per frame with its scene builder,
+ * diffs it structurally against the TS-exported one and renders it. Frames
+ * whose layers use features the builder has not ported are reported
+ * `not-ported` (with the features by name) — rendered, never gated.
+ */
+export async function runNativeScene({ exe, scenesDir, outDir, fontsFile, reportFile, only }) {
+  rmSync(outDir, { recursive: true, force: true });
+  rmSync(reportFile, { force: true });
+  const profile = process.platform === 'win32' ? 'chromium' : 'portable';
+  const table = path.join(scenesDir, 'readback-table.bin');
+  return new Promise((resolve) => {
+    const args = ['--batch', scenesDir, '--fonts', fontsFile, '--profile', profile, '--out', outDir, '--report', reportFile];
+    if (existsSync(table)) args.push('--readback-table', table);
+    if (only && only.length) args.push('--only', only.join(','));
+    const child = spawn(exe, args, { stdio: ['ignore', 'inherit', 'inherit'] });
+    child.on('exit', (code) => resolve(code ?? 1));
+    child.on('error', () => resolve(1));
+  });
+}
+
+/** The structural half of the native-scene gate: C++ FrameScene vs the TS one, per frame. */
+export async function reportNativeSceneStructure(reportFile) {
+  const report = await readJson(reportFile, null);
+  if (!report) return { structFail: 1 };
+  let compared = 0;
+  let equal = 0;
+  let portedUnequal = 0;
+  let worstMatrix = 0;
+  let worstScalar = 0;
+  const bad = [];
+  for (const f of report.frames ?? []) {
+    if (!f.struct?.compared) continue;
+    compared++;
+    if (f.struct.ok) equal++;
+    worstMatrix = Math.max(worstMatrix, f.struct.maxMatrix ?? 0);
+    worstScalar = Math.max(worstScalar, f.struct.maxScalar ?? 0);
+    if (f.port === 'ported' && !f.struct.ok) {
+      portedUnequal++;
+      bad.push(`${f.scene}#${f.frame}: ${(f.struct.mismatches ?? []).slice(0, 3).join(' | ')}`);
+    }
+  }
+  process.stdout.write('\n' + dim('  native-scene structure (the FrameScene the C++ engine built from the DOCUMENT vs the TS-exported FrameScene):\n'));
+  process.stdout.write(dim(`  - ${equal}/${compared} frame(s) structurally equal (matrices within 1e-3 relative, scalars within 1e-4; `
+    + `worst matrix delta ${worstMatrix.toExponential(2)}, worst scalar delta ${worstScalar.toExponential(2)})\n`));
+  if (report.timing) {
+    const t = report.timing;
+    process.stdout.write(dim(`  - C++ frame build: snapshot ${t.meanSnapshotMs} ms + scene ${t.meanSceneMs} ms, rasters ${t.meanRasterMs} ms, `
+      + `render encode ${t.meanEncodeMs} ms + GPU ${t.meanGpuMs} ms (mean over ${t.frames} frame(s))\n`));
+  }
+  for (const b of bad.slice(0, 10)) process.stdout.write(red(`  x ${b}\n`));
+  return { structFail: portedUnequal };
+}
+
 /** Scene id → family, for the per-family table. First matching prefix wins. */
 const FAMILIES = [
   ['blend-', 'blend modes'],

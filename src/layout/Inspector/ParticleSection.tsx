@@ -1,25 +1,34 @@
 /**
  * ParticleSection — controls for a particle emitter. The whole config is one
- * object on the layer's `fx` component (`setParticle`), so edits merge a field
- * and re-render. Every numeric field is keyframeable under `particle.<key>`
- * (stopwatch per row, sampled per frame by resolveParticleConfig); colors
- * keyframe via channel tracks through ColorKfRow, like fill/stroke.
+ * object on the layer's `fx` component. Through the engine API (B3z):
+ *
+ *   • every keyframeable number is the property `layer/particle.<key>`
+ *     (particleProps.ts) — a typed value / scrub sets its static value, or keys
+ *     it at the playhead when animated (auto-keyframe as elsewhere); the
+ *     stopwatch is `setAnimated`; a scrub is ONE gesture;
+ *   • the colours are `layer/particle.<colour>` colour properties (ColorKfRow);
+ *   • every other setting (emitter type, shape, sim mode, trails, sub-emit,
+ *     caps, seed…) is the json field `layer/particle`: the whole next config.
  */
 
 import { useState } from 'react';
 import { ValueField } from '@components/ValueField';
 import { AnimToggle } from './AnimToggle';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeParticle, DEFAULT_PARTICLE_CONFIG, particlePropPath, type ParticleConfig, type ParticleNumericKey } from '@core/particles/particleSim';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { edit } from '@core/engine/uiEdits';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { useAssetStore } from '@stores/assetStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { ColorKfRow } from './ColorKfRow';
-import { writeTransformProps } from '@core/scene/transformWrite';
+import { useEngineEdit } from './useEngineEdit';
+import { useGesture } from '@hooks/useGesture';
+import { jsonFieldCommands } from './layerFieldEdits';
+import { stopwatchCommands, valueCommands } from './inspectorEdits';
 // Same registration-by-import as PhysicsSection: loading this module is what
 // puts `dynamics.bakeParticles` in the command registry.
 import { runParticleBake } from '@core/simulation/bakeCommands';
@@ -30,31 +39,28 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
   useSceneRevision((s) => s.rev);
   useAnimationRevision();
   const time = useActiveWorkspace()?.time ?? 0;
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
+  const eng = useEngineEdit();
+  const picking = useGesture();
   const [bakeOpen, setBakeOpen] = useState(false);
   // Image assets for the sprite picker — a hook, so it sits above the early return.
   const imageAssets = useAssetStore((s) => s.assets).filter((a) => a.type === 'image');
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const cfg = readNodeParticle(node) ?? DEFAULT_PARTICLE_CONFIG;
-  // ONE axis for reads and writes: the canonical keyframe time (reads used to
-  // be on the renderer axis while writes subtracted the first clip's start —
-  // a moved/trimmed clip made every edit land beside the keyframe it showed).
-  // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
-  const layerT = compToKeyframeTime(nodeId, time);
+  // DISPLAY only: where to sample an animated param for the playhead (the
+  // layer's keyframe axis). Writes send comp time; the engine converts.
+  const layerT = keyAxisTimeForDisplay(nodeId, time);
 
-  const set = <K extends keyof ParticleConfig>(key: K, value: ParticleConfig[K]): void => {
-    defaultSceneGraph.setParticle(nodeId, { ...cfg, [key]: value });
-    // The emitter box mirrors the layer's Transform size. Routed through
-    // writeTransformProps so an emitter on a layer with animated width/height
-    // keyframes rather than taking a base write the renderer discards.
-    if (key === 'emitterWidth' && typeof value === 'number') {
-      // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
-      writeTransformProps(nodeId, [{ prop: 'width', value }], 'Emitter Width');
-    } else if (key === 'emitterHeight' && typeof value === 'number') {
-      writeTransformProps(nodeId, [{ prop: 'height', value }], 'Emitter Height');
-    }
-    bumpScene();
+  /**
+   * A non-keyframeable setting: the json field `layer/particle` with that key
+   * changed (the whole config, as the editor always stored it). Inside a scrub
+   * it goes into the open gesture.
+   */
+  const set = <K extends keyof ParticleConfig>(key: K, value: ParticleConfig[K], label = 'Edit Particle Emitter'): void => {
+    eng.send(label, jsonFieldCommands(nodeId, 'layer/particle', { ...cfg, [key]: value }));
   };
+  const scrub = eng.scrub('Edit Particle Emitter');
 
   const Num = (key: ParticleNumericKey, label: string, unit = '', min?: number, max?: number): JSX.Element => {
     const prop = particlePropPath(key);
@@ -63,13 +69,16 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
       ? defaultAnimation.sample(nodeId, prop, layerT) ?? (cfg[key] as number)
       : (cfg[key] as number);
     const toggle = (): void => {
-      if (animated) {
-        // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
-        runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
-      } else {
-        runAnimEdit(`Animate ${label}`, () =>
-          defaultAnimation.setKeyframe(nodeId, prop, layerT, cfg[key] as number));
-      }
+      void edit(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
+    };
+    // `layer/particle.<key>` (a key at the playhead when animated or under
+    // auto-keyframe, else the static value). The emitter box mirrors the
+    // layer's Width / Height: a static emitter size writes both in ONE entry.
+    const write = (v: number): void => {
+      const values: Record<string, number> = { [prop]: v };
+      if (!animated && key === 'emitterWidth') values.width = v;
+      if (!animated && key === 'emitterHeight') values.height = v;
+      eng.send(`Set ${label}`, valueCommands([{ nodeId, values }], { seconds: time, autoKeyframe }));
     };
     return (
       <div className={styles.popoverRow}>
@@ -80,18 +89,8 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
           unit={unit}
           {...(min !== undefined ? { min } : {})}
           {...(max !== undefined ? { max } : {})}
-          onChange={(v) => {
-            if (animated) {
-              // Editing an animated param writes a keyframe at the playhead —
-              // writing the static config would change nothing on screen.
-              // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
-              runAnimEdit(`Set ${label}`, () =>
-                defaultAnimation.setKeyframe(nodeId, prop, layerT, Number(v)),
-                `particle:${nodeId}:${prop}`);
-            } else {
-              set(key, Number(v) as ParticleConfig[typeof key]);
-            }
-          }}
+          {...eng.scrub(`Set ${label}`)}
+          onChange={(v) => write(Number(v))}
           aria-label={label}
         />
       </div>
@@ -108,6 +107,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
       <ValueField
         value={cfg[key]}
         {...(min !== undefined ? { min } : {})}
+        {...scrub}
         onChange={(v) => set(key, Number(v) as ParticleConfig[typeof key])}
         aria-label={label}
       />
@@ -213,18 +213,18 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
               <div className={styles.popoverRow}>
                 <div style={{ width: 13 }} />
                 <span className={styles.popoverLabel}>Burst</span>
-                <ValueField value={cfg.subCount ?? 8} min={0} max={16} precision={0} onChange={(v) => set('subCount', Number(v))} aria-label="Children per burst" />
+                <ValueField value={cfg.subCount ?? 8} min={0} max={16} precision={0} {...scrub} onChange={(v) => set('subCount', Number(v))} aria-label="Children per burst" />
               </div>
             )}
             <div className={styles.popoverRow}>
               <div style={{ width: 13 }} />
               <span className={styles.popoverLabel}>Burst Speed</span>
-              <ValueField value={cfg.subSpeed ?? 120} min={0} precision={0} unit="px/s" onChange={(v) => set('subSpeed', Number(v))} aria-label="Child speed" />
+              <ValueField value={cfg.subSpeed ?? 120} min={0} precision={0} unit="px/s" {...scrub} onChange={(v) => set('subSpeed', Number(v))} aria-label="Child speed" />
             </div>
             <div className={styles.popoverRow}>
               <div style={{ width: 13 }} />
               <span className={styles.popoverLabel}>Burst Life</span>
-              <ValueField value={cfg.subLifetime ?? 0.6} min={0.05} precision={2} unit="s" onChange={(v) => set('subLifetime', Number(v))} aria-label="Child lifetime" />
+              <ValueField value={cfg.subLifetime ?? 0.6} min={0.05} precision={2} unit="s" {...scrub} onChange={(v) => set('subLifetime', Number(v))} aria-label="Child lifetime" />
             </div>
           </>
         )}
@@ -240,6 +240,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
             min={0}
             max={24}
             precision={0}
+            {...scrub}
             onChange={(v) => set('trailLength', Number(v))}
             aria-label="Trail points"
           />
@@ -253,6 +254,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
               min={1 / 240}
               precision={3}
               unit="s"
+              {...scrub}
               onChange={(v) => set('trailSpacing', Number(v))}
               aria-label="Trail spacing seconds"
             />
@@ -273,7 +275,12 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
               <input
                 type="color"
                 value={cfg.plexusColor ?? DEFAULT_PARTICLE_CONFIG.plexusColor}
-                onChange={(e) => set('plexusColor', e.target.value)}
+                // The OS picker fires on every move: one gesture until it closes (blur).
+                onChange={(e) => {
+                  if (!picking.isActive()) picking.begin('Set Plexus Color');
+                  picking.send(jsonFieldCommands(nodeId, 'layer/particle', { ...cfg, plexusColor: e.target.value }));
+                }}
+                onBlur={() => { void picking.end(); }}
                 aria-label="Plexus line colour"
               />
             </div>
@@ -320,13 +327,13 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
             <div className={styles.popoverRow}>
               <div style={{ width: 13 }} />
               <span className={styles.popoverLabel}>Sheet Frames</span>
-              <ValueField value={cfg.spriteFrames ?? 1} min={1} max={256} precision={0} onChange={(v) => set('spriteFrames', Number(v))} aria-label="Sprite sheet frames" />
+              <ValueField value={cfg.spriteFrames ?? 1} min={1} max={256} precision={0} {...scrub} onChange={(v) => set('spriteFrames', Number(v))} aria-label="Sprite sheet frames" />
             </div>
             {(cfg.spriteFrames ?? 1) > 1 && (
               <div className={styles.popoverRow}>
                 <div style={{ width: 13 }} />
                 <span className={styles.popoverLabel}>Sheet FPS</span>
-                <ValueField value={cfg.spriteFps ?? 0} min={0} max={120} precision={0} unit="fps" onChange={(v) => set('spriteFps', Number(v))} aria-label="Sprite sheet frames per second (0 = by age)" />
+                <ValueField value={cfg.spriteFps ?? 0} min={0} max={120} precision={0} unit="fps" {...scrub} onChange={(v) => set('spriteFps', Number(v))} aria-label="Sprite sheet frames per second (0 = by age)" />
               </div>
             )}
           </>
@@ -373,6 +380,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
               <span className={styles.popoverLabel}>Floor Y</span>
               <ValueField
                 value={cfg.bounceFloor ?? 160}
+                {...scrub}
                 onChange={(v) => set('bounceFloor', Number(v))}
                 aria-label="Floor Y"
               />
@@ -384,6 +392,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
                 value={cfg.bounceRestitution ?? 0.65}
                 min={0}
                 max={1}
+                {...scrub}
                 onChange={(v) => set('bounceRestitution', Number(v))}
                 aria-label="Bounce restitution"
               />
@@ -395,6 +404,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
                 value={cfg.bounceDamping ?? 0.998}
                 min={0}
                 max={1}
+                {...scrub}
                 onChange={(v) => set('bounceDamping', Number(v))}
                 aria-label="Air damping"
               />

@@ -25,6 +25,7 @@ import type { LocalEngine, CommandLogData } from '@core/engine/LocalEngine';
 import { localEngine, rebuildEngine, engineIdle } from '@core/engine/engineInstance';
 import { replayLog, logToJsonl, logFromJsonl, type ReplayResult } from '@core/engine/replay';
 import { canonicalJson } from '@core/engine/canonical';
+import { isWriteAroundEngine } from '@core/engine/externalWrites';
 
 // ── The recording flag ───────────────────────────────────────────────
 
@@ -114,7 +115,7 @@ export async function recordSession(opts: { engine?: LocalEngine } = {}): Promis
   let stopped: CommandLogData | null = null;
   let around = 0;
   const unsubscribe = engine.subscribe((batch) => {
-    if (!stopped) for (const ev of batch.events) if (ev.type === 'documentReset' && ev.reason === 'resync') around += 1;
+    if (!stopped && isWriteAroundEngine(batch)) around += 1;
   });
   return {
     snapshot: () => stopped ?? engine.commandLog(),

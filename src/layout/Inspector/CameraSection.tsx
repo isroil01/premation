@@ -8,15 +8,16 @@
  */
 
 import { useMemo } from 'react';
-import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useComponentProp, writeComponentProps } from './useComponentProp';
 import { setLayersSwitch } from './inspectorEdits';
-import { useCompositionStore } from '@stores/compositionStore';
+import { edit } from '@core/engine/uiEdits';
+import { values } from '@core/engine/propRefs';
+import { POI_PATH } from '@core/engine/pointOfInterest';
 import { Project3D } from '@motion/scene';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { is3DEnabled, canBe3D } from '@core/scene/threeD';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useActiveCompLayers } from '@hooks/useMirrorFields';
+import { canBe3DLayer, useActiveCompSize } from './inspectorMirror';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Checkbox } from '@components/Checkbox';
@@ -37,8 +38,11 @@ const LENS_PRESETS: Array<{ label: string; fov: number }> = [
 ];
 
 export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const compWidth = useCompositionStore((s) => s.width);
+  // The layer's header and the active comp from the document mirror (B4).
+  const layer = useMirrorLayer(nodeId);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
+  const compLayers = useActiveCompLayers();
+  // B4-gap: component id for the write path (useComponentProp/writeComponentProps address a component) — B3z
   const node = defaultSceneGraph.getNode(nodeId);
   const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
   const [focalRaw, setFocal, focalField] = useComponentProp(nodeId, tComp?.id, 'focalLength');
@@ -63,8 +67,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const [poiXRaw, setPoiX] = useComponentProp(nodeId, tComp?.id, 'poiX');
   const [poiYRaw, setPoiY] = useComponentProp(nodeId, tComp?.id, 'poiY');
   const [poiZRaw, setPoiZ] = useComponentProp(nodeId, tComp?.id, 'poiZ');
-  const compHeight = useCompositionStore((s) => s.height);
-  if (!node || !tComp) return null;
+  if (!layer || !node || !tComp) return null;
 
   const defaultFocal = Project3D.focalLengthForFov(compWidth, 39.6);
   const focal = typeof focalRaw === 'number' && focalRaw > 0 ? focalRaw : defaultFocal;
@@ -89,10 +92,10 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   // no render-path fix undoes. Worse for solids: set3DEnabled seeds their
   // placement from the ACTIVE comp's dimensions, so a solid in a comp of a
   // different size was repositioned and resized as well.
-  const contentLayers = flattenComposition(defaultSceneGraph, activeCompRootId()).filter((n) => canBe3D(n));
-  const threeDCount = contentLayers.filter((n) => is3DEnabled(n)).length;
+  const contentLayers = compLayers.filter((l) => canBe3DLayer(l.id));
+  const threeDCount = contentLayers.filter((l) => l.switches.threeD).length;
   const enableAll3D = (): void => {
-    void setLayersSwitch(contentLayers.filter((n) => !is3DEnabled(n)).map((n) => n.id), { threeD: true }, 'Make All Layers 3D');
+    void setLayersSwitch(contentLayers.filter((l) => !l.switches.threeD).map((l) => l.id), { threeD: true }, 'Make All Layers 3D');
   };
 
   return (
@@ -195,7 +198,8 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                     onClick={() => {
                       // Enable a two-node camera aimed at the comp centre; from
                       // here the camera always LOOKS AT this target.
-                      writeComponentProps(nodeId, tComp.id, { poiX: compWidth / 2, poiY: compHeight / 2, poiZ: 0 }, 'Enable Point of Interest');
+                      // (`transform/orientTowardsPointOfInterest` on: the target at w/2, h/2, 0.)
+                      void edit('Enable Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(true) });
                     }}
                   >
                     Enable target (two-node camera)
@@ -220,7 +224,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                   variant="ghost"
                   onClick={() => {
                     // Back to a one-node (free) camera: drop the POI props.
-                    writeComponentProps(nodeId, tComp.id, { poiX: undefined, poiY: undefined, poiZ: undefined }, 'Remove Point of Interest');
+                    void edit('Remove Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(false) });
                   }}
                 >
                   Remove target (free camera)

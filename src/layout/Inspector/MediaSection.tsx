@@ -20,9 +20,11 @@ import { useAssetStore } from '@stores/assetStore';
 import { assetIdOf, interpretationOf, type AlphaInterpretation } from '@core/source/sourceInfo';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useComponentProp } from './useComponentProp';
-import { edit } from '@core/engine/uiEdits';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
-import { getNodeHasSequence, getNodeSequenceLoop, setSequenceLoop } from '@core/scene/imageSequence';
+import { getNodeHasSequence, getNodeSequenceLoop } from '@core/scene/imageSequence';
+import { values } from '@core/engine/propRefs';
+import { engine } from '@core/engine/engineInstance';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { readVideoAudioVoices, videoHasAudioTrack, speedAltersAudio, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
 import {
@@ -34,6 +36,40 @@ import { RetimeSection } from './RetimeSection';
 import { ProxyRow } from './ProxyRow';
 import { customPrompt } from '@components/Modal';
 import styles from './TransformSection.module.css';
+
+/**
+ * AE's Replace Footage with a FILE: re-point the layer at the matching library
+ * item, or import the file first (`importFiles` by path) and re-point at the new
+ * item — one engine gesture, one undo entry ("Replace Footage"): the second
+ * command needs the item id the first one returns. Keeps keyframes, effects,
+ * masks and size (`keepSize`).
+ */
+export async function replaceFootageFromPath(nodeId: string, path: string): Promise<boolean> {
+  const label = 'Replace Footage';
+  const match = useAssetStore.getState().assets.find((a) => a.src === path);
+  if (match) {
+    const res = await edit(label, { type: 'replaceLayerSource', layer: nodeId, source: match.id, keepSize: true });
+    return res.ok;
+  }
+  const client = engine();
+  const opened = await client.beginGesture(label);
+  if (!opened.ok) {
+    reportEngineError(label, opened.error);
+    return false;
+  }
+  let ok = false;
+  const imported = await client.execute({ type: 'importFiles', files: [{ path, asSequence: false, createComposition: false }] });
+  const item = imported.ok ? (imported.value as { items?: string[] }).items?.[0] : undefined;
+  if (!imported.ok) reportEngineError(label, imported.error);
+  if (item) {
+    const res = await client.execute({ type: 'replaceLayerSource', layer: nodeId, source: item, keepSize: true });
+    if (res.ok) ok = true;
+    else reportEngineError(label, res.error);
+  }
+  const closed = await client.endGesture(opened.value.gesture, ok);
+  if (!closed.ok) reportEngineError(label, closed.error);
+  return ok;
+}
 
 export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -64,19 +100,14 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
     (c) => c.type === 'video' || c.id.startsWith('video') || (tComp && tComp.props.__kind === 'video'),
   );
 
-  const [src, setSrc] = useComponentProp(nodeId, tComp?.id, 'src');
-  // The renderer resolves assetId ahead of src (buildSnapshot), and the timeline
-  // bounds media clips by the asset's duration — so a replace has to re-point
-  // both or the layer keeps resolving the old asset.
-  const [, setAssetId] = useComponentProp(nodeId, tComp?.id, 'assetId');
-  const [, setAudioAssetId] = useComponentProp(nodeId, tComp?.id, '__assetId');
+  const [src] = useComponentProp(nodeId, tComp?.id, 'src');
 
   // A video layer's own audio track. Level/mute live on the same component; the
   // sound itself is scheduled by the AudioEngine off the layer's clip bar (see
   // audioScene.readVideoAudioVoices).
   const [audioLevelDb, setAudioLevelDb] = useComponentProp(nodeId, tComp?.id, AUDIO_LEVEL_DB_PROP);
   const [legacyPercent] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_LEVEL_PROP);
-  const [audioMuted, setAudioMuted] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_MUTED_PROP);
+  const [audioMuted] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_MUTED_PROP);
   const [audioPan, setAudioPan] = useComponentProp(nodeId, tComp?.id, AUDIO_PAN_PROP);
 
   // Kick the decode so the section can report whether this file has sound at
@@ -105,18 +136,8 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
 
   /** Point the layer at `path`, keeping its keyframes, effects and masks. */
   const applyReplace = (path: string) => {
-    // Re-point to the matching library asset when the new source is one, and
-    // clear the id otherwise so src wins instead of the stale asset.
-    const match = useAssetStore.getState().assets.find((a) => a.src === path);
-    if (match && isLayer(nodeId)) {
-      // B3: a library item — AE's Replace Footage, one command (keeps keyframes, effects, masks and size).
-      void edit('Replace Footage', { type: 'replaceLayerSource', layer: nodeId, source: match.id, keepSize: true });
-      return;
-    }
-    // B3-legacy: engine gap — `replaceLayerSource` takes an ITEM; pointing a layer at a bare file path (not in the library) has no API form.
-    setSrc(path);
-    setAssetId(match?.id);
-    setAudioAssetId(match?.id);
+    if (!isLayer(nodeId)) return;
+    void replaceFootageFromPath(nodeId, path);
   };
 
   const handleReplace = async () => {
@@ -199,8 +220,14 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
         <InspectorRow label="Loop Sequence" align="center">
           <Switch
             checked={getNodeSequenceLoop(nodeId)}
-            // B3-legacy: engine gap — the per-LAYER image-sequence loop flag has no API form (`setInterpretation.loops` is per item and a count).
-            onChange={(e) => setSequenceLoop(nodeId, e.currentTarget.checked)}
+            // The per-LAYER loop flag (`layer/sequenceLoop`, a B3z layer field).
+            onChange={(e) => {
+              void edit('Loop Sequence', {
+                type: 'setProperty',
+                prop: { layer: nodeId, path: 'layer/sequenceLoop' },
+                value: values.bool(e.currentTarget.checked),
+              });
+            }}
             aria-label="Loop image sequence"
           />
         </InspectorRow>
@@ -251,12 +278,19 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
                     unit="%"
                     min={MIN_PAN}
                     max={MAX_PAN}
-                    onStatic={(v) => setAudioPan(v === 0 ? undefined : v)}
+                    // A centred pan is stored as ABSENT by the engine's audio seam.
+                    onStatic={(v) => setAudioPan(v)}
                   />
                   <InspectorRow label="Mute" align="center">
                     <Switch
                       checked={audioMuted === true}
-                      onChange={(e) => setAudioMuted(e.currentTarget.checked || undefined)}
+                      // AE's Audio switch (`setLayerSwitches` audioEnabled — stored as this mute flag).
+                      onChange={(e) => {
+                        if (!isLayer(nodeId)) return;
+                        void edit(e.currentTarget.checked ? 'Mute Audio' : 'Unmute Audio', {
+                          type: 'setLayerSwitches', layers: [nodeId], patch: { audioEnabled: !e.currentTarget.checked },
+                        });
+                      }}
                       aria-label="Mute this video's audio track"
                     />
                   </InspectorRow>

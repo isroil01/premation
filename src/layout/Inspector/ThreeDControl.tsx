@@ -25,34 +25,22 @@
 import { type ReactNode } from 'react';
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import {
-  is3DEnabled,
-  canBe3D,
-  readNode3D,
-  setNodeExtrusionDepth,
-  setNodeBevelDepth,
-  setNodeHoleBevelDepth,
-  setNodeBevelStyle,
-  BEVEL_STYLES,
-  isPerChar3D,
-  setNodePerChar3D,
-} from '@core/scene/threeD';
+import { useThrottledTime } from '@stores/playbackClockStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
+import { plainValue, trackRefIn } from '@core/mirror/trackIndex';
+import { edit } from '@core/engine/uiEdits';
+import { fieldCommands } from '@layout/Text/textEdits';
+import { BEVEL_STYLES } from '@core/scene/threeD';
 import type { BevelStyle } from '@core/scene/extrusion';
-import { hasTextComponent } from '@core/text/textAnimators';
-import { readNodeLayerStyles } from '@core/effects/layerStyles';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useUIStore } from '@stores/uiStore';
 import { AnimToggle } from './AnimToggle';
 import { allAddressable, scalarValueCommands, setLayersSwitch, stopwatchCommands } from './inspectorEdits';
 import { useEngineEdit } from './useEngineEdit';
+import { canBe3DLayer, inspectorKindOf } from './inspectorMirror';
 import s from './ThreeDControl.module.css';
 
 /** Menu labels for the bevel profiles — the union stays the source of truth. */
@@ -67,18 +55,16 @@ interface DepthRowProps {
   prop: 'extrusionDepth' | 'bevelDepth' | 'holeBevelDepth';
   label: string;
   ariaLabel: string;
-  /** The static value (what readNode3D reports). */
-  base: number;
+  /** The value at the playhead (mirror). */
+  value: number;
+  /** Whether the property is keyframed (mirror). */
+  animated: boolean;
   min: number;
   max: number;
   unit: string;
-  /** Playhead on this layer's own keyframe axis (display + the legacy writer). */
-  layerT: number;
-  /** Playhead, comp seconds (the engine route). */
+  /** Playhead, comp seconds (every write). */
   time: number;
   autoKeyframe: boolean;
-  /** The static write — the setter that knows the prop's default and clamp. */
-  onStatic: (v: number) => void;
 }
 
 /**
@@ -86,31 +72,18 @@ interface DepthRowProps {
  * state (no bevel ⇒ no hole row); each row is its own component, so its one
  * hook (the scrub gesture) never shifts the section's hook count.
  *
- * B3: through the engine API (`geometry/<prop>`) when its catalog lists the
- * property on this layer; otherwise the legacy writers below.
+ * B3z: through the engine API (`geometry/<prop>`, listed on every layer that
+ * shows the row — a 3D layer that can have a body). A value is a key at the
+ * playhead where animated / under auto-keyframe, else the static value; a scrub
+ * is ONE gesture; the stopwatch is `setAnimated`.
  */
-function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT, time, autoKeyframe, onStatic }: DepthRowProps): JSX.Element {
+function DepthRow({ nodeId, prop, label, ariaLabel, value, animated, min, max, unit, time, autoKeyframe }: DepthRowProps): JSX.Element {
   const e = useEngineEdit();
-  const animated = defaultAnimation.isAnimated(nodeId, prop);
-  const value = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? base : base;
   const onEngine = (): boolean => allAddressable([nodeId], [prop]);
   const write = (v: number): void => {
     if (!Number.isFinite(v)) return;
     const clamped = Math.max(min, Math.min(max, v));
-    if (onEngine()) {
-      e.send(`Set ${label}`, scalarValueCommands(prop, [{ nodeId, value: clamped }], { seconds: time, autoKeyframe }));
-      return;
-    }
-    if (animated || autoKeyframe) {
-      // B3-legacy: engine gap — a geometry depth the catalog does not list on this layer (Hole Bevel Depth outside text/paths).
-      runAnimEdit(
-        `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, clamped),
-        `set:${nodeId}:${prop}:${layerT}`,
-      );
-    } else {
-      onStatic(clamped);
-    }
+    e.send(`Set ${label}`, scalarValueCommands(prop, [{ nodeId, value: clamped }], { seconds: time, autoKeyframe }));
   };
   return (
     <div className={s.row}>
@@ -121,13 +94,7 @@ function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT
         animated={animated}
         values={() => [value]}
         onToggle={() => {
-          if (onEngine()) {
-            e.send(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
-            return;
-          }
-          // B3-legacy: engine gap — same (a depth outside the catalog).
-          if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
-          else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
+          if (onEngine()) e.send(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
         }}
       />
       <span className={`${s.label}${animated ? ` ${s.labelAnimated}` : ''}`}>{label}</span>
@@ -145,6 +112,9 @@ function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT
   );
 }
 
+/** The geometry properties this control draws (mirror watch). */
+const GEOMETRY_TRACKS: readonly string[] = ['extrusionDepth', 'bevelDepth', 'holeBevelDepth', 'bevelStyle', 'perChar3D'];
+
 export interface ThreeDControlProps {
   nodeId: string;
   children?: ReactNode;
@@ -152,38 +122,42 @@ export interface ThreeDControlProps {
 
 export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Element | null {
   // Every hook before the early returns (conditionalHooks.test.tsx).
-  useSceneRevision((st) => st.rev);
-  // Keyframe writes do not bump the scene revision; without this a lit
-  // stopwatch and the values its track drives would not repaint.
-  useAnimationRevision();
-  const time = useActiveWorkspace()?.time ?? 0;
+  // B4: the layer's mirror header (the 3D switch) and the geometry properties
+  // it draws (keys, values, infos), at the THROTTLED playhead, never the clock.
+  const layer = useMirrorLayer(nodeId);
+  useMirrorTrackWatch([nodeId], GEOMETRY_TRACKS);
+  const time = useThrottledTime();
   const autoKeyframe = usePreferenceStore((st) => st.timelineAutoKeyframe);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || nodeId === 'comp_root') return null;
+  if (!layer) return null;
   // Only kinds the renderer can actually project in 3D get the switch —
   // groups / nulls / cameras / lights / solids / particles etc. are excluded
-  // by the shared canBe3D predicate (single source of truth with the timeline
-  // cube and the viewport 3D badge).
-  if (!canBe3D(node)) return null;
+  // (the mirror twin of the shared canBe3D predicate).
+  if (!canBe3DLayer(nodeId)) return null;
 
-  const on = is3DEnabled(node);
-  const three = readNode3D(node);
-  // B3-legacy: display read (animated depths drawn at the playhead) + the legacy depth writer's key axis.
-  const layerT = compToKeyframeTime(nodeId, time);
+  const m = documentMirror();
+  const tree = m.tree(nodeId);
+  const on = layer.switches.threeD;
+  const depth = (prop: string): number => Math.max(0, readTrack(m, nodeId, prop, time) ?? 0);
+  const animatedNow = (prop: string): boolean => isTrackAnimated(m, nodeId, prop);
   // Per-character 3D is a text-only affordance (AE parity).
-  const isTextLayer = hasTextComponent(node);
-  // Counters exist only on traced outlines: text and free paths.
-  const shapeType = node.components.find((c) => c.type === 'Transform')?.props.shapeType;
-  const hasHoles = isTextLayer || (typeof shapeType === 'string' && shapeType !== 'rect' && shapeType !== 'ellipse');
+  const isTextLayer = inspectorKindOf(nodeId) === 'text';
+  // Counters exist only on traced outlines: text and free paths (the catalog
+  // lists Hole Bevel Depth exactly there).
+  const hasHoles = isTextLayer || layer.kind === 'path' || layer.kind === 'polygon'
+    || trackRefIn(tree, 'holeBevelDepth') !== null;
   // Animated depths decide visibility by the value drawn NOW, like the renderer.
-  const sampled = (prop: 'extrusionDepth' | 'bevelDepth', base: number): number =>
-    defaultAnimation.isAnimated(nodeId, prop) ? defaultAnimation.sample(nodeId, prop, layerT) ?? base : base;
-  const depthNow = sampled('extrusionDepth', three.extrusionDepth);
-  const bevelNow = sampled('bevelDepth', three.bevelDepth);
-  const extrudedAtAll = depthNow > 0 || defaultAnimation.isAnimated(nodeId, 'extrusionDepth');
-  const bevelledAtAll = bevelNow > 0 || defaultAnimation.isAnimated(nodeId, 'bevelDepth');
-  const styled = hasHoles && extrudedAtAll && readNodeLayerStyles(node) !== undefined;
+  const extrusionNow = depth('extrusionDepth');
+  const bevelNow = depth('bevelDepth');
+  const holeNow = readTrack(m, nodeId, 'holeBevelDepth', time) ?? 100;
+  const extrudedAtAll = extrusionNow > 0 || animatedNow('extrusionDepth');
+  const bevelledAtAll = bevelNow > 0 || animatedNow('bevelDepth');
+  const bevelStyleRaw = plainValue(trackRefIn(tree, 'bevelStyle')?.info.value);
+  const bevelStyle: BevelStyle = BEVEL_STYLES.includes(bevelStyleRaw as BevelStyle) ? (bevelStyleRaw as BevelStyle) : 'angular';
+  const perChar3D = plainValue(trackRefIn(tree, 'perChar3D')?.info.value) === true;
+  // Layer styles live under the tree's `styles` group.
+  const hasStyles = tree !== undefined && [...tree.nodes.keys()].some((p) => p === 'styles' || p.startsWith('styles/'));
+  const styled = hasHoles && extrudedAtAll && hasStyles;
 
   return (
     <div className={s.stack}>
@@ -211,9 +185,12 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
             <div className={s.row}>
               <span className={s.label}>Per-character 3D</span>
               <Switch
-                checked={isPerChar3D(node)}
-                // B3-legacy: engine gap — Per-character 3D (a text layer flag) has no switch or property in the API.
-                onChange={(e) => setNodePerChar3D(nodeId, e.currentTarget.checked)}
+                checked={perChar3D}
+                // `text/perCharacter3D` (a layer field).
+                onChange={(e) => {
+                  const next = e.currentTarget.checked;
+                  void edit(next ? 'Enable Per-character 3D' : 'Disable Per-character 3D', fieldCommands(nodeId, 'text/perCharacter3D', next));
+                }}
                 aria-label="Enable per-character 3D"
               />
             </div>
@@ -228,9 +205,9 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               <span className={s.label}>Bevel Style</span>
               <select
                 className={s.select}
-                value={three.bevelStyle}
-                // B3-legacy: engine gap — Bevel Style (an enum on the Transform component) is not a `geometry/bevelStyle` choice property in the catalog.
-                onChange={(e) => setNodeBevelStyle(nodeId, e.currentTarget.value as BevelStyle)}
+                value={bevelStyle}
+                // `geometry/bevelStyle` (a layer field).
+                onChange={(e) => { void edit('Bevel Style', fieldCommands(nodeId, 'geometry/bevelStyle', e.currentTarget.value as BevelStyle)); }}
                 aria-label="Bevel style"
               >
                 {BEVEL_STYLES.map((style) => (
@@ -247,15 +224,13 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               prop="bevelDepth"
               label="Bevel Depth"
               ariaLabel="Bevel depth"
-              base={three.bevelDepth}
+              value={bevelNow}
+              animated={animatedNow('bevelDepth')}
               min={0}
               max={200}
               unit="px"
-              layerT={layerT}
               time={time}
               autoKeyframe={autoKeyframe}
-              // B3-legacy: engine gap — a geometry depth outside the catalog (static writer fallback).
-              onStatic={(v) => setNodeBevelDepth(nodeId, v)}
             />
           )}
           {extrudedAtAll && bevelledAtAll && hasHoles && (
@@ -264,15 +239,13 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               prop="holeBevelDepth"
               label="Hole Bevel Depth"
               ariaLabel="Hole bevel depth"
-              base={three.holeBevelDepth}
+              value={holeNow}
+              animated={animatedNow('holeBevelDepth')}
               min={0}
               max={100}
               unit="%"
-              layerT={layerT}
               time={time}
               autoKeyframe={autoKeyframe}
-              // B3-legacy: engine gap — a geometry depth outside the catalog (static writer fallback).
-              onStatic={(v) => setNodeHoleBevelDepth(nodeId, v)}
             />
           )}
           <DepthRow
@@ -280,15 +253,13 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
             prop="extrusionDepth"
             label="Extrusion Depth"
             ariaLabel="Extrusion depth"
-            base={three.extrusionDepth}
+            value={extrusionNow}
+            animated={animatedNow('extrusionDepth')}
             min={0}
             max={1000}
             unit="px"
-            layerT={layerT}
             time={time}
             autoKeyframe={autoKeyframe}
-            // B3-legacy: engine gap — a geometry depth outside the catalog (static writer fallback).
-            onStatic={(v) => setNodeExtrusionDepth(nodeId, v)}
           />
           {styled && (
             <p className={s.hint}>

@@ -403,7 +403,21 @@ export function batchHistory<T>(key: string, fn: () => T): T {
   }
 }
 
+/**
+ * The 700 ms debounced recorder is the ONLY undo for writes made around the
+ * engine API (ENGINE_API.md §5.3, §15.3). Every engine command records its own
+ * exact entry; the recorder turns a legacy writer's bus traffic into a
+ * `StoreSnapshotCommand`. B4 deletes it — `RECORD_DEBOUNCE_MS`, `schedule`,
+ * `StoreSnapshotCommand`'s recording path, `batchHistory`, and the engine's
+ * flush/runRestoring calls — once `npm run lint:engine-writes` reports 0
+ * direct writes. Until then it stays wired, behind this switch, so the
+ * remaining legacy writers keep their undo. `false` = engine-only history
+ * (what B4's exit runs with; tests pin that engine edits never need it).
+ */
+export const LEGACY_DEBOUNCE_RECORDER = { enabled: true };
+
 export function attachHistoryRecording(): { dispose(): void } {
+  if (!LEGACY_DEBOUNCE_RECORDER.enabled) return { dispose(): void {} };
   const h = (): HistoryStore => useHistoryStore.getState();
   const subs = [
     // Decoding a video frame is not an undoable edit.

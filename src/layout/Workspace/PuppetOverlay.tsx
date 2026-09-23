@@ -8,13 +8,11 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry } from '@core/workspace/geometry';
-import { readNodePuppet, deform, draftPin, pinKindOf, pinColor, pinHasTransformGizmo, restPointFromDeformed } from '@core/rig/puppet';
+import { readNodePuppet, deform, pinKindOf, pinColor, pinHasTransformGizmo, restPointFromDeformed } from '@core/rig/puppet';
 import { resolveLivePins } from '@core/rig/livePins';
 import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
 import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { useAssetStore } from '@stores/assetStore';
-import { addPuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
-import { nextRigId, usedRigIds } from '@core/rig/rigIds';
 import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch';
 import { readNodeSkeleton, bindPoseBones } from '@core/rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '@core/rig/skeleton';
@@ -29,10 +27,13 @@ import {
   type SkeletonBinding,
 } from '@core/rig/rigDeform';
 import type { Mat2D } from '@core/rig/mat2d';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
-import { upsertDataKeyframe, dataPathTangents, setDataSpatialTangent } from '@motion/animation';
-import { bumpScene } from '@stores/sceneStore';
+import { dataPathTangents } from '@motion/animation';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { edit } from '@core/engine/uiEdits';
+import { engine } from '@core/engine/engineInstance';
+import { compTime } from '@core/engine/propRefs';
+import { rigPaths, rigMatch, rigValues, rigKey, rigRemove } from '@core/engine/rigPaths';
+import { useGesture } from '@hooks/useGesture';
 
 /** Radius (screen px) of the advanced-pin gizmo ring. */
 const GIZMO_R = 26;
@@ -112,7 +113,6 @@ export function PuppetOverlay(): JSX.Element | null {
   const dragInfoRef = useRef<{
     pinId: string;
     startScreen: { x: number; y: number };
-    animTx: any;
     /** Alt-drag rotates; the gizmo's square handle scales; Ctrl records. */
     mode: 'move' | 'rotate' | 'scale' | 'sketch';
     startAngleDeg: number;
@@ -127,10 +127,14 @@ export function PuppetOverlay(): JSX.Element | null {
   /** Spatial tangent handle being dragged (the pin motion path). */
   const tangentDragRef = useRef<{
     pinId: string;
-    kfT: number;
+    /** Index of the key in the pin's position track (the handles' order). */
+    index: number;
     which: 'in' | 'out';
-    animTx: any;
+    /** The key's engine id, once the getKeyframes query answered. */
+    keyId: string | null;
   } | null>(null);
+  /** One pin drag / gizmo drag / tangent drag = one engine gesture = one undo entry. */
+  const gesture = useGesture();
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // Drag/element-origin guard: pointerup synthesizes a click even after a drag
@@ -140,10 +144,9 @@ export function PuppetOverlay(): JSX.Element | null {
   const suppressClickAddRef = useRef(false);
 
   const deletePin = useCallback((nodeId: string, pinId: string) => {
-    // One undoable command: removes the pin AND its animation tracks
-    // (position/rotation/stiffness); undo restores both.
-    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-    deletePuppetPin(nodeId, pinId);
+    // One undo entry: removePropertyGroups takes the pin AND its keyframes
+    // (position/rotation/scale/stiffness/overlap); undo restores both.
+    void edit('Delete Puppet Pin', rigRemove(nodeId, [rigPaths.pin(pinId)]));
     if (selectedPinId === pinId) setSelectedPinId(null);
   }, [selectedPinId]);
 
@@ -198,9 +201,9 @@ export function PuppetOverlay(): JSX.Element | null {
   const screenToLocal = (sx: number, sy: number) =>
     mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
-  // Canonical keyframe axis — the same forward map buildSnapshot samples.
-  // B3-legacy: display read + the legacy puppet writers' key axis (puppet pins have no API property yet, see below).
-  const layerT = compToKeyframeTime(node.id, time);
+  // Canonical keyframe axis — the same forward map buildSnapshot samples. A
+  // DISPLAY read only: every write below sends composition time.
+  const layerT = keyAxisTimeForDisplay(node.id, time);
 
   // Same assembly BoneOverlay and the renderer use. `authoringPreview` hugs the
   // PNG silhouette before the first pin exists, so placing a pin does not
@@ -363,10 +366,11 @@ export function PuppetOverlay(): JSX.Element | null {
       setIsRecording(true);
     }
 
-    // Begin drag undo-redo transaction
-    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-    const animTx = beginAnimEdit();
-    dragInfoRef.current = { pinId, startScreen, animTx, mode, startAngleDeg, startRotationDeg };
+    // One gesture = one undo entry; every move sends the absolute value.
+    gesture.begin(
+      mode === 'sketch' ? `Sketch Puppet Pin ${pinId}` : mode === 'rotate' ? `Rotate Puppet Pin ${pinId}` : `Move Puppet Pin ${pinId}`,
+    );
+    dragInfoRef.current = { pinId, startScreen, mode, startAngleDeg, startRotationDeg };
     capturePointer(svg, e.pointerId);
   };
 
@@ -385,14 +389,13 @@ export function PuppetOverlay(): JSX.Element | null {
     dragInfoRef.current = {
       pinId,
       startScreen,
-      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-      animTx: beginAnimEdit(),
       mode: 'scale',
       startAngleDeg: 0,
       startRotationDeg: 0,
       startDist: Math.max(1e-3, Math.hypot(local.x - c.x, local.y - c.y)),
       startScale: animPin?.scale ?? 1,
     };
+    gesture.begin(`Scale Puppet Pin ${pinId}`);
     capturePointer(svg, e.pointerId);
   };
 
@@ -400,15 +403,20 @@ export function PuppetOverlay(): JSX.Element | null {
   const onPointerDownTangent = (
     e: React.PointerEvent,
     pinId: string,
-    kfT: number,
+    index: number,
     which: 'in' | 'out',
   ) => {
     e.stopPropagation();
     suppressClickAddRef.current = true;
     const svg = svgRef.current;
     if (!svg) return;
-    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-    tangentDragRef.current = { pinId, kfT, which, animTx: beginAnimEdit() };
+    const drag = { pinId, index, which, keyId: null as string | null };
+    tangentDragRef.current = drag;
+    gesture.begin(`Curve Puppet Pin Path ${pinId}`);
+    // The key's engine id (keys are addressed by id, never by time).
+    void engine().query({ type: 'getKeyframes', props: [{ layer: node.id, path: rigPaths.pinProp(pinId, 'position') }] }).then((res) => {
+      if (res.ok) drag.keyId = res.value.sets[0]?.keyframes[index]?.id ?? null;
+    });
     capturePointer(svg, e.pointerId);
   };
 
@@ -422,16 +430,19 @@ export function PuppetOverlay(): JSX.Element | null {
       const handle = toRestSpace(
         screenToLocal(e.clientX - rect.left, e.clientY - rect.top),
       );
-      const prop = `puppet.${tan.pinId}.position`;
-      const track = defaultAnimation.getDataTrack(node.id, prop);
-      if (!track) return;
+      const track = defaultAnimation.getDataTrack(node.id, `puppet.${tan.pinId}.position`);
+      const k = track?.keyframes[tan.index];
+      const p = (k?.value as Array<{ x: number; y: number }> | undefined)?.[0];
+      if (!k || !p || !tan.keyId) return;
       // Plain drag mirrors the opposite handle (a smooth point, the AE default);
-      // Alt breaks the point so the two sides move independently.
-      const keyframes = setDataSpatialTangent(
-        track.keyframes, tan.kfT, 0, tan.which, handle, !e.altKey,
-      );
-      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-      defaultAnimation.setDataTrack(node.id, prop, { ...track, keyframes });
+      // Alt breaks the point so the two sides move independently. Absolute
+      // offsets from the key, per move.
+      const d = [handle.x - p.x, handle.y - p.y];
+      const other = e.altKey ? null : [-d[0]!, -d[1]!];
+      const patch = tan.which === 'out'
+        ? { spatialOut: d, spatialIn: other ?? [] }
+        : { spatialIn: d, spatialOut: other ?? [] };
+      gesture.send({ type: 'updateKeyframes', patches: [{ id: tan.keyId, ...patch }] });
       controller.requestRender();
       return;
     }
@@ -456,8 +467,8 @@ export function PuppetOverlay(): JSX.Element | null {
       let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
       // Shift constrains rotation to 15° increments, matching AE's gizmo.
       if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
-      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-      defaultAnimation.setKeyframe(node.id, `puppet.${drag.pinId}.rotation`, layerT, rotation);
+      // Puppet pins always key (AE's pins are animated from the start).
+      gesture.send(rigKey(node.id, rigPaths.pinProp(drag.pinId, 'rotation'), time, rigValues.scalar(rotation)));
       controller.requestRender();
       return;
     }
@@ -468,37 +479,23 @@ export function PuppetOverlay(): JSX.Element | null {
       let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
       // Shift constrains scale to 5% steps, matching AE's gizmo.
       if (e.shiftKey) scale = Math.round(scale * 20) / 20;
-      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-      defaultAnimation.setKeyframe(
-        node.id, `puppet.${drag.pinId}.scale`, layerT, Math.max(0.01, scale),
-      );
+      // API unit: percent.
+      gesture.send(rigKey(node.id, rigPaths.pinProp(drag.pinId, 'scale'), time, rigValues.scalar(Math.max(0.01, scale) * 100)));
       controller.requestRender();
       return;
     }
 
     if (drag.mode === 'sketch') {
-      // Record against the LIVE playhead so the captured path is spread across
-      // real time rather than collapsing onto one frame.
-      // B3-legacy: display read + the legacy puppet writers' key axis (puppet pins have no API property yet, see below).
-      sketchRef.current?.add(localCoords.x, localCoords.y, compToKeyframeTime(node.id, time));
+      // Record against the LIVE playhead (composition seconds — the axis the
+      // keys are sent on) so the captured path is spread across real time
+      // rather than collapsing onto one frame.
+      sketchRef.current?.add(localCoords.x, localCoords.y, time);
       controller.requestRender();
       return;
     }
 
-    // Live update the pin position in the animation engine directly
-    const track = defaultAnimation.getDataTrack(node.id, `puppet.${drag.pinId}.position`) || {
-      nodeId: node.id,
-      prop: `puppet.${drag.pinId}.position`,
-      kind: 'points',
-      keyframes: [],
-    };
-    const value = [{ x: localCoords.x, y: localCoords.y }];
-    const updatedKeyframes = upsertDataKeyframe(track.keyframes, { t: layerT, value });
-    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-    defaultAnimation.setDataTrack(node.id, `puppet.${drag.pinId}.position`, {
-      ...track,
-      keyframes: updatedKeyframes,
-    });
+    // The pin's Position key at the playhead, absolute per move.
+    gesture.send(rigKey(node.id, rigPaths.pinProp(drag.pinId, 'position'), time, rigValues.vec2(localCoords.x, localCoords.y)));
 
     controller.requestRender();
   };
@@ -511,9 +508,7 @@ export function PuppetOverlay(): JSX.Element | null {
       if (svg) {
         try { svg.releasePointerCapture(e.pointerId); } catch {}
       }
-      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-      recordAnimEdit(tan.animTx.commit(`Curve Puppet Pin Path ${tan.pinId}`));
-      bumpScene();
+      void gesture.end();
       return;
     }
 
@@ -533,32 +528,37 @@ export function PuppetOverlay(): JSX.Element | null {
       const kfs = sketchRef.current?.finish({ tolerance: sketchTolerance }) ?? [];
       sketchRef.current = null;
       setIsRecording(false);
-      if (kfs.length > 0) {
-        const prop = `puppet.${drag.pinId}.position`;
-        const existing = defaultAnimation.getDataTrack(node.id, prop);
-        // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-        defaultAnimation.setDataTrack(node.id, prop, {
-          nodeId: node.id,
-          prop,
-          kind: 'points',
-          ...(existing ?? {}),
-          keyframes: kfs.map((k) => ({ t: k.t, value: k.value, easing: k.easing })),
-        } as never);
-      }
-      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-      recordAnimEdit(drag.animTx.commit(`Sketch Puppet Pin ${drag.pinId}`));
-      bumpScene();
+      if (kfs.length > 0) void sendSketch(drag.pinId, kfs);
+      else void gesture.end();
       return;
     }
 
-    // Commit transaction to history
-    const label =
-      drag.mode === 'rotate' ? `Rotate Puppet Pin ${drag.pinId}`
-        : drag.mode === 'scale' ? `Scale Puppet Pin ${drag.pinId}`
-        : `Move Puppet Pin ${drag.pinId}`;
-    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-    recordAnimEdit(drag.animTx.commit(label));
-    bumpScene();
+    void gesture.end();
+  };
+
+  /**
+   * Puppet Sketch: the reduced keys as ONE batch inside the sketch's gesture —
+   * the keys already inside the recorded span go (After Effects' Motion Sketch
+   * replaces the keys of the interval it recorded), then the new ones land with
+   * their easing.
+   */
+  const sendSketch = async (pinId: string, kfs: ReadonlyArray<{ t: number; value: Array<{ x: number; y: number }>; easing?: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' }>) => {
+    const path = rigPaths.pinProp(pinId, 'position');
+    const lo = compTime(kfs[0]!.t);
+    const hi = compTime(kfs[kfs.length - 1]!.t);
+    const res = await engine().query({ type: 'getKeyframes', props: [{ layer: node.id, path }], range: { start: lo, duration: hi - lo } });
+    const inSpan = res.ok ? (res.value.sets[0]?.keyframes ?? []).filter((k) => k.time >= lo && k.time <= hi).map((k) => k.id) : [];
+    gesture.send([
+      ...(inSpan.length > 0 ? [{ type: 'deleteKeyframes' as const, ids: inSpan }] : []),
+      {
+        type: 'addKeyframes',
+        keys: kfs.map((k) => ({
+          prop: { layer: node.id, path }, time: compTime(k.t), value: rigValues.vec2(k.value[0]!.x, k.value[0]!.y),
+          spatialIn: [], spatialOut: [], ...(k.easing ? { easing: k.easing } : {}),
+        })),
+      },
+    ]);
+    await gesture.end();
   };
 
   const onDoubleClickPin = (e: React.MouseEvent, pinId: string) => {
@@ -601,11 +601,8 @@ export function PuppetOverlay(): JSX.Element | null {
       return;
     }
 
-    // Add a new pin — one undoable command (PuppetEditCommand).
-    // Id is the lowest free ordinal for this rig, NOT a timestamp: two pins
-    // placed in the same millisecond used to collide and share one set of
-    // animation tracks.
-    const pinId = nextRigId('pin_', usedRigIds(pins));
+    // Add a new pin — ONE undo entry. The engine mints the id (the lowest free
+    // `pin_<n>`, never reused within the document).
     // `localCoords` is where the click landed on the artwork AS DRAWN — the
     // puppet-deformed mesh. A pin's anchor is a REST-space point, so map the
     // click back through the current deformation; the clicked point itself
@@ -613,23 +610,36 @@ export function PuppetOverlay(): JSX.Element | null {
     // picture does not move when the pin lands. Identity while no pin has
     // moved: the inverse is the click and no keyframe is written.
     const restPoint = restPointFromDeformed(localCoords, restMesh, puppetDeformed) ?? localCoords;
-    const newPin = draftPin(
-      puppetPinKind,
-      pinId,
-      `Pin ${pins.length + 1}`,
-      restPoint.x,
-      restPoint.y,
-    );
     const displaced = Math.hypot(restPoint.x - localCoords.x, restPoint.y - localCoords.y) > 1e-3;
-    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
-    addPuppetPin(
-      node.id,
-      newPin,
-      displaced && puppetPinKind !== 'bend'
-        ? { t: layerT, x: localCoords.x, y: localCoords.y }
-        : undefined,
-    );
-    setSelectedPinId(pinId);
+    void addPin(restPoint, displaced && puppetPinKind !== 'bend' ? localCoords : null);
+  };
+
+  /**
+   * addPropertyGroup (the rig is created with the first pin), then — when the
+   * mesh is displaced under the click — the pin's Position key at the playhead,
+   * so the picture does not move when the pin lands. One gesture = one entry.
+   */
+  const addPin = async (rest: { x: number; y: number }, live: { x: number; y: number } | null) => {
+    const client = engine();
+    const label = 'Add Puppet Pin';
+    const open = await client.beginGesture(label);
+    if (!open.ok) return;
+    const res = await client.execute({
+      type: 'addPropertyGroup', layer: node.id, parent: rigPaths.pins, matchName: rigMatch.pin,
+      init: [
+        { path: 'kind', value: rigValues.choice(puppetPinKind) },
+        { path: 'restPosition', value: rigValues.vec2(rest.x, rest.y) },
+      ],
+    });
+    const path = res.ok ? (res.value as { groups: string[] }).groups[0] : undefined;
+    if (path && live) {
+      await client.execute({
+        type: 'addKeyframes',
+        keys: [{ prop: { layer: node.id, path: `${path}/position` }, time: compTime(time), value: rigValues.vec2(live.x, live.y), spatialIn: [], spatialOut: [] }],
+      });
+    }
+    await client.endGesture(open.value.gesture, true);
+    if (path) setSelectedPinId(path.split('/')[2]!);
   };
 
   return (
@@ -700,7 +710,7 @@ export function PuppetOverlay(): JSX.Element | null {
                 <g
                   key={which}
                   style={{ cursor: 'grab' }}
-                  onPointerDown={(e) => onPointerDownTangent(e, selectedPinId!, h.t, which)}
+                  onPointerDown={(e) => onPointerDownTangent(e, selectedPinId!, pathHandles.indexOf(h), which)}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <line

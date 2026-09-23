@@ -41,5 +41,12 @@ ResultOf<api::SetTimeRemap> handle(const api::SetTimeRemap& c, HCtx& x);
 ResultOf<api::FreezeFrame> handle(const api::FreezeFrame& c, HCtx& x);
 ResultOf<api::SetRetime> handle(const api::SetRetime& c, HCtx& x);
 ResultOf<api::SequenceLayers> handle(const api::SequenceLayers& c, HCtx& x);
+ResultOf<api::UnfreezeLayers> handle(const api::UnfreezeLayers& c, HCtx& x);
+ResultOf<api::TimeStretchLayers> handle(const api::TimeStretchLayers& c, HCtx& x);
+ResultOf<api::RippleDeleteRange> handle(const api::RippleDeleteRange& c, HCtx& x);
+ResultOf<api::ShiftLayerKeyframes> handle(const api::ShiftLayerKeyframes& c, HCtx& x);
+ResultOf<api::AddTransition> handle(const api::AddTransition& c, HCtx& x);
+ResultOf<api::SetTransition> handle(const api::SetTransition& c, HCtx& x);
+ResultOf<api::RemoveTransitions> handle(const api::RemoveTransitions& c, HCtx& x);
 
 }  // namespace premation::doc

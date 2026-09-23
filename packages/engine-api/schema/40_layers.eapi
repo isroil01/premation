@@ -80,7 +80,7 @@ struct LayerTimingPatch {
 }
 
 struct TrackMatte {
-  /// The matte source layer (AE 2023 matte-by-reference; any layer, not only the one above).
+  /// The matte source layer (AE 2023 matte-by-reference; any layer, not only the one above). B3z: absent with a mode other than none = the classic positional matte (the layer directly above in the stack; stored without a source).
   layer?: LayerId = 1;
   mode: MatteMode = 2;
 }
@@ -109,7 +109,15 @@ command duplicateLayers = 202 { layers: LayerId[] = 1; } -> LayerList;
 /// Move layers (keeping their relative order) so the first lands at `toIndex` in the stack.
 command reorderLayers = 203 { comp: ItemId = 1; layers: LayerId[] = 2; toIndex: u32 = 3; }
 /// Parent layers (absent parent = unparent). keepWorldTransform = AE's default (no jump).
-command setParent = 204 { layers: LayerId[] = 1; parent?: LayerId = 2; keepWorldTransform: bool = 3; }
+command setParent = 204 {
+  layers: LayerId[] = 1;
+  parent?: LayerId = 2;
+  keepWorldTransform: bool = 3;
+  /// B3z — Parent & Link JUMP (AE's Shift-pickwhip): relink WITHOUT compensation, then move each child onto the parent's anchor: its Position becomes 0,0 in the parent's layer space at `time` (an animated Position is re-based rigidly by the same offset, keeping its motion). Ignored when un-parenting. `keepWorldTransform` is not read when set.
+  jump?: bool = 4;
+  /// The composition time the jump measures an animated Position at (AE: the current time). Absent = 0.
+  time?: Time = 5;
+}
 command renameLayer = 205 { layer: LayerId = 1; name: string = 2; }
 /// Change switches on several layers at once. Undo restores each layer's previous value of each patched switch.
 command setLayerSwitches = 206 { layers: LayerId[] = 1; patch: LayerSwitchesPatch = 2; }
@@ -134,8 +142,16 @@ enum LayerConversion {
 
 /// Engine-evaluated conversions (the result depends on fonts, outlines or evaluation, so it cannot be a client macro).
 command convertLayer = 212 { layer: LayerId = 1; conversion: LayerConversion = 2; } -> LayerList;
-/// Paste a document fragment (from copyLayers) into a composition at `time`.
-command pasteLayers = 213 { comp: ItemId = 1; fragment: DocumentFragment = 2; time?: Time = 3; index?: u32 = 4; } -> LayerList;
+/// Paste a document fragment (from copyLayers) into a composition at `time`. References BETWEEN pasted layers follow the copies (AE: parenting, track mattes): a matte source, a layer-valued effect parameter, a cloner's path/falloff layer, an audio driver's source layer, a clone-stamp stroke's source layer and a plugin layer's layer-valued prop that name a layer of the fragment name its copy; references to layers outside the fragment are kept as they are (ENGINE_API.md §4.4). Returns the new ids in fragment order.
+command pasteLayers = 213 {
+  comp: ItemId = 1;
+  fragment: DocumentFragment = 2;
+  time?: Time = 3;
+  /// Stack index (0 = top) among the composition's layers, as createLayer's `index`.
+  index?: u32 = 4;
+  /// Paste INTO this layer of `comp` (Premation groups nest): the fragment's top-level layers become its children. Absent = the composition itself.
+  parent?: LayerId = 5;
+} -> LayerList;
 /// Split a camera/text/shape into per-part layers (Create Shapes → Separate, Break Apart text).
 command separateLayer = 214 { layer: LayerId = 1; } -> LayerList;
 /// Auto-trace a layer's alpha/luma into masks over a range (Layer ▸ Auto-trace).
@@ -195,3 +211,57 @@ command freezeFrame = 312 { layer: LayerId = 1; time?: Time = 2; lastFrame: bool
 command setRetime = 313 { layer: LayerId = 1; mode: RetimeMode = 2; speed?: f64 = 3; }
 /// Lay layers end to end in stack order, with overlap (Keyframe Assistant ▸ Sequence Layers).
 command sequenceLayers = 314 { layers: LayerId[] = 1; overlap: Time = 2; crossfade: bool = 3; }
+
+/// Where Time Stretch holds the layer (AE's Hold in Place).
+enum StretchHold {
+  /// The layer's in point stays put.
+  inPoint = 0;
+  /// The frame at `time` shows the same source frame before and after.
+  currentFrame = 1;
+  /// The layer's out point stays put.
+  outPoint = 2;
+}
+
+/// B3z — AE's Time Stretch dialog. `stretch` is the layer's NEW absolute stretch (1 = 100 %, rounded to whole percent, |stretch| within 0.01…10). Footage, audio and precomps change their playback rate and the bar scales about the Hold in Place frame with the source frame there unchanged (stretch must be positive: footage reverses with timeReverseLayers). Any other layer has no source to resample: its bar(s), every keyframe and its layer markers are scaled about the hold frame by the ratio to its current stretch, a negative value reverses them, and the value is recorded as the layer's stretch. Locked bars are left alone. `time` (comp) is required for currentFrame. Inverse: the previous bars, keys, markers and stretch.
+command timeStretchLayers = 330 { layers: LayerId[] = 1; stretch: f64 = 2; hold: StretchHold = 3; time?: Time = 4; }
+/// B3z — remove Freeze Frame from layers (the layer plays its source again). A layer that is not frozen is left as it is. Inverse: the previous freeze and freeze time.
+command unfreezeLayers = 331 { layers: LayerId[] = 1; }
+/// B3z — delete a composition TIME RANGE and close the gap (transcript editing, a range extract): every unlocked layer of `layers` (empty = every layer of the comp) that crosses an edge of `range` is split there, the parts inside are deleted, then EVERY unlocked layer starting at or after the range end moves left by the range's length. Locked layers are never cut, deleted or moved. Returns the layers the splits created. Inverse: the layers, bars and every shifted timing restored exactly.
+command rippleDeleteRange = 332 { comp: ItemId = 1; range: TimeRange = 2; layers: LayerId[] = 3; } -> LayerList;
+
+/// One layer's keyframe shift (shiftLayerKeyframes).
+struct LayerKeyShift {
+  layer: LayerId = 1;
+  /// In LAYER time (the axis keyframes are stored on; = comp time for an unstretched layer). May be fractional frames and may move keys before 0.
+  delta: Time = 2;
+}
+
+/// B3z — move EVERY keyframe a layer owns by a layer-time delta (Stagger / Sequence animation): every animated property, the data tracks (Source Text, gradient stops, mask shapes) — not the time-remap / speed tracks, which live on the composition axis. Unlike moveKeyframes it neither frame-quantises through the bar nor needs keyframe ids for properties outside the catalog. Inverse: the previous keys (same ids).
+command shiftLayerKeyframes = 333 { items: LayerKeyShift[] = 1; }
+
+enum TransitionKind { crossDissolve = 0; dipToBlack = 1; dipToWhite = 2; wipe = 3; }
+/// Where a transition sits relative to its cut.
+enum TransitionAlignment { centred = 0; startAtCut = 1; endAtCut = 2; }
+
+/// A cut transition (the timeline's bracket): a record on the composition, MATERIALISED into the two layers — the overlapping kinds (crossDissolve, wipe) extend the left bar's tail and the right bar's head into their source handles; crossDissolve / dipToBlack ramp Opacity, dipToWhite ramps a white Fill effect, wipe ramps a Linear Wipe on the incoming layer.
+struct Transition {
+  id: string = 1;
+  comp: ItemId = 2;
+  /// The layer whose bar ends at the cut.
+  left: LayerId = 3;
+  /// The layer whose bar starts at the cut.
+  right: LayerId = 4;
+  kind: TransitionKind = 5;
+  /// Whole frames of the composition.
+  duration: Time = 6;
+  alignment: TransitionAlignment = 7;
+}
+
+struct TransitionRef { transition: string = 1; }
+
+/// B3z — add a transition on the cut between two layers of one composition (replacing any transition already on that cut). Refused (`outOfRange`, with the frames the handles lack) when a source cannot pay for the overlap, `invalidArgument` when the layers do not meet at a cut, `locked` for a locked layer. `duration` rounds to whole frames (≥ 1). Returns the new transition's id. Inverse: the cut, the bars, the keys and effects exactly as they were, and the record gone.
+command addTransition = 334 { left: LayerId = 1; right: LayerId = 2; kind: TransitionKind = 3; duration: Time = 4; alignment: TransitionAlignment = 5; } -> TransitionRef;
+/// B3z — change a transition's kind, length or alignment (the bracket drag, the alignment menu): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised.
+command setTransition = 335 [coalesce] { transition: string = 1; kind?: TransitionKind = 2; duration?: Time = 3; alignment?: TransitionAlignment = 4; }
+/// B3z — remove transitions: each cut is put back exactly as it was before the transition was applied (bars, the ramped keys, the effect stack). Hand edits made to those tracks afterwards are discarded with it (transitions.ts). Inverse: the records and their materialisation.
+command removeTransitions = 336 { transitions: string[] = 1; }

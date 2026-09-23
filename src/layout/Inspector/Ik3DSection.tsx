@@ -14,11 +14,12 @@
  * to bend, so the section stays away rather than offering two buttons that
  * would always warn.
  *
- * Both buttons call `poseIk3DAtTarget` / `bakeIk3DToTarget` — the SAME
- * functions the palette commands execute, extracted from their command bodies
- * so the two surfaces cannot drift. The solver options exposed here
- * (iterations, damping, tolerance) are the real `IkOptions`; leaving them at
- * the defaults reproduces the palette's behaviour exactly.
+ * Pose calls `poseIk3DAtTarget` — the SAME function the palette command
+ * executes. Bake is the engine route (B3z): the same solve
+ * (`planIk3DBake`, which the palette's `bakeIk3DToTarget` also runs) sent as
+ * ONE batch of keyframe commands (ikEdits.ts) — one undo entry. The solver
+ * options exposed here (iterations, damping, tolerance) are the real
+ * `IkOptions`; leaving them at the defaults reproduces the palette's solve.
  */
 
 import { useState } from 'react';
@@ -28,14 +29,36 @@ import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { useUIStore } from '@stores/uiStore';
+import { edit } from '@core/engine/uiEdits';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { eligibleParents } from '@core/scene/parenting';
 import { is3DEnabled } from '@core/scene/threeD';
 import { ikChainFromTip, IK_DEFAULTS, type IkOptions } from '@core/scene/boneIK3d';
-import { poseIk3DAtTarget, bakeIk3DToTarget } from '@core/scene/ikCommands';
+import { poseIk3DAtTarget } from '@core/scene/ikCommands';
+import { ik3DBakeCommands } from './ikEdits';
 import s from './Ik3DSection.module.css';
 
 const DEG = 180 / Math.PI;
+
+/** Bake the chain against `target` across the whole composition: one engine batch, one undo entry. */
+async function bakeChain(chain: string[], target: string, opts: IkOptions): Promise<void> {
+  const notify = (level: 'success' | 'warning', message: string): void => {
+    useUIStore.getState().notify({ level, message, durationMs: level === 'warning' ? 6000 : 4500 });
+  };
+  const comp = useCompositionStore.getState();
+  const fps = comp.fps > 0 ? comp.fps : 30;
+  const plan = await ik3DBakeCommands(chain, target, 0, Math.max(0, comp.durationSeconds), fps, opts);
+  if (!plan) {
+    notify('warning', 'Could not bake — chain or target failed to resolve.');
+    return;
+  }
+  const res = await edit('Bake 3D IK', plan.commands);
+  if (!res.ok) return;
+  const joints = chain.length - 1;
+  notify('success', `Baked IK: ${plan.frames} frames of rotation keyframes on ${joints} joint${joints === 1 ? '' : 's'}.`);
+}
 
 /** True when this layer can be the tip of a solvable 3D chain. */
 export function isIk3DTip(nodeId: string): boolean {
@@ -164,8 +187,7 @@ export function Ik3DSection({ nodeId }: { nodeId: string }): JSX.Element | null 
           size="sm"
           variant="secondary"
           disabled={!target}
-          // B3-legacy: engine gap — 3D IK bake has no API command.
-          onClick={() => { if (target) bakeIk3DToTarget(chain, target, opts); }}
+          onClick={() => { if (target) void bakeChain(chain, target, opts); }}
           title="Solve every frame of the composition and bake rotation keyframes onto the joints"
         >
           Bake to target

@@ -94,9 +94,28 @@ void set_parent_preserving_world(const PCtx& c, const std::string& child, const 
 }
 
 bool reparent_node(const PCtx& c, const std::string& child, const std::optional<std::string>& newParent,
-                   bool preserveWorld) {
+                   bool preserveWorld, std::optional<double> jumpAt) {
   if (!can_reparent(c.d, child, newParent)) return false;
   const std::string target = newParent ? *newParent : enclosing_comp_root_of(c.d, child).value_or(std::string(kCompRoot));
+  if (jumpAt && newParent) {
+    // parenting.ts jumpToParent: relink uncompensated, then Position → 0,0 in the
+    // parent's space at `jumpAt`; an animated Position is re-based rigidly.
+    sg_set_parent(c.d, child, target, false);
+    const Node* node = c.d.node(child);
+    if (node == nullptr) return true;
+    const motion::xf::Local2D have = local_transform_at(c, child, *jumpAt).value_or(base_local_of(*node));
+    const double dx = -have.x;
+    const double dy = -have.y;
+    if (const Component* comp = node->comp_with_number("x")) {
+      const std::string cid = comp->id;
+      const Json p = comp->props;
+      (void)sg_write_prop(c.d, child, cid, "x", Json::number(p.at("x").num() + dx));
+      (void)sg_write_prop(c.d, child, cid, "y", Json::number((p.at("y").is_number() ? p.at("y").num() : 0) + dy));
+    }
+    if (std::abs(dx) > kEps) offset_track(c.d, child, "x", dx);
+    if (std::abs(dy) > kEps) offset_track(c.d, child, "y", dy);
+    return true;
+  }
   if (preserveWorld) set_parent_preserving_world(c, child, target);
   else sg_set_parent(c.d, child, target, false);
   return true;

@@ -22,16 +22,15 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
 import {
-  applyGate,
   computeGateEnvelope,
   gateLevels,
   planGate,
   readGate,
-  removeGate,
   DEFAULT_GATE,
   type GateParams,
 } from '@core/audio/audioGate';
 import { staticLevelDbOf } from '@core/audio/audioFades';
+import { gateEdit, removeGateEdit } from './audioEdits';
 import styles from './AudioToolDialog.module.css';
 
 interface Props {
@@ -112,8 +111,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
         notify('That layer has no decodable audio to gate.', 'warning');
         return;
       }
-      // B3-legacy: engine gap — noise gate bakes keys from analysis; needs startJob/applyJobResult.
-      const out = await applyGate(nodeId, res.env, {
+      const out = await gateEdit(nodeId, res.env, {
         ...params,
         fps: res.fps,
         startCompSec: res.start,
@@ -129,8 +127,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
   const drop = async (): Promise<void> => {
     setBusy(true);
     try {
-      // B3-legacy: engine gap — noise gate bakes keys from analysis; needs startJob/applyJobResult.
-      if (await removeGate(nodeId)) notify('Noise gate removed.');
+      if (await removeGateEdit(nodeId)) notify('Noise gate removed.');
       onDone();
     } finally {
       setBusy(false);

@@ -29,6 +29,7 @@ import { graph, requireLayer } from '../doc';
 import { newScope, scopeLayer } from '../state';
 import { dropTrackProps } from '../fields';
 import type { HandlerTable } from '../handler';
+import { ikParentOf, planIkAddProperties, planIkRemoveProperty } from '../rigProps';
 
 type Optional =
   | { kind: 'number'; name: string; value: number }
@@ -70,6 +71,15 @@ export const optionalPropHandlers: HandlerTable = {
     const layer = cmd.parent.layer;
     requireLayer(layer);
     if (cmd.names.length === 0) fail('invalidArgument', 'no property names given', { layer, path: cmd.parent.path });
+    if (ikParentOf(cmd.parent.path) !== null) {
+      // An IK goal's optional Pole (rigProps.ts).
+      const run = planIkAddProperties(layer, cmd.parent.path, cmd.names);
+      return {
+        scope: scopeLayer(newScope(), layer),
+        label: 'Add Property',
+        apply: () => { run(); return { paths: cmd.names.map((n) => `${cmd.parent.path}/${n}`) }; },
+      };
+    }
     const { index, data } = animatorOf(layer, cmd.parent.path);
     const node = graph.getNode(layer)!;
     const cur = data[index]!;
@@ -112,8 +122,15 @@ export const optionalPropHandlers: HandlerTable = {
     if (cmd.props.length === 0) fail('invalidArgument', 'no properties given');
     const scope = newScope();
     const plans: Array<{ layer: string; animatorId: string; o: Optional }> = [];
+    const rigRuns = new Map<string, () => void>();
     for (const p of cmd.props) {
       requireLayer(p.layer);
+      const ik = planIkRemoveProperty(p.layer, p.path);
+      if (ik) {
+        rigRuns.set(ik.key, ik.run);
+        scopeLayer(scope, p.layer);
+        continue;
+      }
       const slash = p.path.lastIndexOf('/');
       const parent = p.path.slice(0, slash);
       const name = p.path.slice(slash + 1);
@@ -127,8 +144,9 @@ export const optionalPropHandlers: HandlerTable = {
     }
     return {
       scope,
-      label: plans.length === 1 ? 'Remove Property' : 'Remove Properties',
+      label: plans.length + rigRuns.size === 1 ? 'Remove Property' : 'Remove Properties',
       apply: () => {
+        for (const run of rigRuns.values()) run();
         for (const { layer, animatorId, o } of plans) {
           const index = readAnimatorData(graph.getNode(layer)!).findIndex((a) => a.id === animatorId);
           // AE: a deleted property takes its keyframes and expression with it.

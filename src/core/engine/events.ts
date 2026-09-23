@@ -25,6 +25,7 @@ import {
   groupInfo,
   keyframeSets,
   barsOf,
+  transitionsOf,
 } from './model';
 import { catalogFor } from './props';
 import { getProjectSettings, getRenderQueue } from '@core/project/documentExtras';
@@ -78,6 +79,7 @@ export class EventBuilder {
     let projectDirty = false;
     let rqDirty = false;
     let allComps = false;
+    const txComps = new Set<string>();
 
     const compOfRemoved = (id: string): string | null => {
       let cur = before.get(`node:${id}`) as SceneNode | undefined;
@@ -159,6 +161,14 @@ export class EventBuilder {
         case 'project': projectDirty = true; break;
         case 'rq': rqDirty = true; break;
         case 'mb': allComps = true; break;
+        case 'tx': {
+          const b = (before.get(key) ?? {}) as Record<string, unknown>;
+          const a = (after.get(key) ?? {}) as Record<string, unknown>;
+          for (const comp of new Set([...Object.keys(b), ...Object.keys(a)])) {
+            if (JSON.stringify(b[comp] ?? []) !== JSON.stringify(a[comp] ?? [])) txComps.add(comp);
+          }
+          break;
+        }
         default: break;
       }
     }
@@ -228,6 +238,9 @@ export class EventBuilder {
       }
     }
     if (rqDirty) events.push({ type: 'renderQueueChanged', items: getRenderQueue() });
+    for (const comp of [...txComps].sort()) {
+      if (isCompItem(comp)) events.push({ type: 'transitionsChanged', comp, transitions: transitionsOf(comp) });
+    }
     return events;
   }
 

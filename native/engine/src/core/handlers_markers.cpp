@@ -72,6 +72,28 @@ void check_label(std::uint32_t label) {
   if (label > 0 && !label_color_of(label)) fail(ErrorCode::out_of_range, "label " + std::to_string(label) + " does not exist");
 }
 
+/// JavaScript `s.length` (UTF-16 code units) of a UTF-8 string.
+std::size_t js_length(std::string_view s) {
+  std::size_t n = 0;
+  for (const char ch : s) {
+    const auto u = static_cast<unsigned char>(ch);
+    if ((u & 0xC0U) != 0x80U) n += 1;
+    if ((u & 0xF8U) == 0xF0U) n += 1;  // a 4-byte sequence is a surrogate pair
+  }
+  return n;
+}
+
+/// markers.ts `checkColor`: a stored colour (swatch token or hex) is at most 128 characters.
+void check_color(const std::optional<std::string>& color) {
+  if (color && js_length(*color) > 128) fail(ErrorCode::out_of_range, "a marker colour is at most 128 characters");
+}
+
+/// markers.ts `storedColor`: an explicit colour wins over the label index; '' = none.
+std::optional<std::string> stored_color(const std::optional<std::string>& color, std::uint32_t label) {
+  if (color) return color->empty() ? std::nullopt : color;
+  return label_color_of(label);
+}
+
 }  // namespace
 
 ResultOf<api::AddMarkers> handle(const api::AddMarkers& c, HCtx& x) {
@@ -86,6 +108,7 @@ ResultOf<api::AddMarkers> handle(const api::AddMarkers& c, HCtx& x) {
   for (const api::MarkerInsert& m : c.markers) {
     if (m.duration < 0) fail(ErrorCode::out_of_range, "a marker duration cannot be negative");
     check_label(m.label);
+    check_color(m.color);
     Owner o = owner_of(d, m.owner);
     plans.push_back(Plan{&m, std::move(o), x.mint_marker_id()});
   }
@@ -99,7 +122,7 @@ ResultOf<api::AddMarkers> handle(const api::AddMarkers& c, HCtx& x) {
     mk.duration = std::max(0.0, flicks_to_frames(p.m->duration, fps));
     mk.name = p.m->name;
     mk.comment = p.m->comment;
-    mk.color = label_color_of(p.m->label);
+    mk.color = stored_color(p.m->color, p.m->label);
     mk.scope = p.o.bar ? "layer" : "timeline";
     mk.ownerId = p.o.bar;
     markers_insert(list_mut(d, Found{p.o.comp, p.o.bar}), std::move(mk));
@@ -116,6 +139,7 @@ ResultOf<api::UpdateMarkers> handle(const api::UpdateMarkers& c, HCtx& x) {
     found.push_back(find_marker(d, p.id));
     if (p.duration && *p.duration < 0) fail(ErrorCode::out_of_range, "a marker duration cannot be negative");
     if (p.label) check_label(*p.label);
+    check_color(p.color);
   }
   x.label = "Edit Marker";
   for (std::size_t i = 0; i < c.patches.size(); ++i) {
@@ -129,7 +153,8 @@ ResultOf<api::UpdateMarkers> handle(const api::UpdateMarkers& c, HCtx& x) {
     if (p.duration) m->duration = flicks_to_frames(*p.duration, fps);
     if (p.name) m->name = *p.name;
     if (p.comment) m->comment = *p.comment;
-    if (p.label) m->color = label_color_of(*p.label);
+    if (p.color) m->color = p.color->empty() ? std::nullopt : p.color;
+    else if (p.label) m->color = label_color_of(*p.label);
     if (p.chapter) m->chapter = *p.chapter;
     if (p.url) m->url = *p.url;
     if (p.cue_point) m->cuePoint = *p.cue_point;

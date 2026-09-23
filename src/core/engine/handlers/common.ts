@@ -92,7 +92,7 @@ export function remintKeyIds(layerId: string, ctx: HandlerCtx): void {
  * is nesting in this graph, so a stack index is honoured among the siblings: the
  * layers go before the first remaining sibling whose stack index is ≥ toIndex.
  */
-export function moveInStack(comp: string, ids: readonly string[], toIndex: number): void {
+export function moveInStack(comp: string, ids: readonly string[], toIndex: number, ignore?: ReadonlySet<string>): void {
   const parent = graph.getNode(ids[0]!)?.parent;
   if (!parent) fail('notFound', `no layer '${ids[0]}'`);
   for (const id of ids) {
@@ -103,7 +103,9 @@ export function moveInStack(comp: string, ids: readonly string[], toIndex: numbe
   const frontFirst = [...kids].reverse();
   const movingOrdered = frontFirst.filter((id) => moving.has(id));
   const rest = frontFirst.filter((id) => !moving.has(id));
-  const stack = layerIdsOfComp(comp).filter((id) => !moving.has(id));
+  // `ignore`: layers that do not count toward `toIndex` (pasteLayers: the
+  // pasted tops' own descendants, which sit in the stack beside them).
+  const stack = layerIdsOfComp(comp).filter((id) => !moving.has(id) && !ignore?.has(id));
   let insertAt = rest.length;
   for (let i = 0; i < rest.length; i++) {
     if (stack.indexOf(rest[i]!) >= toIndex) {

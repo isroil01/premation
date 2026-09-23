@@ -33,14 +33,16 @@ import { useComponentStore } from '@stores/componentStore';
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
 import { insertShape, insertText } from '@core/scene/sceneInsert';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
-import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
+import { MOGRAPH_ITEMS, buildMographItem, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
 import { TRANSITION_ITEMS, applyTransitionItem, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { SFX_ITEMS, insertSfxItem, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
-import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
+import { LOTTIE_ITEMS, type LottieCategory } from '@core/library/lottieLibrary';
+import { importLottieFileEdit, insertLottieItemEdit } from './lottieInsertEdits';
 import { prepareLottiePreview, drawLottiePreview } from '@core/library/lottiePreview';
-import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import type { LottieJson } from '@core/lottie/lottieImport';
 import { TemplateFieldsPanel } from '@layout/Templates/TemplateFieldsPanel';
 import { LibraryBrowser, FavoriteStar } from './LibraryBrowser';
@@ -192,9 +194,9 @@ export function ComponentsPanel(): JSX.Element {
 
 export function ShapesPanel(): JSX.Element {
   const handleShapeInsert = (preset: typeof SHAPE_PRESETS[number]) => {
-    // B3-legacy: engine gap — rich createLayer: a shape preset carries its primitive's path/polystar
-    // settings and the toolbar fill/stroke, placed and sized to the comp (`placeInComp`).
-    insertShape(preset.primitive, preset.label);
+    // The shape builder (outline, tangents, stroke, comp-scaled placement) runs off-document →
+    // ONE pasteLayers entry (offDocument.ts).
+    void insertBuiltLayers(`Insert ${preset.label}`, activeCompRootId(), () => insertShape(preset.primitive, preset.label));
   };
 
   return (
@@ -225,9 +227,9 @@ export function ShapesPanel(): JSX.Element {
 
 export function TextPanel(): JSX.Element {
   const handleTextInsert = (preset: typeof TEXT_PRESETS[number]) => {
-    // B3-legacy: engine gap — rich createLayer: a text preset's size / weight / style extras are text
-    // component props with no init path (`createLayer{text}` takes the default style).
-    insertText(preset.label, preset.fontSize, preset.weight, (preset as any).extra ?? {});
+    // The text preset builder (size, weight, style extras, placement) runs off-document →
+    // ONE pasteLayers entry (offDocument.ts).
+    void insertBuiltLayers(`Insert ${preset.label}`, activeCompRootId(), () => insertText(preset.label, preset.fontSize, preset.weight, (preset as any).extra ?? {}));
   };
 
   return (
@@ -288,10 +290,13 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
       title={`${item.name} — Drag onto canvas or click to insert`}
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'mograph', mographId: item.id, name: item.name })}
-      onClick={() => {
-        // B3-legacy: engine gap — a motion-graphics item builds a whole rigged layer set (shapes,
-        // styled text, keyframes, expressions) in one go; no command instantiates such a set.
-        const id = insertMographItem(item.id);
+      onClick={async () => {
+        // The item's rigged layer set (shapes, styled text, keys, expressions) is built
+        // off-document and lands as ONE pasteLayers entry; then its choreography previews.
+        const ids = await insertBuiltLayers(`Insert ${item.name}`, activeCompRootId(), () => buildMographItem(item.id));
+        if (ids === null) return; // refused — already toasted
+        const id = ids[0];
+        if (id) previewMographItem(item.id);
         if (id) notify({ level: 'success', message: `Inserted motion graphic: ${item.name}`, durationMs: 1500 });
         else notify({ level: 'warning', message: `Could not insert ${item.name}`, durationMs: 2000 });
       }}>
@@ -578,13 +583,8 @@ function LottieContent(): JSX.Element {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    try {
-      // B3-legacy: engine gap — a Lottie file becomes a layer tree (shapes, keyframes, parenting) the
-      // importer builds directly; `importProject` covers .motion/.aep only and `importFiles` needs a path.
-      reportLottieImport(file.name, await importLottieFile(file));
-    } catch (err) {
-      reportLottieImportFailure(file.name, err);
-    }
+    // The importer's layer tree lands as ONE pasteLayers entry (lottieInsertEdits.ts).
+    await importLottieFileEdit(file);
   };
 
   const importButton = (
@@ -619,10 +619,10 @@ function LottieContent(): JSX.Element {
               onDragStart={(e) => setCanvasDrag(e, { kind: 'lottie', lottieId: item.id, name: item.name })}
               onMouseEnter={() => setHovered(item.id)}
               onMouseLeave={() => setHovered((h) => (h === item.id ? null : h))}
-              onClick={() => {
-                // B3-legacy: engine gap — a bundled Lottie becomes a layer tree built by the importer
-                // (see the file import above).
-                const ids = insertLottieItem(item.id);
+              onClick={async () => {
+                // The importer's layer tree lands as ONE pasteLayers entry (lottieInsertEdits.ts).
+                const ids = await insertLottieItemEdit(item.id);
+                if (ids === null) return; // refused — already toasted
                 if (ids.length > 0) notify({ level: 'success', message: `Inserted ${item.name} (${ids.length} layer${ids.length > 1 ? 's' : ''})`, durationMs: 1800 });
                 else notify({ level: 'warning', message: `Could not insert ${item.name}`, durationMs: 2000 });
               }}>

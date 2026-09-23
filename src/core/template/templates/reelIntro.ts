@@ -55,6 +55,7 @@ export const reelIntroTemplate: TemplateDefinition = {
   description: 'A vertical social intro with a kicker pill and a bold two-line headline.',
   layout: layoutReelIntro,
   build: buildReelIntro,
+  settings: { fps: 60, durationSeconds: 5, background: '#111827' },
   animate: animateReelIntro,
   previewTime: 1.8,
   fields: [

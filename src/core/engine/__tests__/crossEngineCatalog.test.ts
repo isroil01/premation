@@ -43,8 +43,13 @@ import { STROKE_TRACK_PARAMS, STROKE_DASH_PARAMS } from '@core/rendering/strokeT
 import { MASK_PROPERTY_KEYS } from '@core/effects/mask';
 import { TEXT_PATH_PARAMS } from '@core/text/textPath';
 import { TEXT_FIELDS, ANIMATOR_FIELDS, ANIMATOR_OPTIONAL_FIELDS, SELECTOR_FIELDS, SELECTOR_KIND_PARAMS } from '@core/text/textFields';
+import { LAYER_FIELDS } from '../layerFieldSpecs';
+import { LATENT_PROPS } from '../latentPropSpecs';
+import { EFFECT_FIELDS, STYLE_FIELDS, GLASS_PROPERTIES } from '../effectFieldSpecs';
+import { RIG_PROPS } from '../rigSpecs';
 import { listPresets } from '@core/animation/animationPresets';
-import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
+import { DEFAULT_PARTICLE_CONFIG, PARTICLE_COLOR_KEYS, PARTICLE_NUMERIC_KEYS } from '@core/particles/particleSim';
+import { PATHOP_FIELDS, POLYSTAR_FIELDS } from '../shapeFieldSpecs';
 import { defaultPrimitiveSpec, makePrimitiveComponent } from '@core/scene/primitiveLayer';
 import { defaultTextSize } from '@core/scene/textDefaults';
 import { Project3D } from '@motion/scene';
@@ -155,8 +160,21 @@ function data(): unknown {
       label: PAINT_KEY_LABEL, unit: PAINT_KEY_UNIT, percentKeys: [...PAINT_PERCENT_KEYS],
     },
     strokeTracks: { params: STROKE_TRACK_PARAMS, dash: STROKE_DASH_PARAMS },
+    // B3z: the latent numeric properties (latentPropSpecs.ts).
+    latent: LATENT_PROPS,
     // G1: the static fields of text layers, animators and selectors (fields.ts / fields.cpp).
-    fields: { text: TEXT_FIELDS, animator: ANIMATOR_FIELDS, animatorOptional: ANIMATOR_OPTIONAL_FIELDS, selector: SELECTOR_FIELDS, selectorKindParams: SELECTOR_KIND_PARAMS },
+    fields: {
+      text: TEXT_FIELDS, animator: ANIMATOR_FIELDS, animatorOptional: ANIMATOR_OPTIONAL_FIELDS, selector: SELECTOR_FIELDS, selectorKindParams: SELECTOR_KIND_PARAMS,
+      // B3z: the layer fields (layerFieldSpecs.ts).
+      layer: LAYER_FIELDS,
+      // B3z WS-R: puppet / skeleton properties (rigSpecs.ts ⇄ rig.cpp).
+      rig: RIG_PROPS,
+      // B3z-a: effect Compositing Options fields, layer-style switches, Glass (effectFieldSpecs.ts).
+      effect: EFFECT_FIELDS, style: STYLE_FIELDS, glass: GLASS_PROPERTIES,
+      // B3z-a (E1): path-operator / Polystar fields (shapeFieldSpecs.ts), the particle emitter's keys (particleProps.ts).
+      pathOp: PATHOP_FIELDS, polystar: POLYSTAR_FIELDS,
+      particle: { numeric: PARTICLE_NUMERIC_KEYS, color: PARTICLE_COLOR_KEYS },
+    },
     maskKeys: MASK_PROPERTY_KEYS,
     textPathParams: TEXT_PATH_PARAMS,
     labels: LABEL_COLORS,

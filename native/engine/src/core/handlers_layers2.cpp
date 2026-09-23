@@ -154,6 +154,52 @@ std::vector<FragmentLayer> decode_fragment(const api::DocumentFragment& f) {
   return out;
 }
 
+/// layers.ts `remapLayerRefs` — the stored layer references of one pasted
+/// component that name a layer of the fragment are pointed at its copy (the
+/// field list is documented there and in ENGINE_API.md §4.4).
+template <typename Mapped>
+void remap_layer_refs(Component& comp, const Mapped& mapped) {
+  Json& p = comp.props;
+  if (!p.is_object()) return;
+  auto swap = [&](Json* o, std::string_view key) {
+    if (o == nullptr || !o->is_object()) return;
+    Json* v = o->find_mut(key);
+    if (v == nullptr || !v->is_string()) return;
+    if (const auto to = mapped(v->str())) *v = Json::string(*to);
+  };
+  auto obj = [](Json* v) -> Json* { return v != nullptr && v->is_object() ? v : nullptr; };
+  swap(obj(p.find_mut("matte")), "sourceId");
+  if (Json* effects = p.find_mut("effects"); effects != nullptr && effects->is_array()) {
+    for (Json& e : effects->arr_mut()) {
+      if (!e.is_object()) continue;
+      Json* params = obj(e.find_mut("params"));
+      if (params == nullptr) continue;
+      for (Json::Member& m : params->obj_mut()) {
+        if (!m.value.is_string()) continue;
+        if (const auto to = mapped(m.value.str())) m.value = Json::string(*to);
+      }
+    }
+  }
+  if (Json* cloner = obj(p.find_mut("__cloner"))) {
+    swap(cloner, "pathLayerId");
+    swap(obj(cloner->find_mut("falloff")), "layerId");
+  }
+  if (Json* drivers = obj(p.find_mut("__audioDriver"))) {
+    for (Json::Member& m : drivers->obj_mut()) swap(obj(&m.value), "sourceLayerId");
+  }
+  if (Json* paint = obj(p.find_mut("paint"))) {
+    if (Json* strokes = paint->find_mut("strokes"); strokes != nullptr && strokes->is_array()) {
+      for (Json& s : strokes->arr_mut()) swap(obj(&s), "cloneSourceId");
+    }
+  }
+  if (comp.type.starts_with("pluginLayer:")) {
+    for (Json::Member& m : p.obj_mut()) {
+      if (m.key.starts_with("__") || !m.value.is_string()) continue;
+      if (const auto to = mapped(m.value.str())) m.value = Json::string(*to);
+    }
+  }
+}
+
 }  // namespace
 
 void set_3d_enabled(HCtx& x, const std::string& node, bool on) {
@@ -502,6 +548,13 @@ ResultOf<api::PasteLayers> handle(const api::PasteLayers& c, HCtx& x) {
       }
     }
   }
+  if (c.parent) {
+    (void)require_layer(d, *c.parent);
+    if (comp_of_layer(d, *c.parent) != c.comp) {
+      fail(ErrorCode::invalid_argument, "the parent must be a layer of the same composition", {.layer = *c.parent});
+    }
+  }
+  const std::string root = c.parent ? *c.parent : c.comp;
   std::vector<std::pair<std::string, std::string>> idMap;
   auto mapped = [&](const std::string& old) -> std::optional<std::string> {
     for (const auto& [a, b] : idMap) {
@@ -515,10 +568,11 @@ ResultOf<api::PasteLayers> handle(const api::PasteLayers& c, HCtx& x) {
   double minIn = std::numeric_limits<double>::infinity();
   for (const auto& l : frag) minIn = std::min(minIn, l.bars.empty() ? 0.0 : l.bars[0].start);
   const double shift = c.time ? flicks_to_frames(*c.time, fps) - (std::isfinite(minIn) ? minIn : 0.0) : 0.0;
+  std::vector<std::pair<std::string, std::vector<std::string>>> siblings;  // parent → pasted children, fragment order
   for (const auto& l : frag) {
     const std::string id = *mapped(l.row.at("id").str());
     const Json& rp = l.row.at("parent");
-    const std::string parent = rp.is_string() && mapped(rp.str()) ? *mapped(rp.str()) : c.comp;
+    const std::string parent = rp.is_string() && mapped(rp.str()) ? *mapped(rp.str()) : root;
     Node row;
     row.id = id;
     row.name = l.row.at("name").is_string() ? l.row.at("name").str() : id;
@@ -532,11 +586,27 @@ ResultOf<api::PasteLayers> handle(const api::PasteLayers& c, HCtx& x) {
       for (const Json& comp : l.row.at("components").arr()) {
         const std::string type = comp.at("type").is_string() ? comp.at("type").str() : "";
         row.components.push_back(Component{id + "_" + type, type, comp.at("props").is_object() ? comp.at("props") : Json::object()});
+        remap_layer_refs(row.components.back(), mapped);
       }
     }
     sg_add_child(d, parent, std::move(row));
     if (l.anim) d.set_anim(id, *l.anim);
     remint_key_ids(x, id);
+    auto run = std::find_if(siblings.begin(), siblings.end(), [&](const auto& s) { return s.first == parent; });
+    if (run == siblings.end()) siblings.emplace_back(parent, std::vector<std::string>{id});
+    else run->second.push_back(id);
+  }
+  // Fragment order is FRONT-first; sg_add_child appended each pasted sibling in
+  // front of the last (a reversed stack). layers.ts pasteLayers: put each run
+  // back so the first in the fragment is the front-most.
+  for (const auto& [parent, run] : siblings) {
+    const std::set<std::string> pasted(run.begin(), run.end());
+    std::vector<std::string> next;
+    for (const auto& ch : sg_child_order(d, parent)) {
+      if (!pasted.contains(ch)) next.push_back(ch);
+    }
+    next.insert(next.end(), run.rbegin(), run.rend());
+    (void)sg_set_child_order(d, parent, next);
   }
   tl_sync_from_scene(d, c.comp);
   for (const auto& l : frag) {
@@ -550,7 +620,11 @@ ResultOf<api::PasteLayers> handle(const api::PasteLayers& c, HCtx& x) {
     const Json& rp = l.row.at("parent");
     if (!rp.is_string() || !mapped(rp.str())) tops.push_back(*mapped(l.row.at("id").str()));
   }
-  if (!tops.empty()) move_in_stack(d, c.comp, tops, c.index.value_or(0));
+  if (!tops.empty()) {
+    std::set<std::string> pasted;
+    for (const auto& [from, to] : idMap) pasted.insert(to);
+    move_in_stack(d, c.comp, tops, c.index.value_or(0), &pasted);
+  }
   api::LayerList out;
   for (const auto& l : frag) out.layers.push_back(*mapped(l.row.at("id").str()));
   return out;

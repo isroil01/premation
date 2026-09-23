@@ -28,7 +28,10 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { DEFAULT_MARKER_COLOR } from './markerGeometry';
-import { deleteMarkers, editMarker, markerPatchNeedsLegacy, type MarkerEditPatch } from './timelineEdits';
+import { edit } from '@core/engine/uiEdits';
+import { framesToFlicks } from '@core/engine/time';
+import type { MarkerInsert } from '@motion/engine-api';
+import { activeCompId, deleteMarkers, editMarker, type MarkerEditPatch } from './timelineEdits';
 
 export const TIMELINE_ADD_MARKER_COMMAND = asCommandId('timeline.addMarker');
 export const TIMELINE_ADD_LAYER_MARKER_COMMAND = asCommandId('timeline.addLayerMarker');
@@ -46,16 +49,20 @@ export function markersChanged(): void {
 }
 
 /**
- * Add a comp marker at the playhead.
- *
- * B3-legacy: engine gap — a marker's colour is a timeline swatch TOKEN
- * (`MARKER_COLORS`), and `addMarkers` only carries a LAYER-label index, which
- * has none of them; a marker added through the API would lose its colour.
+ * Add a comp marker at the playhead — `addMarkers` with the swatch token as
+ * the marker's stored colour (B3z), one undo entry.
  */
 export function addCompMarkerAtPlayhead(label = 'Marker'): void {
-  getTimelineController().addMarkerAtPlayhead(label, DEFAULT_MARKER_COLOR);
-  markersChanged();
+  const t = getTimelineController().timeline;
+  const rate = t.getFrameRate().fps || 30;
+  void edit('Add Marker', {
+    type: 'addMarkers',
+    markers: [{ owner: { comp: activeCompId() }, time: framesToFlicks(Math.round(t.currentFrame), rate), duration: 0, name: label, comment: '', label: 0, color: DEFAULT_MARKER_COLOR }],
+  });
 }
+
+/** The legacy layer-marker colour (`TimelineController.addLayerMarkerAtPlayhead`). */
+const LAYER_MARKER_COLOR = '#a855f7';
 
 /**
  * Add a layer marker at the playhead on every selected layer.
@@ -64,16 +71,24 @@ export function addCompMarkerAtPlayhead(label = 'Marker'): void {
  * shots" is one act, and adding it to whichever layer happened to be first in
  * the selection order is the kind of half-obeyed command that gets typed twice.
  *
- * B3-legacy: engine gap — the marker colour (see `addCompMarkerAtPlayhead`).
+ * One `addMarkers` for all of them (one undo entry). A layer marker's time is
+ * LAYER time — frames from the layer's first bar, as the lanes draw it.
+ * Returns how many layers get one (synchronously, for the transport's fallback).
  */
 export function addLayerMarkersAtPlayhead(label = 'Marker'): number {
   const controller = getTimelineController();
-  let added = 0;
+  const t = controller.timeline;
+  const rate = t.getFrameRate().fps || 30;
+  const playhead = Math.round(t.currentFrame);
+  const comp = activeCompId();
+  const markers: MarkerInsert[] = [];
   for (const nodeId of useSelectionStore.getState().ids) {
-    if (controller.addLayerMarkerAtPlayhead(nodeId, label)) added += 1;
+    const bar = controller.getLayersForNode(nodeId)[0];
+    if (!bar) continue;
+    markers.push({ owner: { comp, layer: nodeId }, time: framesToFlicks(playhead - bar.start, rate), duration: 0, name: label, comment: '', label: 0, color: LAYER_MARKER_COLOR });
   }
-  if (added > 0) markersChanged();
-  return added;
+  if (markers.length > 0) void edit(markers.length === 1 ? 'Add Marker' : 'Add Markers', { type: 'addMarkers', markers });
+  return markers.length;
 }
 
 export function deleteMarker(id: string): void {
@@ -90,12 +105,6 @@ export function updateMarker(
   patch: MarkerEditPatch,
 ): boolean {
   if (!getTimelineController().timeline.getMarker(id)) return false;
-  if (markerPatchNeedsLegacy(id, patch)) {
-    // B3-legacy: engine gap — marker colour tokens (see `markerPatchNeedsLegacy`).
-    const ok = getTimelineController().updateMarker(id, patch);
-    if (ok) markersChanged();
-    return ok;
-  }
   void editMarker(id, patch);
   return true;
 }

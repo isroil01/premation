@@ -51,10 +51,12 @@ import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { EmptyCompositionView } from './EmptyCompositionView';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
-import { insertMographItem } from '@core/library/mographLibrary';
+import { buildMographItem, previewMographItem } from '@core/library/mographLibrary';
 import { applyTransitionItem } from '@core/library/transitionLibrary';
 import { insertSfxItem } from '@core/library/sfxLibrary';
-import { insertLottieItem } from '@core/library/lottieLibrary';
+import { insertLottieItemEdit } from '@layout/EditorLayout/lottieInsertEdits';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { useAssetStore } from '@stores/assetStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -527,27 +529,34 @@ export function WorkspaceViewport({
     const controller = getWorkspaceController();
     const world = controller.ws.screenToWorld(local);
 
-    // The insert helpers select the new node; land it under the cursor.
+    // The insert helpers select the new node; land it under the cursor. Only the
+    // footage drop below still uses this (the media insert router, WS-L2); the library
+    // inserts build their placement inside the same off-document builder.
     const placeSelection = (): void => {
       const id = useSelectionStore.getState().ids[0];
-      // B3-legacy: engine gap — the placement belongs to the legacy insert just before it (the
-      // insert helpers have no API form, see below); an engine write here would split the drop
-      // into two undo entries.
+      // B3-legacy: engine gap — the placement belongs to the legacy footage insert just before
+      // it (`insertMedia` has no API form yet); an engine write here would split the drop into
+      // two undo entries.
       if (id) setNodeWorldPosition(id, world.x, world.y);
     };
+    const comp = activeCompRootId();
 
+    // Library inserts: the builder + its placement run OFF-document and land as ONE
+    // pasteLayers entry (offDocument.ts `insertBuiltLayers`), selected.
     switch (payload.kind) {
       case 'shape':
-        // B3-legacy: engine gap — `createLayer` has no parametric-outline init (shape outlines,
-        // tangents, open lines are built client-side by `insertShape`).
-        insertShape(payload.primitive, payload.label);
-        placeSelection();
+        void insertBuiltLayers(`Insert ${payload.label}`, comp, () => {
+          insertShape(payload.primitive, payload.label);
+          const id = useSelectionStore.getState().ids[0];
+          if (id) setNodeWorldPosition(id, world.x, world.y);
+        });
         break;
       case 'text':
-        // B3-legacy: engine gap — `createLayer` text init carries no style props (font size,
-        // weight, fill, preset extras) nor the continuous-raster default `insertText` sets.
-        insertText(payload.label, payload.fontSize, payload.weight, payload.extra ?? {});
-        placeSelection();
+        void insertBuiltLayers(`Insert ${payload.label}`, comp, () => {
+          insertText(payload.label, payload.fontSize, payload.weight, payload.extra ?? {});
+          const id = useSelectionStore.getState().ids[0];
+          if (id) setNodeWorldPosition(id, world.x, world.y);
+        });
         break;
       case 'asset': {
         // AE Alt-drag: REPLACE the source of the layer under the pointer (or
@@ -566,17 +575,17 @@ export function WorkspaceViewport({
         break;
       }
       case 'component': {
-        const gid = useComponentStore.getState().insert(payload.componentId);
-        // B3-legacy: engine gap — placement of a legacy component insert (one entry with it).
-        if (gid) setNodeWorldPosition(gid, world.x, world.y);
+        // The saved component's tree + its placement: one pasteLayers entry (componentStore).
+        void useComponentStore.getState().insert(payload.componentId, world);
         break;
       }
       case 'component-preset': {
         const preset = UI_COMPONENT_PRESETS.find((p) => p.id === payload.presetId);
         if (preset) {
-          const gid = preset.insert();
-          // B3-legacy: engine gap — placement of a legacy component insert (one entry with it).
-          if (gid) setNodeWorldPosition(gid, world.x, world.y);
+          void insertBuiltLayers(`Insert ${preset.label}`, comp, () => {
+            const gid = preset.insert();
+            if (gid) setNodeWorldPosition(gid, world.x, world.y);
+          });
         }
         break;
       }
@@ -600,39 +609,36 @@ export function WorkspaceViewport({
         }
         break;
       }
-      // B3-legacy: engine gap (every library case below) — library items are client-side node
-      // builders (layers + keys + effects + expressions); the API would need them as a
-      // `pasteLayers` DocumentFragment or `applyPreset` entries in the engine's library.
+      // Library items are client-side node builders (layers + keys + effects + expressions):
+      // they run off-document at the drop point and land as ONE pasteLayers entry.
       case 'animPreset':
         // A self-contained animated element — insert at the drop point.
-        // B3-legacy: engine gap — library item (see above).
-        insertAnimPreset(payload.presetId, world.x, world.y);
+        void insertBuiltLayers('Insert Animation Preset', comp, () => insertAnimPreset(payload.presetId, world.x, world.y));
         break;
       case 'cursor':
-        // B3-legacy: engine gap — library item (see above).
-        insertCursorItem(payload.cursorId, world.x, world.y);
+        void insertBuiltLayers('Insert Cursor', comp, () => insertCursorItem(payload.cursorId, world.x, world.y));
         break;
       case 'uikit':
-        // B3-legacy: engine gap — library item (see above).
-        insertUiComponent(payload.componentId, world.x, world.y);
+        void insertBuiltLayers('Insert UI Component', comp, () => insertUiComponent(payload.componentId, world.x, world.y));
         break;
-      case 'mograph':
-        // B3-legacy: engine gap — library item (see above).
-        insertMographItem(payload.mographId, world.x, world.y);
+      case 'mograph': {
+        const mgId = payload.mographId;
+        void insertBuiltLayers('Insert Motion Graphic', comp, () => buildMographItem(mgId, world.x, world.y))
+          .then((ids) => { if (ids && ids.length > 0) previewMographItem(mgId); });
         break;
+      }
       case 'transition':
         // Position-independent: applies to the selection at the playhead,
         // or drops a choreographed solid.
-        // B3-legacy: engine gap — library item (see above).
+        // B3-legacy: engine gap — a transition item changes EXISTING layers (the timeline workstream's).
         applyTransitionItem(payload.transId);
         break;
       case 'sfx':
-        // B3-legacy: engine gap — library item (an audio layer from the SFX library, see above).
+        // B3-legacy: engine gap — an SFX item is an audio asset + layer (media import, not an off-document build).
         void insertSfxItem(payload.sfxId);
         break;
       case 'lottie':
-        // B3-legacy: engine gap — library item (see above).
-        insertLottieItem(payload.lottieId, world.x, world.y);
+        void insertLottieItemEdit(payload.lottieId, world.x, world.y);
         break;
     }
   }, []);

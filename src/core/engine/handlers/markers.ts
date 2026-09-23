@@ -49,6 +49,17 @@ function findMarker(id: string): Found {
   return fail('notFound', `no marker '${id}'`);
 }
 
+/** B3z: a stored marker colour (a timeline swatch token or a hex); '' = none. */
+function checkColor(color: string | undefined): void {
+  if (color !== undefined && color.length > 128) fail('outOfRange', 'a marker colour is at most 128 characters');
+}
+
+/** The colour a marker stores: an explicit `color` wins over the layer-label index. */
+function storedColor(color: string | undefined, label: number): string | null {
+  if (color !== undefined) return color === '' ? null : color;
+  return labelColorOf(label) ?? null;
+}
+
 function scopeFor(comps: Iterable<string>): Scope {
   const s = newScope();
   for (const c of comps) scopeTimeline(s, c);
@@ -63,6 +74,7 @@ export const markerHandlers: HandlerTable = {
       checkTime(m.duration, 'duration');
       if (m.duration < 0) fail('outOfRange', 'a marker duration cannot be negative');
       if (m.label > 0 && !labelColorOf(m.label)) fail('outOfRange', `label ${m.label} does not exist`);
+      checkColor(m.color);
       const o = owner(m.owner);
       return { m, o, id: ctx.mintMarkerId() };
     });
@@ -79,7 +91,7 @@ export const markerHandlers: HandlerTable = {
             duration: flicksToFrames(m.duration, fps),
             name: m.name,
             comment: m.comment,
-            color: labelColorOf(m.label) ?? null,
+            color: storedColor(m.color, m.label),
             scope: o.bar ? 'layer' : 'timeline',
             ownerId: o.bar ? o.bar.id : null,
           };
@@ -101,6 +113,7 @@ export const markerHandlers: HandlerTable = {
       if (p.time !== undefined) checkTime(p.time);
       if (p.duration !== undefined) { checkTime(p.duration, 'duration'); if (p.duration < 0) fail('outOfRange', 'a marker duration cannot be negative'); }
       if (p.label !== undefined && p.label > 0 && !labelColorOf(p.label)) fail('outOfRange', `label ${p.label} does not exist`);
+      checkColor(p.color);
       return { f, p };
     });
     return {
@@ -114,7 +127,8 @@ export const markerHandlers: HandlerTable = {
           if (p.duration !== undefined) m.duration = flicksToFrames(p.duration, fps);
           if (p.name !== undefined) m.name = p.name;
           if (p.comment !== undefined) m.comment = p.comment;
-          if (p.label !== undefined) m.color = labelColorOf(p.label) ?? null;
+          if (p.color !== undefined) m.color = p.color === '' ? null : p.color;
+          else if (p.label !== undefined) m.color = labelColorOf(p.label) ?? null;
           if (p.chapter !== undefined) m.chapter = p.chapter;
           if (p.url !== undefined) m.url = p.url;
           if (p.cuePoint !== undefined) m.cuePoint = p.cuePoint;

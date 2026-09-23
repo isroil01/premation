@@ -186,6 +186,18 @@ export const CASES: Partial<Record<CommandType, Case>> = {
       return { type: 'pasteKeyframes', prop: pos(s.A), time: sec(3), keys: r.sets[0]!.keyframes };
     },
   },
+  setKeyframes: {
+    cmd: async (s, h) => {
+      const r = await h.query({ type: 'getKeyframes', props: [pos(s.B)] });
+      const [k0, k1] = r.sets[0]!.keyframes;
+      return {
+        type: 'setKeyframes', prop: pos(s.B), keys: [
+          { ...k0!, value: { kind: 'vec2', value: { x: 5, y: 6 } } },
+          { ...k1!, id: '', time: sec(2.5), dims: [{ easing: 'hold', continuous: false }, { easing: 'bezier', bezier: { x1: 0.2, y1: 0, x2: 0.8, y2: 1 }, continuous: true }] },
+        ],
+      };
+    },
+  },
   // ── Groups ──
   addEffect: { cmd: (s) => ({ type: 'addEffect', layers: [s.A, s.B], effect: 'drop-shadow', index: 0, params: [] }) },
   addMask: { cmd: (s) => ({ type: 'addMask', layer: s.B, mode: 'subtract', inverted: true, name: 'Hole', path: { vertices: [0, 0, 10, 0, 10, 10], inTangents: [], outTangents: [], closed: true, featherPoints: [] } }) },

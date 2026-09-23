@@ -35,22 +35,21 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { toDb, meterFraction } from '@core/audio/audioLevels';
 import {
   AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP,
-  MAX_LEVEL_DB, percentToDb,
+  MAX_LEVEL_DB,
 } from '@core/audio/audioParams';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { audioComponent, VIDEO_AUDIO_LEVEL_PROP } from '@core/audio/audioScene';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { applyFade, DEFAULT_FADE_SEC } from '@core/audio/audioFades';
+import { DEFAULT_FADE_SEC } from '@core/audio/audioFades';
+import { useEngineEdit } from './useEngineEdit';
+import { valueCommands } from './inspectorEdits';
+import { fadeEdit } from './audioEdits';
 import { channelDb, fromChannelDb, CLIP_DB } from './faderMath';
 import { InfoReadout } from './InfoReadout';
 import { Icon } from '@components/Icon';
@@ -66,10 +65,10 @@ const PEAK_HOLD_MS = 1200;
 
 type Units = 'db' | 'percent';
 
+const AUDIO_TRACKS = [AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP] as const;
+
 interface Target {
   nodeId: string;
-  /** The component the static props live on — Audio, or the video Transform. */
-  componentId: string;
   levelDb: number;
   pan: number;
   levelAnimated: boolean;
@@ -88,47 +87,29 @@ interface Target {
  */
 function readTarget(nodeId: string | undefined, compSec: number): Target | null {
   if (!nodeId) return null;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const kind = readNodeKind(node);
-  if (kind !== 'audio' && kind !== 'video') return null;
-  const comp = kind === 'audio' ? audioComponent(node) : node.components.find((c) => c.type === 'Transform');
-  if (!comp) return null;
-  const p = comp.props as Record<string, unknown>;
-  const legacy = kind === 'audio' ? p.__level : p[VIDEO_AUDIO_LEVEL_PROP];
-  const levelDb =
-    typeof p[AUDIO_LEVEL_DB_PROP] === 'number'
-      ? (p[AUDIO_LEVEL_DB_PROP] as number)
-      : typeof legacy === 'number'
-        ? percentToDb(legacy)
-        : 0;
-  const staticPan = typeof p[AUDIO_PAN_PROP] === 'number' ? (p[AUDIO_PAN_PROP] as number) : 0;
-  const levelAnimated = defaultAnimation.isAnimated(nodeId, AUDIO_LEVEL_DB_PROP);
-  const panAnimated = defaultAnimation.isAnimated(nodeId, AUDIO_PAN_PROP);
-
-  // The canonical keyframe axis — what the renderer samples for this node, and
-  // what `KeyframeRow` uses, so the two controls cannot land on different times
-  // for a retimed layer.
-  // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
-  const layerT = compToKeyframeTime(nodeId, compSec);
-  const sample = (prop: string, fallback: number): number => {
-    const v = defaultAnimation.sample(nodeId, prop, layerT);
-    return typeof v === 'number' ? v : fallback;
-  };
-
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  if (!layer || (layer.kind !== 'audio' && layer.kind !== 'video')) return null;
+  // `audio/levels` is dB with the legacy percent (`__level` / `audioLevel`)
+  // already folded in by the engine; `audio/pan` is 0 when centred (absent).
+  // Both are sampled in COMP time by the engine, which applies the layer's
+  // retime — the same axis `KeyframeRow` shows.
+  const levelDb = readTrack(m, nodeId, AUDIO_LEVEL_DB_PROP, compSec);
+  const pan = readTrack(m, nodeId, AUDIO_PAN_PROP, compSec);
+  if (levelDb === undefined || pan === undefined) return null;
   return {
     nodeId,
-    componentId: comp.id,
-    levelDb: levelAnimated ? sample(AUDIO_LEVEL_DB_PROP, levelDb) : levelDb,
-    pan: panAnimated ? sample(AUDIO_PAN_PROP, staticPan) : staticPan,
-    levelAnimated,
-    panAnimated,
+    levelDb,
+    pan,
+    levelAnimated: isTrackAnimated(m, nodeId, AUDIO_LEVEL_DB_PROP),
+    panAnimated: isTrackAnimated(m, nodeId, AUDIO_PAN_PROP),
   };
 }
 
 export function AudioPanel(): JSX.Element {
-  useSceneRevision((s) => s.rev);
   const selectedIds = useSelectionStore((s) => s.ids);
+  // The faders read the selection's Level / Pan (and each layer's kind).
+  useMirrorTrackWatch(selectedIds, AUDIO_TRACKS);
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
 
@@ -192,34 +173,20 @@ export function AudioPanel(): JSX.Element {
   // ── The selected layer ────────────────────────────────────────────
   const target = readTarget(selectedIds.find((id) => readTarget(id, time) !== null), time);
 
-  const write = (prop: string, value: number, clearAt?: number): void => {
-    if (!target) return;
-    const animated = prop === AUDIO_LEVEL_DB_PROP ? target.levelAnimated : target.panAnimated;
-    if (animated || autoKeyframe) {
-      // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
-      const t = compToKeyframeTime(target.nodeId, time, prop);
-      runAnimEdit(`Set ${prop}`, () => defaultAnimation.setKeyframe(target.nodeId, prop, t, value), `set:${target.nodeId}:${prop}:${t}`);
-      return;
-    }
-    // A prop whose value is its default is stored as ABSENT — that is what
-    // keeps a document that never touched pan byte-identical (see `panOf`).
-    // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
-    defaultSceneGraph.writeProp(
-      target.nodeId,
-      target.componentId,
-      prop,
-      clearAt !== undefined && value === clearAt ? undefined : value,
-    );
-    bumpScene();
-  };
+  // A fader drag is ONE gesture (pointer down → up): every move sends the
+  // absolute level + pan for the pointer; a keyboard step is one entry. A key
+  // lands at the playhead on an animated property or under Auto-Keyframe; a
+  // centred pan is stored as ABSENT by the engine (`panOf`).
+  const faderEdit = useEngineEdit();
 
   /** Move one fader: solve back to a (level, pan) pair and write both. */
   const setChannel = (ch: 'l' | 'r', db: number): void => {
     if (!target) return;
     const other = channelDb(target.levelDb, target.pan, ch === 'l' ? 'r' : 'l');
     const next = fromChannelDb(ch === 'l' ? db : other, ch === 'l' ? other : db);
-    write(AUDIO_LEVEL_DB_PROP, next.levelDb);
-    if (next.pan !== target.pan) write(AUDIO_PAN_PROP, next.pan, 0);
+    const values: Record<string, number> = { [AUDIO_LEVEL_DB_PROP]: next.levelDb };
+    if (next.pan !== target.pan) values[AUDIO_PAN_PROP] = next.pan;
+    faderEdit.send('Set Audio Levels', valueCommands([{ nodeId: target.nodeId, values }], { seconds: time, autoKeyframe }));
   };
 
   const fmt = (db: number): string =>
@@ -296,7 +263,7 @@ export function AudioPanel(): JSX.Element {
               title={clipLit[ch] ? 'Clipped — the signal went over full scale' : 'No clipping'}
               aria-label={clipLit[ch] ? `${ch.toUpperCase()} clipped` : `${ch.toUpperCase()} not clipping`}
             />
-            <div className={styles.meterWrap}>
+            <div className={styles.meterWrap} {...faderEdit.press('Set Audio Levels', () => target !== null)}>
               <div className={styles.meterBar}>
                 <div className={styles.meterFill} style={{ height: `${bars[ch] * 100}%` }} />
                 <div className={styles.peakTick} style={{ bottom: `${peaks[ch] * 100}%` }} />
@@ -340,16 +307,14 @@ export function AudioPanel(): JSX.Element {
           <div className={styles.fades}>
             <button
               type="button"
-              // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
-              onClick={() => runAnimEdit('Fade Audio In', () => { applyFade(target.nodeId, 'in'); bumpScene(); })}
+              onClick={() => { void fadeEdit([target.nodeId], 'in'); }}
               title={`Ramp up from silence over ${DEFAULT_FADE_SEC}s`}
             >
               Fade in
             </button>
             <button
               type="button"
-              // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
-              onClick={() => runAnimEdit('Fade Audio Out', () => { applyFade(target.nodeId, 'out'); bumpScene(); })}
+              onClick={() => { void fadeEdit([target.nodeId], 'out'); }}
               title={`Ramp down to silence over ${DEFAULT_FADE_SEC}s`}
             >
               Fade out

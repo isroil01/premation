@@ -18,9 +18,9 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { defaultAnimation } from '@motion/animation';
 import { readNodePuppet, clearRestMeshCache } from '@core/rig/puppet';
-import type { SceneNode } from '@core/types';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { rigTestLayer } from './__testHelpers__/rigLayer';
 
 // A fixed 1:1 camera centred on the origin keeps screen↔local arithmetic
 // obvious: local (0,0) is screen (0,0), and one local px is one screen px.
@@ -38,21 +38,11 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
   }),
 }));
 
-function shapeNode(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`,
-        type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, rotation: 0, width: 200, height: 160 },
-      },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
-    ],
-  } as unknown as SceneNode;
-}
-
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+/** The rig layer (engine-created). */
+let L = '';
+/** Let the engine apply what the overlay sent (and React re-render). */
+const idle = (): Promise<void> => act(async () => { await engineIdle(); });
 const pinsOf = (id: string) => readNodePuppet(defaultSceneGraph.getNode(id)!)?.pins ?? [];
 
 /** jsdom gives every element a zero rect, so offsets are all we control. */
@@ -60,96 +50,103 @@ function down(el: Element, x: number, y: number, init: Record<string, unknown> =
   fireEvent.pointerDown(el, { clientX: x, clientY: y, pointerId: 1, ...init });
 }
 
-beforeEach(() => {
-  // Pin add/delete go through the undo system, which the app wires at boot.
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+beforeEach(async () => {
+  h = await setupAppEngine();
   clearRestMeshCache();
-  defaultAnimation.clear?.();
-  try { defaultSceneGraph.removeNode('p1'); } catch { /* fresh */ }
-  defaultSceneGraph.addNode(shapeNode('p1'));
-  defaultSceneGraph.setPuppet('p1', { meshDensity: 6, meshExpansion: 0, pins: [] });
-  useSelectionStore.getState().set(['p1']);
+  L = await rigTestLayer(h, { puppet: { meshDensity: 6, meshExpansion: 0, pins: [] } });
+  useSelectionStore.getState().set([L]);
   useUIStore.getState().setActiveTool('puppet-pin');
   useUIStore.getState().setPuppetPinKind('position');
 });
+afterEach(async () => { await h.dispose(); });
 
 describe('gating', () => {
-  it('renders nothing unless the puppet tool is active', () => {
+  it('renders nothing unless the puppet tool is active', async () => {
     act(() => useUIStore.getState().setActiveTool('select'));
     const { container } = render(<PuppetOverlay />);
     expect(container.querySelector('svg')).toBeNull();
   });
 
-  it('renders nothing without a selected layer', () => {
+  it('renders nothing without a selected layer', async () => {
     act(() => useSelectionStore.getState().set([]));
     const { container } = render(<PuppetOverlay />);
     expect(container.querySelector('svg')).toBeNull();
   });
 
-  it('draws the mesh wireframe for the selected layer', () => {
+  it('draws the mesh wireframe for the selected layer', async () => {
     const { container } = render(<PuppetOverlay />);
     expect(container.querySelector('[data-puppet-mesh]')?.getAttribute('d')).toMatch(/^M/);
   });
 });
 
 describe('click-add', () => {
-  it('adds a pin inside the layer bounds', () => {
+  it('adds a pin inside the layer bounds', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 30, clientY: 20 });
-    const pins = pinsOf('p1');
+    await idle();
+    const pins = pinsOf(L);
     expect(pins).toHaveLength(1);
     expect(pins[0]!.x).toBeCloseTo(30, 3);
     expect(pins[0]!.y).toBeCloseTo(20, 3);
     expect(pins[0]!.kind).toBe('position');
+    expect(pins[0]!.id).toBe('pin_1');
+    expect(historyLabels().at(-1)).toBe('Add Puppet Pin');
   });
 
-  it('places a starch pin when that tool is armed', () => {
+  it('places a starch pin when that tool is armed', async () => {
     useUIStore.getState().setPuppetPinKind('starch');
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 12, clientY: -8 });
-    const pins = pinsOf('p1');
+    await idle();
+    const pins = pinsOf(L);
     expect(pins).toHaveLength(1);
     expect(pins[0]!.kind).toBe('starch');
     expect(pins[0]!.stiffness).toBe(8);
   });
 
-  it('ignores clicks outside the layer bounds', () => {
+  it('ignores clicks outside the layer bounds', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 5000, clientY: 5000 });
-    expect(pinsOf('p1')).toHaveLength(0);
+    await idle();
+    expect(pinsOf(L)).toHaveLength(0);
   });
 
-  it('gives successive pins DISTINCT ids (§12.7 — Date.now() collided)', () => {
+  it('gives successive pins DISTINCT ids (§12.7 — Date.now() collided)', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
+    await idle();
     fireEvent.click(svg, { clientX: -10, clientY: -10 });
-    const ids = pinsOf('p1').map((p) => p.id);
+    await idle();
+    const ids = pinsOf(L).map((p) => p.id);
     expect(ids).toHaveLength(2);
     expect(new Set(ids).size).toBe(2);
   });
 
-  it('a pointerdown on an existing pin does NOT spawn a stray pin', () => {
+  it('a pointerdown on an existing pin does NOT spawn a stray pin', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
-    expect(pinsOf('p1')).toHaveLength(1);
+    await idle();
+    expect(pinsOf(L)).toHaveLength(1);
 
     // pointerup synthesises a click even after stopPropagation on pointerdown;
     // the suppression guard is what stops that click from adding a second pin.
     const pinDot = container.querySelector('circle[r="5"]')!;
     down(pinDot.parentElement!, 10, 10);
     fireEvent.pointerUp(svg, { clientX: 10, clientY: 10, pointerId: 1 });
+    await idle();
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
-    expect(pinsOf('p1')).toHaveLength(1);
+    await idle();
+    expect(pinsOf(L)).toHaveLength(1);
   });
 });
 
 describe('pointer capture is not a precondition', () => {
-  it('a pointerdown still selects when setPointerCapture throws', () => {
+  it('a pointerdown still selects when setPointerCapture throws', async () => {
     // A real browser throws NotFoundError here whenever the id is not an active
     // pointer, and the throw used to abort the rest of the handler — losing the
     // selection and the drag it was setting up. jest.setup polyfills capture as
@@ -165,6 +162,7 @@ describe('pointer capture is not a precondition', () => {
       const { container } = render(<PuppetOverlay />);
       const svg = container.querySelector('svg')!;
       fireEvent.click(svg, { clientX: 20, clientY: 0 });
+      await idle();
 
       const pinDot = container.querySelector('circle[r="5"]')!;
       expect(() => down(pinDot.parentElement!, 20, 0)).not.toThrow();
@@ -177,7 +175,7 @@ describe('pointer capture is not a precondition', () => {
     }
   });
 
-  it('a drag still writes its track when capture is unavailable', () => {
+  it('a drag still writes its track when capture is unavailable', async () => {
     const spy = jest
       .spyOn(Element.prototype, 'setPointerCapture')
       .mockImplementation(() => {
@@ -187,14 +185,16 @@ describe('pointer capture is not a precondition', () => {
       const { container } = render(<PuppetOverlay />);
       const svg = container.querySelector('svg')!;
       fireEvent.click(svg, { clientX: 0, clientY: 0 });
-      const pinId = pinsOf('p1')[0]!.id;
+      await idle();
+      const pinId = pinsOf(L)[0]!.id;
 
       const pinDot = container.querySelector('circle[r="5"]')!;
       down(pinDot.parentElement!, 0, 0);
       fireEvent.pointerMove(svg, { clientX: 12, clientY: 8, pointerId: 1 });
       fireEvent.pointerUp(svg, { clientX: 12, clientY: 8, pointerId: 1 });
+      await idle();
 
-      const v = defaultAnimation.getDataTrack('p1', `puppet.${pinId}.position`)!
+      const v = defaultAnimation.getDataTrack(L, `puppet.${pinId}.position`)!
         .keyframes[0]!.value as Array<{ x: number; y: number }>;
       expect(v[0]!.x).toBeCloseTo(12, 3);
     } finally {
@@ -204,54 +204,61 @@ describe('pointer capture is not a precondition', () => {
 });
 
 describe('drag writes animation, not static props', () => {
-  it('moving a pin writes its position data track', () => {
+  it('moving a pin writes its position data track', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
-    const pinId = pinsOf('p1')[0]!.id;
+    await idle();
+    const pinId = pinsOf(L)[0]!.id;
 
     const pinDot = container.querySelector('circle[r="5"]')!;
     down(pinDot.parentElement!, 0, 0);
     fireEvent.pointerMove(svg, { clientX: 25, clientY: -15, pointerId: 1 });
     fireEvent.pointerUp(svg, { clientX: 25, clientY: -15, pointerId: 1 });
+    await idle();
 
-    const track = defaultAnimation.getDataTrack('p1', `puppet.${pinId}.position`);
+    const track = defaultAnimation.getDataTrack(L, `puppet.${pinId}.position`);
     expect(track).toBeTruthy();
     const v = track!.keyframes[0]!.value as Array<{ x: number; y: number }>;
     expect(v[0]!.x).toBeCloseTo(25, 3);
     expect(v[0]!.y).toBeCloseTo(-15, 3);
     // The pin's STATIC rest position is untouched — only the track moved.
-    expect(pinsOf('p1')[0]!.x).toBeCloseTo(0, 3);
+    expect(pinsOf(L)[0]!.x).toBeCloseTo(0, 3);
+    expect(historyLabels().at(-1)).toBe(`Move Puppet Pin ${pinId}`);
   });
 
-  it('Alt-drag writes rotation instead of position', () => {
+  it('Alt-drag writes rotation instead of position', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
-    const pinId = pinsOf('p1')[0]!.id;
+    await idle();
+    const pinId = pinsOf(L)[0]!.id;
 
     const pinDot = container.querySelector('circle[r="5"]')!;
     down(pinDot.parentElement!, 10, 0, { altKey: true });
     fireEvent.pointerMove(svg, { clientX: 0, clientY: 10, pointerId: 1 });
     fireEvent.pointerUp(svg, { clientX: 0, clientY: 10, pointerId: 1 });
+    await idle();
 
-    expect(defaultAnimation.getTrackKeyframes('p1', `puppet.${pinId}.rotation`)?.length).toBeGreaterThan(0);
-    expect(defaultAnimation.getDataTrack('p1', `puppet.${pinId}.position`)).toBeFalsy();
+    expect(defaultAnimation.getTrackKeyframes(L, `puppet.${pinId}.rotation`)?.length).toBeGreaterThan(0);
+    expect(defaultAnimation.getDataTrack(L, `puppet.${pinId}.position`)).toBeFalsy();
   });
 
-  it('the gizmo scale handle writes the scale track', () => {
+  it('the gizmo scale handle writes the scale track', async () => {
     useUIStore.getState().setPuppetPinKind('advanced');
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
-    const pinId = pinsOf('p1')[0]!.id;
+    await idle();
+    const pinId = pinsOf(L)[0]!.id;
 
     const handle = container.querySelector('rect[width="8"]')!;
     down(handle, 26, 0);
     fireEvent.pointerMove(svg, { clientX: 52, clientY: 0, pointerId: 1 });
     fireEvent.pointerUp(svg, { clientX: 52, clientY: 0, pointerId: 1 });
+    await idle();
 
-    const kfs = defaultAnimation.getTrackKeyframes('p1', `puppet.${pinId}.scale`);
+    const kfs = defaultAnimation.getTrackKeyframes(L, `puppet.${pinId}.scale`);
     expect(kfs?.length).toBeGreaterThan(0);
     // Dragged to twice the grab radius ⇒ ~2x.
     expect(kfs![0]!.value).toBeCloseTo(2, 1);
@@ -259,17 +266,19 @@ describe('drag writes animation, not static props', () => {
 });
 
 describe('deletion', () => {
-  it('double-clicking a pin removes it AND its tracks', () => {
+  it('double-clicking a pin removes it AND its tracks', async () => {
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
-    const pinId = pinsOf('p1')[0]!.id;
-    defaultAnimation.setKeyframe('p1', `puppet.${pinId}.rotation`, 0, 15);
+    await idle();
+    const pinId = pinsOf(L)[0]!.id;
+    defaultAnimation.setKeyframe(L, `puppet.${pinId}.rotation`, 0, 15);
 
     const pinDot = container.querySelector('circle[r="5"]')!;
     fireEvent.doubleClick(pinDot.parentElement!, { clientX: 0, clientY: 0 });
+    await idle();
 
-    expect(pinsOf('p1')).toHaveLength(0);
-    expect(defaultAnimation.getTrackKeyframes('p1', `puppet.${pinId}.rotation`)?.length ?? 0).toBe(0);
+    expect(pinsOf(L)).toHaveLength(0);
+    expect(defaultAnimation.getTrackKeyframes(L, `puppet.${pinId}.rotation`)?.length ?? 0).toBe(0);
   });
 });

@@ -5,7 +5,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { legacyComponentWrite, useComponentProp, type ComponentPropHandle } from './useComponentProp';
+import { useComponentProp, type ComponentPropHandle } from './useComponentProp';
 import { useGesture } from '@hooks/useGesture';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands, fieldEdit, sourceTextCommand, sourceTextStopwatchCommand, textPresetEdit } from '@layout/Text/textEdits';
@@ -168,7 +168,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   /** The Content box's typing session (one gesture per focus — see onContentEdit). */
   const sourceTyping = useGesture({ quiet: true });
   /** Per number field: is a typing session open, and on which route (see `typing`). */
-  const typingState = useRef<Record<string, { open: boolean; legacy: boolean }>>({});
+  const typingState = useRef<Record<string, { open: boolean }>>({});
 
   // Local fallback states when no text layer is active
   const [fallbackFamily, setFallbackFamily] = useState('Inter');
@@ -255,25 +255,19 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     h: ComponentPropHandle,
     set: (v: unknown) => void,
   ): { begin: () => void; set: (v: unknown) => void; onBlur: () => void } => {
-    const s = (typingState.current[key] ??= { open: false, legacy: false });
+    const s = (typingState.current[key] ??= { open: false });
     return {
       begin: () => {
         if (ranged || s.open) return;
         s.open = true;
+        // Opens the gesture only when the engine addresses the prop (a text
+        // LAYER's Size / Leading / Tracking / Stroke Width always is — G1 +
+        // the latent bindings); otherwise every write is refused, visibly.
         h.scrub.onScrubStart();
-        // A prop the engine does not address when the session starts (a
-        // Tracking / Leading the component does not store yet) stays on the
-        // legacy writer for the WHOLE session: switching route mid-typing
-        // would split it into two undo entries.
-        s.legacy = !h.active();
       },
-      set: (v) => {
-        if (s.open && s.legacy && primary && tComp) legacyComponentWrite(primary, tComp.id, key, v);
-        else set(v);
-      },
+      set,
       onBlur: () => {
         s.open = false;
-        s.legacy = false;
         h.scrub.onScrubEnd();
       },
     };
@@ -384,7 +378,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
       sourceTyping.send(cmds);
       return;
     }
-    // Not a layer: the pre-API component write (useComponentProp's funnel).
+    // Not a layer: useComponentProp refuses it (no engine property to write).
     setContent(next);
   };
 
@@ -1380,8 +1374,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
                 value={paraBox ? 'paragraph' : 'point'}
                 disabled={onPath}
                 onChange={(v) => {
-                  if (v === 'paragraph') convertToParagraphText([primary]);
-                  else convertToPointText([primary]);
+                  if (v === 'paragraph') void convertToParagraphText([primary]);
+                  else void convertToPointText([primary]);
                 }}
                 options={[
                   { value: 'point', label: 'Point' },
@@ -1431,7 +1425,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
                     fullWidth
                     aria-label="Box Auto-Size"
                     value={autoSize}
-                    onChange={(v) => setBoxAutoSize(primary, v)}
+                    onChange={(v) => { void setBoxAutoSize(primary, v); }}
                     options={[
                       { value: 'off', label: 'Off' },
                       { value: 'height', label: 'Auto Height' },

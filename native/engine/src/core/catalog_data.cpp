@@ -68,6 +68,7 @@ Registry build() {
   c.fields = d.at("fields");
   c.paint = d.at("paint");
   c.strokeTracks = d.at("strokeTracks");
+  c.latent = d.at("latent");
   for (const Json& k : d.at("maskKeys").arr()) c.maskKeys.push_back(k.str());
   for (const Json& k : d.at("textPathParams").arr()) c.textPathParams.push_back(k.str());
   for (const Json& l : d.at("labels").arr()) c.labelColors.push_back(l.at("color").str());

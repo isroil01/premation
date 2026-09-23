@@ -242,11 +242,11 @@ export function setNodeWorldPosition(nodeId: string, x: number, y: number): void
   const localY = pt.y;
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
-    t.props.x = localX;
-    t.props.y = localY;
+    // Through the graph: `getNode` hands out a VIEW, and assigning its props
+    // changed nothing (the canvas drop landed every insert at the comp centre).
+    defaultSceneGraph.writeProp(nodeId, t.id, 'x', localX);
+    defaultSceneGraph.writeProp(nodeId, t.id, 'y', localY);
   }
-  node.transform.position.x = localX;
-  node.transform.position.y = localY;
   bumpScene();
 }
 
@@ -1177,6 +1177,12 @@ export interface LightSeed {
    * `asset:<assetId>`). Omitted, the composition's World ▸ default sky decides.
    */
   envPreset?: EnvironmentSky;
+  /**
+   * Add the one-time Ambient Fill beside a comp's first positional light
+   * (default true — the silent insert's behaviour). The New Light dialog
+   * passes false: After Effects' New Light makes exactly the one light asked for.
+   */
+  ambientFill?: boolean;
 }
 
 /** Insert a Light layer */
@@ -1214,7 +1220,7 @@ export function insertLight(seed: LightSeed = {}): void {
     fill).
   */
   const positional = seed.type !== 'ambient' && seed.type !== 'environment';
-  if (positional && !compHasAmbientLight(rootId)) {
+  if (positional && seed.ambientFill !== false && !compHasAmbientLight(rootId)) {
     const fill = makeNode('light', 'Ambient Fill');
     const ft = fill.components.find((c) => c.type === 'Transform');
     const compSize = useCompositionStore.getState();

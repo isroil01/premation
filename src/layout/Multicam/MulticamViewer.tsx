@@ -26,12 +26,13 @@ import { framesToSeconds } from '@motion/timeline';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 import {
-  alignMulticamByAudio,
+  planMulticamAudioSync,
   multicamLayersInActiveComp,
   switchMulticamAngle,
 } from '@core/composition/multicam';
 import { Button } from '@components/Button';
 import { EmptyState } from '@components/EmptyState';
+import { moveBars } from '@layout/Timeline/timelineEdits';
 import styles from './MulticamViewer.module.css';
 
 interface AngleView {
@@ -140,9 +141,10 @@ export function MulticamViewerBody(): JSX.Element {
   const onSync = async (): Promise<void> => {
     setSyncing(true);
     try {
-      // B3-legacy: the audio-sync analysis and the bar shifts it implies live in
-      // one core helper (multicam); it becomes analysis + setLayerTiming when it moves.
-      const report = await alignMulticamByAudio();
+      // The analysis (core, no write), then the bar shifts as ONE engine entry
+      // (`setLayerTiming` through moveBars, B3z).
+      const { moves, report } = await planMulticamAudioSync();
+      if (moves.length > 0) await moveBars(moves, 'Sync Multicam by Audio');
       setSyncNote(report.note);
       useUIStore.getState().notify({ level: report.shifted > 0 ? 'success' : 'info', message: report.note, durationMs: 5000 });
     } finally {

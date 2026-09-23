@@ -19,15 +19,12 @@ import { Checkbox } from '@components/Checkbox';
 import { Segmented } from '@components/Segmented';
 import { DialogFooter } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import {
-  countInScope,
-  textLayersInScope,
-  type FindScope,
-} from '@core/textTools/textFindReplace';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompId, useMirrorRevision } from '@hooks/useMirror';
+import type { FindScope } from '@core/textTools/textFindReplace';
 import { replaceTextEdit } from './textEdits';
+import { activeCompIdNow, mirrorCountInScope, mirrorTextLayersInScope } from './textMirror';
 import styles from './TextDialogs.module.css';
 
 export const FIND_REPLACE_TEXT_MODAL_ID = 'find-replace-text';
@@ -42,8 +39,11 @@ const plural = (n: number, word: 'match' | 'layer'): string =>
   `${n} ${n === 1 ? word : word === 'match' ? 'matches' : 'layers'}`;
 
 export function FindReplaceTextBody({ close, initialScope }: { close: () => void; initialScope: FindScope }): JSX.Element {
-  const rev = useSceneRevision((s) => s.rev);
-  const animRev = useAnimationRevision();
+  // B4: counted over the document mirror; a document-wide count re-runs on
+  // every revision (an edit or an undo can change any layer's text).
+  const rev = useMirrorRevision();
+  const selected = useSelectionStore((s) => s.ids);
+  const activeComp = useActiveCompId();
   const [find, setFind] = useState('');
   const [replacement, setReplacement] = useState('');
   const [matchCase, setMatchCase] = useState(false);
@@ -53,10 +53,10 @@ export function FindReplaceTextBody({ close, initialScope }: { close: () => void
 
   const opts = useMemo(() => ({ matchCase, wholeWord }), [matchCase, wholeWord]);
   const count = useMemo(
-    () => countInScope(scope, find, opts),
-    // `rev`/`animRev` re-count after an edit (or an undo) changes the text.
+    () => mirrorCountInScope(documentMirror(), scope, selected, activeComp, find, opts),
+    // `rev` re-counts after an edit (or an undo) changes the text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, find, opts, rev, animRev],
+    [scope, find, opts, rev, selected, activeComp],
   );
 
   const replaceAll = (): void => {
@@ -119,7 +119,8 @@ export function FindReplaceTextBody({ close, initialScope }: { close: () => void
 
 /** Open the dialog. Starts on "Selected layers" when the selection holds text. */
 export function openFindReplaceTextDialog(): void {
-  const hasSelectedText = useSelectionStore.getState().ids.length > 0 && textLayersInScope('selected').length > 0;
+  const ids = useSelectionStore.getState().ids;
+  const hasSelectedText = ids.length > 0 && mirrorTextLayersInScope(documentMirror(), 'selected', ids, activeCompIdNow()).length > 0;
   const initialScope: FindScope = hasSelectedText ? 'selected' : 'comp';
   openModal({
     id: FIND_REPLACE_TEXT_MODAL_ID,

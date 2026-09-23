@@ -362,11 +362,11 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `setParent` | `keepWorldTransform` (AE default) rewrites transform values/keys so nothing jumps. Inverse: previous parent **and** the rewritten transform values/keys. Error `cycle`. |
 | `renameLayer`, `setLayerComment` | Inverse: previous value. |
 | `setLayerSwitches` | Patch visible, audio, solo, lock, shy, collapse, quality, fx, motion blur, adjustment, 3D, guide, frame blend, auto-orient, preserve transparency, label. Inverse: each layer's previous value of each patched switch. |
-| `setBlendMode`, `setTrackMatte` | Matte by reference to any layer (AE 2023). Inverse: previous values. |
+| `setBlendMode`, `setTrackMatte` | Matte by reference to any layer (AE 2023); no `matte.layer` = the classic positional matte (the layer above, B3z). Inverse: previous values. |
 | `replaceLayerSource` | Inverse: previous source (and size if changed). |
 | `groupLayers` / `ungroupLayer` | Premation group layers. Inverse: ungroup / regroup with the same group id. |
 | `convertLayer` | Engine-evaluated conversions: shapes from text, masks from text, shapes from vector, editable text, uncompose, bake transform. Inverse: remove the created layers (and restore the source layer's visibility if the conversion hid it). |
-| `pasteLayers` | Paste a `DocumentFragment` (from the `copyLayers` query). Inverse: delete pasted layers and any items the paste created. |
+| `pasteLayers` | Paste a `DocumentFragment` (from the `copyLayers` query). `parent` (B3z) pastes INTO a layer of `comp` (the fragment's top-level layers become its children; `index` stays a comp-stack index). The copied stacking is kept (the fragment's first layer is the front-most, per parent). References between pasted layers follow the copies (§15.9 WS-L1). Inverse: delete pasted layers and any items the paste created. |
 | `separateLayer` | Break apart into per-part layers. Inverse: remove parts, restore original. |
 | `autoTrace` | Masks from alpha/luma over a range. Inverse: remove the created masks. |
 
@@ -1236,6 +1236,285 @@ replay runs against both.
   rebuilt (`makeSvgComponent`) with its sanitised markup re-scoped to the
   content's id — the editor re-sanitises the source; the engine rewrites the
   `<scope>__` names the sanitiser's id scoping wrote, which is byte-identical.
+
+### 15.9 B3z — the last UI writes (in progress, 2026-09-24)
+
+B3z-a (inspector, effects, text) and B3z-b (timeline, viewport/tools,
+tools/core, comps/assets/dialogs, AI/plugins/commands, layers, other) close the
+remaining ratchet sites. To keep parallel schema work from colliding, B3z-b
+**owns the design** of these model additions (inspector controls use them
+rather than adding their own) and **claims these command-id ranges**:
+
+| Area | Ids | What |
+|---|---|---|
+| Session / history | 20–29 | history checkpoints, whole-document restore (cloud versions) |
+| Items | 70–79 | import from bytes, remaining interpretation fields |
+| Compositions | 120–139 | work-area clear, comp-root template/responsive-time data |
+| Layers | 230–269 | pasteLayers parent / ref remap, subtree delete, layer-kind gaps |
+| Layer time | 330–349 | transitions, time-stretch dialog, unfreeze, track-local ripple |
+| Properties / keyframes | 420–439, 520–539 | member keys, roving retime, graph-editor gaps |
+| Groups | 650–699 | puppet pins, skeleton/bones/IK, paint strokes, mask/shape drawing |
+| Markers | 710–719 | marker colour tokens |
+
+**Off-document builders** (`src/core/engine/offDocument.ts`). An insert
+(a preset, a Lottie import, a library rig, a configured camera, captions) is a
+client-side builder whose result is a set of NEW layers — what a `copyLayers`
+fragment carries. `buildLayerFragment(comp, build)` runs the legacy builder
+against a scratch state of the document inside one synchronous task, encodes
+the layers it added, and restores the document exactly (the parts machinery);
+`insertBuiltLayers(label, comp, build)` then sends ONE `pasteLayers` (both
+engines, one undo entry, engine-minted ids) and selects the result. The run
+fails (`OffDocumentError`) if the builder changed anything but new layers of
+that composition — an existing layer, an item, composition settings, the
+timeline's markers — so a builder with other effects must send those as
+commands of its own. The ratchet treats writer calls lexically inside the
+callback as scratch writes (`OFF_DOCUMENT_BUILDERS` in the rule).
+
+#### Layer inserts — `pasteLayers` parent and reference remap (WS-L1, both engines)
+
+`pasteLayers.parent?: LayerId` (field 5): the fragment's top-level layers go
+under that layer of `comp` (Premation groups nest; parenting IS nesting, so any
+layer of the comp is accepted, as `createLayer.parent`); a parent in another
+composition is `invalidArgument`. `index` keeps its meaning — a stack index
+among the composition's OTHER layers — and the pasted layers' own descendants
+no longer count toward it (a pasted group at index k lands at k, its children
+right under it; before, its children shifted the slot). Pasted siblings keep
+the copied stacking (the first in fragment order is the front-most; both
+engines used to reverse a multi-layer paste). `buildLayerFragment` returns the
+existing layer the builder built into as `parent`, and `insertBuiltLayers`
+sends it.
+
+**References between pasted layers follow the copies** (AE does this for
+parenting and track mattes). A stored layer reference is replaced ONLY when it
+is a string equal to the id of a layer IN the fragment; references to other
+layers are kept as they are. The complete list — any component of a pasted
+row (`layers.ts remapLayerRefs` ⇄ `handlers_layers2.cpp remap_layer_refs`):
+
+| Where | What |
+|---|---|
+| row `parent` | parenting (nesting) — as before |
+| `matte.sourceId` | track matte source |
+| `effects[*].params[*]` (string values) | layer-valued effect params (Set Matte, Displacement Map, Compound Blur, audio effects, plugin `layer` params, Layer Control) — by value, because plugin schemas are not in every engine's registry |
+| `__cloner.pathLayerId`, `__cloner.falloff.layerId` | cloner path / falloff field layer |
+| `__audioDriver[*].sourceLayerId` | audio-driven property source (`mix` is not an id) |
+| `paint.strokes[*].cloneSourceId` | clone-stamp source layer |
+| `pluginLayer:*` component, top-level string props not named `__…` | a plugin layer's `layer` props |
+
+Expressions address layers by NAME (AE) and are not rewritten; animation data
+tracks carry the new id already. Sites moved onto `insertBuiltLayers` /
+`pasteLayers`: shape/text/primitive/solid/camera/light inserts (the New Light
+dialog now makes ONE light — AE — no Ambient Fill beside it; the silent
+insert keeps it), every library insert (motion graphics, Lottie items and
+files, cursors, UI kit, animation presets, saved components, plugin layer
+kinds — now INTO the active comp), templates (a gesture: `deleteLayers` of
+the comp's layers, then `setCompositionSettings` + `pasteLayers`; the fields
+follow the minted ids), and captions (`deleteLayers` of the old captions +
+one `pasteLayers`, one entry). Auto-reframe is a gesture of
+`createComposition` → `createLayer{precomp, init scale}` →
+`setDimensionsSeparated` + `addKeyframes`. The Lottie importer's
+`LegacyDocumentContext` now only ever runs inside the off-document builder.
+
+#### Rigging — puppet and skeleton paths (WS-R, both engines)
+
+Puppet pins and skeletons are ordinary property groups and properties: the
+generic group commands (`addPropertyGroup`, `removePropertyGroups`,
+`movePropertyGroup`, `renamePropertyGroup`, `setGroupEnabled`,
+`addProperties` / `removeProperties`) and the generic value commands
+(`setProperty`, `addKeyframes`, `updateKeyframes`, `deleteKeyframes`,
+`setAnimated`, expressions) — no rig-specific command. Storage is unchanged
+(`fx.puppet`, `fx.skeleton`, the `puppet.<pin>.*` / `bone.<id>.*` /
+`ikTarget.<id>.*` / `ikPole.<id>.*` / `ikMode.<id>` tracks), so every document
+opens as it did. Bindings: `src/core/engine/rigProps.ts` ⇄
+`native/engine/src/core/rig.cpp` (catalog `special: 'rig'`).
+After Effects' Puppet effect is the reference for the puppet; the skeleton
+(Premation-only, Duik-like) follows the same conventions.
+
+A group exists while its data does: `puppet` while the layer has a puppet rig,
+`skeleton` while it has a skeleton. Group ids are engine-minted (`pin_<n>`,
+`bone_<n>`, `ctrl_<n>`), never reused within a document.
+
+| Path | Kind | Value / storage | Notes |
+|---|---|---|---|
+| `puppet` | group "Puppet" (`ADBE FreePin3`) | `fx.puppet` | `addPropertyGroup{parent:'', matchName:'ADBE FreePin3'}` creates an empty rig (mesh mode by layer kind, as the first pin did); removing it deletes every pin and its keys (AE: delete the Puppet effect). |
+| `puppet/mesh/density` · `expansion` | field scalar | `meshDensity` (absent = 22), `meshExpansion` (absent = 0) | AE Mesh ▸ Density / Expansion (not keyframeable here). |
+| `puppet/mesh/mode` | field choice `grid` \| `silhouette` | `meshMode` (absent = grid) | |
+| `puppet/mesh/solver` | field choice `arap` \| `lbs` | `solver` (absent = arap) | |
+| `puppet/mesh/rotationRefinement` | field scalar ≥ 0 | `maxRotationDeg` (0 = unlimited = absent) | AE Mesh Rotation Refinement. |
+| `puppet/pins` | indexed group "Deform" | `pins[]` | order = `movePropertyGroup`. |
+| `puppet/pins/<pin>` | group (`ADBE FreePin3 PosPin Atom`), name = `pin.name` | one pin | `addPropertyGroup{parent:'puppet/pins'}` (creates the rig when absent); `init`: `restPosition`, `kind`, `position`, …; `renamePropertyGroup`; remove = pin + all its keys. |
+| `…/<pin>/position` | vec2, animatable | keys: `puppet.<pin>.position` points track (`[{x,y}]`, spatial tangents = the data key's `si`/`so`); static: `pin.position`, absent = the rest anchor | AE Puppet Pin ▸ Position (layer px, rest space when a skeleton also skins the layer). A static write moves the pin without a key (NEW stored field; the renderer's `resolveLivePins` reads it). Deleting the last key leaves the pin static at that key (AE). |
+| `…/<pin>/rotation` | scalar °, animatable | `puppet.<pin>.rotation`; static `pin.rotation` | Advanced / Bend pin Rotation. |
+| `…/<pin>/scale` | scalar **%**, animatable | `puppet.<pin>.scale` (stored ×1); static `pin.scale` | Advanced / Bend pin Scale (API unit percent, like transform scale). |
+| `…/<pin>/stiffness` | scalar ≥ 0, animatable | `puppet.<pin>.stiffness`; static `pin.stiffness` | AE Starch ▸ Amount (any pin kind here). |
+| `…/<pin>/overlap` | scalar −100..100, animatable | `puppet.<pin>.overlap`; static `pin.overlap` | AE Overlap ▸ In Front. |
+| `…/<pin>/overlapExtent` | field scalar ≥ 0.05 | `pin.overlapExtent` (absent = 1) | AE Overlap ▸ Extent. |
+| `…/<pin>/kind` | field choice `position` \| `starch` \| `bend` \| `advanced` \| `overlap` | `pin.kind` (absent = advanced) | Switching to bend keeps the position keys (dormant). |
+| `…/<pin>/restPosition` | field vec2 | `pin.x`, `pin.y` | Where the pin binds the mesh (AE keeps this internal; set it in `init`). |
+| `skeleton` | group "Skeleton" (`Premation Skeleton`) | `fx.skeleton` | `addPropertyGroup{parent:'', matchName:'Premation Skeleton'}`; removing it deletes every bone, IK goal, controller and their keys. |
+| `skeleton/mesh/density` · `expansion` · `mode` | fields | `meshDensity`, `meshExpansion`, `meshMode` | The skinning mesh when no puppet rig shares the layer. |
+| `skeleton/weightPaint` | field json (§14.2) | `weightPaint` (sparse `{vertexCount, bones:{id:{vertex:weight}}}`; null = none) | A paint stroke = ONE `setProperty` on release. |
+| `skeleton/bones` | indexed group "Bones" | `bones[]` | |
+| `skeleton/bones/<bone>` | group (`Premation Bone`), name = `bone.name` | one bone | `addPropertyGroup{parent:'skeleton/bones'}` (creates the skeleton when absent); `init` writes the new bone's values without capturing a bind pose; remove = the bone's SUBTREE, their IK goals, controllers, weight-paint and bind-pose entries and every key. |
+| `…/<bone>/position` | vec2, animatable | `bone.<id>.x/.y`; static `bone.x/.y` (local to the parent) | |
+| `…/<bone>/rotation` | scalar **°**, animatable | `bone.<id>.rotation` (stored **radians**); static `bone.rotation` | |
+| `…/<bone>/scale` | vec2 **%**, animatable | `bone.<id>.scaleX/.scaleY` (stored ×1) | |
+| `…/<bone>/parent` | field string (`''` = root) | `bone.parentId` | A cycle is `invalidArgument`. |
+| `…/<bone>/length` | field scalar > 0 | `bone.length` | |
+| `…/<bone>/influenceRadius` | field scalar ≥ 0 (0 = unlimited = absent) | `bone.influenceRadius` | |
+| `…/<bone>/restPosition` · `restRotation` (°) · `restScale` (%) | fields | the bone's `bindPose` entry (absent = the bone itself) | The RIG-mode edit: what the skin is bound to. |
+| `…/<bone>/ik` | group "IK" (`Premation IK Goal`) | the `ikTargets` entry of this bone | `addPropertyGroup{parent:'skeleton/bones/<bone>'}`; `setGroupEnabled` = `enabled`; remove = the goal + its target/pole/mode keys. |
+| `…/ik/target` | vec2, animatable | `ikTarget.<id>.x/.y`; static `target.x/.y` | |
+| `…/ik/pole` | vec2, animatable, OPTIONAL | `ikPole.<id>.x/.y`; static `target.pole` | `addProperties{parent:'…/ik', names:['pole']}` / `removeProperties`. |
+| `…/ik/mode` | scalar 0..1, animatable | `ikMode.<id>`; static `target.ikMode` (fk = 0, ik = 1) | ≥ 0.5 = IK (sampled as a hold). |
+| `…/ik/chainLength` | field scalar 1..8 | `target.chainLength` (absent = 2) | |
+| `skeleton/controllers/<ctrl>` | group (`Premation Rig Controller`), name = `controller.name` | one controller | fields `shape`, `side` (choices), `size`, `offset` (vec2), `drives` (`bone` \| `ikTarget`), `bone` (string). |
+| `layer/puppet`, `layer/skeleton` | field json | the whole rig | Whole-rig replace (rig presets, AI rigs, paste); removed pins / bones lose their keys. |
+
+**Static pose writes capture the bind pose.** A static (un-keyed) write of a
+bone's `position` / `rotation` / `scale` or an IK `target` / `pole` first pins
+the rig's bind pose to the current bones when it has none (legacy
+`captureBindPose`), so a pose drag without keyframes deforms instead of moving
+the rest pose with it. The rest fields write the bind pose (capturing it
+first). A rig-mode edit of a bone = its `rest*` field (plus the pose property's
+static value when the property is not animated).
+
+**UI mapping.** Pin placement = one `addPropertyGroup` (`init`: `restPosition`
+= the click mapped back through the current deformation, `kind`, and
+`position` = the clicked point when the mesh is displaced); a pin drag = a
+gesture of `addKeyframes` at the playhead with the absolute value per move
+(puppet pins always key — After Effects auto-keys pins); rotate / scale gizmo
+the same on `rotation` / `scale`; Puppet Sketch = ONE batch of
+`deleteKeyframes` (the keys inside the recorded span, AE) + `addKeyframes`
+(the reduced keys with their easing); a motion-path tangent drag = a gesture
+of `updateKeyframes {spatialIn, spatialOut}`. Bone draw = `addPropertyGroup`
+on `skeleton/bones` (`init`: `parent`, `length`, `position`, `rotation`); a
+pose / IK / pole / controller drag = a gesture of `addKeyframes` (keyframing:
+the property is animated or auto-keyframe is on) or `setProperty` (static);
+IK/FK switch = a client macro (`planChainSwitch`) writing `mode`, rotations
+and `target`; a rig preset = `setProperty('layer/skeleton')`. 3D IK
+(Ik3DSection) is a client macro over transform rotation keys.
+
+#### Layer fields (B3z-a, both engines)
+
+G1's static FIELDS (§15.7) generalised from the Text component to every
+layer. `src/core/engine/layerFieldSpecs.ts` is a DATA table (`LAYER_FIELDS`,
+pure; generated into the C++ catalog as `fields.layer` by
+`GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`), read by
+`src/core/engine/fields.ts` (owner `layer`) and `native/engine/src/core/fields.cpp`
+(`layer_*`). Each row is one static (`animatable: false`) property:
+
+- `path` — the API path; `type` / `default` / `choices` / `min` / `max` /
+  `clearAtDefault` exactly as a G1 field (`setProperty` / `setProperties` /
+  `resetProperty` type-check it; keys, stopwatch and expressions answer
+  `notAnimatable`).
+- `store` — where the value lives: a prop of the layer's first component of a
+  type (`component`, or an ordered list: the first type the layer carries), or
+  a key of its `fx` component (`fx`, optionally a `key` inside that object —
+  the object must exist). A write creates nothing else.
+- `when` — when the layer HAS the property: a component type, layer kinds /
+  excluded kinds, 3D on, an `fx` key present. Absent = every layer that has the
+  storage.
+- `encode` — a choice / bool whose stored form differs from the API value
+  (`[API value, stored raw]` pairs, stored `null` = absent): `material/shading`
+  `phong` is stored as an absent `shadingModel`, a light's `castsShadows` false
+  as absent, a stored `false` also reads as false.
+- `json: 'object' | 'array'` — a json field's shape; `null` clears it; any
+  other shape is `invalidArgument`. The client computes the whole next value
+  (a toggled switch inside a cloner config) and sends it; the engine stores it
+  verbatim and undo restores the previous value exactly (parts, §15.2).
+- `mirror` — a second store written with the same raw value (a legacy marker
+  other readers use: `primitive/type` → `Transform.primitiveType`).
+
+Bindings are appended after the G1 block in table order, skipping a path the
+catalog already has (both engines add them identically; the property tree is
+compared across engines). Rows today:
+
+| Path | Type | Storage | On |
+|---|---|---|---|
+| `material/shading` | choice `phong` \| `pbr` \| `toon` | `Transform.shadingModel` (phong = absent) | 3D layers |
+| `material/toonBands` | scalar 2..8 (3 = absent) | `Transform.toonBands` | 3D |
+| `material/heightMap` | string item id ('' = none) | `Transform.heightMapAssetId` | 3D |
+| `material/displacementSubdivisions` | scalar 0..3 | `Transform.displacementSubdiv` | 3D |
+| `material/faceMaterials` | json object `{side?, bevel?, back?: {fill?, gain?}}` | `Transform.faceMaterials` | 3D |
+| `geometry/bevelStyle` | choice `angular` \| `concave` \| `convex` | `Transform.bevelStyle` (angular = absent) | 3D layers with Geometry Options |
+| `text/perCharacter3D` | bool | `Transform.perChar3D` | text layers |
+| `light/lightType` · `light/falloff` · `light/environment` | choice · choice · string (`studio` \| `sky` \| `sunset` \| `asset:<id>`) | `Transform.lightType` / `falloff` / `envPreset` | lights |
+| `light/castsShadows` · `light/glow` · `light/shadowMap` | bool | `Transform.castShadows` / `lightGlow` / `shadowMap` | lights |
+| `light/shadowMapSize` | scalar 64..8192 (1024 = absent) | `Transform.shadowMapSize` | lights |
+| `camera/filmSize` | scalar mm (36 = absent) | `Transform.filmSize` | cameras |
+| `primitive/type` | choice sphere … box (+ mirror `Transform.primitiveType`) | `Primitive.type` | 3D primitive layers |
+| `primitive/radius` … `tube`, `radialSegments`, `heightSegments`, `capped` | scalar / bool | `Primitive.<key>` | 3D primitive layers |
+| `layer/particle` | json object (the emitter config) | `fx.particle` | particle layers |
+| `layer/cloner` · `layer/physics` · `layer/audioWaveform` | json object | `fx.__cloner` / `fx.__physics` / `fx.audioWaveform` | visual layers |
+| `layer/modifiers` | json object `{<prop>: {modifiers, previous}}` | `Transform.__modifiers` | every layer |
+| `layer/precompose` | bool (a group composited as one unit) | `fx.precomp` | group layers |
+| `layer/compOverrides` | json object `{"<origId>/<prop>": value}` | `fx.__compOverrides` | precomp layers |
+| `layer/sequenceLoop` | bool | `fx.imageSequence.loop` | image sequences |
+| `audio/effects` | json array (declared WebAudio chain) | `fx.audioEffects` | audio / video / precomp |
+| `audio/drivers` · `audio/ducking` · `audio/gate` | json object (analysis records) | `Transform.__audioDriver` / `__ducking`, `Audio`-or-`Transform.__gate` | as above |
+
+The analysis-driven audio tools (ducking, gate, driver, silence removal) and
+the tracker are CLIENT MACROS (§1 rule 7): the analysis is not a document
+write; its result is one batch of ordinary commands plus the record field.
+Replay: the `B3z: layer fields …` corpus session, the `properties: every
+property …` sweep (every row is bumped on every layer kind) and the generated
+corpus (json fields are now among the static fields it writes).
+
+#### Layer operations and text (B3z-a worker B)
+
+- **`setTrackMatte` without `matte.layer`** (mode ≠ none) is AE's classic
+  positional matte — the layer directly above in the stack — stored as
+  `fx.matte {mode, inverted}` with no `sourceId`, as the editor always stored
+  "Layer Above". Both engines accepted only a source before; the random corpus
+  already emitted the form (it is no longer an error in either engine).
+  Replay: `B3z: Layer Above track matte and latent text Tracking / Leading`.
+- **Latent text Tracking / Leading**: `letterSpacing` and `lineHeight` are
+  latent rows (`latentPropSpecs.ts`, home `Text`) — a text layer that has not
+  stored them addresses `text/letterSpacing` / `text/lineHeight` (the paths a
+  stored value has), so a text preset or the Character panel writes them
+  through the engine.
+- **Text presets** (`textPresetEdit`) are one batch of field / property writes:
+  a keyword weight is sent as its number (`bold` ≡ 700 on `text/axes/wght`),
+  the legacy `strokeOverFill` boolean as `text/strokeOrder`, `content` as Source
+  Text (+ its style runs). The pre-API bag writer is gone from the text area.
+- **Point ⇄ paragraph text and Box Auto-Size** (`paragraphTextCommands.ts`) are
+  client macros, ONE batch each: `text/boxWidth|boxHeight|boxAutoSize`, a Fit
+  Text to Box scale baked into `text/fontSize` / `text/letterSpacing` /
+  `text/paragraphSpacing`, Source Text (static: the wrapped text + `text/styleRuns`
+  re-sent — each soft wrap replaces one space, so the runs keep their indices;
+  keyed: `updateKeyframes` values with each key's own wrap, keyframe ids from
+  `getKeyframes`), and the compensating Position (`setProperties`, keyed at the
+  playhead when animated). A keyed layer's static text is not rewritten — AE
+  has no separate static value while the stopwatch is on.
+- **Convert SVG to Editable Shapes** is a client macro, not `convertLayer`: the
+  SVG parser (fonts for `<text>`, clip intersection, CSS/SMIL → keys) runs in the
+  editor off-document (`buildSvgShapeGroup` inside `buildLayerFragment`) and the
+  result goes out as ONE batch `pasteLayers` (at the SVG layer's stack slot and
+  parent) + `deleteLayers` of the SVG layer — replayable in both engines.
+  `convertLayer{shapesFromVector}` stays `unsupported` in both engines: the C++
+  engine has no SVG geometry parser (only the G2 sanitiser), and the TS parser
+  measures text through the DOM.
+- **Create Masks from Text** is the same shape: glyph outlines (async font
+  loading) → an off-document build of the comp-sized solid in the text colour
+  with one mask per contour → ONE batch `pasteLayers` + `setLayerSwitches
+  {visible:false}` on the text.
+- **Replace Footage with a file** (Inspector ▸ Replace): a library item →
+  `replaceLayerSource{keepSize}`; any other path → ONE engine gesture
+  `importFiles` (by path) then `replaceLayerSource` on the new item (AE adds the
+  file to the project). The per-layer image-sequence loop is `layer/sequenceLoop`.
+- **Comp motion-blur master**: switching a layer's motion blur on while the
+  comp master is off sends `setCompositionSettings{motionBlur.enabled:true}` in
+  the switch's own batch (AE's dual gate, one undo entry). Clear Work Area in
+  the Preview panel is `clearWorkArea`. Transform presets reach Skew / Skew
+  Axis / Fill Opacity at their defaults through worker C's latent bindings.
+- **Left for B3z-b's commands** (schema only when this landed): the Shift
+  pick-whip JUMP (`setParent{jump,time}`), the non-footage Time Stretch field
+  (`timeStretchLayers`), the Freeze Frame switch and Freeze Time field
+  (`unfreezeLayers`: on a frozen layer `freezeFrame{time}` re-holds the frame
+  it already shows, AE-correct for the menu command, so a typed source time is
+  `[unfreezeLayers, freezeFrame{keyframeToCompTime(v)}]`), the Cryptomatte ID
+  matte (import from bytes, items 70–79), rename with expression repair and
+  group / ungroup across parents (WS-M).
 
 ## 16. Files
 

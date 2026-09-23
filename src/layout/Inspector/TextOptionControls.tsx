@@ -15,10 +15,12 @@
  */
 
 import { useEffect, useState } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
-import { readTextPathConfig, textPathPropPath, textPathParamValue, type TextPathParam } from '@core/text/textPath';
-import { axisPropPath, axisLabel, readFontAxesProp } from '@core/text/fontAxes';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTree } from '@hooks/useMirror';
+import { plainValue } from '@core/mirror/trackIndex';
+import { textPathPropPath, type TextPathParam } from '@core/text/textPath';
+import { axisPropPath, axisLabel } from '@core/text/fontAxes';
+import { fontAxisValue, hasTextLayer, storedFontAxes, textField, textPathOf } from '@layout/Text/textMirror';
 import { loadFamilyAxes, registeredAxisFallback, type FamilyAxes } from '@core/text/fontAxesLoader';
 import type { FvarAxis } from '@core/text/variableFontProbe';
 import { ValueField } from '@components/ValueField';
@@ -28,11 +30,6 @@ import { AnimToggle } from './AnimToggle';
 import { fieldEdit, useTextParam } from '@layout/Text/textEdits';
 import styles from './CharacterPanel.module.css';
 
-function textComp(nodeId: string): { id: string; props: Record<string, unknown> } | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const c = node?.components.find((x) => x.type === 'Text');
-  return c ? { id: c.id, props: c.props as Record<string, unknown> } : null;
-}
 
 /** A keyframeable number in the Character panel's metric grid. */
 export function KeyframeableNumberCell({
@@ -50,8 +47,8 @@ export function KeyframeableNumberCell({
   step?: number;
   title?: string;
 }): JSX.Element {
-  useSceneRevision((s) => s.rev);
   // Engine API (B3): keyed at the playhead when animated, else static; a scrub is one gesture.
+  // B4: `useTextParam` reads the mirror and wakes on this property alone.
   const p = useTextParam(nodeId, path, label, value, onStatic);
   const shown = p.display;
   return (
@@ -69,7 +66,6 @@ export function KeyframeableNumberCell({
 function KeyframeableSwitch({
   nodeId, path, label, on, title,
 }: { nodeId: string; path: string; label: string; on: boolean; title?: string }): JSX.Element {
-  useSceneRevision((s) => s.rev);
   // Engine API (B3): the 0/1 track keyed at the playhead when animated, else the static flag.
   const p = useTextParam(nodeId, path, label, on ? 1 : 0);
   const shown = p.display >= 0.5;
@@ -94,9 +90,13 @@ function KeyframeableSwitch({
 // ── Variable axes ────────────────────────────────────────────────────
 
 export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const comp = textComp(nodeId);
-  const family = typeof comp?.props.fontFamily === 'string' ? comp.props.fontFamily : 'Inter';
+  // B4: the layer's Text fields and `text/axes/<tag>` from the mirror; the tree
+  // record changes whenever one of its properties does.
+  useMirrorTree(nodeId);
+  const m = documentMirror();
+  const isText = hasTextLayer(m, nodeId);
+  const familyField = isText ? textField(m, nodeId, 'fontFamily') : undefined;
+  const family = typeof familyField === 'string' ? familyField : 'Inter';
   const [info, setInfo] = useState<FamilyAxes | null>(null);
   const [showNominal, setShowNominal] = useState(false);
 
@@ -107,10 +107,13 @@ export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element
     return () => { live = false; };
   }, [family]);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !comp) return null;
-  const stored = readFontAxesProp(node);
-  const hasStored = typeof comp.props.fontWidth === 'number' || typeof comp.props.fontSlant === 'number' || Object.keys(stored).length > 0;
+  if (!isText) return null;
+  const stored = storedFontAxes(m, nodeId);
+  // Width / Slant off their defaults count as set (the API reports every
+  // registered axis, stored or not).
+  const wdth = fontAxisValue(m, nodeId, 'wdth');
+  const slnt = fontAxisValue(m, nodeId, 'slnt');
+  const hasStored = (wdth !== undefined && wdth !== 100) || (slnt !== undefined && slnt !== 0) || Object.keys(stored).length > 0;
 
   // A font file that was read and declares no axes is a static font: no section.
   if (info?.fromFont && info.axes.length === 0 && !hasStored) return null;
@@ -121,12 +124,7 @@ export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element
     if (!axes.some((a) => a.tag === tag)) axes = [...axes, { tag, min: -1000, default: 0, max: 1000, hidden: false }];
   }
 
-  const staticValue = (a: FvarAxis): number => {
-    if (a.tag === 'wght') return Number(comp.props.fontWeight ?? a.default) || a.default;
-    if (a.tag === 'wdth') return typeof comp.props.fontWidth === 'number' ? comp.props.fontWidth : a.default;
-    if (a.tag === 'slnt') return typeof comp.props.fontSlant === 'number' ? comp.props.fontSlant : a.default;
-    return stored[a.tag] ?? a.default;
-  };
+  const staticValue = (a: FvarAxis): number => fontAxisValue(m, nodeId, a.tag) ?? a.default;
   // Every axis — wght / wdth / slnt included — is ONE engine property,
   // `text/axes/<tag>` (G1): static value and keys through the same path.
 
@@ -173,11 +171,21 @@ const SWITCHES: ReadonlyArray<{ param: TextPathParam; label: string; title: stri
   { param: 'forceAlignment', label: 'Force Alignment', title: 'Spread the characters from First Margin to Last Margin' },
 ];
 
+/** Path Options' defaults (textPath.ts `defaultTextPath`) for a param the tree does not report. */
+const PATH_DEFAULTS: Readonly<Record<TextPathParam, number>> = {
+  firstMargin: 0, lastMargin: 0, reversed: 0, perpendicular: 1, forceAlignment: 0,
+};
+
 export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const cfg = node ? readTextPathConfig(node) : null;
-  if (!cfg) return null;
+  // B4: Path Options ▸ Path and `text/pathOptions/<param>` from the mirror.
+  useMirrorTree(nodeId);
+  const m = documentMirror();
+  if (textPathOf(m, nodeId) === '') return null;
+  const param = (p: TextPathParam): number => {
+    const v = plainValue(m.property(nodeId, `text/pathOptions/${p}`)?.value);
+    return typeof v === 'number' ? v : typeof v === 'boolean' ? (v ? 1 : 0) : PATH_DEFAULTS[p];
+  };
+  const cfg = { firstMargin: param('firstMargin'), lastMargin: param('lastMargin') };
   return (
     <div className={styles.metricGrid} role="group" aria-label="Path Options">
       {SWITCHES.map((s) => (
@@ -187,7 +195,7 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
           path={textPathPropPath(s.param)}
           label={s.label}
           title={s.title}
-          on={textPathParamValue(cfg, s.param) >= 0.5}
+          on={param(s.param) >= 0.5}
         />
       ))}
       <KeyframeableNumberCell
@@ -202,7 +210,7 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
         path={textPathPropPath('lastMargin')}
         label="Last Margin"
         unit="px"
-        value={cfg.lastMargin ?? 0}
+        value={cfg.lastMargin}
       />
     </div>
   );
@@ -211,14 +219,16 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
 // ── OpenType ─────────────────────────────────────────────────────────
 
 export function OpenTypeControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const comp = textComp(nodeId);
-  if (!comp) return null;
-  const p = comp.props;
-  const ligatures = p.ligatures !== false;
-  const dlig = p.discretionaryLigatures === true;
-  const calt = p.contextualAlternates !== false;
-  const sets = Array.isArray(p.stylisticSets) ? (p.stylisticSets as number[]) : [];
+  // B4: the OpenType fields (`text/<key>`, G1) from the mirror.
+  useMirrorTree(nodeId);
+  const m = documentMirror();
+  if (!hasTextLayer(m, nodeId)) return null;
+  const f = (key: string): unknown => textField(m, nodeId, key);
+  const ligatures = f('ligatures') !== false;
+  const dlig = f('discretionaryLigatures') === true;
+  const calt = f('contextualAlternates') !== false;
+  const rawSets = f('stylisticSets');
+  const sets = Array.isArray(rawSets) ? (rawSets as number[]) : [];
   // OpenType switches and the stylistic-set list are text fields (G1); undefined = the default.
   const write = (label: string, key: string, value: unknown): void => {
     void fieldEdit(label, nodeId, `text/${key}`, value);

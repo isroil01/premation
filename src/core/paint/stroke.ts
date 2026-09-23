@@ -315,6 +315,29 @@ export function setNodeStrokes(nodeId: string, strokes: Stroke[]): void {
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
+/**
+ * The ENGINE's stack write (`layer/strokes`, the property seam): exactly
+ * `setNodeStrokes`' storage — normalised, the stack kept only when > 1, the
+ * single slot mirroring strokes[0] — without the UI refresh (the engine
+ * reports its own changes).
+ */
+export function storeNodeStrokes(nodeId: string, strokes: ReadonlyArray<unknown>): void {
+  const normalized = strokes.map(normalizeStroke);
+  defaultSceneGraph.setStrokes(nodeId, normalized.length > 1 ? normalized : undefined);
+  defaultSceneGraph.setStroke(nodeId, normalized[0]);
+}
+
+/** Replace the stored stroke at `index` of the stack (engine seam; see storeNodeStrokes). */
+export function storeNodeStrokeAt(nodeId: string, index: number, stroke: Stroke): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const stack = readNodeStrokes(node);
+  if (index < 0 || index >= stack.length) return;
+  const next = [...stack];
+  next[index] = stroke;
+  storeNodeStrokes(nodeId, next);
+}
+
 /** Set (or clear, when undefined) the node's PRIMARY stroke. Routes through
  *  the stack when one exists so single-stroke controls stay truthful. */
 export function setNodeStroke(nodeId: string, stroke: Stroke | undefined): void {

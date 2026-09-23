@@ -16,7 +16,7 @@ import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore, type CompositionSettings, type SerializedWorkspaceTabs } from '@stores/projectStore';
-import { commitAllTimes } from '@stores/playbackClockStore';
+import { withoutTimelineView } from '@core/project/editorView';
 import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
@@ -130,9 +130,11 @@ export interface EditorDocument {
    */
   pluginStorage?: Record<string, Record<string, string>>;
   /**
-   * Open composition tabs (which precomps are open, which is active, playhead
-   * per tab). Optional: an absent key means "keep" on restore, same as
-   * `timelines`. New Project drops them via `resetProjectWorkspace`.
+   * LEGACY (read, never written since B4): open composition tabs (which
+   * precomps are open, which is active, playhead per tab). Editor state — it
+   * now lives beside the file (core/project/editorView.ts). A document that
+   * still carries it restores it once, so an existing project opens where it
+   * was left; an absent key means "keep".
    */
   openTabs?: SerializedWorkspaceTabs;
   /** Legacy: single active comp. Read on restore, no longer written. */
@@ -153,41 +155,25 @@ export interface EditorDocument {
 
 /** Snapshot every authored subsystem into one self-contained document. */
 export function captureDocument(): EditorDocument {
-  // A save taken mid-playback must carry the playhead the user sees, not the
-  // 4 Hz mirror the project store keeps during playback.
-  commitAllTimes();
   const ws = useProjectStore.getState();
-  const openTabs: SerializedWorkspaceTabs = {
-    tabOrder: [...ws.tabOrder],
-    activeTabId: ws.activeTabId,
-    tabs: Object.fromEntries(
-      Object.values(ws.tabs).map((t) => [
-        t.id,
-        {
-          id: t.id,
-          compositionId: t.compositionId,
-          breadcrumbPath: [...t.breadcrumbPath],
-          ...(t.breadcrumbVia && t.breadcrumbVia.length > 0 ? { breadcrumbVia: [...t.breadcrumbVia] } : {}),
-          title: t.title,
-          time: t.time,
-          frame: t.frame,
-        },
-      ]),
-    ),
-  };
+  // B4: no editor state in the document — open tabs, the playhead and each
+  // timeline's zoom/scroll are kept per project file on this machine instead
+  // (core/project/editorView.ts). Documents written before still carry them
+  // and restore still reads them (the migration); the next save drops them.
+  const timelines: Record<string, SerializedTimeline> = {};
+  for (const [id, t] of Object.entries(getTimelineController().capture())) timelines[id] = withoutTimelineView(t);
   return {
     version: '1.1.0',
     scene: sceneProjectIO.capture(),
     animation: defaultAnimation.snapshot(),
     comps: structuredClone(ws.comps),
-    timelines: getTimelineController().capture(),
+    timelines,
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
     colorManagement: useColorManagementStore.getState().settings(),
     swatches: useSwatchStore.getState().list(),
     materials: useMaterialStore.getState().list(),
     transitions: useTransitionStore.getState().capture(),
-    openTabs,
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
     // byte-identical — the same rule `plugins` follows above.

@@ -9,10 +9,13 @@ import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { PropertyRow } from '@components/PropertyRow';
 import { Icon } from '@components/Icon';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { usePhysicsStore } from '@stores/physicsStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodePhysicsRaw, PHYSICS_PROP, DEFAULT_PHYSICS_BODY } from '@core/simulation/physicsBodies';
+import { DEFAULT_PHYSICS_BODY } from '@core/simulation/physicsBodies';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from './useEngineEdit';
+import { jsonFieldCommands } from './layerFieldEdits';
 import type { BodyKind, ColliderShape, PhysicsBodyConfig } from '@core/simulation/rigidBody';
 // Importing this module is what REGISTERS `dynamics.bakePhysics` /
 // `dynamics.bakeParticles`. It has to be imported from somewhere that runs at
@@ -22,36 +25,40 @@ import { runPhysicsBake } from '@core/simulation/bakeCommands';
 import { BakeDialog } from './BakeDialog';
 import panel from '@layout/Effects/EffectsPanel.module.css';
 
+const PHYSICS_PATH = 'layer/physics';
+const EDIT_LABEL = 'Edit Physics';
+
 export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
+  const eng = useEngineEdit();
+  // B4: the layer header and its `layer/physics` json field from the document mirror.
+  const layer = useMirrorLayer(nodeId);
+  const stored = useMirrorJson<Partial<PhysicsBodyConfig>>(nodeId, PHYSICS_PATH);
   const w = usePhysicsStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [worldCollapsed, setWorldCollapsed] = useState(false);
   const [bakeOpen, setBakeOpen] = useState(false);
 
-  if (!node) return null;
+  if (!layer) return null;
 
-  const cfg = readNodePhysicsRaw(node);
+  // The stored config including a disabled one, over the defaults (readNodePhysicsRaw's rule).
+  const cfg: PhysicsBodyConfig = stored && typeof stored === 'object' ? { ...DEFAULT_PHYSICS_BODY, ...stored } : DEFAULT_PHYSICS_BODY;
   const off = !cfg.enabled;
 
-  const write = (patch: Partial<PhysicsBodyConfig>): void => {
-    // B3-legacy: engine gap — physics config (fx key) is a structured value with no API property.
-    defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, { ...cfg, ...patch });
-    bumpScene();
+  // `layer/physics` (json, fx.__physics): the whole next config per write; a
+  // scrub is one gesture, a typed value / pick / checkbox one entry.
+  const write = (patch: Partial<PhysicsBodyConfig>, label = EDIT_LABEL): void => {
+    eng.send(label, jsonFieldCommands(nodeId, PHYSICS_PATH, { ...cfg, ...patch }));
   };
 
   const removePhysics = (): void => {
-    // B3-legacy: engine gap — physics config (fx key) is a structured value with no API property.
-    defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, undefined);
-    bumpScene();
+    void edit('Remove Physics', jsonFieldCommands(nodeId, PHYSICS_PATH, null));
   };
 
+  // AE's Reset restores the parameters, not the effect switch: `enabled` is kept.
   const resetPhysics = (): void => {
-    // B3-legacy: engine gap — physics config (fx key) is a structured value with no API property.
-    defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, DEFAULT_PHYSICS_BODY);
-    bumpScene();
+    void edit('Reset Physics', jsonFieldCommands(nodeId, PHYSICS_PATH, { ...DEFAULT_PHYSICS_BODY, enabled: cfg.enabled }));
   };
+  const scrub = eng.scrub(EDIT_LABEL);
 
   return (
     <div className={panel.effectCardItem}>
@@ -71,7 +78,7 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
 
         <Checkbox
           checked={!off}
-          onChange={(e) => write({ enabled: e.target.checked })}
+          onChange={(ev) => write({ enabled: ev.target.checked }, ev.target.checked ? 'Enable Physics' : 'Disable Physics')}
           title={off ? 'Enable physics' : 'Disable physics'}
           style={{ width: 15, height: 15, flexShrink: 0 }}
         />
@@ -149,16 +156,16 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
                 </div>
               </PropertyRow>
               <PropertyRow label="Mass" compact>
-                <ValueField value={cfg.mass} min={0.01} precision={2} onChange={(v) => write({ mass: v })} aria-label="Mass" />
+                <ValueField value={cfg.mass} min={0.01} precision={2} {...scrub} onChange={(v) => write({ mass: v })} aria-label="Mass" />
               </PropertyRow>
               <PropertyRow label="Bounce" compact>
-                <ValueField value={cfg.restitution} min={0} max={1} precision={2} onChange={(v) => write({ restitution: v })} aria-label="Restitution" />
+                <ValueField value={cfg.restitution} min={0} max={1} precision={2} {...scrub} onChange={(v) => write({ restitution: v })} aria-label="Restitution" />
               </PropertyRow>
               <PropertyRow label="Friction" compact>
-                <ValueField value={cfg.friction} min={0} max={1} precision={2} onChange={(v) => write({ friction: v })} aria-label="Friction" />
+                <ValueField value={cfg.friction} min={0} max={1} precision={2} {...scrub} onChange={(v) => write({ friction: v })} aria-label="Friction" />
               </PropertyRow>
               <PropertyRow label="Damping" compact>
-                <ValueField value={cfg.damping} min={0} max={1} precision={3} onChange={(v) => write({ damping: v })} aria-label="Damping" />
+                <ValueField value={cfg.damping} min={0} max={1} precision={3} {...scrub} onChange={(v) => write({ damping: v })} aria-label="Damping" />
               </PropertyRow>
             </>
           )}

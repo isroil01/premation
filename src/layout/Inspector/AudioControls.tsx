@@ -21,7 +21,7 @@ import { Slider } from '@components/Slider';
 import { Popover } from '@components/Popover';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useClipRevision } from '@hooks/useClipRevision';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -30,7 +30,6 @@ import { audioComponent, isAudioNode, readAudioClipTimings } from '@core/audio/a
 import { AudioEffectsSection } from './AudioEffectsSection';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import {
-  convertAudioToKeyframes,
   ensureAudioBuffer,
   amplitudeEnvelope,
   planAudioKeyframes,
@@ -46,8 +45,10 @@ import {
   AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB, percentToDb,
   AUDIO_PAN_PROP, MIN_PAN, MAX_PAN,
 } from '@core/audio/audioParams';
-import { applyFade, DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
-import { runAnimEdit } from '@core/animation/animationCommands';
+import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
+import { useEngineEdit } from './useEngineEdit';
+import { scalarValueCommands } from './inspectorEdits';
+import { barTimingCommand, convertAudioToKeyframesEdit, fadeEdit, muteEdit, unbarredTimingCommand } from './audioEdits';
 // Importing the command module registers "Remove Silence…" and "Duck Under
 // Voice…"; importing the dialogs is what tells those commands how to open. The
 // three are pulled in together here so the menu entries cannot exist without a
@@ -78,6 +79,8 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
   useSceneRevision((s) => s.rev);
   useClipRevision();
   const time = useActiveWorkspace()?.time ?? 0;
+  // A scrubbed timing / level field is ONE gesture; a typed value one entry.
+  const timingEdit = useEngineEdit();
   // Re-render when the engine finishes decoding a waveform.
   const [, setLoaded] = useState(0);
   useEffect(() => audioEngine.onChange(() => setLoaded((n) => n + 1)), []);
@@ -127,43 +130,29 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
         outSec: num(p.__out, duration),
       };
 
-  const write = (key: string, value: unknown): void => {
-    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
-    defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
-    bumpScene();
+  /** Level / Pan typed or scrubbed with the stopwatch off (KeyframeRow's static route). */
+  const writeStatic = (track: string, label: string, v: number): void => {
+    timingEdit.send(`Set ${label}`, scalarValueCommands(track, [{ nodeId, value: v }], { seconds: time }));
   };
 
   const fadeHere = (side: FadeSide): void => {
-    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
-    runAnimEdit(side === 'in' ? 'Fade Audio In' : 'Fade Audio Out', () => {
-      applyFade(nodeId, side);
-      bumpScene();
-    });
+    void fadeEdit([nodeId], side);
   };
 
   // ── Timing writers ───────────────────────────────────────────────
-  // Clip-backed: express each edit as the bar move / edge trim it really is.
-  // `trimClipTo` takes an ABSOLUTE comp time for the edge, so shifting the
-  // in-point by (new − old) source-seconds moves the head edge by the same
-  // amount; the out-point measures from the head, hence `start + (out − in)`.
-  const controller = getTimelineController();
-  const setStart = (v: number): void => {
-    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
-    if (timing.clipId) controller.setClipStart(timing.clipId, Math.max(0, v));
-    else write('__start', Math.max(0, v));
+  // A layer IS its bar (ENGINE_API.md §3.1): Start moves the bar's head to the
+  // value, In / Out trim its edges — `setLayerTiming`, absolute, so a scrub is
+  // one gesture. The in-point measures source seconds from the head, the
+  // out-point from the head too, hence `start + (out − in)`. A layer with no
+  // bar edits its Audio component's own Start / In / Out (`audio/clip*`).
+  // A legacy multi-bar layer edits the layer's first / last bar (the API's
+  // bar model); its Start moves the whole layer.
+  const sendTiming = (field: 'start' | 'in' | 'out', label: string, v: number): void => {
+    timingEdit.send(label, timing.clipId ? barTimingCommand(nodeId, field, timing, v) : unbarredTimingCommand(nodeId, field, v));
   };
-  const setIn = (v: number): void => {
-    const next = clamp(v, 0, timing.outSec);
-    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
-    if (timing.clipId) controller.trimClipTo(timing.clipId, 'start', timing.startSec + (next - timing.inSec));
-    else write('__in', next);
-  };
-  const setOut = (v: number): void => {
-    const next = clamp(v, timing.inSec, duration || Infinity);
-    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
-    if (timing.clipId) controller.trimClipTo(timing.clipId, 'end', timing.startSec + (next - timing.inSec));
-    else write('__out', next);
-  };
+  const setStart = (v: number): void => sendTiming('start', 'Clip start', Math.max(0, v));
+  const setIn = (v: number): void => sendTiming('in', 'In point', clamp(v, 0, timing.outSec));
+  const setOut = (v: number): void => sendTiming('out', 'Out point', clamp(v, timing.inSec, duration || Infinity));
 
   // Waveform geometry: the trimmed-away head/tail are shaded, and the playhead
   // draws at the SOURCE position the comp playhead currently maps to (so it
@@ -221,7 +210,7 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
         min={MIN_LEVEL_DB}
         max={MAX_LEVEL_DB}
         precision={1}
-        onStatic={(v) => write(AUDIO_LEVEL_DB_PROP, v)}
+        onStatic={(v) => writeStatic(AUDIO_LEVEL_DB_PROP, 'Level', v)}
       />
 
       <KeyframeRow
@@ -232,11 +221,11 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
         unit="%"
         min={MIN_PAN}
         max={MAX_PAN}
-        onStatic={(v) => write(AUDIO_PAN_PROP, v === 0 ? undefined : v)}
+        onStatic={(v) => writeStatic(AUDIO_PAN_PROP, 'Pan', v)}
       />
 
       <InspectorRow label="Mute" align="center">
-        <Switch checked={muted} onChange={(e) => write('__muted', e.currentTarget.checked)} aria-label="Mute audio" />
+        <Switch checked={muted} onChange={(e) => muteEdit(nodeId, e.currentTarget.checked)} aria-label="Mute audio" />
       </InspectorRow>
 
       <div className={styles.sectionLabel}>
@@ -252,6 +241,7 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
           unit="s"
           precision={2}
           onChange={setStart}
+          {...timingEdit.scrub('Clip start')}
           aria-label="Clip start"
         />
       </InspectorRow>
@@ -264,6 +254,7 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
           unit="s"
           precision={2}
           onChange={setIn}
+          {...timingEdit.scrub('In point')}
           aria-label="In point"
         />
       </InspectorRow>
@@ -276,6 +267,7 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
           unit="s"
           precision={2}
           onChange={setOut}
+          {...timingEdit.scrub('Out point')}
           aria-label="Out point"
         />
       </InspectorRow>
@@ -406,8 +398,7 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
   const apply = async (): Promise<void> => {
     setBusy(true);
     try {
-      // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
-      const n = await convertAudioToKeyframes(nodeId, options);
+      const n = await convertAudioToKeyframesEdit(nodeId, options);
       useUIStore.getState().notify(
         n > 0
           ? {

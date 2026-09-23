@@ -33,8 +33,9 @@ import { insertPrimitive, insertAudio, insertImageSequence, insert3DPrimitive, i
 import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { useGuidesStore } from '@stores/guidesStore';
-import { importLottieFile } from '@core/library/lottieLibrary';
-import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
+import { importLottieFileEdit } from '@layout/EditorLayout/lottieInsertEdits';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets } from '@core/animation/animationPresets';
@@ -379,11 +380,8 @@ export function TopNav(): JSX.Element {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-picking the same file
     if (!file) return;
-    try {
-      reportLottieImport(file.name, await importLottieFile(file));
-    } catch (err) {
-      reportLottieImportFailure(file.name, err);
-    }
+    // The importer's layer tree lands as ONE pasteLayers entry (lottieInsertEdits.ts).
+    await importLottieFileEdit(file);
   };
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -725,9 +723,9 @@ export function TopNav(): JSX.Element {
                   </button>
                 }
                 items={[
-                  // B3-legacy: engine gap — `createLayer` places at the comp centre at a fixed size; the shape / text inserts place at the pointer, scaled to the comp (`placeInComp`).
-                  { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => insertPrimitive('shape', 'Shape') },
-                  { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => insertPrimitive('text', 'Text') },
+                  // The shape / text inserts (pointer placement, comp-scaled size) run off-document → ONE pasteLayers entry.
+                  { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => { void insertBuiltLayers('New Shape Layer', activeCompRootId(), () => insertPrimitive('shape', 'Shape')); } },
+                  { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => { void insertBuiltLayers('New Text Layer', activeCompRootId(), () => insertPrimitive('text', 'Text')); } },
                   { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'solid', onSelect: () => openSolidSettings({ mode: 'new' }) },
                   { type: 'separator' },
                   { type: 'item', id: 'new-group', label: 'Group', icon: 'layers', onSelect: () => { void createLayerEdit('group', { name: 'Group', label: 'New Group' }); } },

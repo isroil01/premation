@@ -224,7 +224,7 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
     await getCommandSystem().execute(asCommandId(ProjectCommands.New));
     // New can be declined (the unsaved-changes confirmation).
     if (!getProjectManager().getState().current) return;
-    useTemplateStore.getState().apply(templateId);
+    await useTemplateStore.getState().apply(templateId);
     onDismiss();
   }, [onDismiss]);
 

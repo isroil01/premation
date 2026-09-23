@@ -32,6 +32,8 @@ import {
 } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { apiUnitFactor, catalogFor, readStatic, vectorValue, type PropBinding } from './props';
+import { LAYER_FIELDS } from './layerFieldSpecs';
+import { PLUGIN_LAYER_COMPONENT_PREFIX } from './pluginProps';
 import { readPropertyValue } from '@core/inspector/multiSelection';
 import { parseColorChannels } from '@core/effects/effects';
 
@@ -205,13 +207,30 @@ export function fieldBindingForComponentProp(nodeId: string, componentId: string
   const comp = node?.components.find((c) => c.id === componentId);
   if (!node || !comp) return null;
   const cat = catalogFor(nodeId);
+  // B3z: a plugin layer kind's prop is `plugin/<key>` (pluginProps.ts) — any
+  // binding kind (a number is animatable, the rest are fields).
+  if (comp.type.startsWith(PLUGIN_LAYER_COMPONENT_PREFIX)) return cat.byPath.get(`plugin/${key}`) ?? null;
   if (key === 'fill') {
     const b = cat.byPath.get('layer/fill');
     return b && (typeof (comp.props as Record<string, unknown>).fill === 'string' || comp.type === 'Text') ? b : null;
   }
-  if (comp.type !== 'Text') return null;
-  const b = cat.byPath.get(`text/${key}`);
-  return b && b.special === 'field' ? b : null;
+  if (comp.type === 'Text') {
+    const b = cat.byPath.get(`text/${key}`);
+    if (b && b.special === 'field') return b;
+  }
+  // B3z: a LAYER field stored as this component's prop (a light's type, a
+  // material's shading model, a primitive's shape…, layerFieldSpecs.ts) — the
+  // component must be the one the field's store resolves to on this layer.
+  for (const spec of LAYER_FIELDS) {
+    const s = spec.store;
+    if (s.fx !== undefined || s.key !== key || s.component === undefined) continue;
+    const types = typeof s.component === 'string' ? [s.component] : s.component;
+    const home = types.map((t) => node.components.find((c) => c.type === t)).find((c) => c !== undefined);
+    if (home?.id !== comp.id) continue;
+    const b = cat.byPath.get(spec.path);
+    if (b && b.special === 'field') return b;
+  }
+  return null;
 }
 
 /**
@@ -220,6 +239,14 @@ export function fieldBindingForComponentProp(nodeId: string, componentId: string
  * "back to the default" for clear-at-default fields — is the default value.
  */
 export function fieldValue(b: PropBinding, raw: unknown): Value | null {
+  const typed = typedFieldValue(b, raw);
+  // A plugin's non-numeric param also takes ANY json value (its arbitrary data:
+  // an asset slot going from null to an id) — pluginProps.ts.
+  if (!typed && b.field?.owner === 'plugin' && raw !== undefined) return values.json(raw);
+  return typed;
+}
+
+function typedFieldValue(b: PropBinding, raw: unknown): Value | null {
   if (raw === undefined) return b.defaultValue ?? null;
   switch (b.valueType) {
     case 'string': return typeof raw === 'string' ? values.string(raw) : null;

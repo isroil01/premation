@@ -431,8 +431,9 @@ ResultOf<api::SetTrackMatte> handle(const api::SetTrackMatte& c, HCtx& x) {
   Document& d = x.d;
   (void)require_layer(d, c.layer);
   const api::TrackMatte& m = c.matte;
-  if (m.mode != api::MatteMode::none) {
-    if (!m.layer) fail(ErrorCode::invalid_argument, "a track matte needs a source layer (matte by reference)");
+  // B3z: no `matte.layer` = AE's classic positional matte (the layer directly
+  // above in the stack), stored without a sourceId.
+  if (m.mode != api::MatteMode::none && m.layer) {
     (void)require_layer(d, *m.layer);
     if (*m.layer == c.layer) fail(ErrorCode::invalid_argument, "a layer cannot be its own matte");
     if (comp_of_layer(d, *m.layer) != comp_of_layer(d, c.layer)) {
@@ -448,7 +449,7 @@ ResultOf<api::SetTrackMatte> handle(const api::SetTrackMatte& c, HCtx& x) {
     Json v = obj();
     v.set("mode", Json::string(luma ? "luma" : "alpha"));
     v.set("inverted", Json::boolean(inverted));
-    v.set("sourceId", Json::string(*m.layer));
+    if (m.layer) v.set("sourceId", Json::string(*m.layer));
     sg_set_fx(d, c.layer, "matte", std::move(v));
   }
   return {};
@@ -472,7 +473,9 @@ ResultOf<api::SetParent> handle(const api::SetParent& c, HCtx& x) {
   const PCtx pc = x.pc();
   for (const auto& id : c.layers) {
     if (api_parent_of(d, id) == c.parent) continue;
-    if (!reparent_node(pc, id, c.parent, c.keep_world_transform)) fail(ErrorCode::cycle, "could not parent '" + id + "'", {.layer = id});
+    const std::optional<double> jumpAt =
+        c.jump.value_or(false) && c.parent ? std::optional<double>(flicks_to_seconds(c.time.value_or(0))) : std::nullopt;
+    if (!reparent_node(pc, id, c.parent, c.keep_world_transform, jumpAt)) fail(ErrorCode::cycle, "could not parent '" + id + "'", {.layer = id});
   }
   return {};
 }

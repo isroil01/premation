@@ -66,6 +66,12 @@ export interface PuppetPin {
   y: number; // local coordinate y
   /** Absent = 'advanced'. See {@link PinKind}. */
   kind?: PinKind;
+  /**
+   * The pin's STATIC position when it has no Position keys (engine API
+   * `puppet/pins/<id>/position`, AE's un-keyed Puppet Pin Position). Absent =
+   * the rest anchor `x`/`y`. Keys, when present, win.
+   */
+  position?: { x: number; y: number };
   /** Static rotation in degrees (AE-style: rotates the pin's influence around it). */
   rotation?: number;
   /** Static stiffness ≥ 0 (sharpens this pin's influence falloff; 0 = default). */

@@ -26,6 +26,12 @@ import { makeLayerNode } from '../handlers/layerFactory';
 import { sanitizeSvg } from '@core/svg/svgSanitize';
 import { scanSvgCapabilities } from '@core/svg/svgCapabilities';
 import { makeSvgComponent } from '@core/svg/svgLayer';
+import { buildLayerFragment } from '../offDocument';
+import { insertCamera, insertLight, insertShape, insertText } from '@core/scene/sceneInsert';
+import { buildLottieItem, LOTTIE_ITEMS } from '@core/library/lottieLibrary';
+import { buildMographItem, MOGRAPH_ITEMS } from '@core/library/mographLibrary';
+import { setNodeMatte } from '@core/effects/matte';
+import { useSelectionStore } from '@stores/selectionStore';
 
 export type Session = (h: Harness) => Promise<void>;
 
@@ -132,7 +138,41 @@ function gradientsFixture(): EditorDocument {
   return doc;
 }
 
+/**
+ * B3z WS-K: a pre-API document whose member tracks DISAGREE — Position x keyed at
+ * 0/1/2 with y keyed only at 1 (lone member keys), Scale X / Y keyed together but
+ * eased differently (per-dimension ease), Opacity keyed later. Written by the
+ * legacy helpers; the engine must read each as whole keys and normalise on edit.
+ */
+export const FIXTURE_MEMBER_KEYS = 'C:/fixtures/member-keys.motion';
+function memberKeysFixture(): EditorDocument {
+  const doc = projectDocumentIO.createEmpty('Member keys');
+  const comp = doc.comps!.comp_root!;
+  const a = { ...makeLayerNode({ kind: 'solid', id: 'layer_1', comp, name: 'Lone keys' }), parent: 'comp_root' };
+  const b = { ...makeLayerNode({ kind: 'solid', id: 'layer_2', comp, name: 'Target' }), parent: 'comp_root' };
+  const scene = doc.scene as { nodes: SceneNode[] };
+  scene.nodes.find((n) => n.id === 'comp_root')!.children = ['layer_2', 'layer_1'];
+  scene.nodes.push(a, b);
+  const track = (nodeId: string, prop: string, keyframes: unknown[]) => ({ nodeId, prop, keyframes });
+  return {
+    ...doc,
+    animation: {
+      tracks: {
+        layer_1: {
+          x: track('layer_1', 'x', [{ t: 0, value: 100 }, { t: 1, value: 300, easing: 'bezier', bezier: [0.3, 0, 0.7, 1] }, { t: 2, value: 500 }]),
+          y: track('layer_1', 'y', [{ t: 1, value: 50, easing: 'linear' }]),
+          scaleX: track('layer_1', 'scaleX', [{ t: 0, value: 1, easing: 'bezier', bezier: [0.2, 0, 0.8, 1], continuous: true }, { t: 1.5, value: 2 }]),
+          scaleY: track('layer_1', 'scaleY', [{ t: 0, value: 1 }, { t: 1.5, value: 1.5 }]),
+          opacity: track('layer_1', 'opacity', [{ t: 0.5, value: 100 }, { t: 2.5, value: 0 }]),
+        },
+      },
+      expressions: {},
+    } as unknown as EditorDocument['animation'],
+  };
+}
+
 export const CORPUS_FIXTURES: Record<string, () => EditorDocument> = {
+  [FIXTURE_MEMBER_KEYS]: memberKeysFixture,
   [FIXTURE_EXTRAS]: extrasFixture,
   [FIXTURE_BARE]: bareFixture,
   [FIXTURE_GRADIENTS]: gradientsFixture,
@@ -1536,6 +1576,471 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     await h.query({ type: 'getComposition', comp });
   },
 
+  // B3z WS-K: one key per time (lone member keys normalised on edit), per-dimension
+  // ease, roving re-timing, setKeyframes (+ as a cancelled / committed gesture),
+  // member expressions, failing expressions kept on, Convert Expression to
+  // Keyframes disabling (not removing), Time-Reverse over the whole selection.
+  'B3z WS-K: member keys, per-dimension ease, roving, setKeyframes, expressions, reverse': async (h) => {
+    for (const [path, make] of Object.entries(CORPUS_FIXTURES)) if (!h.files.has(path)) h.files.set(path, make());
+    await h.run({ type: 'openProject', path: FIXTURE_MEMBER_KEYS });
+    const P = (layer: string, path: string) => ({ layer, path });
+    const pos = P('layer_1', 'transform/position');
+    const scale = P('layer_1', 'transform/scale');
+    const opacity = P('layer_1', 'transform/opacity');
+    const keys = async (p: { layer: string; path: string }) => (await h.query({ type: 'getKeyframes', props: [p] })).sets[0]!.keyframes;
+    let k = await keys(pos);
+    // The lone key at 0 (x only) re-eased: y gets a key there too.
+    await h.run({ type: 'updateKeyframes', patches: [{ id: k[0]!.id, easing: 'hold', spatialIn: [], spatialOut: [] }] });
+    // The lone key at 2 moved: the whole key moves.
+    k = await keys(pos);
+    await h.run({ type: 'moveKeyframes', ids: [k[2]!.id], delta: sec(0.5) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Per-dimension ease: Scale Y's handle alone, then continuity on X alone.
+    let s = await keys(scale);
+    await h.run({ type: 'updateKeyframes', patches: [{ id: s[0]!.id, dim: 1, easing: 'bezier', bezier: { x1: 0.5, y1: 0, x2: 0.5, y2: 1 }, spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'updateKeyframes', patches: [{ id: s[0]!.id, dim: 0, continuous: false, spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'updateKeyframes', patches: [{ id: s[0]!.id, dim: 2, easing: 'linear', spatialIn: [], spatialOut: [] }] }).catch(() => undefined);
+    // Roving: the middle position key roves (spatial), then an anchor moves → re-roved.
+    k = await keys(pos);
+    await h.run({ type: 'updateKeyframes', patches: [{ id: k[1]!.id, roving: true, spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'moveKeyframes', ids: [k[2]!.id], delta: sec(1) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'setProperty', prop: pos, value: { kind: 'vec2', value: { x: 900, y: 10 } }, time: k[2]!.time });
+    // Opacity (scalar) roving between three keys.
+    await h.run({ type: 'addKeyframes', keys: [{ prop: opacity, time: sec(1), value: { kind: 'scalar', value: 90 }, roving: true, spatialIn: [], spatialOut: [] }] });
+    // setKeyframes: replace Scale (one id kept, one new, per-dimension ease), then as a preview gesture.
+    s = await keys(scale);
+    await h.run({ type: 'setKeyframes', prop: scale, keys: [
+      { ...s[0]!, value: { kind: 'vec2', value: { x: 50, y: 60 } } },
+      { ...s[1]!, id: '', time: sec(2), dims: [{ easing: 'hold', continuous: false }, { easing: 'bezier', bezier: { x1: 0.1, y1: 0.2, x2: 0.3, y2: 1.2 }, continuous: true }] },
+      { ...s[1]!, id: 'nope', time: sec(3), value: { kind: 'vec2', value: { x: 10, y: 20 } }, dims: [] },
+    ] });
+    await h.run({ type: 'setKeyframes', prop: scale, keys: [] }).catch(() => undefined);
+    await h.run({ type: 'setKeyframes', prop: scale, keys: [s[0]!, { ...s[1]!, time: s[0]!.time }] }).catch(() => undefined);
+    for (const commit of [false, true]) {
+      const { gesture } = await h.run({ type: 'beginGesture', label: 'The Smoother' });
+      for (const x of [110, 120, 130]) {
+        await h.run({ type: 'setKeyframes', prop: scale, keys: [{ ...s[0]!, value: { kind: 'vec2', value: { x, y: x } } }, s[1]!] });
+      }
+      await h.run({ type: 'endGesture', gesture, commit });
+    }
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Paste keys that carry per-dimension ease onto another layer.
+    s = await keys(scale);
+    await h.run({ type: 'pasteKeyframes', prop: P('layer_2', 'transform/scale'), time: sec(0.25), keys: s });
+    // Expressions: a failing one stays on; one dimension's own expression; its switch; bake → disabled.
+    const r1 = await h.run({ type: 'setExpression', prop: opacity, source: 'value +', enabled: true });
+    void r1;
+    await h.run({ type: 'setExpression', prop: pos, source: 'value[1] + time * 100', enabled: true, member: 1 });
+    await h.run({ type: 'setExpressionEnabled', props: [pos], enabled: false, member: 1 });
+    await h.run({ type: 'setExpressionEnabled', props: [pos], enabled: true, member: 1 });
+    await h.run({ type: 'setExpression', prop: pos, source: 'time', enabled: true, member: 5 }).catch(() => undefined);
+    await h.run({ type: 'setExpression', prop: opacity, source: 'time', enabled: true, member: 0 }).catch(() => undefined);
+    await h.run({ type: 'convertExpressionToKeyframes', prop: pos, range: { start: 0, duration: sec(0.5) }, step: 0 });
+    await h.query({ type: 'getPropertyTree', layer: 'layer_1', path: 'transform', depth: 2 });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Time-Reverse over position + opacity as ONE block.
+    const all = [...(await keys(pos)).map((x) => x.id), ...(await keys(opacity)).map((x) => x.id)];
+    await h.run({ type: 'reverseKeyframes', ids: all });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'saveProject', path: 'C:/p/wsk.motion', copy: true });
+  },
+
+  // B3z: the layer fields (layerFieldSpecs.ts) — component props and fx
+  // configs as static properties: encodings, clear-at-default, json shapes,
+  // mirrors, refusals, save → open.
+  'B3z: layer fields — material, geometry, light, camera, primitive, configs — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const str = (value: string) => ({ kind: 'string' as const, value });
+    const choice = (value: string) => ({ kind: 'choice' as const, value });
+    const bool = (value: boolean) => ({ kind: 'bool' as const, value });
+    const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
+    const { layer: s } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'S', init: [] });
+    const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    const { layer: l } = await h.run({ type: 'createLayer', comp, kind: 'light', name: 'L', init: [] });
+    const { layer: c } = await h.run({ type: 'createLayer', comp, kind: 'camera', name: 'C', init: [] });
+    const { layer: m } = await h.run({ type: 'createLayer', comp, kind: 'model3d', name: 'M', init: [] });
+    const { layer: p } = await h.run({ type: 'createLayer', comp, kind: 'particle', name: 'P', init: [] });
+    const { layer: g } = await h.run({ type: 'createLayer', comp, kind: 'group', name: 'G', init: [] });
+    await h.run({ type: 'setLayerSwitches', layers: [s, t], patch: { threeD: true } });
+    // Material / geometry: encoded choices, clear-at-default numbers, a json object.
+    await h.run({ type: 'setProperty', prop: P(s, 'material/shading'), value: choice('toon') });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/toonBands'), value: scalar(5) });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/toonBands'), value: scalar(3) });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/toonBands'), value: scalar(12) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(s, 'material/shading'), value: choice('phong') });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/shading'), value: choice('lambert') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(s, 'material/heightMap'), value: str('asset_1') });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/displacementSubdivisions'), value: scalar(2) });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/faceMaterials'), value: json({ side: { fill: '#ff0000' }, back: { gain: 1.5 } }) });
+    await h.run({ type: 'setProperty', prop: P(s, 'material/faceMaterials'), value: json([1]) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(s, 'geometry/bevelStyle'), value: choice('convex') });
+    await h.run({ type: 'setAnimated', prop: P(s, 'geometry/bevelStyle'), animated: true, time: 0 }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'text/perCharacter3D'), value: bool(true) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Light / camera options.
+    await h.batch('Light look', [
+      { type: 'setProperty', prop: P(l, 'light/lightType'), value: choice('spot') },
+      { type: 'setProperty', prop: P(l, 'light/falloff'), value: choice('inverse-square') },
+      { type: 'setProperty', prop: P(l, 'light/castsShadows'), value: bool(true) },
+      { type: 'setProperty', prop: P(l, 'light/shadowMapSize'), value: scalar(2048) },
+    ]);
+    await h.run({ type: 'setProperty', prop: P(l, 'light/lightType'), value: choice('environment') });
+    await h.run({ type: 'setProperty', prop: P(l, 'light/environment'), value: str('sunset') });
+    await h.run({ type: 'setProperty', prop: P(l, 'light/glow'), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(l, 'light/glow'), value: bool(false) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'setProperty', prop: P(c, 'camera/filmSize'), value: scalar(24) });
+    await h.run({ type: 'setProperty', prop: P(s, 'light/lightType'), value: choice('spot') }).catch(ignore);
+    // Primitive: the type mirrors onto the Transform; params; a bool.
+    await h.run({ type: 'setProperty', prop: P(m, 'primitive/type'), value: choice('torus') });
+    await h.run({ type: 'setProperty', prop: P(m, 'primitive/tube'), value: scalar(20) });
+    await h.run({ type: 'setProperty', prop: P(m, 'primitive/radialSegments'), value: scalar(2) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(m, 'primitive/capped'), value: bool(false) });
+    // Structured configs: particle, cloner, physics, waveform, modifiers, precompose.
+    await h.run({ type: 'setProperty', prop: P(p, 'layer/particle'), value: json({ emitterType: 'box', birthRate: 40, colorStart: '#ffffff' }) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/cloner'), value: json({ enabled: true, mode: 'grid', countX: 3, countY: 2, step: { x: 10, y: 0, rotation: 0, scale: 0, opacity: 0, time: 0 } }) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/physics'), value: json({ enabled: true, kind: 'dynamic', shape: 'box', mass: 2 }) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/physics'), value: json(null) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/cloner'), value: json('grid') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(t, 'layer/audioWaveform'), value: json({ sourceLayerId: '', samples: 64, heightScale: 1, thickness: 2, mode: 'full', windowSec: 2 }) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/modifiers'), value: json({ opacity: { modifiers: [{ id: 'm1', enabled: true, kind: 'offset', amount: 5 }], previous: null } }) });
+    await h.run({ type: 'setProperty', prop: P(g, 'layer/precompose'), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/precompose'), value: bool(true) }).catch(ignore);
+    // Persist.
+    await h.run({ type: 'saveProject', path: 'C:/p/b3z.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/b3z.motion' });
+    for (const id of [s, t, l, c, m, p, g]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+  },
+
+  // B3z-a E2: audio / retime / tracker results as primitives — the Audio
+  // Levels / Pan home (an audio layer's Audio component; a centred pan stored
+  // absent), the legacy percent level read, Convert Audio to Keyframes' track
+  // before its first key, a one-node camera's Point of Interest, the no-bar
+  // clip fields and the tracker's solve-camera tag; retime keys; silence
+  // removal's split / delete / local shift; save → open.
+  'B3z-a E2: audio levels home, amplitude track, camera POI, clip fields, retime keys, tracker splice — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const bool = (value: boolean) => ({ kind: 'bool' as const, value });
+    const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
+    const lin = { easing: 'linear' as const, spatialIn: [], spatialOut: [] };
+    const { items: [clip, sound] } = await h.run({
+      type: 'importFiles',
+      files: [
+        { path: 'C:/m/e2clip.mp4', asSequence: false, createComposition: false },
+        { path: 'C:/m/e2sound.wav', asSequence: false, createComposition: false },
+      ],
+    });
+    const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'audio', source: sound!, name: 'Music', init: [] });
+    const { layer: v } = await h.run({ type: 'createLayer', comp, kind: 'video', source: clip!, name: 'Take', init: [] });
+    const { layer: c } = await h.run({ type: 'createLayer', comp, kind: 'camera', name: 'Cam', init: [] });
+    const { layer: n } = await h.run({ type: 'createLayer', comp, kind: 'null', name: 'Tracked Null', init: [{ path: 'transform/position', value: v2(120, 80) }] });
+    // Levels / pan: the legacy percent reads as dB; writes land on the home component; pan 0 = absent.
+    await h.query({ type: 'getPropertyValues', props: [P(a, 'audio/levels'), P(v, 'audio/levels'), P(a, 'audio/pan')], time: 0, evaluated: false });
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/levels'), value: scalar(-6) });
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/pan'), value: scalar(30) });
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/pan'), value: scalar(0) });
+    await h.run({ type: 'setProperty', prop: P(v, 'audio/levels'), value: scalar(-3) });
+    await h.run({ type: 'setProperty', prop: P(v, 'audio/pan'), value: scalar(-20) });
+    await h.run({ type: 'undo' });
+    // A fade: keys in, the record fields, the expression rule.
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(a, 'audio/levels'), time: sec(0), value: scalar(-60), ...lin }, { prop: P(a, 'audio/levels'), time: sec(1), value: scalar(-6), ...lin }] });
+    await h.run({ type: 'setExpression', prop: P(a, 'audio/levels'), source: 'value', enabled: true });
+    await h.batch('Duck Music', [
+      { type: 'setProperty', prop: P(a, 'audio/ducking'), value: json({ duckDb: -12, thresholdDb: -30, attackMs: 50, releaseMs: 300, holdMs: 100, voiceNodeId: v }) },
+      { type: 'setExpression', prop: P(a, 'audio/levels'), source: '', enabled: true },
+      { type: 'addKeyframes', keys: [{ prop: P(a, 'audio/levels'), time: sec(0.5), value: scalar(-18), ...lin }] },
+    ]);
+    const levelKeys = await h.query({ type: 'getKeyframes', props: [P(a, 'audio/levels')] });
+    const firstLevel = levelKeys.sets[0]?.keyframes[0]?.id;
+    if (firstLevel) await h.run({ type: 'deleteKeyframes', ids: [firstLevel] });
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/gate'), value: json({ thresholdDb: -45, reductionDb: -30, fps: 30, startCompSec: 0 }) });
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/effects'), value: json([{ id: 'afx_1', type: 'eq', params: { gain: 3 } }]) });
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/drivers'), value: json({ audioLevelDb: { prop: 'audioLevelDb', sourceLayerId: 'mix', mode: 'baked' } }) });
+    await h.run({ type: 'setProperty', prop: P(c, 'audio/drivers'), value: json({ zoom: { prop: 'zoom', sourceLayerId: 'mix', mode: 'expression' } }) });
+    await h.run({ type: 'setLayerSwitches', layers: [a], patch: { audioEnabled: false } });
+    // Convert Audio to Keyframes' track, before and after its first key.
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(a, 'layer/audioAmplitude'), time: sec(0), value: scalar(12.5), ...lin }, { prop: P(a, 'layer/audioAmplitude'), time: sec(0.2), value: scalar(80), ...lin }] });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(v, 'layer/audioAmplitude'), time: sec(0), value: scalar(1), ...lin }] }).catch(ignore);
+    // No-bar clip fields (stored whatever the bar says) and a refused negative.
+    await h.batch('Timing', [
+      { type: 'setProperty', prop: P(a, 'audio/clipStart'), value: scalar(0.5) },
+      { type: 'setProperty', prop: P(a, 'audio/clipIn'), value: scalar(0.25) },
+      { type: 'setProperty', prop: P(a, 'audio/clipOut'), value: scalar(2) },
+    ]);
+    await h.run({ type: 'setProperty', prop: P(a, 'audio/clipIn'), value: scalar(-1) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(v, 'audio/clipIn'), value: scalar(1) }).catch(ignore);
+    await h.run({ type: 'setLayerTiming', items: [{ layer: a, inPoint: sec(0.2), outPoint: sec(1.6) }] });
+    // Tracker: a one-node camera's POI keys + position, the solve tag; a null spliced.
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: P(c, 'camera/poiX'), time: sec(0), value: scalar(300), ...lin },
+      { prop: P(c, 'camera/poiY'), time: sec(0), value: scalar(200), ...lin },
+      { prop: P(c, 'transform/position'), time: sec(0), value: { kind: 'vec3', value: { x: 300, y: 200, z: -800 } }, ...lin },
+    ] });
+    await h.run({ type: 'setProperty', prop: P(c, 'camera/trackerSolve'), value: bool(true) });
+    await h.run({ type: 'createLayer', comp, kind: 'camera', name: '3D Camera Tracker', init: [{ path: 'camera/trackerSolve', value: bool(true) }] });
+    await h.run({ type: 'setProperty', prop: P(a, 'camera/trackerSolve'), value: bool(true) }).catch(ignore);
+    await h.run({ type: 'addKeyframes', keys: [0, 1, 2, 3].map((i) => ({ prop: P(n, 'transform/position'), time: sec(i / 10), value: v2(120 + i, 80 - i), ...lin })) });
+    const nk = await h.query({ type: 'getKeyframes', props: [P(n, 'transform/position')] });
+    await h.run({ type: 'addKeyframes', keys: [1, 2].map((i) => ({ prop: P(n, 'transform/position'), time: sec(i / 10), value: v2(0, i), ...lin })) });
+    await h.run({ type: 'deleteKeyframes', ids: nk.sets[0]!.keyframes.slice(1, 2).map((k) => k.id) }).catch(ignore);
+    // Retime: speed curve CRUD, ramp style, preset replace, frames.
+    await h.run({ type: 'setRetime', layer: v, mode: 'speed' });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(v, 'layer/timeSpeed'), time: sec(1), value: scalar(40), easing: 'easeInOut', spatialIn: [], spatialOut: [] }] });
+    const sk = await h.query({ type: 'getKeyframes', props: [P(v, 'layer/timeSpeed')] });
+    const ids = sk.sets[0]!.keyframes.map((k) => k.id);
+    await h.run({ type: 'updateKeyframes', patches: ids.map((id) => ({ id, easing: 'step' as const, clearBezier: true, spatialIn: [], spatialOut: [] })) });
+    await h.run({ type: 'updateKeyframes', patches: [{ id: ids[ids.length - 1]!, time: sec(1.5), value: scalar(250), spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'setLayerSwitches', layers: [v], patch: { frameBlend: 'pixelMotion' } });
+    await h.run({ type: 'setKeyframes', prop: P(v, 'layer/timeSpeed'), keys: [0, 0.5, 1].map((t, i) => ({
+      id: '', time: sec(t), value: scalar([300, 20, 100][i]!), easing: 'easeInOut' as const, continuous: false, roving: false,
+      spatialInterp: 'legacy' as const, spatialIn: [], spatialOut: [], label: 0, dims: [],
+    })) });
+    await h.run({ type: 'setRetime', layer: v, mode: 'frames' });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(v, 'timeRemap'), time: sec(0.5), value: scalar(0.25), ...lin }] });
+    await h.run({ type: 'setRetime', layer: v, mode: 'speed' });
+    // Silence removal: split both edges, delete inside, shift the later part.
+    const { layers: [right] } = await h.run({ type: 'splitLayers', layers: [a], time: sec(0.6) });
+    const { layers: [tail] } = await h.run({ type: 'splitLayers', layers: [right!], time: sec(0.9) });
+    await h.run({ type: 'deleteLayers', layers: [right!] });
+    await h.run({ type: 'moveLayersInTime', layers: [tail!], delta: -sec(0.3), ripple: false });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Persist.
+    await h.run({ type: 'saveProject', path: 'C:/p/b3z-e2.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/b3z-e2.motion' });
+    for (const id of [a, v, c, n]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+  },
+
+  'B3z WS-R: puppet pins and skeletons — groups, pin keys, bones, IK, pole, bind pose — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const str = (value: string) => ({ kind: 'string' as const, value });
+    const choice = (value: string) => ({ kind: 'choice' as const, value });
+    const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
+    const { layer: s } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'Puppet', init: [] });
+    const { layer: k } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'Rig', init: [] });
+    const { layer: cam } = await h.run({ type: 'createLayer', comp, kind: 'camera', name: 'Cam', init: [] });
+    // Puppet: pins (creating the rig), init, mesh fields, keys, tangents, reorder, rename.
+    const { groups: [p1] } = await h.run({ type: 'addPropertyGroup', layer: s, parent: 'puppet/pins', matchName: 'ADBE FreePin3 PosPin Atom',
+      init: [{ path: 'restPosition', value: v2(-20, 10) }, { path: 'kind', value: choice('position') }] });
+    const { groups: [p2] } = await h.run({ type: 'addPropertyGroup', layer: s, parent: 'puppet/pins', matchName: 'ADBE FreePin3 PosPin Atom', name: 'Hand',
+      init: [{ path: 'kind', value: choice('overlap') }] });
+    await h.run({ type: 'addPropertyGroup', layer: s, parent: 'puppet/pins', matchName: 'ADBE FreePin3 PosPin Atom', index: 0,
+      init: [{ path: 'kind', value: choice('starch') }, { path: 'position', value: v2(3, 4) }] });
+    await h.run({ type: 'addPropertyGroup', layer: s, parent: 'puppet/pins', matchName: 'ADBE FreePin3 PosPin Atom', index: 9, init: [] }).catch(ignore);
+    await h.run({ type: 'addPropertyGroup', layer: cam, parent: 'puppet/pins', matchName: 'ADBE FreePin3 PosPin Atom', init: [] }).catch(ignore);
+    await h.run({ type: 'addPropertyGroup', layer: s, parent: '', matchName: 'ADBE FreePin3', init: [] }).catch(ignore);
+    await h.batch('Mesh', [
+      { type: 'setProperty', prop: P(s, 'puppet/mesh/density'), value: scalar(14) },
+      { type: 'setProperty', prop: P(s, 'puppet/mesh/mode'), value: choice('silhouette') },
+      { type: 'setProperty', prop: P(s, 'puppet/mesh/rotationRefinement'), value: scalar(30) },
+      { type: 'setProperty', prop: P(s, 'puppet/mesh/solver'), value: choice('lbs') },
+    ]);
+    await h.run({ type: 'setProperty', prop: P(s, 'puppet/mesh/rotationRefinement'), value: scalar(0) });
+    await h.run({ type: 'setProperty', prop: P(s, 'puppet/mesh/solver'), value: choice('fem') }).catch(ignore);
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: P(s, `${p1}/position`), time: sec(0), value: v2(-20, 10), spatialIn: [], spatialOut: [4, -2] },
+      { prop: P(s, `${p1}/position`), time: sec(1), value: v2(30, 40), spatialIn: [-3, 1], spatialOut: [] },
+      { prop: P(s, `${p2}/rotation`), time: sec(0.5), value: scalar(45), spatialIn: [], spatialOut: [] },
+    ] });
+    await h.run({ type: 'beginGesture', label: 'Move Puppet Pin' });
+    for (const x of [31, 35, 42]) await h.run({ type: 'setProperty', prop: P(s, `${p1}/position`), value: v2(x, x + 10), time: sec(1) });
+    await h.run({ type: 'endGesture', gesture: 0, commit: true });
+    await h.run({ type: 'setProperty', prop: P(s, `${p2}/scale`), value: scalar(150) });
+    await h.run({ type: 'setProperty', prop: P(s, `${p2}/overlap`), value: scalar(120) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(s, `${p2}/overlapExtent`), value: scalar(2) });
+    await h.run({ type: 'setAnimated', prop: P(s, `${p2}/stiffness`), animated: true, time: sec(0.25) });
+    await h.run({ type: 'movePropertyGroup', group: P(s, p2!), toIndex: 0 });
+    await h.run({ type: 'renamePropertyGroup', group: P(s, p1!), name: 'Elbow' });
+    await h.run({ type: 'renamePropertyGroup', group: P(s, 'puppet'), name: 'X' }).catch(ignore);
+    const pk = await h.query({ type: 'getKeyframes', props: [P(s, `${p1}/position`)] });
+    await h.run({ type: 'updateKeyframes', patches: [{ id: pk.sets[0]!.keyframes[0]!.id, spatialIn: [], spatialOut: [9, 9] }] });
+    await h.run({ type: 'deleteKeyframes', ids: pk.sets[0]!.keyframes.map((x) => x.id) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'setAnimated', prop: P(s, `${p1}/position`), animated: false, time: sec(0.5) });
+    await h.run({ type: 'removePropertyGroups', groups: [P(s, p2!)] });
+    await h.run({ type: 'undo' });
+    // Skeleton: bones (creating the skeleton), parent, IK goal + pole, controller, weight paint, bind pose.
+    const { groups: [b1] } = await h.run({ type: 'addPropertyGroup', layer: k, parent: 'skeleton/bones', matchName: 'Premation Bone',
+      init: [{ path: 'position', value: v2(-50, 0) }, { path: 'length', value: scalar(60) }, { path: 'rotation', value: scalar(30) }] });
+    const { groups: [b2] } = await h.run({ type: 'addPropertyGroup', layer: k, parent: 'skeleton/bones', matchName: 'Premation Bone',
+      init: [{ path: 'parent', value: str('bone_1') }, { path: 'position', value: v2(60, 0) }, { path: 'length', value: scalar(40) }] });
+    await h.run({ type: 'addPropertyGroup', layer: k, parent: 'skeleton/bones', matchName: 'Premation Bone', init: [{ path: 'parent', value: str('bone_9') }] }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(k, `${b1}/parent`), value: str('bone_2') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(k, `${b2}/rotation`), value: scalar(-45) });
+    await h.run({ type: 'setProperty', prop: P(k, `${b1}/restRotation`), value: scalar(20) });
+    await h.run({ type: 'setProperty', prop: P(k, `${b2}/restScale`), value: v2(110, 90) });
+    await h.run({ type: 'setProperty', prop: P(k, `${b2}/influenceRadius`), value: scalar(80) });
+    await h.run({ type: 'setProperty', prop: P(k, `${b2}/influenceRadius`), value: scalar(0) });
+    await h.run({ type: 'addPropertyGroup', layer: k, parent: b2!, matchName: 'Premation IK Goal', init: [{ path: 'target', value: v2(70, 30) }, { path: 'chainLength', value: scalar(2) }] });
+    await h.run({ type: 'addPropertyGroup', layer: k, parent: b2!, matchName: 'Premation IK Goal', init: [] }).catch(ignore);
+    await h.run({ type: 'addProperties', parent: P(k, `${b2}/ik`), names: ['pole'] });
+    await h.run({ type: 'addProperties', parent: P(k, `${b2}/ik`), names: ['nope'] }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(k, `${b2}/ik/pole`), value: v2(10, -40) });
+    await h.run({ type: 'setAnimated', prop: P(k, `${b2}/ik/target`), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(k, `${b2}/ik/target`), value: v2(80, 20), time: sec(1) });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: P(k, `${b2}/ik/mode`), time: sec(0.5), value: scalar(0), spatialIn: [], spatialOut: [] }] });
+    await h.run({ type: 'setGroupEnabled', groups: [P(k, `${b2}/ik`)], enabled: false });
+    await h.run({ type: 'setGroupEnabled', groups: [P(k, b1!)], enabled: false }).catch(ignore);
+    await h.run({ type: 'addPropertyGroup', layer: k, parent: 'skeleton/controllers', matchName: 'Premation Rig Controller', name: 'Hand ctrl',
+      init: [{ path: 'drives', value: choice('bone') }, { path: 'bone', value: str('bone_2') }, { path: 'offset', value: v2(5, 0) }] });
+    await h.run({ type: 'setProperty', prop: P(k, 'skeleton/weightPaint'), value: json({ vertexCount: 12, bones: { bone_1: { 3: 0.5 }, bone_2: { 4: 1 } } }) });
+    await h.run({ type: 'setProperty', prop: P(k, 'skeleton/weightPaint'), value: json([1]) }).catch(ignore);
+    await h.run({ type: 'setAnimated', prop: P(k, `${b1}/rotation`), animated: true, time: 0 });
+    const bk = await h.query({ type: 'getKeyframes', props: [P(k, `${b1}/rotation`)] });
+    await h.run({ type: 'deleteKeyframes', ids: bk.sets[0]!.keyframes.map((x) => x.id) });
+    await h.run({ type: 'removeProperties', props: [P(k, `${b2}/ik/pole`)] });
+    await h.run({ type: 'removePropertyGroups', groups: [P(k, b1!)] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'duplicatePropertyGroups', groups: [P(k, b1!)] }).catch(ignore);
+    // Whole-rig replace (a rig preset) drops the keys of removed bones.
+    await h.run({ type: 'setProperty', prop: P(k, 'layer/skeleton'), value: json({ bones: [{ id: 'bone_1', name: 'Root', parentId: null, length: 50, x: 0, y: 0, rotation: 0 }], ikTargets: [] }) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'saveProject', path: 'C:/p/wsr.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/wsr.motion' });
+    for (const id of [s, k]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    await h.run({ type: 'removePropertyGroups', groups: [P(s, 'puppet'), P(k, 'skeleton')] });
+    await h.run({ type: 'undo' });
+  },
+
+  'B3z: Layer Above track matte and latent text Tracking / Leading — save → open': async (h) => {
+    const comp = 'comp_root';
+    const P = (layer: string, path: string) => ({ layer, path });
+    const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    const { layer: b } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'B', init: [] });
+    const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    // The positional matte (no source layer), then by reference, then none.
+    await h.run({ type: 'setTrackMatte', layer: a, matte: { mode: 'lumaInverted' } });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'setTrackMatte', layer: a, matte: { layer: b, mode: 'alpha' } });
+    await h.run({ type: 'setTrackMatte', layer: a, matte: { mode: 'alpha' } });
+    await h.run({ type: 'setTrackMatte', layer: a, matte: { mode: 'none' } });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'setTrackMatte', layer: a, matte: { layer: a, mode: 'alpha' } }).catch(() => undefined);
+    // Latent text Tracking / Leading: first static write homes on the Text component; then keyed.
+    await h.batch('Text preset', [
+      { type: 'setProperties', writes: [{ prop: P(t, 'text/letterSpacing'), value: scalar(6), time: 0 }, { prop: P(t, 'text/lineHeight'), value: scalar(1.4), time: 0 }] },
+    ]);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'setAnimated', prop: P(t, 'text/letterSpacing'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(t, 'text/letterSpacing'), value: scalar(12), time: 705_600_000 });
+    await h.run({ type: 'saveProject', path: 'C:/p/b3zb.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/b3zb.motion' });
+    for (const id of [a, b, t]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+  },
+
+  'B3z: paint — stroke stack, removeStroke, gradient Colors, latent numbers, point of interest — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const bool = (value: boolean) => ({ kind: 'bool' as const, value });
+    const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
+    const color = (r: number, g: number, b: number) => ({ kind: 'color' as const, value: { r, g, b, a: 1 } });
+    const grad = (stops: Array<[number, number, number, number]>) => ({
+      kind: 'gradient' as const,
+      value: { kind: 'linear' as const, stops: stops.map(([offset, r, g, b]) => ({ offset, color: { r, g, b, a: 1 } })), alphaStops: [] },
+    });
+    const stroke = (width: number, extra: Record<string, unknown> = {}) =>
+      ({ enabled: true, color: '#ff0000', width, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter', ...extra });
+    const { layer: s } = await h.run({ type: 'createLayer', comp, kind: 'rectangle', name: 'R', init: [] });
+    const { layer: t } = await h.run({ type: 'createLayer', comp, kind: 'text', name: 'T', init: [] });
+    const { layer: l } = await h.run({ type: 'createLayer', comp, kind: 'light', name: 'L', init: [] });
+    const { layer: c } = await h.run({ type: 'createLayer', comp, kind: 'camera', name: 'C', init: [] });
+    const { layer: m } = await h.run({ type: 'createLayer', comp, kind: 'model3d', name: 'M', init: [] });
+    for (const id of [s, t, l, c, m]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    // The stroke stack: three strokes, a dash, a gradient paint, taper and wave.
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/strokes'), value: json([
+      stroke(4), stroke(2, { dash: [10, 5], dashOffset: 3 }),
+      stroke(3, { paint: { type: 'linear', angle: 30, stops: [{ id: 'a', offset: 0, color: '#ffffff' }, { id: 'b', offset: 1, color: '#000000' }] }, taper: { startWidth: 0.5, endWidth: 1, startLength: 0.3, endLength: 0, startEase: 0, endEase: 0 } }),
+    ]) });
+    await h.query({ type: 'getPropertyTree', layer: s, path: '', depth: 0 });
+    // The stroke rows' static seam: width / opacity / miter / dash / offset / taper / wave / gradient points / colour.
+    await h.batch('Stroke looks', [
+      { type: 'setProperty', prop: P(s, 'layer/strokeWidth'), value: scalar(6) },
+      { type: 'setProperty', prop: P(s, 'layer/strokeOpacity'), value: scalar(0.5) },
+      { type: 'setProperty', prop: P(s, 'layer/strokeMiterLimit'), value: scalar(7) },
+      { type: 'setProperty', prop: P(s, 'layer/stroke.1.gap1'), value: scalar(-4) },
+      { type: 'setProperty', prop: P(s, 'layer/stroke.1.dashOffset'), value: scalar(12) },
+      { type: 'setProperty', prop: P(s, 'layer/stroke.2.taperEndLength'), value: scalar(0.25) },
+      { type: 'setProperty', prop: P(s, 'layer/stroke.2.gradientEndX'), value: scalar(0.8) },
+      { type: 'setProperty', prop: P(s, 'layer/strokeWaveAmount'), value: scalar(6) },
+      { type: 'setProperty', prop: P(s, 'layer/stroke.1.color'), value: color(0, 0.5, 1) },
+    ]);
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/strokeTaperStartWidth'), value: scalar(0.4) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/stroke.1.gap2'), value: scalar(2) }).catch(ignore);
+    // Keys on strokes 2 and 3, then a shortened dash, removeStroke, and a shortened stack.
+    await h.run({ type: 'setAnimated', prop: P(s, 'layer/stroke.1.gap1'), animated: true, time: 0 });
+    await h.run({ type: 'setAnimated', prop: P(s, 'layer/stroke.2.width'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/stroke.2.width'), value: scalar(9), time: sec(1) });
+    await h.run({ type: 'setExpression', prop: P(s, 'layer/stroke.2.opacity'), source: 'value' }).catch(ignore);
+    await h.run({ type: 'setAnimated', prop: P(s, 'layer/stroke.2.taperStartWidth'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/strokes'), value: json([stroke(4), stroke(2, { dash: [10] }), stroke(3)]) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'removeStroke', layer: s, index: 1 });
+    await h.query({ type: 'getPropertyTree', layer: s, path: '', depth: 0 });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'removeStroke', layer: s, index: 9 }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/strokes'), value: json([{ color: 'x' }]) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/strokes'), value: json([stroke(5)]) });
+    await h.run({ type: 'undo' });
+    // Gradient Fill ▸ Colors: static, stopwatch, a key, a typed error, stopwatch off.
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fillPaint'), value: json({ type: 'linear', angle: 0, stops: [{ id: 'a', offset: 0, color: '#ff0000' }, { id: 'b', offset: 1, color: '#0000ff' }] }) });
+    await h.query({ type: 'getPropertyTree', layer: s, path: '', depth: 0 });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fillStops'), value: grad([[0, 0, 1, 0], [0.5, 1, 1, 1], [1, 0, 0, 0]]) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fillAngle'), value: scalar(45) });
+    await h.run({ type: 'setAnimated', prop: P(s, 'layer/fillStops'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fillStops'), value: grad([[0, 1, 1, 1], [1, 0.2, 0.4, 0.6]]), time: sec(1) });
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/fillStops'), value: json([]), time: sec(1) }).catch(ignore);
+    await h.query({ type: 'getPropertyValues', props: [P(s, 'layer/fillStops')], time: sec(0.5), evaluated: true });
+    await h.run({ type: 'setAnimated', prop: P(s, 'layer/fillStops'), animated: false, time: sec(1) });
+    await h.run({ type: 'undo' });
+    // Latent numbers: corners (Style), text stroke width (Text), skew, light / camera options, morph.
+    await h.batch('Corners', [
+      { type: 'setProperty', prop: P(s, 'layer/cornerRadiusTL'), value: scalar(12) },
+      { type: 'setProperty', prop: P(s, 'layer/cornerRadiusBR'), value: scalar(4) },
+    ]);
+    await h.run({ type: 'setProperty', prop: P(s, 'layer/skew'), value: scalar(10) });
+    await h.run({ type: 'setProperty', prop: P(t, 'layer/strokeWidth'), value: scalar(3) });
+    await h.run({ type: 'setAnimated', prop: P(t, 'layer/fillOpacity'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(l, 'light/falloffDistance'), value: scalar(250) });
+    await h.run({ type: 'setAnimated', prop: P(l, 'light/shadowBias'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(c, 'camera/irisRotation'), value: scalar(15) });
+    await h.run({ type: 'setAnimated', prop: P(c, 'camera/dofStrength'), animated: true, time: 0 });
+    // Point of Interest on / off, with a key that goes with it.
+    await h.run({ type: 'setProperty', prop: P(c, 'transform/orientTowardsPointOfInterest'), value: bool(true) });
+    await h.run({ type: 'setAnimated', prop: P(c, 'camera/poiX'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(c, 'transform/orientTowardsPointOfInterest'), value: bool(false) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'setProperty', prop: P(l, 'transform/orientTowardsPointOfInterest'), value: bool(true) });
+    await h.run({ type: 'setProperty', prop: P(s, 'transform/orientTowardsPointOfInterest'), value: bool(true) }).catch(ignore);
+    for (const id of [s, t, l, c, m]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    // Persist.
+    await h.run({ type: 'saveProject', path: 'C:/p/b3z-paint.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/b3z-paint.motion' });
+    for (const id of [s, t, l, c, m]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+  },
+
   // @@family:properties
   ...((): Record<string, Session> => {
     const P = (layer: string, path: string) => ({ layer, path });
@@ -2001,6 +2506,159 @@ export const FAMILY_CORPUS: Record<string, Session> = {
       },
     };
   })(),
+  'B3z-a: effects — compositing options, pasteEffects, keyed-shape mask settings, per-vertex feather, Glass, style switches — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const str = (value: string) => ({ kind: 'string' as const, value });
+    const choice = (value: string) => ({ kind: 'choice' as const, value });
+    const bool = (value: boolean) => ({ kind: 'bool' as const, value });
+    const color = (r: number, g: number, b: number) => ({ kind: 'color' as const, value: { r, g, b, a: 1 } });
+    const path = (vertices: number[], featherPoints: Array<{ segment: number; t: number; radius: number; tension: number }> = []) =>
+      ({ kind: 'path' as const, value: { vertices, inTangents: [], outTangents: [], closed: true, featherPoints } });
+    const square = [0, 0, 100, 0, 100, 100, 0, 100];
+    const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
+    const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'B', init: [] });
+    const { groups: [fx] } = await h.run({ type: 'addEffect', layers: [A], effect: 'gaussian-blur', params: [] });
+    await h.query({ type: 'getPropertyTree', layer: A, path: '', depth: 0 });
+    // Effect Opacity: listed on every effect; static = Effect.opacity (cleared at >= 100), keyed on effect.<id>.fx.opacity.
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/opacity`), value: scalar(40) });
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/opacity`), value: scalar(100) });
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/opacity`), value: scalar(-20) });
+    await h.run({ type: 'setAnimated', prop: P(A, `${fx}/compositing/opacity`), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/opacity`), value: scalar(80), time: sec(1) });
+    await h.run({ type: 'setAnimated', prop: P(A, `${fx}/compositing/opacity`), animated: false, time: sec(0.5) });
+    await h.run({ type: 'resetProperty', prop: P(A, `${fx}/compositing/opacity`) }).catch(ignore);
+    await h.run({ type: 'undo' });
+    // Effect Mask and label colour.
+    const { groups: [m1] } = await h.run({ type: 'addMask', layer: A, path: path(square).value, mode: 'none', inverted: false });
+    const mid = m1!.split('/')[1]!;
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/mask`), value: str(mid) });
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/mask`), value: str('mask_ghost') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/mask`), value: scalar(1) }).catch(ignore);
+    await h.run({ type: 'setAnimated', prop: P(A, `${fx}/compositing/mask`), animated: true, time: 0 }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/label`), value: str('#5282b8') });
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/label`), value: str('red') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/label`), value: str('') });
+    await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/label`), value: str('#d0705a') });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // pasteEffects: a captured snapshot with keys, switch, compositing options and a label.
+    const captured = JSON.stringify([
+      {
+        effect: { id: 'fx_src', type: 'gaussian-blur', params: { blurriness: 12 }, enabled: false, opacity: 50, maskId: mid, labelColor: '#4ea885' },
+        tracks: {
+          blurriness: [{ t: 1, value: 30, easing: 'easeIn', bezier: [0.3, 0, 0.7, 1], id: 'k99' }, { t: 0, value: 10, label: 2, roving: false }],
+          'fx.opacity': [{ t: 0.5, value: 50, easing: 'nope', spatialInterp: 'auto' }],
+          empty: [],
+        },
+        sourceNodeId: 'layer_gone',
+      },
+      { effect: { type: 'fill', params: { color: '#ff0000' } } },
+    ]);
+    await h.run({ type: 'pasteEffects', layers: [A, B], effects: captured, index: 0 });
+    await h.run({ type: 'pasteEffects', layers: [B], effects: captured });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'pasteEffects', layers: [A], effects: '[]' }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: [A], effects: 'nope' }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: [A], effects: '[{"effect":{}}]' }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: [A], effects: '[{"effect":{"type":"fill"},"tracks":{"a":[{"t":"x","value":1}]}}]' }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: [A], effects: '[{"effect":{"type":"fill"},"tracks":[]}]' }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: [A], effects: captured, index: 99 }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: [], effects: captured }).catch(ignore);
+    await h.run({ type: 'pasteEffects', layers: ['ghost'], effects: captured }).catch(ignore);
+    // Feather / Opacity / Expansion on a keyed-shape mask hold across every shape key.
+    await h.run({ type: 'setAnimated', prop: P(A, `${m1}/path`), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path([0, 0, 200, 0, 200, 200, 0, 200]), time: sec(1) });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/feather`), value: scalar(12) });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/opacity`), value: scalar(40) });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/expansion`), value: scalar(-3) });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    // Per-vertex feather (BezierPath.featherPoints): set, keep (empty list), clear (negative marker), refusals.
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path(square, [{ segment: 1, t: 0, radius: 8, tension: 0 }, { segment: 3, t: 0, radius: 2.5, tension: 0 }]), time: sec(1) });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path([0, 0, 110, 0, 110, 110, 0, 110]), time: sec(1) });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path(square, [{ segment: 3, t: 0, radius: -1, tension: 0 }]), time: sec(1) });
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path(square, [{ segment: 1, t: 0.5, radius: 8, tension: 0 }]), time: sec(1) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path(square, [{ segment: 9, t: 0, radius: 8, tension: 0 }]), time: sec(1) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(A, `${m1}/path`), value: path(square, [{ segment: 1, t: 0, radius: 8, tension: 0 }, { segment: 1, t: 0, radius: 4, tension: 0 }]), time: sec(1) }).catch(ignore);
+    const { groups: [m2] } = await h.run({ type: 'addMask', layer: B, path: path(square, [{ segment: 2, t: 0, radius: 6, tension: 0 }]).value, mode: 'add', inverted: false });
+    await h.run({ type: 'setProperty', prop: P(B, `${m2}/path`), value: path([0, 0, 90, 0, 90, 90, 0, 90]) });
+    await h.query({ type: 'getPropertyValues', props: [P(A, `${m1}/path`), P(B, `${m2}/path`)], time: sec(1), evaluated: false });
+    // Layer styles: Glass as a first-class style, the switches, a bound-angle edit as one batch.
+    for (const key of ['glass', 'bevel', 'stroke', 'dropShadow', 'satin']) {
+      await h.run({ type: 'addPropertyGroup', layer: A, parent: 'styles', matchName: `style:${key}`, init: [] });
+    }
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/glass/blur'), value: scalar(40) });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/glass/tintColor'), value: color(1, 0.5, 0) });
+    await h.run({ type: 'setAnimated', prop: P(A, 'styles/glass/rimAngle'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/glass/rimAngle'), value: scalar(90), time: sec(1) });
+    await h.run({ type: 'setAnimated', prop: P(A, 'styles/glass/rimColor'), animated: true, time: 0 });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/glass/tintOpacity'), value: scalar(0.4) });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/glass/useGlobalLight'), value: bool(false) });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/bevel/direction'), value: choice('down') });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/bevel/direction'), value: choice('sideways') }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/stroke/position'), value: choice('center') });
+    await h.run({ type: 'setProperty', prop: P(A, 'styles/satin/invert'), value: bool(true) });
+    await h.batch('Set Angle', [
+      { type: 'setProperty', prop: P(A, 'styles/dropShadow/useGlobalLight'), value: bool(false) },
+      { type: 'setProperty', prop: P(A, 'styles/dropShadow/angle'), value: scalar(30) },
+    ]);
+    await h.run({ type: 'setProperty', prop: P(B, 'styles/satin/invert'), value: bool(true) }).catch(ignore);
+    await h.run({ type: 'copyPropertyGroups', groups: [P(A, 'styles/glass')], toLayers: [B] });
+    await h.run({ type: 'removePropertyGroups', groups: [P(A, 'styles/glass')] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'undo' });
+    for (const id of [A, B]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    // Persist.
+    await h.run({ type: 'saveProject', path: 'C:/p/b3za.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/b3za.motion' });
+    for (const id of [A, B]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+  },
+
+  'B3z WS-L1: builder fragments — text preset, shape, Lottie, camera + light, a matte rig, a motion graphic — into the comp and into a group, save → open': async (h) => {
+    const s = await buildScene(h);
+    // The editor's inserts: a legacy builder runs off-document, its layers travel as ONE
+    // pasteLayers fragment (offDocument.ts) — the bytes are recorded in the log, so both
+    // engines paste exactly what the builder produced.
+    const built = (build: () => unknown) => {
+      const b = buildLayerFragment(s.comp, build);
+      if (!b) throw new Error('the builder added no layers');
+      return b;
+    };
+    const paste = async (b: ReturnType<typeof built>, extra: Record<string, unknown> = {}) =>
+      (await h.run({ type: 'pasteLayers', comp: s.comp, fragment: b.fragment, index: b.index, ...extra } as Command)) as { layers: string[] };
+    const text = await paste(built(() => insertText('Title', 96, 800, { fill: '#ff3366', letterSpacing: 4 })));
+    const star = await paste(built(() => insertShape('star', 'Star')));
+    const lottie = await paste(built(() => buildLottieItem(LOTTIE_ITEMS[0]!.id, 400, 300)));
+    const cam = await paste(built(() => insertCamera({ name: 'Cam', focalLength: 1500, twoNode: true })));
+    const light = await paste(built(() => insertLight({ name: 'Key', type: 'spot', intensity: 80, color: '#ff8800', coneAngle: 30, ambientFill: false })));
+    // A rig whose fill is track-matted by its own matte layer: the reference follows the copies.
+    const rigFrag = built(() => {
+      insertShape('rect', 'Matte');
+      const matte = useSelectionStore.getState().ids[0]!;
+      insertText('Matted');
+      setNodeMatte(useSelectionStore.getState().ids[0]!, { mode: 'luma', inverted: true, sourceId: matte });
+    });
+    const rig = await paste(rigFrag);
+    const mg = await paste(built(() => buildMographItem(MOGRAPH_ITEMS[0]!.id, 500, 500)));
+    // Into a group (pasteLayers `parent`), deeper in the stack.
+    const { layer: G } = await h.run({ type: 'groupLayers', layers: [s.P], name: 'Holder' });
+    const inG = await paste(rigFrag, { parent: G, index: 1 });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    const all = [text, star, lottie, cam, light, rig, mg, inG].flatMap((r) => r.layers);
+    for (const id of all) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    await h.run({ type: 'saveProject', path: 'C:/p/wsl1.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/wsl1.motion' });
+    for (const id of all) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+  },
 };
 
 // ─── The generated corpus (D1b) ──────────────────────────────────────────────
@@ -2057,7 +2715,7 @@ interface World {
   renderItems: string[];
 }
 
-const GROUP_PATH = /^(effects|masks|contents|styles)\/[^/]+$|^text\/animators\/[^/]+(\/selectors\/[^/]+)?$/;
+const GROUP_PATH = /^(effects|masks|contents|styles)\/[^/]+$|^text\/animators\/[^/]+(\/selectors\/[^/]+)?$|^(puppet|skeleton)$|^puppet\/pins\/[^/]+$|^skeleton\/(bones|controllers)\/[^/]+$|^skeleton\/bones\/[^/]+\/ik$/;
 
 async function observe(h: Harness): Promise<World> {
   const doc = await h.query({ type: 'getDocument', includeProperties: true, includeKeyframes: true });
@@ -2112,6 +2770,15 @@ function tweak(g: Gen, info: PropertyInfo, w: World): Value | undefined {
     case 'scalars': return { kind: 'scalars', value: { values: g.some([1, 2, 3, 5, 8, 13, 20], 3).sort((a, b) => a - b) } };
     case 'path': return { kind: 'path', value: { ...v.value, vertices: v.value.vertices.map((x) => x + g.num(-10, 10)) } };
     case 'layer': return { kind: 'layer', value: g.pick(w.layers.map((l) => l.id)) ?? '' };
+    case 'json': {
+      // B3z: a json field (a layer config, a paint): clear it, empty a list, or stamp a key on an object.
+      let cur: unknown;
+      try { cur = JSON.parse(v.value); } catch { cur = null; }
+      if (g.coin(0.2)) return { kind: 'json', value: 'null' };
+      if (Array.isArray(cur)) return { kind: 'json', value: JSON.stringify(g.coin() ? [] : cur) };
+      const base = cur && typeof cur === 'object' ? cur as Record<string, unknown> : {};
+      return { kind: 'json', value: JSON.stringify({ ...base, seed: g.int(9) }) };
+    }
     case 'none': return undefined;
     default: return v;
   }
@@ -2119,7 +2786,7 @@ function tweak(g: Gen, info: PropertyInfo, w: World): Value | undefined {
 
 const animatable = (w: World) => w.props.filter((p) => p.info.animatable && p.info.value && p.info.value.kind !== 'none');
 /** G1: the static (non-animatable) fields — choices, switches, strings, colours, numbers, lists. */
-const staticFields = (w: World) => w.props.filter((p) => !p.info.animatable && p.info.value && ['choice', 'bool', 'string', 'scalar', 'color', 'scalars'].includes(p.info.value.kind));
+const staticFields = (w: World) => w.props.filter((p) => !p.info.animatable && p.info.value && ['choice', 'bool', 'string', 'scalar', 'color', 'scalars', 'json'].includes(p.info.value.kind));
 /** G1: what Add ▸ Property offers a text animator. */
 const OPTIONAL_NAMES = ['anchorX', 'anchorY', 'anchorZ', 'skewAxis', 'lineAnchor', 'characterValue', 'fillHue', 'strokeOpacity', 'color', 'strokeColor', 'axisGRAD', 'axisopsz', 'axisXTRA', 'nope'];
 const OPTIONAL_PROP = /^text\/animators\/[^/]+\/props\/(anchor[XYZ]|skewAxis|lineAnchor|characterValue|fill(Hue|Saturation|Brightness)|stroke(Opacity|Hue|Saturation|Brightness|Color)|color|axis[A-Za-z0-9]{4})$/;
@@ -2261,7 +2928,13 @@ const BUILDERS: Record<string, Builder> = {
     const layers = sameComp(g, w, 2);
     if (!layers.length || w.layers.length > 45) return undefined;
     const fragment = await h.query({ type: 'copyLayers', layers }).catch(() => undefined);
-    return fragment ? { type: 'pasteLayers', comp: g.pick(w.comps)!, fragment, ...(g.coin() ? { time: g.time(60) } : {}), ...(g.coin(0.3) ? { index: 0 } : {}) } : undefined;
+    if (!fragment) return undefined;
+    const comp = g.pick(w.comps)!;
+    const cmd: Command = { type: 'pasteLayers', comp, fragment, ...(g.coin() ? { time: g.time(60) } : {}), ...(g.coin(0.3) ? { index: 0 } : {}) };
+    // WS-L1: paste INTO a layer (a group, or any layer — parenting nests) at a deeper index.
+    const into = g.coin(0.3) ? g.pick(layersOf(w, comp).filter((l) => l.kind === 'group' || g.coin(0.3))) : undefined;
+    if (into) return { ...cmd, parent: into.id, index: g.int(layersOf(w, comp).length + 1) } as Command;
+    return cmd;
   },
   separateLayer: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'separateLayer', layer: l.id } : undefined; },
   autoTrace: (g, w) => { const l = g.pick(w.layers); return l ? { type: 'autoTrace', layer: l.id, range: { start: 0, duration: sec(1) }, channel: 'alpha', threshold: 50, tolerance: 1 } : undefined; },
@@ -2315,9 +2988,11 @@ const BUILDERS: Record<string, Builder> = {
     const p = g.pick(animatable(w));
     if (!p) return undefined;
     const source = p.info.value?.kind === 'scalar' && g.coin(0.7) ? g.pick(EXPRESSIONS_SCALAR)! : g.pick(EXPRESSIONS_ANY)!;
-    return { type: 'setExpression', prop: ref(p), source: g.coin(0.1) ? '' : source, enabled: g.coin(0.85) };
+    // B3z WS-K: now and then one dimension of a vector (a member expression).
+    const vec = ['vec2', 'vec3', 'color'].includes(p.info.value?.kind ?? '');
+    return { type: 'setExpression', prop: ref(p), source: g.coin(0.1) ? '' : source, enabled: g.coin(0.85), ...(vec && g.coin(0.3) ? { member: g.int(2) } : {}) };
   },
-  setExpressionEnabled: (g, w) => ({ type: 'setExpressionEnabled', props: g.some(animatable(w), 2).map(ref), enabled: g.coin() }),
+  setExpressionEnabled: (g, w) => ({ type: 'setExpressionEnabled', props: g.some(animatable(w), 2).map(ref), enabled: g.coin(), ...(g.coin(0.15) ? { member: g.int(2) } : {}) }),
   convertExpressionToKeyframes: (g, w) => {
     const p = g.pick(animatable(w));
     return p ? { type: 'convertExpressionToKeyframes', prop: ref(p), ...(g.coin() ? { range: { start: 0, duration: sec(0.5) } } : {}), step: g.coin() ? 0 : sec(2 / 30) } : undefined;
@@ -2348,6 +3023,8 @@ const BUILDERS: Record<string, Builder> = {
     const patches: Array<Omit<KeyframePatch, 'id' | 'spatialIn' | 'spatialOut'>> = [
       { easing: g.pick(EasingValues)! }, { time: g.time() }, { roving: g.coin() }, { continuous: g.coin() }, { label: g.int(17) },
       { bezier: { x1: 0.2, y1: 0.1, x2: 0.8, y2: 0.9 } }, { clearBezier: true }, { spatialInterp: g.pick(SpatialInterpValues)! }, { clearSpatial: true },
+      // B3z WS-K: per-dimension ease.
+      { dim: g.int(3), easing: 'bezier', bezier: { x1: 0.4, y1: 0, x2: 0.6, y2: 1 } }, { dim: g.int(2), continuous: g.coin(), clearBezier: g.coin() },
     ];
     return { type: 'updateKeyframes', patches: g.some(w.keys, 2).map((k) => ({ id: k.id, spatialIn: [], spatialOut: [], ...g.pick(patches)! })) };
   },
@@ -2359,13 +3036,28 @@ const BUILDERS: Record<string, Builder> = {
     const p = type && g.pick(animatable(w).filter((q) => q.info.valueType === type));
     return set && p ? { type: 'pasteKeyframes', prop: ref(p), time: g.time(60), keys: set.keyframes } : undefined;
   },
+  // B3z WS-K: replace a property's keys (an assistant's result) — kept / new ids, shifted, per-dimension ease.
+  setKeyframes: (g, w) => {
+    const set = g.pick(w.keySets.filter((s) => s.keyframes.length));
+    if (!set) return undefined;
+    const shift = g.coin() ? 0 : sec(g.int(3) / 10);
+    const keys = set.keyframes.filter(() => g.coin(0.8)).map((k) => ({
+      ...k, time: k.time + shift, id: g.coin(0.2) ? '' : k.id,
+      dims: g.coin(0.2) && ['vec2', 'color'].includes(k.value.kind) ? (k.value.kind === 'vec2' ? [0, 1] : [0, 1, 2, 3]).map((i) => ({ easing: i % 2 ? 'hold' as const : 'linear' as const, continuous: false })) : k.dims,
+    }));
+    return keys.length ? { type: 'setKeyframes', prop: set.prop, keys } : undefined;
+  },
   addEffect: (g, w) => ({ type: 'addEffect', layers: g.some(ids(w.layers), 2), effect: g.pick(EFFECT_TYPES)!, ...(g.coin(0.2) ? { index: 0 } : {}), params: [] }),
   addMask: (g, w) => {
     const l = g.pick(w.layers);
     const x = g.int(100);
     return l ? {
       type: 'addMask', layer: l.id, mode: g.pick(MaskModeValues)!, inverted: g.coin(0.2), ...(g.coin(0.3) ? { name: `Mask ${g.int(9)}` } : {}),
-      path: { vertices: [x, 0, x + 100, 0, x + 100, 100, x, 100], inTangents: [], outTangents: [], closed: g.coin(0.9), featherPoints: [] },
+      path: {
+        vertices: [x, 0, x + 100, 0, x + 100, 100, x, 100], inTangents: [], outTangents: [], closed: g.coin(0.9),
+        // B3z-a: per-vertex feather (a vertex past the 4th is refused).
+        featherPoints: g.coin(0.3) ? [{ segment: g.int(5), t: 0, radius: g.int(20), tension: 0 }] : [],
+      },
     } : undefined;
   },
   addPropertyGroup: (g, w) => {
@@ -2381,6 +3073,26 @@ const BUILDERS: Record<string, Builder> = {
     return { type: 'addPropertyGroup', layer: l.id, parent: 'contents', matchName: `pathop:${g.pick(PATH_OP_TYPES)!}`, init: [], ...(g.coin(0.2) ? { index: 0 } : {}) };
   },
   removePropertyGroups: (g, w) => (w.groups.length ? { type: 'removePropertyGroups', groups: g.some(w.groups, 1).map(ref) } : undefined),
+  // B3z WS-R: puppet pins, bones, IK goals, controllers (and the rigs they create).
+  addRigGroup: (g, w) => {
+    const l = g.pick(w.layers);
+    if (!l) return undefined;
+    const bone = g.pick(w.groups.filter((x) => x.layer === l.id && /^skeleton\/bones\/[^/]+$/.test(x.info.path)));
+    const c = g.int(5);
+    const v = { kind: 'vec2' as const, value: { x: g.int(200) - 100, y: g.int(200) - 100 } };
+    if (c === 0) return { type: 'addPropertyGroup', layer: l.id, parent: 'puppet/pins', matchName: 'ADBE FreePin3 PosPin Atom', init: [{ path: 'restPosition', value: v }, { path: 'kind', value: { kind: 'choice', value: g.pick(['position', 'starch', 'bend', 'advanced', 'overlap'])! } }], ...(g.coin(0.2) ? { index: 0 } : {}) };
+    if (c === 1) return { type: 'addPropertyGroup', layer: l.id, parent: 'skeleton/bones', matchName: 'Premation Bone', init: [{ path: 'position', value: v }, ...(bone && g.coin() ? [{ path: 'parent', value: { kind: 'string' as const, value: bone.info.path.split('/')[2]! } }] : [])] };
+    if (c === 2 && bone) return { type: 'addPropertyGroup', layer: l.id, parent: bone.info.path, matchName: 'Premation IK Goal', init: [{ path: 'target', value: v }] };
+    if (c === 3) return { type: 'addPropertyGroup', layer: l.id, parent: 'skeleton/controllers', matchName: 'Premation Rig Controller', init: [] };
+    return { type: 'addPropertyGroup', layer: l.id, parent: '', matchName: g.pick(['ADBE FreePin3', 'Premation Skeleton'])!, init: [] };
+  },
+  addIkPole: (g, w) => {
+    const ik = g.pick(w.groups.filter((x) => /\/ik$/.test(x.info.path)));
+    if (!ik) return undefined;
+    return g.coin()
+      ? { type: 'addProperties', parent: { layer: ik.layer, path: ik.info.path }, names: ['pole'] }
+      : { type: 'removeProperties', props: [{ layer: ik.layer, path: `${ik.info.path}/pole` }] };
+  },
   addProperties: (g, w) => {
     const anim = g.pick(w.groups.filter((x) => /^text\/animators\/[^/]+$/.test(x.info.path)));
     return anim ? { type: 'addProperties', parent: { layer: anim.layer, path: `${anim.info.path}/props` }, names: g.some(OPTIONAL_NAMES, 3) } : undefined;
@@ -2389,11 +3101,29 @@ const BUILDERS: Record<string, Builder> = {
     const props = w.props.filter((p) => OPTIONAL_PROP.test(p.info.path));
     return props.length ? { type: 'removeProperties', props: g.some(props, 2).map(ref) } : undefined;
   },
+  // B3z: delete Stroke N of a layer's stroke stack (an index past the end is outOfRange).
+  removeStroke: (g, w) => {
+    const p = g.pick(w.props.filter((x) => x.info.path === 'layer/strokes'));
+    if (!p) return undefined;
+    let n = 0;
+    try { n = (JSON.parse((p.info.value as { value: string }).value) as unknown[]).length; } catch { n = 0; }
+    return { type: 'removeStroke', layer: p.layer, index: g.int(n + 1) };
+  },
   movePropertyGroup: (g, w) => { const p = g.pick(w.groups); return p ? { type: 'movePropertyGroup', group: ref(p), toIndex: g.int(3) } : undefined; },
   duplicatePropertyGroups: (g, w) => (w.groups.length ? { type: 'duplicatePropertyGroups', groups: g.some(w.groups, 1).map(ref) } : undefined),
   setGroupEnabled: (g, w) => (w.groups.length ? { type: 'setGroupEnabled', groups: g.some(w.groups, 2).map(ref), enabled: g.coin() } : undefined),
   renamePropertyGroup: (g, w) => { const p = g.pick(w.groups); return p ? { type: 'renamePropertyGroup', group: ref(p), name: `N${g.int(9)}` } : undefined; },
   copyPropertyGroups: (g, w) => (w.groups.length ? { type: 'copyPropertyGroups', groups: g.some(w.groups, 1).map(ref), toLayers: g.some(ids(w.layers), 2) } : undefined),
+  // B3z-a: a captured effect snapshot (keys, switch, compositing options).
+  pasteEffects: (g, w) => ({
+    type: 'pasteEffects',
+    layers: g.some(ids(w.layers), 2),
+    effects: JSON.stringify([{
+      effect: { type: g.pick(EFFECT_TYPES)!, params: {}, ...(g.coin(0.3) ? { opacity: g.int(100) } : {}), ...(g.coin(0.3) ? { enabled: false } : {}) },
+      tracks: g.coin(0.5) ? { 'fx.opacity': [{ t: 0, value: g.int(100) }, { t: 1, value: g.int(100), easing: 'easeIn' }] } : {},
+    }]),
+    ...(g.coin(0.2) ? { index: 0 } : {}),
+  }),
   applyPreset: (g, w) => ({ type: 'applyPreset', layers: g.some(ids(w.layers), 2), preset: g.pick(PRESET_NAMES)!, time: g.time(60) }),
   invokeEffectAction: (g, w) => {
     const p = g.pick(w.groups.filter((x) => x.info.path.startsWith('effects/')));
@@ -2432,7 +3162,7 @@ export const GENERATED_COMMANDS: readonly string[] = Object.keys(BUILDERS);
 // not: a batch's inverse took a part's first-seen before / last-seen after
 // from captures that did not list parts created or removed by an earlier
 // command of the batch — engineCorrectness.test.ts pins both fixes.)
-const COALESCING = new Set(['setProperty', 'setProperties', 'moveKeyframes', 'setLayerTiming', 'moveLayersInTime', 'setCompositionSettings', 'setWorkArea', 'updateKeyframes', 'moveMarkers', 'slipLayers']);
+const COALESCING = new Set(['setProperty', 'setProperties', 'moveKeyframes', 'setLayerTiming', 'moveLayersInTime', 'setCompositionSettings', 'setWorkArea', 'updateKeyframes', 'moveMarkers', 'slipLayers', 'setKeyframes']);
 
 async function generatedSession(h: Harness, seed: number, steps: number): Promise<void> {
   const g = new Gen(mulberry32(seed));

@@ -15,26 +15,64 @@
  * NOT KEYFRAMEABLE, deliberately. These are not transform channels: animating
  * `radialSegments` would rebuild and re-upload the mesh every frame, and
  * animating a radius is what the layer's SCALE is for (it costs one matrix,
- * keeps the buffers, and already keyframes). The panel therefore writes static
- * props through the ordinary undoable scene-graph path instead of pretending
- * to offer a stopwatch that would be a performance trap.
+ * keeps the buffers, and already keyframes). They are static LAYER FIELDS of
+ * the engine API (`primitive/<param>`, ENGINE_API.md §15.9) rather than a
+ * stopwatch that would be a performance trap.
+ *
+ * B3z: a parameter write is a CLIENT MACRO — the field plus the layer box the
+ * new mesh fits (`primitiveLayerBox`, pure over the spec; keyed at the playhead
+ * when width/height are animated, as the legacy re-fit did), ONE batch; a
+ * scrub is ONE gesture.
  */
 
+import type { Command, PropertyWrite } from '@motion/engine-api';
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
+import { getTime } from '@stores/playbackClockStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { values } from '@core/engine/propRefs';
+import type { SceneNode } from '@core/types';
 import {
   readNodePrimitive,
-  setPrimitiveParam,
-  setPrimitiveType,
+  primitiveLayerBox,
   PRIMITIVE_FIELDS,
   PRIMITIVE_LABELS,
   PRIMITIVE_MESH_TYPES,
   type PrimitiveMeshType,
   type PrimitiveSpec,
 } from '@core/scene/primitiveLayer';
+import { hasPath } from './materialEdits';
+import { trackWrites } from './inspectorEdits';
+import { useEngineEdit } from './useEngineEdit';
 import s from './PrimitiveSection.module.css';
+
+/**
+ * One primitive edit as ONE command list: the `primitive/<key>` fields and the
+ * layer box (`layer` width / height) the resulting mesh fits. Empty when the
+ * layer has no such field.
+ */
+export function primitiveCommands(nodeId: string, patch: Partial<PrimitiveSpec>, seconds: number): Command[] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const comp = node?.components.find((c) => c.type === 'Primitive');
+  if (!node || !comp) return [];
+  const writes: PropertyWrite[] = [];
+  for (const [k, v] of Object.entries(patch)) {
+    const path = `primitive/${k}`;
+    if (!hasPath(nodeId, path)) continue;
+    const value = k === 'type' ? values.choice(String(v)) : typeof v === 'boolean' ? values.bool(v) : values.scalar(Number(v));
+    writes.push({ prop: { layer: nodeId, path }, value });
+  }
+  if (writes.length === 0) return [];
+  // The spec as the renderer will read it AFTER the write (a type switch fills
+  // unstored params from the NEW type's defaults).
+  const next = readNodePrimitive({ ...node, components: [{ ...comp, props: { ...comp.props, ...patch } }] } as SceneNode);
+  if (next) {
+    const box = primitiveLayerBox(next);
+    writes.push(...trackWrites(nodeId, { width: box.width, height: box.height }, seconds));
+  }
+  return [{ type: 'setProperties', writes }];
+}
 
 /** Does this layer have shape parameters at all? Drives whether the inspector
  *  mounts the section (a mesh primitive; not an extruded cube or a plane). */
@@ -77,12 +115,15 @@ const HINTS: Record<PrimitiveMeshType, string> = {
 
 export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((r) => r.rev);
+  const e = useEngineEdit();
   const node = defaultSceneGraph.getNode(nodeId);
   const spec = node ? readNodePrimitive(node) : null;
   if (!spec) return null;
 
   const fields = PRIMITIVE_FIELDS[spec.type];
   const uses = (f: keyof PrimitiveSpec): boolean => fields.includes(f);
+  const send = (label: string, patch: Partial<PrimitiveSpec>): void => e.send(label, primitiveCommands(nodeId, patch, getTime()));
+  const on = (): boolean => hasPath(nodeId, 'primitive/type');
 
   return (
     <div className={s.stack}>
@@ -91,8 +132,7 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
         <select
           className={s.select}
           value={spec.type}
-          // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
-          onChange={(e) => setPrimitiveType(nodeId, e.currentTarget.value as PrimitiveMeshType)}
+          onChange={(ev) => send('Set Shape', { type: ev.currentTarget.value as PrimitiveMeshType })}
           aria-label="Primitive shape"
         >
           {PRIMITIVE_MESH_TYPES.map((t) => (
@@ -110,8 +150,8 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
             max={SIZE_ROWS[f].max}
             step={1}
             unit="px"
-            // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
-            onChange={(v) => setPrimitiveParam(nodeId, f, v)}
+            onChange={(v) => send(`Set ${SIZE_ROWS[f].label}`, { [f]: v })}
+            {...e.scrub(`Set ${SIZE_ROWS[f].label}`, on)}
             aria-label={SIZE_ROWS[f].label}
           />
         </div>
@@ -125,8 +165,8 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
             min={3}
             max={256}
             step={1}
-            // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
-            onChange={(v) => setPrimitiveParam(nodeId, f, Math.round(v))}
+            onChange={(v) => send(`Set ${SEG_LABELS[spec.type][f]}`, { [f]: Math.round(v) })}
+            {...e.scrub(`Set ${SEG_LABELS[spec.type][f]}`, on)}
             aria-label={SEG_LABELS[spec.type][f]}
           />
         </div>
@@ -137,8 +177,7 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
           <span className={s.label}>End Caps</span>
           <Switch
             checked={spec.capped}
-            // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
-            onChange={(e) => setPrimitiveParam(nodeId, 'capped', e.currentTarget.checked)}
+            onChange={(ev) => send('Set End Caps', { capped: ev.currentTarget.checked })}
             aria-label="End caps"
           />
         </div>

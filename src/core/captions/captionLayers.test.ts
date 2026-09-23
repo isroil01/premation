@@ -22,10 +22,9 @@ import type { SceneNode } from '@core/types';
 import {
   CAPTION_PROP,
   captionNodes,
-  insertCaptionLayers,
+  buildCaptionLayers,
   isCaptionNode,
   readCaptionCues,
-  removeCaptionLayers,
 } from './captionLayers';
 import type { Cue } from './captionFormat';
 
@@ -76,20 +75,20 @@ beforeEach(() => {
   getTimelineController().syncFromScene('comp_root');
 });
 
-describe('insertCaptionLayers', () => {
+describe('buildCaptionLayers (the insert builder; captionLayersEngine.test.ts covers the engine edit)', () => {
   it('creates one layer per cue', () => {
-    const result = insertCaptionLayers(CUES);
+    const result = buildCaptionLayers(CUES);
     expect(result.nodeIds).toHaveLength(2);
     expect(captionNodes('comp_root')).toHaveLength(2);
   });
 
   it('marks each layer so it can be found again', () => {
-    insertCaptionLayers(CUES);
+    buildCaptionLayers(CUES);
     for (const node of captionNodes('comp_root')) expect(isCaptionNode(node)).toBe(true);
   });
 
   it('writes the cue text into the layer', () => {
-    insertCaptionLayers([{ start: 0, end: 1, text: 'Hello there' }]);
+    buildCaptionLayers([{ start: 0, end: 1, text: 'Hello there' }]);
     const node = captionNodes('comp_root')[0] as SceneNode;
     const text = node.components.find((c) => c.type === 'Text');
     expect(text?.props.content).toBe('Hello there');
@@ -97,7 +96,7 @@ describe('insertCaptionLayers', () => {
   });
 
   it('times each clip bar to its cue, which is the whole design', () => {
-    insertCaptionLayers(CUES);
+    buildCaptionLayers(CUES);
     const cues = readCaptionCues('comp_root');
     expect(cues[0]?.start).toBeCloseTo(1, 2);
     expect(cues[0]?.end).toBeCloseTo(3, 2);
@@ -108,14 +107,14 @@ describe('insertCaptionLayers', () => {
   it('does not collapse a cue to a single frame', () => {
     // The failure this guards: trimming the head before the tail inverts the
     // clip, the timeline clamps it, and every caption becomes one frame long.
-    insertCaptionLayers(CUES);
+    buildCaptionLayers(CUES);
     for (const cue of readCaptionCues('comp_root')) {
       expect(cue.end - cue.start).toBeGreaterThan(1);
     }
   });
 
   it('sizes captions from the composition, not from a fixed pixel value', () => {
-    insertCaptionLayers([{ start: 0, end: 1, text: 'Hello' }]);
+    buildCaptionLayers([{ start: 0, end: 1, text: 'Hello' }]);
     const node = captionNodes('comp_root')[0] as SceneNode;
     const fontSize = node.components.find((c) => c.type === 'Text')?.props.fontSize as number;
     // 5% of a 1080-tall comp. The exact number matters less than that it scales.
@@ -123,7 +122,7 @@ describe('insertCaptionLayers', () => {
   });
 
   it('places captions near the bottom of the frame', () => {
-    insertCaptionLayers([{ start: 0, end: 1, text: 'Hello' }]);
+    buildCaptionLayers([{ start: 0, end: 1, text: 'Hello' }]);
     const node = captionNodes('comp_root')[0] as SceneNode;
     const transform = node.components.find((c) => c.type === 'Transform');
     expect(transform?.props.x).toBe(960);
@@ -132,13 +131,13 @@ describe('insertCaptionLayers', () => {
 
   it('wraps a long caption rather than letting it run off the frame', () => {
     const long = 'This is a very long caption indeed and it will certainly not fit on one line of video';
-    insertCaptionLayers([{ start: 0, end: 3, text: long }]);
+    buildCaptionLayers([{ start: 0, end: 3, text: long }]);
     const content = captionNodes('comp_root')[0]?.components.find((c) => c.type === 'Text')?.props.content;
     expect(String(content)).toContain('\n');
   });
 
   it('drops overlapping cues and says how many', () => {
-    const result = insertCaptionLayers([
+    const result = buildCaptionLayers([
       { start: 0, end: 5, text: 'first' },
       { start: 0.001, end: 4, text: 'swallowed' },
     ]);
@@ -147,13 +146,13 @@ describe('insertCaptionLayers', () => {
   });
 
   it('creates nothing for an empty cue list', () => {
-    expect(insertCaptionLayers([]).nodeIds).toHaveLength(0);
+    expect(buildCaptionLayers([]).nodeIds).toHaveLength(0);
   });
 });
 
 describe('readCaptionCues', () => {
   it('reports a re-timed caption at its NEW time', () => {
-    insertCaptionLayers([{ start: 1, end: 3, text: 'moved' }]);
+    buildCaptionLayers([{ start: 1, end: 3, text: 'moved' }]);
     const controller = getTimelineController();
     const nodeId = (captionNodes('comp_root')[0] as SceneNode).id;
     const layer = controller.getLayersForNode(nodeId)[0];
@@ -167,7 +166,7 @@ describe('readCaptionCues', () => {
   });
 
   it('ignores layers that are not captions', () => {
-    insertCaptionLayers([{ start: 0, end: 1, text: 'a caption' }]);
+    buildCaptionLayers([{ start: 0, end: 1, text: 'a caption' }]);
     const plain = root();
     plain.id = 'plain_layer';
     plain.parent = 'comp_root';
@@ -178,33 +177,10 @@ describe('readCaptionCues', () => {
   });
 
   it('returns cues in time order however the layers are stacked', () => {
-    insertCaptionLayers([
+    buildCaptionLayers([
       { start: 4, end: 5, text: 'later' },
       { start: 1, end: 2, text: 'earlier' },
     ]);
     expect(readCaptionCues('comp_root').map((c) => c.text)).toEqual(['earlier', 'later']);
-  });
-});
-
-describe('removeCaptionLayers', () => {
-  it('removes every caption and reports the count', () => {
-    insertCaptionLayers(CUES);
-    expect(removeCaptionLayers('comp_root')).toBe(2);
-    expect(captionNodes('comp_root')).toHaveLength(0);
-  });
-
-  it('leaves other layers alone', () => {
-    insertCaptionLayers(CUES);
-    const plain = root();
-    plain.id = 'plain_layer';
-    plain.parent = 'comp_root';
-    defaultSceneGraph.addChild('comp_root', plain);
-
-    removeCaptionLayers('comp_root');
-    expect(defaultSceneGraph.getNode('plain_layer')).toBeDefined();
-  });
-
-  it('is a no-op on a composition with no captions', () => {
-    expect(removeCaptionLayers('comp_root')).toBe(0);
   });
 });

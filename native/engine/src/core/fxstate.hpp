@@ -100,6 +100,8 @@ void update_path_op(Document& d, std::string_view nodeId, std::string_view opId,
 // ── polystar ─────────────────────────────────────────────────────────────
 [[nodiscard]] std::optional<Json> read_node_polystar(const Node& n);
 [[nodiscard]] std::vector<std::string> polystar_params(std::string_view starType);
+/// polystar.ts `updateNodePolystar`: patch the validated config and store it re-validated (false: no polystar).
+bool update_node_polystar(Document& d, std::string_view nodeId, const Json& patch);
 
 // ── text animators ───────────────────────────────────────────────────────
 [[nodiscard]] const Component* text_component(const Node& n);

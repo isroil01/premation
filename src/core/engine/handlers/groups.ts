@@ -6,7 +6,7 @@
  * index-addressed text animators move).
  */
 
-import { defaultAnimation, type NodeAnimSnapshot } from '@motion/animation';
+import { defaultAnimation, type NodeAnimSnapshot, type Keyframe as TsKeyframe } from '@motion/animation';
 import type { PropRef, BezierPath } from '@motion/engine-api';
 import {
   getNodeEffects,
@@ -50,7 +50,19 @@ import { catalogFor, requireBinding, writeStatic, bezierToPoints } from '../prop
 import { flicksToSeconds } from '../time';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import type { HandlerTable, HandlerCtx } from '../handler';
+import {
+  resolveRigGroup,
+  rigGroupPath,
+  planRigAdd,
+  removeRigGroup,
+  moveRigGroup,
+  renameRigGroup,
+  setRigGroupEnabled,
+  RIG_GROUP_TYPES,
+  type RigGroupRef,
+} from '../rigProps';
 import { plural } from './common';
+import { PLUGIN_PANEL_TRACK_PREFIX, panelGroupForMatchName, panelInitProps, parsePanelGroupPath } from '../pluginProps';
 
 const STYLE_DEFAULTS: Record<string, () => unknown> = {
   glass: defaultGlassStyle,
@@ -71,6 +83,7 @@ export const GROUP_TYPES: Array<{ parent: string; matchName: string; displayName
   { parent: 'text/animators/*/selectors', matchName: 'ADBE Text Wiggly Selector', displayName: 'Wiggly Selector', category: 'text' },
   { parent: 'text/animators/*/selectors', matchName: 'ADBE Text Expressible Selector', displayName: 'Expression Selector', category: 'text' },
   ...Object.keys(STYLE_DEFAULTS).map((k) => ({ parent: 'styles', matchName: `style:${k}`, displayName: k, category: 'styles' })),
+  ...RIG_GROUP_TYPES,
   ...(['zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater', 'wiggleTransform'] as const)
     .map((t) => ({ parent: 'contents', matchName: `pathop:${t}`, displayName: t, category: 'contents' })),
 ];
@@ -83,12 +96,23 @@ type GroupRef =
   | { kind: 'animator'; layer: string; id: string; index: number }
   | { kind: 'selector'; layer: string; animator: string; animIndex: number; id: string; index: number }
   | { kind: 'style'; layer: string; id: string }
-  | { kind: 'pathop'; layer: string; id: string };
+  | { kind: 'pathop'; layer: string; id: string }
+  /** A puppet / skeleton group (rigProps.ts). */
+  | { kind: 'rig'; layer: string; id: string; rig: RigGroupRef }
+  /** B3z: a contributed plugin panel's params (pluginProps.ts) — `id` = the component TYPE, `path` = plugin/<slug>/<panel>. */
+  | { kind: 'plugin'; layer: string; id: string; path: string; prefix: string };
 
 function resolveGroup(ref: PropRef): GroupRef {
   const node = requireLayer(ref.layer);
   const seg = ref.path.split('/');
   const nf = (): never => fail('notFound', `layer '${ref.layer}' has no group '${ref.path}'`, { layer: ref.layer, path: ref.path });
+  const rig = resolveRigGroup(node, ref.layer, ref.path);
+  if (rig) return { kind: 'rig', layer: ref.layer, id: rigGroupPath(rig), rig };
+  const panel = parsePanelGroupPath(ref.path);
+  if (panel) {
+    if (!node.components.some((c) => c.type === panel.type)) nf();
+    return { kind: 'plugin', layer: ref.layer, id: panel.type, path: ref.path, prefix: `${PLUGIN_PANEL_TRACK_PREFIX}${panel.slug}.${panel.panel}.` };
+  }
   if (seg[0] === 'effects' && seg.length === 2) {
     if (!getNodeEffects(ref.layer).some((e) => e.id === seg[1])) nf();
     return { kind: 'effect', layer: ref.layer, id: seg[1]! };
@@ -128,6 +152,8 @@ function groupPath(g: GroupRef): string {
     case 'selector': return `text/animators/${g.animator}/selectors/${g.id}`;
     case 'style': return `styles/${g.id}`;
     case 'pathop': return `contents/${g.id}`;
+    case 'rig': return rigGroupPath(g.rig);
+    case 'plugin': return g.path;
   }
 }
 
@@ -136,10 +162,16 @@ function trackPrefix(g: GroupRef): string | null {
   switch (g.kind) {
     case 'effect': return `effect.${g.id}`;
     case 'mask': return `mask.${g.id}.`;
-    case 'style': return `effect.layerstyle:${g.id}.`;
+    case 'style': return styleTrackPrefix(g.id);
     case 'pathop': return `pathop.${g.id}.`;
+    case 'plugin': return g.prefix;
     default: return null;
   }
+}
+
+/** A layer style's tracks: Glass keys `glass.<param>` (glassResolve.ts), the rest their compiled effect's. */
+function styleTrackPrefix(style: string): string {
+  return style === 'glass' ? 'glass.' : `effect.layerstyle:${style}.`;
 }
 
 function matchesPrefix(prop: string, prefix: string): boolean {
@@ -297,6 +329,7 @@ export const groupHandlers: HandlerTable = {
     const node = requireLayer(cmd.layer);
     const layer = cmd.layer;
     let run: () => string;
+    let rigPlan: ReturnType<typeof planRigAdd> = null;
     const parent = cmd.parent;
     if (parent === 'text/animators' && cmd.matchName === 'ADBE Text Animator') {
       textNodeOrFail(layer);
@@ -364,6 +397,25 @@ export const groupHandlers: HandlerTable = {
         setPathOps(layer, next);
         return `contents/${id}`;
       };
+    } else if (parent === 'plugin' && panelGroupForMatchName(cmd.matchName)) {
+      // B3z: a contributed plugin panel's params, seeded WHOLE from `init` (the
+      // client holds the panel's declared defaults — the engine has no schema).
+      const path = panelGroupForMatchName(cmd.matchName)!;
+      const panel = parsePanelGroupPath(path)!;
+      if (node.components.some((c) => c.type === panel.type || c.id === panel.id)) fail('conflict', `layer '${layer}' already has '${path}'`, { layer, path });
+      const props = panelInitProps(cmd.init);
+      return {
+        scope: layerScopeOf([layer]),
+        label: `Add ${cmd.matchName}`,
+        apply: () => {
+          graph.addComponent(layer, { id: panel.id, type: panel.type, props });
+          return { groups: [path] };
+        },
+      };
+    } else if ((rigPlan = planRigAdd(node, layer, parent, cmd.matchName, cmd.index, cmd.name, cmd.init, ctx.mintGroupId, (p) => requireBinding(catalogFor(layer), p)))) {
+      // Rig groups write their own init (a new group's values, no bind-pose capture).
+      const plan = rigPlan;
+      return { scope: layerScopeOf([layer]), label: `Add ${cmd.matchName}`, apply: () => { plan.run(); return { groups: [plan.path] }; } };
     } else {
       fail('unsupported', `'${cmd.matchName}' under '${parent}' is not a group this engine can add (listGroupTypes lists what it can)`, { path: parent });
     }
@@ -398,6 +450,7 @@ export const groupHandlers: HandlerTable = {
 
   movePropertyGroup: (cmd) => {
     const r = resolveGroup(cmd.group);
+    if (r.kind === 'plugin') fail('unsupported', 'plugin panels have no order');
     return {
       scope: layerScopeOf([r.layer]),
       label: 'Move Group',
@@ -439,7 +492,12 @@ export const groupHandlers: HandlerTable = {
             break;
           }
           case 'style':
-            fail('unsupported', 'layer styles have a fixed order');
+            return fail('unsupported', 'layer styles have a fixed order');
+          case 'plugin':
+            return fail('unsupported', 'plugin panels have no order');
+          case 'rig':
+            moveRigGroup(r.rig, cmd.toIndex);
+            break;
         }
         return {};
       },
@@ -450,6 +508,8 @@ export const groupHandlers: HandlerTable = {
     if (cmd.groups.length === 0) fail('invalidArgument', 'no groups given');
     const refs = cmd.groups.map(resolveGroup);
     for (const r of refs) if (r.kind === 'style') fail('unsupported', 'a layer has at most one style of each kind');
+    for (const r of refs) if (r.kind === 'rig') fail('unsupported', 'rig groups are duplicated by adding a new pin / bone in this engine');
+    for (const r of refs) if (r.kind === 'plugin') fail('unsupported', 'a layer has at most one of each plugin panel');
     const plans = refs.map((r) => ({ r, newId: mintFor(r, r.layer, ctx) }));
     return {
       scope: layerScopeOf(refs.map((r) => r.layer)),
@@ -462,6 +522,8 @@ export const groupHandlers: HandlerTable = {
     if (cmd.groups.length === 0 || cmd.toLayers.length === 0) fail('invalidArgument', 'groups and target layers are required');
     const refs = cmd.groups.map(resolveGroup);
     for (const r of refs) if (r.kind === 'animator' || r.kind === 'selector') fail('unsupported', 'text animators are copied with their layer in this engine');
+    for (const r of refs) if (r.kind === 'rig') fail('unsupported', 'a rig is copied whole through layer/puppet or layer/skeleton in this engine');
+    for (const r of refs) if (r.kind === 'plugin') fail('unsupported', 'plugin panels are added to a layer with addPropertyGroup');
     for (const l of cmd.toLayers) requireLayer(l);
     const plans: Array<{ r: GroupRef; to: string; newId: string }> = [];
     for (const to of cmd.toLayers) for (const r of refs) {
@@ -475,9 +537,45 @@ export const groupHandlers: HandlerTable = {
     };
   },
 
+  pasteEffects: (cmd, ctx) => {
+    if (cmd.layers.length === 0) fail('invalidArgument', 'no layers given');
+    const items = parseCapturedEffects(cmd.effects);
+    for (const layer of cmd.layers) {
+      requireLayer(layer);
+      const count = getNodeEffects(layer).length;
+      if (cmd.index !== undefined && cmd.index > count) fail('outOfRange', `index ${cmd.index} is past the ${count} effects of '${layer}'`, { layer });
+    }
+    const plans = cmd.layers.map((layer) => ({
+      layer,
+      ids: items.map(() => ctx.mintGroupId('fx_', (id) => getNodeEffects(layer).some((e) => e.id === id))),
+    }));
+    return {
+      scope: layerScopeOf(cmd.layers),
+      label: `Paste ${plural(items.length, 'Effect')}`,
+      apply: () => {
+        const groups: string[] = [];
+        for (const { layer, ids } of plans) {
+          const effects = getNodeEffects(layer);
+          const next = effects.slice();
+          next.splice(cmd.index ?? effects.length, 0, ...items.map((it, i) => ({ ...structuredClone(it.effect), id: ids[i]! }) as unknown as Effect));
+          writeNodeEffects(layer, next);
+          items.forEach((it, i) => {
+            for (const [suffix, keys] of it.tracks) {
+              const prop = suffix === '' ? `effect.${ids[i]}` : `effect.${ids[i]}.${suffix}`;
+              defaultAnimation.setTrackKeyframes(layer, prop, keys.map((k) => ({ t: k.t, value: k.value, id: ctx.mintKeyId(), ...keyFieldsOf(k) })));
+            }
+            groups.push(`effects/${ids[i]}`);
+          });
+        }
+        return { groups };
+      },
+    };
+  },
+
   setGroupEnabled: (cmd) => {
     if (cmd.groups.length === 0) fail('invalidArgument', 'no groups given');
     const refs = cmd.groups.map(resolveGroup);
+    for (const r of refs) if (r.kind === 'plugin') fail('unsupported', 'a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)');
     return {
       scope: layerScopeOf(refs.map((r) => r.layer)),
       label: cmd.enabled ? 'Enable' : 'Disable',
@@ -491,12 +589,15 @@ export const groupHandlers: HandlerTable = {
   renamePropertyGroup: (cmd) => {
     const r = resolveGroup(cmd.group);
     if (r.kind === 'style' || r.kind === 'pathop') fail('unsupported', `'${groupPath(r)}' cannot be renamed in this engine`);
+    if (r.kind === 'plugin') fail('unsupported', `'${groupPath(r)}' cannot be renamed`);
+    if (r.kind === 'rig' && r.rig.kind !== 'pin' && r.rig.kind !== 'bone' && r.rig.kind !== 'controller') fail('unsupported', `'${groupPath(r)}' cannot be renamed`);
     return {
       scope: layerScopeOf([r.layer]),
       label: 'Rename Group',
       apply: () => {
         const name = cmd.name.trim() === '' ? undefined : cmd.name;
-        if (r.kind === 'effect') writeNodeEffects(r.layer, getNodeEffects(r.layer).map((e) => (e.id === r.id ? withName(e, name) : e)));
+        if (r.kind === 'rig') renameRigGroup(r.rig, cmd.name);
+        else if (r.kind === 'effect') writeNodeEffects(r.layer, getNodeEffects(r.layer).map((e) => (e.id === r.id ? withName(e, name) : e)));
         else if (r.kind === 'mask') writeMasks(r.layer, (paths) => paths.map((p) => (p.id === r.id ? withName(p, name) : p)));
         else if (r.kind === 'animator') withAnimators(r.layer, (list) => list.map((a) => (a.id === r.id ? withName(a, name) : a)));
         else withAnimators(r.layer, (list) => list.map((a, i) => (i === r.animIndex ? { ...a, selectors: (a.selectors ?? []).map((s) => (s.id === r.id ? withName(s, name) : s)) } : a)));
@@ -549,6 +650,64 @@ export const groupHandlers: HandlerTable = {
   },
 };
 
+// ── pasteEffects: the captured-effect fragment ───────────────────────
+
+interface CapturedEffect {
+  effect: Record<string, unknown>;
+  /** [param suffix, keys sorted by time] in the fragment's order. */
+  tracks: Array<[string, TsKeyframe[]]>;
+}
+
+const EASINGS = new Set(['linear', 'hold', 'bezier', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'step', 'autoBezier', 'continuousBezier']);
+const SPATIALS = new Set(['linear', 'bezier', 'continuous', 'auto']);
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** One captured key as the animation engine stores it (the fields it knows, in the C++ port's order). */
+function capturedKey(k: unknown): TsKeyframe {
+  if (!isObj(k) || !finite(k.t) || !finite(k.value)) fail('invalidArgument', 'a captured keyframe needs a finite t and value');
+  const out: TsKeyframe = { t: k.t, value: k.value };
+  if (typeof k.easing === 'string' && EASINGS.has(k.easing)) out.easing = k.easing as TsKeyframe['easing'];
+  if (Array.isArray(k.bezier) && k.bezier.length >= 4 && k.bezier.slice(0, 4).every(finite)) out.bezier = k.bezier.slice(0, 4) as TsKeyframe['bezier'];
+  if (typeof k.continuous === 'boolean') out.continuous = k.continuous;
+  if (typeof k.roving === 'boolean') out.roving = k.roving;
+  if (typeof k.spatialInterp === 'string' && SPATIALS.has(k.spatialInterp)) out.spatialInterp = k.spatialInterp as TsKeyframe['spatialInterp'];
+  if (finite(k.si)) out.si = k.si;
+  if (finite(k.so)) out.so = k.so;
+  if (finite(k.label)) out.label = k.label;
+  return out;
+}
+
+/** The fields after t / value / id, in the order the C++ engine writes them (anim_json.cpp key_to_json). */
+function keyFieldsOf(k: TsKeyframe): Partial<TsKeyframe> {
+  const { t: _t, value: _v, id: _id, ...rest } = k;
+  return rest;
+}
+
+/**
+ * The editor's CopiedEffect[] (effectClipboard.ts), validated: an array of
+ * `{effect: {type, …}, tracks?: {suffix: Keyframe[]}}`. Keys are sanitised to
+ * the fields the animation engine stores and sorted by time; empty tracks drop.
+ */
+function parseCapturedEffects(json: string): CapturedEffect[] {
+  let v: unknown;
+  try { v = JSON.parse(json); } catch { fail('invalidArgument', 'effects: invalid json'); }
+  if (!Array.isArray(v) || v.length === 0) fail('invalidArgument', 'effects: a non-empty JSON array of captured effects is required');
+  return (v as unknown[]).map((it) => {
+    if (!isObj(it) || !isObj(it.effect) || typeof it.effect.type !== 'string' || it.effect.type === '') {
+      fail('invalidArgument', 'a captured effect is {effect: {type, …}, tracks: {…}}');
+    }
+    if (it.tracks !== undefined && !isObj(it.tracks)) fail('invalidArgument', 'the tracks of a captured effect is an object of keyframe arrays');
+    const tracks: Array<[string, TsKeyframe[]]> = [];
+    for (const [suffix, keys] of Object.entries((it.tracks ?? {}) as Record<string, unknown>)) {
+      if (!Array.isArray(keys)) fail('invalidArgument', `track '${suffix}' is not a keyframe array`);
+      if (keys.length === 0) continue;
+      tracks.push([suffix, keys.map(capturedKey).sort((a, b) => a.t - b.t)]);
+    }
+    return { effect: it.effect as Record<string, unknown>, tracks };
+  });
+}
+
 function withName<T extends object>(o: T, name: string | undefined): T {
   const out = { ...o } as T & { name?: string };
   if (name === undefined) delete out.name;
@@ -564,11 +723,21 @@ function mintFor(r: GroupRef, layer: string, ctx: HandlerCtx): string {
     case 'animator': return ctx.mintGroupId('anim_', () => false);
     case 'selector': return ctx.mintGroupId('sel_', () => false);
     case 'style': return r.id;
+    case 'rig': return fail('unsupported', 'rig groups cannot be copied');
+    case 'plugin': return fail('unsupported', 'plugin panels cannot be copied');
   }
 }
 
 function removeGroup(r: GroupRef): void {
   switch (r.kind) {
+    case 'plugin':
+      // The panel's values and every key / expression of its params.
+      graph.removeComponent(r.layer, r.id);
+      moveGroupTracks(r.layer, r.prefix, null);
+      return;
+    case 'rig':
+      removeRigGroup(r.rig);
+      return;
     case 'effect':
       writeNodeEffects(r.layer, getNodeEffects(r.layer).filter((e) => e.id !== r.id));
       moveGroupTracks(r.layer, trackPrefix(r)!, null);
@@ -608,6 +777,12 @@ function removeGroup(r: GroupRef): void {
 
 function setEnabled(r: GroupRef, on: boolean): void {
   switch (r.kind) {
+    case 'plugin':
+      fail('unsupported', 'a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)');
+      return;
+    case 'rig':
+      setRigGroupEnabled(r.rig, on);
+      return;
     case 'effect':
       writeNodeEffects(r.layer, getNodeEffects(r.layer).map((e) => {
         if (e.id !== r.id) return e;
@@ -672,7 +847,7 @@ function copyGroup(r: GroupRef, to: string, newId: string, ctx: HandlerCtx, afte
     case 'style': {
       const src = (getNodeLayerStyles(r.layer) as Record<string, unknown>)[r.id];
       setLayerStyles(to, { ...getNodeLayerStyles(to), [r.id]: structuredClone(src) } as LayerStyles);
-      copyGroupTracks(r.layer, `effect.layerstyle:${r.id}.`, `effect.layerstyle:${r.id}.`, to, ctx);
+      copyGroupTracks(r.layer, styleTrackPrefix(r.id), styleTrackPrefix(r.id), to, ctx);
       return `styles/${r.id}`;
     }
     case 'pathop': {
@@ -709,6 +884,10 @@ function copyGroup(r: GroupRef, to: string, newId: string, ctx: HandlerCtx, afte
     }
     case 'selector':
       return fail('unsupported', 'duplicate the animator to copy its selectors');
+    case 'rig':
+      return fail('unsupported', 'rig groups cannot be copied');
+    case 'plugin':
+      return fail('unsupported', 'plugin panels cannot be copied');
   }
 }
 

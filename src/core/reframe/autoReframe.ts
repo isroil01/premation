@@ -26,19 +26,15 @@
  * to look, `reframePath.ts` decides how the frame moves.
  */
 
-import { writeTransformProps } from '@core/scene/transformWrite';
 import { renderOffline } from '@core/export/offlineRenderer';
 import { readCanvasPixels } from '@core/export/videoSink';
 import { compSizeOf } from '@core/composition/compSizes';
-import { createComposition } from '@core/composition/compositionOps';
-import { insertCompInstance } from '@core/scene/sceneInsert';
 import { cutsFromDistances, histogramDistance, lumaHistogram } from '@core/tracking/sceneEditDetect';
-import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { beginDocumentTransaction } from '@core/ai/aiTransaction';
-import { defaultAnimation, type Keyframe } from '@motion/animation';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
-import { bumpScene } from '@stores/sceneStore';
+import type { Command, CommandResult, KeyframeInsert } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { hexToColor } from '@core/engine/model';
+import { secondsToFlicks } from '@core/engine/time';
 import { analyseFrame, type AttentionPoint } from './saliency';
 import { buildReframePath, coverScale, pathToKeyframes, type ReframeGeometry } from './reframePath';
 
@@ -197,33 +193,23 @@ async function analyseComposition(
   return { points, cuts };
 }
 
-/** Write the pan onto the comp-instance layer, as one undo entry. */
-function writePanKeyframes(
-  nodeId: string,
+/** The pan as `addKeyframes` inserts on the SEPARATED position dimensions (comp time). */
+function panKeyframeInserts(
+  layer: string,
   path: { x: number[]; y: number[] },
   cuts: readonly number[],
   centre: { x: number; y: number },
-): number {
-  const toKeyframes = (values: number[], offset: number): Keyframe[] =>
+): KeyframeInsert[] {
+  const inserts = (dim: 'x' | 'y', values: number[], offset: number): KeyframeInsert[] =>
     pathToKeyframes(values, cuts, ANALYSIS_RATE).map((k) => ({
-      t: compToKeyframeTime(nodeId, k.t),
-      value: offset + k.value,
+      prop: { layer, path: `transform/position/${dim}` },
+      time: secondsToFlicks(k.t),
+      value: { kind: 'scalar', value: offset + k.value },
       easing: k.easing,
+      spatialIn: [],
+      spatialOut: [],
     }));
-
-  const xKfs = toKeyframes(path.x, centre.x);
-  const yKfs = toKeyframes(path.y, centre.y);
-  if (xKfs.length === 0) return 0;
-
-  runAnimEdit('Auto-reframe', () => {
-    defaultAnimation.batch(() => {
-      // Written wholesale, not spliced: this layer was created moments ago by
-      // this very operation and has no prior animation to preserve.
-      defaultAnimation.setKeyframes(nodeId, 'x', xKfs);
-      defaultAnimation.setKeyframes(nodeId, 'y', yKfs);
-    });
-  });
-  return xKfs.length + yKfs.length;
+  return [...inserts('x', path.x, centre.x), ...inserts('y', path.y, centre.y)];
 }
 
 /**
@@ -262,56 +248,72 @@ export async function autoReframeComposition(options: AutoReframeOptions): Promi
     ...(options.lagSeconds !== undefined ? { lagSeconds: options.lagSeconds } : {}),
   });
 
-  // Everything from here mutates the document, and it is one action.
-  const transaction = beginDocumentTransaction('Auto-reframe');
+  // Everything from here edits the document, and it is ONE action: an engine
+  // gesture (one undo entry) whose later steps need the ids the earlier ones
+  // minted — the new composition, then the instance layer in it.
+  const client = engine();
+  const label = 'Auto-reframe';
+  const opened = await client.beginGesture(label);
+  if (!opened.ok) throw new AutoReframeError(opened.error.message || 'The document is busy.');
+  let committed = false;
   try {
-    const compId = createComposition({
-      name: options.name ?? `${source.name} ${options.target.width}×${options.target.height}`,
-      width: options.target.width,
-      height: options.target.height,
-      fps: source.fps,
-      durationSeconds: source.durationSeconds,
-      background: source.background,
-      transparent: source.transparent,
-      startFrame: source.startFrame,
-    });
+    const step = async (cmds: Command[]): Promise<CommandResult[]> => {
+      const res = await client.batch(label, cmds);
+      if (!res.ok) throw new AutoReframeError(res.error.message || `Auto-reframe failed (${res.error.code}).`);
+      return res.value;
+    };
+    const [made] = await step([{
+      type: 'createComposition',
+      settings: {
+        name: options.name ?? `${source.name} ${options.target.width}×${options.target.height}`,
+        width: options.target.width,
+        height: options.target.height,
+        frameRate: Number.isInteger(source.fps) ? { num: source.fps, den: 1 } : { num: Math.round(source.fps * 1000), den: 1000 },
+        duration: secondsToFlicks(source.durationSeconds),
+        background: hexToColor(source.background),
+        transparent: source.transparent,
+        ...(source.startFrame ? { startTimecode: secondsToFlicks(source.startFrame / source.fps) } : {}),
+      },
+      fromItems: [],
+    } as Command]);
+    const compId = (made as { item: string }).item;
 
-    // `createComposition` opened the new comp, so this lands inside it.
-    const nodeId = insertCompInstance(sourceId);
-    if (!nodeId) throw new AutoReframeError('The source composition could not be placed in the new one.');
-
-    // Through the router, never `writeProp`: scale is an animatable property,
-    // and the renderer reads animated values first — a raw write to a layer
-    // that later carries a scale track is silently discarded. See
-    // `transformWrite.ts` and the guard suite that enforces it.
-    //
-    // Static rather than keyframed: the crop's zoom is fixed by the two aspects,
-    // and an animated scale would be a Ken Burns move nobody asked for.
+    // The source as a precomp INSTANCE (re-cut the master and every reframe
+    // follows), scaled to cover the new frame. Static rather than keyframed:
+    // the crop's zoom is fixed by the two aspects, and an animated scale would
+    // be a Ken Burns move nobody asked for.
     const scale = coverScale(geometry);
-    writeTransformProps(
-      nodeId,
-      [{ prop: 'scaleX', value: scale }, { prop: 'scaleY', value: scale }],
-      'Auto-reframe',
-    );
+    const [layerRes] = await step([{
+      type: 'createLayer', comp: compId, kind: 'precomp', source: sourceId,
+      init: [{ path: 'transform/scale', value: { kind: 'vec2', value: { x: scale * 100, y: scale * 100 } } }],
+    } as Command]);
+    const nodeId = (layerRes as { layer: string }).layer;
 
-    getTimelineController().syncFromScene(compId);
-    const keyframes = writePanKeyframes(nodeId, path, analysis.cuts, {
+    const inserts = panKeyframeInserts(nodeId, path, analysis.cuts, {
       x: options.target.width / 2,
       y: options.target.height / 2,
     });
-
-    bumpScene();
-    transaction.commit();
+    if (inserts.length > 0) {
+      await step([
+        { type: 'setDimensionsSeparated', layer: nodeId, path: 'transform/position', separated: true } as Command,
+        { type: 'addKeyframes', keys: inserts } as Command,
+      ]);
+    }
+    committed = true;
+    const closed = await client.endGesture(opened.value.gesture, true);
+    if (!closed.ok) throw new AutoReframeError(closed.error.message);
+    // Open the result (transport/view, not the document).
+    await client.execute({ type: 'setActiveComposition', comp: compId } as Command);
 
     return {
       compId,
       nodeId,
       samples: analysis.points.length,
       cuts: analysis.cuts.length,
-      keyframes,
+      keyframes: inserts.length,
     };
   } catch (err) {
-    transaction.rollback();
+    if (!committed) await client.endGesture(opened.value.gesture, false);
     throw err;
   }
 }

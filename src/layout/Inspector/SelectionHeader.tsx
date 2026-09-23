@@ -26,21 +26,16 @@ import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import type { Command, LayerSwitchesPatch } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useUIStore } from '@stores/uiStore';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
-import { KIND_ICON, readNodeKind } from '@core/scene/sceneDerive';
+import { documentMirror } from '@stores/documentMirror';
+import { KIND_ICON } from '@core/scene/sceneDerive';
 import { renameLayer } from '@core/scene/renameLayer';
 import { findLayerKind } from '@core/plugins/layerKindRegistry';
-import { LABEL_COLORS, getNodeLabelColor } from '@core/scene/labelColor';
-import { canBe3D, is3DEnabled } from '@core/scene/threeD';
-import { getNodeMotionBlur } from '@core/effects/motionBlur';
-import { getNodeAdjustment } from '@core/effects/adjustment';
-import { getNodeEffects } from '@core/effects/effects';
-import { isLayer } from '@core/engine/doc';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 import { edit } from '@core/engine/uiEdits';
-import { useNodesRevision } from '@hooks/useNodeRevision';
+import { useMirrorLayers } from '@hooks/useMirror';
+import { activeMirrorCompId, canBe3DLayer, inspectorKindOf, is3DLayer, isRenderableLayer } from './inspectorMirror';
 import styles from './SelectionHeader.module.css';
 
 // ── Layer switches ─────────────────────────────────────────────────
@@ -55,56 +50,62 @@ export interface LayerSwitchSpec {
   read: (id: string) => boolean;
   /** The engine's `setLayerSwitches` patch that sets this switch (B3). */
   patch: (on: boolean) => LayerSwitchesPatch;
+  /** More commands of the same user action, sent in the SAME batch (one undo entry). */
+  alsoSend?: (on: boolean) => Command[];
   /** What the user is told after the switch landed (the old "WithFeedback" helpers). */
   after?: (ids: readonly string[], on: boolean) => void;
 }
 
-function isRenderable(id: string): boolean {
-  const n = defaultSceneGraph.getNode(id);
-  if (!n) return false;
-  const kind = readNodeKind(n);
-  return kind !== 'camera' && kind !== 'light' && kind !== 'audio';
+// Every switch reads the document MIRROR (B4): `LayerInfo.switches`.
+const switchesOf = (id: string) => documentMirror().layer(id)?.switches;
+
+const isRenderable = isRenderableLayer;
+
+/** Applied effects on a layer (the tree's `effects` group). */
+function effectCount(id: string): number {
+  return documentMirror().tree(id)?.nodes.get('effects')?.children.length ?? 0;
 }
 
 export const LAYER_SWITCHES: ReadonlyArray<LayerSwitchSpec> = [
   {
     id: 'visible', icon: 'eye', label: 'Visible',
     applies: () => true,
-    read: (id) => defaultSceneGraph.getNode(id)?.visible !== false,
+    read: (id) => switchesOf(id)?.visible !== false,
     patch: (on) => ({ visible: on }),
   },
   {
     id: 'solo', icon: 'circle', label: 'Solo',
     applies: () => true,
-    read: (id) => defaultSceneGraph.getNode(id)?.solo === true,
+    read: (id) => switchesOf(id)?.solo === true,
     patch: (on) => ({ solo: on }),
   },
   {
     id: 'locked', icon: 'lock', label: 'Lock',
     applies: () => true,
-    read: (id) => defaultSceneGraph.getNode(id)?.locked === true,
+    read: (id) => switchesOf(id)?.locked === true,
     patch: (on) => ({ locked: on }),
   },
   {
     id: '3d', icon: '3d', label: '3D layer',
-    applies: (id) => { const n = defaultSceneGraph.getNode(id); return !!n && canBe3D(n); },
-    read: (id) => { const n = defaultSceneGraph.getNode(id); return !!n && is3DEnabled(n); },
+    applies: canBe3DLayer,
+    read: is3DLayer,
     patch: (on) => ({ threeD: on }),
   },
   {
     id: 'motionBlur', icon: 'motion-blur', label: 'Motion blur',
     applies: isRenderable,
-    read: (id) => getNodeMotionBlur(id),
+    read: (id) => switchesOf(id)?.motionBlur === true,
     patch: (on) => ({ motionBlur: on }),
+    alsoSend: (on) => (on ? motionBlurMasterCommands() : []),
     after: (_ids, on) => { if (on) motionBlurFeedback(); },
   },
   {
     id: 'adjustment', icon: 'adjustment', label: 'Adjustment layer',
     applies: isRenderable,
-    read: (id) => getNodeAdjustment(id),
+    read: (id) => switchesOf(id)?.adjustment === true,
     patch: (on) => ({ adjustment: on }),
     after: (ids, on) => {
-      if (on && ids.some((id) => getNodeEffects(id).length === 0)) {
+      if (on && ids.some((id) => effectCount(id) === 0)) {
         notify('info', 'Adjustment layer is on — add effects to grade layers beneath it', 3200);
       }
     },
@@ -113,14 +114,37 @@ export const LAYER_SWITCHES: ReadonlyArray<LayerSwitchSpec> = [
 
 /**
  * AE's dual gate: a layer's motion-blur switch changes pixels only with the
- * composition's master on, so turning the layer on turns the master on too
- * (and says so); warn when draft preview is suppressing the samples.
+ * composition's master on, so turning the layer on turns the master on too —
+ * `setCompositionSettings{motionBlur.enabled}` in the switch's own batch (one
+ * undo entry; the other settings are sent as they are).
  */
+function motionBlurMasterCommands(): Command[] {
+  const comp = activeMirrorCompId();
+  const mb = comp ? documentMirror().comp(comp)?.settings.motionBlur : undefined;
+  masterTurnedOn = !!comp && !!mb && !mb.enabled;
+  if (!comp || !mb || mb.enabled) return [];
+  return [{
+    type: 'setCompositionSettings',
+    comp,
+    patch: {
+      motionBlur: {
+        shutterAngle: mb.shutterAngle,
+        shutterPhase: mb.shutterPhase,
+        samplesPerFrame: mb.samplesPerFrame,
+        adaptiveSampleLimit: mb.adaptiveSampleLimit,
+        enabled: true,
+      },
+    },
+  } as Command];
+}
+
+/** Set by `motionBlurMasterCommands` for the notice that follows the batch. */
+let masterTurnedOn = false;
+
+/** Say what the switch did; warn when draft preview is suppressing the samples. */
 function motionBlurFeedback(): void {
-  const mb = useMotionBlurStore.getState();
-  if (!mb.enabled) {
-    // B3-legacy: engine gap — the composition's motion-blur MASTER switch is not in `setCompositionSettings` (only shutter/samples are).
-    mb.setEnabled(true);
+  if (masterTurnedOn) {
+    masterTurnedOn = false;
     notify('info', 'Motion Blur enabled for this layer and the composition', 3200);
   }
   if (useRenderQualityStore.getState().draft) {
@@ -133,7 +157,8 @@ function motionBlurFeedback(): void {
  * item in the engine API, not a layer, and has no layer switches there.
  */
 function switchTargets(nodeIds: ReadonlyArray<string>, t: LayerSwitchSpec): string[] {
-  return nodeIds.filter((id) => !!defaultSceneGraph.getNode(id) && isLayer(id) && t.applies(id));
+  const m = documentMirror();
+  return nodeIds.filter((id) => m.hasLayer(id) && t.applies(id));
 }
 
 /** All / none / mixed over the layers the switch applies to. */
@@ -155,6 +180,7 @@ export async function applyLayerSwitch(nodeIds: ReadonlyArray<string>, t: LayerS
   // One command per layer (`setLayerSwitches` takes ONE composition's layers
   // and a selection may span a precomp and its parent), one batch = one entry.
   const cmds = targets.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch: t.patch(next) }) as Command);
+  cmds.push(...(t.alsoSend?.(next) ?? []));
   const res = await edit(`${next ? 'Enable' : 'Disable'} ${t.label}`, cmds);
   if (res.ok) t.after?.(targets, next);
 }
@@ -235,9 +261,8 @@ function kindIcon(kind: string): IconName {
 export function kindBreakdown(nodeIds: ReadonlyArray<string>): string {
   const counts = new Map<string, number>();
   for (const id of nodeIds) {
-    const n = defaultSceneGraph.getNode(id);
-    if (!n) continue;
-    const kind = readNodeKind(n);
+    const kind = inspectorKindOf(id);
+    if (kind === null) continue;
     counts.set(kind, (counts.get(kind) ?? 0) + 1);
   }
   return [...counts].map(([kind, n]) => {
@@ -361,17 +386,19 @@ export interface SelectionHeaderProps {
 }
 
 function SelectionHeaderInner({ nodeIds = [], actions }: SelectionHeaderProps): JSX.Element | null {
-  useNodesRevision(nodeIds);
+  // B4: the selection's mirror headers (name, kind, label, lock) — a value
+  // scrub does not wake this row.
+  const layers = useMirrorLayers(nodeIds);
   const primary = nodeIds[0] ?? null;
-  const node = primary ? defaultSceneGraph.getNode(primary) : null;
+  const layer = layers[0];
 
-  if (!primary || !node) return null;
+  if (!primary || !layer) return null;
 
-  const current = getNodeLabelColor(primary);
+  const current = layer.switches.label > 0 ? LABEL_COLORS[layer.switches.label - 1]?.color : undefined;
   // Label colour = the `label` layer switch (index into LABEL_COLORS, 0 = by kind).
   const setLabel = (color: string | undefined): void => {
     const index = color === undefined ? 0 : LABEL_COLORS.findIndex((c) => c.color === color) + 1;
-    const ids = nodeIds.filter((id) => isLayer(id));
+    const ids = nodeIds.filter((id) => documentMirror().hasLayer(id));
     void edit('Label Colour', ids.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch: { label: index } }) as Command));
   };
   const colorItems: DropdownItem[] = [
@@ -394,8 +421,8 @@ function SelectionHeaderInner({ nodeIds = [], actions }: SelectionHeaderProps): 
     })),
   ];
 
-  const live = nodeIds.filter((id) => !!defaultSceneGraph.getNode(id));
-  const kind = readNodeKind(node);
+  const live = nodeIds.filter((_id, i) => layers[i] !== undefined);
+  const kind = inspectorKindOf(primary) ?? 'shape';
 
   return (
     <div className={styles.header} data-selection-header>
@@ -419,7 +446,7 @@ function SelectionHeaderInner({ nodeIds = [], actions }: SelectionHeaderProps): 
       ) : (
         <>
           <Icon name={kindIcon(kind)} size="sm" className={styles.kindIcon} />
-          <LayerName nodeId={primary} name={node.name ?? primary} locked={node.locked === true} />
+          <LayerName nodeId={primary} name={layer.name || primary} locked={layer.switches.locked} />
           <span className={styles.kind}>{kindNoun(kind)}</span>
         </>
       )}

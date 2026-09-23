@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('harnessBridge', {
   sceneFile: (payload) => ipcRenderer.invoke('harness:scene-file', payload),
   // ...and the measured readback table it compares through (renderEntry measureReadbackTable).
   readbackTable: (payload) => ipcRenderer.invoke('harness:readback-table', payload),
+  // D2w `native-scene`: the scene as a project document (harness/sceneProject.ts).
+  sceneProject: (payload) => ipcRenderer.invoke('harness:scene-project', payload),
   manifest: (scenes) => ipcRenderer.invoke('harness:manifest', scenes),
   done: (error) => ipcRenderer.invoke('harness:done', error ?? null),
 });

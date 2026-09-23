@@ -91,7 +91,8 @@ void remint_key_ids(HCtx& x, std::string_view layer) {
   }
 }
 
-void move_in_stack(Document& d, std::string_view comp, const std::vector<std::string>& ids, std::size_t toIndex) {
+void move_in_stack(Document& d, std::string_view comp, const std::vector<std::string>& ids, std::size_t toIndex,
+                   const std::set<std::string>* ignore) {
   const Node* first = d.node(ids.at(0));
   if (first == nullptr || !first->parent) fail(ErrorCode::not_found, "no layer '" + ids[0] + "'");
   const std::string parent = *first->parent;
@@ -116,7 +117,7 @@ void move_in_stack(Document& d, std::string_view comp, const std::vector<std::st
   for (const auto& id : frontFirst) (moving.contains(id) ? movingOrdered : rest).push_back(id);
   std::vector<std::string> stack;
   for (const auto& id : layer_ids_of_comp(d, comp)) {
-    if (!moving.contains(id)) stack.push_back(id);
+    if (!moving.contains(id) && (ignore == nullptr || !ignore->contains(id))) stack.push_back(id);
   }
   std::size_t insertAt = rest.size();
   for (std::size_t i = 0; i < rest.size(); ++i) {

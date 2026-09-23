@@ -1,12 +1,13 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PhysicsSection } from './PhysicsSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { addLayer, idle } from './__testHelpers__/engineLayers';
 import { enableNodePhysics, readNodePhysicsRaw, nodeHasPhysics, PHYSICS_PROP } from '@core/simulation/physicsBodies';
 
 describe('PhysicsSection in Effect Controls', () => {
   beforeEach(() => {
     defaultSceneGraph.clear();
-    defaultSceneGraph.addNode({
+    addLayer({
       id: 'rect',
       name: 'Layer 1',
       parent: null,
@@ -19,7 +20,7 @@ describe('PhysicsSection in Effect Controls', () => {
     enableNodePhysics('rect');
   });
 
-  it('renders AE Effect Card with fx badge and title', () => {
+  it('renders AE Effect Card with fx badge and title', async () => {
     render(<PhysicsSection nodeId="rect" />);
     expect(screen.getByText('Physics (Rigid Body)')).toBeInTheDocument();
     expect(screen.getByText('fx')).toBeInTheDocument();
@@ -27,30 +28,32 @@ describe('PhysicsSection in Effect Controls', () => {
     expect(screen.getByTitle('Restore physics parameters to default')).toBeInTheDocument();
   });
 
-  it('allows changing body type and collider shape', () => {
+  it('allows changing body type and collider shape', async () => {
     render(<PhysicsSection nodeId="rect" />);
     
     const bodyTypeSelect = screen.getByLabelText('Body type') as HTMLSelectElement;
     expect(bodyTypeSelect.value).toBe('dynamic');
 
     fireEvent.change(bodyTypeSelect, { target: { value: 'static' } });
+    await idle();
     expect(readNodePhysicsRaw(defaultSceneGraph.getNode('rect')).kind).toBe('static');
 
     const colliderSelect = screen.getByLabelText('Collider shape') as HTMLSelectElement;
     fireEvent.change(colliderSelect, { target: { value: 'circle' } });
+    await idle();
     expect(readNodePhysicsRaw(defaultSceneGraph.getNode('rect')).shape).toBe('circle');
   });
 
-  it('allows removing physics from layer', () => {
+  it('allows removing physics from layer', async () => {
     render(<PhysicsSection nodeId="rect" />);
     const removeBtn = screen.getByTitle('Remove Physics effect');
     fireEvent.click(removeBtn);
-
+    await idle();
     const node = defaultSceneGraph.getNode('rect');
     expect(nodeHasPhysics(node)).toBe(false);
   });
 
-  it('allows resetting physics parameters to default', () => {
+  it('allows resetting physics parameters to default', async () => {
     defaultSceneGraph.setFxKey('rect', PHYSICS_PROP, {
       enabled: true,
       kind: 'static',
@@ -61,7 +64,7 @@ describe('PhysicsSection in Effect Controls', () => {
     render(<PhysicsSection nodeId="rect" />);
     const resetBtn = screen.getByTitle('Restore physics parameters to default');
     fireEvent.click(resetBtn);
-
+    await idle();
     const cfg = readNodePhysicsRaw(defaultSceneGraph.getNode('rect'));
     expect(cfg.kind).toBe('dynamic');
     expect(cfg.shape).toBe('box');

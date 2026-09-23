@@ -42,9 +42,11 @@
  *
  * ## What re-renders when
  *
- * The shell subscribes to the SELECTION's node revisions, not the scene's: a
- * scrub on an unselected layer no longer re-renders this panel at all, and a
- * scrub on a selected one re-renders the rows that read it. Each section sits
+ * The shell reads the document MIRROR (B4) and subscribes to the SELECTION's
+ * mirror keys only — each selected layer's header, property tree and keyframe
+ * lists (`useMirrorLayersWatch`): a scrub on an unselected layer does not
+ * re-render this panel at all, and a value scrub on a selected one re-renders
+ * only the rows that read that property. Each section sits
  * in a memoised host (`InspectorContent`), so a keystroke in the search box
  * does not run twenty section renders.
  *
@@ -67,8 +69,8 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { getEventBus } from '@core/events/EventBus';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useNodesRevision } from '@hooks/useNodeRevision';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayersWatch } from '@hooks/useMirror';
 import { InspectorContent } from '@layout/Inspector/InspectorContent';
 import { InspectorSelectionProvider } from '@layout/Inspector/inspectorSelection';
 import {
@@ -153,10 +155,10 @@ export function PropertiesPanel(): JSX.Element {
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   // The SELECTION's revisions, not the scene's — see the module note.
-  useNodesRevision(selected);
-  const node = primary ? defaultSceneGraph.getNode(primary) : null;
-  const hasLayer = !!(primary && node);
-  const liveCount = hasLayer ? selected.filter((id) => !!defaultSceneGraph.getNode(id)).length : 0;
+  useMirrorLayersWatch(selected);
+  const mirror = documentMirror();
+  const hasLayer = !!(primary && mirror.layer(primary));
+  const liveCount = hasLayer ? selected.filter((id) => mirror.hasLayer(id)).length : 0;
 
   const showLane = usePreferenceStore((s) => s.inspectorShowLane);
   const setPref = usePreferenceStore((s) => s.set);

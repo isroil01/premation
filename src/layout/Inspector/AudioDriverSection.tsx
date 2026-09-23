@@ -30,13 +30,11 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { resolvePropertyMeta, propertyLabel, GROUP_PLACEHOLDER_PREFIX } from '@core/inspector/propertyMeta';
 import {
-  applyAudioDriver,
   computeDriverEnvelope,
   defaultAudioDriver,
   driverRange,
   expressionBlocker,
   readAudioDrivers,
-  removeAudioDriver,
   BAND_LABELS,
   CURVES,
   CURVE_LABELS,
@@ -46,6 +44,7 @@ import {
   type DriverEnvelope,
   type EnvelopeCurve,
 } from '@core/audio/audioDriver';
+import { driverEdit, removeDriverEdit } from './audioEdits';
 import styles from './AudioDriverSection.module.css';
 
 /** Property value types a 0..1 envelope can sensibly drive. */
@@ -200,8 +199,7 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
     if (!activePath) return;
     setBusy(true);
     try {
-      // B3-legacy: engine gap — audio driver (analysis → keyframes) is an editor-side job; needs startJob/applyJobResult.
-      const result = await applyAudioDriver(nodeId, { ...draft, prop: activePath });
+      const result = await driverEdit(nodeId, { ...draft, prop: activePath });
       setNote(
         result.error
           ? result.error
@@ -407,8 +405,7 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
           <Button
             size="sm"
             variant="secondary"
-            // B3-legacy: engine gap — audio driver (analysis → keyframes) is an editor-side job; needs startJob/applyJobResult.
-            onClick={() => { removeAudioDriver(nodeId, activePath); setNote('Driver removed.'); }}
+            onClick={() => { void removeDriverEdit(nodeId, activePath).then(() => setNote('Driver removed.')); }}
             disabled={busy}
           >
             Remove

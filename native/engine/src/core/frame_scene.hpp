@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,8 +29,17 @@ struct FrameScene {
   bool operator==(const FrameScene&) const = default;
 };
 
+/// D2w: a frame the engine's scene builder produced from its own document
+/// (scene/built_frame.hpp) — opaque here; the render thread draws it through
+/// the render graph instead of the C2 quad compositor.
+struct BuiltFrame;
+
 struct RenderJob {
   FrameScene scene;
+  // shared_ptr: handed core thread → render thread exactly once and destroyed
+  // wherever the job dies (including translation units that see only the
+  // forward declaration above) — shared_ptr type-erases the deleter.
+  std::shared_ptr<BuiltFrame> built;
   std::uint32_t viewport = 0;
   std::int64_t frame = 0;
   std::int64_t time = 0;       // flicks

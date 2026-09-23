@@ -41,6 +41,7 @@ import { LocalEngine, type LocalEngineOptions } from './LocalEngine';
 import { createAppProcessEngine, processEngineEnabled } from './process/processEngine';
 import { useUIStore } from '@stores/uiStore';
 import { setHistoryRoute } from '@stores/historyStore';
+import { setAppMirrorSource } from '@stores/documentMirror';
 import type { EnginePorts } from './ports';
 
 export interface BootEngineOptions {
@@ -104,15 +105,27 @@ function install(next: LocalEngine, reason: 'opened' | 'created'): void {
   for (const l of [...replacedListeners]) {
     try { l(next); } catch { /* isolate */ }
   }
-  if (prev) {
-    fanOut({
-      fromRevision: 0,
-      toRevision: next.documentRevision,
-      events: [{ type: 'documentReset', revision: next.documentRevision, reason }],
-      origin: 'engine',
-    });
-  }
+  // Every install, the first included: a subscriber that outlived a shutdown
+  // (the document mirror, B4) must refetch from the new instance.
+  fanOut({
+    fromRevision: 0,
+    toRevision: next.documentRevision,
+    events: [{ type: 'documentReset', revision: next.documentRevision, reason }],
+    origin: 'engine',
+  });
 }
+
+// The document mirror (src/stores/documentMirror.ts) reads the session's
+// engine through the API only: its events, its queries — and, in process, the
+// synchronous query fast path (LocalEngine.querySync).
+setAppMirrorSource(() => ({
+  subscribe: (listener) => subscribeEngine(listener),
+  query: (q) => engine().query(q),
+  querySync: (q) => {
+    const e = engine();
+    return e instanceof LocalEngine ? e.querySync(q) : null;
+  },
+}));
 
 /**
  * Boot the session's engine. Call once the app bus exists (after

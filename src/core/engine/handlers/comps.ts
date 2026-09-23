@@ -298,6 +298,29 @@ export const compHandlers: HandlerTable = {
     };
   },
 
+  // B3z: Shift+B. "No work area" reads back as the whole comp and follows the
+  // duration (AE always has one; see ENGINE_API.md §4.3).
+  clearWorkArea: (cmd) => {
+    requireComp(cmd.comp);
+    ensureTimeline(cmd.comp);
+    const scope = newScope();
+    scopeTimeline(scope, cmd.comp);
+    return {
+      scope,
+      label: 'Clear Work Area',
+      apply: () => {
+        const reg = getTimelineController().timelineForComp(cmd.comp);
+        if (!reg) return {};
+        const { timeline } = reg;
+        timeline.history.silently(() => {
+          timeline.setRange('workArea', null);
+          if (timeline.getRanges().loop) timeline.setRange('loop', { start: 0, duration: timeline.duration });
+        });
+        return {};
+      },
+    };
+  },
+
   precompose: (cmd, ctx) => {
     requireComp(cmd.comp);
     const comp = requireLayersInOneComp(cmd.layers);

@@ -190,6 +190,16 @@ ipcMain.handle('harness:scene-file', (_e, p) => {
   fs.writeFileSync(path.join(dir, `${p.frame}.pfs`), Buffer.from(p.bytes));
 });
 
+// <SCENE_OUT>/<scene>/project.json (+ media files): the scene as a project
+// document, for the `native-scene` gate (harness/sceneProject.ts).
+ipcMain.handle('harness:scene-project', (_e, p) => {
+  if (!SCENE_OUT) return;
+  const dir = path.join(SCENE_OUT, p.sceneId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'project.json'), p.json);
+  for (const m of p.media ?? []) fs.writeFileSync(path.join(dir, m.name), Buffer.from(m.bytes));
+});
+
 // <SCENE_OUT>/readback-table.png: what this machine's webgpu readback + PNG
 // encode does to each premultiplied (value, alpha) pair (renderEntry.ts
 // measureReadbackTable); nativeBackend.mjs hands it to premation-render.

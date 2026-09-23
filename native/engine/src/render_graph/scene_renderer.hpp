@@ -56,6 +56,11 @@ struct FrameStats {
 class SceneRenderer {
  public:
   static std::unique_ptr<SceneRenderer> create(const RendererOptions& options, std::string& error);
+  /// D2w: a renderer over an EXISTING device (the engine's render thread owns
+  /// the device the viewport's shared slot textures live on). `float32` = the
+  /// device was created with float32-filterable + float32-blendable.
+  static std::unique_ptr<SceneRenderer> create_on(wgpu::Instance instance, const wgpu::Adapter& adapter, wgpu::Device device,
+                                                  bool float32, std::string& error);
   ~SceneRenderer();
   SceneRenderer(const SceneRenderer&) = delete;
   SceneRenderer& operator=(const SceneRenderer&) = delete;
@@ -64,6 +69,10 @@ class SceneRenderer {
 
   /// Render `file`. `readback` false skips the copy (bench). False only on a device-level failure.
   bool render(const api::RenderFrameFile& file, Frame* readback, FrameStats& stats, std::string& error);
+  /// D2w: render `file` straight into `target` (a `format` view of the file's
+  /// pixel size — the viewport's frame slot) instead of the renderer's own surface.
+  bool render_into(const api::RenderFrameFile& file, const wgpu::TextureView& target, wgpu::TextureFormat format,
+                   FrameStats& stats, std::string& error);
 
   /// Read back graph target `name` as the last frame left it (tests and tools:
   /// the float scene-color before the display encode). False when the last
@@ -85,6 +94,8 @@ class SceneRenderer {
 
  private:
   SceneRenderer() = default;
+  bool render_impl(const api::RenderFrameFile& file, const wgpu::TextureView* target, wgpu::TextureFormat targetFormat,
+                   Frame* readback, FrameStats& stats, std::string& error);
   std::unique_ptr<Device> dev_;
   std::unique_ptr<RenderGraph> graph_;
   std::unique_ptr<ColorSystem> colorSystem_;

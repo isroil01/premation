@@ -338,6 +338,17 @@ export function setPrimitiveType(nodeId: string, type: PrimitiveMeshType): void 
 }
 
 /**
+ * The layer box (width / height) a spec's mesh fits — what
+ * `syncPrimitiveLayerBox` writes. Pure over the spec (the mesh bounds; the
+ * built mesh is cached), so the inspector sends it WITH the parameter write as
+ * one engine batch (a client macro, ENGINE_API.md §1 rule 7).
+ */
+export function primitiveLayerBox(spec: PrimitiveSpec): { width: number; height: number } {
+  const b = buildCached(spec).bbox;
+  return { width: Math.max(1, Math.round(b.maxX - b.minX)), height: Math.max(1, Math.round(b.maxY - b.minY)) };
+}
+
+/**
  * Re-fit the layer's width/height to the mesh's own bounds.
  *
  * The quad never draws for a mesh layer, but width/height are still the
@@ -350,13 +361,13 @@ export function syncPrimitiveLayerBox(nodeId: string): void {
   if (!node) return;
   const spec = readNodePrimitive(node);
   if (!spec) return;
-  const b = buildCached(spec).bbox;
+  const box = primitiveLayerBox(spec);
   // Through the transform router, not writeProp: width/height are animatable,
   // and a raw write to a tracked property is silently discarded by the
   // renderer (see transformWrite.ts).
   writeTransformProps(nodeId, [
-    { prop: 'width', value: Math.max(1, Math.round(b.maxX - b.minX)) },
-    { prop: 'height', value: Math.max(1, Math.round(b.maxY - b.minY)) },
+    { prop: 'width', value: box.width },
+    { prop: 'height', value: box.height },
   ], 'Primitive size');
 }
 

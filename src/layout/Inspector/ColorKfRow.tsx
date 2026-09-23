@@ -1,9 +1,8 @@
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useMemo } from 'react';
 import { Color } from '@motion/renderer';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { useSceneRevision } from '@stores/sceneStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
@@ -24,6 +23,12 @@ export interface ColorKfRowProps {
   propPrefix: string; // 'fill' or 'stroke' or 'color'
   label: string;
   value: string; // e.g. '#ffffff'
+  /**
+   * The caller's STATIC write (an engine command of its own) for a colour the
+   * catalog does not address as one colour property on this node. Such a
+   * colour has no keyframes through this row (B3z: the pre-API channel-track
+   * writers are gone).
+   */
   setValue: (v: string) => void;
 }
 
@@ -45,10 +50,8 @@ export function ColorKfRow({
   const aProp = `${propPrefix}_a`;
 
   const animated = defaultAnimation.isAnimated(nodeId, rProp);
-  // ONE axis for reads and writes: the canonical keyframe time — sampling or
-  // writing at the raw comp time collapses keyframes on any moved/trimmed clip.
-  // B3-legacy: display read + the legacy writer's key axis (engine route below uses comp time).
-  const layerT = compToKeyframeTime(nodeId, time, rProp);
+  // Display only: sample on the track's keyframe axis (writes take comp time).
+  const layerT = keyAxisTimeForDisplay(nodeId, time, rProp);
 
   // An unanimated channel falls back to the STORED colour's channel — the same
   // rule the renderer uses. The old `?? 255` invented white for any channel
@@ -71,9 +74,12 @@ export function ColorKfRow({
   });
   const hosted = useInspectorHosted();
 
-  // B3: the engine addresses this colour as ONE colour property (effect colours,
-  // layer-style colours). A colour the catalog does not list as one (a layer's
-  // own fill / stroke paint) keeps the legacy writers below.
+  // B3z: the engine addresses this colour as ONE colour property — a layer's
+  // solid fill (`layer/fill`), a shape stroke's colour (`layer/stroke`,
+  // `layer/stroke.<i>.color`, backed by the stack entry), effect and layer-style
+  // colours, particle colours. A value is `valueCommands` (a key at the
+  // playhead where animated / under auto-keyframe), a picker drag one gesture,
+  // the stopwatch `setAnimated`.
   const onEngine = (): boolean => trackRef(nodeId, rProp)?.valueType === 'color';
   const e = useEngineEdit();
 
@@ -86,49 +92,13 @@ export function ColorKfRow({
       ));
       return;
     }
-    if (animated || autoKeyframe) {
-      // B3-legacy: engine gap — a layer's own fill/stroke colour is not a catalog colour property (`layer/fill` missing).
-      const c = Color.fromHex(hex);
-      runAnimEdit(
-        `Set ${label}`,
-        () => {
-          defaultAnimation.setKeyframe(nodeId, rProp, layerT, c.r);
-          // B3-legacy: engine gap — a layer's own fill/stroke colour is not a catalog colour property (`layer/fill`).
-          defaultAnimation.setKeyframe(nodeId, gProp, layerT, c.g);
-          defaultAnimation.setKeyframe(nodeId, bProp, layerT, c.b);
-          defaultAnimation.setKeyframe(nodeId, aProp, layerT, c.a ?? 1);
-        },
-        `color:${nodeId}:${propPrefix}:${layerT}`
-      );
-    } else {
-      setValue(hex);
-    }
+    // Not a colour property of this node (not a layer): the caller's static write.
+    setValue(hex);
   };
 
   const toggle = (): void => {
-    if (onEngine()) {
-      e.send(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [rProp], time));
-      return;
-    }
-    // B3-legacy: engine gap — same (fill/stroke colour outside the catalog).
-    if (animated) {
-      runAnimEdit(`Remove ${label} animation`, () => {
-        defaultAnimation.removeTrack(nodeId, rProp);
-        defaultAnimation.removeTrack(nodeId, gProp);
-        defaultAnimation.removeTrack(nodeId, bProp);
-        // B3-legacy: engine gap — a layer's own fill/stroke colour is not a catalog colour property (`layer/fill`).
-        defaultAnimation.removeTrack(nodeId, aProp);
-      });
-    } else {
-      const c = Color.fromHex(value);
-      runAnimEdit(`Animate ${label}`, () => {
-        // B3-legacy: engine gap — a layer's own fill/stroke colour is not a catalog colour property (`layer/fill`).
-        defaultAnimation.setKeyframe(nodeId, rProp, layerT, c.r);
-        defaultAnimation.setKeyframe(nodeId, gProp, layerT, c.g);
-        defaultAnimation.setKeyframe(nodeId, bProp, layerT, c.b);
-        defaultAnimation.setKeyframe(nodeId, aProp, layerT, c.a ?? 1);
-      });
-    }
+    if (!onEngine()) return;
+    e.send(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [rProp], time));
   };
 
   // Right-click promotes this colour to an Essential Property, the same way the

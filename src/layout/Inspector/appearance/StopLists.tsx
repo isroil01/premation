@@ -21,12 +21,11 @@ import {
   type ColorStop,
   type OpacityStop,
 } from '@core/paint/fill';
-import { updateNodeStrokeAt } from '@core/paint/stroke';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { setFillPaintEdit } from './paintEdits';
+import { useEngineEdit } from '../useEngineEdit';
+import { fillPaintCommands, fillStopsCommands, fillStopsStopwatch, setFillPaintEdit, strokePatchCommands } from './paintEdits';
 import effStyles from '../../Effects/EffectsPanel.module.css';
 
 /**
@@ -124,6 +123,12 @@ export function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: Fill
  * from the `fill.stops` data track, and there is no `stroke.stops` equivalent in
  * the renderer. Offering the stopwatch here would be a control writing keyframes
  * nothing samples — F34, which this same branch fixed twice.
+ *
+ * B3z: the fill's stops are AE's Gradient Fill ▸ Colors, `layer/fillStops` — a
+ * `gradient` Value keyed on `fill.stops` (a key at the playhead once
+ * keyframed, else the paint's stops); the stopwatch is `setAnimated`. A stroke's
+ * stops ride the stroke stack (`layer/strokes`). A colour drag or a position
+ * scrub is ONE gesture.
  */
 export function StopList({
   nodeId,
@@ -138,9 +143,10 @@ export function StopList({
   strokeIndex?: number;
 }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
+  const e = useEngineEdit();
   if (paint.type === 'solid') return null;
-  // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
-  const layerT = compToKeyframeTime(nodeId, time);
+  // Display only: the sampled stop list at the playhead, on the track's key axis.
+  const layerT = keyAxisTimeForDisplay(nodeId, time, 'fill.stops');
   const canAnimate = target === 'fill';
 
   // Gradient-stop keyframes (data track): when live, the rows show the
@@ -154,37 +160,19 @@ export function StopList({
   const stops = sampled
     ? sortedStops(sampled.map((s, i) => ({ id: `anim_${i}`, offset: s.pos, color: s.color })))
     : sortedStops(paint.stops);
-  const write = (next: ColorStop[]): void => {
+  const write = (next: ColorStop[], label = 'Gradient Stops'): void => {
     if (stopsAnimated) {
-      // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
-      runAnimEdit('Edit gradient stops keyframe', () => {
-        defaultAnimation.setDataKeyframe(
-          nodeId, 'fill.stops', 'gradientStops', layerT,
-          sortedStops(next).map((s) => ({ pos: s.offset, color: s.color })),
-        );
-      }, `gradStops:${nodeId}`);
+      // A Colors key at the playhead (the renderer reads the track).
+      e.send(label, fillStopsCommands(nodeId, sortedStops(next), time));
     } else if (target === 'stroke') {
-      // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
-      updateNodeStrokeAt(nodeId, strokeIndex, { paint: { ...paint, stops: next } });
+      e.send(label, strokePatchCommands(nodeId, strokeIndex, { paint: { ...paint, stops: next } }));
     } else {
-      void setFillPaintEdit('Gradient Stops', nodeId, { ...paint, stops: next });
+      e.send(label, fillPaintCommands(nodeId, { ...paint, stops: next }));
     }
   };
   const toggleStopwatch = (): void => {
-    if (stopsAnimated) {
-      // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
-      runAnimEdit('Remove gradient stop keyframes', () => {
-        defaultAnimation.setDataTrack(nodeId, 'fill.stops', null);
-      });
-    } else {
-      runAnimEdit('Animate gradient stops', () => {
-        // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
-        defaultAnimation.setDataKeyframe(
-          nodeId, 'fill.stops', 'gradientStops', layerT,
-          stops.map((s) => ({ pos: s.offset, color: s.color })),
-        );
-      });
-    }
+    // AE: on — one Colors key holding the stops; off — the stops at the playhead stay.
+    e.send(stopsAnimated ? 'Remove gradient stop keyframes' : 'Animate gradient stops', fillStopsStopwatch(nodeId, !stopsAnimated, time));
   };
 
   return (
@@ -205,18 +193,21 @@ export function StopList({
       )}
       {stops.map((s, i) => (
         <div key={s.id} className={effStyles.stopRow}>
-          <ColorPicker
-            value={s.color}
-            onChange={(color) => write(stops.map((x) => (x.id === s.id ? { ...x, color } : x)))}
-            aria-label={`Stop ${i + 1} color`}
-          />
+          <span style={{ display: 'contents' }} {...e.press('Gradient Stop Color')}>
+            <ColorPicker
+              value={s.color}
+              onChange={(color) => write(stops.map((x) => (x.id === s.id ? { ...x, color } : x)), 'Gradient Stop Color')}
+              aria-label={`Stop ${i + 1} color`}
+            />
+          </span>
           <ValueField
             value={Math.round(s.offset * 100)}
             min={0}
             max={100}
             precision={0}
             unit="%"
-            onChange={(v) => write(stops.map((x) => (x.id === s.id ? { ...x, offset: v / 100 } : x)))}
+            onChange={(v) => write(stops.map((x) => (x.id === s.id ? { ...x, offset: v / 100 } : x)), 'Gradient Stop Position')}
+            {...e.scrub('Gradient Stop Position')}
             aria-label={`Stop ${i + 1} position`}
           />
           <button
@@ -224,7 +215,7 @@ export function StopList({
             className={effStyles.remove}
             aria-label={`Remove stop ${i + 1}`}
             disabled={stops.length <= 2}
-            onClick={() => write(stops.filter((x) => x.id !== s.id))}
+            onClick={() => write(stops.filter((x) => x.id !== s.id), 'Remove Gradient Stop')}
           >
             <Icon name="close" size="sm" />
           </button>
@@ -233,7 +224,7 @@ export function StopList({
       <button
         type="button"
         className={effStyles.addChip}
-        onClick={() => write([...stops, makeStop(0.5, '#888888')])}
+        onClick={() => write([...stops, makeStop(0.5, '#888888')], 'Add Gradient Stop')}
       >
         <Icon name="plus" size="sm" /> Add stop
       </button>

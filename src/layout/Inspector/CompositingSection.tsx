@@ -366,7 +366,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 min={0}
                 precision={2}
                 unit="s"
-                // B3-legacy: engine gap — same (freezeTime is typed on the layer's keyframe axis; `freezeFrame` takes comp time).
+                // B3-legacy: engine gap — waits for B3z-b's `unfreezeLayers` (schema only): on a FROZEN layer `freezeFrame{time}` re-holds the frame it already shows (AE), so a typed source time is `[unfreezeLayers, freezeFrame{keyframeToCompTime(v)}]` in one batch.
                 onChange={(v) => updateNodeLayerTime(nodeId, { freezeTime: v })}
                 aria-label="Freeze time"
               />

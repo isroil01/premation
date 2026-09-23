@@ -41,7 +41,7 @@ import type {
   PropertyWrite,
 } from '@motion/engine-api';
 import { parentOptionsFor, reparentNode } from '@core/scene/parenting';
-import { setNodeMatte, type TrackMatte } from '@core/effects/matte';
+import type { TrackMatte } from '@core/effects/matte';
 import { isDistributeMode, planAlign, type AlignMode } from '@core/scene/alignNodes';
 import { getTime } from '@stores/playbackClockStore';
 import {
@@ -56,7 +56,7 @@ import { compTime, propRefForTrack, valueOfNumbers, type TrackRef } from '@core/
 import { apiUnitFactor } from '@core/engine/props';
 import { engine } from '@core/engine/engineInstance';
 import { isLayer } from '@core/engine/doc';
-import { applyPropertyBag, KEYFRAME_EPS, readPropertyValue } from '@core/inspector/multiSelection';
+import { KEYFRAME_EPS, readPropertyValue } from '@core/inspector/multiSelection';
 import { edit } from '@core/engine/uiEdits';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 
@@ -159,8 +159,9 @@ export function valueCommands(
 
 /**
  * A numeric preset bag (Transform presets) onto every layer that has each
- * property, as ONE undo entry. Properties the engine does not address on a
- * layer fall back to the pre-API bag writer (a second entry, as before).
+ * property, as ONE undo entry. Skew / Skew Axis / Fill Opacity at their
+ * defaults are addressed through the engine's LATENT bindings (B3z,
+ * latentPropSpecs.ts); a property no layer can take is skipped and reported.
  */
 export function applyPresetValues(
   nodeIds: ReadonlyArray<string>,
@@ -169,23 +170,19 @@ export function applyPresetValues(
   label: string,
 ): void {
   const entries: Array<{ nodeId: string; values: Record<string, number> }> = [];
-  const rest: Record<string, number> = {};
-  const restIds = new Set<string>();
+  const skipped = new Set<string>();
   for (const nodeId of nodeIds) {
     const values: Record<string, number> = {};
     for (const [prop, v] of Object.entries(bag)) {
       if (typeof v !== 'number' || !Number.isFinite(v)) continue;
       if (readPropertyValue(nodeId, prop, opts.seconds) === undefined) continue;
       if (trackRef(nodeId, prop)) values[prop] = v;
-      else { rest[prop] = v; restIds.add(nodeId); }
+      else skipped.add(prop);
     }
     if (Object.keys(values).length > 0) entries.push({ nodeId, values });
   }
   if (entries.length > 0) void edit(label, valueCommands(entries, opts));
-  if (restIds.size > 0) {
-    // B3-legacy: engine gap — preset props the catalog does not list on this layer (skew / skewAxis / fillOpacity while at default).
-    applyPropertyBag([...restIds], rest, { compTime: opts.seconds, autoKeyframe: opts.autoKeyframe, label });
-  }
+  if (skipped.size > 0) console.warn(`[applyPresetValues] not addressed by the engine on some layers: ${[...skipped].join(', ')}`);
 }
 
 /** One track, one value per layer (the common field write). */
@@ -336,20 +333,19 @@ function apiMatteMode(m: TrackMatte): ApiMatteMode {
 
 /**
  * Set a layer's track matte. The API addresses a matte BY REFERENCE (AE 2023);
- * a matte with no explicit source ("Layer Above", AE's positional rule) is not
- * expressible, so that one case keeps the legacy writer.
+ * a matte with no explicit source is AE's classic positional "Layer Above"
+ * matte (`setTrackMatte` without `matte.layer`).
  */
 export function setLayerMatte(nodeId: string, matte: TrackMatte | undefined): void {
   if (!matte) {
     void edit('Track Matte', { type: 'setTrackMatte', layer: nodeId, matte: { mode: 'none' } });
     return;
   }
-  if (matte.sourceId) {
-    void edit('Track Matte', { type: 'setTrackMatte', layer: nodeId, matte: { layer: matte.sourceId, mode: apiMatteMode(matte) } });
-    return;
-  }
-  // B3-legacy: engine gap — `setTrackMatte` needs a source layer; the positional "Layer Above" matte (no sourceId) has no API form.
-  setNodeMatte(nodeId, matte);
+  void edit('Track Matte', {
+    type: 'setTrackMatte',
+    layer: nodeId,
+    matte: { ...(matte.sourceId ? { layer: matte.sourceId } : {}), mode: apiMatteMode(matte) },
+  });
 }
 
 /** Blending mode on these layers, one entry. */
@@ -420,11 +416,11 @@ export async function motionPathCommands(nodeId: string, mode: 'smooth' | 'strai
 }
 
 /**
- * `setExpression` for (layer, track) pairs — only where the track IS the whole
- * API property (one member). An expression on ONE member of a vector (X of
- * Position) is not addressable: the API's expressions are per property and
- * `setExpression` would put the source on every member. Returns null when any
- * pair is not addressable, so the caller keeps its legacy path for it.
+ * `setExpression` for (layer, track) pairs: the whole property when the track
+ * IS it (one member); ONE member of an unseparated vector (X of Position) with
+ * `member` — Premation's per-dimension expression, which is what the document
+ * stores (an expression per member track). Returns null when any pair is not
+ * addressable (the caller refuses the edit).
  */
 export function expressionCommands(
   pairs: ReadonlyArray<{ nodeId: string; track: string; source: string }>,
@@ -433,8 +429,17 @@ export function expressionCommands(
   const out: Command[] = [];
   for (const p of pairs) {
     const r = trackRef(p.nodeId, p.track);
-    if (!r || r.members.length !== 1 || r.members[0] !== p.track) return null;
-    out.push({ type: 'setExpression', prop: r.ref, source: p.source, enabled });
+    if (!r) return null;
+    if (r.members.length === 1 && r.members[0] === p.track) {
+      out.push({ type: 'setExpression', prop: r.ref, source: p.source, enabled });
+      continue;
+    }
+    // One dimension of an UNSEPARATED vector (the X field of Position): the
+    // API's per-dimension expression (`member`, ENGINE_API.md §4.6) — the
+    // member track carries the source, as the document always stored it.
+    const member = r.members.indexOf(p.track);
+    if (member < 0) return null;
+    out.push({ type: 'setExpression', prop: r.ref, source: p.source, enabled, member });
   }
   return out;
 }

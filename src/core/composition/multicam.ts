@@ -125,10 +125,16 @@ const SYNC_MAX_LAG_SECONDS = 120;
  * Angles whose audio fails to decode (a silent B-cam) or correlate below
  * confidence keep their current start and say so in the report.
  */
-export async function alignMulticamByAudio(): Promise<MulticamSyncReport> {
+/**
+ * The audio analysis half of Sync by Audio, with no write: every angle bar
+ * that must move (`moves`: clip-bar id + new absolute start, seconds) and the
+ * report. The UI sends the moves as ONE engine entry (B3z, MulticamViewer);
+ * `alignMulticamByAudio` applies them through the timeline controller.
+ */
+export async function planMulticamAudioSync(): Promise<{ moves: Array<{ clipId: string; start: number }>; report: MulticamSyncReport }> {
   const layers = multicamLayersInActiveComp();
   if (layers.length < 2) {
-    return { shifted: 0, angles: [], note: 'Need at least two multicam angles.' };
+    return { moves: [], report: { shifted: 0, angles: [], note: 'Need at least two multicam angles.' } };
   }
 
   const controller = getTimelineController();
@@ -152,9 +158,12 @@ export async function alignMulticamByAudio(): Promise<MulticamSyncReport> {
   const refLayer = controller.getLayersForNode(layers[0]!.id)[0];
   if (!refEnv || !refLayer) {
     return {
-      shifted: 0,
-      angles: [],
-      note: 'Angle 1 has no decodable audio — nothing to align against.',
+      moves: [],
+      report: {
+        shifted: 0,
+        angles: [],
+        note: 'Angle 1 has no decodable audio — nothing to align against.',
+      },
     };
   }
   const refStartSec = framesToSeconds(refLayer.start, fr);
@@ -189,16 +198,16 @@ export async function alignMulticamByAudio(): Promise<MulticamSyncReport> {
   // offset — setLayerStart clamps at 0, which would otherwise silently
   // truncate the alignment instead of sliding the group.
   const minStart = Math.min(...targets.values());
-  let shifted = 0;
+  const moves: Array<{ clipId: string; start: number }> = [];
   for (const l of layers) {
     const want = targets.get(l.id);
     const bar = controller.getLayersForNode(l.id)[0];
     if (want === undefined || !bar) continue;
     const next = want - Math.min(0, minStart);
     if (Math.abs(next - framesToSeconds(bar.start, fr)) < 0.5 / fr.fps) continue;
-    controller.setClipStart(bar.id, next);
-    shifted += 1;
+    moves.push({ clipId: bar.id, start: next });
   }
+  const shifted = moves.length;
 
   const misses = report.filter((r) => r.note).length;
   const note =
@@ -207,7 +216,15 @@ export async function alignMulticamByAudio(): Promise<MulticamSyncReport> {
         ? 'No angles moved — audio failed to match. Align manually via a clap/slate frame.'
         : 'Angles already in sync.'
       : `Synced ${shifted} angle${shifted === 1 ? '' : 's'} by audio${misses ? ` (${misses} not matched)` : ''}.`;
-  return { shifted, angles: report, note };
+  return { moves, report: { shifted, angles: report, note } };
+}
+
+/** Sync by Audio, applied through the timeline controller (headless callers). */
+export async function alignMulticamByAudio(): Promise<MulticamSyncReport> {
+  const { moves, report } = await planMulticamAudioSync();
+  const controller = getTimelineController();
+  for (const m of moves) controller.setClipStart(m.clipId, m.start);
+  return report;
 }
 
 /**

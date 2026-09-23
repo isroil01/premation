@@ -51,6 +51,7 @@ export const quoteCardTemplate: TemplateDefinition = {
   description: 'A centred pull-quote over a soft gradient with an author credit.',
   layout: layoutQuoteCard,
   build: buildQuoteCard,
+  settings: { fps: 60, durationSeconds: 5, background: '#0b1020' },
   animate: animateQuoteCard,
   previewTime: 1.5,
   fields: [

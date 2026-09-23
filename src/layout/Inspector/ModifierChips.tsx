@@ -7,9 +7,9 @@
  * adds up to; it is the wrong one for glancing at Position and seeing that a
  * wiggle and a clamp are on it. Chips answer the glance. Drag a chip to
  * reorder (order changes the number), click one to edit its parameters in a
- * popover, × to remove, + to add. Every change goes through
- * `applyModifierStack`, which recompiles the expression and records ONE undo
- * entry per change.
+ * popover, × to remove, + to add. Every change is ONE engine batch — the
+ * `layer/modifiers` record + the recompiled expression (modifierEdits.ts) — and
+ * a parameter scrub is one gesture: one undo entry per change.
  */
 
 import { useState } from 'react';
@@ -21,18 +21,18 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
   MODIFIER_KINDS,
   MODIFIER_LABELS,
-  applyModifierStack,
   defaultModifier,
   describeModifier,
   moveModifier,
   readModifierStack,
   removeModifier,
-  removeModifierStack,
   type Modifier,
   type ModifierKind,
 } from '@core/animation/modifierStack';
 import { modifierCompileError } from '@core/animation/modifierCompile';
 import { ModifierParams } from './ModifierStackSection';
+import { useEngineEdit } from './useEngineEdit';
+import { modifierStackCommands } from './modifierEdits';
 import styles from './ModifierChips.module.css';
 
 export interface ModifierChipsProps {
@@ -67,6 +67,7 @@ export function AddModifierMenu({ onAdd, label }: { onAdd: (kind: ModifierKind) 
 export function ModifierChips({ nodeId, prop, showAdd = false, className }: ModifierChipsProps): JSX.Element | null {
   const [open, setOpen] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const eng = useEngineEdit();
   const node = defaultSceneGraph.getNode(nodeId);
   const stack = node ? readModifierStack(node, prop) : null;
   const modifiers: readonly Modifier[] = stack?.modifiers ?? [];
@@ -74,15 +75,12 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
   if (!node) return null;
   if (modifiers.length === 0 && !showAdd) return null;
 
-  const commit = (next: Modifier[]): void => {
-    if (next.length === 0) {
-      // B3-legacy: engine gap — modifier stacks (procedural modifiers on a property) have no API group.
-      removeModifierStack(nodeId, prop);
-      setOpen(null);
-      return;
-    }
-    applyModifierStack(nodeId, prop, next);
+  // The last chip removed removes the stack (its previous expression comes back).
+  const commit = (next: Modifier[], label = 'Edit Modifier Stack'): void => {
+    eng.send(label, modifierStackCommands(nodeId, prop, next.length === 0 ? null : next));
+    if (next.length === 0) setOpen(null);
   };
+  const scrub = eng.scrub('Edit Modifier Stack');
 
   const error = modifierCompileError(modifiers);
 
@@ -104,8 +102,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                 onDragStart={() => setDragFrom(i)}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => {
-                  // B3-legacy: engine gap — modifier stacks (procedural modifiers on a property) have no API group.
-                  if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i));
+                  if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i), 'Reorder Modifier');
                   setDragFrom(null);
                 }}
                 onDragEnd={() => setDragFrom(null)}
@@ -126,8 +123,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                   aria-label={`Remove ${label} modifier`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    // B3-legacy: engine gap — modifier stacks (procedural modifiers on a property) have no API group.
-                    commit(removeModifier(modifiers, m.id));
+                    commit(removeModifier(modifiers, m.id), 'Remove Modifier');
                   }}
                 >
                   <Icon name="close" size="sm" />
@@ -148,12 +144,12 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                   On
                 </label>
               </div>
-              <ModifierParams modifier={m} list={modifiers} onPatch={commit} />
+              <ModifierParams modifier={m} list={modifiers} onPatch={commit} scrub={scrub} />
             </div>
           </Popover>
         );
       })}
-      <AddModifierMenu onAdd={(kind) => commit([...modifiers, defaultModifier(kind)])} label={`Add modifier to ${prop}`} />
+      <AddModifierMenu onAdd={(kind) => commit([...modifiers, defaultModifier(kind)], 'Add Modifier')} label={`Add modifier to ${prop}`} />
       {error && <span className={styles.error} title={error}><Icon name="warning" size="sm" /></span>}
     </div>
   );

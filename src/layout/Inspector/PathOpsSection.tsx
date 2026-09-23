@@ -37,10 +37,9 @@ import { useState } from 'react';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { useMirrorLayers } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { Icon } from '@components/Icon';
 import styles from './PathOpsSection.module.css';
 
@@ -95,12 +94,11 @@ export function PathOpsSection(): JSX.Element | null {
   const setTool = useUIStore((s) => s.setActiveTool);
   const activeTool = useUIStore((s) => s.activeTool);
   const [mode, setMode] = useState<Mode>('live');
-  useSceneRevision((s) => s.rev);
+  // The selected layers' headers from the document mirror (B4): re-renders
+  // when one of them changes kind or is removed, not on every scene edit.
+  const selectedLayers = useMirrorLayers(selectedIds);
 
-  const shapeCount = selectedIds.filter((id) => {
-    const node = defaultSceneGraph.getNode(id);
-    return !!node && readNodeKind(node) === 'shape';
-  }).length;
+  const shapeCount = selectedLayers.filter((l) => uiKindOf(l) === 'shape').length;
   if (shapeCount === 0) return null;
 
   const canCombine = selectedIds.length >= 2;

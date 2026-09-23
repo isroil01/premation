@@ -23,6 +23,8 @@ struct Marker {
   cuePoint: string = 10;
   /// Protected region (time-stretch of a precomp leaves it untouched).
   protectedRegion: bool = 11;
+  /// B3z — the stored colour exactly (a timeline swatch token such as `var(--color-timeline-marker-blue)`, or a hex); empty = none. `label` is this colour's index in the LAYER label palette, 0 when it is not one of them.
+  color: string = 12;
 }
 
 struct MarkerInsert {
@@ -32,6 +34,8 @@ struct MarkerInsert {
   name: string = 4;
   comment: string = 5;
   label: u32 = 6;
+  /// B3z — the marker's colour as stored (a timeline swatch token or a hex, at most 128 characters); wins over `label`. Empty = no colour.
+  color?: string = 7;
 }
 
 struct MarkerPatch {
@@ -45,6 +49,8 @@ struct MarkerPatch {
   url?: string = 8;
   cuePoint?: string = 9;
   protectedRegion?: bool = 10;
+  /// B3z — as MarkerInsert.color (wins over `label`).
+  color?: string = 11;
 }
 
 command addMarkers = 700 { markers: MarkerInsert[] = 1; } -> MarkerIds;

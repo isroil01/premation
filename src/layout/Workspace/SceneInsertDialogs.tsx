@@ -18,6 +18,8 @@ import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { Project3D } from '@motion/scene';
 import { insertCamera, insertLight, insert3DPrimitive, nextDeviceName, type Primitive3DKind } from '@core/scene/sceneInsert';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { insertBuiltLayers } from '@core/engine/offDocument';
 import {
   defaultPrimitiveSpec,
   isPrimitiveMeshType,
@@ -46,10 +48,9 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
   const focalPx = Math.round(Project3D.focalLengthForFov(compWidth, fov));
 
   const create = (): void => {
-    // B3-legacy: engine gap — `createLayer{kind:'camera'}` builds the factory's one-node camera;
-    // the dialog's options (two-node + Point of Interest, lens → focal length, placement,
-    // selection) have no init form (`camera/…` init paths the factory node lacks).
-    insertCamera({ name, focalLength: focalPx, twoNode });
+    // The camera builder (two-node POI, lens → focal length, placement) runs off-document and
+    // lands as ONE pasteLayers entry (offDocument.ts).
+    void insertBuiltLayers('New Camera', activeCompRootId(), () => insertCamera({ name, focalLength: focalPx, twoNode }));
     close();
   };
 
@@ -128,9 +129,10 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
   );
 
   const create = (): void => {
-    // B3-legacy: engine gap — `createLayer{kind:'light'}` seeds one point light; light type,
-    // cone angle/feather, environment preset and shadow options have no init form.
-    insertLight({
+    // The light builder (type, colour, intensity, cone, shadows, environment sky) runs
+    // off-document and lands as ONE pasteLayers entry. AE's New Light makes exactly the one
+    // light asked for — no Ambient Fill beside it (the silent insert keeps adding one).
+    void insertBuiltLayers('New Light', activeCompRootId(), () => insertLight({
       name,
       type,
       intensity,
@@ -139,7 +141,8 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
       coneFeather: type === 'spot' ? coneFeather : undefined,
       castShadows: type === 'environment' ? false : castShadows,
       envPreset: type === 'environment' ? envPreset : undefined,
-    });
+      ambientFill: false,
+    }));
     close();
   };
 

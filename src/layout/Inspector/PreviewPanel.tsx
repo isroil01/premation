@@ -62,10 +62,9 @@ export function PreviewPanel(): JSX.Element {
     getTimelineController().getWorkArea() ? 'work-area' : 'entire-comp',
   );
   const setRange = (next: PlayRange): void => {
-    const tc = getTimelineController();
-    // B3-legacy: engine gap — `setWorkArea` cannot CLEAR the work area (no "none" range in the API).
-    if (next === 'entire-comp') tc.clearWorkArea();
-    else if (next === 'current-forward' && duration > time) {
+    if (next === 'entire-comp') {
+      if (getTimelineController().getWorkArea()) void edit('Clear Work Area', { type: 'clearWorkArea', comp: activeCompRootId() });
+    } else if (next === 'current-forward' && duration > time) {
       void edit('Work Area', { type: 'setWorkArea', comp: activeCompRootId(), range: { start: compTime(time), duration: compTime(duration - time) } });
     }
     setRangeState(next);

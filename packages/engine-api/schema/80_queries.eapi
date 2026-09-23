@@ -38,6 +38,8 @@ struct CompInfo {
   /// Layer ids, top of the stack first.
   layers: LayerId[] = 3;
   markers: Marker[] = 4;
+  /// B3z — the composition's cut transitions, in the order they were added.
+  transitions: Transition[] = 5;
 }
 
 /// The layer header the timeline and layer panel draw (no property tree).

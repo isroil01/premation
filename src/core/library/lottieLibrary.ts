@@ -9,15 +9,15 @@
  * plan → applyImportPlan — with `updateComp:false` and an offset so the
  * animation lands where it was dropped instead of resizing the comp.
  *
- * `importLottieFile` is the one shared home for file-based imports (panel
- * button and TopNav menu both use it).
+ * `prepareLottieFile` + `buildLottieFile` are the one shared home for
+ * file-based imports (panel button and TopNav menu both use them, through
+ * layout/EditorLayout/lottieInsertEdits.ts).
  */
 
 import { unzipSync, strFromU8 } from 'fflate';
 import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
 import { applyImportPlan, type AppliedTiming } from '@core/lottie/lottieImportApply';
 import { createLegacyDocumentContext } from '@core/ai/toolContext';
-import { beginDocumentTransaction } from '@core/ai/aiTransaction';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene, batchScene } from '@stores/sceneStore';
@@ -465,11 +465,6 @@ export function getLottieItem(id: string): LottieLibItem | null {
 // ── Insert / import ────────────────────────────────────────────────
 
 /**
- * Insert a bundled item through the REAL Lottie import pipeline, centred at
- * (x, y) — comp centre when omitted — without resizing the user's comp.
- * Returns the created node ids (empty on failure).
- */
-/**
  * Turn each imported layer's Lottie `ip`/`op` window into its timeline clip
  * bar, so a layer that starts two seconds in actually starts two seconds in.
  *
@@ -496,45 +491,45 @@ function applyClipTimings(timings: readonly AppliedTiming[]): void {
 }
 
 /**
- * Insert a bundled item through the REAL Lottie import pipeline, centred at
- * (x, y) — comp centre when omitted — without resizing the user's comp.
- * Returns the created node ids (empty on failure). One undo step.
+ * The BUILDER of a bundled item's insert (B3z): runs the REAL Lottie import
+ * pipeline, centred at (x, y) — comp centre when omitted — without resizing
+ * the user's comp, gives each layer its clip bar and selects the result.
+ * Returns the created node ids (empty on failure). No undo scope of its own:
+ * the editor runs it off-document and inserts the layers as ONE `pasteLayers`
+ * (offDocument.ts `insertBuiltLayers`; layout/EditorLayout/lottieInsertEdits.ts),
+ * which also carries the parent links and track mattes between them.
  */
-export function insertLottieItem(lottieId: string, x?: number, y?: number): string[] {
+export function buildLottieItem(lottieId: string, x?: number, y?: number): string[] {
   const item = getLottieItem(lottieId);
   if (!item) return [];
   const comp = useCompositionStore.getState();
   const px = x ?? comp.width / 2;
   const py = y ?? comp.height / 2;
-  const plan = planLottieImport(item.doc);
-  const tx = beginDocumentTransaction(`Insert ${item.name}`);
-  let nodeIds: string[] = [];
-  try {
-    // One scene notification for the build, not one per node — the listener
-    // walks the whole scene to resync the timeline (see batchScene).
-    const res = batchScene(() =>
-      applyImportPlan(plan, createLegacyDocumentContext(), {
-        updateComp: false,
-        offset: { x: px - LOTTIE_DESIGN_CENTER, y: py - LOTTIE_DESIGN_CENTER },
-      }),
-    );
-    nodeIds = res.nodeIds;
-    if (nodeIds.length > 0) {
-      useSelectionStore.getState().set(nodeIds);
-      getTimelineController().syncFromScene();
-      applyClipTimings(res.timings);
-      bumpScene();
-    }
-  } catch (err) {
-    tx.rollback();
-    throw err;
+  return buildLottiePlan(planLottieImport(item.doc), { x: px - LOTTIE_DESIGN_CENTER, y: py - LOTTIE_DESIGN_CENTER });
+}
+
+/**
+ * After a bundled item landed: show the interaction the card previewed on
+ * hover (micro-UI items land visible at rest, so this is not rescuing an
+ * invisible insert — it is the whole reason to pick one). Transport only.
+ */
+export function previewLottieItem(lottieId: string): void {
+  const item = getLottieItem(lottieId);
+  if (item) previewChoreography({ from: 0, to: item.frames / FPS, restAt: 0 });
+}
+
+/** Apply a plan at `offset` into the active comp (the shared builder body). */
+function buildLottiePlan(plan: ReturnType<typeof planLottieImport>, offset: { x: number; y: number }): string[] {
+  // One scene notification for the build, not one per node — the listener
+  // walks the whole scene to resync the timeline (see batchScene).
+  const res = batchScene(() => applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false, offset }));
+  if (res.nodeIds.length > 0) {
+    useSelectionStore.getState().set(res.nodeIds);
+    getTimelineController().syncFromScene();
+    applyClipTimings(res.timings);
+    bumpScene();
   }
-  tx.commit();
-  // Micro-UI items land visible at rest, so unlike the mograph/transition cards
-  // this is not rescuing an invisible insert — it is showing the interaction the
-  // card previewed on hover, which is the whole reason to pick one.
-  if (nodeIds.length > 0) previewChoreography({ from: 0, to: item.frames / FPS, restAt: 0 });
-  return nodeIds;
+  return res.nodeIds;
 }
 
 export interface LottieFileImportResult {
@@ -542,11 +537,21 @@ export interface LottieFileImportResult {
   warnings: string[];
 }
 
+/** A user's Lottie file, read and planned — ready for {@link buildLottieFile}. */
+export interface PreparedLottieFile {
+  plan: ReturnType<typeof planLottieImport>;
+  /** Where the design centre lands (the active comp's centre). */
+  offset: { x: number; y: number };
+  /** Everything the import will warn about (the plan's, plus a comp shorter than the file). */
+  warnings: string[];
+}
+
 /**
- * Import a user's.json or.lottie file — shared entry point for file imports
- * (TopNav menu and the Lottie panel both call this). Unpacks.lottie ZIP archives.
+ * Read and plan a user's .json or .lottie file — the ASYNC half of a file
+ * import (TopNav menu and the Lottie panel share it). Unpacks .lottie ZIP
+ * archives. Throws on an unreadable file. Writes nothing.
  */
-export async function importLottieFile(file: File): Promise<LottieFileImportResult> {
+export async function prepareLottieFile(file: File): Promise<PreparedLottieFile> {
   let json: LottieJson;
   const fileName = file.name.toLowerCase();
 
@@ -594,42 +599,23 @@ export async function importLottieFile(file: File): Promise<LottieFileImportResu
   // (`updateComp` true) silently resized the current (often freshly-created)
   // scene to the imported file's dimensions, which is never what the user wants.
   const comp = useCompositionStore.getState();
-  const designCx = plan.comp.width / 2;
-  const designCy = plan.comp.height / 2;
-
-  // ONE undo step for the whole import. Without this the timeline resync below
-  // pushed a command per created clip, and Ctrl+Z peeled the import apart a
-  // layer at a time instead of removing it.
-  const tx = beginDocumentTransaction(`Import ${file.name}`);
-  let nodeIds: string[] = [];
-  try {
-    // One scene notification for the build, not one per node (see batchScene).
-    const res = batchScene(() =>
-      applyImportPlan(plan, createLegacyDocumentContext(), {
-        updateComp: false,
-        offset: { x: comp.width / 2 - designCx, y: comp.height / 2 - designCy },
-      }),
-    );
-    nodeIds = res.nodeIds;
-    if (nodeIds.length > 0) {
-      // Select the freshly imported layers so the user sees what landed (and where).
-      useSelectionStore.getState().set(nodeIds);
-      getTimelineController().syncFromScene();
-      applyClipTimings(res.timings);
-      bumpScene();
-    }
-  } catch (err) {
-    tx.rollback();
-    throw err;
-  }
-  tx.commit();
-
+  const offset = { x: comp.width / 2 - plan.comp.width / 2, y: comp.height / 2 - plan.comp.height / 2 };
+  const warnings = [...plan.warnings];
   // A file longer than the comp would be silently truncated at playback, so say
   // so rather than letting the user wonder where the ending went.
   if (plan.comp.durationSeconds > comp.durationSeconds + 1e-3) {
-    plan.warnings.push(
+    warnings.push(
       `The file is ${plan.comp.durationSeconds.toFixed(1)}s but this composition is ${comp.durationSeconds.toFixed(1)}s — the tail will not play until you lengthen the comp.`,
     );
   }
-  return { nodeIds, warnings: plan.warnings };
+  return { plan, offset, warnings };
+}
+
+/**
+ * The synchronous BUILDER of a file import: the prepared plan into the active
+ * comp, clip bars, selection. No undo scope — the editor inserts the result as
+ * ONE `pasteLayers` (layout/EditorLayout/lottieInsertEdits.ts).
+ */
+export function buildLottieFile(prepared: PreparedLottieFile): string[] {
+  return buildLottiePlan(prepared.plan, prepared.offset);
 }

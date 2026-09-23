@@ -1,0 +1,96 @@
+/**
+ * The Inspector core's layer facts, read from the document MIRROR (B4,
+ * docs/B4_MIRROR.md) — what the section registry, the selection header and
+ * the transform/compositing sections ask about a layer: does it exist, what
+ * kind is it, can it take the 3D switch, does it draw pixels. One place, so
+ * the one gap below is marked once instead of in every section.
+ */
+
+import { flicksToSeconds, type LayerInfo } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { useProjectStore } from '@stores/projectStore';
+import { uiKindOf, isAbstractKind } from '@core/mirror/layerKinds';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { splitKind } from '@core/plugins/layerKindSchema';
+
+/** The layer's mirror header, or undefined when it is gone (or not a layer). */
+export function mirrorLayer(id: string | null | undefined): LayerInfo | undefined {
+  return id ? documentMirror().layer(id) : undefined;
+}
+
+export function layerExists(id: string | null | undefined): boolean {
+  return mirrorLayer(id) !== undefined;
+}
+
+/**
+ * The editor kind the Inspector keys on: `uiKindOf` of the mirror header, and
+ * for a generator layer the plugin kind id (`<pluginId>.<kindId>`) when the
+ * layer is a plugin-provided kind.
+ */
+export function inspectorKindOf(id: string | null | undefined): string | null {
+  const layer = mirrorLayer(id);
+  if (!layer) return null;
+  if (layer.kind === 'generator' && id) {
+    // B4-gap: plugin layer kinds — LayerInfo names a `generator` but not which plugin kind (B4_MIRROR.md §4).
+    const node = defaultSceneGraph.getNode(id);
+    // B4-gap: same (the stored kind id).
+    const legacy = node ? readNodeKind(node) : null;
+    if (legacy && splitKind(legacy) !== null) return legacy;
+  }
+  return uiKindOf(layer);
+}
+
+/** Kinds with no spatial or visual presence of their own (camera, light, audio). */
+export function isAbstractLayer(id: string): boolean {
+  return isAbstractKind(uiKindOf(mirrorLayer(id)));
+}
+
+/** Kinds that draw pixels the render pipeline composites (not camera/light/audio). */
+export function isRenderableLayer(id: string): boolean {
+  const layer = mirrorLayer(id);
+  return !!layer && !isAbstractKind(uiKindOf(layer));
+}
+
+const THREE_D_CAPABLE = new Set(['shape', 'text', 'image', 'video', 'null', 'svg']);
+
+/**
+ * Whether the layer can take the 3D switch (the mirror twin of `canBe3D`): a
+ * content kind, or a composition layer that is not collapsed (a sealed comp
+ * is a 3D card; a collapsed one splices its layers into the host).
+ */
+export function canBe3DLayer(id: string): boolean {
+  const layer = mirrorLayer(id);
+  if (!layer) return false;
+  const kind = inspectorKindOf(id);
+  if (kind === 'comp') return !layer.switches.collapse;
+  return kind !== null && THREE_D_CAPABLE.has(kind);
+}
+
+/** Whether the layer's 3D switch is on. */
+export function is3DLayer(id: string): boolean {
+  return mirrorLayer(id)?.switches.threeD === true;
+}
+
+/**
+ * The active tab's composition id, for a CALLBACK (the hook form is
+ * `useActiveCompId`): editor state, then the document's first composition.
+ */
+export function activeMirrorCompId(): string | undefined {
+  const s = useProjectStore.getState();
+  const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+  return id ?? documentMirror().compIds[0];
+}
+
+/** The active composition's duration, seconds (0 when there is none). */
+export function useActiveCompDurationSeconds(): number {
+  const d = useActiveMirrorComp()?.settings.duration;
+  return typeof d === 'number' ? flicksToSeconds(d) : 0;
+}
+
+/** The active composition's frame size (0 × 0 when there is none). */
+export function useActiveCompSize(): { width: number; height: number } {
+  const s = useActiveMirrorComp()?.settings;
+  return { width: s?.width ?? 0, height: s?.height ?? 0 };
+}

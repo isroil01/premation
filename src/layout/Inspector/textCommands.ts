@@ -17,12 +17,11 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
+import { isLayer } from '@core/engine/doc';
 import { fieldCommands } from '@layout/Text/textEdits';
 import { componentPropsCommands } from './useComponentProp';
 import type { SceneNode } from '@core/types';
@@ -69,9 +68,14 @@ export function isTypingInField(
  * colours and their "none" swatches, as ONE undo step. A layer with no stroke
  * width gets 2px so the swap is visible (the fill would otherwise vanish into
  * a zero-width stroke) — what the Character panel button has always done.
+ *
+ * B3z: the engine API, one batch — `layer/fill`, `text/stroke`,
+ * `text/noFill` / `text/noStroke` and the stroke width, a latent property
+ * (`layer/strokeWidth`, homed on the Text component) until the layer stores it.
+ * Only layers of a composition are addressed; any other node is left alone.
  */
 export function swapTextFillStroke(nodeIds: ReadonlyArray<string>): boolean {
-  const targets = nodeIds.map(textTarget).filter((t): t is TextTarget => t !== null);
+  const targets = nodeIds.filter((id) => isLayer(id)).map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return false;
   const plans = targets.map(({ node, compId, props }) => {
     const values: Record<string, unknown> = {};
@@ -86,19 +90,11 @@ export function swapTextFillStroke(nodeIds: ReadonlyArray<string>): boolean {
       values.noStroke = noFill;
     }
     if (!(typeof props.strokeWidth === 'number' && props.strokeWidth > 0)) values.strokeWidth = 2;
-    return { id: node.id, compId, values, ...componentPropsCommands(node.id, compId, values, getTime()) };
+    return componentPropsCommands(node.id, compId, values, getTime());
   });
-  // Engine API (G1): layer/fill, text/stroke, text/noFill… — ONE batch.
-  if (plans.every((pl) => Object.keys(pl.rest).length === 0)) {
-    void edit('Swap Fill and Stroke', plans.flatMap((pl) => pl.cmds));
-    return true;
-  }
-  // B3-legacy: engine gap — a stroke width the text layer has never stored has no API property (layer/strokeWidth is listed only once stored).
-  runDocumentEdit('Swap Fill and Stroke', () => {
-    for (const { id, compId, values } of plans) {
-      for (const [key, value] of Object.entries(values)) updateNodeComponentProp(defaultSceneGraph, id, compId, key, value);
-    }
-  });
+  // ONE batch; a text layer addresses every one of these (latentPropSpecs.ts
+  // makes an unstored stroke width a property too), so nothing is left over.
+  void edit('Swap Fill and Stroke', plans.flatMap((pl) => pl.cmds));
   return true;
 }
 

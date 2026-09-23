@@ -59,16 +59,15 @@
 
 import type { ComponentType } from 'react';
 import type { IconName } from '@components/Icon';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { nodeMorphTargetCount } from '@core/scene/modelMorph';
+import { documentMirror } from '@stores/documentMirror';
+import { trackRefIn } from '@core/mirror/trackIndex';
+import { inspectorKindOf, isAbstractLayer, layerExists } from './inspectorMirror';
 import { findLayerKind } from '@core/plugins/layerKindRegistry';
 import { splitKind } from '@core/plugins/layerKindSchema';
 
 import { AppearanceSection, AppearancePresetAction } from './AppearanceSection';
 import { TextSection, TextPresetAction, hasTextSection } from './TextSection';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from './EffectsSection';
-import { getNodeEffects } from '@core/effects/effects';
 import { AudioControls } from './AudioControls';
 import { PinnedSection } from './PinnedSection';
 import { PluginParamsSection, hasPluginParamsSection, pluginParamsTitle } from './PluginParamsSection';
@@ -160,15 +159,24 @@ export function resolve<T>(value: PerNode<T>, nodeId: string): T {
   return typeof value === 'function' ? (value as (id: string) => T)(nodeId) : value;
 }
 
+/**
+ * The layer's editor kind, from the document MIRROR (B4): `uiKindOf` of its
+ * header (a plugin kind id for a plugin-provided generator layer). The
+ * Properties panel re-renders on the selection's mirror keys, so a kind change
+ * re-runs every predicate below.
+ */
 function kindOf(nodeId: string): string | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeKind(node) : null;
+  return inspectorKindOf(nodeId);
 }
 
 /** Kinds with no spatial or visual presence of their own. */
 function isAbstract(nodeId: string): boolean {
-  const kind = kindOf(nodeId);
-  return kind === 'camera' || kind === 'light' || kind === 'audio';
+  return isAbstractLayer(nodeId);
+}
+
+/** Applied effects (the tree's `effects` group), from the mirror. */
+function effectCount(nodeId: string): number {
+  return documentMirror().tree(nodeId)?.nodes.get('effects')?.children.length ?? 0;
 }
 
 function isDrawable(nodeId: string): boolean {
@@ -198,6 +206,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     category: 'pinned',
     defaultOpen: true,
     keywords: 'pinned essential favourite favorite shortlist',
+    // B4-gap: pinned / essential properties (`__pinnedProps`, `__essentialProps`) — layer data with no catalog path (B4_MIRROR.md §4).
     appliesTo: hasPinnedSection,
     Component: PinnedSection,
   },
@@ -419,7 +428,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     title: 'Effects',
     icon: 'magic-wand',
     category: 'style',
-    defaultOpen: (id) => getNodeEffects(id).length > 0,
+    defaultOpen: (id) => effectCount(id) > 0,
     keywords: 'effects effect stack fx blur glow color correction distort keying',
     appliesTo: hasEffectsSection,
     Component: EffectsSection,
@@ -534,10 +543,8 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     category: 'animation',
     defaultOpen: false,
     keywords: 'morph blend shape target model',
-    appliesTo: (id) => {
-      const node = defaultSceneGraph.getNode(id);
-      return !!node && nodeMorphTargetCount(node) > 0;
-    },
+    // A model's morph weights are catalog properties `morph0…morphN-1`.
+    appliesTo: (id) => trackRefIn(documentMirror().tree(id), 'morph0') !== null,
     Component: ModelSection,
   },
   {
@@ -578,7 +585,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
 
 /** The sections that belong on one layer, in registry order. */
 export function inspectorSectionsFor(nodeId: string, category: InspectorCategory | 'all' = 'all'): InspectorSectionDef[] {
-  if (!defaultSceneGraph.getNode(nodeId)) return [];
+  if (!layerExists(nodeId)) return [];
   return INSPECTOR_SECTIONS.filter((s) => {
     if (category !== 'all' && s.category !== category) return false;
     return s.appliesTo(nodeId);
@@ -607,7 +614,7 @@ export function inspectorSectionsForSelection(nodeIds: ReadonlyArray<string>): I
 export function sectionCoverage(def: InspectorSectionDef, nodeIds: ReadonlyArray<string>): number {
   let n = 0;
   for (const id of nodeIds) {
-    if (defaultSceneGraph.getNode(id) && def.appliesTo(id)) n += 1;
+    if (layerExists(id) && def.appliesTo(id)) n += 1;
   }
   return n;
 }

@@ -43,6 +43,7 @@ import {
   moveSelectedStartToPlayhead,
   nudgeSelectedLayers,
   setWorkAreaIn,
+  clearWorkArea,
   setWorkAreaOut,
   splitSelectedAtPlayhead,
   trimSelectedEndToPlayhead,
@@ -211,8 +212,7 @@ export function useTimelineKeys(): void {
           break;
         case 'B': // Shift+B
           e.preventDefault();
-          // B3-legacy: engine gap — no command CLEARS a work area (setWorkArea needs a range).
-          c.clearWorkArea();
+          void clearWorkArea();
           break;
         case 'n':
         case 'N':

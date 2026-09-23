@@ -236,6 +236,7 @@ set(ENGINE_DOC_SOURCES
   src/core/engine_ctx.cpp
   src/core/events.cpp
   src/core/fields.cpp
+  src/core/rig.cpp
   src/core/fxstate.cpp
   src/core/handlers_common.cpp
   src/core/handlers_comps.cpp
@@ -249,17 +250,20 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_optional.cpp
   src/core/handlers_precompose.cpp
   src/core/handlers_properties.cpp
+  src/core/handlers_strokes.cpp
   src/core/json.cpp
   src/core/layer_clone.cpp
   src/core/meta.cpp
   src/core/model.cpp
   src/core/parenting.cpp
+  src/core/particle_props.cpp
   src/core/props.cpp
   src/core/ptree.cpp
   src/core/queries.cpp
   src/core/readmodel.cpp
   src/core/scene.cpp
   src/core/scene_build.cpp
+  src/core/strokes.cpp
   src/core/timeline.cpp
   src/core/worldxf.cpp
 )
@@ -526,4 +530,75 @@ if(MOTION_BUILD_TESTS)
     target_compile_definitions(engine_audio_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # tmpnam / fopen in fixtures
   endif()
   add_test(NAME engine_audio_tests COMMAND engine_audio_tests --reporter compact)
+endif()
+
+# ── D2w: the engine renders ITS OWN document (src/scene; kept in its own block) ─
+#   engine_scene      the scene builder — buildSnapshot + snapshotToFrameScene
+#                     ported onto the D1b document (snapshot_build, frame_build,
+#                     effects_port, readers), text measurement over the E3 fonts,
+#                     and the texture feed (scene_textures: E3 rasters by content,
+#                     E1 footage frames) the render graph samples through
+#                     rg::ExternalTextureSource.
+#   premation-scene   the parity gate (FrameScene built from each golden scene's
+#                     project document vs the TS-exported one, rendered for the
+#                     render-tests `native-scene` backend) + the frame-build bench
+if(TARGET engine_raster AND TARGET engine_render_graph)
+  add_library(engine_scene STATIC
+    src/scene/readers.cpp
+    src/scene/effects_port.cpp
+    src/scene/effects_spatial.cpp
+    src/scene/effects_spatial_a.cpp
+    src/scene/effects_spatial_b.cpp
+    src/scene/layer_styles.cpp
+    src/scene/path_ops.cpp
+    src/scene/snapshot_build.cpp
+    src/scene/frame_build.cpp
+    src/scene/text_measure.cpp
+    src/scene/scene_textures.cpp
+    src/scene/image_decode_ffi.cpp
+    src/scene/native_scene.cpp
+  )
+  target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
+  target_link_libraries(engine_scene PUBLIC engine_core engine_raster engine_render_graph PRIVATE motion::options)
+  if(WIN32)
+    target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)
+  endif()
+  if(TARGET engine_media_gpu)
+    target_link_libraries(engine_scene PUBLIC engine_media_gpu)
+    target_compile_definitions(engine_scene PUBLIC PREMATION_HAVE_MEDIA=1)
+    target_include_directories(engine_scene SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  endif()
+  if(MSVC)
+    target_compile_options(engine_scene PRIVATE /bigobj)
+  endif()
+
+  add_executable(premation-scene tools/premation_scene.cpp)
+  target_include_directories(premation-scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  target_link_libraries(premation-scene PRIVATE engine_scene motion::options)
+  if(MSVC)
+    target_compile_definitions(premation-scene PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+
+  # engine_frames: the scene builder + render graph + audio wired into the
+  # engine process (Session's FrameBuilder / MediaClock hooks, the render
+  # thread's BuiltFrameDrawer). premation-engine uses it when present.
+  if(TARGET engine_gpu AND TARGET premation-engine)
+    add_library(engine_frames STATIC src/scene/engine_frames.cpp)
+    target_link_libraries(engine_frames PUBLIC engine_scene engine_gpu PRIVATE motion::options)
+    if(TARGET engine_audio)
+      target_link_libraries(engine_frames PUBLIC engine_audio)
+      target_compile_definitions(engine_frames PRIVATE PREMATION_HAVE_AUDIO=1)
+    endif()
+    if(TARGET engine_media_gpu)
+      target_include_directories(engine_frames SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    endif()
+    target_link_libraries(premation-engine PRIVATE engine_frames)
+    target_compile_definitions(premation-engine PRIVATE PREMATION_HAVE_SCENE=1)
+  endif()
+else()
+  message(STATUS "premation-engine: E3 raster or the render graph missing — the D2w scene builder is not built")
+endif()
+# The Session's scene / audio-clock hooks (session_hooks.hpp) are engine_core: tested with fakes.
+if(MOTION_BUILD_TESTS AND TARGET engine_tests)
+  target_sources(engine_tests PRIVATE tests/test_session_hooks.cpp)
 endif()

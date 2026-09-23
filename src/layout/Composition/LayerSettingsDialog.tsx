@@ -17,7 +17,7 @@ import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
   DEFAULT_SOLID_COLOR,
   applyLayerSettings,
-  createSolidLayer,
+  buildSolidLayer,
   nextSolidName,
   readLayerSettings,
   sanitizeLayerSize,
@@ -25,6 +25,8 @@ import {
   type LayerSettingsValues,
 } from '@core/scene/layerSettings';
 import { cn } from '@utils/cn';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { insertBuiltLayers } from '@core/engine/offDocument';
 import { layerSettingsEdit } from './compositionEdits';
 import styles from './LayerSettingsDialog.module.css';
 
@@ -71,8 +73,9 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
         }
       });
     } else {
-      // B3-legacy: engine gap — `createLayer{solid}` cannot set the solid's colour (no fill property path) and places at the comp centre without `insertSolid`'s placement/selection.
-      createSolidLayer(values);
+      // The New Solid builder (comp-sized, centred, colour, name, size) runs off-document and
+      // lands as ONE pasteLayers entry, selected (offDocument.ts).
+      void insertBuiltLayers('New Solid', activeCompRootId(), () => buildSolidLayer(values));
     }
     close();
   };
