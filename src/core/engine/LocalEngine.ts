@@ -1,0 +1,868 @@
+/**
+ * LocalEngine — the engine API (docs/ENGINE_API.md) implemented in TypeScript on
+ * top of today's engine (NATIVE_CORE_PLAN §5 B2). In-process, transport-free:
+ * a `Request` goes in, a `Response` and `EventBatch`es come out, exactly as they
+ * will from the C++ process in C3.
+ *
+ * ## Undo
+ *
+ * The client owns ONE history, and it is the app's `HistoryService` (the T1
+ * unified stack): every applied request pushes one `EngineHistoryEntry` onto it
+ * (a batch or a gesture is one entry). An entry holds the PARTS the request
+ * changed, before and after (state.ts) — the concrete inverse recorded at apply
+ * time. Undo writes the befores back, redo the afters; both are ordinary
+ * revisions with change events. Because the entries live on the same stack as
+ * the pre-API recorders (the 700 ms debounce, engine-timeline commands,
+ * `runAnimEdit`), the two worlds interleave in one strictly linear order until
+ * B3 removes the old recorders (see ENGINE_API.md "B2 implementation notes").
+ *
+ * Coexistence rules while the debounce recorder still exists:
+ *   • every edit runs inside `historyStore.runRestoring` after a `flush()` — a
+ *     pending UI edit gets its own entry first, and nothing this engine writes
+ *     is captured a second time by the recorder (same contract `runAsOneHistoryEntry`
+ *     uses);
+ *   • `HistoryService` pushes from helpers the engine calls (timeline commands,
+ *     runAnimEdit inside a helper) are suspended while it applies;
+ *   • a document change NOT made through the engine marks it stale; the next
+ *     request first sends `documentReset{resync}` so a mirror refetches.
+ */
+
+import {
+  EngineClientBase,
+  COMMANDS,
+  codecs,
+  type Command,
+  type CommandResult,
+  type CommandType,
+  type EngineError,
+  type Event,
+  type EventBatch,
+  type EventListener,
+  type HistoryState,
+  type LogRecord,
+  type Origin,
+  type Query,
+  type QueryResult,
+  type Request,
+  type Response,
+  type Revision,
+  type ResetReason,
+} from '@motion/engine-api';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import type { HistoryService } from '@core/commands/HistoryService';
+import type { IUndoableCommand } from '@core/commands/Command';
+import { useHistoryStore } from '@stores/historyStore';
+import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { restoreDocument, captureDocument, type EditorDocument } from '@core/api/cloudDocument';
+import { projectDocumentIO } from '@core/project/projectDocumentIO';
+import { useProjectStore } from '@stores/projectStore';
+import { useAssetStore, replaceProjectItems } from '@stores/assetStore';
+import { EngineFail, fail, toEngineError } from './errors';
+import { IdAllocator, allKeyframeIds, type IdCounters } from './ids';
+import { captureScope, applyParts, changedKeys, documentScope, type Parts, type Scope } from './state';
+import { EventBuilder } from './events';
+import { idTaken, compItemIds } from './doc';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentHash } from './canonical';
+import type { EnginePorts } from './ports';
+import type { HandlerCtx, Plan } from './handler';
+import { EDIT_HANDLERS } from './handlers';
+import { runQuery, type QueryCtx } from './queries';
+import { Transport } from './transport';
+import { KeyIndex } from './keyIndex';
+import { stampMissingKeyIds } from './stamp';
+
+/** Bars mirror their node (name, enabled, locked, membership) — refresh every comp's mirror. */
+function syncTimelines(): void {
+  const c = getTimelineController();
+  for (const comp of c.registeredCompIds()) c.syncFromScene(comp);
+}
+
+export interface LocalEngineOptions {
+  /** Also diff the whole document around every command and fail one that changed a part outside its scope (tests). */
+  verifyScopes?: boolean;
+  /** Round-trip every request, response and event batch through the binary codec (tests: proves every payload is encodable). */
+  wire?: boolean;
+  /** Record the command log (§12). Default true. */
+  recordLog?: boolean;
+  /** Put a document hash on every log record (costs a canonical capture per request). Default false. */
+  hashes?: boolean;
+  ports?: EnginePorts;
+  /** The history the entries go on; default the app's CommandSystem history. */
+  history?: () => HistoryService | null;
+}
+
+/** One undo entry: the parts a request (or a gesture) changed, before and after. */
+export class EngineHistoryEntry implements IUndoableCommand {
+  readonly named = false;
+  label: string;
+  readonly origin: Origin;
+  readonly before: Parts;
+  readonly after: Parts;
+  private readonly engine: LocalEngine;
+
+  constructor(engine: LocalEngine, label: string, origin: Origin, before: Parts, after: Parts) {
+    this.engine = engine;
+    this.label = label;
+    this.origin = origin;
+    this.before = before;
+    this.after = after;
+  }
+
+  execute(): void {
+    this.engine.replayEntry(this, 'redo');
+  }
+
+  undo(): void {
+    this.engine.replayEntry(this, 'undo');
+  }
+}
+
+interface OpenGesture {
+  id: number;
+  label: string;
+  origin: Origin;
+  before: Parts;
+  after: Parts;
+  /** Revision when the gesture opened (commit:false restores to an equal document). */
+  startRevision: Revision;
+}
+
+interface LogHeader {
+  document: EditorDocument;
+  ids: IdCounters;
+  revision: Revision;
+}
+
+export interface CommandLogData {
+  header: LogHeader;
+  records: LogRecord[];
+}
+
+const humanize = (type: string): string =>
+  type.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+
+export class LocalEngine extends EngineClientBase {
+  private readonly listeners = new Set<EventListener>();
+  private readonly options: LocalEngineOptions;
+  readonly ids = new IdAllocator();
+  private readonly builder = new EventBuilder();
+  readonly transport: Transport;
+  readonly keyIndex = new KeyIndex();
+  private queue: Promise<unknown> = Promise.resolve();
+  private docRevision: Revision = 0;
+  private savedRevision: Revision = 0;
+  private projectPath = '';
+  private gesture: OpenGesture | null = null;
+  private gestureSeq = 0;
+  private applying = 0;
+  private stale = false;
+  private currentSeq: number | undefined;
+  private currentOrigin: Origin = 'ui';
+  private log: LogRecord[] = [];
+  private logHeader: LogHeader | null = null;
+  /** Recovery cadence the app's autosave reads (a preference, not document state). */
+  autosave = { enabled: false, intervalSeconds: 0, keep: 0 };
+  private busDisposers: Array<{ dispose(): void }> = [];
+  private closed = false;
+
+  constructor(options: LocalEngineOptions = {}) {
+    super();
+    this.options = { recordLog: true, hashes: false, ...options };
+    this.transport = new Transport((events) => this.emitEphemeral(events));
+    this.attachBus();
+    this.seedIds();
+    if (this.options.recordLog) this.startLog();
+  }
+
+  // ── Public surface beyond EngineClient ──────────────────────────────
+
+  get documentRevision(): Revision {
+    return this.docRevision;
+  }
+
+  get isGestureOpen(): boolean {
+    return this.gesture !== null;
+  }
+
+  /** Re-subscribe to the app bus (call after `Application.boot()` swaps it). */
+  attachBus(): void {
+    for (const d of this.busDisposers) d.dispose();
+    const bus = getEventBus();
+    const mark = (): void => {
+      if (this.applying === 0) this.stale = true;
+    };
+    this.busDisposers = [
+      bus.on('SceneGraphChanged', mark),
+      bus.on('NodeUpdated', mark),
+      bus.on('AnimationChanged', (p) => {
+        if (!isMediaDecodeRepaint(p as never)) mark();
+      }),
+      bus.on('DocumentChanged', mark),
+    ];
+  }
+
+  subscribe(listener: EventListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    // A gesture still open when the client goes away is COMMITTED (§5.1).
+    if (this.gesture) await this.execute({ type: 'endGesture', gesture: this.gesture.id, commit: true });
+    for (const d of this.busDisposers) d.dispose();
+    this.busDisposers = [];
+    this.closed = true;
+  }
+
+  request(req: Request): Promise<Response> {
+    const run = async (): Promise<Response> => {
+      const r = this.options.wire ? roundTrip('Request', req) : req;
+      const res = await this.handle(r);
+      return this.options.wire ? roundTrip('Response', res) : res;
+    };
+    const p = this.queue.then(run, run);
+    this.queue = p.catch(() => undefined);
+    return p;
+  }
+
+  /** The recorded log since the last reset (§12), with the header a replay starts from. */
+  commandLog(): CommandLogData {
+    return { header: this.logHeader ?? this.makeHeader(), records: this.log.map((r) => deepCopy(r)) };
+  }
+
+  /** Start a fresh log at the current document (the header captures it and the id counters). */
+  startLog(): void {
+    this.log = [];
+    this.logHeader = this.makeHeader();
+  }
+
+  /**
+   * Replace the document with `doc` (a log header, a test fixture, an opened
+   * file): clears history, reseeds or restores the id counters, and emits
+   * `documentReset`. `resetWorkspace` = New/Open semantics (tabs, timelines,
+   * session assets reset first).
+   */
+  loadDocument(doc: EditorDocument, opts: { ids?: IdCounters; revision?: Revision; reason?: ResetReason; resetWorkspace?: boolean } = {}): void {
+    this.applying += 1;
+    try {
+      if (opts.resetWorkspace) {
+        // New/Open semantics, minus dropping the session's footage: the
+        // document's own item list decides which items the project holds.
+        useProjectStore.getState().actions.resetTabs();
+        getTimelineController().reset();
+      }
+      restoreDocument(structuredClone(doc));
+      if (opts.resetWorkspace) this.lastMissing = this.reconcileItems(doc);
+      this.clearHistoryStacks();
+      this.ensureTimelines();
+    } finally {
+      this.applying -= 1;
+    }
+    this.gesture = null;
+    if (opts.ids) this.ids.restore(opts.ids);
+    else this.seedIds();
+    this.keyIndex.invalidate();
+    this.builder.reset();
+    this.stale = false;
+    const from = this.docRevision;
+    this.docRevision = opts.revision ?? this.docRevision + 1;
+    this.savedRevision = this.docRevision;
+    this.emitBatch(from, this.docRevision, [{ type: 'documentReset', revision: this.docRevision, reason: opts.reason ?? 'opened' }]);
+    this.emitStatus();
+  }
+
+  private lastMissing: string[] = [];
+
+  /**
+   * The project's items are the ones its document lists. Footage the session
+   * holds that the document does not list leaves the project; listed footage
+   * the session does not hold is reported missing (AE's missing footage).
+   */
+  private reconcileItems(doc: EditorDocument): string[] {
+    const listed = doc.projectItems?.footage ?? {};
+    const store = useAssetStore.getState();
+    const keep = store.assets.filter((a) => a.id in listed);
+    const missing = Object.keys(listed).filter((id) => !keep.some((a) => a.id === id));
+    // Missing footage stays an ITEM (AE): a placeholder record with no bytes
+    // (`src` empty → ItemInfo.missing), so the project still lists it and a
+    // later relink or library hydration fills it in.
+    const placeholders = missing.map((id) => {
+      const r = listed[id]!;
+      return {
+        id, name: r.name ?? id, type: r.type ?? 'video', src: '', size: 0,
+        ...(r.path ? { path: r.path } : {}), ...(r.folderId ? { folderId: r.folderId } : {}),
+        ...(r.interpret ? { interpret: { ...r.interpret } } : {}), ...(r.label ? { label: r.label } : {}),
+        ...(r.tags ? { tags: [...r.tags] } : {}), ...(r.comment ? { comment: r.comment } : {}),
+      };
+    });
+    if (placeholders.length > 0 || keep.length !== store.assets.length || !doc.projectItems) {
+      replaceProjectItems({ assets: [...keep, ...placeholders], folders: doc.projectItems?.folders ?? [] });
+    }
+    return missing;
+  }
+
+  /** Undo/redo of one of this engine's entries — called by HistoryService (engine undo, or the app's Ctrl+Z). */
+  replayEntry(entry: EngineHistoryEntry, dir: 'undo' | 'redo'): void {
+    const target = dir === 'undo' ? entry.before : entry.after;
+    const from = dir === 'undo' ? entry.after : entry.before;
+    this.applying += 1;
+    try {
+      applyParts(target);
+    } finally {
+      this.applying -= 1;
+    }
+    this.keyIndex.invalidate();
+    const keys = [...target.keys()];
+    const prev = this.docRevision;
+    this.docRevision += 1;
+    const events = this.builder.build(keys, from, target);
+    this.emitBatch(prev, this.docRevision, events);
+    this.emitStatus();
+  }
+
+  // ── Request handling ────────────────────────────────────────────────
+
+  private async handle(req: Request): Promise<Response> {
+    this.noteRevision(this.docRevision);
+    this.currentSeq = req.seq;
+    this.currentOrigin = req.origin;
+    try {
+      if (req.baseRevision !== undefined && req.baseRevision !== this.docRevision) {
+        fail('conflict', `the document is at revision ${this.docRevision}, not ${req.baseRevision}`, { detail: JSON.stringify({ revision: this.docRevision }) });
+      }
+      if (req.body.kind !== 'query') {
+        this.ensureTimelines();
+        this.resyncIfStale();
+      }
+      switch (req.body.kind) {
+        case 'query': {
+          const value = runQuery(req.body.value, this.queryCtx());
+          return this.respond(req, { kind: 'query', value });
+        }
+        case 'command': {
+          const value = await this.command(req.body.value, req.origin);
+          this.record(req);
+          return this.respond(req, { kind: 'command', value });
+        }
+        case 'batch': {
+          const results = await this.batchEdit(req.body.value.label, req.body.value.commands, req.origin);
+          this.record(req);
+          return this.respond(req, { kind: 'batch', value: { results } });
+        }
+      }
+    } catch (err) {
+      return this.respond(req, { kind: 'error', value: toEngineError(err) });
+    } finally {
+      this.currentSeq = undefined;
+    }
+  }
+
+  private respond(req: Request, outcome: Response['outcome']): Response {
+    this.noteRevision(this.docRevision);
+    return { seq: req.seq, revision: this.docRevision, outcome };
+  }
+
+  private record(req: Request): void {
+    if (!this.options.recordLog) return;
+    this.log.push({
+      request: deepCopy(req),
+      revisionAfter: this.docRevision,
+      documentHash: this.options.hashes ? documentHash() : 0,
+    });
+  }
+
+  private makeHeader(): LogHeader {
+    return { document: structuredClone(captureDocument()), ids: this.ids.state(), revision: this.docRevision };
+  }
+
+  private seedIds(): void {
+    this.ids.reset();
+    this.ids.seedKeyframes(allKeyframeIds());
+  }
+
+  /**
+   * Every composition's timeline exists before a command runs. The timeline is
+   * a lazily built mirror in the TS engine; built INSIDE a command it would be
+   * captured as created-by-the-command and undo could not un-build it. Not a
+   * document change (structural mirror), so it is not an edit either.
+   */
+  private ensureTimelines(): void {
+    const c = getTimelineController();
+    this.applying += 1;
+    try {
+      for (const comp of compItemIds()) if (!c.peekTimeline(comp)) c.timelineForComp(comp);
+    } finally {
+      this.applying -= 1;
+    }
+  }
+
+  private resyncIfStale(): void {
+    if (!this.stale) return;
+    this.stale = false;
+    this.keyIndex.invalidate();
+    this.builder.reset();
+    const from = this.docRevision;
+    this.docRevision += 1;
+    this.emitBatch(from, this.docRevision, [{ type: 'documentReset', revision: this.docRevision, reason: 'resync' }]);
+  }
+
+  private async command(cmd: Command, origin: Origin): Promise<CommandResult> {
+    const info = COMMANDS[cmd.type];
+    if (!info) fail('unsupported', `unknown command '${(cmd as { type: string }).type}'`);
+    if (info.kind === 'edit') {
+      const results = await this.runEdits([cmd], origin, null);
+      return results[0]!;
+    }
+    const value = await this.control(cmd, origin);
+    return { type: cmd.type, ...value } as CommandResult;
+  }
+
+  private async batchEdit(label: string, commands: Command[], origin: Origin): Promise<CommandResult[]> {
+    commands.forEach((c, i) => {
+      const info = COMMANDS[c.type];
+      if (!info) fail('unsupported', `unknown command '${(c as { type: string }).type}'`, { commandIndex: i });
+      if (info.kind !== 'edit') fail('invalidArgument', `'${c.type}' is a ${info.kind} command and cannot be part of a batch`, { commandIndex: i });
+    });
+    if (commands.length === 0) return [];
+    return this.runEdits(commands, origin, label);
+  }
+
+  private handlerCtx(origin: Origin): HandlerCtx {
+    const ids = this.ids;
+    const keyIndex = this.keyIndex;
+    return {
+      origin,
+      ids,
+      ports: this.options.ports ?? {},
+      time: this.transport.time,
+      keys: keyIndex,
+      mintId: (prefix) => ids.next(prefix, idTaken),
+      mintGroupId: (prefix, taken) => ids.next(prefix, taken),
+      mintKeyId: () => ids.nextKeyframe((id) => keyIndex.has(id)),
+      mintMarkerId: () => ids.next('mk', (id) => keyIndex.markerTaken(id)),
+    };
+  }
+
+  /**
+   * Apply edit commands atomically: validate + apply one after another,
+   * accumulating the first-seen before and last-seen after of every part; on a
+   * failure restore every before and report the failing index.
+   */
+  private async runEdits(commands: Command[], origin: Origin, batchLabel: string | null): Promise<CommandResult[]> {
+    const ctx = this.handlerCtx(origin);
+    const before: Parts = new Map();
+    const after: Parts = new Map();
+    const results: CommandResult[] = [];
+    const store = useHistoryStore.getState();
+    const history = this.history();
+    const fullBefore = this.options.verifyScopes ? captureScope(documentScope()) : null;
+    let label = batchLabel ?? '';
+    store.flush();
+    let failure: { error: EngineError } | null = null;
+    this.applying += 1;
+    history?.suspend();
+    try {
+      for (let i = 0; i < commands.length; i++) {
+        const cmd = commands[i]!;
+        const handler = EDIT_HANDLERS[cmd.type] as ((c: Command, x: HandlerCtx) => Plan<Record<string, unknown>>) | undefined;
+        if (!handler) fail('unsupported', `'${cmd.type}' is not implemented by this engine`, { commandIndex: commands.length > 1 ? i : undefined });
+        let plan: Plan<Record<string, unknown>>;
+        try {
+          plan = handler(cmd, ctx);
+          if (plan.prepare) await plan.prepare();
+        } catch (err) {
+          failure = { error: withIndex(toEngineError(err), commands.length > 1 || batchLabel !== null ? i : undefined) };
+          break;
+        }
+        const scope: Scope = plan.scope;
+        const b = captureScope(scope);
+        let result: Record<string, unknown>;
+        try {
+          useHistoryStore.setState({ restoring: true });
+          result = plan.apply();
+          stampMissingKeyIds(scope, ctx.mintKeyId);
+          syncTimelines();
+        } catch (err) {
+          applyParts(b);
+          failure = { error: withIndex(toEngineError(err), commands.length > 1 || batchLabel !== null ? i : undefined) };
+          break;
+        } finally {
+          useHistoryStore.setState({ restoring: false });
+        }
+        const a = captureScope(scope);
+        for (const [k, v] of b) if (!before.has(k)) before.set(k, v);
+        for (const [k, v] of a) after.set(k, v);
+        results.push({ type: cmd.type, ...result } as CommandResult);
+        if (!batchLabel) label = plan.label ?? humanize(cmd.type);
+        this.keyIndex.invalidate();
+      }
+      if (failure) {
+        this.applyQuiet(before);
+      }
+    } finally {
+      history?.resume();
+      this.applying -= 1;
+      // Re-baseline the debounce recorder on what the engine wrote (no entry).
+      store.runRestoring(() => {});
+    }
+    if (failure) throw new EngineFail(failure.error);
+
+    const changed = changedKeys(before, after);
+    if (fullBefore) {
+      const fullAfter = captureScope(documentScope());
+      const all = changedKeys(fullBefore, fullAfter);
+      const inScope = new Set(changed);
+      const outside = all.filter((k) => !inScope.has(k) && !(before.has(k) && after.has(k)));
+      if (outside.length > 0) {
+        throw new EngineFail({ code: 'internal', message: `scope violation: ${commands.map((c) => c.type).join(',')} changed ${outside.join(', ')} outside its declared scope` });
+      }
+    }
+    if (changed.length === 0) return results;
+
+    const b: Parts = new Map(changed.map((k) => [k, before.get(k)]));
+    const a: Parts = new Map(changed.map((k) => [k, after.get(k)]));
+    const prev = this.docRevision;
+    this.docRevision += 1;
+    if (this.gesture) {
+      for (const [k, v] of b) if (!this.gesture.before.has(k)) this.gesture.before.set(k, v);
+      for (const [k, v] of a) this.gesture.after.set(k, v);
+    } else {
+      const entry = new EngineHistoryEntry(this, label, origin, b, a);
+      this.pushEntry(entry);
+    }
+    const events = this.builder.build(changed, b, a);
+    this.emitBatch(prev, this.docRevision, events);
+    this.emitStatus();
+    return results;
+  }
+
+  private applyQuiet(parts: Parts): void {
+    if (parts.size === 0) return;
+    useHistoryStore.setState({ restoring: true });
+    try {
+      applyParts(parts);
+    } finally {
+      useHistoryStore.setState({ restoring: false });
+    }
+    this.keyIndex.invalidate();
+  }
+
+  private pushEntry(entry: EngineHistoryEntry): void {
+    const history = this.history();
+    if (!history) return;
+    const store = useHistoryStore.getState();
+    // Pushed inside runRestoring so the baseline sync does not capture again.
+    store.runRestoring(() => history.push(entry));
+  }
+
+  private history(): HistoryService | null {
+    if (this.options.history) return this.options.history();
+    try {
+      return getCommandSystem().getHistory();
+    } catch {
+      return null;
+    }
+  }
+
+  private clearHistoryStacks(): void {
+    const h = this.history();
+    if (!h) return;
+    h.clear();
+    useHistoryStore.getState().runRestoring(() => {});
+  }
+
+  // ── Controls and io ─────────────────────────────────────────────────
+
+  private async control(cmd: Command, origin: Origin): Promise<Record<string, unknown>> {
+    switch (cmd.type) {
+      case 'undo':
+      case 'redo':
+        return this.historyStep(cmd.type);
+      case 'jumpToHistory': {
+        if (this.gesture) fail('gestureOpen', 'close the gesture before moving through history');
+        const h = this.requireHistory();
+        const entries = h.getEntries();
+        if (cmd.position > entries.length) fail('outOfRange', `history has ${entries.length} entries`);
+        const target = cmd.position - 1;
+        let label = '';
+        const store = useHistoryStore.getState();
+        store.flush();
+        while (h.getIndex() > target) {
+          const top = entries[h.getIndex()]!;
+          label = top.label;
+          this.moveHistory(h, 'undo');
+        }
+        while (h.getIndex() < target) {
+          const next = h.getEntries()[h.getIndex() + 1]!;
+          label = next.label;
+          this.moveHistory(h, 'redo');
+        }
+        return { label, position: h.getIndex() + 1 };
+      }
+      case 'beginGesture': {
+        if (this.gesture) fail('gestureOpen', `gesture '${this.gesture.label}' is already open`);
+        useHistoryStore.getState().flush();
+        this.gestureSeq += 1;
+        this.gesture = { id: this.gestureSeq, label: cmd.label, origin, before: new Map(), after: new Map(), startRevision: this.docRevision };
+        this.emitStatus();
+        return { gesture: this.gestureSeq };
+      }
+      case 'endGesture': {
+        const g = this.gesture;
+        if (!g) fail('noGesture', 'no gesture is open');
+        if (cmd.gesture !== 0 && cmd.gesture !== g.id) fail('invalidArgument', `gesture ${cmd.gesture} is not the open gesture (${g.id})`);
+        this.gesture = null;
+        const changed = changedKeys(g.before, g.after);
+        if (changed.length === 0) {
+          this.emitStatus();
+          return {};
+        }
+        const b: Parts = new Map(changed.map((k) => [k, g.before.get(k)]));
+        const a: Parts = new Map(changed.map((k) => [k, g.after.get(k)]));
+        if (cmd.commit) {
+          this.pushEntry(new EngineHistoryEntry(this, g.label, g.origin, b, a));
+        } else {
+          // Esc: every edit of the gesture reverts; a new revision with events.
+          this.applying += 1;
+          const history = this.history();
+          history?.suspend();
+          try {
+            this.applyQuiet(b);
+          } finally {
+            history?.resume();
+            this.applying -= 1;
+            useHistoryStore.getState().runRestoring(() => {});
+          }
+          const prev = this.docRevision;
+          this.docRevision += 1;
+          this.emitBatch(prev, this.docRevision, this.builder.build(changed, a, b));
+        }
+        this.emitStatus();
+        return {};
+      }
+      case 'clearHistory':
+        if (this.gesture) fail('gestureOpen', 'close the gesture first');
+        this.clearHistoryStacks();
+        this.emitStatus();
+        return {};
+      case 'setHistoryLimit':
+        if (!(cmd.entries > 0)) fail('outOfRange', 'the history limit must be at least 1');
+        this.requireHistory().setCapacity(cmd.entries);
+        this.emitStatus();
+        return {};
+      case 'setAutosave':
+        this.autosave = { enabled: cmd.enabled, intervalSeconds: cmd.intervalSeconds, keep: cmd.keep };
+        return {};
+      case 'newProject': {
+        if (this.gesture) fail('gestureOpen', 'close the gesture first');
+        this.loadDocument(projectDocumentIO.createEmpty('Untitled'), { reason: 'created', resetWorkspace: true });
+        this.projectPath = '';
+        this.emitStatus();
+        return {};
+      }
+      case 'openProject': {
+        if (this.gesture) fail('gestureOpen', 'close the gesture first');
+        const port = this.options.ports?.readProject;
+        if (!port) fail('unsupported', 'no project file port is attached to this engine');
+        let doc: EditorDocument;
+        try {
+          doc = await port(cmd.path);
+        } catch (err) {
+          fail('io', `could not read '${cmd.path}': ${err instanceof Error ? err.message : String(err)}`);
+        }
+        this.loadDocument(doc, { reason: 'opened', resetWorkspace: true });
+        this.projectPath = cmd.path;
+        this.emitStatus();
+        return { warnings: [], missingItems: [...this.lastMissing] };
+      }
+      case 'revertProject': {
+        if (this.gesture) fail('gestureOpen', 'close the gesture first');
+        const port = this.options.ports?.readProject;
+        if (!port || !this.projectPath) fail('unsupported', 'nothing to revert to: no saved project path or file port');
+        const doc = await port(this.projectPath);
+        this.loadDocument(doc, { reason: 'reverted', resetWorkspace: true });
+        return {};
+      }
+      case 'saveProject': {
+        const port = this.options.ports?.writeProject;
+        if (!port) fail('unsupported', 'no project file port is attached to this engine');
+        const path = cmd.path ?? this.projectPath;
+        if (!path) fail('invalidArgument', 'the project has no path yet; pass one');
+        let bytes = 0;
+        try {
+          bytes = (await port(path, captureDocument())).bytes;
+        } catch (err) {
+          fail('io', `could not write '${path}': ${err instanceof Error ? err.message : String(err)}`);
+        }
+        if (!cmd.copy) {
+          this.projectPath = path;
+          this.savedRevision = this.docRevision;
+          this.emitEphemeral([{ type: 'projectSaved', path, revision: this.docRevision }]);
+          this.emitStatus();
+        }
+        return { path, bytes };
+      }
+      case 'collectFiles': {
+        const port = this.options.ports?.collectFiles;
+        if (!port) fail('unsupported', 'no collect-files port is attached to this engine');
+        const r = await port(cmd.folder, captureDocument(), cmd.onlyUsed);
+        return { path: r.path, bytes: r.bytes };
+      }
+      case 'reloadItems':
+        // Re-reading from disk is not a document change; the asset store
+        // re-probes on its own schedule until media moves into the engine (E1).
+        return {};
+      case 'startJob':
+        return fail('unsupported', `jobs run in the editor today (tracking, stabilize, object matte, transcription, render); the ${cmd.job.kind} job moves into the engine in phase E/F`);
+      case 'cancelJob':
+        return fail('notFound', `no job '${cmd.job}'`);
+      case 'setPluginEnabled':
+        return this.transport.setPluginEnabled(cmd.plugin, cmd.enabled);
+      default: {
+        // Transport never edits the document; bus noise it causes (a seek
+        // re-rendering, a tab playhead commit) must not read as an external edit.
+        this.applying += 1;
+        try {
+          return this.transport.handle(cmd);
+        } finally {
+          this.applying -= 1;
+        }
+      }
+    }
+  }
+
+  private requireHistory(): HistoryService {
+    const h = this.history();
+    if (!h) fail('unsupported', 'no history service is attached');
+    return h;
+  }
+
+  private historyStep(dir: 'undo' | 'redo'): Record<string, unknown> {
+    if (this.gesture) fail('gestureOpen', `'${dir}' is refused while a gesture is open`);
+    const h = this.requireHistory();
+    useHistoryStore.getState().flush();
+    const entries = h.getEntries();
+    if (dir === 'undo' && !h.canUndo()) fail('nothingToUndo', 'nothing to undo');
+    if (dir === 'redo' && !h.canRedo()) fail('nothingToRedo', 'nothing to redo');
+    const entry = dir === 'undo' ? entries[h.getIndex()]! : entries[h.getIndex() + 1]!;
+    this.moveHistory(h, dir);
+    return { label: entry.label, position: h.getIndex() + 1 };
+  }
+
+  /** One step through the shared stack; a non-engine entry leaves the mirror stale → resync. */
+  private moveHistory(h: HistoryService, dir: 'undo' | 'redo'): void {
+    const entries = h.getEntries();
+    const entry = dir === 'undo' ? entries[h.getIndex()] : entries[h.getIndex() + 1];
+    const foreign = !(entry instanceof EngineHistoryEntry);
+    const store = useHistoryStore.getState();
+    this.applying += 1;
+    try {
+      store.runRestoring(() => (dir === 'undo' ? h.undo() : h.redo()));
+    } finally {
+      this.applying -= 1;
+    }
+    if (foreign) {
+      this.stale = true;
+      this.resyncIfStale();
+    }
+    this.emitStatus();
+  }
+
+  // ── Events ──────────────────────────────────────────────────────────
+
+  private emitBatch(from: Revision, to: Revision, events: Event[]): void {
+    if (events.length === 0 && from === to) return;
+    const batch: EventBatch = {
+      fromRevision: from,
+      toRevision: to,
+      events,
+      ...(this.currentSeq !== undefined ? { causedBy: this.currentSeq } : {}),
+      origin: this.currentSeq !== undefined ? this.currentOrigin : 'engine',
+    };
+    this.deliver(batch);
+  }
+
+  private emitEphemeral(events: Event[]): void {
+    if (events.length === 0) return;
+    this.emitBatch(this.docRevision, this.docRevision, events);
+  }
+
+  private deliver(batch: EventBatch): void {
+    this.noteRevision(batch.toRevision);
+    const b = this.options.wire ? roundTrip('EventBatch', batch) : batch;
+    for (const l of [...this.listeners]) {
+      try {
+        l(b);
+      } catch {
+        // A subscriber's failure never breaks the engine or other subscribers.
+      }
+    }
+  }
+
+  historyState(): HistoryState {
+    const h = this.history();
+    const entries = h?.getEntries() ?? [];
+    return {
+      entries: entries.map((e) => ({ label: e.label, origin: e instanceof EngineHistoryEntry ? e.origin : 'ui' })),
+      position: h ? h.getIndex() + 1 : 0,
+      canUndo: h?.canUndo() ?? false,
+      canRedo: h?.canRedo() ?? false,
+      gestureOpen: this.gesture !== null,
+      limit: h?.getCapacity() ?? 0,
+    };
+  }
+
+  private emitStatus(): void {
+    const state = this.historyState();
+    const h = this.history();
+    const entries = h?.getEntries() ?? [];
+    const idx = h ? h.getIndex() : -1;
+    this.emitEphemeral([
+      { type: 'historyChanged', state, undoLabel: entries[idx]?.label ?? '', redoLabel: entries[idx + 1]?.label ?? '' },
+      { type: 'dirtyChanged', dirty: this.docRevision !== this.savedRevision, projectPath: this.projectPath },
+    ]);
+  }
+
+  private queryCtx(): QueryCtx {
+    return {
+      revision: this.docRevision,
+      projectPath: this.projectPath,
+      dirty: this.docRevision !== this.savedRevision,
+      history: () => this.historyState(),
+      log: (from) => this.log.filter((r) => r.revisionAfter > from).map((r) => deepCopy(r)),
+      transport: this.transport,
+      keyIndex: this.keyIndex,
+    };
+  }
+}
+
+/**
+ * Deep copy that keeps byte arrays as byte arrays (a JSON-based structuredClone
+ * polyfill, as some test environments install, turns them into plain objects).
+ */
+function deepCopy<T>(v: T): T {
+  if (v instanceof Uint8Array) return new Uint8Array(v) as unknown as T;
+  if (Array.isArray(v)) return v.map(deepCopy) as unknown as T;
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = deepCopy(x);
+    return out as T;
+  }
+  return v;
+}
+
+function withIndex(e: EngineError, index: number | undefined): EngineError {
+  return index === undefined || e.commandIndex !== undefined ? e : { ...e, commandIndex: index };
+}
+
+function roundTrip<T>(name: 'Request' | 'Response' | 'EventBatch', v: T): T {
+  const codec = codecs[name] as unknown as { encode(x: T): Uint8Array; decode(b: Uint8Array): T };
+  // encode() returns a view of the codec's SHARED writer, and decode() returns
+  // bytes fields as views of its input: copy, or the next encode rewrites them.
+  return codec.decode(codec.encode(v).slice());
+}
+
+export type { CommandType, Query, QueryResult };

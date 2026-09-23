@@ -17,3 +17,5 @@ export type { DecodeErrorCode } from './wire';
 export { FLICKS_PER_SECOND, secondsToFlicks, flicksToSeconds, frameToFlicks, flicksToFrame } from './time';
 export { propPath, parsePropPath, PROP_ROOTS } from './propPath';
 export type { PropRoot } from './propPath';
+export { EngineClientBase, EngineRequestError, unwrap, engineError, commandKind, isCoalescable } from './client';
+export type { EngineClient, EngineResult, RequestOptions, EventListener, CommandOf, QueryOf } from './client';

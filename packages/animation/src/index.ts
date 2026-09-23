@@ -84,7 +84,7 @@ export { mapLayerNameRefs, layerNameRefsIn } from './layerNameRefs';
 export type { ExprNode } from './exprLang';
 
 // ── Keyframe ids (timeline ↔ engine reference encoding) ───────────
-export { makeKeyframeId, parseKeyframeId, expandKeyframeProp, POSITION_PSEUDO_PROP } from './keyframeId';
+export { makeKeyframeId, parseKeyframeId, expandKeyframeProp, POSITION_PSEUDO_PROP, stableKeyframeId, stableKeyframeIdSeq } from './keyframeId';
 export type { KeyframeRefParts } from './keyframeId';
 
 export {
@@ -103,6 +103,7 @@ export type { LottieBezier, LottieShapeProp } from './lottiePath';
 export { AnimationEngine, defaultAnimation } from './AnimationEngine';
 export type {
   AnimSnapshot,
+  NodeAnimSnapshot,
   ExpressionState,
   AnimationChangeListener,
   AudioLevelProvider,

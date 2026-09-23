@@ -47,6 +47,10 @@ export interface GradientStop {
 export type DataValue = string | DataPoint[] | GradientStop[] | number;
 
 export interface DataKeyframe {
+  /** Stable keyframe id — see `Keyframe.id`. */
+  id?: string;
+  /** AE keyframe colour label (0 / absent = none). */
+  label?: number;
   t: number;
   value: DataValue;
   /**

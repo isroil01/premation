@@ -119,6 +119,19 @@ class AppNodeView implements SceneNode {
   set solo(v: boolean | undefined) {
     this.e.custom.solo = !!v;
   }
+  /**
+   * Shy (AE semantics: document state). Stored on the ENGINE node, like solo.
+   * It used to be an untyped property assigned onto this cached view object,
+   * which `wrap` never rebuilt — so shy was lost on every load and every
+   * snapshot undo (ENGINE_API.md §2.5 #1).
+   */
+  get shy(): boolean {
+    return this.e.custom.shy === true;
+  }
+  set shy(v: boolean | undefined) {
+    if (v) this.e.custom.shy = true;
+    else delete this.e.custom.shy;
+  }
   /** AE-style label color (hex). Stored on the engine node so it survives the
    *  view cache and serializes with the project (sceneProjectIO.capture). */
   get color(): string | undefined {
@@ -223,6 +236,7 @@ export class SceneGraph {
     e.visible = node.visible !== false;
     e.locked = !!node.locked;
     if (node.solo) e.custom.solo = true;
+    if (node.shy) e.custom.shy = true;
     if (typeof node.color === 'string') e.custom.labelColor = node.color;
     e.custom.kind = kind;
     e.custom.childIds = [...(node.children ?? [])];
@@ -792,6 +806,76 @@ export class SceneGraph {
 
   clear(): void {
     this.scene = new Scene();
+  }
+
+  // ── Exact restore (engine API inverses, src/core/engine/state.ts) ──────
+
+  /**
+   * Every node id in the engine's insertion order — the order `traverse`
+   * visits, and therefore the order of `nodes` in a saved document and of
+   * `getRoots()` (composition order).
+   */
+  getNodeOrder(): ID[] {
+    return this.scene.root.children.map((e) => e.id as ID);
+  }
+
+  /** Put the nodes back in `order` (ids not listed keep their relative order at the end). */
+  setNodeOrder(order: ReadonlyArray<ID>): void {
+    const root = this.scene.root;
+    let at = 0;
+    for (const id of order) {
+      const e = this.engine(id);
+      if (!e) continue;
+      if (root.children[at] !== e) this.scene.move(e, root, at);
+      at += 1;
+    }
+  }
+
+  /**
+   * Make node `row.id` exactly `row` (a plain row as `sceneProjectIO.capture`
+   * writes it): name, flags, parent link, child ORDER and every component in
+   * order. Neighbours' child lists are NOT touched — a restore writes every
+   * changed row, including the parents'. A node that does not exist is created
+   * at `index` in the insertion order (end when absent).
+   */
+  restoreNodeRow(row: SceneNode, index?: number): void {
+    let e = this.engine(row.id);
+    const kind = kindOfPlain(row);
+    const type = KIND_TO_ENGINE_TYPE[kind] ?? 'null';
+    if (e && e.type !== type) {
+      const at = this.scene.root.children.indexOf(e);
+      this.scene.remove(e);
+      e = undefined;
+      index ??= at;
+    }
+    if (!e) {
+      e = createNode(type, { id: row.id as NodeId });
+      for (const c of appComponents(e)) e.removeComponent(c.type);
+      this.scene.add(e, this.scene.root, Math.max(0, Math.min(index ?? this.scene.root.children.length, this.scene.root.children.length)));
+    } else {
+      for (const c of appComponents(e)) e.removeComponent(c.type);
+    }
+    if (row.name !== undefined) e.name = row.name;
+    e.visible = row.visible !== false;
+    e.locked = !!row.locked;
+    if (row.solo) e.custom.solo = true;
+    else delete e.custom.solo;
+    if (row.shy) e.custom.shy = true;
+    else delete e.custom.shy;
+    if (typeof row.color === 'string') e.custom.labelColor = row.color;
+    else delete e.custom.labelColor;
+    e.custom.kind = kind;
+    e.custom.childIds = [...(row.children ?? [])];
+    e.custom.parentId = row.parent ?? null;
+    for (const c of row.components) {
+      e.addComponent(new DataComponent(c.type, { ...structuredClone((c.props ?? {}) as Record<string, unknown>), [CID]: c.id }));
+    }
+    e.touch('restore');
+  }
+
+  /** Remove ONE engine node — never its children, never a neighbour's child list. */
+  removeNodeOnly(id: ID): void {
+    this.scene.remove(id as NodeId);
   }
 }
 

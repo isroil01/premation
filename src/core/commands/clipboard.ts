@@ -397,18 +397,17 @@ export async function pasteSelection(): Promise<PasteResult> {
         components: dupComponents,
       };
       
-      defaultSceneGraph.addChild(rootId, dupNode as Parameters<typeof defaultSceneGraph.addChild>[1]);
-      
+      // Offset the PLAIN clone before it enters the graph (ENGINE_API.md §2.5
+      // #3). This used to write `tComp.props.x` AFTER `addChild` — a write into
+      // a copy the graph had already taken, silently discarded — and patch it
+      // back through `setLocalTransform`, which also rewrote rotation.
       const tComp = dupComponents.find((c) => c.type === 'Transform');
       if (tComp && typeof tComp.props.x === 'number') {
         tComp.props.x = (tComp.props.x as number) + 20;
-        tComp.props.y = (tComp.props.y as number) + 20;
-        defaultSceneGraph.setLocalTransform(dupId, {
-          x: tComp.props.x as number,
-          y: tComp.props.y as number,
-          rotation: (tComp.props.rotation as number) ?? 0,
-        });
+        tComp.props.y = (typeof tComp.props.y === 'number' ? tComp.props.y : 0) + 20;
       }
+
+      defaultSceneGraph.addChild(rootId, dupNode as Parameters<typeof defaultSceneGraph.addChild>[1]);
       
       // Paste tracks wholesale — property keyframes, data tracks (Source Text,
       // puppet pins) and expressions. A property-track-only paste left the

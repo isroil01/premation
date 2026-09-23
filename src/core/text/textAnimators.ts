@@ -37,7 +37,7 @@
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
-import { parseExpression, evaluateExpression } from '@motion/animation';
+import { parseExpression, evaluateExpression, defaultAnimation, type NodeAnimSnapshot } from '@motion/animation';
 import { clamp01 } from '@utils/lang';
 import { splitGraphemes } from './graphemes';
 import { mixCssColors } from './cssColor';
@@ -874,7 +874,81 @@ export function addTextAnimator(nodeId: string): number {
 export function removeTextAnimator(nodeId: string, index: number): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;
+  const count = readAnimatorData(node).length;
+  if (index < 0 || index >= count) return;
+  // The animator's tracks go with it and every later animator's tracks move
+  // down one slot (ENGINE_API.md §2.5 #8). Tracks are addressed by INDEX
+  // (`ta.<i>.…`), so without this, removing animator 0 handed its keyframes to
+  // the animator that slid into slot 0.
+  rekeyTextAnimatorTracks(nodeId, (i) => (i === index ? null : i > index ? i - 1 : i));
   writeAnimators(nodeId, readAnimatorData(node).filter((_, i) => i !== index));
+}
+
+/** A `ta.*` track name, decomposed. `sel` null = an animator's own param. */
+interface AnimatorTrackRef {
+  anim: number;
+  sel: number | null;
+  param: string;
+}
+
+const LEGACY_SELECTOR0: Readonly<Record<string, string>> = {
+  start: 'start', end: 'end', offset: 'offset', wiggleFreq: 'wigglesPerSecond',
+};
+
+/** Parse `ta.<i>.<param>` / `ta.<i>.s<j>.<param>` (selector-0 legacy aliases included). */
+export function parseAnimatorTrack(prop: string): AnimatorTrackRef | null {
+  const sel = /^ta\.(\d+)\.s(\d+)\.(.+)$/.exec(prop);
+  if (sel) return { anim: Number(sel[1]), sel: Number(sel[2]), param: sel[3]! };
+  const own = /^ta\.(\d+)\.(.+)$/.exec(prop);
+  if (!own) return null;
+  const param = own[2]!;
+  const legacy = LEGACY_SELECTOR0[param];
+  if (legacy) return { anim: Number(own[1]), sel: 0, param: legacy };
+  return { anim: Number(own[1]), sel: null, param };
+}
+
+/** The track name for a decomposed ref — the inverse of {@link parseAnimatorTrack}. */
+export function animatorTrackName(ref: AnimatorTrackRef): string {
+  if (ref.sel === null) return `ta.${ref.anim}.${ref.param}`;
+  return selectorPropPath(ref.anim, ref.sel, ref.param as SelectorParam);
+}
+
+/**
+ * Move every `ta.*` track, expression and data track of a text layer to the
+ * slots `mapAnim` / `mapSel` give (null = drop it). The one place the index
+ * addressing is kept consistent when animators or selectors are removed or
+ * reordered — the engine API addresses them by id and relies on it.
+ */
+export function rekeyTextAnimatorTracks(
+  nodeId: string,
+  mapAnim: (index: number) => number | null,
+  mapSel?: (animIndex: number, selIndex: number) => number | null,
+): void {
+  const snap = defaultAnimation.snapshotNode(nodeId);
+  if (!snap) return;
+  let changed = false;
+  const remap = <V>(section: Record<string, V>): Record<string, V> => {
+    const out: Record<string, V> = {};
+    for (const [prop, v] of Object.entries(section)) {
+      const ref = parseAnimatorTrack(prop);
+      if (!ref) { out[prop] = v; continue; }
+      const anim = mapAnim(ref.anim);
+      const sel = ref.sel === null ? null : mapSel ? mapSel(ref.anim, ref.sel) : ref.sel;
+      if (anim === null || (ref.sel !== null && sel === null)) { changed = true; continue; }
+      const name = animatorTrackName({ anim, sel, param: ref.param });
+      if (name !== prop) changed = true;
+      out[name] = v;
+    }
+    return out;
+  };
+  const next: NodeAnimSnapshot = {
+    tracks: remap(snap.tracks),
+    expressions: remap(snap.expressions),
+    data: Object.fromEntries(
+      Object.entries(remap(snap.data)).map(([prop, t]) => [prop, { ...t, prop }]),
+    ),
+  };
+  if (changed) defaultAnimation.restoreNode(nodeId, next);
 }
 
 /** Patch fields of the animator at `index` (static base values). */
@@ -969,6 +1043,11 @@ export function removeSelector(
   if (!node) return;
   const cur = readAnimatorData(node)[index];
   if (!cur || (cur.selectors?.length ?? 0) <= 1) return;
+  if (selectorIndex < 0 || selectorIndex >= cur.selectors!.length) return;
+  // Same index-addressing hazard as removeTextAnimator: move later selectors'
+  // tracks down a slot and drop the removed one's.
+  rekeyTextAnimatorTracks(nodeId, (i) => i, (a, s) =>
+    a !== index ? s : s === selectorIndex ? null : s > selectorIndex ? s - 1 : s);
   updateAnimator(nodeId, index, {
     selectors: cur.selectors!.filter((_, j) => j !== selectorIndex),
   });

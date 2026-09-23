@@ -602,6 +602,10 @@ export class AnimationEngine {
     };
     // Carried only when set, so an untouched keyframe keeps its exact shape.
     if (kf.spatialInterp !== undefined) next.spatialInterp = kf.spatialInterp;
+    // Identity travels with the key: a retime or value edit is the SAME
+    // keyframe (ENGINE_API.md §3.3), so dropping the id here would re-address it.
+    if (kf.id !== undefined) next.id = kf.id;
+    if (kf.label !== undefined) next.label = kf.label;
     track.keyframes = upsertKeyframe(track.keyframes.filter((k) => k.t !== oldT), next);
     this.notifyChange(nodeId);
   }
@@ -1336,6 +1340,100 @@ export class AnimationEngine {
     return hasData ? { tracks, expressions, data } : { tracks, expressions };
   }
 
+  /**
+   * One node's whole animation (keyframe tracks, expressions, data tracks) as
+   * deep copies, or `null` when the node has none — the per-node undo seam the
+   * engine API's scoped inverses use (src/core/engine/state.ts). Keys keep the
+   * engine's insertion order so a restore puts them back in the same order.
+   */
+  snapshotNode(nodeId: string): NodeAnimSnapshot | null {
+    const tracks: Record<string, Keyframe[]> = {};
+    const expressions: Record<string, ExpressionState> = {};
+    const data: Record<string, DataTrack> = {};
+    let any = false;
+    const byProp = this.tracks.get(nodeId);
+    if (byProp) {
+      for (const [prop, track] of byProp) {
+        tracks[prop] = track.keyframes.map((k) => ({ ...k }));
+        any = true;
+      }
+    }
+    const byExpr = this.expressions.get(nodeId);
+    if (byExpr) {
+      for (const [prop, entry] of byExpr) {
+        expressions[prop] = {
+          src: entry.compiled.src,
+          enabled: entry.enabled,
+          ...(entry.authoredBy ? { authoredBy: entry.authoredBy } : {}),
+        };
+        any = true;
+      }
+    }
+    const byData = this.dataTracksMap.get(nodeId);
+    if (byData) {
+      for (const [prop, track] of byData) {
+        data[prop] = {
+          nodeId,
+          prop,
+          kind: track.kind,
+          keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
+        };
+        any = true;
+      }
+    }
+    return any ? { tracks, expressions, data } : null;
+  }
+
+  /**
+   * Replace one node's whole animation with `snap` (null clears it). The node's
+   * entry keeps its position in the engine's maps when it already exists, so a
+   * restore leaves every OTHER node's order — and the saved document's key
+   * order — untouched. One change notification.
+   */
+  restoreNode(nodeId: string, snap: NodeAnimSnapshot | null): void {
+    const put = <V>(map: Map<string, Map<PropPath, V>>, entries: Array<[string, V]>): void => {
+      if (entries.length === 0) {
+        map.delete(nodeId);
+        return;
+      }
+      const existing = map.get(nodeId);
+      if (existing) {
+        existing.clear();
+        for (const [k, v] of entries) existing.set(k, v);
+      } else {
+        map.set(nodeId, new Map(entries));
+      }
+    };
+    put(
+      this.tracks,
+      Object.entries(snap?.tracks ?? {})
+        .filter(([, kfs]) => Array.isArray(kfs) && kfs.length > 0)
+        .map(([prop, kfs]) => [prop, { nodeId, prop, keyframes: kfs.map((k) => ({ ...k })) }] as [string, PropertyTrack]),
+    );
+    put(
+      this.expressions,
+      Object.entries(snap?.expressions ?? {})
+        .filter(([, st]) => !!st && typeof st.src === 'string' && st.src.trim() !== '')
+        .map(([prop, st]) => [prop, {
+          compiled: compileExpression(st.src),
+          enabled: st.enabled !== false,
+          ...(st.authoredBy ? { authoredBy: st.authoredBy } : {}),
+        }] as [string, ExpressionEntry]),
+    );
+    put(
+      this.dataTracksMap,
+      Object.entries(snap?.data ?? {})
+        .filter(([, t]) => !!t && t.keyframes.length > 0)
+        .map(([prop, t]) => [prop, {
+          nodeId,
+          prop,
+          kind: t.kind,
+          keyframes: t.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
+        }] as [string, DataTrack]),
+    );
+    this.notifyChange(nodeId);
+  }
+
   /** Replace all tracks + expressions from a snapshot (History jump). */
   restore(data: AnimSnapshot): void {
     this.tracks.clear();
@@ -1408,6 +1506,13 @@ export interface AnimSnapshot {
   tracks: Record<string, Record<string, PropertyTrack>>;
   expressions: Record<string, Record<string, ExpressionState>>;
   data?: Record<string, Record<string, DataTrack>>;
+}
+
+/** One node's animation — see `AnimationEngine.snapshotNode`. */
+export interface NodeAnimSnapshot {
+  tracks: Record<string, Keyframe[]>;
+  expressions: Record<string, ExpressionState>;
+  data: Record<string, DataTrack>;
 }
 
 /** Process-wide default instance (mirrors defaultSceneGraph). */

@@ -336,6 +336,18 @@ export function captureSharedScene(): ProjectFile {
   return { version: '1.0.0', nodes };
 }
 
+/**
+ * One node's row exactly as a full capture would write it, as a fresh plain
+ * object (JSON round trip), or undefined when the node does not exist. The
+ * engine API's scoped inverses capture single nodes through this so the row
+ * shape can never drift from `sceneProjectIO.capture` (pinned in the test).
+ */
+export function captureNodeRow(id: string): SceneNode | undefined {
+  const n = defaultSceneGraph.getNode(id);
+  if (!n) return undefined;
+  return JSON.parse(JSON.stringify(rowOf(n))) as SceneNode;
+}
+
 function internNode(node: SceneNode): SceneNode {
   if (!node || typeof node !== 'object' || typeof node.id !== 'string') return node;
   const json = JSON.stringify(node);

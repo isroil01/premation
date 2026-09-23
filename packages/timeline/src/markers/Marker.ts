@@ -21,6 +21,11 @@ export interface MarkerData {
   scope: MarkerScope;
   /** Owning track/layer id for scoped markers; null for timeline/composition. */
   ownerId: string | null;
+  /** AE marker extras (engine API `Marker`), written only when set. */
+  chapter?: string;
+  url?: string;
+  cuePoint?: string;
+  protectedRegion?: boolean;
 }
 
 export interface MarkerInit {
@@ -32,6 +37,10 @@ export interface MarkerInit {
   scope?: MarkerScope;
   ownerId?: string | null;
   id?: string;
+  chapter?: string;
+  url?: string;
+  cuePoint?: string;
+  protectedRegion?: boolean;
 }
 
 export class Marker {
@@ -43,6 +52,10 @@ export class Marker {
   comment: string;
   scope: MarkerScope;
   ownerId: string | null;
+  chapter: string;
+  url: string;
+  cuePoint: string;
+  protectedRegion: boolean;
 
   constructor(init: MarkerInit) {
     this.id = init.id ?? uid('marker');
@@ -53,6 +66,10 @@ export class Marker {
     this.comment = init.comment ?? '';
     this.scope = init.scope ?? 'timeline';
     this.ownerId = init.ownerId ?? null;
+    this.chapter = init.chapter ?? '';
+    this.url = init.url ?? '';
+    this.cuePoint = init.cuePoint ?? '';
+    this.protectedRegion = init.protectedRegion === true;
   }
 
   get end(): number {
@@ -69,6 +86,12 @@ export class Marker {
       comment: this.comment,
       scope: this.scope,
       ownerId: this.ownerId,
+      // Absent when unset, so every marker written before these existed (and
+      // every one that never uses them) serializes exactly as before.
+      ...(this.chapter ? { chapter: this.chapter } : {}),
+      ...(this.url ? { url: this.url } : {}),
+      ...(this.cuePoint ? { cuePoint: this.cuePoint } : {}),
+      ...(this.protectedRegion ? { protectedRegion: true } : {}),
     };
   }
 

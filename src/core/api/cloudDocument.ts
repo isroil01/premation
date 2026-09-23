@@ -33,7 +33,8 @@ import { collectPluginReferences, type DocumentPluginReference } from '@core/plu
 import { migratePluginBindings } from '@core/plugins/bindingMigration';
 import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
-import { useAssetStore } from '@stores/assetStore';
+import { useAssetStore, captureProjectItems, applyProjectItems, type ProjectItemsDocument } from '@stores/assetStore';
+import { captureDocumentExtras, restoreDocumentExtras, type DocumentExtras } from '@core/project/documentExtras';
 import type { SceneNode } from '@core/types';
 
 export interface EditorDocument {
@@ -130,6 +131,16 @@ export interface EditorDocument {
   openTabs?: SerializedWorkspaceTabs;
   /** Legacy: single active comp. Read on restore, no longer written. */
   comp?: CompositionSettings;
+  /**
+   * Folders + per-footage organisation (folder, interpretation, label, tags,
+   * comment). Was localStorage-only (ENGINE_API.md §2.5 #12). Absent = the
+   * document says nothing; the machine's cache applies (older files).
+   */
+  projectItems?: ProjectItemsDocument;
+  /** Engine-API project settings (bit depth, time display, …) when not default. */
+  projectSettings?: DocumentExtras['projectSettings'];
+  /** The render queue as saved with the project (AE), when not empty. */
+  renderQueue?: DocumentExtras['renderQueue'];
 }
 
 /** Snapshot every authored subsystem into one self-contained document. */
@@ -173,6 +184,9 @@ export function captureDocument(): EditorDocument {
     // Absent when empty, so a document with no plugin state reads back
     // byte-identical — the same rule `plugins` follows above.
     ...(captureProjectStorage() ? { pluginStorage: captureProjectStorage() } : {}),
+    // Absent when empty/default, same rule as the two above.
+    ...(captureProjectItems() ? { projectItems: captureProjectItems() } : {}),
+    ...captureDocumentExtras(),
   };
 }
 
@@ -298,6 +312,14 @@ export function restoreDocument(doc: EditorDocument): void {
   // asset store runs the same rebind when hydration lands, so whichever
   // finishes second completes the repair.
   rebindAssetSrcs(useAssetStore.getState().assets);
+
+  // Project items and engine-API extras: stated whole by the document (absent
+  // = none / default), so a project never inherits the previous one's.
+  applyProjectItems(doc.projectItems);
+  restoreDocumentExtras({
+    ...(doc.projectSettings ? { projectSettings: doc.projectSettings } : {}),
+    ...(doc.renderQueue ? { renderQueue: doc.renderQueue } : {}),
+  });
 
   // A cloud open never emits ProjectLoaded, so the missing-font watcher would
   // not run; ask directly, deferred like the watcher so web fonts can register.

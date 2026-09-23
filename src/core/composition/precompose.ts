@@ -73,6 +73,15 @@ export interface PrecomposeOptions {
   adjustDuration: boolean;
   /** Open the new composition afterwards (AE's "Open New Composition"). */
   openNew: boolean;
+  /**
+   * Engine API (src/core/engine): the composition to precompose in (default:
+   * the active tab's), the ids to create (default: freshly minted), and
+   * `quiet` — no selection change, no tab opened. The engine must be
+   * deterministic and must not touch editor state.
+   */
+  hostId?: string;
+  mint?: { compId: string; instanceId: string; contentId: string };
+  quiet?: boolean;
 }
 
 export interface PrecomposeResult {
@@ -102,8 +111,8 @@ function hasAncestorIn(id: string, set: ReadonlySet<string>): boolean {
  * active comp's stack: known layers of THIS comp, never its root, and never a
  * layer that sits inside another selected one (it travels with its parent).
  */
-export function precomposeTargets(ids: ReadonlyArray<string>): string[] {
-  const hostId = activeCompRootId();
+export function precomposeTargets(ids: ReadonlyArray<string>, host?: string): string[] {
+  const hostId = host ?? activeCompRootId();
   if (!defaultSceneGraph.getNode(hostId)) return [];
   const wanted = new Set(ids.filter((id) => id !== hostId && defaultSceneGraph.getNode(id)));
   return flattenComposition(defaultSceneGraph, hostId)
@@ -144,8 +153,8 @@ function isContentTrack(prop: string): boolean {
  * differently the moment the content moved inside. (Its anchor point and its
  * motion blur it does honour.)
  */
-export function leaveAttributesUnavailableReason(ids: ReadonlyArray<string>): string | null {
-  const targets = precomposeTargets(ids);
+export function leaveAttributesUnavailableReason(ids: ReadonlyArray<string>, hostId?: string): string | null {
+  const targets = precomposeTargets(ids, hostId);
   if (targets.length !== 1) return 'Only available when a single layer is selected.';
   const id = targets[0]!;
   const node = defaultSceneGraph.getNode(id);
@@ -197,8 +206,13 @@ function hostSettings(hostId: string): Omit<CompositionSettings, 'id' | 'name'> 
  * A comp instance centred in a `width × height` frame — the shape
  * `insertCompInstance` builds, placed exactly rather than at the cursor.
  */
-function makeInstanceNode(name: string, refCompId: string, x: number, y: number, width: number, height: number): SceneNode {
+function makeInstanceNode(name: string, refCompId: string, x: number, y: number, width: number, height: number, id?: string): SceneNode {
   const node = makeNode('comp', name);
+  if (id) {
+    const minted = node.id;
+    node.id = id;
+    for (const c of node.components) if (c.id.startsWith(minted)) c.id = id + c.id.slice(minted.length);
+  }
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
     t.props.x = x;
@@ -241,7 +255,7 @@ function transferClips(ids: ReadonlyArray<string>, toCompId: string): void {
 }
 
 function moveAllAttributes(targets: string[], opts: PrecomposeOptions): PrecomposeResult {
-  const hostId = activeCompRootId();
+  const hostId = opts.hostId ?? activeCompRootId();
   const host = hostSettings(hostId);
   const controller = getTimelineController();
 
@@ -269,6 +283,7 @@ function moveAllAttributes(targets: string[], opts: PrecomposeOptions): Precompo
     : null;
 
   const compId = addCompositionRecord({
+    ...(opts.mint ? { id: opts.mint.compId } : {}),
     name: opts.name,
     width: host.width,
     height: host.height,
@@ -285,7 +300,7 @@ function moveAllAttributes(targets: string[], opts: PrecomposeOptions): Precompo
 
   // Same size as the host and centred: comp space inside maps 1:1 onto the
   // host's, so nothing moves on screen.
-  const instance = makeInstanceNode(opts.name, compId, host.width / 2, host.height / 2, host.width, host.height);
+  const instance = makeInstanceNode(opts.name, compId, host.width / 2, host.height / 2, host.width, host.height, opts.mint?.instanceId);
   defaultSceneGraph.addChild(hostId, instance);
   if (anchorParent !== hostId) setParentPreservingWorld(instance.id, anchorParent);
   placeInStack(anchorParent, instance.id, slot);
@@ -313,7 +328,7 @@ function moveAllAttributes(targets: string[], opts: PrecomposeOptions): Precompo
 function leaveAllAttributes(layerId: string, opts: PrecomposeOptions): PrecomposeResult | null {
   const node = defaultSceneGraph.getNode(layerId);
   if (!node) return null;
-  const hostId = activeCompRootId();
+  const hostId = opts.hostId ?? activeCompRootId();
   const host = hostSettings(hostId);
   const controller = getTimelineController();
 
@@ -332,6 +347,7 @@ function leaveAllAttributes(layerId: string, opts: PrecomposeOptions): Precompos
   // solids last as long as this comp, as AE sizes a leave-attributes precomp.
   const sourceFrames = mediaSourceFrames(node, host.fps);
   const compId = addCompositionRecord({
+    ...(opts.mint ? { id: opts.mint.compId } : {}),
     name: opts.name,
     width,
     height,
@@ -342,7 +358,7 @@ function leaveAllAttributes(layerId: string, opts: PrecomposeOptions): Precompos
   });
 
   // ── The content, untransformed and centred in its own comp ───────────
-  const contentId = `${kind}_${shortId()}`;
+  const contentId = opts.mint?.contentId ?? `${kind}_${shortId()}`;
   const pick = (from: Record<string, unknown>, keys: ReadonlyArray<string>): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const k of keys) if (from[k] !== undefined) out[k] = structuredClone(from[k]);
@@ -454,14 +470,14 @@ export function precomposeNow(ids: ReadonlyArray<string>, opts: PrecomposeOption
   const named = { ...opts, name: opts.name.trim() || defaultPrecompName() };
   let result: PrecomposeResult | null;
   if (named.mode === 'leave') {
-    result = leaveAttributesUnavailableReason(targets) === null ? leaveAllAttributes(targets[0]!, named) : null;
+    result = leaveAttributesUnavailableReason(targets, opts.hostId) === null ? leaveAllAttributes(targets[0]!, named) : null;
   } else {
     result = moveAllAttributes(targets, named);
   }
   if (!result) return null;
-  useSelectionStore.getState().set([result.instanceId]);
+  if (!named.quiet) useSelectionStore.getState().set([result.instanceId]);
   bumpScene();
-  if (named.openNew) openLayerComposition(result.instanceId);
+  if (named.openNew && !named.quiet) openLayerComposition(result.instanceId);
   return result;
 }
 

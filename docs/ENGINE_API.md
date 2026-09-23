@@ -18,10 +18,10 @@ Contents: §1 principles · §2 inventory (what B3 has to move) · §3 addressin
 §4 commands · §5 gestures and history · §6 transport · §7 queries · §8 events and
 the UI mirror · §9 wire format (decision + measurements) · §10 errors · §11
 versioning · §12 automation · §13 frames · §14 gaps against After Effects ·
-§15 files.
+§15 B2 implementation notes (what B3 deletes) · §16 files.
 
-Schema size today: **121 commands** (90 document edits, 27 controls, 4 project
-I/O), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 309 structs,
+Schema size today: **121 commands** (91 document edits, 25 controls, 5 project
+I/O — B1 miscounted; corrected in B2 from the meta table), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 309 structs,
 10 unions, 49 enums — `SCHEMA_COUNTS` in `generated/meta.ts`.
 
 ---
@@ -169,6 +169,24 @@ the API implementation. Each is a candidate test for the undo-parity suite.
     action; relink rewrites node `src` through a capture/restore round trip.
 13. Work-area edits are not undoable (`Timeline.setRange` skips `history.run`).
 
+**B2 dispositions** (regression tests in `src/core/engine/__tests__/defects.test.ts`):
+#1 fixed at the seam — shy is stored on the engine node and `wrap`/restore carry it; #2 fixed —
+`cloneLayerNode`/`layerSnapshot` go through `setChildOrder` (and a restored layer keeps solo,
+shy, colour); #3 fixed — the clipboard offsets the plain clone before insertion, and the API
+writes only through `writeProp`/the property seam; #4 fixed — stable `Keyframe.id` + the 1.9.0
+migration (§15.2); #5 fixed — `kfEqual` compares continuity, roving, spatial mode, id, label;
+#6 fixed — `mergeFrom` adopts `dataAfter`; #7 fixed — App.tsx records mask-key moves with
+`runDocumentEdit`, and the API keys mask shapes as ordinary undoable keyframes; #8 fixed —
+removing/adding/moving animators or selectors re-keys their `ta.*` tracks
+(`rekeyTextAnimatorTracks`), and the API addresses them by id; #9/#13 correct through the API
+(`setCompositionSettings`, `setWorkArea` are undoable); the pre-API dialogs stay non-undoable
+until B3 routes them through it; #10 left: the canonical document used for undo parity and
+replay strips tabs/playhead/zoom, but `captureDocument` still saves them (removing them from the
+file is a format change for B4, when the mirror owns view state); #11 left (not on an API
+path); #12 fixed — folders, per-item organisation and interpretation are saved in the document
+(`EditorDocument.projectItems`), localStorage is only a cache, and the API edits them undoably;
+relink is `relinkItem`.
+
 ---
 
 ## 3. Addressing
@@ -220,7 +238,7 @@ their `GroupId`, never by index.
 |---|---|---|
 | Transform | `transform/anchorPoint`, `transform/position`, `transform/scale`, `transform/rotation`, `transform/xRotation`, `transform/yRotation`, `transform/orientation`, `transform/opacity` | `anchorX/Y/Z`, `x y z`, `scaleX/Y/Z`, `rotation`, `rotationX/Y`, `orientationX/Y/Z`, `opacity` |
 | Separated dimension | `transform/position/x` | `x` |
-| Effect param | `effects/<effectId>/<param>`; effect opacity `effects/<effectId>/opacity` | `effect.<id>.<param>`, `effect.<id>.fx.opacity` |
+| Effect param | `effects/<effectId>/<param>`; effect opacity `effects/<effectId>/compositing/opacity` (AE's Compositing Options group: 19 effects declare their own `opacity` param, so the flat path was ambiguous) | `effect.<id>.<param>`, `effect.<id>.fx.opacity` |
 | Colour (any) | one `color` Value at its path | four tracks `<base>_r/_g/_b/_a` |
 | Layer style | `styles/<styleId>/<param>` | `effect.layerstyle:<styleKey>.<param>` |
 | Mask | `masks/<maskId>/path`, `…/feather`, `…/opacity`, `…/expansion`, `…/mode`, `…/inverted` | path: whole-mask snapshots in `fx.maskAnim` (not a track); others `mask.<pathId>.<prop>` |
@@ -831,7 +849,106 @@ list the remaining uses from the property catalog.
 
 ---
 
-## 15. Files
+## 15. B2 implementation notes — the TypeScript engine behind the API
+
+B2 (2026-09-23) implements every command, query and event on today's engine:
+`src/core/engine/LocalEngine.ts`, an `EngineClient` (`packages/engine-api/src/client.ts`).
+
+### 15.1 Coverage
+
+| Family | State |
+|---|---|
+| 91 edit commands | All dispatched. **86** implemented with exact inverses. **5** answer a typed error and change nothing: `convertLayer`, `separateLayer`, `autoTrace` (need font outlines / rendered pixels the TS engine only has inside editor dialogs — E3/D2), `invokeEffectAction` (native-SDK plugins, G1; JS plugins are not ported, plan §5 G2), `applyJobResult` (`notFound`: no engine jobs yet). Partial: `importProject` takes `.motion` only; `setInterpretation` refuses ignore/invert alpha, matte colour, start timecode and colour profile; `setCompositionSettings` refuses `backgroundGradient` and maps `motionBlur` onto the project-wide store (the TS engine has one); `setBlendMode` refuses the modes the TS renderer lacks; `setProxy` is footage-only; `reorderLayers`/`groupLayers` need one parent (parenting is nesting, below). |
+| 30 controls + io | All implemented. `openProject`/`saveProject`/`revertProject`/`collectFiles`/`importFiles` go through injected `EnginePorts` (`unsupported` when none is attached — B3 attaches the Electron ones). `startJob` answers `unsupported` (jobs run in the editor until E/F). Transport forwards to today's controller for the ACTIVE comp and keeps the rest as engine state; viewport/cache/preview controls are recorded state (the TS renderer still draws the viewport). |
+| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `getLayerBounds`, `getTextLayout`, `readPixels` answer `unsupported` (renderer-side until D2/E2); `getRenderStats`/`getLayerErrors`/`getJobs` answer empty (the editor's renderer owns those numbers today). |
+| 27 events | All 13 revisioned events emitted from the changed parts; ephemeral `historyChanged`, `dirtyChanged`, `transportChanged`, `playhead`, `projectSaved` emitted; the render/job/asset/font/autosave ones have no TS source yet. |
+
+### 15.2 Undo: parts
+
+The document is addressed as PARTS (`src/core/engine/state.ts`): `node:<id>` (the saved row),
+`anim:<id>` (tracks, expressions, data tracks), `clips:<comp>` (bar geometry), `tl:<comp>`
+(rate, duration, ranges, composition and layer markers, bar order), `comp:<id>`, `order` (node
+insertion order = saved order and comp order), `items`, `project`, `rq`, `mb`, `cm`. A handler
+validates, then declares the parts it may touch; the engine captures them before and after
+`apply`, and the CHANGED parts are the entry's inverse (befores) and redo (afters) — recorded
+at apply time, restored in dependency order, so ids come back exactly and undo never
+re-derives anything. Commands with an unbounded footprint (delete, split, precompose, ripple…)
+use document scope: the structurally shared capture (`captureSharedState`), so unchanged nodes
+cost an identity check. Tests run with `verifyScopes`, which fails any command that changed a
+part outside its declared scope.
+
+- One history: entries are `EngineHistoryEntry`s on the app's `HistoryService` (the T1 unified
+  stack), so the app's Ctrl+Z, the History panel and the `undo`/`redo` commands walk one list.
+- A gesture accumulates first-seen befores and last-seen afters per part: "first inverse, last
+  value" for coalescable drags, one entry for everything else in it; `endGesture{commit:false}`
+  applies the befores as a new revision. A batch is one entry; a failure at k restores every
+  before and reports `commandIndex`.
+- A failed command changes nothing: validation throws before `apply`; an exception inside
+  `apply` restores the captured befores.
+- Stable keyframe ids: `Keyframe.id` / `DataKeyframe.id` (`k<n>`), carried by every mutator,
+  minted by the engine, stamped on any id-less key a command's scope touches (the pre-API
+  helpers still create id-less keys), assigned to every key of an opened file by the 1.9.0
+  migration. Keys never stamped are addressed by the positional fallback `@layer|track|t`.
+  Mask-shape keys are `<entry>@<maskId>`. Copies (duplicate, split, paste) re-mint.
+- Every id the engine creates is deterministic (`src/core/engine/ids.ts`), so replay reproduces
+  them.
+- Parenting is nesting in the TS scene graph: a comp's stack is the depth-first, front-first
+  walk; `reorderLayers`/`groupLayers` move siblings of one parent.
+
+### 15.3 Coexistence until B3, and what B3 deletes
+
+While the UI still writes directly (≈ 900 call sites, §2.4), the engine and the old recorders
+share one stack safely:
+
+1. Every engine edit calls `historyStore.flush()` first (a pending debounced UI edit gets its own
+   entry, in order), runs with `restoring: true` (the 700 ms recorder does not capture what the
+   engine writes) and `HistoryService.suspend()` (nothing a helper pushes lands beside the
+   engine's entry), and re-baselines the recorder afterwards (`runRestoring(() => {})`).
+2. Undoing a NON-engine entry (debounce snapshot, timeline command, `runAnimEdit`) through the
+   engine answers with `documentReset{resync}`; so does any document change made outside the
+   engine (`SceneGraphChanged`/`NodeUpdated`/`AnimationChanged`/`DocumentChanged` while the
+   engine is idle).
+3. Timelines are built for every composition before a command runs (they are a lazy mirror;
+   built inside a command they would be captured as created by it).
+
+B3 must delete or change (call-site counts from §2):
+
+- `historyStore`'s debounce recorder: `attachHistoryRecording`, `schedule`, `RECORD_DEBOUNCE_MS`,
+  `batchHistory` (22 sites), `record` (9), `flush` (12), `runRestoring` (12), `baselineHistory`;
+  the engine's flush/runRestoring calls in `LocalEngine.runEdits`, `pushEntry`, `endGesture`,
+  `historyStep` and `clearHistoryStacks` go with it.
+- `runAnimEdit` / `beginAnimEdit` / `recordAnimEdit` (208 / 14 / 11 production sites; 118 / 12 / 8
+  in UI) → commands, batches, gestures; `runDocumentEdit` (75), `runAsOneHistoryEntry[Sync]`
+  (13 + 1) and `StoreSnapshotCommand` → batches.
+- The timeline engine's own history hook (`TimelineCommandAdapter`, `onPush`/`onBeforeRun` in
+  `TimelineController.initTimeline`) and the 144 UI controller calls → layer-time commands.
+- Direct SceneGraph writes from the UI (≈ 365), `updateNodeComponentProp` / `useNodeComponentProp`
+  (19 + 102), scene helper modules (190), effects (28), masks (24), text (25), layer styles (80),
+  material/3D (34), paint/puppet/skeleton/tracker (≈ 62), compositions (≈ 28), assets (≈ 25) →
+  commands; lint then forbids the imports (plan B3 exit).
+- The positional keyframe id codec (`makeKeyframeId`/`parseKeyframeId`, `POSITION_PSEUDO_PROP`)
+  in the timeline and graph editor → API keyframe ids; the engine's positional fallback and
+  `stampMissingKeyIds` then go too.
+- `compToKeyframeTime` at the 64 UI sites → API comp-time flicks.
+- The external-change detector (`LocalEngine.attachBus`) once nothing writes around the engine.
+- Attach real `EnginePorts` (project read/write through `ProjectManager`, media import through
+  the asset store's `addAsset`, collect files).
+
+### 15.4 Known limits left for later phases
+
+- The inverse restores PARTS, not command-specific inverses; the C++ engine (D1/F2) records
+  whatever inverse it likes — replay (§12) of the same log is the parity check.
+- Keyframe times go through `compToKeyframeTime`/`keyframeToCompTime`, which are
+  frame-quantized inside a clip: API times are exact at frame boundaries only in the TS engine.
+- Source Text writes carry plain text; style runs through the API arrive with B3.
+- `AnimationEngine.clear`/`clearNode` still do not notify (§2.5 #11, not on an API path).
+- The codec's `encode` returns a view of a SHARED writer and `decode` returns `bytes` fields as
+  views of its input: a caller that decodes `encode()`'s output must copy it first (the wire
+  test mode does).
+
+---
+
+## 16. Files
 
 | Path | What |
 |---|---|
@@ -839,6 +956,13 @@ list the remaining uses from the property catalog.
 | `packages/engine-api/codegen/generate.cjs` | Parser, validator, TS + C++ generators, reflective encoder, sampler. `npm run engine-api:gen` / `engine-api:check`. |
 | `packages/engine-api/src/generated/{types,codec,meta}.ts` | Generated TS (do not edit). |
 | `packages/engine-api/src/{wire,time,propPath,index}.ts` | Hand-written TS runtime and helpers. |
+| `packages/engine-api/src/client.ts` | `EngineClient` (the transport-agnostic contract) + `EngineClientBase` helpers. |
+| `src/core/engine/LocalEngine.ts` | The TypeScript engine behind the API (B2): requests, history entries, gestures, events, log. |
+| `src/core/engine/state.ts` | Parts: capture, diff, restore — the inverse machinery (§15.2). |
+| `src/core/engine/props.ts` | Property catalog: API paths ⇄ today's storage; keyframe read/write. |
+| `src/core/engine/handlers/*.ts` | One handler per edit command, by family. |
+| `src/core/engine/{queries,events,model,transport,keyIndex,ids,replay,canonical}.ts` | Queries, event building, read model, transport, keyframe id index, deterministic ids, replay, canonical document. |
+| `src/core/engine/__tests__/` | Per-command undo parity, controls, events + mirror, queries, defects, replay corpus. |
 | `packages/engine-api/src/*.test.ts` | Round trips for every type, staleness, doc coverage. |
 | `packages/engine-api/bench/` | `npm run engine-api:bench` (set `ENGINE_API_BENCH_EXTRA` to an adapter module to add a comparator). |
 | `packages/engine-api/bench/flatbuffers-eval/` | The FlatBuffers twin used in §9.3 (`bench.fbs`, the C++ bench). The TS side was an esbuild-bundled adapter mapping the plain payloads onto flatc's `*T` object-API classes, passed via `ENGINE_API_BENCH_EXTRA`; flatc came from vcpkg at the repo baseline. Not built by anything. |

@@ -105,6 +105,67 @@ export interface ImportedAsset {
    * authoritative: the file can move or vanish, and every reader must cope.
    */
   path?: string;
+  /** Project-panel Comment column (AE item comment). Document state. */
+  comment?: string;
+}
+
+/**
+ * What the PROJECT DOCUMENT says about its footage items (ENGINE_API.md §2.5
+ * #12). Folders, folder assignment, interpretation, label, tags, comment and a
+ * display name used to live only in this machine's localStorage — they did not
+ * travel with the project file and were not undoable. The document now carries
+ * them (`EditorDocument.projectItems`); localStorage stays as a cache for
+ * assets the open document says nothing about.
+ */
+export interface FootageDocRecord {
+  name?: string;
+  /** What the item is and where it came from — the project's item LIST (AE saves it). */
+  type?: ImportedAsset['type'];
+  path?: string;
+  /** A proxy the user attached (generated proxies are a machine cache, not document). */
+  proxy?: { src: string; enabled: boolean };
+  folderId?: string | null;
+  interpret?: FootageInterpretation;
+  label?: string;
+  tags?: string[];
+  comment?: string;
+}
+
+export interface ProjectItemsDocument {
+  folders: AssetFolder[];
+  /** Per asset id. Assets not yet hydrated are applied when they arrive. */
+  footage: Record<string, FootageDocRecord>;
+}
+
+/** The overlay the open document stated, re-applied when its assets hydrate. */
+let documentItems: ProjectItemsDocument | null = null;
+
+function docRecordOf(a: ImportedAsset): FootageDocRecord | null {
+  // Every item is listed (name, kind, origin), so the document says which
+  // footage the project holds — not only the organised ones.
+  const r: FootageDocRecord = { name: a.name, type: a.type };
+  if (a.path) r.path = a.path;
+  if (a.proxy?.userSupplied && a.proxy.src) r.proxy = { src: a.proxy.src, enabled: a.proxy.status === 'ready' };
+  if (a.folderId) r.folderId = a.folderId;
+  if (a.interpret && Object.keys(a.interpret).length > 0) r.interpret = { ...a.interpret };
+  if (a.label) r.label = a.label;
+  if (a.tags && a.tags.length > 0) r.tags = [...a.tags];
+  if (a.comment) r.comment = a.comment;
+  return Object.keys(r).length > 0 ? r : null;
+}
+
+function withDocRecord(a: ImportedAsset, r: FootageDocRecord | undefined): ImportedAsset {
+  if (!r) return a;
+  const next: ImportedAsset = { ...a };
+  if (r.name !== undefined) next.name = r.name;
+  if (r.folderId !== undefined) next.folderId = r.folderId;
+  if (r.interpret !== undefined) next.interpret = { ...r.interpret };
+  if (r.label !== undefined) next.label = r.label;
+  if (r.tags !== undefined) next.tags = [...r.tags];
+  if (r.comment !== undefined) next.comment = r.comment;
+  if (r.path !== undefined) next.path = r.path;
+  if (r.proxy !== undefined) next.proxy = { ...(a.proxy ?? {}), status: r.proxy.enabled ? 'ready' : 'none', src: r.proxy.src, userSupplied: true } as ImportedAsset['proxy'];
+  return next;
 }
 
 /** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
@@ -639,7 +700,9 @@ function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): Impo
   const sources = loadSources();
   const organisation = loadOrganisation();
   const validFolder = new Set(folders.map((f) => f.id));
-  return assets.map((a) => {
+  const overlay = documentItems?.footage;
+  return assets.map((a) => withDocRecord(applyLocalMaps(a), overlay?.[a.id]));
+  function applyLocalMaps(a: ImportedAsset): ImportedAsset {
     const fid = map[a.id];
     const i = interp[a.id];
     const p = proxies[a.id];
@@ -660,7 +723,7 @@ function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): Impo
       ...(org?.importedAt ? { importedAt: org.importedAt } : {}),
       ...(org?.path ? { path: org.path } : {}),
     };
-  });
+  }
 }
 
 /**
@@ -1412,3 +1475,62 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     },
   })),
 );
+
+// ── Project items as DOCUMENT state (ENGINE_API.md §2.5 #12) ──────────────
+
+/**
+ * What the open project says about its items, for `captureDocument`. Undefined
+ * when there is nothing to say (no folders, no organised asset), so a document
+ * without project organisation reads back byte-identical.
+ */
+export function captureProjectItems(): ProjectItemsDocument | undefined {
+  const s = useAssetStore.getState();
+  const footage: Record<string, FootageDocRecord> = {};
+  for (const a of s.assets) {
+    const r = docRecordOf(a);
+    if (r) footage[a.id] = r;
+  }
+  if (s.folders.length === 0 && Object.keys(footage).length === 0) return undefined;
+  return { folders: s.folders.map((f) => ({ ...f })), footage };
+}
+
+/**
+ * Make the open document's statement about its items live: folders replaced,
+ * every loaded asset patched, and the overlay remembered so assets that hydrate
+ * LATER (the library loads asynchronously) are patched on arrival. `undefined`
+ * = the document says nothing (older files): the localStorage cache applies.
+ */
+export function applyProjectItems(doc: ProjectItemsDocument | undefined): void {
+  documentItems = doc ? structuredClone(doc) : null;
+  if (!doc) return;
+  useAssetStore.setState((s) => {
+    s.folders = doc.folders.map((f) => ({ ...f }));
+    s.assets = s.assets.map((a) => withDocRecord(a, doc.footage[a.id]));
+  });
+  const st = useAssetStore.getState();
+  saveFolders(st.folders);
+  saveAssignments(st.assets);
+  saveInterpretations(st.assets);
+  saveOrganisation(st.assets);
+}
+
+/**
+ * Replace the item list and folders EXACTLY — the engine API's undo seam for
+ * item commands (src/core/engine/state.ts). Never releases storage: an item
+ * removed from the project and brought back by undo still has its bytes.
+ */
+export function replaceProjectItems(items: { assets: ImportedAsset[]; folders: AssetFolder[] }): void {
+  useAssetStore.setState((s) => {
+    s.assets = structuredClone(items.assets);
+    s.folders = structuredClone(items.folders);
+  });
+  const st = useAssetStore.getState();
+  saveFolders(st.folders);
+  saveAssignments(st.assets);
+  saveInterpretations(st.assets);
+  saveOrganisation(st.assets);
+  saveSources(st.assets);
+  saveProxies(st.assets);
+  if (documentItems) documentItems = captureProjectItems() ?? null;
+  bumpScene();
+}

@@ -42,3 +42,24 @@ export function parseKeyframeId(id: string): KeyframeRefParts | null {
   if (!Number.isFinite(t)) return null;
   return { nodeId: parts[0]!, prop: parts[1]!, t };
 }
+
+// ── Stable keyframe ids (ENGINE_API.md §3.3) ─────────────────────────
+//
+// The positional id above (`node::prop::t`) names a keyframe by WHERE it is,
+// so moving it renames it and a pseudo-prop id names no real track (ENGINE_API
+// §2.5 #4). The engine API addresses keys by an id stored ON the keyframe
+// (`Keyframe.id`) instead: `k<n>`, minted from one per-document counter by the
+// engine and by the 1.9.0 migration, never reused within a document. The
+// positional codec stays for the pre-API timeline code until B3 retires it.
+
+/** `k<n>` — the only stable id shape either minter writes. */
+export function stableKeyframeId(n: number): string {
+  return `k${n}`;
+}
+
+/** The counter value behind a stable id (`k17` → 17), or 0 for any other string. */
+export function stableKeyframeIdSeq(id: string | undefined): number {
+  if (!id) return 0;
+  const m = /^k(\d+)$/.exec(id);
+  return m ? Number(m[1]) : 0;
+}

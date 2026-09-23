@@ -26,6 +26,16 @@ export type EasingKind =
 export type BezierHandles = [number, number, number, number];
 
 export interface Keyframe {
+  /**
+   * Stable keyframe id (ENGINE_API.md §3.3) — opaque, survives moves, retimes,
+   * undo and save/load. Assigned by the engine API when it creates or first
+   * touches a key, and by the 1.9.0 document migration for every key a file
+   * carries. Optional because the pre-API authoring calls (`setKeyframe` with no
+   * id) still create id-less keys; every mutator here CARRIES an existing id.
+   */
+  id?: string;
+  /** AE keyframe colour label (0 / absent = none). */
+  label?: number;
   /** Time in seconds. */
   t: number;
   value: number;

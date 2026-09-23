@@ -935,11 +935,13 @@ function EditorShellInner(): JSX.Element {
     if (ref) {
       // Mask keyframes live on the scene graph as whole-shape snapshots, so
       // they retime through the mask store. Same gesture, different owner.
+      // runDocumentEdit, not runAnimEdit: the shapes are SCENE state, and an
+      // animation-only diff recorded nothing (ENGINE_API.md §2.5 #7).
       if (ref.prop === MASK_ANIM_PROP) {
         if (time < 0) {
-          runAnimEdit('Delete mask keyframe', () => removeMaskKeyframe(ref.nodeId, ref.t));
+          runDocumentEdit('Delete mask keyframe', () => removeMaskKeyframe(ref.nodeId, ref.t));
         } else {
-          runAnimEdit('Move mask keyframe', () =>
+          runDocumentEdit('Move mask keyframe', () =>
             moveMaskKeyframe(ref.nodeId, ref.t, compToKeyframeTime(ref.nodeId, time, ref.prop)),
           );
         }

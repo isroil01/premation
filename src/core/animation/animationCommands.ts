@@ -121,6 +121,13 @@ export class AnimEditCommand implements Command {
       if (existing) {
         existing.after = nc.after;
         if (nc.expressionAfter !== undefined) existing.expressionAfter = nc.expressionAfter;
+        // Data tracks too (ENGINE_API.md §2.5 #6): without this a merged drag
+        // on a data track (gradient, mask outline, Source Text) kept the FIRST
+        // step's `dataAfter`, so redo landed on the first frame of the drag.
+        if (nc.dataAfter !== undefined) {
+          if (existing.dataBefore === undefined) existing.dataBefore = nc.dataBefore;
+          existing.dataAfter = nc.dataAfter;
+        }
       } else {
         this.changes.push({ ...nc });
       }
@@ -217,6 +224,13 @@ function kfEqual(a: Keyframe[] | null, b: Keyframe[] | null): boolean {
     if (!x || !y) return false;
     if (x.t !== y.t || x.value !== y.value || x.easing !== y.easing) return false;
     if (x.si !== y.si || x.so !== y.so) return false; // spatial tangents
+    // Every other field a keyframe carries (ENGINE_API.md §2.5 #5): Break /
+    // Link Tangents flips only `continuous`, Rove only `roving`, and a spatial
+    // mode change only `spatialInterp` — comparing without them recorded
+    // nothing, so those edits were applied and could not be undone.
+    if (x.continuous !== y.continuous || x.roving !== y.roving) return false;
+    if (x.spatialInterp !== y.spatialInterp) return false;
+    if (x.id !== y.id || x.label !== y.label) return false;
     const bx = x.bezier;
     const by = y.bezier;
     if (bx || by) {

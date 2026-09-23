@@ -103,6 +103,10 @@ function plainCopy(node: SceneNode): SceneNode {
     },
     visible: node.visible,
     locked: node.locked,
+    // Carried so a restored layer keeps its switches (they were dropped).
+    ...(node.solo ? { solo: true } : {}),
+    ...(node.shy ? { shy: true } : {}),
+    ...(node.color !== undefined ? { color: node.color } : {}),
     components: node.components.map((c) => ({ ...c, props: structuredClone(c.props) })),
   } as SceneNode;
 }
@@ -114,14 +118,12 @@ function plainCopy(node: SceneNode): SceneNode {
  * `cloneLayerNode.ts` do — the facade has no ordered insert.
  */
 function placeAt(parentId: string, movingId: string, index: number): void {
-  const graph = defaultSceneGraph as unknown as {
-    engine?: (id: string) => { custom: Record<string, unknown> } | undefined;
-  };
-  const parent = graph.engine?.(parentId);
-  if (!parent) return;
-  const kids = Array.isArray(parent.custom.childIds) ? [...(parent.custom.childIds as string[])] : [];
+  // Guarded permutation (ENGINE_API.md §2.5 #2) instead of a cast to the
+  // private `engine()` and a raw `custom.childIds` assignment.
+  const kids = defaultSceneGraph.getChildOrder(parentId);
   const from = kids.indexOf(movingId);
-  if (from !== -1) kids.splice(from, 1);
+  if (from === -1) return;
+  kids.splice(from, 1);
   kids.splice(Math.max(0, Math.min(kids.length, index)), 0, movingId);
-  parent.custom.childIds = kids;
+  defaultSceneGraph.setChildOrder(parentId, kids);
 }

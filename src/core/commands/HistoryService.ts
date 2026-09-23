@@ -15,13 +15,25 @@ export type ContextBuilder = (command: IUndoableCommand) => CommandContext;
 export class HistoryService {
   private readonly undoStack: IUndoableCommand[] = [];
   private readonly redoStack: IUndoableCommand[] = [];
-  private readonly capacity: number;
+  private capacity: number;
   private readonly buildContext?: ContextBuilder;
   private suspended = 0;
 
   constructor(capacity = 500, buildContext?: ContextBuilder) {
     this.capacity = capacity;
     this.buildContext = buildContext;
+  }
+
+  /** Entries kept before the oldest is dropped (engine API `setHistoryLimit`). */
+  getCapacity(): number {
+    return this.capacity;
+  }
+
+  /** Change the limit; an over-full stack drops its OLDEST entries now. */
+  setCapacity(n: number): void {
+    this.capacity = Math.max(1, Math.floor(n));
+    while (this.undoStack.length > this.capacity) this.undoStack.shift();
+    this.emit();
   }
 
   /** Top of the undo stack without popping (used to coalesce edits). */

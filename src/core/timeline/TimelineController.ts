@@ -544,6 +544,34 @@ export class TimelineController {
     return timeline && trackId ? { timeline, trackId } : null;
   }
 
+  /**
+   * A composition's timeline IF it already exists — never builds one. For
+   * readers that must not have side effects (the engine API's state capture:
+   * `timelineForComp` would init and sync a timeline as a by-product of a read).
+   */
+  peekTimeline(compId: string): { timeline: Timeline; trackId: string } | null {
+    const timeline = this.registries.get(compId);
+    const trackId = this.compositionTrackIds.get(compId);
+    return timeline && trackId ? { timeline, trackId } : null;
+  }
+
+  /**
+   * Forget a composition's timeline entirely — the engine API's undo of a
+   * command that created the composition (its timeline must not outlive it
+   * in the saved document). Rebuilt lazily if the comp is touched again.
+   */
+  dropTimeline(compId: string): void {
+    this.registries.delete(compId);
+    this.compositionTrackIds.delete(compId);
+    this.loopingByComp.delete(compId);
+    this.invalidateLayerIndex();
+  }
+
+  /** Every composition id that has a live timeline, in registration order. */
+  registeredCompIds(): string[] {
+    return Array.from(this.registries.keys());
+  }
+
   getLayersForNode(nodeId: string): Layer[] {
     const reg = this.registryForNode(nodeId);
     if (!reg) return [];
