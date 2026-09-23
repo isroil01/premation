@@ -33,7 +33,13 @@ import { collectPluginReferences, type DocumentPluginReference } from '@core/plu
 import { migratePluginBindings } from '@core/plugins/bindingMigration';
 import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
-import { useAssetStore, captureProjectItems, applyProjectItems, type ProjectItemsDocument } from '@stores/assetStore';
+import {
+  useAssetStore,
+  captureProjectItems,
+  applyProjectItems,
+  legacyProjectItems,
+  type ProjectItemsDocument,
+} from '@stores/assetStore';
 import { captureDocumentExtras, restoreDocumentExtras, type DocumentExtras } from '@core/project/documentExtras';
 import type { SceneNode } from '@core/types';
 
@@ -134,7 +140,9 @@ export interface EditorDocument {
   /**
    * Folders + per-footage organisation (folder, interpretation, label, tags,
    * comment). Was localStorage-only (ENGINE_API.md §2.5 #12). Absent = the
-   * document says nothing; the machine's cache applies (older files).
+   * document predates items: restore migrates them from the frozen copy of
+   * that cache (`legacyProjectItems`). Every save path carries it — the bundle
+   * in `project.json` (bundleCodec), everything else as this field.
    */
   projectItems?: ProjectItemsDocument;
   /** Engine-API project settings (bit depth, time display, …) when not default. */
@@ -184,8 +192,10 @@ export function captureDocument(): EditorDocument {
     // Absent when empty, so a document with no plugin state reads back
     // byte-identical — the same rule `plugins` follows above.
     ...(captureProjectStorage() ? { pluginStorage: captureProjectStorage() } : {}),
-    // Absent when empty/default, same rule as the two above.
-    ...(captureProjectItems() ? { projectItems: captureProjectItems() } : {}),
+    // Always present, even empty: its ABSENCE marks a document written before
+    // items existed, which restore migrates from the pre-document cache.
+    projectItems: captureProjectItems(),
+    // Absent when default, same rule as `pluginStorage` above.
     ...captureDocumentExtras(),
   };
 }
@@ -229,6 +239,21 @@ function pluginReferences(): DocumentPluginReference[] {
     ]),
   );
   return collectPluginReferences(nodes, installed, restoredPluginRefs);
+}
+
+/** Footage ids the document's layers point at (`assetId`, audio `__assetId`). */
+function referencedAssetIdsOf(doc: EditorDocument): Set<string> {
+  const ids = new Set<string>();
+  for (const node of doc.scene?.nodes ?? []) {
+    for (const c of node.components ?? []) {
+      const props = (c.props ?? {}) as Record<string, unknown>;
+      for (const key of ['assetId', '__assetId']) {
+        const v = props[key];
+        if (typeof v === 'string' && v) ids.add(v);
+      }
+    }
+  }
+  return ids;
 }
 
 /**
@@ -315,7 +340,13 @@ export function restoreDocument(doc: EditorDocument): void {
 
   // Project items and engine-API extras: stated whole by the document (absent
   // = none / default), so a project never inherits the previous one's.
-  applyProjectItems(doc.projectItems);
+  //
+  // A document with no `projectItems` predates them (or came through a path
+  // that used to drop them): its organisation lived in this machine's
+  // localStorage, so it is migrated from the frozen copy of that cache here —
+  // the next save writes it into the document, and from then on the cache is
+  // never consulted for this project again (`legacyProjectItems`).
+  applyProjectItems(doc.projectItems ?? legacyProjectItems(referencedAssetIdsOf(doc)));
   restoreDocumentExtras({
     ...(doc.projectSettings ? { projectSettings: doc.projectSettings } : {}),
     ...(doc.renderQueue ? { renderQueue: doc.renderQueue } : {}),

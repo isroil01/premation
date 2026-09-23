@@ -15,7 +15,13 @@
 
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';
-import { useAssetStore } from '@stores/assetStore';
+import {
+  useAssetStore,
+  withDocumentItems,
+  isItemPlaceholder,
+  fillPlaceholder,
+  type ImportedAsset,
+} from '@stores/assetStore';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import {
@@ -103,27 +109,43 @@ export async function restoreBundleAssets(path: string | null): Promise<number> 
     const fromBundle = await readBundleAssets(path);
     if (fromBundle.length === 0) return 0;
 
-    const present = new Set(useAssetStore.getState().assets.map((a) => a.id));
+    // A placeholder (an item the document lists with no bytes in the session)
+    // is exactly what the bundle's registry fills in, so it does not count as
+    // present.
+    const presentIds = (list: ImportedAsset[]): Set<string> =>
+      new Set(list.filter((a) => !isItemPlaceholder(a)).map((a) => a.id));
+    const present = presentIds(useAssetStore.getState().assets);
     const missing = fromBundle.filter((a) => !present.has(a.id));
     if (missing.length === 0) return 0;
+
+    // The registry carries the file (and tags/label as a fallback); the
+    // DOCUMENT carries the item's organisation — folder, interpretation,
+    // label, tags, comment. This runs after the document was restored, so
+    // without the overlay an asset that arrives here comes back unfiled and
+    // un-conformed while the document on disk still says otherwise.
+    const arriving = withDocumentItems(
+      missing.map((asset): ImportedAsset => ({
+        id: asset.id,
+        name: asset.name,
+        type: asset.type,
+        src: asset.src,
+        size: asset.size ?? 0,
+        ...(asset.metadata ? { metadata: asset.metadata } : {}),
+        ...(asset.tags ? { tags: asset.tags } : {}),
+        ...(asset.label ? { label: asset.label } : {}),
+      })),
+    );
 
     useAssetStore.setState((s) => {
       // Re-checked inside the transaction: IndexedDB hydration runs
       // concurrently at boot and may have landed between the read above and
       // this commit.
-      const now = new Set(s.assets.map((a) => a.id));
-      for (const asset of missing) {
+      const now = presentIds(s.assets);
+      for (const asset of arriving) {
         if (now.has(asset.id)) continue;
-        s.assets.push({
-          id: asset.id,
-          name: asset.name,
-          type: asset.type,
-          src: asset.src,
-          size: asset.size ?? 0,
-          ...(asset.metadata ? { metadata: asset.metadata } : {}),
-          ...(asset.tags ? { tags: asset.tags } : {}),
-          ...(asset.label ? { label: asset.label } : {}),
-        });
+        const at = s.assets.findIndex((a) => a.id === asset.id);
+        if (at >= 0) s.assets[at] = fillPlaceholder(s.assets[at]!, asset);
+        else s.assets.push(asset);
       }
     });
 

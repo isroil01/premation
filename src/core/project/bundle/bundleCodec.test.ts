@@ -175,3 +175,46 @@ describe('legacy single-file detection', () => {
     expect(parseLegacyDocument(JSON.stringify({ foo: 1 }))).toBeNull();
   });
 });
+
+describe('project.json — items and project-level state', () => {
+  const projectFields = (): Partial<EditorDocument> => ({
+    projectItems: {
+      folders: [{ id: 'f1', name: 'Footage', parentId: null }, { id: 'f2', name: 'Plates', parentId: 'f1' }],
+      footage: {
+        a1: { name: 'plate.mp4', type: 'video', path: 'C:/m/plate.mp4', folderId: 'f2', interpret: { conformFps: 24, alpha: 'premultiplied', fields: 'upper', loopCount: 3, par: 2 }, label: '#f00', tags: ['hero'], comment: 'c' },
+        a2: { name: 'logo.png', type: 'image' },
+      },
+    },
+    projectSettings: { bitDepth: 'f32', workingSpace: 'srgbLinear', linearBlending: true, ocioConfig: '', timeDisplay: 'frames', expressionEngine: 'premation', framesStartAt: 1, audioSampleRate: 48000 } as never,
+    renderQueue: [{ id: 'rq1' }] as never,
+    plugins: [{ id: 'com.example.fx' }] as never,
+    pluginStorage: { 'com.example.fx': { k: '"v"' } },
+  });
+
+  it('round-trips every field (they were silently dropped before this chunk existed)', () => {
+    const doc = { ...fullDoc(), ...projectFields() } as EditorDocument;
+    const { files, manifest } = encodeBundle(doc);
+    expect(files[CHUNK.project]).toBeDefined();
+    expect(manifest.chunks[CHUNK.project]).toBe(hashString(files[CHUNK.project]!));
+    expect(decodeBundle(files)).toEqual(doc);
+  });
+
+  it('keeps a stated-empty item list (it is the marker that the document is not pre-items)', () => {
+    const doc = { ...fullDoc(), projectItems: { folders: [], footage: {} } } as EditorDocument;
+    expect(decodeBundle(encodeBundle(doc).files).projectItems).toEqual({ folders: [], footage: {} });
+  });
+
+  it('a bundle written before the chunk existed decodes with no items (restore migrates them)', () => {
+    const { files } = encodeBundle(fullDoc());
+    expect(files[CHUNK.project]).toBeUndefined();
+    expect(decodeBundle(files).projectItems).toBeUndefined();
+  });
+
+  it('an item edit rewrites only project.json', () => {
+    const a = { ...fullDoc(), ...projectFields() } as EditorDocument;
+    const b = structuredClone(a);
+    b.projectItems!.footage.a1!.folderId = 'f1';
+    const { changed } = diffChunks(encodeBundle(a).manifest, encodeBundle(b).manifest);
+    expect(changed).toEqual([CHUNK.project]);
+  });
+});

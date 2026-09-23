@@ -57,7 +57,7 @@ import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { restoreDocument, captureDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { projectDocumentIO } from '@core/project/projectDocumentIO';
 import { useProjectStore } from '@stores/projectStore';
-import { useAssetStore, replaceProjectItems } from '@stores/assetStore';
+import { useAssetStore, replaceProjectItems, getDocumentItems } from '@stores/assetStore';
 import { EngineFail, fail, toEngineError } from './errors';
 import { IdAllocator, allKeyframeIds, type IdCounters } from './ids';
 import { captureScope, applyParts, changedKeys, documentScope, type Parts, type Scope } from './state';
@@ -302,7 +302,7 @@ export class LocalEngine extends EngineClientBase {
         getTimelineController().reset();
       }
       restoreDocument(structuredClone(doc));
-      if (opts.resetWorkspace) this.lastMissing = this.reconcileItems(doc);
+      if (opts.resetWorkspace) this.lastMissing = this.reconcileItems();
       this.clearHistoryStacks();
       this.ensureTimelines();
     } finally {
@@ -328,8 +328,13 @@ export class LocalEngine extends EngineClientBase {
    * holds that the document does not list leaves the project; listed footage
    * the session does not hold is reported missing (AE's missing footage).
    */
-  private reconcileItems(doc: EditorDocument): string[] {
-    const listed = doc.projectItems?.footage ?? {};
+  private reconcileItems(): string[] {
+    // What `restoreDocument` APPLIED, not the file's key: a document written
+    // before items existed carries none, and reading its absent key as "the
+    // project lists nothing" emptied the item list and the folders on every
+    // open of an older file (and of every bundle, which dropped the key).
+    const stated = getDocumentItems() ?? { folders: [], footage: {} };
+    const listed = stated.footage;
     const store = useAssetStore.getState();
     const keep = store.assets.filter((a) => a.id in listed);
     const missing = Object.keys(listed).filter((id) => !keep.some((a) => a.id === id));
@@ -345,8 +350,8 @@ export class LocalEngine extends EngineClientBase {
         ...(r.tags ? { tags: [...r.tags] } : {}), ...(r.comment ? { comment: r.comment } : {}),
       };
     });
-    if (placeholders.length > 0 || keep.length !== store.assets.length || !doc.projectItems) {
-      replaceProjectItems({ assets: [...keep, ...placeholders], folders: doc.projectItems?.folders ?? [] });
+    if (placeholders.length > 0 || keep.length !== store.assets.length) {
+      replaceProjectItems({ assets: [...keep, ...placeholders], folders: stated.folders });
     }
     return missing;
   }

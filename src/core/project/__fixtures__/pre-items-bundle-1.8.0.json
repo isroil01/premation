@@ -1,0 +1,6 @@
+{
+  "manifest.json": "{\"bundleFormat\":\"2.0.0\",\"documentVersion\":\"1.8.0\",\"chunks\":{\"scene.json\":\"x\",\"animation.json\":\"x\",\"meta.json\":\"x\"}}",
+  "scene.json": "{\"version\":\"1.0.0\",\"nodes\":[{\"id\":\"comp_root\",\"parent\":null,\"children\":[\"n1\"],\"transform\":{\"position\":{\"x\":0,\"y\":0},\"rotation\":0,\"scale\":{\"x\":1,\"y\":1}},\"components\":[]},{\"id\":\"n1\",\"parent\":\"comp_root\",\"children\":[],\"transform\":{\"position\":{\"x\":0,\"y\":0},\"rotation\":0,\"scale\":{\"x\":1,\"y\":1}},\"components\":[{\"id\":\"n1_video\",\"type\":\"video\",\"props\":{\"assetId\":\"asset_plate\",\"src\":\"blob:http://localhost/dead\"}}]}]}",
+  "animation.json": "{\"tracks\":{\"n1\":{\"x\":{\"nodeId\":\"n1\",\"prop\":\"x\",\"keyframes\":[{\"t\":0,\"value\":0},{\"t\":1,\"value\":10}]}}},\"expressions\":{}}",
+  "meta.json": "{\"comps\":{\"comp_root\":{\"id\":\"comp_root\",\"name\":\"Old Comp\",\"width\":1280,\"height\":720,\"fps\":30,\"durationSeconds\":5,\"background\":\"#000000\",\"transparent\":false,\"startFrame\":0}}}"
+}

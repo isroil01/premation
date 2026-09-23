@@ -68,6 +68,10 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     // And again for transitions: a new project must not open with the previous
     // one's dissolves still recorded against comp ids it happens to share.
     transitions: {},
+    // And for the item list: an absent key now means "a document older than
+    // items — migrate them from the pre-document cache", which for a NEW
+    // project would hand it the legacy folder tree.
+    projectItems: { folders: [], footage: {} },
   }),
 
   capture: () => captureDocument(),

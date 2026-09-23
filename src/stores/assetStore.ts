@@ -154,18 +154,53 @@ function docRecordOf(a: ImportedAsset): FootageDocRecord | null {
   return Object.keys(r).length > 0 ? r : null;
 }
 
+/**
+ * Apply the document's record for one item.
+ *
+ * The ORGANISATION fields (folder, interpretation, label, tags, comment) are
+ * stated WHOLE by a record — absent means "none", not "keep whatever this
+ * machine's cache says". `captureProjectItems` omits a field exactly when the
+ * item has none, so an overlay that kept the cached value re-applied another
+ * project's (or the pre-document localStorage) folder and interpretation over
+ * a document that says the item has neither: an item filed at the root came
+ * back filed, and footage conformed in one project played conformed in the
+ * next. Name, path and a user proxy stay overlays: they describe the file,
+ * and a record written without them (a partial legacy row) must not blank
+ * what the library knows.
+ */
 function withDocRecord(a: ImportedAsset, r: FootageDocRecord | undefined): ImportedAsset {
   if (!r) return a;
   const next: ImportedAsset = { ...a };
   if (r.name !== undefined) next.name = r.name;
-  if (r.folderId !== undefined) next.folderId = r.folderId;
+  next.folderId = r.folderId ?? null;
   if (r.interpret !== undefined) next.interpret = { ...r.interpret };
+  else delete next.interpret;
   if (r.label !== undefined) next.label = r.label;
+  else delete next.label;
   if (r.tags !== undefined) next.tags = [...r.tags];
+  else delete next.tags;
   if (r.comment !== undefined) next.comment = r.comment;
+  else delete next.comment;
   if (r.path !== undefined) next.path = r.path;
   if (r.proxy !== undefined) next.proxy = { ...(a.proxy ?? {}), status: r.proxy.enabled ? 'ready' : 'none', src: r.proxy.src, userSupplied: true } as ImportedAsset['proxy'];
   return next;
+}
+
+/**
+ * An item the open document lists whose bytes the session does not hold (the
+ * engine's open path lists it as missing footage — `LocalEngine.reconcileItems`).
+ */
+export function isItemPlaceholder(a: ImportedAsset): boolean {
+  return a.src === '' && a.size === 0;
+}
+
+/**
+ * The bytes for a placeholder arrived (library hydration, bundle registry):
+ * the file's facts come from what arrived, anything the placeholder carries
+ * that the arrival does not say (the document's organisation) is kept.
+ */
+export function fillPlaceholder(placeholder: ImportedAsset, arrived: ImportedAsset): ImportedAsset {
+  return { ...placeholder, ...arrived };
 }
 
 /** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
@@ -1417,7 +1452,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         // until the page reloads. `initialize` runs on every boot, twice under
         // StrictMode, and again on each editor re-entry, so a project with 2 GB of
         // footage leaked roughly that much every time.
-        const existingIds = new Set(get().assets.map((a) => a.id));
+        // A placeholder (`src: ''` — an item the opened document lists whose
+        // bytes were not in the session) is not "existing": its bytes are
+        // exactly what this read brings back.
+        const existingIds = new Set(get().assets.filter((a) => !isItemPlaceholder(a)).map((a) => a.id));
         const hydratedAssets: ImportedAsset[] = dbAssets
           .filter((dbAsset) => !existingIds.has(dbAsset.id))
           .map((dbAsset) => ({
@@ -1433,13 +1471,15 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         set((s) => {
           // Re-check inside the transaction: a concurrent import may have landed
           // between the read above and this commit.
-          const present = new Set(s.assets.map((a) => a.id));
+          const present = new Set(s.assets.filter((a) => !isItemPlaceholder(a)).map((a) => a.id));
           const fresh = applyAssignments(
             hydratedAssets.filter((ha) => !present.has(ha.id)),
             s.folders,
           );
           for (const ha of fresh) {
-            s.assets.push(ha);
+            const at = s.assets.findIndex((a) => a.id === ha.id);
+            if (at >= 0) s.assets[at] = fillPlaceholder(s.assets[at]!, ha);
+            else s.assets.push(ha);
             parkedIds.delete(ha.id);
           }
         });
@@ -1479,26 +1519,172 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 // ── Project items as DOCUMENT state (ENGINE_API.md §2.5 #12) ──────────────
 
 /**
- * What the open project says about its items, for `captureDocument`. Undefined
- * when there is nothing to say (no folders, no organised asset), so a document
- * without project organisation reads back byte-identical.
+ * What the open project says about its items, for `captureDocument`.
+ *
+ * ALWAYS a statement, including the empty one. It used to be undefined when
+ * there was nothing to say, which made "this project has no items" and "this
+ * file predates items" the same absent key — and the second has to migrate
+ * from the pre-document cache while the first must not (an empty project would
+ * reopen holding the legacy folder tree; the engine's open path read the
+ * absence as "list nothing" and emptied the Assets panel of an older file).
+ * The key is the marker: present = stated by this build, absent = older.
  */
-export function captureProjectItems(): ProjectItemsDocument | undefined {
+export function captureProjectItems(): ProjectItemsDocument {
   const s = useAssetStore.getState();
   const footage: Record<string, FootageDocRecord> = {};
   for (const a of s.assets) {
     const r = docRecordOf(a);
     if (r) footage[a.id] = r;
   }
-  if (s.folders.length === 0 && Object.keys(footage).length === 0) return undefined;
   return { folders: s.folders.map((f) => ({ ...f })), footage };
+}
+
+/**
+ * The items the open document stated (after `applyProjectItems`), or null
+ * before any document was restored. The engine's open path reconciles the
+ * session's item list against THIS — the statement actually applied, which for
+ * a document written before items existed is the migrated one, not the file's
+ * absent key.
+ */
+export function getDocumentItems(): ProjectItemsDocument | null {
+  return documentItems ? structuredClone(documentItems) : null;
+}
+
+/**
+ * Patch assets that arrive AFTER the document was restored (bundle registry,
+ * library hydration) with what the document says about them. Assets the
+ * document does not list come back unchanged.
+ */
+export function withDocumentItems(assets: ImportedAsset[]): ImportedAsset[] {
+  const overlay = documentItems?.footage;
+  if (!overlay) return assets;
+  return assets.map((a) => withDocRecord(a, overlay[a.id]));
+}
+
+// ── Pre-document organisation (migration) ───────────────────────────────
+
+/**
+ * Before B2 the organisation lived ONLY in this machine's localStorage — one
+ * global folder tree and per-asset maps shared by every project. B2 moved it
+ * into the document, and from then on every item edit rewrites those keys
+ * with the CURRENT project's organisation (they are still the machine cache).
+ * So the pre-document data a not-yet-reopened project depends on would be
+ * overwritten by the first folder made in any other project.
+ *
+ * This key freezes it: the first time a build with document items runs, the
+ * four legacy keys are copied here once, and a project opened with no
+ * `projectItems` is migrated from THIS copy — never from the live cache, which
+ * by then describes some other project. Absent on a fresh install (nothing to
+ * migrate) and never rewritten once taken.
+ */
+export const LEGACY_ITEMS_KEY = 'motion-editor.legacyProjectItems.v1';
+
+interface LegacyItemsSnapshot {
+  v: 1;
+  folders: AssetFolder[];
+  assignments: Record<string, string>;
+  interpretations: Record<string, FootageInterpretation>;
+  organisation: Record<string, AssetOrganisation>;
+}
+
+function readLegacySnapshot(): LegacyItemsSnapshot | null {
+  try {
+    const raw = localStorage.getItem(LEGACY_ITEMS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LegacyItemsSnapshot>;
+    if (!parsed || parsed.v !== 1) return null;
+    return {
+      v: 1,
+      folders: Array.isArray(parsed.folders) ? parsed.folders : [],
+      assignments: parsed.assignments ?? {},
+      interpretations: parsed.interpretations ?? {},
+      organisation: parsed.organisation ?? {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Take the frozen copy if it has not been taken. Idempotent; runs at module
+ * load (before any document restore can rewrite the live keys) and again
+ * lazily from the migration in case storage was unavailable at load.
+ */
+export function freezeLegacyProjectItems(): void {
+  try {
+    if (localStorage.getItem(LEGACY_ITEMS_KEY) != null) return;
+    const snap: LegacyItemsSnapshot = {
+      v: 1,
+      folders: loadFolders(),
+      assignments: loadAssignments(),
+      interpretations: loadInterpretations(),
+      organisation: loadOrganisation(),
+    };
+    localStorage.setItem(LEGACY_ITEMS_KEY, JSON.stringify(snap));
+  } catch {
+    /* no storage — nothing was ever cached there either */
+  }
+}
+freezeLegacyProjectItems();
+
+/**
+ * The `projectItems` a document written before items existed would have
+ * carried, rebuilt from the frozen pre-document cache.
+ *
+ * Listed: every item in the session (pre-document, the Assets panel WAS the
+ * session's library, so that is what the project showed), plus the footage
+ * the document's layers reference that the frozen cache has a row for
+ * (parked or not yet hydrated — `withDocumentItems` patches it on arrival).
+ * Folders: the whole legacy tree when anything is listed (it was one global
+ * tree; which folders "belonged" to which project was never recorded), none
+ * otherwise — so an empty project does not inherit anything.
+ *
+ * Only the organisation fields come from the frozen copy; name, kind and path
+ * describe the file and come from the session. The result is written into the
+ * document on the next save, after which the frozen copy is never consulted
+ * for that project again.
+ */
+export function legacyProjectItems(referencedIds: Iterable<string> = []): ProjectItemsDocument {
+  freezeLegacyProjectItems();
+  const legacy = readLegacySnapshot();
+  const folders = legacy?.folders ?? [];
+  const validFolder = new Set(folders.map((f) => f.id));
+  const legacyRow = (id: string): FootageDocRecord => {
+    const r: FootageDocRecord = {};
+    if (!legacy) return r;
+    const fid = legacy.assignments[id];
+    if (fid && validFolder.has(fid)) r.folderId = fid;
+    const i = legacy.interpretations[id];
+    if (i && Object.keys(i).length > 0) r.interpret = { ...i };
+    const org = legacy.organisation[id];
+    if (org?.label) r.label = org.label;
+    if (org?.tags && org.tags.length > 0) r.tags = [...org.tags];
+    return r;
+  };
+  const footage: Record<string, FootageDocRecord> = {};
+  for (const a of useAssetStore.getState().assets) {
+    const r: FootageDocRecord = { name: a.name, type: a.type, ...legacyRow(a.id) };
+    if (a.path) r.path = a.path;
+    if (a.proxy?.userSupplied && a.proxy.src) r.proxy = { src: a.proxy.src, enabled: a.proxy.status === 'ready' };
+    footage[a.id] = r;
+  }
+  for (const id of referencedIds) {
+    if (id in footage) continue;
+    const r = legacyRow(id);
+    if (Object.keys(r).length > 0) footage[id] = r;
+  }
+  const listed = Object.keys(footage).length > 0;
+  return { folders: listed ? folders.map((f) => ({ ...f })) : [], footage };
 }
 
 /**
  * Make the open document's statement about its items live: folders replaced,
  * every loaded asset patched, and the overlay remembered so assets that hydrate
- * LATER (the library loads asynchronously) are patched on arrival. `undefined`
- * = the document says nothing (older files): the localStorage cache applies.
+ * LATER (the library loads asynchronously) are patched on arrival. The caller
+ * (`restoreDocument`) always states items: a document written before they
+ * existed arrives here already migrated (`legacyProjectItems`), so a project
+ * never inherits the previous one's folders. `undefined` is kept only for
+ * callers outside the document path and leaves the session untouched.
  */
 export function applyProjectItems(doc: ProjectItemsDocument | undefined): void {
   documentItems = doc ? structuredClone(doc) : null;
@@ -1531,6 +1717,6 @@ export function replaceProjectItems(items: { assets: ImportedAsset[]; folders: A
   saveOrganisation(st.assets);
   saveSources(st.assets);
   saveProxies(st.assets);
-  if (documentItems) documentItems = captureProjectItems() ?? null;
+  if (documentItems) documentItems = captureProjectItems();
   bumpScene();
 }

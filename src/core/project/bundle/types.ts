@@ -27,10 +27,19 @@ export const CHUNK = {
   animation: 'animation.json',
   timeline: 'timeline.json',
   meta: 'meta.json',
+  /**
+   * The project's item list and project-level state (folders, footage
+   * organisation + interpretation, engine-API project settings, the saved
+   * render queue, plugin references + plugin project storage). Added after the
+   * bundle shipped: a reader that predates it ignores the file (it stays on
+   * disk), and a bundle written before it has no such chunk — decode then
+   * leaves those fields absent, which `restoreDocument` treats as "older file".
+   */
+  project: 'project.json',
 } as const;
 
 /** Chunk names that carry document content (everything except the manifest). */
-export const CONTENT_CHUNKS = [CHUNK.scene, CHUNK.animation, CHUNK.timeline, CHUNK.meta] as const;
+export const CONTENT_CHUNKS = [CHUNK.scene, CHUNK.animation, CHUNK.timeline, CHUNK.meta, CHUNK.project] as const;
 
 export type ChunkName = (typeof CONTENT_CHUNKS)[number];
 

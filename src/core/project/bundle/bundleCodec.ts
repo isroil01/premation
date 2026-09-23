@@ -11,10 +11,13 @@
  *   animation.json  ← doc.animation        (keyframe tracks + expressions)
  *   timeline.json   ← { timelines, motionBlur, guides }   (time domain + render-affecting)
  *   meta.json       ← { comps, comp, swatches, materials, transitions }  (composition settings registry — comp = legacy single — plus the project palette, material library and per-cut transitions)
+ *   project.json    ← { projectItems, projectSettings, renderQueue, plugins, pluginStorage }  (the project's items and project-level state)
  *   manifest.json   ← BundleManifest       (version + chunk hashes; the index)
  *
- * Every `EditorDocument` field lands in exactly one chunk. `version` is lifted
- * to `manifest.documentVersion`. Optional chunks are omitted when they carry no
+ * Every authored `EditorDocument` field lands in exactly one chunk. `version`
+ * is lifted to `manifest.documentVersion`. `openTabs` (editor state — which
+ * comps are open, per-tab playheads) is deliberately not written; it moves
+ * out of the document in B4. Optional chunks are omitted when they carry no
  * content, and decode tolerates their absence.
  *
  * Adding authored state later (e.g. an `ai/` chunk) means: add a chunk name in
@@ -59,6 +62,26 @@ interface MetaChunk {
   transitions?: EditorDocument['transitions'];
 }
 
+/**
+ * Contents of `project.json`: what the document says about the PROJECT rather
+ * than about a moment or a composition — its items (folders, footage
+ * organisation, interpretation), engine-API project settings, the saved render
+ * queue, and plugin dependencies + plugin project storage. Each is optional and
+ * absent when the document leaves it out, exactly as in `EditorDocument`.
+ *
+ * This chunk did not exist when the bundle format shipped, and every one of
+ * these fields was silently dropped by a bundle save: reopening lost folders,
+ * folder assignments and footage interpretation (tags and labels survived only
+ * because the asset registry carries them).
+ */
+interface ProjectChunk {
+  projectItems?: EditorDocument['projectItems'];
+  projectSettings?: EditorDocument['projectSettings'];
+  renderQueue?: EditorDocument['renderQueue'];
+  plugins?: EditorDocument['plugins'];
+  pluginStorage?: EditorDocument['pluginStorage'];
+}
+
 /** Stable JSON serialization used for every chunk (and thus for its hash). */
 function serialize(value: unknown): string {
   return JSON.stringify(value);
@@ -97,6 +120,15 @@ export function encodeBundle(doc: EditorDocument, hash: HashFn = hashString): Mo
   };
   if (!isEmptyChunk(meta)) chunkText[CHUNK.meta] = serialize(meta);
 
+  const project: ProjectChunk = {
+    projectItems: doc.projectItems,
+    projectSettings: doc.projectSettings,
+    renderQueue: doc.renderQueue,
+    plugins: doc.plugins,
+    pluginStorage: doc.pluginStorage,
+  };
+  if (!isEmptyChunk(project)) chunkText[CHUNK.project] = serialize(project);
+
   const chunks: Partial<Record<ChunkName, string>> = {};
   const files: Record<string, string> = {};
   for (const name of CONTENT_CHUNKS) {
@@ -129,6 +161,7 @@ export function decodeBundle(files: Record<string, string>): EditorDocument {
     parseChunk<EditorDocument['animation']>(files[CHUNK.animation]) ?? { tracks: {}, expressions: {} };
   const timeline = parseChunk<TimelineChunk>(files[CHUNK.timeline]) ?? {};
   const meta = parseChunk<MetaChunk>(files[CHUNK.meta]) ?? {};
+  const project = parseChunk<ProjectChunk>(files[CHUNK.project]) ?? {};
 
   const doc: EditorDocument = {
     version: manifest?.documentVersion ?? '1.1.0',
@@ -149,6 +182,13 @@ export function decodeBundle(files: Record<string, string>): EditorDocument {
   if (meta.materials) doc.materials = meta.materials;
   // Present-but-empty is meaningful here too — see the swatches note above.
   if (meta.transitions) doc.transitions = meta.transitions;
+  // Key presence, not truthiness, for the same reason: `projectItems` with no
+  // folders and no footage is a statement ("this project lists nothing").
+  if (project.projectItems) doc.projectItems = project.projectItems;
+  if (project.projectSettings) doc.projectSettings = project.projectSettings;
+  if (project.renderQueue) doc.renderQueue = project.renderQueue;
+  if (project.plugins) doc.plugins = project.plugins;
+  if (project.pluginStorage) doc.pluginStorage = project.pluginStorage;
   return doc;
 }
 
