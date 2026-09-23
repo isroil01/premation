@@ -23,6 +23,10 @@ export const ENGINE_WRITE_SCOPES = [
   'src/pages/**/*.{ts,tsx}',
   'src/providers/**/*.{ts,tsx}',
   'src/App.tsx',
+  // Core modules that write the document on the UI's behalf — the viewport
+  // tools' ports (select/move/rotate/scale/anchor, pen, shapes, nudge), camera
+  // navigation and device handles. Area `tools/core`.
+  'src/core/workspace/**/*.{ts,tsx}',
 ];
 
 export default [

@@ -29,6 +29,14 @@ import {
   trackNavBy,
   unifiedNavModeFor,
 } from './cameraNav';
+import { flushToolBursts } from './viewportGesture';
+import { engineIdle } from '@core/engine/engineInstance';
+
+/** A nav write outside a pointer gesture is a wheel-style burst: commit it and let the engine apply it. */
+async function settle(): Promise<void> {
+  flushToolBursts();
+  await engineIdle();
+}
 
 const ROOT = 'camnav-views-root';
 const SHAPE = 'camnav-views-shape';
@@ -80,7 +88,8 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await settle();
   for (const id of [SHAPE, CAMERA, ROOT]) {
     try { defaultSceneGraph.removeNode(id); } catch { /* not added in this test */ }
   }
@@ -355,7 +364,7 @@ describe('orbitCameraAboutPivot — a rigid orbit about an arbitrary world point
     ).position;
   }
 
-  it('one-node: the eye keeps its distance to the pivot, and the aim angles advance additively', () => {
+  it('one-node: the eye keeps its distance to the pivot, and the aim angles advance additively', async () => {
     add3DShape();
     addCamera();
     const pivot = { x: 0, y: 0, z: 0 };
@@ -363,6 +372,7 @@ describe('orbitCameraAboutPivot — a rigid orbit about an arbitrary world point
     const r0 = dist(before, pivot);
 
     orbitCameraAboutPivot(nav(), 25, 10, pivot, W, H); // Δyaw 10°, Δpitch 4°
+    await settle();
 
     const p = camProps() as Record<string, number | undefined>;
     expect(p.orbitYaw).toBeCloseTo(10, 9);
@@ -373,7 +383,7 @@ describe('orbitCameraAboutPivot — a rigid orbit about an arbitrary world point
     expect(dist(after, before)).toBeGreaterThan(1);
   });
 
-  it('two-node: eye AND POI rotate rigidly about the pivot; orbitYaw/orbitPitch stay untouched', () => {
+  it('two-node: eye AND POI rotate rigidly about the pivot; orbitYaw/orbitPitch stay untouched', async () => {
     add3DShape();
     addCamera();
     // Make it a two-node camera aimed at the comp centre.
@@ -390,6 +400,7 @@ describe('orbitCameraAboutPivot — a rigid orbit about an arbitrary world point
     const poiToPivot = dist(poiBefore, pivot);
 
     orbitCameraAboutPivot(nav(), 25, 10, pivot, W, H);
+    await settle();
 
     const p = camProps() as Record<string, number | undefined>;
     // The pivot is never written INTO the POI — the POI rotates, it is not re-targeted.
@@ -405,10 +416,11 @@ describe('orbitCameraAboutPivot — a rigid orbit about an arbitrary world point
     expect(dist(eyeAfter, pivot)).toBeCloseTo(dist(eyeBefore, pivot), 6);
   });
 
-  it('orbitNavBy without a pivot keeps the classic POI orbit (no position writes)', () => {
+  it('orbitNavBy without a pivot keeps the classic POI orbit (no position writes)', async () => {
     add3DShape();
     addCamera();
     orbitNavBy({ kind: 'scene', nodeId: CAMERA, transId: `${CAMERA}_t` }, 10, 5, null);
+    await settle();
     const p = camProps() as Record<string, number | undefined>;
     expect(p.orbitYaw).toBeCloseTo(4, 9);
     expect(p.orbitPitch).toBeCloseTo(2, 9);

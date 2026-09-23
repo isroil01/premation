@@ -45,7 +45,7 @@ import {
   parentWorldMatrixAt,
   toWorldPointAt,
 } from '@core/scene/liveWorld3d';
-import { applyNodePropsKeyframed } from '@core/workspace/ports';
+import { sendNodeValues } from '@core/workspace/ports';
 
 /** Which of a device's two draggable points this is. */
 export type DeviceHandleKind = 'position' | 'poi';
@@ -189,9 +189,11 @@ const PROPS: Record<DeviceHandleKind, readonly [string, string, string]> = {
 /**
  * Move a handle to `worldTarget`, writing PARENT-SPACE values.
  *
- * `mergeKey` is stable for a whole gesture so a drag is one undo entry, and the
- * write goes through the same auto-keyframe path the camera tools and the layer
- * gizmo use — a camera dragged with Auto-Keyframe on animates, exactly like
+ * `worldTarget` is ABSOLUTE (the pointer's world point), so each message of
+ * the drag is the whole answer; the drag is one engine gesture — one undo
+ * entry — through the viewport's pointer gesture (`useDeviceHandles` opens
+ * it). A property already animated, or any while Auto-Keyframe is on, keys at
+ * the playhead: a camera dragged with Auto-Keyframe on animates, exactly like
  * everything else.
  *
  * Only the handle's OWN three props are written. Dragging the position must not
@@ -209,9 +211,11 @@ export function dragDeviceHandleTo(
   // device snap back by exactly the parent transform on release.
   const local = parent ? Matrix4Math.toLocalPoint(parent, worldTarget) : worldTarget;
   const [px, py, pz] = PROPS[handle.kind];
-  applyNodePropsKeyframed(
+  const what = handle.kind === 'poi' ? 'Point of Interest' : handle.device === 'camera' ? 'Camera' : 'Light';
+  sendNodeValues(
     handle.nodeId,
     { [px]: local.x, [py]: local.y, [pz]: local.z },
+    `Move ${what}`,
     `devicehandle:${handle.nodeId}:${handle.kind}`,
   );
 }

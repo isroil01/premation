@@ -190,6 +190,10 @@ export async function segmentStrokesToMask(
 
   const existing = getNodeMask(nodeId);
   const kept = existing.paths.filter((p) => p.id !== opts.replacePathId && p.name !== ROTO_PATH_NAME);
+  // B3-legacy: engine gap — `addMask` carries no feather / opacity /
+  // expansion and assigns its own id, while the Roto Brush reuses the path id
+  // it replaces (`replacePathId`) and a follow-up feather write would need the
+  // new id inside the same entry.
   defaultSceneGraph.setMask(nodeId, { paths: [...kept, path] });
   getEventBus().emit('AnimationChanged', { nodeId });
   bumpScene();

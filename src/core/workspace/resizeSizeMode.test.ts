@@ -27,6 +27,7 @@ import { insertSolid, insertText } from '@core/scene/sceneInsert';
 import { useSelectionStore } from '@stores/selectionStore';
 import { commands } from '@motion/workspace';
 import { createCommandPort } from './ports';
+import { engineIdle } from '@core/engine/engineInstance';
 
 type Props = Record<string, unknown>;
 
@@ -52,7 +53,7 @@ beforeAll(() => {
 });
 
 describe('Ctrl-resize writes Size instead of Scale', () => {
-  it('doubles width/height and leaves scale exactly where the drag found it', () => {
+  it('doubles width/height and leaves scale exactly where the drag found it', async () => {
     const id = newSolid();
     const before = transformProps(id);
     const w0 = before.width as number;
@@ -68,6 +69,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
         { x: w0 * 2, y: h0 * 2 },
       ),
     );
+    await engineIdle();
 
     const after = transformProps(id);
     expect(after.width).toBeCloseTo(w0 * 2, 5);
@@ -80,7 +82,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
     expect(after.y).toBeCloseTo(400, 5);
   });
 
-  it('leaves Size alone on a plain (unmodified) drag', () => {
+  it('leaves Size alone on a plain (unmodified) drag', async () => {
     const id = newSolid();
     const before = transformProps(id);
     const w0 = before.width as number;
@@ -95,6 +97,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
         // no `size` — the default, scale-mode drag
       ),
     );
+    await engineIdle();
 
     const after = transformProps(id);
     expect(after.scaleX).toBeCloseTo(2, 5);
@@ -103,7 +106,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
     expect(after.height).toBeCloseTo(h0, 5);
   });
 
-  it('never lets a drag collapse the layer to zero or flip it inside out', () => {
+  it('never lets a drag collapse the layer to zero or flip it inside out', async () => {
     const id = newSolid();
 
     createCommandPort().execute(
@@ -115,6 +118,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
         { x: -40, y: 0 },
       ),
     );
+    await engineIdle();
 
     const after = transformProps(id);
     expect(after.width).toBe(40);   // magnitude kept, flip refused
@@ -132,7 +136,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
  * correct answer to "make this bigger".
  */
 describe('text refuses size mode and scales instead', () => {
-  it('scales the type rather than writing a width nothing reads', () => {
+  it('scales the type rather than writing a width nothing reads', async () => {
     insertText('Headline');
     const ids = useSelectionStore.getState().ids;
     const id = ids[ids.length - 1];
@@ -148,6 +152,7 @@ describe('text refuses size mode and scales instead', () => {
         { x: 999, y: 999 },
       ),
     );
+    await engineIdle();
 
     const after = transformProps(id);
     expect(after.scaleX).toBeCloseTo(3, 5);

@@ -23,6 +23,7 @@ import { readNodeMask, readNodeMaskAnim, type LayerMask, type MaskPoint } from '
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode, ID } from '@core/types';
 import { createCommandPort, createSceneGraphPort } from './ports';
+import { engineIdle } from '@core/engine/engineInstance';
 
 const corner = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
 const tri = (s: number): MaskPoint[] => [corner(0, -s), corner(s, s), corner(-s, s)];
@@ -172,7 +173,7 @@ describe('a Pen outline closed on its first vertex', () => {
 });
 
 describe('a Mask Pen outline on an anchored layer', () => {
-  it('lands where it was clicked — through the viewport\'s own matrix, anchor included', () => {
+  it('lands where it was clicked — through the viewport\'s own matrix, anchor included', async () => {
     const ID_ = 'pen_mask_anchor';
     add(layer(ID_, [], { anchorX: 50, anchorY: -20 }));
     const wm = createSceneGraphPort().getNode(ID_)!.worldMatrix;
@@ -185,6 +186,7 @@ describe('a Mask Pen outline on an anchored layer', () => {
     const bounds = { x: 280, y: 200, width: 60, height: 60 };
     const local = world.map((p) => corner(p.x - 310, p.y - 230));
     createCommandPort().execute(commands.createNode('Path', bounds, local, ID_));
+    await engineIdle(); // New Mask is an engine command (B3)
 
     const pts = readNodeMask(defaultSceneGraph.getNode(ID_)!)!.paths[0]!.points;
     pts.forEach((p, i) => {

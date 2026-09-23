@@ -38,7 +38,8 @@ import { cutPathsWithLine, runFromPolygon, type CutSubpath, type CutPoint } from
 import { shapeOutline } from '@core/scene/pathOps';
 import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@core/scene/cornerRadii';
 import { useHistoryStore } from '@stores/historyStore';
-import { readNodeAnchor, moveAnchorCompensated } from '@core/scene/anchor';
+import { readNodeAnchor, anchorCompensation } from '@core/scene/anchor';
+import { readTransformProp } from '@core/scene/transformWrite';
 import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
@@ -64,7 +65,19 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
 import { drawToolOptions } from '@motion/workspace';
 import { newShapeFill, newShapeStroke } from '@core/workspace/shapeToolPaint';
-import { gestureAnimEdit, gestureSceneBump } from '@core/workspace/viewportGesture';
+import {
+  burstTransaction,
+  currentToolTransaction,
+  gestureAnimEdit,
+  gestureSceneBump,
+  sendToolEdit,
+  runToolEdit,
+  type ToolTransaction,
+} from '@core/workspace/viewportGesture';
+import type { Command, Value } from '@motion/engine-api';
+import { compOfLayer, isLayer } from '@core/engine/doc';
+import { compTime, paths } from '@core/engine/propRefs';
+import { hasVertexEditState, maskPointsToPath, trackValueCommands, type NodeTrackValues } from '@core/workspace/toolEdits';
 import { useProjectStore } from '@stores/projectStore';
 import { compToKeyframeTime, getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
@@ -73,7 +86,7 @@ import { currentViewProjector, currentViewCamera } from '@core/workspace/viewPro
 import { orthoViewOf, isSceneCameraView } from '@core/scene/cameraViewMode';
 import { viewCameraNode } from '@core/scene/camera3d';
 import { composeNodeWorld3d, parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
-import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, readNodeMaskAt, setMaskPoints, editMaskPathTopology, setMaskPathFlags, MaskPath, MaskPoint, type MaskPathEditState } from '@core/effects/mask';
+import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, readNodeMaskAnim, readNodeMaskAt, setMaskPoints, editMaskPathTopology, setMaskPathFlags, MaskPath, MaskPoint, type MaskPathEditState } from '@core/effects/mask';
 import { defaultPolystar, POLYSTAR_FX_PROP, type PolystarType } from '@core/scene/polystar';
 import { defaultTextSize } from '@core/scene/textDefaults';
 
@@ -772,11 +785,6 @@ function getParentIdForPorts(id: string) {
   return node?.parent ?? null;
 }
 
-function cidOf(node: SceneNode, prop: string): string {
-  const c = node.components.find((comp) => comp.props[prop] !== undefined);
-  return c?.id ?? node.components[0]?.id ?? '';
-}
-
 /**
  * AE keyframing contract: a property with a lit stopwatch (an existing track)
  * ALWAYS keyframes on direct manipulation — the global Auto-Keyframe mode only
@@ -868,6 +876,9 @@ export interface Gizmo3DNodeUpdate {
  * base always follows too (harmless when animated — animated reads win — and
  * it keeps the inspector and every other consumer in agreement).
  */
+// B3-legacy: engine gap — the fallback `useGizmo3d` takes only when
+// `trackValueCommands` cannot address a write (a node that is not a
+// composition's layer, a transform member with no API property).
 export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): void {
   if (updates.length === 0) return;
   const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
@@ -923,6 +934,9 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
  * `mergeKey` coalesces a whole drag into one undo entry — pass something stable
  * for the gesture's duration.
  */
+// B3-legacy: engine gap — the fallback `sendNodeValues` takes for props the
+// API cannot address yet (camera orbitYaw/orbitPitch, camera/light POI before
+// the layer carries them).
 export function applyNodePropsKeyframed(
   nodeId: string,
   values: Readonly<Record<string, number>>,
@@ -1061,140 +1075,241 @@ export function snapPx(v: number): number {
   return useViewportDisplayStore.getState().snapToPixel ? Math.round(v) : v;
 }
 
-function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void {
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const view = viewOf?.() ?? useGuidesStore.getState().camera3dMode;
-  const orthoSpatial = orthoDelta3D(payload.delta, view);
-  const toKey: SceneNode[] = [];
-  const toWrite: SceneNode[] = [];
-  for (const id of payload.ids) {
-    const node = defaultSceneGraph.getNode(id as ID);
-    if (!node || node.locked) continue;
-    // A layer being MOTION SKETCHED always keyframes, whatever the
-    // Auto-Keyframe preference says and whether or not it already has a track.
-    // Recording a path is an explicit request for keyframes — the same intent
-    // as a lit stopwatch — and without this the commonest case does nothing at
-    // all: a fresh layer has no x/y track, so with Auto-Keyframe off it takes
-    // the static-write branch, the recorder is never fed, and the take comes
-    // back empty with no error. Found by driving the real command in the app;
-    // no unit test on the reduction could have seen it (rule 5·0).
-    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y']) || motionSketchNodeId() === node.id) {
-      toKey.push(node);
-    } else toWrite.push(node);
-  }
+/** The playhead of the active tab, in comp seconds. */
+function playheadSeconds(): number {
+  const s = useProjectStore.getState();
+  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
+}
 
-  const comp = useProjectStore.getState().comps[
-    useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.compositionId ?? 'comp_root'
-  ];
-  const compW = comp?.width ?? 1920;
-  const compH = comp?.height ?? 1080;
+function activeCompSize(): { w: number; h: number } {
+  const s = useProjectStore.getState();
+  const comp = s.comps[s.tabs[s.activeTabId ?? '']?.compositionId ?? 'comp_root'];
+  return { w: comp?.width ?? 1920, h: comp?.height ?? 1080 };
+}
+
+type LayerValueItem = NodeTrackValues & { forceKey?: boolean };
+
+/** Layer values as commands (null: the API cannot address one of them). */
+function layerValueCommands(items: ReadonlyArray<LayerValueItem>): Command[] | null {
+  if (items.length === 0) return [];
+  const seconds = playheadSeconds();
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const a = trackValueCommands(items.filter((i) => !i.forceKey), { seconds, autoKeyframe });
+  const b = trackValueCommands(items.filter((i) => i.forceKey), { seconds, autoKeyframe: true });
+  return a && b ? [...a, ...b] : null;
+}
+
+/**
+ * Send layer-value writes (stored units: scale as a multiplier) as ONE tool
+ * edit: into the pointer gesture's transaction during a drag, a burst's when
+ * one is given, else a one-shot `edit`. An animated property — or any
+ * property while Auto-Keyframe is on, or `forceKey` — keys at the playhead.
+ * `items` may be a builder, run when the message can go (see
+ * `ToolTransaction.send`). Returns false when the API cannot address the
+ * write (nothing was sent) — known only for eager items.
+ */
+function sendLayerValues(
+  label: string,
+  items: ReadonlyArray<LayerValueItem> | (() => ReadonlyArray<LayerValueItem>),
+  txn: ToolTransaction | null = currentToolTransaction(),
+): boolean {
+  if (typeof items === 'function') {
+    sendToolEdit(label, () => layerValueCommands(items()), txn);
+    return true;
+  }
+  const cmds = layerValueCommands(items);
+  if (!cmds) return false;
+  sendToolEdit(label, cmds, txn);
+  return true;
+}
+
+/**
+ * Write numeric props to ONE node through the engine, as part of the current
+ * tool action (a drag's gesture, or `txn`). The route is decided ONCE per
+ * action (`key`): a node whose props the API cannot address yet (a camera's
+ * first orbit — `orbitYaw` has no API property until the layer carries it)
+ * keeps the legacy dual write for the whole action, so one drag never mixes
+ * the two histories.
+ */
+export function sendNodeValues(
+  nodeId: string,
+  values: Readonly<Record<string, number>>,
+  label: string,
+  key: string,
+  txn: ToolTransaction | null = currentToolTransaction(),
+): void {
+  const addressable = (): boolean =>
+    trackValueCommands([{ nodeId, values }], { seconds: playheadSeconds() }) !== null;
+  const decide = (): 'engine' | 'legacy' => (addressable() ? 'engine' : 'legacy');
+  const route = txn ? txn.memo(`route:${key}`, decide) : decide();
+  if (route === 'legacy') {
+    // B3-legacy: engine gap — a prop with no API property on this layer yet
+    // (camera orbitYaw/orbitPitch, camera/light poiX/Y/Z before the layer
+    // carries them): the catalog lists them only once they exist.
+    applyNodePropsKeyframed(nodeId, values, key);
+    return;
+  }
+  sendLayerValues(label, [{ nodeId, values }], txn);
+}
+
+// ── Move / nudge ───────────────────────────────────────────────────
+
+/** One layer's state when a move began — every message is start + total drag. */
+interface MoveStart {
+  id: string;
+  /** Position at the playhead, stored units (animated value winning). */
+  x: number;
+  y: number;
+  z: number;
+  /** The parent's world → parent-space linear map (null: unparented). */
+  inv: { a: number; b: number; c: number; d: number } | null;
+  /**
+   * A 3D layer's WORLD translation per projected drag pixel along screen x and
+   * y — the view's axes (ortho) or the camera's basis over the layer's depth
+   * (perspective). Null for a 2D layer: its position is camera-independent.
+   */
+  basis: { dx: { x: number; y: number; z: number }; dy: { x: number; y: number; z: number } } | null;
+  /** Being Motion Sketched: always keys, and feeds the recorder. */
+  sketch: boolean;
+}
+
+function captureMoveStarts(ids: readonly NodeId[], view: Camera3dMode): MoveStart[] {
+  const rawTime = playheadSeconds();
+  const { w: compW, h: compH } = activeCompSize();
+  const orthoX = orthoDelta3D({ x: 1, y: 0 }, view);
+  const orthoY = orthoDelta3D({ x: 0, y: 1 }, view);
   // Resolved once: every node in one drag shares the view, and resolving the
   // camera walks the scene.
-  const viewCamera = orthoSpatial ? null : currentViewCamera(compW, compH, rawTime, view);
-
-  /**
-   * This drag as a WORLD translation for `node`, or null when the node is 2D
-   * (which keeps the plain projected delta — a 2D layer has no depth to move in
-   * and its position is camera-independent by definition).
-   */
-  const spatialFor = (node: SceneNode): { x: number; y: number; z: number } | null => {
-    if (!is3DEnabled(node)) return null;
-    if (orthoSpatial) return orthoSpatial;
-    if (!viewCamera) return null;
-    const g = readGeometry(node);
-    const n3 = readNode3D(node);
-    return perspectiveDelta3D(payload.delta, viewCamera, { x: g?.x ?? 0, y: g?.y ?? 0, z: n3.z ?? 0 });
-  };
-
-  /** Depth component of this drag for a 3D layer, or null when it has none. */
-  const depthDeltaFor = (node: SceneNode): number | null => {
-    const s = spatialFor(node);
-    if (!s) return null;
-    return Math.abs(s.z) > 1e-9 ? s.z : null;
-  };
-  /** The in-plane (x/y) part, which is what the existing writes consume. */
-  const planarDelta = (node: SceneNode): { x: number; y: number } => {
-    const s = spatialFor(node);
-    return s ? { x: s.x, y: s.y } : payload.delta;
-  };
-
-  let changed = false;
-  if (toKey.length > 0) {
-    gestureAnimEdit(
-      'Keyframe Position',
-      () => {
-        for (const node of toKey) {
-          const g = readGeometry(node);
-          if (!g) continue;
-          let delta = planarDelta(node);
-          const dz = depthDeltaFor(node);
-          if (node.parent) {
-            const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
-            const inv = Matrix.invert(pw);
-            delta = {
-              x: inv.a * delta.x + inv.c * delta.y,
-              y: inv.b * delta.x + inv.d * delta.y,
-            };
-          }
-          const lt = getRemappedTime(node.id, rawTime);
-          const curX = defaultAnimation.sample(node.id, 'x', lt) ?? g.x;
-          const curY = defaultAnimation.sample(node.id, 'y', lt) ?? g.y;
-          const nx = snapPx(curX + delta.x);
-          const ny = snapPx(curY + delta.y);
-          defaultAnimation.setKeyframe(node.id, 'x', lt, nx);
-          defaultAnimation.setKeyframe(node.id, 'y', lt, ny);
-          const cx = cidOf(node, 'x');
-          const cy = cidOf(node, 'y');
-          defaultSceneGraph.writeProp(node.id, cx, 'x', nx);
-          defaultSceneGraph.writeProp(node.id, cy, 'y', ny);
-          // Motion Sketch records HERE and nowhere else, because this is the
-          // one place a viewport drag has already become the layer's OWN x/y —
-          // through the parent's inverse world matrix above, on the keyframe
-          // axis via `getRemappedTime`. A recorder sampling the pointer itself
-          // would need a second copy of both conversions and would be wrong
-          // under a moving parent in exactly the way F23 was. No-ops unless a
-          // recording is armed for this node.
-          recordMotionSketchSample(node.id, nx, ny, lt);
-          // Depth is NOT run through the parent inverse above: that is a 2×3
-          // affine with no z, so it cannot express the depth axis. A 3D parent
-          // chain's own depth handling lives in nodeMatrix.parentWorld3d.
-          if (dz !== null) {
-            const curZ = defaultAnimation.sample(node.id, 'z', lt) ?? (readNode3D(node).z ?? 0);
-            defaultAnimation.setKeyframe(node.id, 'z', lt, curZ + dz);
-            defaultSceneGraph.writeProp(node.id, cidOf(node, 'z'), 'z', curZ + dz);
-          }
-          changed = true;
-        }
-      },
-      `drag:move:${rawTime}:${toKey.map((n) => n.id).join(',')}`,
-    );
-  }
-
-  for (const node of toWrite) {
+  const viewCamera = orthoX ? null : currentViewCamera(compW, compH, rawTime, view);
+  const out: MoveStart[] = [];
+  for (const id of ids) {
+    const node = defaultSceneGraph.getNode(id as ID);
+    if (!node || node.locked) continue;
     const g = readGeometry(node);
     if (!g) continue;
-    let delta = planarDelta(node);
-    const dz = depthDeltaFor(node);
+    const n3 = readNode3D(node);
+    const lt = getRemappedTime(node.id, rawTime);
+    let basis: MoveStart['basis'] = null;
+    if (is3DEnabled(node)) {
+      if (orthoX && orthoY) basis = { dx: orthoX, dy: orthoY };
+      else if (viewCamera) {
+        // Linear in the delta (the depth scale is sampled at the START
+        // position), so the basis is the delta's two unit columns.
+        const at = { x: g.x, y: g.y, z: n3.z ?? 0 };
+        basis = {
+          dx: perspectiveDelta3D({ x: 1, y: 0 }, viewCamera, at),
+          dy: perspectiveDelta3D({ x: 0, y: 1 }, viewCamera, at),
+        };
+      }
+    }
+    let inv: MoveStart['inv'] = null;
     if (node.parent) {
-      const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
-      const inv = Matrix.invert(pw);
-      delta = {
-        x: inv.a * delta.x + inv.c * delta.y,
-        y: inv.b * delta.x + inv.d * delta.y,
-      };
+      const m = Matrix.invert(worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts));
+      inv = { a: m.a, b: m.b, c: m.c, d: m.d };
     }
-    const cidX = cidOf(node, 'x');
-    const cidY = cidOf(node, 'y');
-    defaultSceneGraph.writeProp(node.id, cidX, 'x', snapPx(g.x + delta.x));
-    defaultSceneGraph.writeProp(node.id, cidY, 'y', snapPx(g.y + delta.y));
-    if (dz !== null) {
-      const curZ = readNode3D(node).z ?? 0;
-      defaultSceneGraph.writeProp(node.id, cidOf(node, 'z'), 'z', curZ + dz);
-    }
-    changed = true;
+    out.push({
+      id: node.id as string,
+      x: defaultAnimation.sample(node.id, 'x', lt) ?? g.x,
+      y: defaultAnimation.sample(node.id, 'y', lt) ?? g.y,
+      z: defaultAnimation.sample(node.id, 'z', lt) ?? (n3.z ?? 0),
+      inv,
+      basis,
+      // A layer being MOTION SKETCHED always keyframes, whatever the
+      // Auto-Keyframe preference says: recording a path is an explicit request
+      // for keyframes, and a fresh layer (no x/y track, Auto-Keyframe off)
+      // would otherwise feed the recorder nothing (found in the real app).
+      sketch: motionSketchNodeId() === node.id,
+    });
   }
-  if (changed) gestureSceneBump();
+  return out;
+}
+
+/** The layer values for `start` moved by the projected world drag `total`. */
+function movedValues(s: MoveStart, total: { x: number; y: number }): Record<string, number> {
+  let planar = total;
+  let dz: number | null = null;
+  if (s.basis) {
+    const { dx, dy } = s.basis;
+    planar = { x: dx.x * total.x + dy.x * total.y, y: dx.y * total.x + dy.y * total.y };
+    // Depth only where this view's drag reaches it (Top/Left views, an
+    // orbited camera). Decided by the basis, not by this message's value, so
+    // a drag that crosses zero depth still writes z every message.
+    if (Math.abs(dx.z) > 1e-9 || Math.abs(dy.z) > 1e-9) dz = dx.z * total.x + dy.z * total.y;
+  }
+  if (s.inv) {
+    // World → parent space. Depth is NOT run through it: a 2×3 affine has no
+    // z (a 3D parent chain's depth lives in nodeMatrix.parentWorld3d).
+    planar = { x: s.inv.a * planar.x + s.inv.c * planar.y, y: s.inv.b * planar.x + s.inv.d * planar.y };
+  }
+  const values: Record<string, number> = { x: snapPx(s.x + planar.x), y: snapPx(s.y + planar.y) };
+  if (dz !== null) values.z = s.z + dz;
+  return values;
+}
+
+/**
+ * The commands for a move/nudge action: `st.starts` is captured on the
+ * action's FIRST message that can go (a builder — after the previous action's
+ * gesture closed, so the start reads the document that action left), `st.total`
+ * is the drag so far, accumulated eagerly as the tool reports it.
+ */
+interface MoveAction {
+  starts: MoveStart[] | null;
+  total: { x: number; y: number };
+}
+
+function sendMove(label: string, st: MoveAction, ids: readonly NodeId[], view: Camera3dMode, txn: ToolTransaction | null): void {
+  const sketching = motionSketchNodeId();
+  if (sketching !== null && ids.includes(sketching as NodeId)) {
+    // Motion Sketch records EVERY pointer sample, in real time — not only the
+    // messages that reach the engine (latest wins drops some) — so its layer's
+    // start is captured now and the sample fed here, where a drag has already
+    // become the layer's OWN x/y (parent inverse applied, keyframe axis).
+    st.starts ??= captureMoveStarts(ids, view);
+    const rawTime = playheadSeconds();
+    for (const s of st.starts) {
+      if (!s.sketch) continue;
+      const v = movedValues(s, st.total);
+      recordMotionSketchSample(s.id, v.x!, v.y!, getRemappedTime(s.id, rawTime));
+    }
+  }
+  sendLayerValues(label, () => {
+    st.starts ??= captureMoveStarts(ids, view);
+    return st.starts.map((s) => ({ nodeId: s.id, values: movedValues(s, st.total), forceKey: s.sketch }));
+  }, txn);
+}
+
+/**
+ * The move tool and the selection drag. The tool reports INCREMENTS (each
+ * pointer move's share of the drag); the engine takes ABSOLUTE values
+ * (docs/B3_PATTERNS.md §3), so the action keeps each layer's drag-start
+ * position and the running total, and every message is start + total.
+ */
+function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void {
+  const view = viewOf?.() ?? useGuidesStore.getState().camera3dMode;
+  const txn = currentToolTransaction();
+  const init = (): MoveAction => ({ starts: null, total: { x: 0, y: 0 } });
+  const st = txn ? txn.memo(`move:${payload.ids.join(',')}`, init) : init();
+  st.total = { x: st.total.x + payload.delta.x, y: st.total.y + payload.delta.y };
+  sendMove('Move', st, payload.ids, view, txn);
+}
+
+/** Idle that ends an arrow-key burst — the timeline's keyframe nudge uses the same. */
+export const NUDGE_BURST_MS = 300;
+
+/**
+ * Arrow-key nudge of the selection by a world-space delta. A burst of presses
+ * (holding an arrow) is ONE undo entry: one engine gesture kept open while
+ * presses keep coming, committed after {@link NUDGE_BURST_MS} of quiet or by
+ * any other key / press — the timeline's keyframe nudge behaves the same.
+ * Each message is the layers' burst-start position + the burst's total.
+ */
+export function nudgeNodes(ids: readonly NodeId[], dx: number, dy: number, viewOf?: () => Camera3dMode): void {
+  if (ids.length === 0) return;
+  const view = viewOf?.() ?? useGuidesStore.getState().camera3dMode;
+  const txn = burstTransaction(`nudge:${ids.join(',')}`, NUDGE_BURST_MS);
+  const st = txn.memo<MoveAction>('nudge', () => ({ starts: null, total: { x: 0, y: 0 } }));
+  st.total = { x: st.total.x + dx, y: st.total.y + dy };
+  sendMove('Nudge', st, ids, view, txn);
 }
 
 function createNode(payload: CreateNodePayload): void {
@@ -1252,8 +1367,21 @@ function createNode(payload: CreateNodePayload): void {
       newMask = ellipse ? ellipseMask(width, height) : rectangleMask(width, height);
     }
     
-    addMaskPath(parentId, newMask);
     useSelectionStore.getState().set([parentId]);
+    if (isLayer(parentId) && !hasVertexEditState(newMask.points)) {
+      sendToolEdit('New Mask', [{
+        type: 'addMask',
+        layer: parentId,
+        path: (maskPointsToPath(newMask.points, newMask.closed) as Extract<Value, { kind: 'path' }>).value,
+        mode: newMask.mode,
+        inverted: newMask.inverted === true,
+      }]);
+      return;
+    }
+    // B3-legacy: engine gap — the API's BezierPath has no per-vertex `broken`
+    // (Alt-split handles) / `tension` state, so a pen mask drawn with split
+    // handles would come back re-joined.
+    addMaskPath(parentId, newMask);
     bumpScene();
     return;
   }
@@ -1284,6 +1412,9 @@ function createNode(payload: CreateNodePayload): void {
         : Math.max(3, Math.min(12, Math.round(drawToolOptions.starPoints))),
       drawToolOptions.starInnerRatio,
     );
+    // B3-legacy: engine gap — `createLayer` cannot carry the toolbar Fill /
+    // Stroke paints (solid or gradient) or a Polystar's parametric config
+    // (`fx.polystar`); continuous raster is not a switch the API sets.
     defaultSceneGraph.addChild(activeCompRootId() as ID, node);
     defaultSceneGraph.setFxKey(node.id, POLYSTAR_FX_PROP, cfg);
     enableContinuousRasterByDefault(node.id as string);
@@ -1364,6 +1495,11 @@ function createNode(payload: CreateNodePayload): void {
     if (textComp) Object.assign(textComp.props, { orientation: 'vertical' });
   }
   const rootId = activeCompRootId() as ID;
+  // B3-legacy: engine gap — a drawn layer through `createLayer` needs, beside
+  // its kind and name: the toolbar Fill / Stroke paints (solid or gradient),
+  // a drawn outline (`Geometry.points`, open or closed), a paragraph text box
+  // (`boxWidth`/`boxHeight`, vertical orientation) and the continuous-raster
+  // default — none of which the API can say yet.
   defaultSceneGraph.addChild(rootId, node);
   // The same default every MENU and LIBRARY insert applies. This path — every
   // layer the user DRAWS — was the one place that did not, so a pen path went
@@ -1452,11 +1588,7 @@ function resizeNode(payload: ResizeNodePayload): void {
     return { x: rawCentre.x - (ox * cos - oy * sin), y: rawCentre.y - (ox * sin + oy * cos) };
   })();
   
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  // Layer-local sampling time — see moveNodes for why toLayerTime must NOT be
-  // applied on top (it double-subtracts the clip start).
-  const lt = getRemappedTime(node.id, rawTime);
+  const rawTime = playheadSeconds();
 
   // World → parent space. `centre` and `scaleX/scaleY` are what the TOOL
   // measured on screen; `x`/`y`/`scaleX`/`scaleY` are stored relative to the
@@ -1467,82 +1599,33 @@ function resizeNode(payload: ResizeNodePayload): void {
   const localScaleX = scaleX / ps.scaleX;
   const localScaleY = scaleY / ps.scaleY;
 
-  // Per-property stopwatch contract (see hasAnyTrack): position and scale
-  // decide independently, so scaling an animated-scale layer keyframes scale
-  // while its un-animated position stays a static write.
-  const keyPos = autoKeyframe || hasAnyTrack(node.id, ['x', 'y']);
-  // Whichever property the gesture is actually writing is the one that gets a
-  // keyframe — keyframing Scale on a Size drag would record a value the drag
-  // never changed, and leave the real change un-keyframed.
-  const keySize = sizing && (autoKeyframe || hasAnyTrack(node.id, ['width', 'height']));
-  const keyScale = !sizing && (autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale']));
-
-  if (keyPos || keyScale || keySize) {
-    gestureAnimEdit(
-      'Keyframe Resize',
-      () => {
-        if (keyPos) {
-          defaultAnimation.setKeyframe(node.id, 'x', lt, localCentre.x);
-          defaultAnimation.setKeyframe(node.id, 'y', lt, localCentre.y);
-        }
-        if (keyScale) {
-          defaultAnimation.setKeyframe(node.id, 'scaleX', lt, localScaleX);
-          defaultAnimation.setKeyframe(node.id, 'scaleY', lt, localScaleY);
-        }
-        if (keySize) {
-          defaultAnimation.setKeyframe(node.id, 'width', lt, nextW);
-          defaultAnimation.setKeyframe(node.id, 'height', lt, nextH);
-        }
-      },
-      `drag:resize:${rawTime}:${node.id}`,
-    );
-  }
-
-  // Static base always follows the manipulation (harmless when animated —
-  // animated reads win — and it keeps every consumer in agreement).
-  defaultSceneGraph.writeProp(node.id, cid, 'x', localCentre.x);
-  defaultSceneGraph.writeProp(node.id, cid, 'y', localCentre.y);
+  // Everything the tool resolved is ABSOLUTE against drag-start state (the
+  // ratio contract `resizeRotated.test.ts` pins), so each message is the whole
+  // answer. Per-property stopwatch contract: position and scale (or size)
+  // decide independently whether they key — `trackValueCommands` asks each.
+  const scaleValues = { x: localCentre.x, y: localCentre.y, scaleX: localScaleX, scaleY: localScaleY };
   if (sizing) {
     // Scale is deliberately left ALONE. The drag expressed itself entirely in
     // width/height, and writing the (unchanged) scale back would push the
     // WORLD scale the tool measured onto a node whose own scale is a different
-    // number the moment it has a parent.
-    const sizeCid = transComp?.id ?? cid;
-    defaultSceneGraph.writeProp(node.id, sizeCid, 'width', nextW);
-    defaultSceneGraph.writeProp(node.id, sizeCid, 'height', nextH);
-  } else {
-    defaultSceneGraph.writeProp(node.id, cid, 'scaleX', localScaleX);
-    defaultSceneGraph.writeProp(node.id, cid, 'scaleY', localScaleY);
+    // number the moment it has a parent. Keying Scale on a Size drag would
+    // record a value the drag never changed.
+    const sized = sendLayerValues('Resize', [{ nodeId: node.id as string, values: { x: localCentre.x, y: localCentre.y, width: nextW, height: nextH } }]);
+    if (sized) return;
+    // A layer whose Size the API cannot address keeps scaling — falling back
+    // beats swallowing the gesture (the same rule as a layer with no size).
   }
-  gestureSceneBump();
+  sendLayerValues('Scale', [{ nodeId: node.id as string, values: scaleValues }]);
 }
-
 function rotateNode(payload: RotateNodePayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
-  const cid = transformComponentId(node);
-  if (!cid) return;
-
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  if (!transformComponentId(node)) return;
   // The tool's angle is ABSOLUTE and in WORLD space (it starts from
   // `node.worldMatrix`); `rotation` is stored relative to the parent. Subtract
   // the parent's world rotation — zero, and so a no-op, without a parent.
-  const deg = (payload.rotation * 180) / Math.PI - parentSpaceOf(node.id, rawTime).rotationDeg;
-
-  if (autoKeyframe || hasAnyTrack(node.id, ['rotation'])) {
-    gestureAnimEdit(
-      'Keyframe Rotate',
-      () => {
-        // Layer-local time — no toLayerTime on top (see moveNodes).
-        defaultAnimation.setKeyframe(node.id, 'rotation', getRemappedTime(node.id, rawTime), deg);
-      },
-      `drag:rotate:${rawTime}:${node.id}`,
-    );
-  }
-
-  defaultSceneGraph.writeProp(node.id, cid, 'rotation', deg);
-  gestureSceneBump();
+  const deg = (payload.rotation * 180) / Math.PI - parentSpaceOf(node.id, playheadSeconds()).rotationDeg;
+  sendLayerValues('Rotate', [{ nodeId: node.id as string, values: { rotation: deg } }]);
 }
 
 /**
@@ -1564,9 +1647,8 @@ function multiTransformable(node: SceneNode): boolean {
  * drag. The TOOL resolved everything absolute (per-node world scale and the
  * world point each node's anchor lands on, both derived from drag-START state,
  * the same ratio contract as `resizeNode`); this handler only converts
- * world → parent space and routes the writes down the keyframe-or-static dual
- * path. One `gestureAnimEdit` covers every node, so a drag is ONE undo entry
- * for the keyframed side, exactly like `moveNodes`.
+ * world → parent space. Every node goes in ONE message, so the drag is one
+ * undo entry.
  *
  * `item.position` is the ANCHOR's world point, which is `parentWorld · (x, y)`
  * by the renderer's model — so the layer's own x/y is just the parent inverse
@@ -1575,128 +1657,103 @@ function multiTransformable(node: SceneNode): boolean {
  */
 function multiResizeNodes(payload: MultiResizeNodesPayload): void {
   if (payload.items.length === 0) return;
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const keyed: Array<{ nodeId: ID; prop: string; lt: number; value: number }> = [];
-  let changed = false;
-
+  const rawTime = playheadSeconds();
+  const items: NodeTrackValues[] = [];
   for (const item of payload.items) {
     const node = defaultSceneGraph.getNode(item.id as ID);
     if (!node || node.locked || !multiTransformable(node)) continue;
-    const cid = transformComponentId(node);
-    if (!cid) continue;
-
+    if (!transformComponentId(node)) continue;
     // World → parent space, the space x/y and scaleX/scaleY actually live in.
     const ps = parentSpaceOf(node.id, rawTime);
     const localPos = Matrix.transformPoint(ps.inv, item.position);
-    const localScaleX = item.scale.x / ps.scaleX;
-    const localScaleY = item.scale.y / ps.scaleY;
-
-    // Per-property stopwatch contract (see hasAnyTrack): position and scale
-    // decide independently, per node.
-    const lt = getRemappedTime(node.id, rawTime);
-    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y'])) {
-      keyed.push(
-        { nodeId: node.id, prop: 'x', lt, value: localPos.x },
-        { nodeId: node.id, prop: 'y', lt, value: localPos.y },
-      );
-    }
-    if (autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale'])) {
-      keyed.push(
-        { nodeId: node.id, prop: 'scaleX', lt, value: localScaleX },
-        { nodeId: node.id, prop: 'scaleY', lt, value: localScaleY },
-      );
-    }
-
-    // Static base always follows (harmless when animated — animated reads win).
-    defaultSceneGraph.writeProp(node.id, cid, 'x', localPos.x);
-    defaultSceneGraph.writeProp(node.id, cid, 'y', localPos.y);
-    defaultSceneGraph.writeProp(node.id, cid, 'scaleX', localScaleX);
-    defaultSceneGraph.writeProp(node.id, cid, 'scaleY', localScaleY);
-    changed = true;
+    items.push({
+      nodeId: node.id as string,
+      values: { x: localPos.x, y: localPos.y, scaleX: item.scale.x / ps.scaleX, scaleY: item.scale.y / ps.scaleY },
+    });
   }
-
-  if (keyed.length > 0) {
-    gestureAnimEdit(
-      'Keyframe Resize',
-      () => {
-        for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
-      },
-      // Stable for the whole drag (playhead can't move mid-drag) → ONE undo
-      // entry per gesture, the moveNodes pattern.
-      `drag:multiresize:${rawTime}:${payload.items.map((i) => i.id).join(',')}`,
-    );
-  }
-  if (changed) gestureSceneBump();
+  sendLayerValues('Scale', items);
 }
 
 /**
  * Rotate a multi-selection about the group centre: each node's rotation adds
  * the drag's sweep and its anchor orbits the pivot — both resolved ABSOLUTE by
- * the tool. Same shape as `multiResizeNodes`: world → parent conversion here,
- * dual keyframe/static writes, one merged undo entry per drag.
+ * the tool. Same shape as `multiResizeNodes`.
  */
 function multiRotateNodes(payload: MultiRotateNodesPayload): void {
   if (payload.items.length === 0) return;
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const keyed: Array<{ nodeId: ID; prop: string; lt: number; value: number }> = [];
-  let changed = false;
-
+  const rawTime = playheadSeconds();
+  const items: NodeTrackValues[] = [];
   for (const item of payload.items) {
     const node = defaultSceneGraph.getNode(item.id as ID);
     if (!node || node.locked || !multiTransformable(node)) continue;
-    const cid = transformComponentId(node);
-    if (!cid) continue;
-
+    if (!transformComponentId(node)) continue;
     const ps = parentSpaceOf(node.id, rawTime);
     // The tool's angle is ABSOLUTE world; `rotation` is stored parent-relative
     // — the same subtraction rotateNode performs.
-    const deg = (item.rotation * 180) / Math.PI - ps.rotationDeg;
     const localPos = Matrix.transformPoint(ps.inv, item.position);
-
-    const lt = getRemappedTime(node.id, rawTime);
-    if (autoKeyframe || hasAnyTrack(node.id, ['rotation'])) {
-      keyed.push({ nodeId: node.id, prop: 'rotation', lt, value: deg });
-    }
-    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y'])) {
-      keyed.push(
-        { nodeId: node.id, prop: 'x', lt, value: localPos.x },
-        { nodeId: node.id, prop: 'y', lt, value: localPos.y },
-      );
-    }
-
-    defaultSceneGraph.writeProp(node.id, cid, 'rotation', deg);
-    defaultSceneGraph.writeProp(node.id, cid, 'x', localPos.x);
-    defaultSceneGraph.writeProp(node.id, cid, 'y', localPos.y);
-    changed = true;
+    items.push({
+      nodeId: node.id as string,
+      values: { rotation: (item.rotation * 180) / Math.PI - ps.rotationDeg, x: localPos.x, y: localPos.y },
+    });
   }
-
-  if (keyed.length > 0) {
-    gestureAnimEdit(
-      'Keyframe Rotate',
-      () => {
-        for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
-      },
-      `drag:multirotate:${rawTime}:${payload.items.map((i) => i.id).join(',')}`,
-    );
-  }
-  if (changed) gestureSceneBump();
+  sendLayerValues('Rotate', items);
 }
 
+/**
+ * Pan Behind (AE Y): move the anchor and compensate Position so the layer
+ * stays put. The tool sends the new anchor ABSOLUTE (layer-local); the
+ * compensation is computed from the DRAG-START anchor, position, rotation and
+ * scale — all read at the playhead, animated values winning (see
+ * `moveAnchorCompensated`, whose arithmetic this is) — so every message is
+ * the whole answer and a dropped one loses nothing.
+ */
 function moveAnchor(payload: MoveAnchorPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
-  // moveAnchorCompensated re-pivots and shifts x/y so the layer stays put.
-  moveAnchorCompensated(node.id, payload.anchor.x, payload.anchor.y);
+  const id = node.id as string;
+  const capture = (): { ax: number; ay: number; x: number; y: number; rot: number; sx: number; sy: number } => ({
+    ax: readTransformProp(id, 'anchorX', 0),
+    ay: readTransformProp(id, 'anchorY', 0),
+    x: readTransformProp(id, 'x', 0),
+    y: readTransformProp(id, 'y', 0),
+    rot: readTransformProp(id, 'rotation', 0),
+    sx: readTransformProp(id, 'scaleX', 1),
+    sy: readTransformProp(id, 'scaleY', 1),
+  });
+  const txn = currentToolTransaction();
+  const anchor = { ...payload.anchor };
+  sendLayerValues('Pan Behind', () => {
+    // Captured once per drag, when its first message can go.
+    const st = txn ? txn.memo(`anchor:${id}`, capture) : capture();
+    const d = anchorCompensation(anchor.x - st.ax, anchor.y - st.ay, st.rot, st.sx, st.sy);
+    return [{ nodeId: id, values: { anchorX: anchor.x, anchorY: anchor.y, x: st.x + d.dx, y: st.y + d.dy } }];
+  }, txn);
 }
 
+/**
+ * Delete / Backspace in the viewport: one `deleteLayers` per composition, ONE
+ * entry. Locked layers and composition roots stay (the context menu's Delete
+ * skips them the same way); the rest of the selection is kept.
+ */
 function deleteNodes(payload: DeleteNodesPayload): void {
   if (payload.ids.length === 0) return;
-  for (const id of payload.ids) defaultSceneGraph.removeNode(id as ID);
-  const remaining = useSelectionStore.getState().ids.filter((id) => !payload.ids.includes(id));
-  useSelectionStore.getState().set(remaining);
-  bumpScene();
+  const byComp = new Map<string, string[]>();
+  for (const id of new Set(payload.ids as readonly string[])) {
+    const n = defaultSceneGraph.getNode(id as ID);
+    const comp = n && !n.locked ? compOfLayer(id) : null;
+    if (!comp) continue;
+    const list = byComp.get(comp);
+    if (list) list.push(id);
+    else byComp.set(comp, [id]);
+  }
+  const doomed = [...byComp.values()].flat();
+  if (doomed.length === 0) return;
+  const cmds: Command[] = [...byComp.values()].map((layers) => ({ type: 'deleteLayers', layers }));
+  void runToolEdit(doomed.length === 1 ? 'Delete layer' : 'Delete layers', cmds).then((res) => {
+    if (!res?.ok) return;
+    const remaining = useSelectionStore.getState().ids.filter((id) => !doomed.includes(id));
+    useSelectionStore.getState().set(remaining);
+  });
 }
 
 type PathPoint = import('@motion/workspace').BezierPoint;
@@ -1783,6 +1840,14 @@ function writeGeometryFlags(node: SceneNode, flags: { closed?: boolean; rotoBezi
   if (flags.rotoBezier !== undefined) defaultSceneGraph.writeProp(node.id, geom.id, 'rotoBezier', flags.rotoBezier ? true : undefined);
 }
 
+/*
+ * B3-legacy: engine gap — a shape layer's own outline. The TS engine gives
+ * `path.points` no static value ("key it instead"), a keyed value's BezierPath
+ * drops each vertex's `broken` / `tension` editing state, and Closed /
+ * RotoBezier (`Geometry.open`, `rotoBezier`) and a vertex added or removed on
+ * EVERY keyframe have no command. Direct Selection / Pen edits of a layer's
+ * path keep the legacy writer, one gesture transaction per drag.
+ */
 function updateNodePath(payload: UpdateNodePathPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
@@ -1836,31 +1901,59 @@ function updateNodePath(payload: UpdateNodePathPayload): void {
 /**
  * Reshape one of a layer's masks (the Direct Selection drag on canvas).
  *
- * Routes through `setMaskPoints` with the playhead, so reshaping an ANIMATED
- * mask writes a keyframe at the current time instead of the static shape that
- * nothing renders.
+ * The payload is the WHOLE outline at the playhead (absolute), so it goes to
+ * the engine as the Mask Path at the playhead: a key there on an animated mask
+ * (AE), the shape itself on a static one — one gesture per drag. The engine
+ * maps the comp time onto the layer's keyframe axis, where `buildSnapshot`
+ * reads the mask.
  */
 function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
+  const id = payload.id as string;
+  const topology = payload.topology;
+  const current = readNodeMask(node)?.paths.find((p) => p.id === payload.maskId);
+  const viaEngine = (): boolean =>
+    isLayer(id) && !!current &&
+    // RotoBezier is a mask-level switch the API does not have.
+    payload.rotoBezier === undefined &&
+    // A vertex added / removed on an ANIMATED mask changes every keyframe.
+    !(topology && readNodeMaskAnim(node).length > 0) &&
+    // Split handles / RotoBezier tension would be dropped by a BezierPath.
+    !hasVertexEditState(payload.points) && !hasVertexEditState(current.points);
+  // Decided once per drag, so one gesture never mixes the two histories.
+  const txn = currentToolTransaction();
+  const route = txn ? txn.memo(`maskroute:${id}:${payload.maskId}`, viaEngine) : viaEngine();
+  if (route && current) {
+    sendToolEdit(topology ? TOPOLOGY_LABEL[topology.op] ?? 'Edit Mask' : 'Edit Mask', [{
+      type: 'setProperty',
+      prop: { layer: id, path: paths.mask(payload.maskId, 'path') },
+      value: maskPointsToPath(payload.points as MaskPoint[], payload.closed ?? current.closed),
+      time: compTime(getTimelineController().currentSeconds),
+    }], txn);
+    return;
+  }
+  // B3-legacy: engine gap — RotoBezier (a mask-level switch), a vertex added /
+  // removed on every key of an animated mask, and per-vertex `broken` /
+  // `tension` state have no API form (see the conditions above).
+  //
   // The playhead on the layer's KEYFRAME axis — where `buildSnapshot` reads the
   // mask (`remapOf`), and where the Effects panel, the timeline and the Layer
   // panel write. Raw comp time is the same number only for an untrimmed bar at
   // 0; on a moved or trimmed layer it put the keyframe where the shape is not.
-  const t = compToKeyframeTime(payload.id as string, getTimelineController().currentSeconds);
-  const topology = payload.topology;
+  const t = compToKeyframeTime(id, getTimelineController().currentSeconds);
   if (payload.closed !== undefined || payload.rotoBezier !== undefined) {
-    setMaskPathFlags(payload.id as string, payload.maskId, { closed: payload.closed, rotoBezier: payload.rotoBezier });
+    setMaskPathFlags(id, payload.maskId, { closed: payload.closed, rotoBezier: payload.rotoBezier });
   }
   if (topology) {
     // Adding or deleting a vertex changes every keyframe, not the one at the
     // playhead — see `editMaskPathTopology`. Splitting is linear in the control
     // points, so the shape at the playhead comes out as `payload.points`.
-    editMaskPathTopology(payload.id as string, payload.maskId, (points, closed) =>
+    editMaskPathTopology(id, payload.maskId, (points, closed) =>
       applyPathTopology(points, topology, closed) as MaskPoint[] | null,
     );
   } else {
-    setMaskPoints(payload.id as string, payload.maskId, payload.points as MaskPoint[], t);
+    setMaskPoints(id, payload.maskId, payload.points as MaskPoint[], t);
   }
   gestureSceneBump();
 }
@@ -1957,6 +2050,11 @@ function readCutRuns(node: SceneNode): CutSubpath[] | null {
  * icon's counters are stored). Splitting into sibling LAYERS would need new
  * ids, and layer ids are not stable across a session — so the pieces would be
  * unreachable by anything holding a reference, expressions included.
+ */
+/*
+ * B3-legacy: engine gap — the knife writes a shape layer's `Geometry.subpaths`
+ * (multi-run outline) and flips its `shapeType` to 'path'; the API has no
+ * property for either.
  */
 function cutPaths(payload: CutPathsPayload): void {
   const time = getTimelineController().currentSeconds;

@@ -16,6 +16,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { defaultAnimation } from '@motion/animation';
 import type { SceneNode } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
 import {
   collectDeviceHandles,
   dragDeviceHandleTo,
@@ -134,38 +135,42 @@ describe('the handle sits where the wireframe is', () => {
 });
 
 describe('dragging writes PARENT-SPACE values', () => {
-  it('an unparented camera stores the world position directly', () => {
+  it('an unparented camera stores the world position directly', async () => {
     addCamera();
     dragDeviceHandleTo(handleOf('position', CAM), { x: 1000, y: 200, z: -500 }, 0);
+    await engineIdle();
     expect(props(CAM).x).toBeCloseTo(1000, 4);
     expect(props(CAM).y).toBeCloseTo(200, 4);
     expect(props(CAM).z).toBeCloseTo(-500, 4);
   });
 
-  it('a PARENTED camera stores the value MINUS the parent — no snap-back', () => {
+  it('a PARENTED camera stores the value MINUS the parent — no snap-back', async () => {
     addCamera({ rigX: 3000 });
     // Drop it at world x = 5000. Stored naively that becomes 5000 + 3000 = 8000
     // on the next frame: the camera jumps 3000px away from the cursor.
     dragDeviceHandleTo(handleOf('position', CAM), { x: 5000, y: 200, z: -500 }, 0);
+    await engineIdle();
     expect(props(CAM).x).toBeCloseTo(2000, 4); // 5000 − 3000
   });
 
-  it('lands where the cursor left it: re-resolving reproduces the drop point', () => {
+  it('lands where the cursor left it: re-resolving reproduces the drop point', async () => {
     // The end-to-end invariant — drop, re-collect, and the handle must be back
     // under the pointer. This is what "no snap, no drift" means.
     addCamera({ rigX: 3000 });
     const target = { x: 4321, y: 654, z: -987 };
     dragDeviceHandleTo(handleOf('position', CAM), target, 0);
+    await engineIdle();
     const after = handleOf('position', CAM).world;
     expect(after.x).toBeCloseTo(target.x, 3);
     expect(after.y).toBeCloseTo(target.y, 3);
     expect(after.z).toBeCloseTo(target.z, 3);
   });
 
-  it('the same holds for a parented SPOT LIGHT', () => {
+  it('the same holds for a parented SPOT LIGHT', async () => {
     addSpot(900);
     const target = { x: 1500, y: 300, z: -200 };
     dragDeviceHandleTo(handleOf('position', SPOT), target, 0);
+    await engineIdle();
     expect(props(SPOT).x).toBeCloseTo(600, 4); // 1500 − 900
     const after = handleOf('position', SPOT).world;
     expect(after.x).toBeCloseTo(target.x, 3);
@@ -174,10 +179,11 @@ describe('dragging writes PARENT-SPACE values', () => {
 });
 
 describe('position and target move independently', () => {
-  it('dragging the POI leaves the camera position alone', () => {
+  it('dragging the POI leaves the camera position alone', async () => {
     addCamera({ twoNode: true });
     const before = { x: props(CAM).x, y: props(CAM).y, z: props(CAM).z };
     dragDeviceHandleTo(handleOf('poi', CAM), { x: 100, y: 50, z: 700 }, 0);
+    await engineIdle();
     expect(props(CAM).poiX).toBeCloseTo(100, 4);
     expect(props(CAM).poiZ).toBeCloseTo(700, 4);
     expect(props(CAM).x).toBe(before.x);
@@ -185,36 +191,40 @@ describe('position and target move independently', () => {
     expect(props(CAM).z).toBe(before.z);
   });
 
-  it('dragging the position leaves the POI alone', () => {
+  it('dragging the position leaves the POI alone', async () => {
     // The other direction matters just as much: a target that follows the body
     // can never be aimed.
     addCamera({ twoNode: true });
     const poiBefore = { x: props(CAM).poiX, y: props(CAM).poiY, z: props(CAM).poiZ };
     dragDeviceHandleTo(handleOf('position', CAM), { x: 42, y: 43, z: 44 }, 0);
+    await engineIdle();
     expect(props(CAM).x).toBeCloseTo(42, 4);
     expect(props(CAM).poiX).toBe(poiBefore.x);
     expect(props(CAM).poiY).toBe(poiBefore.y);
     expect(props(CAM).poiZ).toBe(poiBefore.z);
   });
 
-  it('a parented POI is stored in parent space too', () => {
+  it('a parented POI is stored in parent space too', async () => {
     addCamera({ rigX: 3000, twoNode: true });
     dragDeviceHandleTo(handleOf('poi', CAM), { x: 3500, y: 100, z: 0 }, 0);
+    await engineIdle();
     expect(props(CAM).poiX).toBeCloseTo(500, 4); // 3500 − 3000
   });
 });
 
 describe('auto-keyframe', () => {
-  it('creates a keyframe when Auto-Keyframe is ON', () => {
+  it('creates a keyframe when Auto-Keyframe is ON', async () => {
     addCamera();
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     dragDeviceHandleTo(handleOf('position', CAM), { x: 700, y: 300, z: -500 }, 0);
+    await engineIdle();
     expect(defaultAnimation.getTrackKeyframes(CAM, 'x')?.length ?? 0).toBeGreaterThan(0);
   });
 
-  it('creates none when it is OFF — the base prop still moves', () => {
+  it('creates none when it is OFF — the base prop still moves', async () => {
     addCamera();
     dragDeviceHandleTo(handleOf('position', CAM), { x: 700, y: 300, z: -500 }, 0);
+    await engineIdle();
     expect(defaultAnimation.getTrackKeyframes(CAM, 'x')?.length ?? 0).toBe(0);
     expect(props(CAM).x).toBeCloseTo(700, 4);
   });

@@ -66,7 +66,7 @@ import {
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { motionPathKeyframeMenuItems, guideContextMenuItems, convertMotionPathVertex } from './viewportPrecisionMenus';
 import { openGuideEditor } from './GuideEditorDialog';
-import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
+import { beginViewportGesture, cancelToolGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import type { Command } from '@motion/engine-api';
 import { GestureSession } from '@core/engine/uiEdits';
 import {
@@ -1693,6 +1693,16 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       overlay.style.cursor = 'move';
       altHintCursor = true;
     };
+    // Esc mid-drag reverts what the drag has written so far (the engine
+    // gesture is cancelled; the rest of the drag is ignored until release).
+    // Capture phase, so the same Esc does not also clear the selection.
+    const onEscCancel = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      if (!cancelToolGesture()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      controller.requestRender();
+    };
     const onAltUp = (e: KeyboardEvent): void => {
       if (e.key !== 'Alt' || !altHintCursor) return;
       altHintCursor = false;
@@ -2515,6 +2525,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     overlay.addEventListener('contextmenu', onContextMenu);
     overlay.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onAltDown);
+    window.addEventListener('keydown', onEscCancel, true);
     window.addEventListener('keyup', onAltUp);
     // A plugin changing what it wants drawn has to repaint the chrome. It has
     // no frame of its own to wait for: the viewport is otherwise idle between
@@ -2531,6 +2542,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       overlay.removeEventListener('contextmenu', onContextMenu);
       overlay.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onAltDown);
+      window.removeEventListener('keydown', onEscCancel, true);
       window.removeEventListener('keyup', onAltUp);
       guidesSub();
       toolSub();

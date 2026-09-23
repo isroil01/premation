@@ -18,6 +18,7 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
 import { createCommandPort } from '@core/workspace/ports';
+import { engineIdle } from '@core/engine/engineInstance';
 import { buildPropertyRows } from '../../layout/Timeline/buildPropertyRows';
 import { readNodeMaskAnim, type LayerMask, type MaskPoint } from './mask';
 import type { SceneNode } from '@core/types';
@@ -92,13 +93,15 @@ function renderedMaskAt(t: number): LayerMask | undefined {
 }
 
 describe('mask shape keyframes — one time axis for write and read', () => {
-  it('a canvas reshape at comp 2s lands on the keyframe the renderer reads at 2s', () => {
+  it('a canvas reshape at comp 2s lands on the keyframe the renderer reads at 2s', async () => {
     // Guard: the premise. With the bar at 1s, comp 2s is keyframe 1s — if the
     // axes coincided this test could not tell a fix from the bug.
     expect(compToKeyframeTime(LAYER, 2)).toBeCloseTo(1);
 
     getTimelineController().seekSeconds(2);
     createCommandPort().execute(commands.updateMaskPath(LAYER as never, 'm1', square(30) as never));
+    // The reshape is an engine command (B3): it lands asynchronously.
+    await engineIdle();
 
     const node = defaultSceneGraph.getNode(LAYER)!;
     const times = readNodeMaskAnim(node).map((k) => k.t);
@@ -112,9 +115,11 @@ describe('mask shape keyframes — one time axis for write and read', () => {
     expect(m?.paths[0]?.points[2]?.y).toBeCloseTo(30);
   });
 
-  it("the timeline's Mask Shape diamonds sit where the shape changes", () => {
+  it("the timeline's Mask Shape diamonds sit where the shape changes", async () => {
     getTimelineController().seekSeconds(2);
     createCommandPort().execute(commands.updateMaskPath(LAYER as never, 'm1', square(30) as never));
+    // The reshape is an engine command (B3): it lands asynchronously.
+    await engineIdle();
 
     const row = buildPropertyRows(LAYER).find((r) => r.prop === MASK_ANIM_PROP);
     expect(row).toBeDefined();

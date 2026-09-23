@@ -13,7 +13,7 @@ import type { Tool as UITool } from '@stores/uiStore';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { createSceneGraphPort, createSelectionPort, createCommandPort } from './ports';
+import { createSceneGraphPort, createSelectionPort, createCommandPort, nudgeNodes } from './ports';
 import { setRenderFlusher } from '@core/perf/framePump';
 
 /** Map the app's tool-bar tools onto engine tool ids. */
@@ -353,11 +353,14 @@ export class WorkspaceController {
     this.commandPort.execute(commands.deleteNodes([...ids]));
   }
 
-  /** Nudge the selection by a world-space delta (arrow keys). */
+  /**
+   * Nudge the selection by a world-space delta (arrow keys). A held arrow's
+   * repeats are ONE undo entry (`nudgeNodes`' burst).
+   */
   nudgeSelection(dx: number, dy: number): void {
     const ids = useSelectionStore.getState().ids;
     if (ids.length === 0) return;
-    this.commandPort.execute(commands.moveNodes([...ids], { x: dx, y: dy }));
+    nudgeNodes([...ids], dx, dy);
   }
 }
 

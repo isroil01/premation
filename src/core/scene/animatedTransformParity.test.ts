@@ -31,6 +31,7 @@ import { world2DAt } from '@core/scene/layerSpace';
 import { readGeometry } from '@core/workspace/geometry';
 import { createCommandPort, createSceneGraphPort } from '@core/workspace/ports';
 import { commands } from '@motion/workspace';
+import { engineIdle } from '@core/engine/engineInstance';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
@@ -167,7 +168,7 @@ describe('commands that must respect the PARENT chain', () => {
     expect(poseAt('d2', 1).x).toBeCloseTo(100, 4);
   });
 
-  test('rotating a layer under a ROTATED parent lands at the angle asked for', () => {
+  test('rotating a layer under a ROTATED parent lands at the angle asked for', async () => {
     add(layer('rp', 'null', 0, 0, { rotation: 30 }));
     add(layer('rc', 'shape', 200, 0));
     reparentNode('rc', 'rp');
@@ -175,12 +176,13 @@ describe('commands that must respect the PARENT chain', () => {
 
     // The tool always sends the ABSOLUTE angle it measured off the world matrix.
     createCommandPort().execute(commands.rotateNode('rc', (10 * Math.PI) / 180, { x: 0, y: 0 }) as never);
+    await engineIdle(); // an engine command (B3): lands asynchronously
 
     // 10°, not 40° — the parent's 30° must not be counted twice.
     expect(poseAt('rc', 1).rotation).toBeCloseTo(10, 3);
   });
 
-  test('resizing a layer under a SCALED, OFFSET parent lands where it is asked to', () => {
+  test('resizing a layer under a SCALED, OFFSET parent lands where it is asked to', async () => {
     add(layer('sp', 'null', 400, 0, { scaleX: 2, scaleY: 2 }));
     add(layer('sc', 'shape', 100, 0));
     reparentNode('sc', 'sp');
@@ -194,6 +196,7 @@ describe('commands that must respect the PARENT chain', () => {
       { x: 1.5, y: 1.5 },      // the WORLD scale the tool resolved
       { x: 100, y: 0 },        // the WORLD centre it wants
     ) as never);
+    await engineIdle();
 
     // 1.5× at world x 100 — not 3× at 600, which is what writing the tool's
     // world numbers straight into parent-space props produced.

@@ -3,9 +3,15 @@
  *
  * Both input paths drive these: Alt+drag / Alt+wheel (modifier nav in
  * useWorkspace) and the C-key camera tool (left-drag orbit/pan/dolly cycling).
- * Writes go to BASE Transform props via updateNodeComponentProp — the same
- * path CameraSection's fields use — so no keyframes are created and the
- * inspector live-updates.
+ * Scene-camera writes go through the engine API (B3): one engine gesture per
+ * drag (the viewport's pointer gesture) or per wheel burst, keyed at the
+ * playhead when the property is animated or Auto-Keyframe is on. The math is
+ * incremental (each tick turns the camera by the pointer's step), so the
+ * action keeps a SHADOW of the values it has written and reads them back —
+ * every message then carries the camera's absolute state.
+ *
+ * Custom and axis views are NOT the document: their orbit / track / dolly
+ * write `guidesStore` view params or the viewport pan/zoom (editor state).
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -16,12 +22,18 @@ import { cameraFromNode, defaultFocalLength, viewCameraNode } from '@core/scene/
 import { isSceneCameraView, orthoViewOf, type CameraViewMode } from '@core/scene/cameraViewMode';
 import { nodeWorldWithParents3d } from '@core/scene/liveWorld3d';
 import { readGeometry } from '@core/workspace/geometry';
-import { applyNodePropsKeyframed } from '@core/workspace/ports';
-import { bumpScene } from '@stores/sceneStore';
+import { sendNodeValues } from '@core/workspace/ports';
+import {
+  burstTransaction,
+  currentToolTransaction,
+  openBurstTransaction,
+  type ToolTransaction,
+} from '@core/workspace/viewportGesture';
+import { defaultAnimation } from '@motion/animation';
 import { useGuidesStore, type Camera3dMode, type CameraOrbitPivot } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getTime } from '@stores/playbackClockStore';
-import { governingClipsFor } from '@core/timeline/TimelineController';
+import { getRemappedTime, governingClipsFor } from '@core/timeline/TimelineController';
 import { Matrix4Math, Project3D, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
@@ -121,7 +133,39 @@ export function notifyCameraTipIfMissing(
   }
 }
 
+/** Idle after which a wheel dolly's burst of ticks becomes one undo entry. */
+export const CAMNAV_BURST_MS = 400;
+
+const camKey = (nodeId: string): string => `camnav:${nodeId}`;
+
+/**
+ * The tool action a camera write belongs to: the viewport's pointer gesture
+ * (a drag), else a burst (Alt+wheel / the eased dolly, which write outside
+ * any pointer gesture).
+ */
+function camTxn(nodeId: string): ToolTransaction {
+  return currentToolTransaction() ?? burstTransaction(camKey(nodeId), CAMNAV_BURST_MS);
+}
+
+/** The values the current action has written to this camera (its shadow). */
+function camShadow(nodeId: string): Record<string, number> | undefined {
+  const txn = currentToolTransaction() ?? openBurstTransaction(camKey(nodeId));
+  return txn?.peek<Record<string, number>>(camKey(nodeId));
+}
+
+/**
+ * A camera prop as the NEXT navigation step must see it: what this action
+ * already wrote (the engine applies messages asynchronously, and an animated
+ * prop takes a key rather than a new static value), else the value at the
+ * playhead (animated winning), else the static prop.
+ */
 export function readCamProp(nodeId: string, prop: string): number | undefined {
+  const shadowed = camShadow(nodeId)?.[prop];
+  if (shadowed !== undefined) return shadowed;
+  if (defaultAnimation.isAnimated(nodeId, prop)) {
+    const v = defaultAnimation.sample(nodeId, prop, getRemappedTime(nodeId, getTime()));
+    if (v !== undefined) return v;
+  }
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return undefined;
   for (const c of node.components) {
@@ -133,37 +177,32 @@ export function readCamProp(nodeId: string, prop: string): number | undefined {
 
 /**
  * Write one camera prop. Prefer {@link writeCamProps} when a gesture changes
- * several at once — a single call is a single undo entry.
+ * several at once.
  */
-export function writeCamProp(nav: CameraNavTarget, prop: string, value: number): void {
-  writeCamProps(nav, { [prop]: value });
+export function writeCamProp(nav: CameraNavTarget, prop: string, value: number, label = 'Camera'): void {
+  writeCamProps(nav, { [prop]: value }, label);
 }
 
 /**
- * Write camera props through the SAME dual path the layer gizmo uses: the
- * static base prop always, plus a keyframe when the prop is already animated or
- * Auto-Keyframe is on.
- *
- * This used to call `updateNodeComponentProp` directly — base props only — so
- * the camera tools could move a camera but never animate one. With
- * Auto-Keyframe on, dragging a layer's gizmo keyframed and dragging the camera
- * did not, which is not a distinction After Effects makes.
- *
- * All of a gesture's props go in ONE call so orbit (yaw + pitch) and track
- * (x + y + POI) each collapse to a single undo entry instead of two or four.
+ * Write camera props as part of the current action — ONE engine gesture per
+ * drag or wheel burst, the whole shadow (every prop this action changed, at
+ * its latest value) in each message, so each message is absolute. A property
+ * already animated — or any while Auto-Keyframe is on — keys at the playhead:
+ * the camera tools animate a camera exactly as the layer gizmo animates a
+ * layer, which is what After Effects does.
  */
-export function writeCamProps(nav: CameraNavTarget, values: Readonly<Record<string, number>>): void {
-  // Merge key stable for the gesture: the playhead cannot move mid-drag, so
-  // every write in one drag coalesces.
-  applyNodePropsKeyframed(nav.nodeId, values, `camnav:${nav.nodeId}`);
+export function writeCamProps(nav: CameraNavTarget, values: Readonly<Record<string, number>>, label = 'Camera'): void {
+  const txn = camTxn(nav.nodeId);
+  const shadow = txn.memo<Record<string, number>>(camKey(nav.nodeId), () => ({}));
+  Object.assign(shadow, values);
+  sendNodeValues(nav.nodeId, { ...shadow }, label, camKey(nav.nodeId), txn);
 }
 
 /** Orbit: swing the camera around its point of interest. Sensitivity 0.4°/px. */
 export function orbitCameraBy(nav: CameraNavTarget, dx: number, dy: number): void {
   const yaw = (readCamProp(nav.nodeId, 'orbitYaw') ?? 0) + dx * 0.4;
   const pitch = Math.max(-89, Math.min(89, (readCamProp(nav.nodeId, 'orbitPitch') ?? 0) + dy * 0.4));
-  writeCamProps(nav, { orbitYaw: yaw, orbitPitch: pitch });
-  bumpScene();
+  writeCamProps(nav, { orbitYaw: yaw, orbitPitch: pitch }, 'Orbit Camera');
 }
 
 // ── Orbit about an arbitrary world pivot (AE's Orbit Around Cursor / Scene) ──
@@ -215,8 +254,8 @@ function rotYawPitchInv(v: Vec3, yawDeg: number, pitchDeg: number): Vec3 {
  *    exactly how the POI orbit composes drags); the base position is solved
  *    back through the new angles so the resolved eye is the rotated one.
  *
- * One `writeCamProps` call per drag tick = one undo entry per gesture, the
- * same contract every other nav write keeps.
+ * One `writeCamProps` call per drag tick; the drag is one engine gesture =
+ * one undo entry, the same contract every other nav write keeps.
  */
 export function orbitCameraAboutPivot(
   nav: CameraNavTarget,
@@ -250,7 +289,7 @@ export function orbitCameraAboutPivot(
     writeCamProps(nav, {
       x: base2.x, y: base2.y, z: base2.z,
       poiX: poi2.x, poiY: poi2.y, poiZ: poi2.z,
-    });
+    }, 'Orbit Camera');
   } else {
     const centre = v3(compWidth / 2, compHeight / 2, 0);
     const eye = Project3D.orbitCamera(base, centre, yaw, pitch).position;
@@ -264,9 +303,8 @@ export function orbitCameraAboutPivot(
     writeCamProps(nav, {
       x: base2.x, y: base2.y, z: base2.z,
       orbitYaw: newYaw, orbitPitch: newPitch,
-    });
+    }, 'Orbit Camera');
   }
-  bumpScene();
 }
 
 /**
@@ -390,8 +428,7 @@ export function trackCameraBy(
     y: cy - dy / s,
     ...(poiX !== undefined ? { poiX: poiX - dx / s } : {}),
     ...(poiY !== undefined ? { poiY: poiY - dy / s } : {}),
-  });
-  bumpScene();
+  }, 'Track Camera');
 }
 
 /**
@@ -403,8 +440,7 @@ export function trackCameraBy(
 export function dollyCameraBy(nav: CameraNavTarget, delta: number, compWidth: number): void {
   const focal = readCamProp(nav.nodeId, 'focalLength') ?? defaultFocalLength(compWidth || 1920);
   const z = readCamProp(nav.nodeId, 'z') ?? -focal;
-  writeCamProp(nav, 'z', z - delta * 2);
-  bumpScene();
+  writeCamProp(nav, 'z', z - delta * 2, 'Dolly Camera');
 }
 
 // ── Mode-aware navigation (scene camera OR custom view) ────────────────────

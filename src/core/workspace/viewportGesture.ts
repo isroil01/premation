@@ -28,9 +28,24 @@
  *
  * Outside a gesture every helper falls through to the classic path, so
  * keyboard nudges, AI tools and tests behave exactly as before.
+ *
+ * ── The engine side (B3) ─────────────────────────────────────────────────
+ *
+ * The tools' writes now go to the engine API as ONE engine gesture per pointer
+ * gesture: `sendToolEdit` opens a `ToolTransaction` (a `GestureSession`) on the
+ * gesture's first write and sends each message through it — latest wins, so
+ * every message must carry ABSOLUTE values (docs/B3_PATTERNS.md §3); the
+ * transaction's `memo` holds the drag-start state the writers compute them
+ * from. `endViewportGesture` commits it (one undo entry), `cancelToolGesture`
+ * (Esc) reverts it. A write outside any pointer gesture is a one-shot `edit`,
+ * or — for key/wheel repeats that should read as one action — a BURST: one
+ * transaction kept open while the presses keep coming, committed after a
+ * short idle (the timeline's keyframe nudge does the same).
  */
 
+import type { Command } from '@motion/engine-api';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
+import { edit, GestureSession } from '@core/engine/uiEdits';
 import { bumpScene, bumpSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 
@@ -51,6 +66,8 @@ export function viewportGestureActive(): boolean {
 /** Open a gesture. Pair with `endViewportGesture` on pointerup/cancel/blur. */
 export function beginViewportGesture(): void {
   depth++;
+  // A press ends any key/wheel burst: the burst and the drag are two actions.
+  if (depth === 1) flushToolBursts();
   /*
     The gesture IS the drag, so it raises the drag flag itself.
 
@@ -77,6 +94,9 @@ export function endViewportGesture(): void {
   depth--;
   if (depth > 0) return;
   useUIStore.getState().setDragging(false);
+  const txn = pointerTxn;
+  pointerTxn = null;
+  if (txn) void txn.end();
   const pending = tx;
   tx = null;
   if (pending) recordAnimEdit(pending.commit(txLabel, txMergeKey));
@@ -87,6 +107,11 @@ export function endViewportGesture(): void {
 }
 
 /**
+ * B3-legacy: the legacy writers' transaction (`gestureAnimEdit` below and the
+ * record in `endViewportGesture`) — kept for the edits the engine cannot
+ * address yet (drawn layers, shape paths, the knife, RotoBezier / split-handle
+ * mask edits, the gizmo / camera fallbacks). Deleted with them.
+ *
  * `runAnimEdit`, gesture-aware: inside a gesture the mutation applies directly
  * under the gesture's single transaction; outside it is the classic
  * capture-per-call. The LAST label/mergeKey of the gesture wins — they are
@@ -115,4 +140,262 @@ export function gestureSceneBump(): void {
   }
   structuralDirty = true;
   bumpSceneRevision();
+}
+
+// ── Engine transactions (B3) ──────────────────────────────────────────────
+
+/**
+ * One tool action as ONE engine gesture = one undo entry.
+ *
+ * The session opens lazily, on the first write, with that write's label — a
+ * press that edits nothing (a click that only selects) records nothing. After
+ * `cancel` every later write of the same action is dropped: the pointer is
+ * still down and the tool keeps sending, but the user has said no.
+ */
+/** Commands, or a builder that makes them when the message can be sent. */
+export type ToolCommands = readonly Command[] | (() => readonly Command[] | null);
+
+function resolveCommands(c: ToolCommands): readonly Command[] {
+  return (typeof c === 'function' ? c() : c) ?? [];
+}
+
+export class ToolTransaction {
+  private session: GestureSession | null = null;
+  /** Waiting for the previous action's gesture to close before opening ours. */
+  private opening: Promise<void> | null = null;
+  /** The latest message sent while `opening` (latest wins, as in a session). */
+  private queued: { label: string; commands: ToolCommands } | null = null;
+  private cancelled = false;
+  private done = false;
+  private readonly scratch = new Map<string, unknown>();
+
+  /**
+   * Send the edit for the CURRENT state (absolute values; latest wins).
+   *
+   * `commands` may be a BUILDER: it runs when the message can actually go —
+   * at once while the gesture is open, else once the previous action's
+   * gesture has closed — so a drag-start state it captures (`memo`) is read
+   * from a document that already holds the previous action. Only the latest
+   * builder runs; a builder returning null or [] sends nothing.
+   */
+  send(label: string, commands: ToolCommands): void {
+    if (this.cancelled || this.done) return;
+    if (this.session) {
+      const list = resolveCommands(commands);
+      if (list.length > 0) this.session.send(list);
+      return;
+    }
+    // The engine holds ONE gesture at a time, and the previous action's end
+    // is asynchronous (a nudge burst committed by this very press, a drag
+    // released a frame ago): open ours only once that one has closed, or the
+    // engine would see two and commit the older one into ours.
+    const open = (label: string, commands: ToolCommands): void => {
+      const list = resolveCommands(commands);
+      if (list.length === 0) return;
+      this.session = new GestureSession(label);
+      this.session.send(list);
+    };
+    if (pendingEnds === 0 && !this.opening) {
+      // Nothing is closing: open now (the common case — no extra hop).
+      open(label, commands);
+      return;
+    }
+    this.queued = { label, commands };
+    this.opening ??= settleToolEdits().then(() => {
+      const q = this.queued;
+      this.queued = null;
+      if (!q || this.cancelled) return;
+      open(q.label, q.commands);
+    });
+  }
+
+  /** Per-action state (the drag-start values): computed once, then reused. */
+  memo<T>(key: string, init: () => T): T {
+    if (this.scratch.has(key)) return this.scratch.get(key) as T;
+    const v = init();
+    this.scratch.set(key, v);
+    return v;
+  }
+
+  /** The memo under `key`, if this action made one. */
+  peek<T>(key: string): T | undefined {
+    return this.scratch.get(key) as T | undefined;
+  }
+
+  /** True once a write has been sent. */
+  get hasEdits(): boolean {
+    return this.session !== null || this.opening !== null;
+  }
+
+  get isCancelled(): boolean {
+    return this.cancelled;
+  }
+
+  /** Commit (default) or revert. Idempotent. */
+  end(commit = true): Promise<void> {
+    if (this.done) return Promise.resolve();
+    this.done = true;
+    return trackEnd((async () => {
+      if (this.opening) await this.opening;
+      const s = this.session;
+      this.session = null;
+      this.scratch.clear();
+      if (s) await s.end(commit && !this.cancelled);
+    })());
+  }
+
+  /** Esc: revert everything this action wrote; ignore what it sends next. */
+  cancel(): Promise<void> {
+    this.cancelled = true;
+    this.queued = null;
+    return trackEnd((async () => {
+      if (this.opening) await this.opening;
+      const s = this.session;
+      this.session = null;
+      if (s) await s.cancel();
+    })());
+  }
+}
+
+/** Every tool action's close (commit / revert), chained in order. */
+let endsSettled: Promise<void> = Promise.resolve();
+
+/** Ends still in flight — while 0, a new action opens without waiting. */
+let pendingEnds = 0;
+
+function trackEnd(p: Promise<void>): Promise<void> {
+  pendingEnds += 1;
+  const chained = endsSettled.then(() => p).catch(() => { /* reported by the session */ })
+    .finally(() => { pendingEnds -= 1; });
+  endsSettled = chained;
+  return chained;
+}
+
+/**
+ * Resolves once every tool action ended so far has closed its engine
+ * gesture. A one-shot edit (Delete, a click) and the next action's gesture
+ * wait for it; tests await it before `engineIdle()`.
+ */
+export function settleToolEdits(): Promise<void> {
+  return endsSettled;
+}
+
+/** The transaction of the pointer gesture in flight (created on first use). */
+let pointerTxn: ToolTransaction | null = null;
+
+/**
+ * The open pointer gesture's transaction, or null outside a pointer gesture
+ * (a keyboard edit, a test calling a port directly).
+ */
+export function currentToolTransaction(): ToolTransaction | null {
+  if (depth === 0) return null;
+  pointerTxn ??= new ToolTransaction();
+  return pointerTxn;
+}
+
+/**
+ * Esc during a viewport drag: revert what the drag has written so far and
+ * ignore the rest of it. Returns whether there was anything to revert.
+ */
+export function cancelToolGesture(): boolean {
+  const txn = pointerTxn;
+  if (!txn || !txn.hasEdits || txn.isCancelled) return false;
+  void txn.cancel();
+  return true;
+}
+
+// ── Bursts (key repeats, wheel ticks) ─────────────────────────────────────
+
+interface Burst {
+  key: string;
+  txn: ToolTransaction;
+  timer: ReturnType<typeof setTimeout> | null;
+  idleMs: number;
+}
+
+let burst: Burst | null = null;
+let burstListening = false;
+
+const onBurstKey = (e: KeyboardEvent): void => {
+  // Arrow repeats continue a nudge burst; anything else (Ctrl+Z included) is
+  // a new action and must find the burst committed.
+  if (burst && !(burst.key.startsWith('nudge') && e.key.startsWith('Arrow'))) flushToolBursts();
+};
+const onBurstPointer = (): void => {
+  flushToolBursts();
+};
+
+function listenForBurstEnd(on: boolean): void {
+  if (typeof window === 'undefined' || on === burstListening) return;
+  burstListening = on;
+  if (on) {
+    window.addEventListener('keydown', onBurstKey, true);
+    window.addEventListener('pointerdown', onBurstPointer, true);
+  } else {
+    window.removeEventListener('keydown', onBurstKey, true);
+    window.removeEventListener('pointerdown', onBurstPointer, true);
+  }
+}
+
+/**
+ * The transaction of the burst `key` — opened on the first call, kept while
+ * calls keep coming within `idleMs` of each other, committed after that idle
+ * (or at once by another key, a press, or a burst with a different key).
+ */
+export function burstTransaction(key: string, idleMs: number): ToolTransaction {
+  if (burst && burst.key !== key) flushToolBursts();
+  if (!burst) {
+    burst = { key, txn: new ToolTransaction(), timer: null, idleMs };
+    listenForBurstEnd(true);
+  }
+  const b = burst;
+  if (b.timer !== null) clearTimeout(b.timer);
+  b.timer = setTimeout(() => {
+    if (burst === b) flushToolBursts();
+  }, b.idleMs);
+  return b.txn;
+}
+
+/** The OPEN burst `key`'s transaction, without opening or extending one. */
+export function openBurstTransaction(key: string): ToolTransaction | null {
+  return burst && burst.key === key ? burst.txn : null;
+}
+
+/** Commit any open burst now. */
+export function flushToolBursts(): void {
+  const b = burst;
+  if (!b) return;
+  burst = null;
+  if (b.timer !== null) clearTimeout(b.timer);
+  listenForBurstEnd(false);
+  void b.txn.end();
+}
+
+/** Whether a burst is open (tests). */
+export function toolBurstOpen(): boolean {
+  return burst !== null;
+}
+
+/**
+ * Send a tool's edit: into the open pointer gesture's transaction, else into
+ * `txn` when the caller has one (a burst), else as a one-shot `edit`.
+ */
+export function sendToolEdit(label: string, commands: ToolCommands, txn: ToolTransaction | null = currentToolTransaction()): void {
+  if (txn) {
+    txn.send(label, commands);
+    return;
+  }
+  void runToolEdit(label, commands);
+}
+
+/**
+ * A one-shot tool edit (a key press, a click) as ONE entry — after any tool
+ * action still closing, so it never meets that action's open gesture.
+ */
+export function runToolEdit(label: string, commands: ToolCommands): Promise<Awaited<ReturnType<typeof edit>> | null> {
+  const run = async (): Promise<Awaited<ReturnType<typeof edit>> | null> => {
+    const list = resolveCommands(commands);
+    return list.length > 0 ? edit(label, list) : null;
+  };
+  return pendingEnds === 0 ? run() : settleToolEdits().then(run);
 }

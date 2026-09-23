@@ -15,6 +15,13 @@
  * them morph through each other. So all four edit the static outline AND every
  * keyframe, the way `editMaskPathTopology` adds a vertex. Each command is one
  * undo step (`runDocumentEdit` snapshots scene and animation together).
+ *
+ * B3-legacy: engine gap — every verb here edits what the API cannot address
+ * yet: a shape layer's own outline (`path.points` has no static value in the
+ * TS engine; Closed / RotoBezier / a vertex order applied to EVERY key have
+ * no command), a mask's RotoBezier switch, and per-vertex `broken` / `tension`
+ * state (BezierPath drops it). They stay on `runDocumentEdit` until the
+ * engine grows path topology commands.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';

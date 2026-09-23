@@ -22,6 +22,7 @@ import { commands } from '@motion/workspace';
 import { useProjectStore } from '@stores/projectStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { reparentNode } from '@core/scene/parenting';
+import { engineIdle } from '@core/engine/engineInstance';
 import type { SceneNode } from '@core/types';
 
 function layer(id: string, kind: string, x: number, y: number, extra: Record<string, unknown> = {}): SceneNode {
@@ -82,7 +83,7 @@ beforeEach(() => {
 const port = () => createCommandPort();
 
 describe('multiResizeNodes', () => {
-  test('scales a group about one pivot: scale multiplies, anchors spread by the ratio', () => {
+  test('scales a group about one pivot: scale multiplies, anchors spread by the ratio', async () => {
     add(layer('a', 'shape', 100, 0));
     add(layer('b', 'shape', 300, 0));
 
@@ -92,12 +93,13 @@ describe('multiResizeNodes', () => {
       { id: 'a', scale: { x: 2, y: 2 }, position: { x: 100, y: 0 } },
       { id: 'b', scale: { x: 2, y: 2 }, position: { x: 500, y: 0 } },
     ]) as never);
+    await engineIdle();
 
     expect(poseAt('a', 1)).toMatchObject({ x: 100, scaleX: 2 });
     expect(poseAt('b', 1)).toMatchObject({ x: 500, scaleX: 2 });
   });
 
-  test('a layer under a SCALED, OFFSET parent lands exactly where it was asked to', () => {
+  test('a layer under a SCALED, OFFSET parent lands exactly where it was asked to', async () => {
     add(layer('sp', 'null', 400, 0, { scaleX: 2, scaleY: 2 }));
     add(layer('sc', 'shape', 100, 0));
     reparentNode('sc', 'sp'); // world pose preserved: still at world 100, ×1
@@ -106,6 +108,7 @@ describe('multiResizeNodes', () => {
     port().execute(commands.multiResizeNodes([
       { id: 'sc', scale: { x: 1.5, y: 1.5 }, position: { x: 100, y: 0 } },
     ]) as never);
+    await engineIdle();
 
     // 1.5× at world 100 — writing the tool's world numbers straight into
     // parent-space props would have produced 3× at 600.
@@ -113,7 +116,7 @@ describe('multiResizeNodes', () => {
     expect(poseAt('sc', 1).x).toBeCloseTo(100, 3);
   });
 
-  test('an ANIMATED layer keyframes at the playhead instead of a discarded static write', () => {
+  test('an ANIMATED layer keyframes at the playhead instead of a discarded static write', async () => {
     add(layer('k', 'shape', 100, 100));
     defaultAnimation.setKeyframes('k', 'x', [{ t: 0, value: 100 }, { t: 2, value: 900 }]);
     expect(poseAt('k', 1).x).toBe(500);
@@ -121,6 +124,7 @@ describe('multiResizeNodes', () => {
     port().execute(commands.multiResizeNodes([
       { id: 'k', scale: { x: 2, y: 2 }, position: { x: 600, y: 100 } },
     ]) as never);
+    await engineIdle();
 
     // x is tracked, so the write became a keyframe AT t=1 …
     expect(defaultAnimation.sample('k', 'x', 1)).toBeCloseTo(600, 4);
@@ -129,7 +133,7 @@ describe('multiResizeNodes', () => {
     expect(defaultAnimation.sample('k', 'x', 0)).toBeCloseTo(100, 4);
   });
 
-  test('a locked layer in the selection stays put', () => {
+  test('a locked layer in the selection stays put', async () => {
     add(layer('l', 'shape', 100, 0));
     const node = defaultSceneGraph.getNode('l')!;
     (node as { locked: boolean }).locked = true;
@@ -137,13 +141,14 @@ describe('multiResizeNodes', () => {
     port().execute(commands.multiResizeNodes([
       { id: 'l', scale: { x: 2, y: 2 }, position: { x: 700, y: 0 } },
     ]) as never);
+    await engineIdle();
 
     expect(poseAt('l', 1)).toMatchObject({ x: 100, scaleX: 1 });
   });
 });
 
 describe('multiRotateNodes', () => {
-  test('rotates a group about its centre: anchors orbit, rotations add', () => {
+  test('rotates a group about its centre: anchors orbit, rotations add', async () => {
     add(layer('a', 'shape', 100, 0));
     add(layer('b', 'shape', 300, 0));
 
@@ -153,12 +158,13 @@ describe('multiRotateNodes', () => {
       { id: 'a', rotation: q, position: { x: 200, y: -100 } },
       { id: 'b', rotation: q, position: { x: 200, y: 100 } },
     ]) as never);
+    await engineIdle();
 
     expect(poseAt('a', 1)).toMatchObject({ x: 200, y: -100, rotation: 90 });
     expect(poseAt('b', 1)).toMatchObject({ x: 200, y: 100, rotation: 90 });
   });
 
-  test('a layer under a ROTATED parent lands at the angle asked for, not angle + parent', () => {
+  test('a layer under a ROTATED parent lands at the angle asked for, not angle + parent', async () => {
     add(layer('rp', 'null', 0, 0, { rotation: 30 }));
     add(layer('rc', 'shape', 200, 0));
     reparentNode('rc', 'rp');
@@ -167,6 +173,7 @@ describe('multiRotateNodes', () => {
     port().execute(commands.multiRotateNodes([
       { id: 'rc', rotation: (10 * Math.PI) / 180, position: { x: 200, y: 0 } },
     ]) as never);
+    await engineIdle();
 
     // 10°, not 40° — the parent's 30° must not be counted twice; and the
     // orbit target is a WORLD point, converted through the parent inverse.
@@ -175,7 +182,7 @@ describe('multiRotateNodes', () => {
     expect(poseAt('rc', 1).y).toBeCloseTo(0, 3);
   });
 
-  test('an ANIMATED rotation keyframes at the playhead', () => {
+  test('an ANIMATED rotation keyframes at the playhead', async () => {
     add(layer('kr', 'shape', 100, 0));
     defaultAnimation.setKeyframes('kr', 'rotation', [{ t: 0, value: 0 }, { t: 2, value: 180 }]);
     expect(poseAt('kr', 1).rotation).toBeCloseTo(90, 3);
@@ -183,6 +190,7 @@ describe('multiRotateNodes', () => {
     port().execute(commands.multiRotateNodes([
       { id: 'kr', rotation: Math.PI / 3, position: { x: 100, y: 0 } },
     ]) as never);
+    await engineIdle();
 
     expect(defaultAnimation.sample('kr', 'rotation', 1)).toBeCloseTo(60, 3);
     expect(poseAt('kr', 1).rotation).toBeCloseTo(60, 3);

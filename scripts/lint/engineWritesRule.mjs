@@ -104,6 +104,8 @@ const NOT_DOCUMENT_MODULES = [
   '@core/audio/audioHardware', // device selection
   '@core/tracking/samModelInstall', // model download cache
   '@core/workspace/cameraBookmarks', // viewport view state
+  '@core/plugins/uiTools', // which plugin tool is active (editor state)
+  '@core/plugins/uiCanvas', // plugin on-canvas draw lists (overlay, not the document)
 ];
 
 /** Names that match WRITE_VERB but are not document writes. Reason each. */
@@ -114,6 +116,7 @@ const NOT_WRITES = new Set([
   'clearRestMeshCache', // render cache
   'setFocusedExpressionRow', // which row has keyboard focus (editor state)
   'mergeRanges', // pure range arithmetic
+  'applyTextPath', // pure glyph layout along a path (core/text/textPath)
   'resetProjectWorkspace', // project lifecycle (tabs/timelines), not an edit
   'deleteEffectPreset', 'deletePreset', 'importPresets', 'importPresetObjects', // preset LIBRARY, not the document
 ]);
@@ -307,6 +310,9 @@ export const AREAS = [
   ['layers', /^src\/layout\/Scene\//],
   ['comps/assets/dialogs', /^src\/(layout\/(Composition|Assets|Project|Export|RenderQueue|Templates|Swatches|Transcript)\/|pages\/)/],
   ['AI/plugins/commands', /^src\/(layout\/(AiChat|Plugins|CommandPalette|Menu|TitleBar|TopNav)\/|App\.tsx$)/],
+  // Core code that writes the document on the 2D tools' behalf: the workspace
+  // ports, camera navigation, device handles (src/core/workspace).
+  ['tools/core', /^src\/core\/workspace\//],
   ['other', /./],
 ];
 
