@@ -20,3 +20,10 @@ target_include_directories(motion_eval
 
 target_compile_features(motion_eval PUBLIC cxx_std_20)
 target_link_libraries(motion_eval PRIVATE motion::options)
+
+# The libraries above motion_eval in the §3 order. Added from here (rather
+# than the top-level CMakeLists) so each new library lands without touching
+# the workspace file; the binary dirs mirror libs/<name>.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../motion_jsmath ${CMAKE_CURRENT_BINARY_DIR}/../motion_jsmath)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../motion_expr ${CMAKE_CURRENT_BINARY_DIR}/../motion_expr)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../motion_transform ${CMAKE_CURRENT_BINARY_DIR}/../motion_transform)

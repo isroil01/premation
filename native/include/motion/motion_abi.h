@@ -37,7 +37,7 @@ extern "C" {
 #endif
 
 #define MOTION_ABI_VERSION_MAJOR 0
-#define MOTION_ABI_VERSION_MINOR 1
+#define MOTION_ABI_VERSION_MINOR 2
 
 /** (MAJOR << 16) | MINOR, so callers can compare a single integer. */
 #define MOTION_ABI_VERSION_PACKED \

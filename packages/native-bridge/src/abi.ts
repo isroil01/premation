@@ -8,7 +8,7 @@
 import type { EasingKind, SpatialInterp } from '@motion/animation';
 
 export const NATIVE_ABI_VERSION_MAJOR = 0;
-export const NATIVE_ABI_VERSION_MINOR = 1;
+export const NATIVE_ABI_VERSION_MINOR = 2;
 /** (MAJOR << 16) | MINOR — what `motion_abi_version()` returns. */
 export const NATIVE_ABI_VERSION_PACKED =
   (NATIVE_ABI_VERSION_MAJOR << 16) | NATIVE_ABI_VERSION_MINOR;

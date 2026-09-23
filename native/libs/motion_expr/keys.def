@@ -1,0 +1,62 @@
+// Every property name the interpreter gives meaning to, as an X-macro.
+//
+//   K(ident)             the name is the identifier itself
+//   KN(ident, "name")    the name is not a C++ identifier
+//
+// Member reads resolve their key to a KeyId once — at PARSE time for `a.b`,
+// at run time (binary search over the sorted names) for `a[expr]` — so a
+// member read is an integer switch, not a string compare. A name missing
+// from this list simply reads `undefined` everywhere, as an unknown property
+// does in JavaScript. Order is irrelevant (the table is sorted at startup).
+
+// Blocked (prototype-chain escapes; exprLang.ts BLOCKED_PROPS)
+KN(k_proto_escape, "__proto__")
+K(constructor)
+K(prototype)
+
+// Math
+K(abs) K(acos) K(acosh) K(asin) K(asinh) K(atan) K(atanh) K(atan2) K(ceil) K(cbrt) K(expm1)
+K(clz32) K(cos) K(cosh) K(exp) K(floor) K(fround) K(hypot) K(imul) K(log) K(log1p) K(log2)
+K(log10) K(max) K(min) K(pow) K(random) K(round) K(sign) K(sin) K(sinh) K(sqrt) K(tan) K(tanh)
+K(trunc) K(f16round) K(E) K(LN10) K(LN2) K(LOG10E) K(LOG2E) K(PI) K(SQRT1_2) K(SQRT2)
+
+// Object.prototype
+K(toString) K(valueOf) K(hasOwnProperty) K(isPrototypeOf) K(propertyIsEnumerable) K(toLocaleString)
+
+// Function.prototype
+K(call) K(apply)
+
+// Number.prototype
+K(toFixed) K(toPrecision) K(toExponential)
+
+// String.prototype (+ length, shared with Array)
+K(length) K(at) K(charAt) K(charCodeAt) K(codePointAt) K(concat) K(endsWith) K(includes)
+K(indexOf) K(lastIndexOf) K(padEnd) K(padStart) K(repeat) K(replace) K(replaceAll) K(slice)
+K(split) K(startsWith) K(substr) K(substring) K(toLowerCase) K(toUpperCase)
+K(toLocaleLowerCase) K(toLocaleUpperCase) K(trim) K(trimStart) K(trimEnd) K(trimLeft)
+K(trimRight) K(isWellFormed)
+K(anchor) K(big) K(blink) K(bold) K(fixed) K(fontcolor) K(fontsize) K(italics) K(link) K(small)
+K(strike) K(sub) K(sup)
+
+// Array.prototype
+K(every) K(fill) K(filter) K(find) K(findIndex) K(findLast) K(findLastIndex) K(flat)
+K(join) K(map) K(pop) K(push) K(reduce) K(reduceRight) K(reverse) K(shift) K(some) K(sort)
+K(unshift) K(forEach) K(toReversed)
+
+// thisComp / thisLayer / thisProperty / layer objects / key(n) / markers / rects
+K(width) K(height) K(duration) K(frameDuration) K(fps) K(numLayers) K(layer) K(marker)
+K(name) K(toComp) K(toWorld) K(fromComp) K(fromWorld) K(text) K(value) K(valueAtTime)
+K(velocity) K(speed) K(velocityAtTime) K(loopOut) K(loopIn) K(index) K(time) K(top) K(left)
+K(comment) K(numKeys) K(key) K(nearestKey) K(sourceText)
+
+// Source Text: text.sourceText and its style object (sourceText.ts)
+K(style) K(getStyleAt)
+K(font) K(fontSize) K(fillColor) K(strokeColor) K(strokeWidth) K(tracking) K(leading)
+K(isFauxBold) K(isFauxItalic) K(isAllCaps) K(isSmallCaps) K(applyFill) K(applyStroke)
+K(baselineShift) K(horizontalScaling) K(verticalScaling) K(justification) K(firstLineIndent)
+K(leftMargin) K(rightMargin) K(spaceBefore) K(spaceAfter) K(direction) K(leadingType)
+K(setFont) K(setFontSize) K(setFillColor) K(setStrokeColor) K(setStrokeWidth) K(setTracking)
+K(setLeading) K(setFauxBold) K(setFauxItalic) K(setAllCaps) K(setSmallCaps) K(setApplyFill)
+K(setApplyStroke) K(setBaselineShift) K(setHorizontalScaling) K(setVerticalScaling)
+K(setJustification) K(setFirstLineIndent) K(setLeftMargin) K(setRightMargin) K(setSpaceBefore)
+K(setSpaceAfter) K(setDirection) K(setLeadingType) K(setText)

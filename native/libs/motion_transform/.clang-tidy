@@ -1,0 +1,22 @@
+# Inherits native/.clang-tidy; the two checks below are off for this library,
+# each for a stated reason (the same bar the parent file sets).
+#
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#   cppcoreguidelines-pro-bounds-constant-array-index
+#       New in clang-tidy 21+ (CI's clang-tidy 18 does not have the first) and
+#       they fire on every `v[i]` — including motion_eval's, which fails them
+#       locally too. This library is a line-by-line port of index-based
+#       TypeScript/fdlibm arithmetic whose bounds are established by the loop
+#       structure; `.at()` everywhere would add a branch per element in the
+#       per-frame paths and make the port harder to review against the source
+#       without catching anything the ASan/UBSan suite does not.
+#   modernize-use-designated-initializers
+#       Points and matrix rows here are positional by convention — {x, y, z},
+#       16 column-major doubles — exactly as the TypeScript writes its
+#       `[a0, a1, …]` tuples; naming every coordinate would triple the length
+#       of the formulas that must be compared line by line with the source.
+InheritParentConfig: true
+Checks: >
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -modernize-use-designated-initializers
