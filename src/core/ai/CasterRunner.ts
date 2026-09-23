@@ -405,7 +405,7 @@ export async function runCasterPipeline(
   writeNames: Set<string>,
   tally?: (toolName: string) => void,
 ): Promise<CasterRunResult> {
-  const comp = ctx.comp.get();
+  const comp = await ctx.comp.get();
 
   // Decode in parallel with the brief — do not wait here.
   const audioPromise = analyseSceneAudioForCaster();
@@ -552,7 +552,7 @@ async function runFitCritic(
 ): Promise<string | undefined> {
   try {
     o.events?.onActivity?.('Reviewing the result…');
-    const comp = ctx.comp.get();
+    const comp = await ctx.comp.get();
     const evidence = await renderCritiqueEvidence(ctx, comp.durationSeconds);
     if (!evidence.length) {
       recordAiPathFailure('caster', 'fit critic skipped — no frames rendered');

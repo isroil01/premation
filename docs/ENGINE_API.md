@@ -1070,6 +1070,42 @@ drops the rest (main dropped ~28 % of 60 Hz announcements at a 30 fps comp
 while idle frames re-rendered); the engine surface keeps its last frame after
 a fallback.
 
+### 15.6 B5 — AI tools, scripts and command logs on the API
+
+**AI tools.** The `ToolContext` facades (`packages/ai-tools/src/types.ts`) are async
+and speak composition time; the context carries the turn's `AiEngineSession`
+(`apply(commands)`, `query(q)`, `legacy(gap)`). An AI turn is ONE gesture labelled
+after the turn, origin `ai` (`src/core/ai/aiTransaction.ts`): the whole turn is one
+undo entry and one replayable span of the command log; rollback is
+`endGesture{commit:false}`. The host facades (`src/core/ai/toolContext.ts`) send
+engine commands where the API expresses the tool's write EXACTLY and fall back to the
+pre-engine writer otherwise, naming the gap (`LEGACY_GAPS`); an engine refusal also
+falls back (nothing changed). A turn with any gap — or any write the engine saw
+around it (`documentReset{resync}`) — commits as one whole-document snapshot entry
+instead (still one undo step, not replayable). `runToolTurn(label, calls)` runs tool
+calls as a turn without a model.
+
+**Command logs.** `src/core/automation/commandLog.ts`: `await recordSession()` → `stop()`
+returns JSON lines (the engine's own log + `gestureSeq` in the header);
+`replaySession(log)` rebuilds the app engine and replays; `writesAroundEngine` says
+whether the recording is exact. The app records when `setCommandLogRecording(true)`
+(development builds, `VITE_RECORD_COMMAND_LOG=1`). `premation render … --commands
+<log.jsonl>` replays a log before rendering. Dev handle: `window.__premationAutomation`.
+
+**Scripts.** `src/core/scripting/`: `runScript(source, {consent})` runs the source in a
+dedicated Worker (no DOM, storage or network) with one global, `premation`
+(`execute`/`batch`/`query`/`onEvents`/`log`). Permissions `document.read` /
+`document.write` are declared in a `// @permissions` header and granted per run;
+control and io commands are never available. One run = one gesture `Script: <name>`,
+origin `script`; a throw, a timeout or a crash rolls it back.
+
+Gaps found (engine side, not changed by B5): gesture ids are not in the log header's
+id counters (the recorder stores `gestureSeq`, the replay burns empty gestures to
+align); the app's Edit ▸ Undo / Ctrl+Z steps the history directly
+(`CommandSystem.undo` → `EngineHistoryEntry.undo`) instead of sending `undo`, so a
+keyboard undo moves the revision without a log record; `applyPreset` applies at comp
+seconds without converting to the layer's keyframe axis.
+
 ## 16. Files
 
 | Path | What |

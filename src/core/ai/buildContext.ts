@@ -95,9 +95,9 @@ CONSTRAINTS
  * The always-on preamble: comp settings, playhead, selection, and the shape of
  * the layer tree — not its contents.
  */
-export function buildContextPreamble(ctx: ToolContext): string {
-  const comp = ctx.comp.get();
-  const all = ctx.scene.all();
+export async function buildContextPreamble(ctx: ToolContext): Promise<string> {
+  const comp = await ctx.comp.get();
+  const all = await ctx.scene.all();
   const selection = ctx.scene.selection();
 
   const topLevel = all.filter((n) => !n.parent);
@@ -119,11 +119,11 @@ export function buildContextPreamble(ctx: ToolContext): string {
 
 
   if (selection.length) {
-    const named = selection
-      .map((id) => {
-        const n = ctx.scene.get(id);
+    const named = (await Promise.all(selection
+      .map(async (id) => {
+        const n = await ctx.scene.get(id);
         return n ? `${n.name} (${n.id}, ${n.kind})` : id;
-      })
+      })))
       .join(', ');
     lines.push(`Selected: ${named}.`);
   } else {

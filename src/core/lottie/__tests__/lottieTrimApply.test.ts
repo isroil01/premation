@@ -5,7 +5,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { createToolContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/ai/toolContext';
 import { readTrimOp, pathOpPropPath } from '@core/scene/pathOps';
 import { planLottieImport, type LottieJson } from '../lottieImport';
 import { applyImportPlan } from '../lottieImportApply';
@@ -54,7 +54,7 @@ describe('Lottie trim paths → trim operator', () => {
     expect(plan.layers.length).toBe(1);
     expect(plan.layers[0]!.trim).toBeDefined();
 
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
     const node = findByName('line');
     const op = readTrimOp(node);
     expect(op).not.toBeNull();

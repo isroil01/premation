@@ -10,6 +10,7 @@ module.exports = {
   moduleNameMapper: {
     '^@motion/design-system$': '<rootDir>/../design-system/src/index.ts',
     '^@motion/ai-tools$': '<rootDir>/../ai-tools/src/index.ts',
+    '^@motion/engine-api$': '<rootDir>/../engine-api/src/index.ts',
     '^@motion/technique-library$': '<rootDir>/../technique-library/src/index.ts',
     '^@motion/product-motion$': '<rootDir>/../product-motion/src/index.ts',
   },

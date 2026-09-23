@@ -93,10 +93,10 @@ const kinds = (f: Finding[]): string[] => f.map((x) => x.kind);
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the audit\'s false positives stay unflagged', () => {
-  it('does not flag a light sweep that starts offscreen and animates across', () => {
+  it('does not flag a light sweep that starts offscreen and animates across', async () => {
     // Flagged twice by the naive verifier. The sweep is at x = -480 by design
     // and travels to x = 2400 — a static bounds check sees only the start.
-    const findings = verifyScene(ctxOf([
+    const findings = await verifyScene(ctxOf([
       {
         id: 'sweep', name: 'Light Sweep', width: 400, height: 1080,
         tracks: { x: [{ t: 0.77, value: -480 }, { t: 1.67, value: 2400 }] },
@@ -105,20 +105,20 @@ describe('the audit\'s false positives stay unflagged', () => {
     expect(kinds(findings)).not.toContain('offscreen');
   });
 
-  it('does not flag ambient orbs sharing a single opacity keyframe', () => {
+  it('does not flag ambient orbs sharing a single opacity keyframe', async () => {
     // Flagged twice as "5 layers at 0.000s". One keyframe is a constant, not
     // an entrance — these orbs never animate at all.
     const orbs: FakeLayer[] = Array.from({ length: 5 }, (_, i) => ({
       id: `orb${i}`, name: `Orb ${i}`, width: 120, height: 120,
       tracks: { opacity: [{ t: 0, value: 40 }] },
     }));
-    expect(kinds(verifyScene(ctxOf(orbs)))).not.toContain('simultaneous');
+    expect(kinds(await verifyScene(ctxOf(orbs)))).not.toContain('simultaneous');
   });
 
-  it('does not flag a blur_resolve title as opacity-only', () => {
+  it('does not flag a blur_resolve title as opacity-only', async () => {
     // Flagged once. blur_resolve pairs the fade with an EFFECT parameter
     // rather than a transform, which is still a proper entrance.
-    const findings = verifyScene(ctxOf([
+    const findings = await verifyScene(ctxOf([
       {
         id: 'title', name: 'Title', width: 800, height: 120,
         tracks: {
@@ -130,10 +130,10 @@ describe('the audit\'s false positives stay unflagged', () => {
     expect(kinds(findings)).not.toContain('opacity-only');
   });
 
-  it('does not flag a layer that fades up from opacity 0', () => {
+  it('does not flag a layer that fades up from opacity 0', async () => {
     // The same trap as the light sweep, one axis over: a layer whose opacity
     // STARTS at zero is the normal case, not an invisible layer.
-    const findings = verifyScene(ctxOf([
+    const findings = await verifyScene(ctxOf([
       {
         id: 'a', name: 'Fader', width: 400, height: 200, opacity: 0,
         tracks: {
@@ -151,30 +151,30 @@ describe('the audit\'s false positives stay unflagged', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('real defects are caught', () => {
-  it('flags a keyframe past the end of the composition', () => {
-    const findings = verifyScene(ctxOf([
+  it('flags a keyframe past the end of the composition', async () => {
+    const findings = await verifyScene(ctxOf([
       { id: 'a', name: 'Late', width: 100, height: 100, tracks: { x: [{ t: 0, value: 960 }, { t: 9, value: 100 }] } },
     ], 5));
     expect(kinds(findings)).toContain('past-end');
     expect(findings.find((f) => f.kind === 'past-end')!.message).toContain('9.00s');
   });
 
-  it('flags a layer parked outside the frame for the whole composition', () => {
-    const findings = verifyScene(ctxOf([
+  it('flags a layer parked outside the frame for the whole composition', async () => {
+    const findings = await verifyScene(ctxOf([
       { id: 'a', name: 'Lost', width: 100, height: 100, x: -900, y: 540 },
     ]));
     expect(kinds(findings)).toContain('offscreen');
   });
 
-  it('flags a layer that is transparent throughout', () => {
-    const findings = verifyScene(ctxOf([
+  it('flags a layer that is transparent throughout', async () => {
+    const findings = await verifyScene(ctxOf([
       { id: 'a', name: 'Ghost', width: 100, height: 100, opacity: 0 },
     ]));
     expect(kinds(findings)).toContain('invisible');
   });
 
-  it('flags a bare fade with no accompanying motion', () => {
-    const findings = verifyScene(ctxOf([
+  it('flags a bare fade with no accompanying motion', async () => {
+    const findings = await verifyScene(ctxOf([
       {
         id: 'a', name: 'Flat', width: 400, height: 200,
         tracks: { opacity: [{ t: 0, value: 0 }, { t: 0.5, value: 100 }] },
@@ -183,7 +183,7 @@ describe('real defects are caught', () => {
     expect(kinds(findings)).toContain('opacity-only');
   });
 
-  it('flags four or more layers entering together', () => {
+  it('flags four or more layers entering together', async () => {
     const layers: FakeLayer[] = Array.from({ length: 4 }, (_, i) => ({
       id: `c${i}`, name: `Card ${i}`, width: 300, height: 400,
       tracks: {
@@ -191,13 +191,13 @@ describe('real defects are caught', () => {
         y: [{ t: 0, value: 600 }, { t: 0.5, value: 540 }],
       },
     }));
-    const findings = verifyScene(ctxOf(layers));
+    const findings = await verifyScene(ctxOf(layers));
     const sim = findings.find((f) => f.kind === 'simultaneous');
     expect(sim).toBeDefined();
     expect(sim!.nodeIds).toHaveLength(4);
   });
 
-  it('does not flag a properly staggered group', () => {
+  it('does not flag a properly staggered group', async () => {
     // The compose tools stagger at ~0.10s offsets. That must read as correct,
     // or the verifier fights the technique library it is meant to protect.
     const layers: FakeLayer[] = [0.22, 0.33, 0.42, 0.52].map((t, i) => ({
@@ -207,7 +207,7 @@ describe('real defects are caught', () => {
         y: [{ t, value: 600 }, { t: t + 0.5, value: 540 }],
       },
     }));
-    expect(kinds(verifyScene(ctxOf(layers)))).not.toContain('simultaneous');
+    expect(kinds(await verifyScene(ctxOf(layers)))).not.toContain('simultaneous');
   });
 });
 
@@ -225,8 +225,8 @@ describe('formatFindings', () => {
 });
 
 describe('a clean scene produces nothing', () => {
-  it('passes a well-formed staggered composition', () => {
-    const findings = verifyScene(ctxOf([
+  it('passes a well-formed staggered composition', async () => {
+    const findings = await verifyScene(ctxOf([
       { id: 'bg', name: 'Background', width: 1920, height: 1080 },
       {
         id: 'title', name: 'Title', width: 900, height: 140,

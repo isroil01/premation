@@ -9,7 +9,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { createToolContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/ai/toolContext';
 import { readNodeStroke } from '@core/paint/stroke';
 import { planLottieImport, type LottieJson } from '../lottieImport';
 import { applyImportPlan } from '../lottieImportApply';
@@ -79,7 +79,7 @@ describe('Lottie st → stroke + tracks', () => {
 
   it('applies the fields onto the node stroke and the tracks onto the animation', () => {
     const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith(STROKE)] });
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
     const node = findByName('line');
     const s = readNodeStroke(node)!;
     expect(s).toMatchObject({ color: '#ff0000', opacity: 0.5, cap: 'round', join: 'bevel', miterLimit: 7, dash: [10, 5], dashOffset: 0 });
@@ -137,7 +137,7 @@ describe('Lottie st → stroke + tracks', () => {
   it('bm on a stroke becomes its blend mode', () => {
     const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith({ ...STROKE, bm: 1 })] });
     expect(plan.layers[0]!.stroke!.blendMode).toBe('multiply');
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
     expect(readNodeStroke(findByName('line'))!.blendMode).toBe('multiply');
   });
 
@@ -159,7 +159,7 @@ describe('Lottie gs → gradient stroke paint', () => {
       g: { p: 2, k: { a: 0, k: [0, 1, 0, 0, 1, 0, 0, 1] } },
     })] });
     expect(plan.warnings.some((w) => /gradient/i.test(w))).toBe(false);
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
     const s = readNodeStroke(findByName('line'))!;
     expect(s.opacity).toBeCloseTo(0.8);
     expect(s.cap).toBe('butt');
@@ -179,7 +179,7 @@ describe('Lottie gs → gradient stroke paint', () => {
       h: { a: 0, k: 40 }, a: { a: 0, k: 30 },
       g: { p: 2, k: { a: 0, k: [0, 1, 1, 1, 1, 0, 0, 0] } },
     })] });
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
     const s = readNodeStroke(findByName('line'))!;
     expect(s.paint?.type).toBe('radial');
     expect(s.gradient).toEqual({ startX: 0, startY: 0, endX: 1, endY: 0.5, highlightLength: 0.4, highlightAngle: 30 });

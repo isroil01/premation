@@ -7,5 +7,8 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.test.json' }],
   },
+  moduleNameMapper: {
+    '^@motion/engine-api$': '<rootDir>/../engine-api/src/index.ts',
+  },
   testMatch: ['**/*.test.ts'],
 };

@@ -454,7 +454,7 @@ export function useAiChat(): UseAiChat {
   useEffect(() => () => {
     abort.current?.abort();
     if (pendingTxRef.current) {
-      pendingTxRef.current.rollback();
+      void pendingTxRef.current.rollback();
       pendingTxRef.current = null;
     }
   }, []);
@@ -531,7 +531,7 @@ export function useAiChat(): UseAiChat {
   useEffect(() => {
     let live = true;
     if (pendingTxRef.current) {
-      pendingTxRef.current.rollback();
+      void pendingTxRef.current.rollback();
       pendingTxRef.current = null;
     }
     setHasPendingTx(false);
@@ -610,7 +610,7 @@ export function useAiChat(): UseAiChat {
 
   const acceptPending = useCallback(() => {
     if (!pendingTxRef.current) return;
-    pendingTxRef.current.commit();
+    void pendingTxRef.current.commit();
     pendingTxRef.current = null;
     setHasPendingTx(false);
     setPendingChanges([]);
@@ -632,7 +632,7 @@ export function useAiChat(): UseAiChat {
 
   const discardPending = useCallback(() => {
     if (!pendingTxRef.current) return;
-    pendingTxRef.current.rollback();
+    void pendingTxRef.current.rollback();
     pendingTxRef.current = null;
     setHasPendingTx(false);
     setPendingChanges([]);
@@ -660,7 +660,7 @@ export function useAiChat(): UseAiChat {
   const newChat = useCallback(() => {
     abort.current?.abort();
     if (pendingTxRef.current) {
-      pendingTxRef.current.rollback();
+      void pendingTxRef.current.rollback();
       pendingTxRef.current = null;
     }
     setHasPendingTx(false);

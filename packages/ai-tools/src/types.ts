@@ -5,13 +5,16 @@
  * Gemini, MCP) — so a tool is described exactly once and can never drift
  * between providers, or between this editor and the backend.
  *
- * This package is deliberately pure: no DOM, no zustand, no `@core`, no
- * `@motion/*`. Handlers are **injected by the host** rather than defined here.
- * That is what lets Electron's main process, the renderer, and the NestJS
+ * This package is deliberately pure: no DOM, no zustand, no `@core`. Its one
+ * dependency is the engine API's TYPES (`@motion/engine-api`, type-only): a
+ * handler talks to the engine through the `ToolContext`. Handlers are
+ * **injected by the host** rather than defined here. That is what lets Electron's main process, the renderer, and the NestJS
  * backend all read the same schemas, and it is also how the undo boundary is
  * enforced — a handler can only touch what its `ToolContext` hands it, and the
  * context has no access to the command history.
  */
+
+import type { Command, CommandResult, EngineClient, Origin, QueryOf, QueryResults, QueryType } from '@motion/engine-api';
 
 /** A JSON Schema fragment. Structural only — validation lives in schema.ts. */
 export interface JsonSchema {
@@ -80,22 +83,80 @@ export interface ToolResult {
   data?: unknown;
 }
 
-/** Scene reads + structural writes. No history access, by design. */
+// ── The engine seam (NATIVE_CORE_PLAN §5 B5, ENGINE_API.md §12) ─────
+//
+// Every facade below is ASYNC. A tool handler never assumes a write has landed
+// in the same tick, and never reads the document behind the engine's back: a
+// write is a command sent to the engine, a read-back is a query (or, until the
+// B4 mirror, a host read of the mirror the engine keeps current). That is what
+// lets the same handlers drive the TypeScript engine today and the C++ engine
+// process tomorrow — the host swaps the `EngineClient`, not the tools.
+
+/**
+ * The engine session one AI turn (or one script run) writes through.
+ *
+ * The host opens it around the turn: a gesture labelled after the turn, so the
+ * whole turn is ONE undo entry and one replayable stretch of the command log,
+ * and cancelling it (`endGesture{commit:false}`) is the rollback. Handlers do
+ * not see the gesture — they only `apply` commands and `query`.
+ */
+export interface AiEngineSession {
+  /** The engine every request goes to. Requests carry `origin` (`ai`, `script`). */
+  readonly client: EngineClient;
+  /** Who is asking: `ai` for a turn, `script` for a user script. */
+  readonly origin: Origin;
+  /**
+   * Apply edit commands NOW, inside the turn. One command is sent as is; more
+   * than one as ONE batch (all-or-nothing). A typed engine error throws
+   * `AiEngineError` — nothing changed — which the registry hands to the model
+   * as a failed tool call.
+   */
+  apply(commands: readonly Command[], label?: string): Promise<CommandResult[]>;
+  /** Read (read-back after a write). A typed error throws `AiEngineError`. */
+  query<T extends QueryType>(query: QueryOf<T>): Promise<QueryResults[T]>;
+  /**
+   * Record that a write went AROUND the engine (a legacy writer the engine API
+   * cannot express yet), naming the gap. The host then commits the turn as a
+   * whole-document snapshot entry instead of an engine entry: still one undo
+   * step, but not replayable from the command log.
+   */
+  legacy(gap: string): void;
+  /** The gaps recorded so far this turn (empty = the turn is engine-only). */
+  readonly legacyGaps: readonly string[];
+}
+
+/** A typed engine refusal, thrown by `AiEngineSession.apply` / `query`. */
+export class AiEngineError extends Error {
+  readonly code: string;
+  readonly commandIndex: number | undefined;
+  constructor(code: string, message: string, commandIndex?: number) {
+    super(message);
+    this.name = 'AiEngineError';
+    this.code = code;
+    this.commandIndex = commandIndex;
+  }
+}
+
+/**
+ * Scene reads + structural writes. No history access, by design.
+ *
+ * Reads describe the document as the engine left it after every write this
+ * turn has awaited. Writes resolve once the engine applied them.
+ */
 export interface SceneFacade {
-  has(nodeId: string): boolean;
-  /** Real hierarchy walk. Do not use SceneGraph.traverse — it is flat. */
-  all(): readonly SceneNodeView[];
-  get(nodeId: string): SceneNodeView | undefined;
+  has(nodeId: string): Promise<boolean>;
+  /** Real hierarchy walk, parents before children. */
+  all(): Promise<readonly SceneNodeView[]>;
+  get(nodeId: string): Promise<SceneNodeView | undefined>;
   /** Closest existing ids to a bad one, for "did you mean" repair hints. */
-  nearest(nodeId: string, limit?: number): string[];
-  create(kind: string, name: string, at?: { x: number; y: number }): string;
-  remove(nodeId: string): void;
+  nearest(nodeId: string, limit?: number): Promise<string[]>;
+  create(kind: string, name: string, at?: { x: number; y: number }): Promise<string>;
+  remove(nodeId: string): Promise<void>;
   /** Re-parent a node. By default the node keeps its WORLD pose (local transform
    *  is recompensated). Pass `{ preserveWorld: false }` to keep the LOCAL
-   *  transform instead — used by importers whose locals are already
-   *  parent-relative (e.g. Lottie). */
-  reparent(nodeId: string, parentId: string | null, options?: { preserveWorld?: boolean }): void;
-  setProp(nodeId: string, prop: string, value: unknown): boolean;
+   *  transform instead. */
+  reparent(nodeId: string, parentId: string | null, options?: { preserveWorld?: boolean }): Promise<void>;
+  setProp(nodeId: string, prop: string, value: unknown): Promise<boolean>;
   /**
    * Add an effect, returning its id.
    *
@@ -104,35 +165,25 @@ export interface SceneFacade {
    * without this it has no way to keyframe `effect.<id>.<param>` on an effect it
    * just added. Ignored if the node already carries an effect with that id.
    */
-  addEffect(nodeId: string, type: string, id?: string): string;
-  updateEffect(nodeId: string, effectId: string, amount: number): void;
+  addEffect(nodeId: string, type: string, id?: string): Promise<string>;
+  updateEffect(nodeId: string, effectId: string, amount: number): Promise<void>;
   /**
-   * Set a **named** effect parameter.
-   *
-   * `updateEffect` only reaches an effect's *primary* param, which made most of
-   * the effect registry unreachable: a drop-shadow has distance / angle /
-   * softness / colour / opacity, and only one of them could be set. Authoring a
-   * layered elevation stack, a tinted shadow, or an angled gradient is
-   * impossible without this. (`add_effect`'s own description already told the
-   * model to use `update_effect_param` — a tool that did not exist.)
+   * Set a **named** effect parameter (`updateEffect` only reaches the primary
+   * one; a drop shadow has distance / angle / softness / colour / opacity).
    */
-  updateEffectParam(nodeId: string, effectId: string, key: string, value: number | string | boolean): void;
+  updateEffectParam(nodeId: string, effectId: string, key: string, value: number | string | boolean): Promise<void>;
   /** Effects currently on a layer, so a handler can find one it did not create. */
-  listEffects(nodeId: string): readonly { id: string; type: string }[];
-  removeEffect(nodeId: string, effectId: string): void;
-  /**
-   * Wrap layers into a nested composition and return the new group's id.
-   * Nesting is how complexity grows without the step count exploding — one
-   * transform on the precomp moves everything inside it, and `timeRemap` on it
-   * retimes the whole subtree.
-   */
-  precompose(nodeIds: readonly string[], name: string): string;
+  listEffects(nodeId: string): Promise<readonly { id: string; type: string }[]>;
+  removeEffect(nodeId: string, effectId: string): Promise<void>;
+  /** Wrap layers into a nested composition and return the new composition LAYER's id. */
+  precompose(nodeIds: readonly string[], name: string): Promise<string>;
   /** Enable/disable time remapping on a group/precomp layer. */
-  setTimeRemapEnabled(nodeId: string, enabled: boolean): boolean;
+  setTimeRemapEnabled(nodeId: string, enabled: boolean): Promise<boolean>;
+  /** The editor's layer selection. Editor state, not document state — synchronous. */
   selection(): readonly string[];
-  setPuppet(nodeId: string, puppet: any): void;
+  setPuppet(nodeId: string, puppet: unknown): Promise<void>;
   /** The layer's puppet pins (id + name), or undefined if the layer isn't rigged. */
-  readPuppet(nodeId: string): { pins: readonly { id: string; name: string }[] } | undefined;
+  readPuppet(nodeId: string): Promise<{ pins: readonly { id: string; name: string }[] } | undefined>;
 }
 
 export interface SceneNodeView {
@@ -162,68 +213,76 @@ export interface SceneNodeView {
   animated: readonly string[];
 }
 
-/** Animation reads + writes. Times here are LAYER time; convert via TimeFacade. */
+/**
+ * Animation reads + writes.
+ *
+ * Every time here is COMPOSITION seconds — the engine API's own axis. The
+ * engine converts to each property's stored keyframe axis (trim, split,
+ * stretch, precomp nesting) in ONE place, for the value and its easing alike,
+ * which is the whole of bug B1's fix: a handler can no longer convert one and
+ * forget the other, because it converts neither.
+ */
 export interface AnimFacade {
-  isValidProp(nodeId: string, prop: string): boolean;
-  setKeyframe(nodeId: string, prop: string, t: number, value: number, easing?: string): void;
+  isValidProp(nodeId: string, prop: string): Promise<boolean>;
+  setKeyframe(nodeId: string, prop: string, t: number, value: number, easing?: string): Promise<void>;
   /**
    * Upsert a `points`-kind data keyframe (e.g. a puppet pin's position track,
-   * `puppet.<pinId>.position`). `t` is LAYER time. Points are non-scalar, so they
-   * go through the data-track engine rather than setKeyframe.
+   * `puppet.<pinId>.position`).
    */
-  setPointsKeyframe(nodeId: string, prop: string, t: number, points: readonly { x: number; y: number }[]): void;
-  removeKeyframe(nodeId: string, prop: string, t: number): void;
-  setEasing(nodeId: string, prop: string, t: number, easing: string): void;
-  setBezier(nodeId: string, prop: string, t: number, bezier: readonly number[]): void;
-  setRoving(nodeId: string, prop: string, t: number, roving: boolean): void;
-  setExpression(nodeId: string, prop: string, src: string): void;
-  getExpressionError(nodeId: string, prop: string): string | null;
+  setPointsKeyframe(nodeId: string, prop: string, t: number, points: readonly { x: number; y: number }[]): Promise<void>;
+  removeKeyframe(nodeId: string, prop: string, t: number): Promise<void>;
+  setEasing(nodeId: string, prop: string, t: number, easing: string): Promise<void>;
+  setBezier(nodeId: string, prop: string, t: number, bezier: readonly number[]): Promise<void>;
+  setRoving(nodeId: string, prop: string, t: number, roving: boolean): Promise<void>;
+  setExpression(nodeId: string, prop: string, src: string): Promise<void>;
+  getExpressionError(nodeId: string, prop: string): Promise<string | null>;
   /**
-   * Does the expression currently DRIVE the property?
-   *
-   * The engine preserves a disabled expression's enabled state across a
-   * rewrite, so `setExpression` succeeding stopped being the same claim as
-   * "this now overrides the keyframes". The tool has to ask, or it reports a
-   * change the user will not see.
+   * Does the expression currently DRIVE the property? (A disabled expression
+   * keeps its enabled state across a rewrite, so writing one is not the same
+   * claim as "this now overrides the keyframes".)
    */
-  isExpressionEnabled(nodeId: string, prop: string): boolean;
-  tracks(nodeId: string): readonly { prop: string; keyframes: readonly KeyframeView[] }[];
-  evaluate(nodeId: string, t: number): Record<string, number>;
-  applyPreset(nodeId: string, name: string, atTime: number): boolean;
-  listPresets(): readonly string[];
+  isExpressionEnabled(nodeId: string, prop: string): Promise<boolean>;
+  /** Keyframes per animated prop; `t` in composition seconds. */
+  tracks(nodeId: string): Promise<readonly { prop: string; keyframes: readonly KeyframeView[] }[]>;
+  /** Animated values at composition time `t`. */
+  evaluate(nodeId: string, t: number): Promise<Record<string, number>>;
+  applyPreset(nodeId: string, name: string, atTime: number): Promise<boolean>;
+  listPresets(): Promise<readonly string[]>;
 }
 
 export interface KeyframeView {
+  /** Composition seconds. */
   t: number;
   value: number;
   easing: string;
 }
 
+export interface CompSettingsView {
+  width: number; height: number; fps: number; durationSeconds: number; background: string;
+}
+
 export interface CompFacade {
-  get(): { width: number; height: number; fps: number; durationSeconds: number; background: string };
-  update(patch: Partial<{ width: number; height: number; fps: number; durationSeconds: number; background: string }>): void;
-  /** Current playhead, in composition seconds. */
+  get(): Promise<CompSettingsView>;
+  update(patch: Partial<CompSettingsView>): Promise<void>;
+  /** Current playhead, in composition seconds. Transport state — synchronous. */
   playhead(): number;
   /**
    * Composition-level motion blur: shutter angle, phase, and sample count.
-   *
-   * Per-layer `motionBlur` is only an opt-in switch — the shutter that decides
-   * whether a fast move reads as *rendered* or as *stepped* lives here, and it
-   * was invisible to the AI entirely. 180° is the film default; 16+ samples is
-   * what stops a fast move banding.
+   * 180° is the film default; 16+ samples is what stops a fast move banding.
    */
-  motionBlur(): { enabled: boolean; shutterAngle: number; shutterPhase: number; samples: number };
-  setMotionBlur(patch: Partial<{ enabled: boolean; shutterAngle: number; shutterPhase: number; samples: number }>): void;
+  motionBlur(): Promise<{ enabled: boolean; shutterAngle: number; shutterPhase: number; samples: number }>;
+  setMotionBlur(patch: Partial<{ enabled: boolean; shutterAngle: number; shutterPhase: number; samples: number }>): Promise<void>;
 }
 
 /**
- * Composition time ⇄ layer time. The engine stores keyframes in LAYER time, so
- * every keyframe write must go through here. Centralizing it is what stops the
- * class of bug where a value lands at one time and its easing lands at another.
+ * Composition time ⇄ a property's STORED keyframe axis. Handlers no longer need
+ * it to write (the AnimFacade speaks composition time); it remains for the few
+ * that must predict where the engine will put a key — `set_keyframes` warns when
+ * two requested times collapse onto one frame.
  */
 export interface TimeFacade {
-  toLayerTime(nodeId: string, compSeconds: number): number;
-  toCompTime(nodeId: string, layerSeconds: number): number;
+  toLayerTime(nodeId: string, compSeconds: number): Promise<number>;
+  toCompTime(nodeId: string, layerSeconds: number): Promise<number>;
 }
 
 /**
@@ -236,6 +295,8 @@ export interface ToolContext {
   anim: AnimFacade;
   comp: CompFacade;
   time: TimeFacade;
+  /** The turn's engine session: commands, queries, and the legacy-gap record. */
+  engine: AiEngineSession;
   /** Aborts when the user cancels the run; long read tools should check it. */
   signal: AbortSignal;
   /** Attached reference images in the current turn. */

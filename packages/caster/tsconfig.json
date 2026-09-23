@@ -23,6 +23,7 @@
     "paths": {
       "@motion/design-system": ["packages/design-system/src/index.ts"],
       "@motion/ai-tools": ["packages/ai-tools/src/index.ts"],
+      "@motion/engine-api": ["packages/engine-api/src/index.ts"],
       "@motion/technique-library": ["packages/technique-library/src/index.ts"],
       "@motion/product-motion": ["packages/product-motion/src/index.ts"]
     }

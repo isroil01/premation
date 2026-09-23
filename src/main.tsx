@@ -4,6 +4,7 @@ import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst, setUnifiedHistory } from '@core/config/flags';
+import { setCommandLogRecording } from '@core/automation/commandLog';
 import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
 import { restoreSamModelAtBoot, useSamModelStore } from '@stores/samModelStore';
 import { registerBundledSamAtBoot } from '@core/tracking/samBundled';
@@ -81,6 +82,15 @@ setLocalFirst(
 // one-release escape hatch back to the pre-T1 behaviour.
 setUnifiedHistory(
   !(import.meta.env.VITE_UNIFIED_HISTORY === '0' || import.meta.env.VITE_UNIFIED_HISTORY === 'false'),
+);
+
+// Command-log recording (NATIVE_CORE_PLAN §5 B5): the engine keeps every request
+// so a session can be recorded and replayed (`window.__premationAutomation` in
+// development). On in development; `VITE_RECORD_COMMAND_LOG=1` elsewhere.
+setCommandLogRecording(
+  import.meta.env.DEV === true ||
+    import.meta.env.VITE_RECORD_COMMAND_LOG === '1' ||
+    import.meta.env.VITE_RECORD_COMMAND_LOG === 'true',
 );
 
 // Object Matte — neural, one-click subject selection. The segmenter and its

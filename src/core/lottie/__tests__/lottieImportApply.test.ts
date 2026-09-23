@@ -12,7 +12,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { baseLocal } from '@core/scene/parenting';
 import { worldTransformOf } from '@core/scene/worldTransform';
-import { createToolContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/ai/toolContext';
 import { planLottieImport, type LottieJson } from '../lottieImport';
 import { applyImportPlan } from '../lottieImportApply';
 import type { SceneNode } from '@core/types';
@@ -86,7 +86,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
 
   it('a precomp child lands at the correct WORLD position after apply', () => {
     const plan = planLottieImport(PRECOMP_JSON);
-    const ctx = createToolContext(new AbortController().signal);
+    const ctx = createLegacyDocumentContext();
     const { nodeIds } = applyImportPlan(plan, ctx, { updateComp: false });
     expect(nodeIds.length).toBe(2);
 
@@ -107,7 +107,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
 
   it('a centring offset moves the root only; children follow via the parent', () => {
     const plan = planLottieImport(PRECOMP_JSON);
-    const ctx = createToolContext(new AbortController().signal);
+    const ctx = createLegacyDocumentContext();
     applyImportPlan(plan, ctx, { updateComp: false, offset: { x: 10, y: 20 } });
 
     const group = findByName('Pre');
@@ -134,7 +134,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
       ],
     };
     const plan = planLottieImport(json);
-    const ctx = createToolContext(new AbortController().signal);
+    const ctx = createLegacyDocumentContext();
     applyImportPlan(plan, ctx, { updateComp: false });
 
     const arm = findByName('Arm');
@@ -166,7 +166,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
       ],
     };
     const plan = planLottieImport(json);
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
 
     // Child local carries the anchor: 50 − 30 = 20, 0 − 10 = −10.
     const child = findByName('Child');
@@ -210,7 +210,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
       ],
     };
     const plan = planLottieImport(json);
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
 
     const t = findByName('Morph').components.find((c) => c.type === 'Transform')!;
     expect(t.props.shapeType).toBe('path');
@@ -236,7 +236,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
       fr: 30, w: 512, h: 512, op: 30,
       layers: [rect('Top', 1), rect('Middle', 2), rect('Bottom', 3)] as never,
     };
-    applyImportPlan(planLottieImport(json), createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(planLottieImport(json), createLegacyDocumentContext(), { updateComp: false });
 
     // Children paint in order, so the last child is the front-most.
     const order = defaultSceneGraph.getChildren('comp_root').map((n) => n.name);
@@ -270,7 +270,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
     };
     const plan = planLottieImport(json);
     expect(plan.warnings).toEqual([]);
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
 
     const sourceId = findByName('Sweep').id;
     const matteOf = (nm: string): unknown =>
@@ -303,7 +303,7 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
     const plan = planLottieImport(json);
     expect(plan.warnings).toHaveLength(1);
     expect(plan.warnings[0]).toContain('track matte could not be applied');
-    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
 
     for (const nm of ['Sweep', 'S1', 'S2']) expect(findByName(nm).visible).toBe(false);
     expect(findByName('Highlight').visible).not.toBe(false);

@@ -45,6 +45,10 @@ describe('no host-realm evaluation of plugin code', () => {
     'layout/Plugins/PluginDetailTab.tsx',
     'layout/Plugins/useDiskInstall.tsx',
     'layout/Plugins/PluginPanel.tsx',
+    // User scripts (B5) follow the same rule: source is data in the host realm.
+    'core/scripting/scriptHost.ts',
+    'core/scripting/protocol.ts',
+    'core/automation/devApi.ts',
   ];
 
   it.each(HOST_FILES)('%s contains no new Function / eval', (rel) => {

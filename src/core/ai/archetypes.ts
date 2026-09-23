@@ -72,22 +72,22 @@ export interface ApplyEntranceOptions {
 }
 
 /** Coerce a requested archetype away from targets it cannot work on. */
-function resolveArchetype(ctx: ToolContext, id: string, opts: ApplyEntranceOptions, s: MotionStyle): EntranceArchetype {
+async function resolveArchetype(ctx: ToolContext, id: string, opts: ApplyEntranceOptions, s: MotionStyle): Promise<EntranceArchetype> {
   const role = opts.role ?? 'generic';
   let arch =
     opts.archetype ??
     pickEntranceArchetype({ role, styleName: s.name, seed: runSeed, index: opts.index ?? 0 });
-  const isText = ctx.scene.get(id)?.kind === 'text';
+  const isText = (await ctx.scene.get(id))?.kind === 'text';
   if (arch === 'char_cascade' && !isText) arch = 'scale_pop';
   return arch;
 }
 
-function setKfs(ctx: ToolContext, id: string, plans: EntranceTrackPlan[]): void {
+async function setKfs(ctx: ToolContext, id: string, plans: EntranceTrackPlan[]): Promise<void> {
   for (const plan of plans) {
     for (const pt of plan.points) {
-      const lt = ctx.time.toLayerTime(id, pt.t);
-      ctx.anim.setKeyframe(id, plan.prop, lt, pt.value, pt.easing ?? 'easeOut');
-      if (pt.easing === 'bezier' && pt.bezier) ctx.anim.setBezier(id, plan.prop, lt, pt.bezier);
+      // Composition seconds: the engine puts value and easing on the same key.
+      await ctx.anim.setKeyframe(id, plan.prop, pt.t, pt.value, pt.easing ?? 'easeOut');
+      if (pt.easing === 'bezier' && pt.bezier) await ctx.anim.setBezier(id, plan.prop, pt.t, pt.bezier);
     }
   }
 }
@@ -96,16 +96,16 @@ function setKfs(ctx: ToolContext, id: string, plans: EntranceTrackPlan[]): void 
  * Apply an entrance to a layer. Replaces the old always-rise `entranceRise3D`:
  * same contract (start + style + resting centre), but the archetype varies.
  */
-export function applyEntrance(
+export async function applyEntrance(
   ctx: ToolContext,
   id: string,
   start: number,
   s: MotionStyle,
   cy: number,
   opts: ApplyEntranceOptions = {},
-): EntranceArchetype {
-  const arch = resolveArchetype(ctx, id, opts, s);
-  const node = ctx.scene.get(id);
+): Promise<EntranceArchetype> {
+  const arch = await resolveArchetype(ctx, id, opts, s);
+  const node = await ctx.scene.get(id);
   const cx = node?.x ?? 0;
   const travelPx = s.travelPx * (opts.travelScale ?? 1);
   const direction = (['left', 'right', 'up', 'down'] as const)[
@@ -114,12 +114,12 @@ export function applyEntrance(
   const params: EntranceParams = { start, dur: s.entranceDur, travelPx, cy, cx, curve: s.entranceCurve, direction };
 
   if (arch === 'rise') set3DEnabled(id, true);
-  setKfs(ctx, id, entranceTrackPlans(arch, params));
+  await setKfs(ctx, id, entranceTrackPlans(arch, params));
 
   if (arch === 'blur_resolve') {
-    const fx = ctx.scene.addEffect(id, 'blur');
+    const fx = await ctx.scene.addEffect(id, 'blur');
     if (fx) {
-      setKfs(ctx, id, [{ prop: `effect.${fx}`, points: blurResolvePoints(start, s.entranceDur) }]);
+      await setKfs(ctx, id, [{ prop: `effect.${fx}`, points: blurResolvePoints(start, s.entranceDur) }]);
     }
   }
 
@@ -131,7 +131,7 @@ export function applyEntrance(
       // Covered glyphs are invisible and offset down; sweeping the selector
       // window off the string (offset 0 → 100) reveals characters left→right.
       updateAnimator(id, idx, { basedOn: 'characters', shape: 'rampUp', start: 0, end: 100, opacity: 0, y: 16, scale: 88 });
-      setKfs(ctx, id, [
+      await setKfs(ctx, id, [
         { prop: `ta.${idx}.offset`, points: charCascadePoints(start, Math.max(0.4, s.entranceDur * 1.1)) },
       ]);
     }

@@ -1,9 +1,11 @@
 /**
  * @motion/ai-tools — the typed vocabulary an LLM uses to author motion graphics.
  *
- * Pure and dependency-free by design: the renderer, Electron's main process,
- * and the NestJS backend all read these same definitions, so a tool is
- * described exactly once and cannot drift between them.
+ * Pure by design — its one dependency is the engine API's TYPES
+ * (`@motion/engine-api`, type-only; B5: the facades a handler receives are async
+ * over the engine): the renderer, Electron's main process, and the NestJS
+ * backend all read these same definitions, so a tool is described exactly once
+ * and cannot drift between them.
  */
 
 export type {
@@ -19,7 +21,9 @@ export type {
   AnimFacade,
   KeyframeView,
   CompFacade,
+  CompSettingsView,
   TimeFacade,
+  AiEngineSession,
   ProviderId,
   AiErrorCode,
   AiEvent,
@@ -29,7 +33,7 @@ export type {
   AiRequest,
 } from './types';
 
-export { mutates, bindAlias, resolveAlias } from './types';
+export { mutates, bindAlias, resolveAlias, AiEngineError } from './types';
 export { ToolRegistry } from './registry';
 export {
   SPRING_PRESETS,

@@ -1954,7 +1954,11 @@ export class TimelineController {
   capture(): Record<string, SerializedTimeline> {
     const out: Record<string, SerializedTimeline> = {};
     for (const [compId, timeline] of this.registries) {
-      out[compId] = serializeTimeline(timeline);
+      // The timeline object's own id is a random per-session handle that
+      // nothing reads back (`restore` keys by composition), so it is written
+      // deterministically: a document saved twice — or rebuilt by replaying a
+      // recorded session (B5) — must serialize byte-identically.
+      out[compId] = { ...serializeTimeline(timeline), id: `timeline_${compId}` };
     }
     return out;
   }

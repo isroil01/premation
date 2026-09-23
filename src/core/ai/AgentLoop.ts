@@ -347,7 +347,6 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   const { provider, dialect, model, signal, events } = opts;
 
   const reg = getAiRegistry();
-  const ctx = createToolContext(signal, opts.images);
   const tools = reg.list();
   // Which tools mutate the document — only these feed the "pending changes"
   // preview list; read calls ("describe_scene") are not changes to review.
@@ -368,7 +367,9 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   };
 
   const label = `AI: ${prompt.length > 48 ? `${prompt.slice(0, 48)}…` : prompt}`;
-  const tx = beginAiTransaction(label);
+  // ONE engine gesture for the whole turn; every tool writes through its session.
+  const tx = await beginAiTransaction(label);
+  const ctx = createToolContext(signal, opts.images, tx.session);
 
   const requestPrompt = prompt;
   /**
@@ -562,7 +563,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         events?.onActivity?.('Reviewing the result');
         try {
           const { renderSceneFrames, critiqueTimes } = await import('./renderFeedback');
-          const comp = ctx.comp.get();
+          const comp = await ctx.comp.get();
           pipelineReviewShots = await renderSceneFrames(critiqueTimes(comp.durationSeconds, comp.fps));
         } catch {
           pipelineReviewShots = [];
@@ -583,7 +584,7 @@ ${casterCritique}` : planSummary) + exportNote;
         if (opts.preview) {
           return { text: finalText, messages: produced, toolCallCount, tx, changes, tally: callTally };
         }
-        tx.commit();
+        await tx.commit();
         return { text: finalText, messages: produced, toolCallCount, changes, tally: callTally };
       }
     }
@@ -596,7 +597,7 @@ ${casterCritique}` : planSummary) + exportNote;
       ...(opts.history ?? []),
       {
         role: 'user',
-        content: `${buildContextPreamble(ctx)}${exemplarBlock}\n\n---\n\n${requestPrompt}`,
+        content: `${await buildContextPreamble(ctx)}${exemplarBlock}\n\n---\n\n${requestPrompt}`,
         ...(opts.images?.length ? { images: opts.images } : {}),
       },
     ];
@@ -650,7 +651,7 @@ ${casterCritique}` : planSummary) + exportNote;
           let mechanical: string | null = null;
           try {
             const { verifyScene, formatFindings } = await import('./verify');
-            mechanical = formatFindings(verifyScene(ctx));
+            mechanical = formatFindings(await verifyScene(ctx));
           } catch (err) {
             // A broken verifier must never take the run down with it.
 
@@ -662,7 +663,7 @@ ${casterCritique}` : planSummary) + exportNote;
             events?.onActivity?.('Reviewing the result');
             try {
               const { renderSceneFrames, critiqueTimes } = await import('./renderFeedback');
-              const comp = ctx.comp.get();
+              const comp = await ctx.comp.get();
               shots = await renderSceneFrames(critiqueTimes(comp.durationSeconds, comp.fps));
             } catch {
               shots = [];
@@ -757,12 +758,12 @@ ${casterCritique}`
     if (opts.preview) {
       return { text: finalText, messages: produced, toolCallCount, tx, changes, tally: callTally };
     }
-    tx.commit();
+    await tx.commit();
     return { text: finalText, messages: produced, toolCallCount, changes, tally: callTally };
   } catch (err) {
     // A half-applied AI edit is worse than none — the user can't tell which
     // half landed, and undo would only reach part of it.
-    tx.rollback();
+    await tx.rollback();
     throw err;
   }
 }

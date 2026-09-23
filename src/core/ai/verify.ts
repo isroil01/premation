@@ -29,6 +29,7 @@
  */
 
 import type { ToolContext } from '@motion/ai-tools';
+import { mapSeq } from './asyncList';
 
 export type VerdictKind =
   | 'past-end'
@@ -109,9 +110,9 @@ function isPairedWithOpacity(prop: string): boolean {
  * tracks each hold a single keyframe. That single-keyframe case is false
  * positive #2: one keyframe sets a constant value, it does not animate.
  */
-function entranceOf(ctx: ToolContext, nodeId: string, durationSeconds: number): number | null {
+async function entranceOf(ctx: ToolContext, nodeId: string, durationSeconds: number): Promise<number | null> {
   let earliest: number | null = null;
-  for (const track of ctx.anim.tracks(nodeId)) {
+  for (const track of await ctx.anim.tracks(nodeId)) {
     if (track.keyframes.length < 2) continue;
     const first = track.keyframes[0]!.t;
     const last = track.keyframes[track.keyframes.length - 1]!.t;
@@ -120,7 +121,7 @@ function entranceOf(ctx: ToolContext, nodeId: string, durationSeconds: number): 
     if (span > ENTRANCE_MAX_SEC || span >= durationSeconds * AMBIENT_SPAN_FRACTION) continue;
     if (earliest === null || first < earliest) earliest = first;
   }
-  return earliest === null ? null : ctx.time.toCompTime(nodeId, earliest);
+  return earliest; // tracks report composition seconds
 }
 
 /**
@@ -130,17 +131,17 @@ function entranceOf(ctx: ToolContext, nodeId: string, durationSeconds: number): 
  * keyframes are what make this exact: a short event cannot fall between two
  * samples when the samples include its own endpoints.
  */
-function sampleTimes(ctx: ToolContext, nodeId: string, durationSeconds: number): number[] {
+async function sampleTimes(ctx: ToolContext, nodeId: string, durationSeconds: number): Promise<number[]> {
   const times = new Set<number>();
   for (let i = 0; i < UNIFORM_SAMPLES; i++) {
     times.add((durationSeconds * i) / Math.max(1, UNIFORM_SAMPLES - 1));
   }
-  for (const track of ctx.anim.tracks(nodeId)) {
+  for (const track of await ctx.anim.tracks(nodeId)) {
     const kfs = track.keyframes;
     for (let i = 0; i < kfs.length; i++) {
       const kf = kfs[i]!;
-      times.add(ctx.time.toCompTime(nodeId, kf.t));
-      if (i > 0) times.add(ctx.time.toCompTime(nodeId, (kfs[i - 1]!.t + kf.t) / 2));
+      times.add(kf.t);
+      if (i > 0) times.add((kfs[i - 1]!.t + kf.t) / 2);
     }
   }
   return [...times].filter((t) => t >= 0 && t <= durationSeconds).sort((a, b) => a - b);
@@ -160,12 +161,12 @@ function fillsFrame(
 }
 
 /** A layer's box at composition time `t`, falling back to its base transform. */
-function boxAt(
+async function boxAt(
   ctx: ToolContext,
   node: { id: string; x: number; y: number; width?: number; height?: number },
   t: number,
-): { x: number; y: number; w: number; h: number } {
-  const v = ctx.anim.evaluate(node.id, ctx.time.toLayerTime(node.id, t));
+): Promise<{ x: number; y: number; w: number; h: number }> {
+  const v = await ctx.anim.evaluate(node.id, t);
   const scaleX = v['scaleX'] ?? v['scale'] ?? 1;
   const scaleY = v['scaleY'] ?? v['scale'] ?? 1;
   return {
@@ -182,19 +183,19 @@ function boxAt(
  * Pure over the ToolContext — no mutation, no rendering, no network. Safe to
  * call as often as you like.
  */
-export function verifyScene(ctx: ToolContext): Finding[] {
+export async function verifyScene(ctx: ToolContext): Promise<Finding[]> {
   const findings: Finding[] = [];
-  const comp = ctx.comp.get();
-  const layers = ctx.scene.all().filter((n) => n.visible !== false && n.kind !== 'camera');
+  const comp = await ctx.comp.get();
+  const layers = (await ctx.scene.all()).filter((n) => n.visible !== false && n.kind !== 'camera');
 
   // ── past-end ──────────────────────────────────────────────────────────────
   // Keyframes after the composition ends are simply never seen. Unambiguous,
   // and the cheapest thing here to get right.
   for (const node of layers) {
     let latest = -Infinity;
-    for (const track of ctx.anim.tracks(node.id)) {
+    for (const track of await ctx.anim.tracks(node.id)) {
       for (const kf of track.keyframes) {
-        const t = ctx.time.toCompTime(node.id, kf.t);
+        const t = kf.t;
         if (t > latest) latest = t;
       }
     }
@@ -218,9 +219,9 @@ export function verifyScene(ctx: ToolContext): Finding[] {
   for (const node of layers) {
     if (!node.width || !node.height) continue; // nulls, cameras, sizeless layers
     let everOnscreen = false;
-    for (const t of sampleTimes(ctx, node.id, comp.durationSeconds)) {
+    for (const t of await sampleTimes(ctx, node.id, comp.durationSeconds)) {
       if (everOnscreen) break;
-      const b = boxAt(ctx, node, t);
+      const b = await boxAt(ctx, node, t);
       const onscreen =
         b.x + b.w / 2 > OFFSCREEN_SLACK &&
         b.x - b.w / 2 < comp.width - OFFSCREEN_SLACK &&
@@ -244,9 +245,9 @@ export function verifyScene(ctx: ToolContext): Finding[] {
   // layer that is transparent at EVERY sample counts.
   for (const node of layers) {
     let everVisible = false;
-    for (const t of sampleTimes(ctx, node.id, comp.durationSeconds)) {
+    for (const t of await sampleTimes(ctx, node.id, comp.durationSeconds)) {
       if (everVisible) break;
-      const v = ctx.anim.evaluate(node.id, ctx.time.toLayerTime(node.id, t));
+      const v = await ctx.anim.evaluate(node.id, t);
       if ((v['opacity'] ?? node.opacity) > 1) everVisible = true;
     }
     if (!everVisible) {
@@ -270,7 +271,7 @@ export function verifyScene(ctx: ToolContext): Finding[] {
     // Demanding movement from one would nag on every multi-scene piece the
     // library produces.
     if (fillsFrame(node, comp)) continue;
-    const animated = ctx.anim.tracks(node.id).filter((t) => t.keyframes.length >= 2);
+    const animated = (await ctx.anim.tracks(node.id)).filter((t) => t.keyframes.length >= 2);
     if (!animated.some((t) => t.prop === 'opacity')) continue;
     if (animated.some((t) => isPairedWithOpacity(t.prop))) continue;
     findings.push({
@@ -287,14 +288,14 @@ export function verifyScene(ctx: ToolContext): Finding[] {
   // whose tracks each hold one keyframe has no entrance and is not counted.
   const entrances = new Map<string, number>();
   for (const node of layers) {
-    const t = entranceOf(ctx, node.id, comp.durationSeconds);
+    const t = await entranceOf(ctx, node.id, comp.durationSeconds);
     if (t !== null) entrances.set(node.id, t);
   }
   const byTime = [...entrances.entries()].sort((a, b) => a[1] - b[1]);
   let group: Array<[string, number]> = [];
-  const flush = (): void => {
+  const flush = async (): Promise<void> => {
     if (group.length >= SIMULTANEITY_MIN_LAYERS) {
-      const names = group.map(([id]) => ctx.scene.get(id)?.name ?? id);
+      const names = await mapSeq(group, async ([id]) => (await ctx.scene.get(id))?.name ?? id);
       findings.push({
         kind: 'simultaneous',
         nodeIds: group.map(([id]) => id),
@@ -307,10 +308,10 @@ export function verifyScene(ctx: ToolContext): Finding[] {
     group = [];
   };
   for (const entry of byTime) {
-    if (group.length && entry[1] - group[0]![1] > SIMULTANEITY_WINDOW_SEC) flush();
+    if (group.length && entry[1] - group[0]![1] > SIMULTANEITY_WINDOW_SEC) await flush();
     group.push(entry);
   }
-  flush();
+  await flush();
 
   return findings;
 }

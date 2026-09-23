@@ -89,8 +89,8 @@ export async function runBackendDirector(
   // whole payload and learning about it from a 401.
   if (!isAuthenticated()) throw new AiError('auth', 'Sign in to run the AI director pipeline.');
 
-  const comp = ctx.comp.get();
-  const layers = ctx.scene.all().map((n: any) => ({
+  const comp = await ctx.comp.get();
+  const layers = (await ctx.scene.all()).map((n: any) => ({
     id: n.id,
     name: n.name,
     type: n.kind,

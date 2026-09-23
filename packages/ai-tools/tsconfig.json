@@ -18,7 +18,11 @@
     "noImplicitOverride": true,
     "forceConsistentCasingInFileNames": true,
 
-    "types": ["node", "jest"]
+    "types": ["node", "jest"],
+    "baseUrl": "../..",
+    "paths": {
+      "@motion/engine-api": ["packages/engine-api/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "src/**/__tests__/**"]

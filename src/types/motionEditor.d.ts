@@ -47,6 +47,8 @@ export interface CliRenderRequest {
   aspect?: string;
   /** A caption file's text, imported before the render (burn-in). */
   captions?: { text: string; filename: string };
+  /** A recorded engine command log (JSON lines) replayed before the render (B5). */
+  commands?: { text: string; filename: string };
   /**
    * mp4 only — the H.264/HEVC encoder. Set by the export supervisor from the
    * preference captured when the job was queued; the CLI leaves it unset.

@@ -332,6 +332,16 @@ describe('parseCli — captions', () => {
   });
 });
 
+describe('parseCli — command log replay (B5)', () => {
+  it('takes a recorded command log to replay before rendering', () => {
+    expect(job(parseCli(['render', 'a.motion', '--commands', 'session.jsonl'])).commandsPath).toBe('session.jsonl');
+  });
+
+  it('needs a file after --commands', () => {
+    expect(parseCli(['render', 'a.motion', '--commands']).kind).toBe('error');
+  });
+});
+
 describe('parseCli — caption burn-in', () => {
   it('takes a caption file to import before rendering', () => {
     expect(job(parseCli(['render', 'a.motion', '--captions', 'subs.srt'])).captionsPath).toBe('subs.srt');

@@ -100,7 +100,7 @@ const run = async () => {
     registry,
     writeNames,
   );
-  return { ...res, layers: ctx.scene.all() };
+  return { ...res, layers: await ctx.scene.all() };
 };
 
 describe('a backend tool_calls payload executes against the real registry', () => {

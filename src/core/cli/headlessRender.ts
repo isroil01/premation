@@ -42,6 +42,8 @@ import { parseCaptions, toSrt, toVtt } from '@core/captions/captionFormat';
 import { DEFAULT_CAPTION_STYLE, insertCaptionLayers, removeCaptionLayers } from '@core/captions/captionLayers';
 import { transcribeComposition } from '@core/captions/transcribe';
 import { ASPECT_PRESETS, autoReframeComposition, targetSizeFor } from '@core/reframe/autoReframe';
+import { localEngine } from '@core/engine/engineInstance';
+import { replaySession } from '@core/automation/commandLog';
 
 /** Formats the CLI can deliver. The queue's set, plus a single still frame. */
 export type CliRenderFormat = OutputFormat | 'png';
@@ -100,6 +102,14 @@ export interface HeadlessRenderRequest {
    * subtitles into a delivery without a person opening the project.
    */
   captions?: { text: string; filename: string };
+  /**
+   * A recorded engine command log's TEXT (`--commands`, JSON lines), already
+   * read by the main process. Replayed into the session's engine before the
+   * captions and the retarget: the log's own start document, then every
+   * recorded request (NATIVE_CORE_PLAN §5 B5) — so a render of a recorded
+   * session is the document the session produced.
+   */
+  commands?: { text: string; filename: string };
   /**
    * mp4 only — the H.264/HEVC encoder, captured from the preference when the
    * job was queued. Set by the export supervisor's jobs; a CLI invocation
@@ -384,6 +394,8 @@ async function prepareComposition(
   req: HeadlessRenderRequest,
   warnings: string[],
 ): Promise<CompositionSettings> {
+  if (req.commands) await replayCommandsForRender(req.commands, warnings);
+
   let comp = requireComposition(req.comp);
 
   if (req.captions) {
@@ -422,6 +434,28 @@ async function prepareComposition(
   }
 
   return comp;
+}
+
+/**
+ * Replay a recorded command log into the session's engine. A mismatch (a
+ * request that answered differently than when it was recorded) is reported,
+ * not fatal: the rest of the log still applied, and the log line says which.
+ */
+async function replayCommandsForRender(commands: { text: string; filename: string }, warnings: string[]): Promise<void> {
+  const engine = localEngine();
+  if (!engine) throw new Error('No engine is running, so the command log cannot be replayed.');
+  let result;
+  try {
+    result = await replaySession(commands.text, { engine });
+  } catch (err) {
+    throw new Error(`"${commands.filename}" is not a command log: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (result.mismatches.length > 0) {
+    warnings.push(
+      `${result.mismatches.length} of ${result.applied} recorded request(s) in "${commands.filename}" replayed differently ` +
+        `(first: #${result.mismatches[0]!.index} ${result.mismatches[0]!.what}).`,
+    );
+  }
 }
 
 /** Resolve the composition named by the request, or explain what exists. */

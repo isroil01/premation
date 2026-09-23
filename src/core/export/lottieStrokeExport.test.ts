@@ -8,7 +8,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { createToolContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/ai/toolContext';
 import { readNodeStroke, setNodeStroke, setNodeStrokes, defaultStroke } from '@core/paint/stroke';
 import { getNodeFill, setNodeFill } from '@core/paint/fill';
 import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
@@ -51,7 +51,7 @@ function importRect(name: string, paints: unknown[]): SceneNode {
       { ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } },
     ] }],
   } as unknown as Layer;
-  applyImportPlan(planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layer] }), createToolContext(new AbortController().signal), { updateComp: false });
+  applyImportPlan(planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layer] }), createLegacyDocumentContext(), { updateComp: false });
   return findByName(name);
 }
 

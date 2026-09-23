@@ -82,7 +82,7 @@ describe('the verifier stays quiet on real compose-tool output', () => {
       ['add_title', { text: 'Three reasons teams choose us' }],
       ['add_cards', { count: 3 }],
     ]);
-    expect(verifyScene(ctx)).toEqual([]);
+    expect(await verifyScene(ctx)).toEqual([]);
   });
 
   it('a light sweep — the layer that starts at x = -480 by design', async () => {
@@ -93,7 +93,7 @@ describe('the verifier stays quiet on real compose-tool output', () => {
       ['add_title', { text: 'Cadence' }],
       ['add_light_sweep', {}],
     ]);
-    expect(verifyScene(ctx)).toEqual([]);
+    expect(await verifyScene(ctx)).toEqual([]);
   });
 
   it('ambient orbs — single-keyframe constants, not entrances', async () => {
@@ -103,7 +103,7 @@ describe('the verifier stays quiet on real compose-tool output', () => {
       ['add_ambient_orbs', {}],
       ['add_title', { text: 'Premium' }],
     ]);
-    expect(verifyScene(ctx)).toEqual([]);
+    expect(await verifyScene(ctx)).toEqual([]);
   });
 
   it('every entrance archetype, including blur_resolve', async () => {
@@ -115,7 +115,7 @@ describe('the verifier stays quiet on real compose-tool output', () => {
         ['add_background', {}],
         ['add_title', { text: 'Cadence', entrance }],
       ]);
-      expect({ entrance, findings: verifyScene(ctx) }).toEqual({ entrance, findings: [] });
+      expect({ entrance, findings: await verifyScene(ctx) }).toEqual({ entrance, findings: [] });
     }
   });
 
@@ -141,6 +141,6 @@ describe('the verifier stays quiet on real compose-tool output', () => {
       ['add_transition', { atSec: 5 }],
       ['add_camera_move', {}],
     ]);
-    expect(verifyScene(ctx)).toEqual([]);
+    expect(await verifyScene(ctx)).toEqual([]);
   });
 });

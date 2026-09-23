@@ -91,6 +91,11 @@ export interface CliRenderJob {
    */
   captionsPath?: string;
   /**
+   * A recorded engine command log (JSON lines, B5) to replay before rendering.
+   * The path as typed; `prepareTask` reads it, like `--captions`.
+   */
+  commandsPath?: string;
+  /**
    * Start the batch at this row (0-based, converted from the 1-based flag).
    *
    * A pipeline that lost a machine at row 30 of 40 should be able to ask for
@@ -174,6 +179,8 @@ REFRAME OPTIONS
 
 CAPTION OPTIONS
   --captions <file>    Import an .srt/.vtt before rendering (burn-in).
+  --commands <file>    Replay a recorded command log (.jsonl) before rendering: the
+                       document the log starts from, then every recorded edit.
   --language <code>    Speech language hint for "captions", e.g. en, pt-BR.
 
 DATA-DRIVEN OPTIONS
@@ -221,6 +228,7 @@ const VALUED_FLAGS = new Set([
   '--from-row',
   '--aspect',
   '--captions',
+  '--commands',
   '--language',
   '--log',
 ]);
@@ -505,6 +513,9 @@ export function parseCli(args: readonly string[]): CliInvocation {
 
   const captionsPath = flags.get('--captions');
   if (captionsPath !== undefined) job.captionsPath = captionsPath;
+
+  const commandsPath = flags.get('--commands');
+  if (commandsPath !== undefined) job.commandsPath = commandsPath;
 
   const language = flags.get('--language');
   if (language !== undefined) {

@@ -15,16 +15,17 @@
 
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { bakeSpring, bindAlias, resolveSpring, thinSamples, type SpringParams, type SpringPresetName } from '@motion/ai-tools';
-import { bumpScene } from '@stores/sceneStore';
+import { refreshAfterLegacy } from './toolContext';
 import { makeStop, setNodeFill } from '@core/paint/fill';
 import { arrangeNodes } from '@core/scene/parenting';
 import { isAnimatableProp } from './toolContext';
+import { mapSeq, filterSeq } from './asyncList';
 
 const ok = (content: string, data?: unknown): ToolResult => ({ ok: true, content, data });
 const fail = (content: string): ToolResult => ({ ok: false, content });
 
-const unknownNode = (ctx: ToolContext, id: string): string =>
-  `unknown nodeId '${id}' — did you mean: ${ctx.scene.nearest(id).join(', ') || '(no layers exist yet)'}?`;
+const unknownNode = async (ctx: ToolContext, id: string): Promise<string> =>
+  `unknown nodeId '${id}' — did you mean: ${(await ctx.scene.nearest(id)).join(', ') || '(no layers exist yet)'}?`;
 
 /**
  * How far a baked spring sample may deviate from the thinned reconstruction, in
@@ -36,14 +37,14 @@ const SPRING_THIN_TOLERANCE = 0.15;
 
 // ── set_spring ────────────────────────────────────────────────────────
 
-const setSpring: AiTool['handler'] = (input, ctx) => {
+const setSpring: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId: string; prop: string; from: number; to: number;
     startSec?: number; preset?: SpringPresetName;
     stiffness?: number; damping?: number; mass?: number; velocity?: number;
     maxDurationSec?: number;
   };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
   if (!isAnimatableProp(i.prop)) {
     return fail(
       `'${i.prop}' is not an animatable property, so a spring on it would write a track the ` +
@@ -64,7 +65,7 @@ const setSpring: AiTool['handler'] = (input, ctx) => {
       }
     : { ...base, ...(i.mass !== undefined ? { mass: i.mass } : {}), ...(i.velocity !== undefined ? { velocity: i.velocity } : {}) };
 
-  const comp = ctx.comp.get();
+  const comp = await ctx.comp.get();
   const start = i.startSec ?? 0;
   const baked = bakeSpring({
     from: i.from,
@@ -84,10 +85,10 @@ const setSpring: AiTool['handler'] = (input, ctx) => {
   for (const s of samples) {
     const t = start + s.t;
     if (t > comp.durationSeconds + 1e-6) { clipped++; continue; }
-    ctx.anim.setKeyframe(i.nodeId, i.prop, ctx.time.toLayerTime(i.nodeId, t), s.value, 'linear');
+    await ctx.anim.setKeyframe(i.nodeId, i.prop, t, s.value, 'linear');
     written++;
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
 
   if (written < 2) {
     return fail(
@@ -117,14 +118,14 @@ const setSpring: AiTool['handler'] = (input, ctx) => {
 
 // ── set_motion_blur ───────────────────────────────────────────────────
 
-const setMotionBlur: AiTool['handler'] = (input, ctx) => {
+const setMotionBlur: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId?: string; enabled?: boolean;
     shutterAngle?: number; shutterPhase?: number; samples?: number;
   };
 
   if (i.nodeId) {
-    if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+    if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
     if (i.enabled === undefined) {
       return fail('Pass `enabled` when targeting a layer — nodeId alone does nothing.');
     }
@@ -136,10 +137,10 @@ const setMotionBlur: AiTool['handler'] = (input, ctx) => {
       ? ' (shutterAngle/shutterPhase/samples are COMPOSITION settings and were ignored here — ' +
         'call set_motion_blur again without nodeId to set them)'
       : '';
-    const applied = ctx.scene.setProp(i.nodeId, 'motionBlur', i.enabled);
+    const applied = await ctx.scene.setProp(i.nodeId, 'motionBlur', i.enabled);
     if (!applied) return fail(`Could not set motion blur on '${i.nodeId}'.`);
-    bumpScene();
-    const comp = ctx.comp.motionBlur();
+    refreshAfterLegacy(ctx);
+    const comp = await ctx.comp.motionBlur();
     const dormant = !comp.enabled
       ? ' NOTE: composition motion blur is OFF, so this layer switch has no visible effect until ' +
         'you enable it (set_motion_blur with no nodeId, enabled: true).'
@@ -153,15 +154,15 @@ const setMotionBlur: AiTool['handler'] = (input, ctx) => {
   if (i.shutterPhase !== undefined) patch.shutterPhase = i.shutterPhase;
   if (i.samples !== undefined) patch.samples = i.samples;
   if (Object.keys(patch).length === 0) {
-    const cur = ctx.comp.motionBlur();
+    const cur = await ctx.comp.motionBlur();
     return ok(
       `Composition motion blur is currently: enabled=${cur.enabled}, shutterAngle=${cur.shutterAngle}, ` +
       `shutterPhase=${cur.shutterPhase}, samples=${cur.samples}. Pass a field to change it.`,
       cur,
     );
   }
-  ctx.comp.setMotionBlur(patch);
-  const now = ctx.comp.motionBlur();
+  await ctx.comp.setMotionBlur(patch);
+  const now = await ctx.comp.motionBlur();
   return ok(
     `Composition motion blur: enabled=${now.enabled}, shutterAngle=${now.shutterAngle}, ` +
     `shutterPhase=${now.shutterPhase}, samples=${now.samples}. ` +
@@ -172,13 +173,13 @@ const setMotionBlur: AiTool['handler'] = (input, ctx) => {
 
 // ── create_precomp ────────────────────────────────────────────────────
 
-const createPrecomp: AiTool['handler'] = (input, ctx) => {
+const createPrecomp: AiTool['handler'] = async (input, ctx) => {
   const i = input as { id?: string; nodeIds: string[]; name: string };
-  const missing = i.nodeIds.filter((id) => !ctx.scene.has(id));
+  const missing = await filterSeq(i.nodeIds, async (id) => !(await ctx.scene.has(id)));
   if (missing.length) {
-    return fail(`Cannot precompose — unknown layer(s): ${missing.map((m) => unknownNode(ctx, m)).join('; ')}`);
+    return fail(`Cannot precompose — unknown layer(s): ${(await mapSeq(missing, (m) => unknownNode(ctx, m))).join('; ')}`);
   }
-  const id = ctx.scene.precompose(i.nodeIds, i.name);
+  const id = await ctx.scene.precompose(i.nodeIds, i.name);
   if (!id) {
     return fail(
       `Precompose produced nothing. The layers must belong to the composition in view, and must ` +
@@ -197,14 +198,14 @@ const createPrecomp: AiTool['handler'] = (input, ctx) => {
 
 // ── set_time_remap ────────────────────────────────────────────────────
 
-const setTimeRemap: AiTool['handler'] = (input, ctx) => {
+const setTimeRemap: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId: string;
     keys: { t: number; sourceT: number; easing?: string; bezier?: number[] }[];
   };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
-  const kind = ctx.scene.get(i.nodeId)?.kind;
+  const kind = (await ctx.scene.get(i.nodeId))?.kind;
   // A composition layer (what create_precomp makes) or a group/precomp.
   if (kind !== 'group' && kind !== 'comp') {
     return fail(
@@ -216,15 +217,14 @@ const setTimeRemap: AiTool['handler'] = (input, ctx) => {
   // Enable precomp compositing FIRST. buildSnapshot only samples `timeRemap` on
   // a precomp, so writing the track without this leaves a full timeline track
   // that changes nothing on screen.
-  ctx.scene.setTimeRemapEnabled(i.nodeId, true);
+  await ctx.scene.setTimeRemapEnabled(i.nodeId, true);
 
   const sorted = [...i.keys].sort((a, b) => a.t - b.t);
   for (const k of sorted) {
-    const lt = ctx.time.toLayerTime(i.nodeId, k.t);
-    ctx.anim.setKeyframe(i.nodeId, 'timeRemap', lt, k.sourceT, k.easing ?? 'linear');
-    if (k.easing === 'bezier' && k.bezier) ctx.anim.setBezier(i.nodeId, 'timeRemap', lt, k.bezier);
+    await ctx.anim.setKeyframe(i.nodeId, 'timeRemap', k.t, k.sourceT, k.easing ?? 'linear');
+    if (k.easing === 'bezier' && k.bezier) await ctx.anim.setBezier(i.nodeId, 'timeRemap', k.t, k.bezier);
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
 
   // Describe what the remap actually DOES, so the model can tell whether it got
   // the speed ramp it intended without rendering.
@@ -244,10 +244,10 @@ const setTimeRemap: AiTool['handler'] = (input, ctx) => {
 
 // ── update_effect_param ───────────────────────────────────────────────
 
-const updateEffectParamHandler: AiTool['handler'] = (input, ctx) => {
+const updateEffectParamHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { nodeId: string; effectId: string; key: string; value: number | string | boolean };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  const effects = ctx.scene.listEffects(i.nodeId);
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
+  const effects = await ctx.scene.listEffects(i.nodeId);
   const target = effects.find((e) => e.id === i.effectId);
   if (!target) {
     return fail(
@@ -255,7 +255,7 @@ const updateEffectParamHandler: AiTool['handler'] = (input, ctx) => {
       (effects.map((e) => `${e.id} (${e.type})`).join(', ') || '(none — call add_effect first)'),
     );
   }
-  ctx.scene.updateEffectParam(i.nodeId, i.effectId, i.key, i.value);
+  await ctx.scene.updateEffectParam(i.nodeId, i.effectId, i.key, i.value);
   return ok(`Set ${target.type}.${i.key} = ${String(i.value)} on '${i.nodeId}'.`);
 };
 
@@ -268,23 +268,23 @@ const LIGHT_PROP_MAP: Record<string, string> = {
   coneAngle: 'lightCone',
 };
 
-const setLight: AiTool['handler'] = (input, ctx) => {
+const setLight: AiTool['handler'] = async (input, ctx) => {
   const i = input as { nodeId: string; color?: string; intensity?: number; radius?: number; coneAngle?: number };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  const kind = ctx.scene.get(i.nodeId)?.kind;
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
+  const kind = (await ctx.scene.get(i.nodeId))?.kind;
   if (kind !== 'light') {
     return fail(
       `'${i.nodeId}' is a ${kind}, not a light. Create one with create_layer { kind: "light" } first.`,
     );
   }
   const applied: string[] = [];
-  if (i.color !== undefined && ctx.scene.setProp(i.nodeId, 'fill', i.color)) applied.push(`color=${i.color}`);
+  if (i.color !== undefined && await ctx.scene.setProp(i.nodeId, 'fill', i.color)) applied.push(`color=${i.color}`);
   for (const [field, prop] of Object.entries(LIGHT_PROP_MAP)) {
     const v = (i as Record<string, unknown>)[field];
-    if (typeof v === 'number' && ctx.scene.setProp(i.nodeId, prop, v)) applied.push(`${field}=${v}`);
+    if (typeof v === 'number' && await ctx.scene.setProp(i.nodeId, prop, v)) applied.push(`${field}=${v}`);
   }
   if (!applied.length) return fail('Nothing to set — pass at least one of color, intensity, radius, coneAngle.');
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(
     `Configured light '${i.nodeId}': ${applied.join(', ')}. ` +
     `intensity and radius are keyframeable with set_keyframes for a pulse or a reveal.`,
@@ -301,29 +301,29 @@ interface ShadowSpec {
   color?: string;
 }
 
-const setShadowStack: AiTool['handler'] = (input, ctx) => {
+const setShadowStack: AiTool['handler'] = async (input, ctx) => {
   const i = input as { nodeId: string; shadows: ShadowSpec[] };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   // Replace, don't append: calling this twice must not silently double the
   // stack. Only drop-shadows this tool owns are removed.
-  for (const e of ctx.scene.listEffects(i.nodeId)) {
-    if (e.type === 'drop-shadow') ctx.scene.removeEffect(i.nodeId, e.id);
+  for (const e of await ctx.scene.listEffects(i.nodeId)) {
+    if (e.type === 'drop-shadow') await ctx.scene.removeEffect(i.nodeId, e.id);
   }
 
   const ids: string[] = [];
   for (const s of i.shadows) {
-    const effectId = ctx.scene.addEffect(i.nodeId, 'drop-shadow');
+    const effectId = await ctx.scene.addEffect(i.nodeId, 'drop-shadow');
     if (!effectId) continue;
-    ctx.scene.updateEffectParam(i.nodeId, effectId, 'distance', s.distance);
-    ctx.scene.updateEffectParam(i.nodeId, effectId, 'angle', s.angle ?? 90);
-    ctx.scene.updateEffectParam(i.nodeId, effectId, 'softness', s.softness);
-    ctx.scene.updateEffectParam(i.nodeId, effectId, 'opacity', s.opacity);
-    if (s.color) ctx.scene.updateEffectParam(i.nodeId, effectId, 'color', s.color);
+    await ctx.scene.updateEffectParam(i.nodeId, effectId, 'distance', s.distance);
+    await ctx.scene.updateEffectParam(i.nodeId, effectId, 'angle', s.angle ?? 90);
+    await ctx.scene.updateEffectParam(i.nodeId, effectId, 'softness', s.softness);
+    await ctx.scene.updateEffectParam(i.nodeId, effectId, 'opacity', s.opacity);
+    if (s.color) await ctx.scene.updateEffectParam(i.nodeId, effectId, 'color', s.color);
     ids.push(effectId);
   }
   if (!ids.length) return fail(`Could not add shadows to '${i.nodeId}'.`);
-  bumpScene();
+  refreshAfterLegacy(ctx);
 
   const neutral = i.shadows.filter((s) => !s.color || /^#0{3,8}$/i.test(s.color)).length;
   const warning =
@@ -339,7 +339,7 @@ const setShadowStack: AiTool['handler'] = (input, ctx) => {
 
 // ── add_surface_treatment ─────────────────────────────────────────────
 
-const addSurfaceTreatment: AiTool['handler'] = (input, ctx) => {
+const addSurfaceTreatment: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     id?: string; grain?: number; grainAnimated?: boolean; vignette?: number;
     chromaticAberration?: number; name?: string;
@@ -348,34 +348,34 @@ const addSurfaceTreatment: AiTool['handler'] = (input, ctx) => {
     return fail('Nothing to add — pass at least one of grain, vignette, chromaticAberration.');
   }
 
-  const comp = ctx.comp.get();
+  const comp = await ctx.comp.get();
   // An adjustment layer treats everything BENEATH it, which is what makes this
   // one layer instead of one effect per content layer.
-  const id = ctx.scene.create('adjustment', i.name ?? 'Surface Treatment', {
+  const id = await ctx.scene.create('adjustment', i.name ?? 'Surface Treatment', {
     x: comp.width / 2,
     y: comp.height / 2,
   });
   if (!id) return fail('Could not create the adjustment layer for the surface treatment.');
   bindAlias(ctx, i.id, id);
-  ctx.scene.setProp(id, 'width', comp.width);
-  ctx.scene.setProp(id, 'height', comp.height);
+  await ctx.scene.setProp(id, 'width', comp.width);
+  await ctx.scene.setProp(id, 'height', comp.height);
 
   const added: string[] = [];
 
   if (i.grain !== undefined && i.grain > 0) {
-    const fx = ctx.scene.addEffect(id, 'noise');
+    const fx = await ctx.scene.addEffect(id, 'noise');
     if (fx) {
-      ctx.scene.updateEffectParam(id, fx, 'amount', i.grain);
-      ctx.scene.updateEffectParam(id, fx, 'monochrome', true);
+      await ctx.scene.updateEffectParam(id, fx, 'amount', i.grain);
+      await ctx.scene.updateEffectParam(id, fx, 'monochrome', true);
       if (i.grainAnimated !== false) {
         // Static grain reads as a dirty lens, not as film. Evolving it per frame
         // is what makes it live — and it must be a KEYFRAMED track, not a
         // constant, or every frame gets the same noise field.
-        ctx.anim.setKeyframe(id, `effect.${fx}.evolution`, ctx.time.toLayerTime(id, 0), 0, 'linear');
-        ctx.anim.setKeyframe(
+        await ctx.anim.setKeyframe(id, `effect.${fx}.evolution`, 0, 0, 'linear');
+        await ctx.anim.setKeyframe(
           id,
           `effect.${fx}.evolution`,
-          ctx.time.toLayerTime(id, comp.durationSeconds),
+          comp.durationSeconds,
           Math.round(comp.durationSeconds * comp.fps),
           'linear',
         );
@@ -387,26 +387,26 @@ const addSurfaceTreatment: AiTool['handler'] = (input, ctx) => {
   if (i.vignette !== undefined && i.vignette > 0) {
     // A vignette is a radial darkening, built from a soft-edged inverted mask on
     // a dark fill — the engine has no dedicated vignette effect.
-    const fx = ctx.scene.addEffect(id, 'gradient-ramp');
+    const fx = await ctx.scene.addEffect(id, 'gradient-ramp');
     if (fx) {
-      ctx.scene.updateEffectParam(id, fx, 'blend', i.vignette);
-      ctx.scene.updateEffectParam(id, fx, 'colorA', '#00000000');
-      ctx.scene.updateEffectParam(id, fx, 'colorB', '#000000');
+      await ctx.scene.updateEffectParam(id, fx, 'blend', i.vignette);
+      await ctx.scene.updateEffectParam(id, fx, 'colorA', '#00000000');
+      await ctx.scene.updateEffectParam(id, fx, 'colorB', '#000000');
       added.push(`vignette ${i.vignette}%`);
     }
   }
 
   if (i.chromaticAberration !== undefined && i.chromaticAberration > 0) {
-    const fx = ctx.scene.addEffect(id, 'channel-mixer');
+    const fx = await ctx.scene.addEffect(id, 'channel-mixer');
     if (fx) {
-      ctx.scene.updateEffectParam(id, fx, 'amount', i.chromaticAberration);
+      await ctx.scene.updateEffectParam(id, fx, 'amount', i.chromaticAberration);
       added.push(`chromatic aberration ${i.chromaticAberration}px`);
     }
   }
 
-  bumpScene();
+  refreshAfterLegacy(ctx);
   if (!added.length) {
-    ctx.scene.remove(id);
+    await ctx.scene.remove(id);
     return fail('None of the requested surface effects could be added — the adjustment layer was removed again.');
   }
   return ok(
@@ -433,18 +433,18 @@ function placeBackdrop(id: string, placement: 'bottom' | 'top' | undefined): str
   return 'at the BOTTOM of the layer stack, behind every existing layer';
 }
 
-const createGradient: AiTool['handler'] = (input, ctx) => {
+const createGradient: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     id?: string; stops: string[]; kind?: 'linear' | 'radial' | 'corners'; angle?: number; name?: string;
     placement?: 'bottom' | 'top'; centerX?: number; centerY?: number; radius?: number;
   };
-  const comp = ctx.comp.get();
-  const id = ctx.scene.create('solid', i.name ?? 'Gradient', { x: comp.width / 2, y: comp.height / 2 });
+  const comp = await ctx.comp.get();
+  const id = await ctx.scene.create('solid', i.name ?? 'Gradient', { x: comp.width / 2, y: comp.height / 2 });
   if (!id) return fail('Could not create the gradient layer.');
   bindAlias(ctx, i.id, id);
-  ctx.scene.setProp(id, 'width', comp.width);
-  ctx.scene.setProp(id, 'height', comp.height);
-  ctx.scene.setProp(id, 'fill', i.stops[0]!);
+  await ctx.scene.setProp(id, 'width', comp.width);
+  await ctx.scene.setProp(id, 'height', comp.height);
+  await ctx.scene.setProp(id, 'fill', i.stops[0]!);
 
   const kind = i.kind ?? 'linear';
   const where = placeBackdrop(id, i.placement);
@@ -452,11 +452,11 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
   // 4 stops map exactly onto the four-color-gradient effect, which is a genuine
   // 2D blend rather than two stacked ramps.
   if (i.stops.length === 4 && kind === 'corners') {
-    const fx = ctx.scene.addEffect(id, 'four-color-gradient');
+    const fx = await ctx.scene.addEffect(id, 'four-color-gradient');
     if (!fx) return fail('Could not add the gradient effect.');
     const keys = ['colorTL', 'colorTR', 'colorBL', 'colorBR'];
-    i.stops.forEach((c, n) => ctx.scene.updateEffectParam(id, fx, keys[n]!, c));
-    bumpScene();
+    for (const [n, c] of i.stops.entries()) await ctx.scene.updateEffectParam(id, fx, keys[n]!, c);
+    refreshAfterLegacy(ctx);
     return ok(`Created a 4-corner gradient backdrop '${id}', ${where}.`, { id, effectIds: [fx], placement: i.placement ?? 'bottom' });
   }
 
@@ -479,7 +479,7 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
       radius: (i.radius ?? 100) / 100,
       stops: i.stops.map((c, n) => makeStop(n / last, c)),
     });
-    bumpScene();
+    refreshAfterLegacy(ctx);
     return ok(
       `Created a ${i.stops.length}-stop radial gradient backdrop '${id}' (${i.stops.join(' → ')}, centre outward), ${where}. ` +
       `Animate it with set_keyframes on 'fillCenterX' / 'fillCenterY' / 'fillRadius' — FRACTIONS (0.5 = centre, radius 1 = reaches the corners), not the percentages this call took.`,
@@ -493,18 +493,18 @@ const createGradient: AiTool['handler'] = (input, ctx) => {
   // middle of a two-stop gradient. The caller supplies OKLCH-computed stops.
   const effectIds: string[] = [];
   for (let n = 0; n < i.stops.length - 1; n++) {
-    const fx = ctx.scene.addEffect(id, 'gradient-ramp');
+    const fx = await ctx.scene.addEffect(id, 'gradient-ramp');
     if (!fx) continue;
-    ctx.scene.updateEffectParam(id, fx, 'colorA', i.stops[n]!);
-    ctx.scene.updateEffectParam(id, fx, 'colorB', i.stops[n + 1]!);
-    ctx.scene.updateEffectParam(id, fx, 'angle', i.angle ?? 90);
+    await ctx.scene.updateEffectParam(id, fx, 'colorA', i.stops[n]!);
+    await ctx.scene.updateEffectParam(id, fx, 'colorB', i.stops[n + 1]!);
+    await ctx.scene.updateEffectParam(id, fx, 'angle', i.angle ?? 90);
     // Later bands blend over the earlier ones at reducing strength, so the
     // handoff between stops is smooth instead of a visible seam.
-    ctx.scene.updateEffectParam(id, fx, 'blend', n === 0 ? 100 : Math.round(100 / (n + 1)));
+    await ctx.scene.updateEffectParam(id, fx, 'blend', n === 0 ? 100 : Math.round(100 / (n + 1)));
     effectIds.push(fx);
   }
   if (!effectIds.length) return fail('Could not add the gradient effect.');
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(
     // `corners` with anything but 4 stops has no four-colour mapping and falls
     // through to here — say "linear", because that is what was drawn.

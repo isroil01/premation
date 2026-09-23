@@ -54,18 +54,18 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
  * Thinned to `STRIP_MAX` by dropping the most closely-spaced samples first, so
  * a dense cluster loses members before an isolated event does.
  */
-export function filmstripTimes(ctx: ToolContext, durationSec: number): number[] {
+export async function filmstripTimes(ctx: ToolContext, durationSec: number): Promise<number[]> {
   const times = new Set<number>();
   const clamp = (t: number): number => Math.max(0, Math.min(durationSec, t));
 
-  for (const node of ctx.scene.all()) {
-    for (const track of ctx.anim.tracks(node.id)) {
+  for (const node of await ctx.scene.all()) {
+    for (const track of await ctx.anim.tracks(node.id)) {
       const kfs = track.keyframes;
       for (let i = 0; i < kfs.length; i++) {
-        const t = ctx.time.toCompTime(node.id, kfs[i]!.t);
+        const t = kfs[i]!.t; // composition seconds
         times.add(Number(clamp(t).toFixed(3)));
         if (i > 0) {
-          const prev = ctx.time.toCompTime(node.id, kfs[i - 1]!.t);
+          const prev = kfs[i - 1]!.t;
           times.add(Number(clamp((prev + t) / 2).toFixed(3)));
         }
       }
@@ -208,18 +208,18 @@ export interface VelocityTrack {
  * rises and falls smoothly is an eased move; a speed spike is a pop. All three
  * are instantly legible on a plot and invisible in a frame.
  */
-export function sampleVelocities(
+export async function sampleVelocities(
   ctx: ToolContext,
   durationSec: number,
   o: { maxTracks?: number; samples?: number } = {},
-): VelocityTrack[] {
+): Promise<VelocityTrack[]> {
   const sampleCount = o.samples ?? 120;
   const maxTracks = o.maxTracks ?? 6;
   const HERO_PROPS = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'z']);
 
   const candidates: { label: string; nodeId: string; prop: string; range: number }[] = [];
-  for (const node of ctx.scene.all()) {
-    for (const track of ctx.anim.tracks(node.id)) {
+  for (const node of await ctx.scene.all()) {
+    for (const track of await ctx.anim.tracks(node.id)) {
       if (!HERO_PROPS.has(track.prop) || track.keyframes.length < 2) continue;
       const values = track.keyframes.map((k) => k.value);
       const range = Math.max(...values) - Math.min(...values);
@@ -232,16 +232,18 @@ export function sampleVelocities(
   candidates.sort((a, b) => b.range - a.range);
 
   const dt = durationSec / Math.max(1, sampleCount - 1);
-  return candidates.slice(0, maxTracks).map((c) => {
+  const out: VelocityTrack[] = [];
+  for (const c of candidates.slice(0, maxTracks)) {
     const samples: number[] = [];
     for (let i = 0; i < sampleCount; i++) {
       const t = i * dt;
-      const a = ctx.anim.evaluate(c.nodeId, ctx.time.toLayerTime(c.nodeId, Math.max(0, t - dt / 2)))[c.prop] ?? 0;
-      const b = ctx.anim.evaluate(c.nodeId, ctx.time.toLayerTime(c.nodeId, Math.min(durationSec, t + dt / 2)))[c.prop] ?? 0;
+      const a = (await ctx.anim.evaluate(c.nodeId, Math.max(0, t - dt / 2)))[c.prop] ?? 0;
+      const b = (await ctx.anim.evaluate(c.nodeId, Math.min(durationSec, t + dt / 2)))[c.prop] ?? 0;
       samples.push(Math.abs(b - a) / Math.max(1e-6, dt));
     }
-    return { label: c.label, samples };
-  });
+    out.push({ label: c.label, samples });
+  }
+  return out;
 }
 
 /**
@@ -313,11 +315,11 @@ export async function renderCritiqueEvidence(
 ): Promise<AiImage[]> {
   const out: AiImage[] = [];
   try {
-    const times = filmstripTimes(ctx, durationSec);
+    const times = await filmstripTimes(ctx, durationSec);
     const strip = await renderFilmstrip(times);
     if (strip) out.push(strip);
 
-    const graphs = renderVelocityGraphs(sampleVelocities(ctx, durationSec), durationSec);
+    const graphs = renderVelocityGraphs(await sampleVelocities(ctx, durationSec), durationSec);
     if (graphs) out.push(graphs);
   } catch {
     return out;

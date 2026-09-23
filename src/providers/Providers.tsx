@@ -63,6 +63,8 @@ import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
 import { bootEngine, shutdownEngine } from '@core/engine/engineInstance';
+import { commandLogRecordingEnabled } from '@core/automation/commandLog';
+import { installAutomationDevApi } from '@core/automation/devApi';
 import { createAppEnginePorts } from '@core/engine/appPorts';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
@@ -3078,8 +3080,15 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           bootEngine({
             ports: createAppEnginePorts(getProjectManager()),
             projectPath: () => getProjectManager().getState().current?.path,
+            // B5: the command log automation records/replays (dev builds and
+            // VITE_RECORD_COMMAND_LOG=1; see core/automation/commandLog).
+            recordLog: commandLogRecordingEnabled(),
           });
           track(() => { void shutdownEngine(); });
+          // B5 automation (record/replay a session, run a script) on window.
+          // Not tracked: it holds no resources and always targets the CURRENT
+          // engine, so a boot re-run (StrictMode) must not leave it uninstalled.
+          installAutomationDevApi();
         } catch (err) {
           console.error('[boot] engine API failed to start', err);
         }

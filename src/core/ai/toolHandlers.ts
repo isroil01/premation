@@ -26,7 +26,7 @@
  */
 
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
-import { ALL_TOOL_DEFS, bindAlias } from '@motion/ai-tools';
+import { ALL_TOOL_DEFS, bindAlias, mutates } from '@motion/ai-tools';
 import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
 import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/textAnimators';
@@ -52,12 +52,10 @@ import {
   setNodeSpecular,
 } from '@core/scene/material';
 import { rectangleMask, ellipseMask, addMaskPath, type MaskMode } from '@core/effects/mask';
-import { bumpScene } from '@stores/sceneStore';
+import { refreshAfterLegacy } from './toolContext';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { insertMedia, insertSvgLayer } from '@core/scene/sceneInsert';
 import { convertSvgLayerToShapes } from '@core/svg/svgConvert';
 import { analyseAudio } from '@motion/audio';
@@ -92,6 +90,9 @@ import { setNodeBlend } from '@core/effects/blendMode';
 import { setNodeMatte, readMatte } from '@core/effects/matte';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { CRAFT_HANDLERS } from './craftHandlers';
+import { mapSeq, filterSeq } from './asyncList';
+import { engineOr } from './toolContext';
+import type { Command } from '@motion/engine-api';
 
 const def = (name: string) => {
   const d = ALL_TOOL_DEFS.find((t) => t.name === name);
@@ -103,15 +104,15 @@ const ok = (content: string, data?: unknown): ToolResult => ({ ok: true, content
 const fail = (content: string): ToolResult => ({ ok: false, content });
 
 /** The standard "that id doesn't exist" repair hint. */
-const unknownNode = (ctx: ToolContext, id: string): string =>
-  `unknown nodeId '${id}' — did you mean: ${ctx.scene.nearest(id).join(', ') || '(no layers exist yet)'}?`;
+const unknownNode = async (ctx: ToolContext, id: string): Promise<string> =>
+  `unknown nodeId '${id}' — did you mean: ${(await ctx.scene.nearest(id)).join(', ') || '(no layers exist yet)'}?`;
 
 // ── Read ──────────────────────────────────────────────────────────
 
-const describeScene: AiTool['handler'] = (input, ctx) => {
+const describeScene: AiTool['handler'] = async (input, ctx) => {
   const { subtreeOf, includeTracks, limit } = input as { subtreeOf?: string; includeTracks?: boolean; limit?: number };
-  const all = ctx.scene.all();
-  if (subtreeOf && !ctx.scene.has(subtreeOf)) return fail(unknownNode(ctx, subtreeOf));
+  const all = await ctx.scene.all();
+  if (subtreeOf && !await ctx.scene.has(subtreeOf)) return fail((await unknownNode(ctx, subtreeOf)));
 
   let nodes = all;
   if (subtreeOf) {
@@ -123,13 +124,13 @@ const describeScene: AiTool['handler'] = (input, ctx) => {
 
   const cap = limit ?? 120;
   const shown = nodes.slice(0, cap);
-  const comp = ctx.comp.get();
+  const comp = await ctx.comp.get();
 
   const payload = {
     composition: { ...comp, playhead: ctx.comp.playhead() },
     selection: ctx.scene.selection(),
     layerCount: nodes.length,
-    layers: shown.map((n) => ({
+    layers: await mapSeq(shown, async (n) => ({
       id: n.id,
       name: n.name,
       kind: n.kind,
@@ -150,7 +151,7 @@ const describeScene: AiTool['handler'] = (input, ctx) => {
       ...(n.fontFamily !== undefined ? { fontFamily: n.fontFamily } : {}),
       ...(n.animated.length ? { animated: n.animated } : {}),
       ...(includeTracks && n.animated.length
-        ? { tracks: ctx.anim.tracks(n.id).map((t) => ({ prop: t.prop, keys: t.keyframes.map((k) => [ctx.time.toCompTime(n.id, k.t), k.value]) })) }
+        ? { tracks: (await ctx.anim.tracks(n.id)).map((t) => ({ prop: t.prop, keys: t.keyframes.map((k) => [k.t, k.value]) })) }
         : {}),
     })),
   };
@@ -164,26 +165,26 @@ const describeScene: AiTool['handler'] = (input, ctx) => {
   return ok(JSON.stringify(payload) + note, payload);
 };
 
-const readTracks: AiTool['handler'] = (input, ctx) => {
+const readTracks: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, props } = input as { nodeId: string; props?: string[] };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
-  let tracks = ctx.anim.tracks(nodeId);
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
+  let tracks = await ctx.anim.tracks(nodeId);
   if (props?.length) tracks = tracks.filter((t) => props.includes(t.prop));
   if (!tracks.length) return ok(`${nodeId} has no animated properties${props?.length ? ' matching those props' : ''}.`);
   // [t, value] pairs — roughly 4x cheaper in tokens than objects.
   const payload = tracks.map((t) => ({
     prop: t.prop,
-    keys: t.keyframes.map((k) => [ctx.time.toCompTime(nodeId, k.t), k.value, k.easing]),
+    keys: t.keyframes.map((k) => [k.t, k.value, k.easing]),
   }));
   return ok(`Times are composition seconds. [t, value, easing]:\n${JSON.stringify(payload)}`, payload);
 };
 
-const evaluateAt: AiTool['handler'] = (input, ctx) => {
+const evaluateAt: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, t } = input as { nodeId: string; t?: number };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
   const compT = t ?? ctx.comp.playhead();
-  const animated = ctx.anim.evaluate(nodeId, ctx.time.toLayerTime(nodeId, compT));
-  const node = ctx.scene.get(nodeId)!;
+  const animated = await ctx.anim.evaluate(nodeId, compT);
+  const node = (await ctx.scene.get(nodeId))!;
   // Fall back to the node's base transform for properties with no track —
   // evaluateNode only reports animated props.
   const payload = {
@@ -193,17 +194,17 @@ const evaluateAt: AiTool['handler'] = (input, ctx) => {
   return ok(JSON.stringify(payload), payload);
 };
 
-const getSelection: AiTool['handler'] = (_input, ctx) => {
+const getSelection: AiTool['handler'] = async (_input, ctx) => {
   const ids = ctx.scene.selection();
   if (!ids.length) return ok('Nothing is selected.', []);
-  const payload = ids.map((id) => {
-    const n = ctx.scene.get(id);
+  const payload = await mapSeq(ids, async (id) => {
+    const n = await ctx.scene.get(id);
     return { id, name: n?.name ?? id, kind: n?.kind ?? 'unknown' };
   });
   return ok(JSON.stringify(payload), payload);
 };
 
-const listCapabilities: AiTool['handler'] = (input, ctx) => {
+const listCapabilities: AiTool['handler'] = async (input, ctx) => {
   const { area } = input as { area?: string };
   const want = (a: string) => !area || area === 'all' || area === a;
   const payload: Record<string, unknown> = {};
@@ -257,39 +258,39 @@ const listCapabilities: AiTool['handler'] = (input, ctx) => {
       note: 'Pin ids are returned by create_puppet_rig. Rig mesh settings live on the layer fx.puppet block (meshDensity 2-50, meshExpansion px, solver lbs|arap, meshMode grid|silhouette, maxRotationDeg = Mesh Rotation Refinement).',
     };
   }
-  if (want('all')) payload.presets = ctx.anim.listPresets();
+  if (want('all')) payload.presets = await ctx.anim.listPresets();
   return ok(JSON.stringify(payload), payload);
 };
 
-const listPresetsHandler: AiTool['handler'] = (_input, ctx) => {
-  const names = ctx.anim.listPresets();
+const listPresetsHandler: AiTool['handler'] = async (_input, ctx) => {
+  const names = await ctx.anim.listPresets();
   return ok(JSON.stringify(names), names);
 };
 
 // ── Write: structure ──────────────────────────────────────────────
 
-const createLayer: AiTool['handler'] = (input, ctx) => {
+const createLayer: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     id?: string; kind: string; name: string; x?: number; y?: number; width?: number; height?: number;
     text?: string; shape?: string; fill?: string; parent?: string;
     points?: number; outerRadius?: number; innerRadius?: number; roundness?: number;
   };
-  if (i.parent && !ctx.scene.has(i.parent)) return fail(unknownNode(ctx, i.parent));
+  if (i.parent && !await ctx.scene.has(i.parent)) return fail((await unknownNode(ctx, i.parent)));
   // Accept x-only or y-only (the old code discarded BOTH if either was missing,
   // silently centring the layer). Only when NEITHER is given do we hand the
   // facade `undefined`, which fans the layer out instead of stacking at centre.
-  const comp = ctx.comp.get();
+  const comp = await ctx.comp.get();
   const at =
     i.x !== undefined || i.y !== undefined
       ? { x: i.x ?? comp.width / 2, y: i.y ?? comp.height / 2 }
       : undefined;
-  const id = ctx.scene.create(i.kind, i.name, at);
+  const id = await ctx.scene.create(i.kind, i.name, at);
   if (!id) return fail(`Could not create a ${i.kind} layer — the insert produced no node.`);
   // Bind the caller's handle BEFORE anything else, so a later call in the same
   // batch can address this layer without a round-trip through the model.
   bindAlias(ctx, i.id, id);
-  if (i.text !== undefined) ctx.scene.setProp(id, 'content', i.text);
-  if (i.fill) ctx.scene.setProp(id, 'fill', i.fill);
+  if (i.text !== undefined) await ctx.scene.setProp(id, 'content', i.text);
+  if (i.fill) await ctx.scene.setProp(id, 'fill', i.fill);
   // Polygon / star are PARAMETRIC — the same `fx.polystar` node the UI's
   // Polygon and Star tools create (ports.ts), whose outline `buildSnapshot`
   // recomputes from live parameters every frame. Writing `shapeType: 'polygon'`
@@ -312,45 +313,47 @@ const createLayer: AiTool['handler'] = (input, ctx) => {
         ? { outerRoundness: i.roundness, innerRoundness: polystarType === 'star' ? i.roundness : 0 }
         : {}),
     };
-    ctx.scene.setProp(id, 'shapeType', 'polystar');
+    await ctx.scene.setProp(id, 'shapeType', 'polystar');
+    // B5 gap: the parametric polystar block has no engine command yet.
+    ctx.engine.legacy('create_layer polystar (fx.polystar has no engine command)');
     setNodePolystar(id, polystar);
   } else if (i.shape) {
-    ctx.scene.setProp(id, 'shapeType', i.shape);
+    await ctx.scene.setProp(id, 'shapeType', i.shape);
   }
-  if (i.parent) ctx.scene.reparent(id, i.parent);
+  if (i.parent) await ctx.scene.reparent(id, i.parent);
 
   // GPU renderer builds its model matrix from layer.width × layer.scaleX and
   // layer.height × layer.scaleY. Without explicit size the quad is zero-area
   // and invisible on WebGL/WebGPU. Apply safe defaults when the AI omits them.
   const kind = i.kind;
   if (kind === 'solid') {
-    ctx.scene.setProp(id, 'width', i.width ?? comp.width);
-    ctx.scene.setProp(id, 'height', i.height ?? comp.height);
+    await ctx.scene.setProp(id, 'width', i.width ?? comp.width);
+    await ctx.scene.setProp(id, 'height', i.height ?? comp.height);
   } else if (polystar) {
     // The box follows the radius — the renderer sizes a polystar's raster from
     // its live outer radius anyway, and the selection outline reads these.
-    ctx.scene.setProp(id, 'width', polystar.outerRadius * 2);
-    ctx.scene.setProp(id, 'height', polystar.outerRadius * 2);
+    await ctx.scene.setProp(id, 'width', polystar.outerRadius * 2);
+    await ctx.scene.setProp(id, 'height', polystar.outerRadius * 2);
   } else if (kind === 'shape') {
-    ctx.scene.setProp(id, 'width', i.width ?? 200);
-    ctx.scene.setProp(id, 'height', i.height ?? 200);
+    await ctx.scene.setProp(id, 'width', i.width ?? 200);
+    await ctx.scene.setProp(id, 'height', i.height ?? 200);
   } else if (kind === 'text') {
     // Text width drives line-wrapping; height is derived from line count.
     // Default to a wide strip so short text renders in a single line.
-    if (i.width !== undefined) ctx.scene.setProp(id, 'width', i.width);
-    else ctx.scene.setProp(id, 'width', Math.round(comp.width * 0.75));
-    if (i.height !== undefined) ctx.scene.setProp(id, 'height', i.height);
+    if (i.width !== undefined) await ctx.scene.setProp(id, 'width', i.width);
+    else await ctx.scene.setProp(id, 'width', Math.round(comp.width * 0.75));
+    if (i.height !== undefined) await ctx.scene.setProp(id, 'height', i.height);
   } else {
     // For all other kinds (null, group, camera, light, etc.) apply only if provided.
-    if (i.width !== undefined) ctx.scene.setProp(id, 'width', i.width);
-    if (i.height !== undefined) ctx.scene.setProp(id, 'height', i.height);
+    if (i.width !== undefined) await ctx.scene.setProp(id, 'width', i.width);
+    if (i.height !== undefined) await ctx.scene.setProp(id, 'height', i.height);
   }
 
   // Report what the scene ACTUALLY holds, read back — not the request echoed.
   // The special inserters (camera/light/adjustment/particle) name and select
   // their own node, and a reply that repeats `i.name` regardless is how "Created
   // light layer 'My Key Light'" got said about a layer called "Light 1".
-  const made = ctx.scene.get(id);
+  const made = await ctx.scene.get(id);
   const realName = made?.name ?? i.name;
   const renamed = realName !== i.name ? ` (requested '${i.name}' — the engine named it '${realName}')` : '';
   const shapeNote = polystar
@@ -365,29 +368,29 @@ const createLayer: AiTool['handler'] = (input, ctx) => {
   );
 };
 
-const deleteLayer: AiTool['handler'] = (input, ctx) => {
+const deleteLayer: AiTool['handler'] = async (input, ctx) => {
   const { nodeIds } = input as { nodeIds: string[] };
   const bad: string[] = [];
   let removed = 0;
   for (const id of nodeIds) {
-    if (!ctx.scene.has(id)) { bad.push(unknownNode(ctx, id)); continue; }
-    ctx.scene.remove(id);
+    if (!await ctx.scene.has(id)) { bad.push((await unknownNode(ctx, id))); continue; }
+    await ctx.scene.remove(id);
     removed++;
   }
   if (bad.length) return { ok: false, content: `Deleted ${removed}. Failed:\n- ${bad.join('\n- ')}` };
   return ok(`Deleted ${removed} layer(s).`);
 };
 
-const reparentLayer: AiTool['handler'] = (input, ctx) => {
+const reparentLayer: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, parentId } = input as { nodeId: string; parentId?: string | null };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
-  if (parentId && !ctx.scene.has(parentId)) return fail(unknownNode(ctx, parentId));
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
+  if (parentId && !await ctx.scene.has(parentId)) return fail((await unknownNode(ctx, parentId)));
   if (parentId === nodeId) return fail('A layer cannot be its own parent.');
-  ctx.scene.reparent(nodeId, parentId ?? null);
+  await ctx.scene.reparent(nodeId, parentId ?? null);
   return ok(`Re-parented ${nodeId} to ${parentId ?? 'the top level'}.`);
 };
 
-const updateLayer: AiTool['handler'] = (input, ctx) => {
+const updateLayer: AiTool['handler'] = async (input, ctx) => {
   const i = input as Record<string, unknown> & {
     nodeId: string;
     threeD?: boolean;
@@ -404,13 +407,14 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
     matte?: { mode: string; inverted?: boolean; sourceId?: string } | string;
     removeMatte?: boolean;
   };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   const node = defaultSceneGraph.getNode(i.nodeId);
   const applied: string[] = [];
 
+  const sw = (patch: Record<string, unknown>): Command[] => [{ type: 'setLayerSwitches', layers: [i.nodeId], patch } as Command];
   if (i.threeD !== undefined && node) {
-    set3DEnabled(i.nodeId, !!i.threeD);
+    await engineOr(ctx.engine, 'update_layer threeD refused by the engine', sw({ threeD: !!i.threeD }), () => undefined, () => set3DEnabled(i.nodeId, !!i.threeD));
     applied.push(`threeD=${!!i.threeD}`);
   }
   // Material switches. Without these `set_light` was a tool that could not
@@ -418,6 +422,11 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
   // switch AND `acceptsLights`, the flag defaults to false, and the only writer
   // was the inspector checkbox. A light could be created, positioned and tuned,
   // and nothing in the scene would ever be lit by it.
+  // B5 gap: material options (accepts lights, ambient, diffuse, specular,
+  // shininess) and track mattes keep their legacy writers.
+  const legacyMaterial = i.acceptsLights !== undefined || typeof i.ambient === 'number' || typeof i.diffuse === 'number' ||
+    typeof i.specular === 'number' || typeof i.shininess === 'number' || i.removeMatte || i.matte !== undefined;
+  if (legacyMaterial && node) ctx.engine.legacy('update_layer material options / track matte');
   if (i.acceptsLights !== undefined && node) {
     setNodeAcceptsLights(i.nodeId, !!i.acceptsLights);
     applied.push(`acceptsLights=${!!i.acceptsLights}`);
@@ -438,23 +447,24 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
     applied.push(`shininess=${i.shininess}`);
   }
   if (i.name !== undefined && node) {
-    node.name = String(i.name);
+    const name = String(i.name);
+    await engineOr(ctx.engine, 'update_layer rename refused by the engine', [{ type: 'renameLayer', layer: i.nodeId, name } as Command], () => undefined, () => { node.name = name; });
     applied.push('name');
   }
   if (i.visible !== undefined && node) {
-    node.visible = !!i.visible;
+    await engineOr(ctx.engine, 'update_layer visibility refused by the engine', sw({ visible: !!i.visible }), () => undefined, () => { node.visible = !!i.visible; });
     applied.push('visible');
   }
   if (i.locked !== undefined && node) {
-    node.locked = !!i.locked;
+    await engineOr(ctx.engine, 'update_layer lock refused by the engine', sw({ locked: !!i.locked }), () => undefined, () => { node.locked = !!i.locked; });
     applied.push('locked');
   }
   if (i.motionBlur !== undefined && node) {
-    setNodeMotionBlur(i.nodeId, !!i.motionBlur);
+    await engineOr(ctx.engine, 'update_layer motion blur refused by the engine', sw({ motionBlur: !!i.motionBlur }), () => undefined, () => setNodeMotionBlur(i.nodeId, !!i.motionBlur));
     applied.push(`motionBlur=${!!i.motionBlur}`);
   }
   if (i.blendMode !== undefined && node) {
-    setNodeBlend(i.nodeId, i.blendMode as any);
+    await engineOr(ctx.engine, `update_layer blend mode '${i.blendMode}' refused by the engine`, [{ type: 'setBlendMode', layers: [i.nodeId], mode: i.blendMode } as Command], () => undefined, () => setNodeBlend(i.nodeId, i.blendMode as any));
     applied.push(`blendMode=${i.blendMode}`);
   }
   if (i.removeMatte && node) {
@@ -508,11 +518,11 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
         `'${key}' needs the layer's 3D switch — pass threeD: true in this same call (it is applied first).`,
       );
     }
-    if (ctx.scene.setProp(i.nodeId, map[key] ?? key, i[key])) applied.push(key);
+    if (await ctx.scene.setProp(i.nodeId, map[key] ?? key, i[key])) applied.push(key);
   }
 
   if (!applied.length) return fail('Nothing to update — pass at least one property besides nodeId.');
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Updated ${i.nodeId}: ${applied.join(', ')}.`);
 };
 
@@ -527,7 +537,7 @@ interface KeyframeInput {
   bezier?: number[];
 }
 
-const setKeyframes: AiTool['handler'] = (input, ctx) => {
+const setKeyframes: AiTool['handler'] = async (input, ctx) => {
   const { keyframes } = input as { keyframes: KeyframeInput[] };
   const bad: string[] = [];
   const touched = new Set<string>();
@@ -548,7 +558,7 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
   const mergeNotes: string[] = [];
 
   for (const [i, k] of keyframes.entries()) {
-    if (!ctx.scene.has(k.nodeId)) { bad.push(`keyframes[${i}]: ${unknownNode(ctx, k.nodeId)}`); continue; }
+    if (!await ctx.scene.has(k.nodeId)) { bad.push(`keyframes[${i}]: ${(await unknownNode(ctx, k.nodeId))}`); continue; }
     if (!isAnimatableProp(k.prop)) {
       bad.push(`keyframes[${i}]: '${k.prop}' is not animatable. Call list_capabilities for the real property paths.`);
       continue;
@@ -572,8 +582,8 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
      */
     if (k.prop.startsWith('effect.')) {
       const effectId = k.prop.slice('effect.'.length).split('.')[0]!;
-      if (!ctx.scene.listEffects(k.nodeId).some((e) => e.id === effectId)) {
-        const have = ctx.scene.listEffects(k.nodeId).map((e) => `${e.id} (${e.type})`).join(', ');
+      if (!(await ctx.scene.listEffects(k.nodeId)).some((e) => e.id === effectId)) {
+        const have = (await ctx.scene.listEffects(k.nodeId)).map((e) => `${e.id} (${e.type})`).join(', ');
         bad.push(
           `keyframes[${i}]: ${k.nodeId} has no effect '${effectId}', so '${k.prop}' would store ` +
             `keyframes nothing ever reads. ${have ? `It has: ${have}.` : 'It has no effects.'} ` +
@@ -584,7 +594,7 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
     }
     // A camera is 3D by nature — its z (dolly) needs no 3D switch, and it never
     // renders rotationX/Y (it uses orbitYaw/orbitPitch instead).
-    const isCamera = ctx.scene.get(k.nodeId)?.kind === 'camera';
+    const isCamera = (await ctx.scene.get(k.nodeId))?.kind === 'camera';
     if (
       !isCamera &&
       (THREE_D_PROPS as readonly string[]).includes(k.prop) &&
@@ -594,9 +604,11 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
       continue;
     }
 
-    // The one conversion, done once, for the value AND its easing. Splitting
-    // these is exactly the bug this design exists to prevent.
-    const lt = ctx.time.toLayerTime(k.nodeId, k.t);
+    // Where the engine will store this key (the frame-snapped layer axis) —
+    // only to spot two requested times collapsing onto one key. The WRITES
+    // below speak composition time; the engine converts the value AND its
+    // easing together, which is the bug this design exists to prevent.
+    const lt = await ctx.time.toLayerTime(k.nodeId, k.t);
     const trackKey = `${k.nodeId}.${k.prop}`;
     const slots = landed.get(trackKey) ?? new Map<number, { index: number; t: number }>();
     landed.set(trackKey, slots);
@@ -611,9 +623,9 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
       );
     }
     slots.set(lt, { index: i, t: k.t });
-    ctx.anim.setKeyframe(k.nodeId, k.prop, lt, k.value, k.easing ?? 'linear');
+    await ctx.anim.setKeyframe(k.nodeId, k.prop, k.t, k.value, k.easing ?? 'linear');
     if (k.easing === 'bezier' && k.bezier) {
-      ctx.anim.setBezier(k.nodeId, k.prop, lt, k.bezier);
+      await ctx.anim.setBezier(k.nodeId, k.prop, k.t, k.bezier);
     }
     touched.add(trackKey);
     applied++;
@@ -621,16 +633,16 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
 
   // A single keyframe on a property holds a constant — usually a mistake worth
   // naming, since the model thinks it animated something.
-  const singles = [...touched].filter((key) => {
+  const singles = await filterSeq([...touched], async (key) => {
     const [nodeId, ...rest] = key.split('.');
     const prop = rest.join('.');
-    return (ctx.anim.tracks(nodeId!).find((t) => t.prop === prop)?.keyframes.length ?? 0) < 2;
+    return ((await ctx.anim.tracks(nodeId!)).find((t) => t.prop === prop)?.keyframes.length ?? 0) < 2;
   });
   const warn = singles.length
     ? `\nNote: ${singles.join(', ')} now has only ONE keyframe, so it holds a constant. Add a second at a different time to make it move.`
     : '';
 
-  const fps = ctx.comp.get().fps || 30;
+  const fps = (await ctx.comp.get()).fps || 30;
   const mergeWarn = mergeNotes.length
     ? `\nWARNING: keyframe times snap to the frame grid (one frame = ${(1 / fps).toFixed(4)}s at ` +
       `${fps} fps), so ${mergeNotes.length} key(s) MERGED:\n- ${mergeNotes.join('\n- ')}` +
@@ -653,19 +665,19 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
   );
 };
 
-const removeKeyframes: AiTool['handler'] = (input, ctx) => {
+const removeKeyframes: AiTool['handler'] = async (input, ctx) => {
   const { targets } = input as { targets: { nodeId: string; prop: string; t?: number }[] };
   const bad: string[] = [];
   let n = 0;
   for (const [i, tg] of targets.entries()) {
-    if (!ctx.scene.has(tg.nodeId)) { bad.push(`targets[${i}]: ${unknownNode(ctx, tg.nodeId)}`); continue; }
+    if (!await ctx.scene.has(tg.nodeId)) { bad.push(`targets[${i}]: ${(await unknownNode(ctx, tg.nodeId))}`); continue; }
     if (tg.t === undefined) {
-      const track = ctx.anim.tracks(tg.nodeId).find((t) => t.prop === tg.prop);
+      const track = (await ctx.anim.tracks(tg.nodeId)).find((t) => t.prop === tg.prop);
       if (!track) { bad.push(`targets[${i}]: ${tg.nodeId} has no '${tg.prop}' track.`); continue; }
-      for (const k of [...track.keyframes]) ctx.anim.removeKeyframe(tg.nodeId, tg.prop, k.t);
+      for (const k of [...track.keyframes]) await ctx.anim.removeKeyframe(tg.nodeId, tg.prop, k.t);
       n += track.keyframes.length;
     } else {
-      ctx.anim.removeKeyframe(tg.nodeId, tg.prop, ctx.time.toLayerTime(tg.nodeId, tg.t));
+      await ctx.anim.removeKeyframe(tg.nodeId, tg.prop, tg.t);
       n++;
     }
   }
@@ -673,47 +685,49 @@ const removeKeyframes: AiTool['handler'] = (input, ctx) => {
   return ok(`Removed ${n} keyframe(s).`);
 };
 
-const setEasing: AiTool['handler'] = (input, ctx) => {
+const setEasing: AiTool['handler'] = async (input, ctx) => {
   const { targets } = input as { targets: { nodeId: string; prop: string; t: number; easing?: string; bezier?: number[]; roving?: boolean }[] };
   const bad: string[] = [];
   let n = 0;
   for (const [i, tg] of targets.entries()) {
-    if (!ctx.scene.has(tg.nodeId)) { bad.push(`targets[${i}]: ${unknownNode(ctx, tg.nodeId)}`); continue; }
-    const lt = ctx.time.toLayerTime(tg.nodeId, tg.t);
-    const track = ctx.anim.tracks(tg.nodeId).find((t) => t.prop === tg.prop);
-    const exists = track?.keyframes.some((k) => Math.abs(k.t - lt) < 1e-4);
+    if (!await ctx.scene.has(tg.nodeId)) { bad.push(`targets[${i}]: ${(await unknownNode(ctx, tg.nodeId))}`); continue; }
+    // The key the engine will address: the requested time, snapped the way
+    // the engine snaps it (tracks report composition seconds).
+    const at = await ctx.time.toCompTime(tg.nodeId, await ctx.time.toLayerTime(tg.nodeId, tg.t));
+    const track = (await ctx.anim.tracks(tg.nodeId)).find((t) => t.prop === tg.prop);
+    const exists = track?.keyframes.some((k) => Math.abs(k.t - at) < 1e-4);
     if (!exists) {
       // Naming the times that DO exist saves a guess-and-retry round trip.
-      const times = track?.keyframes.map((k) => ctx.time.toCompTime(tg.nodeId, k.t)).join(', ') ?? 'none';
+      const times = track?.keyframes.map((k) => k.t).join(', ') ?? 'none';
       bad.push(`targets[${i}]: no '${tg.prop}' keyframe at t=${tg.t} on ${tg.nodeId}. Existing times: ${times}.`);
       continue;
     }
-    if (tg.easing) ctx.anim.setEasing(tg.nodeId, tg.prop, lt, tg.easing);
-    if (tg.easing === 'bezier' && tg.bezier) ctx.anim.setBezier(tg.nodeId, tg.prop, lt, tg.bezier);
-    if (tg.roving !== undefined) ctx.anim.setRoving(tg.nodeId, tg.prop, lt, tg.roving);
+    if (tg.easing) await ctx.anim.setEasing(tg.nodeId, tg.prop, tg.t, tg.easing);
+    if (tg.easing === 'bezier' && tg.bezier) await ctx.anim.setBezier(tg.nodeId, tg.prop, tg.t, tg.bezier);
+    if (tg.roving !== undefined) await ctx.anim.setRoving(tg.nodeId, tg.prop, tg.t, tg.roving);
     n++;
   }
   if (bad.length) return { ok: false, content: `Updated ${n}. Failed:\n- ${bad.join('\n- ')}` };
   return ok(`Updated easing on ${n} keyframe(s).`);
 };
 
-const setExpression: AiTool['handler'] = (input, ctx) => {
+const setExpression: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, prop, expression } = input as { nodeId: string; prop: string; expression: string };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
   if (!isAnimatableProp(prop)) return fail(`'${prop}' is not animatable. Call list_capabilities.`);
-  ctx.anim.setExpression(nodeId, prop, expression);
+  await ctx.anim.setExpression(nodeId, prop, expression);
   if (!expression.trim()) return ok(`Removed the expression on ${nodeId}.${prop}.`);
   // Compile errors are reported here rather than discovered at render time.
-  const err = ctx.anim.getExpressionError(nodeId, prop);
+  const err = await ctx.anim.getExpressionError(nodeId, prop);
   if (err) {
-    ctx.anim.setExpression(nodeId, prop, '');
+    await ctx.anim.setExpression(nodeId, prop, '');
     return fail(`Expression rejected and not applied: ${err}. It must be a single expression returning a number — no 'return', no statements.`);
   }
   // Presence stopped being the same question as enablement. `setExpression`
   // preserves a disabled expression's state, so writing a formula onto a
   // property the user switched off does NOT make it drive the value — and
   // claiming otherwise sends the model hunting a rendering bug that is not there.
-  if (!ctx.anim.isExpressionEnabled(nodeId, prop)) {
+  if (!await ctx.anim.isExpressionEnabled(nodeId, prop)) {
     return ok(
       `Applied expression to ${nodeId}.${prop}, but the expression on that property is ` +
         `DISABLED, so its keyframed or static value still applies. It can be re-enabled ` +
@@ -725,14 +739,14 @@ const setExpression: AiTool['handler'] = (input, ctx) => {
 
 // ── Write: effects + text ─────────────────────────────────────────
 
-const addEffectHandler: AiTool['handler'] = (input, ctx) => {
+const addEffectHandler: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, type, amount, id: wantedId } = input as {
     nodeId: string; type: string; amount?: number; id?: string;
   };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
-  const id = ctx.scene.addEffect(nodeId, type, wantedId);
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
+  const id = await ctx.scene.addEffect(nodeId, type, wantedId);
   if (!id) return fail(`Could not add '${type}' to ${nodeId}.`);
-  if (amount !== undefined) ctx.scene.updateEffect(nodeId, id, amount);
+  if (amount !== undefined) await ctx.scene.updateEffect(nodeId, id, amount);
   // `effectDefFor`, not a scan of the built-in array: `ctx.scene.addEffect`
   // resolves plugin effects too, so a scan here would report an effect it had
   // just successfully added as having no parameters — and the model would then
@@ -750,21 +764,21 @@ const addEffectHandler: AiTool['handler'] = (input, ctx) => {
   );
 };
 
-const updateEffectHandler: AiTool['handler'] = (input, ctx) => {
+const updateEffectHandler: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, effectId, amount, remove } = input as { nodeId: string; effectId: string; amount?: number; remove?: boolean };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
   if (remove) {
-    ctx.scene.removeEffect(nodeId, effectId);
+    await ctx.scene.removeEffect(nodeId, effectId);
     return ok(`Removed effect ${effectId} from ${nodeId}.`);
   }
   if (amount === undefined) return fail('Pass amount, or remove: true.');
-  ctx.scene.updateEffect(nodeId, effectId, amount);
+  await ctx.scene.updateEffect(nodeId, effectId, amount);
   return ok(`Set effect ${effectId} to ${amount}.`);
 };
 
-const textAnimator: AiTool['handler'] = (input, ctx) => {
+const textAnimator: AiTool['handler'] = async (input, ctx) => {
   const i = input as Record<string, unknown> & { nodeId: string; index?: number; remove?: boolean };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
   const node = defaultSceneGraph.getNode(i.nodeId);
   if (!node || !node.components.some((c) => c.type === 'Text')) {
     return fail(`${i.nodeId} is not a text layer — text animators only apply to text.`);
@@ -807,20 +821,20 @@ const textAnimator: AiTool['handler'] = (input, ctx) => {
       );
     }
     const prop = `ta.${index}.offset`;
-    const a = ctx.time.toLayerTime(i.nodeId, sweep.fromSec);
-    const b = ctx.time.toLayerTime(i.nodeId, sweep.toSec);
+    const a = sweep.fromSec; // composition seconds — the engine converts
+    const b = sweep.toSec;
     const easing = sweep.easing ?? 'bezier';
-    ctx.anim.setKeyframe(i.nodeId, prop, a, sweep.fromOffset ?? -100, easing);
-    ctx.anim.setKeyframe(i.nodeId, prop, b, sweep.toOffset ?? 100, 'linear');
+    await ctx.anim.setKeyframe(i.nodeId, prop, a, sweep.fromOffset ?? -100, easing);
+    await ctx.anim.setKeyframe(i.nodeId, prop, b, sweep.toOffset ?? 100, 'linear');
     if (easing === 'bezier') {
       // A default that is not linear: a linear selector sweep gives every
       // character exactly the same timing, which is the flat machine-gun type-on.
-      ctx.anim.setBezier(i.nodeId, prop, a, (sweep.bezier as [number, number, number, number]) ?? [0.22, 0.61, 0.36, 1]);
+      await ctx.anim.setBezier(i.nodeId, prop, a, (sweep.bezier as [number, number, number, number]) ?? [0.22, 0.61, 0.36, 1]);
     }
     swept = ` Selector sweeps ${sweep.fromOffset ?? -100}% → ${sweep.toOffset ?? 100}% between ${sweep.fromSec}s and ${sweep.toSec}s.`;
   }
 
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(
     `Text animator ${index} on ${i.nodeId} is ready.${swept}` +
     (sweep ? '' : ` It has a STATIC selector, so it currently applies a constant style rather than an animation — pass \`sweep\`, or keyframe "ta.${index}.offset".`),
@@ -830,7 +844,7 @@ const textAnimator: AiTool['handler'] = (input, ctx) => {
 
 // ── Media ─────────────────────────────────────────────────────────
 
-const listAssets: AiTool['handler'] = () => {
+const listAssets: AiTool['handler'] = async () => {
   const assets = useAssetStore.getState().assets;
   if (!assets.length) {
     return ok(
@@ -874,7 +888,7 @@ const createMedia: AiTool['handler'] = async (input, ctx) => {
       if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
     }
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Added ${asset.type} layer "${asset.name}" with id '${id}'. Animate it like any other layer.`, { id });
 };
 
@@ -901,7 +915,7 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
     id?: string; prompt: string; aspect?: string; x?: number; y?: number;
   };
 
-  const comp = ctx.comp.get();
+  const comp = await ctx.comp.get();
   // Aspect is advisory — the gateway / shell maps it onto a size the provider accepts.
   // Sending the comp's own dimensions lets a square comp get a square image
   // without the model having to reason about it.
@@ -950,7 +964,7 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
       if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
     }
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
   // No credits any more — image generation runs on the user's own key and their
   // provider bills them directly, so there is nothing of ours to report.
   return ok(
@@ -1002,7 +1016,7 @@ const generateVideo: AiTool['handler'] = async (input, ctx) => {
       if (y !== undefined) defaultSceneGraph.writeProp(nodeId, t.id, 'y', y);
     }
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Generated a video clip and placed it as layer '${nodeId}'. Asset "${name}" is in the library.`, { id: nodeId });
 };
 
@@ -1023,7 +1037,7 @@ const generateSpeech: AiTool['handler'] = async (input, ctx) => {
 
   await insertMedia(placed.asset);
   const nodeId = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(
     nodeId
       ? `Generated voice-over and added audio layer '${nodeId}'.`
@@ -1050,8 +1064,8 @@ const generate3dModel: AiTool['handler'] = async (input, ctx) => {
 
   // Place a 3D null as a scene placeholder — the compositor does not yet draw
   // glTF meshes, but the asset is in the library and the layer anchors it.
-  const comp = ctx.comp.get();
-  const nodeId = ctx.scene.create('null', label.replace(/\.(glb|gltf)$/i, '') || '3D Model', {
+  const comp = await ctx.comp.get();
+  const nodeId = await ctx.scene.create('null', label.replace(/\.(glb|gltf)$/i, '') || '3D Model', {
     x: comp.width / 2,
     y: comp.height / 2,
   });
@@ -1061,7 +1075,7 @@ const generate3dModel: AiTool['handler'] = async (input, ctx) => {
   if (t) {
     defaultSceneGraph.writeProp(nodeId, t.id, 'assetId', placed.asset.id);
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
 
   return ok(
     `Generated a 3D model (asset ${placed.asset.id}) and placed null layer '${nodeId}' in 3D space. ` +
@@ -1129,7 +1143,7 @@ const importSvg: AiTool['handler'] = async (input, ctx) => {
     );
   }
   bindAlias(ctx, alias, nodeId);
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Added SVG layer "${name}" with id '${nodeId}'. Animate it like any other layer.`, { id: nodeId });
 };
 
@@ -1236,13 +1250,13 @@ const createMediaFromAttachment: AiTool['handler'] = async (input, ctx) => {
       if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
     }
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Added attachment image layer "${asset.name}" with id '${id}'. Animate it like any other layer.`, { id });
 };
 
 // ── Write: masks ──────────────────────────────────────────────────
 
-const createMask: AiTool['handler'] = (input, ctx) => {
+const createMask: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId: string;
     shape: 'rectangle' | 'ellipse';
@@ -1254,7 +1268,7 @@ const createMask: AiTool['handler'] = (input, ctx) => {
     expansion?: number;
     inverted?: boolean;
   };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   // Size the mask to the layer's bounds unless told otherwise. Text has no
   // width/height prop, so fall back to a sensible square the AI can resize.
@@ -1271,7 +1285,7 @@ const createMask: AiTool['handler'] = (input, ctx) => {
   if (i.inverted !== undefined) path.inverted = i.inverted;
 
   addMaskPath(i.nodeId, path);
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(
     `Added a ${i.shape} mask (${Math.round(w)}×${Math.round(h)}, mode ${path.mode}) to ${i.nodeId} ` +
       `with maskId '${path.id}'. It clips the layer to the ${path.inverted ? 'outside' : 'inside'} of the shape.`,
@@ -1281,7 +1295,7 @@ const createMask: AiTool['handler'] = (input, ctx) => {
 
 // ── Write: comp + presets ─────────────────────────────────────────
 
-const updateComposition: AiTool['handler'] = (input, ctx) => {
+const updateComposition: AiTool['handler'] = async (input, ctx) => {
   const patch = { ...(input as Record<string, number | string>) };
   // Size is fixed at creation — strip any width/height a model still sends
   // (older prompts / schema drift) so it can never resize the canvas.
@@ -1294,75 +1308,69 @@ const updateComposition: AiTool['handler'] = (input, ctx) => {
         : 'Pass at least one setting to change (duration, fps, or background).',
     );
   }
-  ctx.comp.update(patch as never);
   // The composition store and the timeline's time domain must agree, or layer
-  // clips keep the OLD length and everything past the old end gets culled
-  // (scene 3 vanishing at the previous duration boundary). Mirror duration/fps
-  // into the TimelineController exactly as the Composition Settings dialog does.
-  if (typeof patch.durationSeconds === 'number') {
-    getTimelineController().setDurationSeconds(useCompositionStore.getState().durationSeconds);
-  }
-  if (typeof patch.fps === 'number') {
-    getTimelineController().setFrameRate(useCompositionStore.getState().fps);
-  }
+  // clips keep the OLD length and everything past the old end gets culled.
+  // `setCompositionSettings` updates both; the facade's legacy path mirrors
+  // duration/fps into the TimelineController as the Settings dialog does.
+  await ctx.comp.update(patch as never);
   const note = blocked.length ? ' (ignored width/height — size is locked)' : '';
-  return ok(`Composition updated${note}: ${JSON.stringify(ctx.comp.get())}`);
+  return ok(`Composition updated${note}: ${JSON.stringify(await ctx.comp.get())}`);
 };
 
-const applyPreset: AiTool['handler'] = (input, ctx) => {
+const applyPreset: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, preset, atTime } = input as { nodeId: string; preset: string; atTime?: number };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
   const t = atTime ?? 0;
-  const applied = ctx.anim.applyPreset(nodeId, preset, ctx.time.toLayerTime(nodeId, t));
+  const applied = await ctx.anim.applyPreset(nodeId, preset, t);
   if (!applied) {
-    return fail(`No preset named '${preset}'. Available: ${ctx.anim.listPresets().join(', ')}`);
+    return fail(`No preset named '${preset}'. Available: ${(await ctx.anim.listPresets()).join(', ')}`);
   }
   return ok(`Applied '${preset}' to ${nodeId} at ${t}s.`);
 };
 
 // ── High-level composition (Tool Intelligence) ────────────────────
 
-const addBackground: AiTool['handler'] = (input, ctx) => {
+const addBackground: AiTool['handler'] = async (input, ctx) => {
   const i = input as { style?: string; color?: string };
-  const id = recipeBackground(ctx, resolveStyle(i.style), i.color);
-  bumpScene();
+  const id = await recipeBackground(ctx, resolveStyle(i.style), i.color);
+  refreshAfterLegacy(ctx);
   return ok(`Added a full-comp background (id ${id}).`, { id });
 };
 
-const addTitle: AiTool['handler'] = (input, ctx) => {
+const addTitle: AiTool['handler'] = async (input, ctx) => {
   const i = input as { text: string; level?: 'title' | 'subtitle' | 'tagline'; style?: string; y?: number; scene?: number; entrance?: EntranceArchetype };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const id = recipeText(ctx, resolveStyle(i.style), { text: i.text, level: i.level ?? 'title', y: i.y, entrance: i.entrance });
-  bumpScene();
+  const id = await recipeText(ctx, resolveStyle(i.style), { text: i.text, level: i.level ?? 'title', y: i.y, entrance: i.entrance });
+  refreshAfterLegacy(ctx);
   return ok(`Added ${i.level ?? 'title'} "${i.text}" (id ${id}), positioned and animated in.`, { id });
 };
 
-const addEmblem: AiTool['handler'] = (input, ctx) => {
+const addEmblem: AiTool['handler'] = async (input, ctx) => {
   const i = input as { style?: string; y?: number; size?: number; scene?: number; entrance?: EntranceArchetype };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const id = recipeEmblem(ctx, resolveStyle(i.style), { y: i.y, size: i.size, entrance: i.entrance });
-  bumpScene();
+  const id = await recipeEmblem(ctx, resolveStyle(i.style), { y: i.y, size: i.size, entrance: i.entrance });
+  refreshAfterLegacy(ctx);
   return ok(`Added a glowing emblem (id ${id}) with an animated entrance and pulse.`, { id });
 };
 
-const addCards: AiTool['handler'] = (input, ctx) => {
+const addCards: AiTool['handler'] = async (input, ctx) => {
   const i = input as { count?: number; style?: string; y?: number; scene?: number; entrance?: EntranceArchetype };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const ids = recipeCards(ctx, resolveStyle(i.style), { count: i.count, y: i.y, entrance: i.entrance });
-  bumpScene();
+  const ids = await recipeCards(ctx, resolveStyle(i.style), { count: i.count, y: i.y, entrance: i.entrance });
+  refreshAfterLegacy(ctx);
   return ok(`Added a row of ${ids.length} card(s), staggered in. Ids: ${ids.join(', ')}.`, { ids });
 };
 
-const staggerIn: AiTool['handler'] = (input, ctx) => {
+const staggerIn: AiTool['handler'] = async (input, ctx) => {
   const i = input as { nodeIds: string[]; style?: string; entrance?: EntranceArchetype };
-  const bad = i.nodeIds.filter((n) => !ctx.scene.has(n));
-  const applied = recipeStaggerIn(ctx, resolveStyle(i.style), i.nodeIds, i.entrance);
-  bumpScene();
+  const bad = await filterSeq(i.nodeIds, async (n) => !(await ctx.scene.has(n)));
+  const applied = await recipeStaggerIn(ctx, resolveStyle(i.style), i.nodeIds, i.entrance);
+  refreshAfterLegacy(ctx);
   if (bad.length) return { ok: applied > 0, content: `Staggered ${applied} layer(s). Unknown ids: ${bad.join(', ')}.` };
   return ok(`Gave ${applied} layer(s) a staggered entrance.`);
 };
 
-const defineStyle: AiTool['handler'] = (input) => {
+const defineStyle: AiTool['handler'] = async (input) => {
   // `accent` is accepted at the TOP LEVEL and folded into the palette.
   //
   // Both the system prompt ("call define_style FIRST — give it the accent
@@ -1386,10 +1394,10 @@ const defineStyle: AiTool['handler'] = (input) => {
   );
 };
 
-const addCameraMove: AiTool['handler'] = (input, ctx) => {
+const addCameraMove: AiTool['handler'] = async (input, ctx) => {
   const i = input as { kind?: 'push_in' | 'pull_out'; style?: string; durationSec?: number };
-  const move = recipeCameraMove(ctx, { kind: i.kind, durationSec: i.durationSec });
-  bumpScene();
+  const move = await recipeCameraMove(ctx, { kind: i.kind, durationSec: i.durationSec });
+  refreshAfterLegacy(ctx);
   // The camera is named on its own, not counted: it is what moves, not one of
   // the layers the move is across. The old `targets.length + 1` told the model
   // it had one more content layer than it made — and hid that a camera layer
@@ -1401,47 +1409,47 @@ const addCameraMove: AiTool['handler'] = (input, ctx) => {
   );
 };
 
-const addKineticTitle: AiTool['handler'] = (input, ctx) => {
+const addKineticTitle: AiTool['handler'] = async (input, ctx) => {
   const i = input as { text: string; style?: string; y?: number; fontSize?: number; scene?: number };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const ids = recipeKineticText(ctx, resolveStyle(i.style), { text: i.text, y: i.y, fontSize: i.fontSize });
-  bumpScene();
+  const ids = await recipeKineticText(ctx, resolveStyle(i.style), { text: i.text, y: i.y, fontSize: i.fontSize });
+  refreshAfterLegacy(ctx);
   if (!ids.length) return fail('The phrase had no words to animate.');
   return ok(`Added kinetic typography: ${ids.length} word(s) popping in on the beat. Ids: ${ids.join(', ')}.`, { ids });
 };
 
-const addLightSweep: AiTool['handler'] = (input, ctx) => {
+const addLightSweep: AiTool['handler'] = async (input, ctx) => {
   const i = input as { style?: string; at?: number };
-  const id = recipeLightSweep(ctx, resolveStyle(i.style), { at: i.at });
-  bumpScene();
+  const id = await recipeLightSweep(ctx, resolveStyle(i.style), { at: i.at });
+  refreshAfterLegacy(ctx);
   return ok(`Added a light sweep (id ${id}) passing across the frame.`, { id });
 };
 
-const addAmbientOrbs: AiTool['handler'] = (input, ctx) => {
+const addAmbientOrbs: AiTool['handler'] = async (input, ctx) => {
   const i = input as { count?: number; style?: string };
-  const ids = recipeFloatingOrbs(ctx, resolveStyle(i.style), { count: i.count });
-  bumpScene();
+  const ids = await recipeFloatingOrbs(ctx, resolveStyle(i.style), { count: i.count });
+  refreshAfterLegacy(ctx);
   return ok(`Added ${ids.length} ambient orb(s) drifting at background depth. Ids: ${ids.join(', ')}.`, { ids });
 };
 
-const addLowerThird: AiTool['handler'] = (input, ctx) => {
+const addLowerThird: AiTool['handler'] = async (input, ctx) => {
   const i = input as { title: string; subtitle?: string; style?: string; scene?: number };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const ids = recipeLowerThird(ctx, resolveStyle(i.style), { title: i.title, subtitle: i.subtitle });
-  bumpScene();
+  const ids = await recipeLowerThird(ctx, resolveStyle(i.style), { title: i.title, subtitle: i.subtitle });
+  refreshAfterLegacy(ctx);
   return ok(`Added a lower third ("${i.title}"). Ids: ${ids.join(', ')}.`, { ids });
 };
 
-const addScene: AiTool['handler'] = (input, ctx) => {
+const addScene: AiTool['handler'] = async (input, ctx) => {
   const i = input as { index: number; startSec: number; durationSec: number; background?: string; transition?: 'dissolve' | 'cut'; style?: string };
-  const id = recipeScene(ctx, resolveStyle(i.style), {
+  const id = await recipeScene(ctx, resolveStyle(i.style), {
     index: i.index,
     startSec: i.startSec,
     durationSec: i.durationSec,
     background: i.background,
     transition: i.transition,
   });
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(
     `Opened scene ${i.index} at ${i.startSec}s for ${i.durationSec}s (bg id ${id}). ` +
       `Content added now enters at ${i.startSec}s and exits at its end.`,
@@ -1449,10 +1457,10 @@ const addScene: AiTool['handler'] = (input, ctx) => {
   );
 };
 
-const addTransition: AiTool['handler'] = (input, ctx) => {
+const addTransition: AiTool['handler'] = async (input, ctx) => {
   const i = input as { atSec: number; kind?: 'fade_black' | 'flash'; durationSec?: number };
-  const id = recipeTransition(ctx, { atSec: i.atSec, kind: i.kind, durationSec: i.durationSec });
-  bumpScene();
+  const id = await recipeTransition(ctx, { atSec: i.atSec, kind: i.kind, durationSec: i.durationSec });
+  refreshAfterLegacy(ctx);
   return ok(`Added a ${i.kind ?? 'fade_black'} transition at ${i.atSec}s (id ${id}).`, { id });
 };
 
@@ -1464,10 +1472,10 @@ interface CreatePuppetRigInput {
   }[];
 }
 
-const createPuppetRig: AiTool['handler'] = (input, ctx) => {
+const createPuppetRig: AiTool['handler'] = async (input, ctx) => {
   const i = input as CreatePuppetRigInput;
-  if (!ctx.scene.has(i.layerId)) {
-    const near = ctx.scene.nearest(i.layerId).join(', ');
+  if (!await ctx.scene.has(i.layerId)) {
+    const near = (await ctx.scene.nearest(i.layerId)).join(', ');
     return {
       ok: false,
       content: `Layer id '${i.layerId}' not found. Did you mean: ${near || 'none'}?`,
@@ -1503,7 +1511,7 @@ const createPuppetRig: AiTool['handler'] = (input, ctx) => {
       ? { overlap: Math.max(-100, Math.min(100, p.overlap)) }
       : {}),
   }));
-  ctx.scene.setPuppet(i.layerId, { pins: pinsList });
+  await ctx.scene.setPuppet(i.layerId, { pins: pinsList });
   const ids = pinsList.map((p) => ({ id: p.id, name: p.name }));
   return {
     ok: true,
@@ -1522,13 +1530,13 @@ interface SetPuppetPinKeyframesInput {
   keyframes: { timeSec: number; x: number; y: number }[];
 }
 
-const setPuppetPinKeyframes: AiTool['handler'] = (input, ctx) => {
+const setPuppetPinKeyframes: AiTool['handler'] = async (input, ctx) => {
   const i = input as SetPuppetPinKeyframesInput;
-  if (!ctx.scene.has(i.layerId)) {
-    const near = ctx.scene.nearest(i.layerId).join(', ');
+  if (!await ctx.scene.has(i.layerId)) {
+    const near = (await ctx.scene.nearest(i.layerId)).join(', ');
     return { ok: false, content: `Layer id '${i.layerId}' not found. Did you mean: ${near || 'none'}?` };
   }
-  const rig = ctx.scene.readPuppet(i.layerId);
+  const rig = await ctx.scene.readPuppet(i.layerId);
   if (!rig) {
     return { ok: false, content: `Layer '${i.layerId}' has no puppet rig. Call create_puppet_rig first.` };
   }
@@ -1541,8 +1549,8 @@ const setPuppetPinKeyframes: AiTool['handler'] = (input, ctx) => {
   }
   const prop = `puppet.${i.pinId}.position`;
   for (const k of i.keyframes) {
-    const lt = ctx.time.toLayerTime(i.layerId, k.timeSec);
-    ctx.anim.setPointsKeyframe(i.layerId, prop, lt, [{ x: k.x, y: k.y }]);
+    const lt = k.timeSec; // composition seconds — the engine converts
+    await ctx.anim.setPointsKeyframe(i.layerId, prop, lt, [{ x: k.x, y: k.y }]);
   }
   return {
     ok: true,
@@ -1555,9 +1563,9 @@ const setPuppetPinKeyframes: AiTool['handler'] = (input, ctx) => {
 
 import { liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 
-const mergePathsHandler: AiTool['handler'] = (input, ctx) => {
+const mergePathsHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { op: MergeOp; nodeIds: string[] };
-  const missing = i.nodeIds.filter((id) => !ctx.scene.has(id));
+  const missing = await filterSeq(i.nodeIds, async (id) => !(await ctx.scene.has(id)));
   if (missing.length > 0) return fail(`Unknown nodeId(s): ${missing.join(', ')}`);
   useSelectionStore.getState().set(i.nodeIds);
   // Live merge keeps sources animatable — the designed-motion default.
@@ -1593,22 +1601,22 @@ function applyTrim(nodeId: string, i: { start?: number; end?: number; offset?: n
 const NO_PATH_PIPELINE = new Set(['svg', 'image', 'video', 'text', 'audio', 'camera', 'light', 'null', 'group', 'comp']);
 
 /** Every shape-pipeline layer under `rootId` (inclusive), in stack order. */
-function shapeDescendants(ctx: ToolContext, rootId: string): string[] {
-  const all = ctx.scene.all();
+async function shapeDescendants(ctx: ToolContext, rootId: string): Promise<string[]> {
+  const all = await ctx.scene.all();
   const keep = new Set<string>([rootId]);
   // `all` is parents-before-children, so one pass collects the subtree.
   for (const n of all) if (n.parent && keep.has(n.parent)) keep.add(n.id);
   return all.filter((n) => keep.has(n.id) && !NO_PATH_PIPELINE.has(n.kind)).map((n) => n.id);
 }
 
-const setTrimPathHandler: AiTool['handler'] = (input, ctx) => {
+const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { nodeId: string; start?: number; end?: number; offset?: number; convertSvg?: boolean };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
   if (i.start === undefined && i.end === undefined && i.offset === undefined) {
     return fail(`Nothing to set — give at least one of start, end or offset (percentages, 0..100).`);
   }
 
-  const kind = ctx.scene.get(i.nodeId)?.kind ?? 'shape';
+  const kind = (await ctx.scene.get(i.nodeId))?.kind ?? 'shape';
   if (kind === 'svg') {
     if (!i.convertSvg) {
       return fail(
@@ -1630,7 +1638,7 @@ const setTrimPathHandler: AiTool['handler'] = (input, ctx) => {
     }
     // Handles bound to the SVG layer would now point at a deleted node.
     for (const [handle, real] of ctx.aliases) if (real === i.nodeId) ctx.aliases.set(handle, groupId);
-    const shapeIds = shapeDescendants(ctx, groupId);
+    const shapeIds = await shapeDescendants(ctx, groupId);
     if (!shapeIds.length) return fail(`Converted '${i.nodeId}' to group '${groupId}', but it holds no shape layers to trim.`);
     const trims = shapeIds.map((id) => ({ nodeId: id, opId: applyTrim(id, i) }));
     return ok(
@@ -1679,7 +1687,7 @@ function perCopyOpacity(copies: number, startPct: number, endPct: number): numbe
   return ratio ** (1 / (copies - 1));
 }
 
-const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
+const addRepeaterHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId: string;
     copies?: number;
@@ -1693,7 +1701,7 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
     endOpacity?: number;
     opId?: string;
   };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
   const repeaters = chain.filter((o) => o.type === 'repeater');
@@ -1797,7 +1805,7 @@ const PATH_OP_ALIASES: Record<string, PathOp['type']> = {
   wiggleTransform: 'wiggleTransform',
 };
 
-const addPathOperatorHandler: AiTool['handler'] = (input, ctx) => {
+const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId: string;
     op: string;
@@ -1805,7 +1813,7 @@ const addPathOperatorHandler: AiTool['handler'] = (input, ctx) => {
     detail?: number;
     wigglesPerSecond?: number;
   };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   const type = PATH_OP_ALIASES[i.op];
   if (!type) {
@@ -1839,9 +1847,9 @@ const addPathOperatorHandler: AiTool['handler'] = (input, ctx) => {
   );
 };
 
-const createSkeletonRigHandler: AiTool['handler'] = (input, ctx) => {
+const createSkeletonRigHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { layerId: string; bones: Array<{ id: string; parentId?: string; length: number; x?: number; y?: number; rotation?: number }> };
-  if (!ctx.scene.has(i.layerId)) return fail(unknownNode(ctx, i.layerId));
+  if (!await ctx.scene.has(i.layerId)) return fail((await unknownNode(ctx, i.layerId)));
   const node = defaultSceneGraph.getNode(i.layerId);
   if (!node) return fail(`Node '${i.layerId}' not found.`);
   if (!isRiggableKind(readNodeKind(node))) {
@@ -1871,26 +1879,26 @@ const createSkeletonRigHandler: AiTool['handler'] = (input, ctx) => {
     rotation: b.rotation ?? 0,
   }));
   defaultSceneGraph.setSkeleton(i.layerId, { bones, ikTargets: [] });
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Created skeleton rig with ${bones.length} bones on layer '${i.layerId}'.`, { layerId: i.layerId, boneCount: bones.length });
 };
 
-const poseSkeletonHandler: AiTool['handler'] = (input, ctx) => {
+const poseSkeletonHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { layerId: string; bonePoses: Array<{ boneId: string; timeSec: number; rotation: number; x?: number; y?: number }> };
-  if (!ctx.scene.has(i.layerId)) return fail(unknownNode(ctx, i.layerId));
+  if (!await ctx.scene.has(i.layerId)) return fail((await unknownNode(ctx, i.layerId)));
   for (const p of i.bonePoses) {
-    const lt = ctx.time.toLayerTime(i.layerId, p.timeSec);
-    ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.rotation`, lt, p.rotation);
-    if (p.x !== undefined) ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.x`, lt, p.x);
-    if (p.y !== undefined) ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.y`, lt, p.y);
+    const lt = p.timeSec; // composition seconds — the engine converts
+    await ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.rotation`, lt, p.rotation);
+    if (p.x !== undefined) await ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.x`, lt, p.x);
+    if (p.y !== undefined) await ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.y`, lt, p.y);
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Set ${i.bonePoses.length} bone pose keyframes on layer '${i.layerId}'.`, { layerId: i.layerId, poseCount: i.bonePoses.length });
 };
 
-const applyLayerStyleHandler: AiTool['handler'] = (input, ctx) => {
+const applyLayerStyleHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { nodeId: string; styleType: 'drop_shadow' | 'outer_glow'; color: string; opacity?: number; size?: number; distance?: number; angle?: number };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+  if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   if (i.styleType === 'drop_shadow') {
     updateDropShadow(i.nodeId, {
@@ -1909,13 +1917,13 @@ const applyLayerStyleHandler: AiTool['handler'] = (input, ctx) => {
       size: i.size ?? 16,
     });
   }
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Applied ${i.styleType} layer style on '${i.nodeId}'.`);
 };
 
-const recolorLottieVectorHandler: AiTool['handler'] = (input, ctx) => {
+const recolorLottieVectorHandler: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, color } = input as { nodeId: string; color: string };
-  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
+  if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
 
   let count = 0;
   const traverseAndRecolor = (id: string) => {
@@ -1936,37 +1944,37 @@ const recolorLottieVectorHandler: AiTool['handler'] = (input, ctx) => {
   };
 
   traverseAndRecolor(nodeId);
-  bumpScene();
+  refreshAfterLegacy(ctx);
   return ok(`Recolored ${count} vector shapes inside Lottie/group '${nodeId}' to ${color}.`);
 };
 
 // ── Recipe handlers whose defs live in craft.ts ────────────────────
 
-const addLogoReveal: AiTool['handler'] = (input, ctx) => {
+const addLogoReveal: AiTool['handler'] = async (input, ctx) => {
   const i = input as { text: string; shape?: 'ellipse' | 'star' | 'rect'; style?: string };
   const s = resolveStyle(i.style);
-  const ids = recipeLogoReveal(ctx, s, { text: i.text, shape: i.shape });
-  bumpScene();
+  const ids = await recipeLogoReveal(ctx, s, { text: i.text, shape: i.shape });
+  refreshAfterLegacy(ctx);
   return ok(`Built trim-path logo reveal sequence for "${i.text}".`, { ids });
 };
 
-const addRadialBurst: AiTool['handler'] = (input, ctx) => {
+const addRadialBurst: AiTool['handler'] = async (input, ctx) => {
   const i = input as { count?: number; x?: number; y?: number; style?: string };
   const s = resolveStyle(i.style);
-  const id = recipeRadialBurst(ctx, s, { count: i.count, x: i.x, y: i.y });
-  bumpScene();
+  const id = await recipeRadialBurst(ctx, s, { count: i.count, x: i.x, y: i.y });
+  refreshAfterLegacy(ctx);
   return ok(`Added radial repeater burst accent '${id}'.`, { id });
 };
 
-const addPathMorph: AiTool['handler'] = (input, ctx) => {
+const addPathMorph: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     nodeId?: string; op?: 'puckerBloat' | 'zigzag'; amount?: number; fromAmount?: number;
     startSec?: number; durationSec?: number; pingPong?: boolean; fill?: string; x?: number; y?: number;
     style?: string;
   };
   if (i.nodeId !== undefined) {
-    if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-    const kind = ctx.scene.get(i.nodeId)?.kind ?? 'shape';
+    if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
+    const kind = (await ctx.scene.get(i.nodeId))?.kind ?? 'shape';
     // Same gate as set_trim_path, same reason: a path operator on a layer with
     // no shape path is stored and never rendered.
     if (NO_PATH_PIPELINE.has(kind)) {
@@ -1977,8 +1985,8 @@ const addPathMorph: AiTool['handler'] = (input, ctx) => {
     }
   }
   const s = resolveStyle(i.style);
-  const r = recipePathMorph(ctx, s, i);
-  bumpScene();
+  const r = await recipePathMorph(ctx, s, i);
+  refreshAfterLegacy(ctx);
   const span = `${r.startSec.toFixed(2)}s → ${r.endSec.toFixed(2)}s`;
   return ok(
     (r.created
@@ -1991,6 +1999,22 @@ const addPathMorph: AiTool['handler'] = (input, ctx) => {
 };
 
 // ── Registry wiring ───────────────────────────────────────────────
+
+/**
+ * Mutating tools whose handlers write ONLY through the ToolContext facades (or
+ * engine commands), audited for B5. Their writes go to the engine; anything the
+ * API cannot express yet is named inside the facade / handler with
+ * `ctx.engine.legacy(<gap>)`. Every OTHER mutating tool (text animators, masks,
+ * media, path ops, rigs, layer styles, the compose recipes, …) still calls
+ * legacy document helpers and is recorded as a gap wholesale by `buildAiTools`.
+ */
+export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
+  'create_layer', 'delete_layer', 'reparent_layer', 'update_layer',
+  'set_keyframes', 'remove_keyframes', 'set_easing', 'set_expression',
+  'add_effect', 'update_effect', 'update_effect_param', 'update_composition', 'apply_preset',
+  'set_spring', 'set_motion_blur', 'create_precomp', 'set_time_remap', 'set_light', 'set_shadow_stack',
+  'create_puppet_rig', 'set_puppet_pin_keyframes', 'pose_skeleton',
+]);
 
 const HANDLERS: Record<string, AiTool['handler']> = {
   // The craft primitives (spring, precomp, time remap, shadow stack, surface
@@ -2067,8 +2091,16 @@ const HANDLERS: Record<string, AiTool['handler']> = {
  */
 export function buildAiTools(): AiTool[] {
   const tools = ALL_TOOL_DEFS.map((d) => {
-    const handler = HANDLERS[d.name];
-    if (!handler) throw new Error(`Tool '${d.name}' is declared but has no handler`);
+    const raw = HANDLERS[d.name];
+    if (!raw) throw new Error(`Tool '${d.name}' is declared but has no handler`);
+    // A mutating tool that still writes through legacy helpers records the gap
+    // up front, so its turn commits as a snapshot entry (B5, see the list).
+    const handler: AiTool['handler'] = !mutates(d.kind) || ENGINE_ROUTED_TOOLS.has(d.name)
+      ? raw
+      : (input, ctx) => {
+          ctx.engine?.legacy(`${d.name} writes through legacy helpers`);
+          return raw(input, ctx);
+        };
     return { ...def(d.name), handler };
   });
 

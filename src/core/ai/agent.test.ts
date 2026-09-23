@@ -63,25 +63,32 @@ describe('layer-time conversion (B1)', () => {
   /**
    * A fake context whose layer time is offset by 2s, standing in for a layer
    * whose clip starts at 2s. Recording the calls is the point: the assertion is
-   * about which TIME each engine call receives.
+   * about which TIME each facade call receives.
+   *
+   * B5: the facades speak COMPOSITION time and the engine converts the value
+   * and its easing in one place, so a tool must hand both the SAME comp time
+   * and never pre-convert (a handler that converted one of them would now be
+   * off by the clip start — the bug B1 was, moved one layer up).
    */
   function offsetCtx(offset: number) {
     const calls: { fn: string; nodeId: string; prop: string; t: number }[] = [];
     const anim: Partial<AnimFacade> = {
-      isValidProp: () => true,
-      setKeyframe: (nodeId, prop, t) => { calls.push({ fn: 'setKeyframe', nodeId, prop, t }); },
-      setBezier: (nodeId, prop, t) => { calls.push({ fn: 'setBezier', nodeId, prop, t }); },
-      setEasing: (nodeId, prop, t) => { calls.push({ fn: 'setEasing', nodeId, prop, t }); },
-      removeKeyframe: (nodeId, prop, t) => { calls.push({ fn: 'removeKeyframe', nodeId, prop, t }); },
-      setRoving: () => {},
-      tracks: () => [{ prop: 'opacity', keyframes: [{ t: 1, value: 0, easing: 'linear' }] }],
+      isValidProp: async () => true,
+      setKeyframe: async (nodeId, prop, t) => { calls.push({ fn: 'setKeyframe', nodeId, prop, t }); },
+      setBezier: async (nodeId, prop, t) => { calls.push({ fn: 'setBezier', nodeId, prop, t }); },
+      setEasing: async (nodeId, prop, t) => { calls.push({ fn: 'setEasing', nodeId, prop, t }); },
+      removeKeyframe: async (nodeId, prop, t) => { calls.push({ fn: 'removeKeyframe', nodeId, prop, t }); },
+      setRoving: async () => {},
+      // Tracks report composition seconds: the key stored at layer t=1 is at comp t=3.
+      tracks: async () => [{ prop: 'opacity', keyframes: [{ t: 1 + offset, value: 0, easing: 'linear' }] }],
     };
-    const scene: Partial<SceneFacade> = { has: () => true, nearest: () => [], get: () => undefined };
+    const scene: Partial<SceneFacade> = { has: async () => true, nearest: async () => [], get: async () => undefined };
     const ctx = {
       scene,
       anim,
-      comp: { get: () => ({ width: 1920, height: 1080, fps: 30, durationSeconds: 10, background: '#000' }), update: () => {}, playhead: () => 0 },
-      time: { toLayerTime: (_id: string, t: number) => t - offset, toCompTime: (_id: string, t: number) => t + offset },
+      comp: { get: async () => ({ width: 1920, height: 1080, fps: 30, durationSeconds: 10, background: '#000' }), update: async () => {}, playhead: () => 0 },
+      time: { toLayerTime: async (_id: string, t: number) => t - offset, toCompTime: async (_id: string, t: number) => t + offset },
+      engine: { legacy: () => {}, legacyGaps: [] },
       signal: new AbortController().signal,
     } as unknown as ToolContext;
     return { ctx, calls };
@@ -98,17 +105,17 @@ describe('layer-time conversion (B1)', () => {
 
     const kf = calls.find((c) => c.fn === 'setKeyframe')!;
     const bez = calls.find((c) => c.fn === 'setBezier')!;
-    expect(kf.t).toBe(1);                 // 3s comp − 2s clip start
+    expect(kf.t).toBe(3);                 // comp time; the engine converts (3s − 2s clip start)
     expect(bez.t).toBe(kf.t);             // ← B1: these disagreed before
   });
 
-  it('converts remove_keyframes to layer time', async () => {
+  it('sends remove_keyframes the composition time (converted once, by the engine)', async () => {
     const { ctx, calls } = offsetCtx(2);
     await registry().execute('remove_keyframes', { targets: [{ nodeId: 'title', prop: 'x', t: 3 }] }, ctx);
-    expect(calls.find((c) => c.fn === 'removeKeyframe')!.t).toBe(1);
+    expect(calls.find((c) => c.fn === 'removeKeyframe')!.t).toBe(3);
   });
 
-  it('converts set_easing to layer time and matches its bezier to it', async () => {
+  it('matches set_easing to the stored key and sends its bezier to the same time', async () => {
     const { ctx, calls } = offsetCtx(2);
     // The fake track has a keyframe at layer t=1, i.e. comp t=3.
     const res = await registry().execute(
@@ -117,8 +124,8 @@ describe('layer-time conversion (B1)', () => {
       ctx,
     );
     expect(res.ok).toBe(true);
-    expect(calls.find((c) => c.fn === 'setEasing')!.t).toBe(1);
-    expect(calls.find((c) => c.fn === 'setBezier')!.t).toBe(1);
+    expect(calls.find((c) => c.fn === 'setEasing')!.t).toBe(3);
+    expect(calls.find((c) => c.fn === 'setBezier')!.t).toBe(3);
   });
 
   it('refuses to ease a keyframe that does not exist, and says which times do', async () => {
@@ -141,7 +148,7 @@ describe('one prompt, one undo entry', () => {
   it('collapses 30 mixed scene + animation calls into a single entry', async () => {
     const reg = registry();
     const c = ctx();
-    const tx = beginAiTransaction('AI: make it move');
+    const tx = await beginAiTransaction('AI: make it move');
 
     const created: string[] = [];
     for (let i = 0; i < 10; i++) {
@@ -158,7 +165,7 @@ describe('one prompt, one undo entry', () => {
       await reg.execute('update_layer', { nodeId: id, rotation: 15 }, c);
     }
 
-    tx.commit();
+    await tx.commit();
 
     const history = getCommandSystem().getHistory().getEntries();
     expect(history).toHaveLength(1);
@@ -169,7 +176,7 @@ describe('one prompt, one undo entry', () => {
   it('undoes the whole run at once, and redoes it', async () => {
     const reg = registry();
     const c = ctx();
-    const tx = beginAiTransaction('AI: build');
+    const tx = await beginAiTransaction('AI: build');
     const res = await reg.execute('create_layer', { kind: 'text', name: 'Title' }, c);
     const id = (res.data as { id: string }).id;
     await reg.execute('set_keyframes', {
@@ -178,7 +185,7 @@ describe('one prompt, one undo entry', () => {
         { nodeId: id, prop: 'opacity', t: 1, value: 100 },
       ],
     }, c);
-    tx.commit();
+    await tx.commit();
 
     expect(defaultSceneGraph.getNode(id)).toBeDefined();
     expect(defaultAnimation.tracksFor(id)).toHaveLength(1);
@@ -198,28 +205,30 @@ describe('one prompt, one undo entry', () => {
     // Something pre-existing, so we're not just comparing two empty documents.
     await reg.execute('create_layer', { kind: 'shape', name: 'Existing' }, c);
     const before = JSON.stringify({ scene: sceneProjectIO.capture(), anim: defaultAnimation.snapshot() });
+    // Outside a turn, a write the engine takes is an ordinary undo entry of its own.
+    const entriesBefore = getCommandSystem().getHistory().getEntries().length;
 
-    const tx = beginAiTransaction('AI: doomed');
+    const tx = await beginAiTransaction('AI: doomed');
     const res = await reg.execute('create_layer', { kind: 'shape', name: 'Doomed' }, c);
     const id = (res.data as { id: string }).id;
     await reg.execute('set_keyframes', { keyframes: [{ nodeId: id, prop: 'x', t: 0, value: 0 }, { nodeId: id, prop: 'x', t: 1, value: 500 }] }, c);
     expect(defaultSceneGraph.getNode(id)).toBeDefined();   // it really did land
 
-    tx.rollback();
+    await tx.rollback();
 
     expect(defaultSceneGraph.getNode(id)).toBeUndefined();
     expect(JSON.stringify({ scene: sceneProjectIO.capture(), anim: defaultAnimation.snapshot() })).toBe(before);
-    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(0);
+    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(entriesBefore);
   });
 
   it('leaves no undo entry for a read-only run', async () => {
     const reg = registry();
     const c = ctx();
-    const tx = beginAiTransaction('AI: what is here?');
+    const tx = await beginAiTransaction('AI: what is here?');
     await reg.execute('describe_scene', {}, c);
     await reg.execute('list_capabilities', {}, c);
     await reg.execute('get_selection', {}, c);
-    tx.commit();
+    await tx.commit();
     expect(getCommandSystem().getHistory().getEntries()).toHaveLength(0);
   });
 
@@ -229,10 +238,10 @@ describe('one prompt, one undo entry', () => {
     // Left alone it lands on the undo stack as a second entry, so one undo
     // would only half-undo the run.
     const history = getCommandSystem().getHistory();
-    const tx = beginAiTransaction('AI: suppressed');
+    const tx = await beginAiTransaction('AI: suppressed');
     history.push({ label: 'Add Track', execute: () => {}, undo: () => {} } as never);
     await registry().execute('create_layer', { kind: 'shape', name: 'A' }, ctx());
-    tx.commit();
+    await tx.commit();
 
     const entries = history.getEntries();
     expect(entries).toHaveLength(1);
@@ -241,7 +250,7 @@ describe('one prompt, one undo entry', () => {
 
   it('stops suppressing once the run settles', async () => {
     const history = getCommandSystem().getHistory();
-    beginAiTransaction('AI: done').commit();
+    await (await beginAiTransaction('AI: done')).commit();
     history.push({ label: 'A later user edit', execute: () => {}, undo: () => {} } as never);
     expect(history.getEntries().map((e) => e.label)).toEqual(['A later user edit']);
   });
@@ -249,11 +258,11 @@ describe('one prompt, one undo entry', () => {
   it('ignores a double commit / commit-after-rollback', async () => {
     const reg = registry();
     const c = ctx();
-    const tx = beginAiTransaction('AI: once');
+    const tx = await beginAiTransaction('AI: once');
     await reg.execute('create_layer', { kind: 'shape', name: 'A' }, c);
-    tx.commit();
-    tx.commit();
-    tx.rollback();
+    await tx.commit();
+    await tx.commit();
+    await tx.rollback();
     expect(getCommandSystem().getHistory().getEntries()).toHaveLength(1);
   });
 });
@@ -367,7 +376,7 @@ describe('tool results teach the model', () => {
     const id = (made.data as { id: string }).id;
     expect(id).toBeTruthy();
     // It is a real, animatable layer now.
-    expect(c.scene.has(id)).toBe(true);
+    expect(await c.scene.has(id)).toBe(true);
 
     useAssetStore.setState({ assets: [] });
   });
@@ -385,8 +394,8 @@ describe('tool results teach the model', () => {
     const c = ctx();
     const a = (await reg.execute('create_layer', { kind: 'shape', name: 'A' }, c)).data as { id: string };
     const b = (await reg.execute('create_layer', { kind: 'shape', name: 'B' }, c)).data as { id: string };
-    const va = c.scene.get(a.id)!;
-    const vb = c.scene.get(b.id)!;
+    const va = (await c.scene.get(a.id))!;
+    const vb = (await c.scene.get(b.id))!;
     // Two layers created with NO position must not land on the exact same pixel.
     expect(va.x !== vb.x || va.y !== vb.y).toBe(true);
   });
@@ -395,7 +404,7 @@ describe('tool results teach the model', () => {
     const reg = registry();
     const c = ctx();
     const r = (await reg.execute('create_layer', { kind: 'shape', name: 'Placed', x: 123 }, c)).data as { id: string };
-    expect(c.scene.get(r.id)!.x).toBe(123);
+    expect((await c.scene.get(r.id))!.x).toBe(123);
   });
 
   it('add_title creates a positioned, animated title in one call', async () => {
@@ -412,7 +421,7 @@ describe('tool results teach the model', () => {
     const movers = props.filter((p) => p !== 'opacity' && p !== 'z');
     expect(movers.length).toBeGreaterThan(0);
     // It carries its text and is not stuck at fontSize default.
-    expect(c.scene.get(id)!.text).toBe('NOVA');
+    expect((await c.scene.get(id))!.text).toBe('NOVA');
   });
 
   it('add_cards builds a staggered row of distinct, animated cards', async () => {
@@ -423,7 +432,7 @@ describe('tool results teach the model', () => {
     const ids = (r.data as { ids: string[] }).ids;
     expect(ids).toHaveLength(3);
     // Cards sit at distinct x positions (a row, not a stack)…
-    const xs = ids.map((id) => c.scene.get(id)!.x);
+    const xs = ids.map(async (id) => (await c.scene.get(id))!.x);
     expect(new Set(xs).size).toBe(3);
     // …and each animates in.
     for (const id of ids) {
@@ -434,11 +443,11 @@ describe('tool results teach the model', () => {
   it('add_background makes a full-comp layer', async () => {
     const reg = registry();
     const c = ctx();
-    const comp = c.comp.get();
+    const comp = await c.comp.get();
     const r = await reg.execute('add_background', { style: 'premium' }, c);
     const id = (r.data as { id: string }).id;
-    expect(c.scene.get(id)!.width).toBe(comp.width);
-    expect(c.scene.get(id)!.height).toBe(comp.height);
+    expect((await c.scene.get(id))!.width).toBe(comp.width);
+    expect((await c.scene.get(id))!.height).toBe(comp.height);
   });
 
   it('add_camera_move dollies a 3D camera across the content', async () => {
@@ -447,12 +456,12 @@ describe('tool results teach the model', () => {
     await reg.execute('add_title', { text: 'Depth', style: 'premium' }, c);
     const move = await reg.execute('add_camera_move', { kind: 'push_in' }, c);
     expect(move.ok).toBe(true);
-    const camNode = c.scene.all().find((n) => n.kind === 'camera')!;
+    const camNode = (await c.scene.all()).find((n) => n.kind === 'camera')!;
     expect(camNode).toBeDefined();
     const zTrack = defaultAnimation.tracksFor(camNode.id).find((t) => t.prop === 'z');
     expect(zTrack).toBeTruthy();
     // The count is CONTENT layers only; the camera is named, not counted.
-    const content = c.scene.all().filter((n) => n.kind === 'shape' || n.kind === 'text' || n.kind === 'image');
+    const content = (await c.scene.all()).filter((n) => n.kind === 'shape' || n.kind === 'text' || n.kind === 'image');
     expect(move.content).toContain(`across ${content.length} layer(s)`);
     expect(move.content).toContain(`a new 3D camera (id ${camNode.id})`);
     expect((move.data as { cameraId: string }).cameraId).toBe(camNode.id);

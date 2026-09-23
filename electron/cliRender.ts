@@ -79,6 +79,8 @@ export type CliRenderRequestWithData = CliRenderJob & {
   data?: { text: string; filename: string };
   /** A caption file's text, read here for the same reason `data` is. */
   captions?: { text: string; filename: string };
+  /** A recorded command log's text (`--commands`), read here likewise. */
+  commands?: { text: string; filename: string };
 };
 
 export interface CliTask {
@@ -231,6 +233,20 @@ export function prepareTask(task: CliTask): string | null {
       };
     } catch (e) {
       return `Could not read the caption file "${resolvedCaptions}": ${(e as Error).message}`;
+    }
+  }
+
+  const commandsPath = task.request.job.commandsPath;
+  if (commandsPath !== undefined) {
+    const resolvedCommands = absolute(commandsPath);
+    if (!existsSync(resolvedCommands)) return `No command log at "${resolvedCommands}".`;
+    try {
+      task.request.job.commands = {
+        text: readFileSync(resolvedCommands, 'utf8'),
+        filename: path.basename(resolvedCommands),
+      };
+    } catch (e) {
+      return `Could not read the command log "${resolvedCommands}": ${(e as Error).message}`;
     }
   }
 

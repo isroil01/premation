@@ -16,7 +16,7 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
 import { applyImportPlan, type AppliedTiming } from '@core/lottie/lottieImportApply';
-import { createToolContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/ai/toolContext';
 import { beginDocumentTransaction } from '@core/ai/aiTransaction';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -513,7 +513,7 @@ export function insertLottieItem(lottieId: string, x?: number, y?: number): stri
     // One scene notification for the build, not one per node — the listener
     // walks the whole scene to resync the timeline (see batchScene).
     const res = batchScene(() =>
-      applyImportPlan(plan, createToolContext(new AbortController().signal), {
+      applyImportPlan(plan, createLegacyDocumentContext(), {
         updateComp: false,
         offset: { x: px - LOTTIE_DESIGN_CENTER, y: py - LOTTIE_DESIGN_CENTER },
       }),
@@ -605,7 +605,7 @@ export async function importLottieFile(file: File): Promise<LottieFileImportResu
   try {
     // One scene notification for the build, not one per node (see batchScene).
     const res = batchScene(() =>
-      applyImportPlan(plan, createToolContext(new AbortController().signal), {
+      applyImportPlan(plan, createLegacyDocumentContext(), {
         updateComp: false,
         offset: { x: comp.width / 2 - designCx, y: comp.height / 2 - designCy },
       }),
