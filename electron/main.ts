@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, dialog, Menu, protocol, net, type WebContents } from 'electron';
+import { app, BrowserWindow, shell, dialog, Menu, protocol, net, sharedTexture, type WebContents } from 'electron';
 import { handle, on } from './ipcGuard';
 import {
   devUiPlatformOverride,
@@ -15,7 +15,7 @@ import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFi
 import { writeFileAtomic } from './atomicWrite';
 import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
 import { localFileUrlToPath } from './localFileUrl';
-import { registerRouteCSpikePreload, routeCSpikeEngine, startRouteCSpike } from './routeCSpike';
+import { EngineHost, engineBackendEnabled, enginePreferenceFile, registerEngineIpc, type SharedTextureApi } from './engineHost';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
@@ -72,6 +72,13 @@ let mainWindow: BrowserWindow | null = null;
 
 /** The export queue, owned here so it outlives any window (electron/exportProcess.ts). */
 let exportSupervisor: ExportSupervisor | null = null;
+
+/**
+ * The C++ engine process (electron/engineHost.ts), created in whenReady. Its
+ * supervisor only exists — and the engine only runs — when the process
+ * backend is switched on (PREMATION_ENGINE=process or <userData>/engine.json).
+ */
+let engineHost: EngineHost | null = null;
 
 // ── OAuth deep link (premation://oauth?code=…) ──────────────────────────────
 //
@@ -1477,14 +1484,11 @@ function createMainWindow(): BrowserWindow {
   buildApplicationMenu(win);
   if (hasTitleBarOverlay(chrome)) overlayWindows.add(win);
 
-  // Route C spike (dev only, off unless PREMATION_ROUTE_C_SPIKE names a C1
-  // engine binary): engine-rendered GPU textures into this window. Not a
-  // feature — see electron/routeCSpike.ts.
-  const routeCEngine = routeCSpikeEngine(isDev);
-  if (routeCEngine) {
-    registerRouteCSpikePreload(win.webContents.session);
-    win.webContents.once('did-finish-load', () => startRouteCSpike(win, routeCEngine));
-  }
+  // The C++ engine's shared-texture receiver belongs to the page that installed
+  // it: a reload or a renderer crash takes it away until the page says it is
+  // back (electron/engineHost.ts — early sends time out).
+  win.webContents.on('did-start-loading', () => engineHost?.pageReset());
+  win.webContents.on('render-process-gone', () => engineHost?.pageReset());
 
   // The renderer draws the bar at first paint, so it reads the chrome off the
   // URL rather than asking over IPC (src/core/config/uiPlatform.ts).
@@ -1898,6 +1902,27 @@ app.whenReady().then(() => {
   // which on Electron 44 is earlier than `ready-to-show` (see updater.ts).
   registerUpdaterIpc();
 
+  // The C++ engine process (NATIVE_CORE_PLAN C3), behind its flag. The
+  // channels exist before the window does (the page asks for the status at
+  // boot); `engine:status` answers `enabled: false` when the flag is off.
+  engineHost = new EngineHost({
+    enabled: engineBackendEnabled(process.env, enginePreferenceFile(app.getPath('userData'))),
+    isDev,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    // Development runs `electron dist-electron/main.js`: the repo root is one up.
+    appPath: app.isPackaged ? app.getAppPath() : path.join(__dirname, '..'),
+    hostPid: process.pid,
+    appVersion: app.getVersion(),
+    getGPUInfo: (level) => app.getGPUInfo(level),
+    getWindow: () => mainWindow,
+    sharedTexture: sharedTexture as unknown as SharedTextureApi,
+  });
+  registerEngineIpc(engineHost);
+  // Dev only: the real-app harness reads the frame-forwarding counters from
+  // the main-process inspector (`globalThis.__premationEngineHost.frames.stats`).
+  if (isDev) (globalThis as { __premationEngineHost?: EngineHost }).__premationEngineHost = engineHost;
+
   // A normal build is a CLIENT: it talks to a deployed motion-back at the origin
   // baked in by VITE_BACKEND_ORIGIN, or to one you run yourself on localhost:4000
   // (see src/core/api/env.ts). It starts no server of its own.
@@ -1908,6 +1933,15 @@ app.whenReady().then(() => {
   if (shouldStartBackend()) void startBackend();
 
   const win = createMainWindow();
+
+  // After ready, beside the window: the engine asks Chromium which adapter it
+  // composits on, so it can render where the page will sample (C1).
+  if (engineHost.enabled) {
+    void engineHost.start();
+    app.on('child-process-gone', (_event, details) => {
+      if (details.type === 'GPU') engineHost?.gpuProcessGone(details.reason);
+    });
+  }
 
   // Report GPU status AFTER the renderer has loaded and touched the GPU. Reading
   // in whenReady catches Chromium's GPU process before it initializes (every
@@ -1956,4 +1990,7 @@ app.on('before-quit', () => {
   // running after the last window closed — a stranger's compiled code with no
   // editor left to serve.
   disposeNativePlugins();
+  // The engine gets a Goodbye and exits on its own; the supervisor kills it
+  // after 2 s if it does not (a closing stdin ends it either way).
+  void engineHost?.stop();
 });

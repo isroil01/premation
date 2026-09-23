@@ -37,11 +37,9 @@ import {
   deleteSelectedLayers,
   duplicateSelectedLayers,
   groupSelectedLayers,
-  toggleSelectedLocked,
-  toggleSelectedSolo,
-  toggleSelectedVisible,
   ungroupSelected,
 } from '@core/scene/sceneInsert';
+import { toggleLayerSwitchAnchored } from './layerSwitchEdits';
 import { liveMergeSelectedPaths, mergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { createNullsFromPathUndoable } from '@core/scene/nullsFromPaths';
@@ -130,7 +128,9 @@ function switchesMenuItems(targetId: string, ids: ReadonlyArray<string>): Contex
     // different depending on what they are sitting on.
     label: describeLayerFlag(node, def.id).label,
     icon: readLayerFlag(node, def.id) ? 'check' : undefined,
-    onSelect: () => toggleLayerFlags(ids, def.id, targetId),
+    onSelect: def.id === 'shy'
+      ? () => { void toggleLayerSwitchAnchored(targetId, 'shy'); }
+      : () => toggleLayerFlags(ids, def.id, targetId),
   }));
 }
 
@@ -311,9 +311,9 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
 
     // Anchored on the clicked row, so the label ("Unlock") and the action
     // agree even when the rest of the selection is in the other state.
-    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: () => toggleSelectedVisible(targetId) },
-    { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked(targetId) },
-    { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo(targetId) },
+    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: () => { void toggleLayerSwitchAnchored(targetId, 'visible'); } },
+    { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => { void toggleLayerSwitchAnchored(targetId, 'locked'); } },
+    { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => { void toggleLayerSwitchAnchored(targetId, 'solo'); } },
     { id: 'switches', label: 'Switches', children: switchesMenuItems(targetId, ids) },
     { id: 'labelColor', label: 'Label Color', children: labelColorMenuItems(targetId) },
     { id: 'sep2', separator: true },

@@ -281,6 +281,24 @@ export class ProjectManager {
     await this.storage.save(path, this.io.capture());
   }
 
+  /**
+   * Read a document from `path` through this manager's storage (bundle or
+   * single file) WITHOUT restoring it or becoming it — the engine API's file
+   * port (src/core/engine/appPorts.ts). Null when there is nothing there.
+   */
+  async readDocument(path: string): Promise<VersionedDocument | null> {
+    return this.storage.load(path);
+  }
+
+  /**
+   * Write `doc` to `path` through this manager's storage (temp file + rename,
+   * footage collected into a bundle) without changing the current project —
+   * the engine API's file port. The caller decides what the write means.
+   */
+  async writeDocument(path: string, doc: VersionedDocument): Promise<void> {
+    await this.storage.save(path, doc);
+  }
+
   private async writeTo(ref: ProjectRef, path: string): Promise<SaveOutcome> {
     try {
       const file = this.io.capture();

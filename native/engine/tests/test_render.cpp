@@ -104,7 +104,7 @@ TEST_CASE("render thread: 1080p frames through the slot ring (headless throughpu
       [&](const frames::Message& msg) {
         // The host: release every slot as soon as it is announced (Chromium
         // sampling instantly), so the engine is the bottleneck.
-        if (const auto* f = std::get_if<frames::FrameReady>(&msg)) {
+        if (const auto* f = std::get_if<api::FrameReady>(&msg.v)) {
           ++delivered;
           self->release(f->generation, f->slot);
         }
@@ -156,5 +156,5 @@ TEST_CASE("render thread: 1080p frames through the slot ring (headless throughpu
               c.gpuFrameMs, rt.adapter().c_str());
   REQUIRE(fps > 30.0);
   const std::lock_guard<std::mutex> lock(m);
-  REQUIRE(std::holds_alternative<frames::Slots>(sent.front()));
+  REQUIRE(std::holds_alternative<api::FrameSlots>(sent.front().v));
 }

@@ -421,22 +421,13 @@ struct CommandVisitor {
     s.txn_.touch_layer(s.doc_, id);
     comp->layers.insert(comp->layers.begin() + static_cast<std::ptrdiff_t>(index), id);
     s.doc_.layers.emplace(id, std::move(layer));
-    bool sizeGiven = false;
-    bool anchorGiven = false;
+    // Layer space is centre-origin: a new layer's anchor (0,0) is its centre
+    // whatever size `init` gives it — nothing to re-centre.
     for (std::size_t i = 0; i < c.init.size(); ++i) {
       std::optional<api::KeyframeId> key;
       if (auto e = s.write_property(api::PropRef{id, c.init[i].path}, c.init[i].value, std::nullopt, key)) {
         return fail(std::move(*e));
       }
-      sizeGiven = sizeGiven || c.init[i].path == "layer/size";
-      anchorGiven = anchorGiven || c.init[i].path == "transform/anchorPoint";
-    }
-    if (sizeGiven && !anchorGiven) {
-      // A new solid's anchor is its centre (AE), for the size it was created with.
-      doc::Layer& created = *s.doc_.layer(id);
-      std::array<double, 4> size{};
-      (void)doc::components(created.props.at("layer/size").value, size);
-      created.props.at("transform/anchorPoint").value = doc::make_vec2(size[0] / 2.0, size[1] / 2.0);
     }
     return edit<api::CreateLayer>("New Layer", api::LayerRef{id});
   }
@@ -953,12 +944,21 @@ void Session::on_disconnect() {
 }
 
 void Session::on_ping(std::uint64_t nonce, std::uint32_t queued) {
-  out_.send_frames(frames::Pong{nonce, revision_, playing_, queued});
+  out_.send_frames(frames::Message{.v = api::FramePong{nonce, revision_, playing_, queued}});
 }
 
 void Session::respond(api::Seq seq, api::Outcome outcome) {
+  flush_scope();  // the request's one EventBatch goes first (§8.1)
   api::EngineMessage m;
   m.v = api::Response{seq, revision_, std::move(outcome)};
+  out_.send(m);
+}
+
+void Session::flush_scope() {
+  if (!scope_ || !scope_->pending) return;
+  api::EngineMessage m;
+  m.v = std::move(*scope_->pending);
+  scope_->pending.reset();
   out_.send(m);
 }
 
@@ -971,6 +971,24 @@ void Session::respond_error(api::Seq seq, api::EngineError error) {
 void Session::send_events(api::Revision from, api::Revision to, std::vector<api::Event> events,
                           std::optional<api::Seq> seq, api::Origin origin) {
   if (events.empty()) return;
+  if (scope_) {
+    // Inside a request: fold into its single batch, attributed to it — a seek's
+    // playhead event is caused by the seek (TS engine parity).
+    if (scope_->pending) {
+      api::EventBatch& p = *scope_->pending;
+      p.to_revision = std::max(p.to_revision, to);
+      for (auto& e : events) p.events.push_back(std::move(e));
+      return;
+    }
+    api::EventBatch b;
+    b.from_revision = from;
+    b.to_revision = to;
+    b.events = std::move(events);
+    b.caused_by = scope_->seq;
+    b.origin = scope_->origin;
+    scope_->pending = std::move(b);
+    return;
+  }
   api::EventBatch b;
   b.from_revision = from;
   b.to_revision = to;
@@ -997,6 +1015,13 @@ Session::Outcome Session::run_command(const api::Command& cmd, api::Origin origi
 }
 
 void Session::handle_request(api::Request request, Clock::time_point now) {
+  scope_ = RequestScope{request.seq, request.origin, std::nullopt};
+  handle_request_body(std::move(request), now);
+  flush_scope();  // anything emitted after the response (nothing, by design) still goes out
+  scope_.reset();
+}
+
+void Session::handle_request_body(api::Request request, Clock::time_point now) {
   const api::Seq seq = request.seq;
   if (request.base_revision && *request.base_revision != revision_) {
     api::EngineError e = err(ErrorCode::conflict, "the document is at revision " + std::to_string(revision_));
@@ -1042,8 +1067,8 @@ void Session::handle_request(api::Request request, Clock::time_point now) {
           ev.push_back(make_event(api::DocumentResetEvent{revision_, api::ResetReason::created}));
           ev.push_back(history_event());
           send_events(from, revision_, std::move(ev), seq, request.origin);
+          emit_transport();  // before the response: same batch (§8.1)
           respond(seq, std::move(o));
-          emit_transport();
           request_render();
           break;
         }

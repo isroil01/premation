@@ -72,6 +72,7 @@ import { runQuery, type QueryCtx } from './queries';
 import { Transport } from './transport';
 import { KeyIndex } from './keyIndex';
 import { stampMissingKeyIds } from './stamp';
+import { refreshLegacyUi } from './legacyRefresh';
 
 /** Bars mirror their node (name, enabled, locked, membership) — refresh every comp's mirror. */
 function syncTimelines(): void {
@@ -91,6 +92,14 @@ export interface LocalEngineOptions {
   ports?: EnginePorts;
   /** The history the entries go on; default the app's CommandSystem history. */
   history?: () => HistoryService | null;
+  /**
+   * Announce every forward edit on the app bus so today's panels re-read the
+   * document (legacyRefresh.ts). The app's engine sets it (engineInstance.ts);
+   * B4's mirror removes it. Undo/redo always refresh (applyParts).
+   */
+  legacyUiRefresh?: boolean;
+  /** The project file this document was opened from / saved to ('' = never saved). */
+  projectPath?: string;
 }
 
 /** One undo entry: the parts a request (or a gesture) changed, before and after. */
@@ -155,6 +164,10 @@ export class LocalEngine extends EngineClientBase {
   private savedRevision: Revision = 0;
   private projectPath = '';
   private gesture: OpenGesture | null = null;
+  /** Open while jumpToHistory walks the stack: the steps fold into one revision. */
+  private jump: { from: Parts; to: Parts } | null = null;
+  /** The request's single EventBatch, delivered just before its response (§8.1). */
+  private pendingBatch: EventBatch | null = null;
   private gestureSeq = 0;
   private applying = 0;
   private stale = false;
@@ -170,6 +183,7 @@ export class LocalEngine extends EngineClientBase {
   constructor(options: LocalEngineOptions = {}) {
     super();
     this.options = { recordLog: true, hashes: false, ...options };
+    this.projectPath = options.projectPath ?? '';
     this.transport = new Transport((events) => this.emitEphemeral(events));
     this.attachBus();
     this.seedIds();
@@ -214,6 +228,39 @@ export class LocalEngine extends EngineClientBase {
     if (this.gesture) await this.execute({ type: 'endGesture', gesture: this.gesture.id, commit: true });
     for (const d of this.busDisposers) d.dispose();
     this.busDisposers = [];
+    this.closed = true;
+  }
+
+  /**
+   * Resolves when no request is queued or running — including requests that
+   * were sent by continuations of earlier ones (a gesture's next message).
+   */
+  async whenIdle(): Promise<void> {
+    for (let i = 0; i < 1000; i++) {
+      const q = this.queue;
+      await q;
+      // Let continuations of the answered requests send their follow-ups.
+      for (let k = 0; k < 20; k++) await Promise.resolve();
+      if (q === this.queue) return;
+    }
+  }
+
+  /** Attach (or replace) the file/media ports — the app attaches its real ones at boot. */
+  attachPorts(ports: EnginePorts): void {
+    this.options.ports = ports;
+  }
+
+  /**
+   * Drop this instance because the DOCUMENT under it was replaced (the app
+   * opened/created/closed a project around the API): unlike `close`, an open
+   * gesture is abandoned, not committed — its entry would describe the old
+   * document and land on the new one's freshly reset history.
+   */
+  dispose(): void {
+    this.gesture = null;
+    for (const d of this.busDisposers) d.dispose();
+    this.busDisposers = [];
+    this.listeners.clear();
     this.closed = true;
   }
 
@@ -316,6 +363,15 @@ export class LocalEngine extends EngineClientBase {
     }
     this.keyIndex.invalidate();
     const keys = [...target.keys()];
+    if (this.jump) {
+      // jumpToHistory: every step folds into ONE revision (ENGINE_API.md §8.1 —
+      // one revision per request); first-seen "from", last-seen "to" per part.
+      for (const k of keys) {
+        if (!this.jump.from.has(k)) this.jump.from.set(k, from.get(k));
+        this.jump.to.set(k, target.get(k));
+      }
+      return;
+    }
     const prev = this.docRevision;
     this.docRevision += 1;
     const events = this.builder.build(keys, from, target);
@@ -356,13 +412,23 @@ export class LocalEngine extends EngineClientBase {
     } catch (err) {
       return this.respond(req, { kind: 'error', value: toEngineError(err) });
     } finally {
+      this.flushPendingBatch();  // normally already flushed by respond()
       this.currentSeq = undefined;
     }
   }
 
   private respond(req: Request, outcome: Response['outcome']): Response {
+    // Events before the response: the request's one batch reaches subscribers
+    // before the caller's await resumes (ENGINE_API.md §8.1).
+    this.flushPendingBatch();
     this.noteRevision(this.docRevision);
     return { seq: req.seq, revision: this.docRevision, outcome };
+  }
+
+  private flushPendingBatch(): void {
+    const b = this.pendingBatch;
+    this.pendingBatch = null;
+    if (b) this.deliver(b);
   }
 
   private record(req: Request): void {
@@ -501,6 +567,8 @@ export class LocalEngine extends EngineClientBase {
       }
       if (failure) {
         this.applyQuiet(before);
+      } else if (this.options.legacyUiRefresh) {
+        this.refreshUi(changedKeys(before, after));
       }
     } finally {
       history?.resume();
@@ -550,6 +618,20 @@ export class LocalEngine extends EngineClientBase {
     this.keyIndex.invalidate();
   }
 
+  /** Legacy bus/revision announcements for what just changed (legacyRefresh.ts), recorder held. */
+  private refreshUi(keys: string[]): void {
+    if (keys.length === 0) return;
+    const prev = useHistoryStore.getState().restoring;
+    useHistoryStore.setState({ restoring: true });
+    try {
+      refreshLegacyUi(keys);
+    } catch {
+      // A panel listener's failure must not fail a command that already applied.
+    } finally {
+      useHistoryStore.setState({ restoring: prev });
+    }
+  }
+
   private pushEntry(entry: EngineHistoryEntry): void {
     const history = this.history();
     if (!history) return;
@@ -590,15 +672,30 @@ export class LocalEngine extends EngineClientBase {
         let label = '';
         const store = useHistoryStore.getState();
         store.flush();
-        while (h.getIndex() > target) {
-          const top = entries[h.getIndex()]!;
-          label = top.label;
-          this.moveHistory(h, 'undo');
-        }
-        while (h.getIndex() < target) {
-          const next = h.getEntries()[h.getIndex() + 1]!;
-          label = next.label;
-          this.moveHistory(h, 'redo');
+        // One revision for the whole jump, like the C++ engine (replayEntry folds
+        // the steps into `this.jump`; a foreign entry still resyncs on its own).
+        this.jump = { from: new Map(), to: new Map() };
+        try {
+          while (h.getIndex() > target) {
+            const top = entries[h.getIndex()]!;
+            label = top.label;
+            this.moveHistory(h, 'undo');
+          }
+          while (h.getIndex() < target) {
+            const next = h.getEntries()[h.getIndex() + 1]!;
+            label = next.label;
+            this.moveHistory(h, 'redo');
+          }
+        } finally {
+          const jump = this.jump;
+          this.jump = null;
+          const keys = changedKeys(jump.from, jump.to);
+          if (keys.length > 0) {
+            const prev = this.docRevision;
+            this.docRevision += 1;
+            this.emitBatch(prev, this.docRevision, this.builder.build(keys, jump.from, jump.to));
+            this.emitStatus();
+          }
         }
         return { label, position: h.getIndex() + 1 };
       }
@@ -631,6 +728,7 @@ export class LocalEngine extends EngineClientBase {
           history?.suspend();
           try {
             this.applyQuiet(b);
+            if (this.options.legacyUiRefresh) this.refreshUi(changed);
           } finally {
             history?.resume();
             this.applying -= 1;
@@ -775,6 +873,19 @@ export class LocalEngine extends EngineClientBase {
 
   private emitBatch(from: Revision, to: Revision, events: Event[]): void {
     if (events.length === 0 && from === to) return;
+    if (this.currentSeq !== undefined) {
+      // Inside a request: ONE EventBatch per request (§8.1) — the revisioned
+      // change and the status events (history, dirty, transport) ride together,
+      // exactly as the C++ engine sends them.
+      const p = this.pendingBatch;
+      if (p) {
+        p.toRevision = Math.max(p.toRevision, to);
+        p.events.push(...events);
+        return;
+      }
+      this.pendingBatch = { fromRevision: from, toRevision: to, events: [...events], causedBy: this.currentSeq, origin: this.currentOrigin };
+      return;
+    }
     const batch: EventBatch = {
       fromRevision: from,
       toRevision: to,

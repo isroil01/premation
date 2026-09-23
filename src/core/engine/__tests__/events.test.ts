@@ -40,11 +40,20 @@ test('each applied edit is one batch; revisions are consecutive; causedBy/origin
   await h.run({ type: 'renameLayer', layer: s.A, name: 'X' });
   expect(revisioned(h.batches)).toHaveLength(0);
   expect(h.engine.documentRevision).toBe(r0 + 2);
-  // historyChanged + dirtyChanged follow every change, ephemeral.
+  // ONE batch per request (ENGINE_API.md §8.1): historyChanged + dirtyChanged
+  // ride in the same batch as the change, after it — as the C++ engine sends them.
   h.batches.length = 0;
   await h.run({ type: 'renameLayer', layer: s.A, name: 'X2' });
-  const eph = h.batches.filter((b) => b.fromRevision === b.toRevision).flatMap(types);
-  expect(eph).toEqual(expect.arrayContaining(['historyChanged', 'dirtyChanged']));
+  expect(h.batches).toHaveLength(1);
+  expect(types(h.batches[0]!)).toEqual(expect.arrayContaining(['layersChanged', 'historyChanged', 'dirtyChanged']));
+  expect(h.batches[0]!.toRevision).toBe(h.batches[0]!.fromRevision + 1);
+  // jumpToHistory over several entries is ONE revision too.
+  h.batches.length = 0;
+  const before = h.engine.documentRevision;
+  const hist = await h.query({ type: 'getHistory' });
+  await h.run({ type: 'jumpToHistory', position: Math.max(0, hist.position - 3) });
+  expect(h.engine.documentRevision).toBe(before + 1);
+  expect(h.batches).toHaveLength(1);
 });
 
 test('the right event kinds for each family', async () => {

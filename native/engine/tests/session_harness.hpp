@@ -135,13 +135,13 @@ class Harness final : public Outbox {
   /// Release every slot of the current generation the sink announced.
   void release_all() {
     for (const auto& m : frameMsgs) {
-      if (const auto* f = std::get_if<frames::FrameReady>(&m)) sink.release(f->generation, f->slot);
+      if (const auto* f = std::get_if<api::FrameReady>(&m.v)) sink.release(f->generation, f->slot);
     }
   }
-  [[nodiscard]] std::vector<frames::FrameReady> frames_ready() const {
-    std::vector<frames::FrameReady> out;
+  [[nodiscard]] std::vector<api::FrameReady> frames_ready() const {
+    std::vector<api::FrameReady> out;
     for (const auto& m : frameMsgs) {
-      if (const auto* f = std::get_if<frames::FrameReady>(&m)) out.push_back(*f);
+      if (const auto* f = std::get_if<api::FrameReady>(&m.v)) out.push_back(*f);
     }
     return out;
   }

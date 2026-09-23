@@ -25,7 +25,7 @@ import {
   toggleLayerFlags,
   type LayerFlag,
 } from '@core/scene/layerFlags';
-import { toggleSelectedLocked, toggleSelectedSolo, toggleSelectedVisible } from '@core/scene/sceneInsert';
+import { toggleLayerSwitchAnchored } from './layerSwitchEdits';
 import { isLayerAudioMuted, toggleLayerAudioMute } from '@core/audio/audioLayerSwitches';
 import { videoHasAudioTrack } from '@core/audio/audioScene';
 import { runDocumentEdit } from '@core/commands/documentEdit';
@@ -87,7 +87,7 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
         data-on={hidden || undefined}
         aria-label={hidden ? 'Show layer' : 'Hide layer'}
         title={hidden ? 'Show' : 'Hide'}
-        onClick={(e) => { e.stopPropagation(); toggleSelectedVisible(nodeId); }}
+        onClick={(e) => { e.stopPropagation(); void toggleLayerSwitchAnchored(nodeId, 'visible'); }}
       >
         <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
       </button>
@@ -117,7 +117,7 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
         data-on={solo || undefined}
         aria-label={solo ? 'Unsolo layer' : 'Solo layer'}
         title={solo ? 'Unsolo' : 'Solo'}
-        onClick={(e) => { e.stopPropagation(); toggleSelectedSolo(nodeId); }}
+        onClick={(e) => { e.stopPropagation(); void toggleLayerSwitchAnchored(nodeId, 'solo'); }}
       >
         <Icon name="circle" size="sm" />
       </button>
@@ -129,7 +129,7 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
         data-on={locked || undefined}
         aria-label={locked ? 'Unlock layer' : 'Lock layer'}
         title={locked ? 'Unlock' : 'Lock'}
-        onClick={(e) => { e.stopPropagation(); toggleSelectedLocked(nodeId); }}
+        onClick={(e) => { e.stopPropagation(); void toggleLayerSwitchAnchored(nodeId, 'locked'); }}
       >
         <Icon name={locked ? 'lock' : 'unlock'} size="sm" />
       </button>
@@ -158,7 +158,14 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
             {...(cycles ? {} : { 'aria-pressed': on })}
             data-quality={cycles ? face.glyph : undefined}
             title={face.title}
-            onClick={(e) => { e.stopPropagation(); toggleLayerFlags(anchoredIds(nodeId), flag, nodeId); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              // Shy is a pure switch → the engine API. The other flags carry
+              // feedback (camera tip, motion-blur comp switch) and migrate
+              // with the layers area.
+              if (flag === 'shy') void toggleLayerSwitchAnchored(nodeId, 'shy');
+              else toggleLayerFlags(anchoredIds(nodeId), flag, nodeId);
+            }}
           >
             {face.glyph
               ? <span className={styles.switchGlyph}>{face.glyph}</span>

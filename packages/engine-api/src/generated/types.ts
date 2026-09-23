@@ -440,6 +440,10 @@ export type AssetStatus =
   | 'failed';
 export const AssetStatusValues = ['ready', 'missing', 'decoding', 'offline', 'failed'] as const;
 
+export type PixelFormat =
+  | 'rgba8unorm';
+export const PixelFormatValues = ['rgba8unorm'] as const;
+
 /** A layer (scene node) id. Stable for the layer's lifetime, survives save/load and undo. */
 export type LayerId = string;
 
@@ -2678,6 +2682,67 @@ export interface AutosavedEvent {
   path: string;
   revision: Revision;
 }
+
+/** Engine → host. The ring changed (first viewport, resize, GPU restart). Every slot of an older generation is gone; the host drops its imports of them. */
+export interface FrameSlots {
+  generation: number;
+  viewport: number;
+  width: number;
+  height: number;
+  format: PixelFormat;
+  /** true: `handles` are NT handles valid in the host process (sharedTexture import); the ENGINE owns them — the host never closes one. false: offscreen slots (headless, tests); handles are 0. */
+  shared: boolean;
+  /** One per slot, at most 16. */
+  handles: number[];
+}
+
+/** Engine → host. A finished frame is in `slot` (the GPU work is complete: Electron's rgba import takes no fence). The slot belongs to the host until it sends FrameRelease for this generation + slot. */
+export interface FrameReady {
+  generation: number;
+  slot: number;
+  viewport: number;
+  /** Frames not delivered since the previous FrameReady (ring full, or the clock ran ahead of the GPU). */
+  dropped: number;
+  /** Comp frame index. */
+  frame: number;
+  time: Time;
+  /** Document revision the frame shows. */
+  revision: Revision;
+  /** Epoch microseconds — MEASUREMENT ONLY, never an input to pixels. */
+  renderStartUs: number;
+  renderDoneUs: number;
+  width: number;
+  height: number;
+}
+
+/** Engine → host. Heartbeat answer, sent by the document core thread. */
+export interface FramePong {
+  nonce: number;
+  revision: Revision;
+  playing: boolean;
+  /** Messages waiting in the core queue when the ping was served. */
+  queued: number;
+}
+
+/** Host → engine. Chromium is done with a slot. A stale generation is ignored. */
+export interface FrameRelease {
+  generation: number;
+  slot: number;
+}
+
+/** Host → engine. Heartbeat. */
+export interface FramePing {
+  nonce: number;
+}
+
+/** Every message on the frame channel (fd 3 / fd 4). Unknown variants are skipped by both sides. */
+export type FrameChannelMessage =
+  | ({ type: 'slots' } & FrameSlots)
+  | ({ type: 'frameReady' } & FrameReady)
+  | ({ type: 'pong' } & FramePong)
+  | ({ type: 'release' } & FrameRelease)
+  | ({ type: 'ping' } & FramePing);
+export type FrameChannelMessageType = FrameChannelMessage['type'];
 
 /** Every command, keyed by its schema id. */
 export type Command =

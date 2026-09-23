@@ -215,7 +215,7 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
   next->generation = ++generation_;
   next->width = config.width;
   next->height = config.height;
-  frames::Slots announce;
+  api::FrameSlots announce;
   announce.generation = next->generation;
   announce.viewport = config.viewport;
   announce.width = config.width;
@@ -268,7 +268,7 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
       .kv("height", config.height)
       .kv("count", count)
       .kv("shared", slots_->shared);
-  if (send_) send_(announce);
+  if (send_) send_(frames::Message{.v = std::move(announce)});
   const std::lock_guard<std::mutex> lock(m_);
   cv_.notify_all();
 }
@@ -303,7 +303,7 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   const double doneUs = os::epoch_us();
   const double gpuMs = std::chrono::duration<double, std::milli>(SteadyClock::now() - t0).count();
 
-  frames::FrameReady ready;
+  api::FrameReady ready;
   ready.generation = set.generation;
   ready.slot = slot;
   ready.viewport = job.viewport;
@@ -311,11 +311,11 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   ready.frame = job.frame;
   ready.time = job.time;
   ready.revision = job.revision;
-  ready.renderStartUs = startUs;
-  ready.renderDoneUs = doneUs;
+  ready.render_start_us = startUs;
+  ready.render_done_us = doneUs;
   ready.width = set.width;
   ready.height = set.height;
-  if (send_) send_(ready);
+  if (send_) send_(frames::Message{.v = ready});
 
   const std::lock_guard<std::mutex> lock(m_);
   ++counters_.rendered;

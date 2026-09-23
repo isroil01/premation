@@ -1,0 +1,61 @@
+/*
+ * The C++ engine's picture (NATIVE_CORE_PLAN C3): a picture-in-picture panel
+ * in the stage's bottom-right corner, BESIDE today's viewport — it replaces
+ * nothing until D5. Not clickable: the TypeScript viewport under it keeps
+ * every gesture.
+ */
+.surface {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  /* Above the empty-composition start surface (z 10): the engine's document
+     is not the one that view describes. */
+  z-index: 11;
+  width: 36%;
+  min-width: 240px;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-overlay-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-overlay-panel-bg);
+  box-shadow: var(--color-overlay-panel-shadow);
+  color: var(--color-overlay-text);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.title {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  opacity: 0.7;
+}
+
+.frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.notice {
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--color-overlay-panel-border);
+  line-height: 1.4;
+}

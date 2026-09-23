@@ -103,6 +103,7 @@ class Session {
   // ── envelope ──
   void handle_hello(const api::Hello& hello);
   void handle_request(api::Request request, Clock::time_point now);
+  void handle_request_body(api::Request request, Clock::time_point now);
   void respond(api::Seq seq, api::Outcome outcome);
   void respond_error(api::Seq seq, api::EngineError error);
   void send_events(api::Revision from, api::Revision to, std::vector<api::Event> events, std::optional<api::Seq> seq,
@@ -154,6 +155,17 @@ class Session {
   api::Revision revision_ = 0;
   eval::Scratch scratch_;
   doc::ChangeSet txn_;  // the changes of the request being applied
+
+  // One EventBatch per request (ENGINE_API.md §8.1): while a request is being
+  // handled, every send_events folds into `pending_` (causedBy = the request),
+  // which respond() sends just before the response — events first.
+  struct RequestScope {
+    api::Seq seq = 0;
+    api::Origin origin = api::Origin::ui;
+    std::optional<api::EventBatch> pending;
+  };
+  std::optional<RequestScope> scope_;
+  void flush_scope();
 
   // transport (engine-owned clock, never document state)
   std::optional<api::ItemId> activeComp_;

@@ -97,13 +97,14 @@ void frames_reader(io::Handle in, BlockingQueue<CoreItem>& queue, ReleaseFn rele
     std::span<const std::uint8_t> payload;
     while (decoder.next(payload)) {
       frames::Message m;
-      if (frames::decode(payload, m) != frames::Status::ok) {
+      if (const wire::Status st = frames::decode(payload, m); st != wire::Status::ok) {
+        if (st == wire::Status::unknown_variant) continue;  // a newer host's message: skip
         PREMATION_LOG(warn, "frame_channel_bad_message").kv("bytes", payload.size());
         continue;
       }
-      if (const auto* r = std::get_if<frames::Release>(&m)) {
+      if (const auto* r = std::get_if<api::FrameRelease>(&m.v)) {
         release(r->generation, r->slot);
-      } else if (const auto* p = std::get_if<frames::Ping>(&m)) {
+      } else if (const auto* p = std::get_if<api::FramePing>(&m.v)) {
         (void)queue.push(CoreItem{CoreItem::Kind::ping, {}, p->nonce, {}});
       }
     }

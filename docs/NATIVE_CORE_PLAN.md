@@ -205,6 +205,17 @@ made every transfer time out); the viewport tells the engine a preview size
 and pixel ratio, not a window rectangle. Dawn comes from vcpkg's `dawn` port
 behind a manifest feature `engine`: 16 min clean build, 565 MB cache.
 
+**C3 result (2026-09-23, `docs/ENGINE_API.md` §15.5):** the C++ engine is a
+second `EngineClient` backend (`ProcessEngineClient`), selected by
+`PREMATION_ENGINE=process` (default off) and wired end to end: supervisor in
+main, IPC through ipcGuard, shared-texture frames into an engine surface beside
+today's viewport, crash → restart → command-log replay, crash loop → the TS
+engine. Parity decided and enforced on both engines: one revision and one event
+batch per request, events before the response, After Effects units (scale %),
+centre-origin layer space. **Exit met:** the replay corpus passes against both
+engines (9/9, 0 mismatches; the C2-subset session 41/41 compared). Real app:
+30/30 fps, restart replays 55 requests in 29 ms with an identical document.
+
 ### Phase D — Rendering in C++
 
 | Step | What | Exit | Size |

@@ -25,7 +25,7 @@ import {
   layerMarkers,
   itemInfo,
 } from './model';
-import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimated, flicksToKeyTime, keyTimeToFlicks } from './props';
+import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimated, flicksToKeyTime, keyTimeToFlicks, toApiNums, apiUnitFactor } from './props';
 import { valueAt } from './handlers/properties';
 import { encodeFragment } from './handlers/layers';
 import { GROUP_TYPES } from './handlers/groups';
@@ -115,7 +115,7 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         const t = flicksToKeyTime(p.layer, b, q.time);
         let value = isAnimated(p.layer, b) ? valueAt(p.layer, b, t) ?? readStatic(p.layer, b) : readStatic(p.layer, b);
         if (q.evaluated && b.members.length > 0 && b.members.some((m) => defaultAnimation.isExpressionEnabled(p.layer, m))) {
-          const nums = b.members.map((m) => defaultAnimation.sample(p.layer, m, t) ?? 0);
+          const nums = toApiNums(b, b.members.map((m) => defaultAnimation.sample(p.layer, m, t) ?? 0));
           value = b.valueType === 'scalar' ? { kind: 'scalar', value: nums[0]! } : value.kind === 'vec2' ? { kind: 'vec2', value: { x: nums[0]!, y: nums[1]! } } : value.kind === 'vec3' ? { kind: 'vec3', value: { x: nums[0]!, y: nums[1]!, z: nums[2]! } } : value;
         }
         return { prop: p, value };
@@ -133,12 +133,16 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       for (let i = 0; i < q.samples; i++) {
         const tf = q.range.start + Math.round((q.range.duration * i) / (q.samples - 1));
         const t = flicksToKeyTime(q.prop.layer, b, tf);
-        const nums = b.members.map((m) => defaultAnimation.sample(q.prop.layer, m, t) ?? (numbersOf(readStatic(q.prop.layer, b))[b.members.indexOf(m)] ?? 0));
+        // API units: samples are stored units (scaled per member); the static fallback already is API.
+        const nums = b.members.map((m, i) => {
+          const s = defaultAnimation.sample(q.prop.layer, m, t);
+          return s !== undefined ? s * (b.colorBase ? 1 : apiUnitFactor(m)) : (numbersOf(readStatic(q.prop.layer, b))[i] ?? 0);
+        });
         times.push(tf);
         values.push(...nums);
         if (q.speed) {
           const dt = 1 / 240;
-          const n2 = b.members.map((m) => defaultAnimation.sample(q.prop.layer, m, t + dt) ?? 0);
+          const n2 = toApiNums(b, b.members.map((m) => defaultAnimation.sample(q.prop.layer, m, t + dt) ?? 0));
           speeds.push(Math.hypot(...n2.map((v, j) => v - nums[j]!)) / dt);
         }
       }

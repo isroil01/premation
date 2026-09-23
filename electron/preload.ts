@@ -5,7 +5,61 @@
  * here is a thin IPC forwarder; no privileged work happens in the renderer.
  */
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, sharedTexture } from 'electron';
+
+// ── C++ engine frames (electron/engineHost.ts) ──────────────────────────────
+//
+// `sharedTexture` is one of the modules a SANDBOXED preload is given
+// (Electron ≥ 40; proven in this app's real window by C4's route-C spike),
+// and a `VideoFrame` is one of the types contextBridge carries into the page.
+// The receiver is installed only when the page asks for frames, and main is
+// told so — a transfer to a page without a receiver times out.
+//
+// Ownership: every texture main sends is released exactly once. With no page
+// consumer it is released at once; otherwise the page gets the frame and a
+// `release()` it must call after drawing (the engine's ring slot is freed only
+// when every process, queued GPU work included, has let go).
+
+type EngineFrameConsumer = (frame: VideoFrame, meta: unknown, release: () => void) => void;
+let engineFrameConsumer: EngineFrameConsumer | null = null;
+let engineReceiverInstalled = false;
+
+function installEngineFrameReceiver(): boolean {
+  if (engineReceiverInstalled) return true;
+  if (!sharedTexture || typeof sharedTexture.setSharedTextureReceiver !== 'function') return false;
+  sharedTexture.setSharedTextureReceiver(async (data, meta: unknown) => {
+    const imported = data.importedSharedTexture;
+    const consumer = engineFrameConsumer;
+    if (!consumer) {
+      imported.release();
+      return;
+    }
+    let frame: VideoFrame;
+    try {
+      frame = imported.getVideoFrame();
+    } catch {
+      imported.release();
+      return;
+    }
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      try {
+        frame.close();
+      } finally {
+        imported.release();
+      }
+    };
+    try {
+      consumer(frame, meta, release);
+    } catch {
+      release();
+    }
+  });
+  engineReceiverInstalled = true;
+  return true;
+}
 
 const bridge = {
   platform: process.platform,
@@ -510,6 +564,45 @@ const bridge = {
    * this catches the packaged build where they somehow still did not.
    */
   reportEdition: (edition: string) => ipcRenderer.invoke('edition:report', edition),
+
+  /**
+   * The C++ engine process (NATIVE_CORE_PLAN C3; electron/engineHost.ts). Bytes
+   * in, bytes out: the page's ProcessEngineClient owns the codec, main relays.
+   * `status().enabled` is false unless the process backend is switched on
+   * (PREMATION_ENGINE=process / <userData>/engine.json), and then nothing else
+   * here has a handler.
+   */
+  engine: {
+    request: (bytes: Uint8Array) => ipcRenderer.invoke('engine:request', bytes),
+    status: () =>
+      ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'disabled' })),
+    onEvents: (handler: (bytes: Uint8Array) => void) => {
+      const listener = (_event: unknown, bytes: Uint8Array): void => handler(bytes);
+      ipcRenderer.on('engine:events', listener);
+      return () => ipcRenderer.removeListener('engine:events', listener);
+    },
+    onState: (handler: (state: string) => void) => {
+      const listener = (_event: unknown, state: string): void => handler(state);
+      ipcRenderer.on('engine:state', listener);
+      return () => ipcRenderer.removeListener('engine:state', listener);
+    },
+    onRestarted: (handler: (info: unknown) => void) => {
+      const listener = (_event: unknown, info: unknown): void => handler(info);
+      ipcRenderer.on('engine:restarted', listener);
+      return () => ipcRenderer.removeListener('engine:restarted', listener);
+    },
+    onFallback: (handler: (info: unknown) => void) => {
+      const listener = (_event: unknown, info: unknown): void => handler(info);
+      ipcRenderer.on('engine:fallback', listener);
+      return () => ipcRenderer.removeListener('engine:fallback', listener);
+    },
+    /** Engine frames (shared textures); null stops. The consumer must `release()` each frame. */
+    onFrame: (consumer: EngineFrameConsumer | null) => {
+      engineFrameConsumer = consumer;
+      const ready = consumer !== null && installEngineFrameReceiver();
+      ipcRenderer.send('engine:receiverReady', ready);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('motionEditor', bridge);

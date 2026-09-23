@@ -266,7 +266,7 @@ export function catalogFor(layerId: string): Catalog {
       members: [...row.members],
       ...(color ? { colorBase: row.prop } : {}),
       animatable: meta.keyframeable !== false,
-      unit: row.valueUnit ?? meta.unit ?? '',
+      unit: !color && apiUnitFactor(row.members[0]) === 100 ? '%' : row.valueUnit ?? meta.unit ?? '',
       ...(meta.min !== undefined && !color ? { min: meta.min } : {}),
       ...(meta.max !== undefined && !color ? { max: meta.max } : {}),
       ...(def ? { defaultValue: def } : {}),
@@ -421,10 +421,11 @@ export function catalogFor(layerId: string): Catalog {
 
 function defaultFor(vt: ValueType, members: readonly string[], layerId: string, d: unknown): Value | undefined {
   if (vt === 'color') return undefined;
-  if (members.length === 1) return typeof d === 'number' ? { kind: 'scalar', value: d } : undefined;
+  // Defaults are API values (AE units, see apiUnitFactor).
+  if (members.length === 1) return typeof d === 'number' ? { kind: 'scalar', value: d * apiUnitFactor(members[0]) } : undefined;
   const vals = members.map((m) => {
     const v = resolvePropertyMeta(m, layerId).defaultValue;
-    return typeof v === 'number' ? v : 0;
+    return typeof v === 'number' ? v * apiUnitFactor(m) : 0;
   });
   return vectorValue(vt, vals);
 }
@@ -436,6 +437,34 @@ export function requireBinding(cat: Catalog, path: string): PropBinding {
 }
 
 // ── Value conversion ─────────────────────────────────────────────────
+
+/**
+ * API units are After Effects units (ENGINE_API.md §3.5): pixels, degrees and
+ * PERCENT for opacity and scale. Every member this engine stores in the AE unit
+ * already (opacity 0..100, rotation in degrees, pixels) has factor 1; transform
+ * scale is stored as a multiplier (1 = 100 %) and is converted HERE, at the
+ * seam, both ways — every value that crosses the API (setProperty, keyframe
+ * values, getPropertyValues/Tree, sampleProperty, change events) goes through
+ * `toApiNums`/`fromApiNums`. The C++ engine stores the AE unit directly.
+ */
+const PERCENT_MULTIPLIER_MEMBERS = new Set(['scale', 'scaleX', 'scaleY', 'scaleZ']);
+
+/** API value = stored value × this, for one member track. */
+export function apiUnitFactor(member: string | undefined): number {
+  return member !== undefined && PERCENT_MULTIPLIER_MEMBERS.has(member) ? 100 : 1;
+}
+
+/** Stored member numbers → API numbers (colours are never scaled). */
+export function toApiNums(b: PropBinding, nums: number[]): number[] {
+  if (b.colorBase) return nums;
+  return nums.map((x, i) => x * apiUnitFactor(b.members[i]));
+}
+
+/** API numbers → stored member numbers. */
+export function fromApiNums(b: PropBinding, nums: number[]): number[] {
+  if (b.colorBase) return nums;
+  return nums.map((x, i) => x / apiUnitFactor(b.members[i]));
+}
 
 export function vectorValue(vt: ValueType, v: number[]): Value {
   switch (vt) {
@@ -603,8 +632,8 @@ export function readStatic(layerId: string, b: PropBinding): Value {
   if (b.dataTrack) return { kind: 'none' };
   const nums = b.members.map((m, i) => {
     const v = readStaticPropertyValue(layerId, m);
-    if (v !== undefined) return v;
-    const d = b.defaultValue ? numbersOfDefault(b.defaultValue)[i] : undefined;
+    if (v !== undefined) return v * apiUnitFactor(m);
+    const d = b.defaultValue ? numbersOfDefault(b.defaultValue)[i] : undefined;  // already API units
     return d ?? 0;
   });
   return vectorValue(b.valueType, nums);
@@ -704,7 +733,7 @@ export function writeStatic(layerId: string, b: PropBinding, value: Value): void
     if (!writeColorBase(node, b.colorBase, value.value)) fail('notFound', `nowhere to store '${b.path}'`, { path: b.path });
     return;
   }
-  const nums = numbersOf(b, value);
+  const nums = fromApiNums(b, numbersOf(b, value));
   for (let i = 0; i < nums.length; i++) {
     const m = b.members[i]!;
     if (!writeStaticPropertyValue(layerId, m, nums[i]!)) {
@@ -780,7 +809,8 @@ export function readKeys(layerId: string, b: PropBinding): KeyAt[] {
   for (const t of tracks) for (const k of t) times.add(k.t);
   const sorted = [...times].sort((x, y) => x - y);
   const stat = readStatic(layerId, b);
-  const statNums = stat.kind === 'none' ? [] : numbersOfLoose(stat);
+  // Stored units below; converted to API units once per key (toApiNums).
+  const statNums = stat.kind === 'none' ? [] : fromApiNums(b, numbersOfLoose(stat));
   return sorted.map((t) => {
     let lead: TsKeyframe | undefined;
     let leadMember = b.members[0]!;
@@ -802,7 +832,7 @@ export function readKeys(layerId: string, b: PropBinding): KeyAt[] {
     return {
       t,
       id: l.id ?? fallbackKeyId(layerId, leadMember, t),
-      value: vectorValue(b.valueType, nums),
+      value: vectorValue(b.valueType, toApiNums(b, nums)),
       easing: toEasing(l.easing),
       ...(l.bezier ? { bezier: [...l.bezier] as [number, number, number, number] } : {}),
       continuous: l.continuous === true,
@@ -960,7 +990,7 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
   const tracks = b.members.map((m) => (defaultAnimation.getTrackKeyframes(layerId, m) ?? []).map((k) => ({ ...k })));
   for (const w of writes) {
     const nums = w.value
-      ? (b.colorBase && w.value.kind !== 'color' ? fail('typeMismatch', `'${b.path}' takes a color`, { path: b.path }) : numbersOf(b, w.value))
+      ? (b.colorBase && w.value.kind !== 'color' ? fail('typeMismatch', `'${b.path}' takes a color`, { path: b.path }) : fromApiNums(b, numbersOf(b, w.value)))
       : null;
     b.members.forEach((m, i) => {
       const list = tracks[i]!;

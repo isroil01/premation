@@ -87,6 +87,7 @@ import { useWorkspace } from './useWorkspace';
 import { pluginKeyDown } from './pluginDrawOverlay';
 import { TransportBar } from './TransportBar';
 import { ViewportHud } from './ViewportHud';
+import { EngineSurface } from '@components/EngineSurface/EngineSurface';
 import { CompareOverlay } from './CompareOverlay';
 import { RotoBrushOverlay } from './RotoBrushOverlay';
 import { InlineAiPrompt } from './InlineAiPrompt';
@@ -721,6 +722,10 @@ export function WorkspaceViewport({
           <CompareOverlay />
           {/* fps / frame ms / cache / resolution / backend, top-left. */}
           <ViewportHud />
+          {/* The C++ engine's picture, beside (not instead of) this viewport —
+              renders nothing unless the process backend is on
+              (PREMATION_ENGINE=process; NATIVE_CORE_PLAN C3). */}
+          <EngineSurface />
           {/* Ctrl+Enter: an AI prompt anchored to the selection's screen rect. */}
           <InlineAiPrompt />
         </div>

@@ -25,6 +25,13 @@ extraResources:
   # here or a self-hosted build boots with Electron's default icon.
   - from: build/icon.png
     to: build/icon.png
+  # Repeated for the same reason: the C++ engine, when it was built (see the
+  # base config and scripts/stageEngine.cjs; `beforePack` IS inherited).
+  - from: build/engine
+    to: engine
+    filter:
+      - premation-engine*
+      - '*.dll'
   - from: ../motion-back/dist
     to: backend/dist
   - from: ../motion-back/node_modules

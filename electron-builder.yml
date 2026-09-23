@@ -32,6 +32,18 @@ icon: build/icon.png
 extraResources:
   - from: build/icon.png
     to: build/icon.png
+  # The C++ engine process (NATIVE_CORE_PLAN C3) at <resources>/engine/, where
+  # electron/engineSupervisor.ts looks in a packaged app. scripts/stageEngine.cjs
+  # (the beforePack hook below) copies it into build/engine/ ONLY when it was
+  # built — an empty folder ships nothing, and the app runs on the TypeScript
+  # engine as before. Windows: Dawn loads dxcompiler.dll + dxil.dll at runtime.
+  - from: build/engine
+    to: engine
+    filter:
+      - premation-engine*
+      - '*.dll'
+
+beforePack: ./scripts/stageEngine.cjs
 
 # The renderer bundle + compiled main/preload + manifest are all that ship.
 #

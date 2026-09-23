@@ -19,3 +19,18 @@ export { propPath, parsePropPath, PROP_ROOTS } from './propPath';
 export type { PropRoot } from './propPath';
 export { EngineClientBase, EngineRequestError, unwrap, engineError, commandKind, isCoalescable } from './client';
 export type { EngineClient, EngineResult, RequestOptions, EventListener, CommandOf, QueryOf } from './client';
+export { ProcessEngineClient, createProcessEngineClient } from './process';
+export type {
+  EngineBridge,
+  EngineHostState,
+  EngineHostStatus,
+  EngineWireReply,
+  EngineRestartNotice,
+  EngineFallbackNotice,
+  EngineFrameMeta,
+  EngineFrameConsumer,
+  VideoFrameLike,
+  ProcessEngineNotice,
+  ProcessEngineOptions,
+} from './process';
+export { IdMap } from './idMap';

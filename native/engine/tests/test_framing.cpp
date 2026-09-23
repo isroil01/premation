@@ -43,44 +43,51 @@ TEST_CASE("framing: an oversize length latches an error and yields nothing more"
 }
 
 TEST_CASE("frame channel: every message round-trips and every truncation is refused", "[frames]") {
-  frames::Slots slots;
+  // The messages are schema types (95_frames.eapi); these are the generated codec.
+  api::FrameSlots slots;
   slots.generation = 7;
   slots.viewport = 1;
   slots.width = 1920;
   slots.height = 1080;
   slots.shared = true;
   slots.handles = {0x1234, 0xFFFFFFFFFFFFULL, 42};
-  frames::FrameReady ready{3, 2, 1, 5, -9, 123456789012LL, 99, 1.5, 2.5, 640, 360};
+  api::FrameReady ready{3, 2, 1, 5, -9, 123456789012LL, 99, 1.5, 2.5, 640, 360};
   const std::vector<frames::Message> all = {
-      slots, ready, frames::Pong{77, 12, true, 3}, frames::Release{7, 2}, frames::Ping{0xDEADBEEFULL}};
+      frames::Message{.v = slots},
+      frames::Message{.v = ready},
+      frames::Message{.v = api::FramePong{77, 12, true, 3}},
+      frames::Message{.v = api::FrameRelease{7, 2}},
+      frames::Message{.v = api::FramePing{0xDEADBEEFULL}},
+  };
   for (const auto& m : all) {
     std::vector<std::uint8_t> bytes;
     frames::encode(m, bytes);
+    REQUIRE(bytes.size() <= frames::kMaxPayload);
     frames::Message back;
-    REQUIRE(frames::decode(bytes, back) == frames::Status::ok);
+    REQUIRE(frames::decode(bytes, back) == wire::Status::ok);
     REQUIRE(back == m);
     for (std::size_t n = 0; n < bytes.size(); ++n) {
       frames::Message cut;
       const auto st = frames::decode(std::span<const std::uint8_t>(bytes.data(), n), cut);
-      REQUIRE(st != frames::Status::ok);
+      REQUIRE(st != wire::Status::ok);
     }
-    // A newer peer may append fields: extra bytes are ignored.
-    bytes.push_back(0xAB);
-    REQUIRE(frames::decode(bytes, back) == frames::Status::ok);
+    // A newer peer may add fields: an unknown field (#30, varint) is skipped.
+    bytes.push_back(0xF0);
+    bytes.push_back(0x01);
+    bytes.push_back(0x05);
+    REQUIRE(frames::decode(bytes, back) == wire::Status::ok);
     REQUIRE(back == m);
   }
 }
 
-TEST_CASE("frame channel: unknown types are skipped, bad values refused", "[frames]") {
+TEST_CASE("frame channel: unknown variants are reported, too many slots refused", "[frames]") {
   frames::Message m;
-  const std::vector<std::uint8_t> unknown = {200, 1, 2};
-  REQUIRE(frames::decode(unknown, m) == frames::Status::ok);
-  REQUIRE(std::holds_alternative<frames::Unknown>(m));
-  std::vector<std::uint8_t> slots;
-  frames::encode(frames::Slots{}, slots);
-  slots[18] = 2;  // [0] type, [1..16] four u32, [17] format, [18] shared (0/1), [19] count
-  REQUIRE(frames::decode(slots, m) == frames::Status::bad_value);
-  frames::encode(frames::Slots{}, slots);
-  slots[19] = frames::kMaxSlots + 1;  // count
-  REQUIRE(frames::decode(slots, m) == frames::Status::bad_value);
+  // Variant #31 (a newer peer's message), empty body.
+  const std::vector<std::uint8_t> unknown = {0xFA, 0x01, 0x00};
+  REQUIRE(frames::decode(unknown, m) == wire::Status::unknown_variant);
+  api::FrameSlots s;
+  s.handles.assign(frames::kMaxSlots + 1, 4);
+  std::vector<std::uint8_t> bytes;
+  frames::encode(frames::Message{.v = s}, bytes);
+  REQUIRE(frames::decode(bytes, m) == wire::Status::bad_value);
 }

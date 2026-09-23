@@ -958,6 +958,18 @@ export interface MotionEditorApi {
    * Optional like every other member here: there is no bridge in a browser build.
    */
   reportEdition?(edition: string): Promise<{ ok: boolean; message?: string }>;
+  /**
+   * The C++ engine process (NATIVE_CORE_PLAN C3, electron/engineHost.ts):
+   * encoded EngineMessages in and out, plus the supervisor's lifecycle and the
+   * shared-texture frame receiver. `status().enabled` is false unless the
+   * process backend is switched on (PREMATION_ENGINE=process or
+   * `<userData>/engine.json`). The page's `ProcessEngineClient`
+   * (@motion/engine-api) is the only intended caller. Absent in a browser build.
+   */
+  engine?: import('@motion/engine-api').EngineBridge & {
+    /** Engine frames as real VideoFrames (the consumer must call `release()` once). */
+    onFrame(consumer: ((frame: VideoFrame, meta: import('@motion/engine-api').EngineFrameMeta, release: () => void) => void) | null): void;
+  };
   // The NOTE that used to sit here claimed "there is deliberately no `ai` surface
   // any more — keys are stored server-side, so the desktop shell holds no AI
   // privileges at all". That stopped being true when the local edition grew its

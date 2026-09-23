@@ -62,6 +62,8 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
+import { bootEngine, shutdownEngine } from '@core/engine/engineInstance';
+import { createAppEnginePorts } from '@core/engine/appPorts';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
 import { cloudProjectsEnabled, pluginRegistryEnabled, pluginsEnabled } from '@core/config/edition';
@@ -3001,6 +3003,19 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // boot does rather than a re-typed copy of it.
           track(attachHistoryRecording());
         } catch { /* ignore */ }
+        // The engine API (NATIVE_CORE_PLAN §5 B3): ONE LocalEngine over the
+        // live document, with the real file/media ports. After the history
+        // wiring (its entries go on the same unified stack) and the default
+        // scene seed; rebuilt on every ProjectLoaded/ProjectUnloaded.
+        try {
+          bootEngine({
+            ports: createAppEnginePorts(getProjectManager()),
+            projectPath: () => getProjectManager().getState().current?.path,
+          });
+          track(() => { void shutdownEngine(); });
+        } catch (err) {
+          console.error('[boot] engine API failed to start', err);
+        }
         track(getEventBus().on('SceneGraphChanged', () => {
           const nodeIds = new Set<string>();
           defaultSceneGraph.traverse((node) => nodeIds.add(node.id));

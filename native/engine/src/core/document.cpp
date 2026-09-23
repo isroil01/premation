@@ -9,10 +9,12 @@ namespace {
 
 using VT = api::ValueType;
 
-// After Effects units: pixels, percent (scale, opacity), degrees.
-// ★ The TypeScript engine stores opacity 0..1 and scale 0..1 on its tracks;
-//   the API speaks AE units (§3.4 names the properties, these are the units a
-//   user types). B2's TS backend must convert at the seam the same way.
+// After Effects units (ENGINE_API.md §3.5): pixels, percent (scale, opacity),
+// degrees. The TypeScript engine stores scale as a multiplier and converts at
+// its seam (src/core/engine/props.ts apiUnitFactor); opacity and rotation are
+// stored in these units by both. Layer space is centre-origin in both engines:
+// anchorPoint (0,0) is the middle of the layer's box (AE measures from the
+// top-left; the UI may show that by adding size/2).
 constexpr std::array<PropertySpec, 7> kFilled = {{
     {"transform/anchorPoint", "Anchor Point", "ADBE Anchor Point", "px", VT::vec2, true, 2, {}, {}},
     {"transform/position", "Position", "ADBE Position", "px", VT::vec2, true, 2, {}, {}},
@@ -218,7 +220,10 @@ Layer make_layer(api::LayerKind kind, const Comp& comp, std::string id, std::str
     Property prop;
     prop.type = spec.type;
     if (spec.path == "transform/anchorPoint") {
-      prop.value = kind == api::LayerKind::null ? make_vec2(0.0, 0.0) : make_vec2(size[0] / 2.0, size[1] / 2.0);
+      // Layer space is CENTRE-origin (ENGINE_API.md §3.5): (0,0) is the middle
+      // of the layer's box, so the default anchor is the centre for every kind
+      // and stays there whatever `layer/size` becomes.
+      prop.value = make_vec2(0.0, 0.0);
     } else if (spec.path == "layer/size") {
       prop.value = make_vec2(size[0], size[1]);
     } else if (spec.path == "layer/color" && kind != api::LayerKind::solid) {

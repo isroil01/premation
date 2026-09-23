@@ -33,6 +33,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { EMPTY_FILTER, useSceneViewStore } from '@stores/sceneViewStore';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
 
 const ROOT = 'comp_main';
 const OTHER = 'comp_other';
@@ -273,26 +274,27 @@ describe('follows a selection it did not make', () => {
 });
 
 describe('row switches', () => {
-  it('draws a lock and a solo glyph per row and toggles them undoably through the anchor', () => {
+  it('draws a lock and a solo glyph per row and toggles them undoably through the anchor', async () => {
     renderPanel();
     const row = within(rowFor('beta'));
-    fireEvent.click(row.getByLabelText('Lock layer'));
+    // The switches are engine API commands (B3): applied in order, asynchronously.
+    await act(async () => { fireEvent.click(row.getByLabelText('Lock layer')); await engineIdle(); });
     expect(defaultSceneGraph.getNode('beta')?.locked).toBe(true);
     // Beta is not selected, so the anchor toggles only itself.
     expect(defaultSceneGraph.getNode('alpha')?.locked).toBe(false);
     expect(row.getByLabelText('Unlock layer')).toHaveAttribute('data-on');
 
-    fireEvent.click(row.getByLabelText('Solo layer'));
+    await act(async () => { fireEvent.click(row.getByLabelText('Solo layer')); await engineIdle(); });
     expect(defaultSceneGraph.getNode('beta')?.solo).toBe(true);
     expect(row.getByLabelText('Unsolo layer')).toHaveAttribute('data-on');
   });
 
-  it('draws the AE switches the view menu asks for, and toggles the whole selection at once', () => {
+  it('draws the AE switches the view menu asks for, and toggles the whole selection at once', async () => {
     act(() => { useSceneViewStore.setState({ switches: ['shy'] }); });
     renderPanel();
     act(() => { useSelectionStore.getState().set(['alpha', 'beta']); });
 
-    fireEvent.click(within(rowFor('beta')).getByLabelText('Shy'));
+    await act(async () => { fireEvent.click(within(rowFor('beta')).getByLabelText('Shy')); await engineIdle(); });
     // Anchored on Beta, applied to the selection Beta is part of — one undo
     // step, not two, and not "invert each of them".
     expect((defaultSceneGraph.getNode('beta') as { shy?: boolean }).shy).toBe(true);

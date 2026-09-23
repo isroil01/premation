@@ -19,6 +19,7 @@ import {
   dropKeys,
   numbersOf,
   vectorValue,
+  apiUnitFactor,
   flicksToKeyTime,
   keyTimeToFlicks,
   type PropBinding,
@@ -555,10 +556,12 @@ export function valueAt(layer: string, b: PropBinding, t: number): Value | undef
   const stat = readStatic(layer, b);
   const statNums = stat.kind === 'color' ? [stat.value.r, stat.value.g, stat.value.b, stat.value.a]
     : stat.kind === 'scalar' ? [stat.value] : stat.kind === 'vec2' ? [stat.value.x, stat.value.y] : stat.kind === 'vec3' ? [stat.value.x, stat.value.y, stat.value.z] : [];
+  // statNums are API units (readStatic); samples are stored units → scaled per member.
   const nums = b.members.map((m, i) => {
     const kfs = defaultAnimation.getTrackKeyframes(layer, m);
     if (!kfs || kfs.length === 0) return statNums[i] ?? 0;
-    return defaultAnimation.sample(layer, m, t) ?? statNums[i] ?? 0;
+    const s = defaultAnimation.sample(layer, m, t);
+    return s !== undefined && s !== null ? s * (b.colorBase ? 1 : apiUnitFactor(m)) : statNums[i] ?? 0;
   });
   return vectorValue(b.valueType, nums);
 }

@@ -141,10 +141,14 @@ void build_scene(const doc::Document& document, const doc::Comp& comp, api::Time
     const double alpha = std::clamp(opacity[0] / 100.0, 0.0, 1.0) * std::clamp(color[3], 0.0, 1.0);
     if (alpha <= 0.0 || size[0] <= 0.0 || size[1] <= 0.0) continue;
     const auto m = layer_matrix(*layer, t, scratch);
-    // Unit square → layer pixels (scale by size) → comp pixels.
+    // Unit square → layer pixels (centre-origin: u ↦ (u − ½)·size) → comp pixels.
     DrawQuad q;
-    q.affine = {to_float(m[0] * size[0]), to_float(m[1] * size[0]), to_float(m[2] * size[1]),
-                to_float(m[3] * size[1]), to_float(m[4]),           to_float(m[5])};
+    const double ax = m[0] * size[0];
+    const double bx = m[1] * size[0];
+    const double cy = m[2] * size[1];
+    const double dy = m[3] * size[1];
+    q.affine = {to_float(ax), to_float(bx), to_float(cy), to_float(dy), to_float(m[4] - 0.5 * (ax + cy)),
+                to_float(m[5] - 0.5 * (bx + dy))};
     q.color = {to_float(std::clamp(color[0], 0.0, 1.0)), to_float(std::clamp(color[1], 0.0, 1.0)),
                to_float(std::clamp(color[2], 0.0, 1.0)), to_float(alpha)};
     out.quads.push_back(q);

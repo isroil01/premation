@@ -21,8 +21,9 @@ versioning · §12 automation · §13 frames · §14 gaps against After Effects 
 §15 B2 implementation notes (what B3 deletes) · §16 files.
 
 Schema size today: **121 commands** (91 document edits, 25 controls, 5 project
-I/O — B1 miscounted; corrected in B2 from the meta table), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 309 structs,
-10 unions, 49 enums — `SCHEMA_COUNTS` in `generated/meta.ts`.
+I/O — B1 miscounted; corrected in B2 from the meta table), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 314 structs,
+11 unions, 50 enums — `SCHEMA_COUNTS` in `generated/meta.ts` (C3 added the five
+frame-channel messages, their union and `PixelFormat`, §13).
 
 ---
 
@@ -270,6 +271,28 @@ paragraphs + box + orientation), `layer`/`item` references, `scalars` (numeric
 list), and `json` — an explicit **escape hatch** for structured values not yet
 typed (§14.2 lists every use). The engine type-checks every write against the
 property's `ValueType`.
+
+**Units (decided in C3, enforced on both engines).** Every numeric value that
+crosses the API — `setProperty`/`setProperties` values, keyframe values,
+`getPropertyValues`, `getPropertyTree` values and defaults, `sampleProperty`,
+change events — is in **After Effects units**: pixels for position, anchor and
+sizes; **percent** for `transform/scale` (100 = identity) and
+`transform/opacity` (0–100); **degrees** for every rotation and orientation;
+colours are straight RGBA 0–1. The TypeScript engine stores scale as a
+multiplier and converts at its seam (`props.ts` `apiUnitFactor` /
+`toApiNums` / `fromApiNums`); opacity and rotation it already stores in these
+units. The C++ engine stores the AE unit directly. `PropertyInfo.unit` says
+`%` for scale.
+
+**Layer space is centre-origin** (the spec was silent; C3 chose): a layer's
+`transform/anchorPoint` (0, 0) is the middle of its box, and a new layer's
+anchor is (0, 0) whatever its size. This is the TypeScript engine's storage,
+its file format and the `.aep` importer's target (`anchorX = aeAnchor −
+width/2`); After Effects measures from the top-left, which a UI can show by
+adding size/2 — a display convention, not a document one. The C++ engine
+moved to it in C3 (it had AE's top-left). `getLayerTransforms` matrices map
+this centre-origin layer space to comp pixels. Position is where the anchor
+lands in the comp in both.
 
 ---
 
@@ -545,7 +568,34 @@ Every applied edit increments the document **revision** by one (undo and redo
 included). After each request (or engine-initiated change such as a job result),
 the engine sends one `EventBatch { fromRevision, toRevision, events, causedBy,
 origin }`. Revisioned events are complete facts, never deltas the mirror must
-compute:
+compute.
+
+**Replay-parity rules (C3; both engines enforce them, `crossEngine.test.ts` checks them):**
+
+1. **One revision per request.** A single edit, a batch of N commands, one undo,
+   one redo, an `endGesture{commit:false}` that reverts, and a
+   `jumpToHistory` over any number of entries each move the revision by
+   exactly one (zero when nothing changed). Each `setProperty` inside a gesture
+   is its own request, so its own revision; `endGesture{commit:true}` moves
+   none. (The TS engine used to bump once per step of a jump; fixed in C3.)
+2. **One `EventBatch` per request**, carrying the change AND the status events
+   it caused (`historyChanged`, `dirtyChanged`, `transportChanged`,
+   `playhead` of a seek), `causedBy` = the request's `seq`. Batches the engine
+   sends on its own (playback ticks, stats, a job) have no `causedBy` and
+   `origin: engine`. (The TS engine used to send the status events in a second
+   batch, and the C++ engine sent a seek's playhead without `causedBy`; both
+   fixed in C3.)
+3. **Events before the response.** The batch reaches the client before the
+   response to the same request, so when a caller's `await` resumes the mirror
+   already shows the change. A client must still not rely on it across an IPC
+   hop: `ProcessEngineClient` keeps the mirror's revision (`eventRevision`)
+   apart from the newest revision a response reported.
+4. **Kinds may differ, facts may not.** Upserts are full records, so an engine
+   may report more than changed (the TS engine sends `compositionChanged` with
+   every new layer and `layersChanged` with property edits; the C++ engine
+   sends `propertiesChanged` with keyframe edits). The rule is that a mirror
+   fed only by one engine's events equals that engine's queries — checked per
+   engine by the cross-engine test.
 
 | Event | Meaning (all upserts are full records) |
 |---|---|
@@ -778,12 +828,27 @@ moved on — for scripts and AI tools that read, think, then write.
 
 ## 13. Frames
 
-Frames reach the viewport by the route phase C1 chooses (frames copied into the
-page, a native child window, or a shared GPU texture — measured, not assumed).
-The schema reserves event ids 2100–2199 for that route's messages
-(frame-ready notifications carrying viewport id, comp, time, revision, size and
-a handle). `setViewport` already carries everything a route needs to know about
-the target. Frames are never sent as ordinary events.
+Frames reach the viewport by the route phase C1 chose: **shared GPU textures**
+(docs/VIEWPORT_ROUTE.md). `setViewport` carries everything the route needs to
+know about the target (CSS size × devicePixelRatio). Frames are never sent as
+ordinary events.
+
+The frame route has its own message family, **`FrameChannel`**
+(`schema/95_frames.eapi`, C3), on its own pipe pair (engine fd 3 → host, host →
+engine fd 4), framed like the command pipe:
+
+| Message | Direction | Meaning |
+|---|---|---|
+| `FrameSlots` | engine → host | A ring of N shared textures (generation, viewport, size, format, NT handles valid in the host). Retires every older generation. |
+| `FrameReady` | engine → host | Slot N holds a finished frame (frame, comp time, the revision it shows, size, frames dropped since the last one, render timestamps for measurement). |
+| `FrameRelease` | host → engine | Chromium is done with a slot (a stale generation is ignored). |
+| `FramePing` / `FramePong` | host ⇄ engine | The supervisor's heartbeat, answered by the engine's document core thread. |
+
+They are generated like everything else: C++ `api::FrameChannelMessage`, and —
+because Electron main cannot import packages/ — a standalone TypeScript module
+`electron/generated/frameChannel.ts` (+ a copy of the wire runtime), emitted by
+the same generator for exactly this family. The event ids 2100–2199 stay
+reserved and unused.
 
 ---
 
@@ -932,7 +997,15 @@ B3 must delete or change (call-site counts from §2):
 - `compToKeyframeTime` at the 64 UI sites → API comp-time flicks.
 - The external-change detector (`LocalEngine.attachBus`) once nothing writes around the engine.
 - Attach real `EnginePorts` (project read/write through `ProjectManager`, media import through
-  the asset store's `addAsset`, collect files).
+  the asset store's `addAsset`, collect files). **Done in B3-0** (`src/core/engine/appPorts.ts`).
+
+**B3-0 (2026-09-23)** landed the foundation the area migrations use: one app engine booted in
+`Providers` and rebuilt on `ProjectLoaded`/`ProjectUnloaded` (`engineInstance.ts`: `engine()`,
+`subscribeEngine`), `edit`/`GestureSession` (`uiEdits.ts`) and `useGesture` (`src/hooks`),
+property-path helpers (`propRefs.ts`), a legacy UI refresh so today's panels redraw after engine
+edits (`legacyRefresh.ts`, removed by B4), and the per-area ratchet
+(`npm run lint:engine-writes`, `src/__tests__/engineWriteRatchet.test.ts`). Conversion guide with
+before/after code: **docs/B3_PATTERNS.md**.
 
 ### 15.4 Known limits left for later phases
 
@@ -946,7 +1019,54 @@ B3 must delete or change (call-site counts from §2):
   views of its input: a caller that decodes `encode()`'s output must copy it first (the wire
   test mode does).
 
----
+### 15.5 C3 — the C++ engine as a second backend
+
+`ProcessEngineClient` (`packages/engine-api/src/process.ts`) is the
+`EngineClient` over the preload's `motionEditor.engine` bridge → Electron main
+(`electron/engineHost.ts`, `EngineSupervisor`) → `premation-engine`. It is
+selected by `PREMATION_ENGINE=process` (or `{ "backend": "process" }` in
+`<userData>/engine.json`); default OFF. It applies the §8.2 revision rule,
+records the §12 command log, replays it into a restarted engine before any new
+request (ids are deterministic, so the same requests mint the same ids), and on
+the supervisor's `fallback` switches to the TypeScript engine with one notice.
+
+**The cross-engine replay** (`src/core/engine/__tests__/crossEngine.test.ts`)
+records every corpus session on the TS engine and replays the log in lockstep
+into a fresh TS engine and the real C++ engine (`--no-gpu`), translating ids
+(`IdMap`). Per request: same outcome, same revision delta, ≤ 1 batch each, a
+batch whenever the revision moved; at the end, per engine, an event-fed mirror
+equals that engine's queries, and the two documents agree on stack order,
+names and the five transform properties (values at 4 times + keyframes).
+Commands the C++ engine answers `unsupported` are skipped and counted; so are
+later requests that reference what only the TS engine created (dependents), and
+undo/redo over TS-only history entries (the history is modelled so the rest
+stays comparable). Result 2026-09-23: **9/9 sessions pass, 0 mismatches**; the
+native-subset session compares **41/41** requests (0 unsupported, 0 dependent;
+56 final values and 3 keyframes equal, both event mirrors exact). Across the
+eight B2 sessions (265 records): 79 compared, 74 unsupported (25 command types —
+items, folders, effects, markers, work area, parenting, most layer-time and
+keyframe-retiming commands, non-solid layer kinds), 98 dependent, 14 TS-only
+history moves. Catalog gap found: TS null layers have no `transform/opacity`
+(AE nulls do; the C++ engine has it) — reported, not failed.
+
+**Real app** (Electron 44, RTX 4060, `PREMATION_ENGINE=process`): the engine
+starts on Chromium's GPU (vendor 0x10DE); layers created through the process
+client render in the engine surface; a 41-message opacity drag is one undo
+entry (`setProperty` RTT p50 1.0–1.2 ms, p95 1.6–1.8 ms through IPC), undo/redo
+exact; playback 29.8–30.0 fps drawn for a 30 fps comp, engine render-done →
+drawn p50 1.3–1.5 ms; killing `premation-engine.exe` → a new process, 55
+requests replayed in 29 ms, 0 mismatches, document snapshot identical; three
+kills inside 60 s → one fallback notice and the next `createLayer` lands on the
+TypeScript engine.
+
+Limits (for D): the command log lives in the page, so a page reload loses it
+(the client reconnects and resyncs, but a crash after that cannot restore the
+earlier work) — the log should move to main, which owns the engine; on fallback
+the C++ document is not migrated into the TS one (`IdMap` can translate; the
+units and ids now agree); frame forwarding holds one transfer in flight and
+drops the rest (main dropped ~28 % of 60 Hz announcements at a 30 fps comp
+while idle frames re-rendered); the engine surface keeps its last frame after
+a fallback.
 
 ## 16. Files
 
@@ -957,6 +1077,12 @@ B3 must delete or change (call-site counts from §2):
 | `packages/engine-api/src/generated/{types,codec,meta}.ts` | Generated TS (do not edit). |
 | `packages/engine-api/src/{wire,time,propPath,index}.ts` | Hand-written TS runtime and helpers. |
 | `packages/engine-api/src/client.ts` | `EngineClient` (the transport-agnostic contract) + `EngineClientBase` helpers. |
+| `packages/engine-api/src/process.ts` | `ProcessEngineClient` — the C++ process backend (C3): bridge types, §8.2 rule, crash-recovery replay, fallback. |
+| `packages/engine-api/src/idMap.ts` | `IdMap` — carries a request stream between engines whose ids differ (cross-engine replay). |
+| `packages/engine-api/schema/95_frames.eapi` | The `FrameChannel` family (§13). |
+| `electron/generated/{frameChannel,engineWire}.ts` | Generated standalone TS for that family (Electron main). |
+| `electron/engineHost.ts` | The flag, the supervisor, IPC (`engine:request/status/receiverReady`), shared-texture frame forwarding. |
+| `src/core/engine/process/processEngine.ts`, `src/components/EngineSurface/` | The window's process client (+ dev handle) and the surface that draws engine frames. |
 | `src/core/engine/LocalEngine.ts` | The TypeScript engine behind the API (B2): requests, history entries, gestures, events, log. |
 | `src/core/engine/state.ts` | Parts: capture, diff, restore — the inverse machinery (§15.2). |
 | `src/core/engine/props.ts` | Property catalog: API paths ⇄ today's storage; keyframe read/write. |

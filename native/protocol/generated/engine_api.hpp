@@ -563,6 +563,12 @@ enum class AssetStatus : std::uint32_t {
 [[nodiscard]] std::string_view to_string(AssetStatus v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, AssetStatus& out) noexcept;
 
+enum class PixelFormat : std::uint32_t {
+  rgba8unorm = 0,
+};
+[[nodiscard]] std::string_view to_string(PixelFormat v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, PixelFormat& out) noexcept;
+
 struct Empty;
 struct Vec2;
 struct Vec3;
@@ -882,6 +888,12 @@ struct Event;
 struct EventBatch;
 struct Goodbye;
 struct EngineMessage;
+struct FrameSlots;
+struct FrameReady;
+struct FramePong;
+struct FrameRelease;
+struct FramePing;
+struct FrameChannelMessage;
 
 struct Empty {
   bool operator==(const Empty&) const = default;
@@ -3585,6 +3597,64 @@ struct EngineMessage {
   bool operator==(const EngineMessage&) const = default;
 };
 
+struct FrameSlots {
+  std::uint32_t generation = 0;
+  std::uint32_t viewport = 0;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  PixelFormat format = PixelFormat::rgba8unorm;
+  bool shared = false;
+  std::vector<std::uint64_t> handles;
+  bool operator==(const FrameSlots&) const = default;
+};
+
+struct FrameReady {
+  std::uint32_t generation = 0;
+  std::uint32_t slot = 0;
+  std::uint32_t viewport = 0;
+  std::uint32_t dropped = 0;
+  std::int64_t frame = 0;
+  Time time = 0;
+  Revision revision = 0;
+  double render_start_us = 0.0;
+  double render_done_us = 0.0;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  bool operator==(const FrameReady&) const = default;
+};
+
+struct FramePong {
+  std::uint64_t nonce = 0;
+  Revision revision = 0;
+  bool playing = false;
+  std::uint32_t queued = 0;
+  bool operator==(const FramePong&) const = default;
+};
+
+struct FrameRelease {
+  std::uint32_t generation = 0;
+  std::uint32_t slot = 0;
+  bool operator==(const FrameRelease&) const = default;
+};
+
+struct FramePing {
+  std::uint64_t nonce = 0;
+  bool operator==(const FramePing&) const = default;
+};
+
+struct FrameChannelMessage {
+  enum class Kind : std::uint32_t {
+    slots = 1,
+    frame_ready = 2,
+    pong = 3,
+    release = 16,
+    ping = 17,
+  };
+  std::variant<FrameSlots, FrameReady, FramePong, FrameRelease, FramePing> v;
+  [[nodiscard]] Kind kind() const noexcept;
+  bool operator==(const FrameChannelMessage&) const = default;
+};
+
 void encode(wire::Writer& w, const Empty& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Empty& out);
 void encode(wire::Writer& w, const Vec2& v);
@@ -4223,6 +4293,18 @@ void encode(wire::Writer& w, const Goodbye& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Goodbye& out);
 void encode(wire::Writer& w, const EngineMessage& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, EngineMessage& out);
+void encode(wire::Writer& w, const FrameSlots& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FrameSlots& out);
+void encode(wire::Writer& w, const FrameReady& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FrameReady& out);
+void encode(wire::Writer& w, const FramePong& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FramePong& out);
+void encode(wire::Writer& w, const FrameRelease& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FrameRelease& out);
+void encode(wire::Writer& w, const FramePing& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FramePing& out);
+void encode(wire::Writer& w, const FrameChannelMessage& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FrameChannelMessage& out);
 
 /// Decode `bytes` as the message type named `type`, re-encode it into `out`.
 /// Used by the cross-language round-trip test; unknown names return bad_type.

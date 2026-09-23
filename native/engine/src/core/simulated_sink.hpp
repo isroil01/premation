@@ -41,13 +41,13 @@ class SimulatedSink final : public FrameSink {
     ++generation_;
     const std::uint32_t count = config.open ? slots_ : 0;
     ring_.reset(generation_, count);
-    frames::Slots s;
+    api::FrameSlots s;
     s.generation = generation_;
     s.viewport = config.viewport;
     s.width = config.width;
     s.height = config.height;
     s.handles.assign(count, 0);
-    if (send_) send_(s);
+    if (send_) send_(frames::Message{.v = std::move(s)});
   }
 
   void set_shared(bool) override {}
@@ -82,7 +82,7 @@ class SimulatedSink final : public FrameSink {
     if (!pending_ || !config_.open) return;
     const auto slot = ring_.acquire();
     if (!slot) return;  // ring full: keep the newest job until a release
-    frames::FrameReady f;
+    api::FrameReady f;
     f.generation = generation_;
     f.slot = *slot;
     f.viewport = pending_->viewport;
@@ -95,7 +95,7 @@ class SimulatedSink final : public FrameSink {
     droppedPending_ = 0;
     pending_.reset();
     ++counters_.rendered;
-    if (send_) send_(f);
+    if (send_) send_(frames::Message{.v = f});
   }
 
   SendFrames send_;

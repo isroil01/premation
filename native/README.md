@@ -159,8 +159,8 @@ aliases):
 
 ```sh
 node native/tests/gen_golden_jsmath.ts      # golden_jsmath.inc (8 400 rows), golden_numconv.inc (5 245 rows)
-node native/tests/gen_golden_expr.ts        # golden_expr.inc (6 264 samples, 1 591 expressions), golden_expr_engine.inc (195)
-node native/tests/gen_golden_transform.ts   # golden_transform.inc (3 336 rows, 60 410 doubles)
+node native/tests/gen_golden_expr.ts        # golden_expr.inc (7 840 samples, 1 779 expressions), golden_expr_engine.inc (220)
+node native/tests/gen_golden_transform.ts   # golden_transform.inc (3 364 rows)
 node native/tests/bench_ts.ts               # TypeScript timings for the bench_expr.cpp cases (not a golden)
 ```
 
@@ -181,8 +181,9 @@ differed on 4.6 % of inputs; `std::pow` matched), so the TypeScript's own
 DLL MSVC runtimes (1 row in 8 400 is one ulp off here). The pow rows are
 therefore checked to ≤ 1 ulp and counted; nothing else is.
 
-**What `motion_expr` covers.** The whole language (lexer, Pratt parser, error
-text, the shared 200 000-step / depth-512 budget across cross-layer re-entry)
+**What `motion_expr` covers.** The whole language (lexer, Pratt parser with the
+shared 2 000-level parse limit, error text, the shared 200 000-step / depth-512
+evaluation budget across cross-layer re-entry)
 and the whole `expressions.ts` scope: `time value audio ctrl wiggle clamp linear
 ease easeIn easeOut timeToFrames framesToTime random seedRandom gaussRandom
 noise Math valueAtTime velocity speed velocityAtTime layer layerAt loopOut
@@ -213,28 +214,38 @@ uses full ICU). Grapheme counting (for style ranges) is a UAX #29 subset
 uses `Intl.Segmenter`. A function's `toString` is a fixed text (V8 prints the
 transpiled source). The C ABI does not carry Source Text yet (C++ API only).
 
-**TypeScript behaviours reproduced but flagged** (parity first; each is a
-candidate fix on BOTH sides, together):
-- `Math.random()` is reachable from expressions and is V8's unseeded random —
-  non-deterministic rendering, against the plan's determinism rule. The port
-  answers from a separate seeded sequence (so never equal to the TS); it is
-  excluded from the goldens.
-- `Math.pow` is platform-dependent in the TS engine (above).
-- The TS parser has no depth guard: roughly 1 500–2 500 nested parentheses or
-  ~12 000 prefix operators overflow V8's stack, and the exact threshold moves
-  with JIT state (measured). The port stops at 2 000 levels / 12 000 prefix
-  operators with the same "Maximum call stack size exceeded" message.
-- `valueAtTime()` (no argument) on a ONE-keyframe track throws a TypeError
-  inside `sampleTrack` (`kfs[1]` is undefined when `t` is NaN); on longer
-  tracks it returns the last segment's NaN arithmetic. The engine Host must
-  keep that (motion_eval's C API rejects NaN times; the internal `sample` does not).
-- `worldMatrixOf` recurses without a cycle guard (a parent cycle is a stack
-  overflow); `world_matrices_2d` is iterative and reports the cycle.
-- `marker.key(NaN)` returns `undefined` (so `.time` throws) while `key(NaN)`
-  returns `{index: NaN, time: 0}` — two answers to one question.
-- `humanize` turns ANY runtime message containing "Unexpected"/"missing" into
-  "Syntax error: …" (e.g. a layer named "missing").
-- Sorting markers with NaN times is comparator-inconsistent in both languages.
+**Behaviours fixed on BOTH sides together** (D1 found them by porting; each
+was changed in the TypeScript and the C++ in one step and is pinned by the
+goldens, so the engines stay bit-identical):
+- `Math.random()` in an expression draws from the evaluation's seeded
+  `random()` sequence (`propSeed`, `seedRandom`, one call counter shared with
+  `random()`/`gaussRandom()`, reset per evaluation) instead of V8's unseeded
+  RNG. Old projects that used it rendered differently on every draw, so there
+  was no stable output to keep; they now render deterministically. Like
+  `random()` itself, the sequence does not mix in `time` (it is the same on
+  every frame unless the expression seeds it with time).
+- Parse depth: both parsers stop at 2 000 levels (the expression, each
+  bracketed sub-expression, binary right operand and prefix operator) with
+  "Syntax error: This expression is nested too deeply to read (more than 2000
+  levels)." The TS parser now spends one JS frame per level, as the C++ does,
+  so V8's stack is never the limit. Goldens at 1 999 / 2 000 / 2 001 levels.
+- `valueAtTime()` / `velocityAtTime()` with a missing or non-numeric time is
+  the stated error "valueAtTime() needs a time in seconds, e.g.
+  valueAtTime(time - 0.5)." (was a TypeError inside `sampleTrack` on a
+  one-key track, NaN arithmetic otherwise).
+- Parent cycles: every node ON a cycle is a root (world = local) and is
+  reported (`worldMatrixOf`'s `onCycle`, `world_matrices_2d`'s `on_cycle`
+  flags); nodes parented into the cycle compose onto it. Independent of
+  resolution order. Was a stack overflow in the TS and a whole-batch failure
+  in the C++.
+- `key(n)` and `marker.key(n)` share one index rule: rounded, clamped to
+  1..count, NaN → 1 (was `{index: NaN}` vs `undefined`).
+- "Syntax error: …" labels exactly the parse failures (all of them), never a
+  runtime message that happens to contain "Unexpected"/"missing".
+- Markers sort ascending, stable, NaN times last (a total order, so V8's
+  TimSort and `std::stable_sort` agree).
+
+`Math.pow` stays platform-dependent in the TS engine (above).
 
 **Transforms.** All scene-side TS math is float64 (Float32 appears only in
 `packages/renderer`'s Mat3/Mat4 — the GPU side, D2), so the port is exact
@@ -244,15 +255,17 @@ atan/atan2/hypot. Two compositions (`layerSpaceAt`'s 3D branch and
 generator composes the same exported primitives in the same order, quoted in
 `gen_golden_transform.ts`.
 
-**Sanitizers on Windows.** The `windows-clang-cl-asan` preset does not link
-today, for reasons outside these libraries: `cmake/sanitizers.cmake` hands
-`/fsanitize=address` to lld-link, and the vcpkg Catch2 is not ASan-built
-(`/failifmismatch: annotate_string`). The D1 suites were run under
-ASan + UBSan by compiling the libraries and the three test files directly with
-clang-cl against a tiny Catch2 stand-in: clean (UBSan's `alignment` check off —
-it fires inside the UCRT's `wchar.h`). Sanitizer frames are large, so the
-deepest goldens need more than Windows' 1 MB default stack; `motion_tests`
-links with a 16 MB stack.
+**Sanitizers on Windows.** `node scripts/native.mjs configure|build|test
+--asan` (the `windows-clang-cl-asan` preset) builds and runs every suite under
+AddressSanitizer (clang-cl has no UBSan runtime for the MSVC target here; the
+Linux/macOS presets run ASan + UBSan). `cmake/sanitizers.cmake` explains the
+three Windows specifics: CMake links with lld-link, so the ASan runtime
+libraries are named explicitly (the clang-cl driver's own link line); the
+vcpkg Catch2 is not ASan-built, so the MSVC STL container annotations are
+switched off everywhere (`_DISABLE_STRING_ANNOTATION` /
+`_DISABLE_VECTOR_ANNOTATION`, which only costs the container-overflow check);
+and the runtime DLL is copied next to `motion_tests.exe`. Sanitizer frames are
+large, so `motion_tests` links with a 16 MB stack.
 
 **Speed** (this machine, Release-ish `RelWithDebInfo`, clang-cl; Node 24 for TS):
 

@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { decodeEngineMessage, encodeEngineMessage, type EngineMessage } from '@motion/engine-api';
+import { codecs, decodeEngineMessage, encodeEngineMessage, type EngineMessage } from '@motion/engine-api';
 import { FrameDecoder, frame } from './engineFraming';
 import { EngineGoneError } from './engineTransport';
 import {
@@ -60,9 +60,9 @@ class FakeEngine extends EventEmitter implements EngineChild {
     const fr = new FrameDecoder();
     this.fd4.on('data', (c: Buffer) => {
       for (const p of fr.push(c)) {
-        const v = new DataView(p.buffer, p.byteOffset, p.byteLength);
-        if (p[0] === 17 && this.b.pong !== false) this.pong(v.getBigUint64(1, true));
-        if (p[0] === 16) this.releases.push([v.getUint32(1, true), v.getUint32(5, true)]);
+        const m = codecs.FrameChannelMessage.decode(p);
+        if (m.type === 'ping' && this.b.pong !== false) this.pong(m.nonce);
+        if (m.type === 'release') this.releases.push([m.generation, m.slot]);
       }
     });
     if (b.exitAtOnce !== undefined) queueMicrotask(() => this.exit(b.exitAtOnce!, null));
@@ -88,21 +88,18 @@ class FakeEngine extends EventEmitter implements EngineChild {
     }
   }
 
-  pong(nonce: bigint) {
-    const p = new Uint8Array(25);
-    const v = new DataView(p.buffer);
-    p[0] = 3;
-    v.setBigUint64(1, nonce, true);
-    this.fd3.write(frame(p));
+  pong(nonce: number) {
+    this.fd3.write(frame(codecs.FrameChannelMessage.encode({ type: 'pong', nonce, revision: 0, playing: false, queued: 0 })));
   }
 
   frameReady(generation: number, slot: number) {
-    const p = new Uint8Array(65);
-    const v = new DataView(p.buffer);
-    p[0] = 2;
-    v.setUint32(1, generation, true);
-    v.setUint32(5, slot, true);
-    this.fd3.write(frame(p));
+    this.fd3.write(
+      frame(
+        codecs.FrameChannelMessage.encode({
+          type: 'frameReady', generation, slot, viewport: 1, dropped: 0, frame: 0, time: 0, revision: 0, renderStartUs: 0, renderDoneUs: 0, width: 16, height: 16,
+        }),
+      ),
+    );
   }
 
   kill(): boolean {

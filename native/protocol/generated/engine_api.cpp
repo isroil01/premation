@@ -1069,6 +1069,18 @@ bool from_u32(std::uint32_t n, AssetStatus& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(PixelFormat v) noexcept {
+  switch (v) {
+    case PixelFormat::rgba8unorm: return "rgba8unorm";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, PixelFormat& out) noexcept {
+  switch (n) {
+    case 0: out = PixelFormat::rgba8unorm; return true;
+    default: return false;
+  }
+}
 
 void encode(wire::Writer& w, const Empty& v) {
   (void)w;
@@ -17247,6 +17259,355 @@ Status decode(wire::Reader& r, EngineMessage& out) {
   return seen ? Status::ok : Status::unknown_variant;
 }
 
+void encode(wire::Writer& w, const FrameSlots& v) {
+  w.varint(8U); w.varint(v.generation);
+  w.varint(16U); w.varint(v.viewport);
+  w.varint(24U); w.varint(v.width);
+  w.varint(32U); w.varint(v.height);
+  w.varint(40U); w.varint(static_cast<std::uint32_t>(v.format));
+  w.varint(48U); w.boolean(v.shared);
+  if (!v.handles.empty()) { w.varint(58U); const std::size_t s = w.begin_ld(); for (const auto& e : v.handles) w.varint(e); w.end_ld(s); }
+}
+
+Status decode(wire::Reader& r, FrameSlots& out) {
+  bool has_generation = false;
+  bool has_viewport = false;
+  bool has_width = false;
+  bool has_height = false;
+  bool has_format = false;
+  bool has_shared = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.generation)) return Status::bad_value;
+        has_generation = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.viewport)) return Status::bad_value;
+        has_viewport = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.width)) return Status::bad_value;
+        has_width = true;
+        break;
+      }
+      case 32U: {
+        if (!r.u32(out.height)) return Status::bad_value;
+        has_height = true;
+        break;
+      }
+      case 40U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.format)) return Status::bad_enum; }
+        has_format = true;
+        break;
+      }
+      case 48U: {
+        if (!r.boolean(out.shared)) return Status::truncated;
+        has_shared = true;
+        break;
+      }
+      case 58U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { std::uint64_t e = 0; if (!sub.varint(e)) return Status::truncated; out.handles.push_back(e); }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_generation) return Status::missing_field;
+  if (!has_viewport) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  if (!has_format) return Status::missing_field;
+  if (!has_shared) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const FrameReady& v) {
+  w.varint(8U); w.varint(v.generation);
+  w.varint(16U); w.varint(v.slot);
+  w.varint(24U); w.varint(v.viewport);
+  w.varint(32U); w.varint(v.dropped);
+  w.varint(40U); w.svarint(v.frame);
+  w.varint(48U); w.svarint(v.time);
+  w.varint(56U); w.varint(v.revision);
+  w.varint(65U); w.f64(v.render_start_us);
+  w.varint(73U); w.f64(v.render_done_us);
+  w.varint(80U); w.varint(v.width);
+  w.varint(88U); w.varint(v.height);
+}
+
+Status decode(wire::Reader& r, FrameReady& out) {
+  bool has_generation = false;
+  bool has_slot = false;
+  bool has_viewport = false;
+  bool has_dropped = false;
+  bool has_frame = false;
+  bool has_time = false;
+  bool has_revision = false;
+  bool has_render_start_us = false;
+  bool has_render_done_us = false;
+  bool has_width = false;
+  bool has_height = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.generation)) return Status::bad_value;
+        has_generation = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.slot)) return Status::bad_value;
+        has_slot = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.viewport)) return Status::bad_value;
+        has_viewport = true;
+        break;
+      }
+      case 32U: {
+        if (!r.u32(out.dropped)) return Status::bad_value;
+        has_dropped = true;
+        break;
+      }
+      case 40U: {
+        if (!r.svarint(out.frame)) return Status::truncated;
+        has_frame = true;
+        break;
+      }
+      case 48U: {
+        if (!r.svarint(out.time)) return Status::truncated;
+        has_time = true;
+        break;
+      }
+      case 56U: {
+        if (!r.varint(out.revision)) return Status::truncated;
+        has_revision = true;
+        break;
+      }
+      case 65U: {
+        if (!r.f64(out.render_start_us)) return Status::truncated;
+        has_render_start_us = true;
+        break;
+      }
+      case 73U: {
+        if (!r.f64(out.render_done_us)) return Status::truncated;
+        has_render_done_us = true;
+        break;
+      }
+      case 80U: {
+        if (!r.u32(out.width)) return Status::bad_value;
+        has_width = true;
+        break;
+      }
+      case 88U: {
+        if (!r.u32(out.height)) return Status::bad_value;
+        has_height = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_generation) return Status::missing_field;
+  if (!has_slot) return Status::missing_field;
+  if (!has_viewport) return Status::missing_field;
+  if (!has_dropped) return Status::missing_field;
+  if (!has_frame) return Status::missing_field;
+  if (!has_time) return Status::missing_field;
+  if (!has_revision) return Status::missing_field;
+  if (!has_render_start_us) return Status::missing_field;
+  if (!has_render_done_us) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const FramePong& v) {
+  w.varint(8U); w.varint(v.nonce);
+  w.varint(16U); w.varint(v.revision);
+  w.varint(24U); w.boolean(v.playing);
+  w.varint(32U); w.varint(v.queued);
+}
+
+Status decode(wire::Reader& r, FramePong& out) {
+  bool has_nonce = false;
+  bool has_revision = false;
+  bool has_playing = false;
+  bool has_queued = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.varint(out.nonce)) return Status::truncated;
+        has_nonce = true;
+        break;
+      }
+      case 16U: {
+        if (!r.varint(out.revision)) return Status::truncated;
+        has_revision = true;
+        break;
+      }
+      case 24U: {
+        if (!r.boolean(out.playing)) return Status::truncated;
+        has_playing = true;
+        break;
+      }
+      case 32U: {
+        if (!r.u32(out.queued)) return Status::bad_value;
+        has_queued = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_nonce) return Status::missing_field;
+  if (!has_revision) return Status::missing_field;
+  if (!has_playing) return Status::missing_field;
+  if (!has_queued) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const FrameRelease& v) {
+  w.varint(8U); w.varint(v.generation);
+  w.varint(16U); w.varint(v.slot);
+}
+
+Status decode(wire::Reader& r, FrameRelease& out) {
+  bool has_generation = false;
+  bool has_slot = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.generation)) return Status::bad_value;
+        has_generation = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.slot)) return Status::bad_value;
+        has_slot = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_generation) return Status::missing_field;
+  if (!has_slot) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const FramePing& v) {
+  w.varint(8U); w.varint(v.nonce);
+}
+
+Status decode(wire::Reader& r, FramePing& out) {
+  bool has_nonce = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.varint(out.nonce)) return Status::truncated;
+        has_nonce = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_nonce) return Status::missing_field;
+  return Status::ok;
+}
+
+FrameChannelMessage::Kind FrameChannelMessage::kind() const noexcept {
+  static constexpr std::array<Kind, 5> kKinds = {Kind::slots, Kind::frame_ready, Kind::pong, Kind::release, Kind::ping};
+  return kKinds[v.index()];
+}
+
+void encode(wire::Writer& w, const FrameChannelMessage& v) {
+  switch (v.v.index()) {
+    case 0: w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, std::get<0>(v.v)); w.end_ld(s); } return;
+    case 1: w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, std::get<1>(v.v)); w.end_ld(s); } return;
+    case 2: w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, std::get<2>(v.v)); w.end_ld(s); } return;
+    case 3: w.varint(130U); { const std::size_t s = w.begin_ld(); encode(w, std::get<3>(v.v)); w.end_ld(s); } return;
+    case 4: w.varint(138U); { const std::size_t s = w.begin_ld(); encode(w, std::get<4>(v.v)); w.end_ld(s); } return;
+    default: return;
+  }
+}
+
+Status decode(wire::Reader& r, FrameChannelMessage& out) {
+  bool seen = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (seen) return Status::multiple_variants;
+        FrameSlots e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<0>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 18U: {
+        if (seen) return Status::multiple_variants;
+        FrameReady e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<1>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 26U: {
+        if (seen) return Status::multiple_variants;
+        FramePong e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<2>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 130U: {
+        if (seen) return Status::multiple_variants;
+        FrameRelease e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<3>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 138U: {
+        if (seen) return Status::multiple_variants;
+        FramePing e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<4>(std::move(e));
+        seen = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return seen ? Status::ok : Status::unknown_variant;
+}
+
 namespace {
 template <class M>
 Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>& out) {
@@ -17258,7 +17619,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 319> kNames = {
+constexpr std::array<std::string_view, 325> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -17573,6 +17934,12 @@ constexpr std::array<std::string_view, 319> kNames = {
     "AssetStatusChangedEvent",
     "FontsChangedEvent",
     "AutosavedEvent",
+    "FrameSlots",
+    "FrameReady",
+    "FramePong",
+    "FrameRelease",
+    "FramePing",
+    "FrameChannelMessage",
     "Command",
     "CommandResult",
     "Query",
@@ -17898,6 +18265,12 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "AssetStatusChangedEvent") return roundtrip<AssetStatusChangedEvent>(bytes, out);
   if (type == "FontsChangedEvent") return roundtrip<FontsChangedEvent>(bytes, out);
   if (type == "AutosavedEvent") return roundtrip<AutosavedEvent>(bytes, out);
+  if (type == "FrameSlots") return roundtrip<FrameSlots>(bytes, out);
+  if (type == "FrameReady") return roundtrip<FrameReady>(bytes, out);
+  if (type == "FramePong") return roundtrip<FramePong>(bytes, out);
+  if (type == "FrameRelease") return roundtrip<FrameRelease>(bytes, out);
+  if (type == "FramePing") return roundtrip<FramePing>(bytes, out);
+  if (type == "FrameChannelMessage") return roundtrip<FrameChannelMessage>(bytes, out);
   if (type == "Command") return roundtrip<Command>(bytes, out);
   if (type == "CommandResult") return roundtrip<CommandResult>(bytes, out);
   if (type == "Query") return roundtrip<Query>(bytes, out);

@@ -109,6 +109,21 @@ describe('IPC registration goes through one door', () => {
     expect(listed).toEqual(registered);
   });
 
+  it('registers the engine host’s channels, all of them, in engineHost.ts', () => {
+    // The C++ engine's relay (C3): bytes to a child process that owns the
+    // document. Pinned by name like the export supervisor, and never through
+    // `ipcMain` directly.
+    const src = code(readFileSync(join(DIR, 'engineHost.ts'), 'utf8'));
+    const registered = [...src.matchAll(/(?<![\w.])(?:handle|on)\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
+    expect(registered).toEqual(['engine:receiverReady', 'engine:request', 'engine:status']);
+    const listed = [...src.matchAll(/^\s+'(engine:[A-Za-z]+)',$/gm)].map((m) => m[1]).sort();
+    expect(listed).toEqual(registered);
+    // main.ts wires it rather than registering engine channels itself.
+    const main = code(readFileSync(join(DIR, 'main.ts'), 'utf8'));
+    expect(main).toMatch(/registerEngineIpc\(engineHost\)/);
+    expect(main).not.toMatch(/(?:handle|on)\(\s*'engine:/);
+  });
+
   it('validates inside the wrapper rather than after it', () => {
     // The wrapper must refuse BEFORE the handler body runs. A wrapper that
     // called `fn` first and checked afterwards would pass every other

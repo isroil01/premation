@@ -9,10 +9,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PassThrough, type Readable, type Writable } from 'node:stream';
 import {
+  codecs,
   decodeEngineMessage,
   encodeEngineMessage,
   type Command,
   type EngineMessage,
+  type FrameChannelMessage,
   type Query,
   type Response,
 } from '@motion/engine-api';
@@ -22,8 +24,11 @@ import {
   decodeFrameMessage,
   decodeGoodbye,
   decodeWelcome,
+  encodeFrameMessage,
   encodeGoodbye,
   encodeHello,
+  encodePing,
+  encodeRelease,
   frame,
   peekEnvelope,
   type FrameReadyMessage,
@@ -101,27 +106,30 @@ describe('engineFraming — pinned against the generated codec', () => {
     expect(d.error).toBe(true);
   });
 
-  it('decodes the C++ frame-channel layout', () => {
-    // FrameReady as native/protocol/include/premation/protocol/frame_channel.hpp writes it.
-    const p = new Uint8Array(65);
-    const v = new DataView(p.buffer);
-    p[0] = 2;
-    v.setUint32(1, 3, true);
-    v.setUint32(5, 1, true);
-    v.setUint32(9, 1, true);
-    v.setUint32(13, 4, true);
-    v.setBigInt64(17, 90n, true);
-    v.setBigInt64(25, BigInt(3 * FLICKS), true);
-    v.setBigUint64(33, 17n, true);
-    v.setFloat64(41, 1.5, true);
-    v.setFloat64(49, 2.5, true);
-    v.setUint32(57, 1920, true);
-    v.setUint32(61, 1080, true);
-    expect(decodeFrameMessage(p)).toEqual({
-      type: 'frameReady', generation: 3, slot: 1, viewport: 1, dropped: 4, frame: 90, time: 3 * FLICKS,
-      revision: 17, renderStartUs: 1.5, renderDoneUs: 2.5, width: 1920, height: 1080,
-    });
-    for (let n = 0; n < p.length; n++) expect(decodeFrameMessage(p.subarray(0, n))).toBeNull();
+  it('frame channel: the electron copy of the generated codec emits the schema codec\'s bytes', () => {
+    const msgs: FrameChannelMessage[] = [
+      { type: 'frameReady', generation: 3, slot: 1, viewport: 1, dropped: 4, frame: 90, time: 3 * FLICKS, revision: 17, renderStartUs: 1.5, renderDoneUs: 2.5, width: 1920, height: 1080 },
+      { type: 'slots', generation: 2, viewport: 1, width: 640, height: 360, format: 'rgba8unorm', shared: true, handles: [0x1a4, 0x1b8, 0x2000] },
+      { type: 'pong', nonce: 2 ** 40, revision: 9, playing: true, queued: 3 },
+      { type: 'release', generation: 7, slot: 2 },
+      { type: 'ping', nonce: 0xdeadbeef },
+    ];
+    for (const m of msgs) {
+      const mine = encodeFrameMessage(m);
+      expect(Buffer.from(mine).toString('hex')).toBe(Buffer.from(codecs.FrameChannelMessage.encode(m)).toString('hex'));
+    }
+    expect(Buffer.from(encodeRelease(7, 2))).toEqual(Buffer.from(encodeFrameMessage(msgs[3]!)));
+    expect(Buffer.from(encodePing(0xdeadbeef))).toEqual(Buffer.from(encodeFrameMessage(msgs[4]!)));
+    // Engine → host decodes; host → engine types and malformed input are null.
+    const ready = encodeFrameMessage(msgs[0]!);
+    expect(decodeFrameMessage(ready)).toEqual(msgs[0]);
+    expect(decodeFrameMessage(encodeFrameMessage(msgs[1]!))).toEqual(msgs[1]);
+    expect(decodeFrameMessage(encodeRelease(1, 1))).toBeNull();
+    for (let n = 0; n < ready.length; n++) expect(decodeFrameMessage(ready.subarray(0, n))).toBeNull();
+    const tooMany = encodeFrameMessage({ ...(msgs[1] as Extract<FrameChannelMessage, { type: 'slots' }>), handles: new Array(17).fill(4) });
+    expect(decodeFrameMessage(tooMany)).toBeNull();
+    // An unknown variant (a newer engine) is skipped, not an error that kills the channel.
+    expect(decodeFrameMessage(Uint8Array.from([0xfa, 0x01, 0x00]))).toBeNull();
   });
 });
 

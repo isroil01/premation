@@ -9,8 +9,8 @@
  *   - peek an envelope's kind and `seq` to correlate responses with requests,
  *     and `fromRevision`/`toRevision` of event batches,
  *   - build the Hello / Goodbye it sends itself and read the Welcome / Goodbye,
- *   - speak the frame channel (fd 3 / fd 4): the twin of
- *     native/protocol/include/premation/protocol/frame_channel.hpp.
+ *   - speak the frame channel (fd 3 / fd 4) — schema family "FrameChannel",
+ *     through the generated standalone codec in ./generated/frameChannel.ts.
  *
  * Why not import @motion/engine-api: electron/ is its own TypeScript project
  * (rootDir `.`, CommonJS) and cannot import packages/. The encoding is the
@@ -19,13 +19,15 @@
  * generated codec, so they cannot drift silently.
  */
 
+import { codecs as frameCodecs, type FrameChannelMessage } from './generated/frameChannel';
+
 /** Protocol major this build of the UI speaks (schema `version 1.0`). Pinned by a test against the generated meta. */
 export const PROTOCOL_MAJOR = 1;
 export const PROTOCOL_MINOR = 0;
 
 /** Largest command-pipe frame accepted (framing.hpp kDefaultMaxFrame). */
 export const MAX_FRAME = 64 * 1024 * 1024;
-/** Largest frame-channel payload (frame_channel.hpp kMaxPayload). */
+/** Largest frame-channel payload (framing.hpp kMaxFramePayload). */
 export const MAX_FRAME_CHANNEL_PAYLOAD = 4096;
 
 // ── framing ──────────────────────────────────────────────────────────────────
@@ -291,116 +293,49 @@ export function decodeGoodbye(body: Uint8Array): { reason: GoodbyeReason; messag
 }
 
 // ── frame channel (fd 3 engine → host, fd 4 host → engine) ───────────────────
+//
+// The messages are schema types (packages/engine-api/schema/95_frames.eapi,
+// family "FrameChannel"); electron/generated/frameChannel.ts is their generated
+// standalone codec — the C++ side uses the same generated structs
+// (premation::api::FrameChannelMessage). Nothing here is hand-encoded.
 
-export interface SlotsMessage {
-  type: 'slots';
-  generation: number;
-  viewport: number;
-  width: number;
-  height: number;
-  format: 'rgba8unorm';
-  /** Handles are NT handles valid in THIS process; the engine owns their lifetime — never close them. */
-  shared: boolean;
-  handles: bigint[];
-}
-export interface FrameReadyMessage {
-  type: 'frameReady';
-  generation: number;
-  slot: number;
-  viewport: number;
-  dropped: number;
-  frame: number;
-  /** comp time, flicks */
-  time: number;
-  revision: number;
-  /** epoch µs, measurement only */
-  renderStartUs: number;
-  renderDoneUs: number;
-  width: number;
-  height: number;
-}
-export interface PongMessage {
-  type: 'pong';
-  nonce: number;
-  revision: number;
-  playing: boolean;
-  queued: number;
-}
+export type SlotsMessage = Extract<FrameChannelMessage, { type: 'slots' }>;
+export type FrameReadyMessage = Extract<FrameChannelMessage, { type: 'frameReady' }>;
+export type PongMessage = Extract<FrameChannelMessage, { type: 'pong' }>;
+/** What the engine sends on fd 3. Slot handles are NT handles valid in THIS process; the engine owns their lifetime — never close them. */
 export type EngineFrameMessage = SlotsMessage | FrameReadyMessage | PongMessage;
 
-const T_SLOTS = 1;
-const T_FRAME_READY = 2;
-const T_PONG = 3;
-const T_RELEASE = 16;
-const T_PING = 17;
+/** Most slots a ring may announce (FrameSlots.handles). */
+export const MAX_FRAME_SLOTS = 16;
 
-/** Decode an engine → host frame-channel payload; null for unknown types or malformed input. */
+/** Decode an engine → host frame-channel payload; null for host → engine types, unknown variants or malformed input. */
 export function decodeFrameMessage(p: Uint8Array): EngineFrameMessage | null {
-  if (p.length < 1) return null;
-  const v = new DataView(p.buffer, p.byteOffset, p.byteLength);
-  const need = (n: number) => p.length >= n;
-  switch (p[0]) {
-    case T_SLOTS: {
-      if (!need(21)) return null;
-      const count = p[19]!;
-      if (p[17] !== 1 || p[18]! > 1 || count > 16 || !need(21 + count * 8)) return null;
-      const handles: bigint[] = [];
-      for (let i = 0; i < count; i++) handles.push(v.getBigUint64(21 + i * 8, true));
-      return {
-        type: 'slots',
-        generation: v.getUint32(1, true),
-        viewport: v.getUint32(5, true),
-        width: v.getUint32(9, true),
-        height: v.getUint32(13, true),
-        format: 'rgba8unorm',
-        shared: p[18] === 1,
-        handles,
-      };
-    }
-    case T_FRAME_READY: {
-      if (!need(1 + 16 + 24 + 16 + 8)) return null;
-      return {
-        type: 'frameReady',
-        generation: v.getUint32(1, true),
-        slot: v.getUint32(5, true),
-        viewport: v.getUint32(9, true),
-        dropped: v.getUint32(13, true),
-        frame: Number(v.getBigInt64(17, true)),
-        time: Number(v.getBigInt64(25, true)),
-        revision: Number(v.getBigUint64(33, true)),
-        renderStartUs: v.getFloat64(41, true),
-        renderDoneUs: v.getFloat64(49, true),
-        width: v.getUint32(57, true),
-        height: v.getUint32(61, true),
-      };
-    }
-    case T_PONG: {
-      if (!need(1 + 16 + 4 + 4)) return null;
-      return {
-        type: 'pong',
-        nonce: Number(v.getBigUint64(1, true)),
-        revision: Number(v.getBigUint64(9, true)),
-        playing: p[17] === 1,
-        queued: v.getUint32(21, true),
-      };
-    }
+  let m: FrameChannelMessage;
+  try {
+    m = frameCodecs.FrameChannelMessage.decode(p);
+  } catch {
+    return null;
+  }
+  switch (m.type) {
+    case 'slots':
+      return m.handles.length <= MAX_FRAME_SLOTS ? m : null;
+    case 'frameReady':
+    case 'pong':
+      return m;
     default:
       return null;
   }
 }
 
 export function encodeRelease(generation: number, slot: number): Uint8Array {
-  const p = new Uint8Array(9);
-  const v = new DataView(p.buffer);
-  p[0] = T_RELEASE;
-  v.setUint32(1, generation, true);
-  v.setUint32(5, slot, true);
-  return p;
+  return frameCodecs.FrameChannelMessage.encode({ type: 'release', generation, slot });
 }
 
 export function encodePing(nonce: number): Uint8Array {
-  const p = new Uint8Array(9);
-  p[0] = T_PING;
-  new DataView(p.buffer).setBigUint64(1, BigInt(nonce), true);
-  return p;
+  return frameCodecs.FrameChannelMessage.encode({ type: 'ping', nonce });
+}
+
+/** Encode any frame-channel message (tests and fakes play the engine side with it). */
+export function encodeFrameMessage(m: FrameChannelMessage): Uint8Array {
+  return frameCodecs.FrameChannelMessage.encode(m);
 }
