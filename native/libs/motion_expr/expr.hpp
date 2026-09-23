@@ -49,11 +49,13 @@ inline constexpr int kMaxWiggleOctaves = 8;
 inline constexpr std::size_t kMaxSourceTextLength = 100000;
 /// Most per-character style ranges one Source Text expression may stack.
 inline constexpr std::size_t kMaxRangeOverrides = 256;
-/// Parser nesting guard. The TypeScript parser has none: V8's stack overflows
-/// ("Maximum call stack size exceeded", which becomes the compile error) at a
-/// depth that depends on the V8 build. This port stops at a fixed depth with
-/// the SAME message so a hostile document cannot overflow the native stack.
+/// Parser nesting limit — exprLang.ts MAX_PARSE_DEPTH / MAX_PARSE_DEPTH_MESSAGE,
+/// the same count and text in both engines (a level: the expression, each
+/// bracketed sub-expression, each binary right operand, each prefix operator).
+/// Past it the compile error is "Syntax error: " + the message.
 inline constexpr int kMaxParseDepth = 2000;
+inline constexpr std::u16string_view kMaxParseDepthMessage =
+    u"This expression is nested too deeply to read (more than 2000 levels).";
 
 // ── Context data ────────────────────────────────────────────────────────────
 

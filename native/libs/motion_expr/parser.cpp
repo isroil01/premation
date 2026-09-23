@@ -49,11 +49,6 @@ constexpr std::array<std::u16string_view, 24> kPunct = {
     u"===", u"!==", u"==", u"!=", u"<=", u">=", u"&&", u"||", u"(", u")", u"[", u"]",
     u",",   u".",   u"?",  u":",  u"+",  u"-",  u"*",  u"/",  u"%", u"<", u">", u"!"};
 
-/// A run of prefix operators is a loop here, but one frame per operator in
-/// V8, which overflows around 12 000 of them; past this we report what V8
-/// reports.
-constexpr std::size_t kMaxPrefixChain = 12000;
-
 // Functions, not globals: a static std::u16string may throw at startup. They
 // return Str (not a view) because every use is a `+` concatenation.
 Str lq() { return u"“"; }  // NOLINT(modernize-use-string-view)
@@ -185,11 +180,9 @@ class Parser {
   }
 
  private:
-  /// Guards native recursion; see kMaxParseDepth.
+  /// One nesting level; see kMaxParseDepth.
   struct DepthGuard {
-    explicit DepthGuard(int& d) : depth(d) {
-      if (++depth > kMaxParseDepth) throw SyntaxError{u"Maximum call stack size exceeded"};
-    }
+    explicit DepthGuard(int& d) : depth(d) { enter(depth); }
     DepthGuard(const DepthGuard&) = delete;
     DepthGuard(DepthGuard&&) = delete;
     DepthGuard& operator=(const DepthGuard&) = delete;
@@ -197,6 +190,10 @@ class Parser {
     ~DepthGuard() { --depth; }
     int& depth;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members) — scoped RAII counter
   };
+  /// exprLang.ts `enter`: open a level or fail at kMaxParseDepth.
+  static void enter(int& depth) {
+    if (++depth > kMaxParseDepth) throw SyntaxError{Str(kMaxParseDepthMessage)};
+  }
 
   [[nodiscard]] const Tok& peek() const { return toks_[pos_]; }
   const Tok& next() { return toks_[pos_++]; }
@@ -233,17 +230,15 @@ class Parser {
     prog_.lists.insert(prog_.lists.end(), items.begin(), items.end());
   }
 
-  // ── One recursive function instead of the TypeScript's six ─────────────
+  // ── exprLang.ts `parseLevel`, statement for statement ──────────────────
   //
-  // exprLang.ts descends parseExpression → parseConditional → parseBinary →
-  // parseUnary → parseCallMember → parsePrimary for every parenthesis, i.e.
-  // six native frames per nesting level. That is fine in V8 (it overflows
-  // somewhere past ~1500 levels, see kMaxParseDepth) but would overflow a 1 MB
-  // native stack well before the TypeScript does. `parse_level` does the same
-  // grammar — same tokens consumed in the same order, same nodes, same
-  // errors — in ONE frame per nesting level: prefix operators are collected in
-  // a loop, the postfix chain and the binary loop are loops, and only a
-  // bracketed sub-expression or a binary operator's right side recurses.
+  // The whole grammar in one recursive function, as in the TypeScript: prefix
+  // operators are collected in a loop, the postfix chain and the binary loop
+  // are loops, and only a bracketed sub-expression or a binary operator's
+  // right side recurses. Same tokens consumed in the same order, same nodes,
+  // same errors, and the same depth accounting — the level itself, plus one
+  // per prefix operator while its operand is parsed — so both engines refuse
+  // exactly the same sources at kMaxParseDepth.
 
   std::uint32_t parse_expression() { return parse_level(0, true); }
 
@@ -257,7 +252,7 @@ class Parser {
       if (t.type != TokType::kPunct || !(t.value == u"-" || t.value == u"+" || t.value == u"!")) break;
       prefix.push_back(t.value == u"-" ? Op::kNeg : t.value == u"+" ? Op::kPlus : Op::kNot);
       next();
-      if (prefix.size() > kMaxPrefixChain) throw SyntaxError{u"Maximum call stack size exceeded"};
+      enter(depth_);
     }
     std::uint32_t left = parse_postfix(parse_primary());
     for (const Op op : std::views::reverse(prefix)) {
@@ -267,6 +262,7 @@ class Parser {
       node.a = left;
       left = add(node);
     }
+    depth_ -= static_cast<int>(prefix.size());
     // parseBinary: all these operators are left-associative.
     for (;;) {
       const Tok& t = peek();

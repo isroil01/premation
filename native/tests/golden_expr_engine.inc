@@ -15,6 +15,9 @@
   scene.push_back({u"rd", u"Reader", {{u"x", {}, S(u"layer('Broken', 'x') * 2 + layer('Disabled', 'x') + layer('CycleA', 'x')"), true, true}, {u"y", {}, S(u"layer('Follower', 'z') + layer('Follower', 'scaleY') + layer('#fol', 'rotationZ')"), true, true}, {u"z", {}, R(u"[", u"1,", 70000, u"1].length + layer('Wide', 'x')"), true, true}}});
   scene.push_back({u"wide", u"Wide", {{u"x", {}, R(u"[", u"1,", 70000, u"1].length + layer('Wide2', 'x')"), true, true}}});
   scene.push_back({u"wide2", u"Wide2", {{u"x", {{0.0, 1.0, 0, 0u, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, R(u"[", u"1,", 70000, u"1].length"), true, true}}});
+  scene.push_back({u"rnd1", u"Rnd1", {{u"x", {}, S(u"Math.random() + layer('Rnd2', 'x') + Math.random()"), true, true}, {u"y", {}, S(u"Math.random()"), true, true}}});
+  scene.push_back({u"rnd2", u"Rnd2", {{u"x", {}, S(u"Math.random() * 10 + random()"), true, true}}});
+  scene.push_back({u"vat", u"Vat", {{u"x", {{1.0, 4.0, 0, 0u, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, S(u"valueAtTime() + 1"), true, true}, {u"y", {{1.0, 4.0, 0, 0u, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, S(u"valueAtTime(time) + 1"), true, true}}});
   scene.push_back({u"ch0", u"Chain0", {{u"x", {{0.0, 0.0, 0, 0u, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, S(u"layer('Chain1', 'x') + 1"), true, true}}});
   scene.push_back({u"ch1", u"Chain1", {{u"x", {{0.0, 1.0, 0, 0u, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, S(u"layer('Chain2', 'x') + 1"), true, true}}});
   scene.push_back({u"ch2", u"Chain2", {{u"x", {{0.0, 2.0, 0, 0u, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, S(u"layer('Chain3', 'x') + 1"), true, true}}});
@@ -133,6 +136,31 @@ MOTION_ENGINE_SAMPLE(u"wide2", u"x", 0x3fd3333333333333ull, 1, 0x40f117100000000
 MOTION_ENGINE_SAMPLE(u"wide2", u"x", 0x3fe8000000000000ull, 1, 0x40f1171000000000ull)
 MOTION_ENGINE_SAMPLE(u"wide2", u"x", 0x3ff999999999999aull, 1, 0x40f1171000000000ull)
 MOTION_ENGINE_SAMPLE(u"wide2", u"x", 0x4003333333333333ull, 1, 0x40f1171000000000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"x", 0x0000000000000000ull, 1, 0x4021fa034776b000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"x", 0x3fd3333333333333ull, 1, 0x401222371fcfb000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"x", 0x3fe8000000000000ull, 1, 0x4026f7b332a69300ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"x", 0x3ff999999999999aull, 1, 0x4016f06ed0ebdc00ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"x", 0x4003333333333333ull, 1, 0x4018a5f088a67800ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"y", 0x0000000000000000ull, 1, 0x3fc2396a42840000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"y", 0x3fd3333333333333ull, 1, 0x3fe871ebd4260000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"y", 0x3fe8000000000000ull, 1, 0x3fded02c9a820000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"y", 0x3ff999999999999aull, 1, 0x3fef2713a5fc0000ull)
+MOTION_ENGINE_SAMPLE(u"rnd1", u"y", 0x4003333333333333ull, 1, 0x3fd83f7c3e0f4000ull)
+MOTION_ENGINE_SAMPLE(u"rnd2", u"x", 0x0000000000000000ull, 1, 0x401e498a953ac000ull)
+MOTION_ENGINE_SAMPLE(u"rnd2", u"x", 0x3fd3333333333333ull, 1, 0x400e70967f7a2000ull)
+MOTION_ENGINE_SAMPLE(u"rnd2", u"x", 0x3fe8000000000000ull, 1, 0x40242f6da004ed00ull)
+MOTION_ENGINE_SAMPLE(u"rnd2", u"x", 0x3ff999999999999aull, 1, 0x40143d2a27fee000ull)
+MOTION_ENGINE_SAMPLE(u"rnd2", u"x", 0x4003333333333333ull, 1, 0x40172b701a931800ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"x", 0x0000000000000000ull, 1, 0x4010000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"x", 0x3fd3333333333333ull, 1, 0x4010000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"x", 0x3fe8000000000000ull, 1, 0x4010000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"x", 0x3ff999999999999aull, 1, 0x4010000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"x", 0x4003333333333333ull, 1, 0x4010000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"y", 0x0000000000000000ull, 1, 0x4014000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"y", 0x3fd3333333333333ull, 1, 0x4014000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"y", 0x3fe8000000000000ull, 1, 0x4014000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"y", 0x3ff999999999999aull, 1, 0x4014000000000000ull)
+MOTION_ENGINE_SAMPLE(u"vat", u"y", 0x4003333333333333ull, 1, 0x4014000000000000ull)
 MOTION_ENGINE_SAMPLE(u"ch0", u"x", 0x0000000000000000ull, 1, 0x0000000000000000ull)
 MOTION_ENGINE_SAMPLE(u"ch0", u"x", 0x3fd3333333333333ull, 1, 0x0000000000000000ull)
 MOTION_ENGINE_SAMPLE(u"ch0", u"x", 0x3fe8000000000000ull, 1, 0x0000000000000000ull)

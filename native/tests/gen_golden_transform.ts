@@ -141,28 +141,53 @@ for (let i = 0; i < 120; i++) {
   row('LUP', [...m2d(m), ...m2d(n)], loc(localUnderParent(m, n)));
 }
 // Parent chains 1..50 deep, plus random trees, plus a 400-layer forest (the
-// 2000-layer build is the benchmark's; one macro row that size is too big).
-function scene2d(n: number, parentGen: (i: number) => number): void {
+// 2000-layer build is the benchmark's; one macro row that size is too big),
+// plus parent CYCLES: every node on one is a root and reported through
+// `onCycle` — resolved in several orders with one shared cache, because the
+// rule must not depend on which layer a frame asks for first.
+// Output per node: world (6), matrixToLocal (5), on-cycle flag (1).
+function scene2d(n: number, parentGen: (i: number) => number, order: 'up' | 'down' | 'random' = 'up'): void {
   const parents = Array.from({ length: n }, (_, i) => parentGen(i));  // drawn once: the generator may be random
   const parentOf = (i: number) => parents[i]!;
   const locals = Array.from({ length: n }, (_, i) => (i % 17 === 5 ? null : randLocal()));
   const cache = new Map();
   const input = [n];
-  const out: number[] = [];
   for (let i = 0; i < n; i++) {
     const l = locals[i];
     input.push(l ? 1 : 0, parentOf(i), ...(l ? loc(l) : [0, 0, 0, 1, 1]));
   }
-  for (let i = 0; i < n; i++) {
-    const w = worldMatrixOf(String(i), (id: string) => locals[Number(id)] ?? null,
-      (id: string) => (parentOf(Number(id)) >= 0 ? String(parentOf(Number(id))) : null), cache);
-    out.push(...m2d(w), ...loc(matrixToLocal(w)));
+  const ids = Array.from({ length: n }, (_, i) => i);
+  if (order === 'down') ids.reverse();
+  if (order === 'random') for (let i = n - 1; i > 0; i--) { const j = Math.floor(u() * (i + 1)); [ids[i], ids[j]] = [ids[j]!, ids[i]!]; }
+  const worlds: unknown[] = new Array(n);
+  const onCycle = new Array<number>(n).fill(0);
+  for (const i of ids) {
+    worlds[i] = worldMatrixOf(String(i), (id: string) => locals[Number(id)] ?? null,
+      (id: string) => (parentOf(Number(id)) >= 0 ? String(parentOf(Number(id))) : null), cache,
+      (id: string) => { onCycle[Number(id)]! += 1; });
   }
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(...m2d(worlds[i]), ...loc(matrixToLocal(worlds[i])), onCycle[i]!);
   row('SCENE2D', input, out);
 }
 for (let depth = 1; depth <= 50; depth++) scene2d(depth, (i) => i - 1);
 for (let k = 0; k < 20; k++) scene2d(40, (i) => (i === 0 ? -1 : Math.floor(u() * i)));
 scene2d(400, (i) => (i === 0 ? -1 : i % 50 === 0 ? -1 : Math.max(0, i - 1 - Math.floor(u() * 3))));
+// Cycles.
+const CYCLES: Array<[number, (i: number) => number]> = [
+  [1, () => 0],                                                  // parented to itself
+  [3, (i) => [0, 0, 1][i]!],                                     // self-loop at the root, a child, a grandchild
+  [2, (i) => 1 - i],                                             // A ↔ B
+  [6, (i) => [2, 0, 1, 1, 3, -1][i]!],                           // a 3-cycle, a chain hanging off it, a free root
+  [8, (i) => [1, 2, 0, 4, 5, 3, 2, 6][i]!],                      // two 3-cycles, a tail into the first
+  [7, (i) => [-1, 0, 3, 4, 2, 4, 5][i]!],                        // a clean root beside a cycle fed by a chain
+];
+for (const [n, p] of CYCLES) for (const order of ['up', 'down', 'random'] as const) scene2d(n, p, order);
+for (let k = 0; k < 10; k++) {
+  // A random 40-node forest with a few back-edges, which may close cycles.
+  const back = new Set([Math.floor(u() * 40), Math.floor(u() * 40), Math.floor(u() * 40)]);
+  scene2d(40, (i) => (back.has(i) ? Math.floor(u() * 40) : i === 0 ? -1 : Math.floor(u() * i)), k % 2 === 0 ? 'random' : 'down');
+}
 
 // ── 3D ──────────────────────────────────────────────────────────────────────
 

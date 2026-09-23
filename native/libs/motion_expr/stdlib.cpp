@@ -470,16 +470,11 @@ Value call_math(Interp& in, Fn fn, Args a) {
       const double b = to_number(a[0]);
       return Value::number(js::pow(b, to_number(a[1])));
     }
-    case Fn::kMathRandom: {
-      // NON-DETERMINISTIC in the TypeScript (it is V8's Math.random), which the
-      // determinism rule forbids in rendering. The port answers from a
-      // separate seeded sequence — reproducible, never equal to the TS.
-      // Flagged in native/README.md; excluded from the golden table.
-      (void)in;
-      static thread_local double counter = 0;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-      counter += 1;
-      return Value::number(hash01(counter * 71.3 + 0.5));
-    }
+    case Fn::kMathRandom:
+      // The evaluation's own seeded sequence, shared with random() and
+      // gaussRandom() — expressions.ts EXPR_MATH. Deterministic, and in the
+      // goldens like every other builtin.
+      return Value::number(in.next_random());
     case Fn::kMathRound: return Value::number(js::round(x()));
     case Fn::kMathSign: return Value::number(js::sign(x()));
     case Fn::kMathSin: return Value::number(js::sin(x()));

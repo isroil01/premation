@@ -73,7 +73,7 @@ void to_c(const xf::Camera& c, motion_camera* out) noexcept {
 extern "C" {
 
 motion_status motion_transform_world_2d(const motion_node2d* nodes, size_t count, motion_mat2d* out,
-                                        motion_error* err) {
+                                        uint8_t* on_cycle, motion_error* err) {
   if ((nodes == nullptr || out == nullptr) && count > 0) {
     set_error(err, "motion_transform_world_2d: NULL argument");
     return MOTION_INVALID_ARG;
@@ -89,8 +89,10 @@ motion_status motion_transform_world_2d(const motion_node2d* nodes, size_t count
       n[i].parent = in[i].parent;
     }
     std::vector<xf::Mat2D> w(count);
-    if (!xf::world_matrices_2d(n, w)) {
-      set_error(err, "motion_transform_world_2d: parent cycle or parent index out of range");
+    const std::span<std::uint8_t> flags = on_cycle != nullptr ? std::span<std::uint8_t>(on_cycle, count)
+                                                                : std::span<std::uint8_t>();
+    if (!xf::world_matrices_2d(n, w, flags)) {
+      set_error(err, "motion_transform_world_2d: parent index out of range");
       return MOTION_INVALID_ARG;
     }
     const std::span<motion_mat2d> o(out, count);

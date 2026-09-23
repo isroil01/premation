@@ -125,10 +125,18 @@ struct Node2D {
 };
 
 /// `worldMatrixOf` for every node: world = parentWorld · local. Iterative
-/// (a 10 000-deep chain uses no stack) and O(n). Returns false — and writes
-/// nothing further — on a parent cycle or an out-of-range parent index; the
-/// TypeScript recursion has no cycle guard and overflows the stack there.
-[[nodiscard]] bool world_matrices_2d(std::span<const Node2D> nodes, std::span<Mat2D> out);
+/// (a 10 000-deep chain uses no stack) and O(n).
+///
+/// Parent cycles, as worldTransform.ts: every node ON a cycle is a root (its
+/// world is its local matrix) and nodes parented into the cycle compose onto
+/// it — a rule of the graph alone, so it matches the TypeScript whatever order
+/// that resolves nodes in. When `on_cycle` is non-empty (it must then hold
+/// `nodes.size()` entries) each node gets 1 if it is on a cycle, else 0 — the
+/// TypeScript's `onCycle(nodeId)` calls. Returns false only for a caller bug:
+/// `out` or a non-empty `on_cycle` shorter than `nodes`, or a parent index
+/// out of range (`out` is then unspecified).
+[[nodiscard]] bool world_matrices_2d(std::span<const Node2D> nodes, std::span<Mat2D> out,
+                                     std::span<std::uint8_t> on_cycle = {});
 
 // ── nodeMatrix.ts: 3D layers and mixed 2D/3D parent chains ─────────────────
 

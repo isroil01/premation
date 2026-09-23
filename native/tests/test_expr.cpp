@@ -115,7 +115,9 @@ class GoldenHost final : public ex::Host {
   [[nodiscard]] bool has_self_at() const override { return !c_.self.empty(); }
   double self_at(double t) override {
     // sampleTrack on a ONE-key track at NaN falls through both clamps and reads
-    // kfs[1].t of undefined — a TypeError the TS evaluator reports as-is.
+    // kfs[1].t of undefined — a TypeError. Expressions can no longer get here
+    // (valueAtTime/velocityAtTime reject a NaN time first); kept so a new
+    // path that could would show up as a golden mismatch, not a silent pass.
     if (std::isnan(t) && c_.self.size() == 1) throw ex::HostError{u"Cannot read properties of undefined (reading 't')"};
     return sample(c_.self, t);
   }

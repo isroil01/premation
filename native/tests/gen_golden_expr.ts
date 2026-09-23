@@ -20,7 +20,8 @@
  *
  *     node native/tests/gen_golden_expr.ts
  *
- * Math.random is excluded (it is non-deterministic in the TypeScript).
+ * Math.random is included: it draws from the evaluation's seeded random()
+ * sequence, so it is deterministic in both engines.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -175,6 +176,17 @@ const CTXS: Ctx[] = [
   },
   /* 5 */ { base: 42, comp: { width: 800, height: 600, duration: 5, fps: 0.5, numLayers: 2 }, markers: { comp: [], layer: [] } },
   /* 6 */ { self: [{ t: 2, value: 9 }], base: 3, propSeed: 0, texts: [[null, EMOJI_TEXT]] },
+  /* 7 */ {
+    base: 1, propSeed: 77,
+    markers: {
+      comp: [
+        { time: NaN, duration: 0, name: 'n1', comment: '' }, { time: 2, duration: 0, name: 'b', comment: '' },
+        { time: NaN, duration: 0, name: 'n2', comment: '' }, { time: 0.5, duration: 0, name: 'a', comment: '' },
+        { time: 2, duration: 1, name: 'b2', comment: '' },
+      ],
+      layer: [{ time: NaN, duration: 0, name: 'only', comment: 'x' }],
+    },
+  },
 ];
 
 function resolveRef(ref: any): string | null {
@@ -439,9 +451,27 @@ const WIGGLES = [
   'seedRandom(7) + random()', 'seedRandom(7, true) + random(10)', 'random() + seedRandom(3) + random()', 'seedRandom("x") + random()',
   'seedRandom(-2.5) + random(1, 2)', 'gaussRandom()', '[gaussRandom(), gaussRandom()]', 'seedRandom(99) + gaussRandom()',
   'noise(time)', 'noise(time, 3)', 'noise(-time * 13.1)', 'noise(1e7)', 'noise("2")', 'noise(time) + random()',
+  // Math.random draws from the same seeded sequence as random()/gaussRandom().
+  'Math.random()', '[Math.random(), random(), Math.random()]', 'seedRandom(7) + Math.random()',
+  'Math.random() + gaussRandom() + Math.random() * 100', 'seedRandom("x") + Math.random(5)', 'Math.random.call(null)',
+  'Math.random.apply(Math, [])', '[4, 5].map(Math.random).join()', 'Math.random === Math.random', 'Math.random.name.length',
+  'Math.random.length', 'Math.hasOwnProperty("random")', '(Math + "").length', 'Math.toString().length', 'value + Math.random() * 10 - 5',
   'value + wiggle(4, 20) - value', 'Math.sin(time * 127.1) * 43758.5453', 'posterizeTime(12) * 1000',
 ];
 for (const ctx of [0, 2, 3, 4, 6]) add(ctx, [0, 0.1, 0.7, 1.33, 2.25, 10.5, 97.03], ...WIGGLES);
+
+// The random stream mixes in the FRAME (round(time * fps)) unless seedRandom(s, true):
+// the default and seedRandom(s) vary across times, timeless is constant, sub-frame
+// times (0.004 s after a frame, a motion-blur sample) keep the frame's values,
+// gaussRandom and Math.random follow the same rule, and wiggle is unaffected.
+const RANDOM_TIME = [
+  'random()', 'random(100)', 'seedRandom(5) + random()', 'seedRandom(5, true) + random()', 'seedRandom(5, 1) + random()',
+  'seedRandom(5, 0) + random()', 'seedRandom(5, "") + random()', 'seedRandom(5, true) + seedRandom(5) + random()',
+  'gaussRandom()', 'seedRandom(5, true) + gaussRandom()', 'Math.random()', 'seedRandom(5, true) + Math.random()',
+  'seedRandom(9) + Math.random() * 10', '[random(), Math.random(), gaussRandom()]', 'wiggle(2, 30)',
+  'seedRandom(5, true) + wiggle(2, 30)', 'noise(time) + seedRandom(1, true) + random()',
+];
+for (const ctx of [0, 3, 5]) add(ctx, [0, 0.004, 0.5, 0.504, 1, 1.004, 2, -1.5, 1e6], ...RANDOM_TIME);
 
 // loopOut / loopIn / valueAtTime / velocity over the keyed contexts
 const LOOPS = [
@@ -454,6 +484,11 @@ const LOOPS = [
   'time <= key(numKeys).time ? value : value + velocityAtTime(key(numKeys).time - 0.001) * 0.05 * Math.sin((time - key(numKeys).time) * 12) / Math.exp((time - key(numKeys).time) * 4)',
   'time <= key(numKeys).time ? value : value + velocityAtTime(key(numKeys).time - 0.001) * Math.exp(-(time - key(numKeys).time) * 5)',
   "loopOut('offset') + valueAtTime(0.5) + wiggle(2, 30)",
+  // A time that is not a number is a stated error, whatever the track.
+  'valueAtTime(0/0)', 'valueAtTime("x")', 'valueAtTime([0.5])', 'valueAtTime(null)', 'thisProperty.valueAtTime()',
+  'velocityAtTime()', 'velocityAtTime(0/0)', 'thisProperty.velocityAtTime("y")',
+  // key(n): an index that rounds to NaN is 1.
+  'key(0/0).index', 'key(0/0).time', 'key().index', 'key("x").value', 'key(-Infinity).index', 'key(Infinity).index',
 ];
 for (const ctx of [0, 1, 2, 3, 6]) add(ctx, [-3.3, -1.25, -0.5, 0, 0.25, 0.5, 1, 1.25, 1.75, 2, 2.5, 2.75, 3.3, 7.01], ...LOOPS);
 
@@ -478,9 +513,23 @@ const FULL = [
   'marker.nearestKey(100).index', 'marker.nearestKey().time', 'marker.nearestKey("3").comment', 'thisComp.marker.nearestKey(2).name',
   'marker.key(1)', 'thisComp.marker.key("head").duration', 'marker.key(text.sourceText)',
   'thisLayer.name + ":" + thisLayer.width', 'thisComp.width / thisComp.height', 'thisComp.frameDuration * 24',
+  // marker.key(n): an index that rounds to NaN is 1, like key(n).
+  'marker.key(0/0).time', 'marker.key().index', 'thisComp.marker.key(0/0).name', 'marker.key(null).index',
+  // Runtime messages are never "Syntax error" because of their words.
+  "thisComp.layer('missing').toComp([0, 0])", "thisComp.layer('Unexpected').fromComp([0, 0])", "layer('missing', 'x')",
   'timeToFrames()', 'framesToTime(48)', 'thisComp.layer("Leader").name', 'thisComp.layer("Leader").width',
 ];
 add(3, [0, 0.8, 1.9, 3.75], ...FULL);
+// Markers with NaN times: ascending, stable, NaN last (compareMarkerTimes) in both engines.
+add(7, [0, 1],
+  'thisComp.marker.numKeys', 'thisComp.marker.key(3).index', 'thisComp.marker.key("n2").index', 'thisComp.marker.key(5).time',
+  'thisComp.marker.key(3).duration', 'marker.key(0/0).time', 'Math.random()',
+);
+addText(7, [0],
+  'thisComp.marker.key(1).name + thisComp.marker.key(2).name + thisComp.marker.key(3).name + thisComp.marker.key(4).name + thisComp.marker.key(5).name',
+  'thisComp.marker.nearestKey(0.6).name + "|" + thisComp.marker.nearestKey(5).name + "|" + thisComp.marker.nearestKey(0/0).name',
+  'marker.key(1).name + marker.nearestKey(0).comment', 'Math.random.name', 'Math + ""',
+);
 add(5, [0, 1.25], ...FULL.slice(0, 60), 'thisComp.frameDuration', 'timeToFrames(3)', 'marker.nearestKey(5).time', 'marker.key("x").duration');
 
 // Source Text: numeric reads (run) in the text context, plus runText results
@@ -546,6 +595,22 @@ addText(0, [0], 'text.sourceText', 'value', 'valueAtTime(1)', '"no text layer"')
 let bigRange = 'value.style';
 for (let i = 0; i <= 256; i++) bigRange += `.setFontSize(10, ${i}, 1)`;  // < 6k chars
 addText(4, [0], bigRange);
+
+// Parse depth (exprLang.ts MAX_PARSE_DEPTH = 2000): 1 999 / 2 000 / 2 001 levels
+// reached through parentheses, prefix operators, both mixed, arrays, call
+// arguments and binary right operands. Parsing succeeds up to 2 000; the
+// deepest that parse then fail evaluation's own MAX_EVAL_DEPTH.
+for (const levels of [1999, 2000, 2001]) {
+  const n = levels - 1;
+  add(0, [0],
+    rep('', '(', n, `1${')'.repeat(n)}`), rep('', '-', n, '1'), rep('', '[', n, `1${']'.repeat(n)}`),
+    rep('', 'Math.abs(', n, `1${')'.repeat(n)}`), rep('1', '*(1', Math.floor(n / 2), ')'.repeat(Math.floor(n / 2))),
+  );
+}
+add(0, [0], rep('', '-(', 999, `1${')'.repeat(999)}`), rep('', '-(', 1000, `1${')'.repeat(1000)}`),
+  rep('', '!-+', 666, '0'), rep('', '!-+', 667, '0'), rep('', '(', 2000, '1'), rep('', '(', 5000, `1${')'.repeat(5000)}`),
+  rep('', '-', 30000, '1'), rep('1?', '1?', 1998, `1${':1'.repeat(1999)}`), rep('1?', '1?', 1999, `1${':1'.repeat(2000)}`),
+);
 
 // Budgets and depth (exprLang.ts MAX_EVAL_STEPS / MAX_EVAL_DEPTH), in one evaluation.
 add(0, [0],
@@ -627,6 +692,12 @@ const SCENE: ENode[] = [
   ] },
   { id: 'wide', name: 'Wide', props: [{ prop: 'x', expr: rep('[', '1,', 70000, "1].length + layer('Wide2', 'x')") }] },
   { id: 'wide2', name: 'Wide2', props: [{ prop: 'x', kfs: [{ t: 0, value: 1 }], expr: rep('[', '1,', 70000, '1].length') }] },
+  // Math.random across a cross-layer read: each expression draws from its OWN
+  // seeded stream, and the caller's resumes where it left off.
+  { id: 'rnd1', name: 'Rnd1', props: [{ prop: 'x', expr: "Math.random() + layer('Rnd2', 'x') + Math.random()" }, { prop: 'y', expr: 'Math.random()' }] },
+  { id: 'rnd2', name: 'Rnd2', props: [{ prop: 'x', expr: 'Math.random() * 10 + random()' }] },
+  // valueAtTime() without a time on a one-key track: a stated error, so the track value.
+  { id: 'vat', name: 'Vat', props: [{ prop: 'x', kfs: [{ t: 1, value: 4 }], expr: 'valueAtTime() + 1' }, { prop: 'y', kfs: [{ t: 1, value: 4 }], expr: 'valueAtTime(time) + 1' }] },
 ];
 for (let i = 0; i < 20; i++) {
   SCENE.push({ id: `ch${i}`, name: `Chain${i}`, props: [{ prop: 'x', kfs: [{ t: 0, value: i }], expr: i === 19 ? 'time * 3' : `layer('Chain${i + 1}', 'x') + 1` }] });

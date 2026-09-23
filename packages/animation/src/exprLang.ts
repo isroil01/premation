@@ -145,6 +145,31 @@ function lex(src: string): Tok[] {
 
 // ── Parser (Pratt) ────────────────────────────────────────────────
 
+/**
+ * How deeply one expression may NEST, counted at parse time.
+ *
+ * One level is: the expression itself, every bracketed sub-expression (a
+ * parenthesis, an array item, a call argument, a computed member key, a
+ * ternary branch), every binary operator's right operand, and every prefix
+ * operator. Past it the parse fails with {@link MAX_PARSE_DEPTH_MESSAGE}.
+ *
+ * WHY A NUMBER AND NOT "UNTIL THE STACK RUNS OUT": the parser used to have no
+ * limit, so a deeply nested source overflowed V8's stack — somewhere between
+ * roughly 1 500 and 2 500 parentheses, and the threshold moved with JIT state
+ * from one run to the next. The same document could compile on one open and
+ * fail on the next. A fixed count makes the outcome a property of the source.
+ * The C++ port (native/libs/motion_expr/parser.cpp, `kMaxParseDepth`) applies
+ * the identical rule and message; golden_expr.inc pins both at 1 999 / 2 000 /
+ * 2 001 levels.
+ *
+ * The parser spends ONE JS frame per level (see `parseLevel`), so 2 000 levels
+ * sit far inside V8's default stack. Evaluation has its own, smaller nesting
+ * limit (`MAX_EVAL_DEPTH`), so a source between the two parses and then fails
+ * as "nested too deeply" when run — also deterministic.
+ */
+export const MAX_PARSE_DEPTH = 2000;
+export const MAX_PARSE_DEPTH_MESSAGE = 'This expression is nested too deeply to read (more than 2000 levels).';
+
 /** JS binary precedence. Higher binds tighter. Ternary and ?: sit below these. */
 const BINARY_PRECEDENCE: Record<string, number> = {
   '||': 1,
@@ -158,6 +183,8 @@ const BINARY_PRECEDENCE: Record<string, number> = {
 class Parser {
   private toks: Tok[];
   private pos = 0;
+  /** Nesting levels currently open; see MAX_PARSE_DEPTH. */
+  private depth = 0;
 
   constructor(src: string) {
     this.toks = lex(src);
@@ -190,7 +217,7 @@ class Parser {
   }
 
   parse(): ExprNode {
-    const node = this.parseExpression();
+    const node = this.parseLevel(0, true);
     if (this.peek().type !== 'eof') {
       throw new ExprSyntaxError(
         `Unexpected “${this.peek().value}”. An expression must be a single value — statements and “;” aren’t supported.`,
@@ -199,70 +226,80 @@ class Parser {
     return node;
   }
 
-  private parseExpression(): ExprNode {
-    return this.parseConditional();
+  /** Open one nesting level, or fail at MAX_PARSE_DEPTH. */
+  private enter(): void {
+    if ((this.depth += 1) > MAX_PARSE_DEPTH) throw new ExprSyntaxError(MAX_PARSE_DEPTH_MESSAGE);
   }
 
-  private parseConditional(): ExprNode {
-    const test = this.parseBinary(0);
-    if (!this.eat('?')) return test;
-    const consequent = this.parseExpression();
-    this.expect(':');
-    const alternate = this.parseExpression();
-    return { kind: 'conditional', test, consequent, alternate };
-  }
-
-  private parseBinary(minPrec: number): ExprNode {
-    let left = this.parseUnary();
+  /**
+   * The whole grammar in ONE recursive method, so one nesting level costs one
+   * JS frame (MAX_PARSE_DEPTH relies on that): `allowConditional` is
+   * parseExpression/parseConditional, otherwise parseBinary(minPrec). Prefix
+   * operators, the postfix (member/call) chain and the binary loop are loops;
+   * only a bracketed sub-expression or a binary operator's right side
+   * recurses. The C++ `Parser::parse_level` is the same function — same
+   * tokens consumed in the same order, same nodes, same errors, same depth
+   * accounting — which is what keeps the two engines' compile errors equal.
+   */
+  private parseLevel(minPrec: number, allowConditional: boolean): ExprNode {
+    this.enter();
+    // Prefix operators, applied innermost-last. Each is a nesting level.
+    const prefix: Array<'-' | '+' | '!'> = [];
+    for (;;) {
+      const t = this.peek();
+      if (t.type !== 'punct' || (t.value !== '-' && t.value !== '+' && t.value !== '!')) break;
+      this.pos++;
+      prefix.push(t.value);
+      this.enter();
+    }
+    let left = this.parsePrimary();
+    // Postfix: member access and calls, all left to right.
+    for (;;) {
+      if (this.eat('.')) {
+        const t = this.next();
+        if (t.type !== 'name') throw new ExprSyntaxError('Expected a property name after “.”.');
+        left = { kind: 'member', object: left, property: { kind: 'str', value: t.value }, computed: false };
+      } else if (this.eat('[')) {
+        const property = this.parseLevel(0, true);
+        this.expect(']');
+        left = { kind: 'member', object: left, property, computed: true };
+      } else if (this.eat('(')) {
+        const args: ExprNode[] = [];
+        if (!this.is(')')) {
+          do { args.push(this.parseLevel(0, true)); } while (this.eat(','));
+        }
+        this.expect(')');
+        left = { kind: 'call', callee: left, args };
+      } else {
+        break;
+      }
+    }
+    for (let i = prefix.length - 1; i >= 0; i--) left = { kind: 'unary', op: prefix[i]!, argument: left };
+    this.depth -= prefix.length;
+    // Binary operators — all left-associative.
     for (;;) {
       const t = this.peek();
       if (t.type !== 'punct') break;
       const prec = BINARY_PRECEDENCE[t.value];
       if (prec === undefined || prec < minPrec) break;
       this.next();
-      // All these operators are left-associative.
-      const right = this.parseBinary(prec + 1);
+      const right = this.parseLevel(prec + 1, false);
       left =
         t.value === '&&' || t.value === '||'
           ? { kind: 'logical', op: t.value, left, right }
           : { kind: 'binary', op: t.value as BinaryOp, left, right };
     }
+    if (allowConditional && this.eat('?')) {
+      const consequent = this.parseLevel(0, true);
+      this.expect(':');
+      const alternate = this.parseLevel(0, true);
+      left = { kind: 'conditional', test: left, consequent, alternate };
+    }
+    this.depth -= 1;
     return left;
   }
 
-  private parseUnary(): ExprNode {
-    const t = this.peek();
-    if (t.type === 'punct' && (t.value === '-' || t.value === '+' || t.value === '!')) {
-      this.next();
-      return { kind: 'unary', op: t.value as '-' | '+' | '!', argument: this.parseUnary() };
-    }
-    return this.parseCallMember();
-  }
-
-  private parseCallMember(): ExprNode {
-    let node = this.parsePrimary();
-    for (;;) {
-      if (this.eat('.')) {
-        const t = this.next();
-        if (t.type !== 'name') throw new ExprSyntaxError('Expected a property name after “.”.');
-        node = { kind: 'member', object: node, property: { kind: 'str', value: t.value }, computed: false };
-      } else if (this.eat('[')) {
-        const property = this.parseExpression();
-        this.expect(']');
-        node = { kind: 'member', object: node, property, computed: true };
-      } else if (this.eat('(')) {
-        const args: ExprNode[] = [];
-        if (!this.is(')')) {
-          do { args.push(this.parseExpression()); } while (this.eat(','));
-        }
-        this.expect(')');
-        node = { kind: 'call', callee: node, args };
-      } else {
-        return node;
-      }
-    }
-  }
-
+  /** A primary: literal, name, `( … )` or `[ … ]` (the brackets recurse into parseLevel). */
   private parsePrimary(): ExprNode {
     const t = this.next();
 
@@ -282,14 +319,14 @@ class Parser {
 
     if (t.type === 'punct') {
       if (t.value === '(') {
-        const node = this.parseExpression();
+        const node = this.parseLevel(0, true);
         this.expect(')');
         return node;
       }
       if (t.value === '[') {
         const items: ExprNode[] = [];
         if (!this.is(']')) {
-          do { items.push(this.parseExpression()); } while (this.eat(','));
+          do { items.push(this.parseLevel(0, true)); } while (this.eat(','));
         }
         this.expect(']');
         return { kind: 'array', items };

@@ -5,6 +5,7 @@
 
 #include "transform.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -249,33 +250,46 @@ Local2D local_under_parent(const Mat2D& child_world, const Mat2D& parent_world) 
   return matrix_to_local(multiply(invert(parent_world), child_world));
 }
 
-bool world_matrices_2d(std::span<const Node2D> nodes, std::span<Mat2D> out) {
+bool world_matrices_2d(std::span<const Node2D> nodes, std::span<Mat2D> out, std::span<std::uint8_t> on_cycle) {
   const std::size_t n = nodes.size();
-  if (out.size() < n) return false;
+  if (out.size() < n || (!on_cycle.empty() && on_cycle.size() < n)) return false;
+  for (const Node2D& node : nodes) {
+    if (std::cmp_greater_equal(node.parent, n)) return false;
+  }
+  if (!on_cycle.empty()) std::ranges::fill(on_cycle.first(n), std::uint8_t{0});
   // 0 = not yet, 1 = on the current walk, 2 = done.
   std::vector<std::uint8_t> state(n, 0);
   std::vector<std::size_t> path;
   for (std::size_t start = 0; start < n; ++start) {
     if (state[start] == 2) continue;
-    // Walk up to a finished ancestor (or a root), then fill top-down: the
-    // TypeScript's recursion `multiply(worldMatrixOf(parent), local)` unrolled.
+    // Walk up to a finished ancestor, a root, or back onto this walk (a
+    // cycle), then fill root-side first — worldTransform.ts's loop.
     path.clear();
+    std::size_t cycle_from = n;  // path[cycle_from..] is a cycle; n = none
     std::size_t i = start;
     for (;;) {
-      if (state[i] == 1) return false;  // cycle
       state[i] = 1;
       path.push_back(i);
       const std::int32_t p = nodes[i].parent;
       if (p < 0) break;
-      if (std::cmp_greater_equal(p, n)) return false;
-      if (state[static_cast<std::size_t>(p)] == 2) break;
-      i = static_cast<std::size_t>(p);
+      const auto pi = static_cast<std::size_t>(p);
+      if (state[pi] == 2) break;
+      if (state[pi] == 1) {
+        cycle_from = static_cast<std::size_t>(std::ranges::find(path, pi) - path.begin());
+        break;
+      }
+      i = pi;
     }
     for (std::size_t k = path.size(); k-- > 0;) {
       const std::size_t id = path[k];
       const Node2D& node = nodes[id];
       const Mat2D lm = node.local ? local_matrix(*node.local) : Mat2D{};
-      out[id] = node.parent >= 0 ? multiply(out[static_cast<std::size_t>(node.parent)], lm) : lm;
+      if (k >= cycle_from) {
+        out[id] = lm;  // on a cycle: a root
+        if (!on_cycle.empty()) on_cycle[id] = 1;
+      } else {
+        out[id] = node.parent >= 0 ? multiply(out[static_cast<std::size_t>(node.parent)], lm) : lm;
+      }
       state[id] = 2;
     }
   }

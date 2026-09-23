@@ -217,13 +217,20 @@ transpiled source). The C ABI does not carry Source Text yet (C++ API only).
 **Behaviours fixed on BOTH sides together** (D1 found them by porting; each
 was changed in the TypeScript and the C++ in one step and is pinned by the
 goldens, so the engines stay bit-identical):
-- `Math.random()` in an expression draws from the evaluation's seeded
-  `random()` sequence (`propSeed`, `seedRandom`, one call counter shared with
-  `random()`/`gaussRandom()`, reset per evaluation) instead of V8's unseeded
-  RNG. Old projects that used it rendered differently on every draw, so there
-  was no stable output to keep; they now render deterministically. Like
-  `random()` itself, the sequence does not mix in `time` (it is the same on
-  every frame unless the expression seeds it with time).
+- `random()` / `gaussRandom()` vary with time as in AE: the stream is
+  `hash01(seed·1013.7 + call·71.3 + frame·7.919)` with
+  `frame = round(time · fps)` (comp fps; non-finite → 0), and
+  `seedRandom(s, true)` (timeless) drops the frame term. Rounding to the frame
+  keeps every motion-blur sub-frame sample of a frame on that frame's values.
+  Before, the frame was never mixed in and `timeless` was ignored, so every
+  `random()` was constant per property — **old projects' `random()` now
+  changes every frame, as it does in After Effects**; `seedRandom(s, true)`
+  keeps the old constant values exactly.
+- `Math.random()` in an expression draws from that same sequence
+  (`propSeed`, `seedRandom`, the frame unless timeless, one call counter
+  shared with `random()`/`gaussRandom()`, reset per evaluation) instead of
+  V8's unseeded RNG. It still jitters per frame, but reproducibly: the same
+  frame gives the same values on every draw, scrub and export, in both engines.
 - Parse depth: both parsers stop at 2 000 levels (the expression, each
   bracketed sub-expression, binary right operand and prefix operator) with
   "Syntax error: This expression is nested too deeply to read (more than 2000

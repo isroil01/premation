@@ -37,7 +37,11 @@ bool contains_ci(std::u16string_view hay, std::u16string_view needle) {
   return false;
 }
 
-/// expressions.ts `humanize`, with its regexes' exact matching rules.
+/// expressions.ts `humanize` for a RUNTIME error, with its regexes' exact
+/// matching rules. A parse failure never comes here: it is always
+/// "Syntax error: " + its message (`Expression::compile`), decided by the
+/// error's kind rather than its words — as the TypeScript's
+/// `e instanceof ExprSyntaxError`.
 Str humanize(const Str& msg) {
   if (contains_ci(msg, u"Cycle detected") || contains_ci(msg, u"Maximum cross-layer evaluation depth")) return msg;
   // /(\w+) is not defined/ — leftmost match: a maximal word run from s that
@@ -56,7 +60,6 @@ Str humanize(const Str& msg) {
   if (msg.find(u"is not a function") != Str::npos) {
     return u"That isn’t a function — check the name and parentheses.";
   }
-  if (msg.find(u"Unexpected") != Str::npos || msg.find(u"missing") != Str::npos) return u"Syntax error: " + msg;
   return msg;
 }
 
@@ -103,7 +106,7 @@ Expression Expression::compile(std::u16string_view src) {
   try {
     e.program_ = std::make_unique<const detail::Program>(detail::parse(src.substr(b, end - b)));
   } catch (detail::SyntaxError& err) {
-    e.compile_error_ = humanize(err.message);
+    e.compile_error_ = u"Syntax error: " + err.message;
   }
   return e;
 }

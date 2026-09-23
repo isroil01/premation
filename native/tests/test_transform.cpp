@@ -90,10 +90,12 @@ std::vector<double> compute(int kind, std::span<const double> in) {
         nodes[i].parent = static_cast<std::int32_t>(in[b + 1]);
       }
       std::vector<xf::Mat2D> w(n);
-      REQUIRE(xf::world_matrices_2d(nodes, w));
+      std::vector<std::uint8_t> on_cycle(n);
+      REQUIRE(xf::world_matrices_2d(nodes, w, on_cycle));
       for (std::size_t i = 0; i < n; ++i) {
         put(o, w[i]);
         put(o, xf::matrix_to_local(w[i]));
+        o.push_back(on_cycle[i]);
       }
       break;
     }
@@ -268,12 +270,27 @@ TEST_CASE("transforms, parenting and camera match the TypeScript bit for bit", "
   CHECK(bad == 0);
 }
 
-TEST_CASE("world_matrices_2d refuses cycles and survives a 10 000-deep chain", "[transform]") {
-  std::vector<xf::Node2D> nodes(3);
+TEST_CASE("world_matrices_2d draws cycles as roots and survives a 10 000-deep chain", "[transform]") {
+  // 0 → 2 → 1 → 0 is a cycle; 3 hangs off it. Cycle members are roots.
+  std::vector<xf::Node2D> nodes(4);
   nodes[0].parent = 2;
   nodes[1].parent = 0;
   nodes[2].parent = 1;
-  std::vector<xf::Mat2D> out(3);
+  nodes[3].parent = 1;
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    nodes[i].local = xf::Local2D{.x = static_cast<double>(i + 1), .y = 0, .rotation = 0, .scale_x = 1, .scale_y = 1};
+  }
+  std::vector<xf::Mat2D> out(4);
+  std::vector<std::uint8_t> on_cycle(4, 9);
+  REQUIRE(xf::world_matrices_2d(nodes, out, on_cycle));
+  CHECK(on_cycle == std::vector<std::uint8_t>{1, 1, 1, 0});
+  CHECK(out[0].e == 1);
+  CHECK(out[1].e == 2);
+  CHECK(out[2].e == 3);
+  CHECK(out[3].e == 2 + 4);
+  std::vector<std::uint8_t> short_flags(2);
+  CHECK_FALSE(xf::world_matrices_2d(nodes, out, short_flags));
+  nodes[3].parent = 4;  // out of range
   CHECK_FALSE(xf::world_matrices_2d(nodes, out));
   nodes.assign(10000, {});
   for (std::size_t i = 1; i < nodes.size(); ++i) {
@@ -290,11 +307,17 @@ TEST_CASE("the transform C ABI", "[transform][abi]") {
   nodes[0] = {.local = {.x = 10, .y = 0, .rotation = 90, .scale_x = 2, .scale_y = 2}, .has_local = 1, .parent = -1};
   nodes[1] = {.local = {.x = 5, .y = 0, .rotation = 0, .scale_x = 1, .scale_y = 1}, .has_local = 1, .parent = 0};
   std::array<motion_mat2d, 2> w{};
-  REQUIRE(motion_transform_world_2d(nodes.data(), nodes.size(), w.data(), nullptr) == MOTION_OK);
+  REQUIRE(motion_transform_world_2d(nodes.data(), nodes.size(), w.data(), nullptr, nullptr) == MOTION_OK);
   CHECK(std::fabs(w[1].e - 10) < 1e-9);
   CHECK(std::fabs(w[1].f - 10) < 1e-9);
-  nodes[0].parent = 1;
-  CHECK(motion_transform_world_2d(nodes.data(), nodes.size(), w.data(), nullptr) == MOTION_INVALID_ARG);
+  nodes[0].parent = 1;  // a cycle: both drawn as roots, both flagged
+  std::array<std::uint8_t, 2> flags{};
+  REQUIRE(motion_transform_world_2d(nodes.data(), nodes.size(), w.data(), flags.data(), nullptr) == MOTION_OK);
+  CHECK(flags[0] == 1);
+  CHECK(flags[1] == 1);
+  CHECK(w[1].e == 5);
+  nodes[0].parent = 2;  // out of range
+  CHECK(motion_transform_world_2d(nodes.data(), nodes.size(), w.data(), nullptr, nullptr) == MOTION_INVALID_ARG);
 
   motion_camera c{};
   motion_transform_default_camera(1920, 1080, 39.6, &c);

@@ -51,6 +51,25 @@ loader, local version history, the cloud API and legacy single-file reads.
 | 1.4.0 → 1.5.0 | Repeater: a fixed `fx.repeater` stage → an entry in the chain |
 | 1.5.0 → 1.6.0 | Expressions: bare string → `{ src, enabled }` |
 
+**Rendering changes that need no migration.** Some fixes change what an
+unchanged document renders without changing its shape, so they get a note
+here instead of a ladder step:
+
+- *2026-09 (native-core D1 follow-up):* **`random()` and `gaussRandom()` now
+  change every frame, as in After Effects.** They used to ignore time
+  entirely, so an old project's `random()` gave one constant value per
+  property; it now gives a new value each frame (the same value for every
+  motion-blur sample within a frame). `seedRandom(s, true)` — AE's
+  "timeless" — keeps a constant sequence and reproduces the old values
+  exactly. `Math.random()` inside an expression now draws from that same
+  seeded sequence instead of V8's unseeded generator: such a project
+  rendered differently on every draw, scrub and export, so no stable output
+  existed to preserve; it still jitters per frame, but now identically every
+  time, in the TypeScript and the C++ engine alike. Also in that change: expressions
+  nested deeper than 2 000 levels are a compile error (they used to overflow
+  the stack somewhere between ~1 500 and ~2 500), `valueAtTime()` without a
+  time is a stated error, and a parent cycle draws its layers as roots.
+
 **So the honest position is better than the README's.** Old documents already
 open. What is missing is not machinery — it is a *commitment*, a *test that
 proves the commitment*, and a *decision about what still wants to move*.

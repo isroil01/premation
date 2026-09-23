@@ -595,10 +595,13 @@ Interp::MarkerList& Interp::markers(MarkerScope scope) {
   m.built = true;
   std::vector<MarkerData> data;
   if (ctx_.host != nullptr && ctx_.host->has_markers_at()) data = ctx_.host->markers_at(scope);
-  // `.sort((a, b) => a.time - b.time)` — V8's sort is stable (TimSort); so is
-  // this. (With NaN times the comparator is not an ordering in either
-  // language and the orders may differ — documented.)
-  std::ranges::stable_sort(data, [](const MarkerData& a, const MarkerData& b) { return a.time - b.time < 0; });
+  // `.sort((a, b) => compareMarkerTimes(a.time, b.time))`: ascending, NaN
+  // last. A total order, so any stable sort (V8's TimSort, this) agrees.
+  std::ranges::stable_sort(data, [](const MarkerData& a, const MarkerData& b) {
+    if (std::isnan(a.time)) return false;
+    if (std::isnan(b.time)) return true;
+    return a.time - b.time < 0;
+  });
   m.sorted.reserve(data.size());
   for (std::size_t i = 0; i < data.size(); ++i) {
     const MarkerData& d = data[i];
@@ -621,6 +624,14 @@ Interp::MarkerList& Interp::markers(MarkerScope scope) {
 }
 
 namespace {
+/// expressions.ts `clampKeyIndex`: 1-based, rounded, clamped to 1..count; an
+/// index that rounds to NaN is 1 (key(n) and marker.key(n) alike).
+double clamp_key_index(const Value& n, double count) {
+  const double r = motion::js::round(to_number(n));
+  if (std::isnan(r)) return 1;
+  return js_max2(1, js_min2(count, r));
+}
+
 const Value& prop_of(const Value& obj, KeyId k) {
   for (const Prop& p : obj.o->props) {
     if (p.key == k) return p.value;
@@ -646,9 +657,7 @@ Value Interp::marker_key(MarkerScope scope, const Value& n) {
     return m.empty;
   }
   if (m.sorted.empty()) return m.empty;
-  const double i = js_max2(1, js_min2(static_cast<double>(m.sorted.size()), motion::js::round(to_number(n))));
-  if (std::isnan(i)) return {};  // sorted[NaN] is undefined
-  return m.sorted[static_cast<std::size_t>(i) - 1];
+  return m.sorted[static_cast<std::size_t>(clamp_key_index(n, static_cast<double>(m.sorted.size()))) - 1];
 }
 
 Value Interp::marker_nearest(MarkerScope scope, Args a) {
@@ -671,6 +680,15 @@ double Interp::self_at(const Value& t) {
   return ctx_.value;
 }
 
+void Interp::need_time(const Value& t, std::u16string_view fn) {
+  if (!std::isnan(to_number(t))) return;
+  Str msg(fn);
+  msg += u"() needs a time in seconds, e.g. ";
+  msg += fn;
+  msg += u"(time - 0.5).";
+  throw_eval(std::move(msg));
+}
+
 double Interp::velocity_at(const Value& t) {
   constexpr double dt = 0.001;
   const double v1 = self_at(Value::number(to_number(t) - dt));
@@ -679,8 +697,14 @@ double Interp::velocity_at(const Value& t) {
 }
 
 double Interp::next_random() {
+  // expressions.ts `nextRandom`: (seed, frame, call) unless timeless — see the
+  // comment there for the frame rounding (motion-blur samples) and the salt.
   random_counter_ += 1;
-  return hash01(to_number(random_seed_) * 1013.7 + random_counter_ * 71.3);
+  const double base = to_number(random_seed_) * 1013.7 + random_counter_ * 71.3;
+  if (random_timeless_) return hash01(base);
+  const double frame = motion::js::round(ctx_.time * comp_.fps);
+  const double salt = frame - frame == 0 ? frame * 7.919 : 0;  // Number.isFinite
+  return hash01(base + salt);
 }
 
 Value Interp::wiggle(Args a) {
@@ -811,9 +835,9 @@ Value Interp::space_fn(const Obj& f, Args a) {
 Value Interp::key_fn(const Value& n) {
   const std::span<const double> kt = ctx_.key_times;
   const auto num_keys = static_cast<double>(kt.size());
-  const double i = js_max2(1, js_min2(num_keys, motion::js::round(to_number(n))));
+  const double i = clamp_key_index(n, num_keys);
   double t = 0;  // keyTimes[i - 1] ?? 0
-  if (!std::isnan(i) && i - 1 < num_keys) t = kt[static_cast<std::size_t>(i - 1)];
+  if (i - 1 < num_keys) t = kt[static_cast<std::size_t>(i - 1)];
   return plain({
       {.key = KeyId::k_index, .value = Value::number(i)},
       {.key = KeyId::k_time, .value = Value::number(t)},
@@ -1020,10 +1044,12 @@ Value Interp::call_api(const Obj& f, Args a) {
       return js_add(a[0], Value::number(u * (to_number(a[1]) - to_number(a[0]))), arena_);
     }
     case Fn::kValueAtTime:
+      need_time(a[0], u"valueAtTime");
       return Value::number(self_at(a[0]));
     case Fn::kValueAtTimeText:
       return source_text_of(Value::null(), to_number(a[0]));
     case Fn::kVelocityAtTime:
+      need_time(a[0], u"velocityAtTime");
       return Value::number(velocity_at(a[0]));
     case Fn::kLayer:
       return layer_at(a[0], a[1], Value::number(ctx_.time));
@@ -1043,6 +1069,7 @@ Value Interp::call_api(const Obj& f, Args a) {
     case Fn::kSeedRandom:
       random_seed_ = a[0];
       random_counter_ = 0;
+      random_timeless_ = truthy(a[1]);
       return Value::number(0);  // AE returns undefined; 0 keeps the expression numeric.
     case Fn::kGaussRandom: {
       const double u1 = js_max2(1e-9, next_random());

@@ -1,4 +1,4 @@
-import { compileExpression, tokenizeExpression, matchBracket } from './expressions';
+import { compileExpression, tokenizeExpression, matchBracket, type ExprContext } from './expressions';
 
 describe('tokenizeExpression', () => {
   it('classifies api names, numbers and operators', () => {
@@ -228,5 +228,76 @@ describe('expression API v3 (thisComp, ease, 5-arg wiggle)', () => {
       selfAt: (t) => (t === 0 ? 20 : 50),
     });
     expect(res.value).toBe(820);
+  });
+});
+
+describe('determinism and error fixes shared with the C++ engine', () => {
+  const run = (src: string, ctx: Partial<ExprContext> = {}) =>
+    compileExpression(src).run({ time: 0, value: 0, ...ctx });
+
+  it('Math.random draws from the seeded random() sequence', () => {
+    const a = run('[Math.random(), Math.random()]', { propSeed: 11 }).value;
+    expect(run('[Math.random(), Math.random()]', { propSeed: 11 }).value).toEqual(a);
+    expect(run('[random(), random()]', { propSeed: 11 }).value).toEqual(a);
+    // One counter: Math.random() then random() continue the same stream.
+    expect(run('[Math.random(), random()]', { propSeed: 11 }).value).toEqual(a);
+    expect(run('seedRandom(3) + Math.random()').value).toBe(run('seedRandom(3) + random()').value);
+    expect(run('Math.random()', { propSeed: 12 }).value).not.toBe((a as number[])[0]);
+  });
+
+  it('varies per frame like AE unless seedRandom(s, true); stable within a frame', () => {
+    const at = (src: string, time: number) => run(src, { time, propSeed: 4, comp: { width: 1, height: 1, duration: 10, fps: 24, numLayers: 1 } }).value;
+    for (const src of ['random()', 'seedRandom(5) + random()', 'gaussRandom()', 'Math.random()']) {
+      const v = [0, 1, 2].map((t) => at(src, t));
+      expect(new Set(v).size).toBe(3);
+      // A motion-blur sample a fraction of a frame away keeps the frame's values.
+      expect(at(src, 1 + 0.3 / 24)).toBe(v[1]);
+      expect(at(src, 1)).toBe(v[1]);
+    }
+    for (const src of ['seedRandom(5, true) + random()', 'seedRandom(5, true) + gaussRandom()', 'seedRandom(5, true) + Math.random()']) {
+      expect(new Set([0, 1, 2].map((t) => at(src, t))).size).toBe(1);
+    }
+  });
+
+  it('keeps the rest of Math intact', () => {
+    expect(run('Math.sin === Math.sin ? Math.PI : 0').value).toBe(Math.PI);
+    expect(run('(Math + "").length').value).toBe('[object Math]'.length);
+    expect(run('Math.random.length').value).toBe(0);
+  });
+
+  it('valueAtTime()/velocityAtTime() without a numeric time are stated errors', () => {
+    // A one-keyframe host: sampleTrack used to throw a TypeError here.
+    const selfAt = (t: number): number => {
+      if (Number.isNaN(Number(t))) throw new TypeError('reached the host');
+      return 5;
+    };
+    expect(run('valueAtTime()', { selfAt }).error).toBe(
+      'valueAtTime() needs a time in seconds, e.g. valueAtTime(time - 0.5).',
+    );
+    expect(run('thisProperty.valueAtTime(0/0)', { selfAt }).error).toMatch(/^valueAtTime\(\) needs a time/);
+    expect(run('velocityAtTime("x")', { selfAt }).error).toMatch(/^velocityAtTime\(\) needs a time/);
+    expect(run('valueAtTime("0.5") + velocity', { selfAt }).value).toBe(5);
+  });
+
+  it('key(NaN) and marker.key(NaN) both mean the first one', () => {
+    const markersAt = () => [{ time: 2, duration: 0, name: 'b', comment: '' }, { time: 1, duration: 0, name: 'a', comment: '' }];
+    expect(run('marker.key(0/0).time', { markersAt }).value).toBe(1);
+    expect(run('key(0/0).index + key(0/0).time', { keyTimes: [3, 4] }).value).toBe(1 + 3);
+  });
+
+  it('sorts NaN marker times last', () => {
+    const markersAt = () => [
+      { time: NaN, duration: 0, name: 'n', comment: '' },
+      { time: 2, duration: 0, name: 'b', comment: '' },
+      { time: 1, duration: 0, name: 'a', comment: '' },
+    ];
+    expect(run('marker.key(1).time * 10 + marker.key(2).time', { markersAt }).value).toBe(12);
+  });
+
+  it('only parse failures are "Syntax error", whatever a runtime message says', () => {
+    const spaceAt = () => undefined;
+    expect(run("thisComp.layer('missing').toComp([0, 0])", { spaceAt }).error).toBe('toComp(): no layer named “missing”.');
+    expect(compileExpression('f(1,').compileError).toBe('Syntax error: Unexpected end of expression.');
+    expect(compileExpression('(1').compileError).toBe('Syntax error: Expected “)” but found end of expression.');
   });
 });

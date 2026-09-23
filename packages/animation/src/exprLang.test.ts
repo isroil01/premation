@@ -183,3 +183,31 @@ describe('compileExpression under CSP', () => {
     });
   });
 });
+
+describe('parse depth limit (MAX_PARSE_DEPTH, shared with the C++ parser)', () => {
+  const parens = (n: number): string => `${'('.repeat(n)}1${')'.repeat(n)}`;
+
+  it('parses 2000 levels and refuses 2001, with a typed error', () => {
+    expect(() => parseExpression(parens(1999))).not.toThrow();
+    expect(() => parseExpression(parens(2000))).toThrow(ExprSyntaxError);
+    expect(() => parseExpression(parens(2000))).toThrow('nested too deeply to read');
+  });
+
+  it('counts prefix operators as levels', () => {
+    expect(() => parseExpression(`${'-'.repeat(1999)}1`)).not.toThrow();
+    expect(() => parseExpression(`${'-'.repeat(2000)}1`)).toThrow(ExprSyntaxError);
+  });
+
+  it('fails the same way every time, far past the limit (no stack overflow)', () => {
+    for (let k = 0; k < 3; k++) {
+      expect(() => parseExpression(parens(100000))).toThrow(ExprSyntaxError);
+      expect(() => parseExpression(`${'!'.repeat(100000)}0`)).toThrow(ExprSyntaxError);
+    }
+  });
+
+  it('surfaces as a compile error, labelled a syntax error', () => {
+    expect(compileExpression(parens(2000)).compileError).toBe(
+      'Syntax error: This expression is nested too deeply to read (more than 2000 levels).',
+    );
+  });
+});

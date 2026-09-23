@@ -59,6 +59,9 @@ class Interp {
   [[nodiscard]] Value str(Str s) { return Value::string(arena_.str(std::move(s))); }
   [[nodiscard]] Value array(std::vector<Value> elems);
   [[nodiscard]] Value plain(std::initializer_list<Prop> props);
+  /// The next value of AE's random sequence — random(), gaussRandom() and
+  /// Math.random() all draw from it.
+  double next_random();
 
  private:
   Value eval(std::uint32_t id);
@@ -71,7 +74,8 @@ class Interp {
   Value call_api(const Obj& f, Args a);
   double self_at(const Value& t);
   double velocity_at(const Value& t);
-  double next_random();
+  /// expressions.ts `needTime`: valueAtTime/velocityAtTime need a numeric time.
+  void need_time(const Value& t, std::u16string_view fn);
   Value wiggle(Args a);
   Value range_fn(Fn fn, Args a);
   Value space_fn(const Obj& f, Args a);
@@ -136,6 +140,7 @@ class Interp {
   // AE's random sequence: (seed, call index) → value; see expressions.ts.
   Value random_seed_ = ctx_.prop_seed ? Value::number(*ctx_.prop_seed) : Value::number(0);
   double random_counter_ = 0;
+  bool random_timeless_ = false;  // seedRandom(s, true)
 };
 
 // stdlib.cpp — Math and the Object/Function/Number/Boolean/String/Array prototypes.

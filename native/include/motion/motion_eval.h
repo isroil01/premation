@@ -34,7 +34,7 @@
 #ifndef MOTION_EVAL_H
 #define MOTION_EVAL_H
 
-// NOLINTBEGIN(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size)
+// NOLINTBEGIN(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size, cppcoreguidelines-use-enum-class)
 
 #include <stddef.h>
 #include <stdint.h>
@@ -142,6 +142,6 @@ MOTION_API motion_status motion_eval_sample_scalar_packed_batch(const double* pa
 } /* extern "C" */
 #endif
 
-// NOLINTEND(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size)
+// NOLINTEND(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size, cppcoreguidelines-use-enum-class)
 
 #endif /* MOTION_EVAL_H */

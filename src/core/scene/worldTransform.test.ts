@@ -108,3 +108,43 @@ describe('worldMatrixOf caching', () => {
     expect(cache.has('c')).toBe(true);
   });
 });
+
+describe('worldMatrixOf parent cycles', () => {
+  // a → c → b → a is a cycle; d hangs off b. Same rule as native world_matrices_2d.
+  const map = {
+    a: { local: L(1, 0), parent: 'c' },
+    b: { local: L(2, 0), parent: 'a' },
+    c: { local: L(3, 0), parent: 'b' },
+    d: { local: L(4, 0), parent: 'b' },
+  };
+
+  test('nodes on a cycle are roots and are reported; descendants compose onto them', () => {
+    const { localOf, parentOf } = graph(map);
+    const reported: string[] = [];
+    const cache = new Map();
+    const d = worldMatrixOf('d', localOf, parentOf, cache, (id) => reported.push(id));
+    expect(reported.sort()).toEqual(['a', 'b', 'c']);
+    expect(d.e).toBe(2 + 4);
+    for (const id of ['a', 'b', 'c'] as const) {
+      expect(worldMatrixOf(id, localOf, parentOf, cache)).toEqual(localMatrix(map[id].local));
+    }
+  });
+
+  test('the answer does not depend on which node is asked for first', () => {
+    const { localOf, parentOf } = graph(map);
+    const ids = ['a', 'b', 'c', 'd'];
+    const first = ids.map((id) => worldMatrixOf(id, localOf, parentOf, new Map()));
+    const cache = new Map();
+    const shared = [...ids].reverse().map((id) => worldMatrixOf(id, localOf, parentOf, cache)).reverse();
+    expect(shared).toEqual(first);
+  });
+
+  test('a node parented to itself is a root, and a very deep chain does not overflow', () => {
+    const self = graph({ s: { local: L(7, 0), parent: 's' } });
+    expect(worldMatrixOf('s', self.localOf, self.parentOf).e).toBe(7);
+    const deep: Record<string, { local: LocalTransform; parent: string | null }> = {};
+    for (let i = 0; i < 20000; i++) deep[`n${i}`] = { local: L(1, 0), parent: i === 0 ? null : `n${i - 1}` };
+    const g = graph(deep);
+    expect(worldMatrixOf('n19999', g.localOf, g.parentOf).e).toBe(20000);
+  });
+});

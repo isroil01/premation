@@ -27,7 +27,7 @@
  * parameter lists and int-sized enums are the language, not a style lapse.
  * Silenced for the whole file (BEGIN/END lists must match exactly) so the
  * same clang-tidy checks keep firing on the C++ sources. */
-// NOLINTBEGIN(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size)
+// NOLINTBEGIN(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size, cppcoreguidelines-use-enum-class)
 
 #include <stddef.h>
 #include <stdint.h>
@@ -94,6 +94,6 @@ MOTION_API const char* motion_status_name(motion_status status);
 } /* extern "C" */
 #endif
 
-// NOLINTEND(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size)
+// NOLINTEND(modernize-use-using, modernize-deprecated-headers, modernize-macro-to-enum, modernize-redundant-void-arg, modernize-avoid-c-arrays, cppcoreguidelines-avoid-c-arrays, cppcoreguidelines-macro-usage, performance-enum-size, cppcoreguidelines-use-enum-class)
 
 #endif /* MOTION_ABI_H */

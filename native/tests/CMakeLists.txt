@@ -24,7 +24,7 @@ target_link_libraries(motion_tests PRIVATE
   Catch2::Catch2WithMain
 )
 
-# The expression goldens nest 1 500 parentheses and 512-deep evaluations (the
+# The expression goldens nest 2 000-level parses and 512-deep evaluations (the
 # TypeScript's limits). That fits Windows' default 1 MB main-thread stack in a
 # normal build but not with ASan's inflated frames; Linux/macOS default to 8 MB.
 if(MSVC)
@@ -35,3 +35,13 @@ endif()
 # at build time, which under TSan/ASan on a shared runner is one more thing to
 # go wrong for no gain at this size.
 add_test(NAME motion_tests COMMAND motion_tests --reporter compact)
+
+# clang-cl ASan: the runtime is a DLL in the clang resource dir (see
+# cmake/sanitizers.cmake). Copied next to the executable so both ctest and a
+# direct run find it.
+if(MOTION_ASAN_RUNTIME_DIR)
+  add_custom_command(TARGET motion_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MOTION_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll" "$<TARGET_FILE_DIR:motion_tests>"
+    VERBATIM)
+endif()

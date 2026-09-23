@@ -16,7 +16,7 @@
  * expression is text the user owns, never a locked result.
  */
 
-import { parseExpression, evaluateExpression, type ExprNode } from './exprLang';
+import { parseExpression, evaluateExpression, ExprSyntaxError, type ExprNode } from './exprLang';
 import {
   makeSourceTextValue,
   coerceSourceTextResult,
@@ -250,16 +250,60 @@ function smoothNoise(x: number): number {
   return a + (b - a) * u;
 }
 
-/** Turn a thrown error into a short, human-readable explanation. */
+/**
+ * Turn a thrown error into a short, human-readable explanation.
+ *
+ * A PARSE failure is always "Syntax error: …" and nothing else — decided by
+ * the error's class, not by its words. This used to be a text match on
+ * "Unexpected"/"missing" applied to every message, which labelled runtime
+ * errors about a layer NAMED "missing" as syntax errors and left real ones
+ * ("Expected “)” but found …") unlabelled. The C++ port
+ * (native/libs/motion_expr/expr.cpp `humanize`) makes the same split.
+ */
 function humanize(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
+  if (e instanceof ExprSyntaxError) return `Syntax error: ${msg}`;
   if (/Cycle detected/i.test(msg) || /Maximum cross-layer evaluation depth/i.test(msg)) return msg;
   const ref = /(\w+) is not defined/.exec(msg);
   if (ref) return `Unknown name “${ref[1]}”. Try time, value, audio, wiggle, layer, loopOut, valueAtTime, clamp, linear, ease, thisComp or Math.`;
   if (/is not a function/.test(msg)) return `That isn’t a function — check the name and parentheses.`;
-  if (/Unexpected/.test(msg) || /missing/.test(msg)) return `Syntax error: ${msg}`;
   return msg;
 }
+
+/**
+ * The random stream of the evaluation in progress — what `Math.random()`
+ * draws from. Swapped in and out around each `evaluateExpression` (and
+ * restored after, so a cross-layer read that evaluates ANOTHER expression
+ * mid-way uses that expression's stream and hands this one back untouched).
+ * Outside any evaluation nothing can reach `EXPR_MATH`, so the fallback is
+ * never observed; it is a constant rather than V8's RNG all the same.
+ */
+let activeRandom: () => number = () => 0;
+
+/**
+ * `Math` as expressions see it: every member of the real `Math` (the same
+ * function objects, so `Math.sin === Math.sin` and `.name`/`.length` are V8's)
+ * except `random`, which draws from the SAME seeded sequence as AE-style
+ * `random()` — `ctx.propSeed`, re-based by `seedRandom`, the frame mixed in
+ * unless `seedRandom(s, true)`, one call counter shared with
+ * `random()`/`gaussRandom()` and reset per evaluation. So `Math.random()`
+ * changes every frame yet is reproducible for any given frame, run to run,
+ * and between this engine and the C++ one (stdlib.cpp `kMathRandom`).
+ *
+ * PROJECT COMPATIBILITY: before this, `Math.random()` in an expression was
+ * V8's unseeded generator, so such a property rendered differently on every
+ * draw, every scrub and every export — there was no stable output to
+ * preserve. Old projects that use it still jitter per frame, but now the same
+ * way every time; nothing in the document changes and no migration is involved.
+ */
+const EXPR_MATH: Math = (() => {
+  const m = Object.defineProperties({}, Object.getOwnPropertyDescriptors(Math)) as Math;
+  Object.defineProperty(m, 'random', {
+    ...Object.getOwnPropertyDescriptor(Math, 'random'),
+    value: { random(): number { return activeRandom(); } }.random,
+  });
+  return Object.freeze(m);
+})();
 
 // `API_PARAMS` lived here: a fourth hand-written list of the same names, left
 // over from when this API was compiled with `new Function` and the array was
@@ -267,6 +311,32 @@ function humanize(e: unknown): string {
 // tokenizer reads its own set, and the "Unknown name" hint below hardcodes its
 // suggestions — so it was a stale description of the scope that nothing could
 // notice going wrong. Deleted rather than updated, per the no-dual-shape rule.
+
+/**
+ * `key(n)` / `marker.key(n)`'s index: 1-based, rounded, clamped to 1..count.
+ *
+ * An index that rounds to NaN (`key(0/0)`, `marker.key()`) is index 1, the
+ * same as any other out-of-range request. Before, the two accessors disagreed
+ * — `key(NaN)` returned `{ index: NaN, time: 0 }` and `marker.key(NaN)`
+ * returned undefined, so its `.time` threw. One rule for both now, and the
+ * C++ engine's (interp.cpp `clamp_key_index`).
+ */
+function clampKeyIndex(n: unknown, count: number): number {
+  const r = Math.round(n as number);
+  return Number.isNaN(r) ? 1 : Math.max(1, Math.min(count, r));
+}
+
+/**
+ * Marker order: ascending time, stable, NaN times last. `a.time - b.time`
+ * alone is not an ordering once a NaN is present (every comparison with it
+ * reads "equal"), so the result depended on the sort's visiting order — which
+ * the C++ port cannot promise to share with V8. A total order can.
+ */
+function compareMarkerTimes(a: number, b: number): number {
+  if (Number.isNaN(a)) return Number.isNaN(b) ? 0 : 1;
+  if (Number.isNaN(b)) return -1;
+  return a - b;
+}
 
 function resolveRange(t: number, a: number, b: number, c?: number, d?: number): { k: number; vMin: number; vMax: number } {
   let tMin: number, tMax: number, vMin: number, vMax: number;
@@ -408,11 +478,27 @@ export function compileExpression(src: string): CompiledExpression {
        * every re-evaluation of the same frame, or scrubbing would shimmer and
        * export would not match preview.
        *
-       * Both hold by making the sequence a pure function of (seed, call index):
-       * the counter resets per evaluation, so call N of frame F always gets the
-       * same value. `seedRandom(s)` re-bases it; AE's `timeless` second
-       * argument is honoured by simply not mixing time in, which is what this
-       * already does — the seed is the only input.
+       * Both hold by making the sequence a pure function of (seed, FRAME, call
+       * index): the counter resets per evaluation, so call N of frame F always
+       * gets the same value. `seedRandom(s)` re-bases it.
+       *
+       * TIME, as in AE: unless `seedRandom(s, true)` asked for a TIMELESS
+       * sequence, the stream also mixes in the frame, so `random()` gives new
+       * values every frame (and `value + random() * 10` jitters). The default
+       * — seedRandom never called — is time-varying too, as in AE.
+       *
+       * The frame is `Math.round(time * fps)` of the time the expression sees
+       * (comp fps), not the raw time: motion blur evaluates a frame at
+       * sub-frame times around it (shutter samples within ±½ frame), and a raw
+       * time would hand every sample a different random value — the blurred
+       * frame would smear across unrelated values instead of blurring the
+       * frame's own. Rounding keeps every sample of frame F on frame F's
+       * values. A non-finite frame (fps 0/NaN, NaN time) counts as frame 0.
+       * The salt is `frame * 7.919`, added to the hash input; 7.919 shares no
+       * small multiple with the 71.3 call step, so (frame, call) pairs do not
+       * alias. Timeless adds nothing, so a timeless sequence is exactly the
+       * pre-time-mixing one. The C++ port (interp.cpp `next_random`) is the
+       * same arithmetic.
        *
        * The previous `random(seed = time)` was a pure hash of the time, so
        * every call in a frame returned the SAME number. That is not AE's
@@ -420,12 +506,19 @@ export function compileExpression(src: string): CompiledExpression {
        */
       let randomSeed = ctx.propSeed ?? 0;
       let randomCounter = 0;
-      const seedRandom = (seed: number, _timeless = false): number => {
+      let randomTimeless = false;
+      const randomFrame = Math.round(time * compInfo.fps);
+      const randomFrameSalt = Number.isFinite(randomFrame) ? randomFrame * 7.919 : 0;
+      const seedRandom = (seed: number, timeless = false): number => {
         randomSeed = seed;
         randomCounter = 0;
+        randomTimeless = Boolean(timeless);
         return 0; // AE returns undefined; 0 keeps the expression numeric.
       };
-      const nextRandom = (): number => hash01(randomSeed * 1013.7 + (randomCounter += 1) * 71.3);
+      const nextRandom = (): number => {
+        const base = randomSeed * 1013.7 + (randomCounter += 1) * 71.3;
+        return hash01(randomTimeless ? base : base + randomFrameSalt);
+      };
       /** `random()` → 0..1 · `random(max)` → 0..max · `random(min, max)`. */
       const random = (a?: number, b?: number): number => {
         const u = nextRandom();
@@ -557,7 +650,7 @@ export function compileExpression(src: string): CompiledExpression {
        * whole property rather than degrading.
        */
       const key = (n: number): { index: number; time: number; value: number } => {
-        const i = Math.max(1, Math.min(numKeys, Math.round(n)));
+        const i = clampKeyIndex(n, numKeys);
         const t = keyTimes[i - 1] ?? 0;
         return { index: i, time: t, value: selfAt(t) };
       };
@@ -586,7 +679,7 @@ export function compileExpression(src: string): CompiledExpression {
        */
       const buildMarkers = (which: 'comp' | 'layer') => {
         const sorted = [...(ctx.markersAt?.(which) ?? [])]
-          .sort((a, b) => a.time - b.time)
+          .sort((a, b) => compareMarkerTimes(a.time, b.time))
           .map((m, i): ExprMarker => ({ ...m, index: i + 1 }));
         const EMPTY: ExprMarker = { time: 0, duration: 0, name: '', comment: '', index: 0 };
         /**
@@ -606,8 +699,7 @@ export function compileExpression(src: string): CompiledExpression {
               ?? EMPTY;
           }
           if (sorted.length === 0) return EMPTY;
-          const i = Math.max(1, Math.min(sorted.length, Math.round(n)));
-          return sorted[i - 1]!;
+          return sorted[clampKeyIndex(n, sorted.length) - 1]!;
         };
         const mNearest = (t = time): ExprMarker => {
           if (sorted.length === 0) return EMPTY;
@@ -696,14 +788,32 @@ export function compileExpression(src: string): CompiledExpression {
       };
 
       const selfAt = ctx.selfAt ?? ((): number => value);
-      const valueAtTime = (t: number): number => selfAt(t);
-      const velocityAtTime = (t: number): number => {
+      /**
+       * AE requires the time argument, and a time that is not a number has no
+       * value to sample. Both used to reach the host's `sampleTrack` as NaN,
+       * which on a ONE-keyframe track threw an internal TypeError ("Cannot
+       * read properties of undefined") and on longer tracks quietly produced
+       * NaN. Now either is this stated error, identical in the C++ engine.
+       */
+      const needTime = (t: unknown, fn: string): void => {
+        if (Number.isNaN(Number(t))) throw new Error(`${fn}() needs a time in seconds, e.g. ${fn}(time - 0.5).`);
+      };
+      const valueAtTime = (t: number): number => {
+        needTime(t, 'valueAtTime');
+        return selfAt(t);
+      };
+      /** Unchecked: the engine's own calls below always pass a real time. */
+      const velocityAt = (t: number): number => {
         const dt = 0.001;
         const v1 = selfAt(t - dt);
         const v2 = selfAt(t + dt);
         return (v2 - v1) / (2 * dt);
       };
-      const velocity = velocityAtTime(time);
+      const velocityAtTime = (t: number): number => {
+        needTime(t, 'velocityAtTime');
+        return velocityAt(t);
+      };
+      const velocity = velocityAt(time);
       const speed = Math.abs(velocity);
       const layerAt = (name: string, prop: string, t: number): number => {
         const res = ctx.layerAt?.(name, prop, t);
@@ -732,7 +842,7 @@ export function compileExpression(src: string): CompiledExpression {
           // AE: keep the last segment's speed. Sample just inside the span —
           // at `end` a hold-clamped selfAt has zero finite-difference velocity.
           const tip = end - Math.min(0.001, dur / 2);
-          return selfAt(end) + velocityAtTime(tip) * (time - end);
+          return selfAt(end) + velocityAt(tip) * (time - end);
         }
         return selfAt(start + (rel % dur));
       };
@@ -753,7 +863,7 @@ export function compileExpression(src: string): CompiledExpression {
         }
         if (mode === 'continue') {
           const tip = start + Math.min(0.001, dur / 2);
-          return selfAt(start) + velocityAtTime(tip) * (time - start);
+          return selfAt(start) + velocityAt(tip) * (time - start);
         }
         return selfAt(start + (((rel % dur) + dur) % dur));
       };
@@ -847,7 +957,7 @@ export function compileExpression(src: string): CompiledExpression {
         ['wiggle', wiggle], ['clamp', clamp], ['linear', linear],
         ['ease', ease], ['easeIn', easeIn], ['easeOut', easeOut],
         ['timeToFrames', timeToFrames], ['framesToTime', framesToTime],
-        ['random', random], ['Math', Math],
+        ['random', random], ['Math', EXPR_MATH],
         ['valueAtTime', propertyValueAtTime], ['velocity', velocity], ['speed', speed],
         ['velocityAtTime', velocityAtTime],
         ['layer', layer], ['layerAt', layerAt],
@@ -889,10 +999,14 @@ export function compileExpression(src: string): CompiledExpression {
       // is actually bound — see `boundScopeNames`.
       if (boundNames.length === 0) boundNames = [...scope.keys()];
 
+      const outerRandom = activeRandom;
+      activeRandom = nextRandom;
       try {
         return { out: evaluateExpression(ast, scope), error: null };
       } catch (e) {
         return { out: null, error: humanize(e) };
+      } finally {
+        activeRandom = outerRandom;
       }
   };
 

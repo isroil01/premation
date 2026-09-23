@@ -45,10 +45,16 @@ typedef struct motion_node2d {
 } motion_node2d;
 
 /** World matrices of a flat layer array: world = parentWorld · local.
- *  INVALID_ARG on a parent cycle or an out-of-range parent (out then
- *  unspecified). Linear time, no recursion. */
+ *  Linear time, no recursion.
+ *
+ *  A parent CYCLE is not an error: every node on it is drawn as a root (its
+ *  world is its local matrix), nodes parented into it compose onto it, and
+ *  `on_cycle` (may be NULL; else `count` entries) gets 1 for each node on a
+ *  cycle and 0 for the rest — the TypeScript `worldMatrixOf` rule and its
+ *  `onCycle` report. INVALID_ARG for an out-of-range parent index (out then
+ *  unspecified). (`on_cycle` was added within ABI 0.2, before 0.2 shipped.) */
 MOTION_API motion_status motion_transform_world_2d(const motion_node2d* nodes, size_t count, motion_mat2d* out,
-                                                   motion_error* err);
+                                                   uint8_t* on_cycle, motion_error* err);
 
 typedef struct motion_node3d_transform {
   double x, y, z;
