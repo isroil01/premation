@@ -4,8 +4,11 @@
  * Mirrors the renderer's `LocalIndex` port over IPC (`index:*`). The native
  * driver (`better-sqlite3`) is loaded with a GUARDED require so the app still
  * boots if it isn't installed/rebuilt yet: `index:available` then returns false
- * and the renderer falls back to its in-memory index. To activate on-device:
- * `npm i better-sqlite3` then `npx electron-rebuild -f -w better-sqlite3`.
+ * and the renderer falls back to its in-memory index. Since better-sqlite3 13
+ * the driver is an N-API module with prebuilt binaries in the package, so the
+ * same `.node` loads under Node (jest) and every Electron version — no
+ * `electron-rebuild` step. (Under 11.x the dev tree held a Node-ABI build that
+ * Electron refused, so dev launches silently ran on the in-memory index.)
  *
  * The index is a rebuildable cache — the `.motion` bundles remain the source of
  * truth — so a missing DB never blocks editing.

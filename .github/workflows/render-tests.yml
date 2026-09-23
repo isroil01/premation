@@ -39,7 +39,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # electron 44 declares node >= 22.12 (and downloads its binary on the
+          # first `import 'electron'` in run.mjs, not in a postinstall).
+          node-version: '22'
           cache: 'npm'
 
       - name: Install

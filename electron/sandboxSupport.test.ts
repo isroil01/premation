@@ -21,6 +21,10 @@
  * This file is what keeps that from silently reverting, and what tells the next
  * person how the claim was established rather than asking them to trust it.
  *
+ * Re-checked on **Electron 44.4.3 / Chromium 152** (C4, 2026-09-23) in the
+ * real app: sandboxed viewport resolved WebGPU, hidden export windows
+ * rendered and encoded MP4s.
+ *
  * **Re-run the probe at the next Electron upgrade.** It is not run here — it
  * needs a real GPU and a real display, which CI does not have, and a test that
  * silently skips is worse than one that states its scope.

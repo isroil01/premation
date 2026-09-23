@@ -165,7 +165,54 @@ export function plexusPointCloud(w: number, h: number, s: PlexusCloudSettings): 
 const COMPOSITE: Record<number, GlobalCompositeOperation> = { 0: 'source-over', 1: 'lighter', 2: 'screen', 3: 'multiply', 4: 'source-atop' };
 
 /** The `plexus` effect's Canvas2D pass. */
+/**
+ * A float16 2D canvas the size of the effect, or null where the browser has
+ * none (jsdom, Chromium before `colorType` landed).
+ *
+ * Why plexus needs it: a triangle mesh is hundreds of faint primitives stacked
+ * on each other, each blended into the destination. On an 8-bit canvas every
+ * blend rounds, and the error compounds: filling black 30× with
+ * rgba(159,208,255,0.004) gives 30 on Chromium 128, 1 on Chromium 140+, and
+ * ~18 is correct. The golden `effect-plexus` went from passing to 37 %
+ * divergent on the Electron 32 → 44 upgrade for exactly this reason — neither
+ * reference was right. Blending in float16 and rounding once gives 18,23,28.
+ */
+function floatScratch(w: number, h: number): { canvas: OffscreenCanvas; ctx: OffscreenCanvasRenderingContext2D } | null {
+  if (typeof OffscreenCanvas === 'undefined' || w <= 0 || h <= 0) return null;
+  try {
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d', { colorType: 'float16' } as CanvasRenderingContext2DSettings) as OffscreenCanvasRenderingContext2D | null;
+    if (!ctx) return null;
+    const attrs = (ctx as unknown as { getContextAttributes?: () => { colorType?: string } }).getContextAttributes?.();
+    if (attrs?.colorType !== 'float16') return null;
+    return { canvas, ctx };
+  } catch {
+    return null;
+  }
+}
+
 export function drawPlexus(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  // Blend in float, round once (see floatScratch). The destination is copied
+  // in first and the chosen composite op still applies per primitive, so every
+  // blend mode means exactly what it did — only the rounding moves to the end.
+  const scratch = floatScratch(w, h);
+  if (!scratch) {
+    drawPlexusInto(oc, w, h, e);
+    return;
+  }
+  const { canvas, ctx } = scratch;
+  ctx.drawImage(oc.canvas as CanvasImageSource, 0, 0);
+  drawPlexusInto(ctx as unknown as CanvasRenderingContext2D, w, h, e);
+  const prevOp = oc.globalCompositeOperation;
+  oc.save();
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  oc.globalCompositeOperation = 'copy';
+  oc.drawImage(canvas, 0, 0);
+  oc.restore();
+  oc.globalCompositeOperation = prevOp;
+}
+
+function drawPlexusInto(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
   const n = (k: string): number => effectNumber(e, k);
   const opacity = Math.max(0, Math.min(1, n('opacity') / 100));
   if (opacity <= 0) return;

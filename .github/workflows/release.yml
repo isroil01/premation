@@ -76,7 +76,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # electron 44 / @electron/rebuild 4 declare node >= 22.12.
+          node-version: '22'
           cache: 'npm'
 
       - run: npm ci
@@ -176,7 +177,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # electron 44 / @electron/rebuild 4 declare node >= 22.12.
+          node-version: '22'
           cache: 'npm'
 
       - run: npm ci

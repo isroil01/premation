@@ -264,16 +264,28 @@ function registerIpc(): void {
 let ipcRegistered = false;
 
 /**
+ * Open the renderer's `updater:*` channels. Idempotent.
+ *
+ * Called from main BEFORE the window is created, not only from
+ * `initAutoUpdate` (which waits for `ready-to-show`). On Electron 44 the page's
+ * boot code reaches `updates.getStatus()` before `ready-to-show` fires, and the
+ * invoke was rejected with "No handler registered for 'updater:getStatus'".
+ * `getStatus` answers `idle` until `initAutoUpdate` has decided.
+ */
+export function registerUpdaterIpc(): void {
+  if (ipcRegistered) return;
+  registerIpc();
+  ipcRegistered = true;
+}
+
+/**
  * Start the update flow for a window. Safe to call unconditionally and more
  * than once — it decides for itself whether this build can update, and says why
  * in the log when it cannot.
  */
 export function initAutoUpdate(win: BrowserWindow): void {
   target = win;
-  if (!ipcRegistered) {
-    registerIpc();
-    ipcRegistered = true;
-  }
+  registerUpdaterIpc();
 
   void (async () => {
     const support = await currentSupport();

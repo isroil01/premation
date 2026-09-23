@@ -53,7 +53,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22, not 20: electron 44 and @electron/rebuild 4 declare node >= 22.12,
+          # and better-sqlite3 13 >= 22 (the local toolchain is 24).
+          node-version: 22
           cache: npm
 
       # Native modules (better-sqlite3) build from source here. They are not
@@ -112,7 +114,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Same as the verify job: native modules are not needed to bench.
@@ -155,11 +157,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      # WITH scripts, unlike the verify job: Electron's postinstall is what
-      # downloads the binary this suite runs.
+      # WITH scripts, unlike the verify job (better-sqlite3's install). The
+      # Electron binary itself is no longer a postinstall since Electron 42: the
+      # first `require('electron')` (Playwright's launch) downloads it.
       - run: npm ci
 
       # Electron is a GUI process and a headless runner has no display. `xvfb`

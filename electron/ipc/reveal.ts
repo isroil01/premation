@@ -20,6 +20,7 @@ import { existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { handle } from '../ipcGuard';
+import { rememberDir, rememberedDir } from '../dialogDirs';
 
 export interface DirEntryDto {
   name: string;
@@ -68,8 +69,10 @@ export function registerRevealIpc(): void {
 
   /** Native folder picker for the media browser's root. Null if cancelled. */
   handle('dialog:pickFolder', async () => {
-    const res = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-    return res.canceled ? null : res.filePaths[0] ?? null;
+    const res = await dialog.showOpenDialog({ ...rememberedDir('media'), properties: ['openDirectory'] });
+    if (res.canceled) return null;
+    rememberDir('media', res.filePaths[0], true);
+    return res.filePaths[0] ?? null;
   });
 
   /**
@@ -79,6 +82,7 @@ export function registerRevealIpc(): void {
    */
   handle('dialog:pickFiles', async () => {
     const res = await dialog.showOpenDialog({
+      ...rememberedDir('media'),
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Media', extensions: ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'mpg', 'mpeg', 'wmv', 'mxf', 'mts', 'm2ts',
@@ -87,7 +91,9 @@ export function registerRevealIpc(): void {
         { name: 'All Files', extensions: ['*'] },
       ],
     });
-    return res.canceled ? null : res.filePaths;
+    if (res.canceled) return null;
+    rememberDir('media', res.filePaths[0], false);
+    return res.filePaths;
   });
 
   /** One level of a directory, hidden entries removed. Null if unreadable. */

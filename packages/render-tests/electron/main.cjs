@@ -217,10 +217,15 @@ app.whenReady().then(() => {
   // CLAIM ABOUT THE RESULTS and has to travel with them, so it is forwarded
   // regardless of level. It goes to stdout (informational) rather than stderr
   // (the failure channel).
-  win.webContents.on('console-message', (_e, level, message) => {
+  //
+  // Electron 35+ puts the details on the event (`level` is now 'debug' | 'info'
+  // | 'warning' | 'error'); the positional (event, level, message) form is
+  // deprecated. 'warning' and 'error' are the old numeric levels 2 and 3.
+  win.webContents.on('console-message', (event) => {
+    const { level, message } = event;
     if (typeof message === 'string' && message.startsWith('[harness]')) {
       process.stdout.write(`${message}\n`);
-    } else if (level >= 2) {
+    } else if (level === 'warning' || level === 'error') {
       process.stderr.write(`[renderer] ${message}\n`);
     }
   });

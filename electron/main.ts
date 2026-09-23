@@ -13,6 +13,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile, stat } from 'node:fs/promises';
 import { writeFileAtomic } from './atomicWrite';
+import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
+import { localFileUrlToPath } from './localFileUrl';
+import { registerRouteCSpikePreload, routeCSpikeEngine, startRouteCSpike } from './routeCSpike';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
@@ -34,7 +37,7 @@ import { registerPluginLoaderIpc } from './pluginLoader';
 import { disposeNativePlugins, registerPluginNativeIpc } from './pluginNativeIpc';
 import { aiEnabled, pluginsEnabled, pluginPublishEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
-import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
+import { checkForUpdatesInteractive, initAutoUpdate, registerUpdaterIpc } from './updater';
 import { nativeTemplateFromGroups, sanitizeMenuGroups, type NativeMenuGroupSpec, type NativeMenuOptions } from './nativeMenu';
 import { CLI_HELP, cliArgs, parseCli, type CliInvocation } from './cliArgs';
 import { runCliAndExit } from './cliRender';
@@ -213,7 +216,8 @@ app.commandLine.appendSwitch('use-angle', 'default');
 // Linux is the one platform where Chromium still gates WebGPU behind Vulkan;
 // without this, `navigator.gpu` is undefined there and the app silently spends
 // its whole life on the WebGL2 fallback. Windows (D3D12) and macOS (Metal)
-// have WebGPU on by default in Electron 32 / Chromium 128, and enabling Vulkan
+// have WebGPU on by default (Electron 32 / Chromium 128 and still on 44 /
+// Chromium 152, where every switch above is still honoured), and enabling Vulkan
 // on those platforms is what conflicts with ANGLE — hence the platform gate.
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('enable-features', 'Vulkan');
@@ -235,9 +239,10 @@ const PROJECT_FILTERS = [
  */
 function registerFileIpc(): void {
   handle('project:open', async () => {
-    const res = await dialog.showOpenDialog({ properties: ['openFile'], filters: PROJECT_FILTERS });
+    const res = await dialog.showOpenDialog({ ...rememberedDir('project'), properties: ['openFile'], filters: PROJECT_FILTERS });
     const filePath = res.filePaths[0];
     if (res.canceled || !filePath) return null;
+    rememberDir('project', filePath, false);
     try {
       const contents = await readFile(filePath, 'utf8');
       return { path: filePath, name: path.basename(filePath), contents };
@@ -382,8 +387,11 @@ function registerBundleIpc(): void {
 
   // Native directory dialog for opening a `.motion` bundle (a directory).
   handle('project:openBundleDir', async () => {
-    const res = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-    return res.canceled ? null : res.filePaths[0] ?? null;
+    const res = await dialog.showOpenDialog({ ...rememberedDir('project'), properties: ['openDirectory'] });
+    if (res.canceled) return null;
+    // The bundle IS the picked directory; the folder worth reopening is its parent.
+    rememberDir('project', res.filePaths[0], false);
+    return res.filePaths[0] ?? null;
   });
 }
 
@@ -1257,8 +1265,10 @@ function registerRenderIpc(): RenderIpcControl {
 
   /** Directory picker for the render queue's output folder. */
   handle('render:chooseOutputDir', async () => {
-    const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-    return res.canceled ? null : (res.filePaths[0] ?? null);
+    const res = await dialog.showOpenDialog({ ...rememberedDir('outputFolder'), properties: ['openDirectory', 'createDirectory'] });
+    if (res.canceled) return null;
+    rememberDir('outputFolder', res.filePaths[0], true);
+    return res.filePaths[0] ?? null;
   });
 
   handle('render:cleanJob', async (_e, jobId: string) => {
@@ -1414,6 +1424,10 @@ function createMainWindow(): BrowserWindow {
         `ipcRenderer`, and reads `process.platform` / `process.versions`, all of
         which a sandboxed preload is given.
 
+        Re-measured on Electron 44.4.3 / Chromium 152 (C4, 2026-09-23): the
+        real app, sandboxed, reports WebGPU `resolvedKind: 'webgpu'` on the dev
+        server, and the hidden export windows render and encode.
+
         Re-measure at the next Electron upgrade rather than trusting this note:
         `electron/sandboxSupport.test.ts` records what was checked and how.
       */
@@ -1462,6 +1476,15 @@ function createMainWindow(): BrowserWindow {
 
   buildApplicationMenu(win);
   if (hasTitleBarOverlay(chrome)) overlayWindows.add(win);
+
+  // Route C spike (dev only, off unless PREMATION_ROUTE_C_SPIKE names a C1
+  // engine binary): engine-rendered GPU textures into this window. Not a
+  // feature — see electron/routeCSpike.ts.
+  const routeCEngine = routeCSpikeEngine(isDev);
+  if (routeCEngine) {
+    registerRouteCSpikePreload(win.webContents.session);
+    win.webContents.once('did-finish-load', () => startRouteCSpike(win, routeCEngine));
+  }
 
   // The renderer draws the bar at first paint, so it reads the chrome off the
   // URL rather than asking over IPC (src/core/config/uiPlatform.ts).
@@ -1672,13 +1695,11 @@ function registerObjectMatteIpc(): void {
 /** Resolve `local-file://` URLs (imported media) to real files on disk. */
 function registerLocalFileProtocol(): void {
   protocol.handle('local-file', (request) => {
-    let filePath = request.url.replace(/^local-file:\/\//, '');
-    filePath = decodeURIComponent(filePath);
-    // On Windows, local-file://C:/... sometimes retains a slash or format that needs normalize/file URL format
-    if (process.platform === 'win32') {
-      filePath = filePath.replace(/^\/([A-Za-z]:)/, '$1');
-    }
-    return net.fetch('file://' + filePath);
+    // Both `local-file://C:/…` (which Chromium ≥ 130 delivers as
+    // `local-file://C/…`) and `local-file:///C:/…` — see localFileUrl.ts.
+    const filePath = localFileUrlToPath(request.url);
+    if (!filePath) return new Response(null, { status: 400 });
+    return net.fetch(pathToFileURL(filePath).href);
   });
 }
 
@@ -1773,6 +1794,10 @@ app.whenReady().then(() => {
 
   // Claim the premation:// scheme so the OAuth callback can hand the code back.
   registerProtocolClient();
+
+  // Where each file dialog last was (Electron 43+ no longer lets the OS
+  // remember — see electron/dialogDirs.ts).
+  initDialogDirs(path.join(app.getPath('userData'), 'dialog-dirs.json'));
 
   registerLocalFileProtocol();
 
@@ -1869,6 +1894,9 @@ app.whenReady().then(() => {
 
   registerEditionReportIpc();
   registerMenuIpc();
+  // Before the window exists: the page asks for the update status during boot,
+  // which on Electron 44 is earlier than `ready-to-show` (see updater.ts).
+  registerUpdaterIpc();
 
   // A normal build is a CLIENT: it talks to a deployed motion-back at the origin
   // baked in by VITE_BACKEND_ORIGIN, or to one you run yourself on localhost:4000
