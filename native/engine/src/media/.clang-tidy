@@ -1,0 +1,24 @@
+# The media module's clang-tidy config: native/.clang-tidy (cppcoreguidelines,
+# bugprone, performance, modernize — every warning an error) plus this
+# directory's headers, minus the checks below, each disabled for a stated reason.
+#
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#       Same reason as render_graph/.clang-tidy: operator[] over fixed-size
+#       uniform packs and loop-bounded plane arrays; ASan covers them.
+#   modernize-use-designated-initializers
+#       FramePick / Plane / TexRef are value tuples; see render_graph.
+#   clang-analyzer-optin.core.EnumCastOutOfRange
+#       Fires inside Dawn's webgpu_enum_class_bitmasks.h on every
+#       `TextureUsage::A | TextureUsage::B` (a combined bitmask is by design not
+#       an enumerator) — the same reason render_graph gives.
+#   cppcoreguidelines-pro-type-union-access / cppcoreguidelines-pro-bounds-array-to-pointer-decay
+#       libav structs (AVFrame::data[], linesize[], comp[]) are C arrays and
+#       unions by design; the *_ffi.cpp files are the only place they appear.
+Checks: >
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -modernize-use-designated-initializers,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay
+InheritParentConfig: true
+HeaderFilterRegex: '.*(native[/\](include|libs)|media)[/\].*'

@@ -27,6 +27,7 @@ void TextureTable::build(const api::RenderFrameFile& file) {
     rb.sampleLinear = t.sample_linear;
     rb.ready = t.ready;
     rb.inputSpace = t.input_space;
+    rb.hash = t.hash;
     byKey_.emplace(t.key, rb);
   }
 }
@@ -75,7 +76,15 @@ wgpu::TextureFormat blob_format(api::RenderTextureFormat f) {
 
 TexRef PassContext::texture(std::string_view key) {
   const ResolvedBlob rb = textures.resolve(key);
-  if (rb.blob == nullptr) return {};
+  if (rb.blob == nullptr) {
+    // E1: pixels the engine produced itself (decoded footage), by hash.
+    if (external == nullptr || rb.hash.empty()) return {};
+    TexRef t = external->external_texture(rb.hash);
+    if (!t) return {};
+    t.sampleLinear = rb.sampleLinear;
+    if (colorSystem != nullptr && colorSystem->active() && rb.inputSpace) return colorSystem->input(t, rb.hash, *rb.inputSpace);
+    return t;
+  }
   const api::RenderBlob& b = *rb.blob;
   TexRef t = dev.texture(b.hash, b.width, b.height, blob_format(b.format), b.pixels, b.mipmapped);
   t.sampleLinear = rb.sampleLinear;

@@ -1,0 +1,27 @@
+# The raster module's clang-tidy config (E3): native/.clang-tidy (cppcoreguidelines,
+# bugprone, performance, modernize — every warning an error) plus this
+# directory's headers, minus the checks below, each disabled for a stated reason.
+#
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#       operator[] on std::vector / std::array. The painters are the TS painters
+#       ported line for line (textLayout.ts, vectorDraw.ts, …) so they stay
+#       reviewable against them; their indices are loop-bounded by the container's
+#       own size. ASan (the sanitizer presets) covers them at runtime.
+#   modernize-use-designated-initializers
+#       Pt / BPt / Gradient::Stop / Mat2D are value tuples mirroring the TS object
+#       literals ({x, y}); naming every field at each site doubles the line
+#       without catching anything the distinct types do not already catch.
+#   bugprone-branch-clone
+#       The ports keep the TS's branch structure (e.g. resolveAlign's switch has
+#       cases with identical bodies) so a diff against the TS stays readable.
+#   cppcoreguidelines-avoid-do-while / readability-function-cognitive-complexity
+#       paintTextInBox / layoutText / layoutVerticalText are single long
+#       functions in the TS; splitting them in the port would break the
+#       one-to-one reading the parity work relies on.
+Checks: >
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -modernize-use-designated-initializers,
+  -bugprone-branch-clone,
+  -readability-function-cognitive-complexity
+InheritParentConfig: true
+HeaderFilterRegex: '.*(native[/\\](include|libs)|raster)[/\\].*'

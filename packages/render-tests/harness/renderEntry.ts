@@ -19,9 +19,11 @@ import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/re
 import { SCENES } from './scenes/registry';
 import type { Scene } from './sceneKit';
 import { registeredEffects } from '@core/plugins/pluginEffects';
-import { BENCH_SCENES } from './benchScenes';
+import { BENCH_SCENES, RASTER_BENCH_SCENES } from './benchScenes';
 import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
+import { setRasterCapture } from '@core/rendering/raster/rasterCapture';
+import { createRasterRecorder } from './rasterRecorder';
 
 /**
  * Block until no registered plugin effect is still `pending`.
@@ -45,7 +47,7 @@ async function waitForPluginEffects(timeoutMs = 8000): Promise<void> {
 }
 
 interface HarnessBridge {
-  config: { backends: BackendChoice[]; only?: string[]; exportScenes?: boolean; bench?: boolean };
+  config: { backends: BackendChoice[]; only?: string[]; exportScenes?: boolean; bench?: boolean; rasterBench?: boolean };
   /**
    * The `native` backend (docs/NATIVE_CORE_PLAN.md D2): one RenderFrameFile per
    * rendered webgpu frame — the FrameScene it was drawn from, for the C++
@@ -552,6 +554,76 @@ async function loadHarnessFonts(): Promise<void> {
   for (const face of faces) document.fonts.add(await face.load());
 }
 
+/**
+ * E3 raster bench (scripts/bench-raster.mjs): the TS text / vector raster time
+ * of an animated scene, frame by frame, measured inside
+ * Canvas2DVectorRasterizer (rasterCapture.ts): `draw` = the painter's Canvas2D
+ * calls, `total` = draw + the texture upload that flushes the canvas (a GPU
+ * canvas rasterises lazily, at that upload). Then a fresh backend re-renders the
+ * first frames with the recorder on and exports them, so premation-raster can
+ * time the C++ side on the same raster sources.
+ */
+async function rasterBenchScene(scene: Scene): Promise<void> {
+  const { graph, anim } = buildSceneOrThrow(scene);
+  const { w, h } = scene.size;
+  const make = async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const be = createRenderBackend('webgpu');
+    be.attach(canvas);
+    be.resize(w, h, 1);
+    be.setExactMediaTiming?.(true);
+    if (be.readyPromise) await be.readyPromise;
+    return be;
+  };
+  const snapAt = (i: number) => buildSnapshot(graph, anim, i / scene.fps, undefined, undefined, exportView(w, h, scene.comp), scene.motionBlur, scene.comp);
+  const be = await make();
+  let begun = 0;
+  let drawMs = 0;
+  let totalMs = 0;
+  let rasters = 0;
+  let frameDraw = 0;
+  let frameTotal = 0;
+  const perFrame: number[] = [];
+  setRasterCapture({
+    begin() { begun = performance.now(); },
+    drawn() { frameDraw += performance.now() - begun; },
+    end() { frameTotal += performance.now() - begun; rasters++; },
+    rasterOf() { return undefined; },
+  });
+  // Frame 0 warms fonts, pipelines and shaders; it is not timed.
+  be.renderFrame(snapAt(0));
+  for (const i of scene.frames) {
+    frameDraw = 0;
+    frameTotal = 0;
+    be.renderFrame(snapAt(i));
+    drawMs += frameDraw;
+    totalMs += frameTotal;
+    perFrame.push(frameTotal);
+  }
+  setRasterCapture(null);
+  be.dispose();
+  perFrame.sort((a, b) => a - b);
+  const n = scene.frames.length;
+  console.log(`[harness] raster-bench ${scene.id} frames=${n} rasters=${rasters} drawMsPerFrame=${(drawMs / n).toFixed(3)} `
+    + `totalMsPerFrame=${(totalMs / n).toFixed(3)} p50TotalMs=${perFrame[n >> 1]!.toFixed(3)}`);
+  // Export frames 1..3 with the recorder, from a fresh backend (a cold raster cache).
+  const ex = await make();
+  ex.captureFrameScenes = true;
+  setRasterCapture(createRasterRecorder());
+  try {
+    for (const i of scene.frames.slice(0, 3)) {
+      ex.renderFrame(snapAt(i));
+      const bytes = await ex.exportLastFrameScene?.(scene.id, i);
+      if (bytes) await window.harnessBridge.sceneFile!({ sceneId: scene.id, frame: i, bytes });
+    }
+  } finally {
+    setRasterCapture(null);
+    ex.dispose();
+  }
+}
+
 async function main(): Promise<void> {
   // No wall clock on an offline render: `requestAnimationFrame` in an offscreen
   // Electron window is throttled (and can stop firing once occluded), so the
@@ -559,6 +631,16 @@ async function main(): Promise<void> {
   setMediaRepaintScheduler(syncFlushScheduler);
   try {
     await loadHarnessFonts();
+    if (window.harnessBridge.config.rasterBench) {
+      for (const scene of RASTER_BENCH_SCENES) await rasterBenchScene(scene);
+      await window.harnessBridge.manifest([]);
+      await window.harnessBridge.done();
+      return;
+    }
+    // E3: with FrameScene export on, every text / vector raster also exports
+    // what it was drawn from (rasterRecorder.ts). Recording forwards every call
+    // unchanged, so the rendered pixels are the same with or without it.
+    if (window.harnessBridge.config.exportScenes) setRasterCapture(createRasterRecorder());
     const backends = window.harnessBridge.config.backends;
     /*
       Debug-only scene filter. Empty means every scene, which is what the gate

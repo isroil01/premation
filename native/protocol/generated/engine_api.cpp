@@ -1399,6 +1399,22 @@ bool from_u32(std::uint32_t n, RenderParamKind& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(RenderRasterKind v) noexcept {
+  switch (v) {
+    case RenderRasterKind::text: return "text";
+    case RenderRasterKind::path: return "path";
+    case RenderRasterKind::mask: return "mask";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderRasterKind& out) noexcept {
+  switch (n) {
+    case 0: out = RenderRasterKind::text; return true;
+    case 1: out = RenderRasterKind::path; return true;
+    case 2: out = RenderRasterKind::mask; return true;
+    default: return false;
+  }
+}
 
 void encode(wire::Writer& w, const Empty& v) {
   (void)w;
@@ -20265,6 +20281,102 @@ Status decode(wire::Reader& r, RenderShaderSource& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const RenderRasterSource& v) {
+  w.varint(10U); w.str(v.key);
+  w.varint(16U); w.varint(static_cast<std::uint32_t>(v.kind));
+  w.varint(26U); w.str(v.cache_key);
+  w.varint(32U); w.varint(v.width);
+  w.varint(40U); w.varint(v.height);
+  w.varint(49U); w.f64(v.resolution_scale);
+  w.varint(57U); w.f64(v.padding);
+  w.varint(66U); w.str(v.spec_json);
+  w.varint(74U); w.str(v.ops_json);
+  w.varint(82U); w.str(v.incomplete);
+}
+
+Status decode(wire::Reader& r, RenderRasterSource& out) {
+  bool has_key = false;
+  bool has_kind = false;
+  bool has_cache_key = false;
+  bool has_width = false;
+  bool has_height = false;
+  bool has_resolution_scale = false;
+  bool has_padding = false;
+  bool has_spec_json = false;
+  bool has_ops_json = false;
+  bool has_incomplete = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.key)) return Status::truncated;
+        has_key = true;
+        break;
+      }
+      case 16U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.kind)) return Status::bad_enum; }
+        has_kind = true;
+        break;
+      }
+      case 26U: {
+        if (!r.str(out.cache_key)) return Status::truncated;
+        has_cache_key = true;
+        break;
+      }
+      case 32U: {
+        if (!r.u32(out.width)) return Status::bad_value;
+        has_width = true;
+        break;
+      }
+      case 40U: {
+        if (!r.u32(out.height)) return Status::bad_value;
+        has_height = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.resolution_scale)) return Status::truncated;
+        has_resolution_scale = true;
+        break;
+      }
+      case 57U: {
+        if (!r.f64(out.padding)) return Status::truncated;
+        has_padding = true;
+        break;
+      }
+      case 66U: {
+        if (!r.str(out.spec_json)) return Status::truncated;
+        has_spec_json = true;
+        break;
+      }
+      case 74U: {
+        if (!r.str(out.ops_json)) return Status::truncated;
+        has_ops_json = true;
+        break;
+      }
+      case 82U: {
+        if (!r.str(out.incomplete)) return Status::truncated;
+        has_incomplete = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_key) return Status::missing_field;
+  if (!has_kind) return Status::missing_field;
+  if (!has_cache_key) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  if (!has_resolution_scale) return Status::missing_field;
+  if (!has_padding) return Status::missing_field;
+  if (!has_spec_json) return Status::missing_field;
+  if (!has_ops_json) return Status::missing_field;
+  if (!has_incomplete) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const RenderFrameFile& v) {
   w.varint(8U); w.varint(v.format_version);
   w.varint(18U); w.str(v.scene_id);
@@ -20274,6 +20386,7 @@ void encode(wire::Writer& w, const RenderFrameFile& v) {
   for (const auto& e : v.textures) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   for (const auto& e : v.blobs) { w.varint(58U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   for (const auto& e : v.shaders) { w.varint(66U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.rasters) { w.varint(74U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, RenderFrameFile& out) {
@@ -20326,6 +20439,11 @@ Status decode(wire::Reader& r, RenderFrameFile& out) {
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         break;
       }
+      case 74U: {
+        auto& e = out.rasters.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -20350,7 +20468,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 357> kNames = {
+constexpr std::array<std::string_view, 358> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -20702,6 +20820,7 @@ constexpr std::array<std::string_view, 357> kNames = {
     "RenderTextureRef",
     "RenderBlob",
     "RenderShaderSource",
+    "RenderRasterSource",
     "RenderFrameFile",
     "Command",
     "CommandResult",
@@ -21065,6 +21184,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "RenderTextureRef") return roundtrip<RenderTextureRef>(bytes, out);
   if (type == "RenderBlob") return roundtrip<RenderBlob>(bytes, out);
   if (type == "RenderShaderSource") return roundtrip<RenderShaderSource>(bytes, out);
+  if (type == "RenderRasterSource") return roundtrip<RenderRasterSource>(bytes, out);
   if (type == "RenderFrameFile") return roundtrip<RenderFrameFile>(bytes, out);
   if (type == "Command") return roundtrip<Command>(bytes, out);
   if (type == "CommandResult") return roundtrip<CommandResult>(bytes, out);

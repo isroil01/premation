@@ -19,11 +19,15 @@
 namespace premation::rg {
 
 class ColorSystem;
+class ExternalTextureSource;
 
 struct RendererOptions {
   /// PCI vendor id to render on (0 = power preference decides).
   std::uint32_t vendorId = 0;
   bool highPerformance = true;
+  /// E1: further device features to request when the adapter offers them
+  /// (media::wanted_device_features — shared-surface import, multi-planar video formats).
+  std::vector<wgpu::FeatureName> optionalFeatures;
 };
 
 /// A read-back frame: top-down RGBA8, PREMULTIPLIED (the golden-reference convention).
@@ -76,12 +80,15 @@ class SceneRenderer {
   [[nodiscard]] Device& device() noexcept { return *dev_; }
   [[nodiscard]] RenderGraph& graph() noexcept { return *graph_; }
   [[nodiscard]] ColorSystem& color_system() noexcept { return *colorSystem_; }
+  /// E1: where hashes with no blob resolve (the media system); nullptr = none.
+  void set_external_textures(ExternalTextureSource* source) noexcept { external_ = source; }
 
  private:
   SceneRenderer() = default;
   std::unique_ptr<Device> dev_;
   std::unique_ptr<RenderGraph> graph_;
   std::unique_ptr<ColorSystem> colorSystem_;
+  ExternalTextureSource* external_ = nullptr;
   wgpu::Texture surface_;
   wgpu::TextureView surfaceView_;
   std::uint32_t surfaceW_ = 0;

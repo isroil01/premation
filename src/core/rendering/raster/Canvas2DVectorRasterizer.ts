@@ -24,6 +24,7 @@ import {
 import type { Stroke } from '@core/paint/stroke';
 import { paintTextInBox } from './textPaint';
 import { drawPaint, hasPaintStrokes } from '@core/paint/paintRaster';
+import { rasterCapture } from './rasterCapture';
 
 /** Cache statistics reported by the rasterizer (defined locally — not in @motion/renderer). */
 export interface RasterStats {
@@ -222,7 +223,14 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
     this.misses++;
 
+    // E3 parity harness (rasterCapture.ts): null outside the harness.
+    const capture = rasterCapture();
+    capture?.begin({
+      kind: String((drawable as { kind?: unknown }).kind ?? 'path'), cacheKey: key, drawable, resolutionScale, padding,
+      deviceMax: this.deviceMax,
+    });
     const canvas = this.drawToCanvas(drawable, resolutionScale, padding);
+    capture?.drawn?.();
 
     const tex = this.resources.texture(
       poolKeyFor(key),
@@ -230,6 +238,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
+    capture?.end({ canvas, texture: tex });
 
     // LRU cache insertion & eviction
     const bytes = canvas.width * canvas.height * 4;

@@ -25,11 +25,13 @@ import {
   type RenderFrameFile,
   type RenderLight3D,
   type RenderOverlays,
+  type RenderRasterSource,
   type RenderTextureFormat,
   type RenderTextureRef,
   type Renderable as WireRenderable,
 } from '@motion/engine-api';
 import type { FrameScene, Renderable, SceneLight3D } from '@motion/renderer';
+import type { CapturedRaster } from './raster/rasterCapture';
 
 type EnvironmentMap = NonNullable<FrameScene['envMap']>;
 
@@ -104,6 +106,8 @@ export interface ResolvedTextureInfo {
   sampleLinear: boolean;
   ready: boolean;
   read(): Promise<TextureReadback | null>;
+  /** E3: what a text / vector raster was drawn from, when a raster capture recorded it (raster/rasterCapture.ts). */
+  raster?: CapturedRaster;
 }
 
 export type TextureResolver = (key: string) => ResolvedTextureInfo | null;
@@ -461,6 +465,7 @@ export function frameSceneToWire(capture: FrameCapture, sceneId: string, frame: 
     textures: [],
     blobs: [],
     shaders: [],
+    rasters: [],
   };
   return { file, keys: [...keys].sort(), shaders: [...shaders].sort() };
 }
@@ -484,8 +489,10 @@ export async function exportFrameFile(
   }
   const refs: RenderTextureRef[] = [];
   const blobs = new Map<string, RenderBlob>();
+  const rasters: RenderRasterSource[] = [];
   for (const key of keys) {
     const info = resolve(key);
+    if (info?.raster) rasters.push({ key, ...info.raster });
     if (!info) {
       refs.push({ key, hash: '', sampleLinear: false, ready: false });
       continue;
@@ -505,5 +512,6 @@ export async function exportFrameFile(
   }
   file.textures = refs;
   file.blobs = [...blobs.values()];
+  file.rasters = rasters;
   return codecs.RenderFrameFile.encode(file);
 }

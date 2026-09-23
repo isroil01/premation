@@ -104,6 +104,9 @@ std::unique_ptr<SceneRenderer> SceneRenderer::create(const RendererOptions& opti
   const bool f32Blend = adapter.HasFeature(wgpu::FeatureName::Float32Blendable);
   if (f32Filter) features.push_back(wgpu::FeatureName::Float32Filterable);
   if (f32Blend) features.push_back(wgpu::FeatureName::Float32Blendable);
+  for (const wgpu::FeatureName f : options.optionalFeatures) {
+    if (adapter.HasFeature(f)) features.push_back(f);
+  }
   wgpu::DeviceDescriptor dd{};
   dd.requiredFeatureCount = features.size();
   dd.requiredFeatures = features.data();
@@ -172,6 +175,7 @@ bool SceneRenderer::render(const api::RenderFrameFile& file, Frame* readback, Fr
     default: ctx.color.display = DisplayTransform::srgb; break;
   }
   ctx.color.bitDepth = file.view.bit_depth;
+  ctx.external = external_;
   if (file.view.frame_clip) {
     // WebGPUBackend.beginRenderPass: round + clamp the clip to the surface.
     const auto& c = *file.view.frame_clip;

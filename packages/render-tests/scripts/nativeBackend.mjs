@@ -84,6 +84,42 @@ export async function runNativeRenderer({ exe, scenesDir, outDir, reportFile, on
   });
 }
 
+/**
+ * E3: `premation-raster` (native/engine/tools/premation_raster.cpp) —
+ * NATIVE_RASTER_EXE, else the engine preset builds.
+ */
+export function findRasterExe(repoRoot) {
+  if (process.env.NATIVE_RASTER_EXE) return existsSync(process.env.NATIVE_RASTER_EXE) ? process.env.NATIVE_RASTER_EXE : null;
+  const exe = process.platform === 'win32' ? 'premation-raster.exe' : 'premation-raster';
+  for (const p of ['windows-clang-cl-engine', 'linux-clang-engine', 'macos-clang-engine']) {
+    const f = path.join(repoRoot, 'native', 'build', p, 'engine', exe);
+    if (existsSync(f)) return f;
+  }
+  return null;
+}
+
+/**
+ * E3 `native-raster` backend, step 1: draw every recorded text / vector raster
+ * with the C++ painters (native mode) and write the frames that carry one again
+ * with the C++ texels substituted (`--emit`). Rasters the painters do not
+ * implement yet keep their TS texels. The frames are then rendered by
+ * premation-render exactly like the `native` backend's.
+ */
+export async function runNativeRaster({ exe, scenesDir, outScenesDir, fontsFile, reportFile, only }) {
+  rmSync(outScenesDir, { recursive: true, force: true });
+  rmSync(reportFile, { force: true });
+  // The Chromium-parity glyph profile (FontOptions::chromium_windows) where the
+  // TS rasters came from Chromium on Windows; the portable FreeType profile elsewhere.
+  const profile = process.platform === 'win32' ? 'chromium' : 'portable';
+  return new Promise((resolve) => {
+    const args = ['--batch', scenesDir, '--fonts', fontsFile, '--mode', 'native', '--profile', profile, '--emit', outScenesDir, '--report', reportFile];
+    if (only && only.length) args.push('--only', only.join(','));
+    const child = spawn(exe, args, { stdio: ['ignore', 'inherit', 'inherit'] });
+    child.on('exit', (code) => resolve(code ?? 1));
+    child.on('error', () => resolve(1));
+  });
+}
+
 /** Scene id → family, for the per-family table. First matching prefix wins. */
 const FAMILIES = [
   ['blend-', 'blend modes'],
@@ -141,6 +177,9 @@ async function readJson(file, fallback) {
  */
 export async function gateNative(scenes, opts) {
   const { actualDir, referencesDir, reportFile, baselineFile, updateBaseline, compareFrames, readPngSafe, tolerance, slack, tighten } = opts;
+  // 'native' (TS rasters in the FrameScene) or 'native-raster' (E3: the C++ rasters substituted).
+  const backendDir = opts.backendDir ?? 'native';
+  const title = opts.title ?? 'native pixel parity (C++ render graph vs the TS WebGPU frame of the same FrameScene)';
   const report = await readJson(reportFile, null);
   if (!report) {
     process.stdout.write('\n' + red('  native: no report from premation-render — the renderer did not run.\n'));
@@ -188,7 +227,7 @@ export async function gateNative(scenes, opts) {
         errors.push({ id, why: rep.error ?? rep.status });
         continue;
       }
-      const native = await readPngSafe(path.join(actualDir, 'native', s.id, `${frame}.png`));
+      const native = await readPngSafe(path.join(actualDir, backendDir, s.id, `${frame}.png`));
       if (!native) { errors.push({ id, why: 'reported rendered but no PNG' }); continue; }
       ported++;
       row.ported++;
@@ -222,7 +261,7 @@ export async function gateNative(scenes, opts) {
     }
   }
 
-  process.stdout.write('\n' + dim('  native pixel parity (C++ render graph vs the TS WebGPU frame of the same FrameScene):\n'));
+  process.stdout.write('\n' + dim(`  ${title}:\n`));
   process.stdout.write(dim(`  - adapter: ${report.adapter ?? '?'} (${report.backend ?? '?'})\n`));
   process.stdout.write(dim(`  - ${ported}/${total} frame(s) ported; ${passing}/${ported} within the scene tolerance of webgpu; `
     + `${refMatches}/${ported} also match the committed reference\n`));
@@ -230,7 +269,11 @@ export async function gateNative(scenes, opts) {
   for (const d of inexact.sort((a, b) => b.maxDelta - a.maxDelta).slice(0, 8)) {
     process.stdout.write(dim(`      not bit-exact: ${d.id} max Δ ${d.maxDelta}/255\n`));
   }
-  if (notExported > 0) process.stdout.write(yellow(`  - ${notExported} frame(s) had no exported FrameScene\n`));
+  if (notExported > 0) {
+    process.stdout.write(backendDir === 'native'
+      ? yellow(`  - ${notExported} frame(s) had no exported FrameScene\n`)
+      : dim(`  - ${notExported} frame(s) carry no C++-drawn raster (no text/vector layer, or only not-ported ones) — the native frames stand for them\n`));
+  }
   process.stdout.write(dim('  family                   ported/total  passing\n'));
   for (const [name, r] of [...fam.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     process.stdout.write(dim(`    ${name.padEnd(24)} ${`${r.ported}/${r.total}`.padStart(9)}  ${String(r.passing).padStart(7)}\n`));
@@ -246,8 +289,10 @@ export async function gateNative(scenes, opts) {
 
   if (updateBaseline) {
     const body = {
-      _comment:
-        'Ceilings for how far the C++ render graph (native backend) may differ from the TS WebGPU frame of the SAME FrameScene. '
+      _comment: (backendDir === 'native'
+        ? 'Ceilings for how far the C++ render graph (native backend) may differ from the TS WebGPU frame of the SAME FrameScene. '
+        : 'Ceilings for how far frames drawn with the C++ text/vector rasters (native-raster backend, E3) may differ from the TS '
+          + 'WebGPU frame of the SAME FrameScene. ')
         + 'A LIST OF DEBTS: every entry is an undiagnosed C++-vs-TS disagreement on a ported scene. Frames not ported yet are '
         + 'not listed (they are reported, never failed). Entries are meant to be removed.',
       tolerance,

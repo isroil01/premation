@@ -728,6 +728,14 @@ enum class RenderParamKind : std::uint32_t {
 [[nodiscard]] std::string_view to_string(RenderParamKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, RenderParamKind& out) noexcept;
 
+enum class RenderRasterKind : std::uint32_t {
+  text = 0,
+  path = 1,
+  mask = 2,
+};
+[[nodiscard]] std::string_view to_string(RenderRasterKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderRasterKind& out) noexcept;
+
 struct Empty;
 struct Vec2;
 struct Vec3;
@@ -1084,6 +1092,7 @@ struct RenderView;
 struct RenderTextureRef;
 struct RenderBlob;
 struct RenderShaderSource;
+struct RenderRasterSource;
 struct RenderFrameFile;
 
 struct Empty {
@@ -4215,6 +4224,20 @@ struct RenderShaderSource {
   bool operator==(const RenderShaderSource&) const = default;
 };
 
+struct RenderRasterSource {
+  std::string key;
+  RenderRasterKind kind = RenderRasterKind::text;
+  std::string cache_key;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  double resolution_scale = 0.0;
+  double padding = 0.0;
+  std::string spec_json;
+  std::string ops_json;
+  std::string incomplete;
+  bool operator==(const RenderRasterSource&) const = default;
+};
+
 struct RenderFrameFile {
   std::uint32_t format_version = 0;
   std::string scene_id;
@@ -4224,6 +4247,7 @@ struct RenderFrameFile {
   std::vector<RenderTextureRef> textures;
   std::vector<RenderBlob> blobs;
   std::vector<RenderShaderSource> shaders;
+  std::vector<RenderRasterSource> rasters;
   bool operator==(const RenderFrameFile&) const = default;
 };
 
@@ -4939,6 +4963,8 @@ void encode(wire::Writer& w, const RenderBlob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderBlob& out);
 void encode(wire::Writer& w, const RenderShaderSource& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderShaderSource& out);
+void encode(wire::Writer& w, const RenderRasterSource& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderRasterSource& out);
 void encode(wire::Writer& w, const RenderFrameFile& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderFrameFile& out);
 

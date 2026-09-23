@@ -311,6 +311,28 @@ program so output views stop using the lattice (1.5e-2 in gamut at 65³ today),
 | E3 | Text and vector with Skia + HarfBuzz; bidi, vertical, kinsoku parity with today | Noto text goldens match; animated-text bench ≥ 3× | 8 wk |
 | E4 | Effects: GPU effects keep their WGSL; the 28 Canvas2D-only effects and 44 CPU bake sites become SIMD kernels on all cores | No effect drops the bench comp below 24 fps; golden parity | 8–10 wk |
 
+**E3 progress (2026-09-24, uncommitted on `native-core`).** `native/engine/src/raster`
+is a Canvas2D-semantics layer on Skia's CPU raster backend (Chromium's canvas is
+Skia) with call-for-call ports of the TS vector, mask and text painters, HarfBuzz
+shaping with Blink's font funcs, SheenBidi, and the vertical / TCY / kinsoku /
+optical-kerning layout; see `native/README.md` § Text and vector rasters. The
+TS side gained one export path: `rasterCapture.ts`, a hook in
+`Canvas2DVectorRasterizer.rasterize`, and `RenderFrameFile.rasters` (schema
+`96_render.eapi`), recorded only by the render-tests harness. Parity against
+Chromium's software canvas, per raster (263 rasters, `premation-raster --mode native`):
+blend 36/36, effects 77/77, masks 18/18 and "other" 47/48 ported rasters are within
+1/255. Shapes, strokes and text are all within 16/255, except that text-optical-kerning
+glyphs land ≈0.1 px off. In replay mode, text is 28/28 within 16/255 and
+measureText 183/183 exact. Whole frames drawn with C++ rasters: 211/213 within the
+scene tolerance of webgpu, and 1 ceiling in `native-raster-baseline.json`
+(effect-posterize: GPU-canvas ellipse AA amplified by posterize). Bench
+(`bench-raster.mjs`, RTX 4060 laptop): 200 animated text layers, TS 344.7 ms/frame
+(GPU canvas draw + upload) vs C++ 95.8 ms on 1 thread (3.6×) and 26.6 ms on 16 threads
+(13×). 1000 animated paths, TS 1762.9 ms/frame vs C++ 175.4 ms (10×) and 24.5 ms (72×).
+Open: the GPU (Graphite) raster path, CPU-baked effect chains (E4), paint strokes,
+vertical optical kerning, alias FontFace features, Intl word breaks, macOS / Linux
+system fonts.
+
 ### Phase F — Export and ownership
 
 | Step | What | Exit | Size |

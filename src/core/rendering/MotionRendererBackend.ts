@@ -28,6 +28,7 @@ import {
   type FrameScene,
 } from '@motion/renderer';
 import { exportFrameFile, type FrameCapture } from './frameSceneExport';
+import { rasterSourceOf } from './raster/rasterCapture';
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, takeSceneLayerErrors, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { framePerf, perfBegin, perfEnd, PerfStage } from '@core/perf/framePerf';
@@ -1401,7 +1402,10 @@ export class MotionRendererBackend implements RenderBackend {
     return exportFrameFile(cap, sceneId, frame, (key) => {
       const res = textures.get(key);
       if (!res) return null;
-      return { sampleLinear: !!res.sampleLinear, ready: res.ready, read: () => read(res.texture) };
+      // E3: a harness raster capture (raster/rasterCapture.ts) files each text /
+      // vector raster's source under its texture; absent everywhere else.
+      const raster = rasterSourceOf(res.texture);
+      return { sampleLinear: !!res.sampleLinear, ready: res.ready, read: () => read(res.texture), ...(raster ? { raster } : {}) };
     }, (name) => registry.get(name)?.wgsl);
   }
 

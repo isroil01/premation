@@ -17,6 +17,23 @@ namespace premation::rg {
 
 class ColorSystem;
 
+/// E1: textures another engine system owns (the media system's decoded video
+/// frames), named by the RenderTextureRef.hash a frame carries with no blob.
+/// Called on the render thread, during the frame; an empty TexRef = not
+/// available (the draw is skipped, as for an unresolved key). TexRef.id must be
+/// stable per texture object and must not collide with Device ids (use the
+/// high bit).
+class ExternalTextureSource {
+ public:
+  ExternalTextureSource() = default;
+  virtual ~ExternalTextureSource() = default;
+  ExternalTextureSource(const ExternalTextureSource&) = delete;
+  ExternalTextureSource& operator=(const ExternalTextureSource&) = delete;
+  ExternalTextureSource(ExternalTextureSource&&) = delete;
+  ExternalTextureSource& operator=(ExternalTextureSource&&) = delete;
+  [[nodiscard]] virtual TexRef external_texture(std::string_view hash) = 0;
+};
+
 /// Viewport + Camera2D (viewport/Viewport.ts, camera/Camera2D.ts).
 struct ViewportState {
   double cssWidth = 1, cssHeight = 1, dpr = 1;
@@ -66,6 +83,8 @@ struct PassContext {
   Scope3D scope;
   /// D3 colour management for this frame (nullptr / inactive = today's pipeline).
   ColorSystem* colorSystem = nullptr;
+  /// E1: engine-produced textures (nullptr = only the frame file's blobs).
+  ExternalTextureSource* external = nullptr;
 
   /// ctx.target(name): nullptr = the surface (or an undeclared name).
   [[nodiscard]] RenderTarget* target(std::string_view name) const {

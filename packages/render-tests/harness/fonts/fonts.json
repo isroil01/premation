@@ -1,0 +1,13 @@
+{
+  "_comment": "The faces renderEntry.ts loadHarnessFonts() registers, for the C++ rasterizer (premation-render --fonts). Keep the two lists identical: same family, weight, unicode-range and file.",
+  "faces": [
+    { "family": "Arial", "weight": 400, "style": "normal", "file": "arimo-latin-400-normal.woff2" },
+    { "family": "Arial", "weight": 700, "style": "normal", "file": "arimo-latin-700-normal.woff2" },
+    { "family": "Arial", "weight": 400, "style": "normal", "file": "noto-sans-arabic/noto-sans-arabic-400-subset.woff2",
+      "unicodeRange": "U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF" },
+    { "family": "Arial", "weight": 400, "style": "normal", "file": "noto-sans-hebrew/noto-sans-hebrew-400-subset.woff2",
+      "unicodeRange": "U+0590-05FF, U+FB1D-FB4F" },
+    { "family": "Arial", "weight": 400, "style": "normal", "file": "noto-sans-jp/noto-sans-jp-400-subset.woff2",
+      "unicodeRange": "U+3000-30FF, U+4E00-9FFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF" }
+  ]
+}

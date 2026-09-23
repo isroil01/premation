@@ -1,0 +1,35 @@
+# The audio module's clang-tidy config: native/.clang-tidy (cppcoreguidelines,
+# bugprone, performance, modernize — every warning an error) plus this
+# directory's headers, minus the checks below, each disabled for a stated reason.
+#
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#       operator[] over the render quantum's fixed-size arrays and the DSP
+#       state (delay lines, FFT bins, kernels), loop-bounded by their own
+#       sizes; `.at()` puts a branch and a throw path into every sample of
+#       every voice on the audio thread. ASan covers them at runtime.
+#   cppcoreguidelines-pro-bounds-constant-array-index
+#       The same indexing through std::array (the quantum's per-channel
+#       planes, per-sample parameter values, ring slots), always bounded by
+#       the loop or a mask of the array's own power-of-two size.
+#   cppcoreguidelines-pro-bounds-pointer-arithmetic
+#       Planar sample pointers (float* per channel, per quantum) are the DSP
+#       interface — the Web Audio model this module ports; spans would be
+#       rebuilt per call on the hot path.
+#   modernize-use-designated-initializers
+#       Anchor / QuantumClock / Tol are value tuples; see render_graph.
+#   bugprone-float-loop-counter, clang-analyzer-security.FloatLoopCounter
+#       voice_build.cpp accumulates `t += step` as audioRetimeSegments.ts
+#       does: the same float accumulation gives the same segment edges.
+#   cppcoreguidelines-pro-type-union-access / cppcoreguidelines-pro-bounds-array-to-pointer-decay
+#       libav structs (AVFrame::extended_data, ch_layout) in audio_decode_ffi.cpp.
+Checks: >
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -modernize-use-designated-initializers,
+  -bugprone-float-loop-counter,
+  -clang-analyzer-security.FloatLoopCounter,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay
+InheritParentConfig: true
+HeaderFilterRegex: '.*(native[/\](include|libs)|audio)[/\].*'

@@ -1,0 +1,7 @@
+{
+  "_comment": "Ceilings for how far frames drawn with the C++ text/vector rasters (native-raster backend, E3) may differ from the TS WebGPU frame of the SAME FrameScene. A LIST OF DEBTS: every entry is an undiagnosed C++-vs-TS disagreement on a ported scene. Frames not ported yet are not listed (they are reported, never failed). Entries are meant to be removed.",
+  "tolerance": 0.01,
+  "frames": {
+    "effect-posterize#0": 0.01105
+  }
+}

@@ -303,3 +303,225 @@ if(TARGET engine_fuzz)
     target_compile_definitions(engine_fuzz PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv/fopen in the harness
   endif()
 endif()
+
+# ── E1: media — footage decode (src/media; kept in its own block) ────────────
+#   engine_media_core  GPU-free, ffmpeg-free: frame index (+1 µs rule), time
+#                      mapping (loop / posterize / stretch / pulldown / frame
+#                      blending), decoded-frame LRU cache, Y'CbCr matrices
+#   engine_media       ffmpeg (vcpkg `engine` feature): probe, demux, decode
+#                      (hardware via d3d11va/videotoolbox/vaapi/nvdec, software
+#                      fallback), MediaSystem (worker per source, latest-wins
+#                      seeks, readahead). libav* only in decoder_ffi.cpp; D3D11
+#                      only in d3d11_ffi.cpp
+#   engine_media_gpu   Dawn: decoded frame → RGBA16F texture (planes uploaded
+#                      as-is, or a hardware surface imported zero-copy) and the
+#                      render graph's ExternalTextureSource for media hashes
+#   premation-decode-bench   scrub latency / playback fps / CPU / memory
+add_library(engine_media_core STATIC
+  src/media/frame_index.cpp
+  src/media/time_map.cpp
+  src/media/frame_cache.cpp
+  src/media/yuv.cpp
+)
+target_include_directories(engine_media_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
+target_compile_features(engine_media_core PUBLIC cxx_std_20)
+target_link_libraries(engine_media_core PRIVATE motion::options)
+
+find_package(FFMPEG QUIET)
+if(FFMPEG_FOUND)
+  add_library(engine_media STATIC src/media/decoder_ffi.cpp src/media/media_system.cpp)
+  if(WIN32)
+    target_sources(engine_media PRIVATE src/media/d3d11_ffi.cpp)
+    target_link_libraries(engine_media PRIVATE d3d11 dxgi)
+    target_compile_definitions(engine_media PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  endif()
+  target_include_directories(engine_media SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  target_link_directories(engine_media PUBLIC ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(engine_media PUBLIC engine_media_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  target_compile_definitions(engine_media PUBLIC PREMATION_HAVE_MEDIA=1)
+  if(TARGET engine_render_graph)
+    add_library(engine_media_gpu STATIC src/media/frame_convert.cpp src/media/media_textures.cpp src/media/platform_ffi.cpp)
+    if(WIN32)
+      target_compile_definitions(engine_media_gpu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+      target_link_libraries(engine_media_gpu PRIVATE d3d11 dxgi d3d12 psapi)
+    endif()
+    target_link_libraries(engine_media_gpu PUBLIC engine_media engine_render_graph dawn::webgpu_dawn PRIVATE motion::options)
+    add_executable(premation-decode-bench tools/premation_decode_bench.cpp)
+    target_link_libraries(premation-decode-bench PRIVATE engine_media_gpu motion::options)
+  endif()
+else()
+  message(STATUS "premation-engine: ffmpeg not found — media (E1) builds its GPU-free core only")
+endif()
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_media_tests tests/test_media.cpp)
+  target_link_libraries(engine_media_tests PRIVATE engine_media_core motion::options Catch2::Catch2WithMain)
+  if(TARGET engine_media)
+    target_sources(engine_media_tests PRIVATE tests/test_media_decode.cpp tests/media_fixture_ffi.cpp)
+    target_include_directories(engine_media_tests SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(engine_media_tests PRIVATE engine_media)
+    target_compile_definitions(engine_media_tests PRIVATE
+      PREMATION_MEDIA_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/video/__fixtures__")
+  endif()
+  if(TARGET engine_media_gpu)
+    target_sources(engine_media_tests PRIVATE tests/test_media_gpu.cpp)
+    target_link_libraries(engine_media_tests PRIVATE engine_media_gpu)
+    if(WIN32 AND DEFINED _dxc_bin)
+      add_custom_command(TARGET engine_media_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxc_bin}/dxcompiler.dll" "${_dxc_bin}/dxil.dll"
+                "$<TARGET_FILE_DIR:engine_media_tests>"
+        VERBATIM)
+    endif()
+  endif()
+  if(MSVC)
+    target_compile_definitions(engine_media_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv / tmpnam in fixtures
+  endif()
+  add_test(NAME engine_media_tests COMMAND engine_media_tests --reporter compact)
+endif()
+
+# ── E3: text + vector rasterisation (src/raster; kept in its own block) ─────
+#   engine_raster_core  Skia-free: JSON, CSS values (colour / font / filter)
+#   engine_raster       the Canvas2D semantics on Skia's CPU raster backend
+#                       (canvas_ffi), fonts (FreeType + woff2) + HarfBuzz shaping
+#                       + SheenBidi (fonts_ffi), the recorded-call replayer and
+#                       the painters ported from src/core/rendering/raster
+#                       (vector_paint, text_paint). Skia / HarfBuzz / FreeType /
+#                       SheenBidi / woff2 only in *_ffi.cpp (vcpkg `engine`).
+#   premation-raster    parity harness (vs the TS rasters exported with each
+#                       golden FrameScene) + the raster bench
+add_library(engine_raster_core STATIC src/raster/json.cpp src/raster/css.cpp)
+target_include_directories(engine_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/raster)
+target_compile_features(engine_raster_core PUBLIC cxx_std_20)
+target_link_libraries(engine_raster_core PRIVATE motion::options)
+
+find_package(unofficial-skia CONFIG QUIET)
+find_package(harfbuzz CONFIG QUIET)
+find_package(SheenBidi CONFIG QUIET)
+find_package(unofficial-brotli CONFIG QUIET)
+find_library(PREMATION_WOFF2DEC woff2dec)
+find_library(PREMATION_WOFF2COMMON woff2common)
+if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenBidi::SheenBidi AND PREMATION_WOFF2DEC)
+  add_library(engine_raster STATIC
+    src/raster/canvas.cpp
+    src/raster/canvas_ffi.cpp
+    src/raster/fonts_ffi.cpp
+    src/raster/bidi_ffi.cpp
+    src/raster/text_unicode.cpp
+    src/raster/text_layout.cpp
+    src/raster/canvas_replay.cpp
+    src/raster/paint_common.cpp
+    src/raster/vector_paint.cpp
+    src/raster/mask_paint.cpp
+    src/raster/optical_kerning.cpp
+    src/raster/text_paint.cpp
+    src/raster/raster_source.cpp
+  )
+  target_link_libraries(engine_raster
+    PUBLIC engine_raster_core motion::jsmath
+    PRIVATE unofficial::skia::skia harfbuzz::harfbuzz SheenBidi::SheenBidi ${PREMATION_WOFF2DEC} ${PREMATION_WOFF2COMMON}
+            unofficial::brotli::brotlidec unofficial::brotli::brotlicommon motion::options)
+  target_compile_definitions(engine_raster PUBLIC PREMATION_HAVE_RASTER=1)
+  if(MSVC)
+    target_compile_options(engine_raster PRIVATE /bigobj)
+  endif()
+
+  add_executable(premation-raster tools/premation_raster.cpp)
+  target_include_directories(premation-raster PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  target_link_libraries(premation-raster PRIVATE engine_raster engine_protocol motion::options)
+  if(MSVC)
+    target_compile_definitions(premation-raster PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+else()
+  message(STATUS "premation-engine: Skia / HarfBuzz / SheenBidi / woff2 not found — E3 builds its Skia-free core only")
+endif()
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_raster_tests tests/test_raster.cpp)
+  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
+  if(TARGET engine_raster)
+    target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp)
+    target_link_libraries(engine_raster_tests PRIVATE engine_raster)
+    target_compile_definitions(engine_raster_tests PRIVATE
+      PREMATION_RASTER_FONTS="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/harness/fonts/fonts.json")
+  endif()
+  add_test(NAME engine_raster_tests COMMAND engine_raster_tests --reporter compact)
+endif()
+
+# ── E2: audio — decode, effects, mix, playback, the master clock (src/audio;
+#    kept in its own block) ───────────────────────────────────────────────────
+#   engine_audio_core  ffmpeg-free, device-free: the Web Audio node DSP (biquad,
+#                      delay, PeriodicWave oscillator, compressor, wave shaper,
+#                      partitioned convolver), the audioEffects.ts chains, the
+#                      mixer (RenderPlan) + automation, the conformed-source
+#                      store + peak pyramid, voice building (retime / nested),
+#                      the master clock (DLL + playhead map), the realtime
+#                      transport and the steady-clock NullDevice
+#   engine_audio       + ffmpeg decode / swresample (audio_decode_ffi.cpp),
+#                      miniaudio output (device_ffi.cpp; vcpkg `engine`), and
+#                      AudioSystem (sources, conform workers, device, export)
+#   premation-audio    bench / real-device smoke / render-to-WAV tool
+find_package(Threads REQUIRED)
+add_library(engine_audio_core STATIC
+  src/audio/param_curve.cpp
+  src/audio/automation.cpp
+  src/audio/dsp_fft.cpp
+  src/audio/dsp_filters.cpp
+  src/audio/dsp_osc.cpp
+  src/audio/dsp_dynamics.cpp
+  src/audio/dsp_convolver.cpp
+  src/audio/effects.cpp
+  src/audio/source_store.cpp
+  src/audio/peaks.cpp
+  src/audio/mixer.cpp
+  src/audio/voice_build.cpp
+  src/audio/clock.cpp
+  src/audio/realtime.cpp
+  src/audio/device_null.cpp
+)
+target_include_directories(engine_audio_core
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/audio
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)  # eval.hpp: the sampler's C++ entry points
+target_compile_features(engine_audio_core PUBLIC cxx_std_20)
+target_link_libraries(engine_audio_core PUBLIC motion::eval Threads::Threads PRIVATE motion::jsmath motion::options)
+
+if(FFMPEG_FOUND)
+  add_library(engine_audio STATIC src/audio/audio_decode_ffi.cpp src/audio/audio_system.cpp)
+  target_include_directories(engine_audio SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  target_link_directories(engine_audio PUBLIC ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(engine_audio PUBLIC engine_audio_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  find_path(PREMATION_MINIAUDIO_INCLUDE miniaudio.h)
+  if(PREMATION_MINIAUDIO_INCLUDE)
+    target_sources(engine_audio PRIVATE src/audio/device_ffi.cpp)
+    target_include_directories(engine_audio SYSTEM PRIVATE ${PREMATION_MINIAUDIO_INCLUDE})
+    target_compile_definitions(engine_audio PUBLIC PREMATION_HAVE_MINIAUDIO=1)
+    if(APPLE)
+      target_link_libraries(engine_audio PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation")
+    elseif(UNIX)
+      target_link_libraries(engine_audio PRIVATE ${CMAKE_DL_LIBS} m)
+    endif()
+  else()
+    target_compile_definitions(engine_audio PUBLIC PREMATION_HAVE_MINIAUDIO=0)
+    message(STATUS "premation-engine: miniaudio not found — audio plays through the steady-clock NullDevice")
+  endif()
+  add_executable(premation-audio tools/premation_audio.cpp)
+  target_link_libraries(premation-audio PRIVATE engine_audio motion::options)
+  if(MSVC)
+    target_compile_definitions(premation-audio PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+else()
+  message(STATUS "premation-engine: ffmpeg not found — audio (E2) builds its decode-free core only")
+endif()
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_audio_tests tests/test_audio.cpp tests/test_audio_clock.cpp tests/test_audio_parity.cpp)
+  target_link_libraries(engine_audio_tests PRIVATE engine_audio_core motion::jsmath motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_audio_tests PRIVATE
+    PREMATION_AUDIO_PARITY="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/audio_parity.bin")
+  if(TARGET engine_audio)
+    target_sources(engine_audio_tests PRIVATE tests/test_audio_decode.cpp tests/audio_fixture_ffi.cpp
+                   tests/media_fixture_ffi.cpp)
+    target_include_directories(engine_audio_tests SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(engine_audio_tests PRIVATE engine_audio)
+  endif()
+  if(MSVC)
+    target_compile_definitions(engine_audio_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # tmpnam / fopen in fixtures
+  endif()
+  add_test(NAME engine_audio_tests COMMAND engine_audio_tests --reporter compact)
+endif()

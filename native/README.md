@@ -319,6 +319,215 @@ writes the surface bytes untouched.
   every render-graph test and all 436 golden FrameScenes run clean and
   byte-identical under ASan.
 
+## Media — footage decode (engine/src/media, E1)
+
+`MediaSystem` decodes footage for the engine: ffmpeg 8.1 from vcpkg (`engine`
+feature: avcodec/avformat/swscale/swresample + dav1d + libvpx; hwaccels d3d11va,
+d3d12va, dxva2 on Windows, videotoolbox on macOS, nvdec via `nvcodec` on
+Windows/Linux, vulkan on Linux). Clean vcpkg build 27 min, then from the binary
+cache. libav* is included only by `decoder_ffi.cpp`, D3D11 only by
+`d3d11_ffi.cpp`, Dawn-native/OS calls only by `platform_ffi.cpp`.
+
+- **Probe** (`VideoDecoder::probe`): codec + profile, exact rational rate
+  (24000/1001 stays that), duration, frame count, bit depth, chroma
+  subsampling, alpha (ProRes 4444, VP8/VP9 `alpha_mode`), rotation, and colour
+  as the file states it (H.273 primaries / transfer / matrix / range) plus the
+  resolved matrix/range; HDR10 mastering display + MaxCLL/FALL (container side
+  data, or the first frame's SEI).
+- **Frame index** (`frame_index.cpp`): the TS `frameIndex.ts` rules — samples
+  sorted by pts, rebased to the first displayed frame, integer µs, floor over
+  `[start, next)` with the `+1 µs` lookup, ends clamp. From the container index
+  when it lists every sample with presentation times (MOV/MP4 intra or
+  non-reordered streams); else constant-rate at once and the exact index from a
+  demux-only scan on a background thread (swapped in when done). Open-GOP
+  leading B-frames start at the previous keyframe (the TS index starts them at
+  their own and gets them wrong).
+- **Decode**: a worker thread per source; hardware when the platform decoder
+  takes the stream (a refusal at the first frame — H.264 High 10, 4:2:2 —
+  reopens the codec in software, fully threaded), software otherwise
+  (slice threads for intra codecs = single-frame latency; frame+slice for
+  long-GOP). **Latest-wins**: a scrub request replaces the pending one and bumps
+  a generation the decoder checks between packets; the in-flight GOP decode is
+  retargeted (same GOP, further on), finished (≤ 120 ms left, or nothing
+  delivered for 400 ms) or abandoned. `exact` requests (export) never are.
+  Readahead fills a window ahead of the playhead. `FrameCache`: LRU by bytes,
+  separate CPU and GPU budgets, keyed (source, frame).
+- **To the GPU** (`frame_convert.cpp`): CPU frames upload their planes as-is
+  (8/16-bit UINT textures, the decoder's own stride) and one WGSL pass applies
+  the Y'CbCr matrix + range (`yuv.cpp`, BT.601/709/2020/240M/FCC/YCgCo, any
+  bit depth), bilinear chroma (co-sited horizontally, centred vertically) and
+  premultiplies alpha → RGBA16F, the stream's own R'G'B'. **Zero-copy on
+  Windows**: a D3D11VA decoder slice is copied GPU→GPU into a pooled
+  SHARED_NTHANDLE + keyed-mutex NV12 surface on Dawn's adapter (LUID) and
+  imported into Dawn as a multi-planar texture — no byte crosses the CPU.
+  10-bit (P010) surfaces are downloaded instead: the pinned Dawn does not offer
+  `MultiPlanarFormatP010` on D3D12.
+- **Render graph hook** (the one change outside src/media):
+  `rg::ExternalTextureSource`, consulted by `PassContext::texture` for a
+  `RenderTextureRef` whose hash has no blob; `SceneRenderer::set_external_textures`
+  installs it; `RendererOptions::optionalFeatures` requests the video features.
+  `MediaTextures` implements it for `media:<source>:<frame>` (and
+  `media:<source>:<top>~<bottom>` pulldown weaves): preview never blocks
+  (nearest cached frame, as `exactVideoFrames.ts`), export waits for the exact
+  frame. `inputSpace` from `yuv.hpp input_space_of` feeds D3's OCIO input.
+- **Time mapping** (`time_map.cpp`): loop, posterize, stretch/reverse/freeze,
+  pulldown picks and frame-blend brackets (conform > probe > comp rate), ported
+  from the TS formulas; the comp half (clip map, Speed %/Frames retime) is the
+  document's (D1b `timeline.cpp`).
+
+**Hookup** (for the engine's scene builder, once footage layers are in the C++
+FrameScene): per footage layer, `sourceTime` (the document chain) →
+`plan_frames(*media.index(src), …)` → one `RenderTextureRef{key, hash =
+media_hash(src, frame), ready, inputSpace}` per frame (frame mix: `vfa:`/`vfb:`
+as the TS exporter) with no blob; the render thread owns one `MediaTextures`
+over the engine's `MediaSystem` (created with `create_hw_context({adapterLuid =
+platform::adapter_luid(device)})`); transport play calls `media.playhead(src,
+frame, dir)`.
+
+`premation-decode-bench probe|scrub|play` measures it (header of
+`tools/premation_decode_bench.cpp`); `engine_media_tests` makes its own
+fixtures with libavcodec's encoders (ProRes 422/4444, DNxHR, MPEG-4 B-frames,
+VP9 alpha, FFV1 RGB) and checks every frame's identity after random seeks.
+
+## Audio (engine/src/audio, E2)
+
+`AudioSystem` is the engine's sound: decode, effects, mix, playback, export,
+waveform peaks, and the MASTER CLOCK. ffmpeg (same vcpkg `engine` feature as
+E1, libav* only in `audio_decode_ffi.cpp`) + miniaudio 0.11.25 (header-only,
+`engine` feature, only in `device_ffi.cpp`). `engine_audio_core` is free of
+both and is what the sanitizer presets test.
+
+- **Sources are conformed** (AE's model): decoded once, in order, down-mixed
+  as `decodeAudioData` + the Web Audio destination do (mono stays mono; quad /
+  5.1 by the spec's speaker rules; others: first two channels), resampled to
+  the mix format (float32, 48 kHz, stereo — `MixFormat`) by one continuous
+  swresample pass, into a lock-free chunk table (`SourceData`) the audio
+  thread reads without locks. Frame n is the same sample however the playhead
+  got there, so every read is sample-exact. A multi-resolution peak pyramid
+  (min/max/Σx² per 256 frames, ×4 per level, per channel + the mono mix) is
+  built in the same pass. `decode_range` also seeks sample-accurately (pre-roll
+  + timestamp placement; WAV/FLAC/AAC-in-MP4 checked identical to a linear
+  decode) for later streaming of very long files.
+- **The mix is the TS one** (`src/core/audio`): the voice list of
+  `audioScene.ts` (`Voice` = `AudioLayerState`), `audibleWindow` timing,
+  varispeed by linear interpolation (pitch follows — the TS has no
+  pitch-preserving stretch), reverse / Backwards as a mirrored read, effects
+  BEFORE level, then the optional equal-power panner, summed. Effect chains
+  are `connectAudioEffects` node for node on Web Audio node DSP ported from
+  Chromium (biquad incl. the spec's dB-Q lowpass/highpass, DelayNode — whose
+  feedback cycle is delayTime + 128 frames, as Chromium's pull model makes it,
+  PeriodicWave oscillators, the DynamicsCompressor kernel, WaveShaper with its
+  half-band 2×/4× samplers, a partitioned convolver). All 13 built-in effects
+  + plugin declared chains (`PluginChain`). `voice_build.cpp` ports the pure
+  halves of `buildAudioRetimeSegments` and `placeNestedVoices` (+ solo).
+- **Automation** (`automation.hpp`): every keyframed parameter is sampled on a
+  control grid at ABSOLUTE comp-frame multiples (`Program::controlPeriod`,
+  default 128 = one quantum; the TS ramps at 50 Hz = 960 frames) and ramped
+  linearly per sample. Anchoring to the comp clock (the TS anchors at the voice
+  start) makes the curve independent of where playback began.
+- **Determinism**: a `RenderPlan` renders whole render quanta at absolute
+  frame multiples of 128, never allocating, locking or reading a clock; its
+  output is a pure function of (program, the aligned start frame).
+  `render_offline` (export) is bit-identical run to run AND to the realtime
+  path, whatever the device's callback size (`test_audio.cpp [determinism]`).
+  Stateful effects (reverb tails, compressor envelopes) start where the render
+  starts — the same in preview and export.
+- **Clock** (`clock.hpp`, `realtime.hpp`): the device callback reports frames
+  written and frames PLAYED (WASAPI: written − GetCurrentPadding; elsewhere
+  written − the reported depth); a delay-locked loop locks to the played
+  frames, and every transport event (play, seek, loop wrap, pause) records a
+  segment device-frame → comp-frame. `playhead(now)` = the comp time of the
+  sample at the speaker (+ the master limiter's look-ahead). Transport
+  discontinuities cross-fade a 5 ms tail of the old stream (no clicks); a
+  scrub while stopped plays a 60 ms grain.
+- **Integration seam for the Session (D1b)**: `transport_clock.hpp` —
+  `TransportClock::media_elapsed(now)` replaces the wall clock in
+  `Session::tick` (`k = floor(elapsed · compFps)`), nullopt → wall clock.
+- **Waveform query** (`peaks.hpp`): `query_peaks(source, from, dur, buckets,
+  monoMix)` answers 80_queries.eapi `WaveformPeaks` (interleaved min/max per
+  bucket per channel + RMS) exactly — bucket edges where `computePeaks` puts
+  them; `ts_envelope` gives the TS consumer's `peaks` (max |x| of the mono
+  mix, clamped to 1), identical to `computePeaks` (test: 4 ranges).
+
+**Parity gate** (`test_audio_parity.cpp`): `node
+native/engine/tests/gen_audio_parity.mjs` runs the REAL `audioMixdown.ts`
+`mixdownBuffer` in Electron's Chromium (OfflineAudioContext) over 36 scenes and
+writes `tests/data/audio_parity.bin`; the C++ rebuilds the sources bit for bit
+and compares. Gain, pan, keyframed level/pan, trims, varispeed, reverse, export
+offset, backwards, stereo mixer, white-noise tone, compressor (incl. output
+limit, de-esser, mono→stereo chain): bit-identical or ≤ 4e-7; biquads/delay/
+reverb ≤ 4e-6 (> 110 dB SNR); oscillators 97–130 dB; flanger 45 dB (Chromium
+reads LFO tables with Lagrange interpolation); 4× distortion 52–84 dB.
+
+**Found by porting (TS side, not copied or not fixed here):** `readAudioEffects`
+drops `flags` and `curve` and rejects `wave: 'white-noise'` and every plugin
+effect type, so those settings never reach the graph from a saved project
+(the C++ honours them); `connectAudioEffects`' `bind` for a plugin effect calls
+`AUDIO_EFFECT_DEFS[type].params` on an undefined entry; `mixdownBuffer`
+reverses a Backwards / reversed clip over the window CLIPPED to the export
+range (preview plays the bar's window; the C++ follows preview); reverse
+`buildAudioRetimeSegments` merges keep the first sub-segment's `inSec` (the
+upper end) — ported as is, fix both sides together; the effect tail rings on
+past a clip's end in export but not in preview (the C++ cuts at the bar end,
+as AE and the preview do); nested voices ignore the precomp layer's own level.
+
+`premation-audio bench|smoke|render` (header of `tools/premation_audio.cpp`).
+
+## Text and vector rasters (engine/src/raster, E3)
+
+The TS text / shape / mask rasters are nothing but Canvas2D calls, and
+Chromium's Canvas2D is Skia. So E3 is a **Canvas2D-semantics layer on Skia's
+CPU raster backend** (`canvas.hpp`, Skia only in `canvas_ffi.cpp`) plus call-for-call
+ports of the TS painters on top of it:
+
+| file | TS it ports |
+|---|---|
+| `vector_paint.cpp` | `drawPath` / `vectorDraw`: fills (nonzero / evenodd), strokes, joins, caps, dashes, taper + wave, trim, gradients, rounded corners, repeaters, ordered paint stack |
+| `mask_paint.cpp` | `paintMaskMatte` (+ expansion, feather as device-space blur) |
+| `text_layout.cpp` | `textLayout` / `textExtras` / `verticalLayout`: wrapping, bidi lines, vertical columns, tate-chu-yoko, kinsoku, vertical forms |
+| `text_paint.cpp` | `paintTextInBox`: fast + glyph paths, animators, text on path, gradients, stroke order, optical kerning wiring |
+| `optical_kerning.cpp` | `opticalKerning.ts` (raster ink profiles; outline profiles via `FontSet::glyph_outline`) |
+| `fonts_ffi.cpp` | font loading (woff2, TTC, system families via DirectWrite), CSS face matching + unicode-range fallback, HarfBuzz shaping with Blink's font funcs |
+| `bidi_ffi.cpp` / `text_unicode.cpp` | SheenBidi (UAX #9 + L1 by hand), graphemes, case mapping |
+| `raster_source.cpp` | `Canvas2DVectorRasterizer`: one raster from its source spec |
+
+Dependencies (vcpkg `engine` feature): `skia` (overlay port in `vcpkg-overlays/`
+building Skia with clang-cl: MSVC builds fall back to the scalar raster
+pipeline), `harfbuzz`, `freetype[brotli]`, `woff2`, `sheenbidi`.
+
+**Glyph profiles.** `FontOptions::chromium_windows()` (DirectWrite, slight
+hinting, subpixel positioning, LCD edging on an RGB-geometry surface, so
+grayscale masks come from ClearType masks) is what Chromium's canvas does on
+Windows, found by measurement; `FontOptions{}` (FreeType, unhinted, grayscale) is
+the portable, deterministic profile.
+
+**Parity harness.** The render-tests harness records every raster's source
+spec and Canvas2D call log into the exported FrameScene (`RenderFrameFile.rasters`,
+`packages/render-tests/harness/rasterRecorder.ts`). `premation-raster`:
+
+```
+premation-raster --batch <scenes> --fonts packages/render-tests/harness/fonts/fonts.json
+                 --mode native|replay --profile chromium|portable [--report r.json] [--emit dir]
+premation-raster --bench <scenes> --fonts … [--iterations N] [--threads N]
+```
+
+`replay` runs the recorded call log (rasterisation parity only); `native` runs
+the ported painters from the spec (layout + rasterisation). `--emit` rewrites the
+frame files with C++ texels so `premation-render` draws whole frames from them;
+`npm run render-tests` with `HARNESS_NATIVE_RASTER=1` (or backend `native-raster`)
+gates those frames against webgpu (`packages/render-tests/native-raster-baseline.json`).
+`node packages/render-tests/scripts/bench-raster.mjs` is the TS-vs-C++ bench.
+
+**Threads.** Skia takes a process-wide strike-cache lock on every
+`getWidths` / `getBounds` / `getMetrics`; `fonts_ffi.cpp` keeps per-thread
+caches of those values (bit-identical), without which 16 raster workers ran 4×
+slower than one.
+
+Not ported yet (each reported by name, never silently drawn wrong): CPU-baked
+effect chains (E4), paint brush strokes, vertical optical kerning, variable
+mask feather, alias FontFace features, `capitalize`, anisotropic blur,
+Intl word-break joins, WOFF1, system fonts on macOS / Linux.
+
 ## Adding a library (N2+)
 
 `libs/<name>/CMakeLists.txt` with a `STATIC` target linking `motion::options`

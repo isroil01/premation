@@ -88,6 +88,9 @@ struct ResolvedBlob {
   bool ready = false;
   /// D3: a colour texture's interpretation (RenderTextureRef.inputSpace); absent = data.
   std::optional<api::RenderColorSpace> inputSpace;
+  /// RenderTextureRef.hash (a view into the frame file). E1: a hash with no blob
+  /// may name a texture another engine system provides (ExternalTextureSource).
+  std::string_view hash;
 };
 
 /// Key → blob index for one frame file.

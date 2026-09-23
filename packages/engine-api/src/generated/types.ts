@@ -577,6 +577,13 @@ export type RenderParamKind =
   | 'texts';
 export const RenderParamKindValues = ['number', 'numbers', 'text', 'flag', 'color', 'texts'] as const;
 
+/** E3: which painter produced a text / vector raster. */
+export type RenderRasterKind =
+  | 'text'
+  | 'path'
+  | 'mask';
+export const RenderRasterKindValues = ['text', 'path', 'mask'] as const;
+
 /** A layer (scene node) id. Stable for the layer's lifetime, survives save/load and undo. */
 export type LayerId = string;
 
@@ -3275,6 +3282,34 @@ export interface RenderShaderSource {
   wgsl: string;
 }
 
+/**
+ * E3: what a text / vector raster was drawn FROM, so the C++ rasterizer (native/engine/src/raster) can draw it again
+ * and be compared with the TS texels in `blobs` — the parity harness, not a runtime path. The C++ engine will build
+ * the same description in process from its own document.
+ */
+export interface RenderRasterSource {
+  /** The texture key (RenderTextureRef.key) the raster was bound to when the frame rendered. */
+  key: string;
+  kind: RenderRasterKind;
+  /** The TS rasterizer's cache key (Canvas2DVectorRasterizer). */
+  cacheKey: string;
+  /** The raster canvas (= texture) size in px. */
+  width: number;
+  height: number;
+  /** Canvas2DVectorRasterizer's inputs: raster scale (tier × supersample decided inside) and padding in layer px. */
+  resolutionScale: number;
+  padding: number;
+  /** The drawable the painter read — a TextSpec or a RenderLayer — as JSON. */
+  specJson: string;
+  /**
+   * The Canvas2D calls the painter issued, recorded, as JSON (grammar: native/engine/src/raster/canvas_replay.hpp).
+   * Empty when the harness did not record them.
+   */
+  opsJson: string;
+  /** Why the recording cannot be replayed exactly ('' = it can), e.g. a CPU-baked effect chain read back pixels. */
+  incomplete: string;
+}
+
 /** One frame, self-contained: `premation-render --scene <file>` renders it with no other input. */
 export interface RenderFrameFile {
   /** Bumped when the exporter's mapping changes meaning (not for additive fields). */
@@ -3287,6 +3322,8 @@ export interface RenderFrameFile {
   blobs: RenderBlob[];
   /** Plugin effect shaders the frame uses (effect param `shader`), by name. */
   shaders: RenderShaderSource[];
+  /** E3: the source of every text / vector raster in `textures` the harness captured (empty otherwise). */
+  rasters: RenderRasterSource[];
 }
 
 /** Every command, keyed by its schema id. */

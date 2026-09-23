@@ -176,7 +176,11 @@ const ONLY = (process.env.HARNESS_SCENES || '')
 const SCENE_OUT = process.env.HARNESS_SCENE_OUT || '';
 
 ipcMain.on('harness:config', (e) => {
-  e.returnValue = { backends: BACKENDS, only: ONLY, exportScenes: !!SCENE_OUT, bench: process.env.HARNESS_BENCH === '1' };
+  e.returnValue = {
+    backends: BACKENDS, only: ONLY, exportScenes: !!SCENE_OUT, bench: process.env.HARNESS_BENCH === '1',
+    // E3 raster bench (scripts/bench-raster.mjs): time the TS text/vector rasters.
+    rasterBench: process.env.HARNESS_RASTER_BENCH === '1',
+  };
 });
 
 ipcMain.handle('harness:scene-file', (_e, p) => {

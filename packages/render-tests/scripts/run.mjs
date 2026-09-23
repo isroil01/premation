@@ -24,7 +24,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareAgainstReference, readPng, compareFrames } from './comparator.mjs';
-import { findRenderExe, runNativeRenderer, gateNative } from './nativeBackend.mjs';
+import { findRenderExe, findRasterExe, runNativeRenderer, runNativeRaster, gateNative } from './nativeBackend.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG = path.resolve(__dirname, '..');
@@ -43,6 +43,16 @@ const REPO_ROOT = path.resolve(PKG, '..', '..');
  * Not an Electron backend: it renders the FrameScenes the webgpu pass exports.
  */
 const NATIVE_BACKEND = 'native';
+/**
+ * E3 (docs/NATIVE_CORE_PLAN.md): the native backend's frames with the C++
+ * text / vector rasters (native/engine/src/raster) substituted for the TS ones.
+ */
+const NATIVE_RASTER_BACKEND = 'native-raster';
+const RASTER_SCENES_OUT = path.join(ARTIFACTS, 'scenes-native-raster');
+const NATIVE_RASTER_REPORT = path.join(ARTIFACTS, 'native-raster-report.json');
+const NATIVE_RASTER_RENDER_REPORT = path.join(ARTIFACTS, 'native-raster-render-report.json');
+/** The faces renderEntry.ts registers (premation-raster --fonts). */
+const HARNESS_FONTS = path.join(PKG, 'harness', 'fonts', 'fonts.json');
 /** Set per run: whether the webgpu pass must export its FrameScenes. */
 let exportScenesForNative = false;
 
@@ -798,9 +808,13 @@ async function main() {
   // exported). In the default set it runs only when premation-render is built;
   // asked for explicitly, a missing exe is a failure.
   const nativeExe = findRenderExe(REPO_ROOT);
-  const nativeExplicit = requested.includes(NATIVE_BACKEND);
+  // E3: `native-raster` = the native backend's frames with the C++ text/vector
+  // rasters substituted (premation-raster --emit). Asked for explicitly (or
+  // HARNESS_NATIVE_RASTER=1); it implies `native`.
+  const wantNativeRaster = requested.includes(NATIVE_RASTER_BACKEND) || process.env.HARNESS_NATIVE_RASTER === '1';
+  const nativeExplicit = requested.includes(NATIVE_BACKEND) || wantNativeRaster;
   const wantNative = nativeExplicit || (!process.env.HARNESS_BACKENDS && !!nativeExe);
-  const backends = requested.filter((b) => b !== NATIVE_BACKEND);
+  const backends = requested.filter((b) => b !== NATIVE_BACKEND && b !== NATIVE_RASTER_BACKEND);
   if (wantNative && !backends.includes('webgpu')) backends.push('webgpu');
   if (!backends.includes(GATE_BACKEND)) backends.unshift(GATE_BACKEND);
   exportScenesForNative = wantNative;
@@ -828,6 +842,37 @@ async function main() {
       nativeRan = true;
       if (code !== 0) process.stdout.write(red(`  x [native] premation-render exited ${code}\n`));
     }
+  }
+  let nativeRasterRan = false;
+  if (wantNativeRaster && nativeRan) {
+    const rasterExe = findRasterExe(REPO_ROOT);
+    if (!rasterExe) {
+      process.stdout.write(red('  ! [native-raster] premation-raster not built (node scripts/native.mjs build --engine).\n'));
+      process.exit(1);
+    }
+    process.stdout.write(dim(`· drawing text/vector rasters in C++ [native-raster] with ${path.relative(REPO_ROOT, rasterExe)}…\n`));
+    const code = await runNativeRaster({
+      exe: rasterExe,
+      scenesDir: SCENES_OUT,
+      outScenesDir: RASTER_SCENES_OUT,
+      fontsFile: HARNESS_FONTS,
+      reportFile: NATIVE_RASTER_REPORT,
+      only: sceneOnly ? [sceneOnly] : [],
+    });
+    if (code !== 0) process.stdout.write(red(`  x [native-raster] premation-raster exited ${code}\n`));
+    // The measured readback table travels with the frames it applies to.
+    await fs.mkdir(RASTER_SCENES_OUT, { recursive: true });
+    await fs.copyFile(path.join(SCENES_OUT, 'readback-table.png'), path.join(RASTER_SCENES_OUT, 'readback-table.png')).catch(() => {});
+    await rmrf(path.join(ACTUAL, NATIVE_RASTER_BACKEND));
+    const rc = await runNativeRenderer({
+      exe: nativeExe,
+      scenesDir: RASTER_SCENES_OUT,
+      outDir: path.join(ACTUAL, NATIVE_RASTER_BACKEND),
+      reportFile: NATIVE_RASTER_RENDER_REPORT,
+      only: sceneOnly ? [sceneOnly] : [],
+    });
+    nativeRasterRan = true;
+    if (rc !== 0) process.stdout.write(red(`  x [native-raster] premation-render exited ${rc}\n`));
   }
 
   const scenes = await loadManifest();
@@ -922,6 +967,22 @@ async function main() {
       tolerance: BACKEND_TOLERANCE,
       slack: BACKEND_RATCHET_SLACK,
       tighten: BACKEND_RATCHET_TIGHTEN,
+    });
+  }
+  if (nativeRasterRan) {
+    backendFail += await gateNative(scenes, {
+      actualDir: ACTUAL,
+      referencesDir: REFERENCES,
+      reportFile: NATIVE_RASTER_RENDER_REPORT,
+      baselineFile: backendBaselinePath(NATIVE_RASTER_BACKEND),
+      updateBaseline: updateBackendBaselineMode,
+      compareFrames,
+      readPngSafe,
+      tolerance: BACKEND_TOLERANCE,
+      slack: BACKEND_RATCHET_SLACK,
+      tighten: BACKEND_RATCHET_TIGHTEN,
+      backendDir: NATIVE_RASTER_BACKEND,
+      title: 'native-raster parity (C++ render graph + C++ text/vector rasters vs the TS WebGPU frame of the same FrameScene)',
     });
   }
 

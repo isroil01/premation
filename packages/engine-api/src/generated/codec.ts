@@ -276,6 +276,10 @@ const RenderParamKind_TO_NUM: Record<string, number> = { 'number': 0, 'numbers':
 const RenderParamKind_FROM_NUM: readonly (T.RenderParamKind | undefined)[] = ['number', 'numbers', 'text', 'flag', 'color', 'texts'];
 function enc_RenderParamKind(v: T.RenderParamKind): number { const n = RenderParamKind_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderParamKind: invalid value ' + String(v)); return n; }
 function dec_RenderParamKind(n: number): T.RenderParamKind { const v = RenderParamKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderParamKind: unknown value ' + n, 'badEnum'); return v; }
+const RenderRasterKind_TO_NUM: Record<string, number> = { 'text': 0, 'path': 1, 'mask': 2 };
+const RenderRasterKind_FROM_NUM: readonly (T.RenderRasterKind | undefined)[] = ['text', 'path', 'mask'];
+function enc_RenderRasterKind(v: T.RenderRasterKind): number { const n = RenderRasterKind_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderRasterKind: invalid value ' + String(v)); return n; }
+function dec_RenderRasterKind(n: number): T.RenderRasterKind { const v = RenderRasterKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderRasterKind: unknown value ' + n, 'badEnum'); return v; }
 
 function encS_Empty(w: Writer, v: T.Empty): void {
   void w; void v;
@@ -11177,6 +11181,78 @@ function decS_RenderShaderSource(r: Reader, end: number, o: any): T.RenderShader
   o.wgsl = v_wgsl;
   return o;
 }
+function encS_RenderRasterSource(w: Writer, v: T.RenderRasterSource): void {
+  w.byte(10); w.str(v.key);
+  w.byte(16); w.varint(enc_RenderRasterKind(v.kind));
+  w.byte(26); w.str(v.cacheKey);
+  w.byte(32); w.u32(v.width);
+  w.byte(40); w.u32(v.height);
+  w.byte(49); w.f64(v.resolutionScale);
+  w.byte(57); w.f64(v.padding);
+  w.byte(66); w.str(v.specJson);
+  w.byte(74); w.str(v.opsJson);
+  w.byte(82); w.str(v.incomplete);
+}
+function decS_RenderRasterSource(r: Reader, end: number, o: any): T.RenderRasterSource {
+  let h_key = false;
+  let h_kind = false;
+  let h_cacheKey = false;
+  let h_width = false;
+  let h_height = false;
+  let h_resolutionScale = false;
+  let h_padding = false;
+  let h_specJson = false;
+  let h_opsJson = false;
+  let h_incomplete = false;
+  let v_key: string | undefined;
+  let v_kind: T.RenderRasterKind | undefined;
+  let v_cacheKey: string | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  let v_resolutionScale: number | undefined;
+  let v_padding: number | undefined;
+  let v_specJson: string | undefined;
+  let v_opsJson: string | undefined;
+  let v_incomplete: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_key = r.str(); h_key = true; break;
+      case 16: v_kind = dec_RenderRasterKind(r.varint()); h_kind = true; break;
+      case 26: v_cacheKey = r.str(); h_cacheKey = true; break;
+      case 32: v_width = r.u32(); h_width = true; break;
+      case 40: v_height = r.u32(); h_height = true; break;
+      case 49: v_resolutionScale = r.f64(); h_resolutionScale = true; break;
+      case 57: v_padding = r.f64(); h_padding = true; break;
+      case 66: v_specJson = r.str(); h_specJson = true; break;
+      case 74: v_opsJson = r.str(); h_opsJson = true; break;
+      case 82: v_incomplete = r.str(); h_incomplete = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_key) throw new DecodeError('RenderRasterSource.key: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('RenderRasterSource.kind: missing', 'missingField');
+  if (!h_cacheKey) throw new DecodeError('RenderRasterSource.cacheKey: missing', 'missingField');
+  if (!h_width) throw new DecodeError('RenderRasterSource.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('RenderRasterSource.height: missing', 'missingField');
+  if (!h_resolutionScale) throw new DecodeError('RenderRasterSource.resolutionScale: missing', 'missingField');
+  if (!h_padding) throw new DecodeError('RenderRasterSource.padding: missing', 'missingField');
+  if (!h_specJson) throw new DecodeError('RenderRasterSource.specJson: missing', 'missingField');
+  if (!h_opsJson) throw new DecodeError('RenderRasterSource.opsJson: missing', 'missingField');
+  if (!h_incomplete) throw new DecodeError('RenderRasterSource.incomplete: missing', 'missingField');
+  o.key = v_key;
+  o.kind = v_kind;
+  o.cacheKey = v_cacheKey;
+  o.width = v_width;
+  o.height = v_height;
+  o.resolutionScale = v_resolutionScale;
+  o.padding = v_padding;
+  o.specJson = v_specJson;
+  o.opsJson = v_opsJson;
+  o.incomplete = v_incomplete;
+  return o;
+}
 function encS_RenderFrameFile(w: Writer, v: T.RenderFrameFile): void {
   w.byte(8); w.u32(v.formatVersion);
   w.byte(18); w.str(v.sceneId);
@@ -11186,11 +11262,13 @@ function encS_RenderFrameFile(w: Writer, v: T.RenderFrameFile): void {
   { const a = v.textures; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_RenderTextureRef(w, a[i]!); w.endLd(s); } } }
   { const a = v.blobs; for (let i = 0; i < a.length; i++) { w.byte(58); { const s = w.beginLd(); encS_RenderBlob(w, a[i]!); w.endLd(s); } } }
   { const a = v.shaders; for (let i = 0; i < a.length; i++) { w.byte(66); { const s = w.beginLd(); encS_RenderShaderSource(w, a[i]!); w.endLd(s); } } }
+  { const a = v.rasters; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_RenderRasterSource(w, a[i]!); w.endLd(s); } } }
 }
 function decS_RenderFrameFile(r: Reader, end: number, o: any): T.RenderFrameFile {
   const l_textures: T.RenderTextureRef[] = [];
   const l_blobs: T.RenderBlob[] = [];
   const l_shaders: T.RenderShaderSource[] = [];
+  const l_rasters: T.RenderRasterSource[] = [];
   let h_formatVersion = false;
   let h_sceneId = false;
   let h_frame = false;
@@ -11212,6 +11290,7 @@ function decS_RenderFrameFile(r: Reader, end: number, o: any): T.RenderFrameFile
       case 50: l_textures.push(decS_RenderTextureRef(r, r.ldEnd(), {})); break;
       case 58: l_blobs.push(decS_RenderBlob(r, r.ldEnd(), {})); break;
       case 66: l_shaders.push(decS_RenderShaderSource(r, r.ldEnd(), {})); break;
+      case 74: l_rasters.push(decS_RenderRasterSource(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -11229,6 +11308,7 @@ function decS_RenderFrameFile(r: Reader, end: number, o: any): T.RenderFrameFile
   o.textures = l_textures;
   o.blobs = l_blobs;
   o.shaders = l_shaders;
+  o.rasters = l_rasters;
   return o;
 }
 function encU_Value(w: Writer, v: T.Value): void {
@@ -12547,6 +12627,7 @@ export const codecs = {
   RenderTextureRef: mk<T.RenderTextureRef>(encS_RenderTextureRef, (r, e) => decS_RenderTextureRef(r, e, {})),
   RenderBlob: mk<T.RenderBlob>(encS_RenderBlob, (r, e) => decS_RenderBlob(r, e, {})),
   RenderShaderSource: mk<T.RenderShaderSource>(encS_RenderShaderSource, (r, e) => decS_RenderShaderSource(r, e, {})),
+  RenderRasterSource: mk<T.RenderRasterSource>(encS_RenderRasterSource, (r, e) => decS_RenderRasterSource(r, e, {})),
   RenderFrameFile: mk<T.RenderFrameFile>(encS_RenderFrameFile, (r, e) => decS_RenderFrameFile(r, e, {})),
   Command: mk<T.Command>(encU_Command, decU_Command),
   CommandResult: mk<T.CommandResult>(encU_CommandResult, decU_CommandResult),
