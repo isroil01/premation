@@ -44,7 +44,9 @@ const cfg = {
   holesDefault: argv.holes === '1',
   engine:
     argv.engine ||
-    path.resolve(__dirname, '..', '..', 'build', 'windows-clang-cl-engine', 'engine', 'premation-engine.exe'),
+    // The C1 prototype binary. Since C2, premation-engine.exe is the real engine
+    // (protocol server) and route B's code is deleted; --route=B no longer runs.
+    path.resolve(__dirname, '..', '..', 'build', 'windows-clang-cl-engine', 'engine', 'premation-viewport-proto.exe'),
 };
 // --chromium-gpu=low: ask Chromium for the integrated GPU (the engine then
 // follows it via --gpu-vendor), to measure the whole stack on the iGPU.

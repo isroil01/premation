@@ -1,5 +1,6 @@
 #include "gpu.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <string_view>
@@ -7,6 +8,8 @@
 
 namespace premation {
 namespace {
+
+std::atomic<bool> g_deviceLost{false};
 
 std::string_view view(wgpu::StringView s) {
   if (s.data == nullptr) return {};
@@ -112,6 +115,7 @@ std::optional<Gpu> create_gpu(bool wantSharedTexture, bool highPerformance, std:
   deviceDesc.SetDeviceLostCallback(wgpu::CallbackMode::AllowSpontaneous,
                                    [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView msg) {
                                      if (reason == wgpu::DeviceLostReason::Destroyed) return;
+                                     g_deviceLost.store(true);
                                      std::fprintf(stderr, "engine: device lost (%d): %.*s\n",
                                                   static_cast<int>(reason), static_cast<int>(view(msg).size()),
                                                   view(msg).data());
@@ -132,6 +136,8 @@ std::optional<Gpu> create_gpu(bool wantSharedTexture, bool highPerformance, std:
   gpu.queue = gpu.device.GetQueue();
   return gpu;
 }
+
+bool device_lost() noexcept { return g_deviceLost.load(); }
 
 void wait_idle(const Gpu& gpu) {
   gpu.instance.WaitAny(gpu.queue.OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly,

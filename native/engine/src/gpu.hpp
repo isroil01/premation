@@ -28,4 +28,10 @@ std::optional<Gpu> create_gpu(bool wantSharedTexture, bool highPerformance, std:
 // Block until everything submitted so far has finished on the GPU.
 void wait_idle(const Gpu& gpu);
 
+// True once any device created by create_gpu was lost for a reason other
+// than its own destruction (driver reset, TDR, GPU removed). The engine treats
+// that as fatal: it reports it and exits so EngineSupervisor restarts it on a
+// fresh device.
+bool device_lost() noexcept;
+
 }  // namespace premation

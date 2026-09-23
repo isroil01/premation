@@ -17,6 +17,13 @@ void set_dpi_aware();
 // User + kernel CPU time of this process, milliseconds.
 double process_cpu_ms();
 
+// Windows: request 1 ms scheduler timer resolution while `on` (timeBeginPeriod),
+// released with `false`. Since Windows 10 2004 the resolution is per process,
+// so the engine's frame clock is quantised to ~15.6 ms without it — measured:
+// a 60 fps comp delivered 46 fps. Called only while the transport plays.
+// No-op elsewhere.
+void high_resolution_timer(bool on);
+
 // Wall clock in microseconds since the Unix epoch. MEASUREMENT ONLY — the
 // latency stamps in frame headers. Nothing that decides pixels reads it
 // (rendering is a pure function of the frame counter).

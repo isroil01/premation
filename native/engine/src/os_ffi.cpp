@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#include <timeapi.h>
 #else
 #include <sys/resource.h>
 #include <unistd.h>
@@ -45,6 +46,21 @@ double process_cpu_ms() {
     return static_cast<double>(t.tv_sec) * 1000.0 + static_cast<double>(t.tv_usec) / 1000.0;
   };
   return ms(u.ru_utime) + ms(u.ru_stime);
+#endif
+}
+
+void high_resolution_timer(bool on) {
+#ifdef _WIN32
+  static bool active = false;
+  if (on == active) return;
+  active = on;
+  if (on) {
+    (void)timeBeginPeriod(1);
+  } else {
+    (void)timeEndPeriod(1);
+  }
+#else
+  (void)on;
 #endif
 }
 

@@ -44,6 +44,14 @@ class SharedTexturePool {
   bool begin_access(Slot& slot);
   bool end_access(Slot& slot);
 
+  // Close the host's copies of the slot handles (DuplicateHandle with
+  // DUPLICATE_CLOSE_SOURCE into the host process). The engine owns their
+  // lifetime: the host imports them and must never close them itself, or a
+  // recycled handle value could be closed here. Called when a retired ring's
+  // grace period is over; without it every resize would leak three textures in
+  // Electron main.
+  void close_remote_handles();
+
  private:
   struct Native;  // D3D11 device + textures + local handles (RAII, in the .cpp)
   std::unique_ptr<Native> native_;

@@ -309,7 +309,9 @@ Per frame, main takes 0.15 ms and main → renderer takes 1.2 ms.
 ```powershell
 node scripts/native.mjs configure --engine      # first time ~16 min (Dawn), then seconds
 node scripts/native.mjs build --engine
-native\build\windows-clang-cl-engine\engine\premation-engine.exe --route bench --width 3840 --height 2160
+native\build\windows-clang-cl-engine\engine\premation-viewport-proto.exe --route bench --width 3840 --height 2160
+# (the C1 prototype was renamed when C2 turned premation-engine.exe into the real engine process;
+#  route B's code was deleted as decided above — the host runs A and C)
 npx electron native/engine/proto-host --route=A --interactive=1          # or B; drag the splitter, open View ▾
 <electron-40>\electron.exe native/engine/proto-host --route=C --interactive=1
 node native/engine/proto-host/run-matrix.mjs --out=<dir> --electron40=<electron-40>\electron.exe   # the tables above

@@ -136,6 +136,17 @@ bool SharedTexturePool::init(const Gpu& gpu, std::uint32_t width, std::uint32_t 
   return true;
 }
 
+void SharedTexturePool::close_remote_handles() {
+  if (!native_ || !native_->targetProcess) return;
+  for (Slot& slot : slots_) {
+    if (slot.remoteHandle == 0) continue;
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): a handle value from DuplicateHandle, valid in the host.
+    auto* remote = reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(slot.remoteHandle));
+    (void)DuplicateHandle(native_->targetProcess.get(), remote, nullptr, nullptr, 0, FALSE, DUPLICATE_CLOSE_SOURCE);
+    slot.remoteHandle = 0;
+  }
+}
+
 bool SharedTexturePool::begin_access(Slot& slot) {
   wgpu::SharedTextureMemoryBeginAccessDescriptor begin{};
   begin.concurrentRead = false;

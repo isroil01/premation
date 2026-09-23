@@ -1,0 +1,48 @@
+// premation-engine's process structure (docs/NATIVE_CORE_PLAN.md §5 C2).
+//
+//   thread            owns                               talks to
+//   ───────────────   ─────────────────────────────────  ─────────────────────────────
+//   command reader    stdin, the frame decoder           core queue (push)
+//   frames reader     fd 4                               ring (Release), core queue (Ping)
+//   core (main)       Document, History, clock, Session  outbox, FrameSink
+//   render            Dawn device, compositor, slot ring frames outbox (Slots, FrameReady)
+//   command writer    stdout                             ← outbox queue
+//   frames writer     fd 3                               ← outbox queue
+//
+// The core thread is the only one that reads or writes the document, and it
+// takes work from exactly one FIFO — so commands apply in arrival order, one
+// at a time, and the same request stream always produces the same revisions,
+// events and frames. The clock is the same FIFO's timeout: when a frame is
+// due the pop returns empty and the core ticks.
+//
+// Exit codes: 0 normal (Goodbye or host gone), 2 cannot start (no GPU,
+// no stdio) — the supervisor falls back to the TypeScript engine without
+// retrying, 3 GPU device lost, 4 unrecoverable framing error on the command
+// pipe, 70 unexpected exception.
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+#include "core/log.hpp"
+#include "render/render_thread.hpp"
+
+namespace premation {
+
+struct EngineOptions {
+  render::RenderOptions render;
+  bool noGpu = false;
+  log::Level logLevel = log::Level::info;
+};
+
+inline constexpr int kExitOk = 0;
+inline constexpr int kExitCannotStart = 2;
+inline constexpr int kExitDeviceLost = 3;
+inline constexpr int kExitFraming = 4;
+inline constexpr int kExitException = 70;
+
+inline constexpr const char* kEngineVersion = "0.2.0-c2";
+
+int run_engine(const EngineOptions& options);
+
+}  // namespace premation
