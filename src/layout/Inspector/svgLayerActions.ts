@@ -23,6 +23,7 @@ export async function confirmAndConvertSvg(nodeId: string): Promise<string | nul
     describeConversion(data).join('\n\n'),
     { confirmLabel: 'Convert', cancelLabel: 'Cancel' },
   );
+  // B3-legacy: engine gap — convertLayer(shapesFromVector) answers `unsupported` in the TS engine.
   return ok ? convertSvgLayerToShapes(nodeId) : null;
 }
 

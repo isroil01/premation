@@ -109,6 +109,7 @@ function readTarget(nodeId: string | undefined, compSec: number): Target | null 
   // The canonical keyframe axis — what the renderer samples for this node, and
   // what `KeyframeRow` uses, so the two controls cannot land on different times
   // for a retimed layer.
+  // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
   const layerT = compToKeyframeTime(nodeId, compSec);
   const sample = (prop: string, fallback: number): number => {
     const v = defaultAnimation.sample(nodeId, prop, layerT);
@@ -195,12 +196,14 @@ export function AudioPanel(): JSX.Element {
     if (!target) return;
     const animated = prop === AUDIO_LEVEL_DB_PROP ? target.levelAnimated : target.panAnimated;
     if (animated || autoKeyframe) {
+      // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
       const t = compToKeyframeTime(target.nodeId, time, prop);
       runAnimEdit(`Set ${prop}`, () => defaultAnimation.setKeyframe(target.nodeId, prop, t, value), `set:${target.nodeId}:${prop}:${t}`);
       return;
     }
     // A prop whose value is its default is stored as ABSENT — that is what
     // keeps a document that never touched pan byte-identical (see `panOf`).
+    // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
     defaultSceneGraph.writeProp(
       target.nodeId,
       target.componentId,
@@ -337,6 +340,7 @@ export function AudioPanel(): JSX.Element {
           <div className={styles.fades}>
             <button
               type="button"
+              // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
               onClick={() => runAnimEdit('Fade Audio In', () => { applyFade(target.nodeId, 'in'); bumpScene(); })}
               title={`Ramp up from silence over ${DEFAULT_FADE_SEC}s`}
             >
@@ -344,6 +348,7 @@ export function AudioPanel(): JSX.Element {
             </button>
             <button
               type="button"
+              // B3-legacy: engine gap — audio fades and level keys on the audio component (not a catalog `audio/levels` layer here) are not API-addressed.
               onClick={() => runAnimEdit('Fade Audio Out', () => { applyFade(target.nodeId, 'out'); bumpScene(); })}
               title={`Ramp down to silence over ${DEFAULT_FADE_SEC}s`}
             >

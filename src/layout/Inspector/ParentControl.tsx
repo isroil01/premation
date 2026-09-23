@@ -26,7 +26,8 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { eligibleParents, parentOfNode, reparentNode, parentOptionsFor } from '@core/scene/parenting';
+import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { parentLayer } from './inspectorEdits';
 import styles from './ParentControl.module.css';
 
 export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -46,7 +47,7 @@ export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | nul
       id: '__none__',
       label: 'None',
       icon: currentParent === null ? 'check' : undefined,
-      onSelect: (m) => reparentNode(nodeId, null, parentOptionsFor(m)),
+      onSelect: (m) => parentLayer(nodeId, null, m),
     },
     ...(options.length ? [{ type: 'separator' as const }] : []),
     ...options.map((o): DropdownItem => ({
@@ -54,7 +55,7 @@ export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | nul
       id: o.id,
       label: o.name,
       icon: o.id === currentParent ? 'check' : undefined,
-      onSelect: (m) => reparentNode(nodeId, o.id, parentOptionsFor(m)),
+      onSelect: (m) => parentLayer(nodeId, o.id, m),
     })),
   ];
 
@@ -67,7 +68,7 @@ export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | nul
         // `eligibleParents` already excludes this layer and its descendants,
         // so a cycle cannot be dropped and the line greys out over one.
         accept={(target) => options.some((o) => o.id === target.nodeId)}
-        onPick={(target, m) => reparentNode(nodeId, target.nodeId, parentOptionsFor(m))}
+        onPick={(target, m) => parentLayer(nodeId, target.nodeId, m)}
       />
       <Dropdown
         placement="left-start"

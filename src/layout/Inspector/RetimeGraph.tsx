@@ -151,6 +151,7 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
       onSelect(t);
       drag.current = {
         t,
+        // B3-legacy: engine gap — retime graph point drags need retime-key semantics (speed integration) the API's updateKeyframes does not apply.
         tx: beginAnimEdit(),
         lo: prev ? prev.compT + 1 / fps : inSec,
         hi: next ? next.compT - 1 / fps : outSec - 1 / fps,
@@ -180,6 +181,7 @@ export function RetimeGraph(props: RetimeGraphProps): JSX.Element {
   const endPointer = (e: PointerEvent<SVGSVGElement>): void => {
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag.current) {
+      // B3-legacy: engine gap — retime graph point drags need retime-key semantics (speed integration) the API's updateKeyframes does not apply.
       recordAnimEdit(drag.current.tx.commit(kind === 'speed' ? 'Move speed point' : 'Move frame key'));
       drag.current = null;
       setDragT(null);

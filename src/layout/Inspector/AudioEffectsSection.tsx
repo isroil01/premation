@@ -43,6 +43,7 @@ function writeChain(nodeId: string, next: AudioEffect[]): void {
   const node = defaultSceneGraph.getNode(nodeId);
   const fx = node?.components.find((c) => c.type === 'fx');
   if (!fx) return;
+  // B3-legacy: engine gap — declared WebAudio effect chains (audio effects list on the layer) have no API group.
   defaultSceneGraph.writeProp(nodeId, fx.id, AUDIO_EFFECTS_PROP, next);
   bumpScene();
 }

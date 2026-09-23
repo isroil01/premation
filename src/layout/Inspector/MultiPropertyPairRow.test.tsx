@@ -20,6 +20,7 @@ import type { PropertyAccess } from '@core/inspector/multiSelection';
 import { requestExpressionEditor } from '@core/animation/expressionCommands';
 import { useContextMenuStore, closeContextMenu } from '@stores/contextMenuStore';
 import { useProjectStore } from '@stores/projectStore';
+import { engineIdle } from '@core/engine/engineInstance';
 import { InspectorSelectionProvider } from './inspectorSelection';
 import { MultiPropertyPairRow, type PairFieldSpec } from './MultiPropertyPairRow';
 import type { SceneNode } from '@core/types';
@@ -32,8 +33,18 @@ beforeAll(() => {
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
 });
 
+/** The composition root the layers live in (the engine addresses LAYERS: nodes inside a comp). */
+const ROOT = 'pair_root';
+
 function addNode(id: string, props: Record<string, number>): void {
-  defaultSceneGraph.addNode({
+  if (!defaultSceneGraph.getNode(ROOT)) {
+    defaultSceneGraph.addNode({
+      id: ROOT, name: 'Comp', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [],
+    } as unknown as SceneNode);
+  }
+  defaultSceneGraph.addChild(ROOT, {
     id, name: id, parent: null, children: [], visible: true, locked: false,
     transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
     components: [
@@ -58,6 +69,9 @@ const spec = (prop: string, prefix: string, extra: Partial<PairFieldSpec> = {}):
 
 const staticProp = (id: string, prop: string): unknown =>
   defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Transform')?.props[prop];
+
+/** Inspector writes are engine commands (B3): asynchronous. */
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
 
 const setTime = (t: number): void => {
   act(() => { useProjectStore.getState().actions.setTime(t, Math.round(t * 30)); });
@@ -90,7 +104,7 @@ describe('one row, every field a full field', () => {
     expect(screen.getByRole('button', { name: 'Enable Position animation' })).toBeInTheDocument();
   });
 
-  it('a mixed field shows `—` and a nudge offsets EACH layer from its own value, as one undo step', () => {
+  it('a mixed field shows `—` and a nudge offsets EACH layer from its own value, as one undo step', async () => {
     render(position([A, B]));
     const x = screen.getByRole('spinbutton', { name: 'Position X' });
     expect(x).toHaveAttribute('aria-valuetext', 'Mixed');
@@ -99,6 +113,7 @@ describe('one row, every field a full field', () => {
 
     const before = getCommandSystem().getHistory().getEntries().length;
     fireEvent.keyDown(x, { key: 'ArrowUp' });
+    await idle();
     expect(staticProp(A, 'x')).toBe(6);
     expect(staticProp(B, 'x')).toBe(16);
     expect(getCommandSystem().getHistory().getEntries().length - before).toBeLessThanOrEqual(1);
@@ -112,16 +127,17 @@ describe('one row, every field a full field', () => {
 });
 
 describe('the group controls', () => {
-  it('the stopwatch seeds EVERY member from its own reader (Y is not seeded from X)', () => {
+  it('the stopwatch seeds EVERY member from its own reader (Y is not seeded from X)', async () => {
     render(position());
     fireEvent.click(screen.getByRole('button', { name: 'Enable Position animation' }));
+    await idle();
     expect(defaultAnimation.isAnimated(A, 'x')).toBe(true);
     expect(defaultAnimation.isAnimated(A, 'y')).toBe(true);
     expect(defaultAnimation.sample(A, 'x', 0)).toBeCloseTo(5);
     expect(defaultAnimation.sample(A, 'y', 0)).toBeCloseTo(7);
   });
 
-  it('the merged navigator steps to the nearest key of ANY member, and the diamond keys all of them', () => {
+  it('the merged navigator steps to the nearest key of ANY member, and the diamond keys all of them', async () => {
     defaultAnimation.setKeyframe(A, 'x', 0, 5);
     defaultAnimation.setKeyframe(A, 'y', 0, 7);
     defaultAnimation.setKeyframe(A, 'y', 2, 70);
@@ -132,13 +148,14 @@ describe('the group controls', () => {
     expect(screen.getByRole('button', { name: 'Next Position keyframe' })).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Position keyframe at playhead' }));
+    await idle();
     const at1 = (p: string): boolean =>
       (defaultAnimation.getTrackKeyframes(A, p) ?? []).some((k) => Math.abs(k.t - 1) < 1e-4);
     expect(at1('x')).toBe(true);
     expect(at1('y')).toBe(true);
   });
 
-  it('Linked writes both members from either field, and the toggle reports its state', () => {
+  it('Linked writes both members from either field, and the toggle reports its state', async () => {
     const onToggle = jest.fn();
     render(
       <MultiPropertyPairRow
@@ -158,6 +175,7 @@ describe('the group controls', () => {
     const input = w.querySelector('input')!;
     fireEvent.change(input, { target: { value: '200' } });
     fireEvent.keyDown(input, { key: 'Enter' });
+    await idle();
     expect(staticProp(A, 'scaleX')).toBeCloseTo(staticProp(A, 'scaleY') as number);
     expect(staticProp(A, 'scaleX')).not.toBe(1);
   });

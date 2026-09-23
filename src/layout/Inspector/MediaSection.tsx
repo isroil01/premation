@@ -15,11 +15,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
 import { assetIdOf, interpretationOf, type AlphaInterpretation } from '@core/source/sourceInfo';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { useComponentProp } from './useComponentProp';
+import { edit } from '@core/engine/uiEdits';
+import { isLayer } from '@core/engine/doc';
 import { getNodeHasSequence, getNodeSequenceLoop, setSequenceLoop } from '@core/scene/imageSequence';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { readVideoAudioVoices, videoHasAudioTrack, speedAltersAudio, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
@@ -62,20 +64,20 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
     (c) => c.type === 'video' || c.id.startsWith('video') || (tComp && tComp.props.__kind === 'video'),
   );
 
-  const [src, setSrc] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'src');
+  const [src, setSrc] = useComponentProp(nodeId, tComp?.id, 'src');
   // The renderer resolves assetId ahead of src (buildSnapshot), and the timeline
   // bounds media clips by the asset's duration — so a replace has to re-point
   // both or the layer keeps resolving the old asset.
-  const [, setAssetId] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'assetId');
-  const [, setAudioAssetId] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, '__assetId');
+  const [, setAssetId] = useComponentProp(nodeId, tComp?.id, 'assetId');
+  const [, setAudioAssetId] = useComponentProp(nodeId, tComp?.id, '__assetId');
 
   // A video layer's own audio track. Level/mute live on the same component; the
   // sound itself is scheduled by the AudioEngine off the layer's clip bar (see
   // audioScene.readVideoAudioVoices).
-  const [audioLevelDb, setAudioLevelDb] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, AUDIO_LEVEL_DB_PROP);
-  const [legacyPercent] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, VIDEO_AUDIO_LEVEL_PROP);
-  const [audioMuted, setAudioMuted] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, VIDEO_AUDIO_MUTED_PROP);
-  const [audioPan, setAudioPan] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, AUDIO_PAN_PROP);
+  const [audioLevelDb, setAudioLevelDb] = useComponentProp(nodeId, tComp?.id, AUDIO_LEVEL_DB_PROP);
+  const [legacyPercent] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_LEVEL_PROP);
+  const [audioMuted, setAudioMuted] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_MUTED_PROP);
+  const [audioPan, setAudioPan] = useComponentProp(nodeId, tComp?.id, AUDIO_PAN_PROP);
 
   // Kick the decode so the section can report whether this file has sound at
   // all, and re-render when the engine settles.
@@ -103,10 +105,16 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
 
   /** Point the layer at `path`, keeping its keyframes, effects and masks. */
   const applyReplace = (path: string) => {
-    setSrc(path);
     // Re-point to the matching library asset when the new source is one, and
     // clear the id otherwise so src wins instead of the stale asset.
     const match = useAssetStore.getState().assets.find((a) => a.src === path);
+    if (match && isLayer(nodeId)) {
+      // B3: a library item — AE's Replace Footage, one command (keeps keyframes, effects, masks and size).
+      void edit('Replace Footage', { type: 'replaceLayerSource', layer: nodeId, source: match.id, keepSize: true });
+      return;
+    }
+    // B3-legacy: engine gap — `replaceLayerSource` takes an ITEM; pointing a layer at a bare file path (not in the library) has no API form.
+    setSrc(path);
     setAssetId(match?.id);
     setAudioAssetId(match?.id);
   };
@@ -172,10 +180,11 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
             className={styles.presetChip}
             value={alphaMode}
             onChange={(e) => {
-              useAssetStore.getState().setInterpretation(alphaAssetId, {
-                alpha: e.currentTarget.value as AlphaInterpretation,
+              void edit('Interpret Footage', {
+                type: 'setInterpretation',
+                items: [alphaAssetId],
+                patch: { alpha: e.currentTarget.value as AlphaInterpretation },
               });
-              bumpScene();
             }}
             aria-label="How this footage's colour relates to its alpha"
             title="Premultiplied = the file's colour is already multiplied by its alpha (rendered elements, TGA). Straight = it is not (PNG, ProRes 4444, WebM)."
@@ -190,6 +199,7 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
         <InspectorRow label="Loop Sequence" align="center">
           <Switch
             checked={getNodeSequenceLoop(nodeId)}
+            // B3-legacy: engine gap — the per-LAYER image-sequence loop flag has no API form (`setInterpretation.loops` is per item and a count).
             onChange={(e) => setSequenceLoop(nodeId, e.currentTarget.checked)}
             aria-label="Loop image sequence"
           />

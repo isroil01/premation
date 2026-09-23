@@ -3,8 +3,10 @@ import { propertyRegistry } from './PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useComponentProp } from '@layout/Inspector/useComponentProp';
+import { stopwatchCommands, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
+import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useSceneRevision } from '@stores/sceneStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -37,11 +39,13 @@ function PropertyRow({
   componentType: string;
   propName: string;
 }): JSX.Element {
-  const [baseVal, setBaseVal] = useNodeComponentProp(defaultSceneGraph, nodeId, componentId, propName);
+  const [baseVal, setBaseVal] = useComponentProp(nodeId, componentId, propName);
+  const e = useEngineEdit();
   const rawTime = useActiveWorkspace()?.time ?? 0;
   // Already layer-local: this is the axis the renderer samples on, and the
-  // axis every write below must use. Calling toLayerTime on top of it
+  // axis the legacy writes below use. Calling toLayerTime on top of it
   // subtracted the clip start twice (the ghost-drag bug's root cause).
+  // B3-legacy: display read + the legacy key axis; the engine route takes comp time.
   const time = compToKeyframeTime(nodeId, rawTime, propName);
   // Subscribe to the revision so the row re-renders on keyframe/scene changes.
   useSceneRevision((s) => s.rev);
@@ -67,8 +71,27 @@ function PropertyRow({
     }
   }
 
+  // B3: a numeric prop / colour the engine's catalog addresses goes through the
+  // API (value, key at the playhead, stopwatch). The rest keep the legacy key
+  // writers below (engine gap: props outside the catalog, e.g. a Style fill).
+  const engineTrack = numeric ? propName : isColor ? `${propName}_r` : null;
+  const ref = engineTrack ? trackRef(nodeId, engineTrack) : null;
+  const onEngine = ref !== null && (numeric ? ref.valueType !== 'color' : ref.valueType === 'color');
+
   const onChange = (v: unknown): void => {
+    if (onEngine && (animated || autoKeyframe)) {
+      const vals: Record<string, number> | null = typeof v === 'number'
+        ? { [propName]: v }
+        : typeof v === 'string' && isColor
+          ? (() => { const c = Color.fromHex(v); return { [`${propName}_r`]: c.r, [`${propName}_g`]: c.g, [`${propName}_b`]: c.b, [`${propName}_a`]: c.a ?? 1 }; })()
+          : null;
+      if (vals) {
+        e.send(`Set ${propName}`, valueCommands([{ nodeId, values: vals }], { seconds: rawTime, autoKeyframe }));
+        return;
+      }
+    }
     if ((animated || autoKeyframe) && typeof v === 'number') {
+      // B3-legacy: engine gap — a numeric component prop outside the catalog.
       // Reversible keyframe edit. A scrub fires onChange many times for the same
       // (node, prop, time); the merge key collapses them into one undo step.
       runAnimEdit(
@@ -77,11 +100,13 @@ function PropertyRow({
         `set:${nodeId}:${propName}:${time}`,
       );
     } else if ((animated || autoKeyframe) && isColor && typeof v === 'string') {
+      // B3-legacy: engine gap — a colour outside the catalog (a layer's own Style fill).
       const c = Color.fromHex(v);
       runAnimEdit(
         `Set ${propName}`,
         () => {
           defaultAnimation.setKeyframe(nodeId, `${propName}_r`, time, c.r);
+          // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
           defaultAnimation.setKeyframe(nodeId, `${propName}_g`, time, c.g);
           defaultAnimation.setKeyframe(nodeId, `${propName}_b`, time, c.b);
           defaultAnimation.setKeyframe(nodeId, `${propName}_a`, time, c.a);
@@ -94,12 +119,18 @@ function PropertyRow({
   };
 
   const toggleAnim = (): void => {
+    if (onEngine && engineTrack) {
+      e.send(animated ? `Remove ${propName} animation` : `Animate ${propName}`, stopwatchCommands([nodeId], [engineTrack], rawTime));
+      return;
+    }
+    // B3-legacy: engine gap — same (props / colours outside the catalog).
     if (animated) {
       if (numeric) {
         runAnimEdit(`Remove ${propName} animation`, () =>
           defaultAnimation.removeTrack(nodeId, propName),
         );
       } else if (isColor) {
+        // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
         runAnimEdit(`Remove ${propName} animation`, () => {
           defaultAnimation.removeTrack(nodeId, `${propName}_r`);
           defaultAnimation.removeTrack(nodeId, `${propName}_g`);
@@ -108,11 +139,13 @@ function PropertyRow({
         });
       }
     } else if (numeric) {
+      // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
       runAnimEdit(`Animate ${propName}`, () =>
         defaultAnimation.setKeyframe(nodeId, propName, time, Number(baseVal)),
       );
     } else if (isColor) {
       const c = Color.fromHex(String(baseVal));
+      // B3-legacy: engine gap — generic component props / colours outside the catalog (e.g. Style fill) keep the legacy key writers.
       runAnimEdit(`Animate ${propName}`, () => {
         defaultAnimation.setKeyframe(nodeId, `${propName}_r`, time, c.r);
         defaultAnimation.setKeyframe(nodeId, `${propName}_g`, time, c.g);

@@ -119,12 +119,18 @@ function getBounds(nodeId: string): Bounds | null {
  * aligning any animated layer appeared to do nothing at all.
  */
 function setPos(nodeId: string, x: number, y: number): void {
-  // `x`/`y` are PARENT-space values. The alignment maths above is in comp
-  // space, so the answer has to come back through the parent's inverse — on an
-  // unparented layer that is the identity and this is the same write as before.
-  const inv = Matrix.invert(parentWorld2DAt(nodeId, playheadCompTime()));
-  const local = Matrix.transformPoint(inv, { x, y });
+  const local = toParentSpace(nodeId, x, y);
   writeTransformProps(nodeId, [{ prop: 'x', value: local.x }, { prop: 'y', value: local.y }], 'Align');
+}
+
+/**
+ * A comp-space centre → the node's PARENT-space `x`/`y`. The alignment maths
+ * is in comp space, so the answer has to come back through the parent's
+ * inverse — on an unparented layer that is the identity.
+ */
+function toParentSpace(nodeId: string, x: number, y: number): { x: number; y: number } {
+  const inv = Matrix.invert(parentWorld2DAt(nodeId, playheadCompTime()));
+  return Matrix.transformPoint(inv, { x, y });
 }
 
 type Ref = 'start' | 'centre' | 'end' | 'space';
@@ -206,6 +212,73 @@ export function distributeBoxes(
     const newLo = ref === 'start' ? r : ref === 'end' ? r - size(o.b) : r - size(o.b) / 2;
     place(o.i, newLo);
   });
+  return out;
+}
+
+/** One node's new centre from {@link planAlign}: comp space, and the parent-space `x`/`y` to write. */
+export interface AlignMove {
+  id: string;
+  /** Comp-space centre. */
+  cx: number;
+  cy: number;
+  /** The same point in the node's parent space — the Position value to write. */
+  x: number;
+  y: number;
+}
+
+/**
+ * The moves an align / distribute makes, WITHOUT writing them — the pure half
+ * of {@link alignNodes}, for callers that send the writes themselves (the
+ * inspector sends them to the engine API as one command, B3). Only nodes that
+ * actually move are listed.
+ */
+export function planAlign(
+  ids: ReadonlyArray<string>,
+  mode: AlignMode,
+  alignTo: 'selection' | 'composition' = 'selection',
+  compWidth: number = 1920,
+  compHeight: number = 1080,
+): AlignMove[] {
+  if (ids.length < 1) return [];
+  const boxes = ids
+    .map((id) => ({ id, b: getBounds(id) }))
+    .filter((v): v is { id: string; b: Bounds } => v.b !== null);
+  if (boxes.length === 0) return [];
+  const out: AlignMove[] = [];
+  const move = (id: string, cx: number, cy: number): void => {
+    const p = toParentSpace(id, cx, cy);
+    out.push({ id, cx, cy, x: p.x, y: p.y });
+  };
+
+  if (isDistributeMode(mode)) {
+    const frame = alignTo === 'composition' ? { width: compWidth, height: compHeight } : undefined;
+    const centres = distributeBoxes(boxes.map((v) => v.b), mode, frame);
+    if (!centres) return [];
+    centres.forEach((c, i) => {
+      const { id, b } = boxes[i]!;
+      if (Math.abs(c.cx - b.cx) > 1e-6 || Math.abs(c.cy - b.cy) > 1e-6) move(id, c.cx, c.cy);
+    });
+    return out;
+  }
+
+  const left   = alignTo === 'composition' ? 0 : Math.min(...boxes.map((v) => v.b.x));
+  const top    = alignTo === 'composition' ? 0 : Math.min(...boxes.map((v) => v.b.y));
+  const right  = alignTo === 'composition' ? compWidth : Math.max(...boxes.map((v) => v.b.x + v.b.w));
+  const bottom = alignTo === 'composition' ? compHeight : Math.max(...boxes.map((v) => v.b.y + v.b.h));
+  const cx = (left + right) / 2;
+  const cy = (top + bottom) / 2;
+
+  for (const { id, b } of boxes) {
+    switch (mode) {
+      case 'left':     move(id, left + b.w / 2,            b.cy); break;
+      case 'center-h': move(id, cx,                        b.cy); break;
+      case 'right':    move(id, right - b.w / 2,           b.cy); break;
+      case 'top':      move(id, b.cx, top + b.h / 2);             break;
+      case 'middle-v': move(id, b.cx, cy);                        break;
+      case 'bottom':   move(id, b.cx, bottom - b.h / 2);          break;
+      default: break;
+    }
+  }
   return out;
 }
 

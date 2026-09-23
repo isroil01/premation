@@ -22,9 +22,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyValueExpression } from '@utils/evalMath';
-import { defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { whipExpression } from '@core/whip/whipTarget';
@@ -35,16 +34,12 @@ import { useNodesRevision } from '@hooks/useNodeRevision';
 import { readModifierStack } from '@core/animation/modifierStack';
 import {
   aggregateProperty,
-  applyAbsolute,
-  applyRelative,
   applyValues,
   KEYFRAME_EPS,
   layerTimeFor,
   navigatorState,
   readPropertyValue,
   snapshotStarts,
-  toggleAnimationAll,
-  toggleKeyframeAll,
   type PropertyAccess,
 } from '@core/inspector/multiSelection';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
@@ -55,11 +50,25 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import {
   addExpression,
   consumeExpressionEditorRequest,
+  DEFAULT_EXPRESSION,
   onExpressionEditorRequest,
   setFocusedExpressionRow,
 } from '@core/animation/expressionCommands';
 import type { KeyframeNavigatorProps } from '@components/PropertyRow';
 import { useInspectorSelection } from './inspectorSelection';
+import { useGesture } from '@hooks/useGesture';
+import { edit } from '@core/engine/uiEdits';
+import {
+  allAddressable,
+  deleteKeysAtCommands,
+  easeKeysAtCommands,
+  expressionCommands,
+  keyToggleCommands,
+  moveKeysCommands,
+  stopwatchCommands,
+  valueCommands,
+  type EasePreset,
+} from './inspectorEdits';
 
 export interface MultiPropertyFieldOptions {
   /** Custom read / static-write for values the property seam cannot see. */
@@ -100,6 +109,7 @@ export interface MultiPropertyField {
     precision: number;
     onChange: (display: number) => void;
     onScrubStart: () => void;
+    onScrubEnd: () => void;
     onRelative: (delta: number, cumulative: boolean) => void;
     onCommitText: (raw: string) => boolean;
     'aria-label': string;
@@ -134,7 +144,7 @@ export interface MultiPropertyField {
   onBlurCapture: (e: React.FocusEvent<HTMLElement>) => void;
 }
 
-const EASINGS: ReadonlyArray<{ id: EasingPreset; label: string }> = [
+const EASINGS: ReadonlyArray<{ id: EasePreset; label: string }> = [
   { id: 'Linear', label: 'Linear' },
   { id: 'Ease', label: 'Easy Ease' },
   { id: 'EaseIn', label: 'Easy Ease In' },
@@ -149,6 +159,7 @@ export function useMultiPropertyField(
   prop: string,
   { access, linkedProp, label: labelOverride, enabled = true }: MultiPropertyFieldOptions = {},
 ): MultiPropertyField {
+  const gesture = useGesture();
   const nodeIds = useInspectorSelection(nodeId);
   // The tick is a dependency below: the scene graph can hand back the same
   // node object after a write, so identity alone cannot invalidate the read.
@@ -190,27 +201,72 @@ export function useMultiPropertyField(
   );
   const mergeKey = `multi:${prop}:${nodeIds.join(',')}:${time}`;
 
+  // B3: writes go through the engine API (commands; a scrub is ONE gesture).
+  // The route is decided per write — a property the engine's catalog does not
+  // address, or one with its own static writer (a plugin panel's params), keeps
+  // the legacy writer below. Decided at scrub START for a drag, so a gesture
+  // never switches route halfway.
+  const engineRoute = useCallback(
+    (): boolean => !access?.writeStatic && allAddressable(nodeIds, linkedProp ? [prop, linkedProp] : [prop]),
+    [access, nodeIds, prop, linkedProp],
+  );
+  const scrubRoute = useRef<boolean | null>(null);
+
+  /**
+   * Per-layer values (stored units) → the document. `linkedWrites` are Linked
+   * Scale's second property, written in the SAME command (one API property).
+   */
+  const sendValues = useCallback((
+    writes: ReadonlyArray<{ nodeId: string; value: number }>,
+    linkedWrites: ReadonlyArray<{ nodeId: string; value: number }> | null,
+    label: string,
+  ) => {
+    const onEngine = scrubRoute.current ?? engineRoute();
+    if (onEngine) {
+      const byNode = new Map<string, Record<string, number>>();
+      for (const w of writes) byNode.set(w.nodeId, { [prop]: w.value });
+      if (linkedProp && linkedWrites) {
+        for (const w of linkedWrites) byNode.set(w.nodeId, { ...byNode.get(w.nodeId), [linkedProp]: w.value });
+      }
+      const cmds = valueCommands([...byNode].map(([nodeId, values]) => ({ nodeId, values })), { seconds: time, autoKeyframe });
+      if (gesture.isActive()) gesture.send(cmds);
+      else void edit(label, cmds);
+      return;
+    }
+    // B3-legacy: engine gap — properties outside the engine catalog / custom static writers (plugin panel params, `plugin/<p>`).
+    const legacy = (p: string, ws: ReadonlyArray<{ nodeId: string; value: number }>): void => applyValues(p, ws, { ...opts, mergeKey, label });
+    legacy(prop, writes);
+    if (linkedProp && linkedWrites) legacy(linkedProp, linkedWrites);
+  }, [prop, linkedProp, time, autoKeyframe, gesture, engineRoute, opts, mergeKey]);
+
   const writeAll = useCallback((display: number) => {
-    const engine = display / scale;
-    applyAbsolute(nodeIds, prop, engine, { ...opts, mergeKey, label: `Set ${meta.label}` });
-    if (linkedProp) applyAbsolute(nodeIds, linkedProp, engine, { ...opts, mergeKey, label: `Set ${meta.label}` });
-  }, [nodeIds, prop, linkedProp, opts, mergeKey, meta.label, scale]);
+    const stored = display / scale;
+    const writes = nodeIds.map((nodeId) => ({ nodeId, value: stored }));
+    sendValues(writes, linkedProp ? writes : null, `Set ${meta.label}`);
+  }, [nodeIds, linkedProp, meta.label, scale, sendValues]);
 
   const onScrubStart = useCallback(() => {
     starts.current = snapshotStarts(nodeIds, prop, time, access);
-  }, [nodeIds, prop, time, access]);
+    // One undo entry for the whole scrub (ENGINE_API.md §5.2).
+    scrubRoute.current = engineRoute();
+    if (scrubRoute.current) gesture.begin(`Set ${meta.label}`);
+  }, [nodeIds, prop, time, access, engineRoute, gesture, meta.label]);
+
+  const onScrubEnd = useCallback(() => {
+    if (scrubRoute.current) void gesture.end();
+    scrubRoute.current = null;
+  }, [gesture]);
 
   const onRelative = useCallback((delta: number, cumulative: boolean) => {
     const from = cumulative ? starts.current : snapshotStarts(nodeIds, prop, time, access);
-    const bounds = { min: meta.min, max: meta.max };
-    applyRelative(prop, from, delta / scale, { ...opts, ...bounds, mergeKey, label: `Offset ${meta.label}` });
-    if (linkedProp) {
-      const linkedFrom = cumulative
-        ? starts.current
-        : snapshotStarts(nodeIds, linkedProp, time, access);
-      applyRelative(linkedProp, linkedFrom, delta / scale, { ...opts, ...bounds, mergeKey, label: `Offset ${meta.label}` });
-    }
-  }, [nodeIds, prop, linkedProp, time, access, opts, mergeKey, meta, scale]);
+    const lo = meta.min ?? -Infinity;
+    const hi = meta.max ?? Infinity;
+    const offset = (m: ReadonlyMap<string, number>): Array<{ nodeId: string; value: number }> =>
+      [...m].map(([nodeId, start]) => ({ nodeId, value: Math.min(hi, Math.max(lo, start + delta / scale)) }));
+    // Linked: offset the second property from ITS values (the scrub's start map when cumulative, as before).
+    const linkedFrom = linkedProp ? (cumulative ? starts.current : snapshotStarts(nodeIds, linkedProp, time, access)) : null;
+    sendValues(offset(from), linkedFrom ? offset(linkedFrom) : null, `Offset ${meta.label}`);
+  }, [nodeIds, prop, linkedProp, time, access, meta, scale, sendValues]);
 
   const onCommitText = useCallback((raw: string): boolean => {
     const writes: Array<{ nodeId: string; value: number }> = [];
@@ -223,10 +279,9 @@ export function useMultiPropertyField(
       writes.push({ nodeId: id, value: clamped / scale });
     }
     if (writes.length === 0) return false;
-    applyValues(prop, writes, { ...opts, label: `Set ${meta.label}` });
-    if (linkedProp) applyValues(linkedProp, writes, { ...opts, label: `Set ${meta.label}` });
+    sendValues(writes, linkedProp ? writes : null, `Set ${meta.label}`);
     return true;
-  }, [nodeIds, prop, linkedProp, time, access, opts, meta, scale]);
+  }, [nodeIds, prop, linkedProp, time, access, meta, scale, sendValues]);
 
   // ── Plain per-render derivations (no hooks below this line) ────────────
   const exists = node !== undefined;
@@ -241,6 +296,7 @@ export function useMultiPropertyField(
   const hasStack = node !== undefined && readModifierStack(node, prop) !== null;
   const pinned = exists && isPinnedProp(nodeId, prop);
   const resetValue = meta.resettable && typeof meta.defaultValue === 'number' ? meta.defaultValue : undefined;
+  // B3-legacy: feeds `buildPropertyMenu` (src/core/inspector, not this area), which still writes on the keyframe axis.
   const layerT = compToKeyframeTime(nodeId, time, prop);
   const hint = nodeIds.length > 1 && agg.present < nodeIds.length
     ? `${agg.present} of ${nodeIds.length}`
@@ -252,26 +308,26 @@ export function useMultiPropertyField(
     : null;
 
   const onLaneRetime = (fromC: number, toC: number): void => {
-    const fromT = compToKeyframeTime(nodeId, fromC, prop);
-    const toT = compToKeyframeTime(nodeId, toC, prop);
-    runAnimEdit(`Move ${label} keyframe`, () => defaultAnimation.moveKeyframe(nodeId, prop, fromT, toT));
+    void moveKeysCommands(nodeId, [prop], fromC, toC).then((cmds) => edit(`Move ${label} keyframe`, cmds));
   };
 
   const onLaneContext = (e: React.MouseEvent, compT: number): void => {
-    const t = compToKeyframeTime(nodeId, compT, prop);
-    const id = makeKeyframeId(nodeId, prop, t);
     openContextMenu(e.clientX, e.clientY, [
       {
         id: 'lane-easing',
         label: 'Keyframe Interpolation',
-        children: EASINGS.map((p) => ({ id: `lane-ease-${p.id}`, label: p.label, onSelect: () => applyEasingToKeyframes([id], p.id) })),
+        children: EASINGS.map((p) => ({
+          id: `lane-ease-${p.id}`,
+          label: p.label,
+          onSelect: () => { void easeKeysAtCommands(nodeId, [prop], compT, p.id).then((cmds) => edit(`Set keyframe easing: ${p.id}`, cmds)); },
+        })),
       },
       { id: 'lane-sep', separator: true },
       {
         id: 'lane-remove',
         label: 'Remove Keyframe',
         danger: true,
-        onSelect: () => runAnimEdit(`Remove ${label} keyframe`, () => defaultAnimation.removeKeyframe(nodeId, prop, t)),
+        onSelect: () => { void deleteKeysAtCommands(nodeId, [prop], compT).then((cmds) => edit(`Remove ${label} keyframe`, cmds)); },
       },
     ]);
   };
@@ -280,20 +336,20 @@ export function useMultiPropertyField(
     const name = defaultSceneGraph.getNode(target.nodeId)?.name;
     if (!name) return;
     const src = whipExpression(name, target.prop ?? prop);
-    runAnimEdit(`Link ${label}`, () => defaultAnimation.batch(() => {
-      for (const id of nodeIds) {
-        defaultAnimation.setExpression(id, prop, src);
-        defaultAnimation.setExpressionEnabled(id, prop, true);
-      }
-    }));
+    const cmds = expressionCommands(nodeIds.map((id) => ({ nodeId: id, track: prop, source: src })));
+    if (cmds) void edit(`Link ${label}`, cmds);
+    else legacyExpressions(`Link ${label}`, nodeIds.map((id) => ({ nodeId: id, prop, src })));
     setExprOpen(true);
   };
 
   const toggleExpression = (): void => {
-    // No expression yet: ADD one — AE's default `value`, one undo step, the
-    // same helper the timeline row menu and Alt+Shift+= use — and open it.
+    // No expression yet: ADD one — AE's default `value`, one undo step — and open it.
     if (!hasExpr) {
-      addExpression(nodeIds.map((id) => ({ nodeId: id, prop })), { openEditor: false });
+      const fresh = nodeIds.filter((id) => !defaultAnimation.hasExpression(id, prop));
+      const cmds = expressionCommands(fresh.map((id) => ({ nodeId: id, track: prop, source: DEFAULT_EXPRESSION })));
+      if (cmds) void edit(fresh.length === 1 ? 'Add Expression' : 'Add Expressions', cmds);
+      // B3-legacy: engine gap — an expression on ONE member of a vector (X of Position): API expressions are per property.
+      else addExpression(nodeIds.map((id) => ({ nodeId: id, prop })), { openEditor: false });
       setExprOpen(true);
       return;
     }
@@ -329,6 +385,7 @@ export function useMultiPropertyField(
       precision: meta.precision,
       onChange: writeAll,
       onScrubStart,
+      onScrubEnd,
       onRelative,
       onCommitText,
       'aria-label': label,
@@ -340,9 +397,9 @@ export function useMultiPropertyField(
       atKeyframe: nav.atKeyframe,
       onPrev: () => { if (nav.prevT !== null) seek(nav.prevT); },
       onNext: () => { if (nav.nextT !== null) seek(nav.nextT); },
-      onToggleKeyframe: () => toggleKeyframeAll(nodeIds, prop, time, access),
+      onToggleKeyframe: () => toggleKeyframeGroup(nodeIds, [{ prop, access }], time, label),
     },
-    toggleAnimation: () => toggleAnimationAll(nodeIds, prop, time, access),
+    toggleAnimation: () => toggleAnimationGroupEach(nodeIds, [{ prop, access }], time, label),
     seek,
     hasExpr,
     exprEnabled,
@@ -379,14 +436,36 @@ export interface GroupMember {
 }
 
 /**
- * The GROUP stopwatch with a reader PER PROPERTY.
- *
- * `toggleAnimationGroup` takes one `access` for the whole group, and its
- * `read(nodeId)` has no prop argument — so a group whose members need their
- * own readers (Transform's `accessFor('x')` vs `accessFor('y')`) would seed Y's
- * first keyframe from X's static value. Same rule otherwise, and one undo step:
- * any track on any node lit → every track removed; else every node gets a
- * first keyframe on every member it has.
+ * The engine addresses every member on every layer, and none has its own
+ * static storage (a plugin panel's params do) — the group's writes can go
+ * through the API.
+ */
+function groupOnEngine(nodeIds: ReadonlyArray<string>, members: ReadonlyArray<GroupMember>): boolean {
+  return members.every((m) => !m.access?.writeStatic) && allAddressable(nodeIds, members.map((m) => m.prop));
+}
+
+/**
+ * Link / set expressions the API cannot address (one member of a vector
+ * property, a param outside the catalog) — the pre-API writer, ONE undo step.
+ */
+export function legacyExpressions(label: string, list: ReadonlyArray<{ nodeId: string; prop: string; src: string }>): void {
+  // B3-legacy: engine gap — per-member expressions (X of Position): `setExpression` puts one source on every member.
+  runAnimEdit(label, () => defaultAnimation.batch(() => {
+    for (const x of list) {
+      // B3-legacy: same gap (the member-level writer).
+      defaultAnimation.setExpression(x.nodeId, x.prop, x.src);
+      // B3-legacy: same gap.
+      defaultAnimation.setExpressionEnabled(x.nodeId, x.prop, true);
+    }
+  }));
+}
+
+/**
+ * The GROUP stopwatch (a pair row; a single row is a group of one): any
+ * property on any layer animated → every one stops (the static value becomes
+ * the value at the playhead); else every layer gets a first keyframe holding
+ * its current value. One undo step, through `setAnimated` (AE: Position's X
+ * and Y are ONE property, so its stopwatch is one command per layer).
  */
 export function toggleAnimationGroupEach(
   nodeIds: ReadonlyArray<string>,
@@ -397,24 +476,25 @@ export function toggleAnimationGroupEach(
   const ids = nodeIds.filter((id) => defaultSceneGraph.getNode(id));
   if (ids.length === 0 || members.length === 0) return;
   const anyAnimated = ids.some((id) => members.some((m) => defaultAnimation.isAnimated(id, m.prop)));
-  if (anyAnimated) {
-    runAnimEdit(`Remove ${groupLabel} animation`, () => defaultAnimation.batch(() => {
-      for (const id of ids) {
-        for (const m of members) if (defaultAnimation.isAnimated(id, m.prop)) defaultAnimation.removeTrack(id, m.prop);
-      }
-    }));
+  const label = anyAnimated ? `Remove ${groupLabel} animation` : `Animate ${groupLabel}`;
+  if (groupOnEngine(ids, members)) {
+    void edit(label, stopwatchCommands(ids, members.map((m) => m.prop), compTime));
     return;
   }
-  const seeds: Array<{ id: string; prop: string; v: number }> = [];
-  for (const id of ids) {
-    for (const m of members) {
-      const v = readPropertyValue(id, m.prop, compTime, m.access);
-      if (typeof v === 'number') seeds.push({ id, prop: m.prop, v });
+  // B3-legacy: engine gap — members outside the engine catalog / with custom storage (plugin panel params): seeds need their own readers.
+  runAnimEdit(label, () => defaultAnimation.batch(() => {
+    for (const id of ids) {
+      for (const m of members) {
+        const v = readPropertyValue(id, m.prop, compTime, m.access);
+        if (anyAnimated) {
+          // B3-legacy: same gap (stop = drop the track).
+          if (defaultAnimation.isAnimated(id, m.prop)) defaultAnimation.removeTrack(id, m.prop);
+        } else if (typeof v === 'number') {
+          // B3-legacy: same gap (start = first key from the member's own reader).
+          defaultAnimation.setKeyframe(id, m.prop, layerTimeFor(id, m.prop, compTime), v);
+        }
+      }
     }
-  }
-  if (seeds.length === 0) return;
-  runAnimEdit(`Animate ${groupLabel}`, () => defaultAnimation.batch(() => {
-    for (const s of seeds) defaultAnimation.setKeyframe(s.id, s.prop, layerTimeFor(s.id, s.prop, compTime), s.v);
   }));
 }
 
@@ -448,9 +528,10 @@ export function groupNavigatorState(
 }
 
 /**
- * The group diamond: on a keyframe → remove the keyframe at the playhead from
- * every member that has one; off → add one to EVERY member of every layer
- * where the group is animated, holding its current value. One undo step.
+ * The group diamond: on a keyframe → remove the keyframes at the playhead from
+ * every animated property; off → add one to every animated property of every
+ * layer, holding its current value. One undo step. Key ids come from the
+ * engine (`getKeyframes`), never from positional ids.
  */
 export function toggleKeyframeGroup(
   nodeIds: ReadonlyArray<string>,
@@ -462,24 +543,26 @@ export function toggleKeyframeGroup(
   const animatedIds = nodeIds.filter((id) => props.some((p) => defaultAnimation.isAnimated(id, p)));
   if (animatedIds.length === 0) return;
   const { atKeyframe } = groupNavigatorState(animatedIds, props, compTime);
-  if (atKeyframe) {
-    runAnimEdit(`Remove ${groupLabel} keyframe`, () => defaultAnimation.batch(() => {
-      for (const id of animatedIds) {
-        for (const p of props) {
-          if (!defaultAnimation.isAnimated(id, p)) continue;
-          const lt = layerTimeFor(id, p, compTime);
-          const at = (defaultAnimation.getTrackKeyframes(id, p) ?? []).find((k) => Math.abs(k.t - lt) < KEYFRAME_EPS);
-          if (at) defaultAnimation.removeKeyframe(id, p, at.t);
-        }
-      }
-    }));
+  const label = atKeyframe ? `Remove ${groupLabel} keyframe` : `Add ${groupLabel} keyframe`;
+  if (groupOnEngine(animatedIds, members)) {
+    void keyToggleCommands(animatedIds, props, compTime).then((cmds) => edit(label, cmds));
     return;
   }
-  runAnimEdit(`Add ${groupLabel} keyframe`, () => defaultAnimation.batch(() => {
+  // B3-legacy: engine gap — members outside the engine catalog / with custom storage (plugin panel params).
+  runAnimEdit(label, () => defaultAnimation.batch(() => {
     for (const id of animatedIds) {
       for (const m of members) {
+        if (!defaultAnimation.isAnimated(id, m.prop)) continue;
+        const lt = layerTimeFor(id, m.prop, compTime);
+        const at = (defaultAnimation.getTrackKeyframes(id, m.prop) ?? []).find((k) => Math.abs(k.t - lt) < KEYFRAME_EPS);
         const v = readPropertyValue(id, m.prop, compTime, m.access);
-        if (v !== undefined) defaultAnimation.setKeyframe(id, m.prop, layerTimeFor(id, m.prop, compTime), v);
+        if (atKeyframe) {
+          // B3-legacy: same gap (remove the key at the playhead).
+          if (at) defaultAnimation.removeKeyframe(id, m.prop, at.t);
+        } else if (v !== undefined) {
+          // B3-legacy: same gap (add one holding the member's value).
+          defaultAnimation.setKeyframe(id, m.prop, lt, v);
+        }
       }
     }
   }));

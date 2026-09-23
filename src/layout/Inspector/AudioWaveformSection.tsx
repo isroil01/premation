@@ -33,6 +33,7 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
   const audioLayers = flattenScene(defaultSceneGraph).filter((n) => readNodeKind(n) === 'audio');
 
   const set = <K extends keyof AudioWaveformConfig>(key: K, value: AudioWaveformConfig[K]): void => {
+    // B3-legacy: engine gap — the audio-waveform generator config is a structured value with no API property.
     updateAudioWaveform(nodeId, { [key]: value } as Partial<AudioWaveformConfig>);
   };
 
@@ -113,6 +114,7 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
 
         <button
           type="button"
+          // B3-legacy: engine gap — the audio-waveform generator config is a structured value with no API property.
           onClick={() => setAudioWaveform(nodeId, null)}
           style={{
             marginTop: 6, height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600,

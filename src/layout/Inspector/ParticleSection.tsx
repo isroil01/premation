@@ -39,6 +39,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
   // ONE axis for reads and writes: the canonical keyframe time (reads used to
   // be on the renderer axis while writes subtracted the first clip's start —
   // a moved/trimmed clip made every edit land beside the keyframe it showed).
+  // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
   const layerT = compToKeyframeTime(nodeId, time);
 
   const set = <K extends keyof ParticleConfig>(key: K, value: ParticleConfig[K]): void => {
@@ -47,6 +48,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
     // writeTransformProps so an emitter on a layer with animated width/height
     // keyframes rather than taking a base write the renderer discards.
     if (key === 'emitterWidth' && typeof value === 'number') {
+      // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
       writeTransformProps(nodeId, [{ prop: 'width', value }], 'Emitter Width');
     } else if (key === 'emitterHeight' && typeof value === 'number') {
       writeTransformProps(nodeId, [{ prop: 'height', value }], 'Emitter Height');
@@ -62,6 +64,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
       : (cfg[key] as number);
     const toggle = (): void => {
       if (animated) {
+        // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
         runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
       } else {
         runAnimEdit(`Animate ${label}`, () =>
@@ -81,6 +84,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
             if (animated) {
               // Editing an animated param writes a keyframe at the playhead —
               // writing the static config would change nothing on screen.
+              // B3-legacy: engine gap — particle emitter config (fx.particle) is a structured value with no API property.
               runAnimEdit(`Set ${label}`, () =>
                 defaultAnimation.setKeyframe(nodeId, prop, layerT, Number(v)),
                 `particle:${nodeId}:${prop}`);

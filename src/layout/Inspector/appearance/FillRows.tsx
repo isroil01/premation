@@ -59,6 +59,7 @@ const FILL_ANGLE: PropertyAccess = {
   writeStatic: (id, angle) => {
     const f = getNodeFill(id);
     if (f?.type !== 'linear') return false;
+    // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
     setNodeFill(id, { ...f, angle });
     return true;
   },
@@ -73,6 +74,7 @@ function radialAccess(field: 'cx' | 'cy' | 'radius'): PropertyAccess {
     writeStatic: (id, v) => {
       const f = getNodeFill(id);
       if (f?.type !== 'radial') return false;
+      // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
       setNodeFill(id, { ...f, [field]: v });
       return true;
     },
@@ -107,11 +109,13 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
   const handleFillTypeChange = (type: FillType | 'none') => {
     if (type === 'none') {
       if (fill) setSavedFill(fill);
+      // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
       setNodeFill(nodeId, undefined);
     } else {
       // Composite / blend survive a type switch — they belong to the paint
       // operation, not to whichever kind of paint it currently is.
       const next = convertFill(fill, type);
+      // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
       setNodeFill(nodeId, fill ? withPaintOp(next, fill as PaintOpOptions) : next);
       setSavedFill(null);
     }
@@ -119,12 +123,14 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
 
   const handleFillColorChange = (color: string) => {
     if (fill && fill.type === 'solid') {
+      // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
       setNodeFill(nodeId, { ...fill, color });
     } else if (fill) {
       const newStops = [...fill.stops];
       if (newStops[0]) {
         newStops[0] = { ...newStops[0], color };
       }
+      // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
       setNodeFill(nodeId, { ...fill, stops: newStops });
     } else {
       setNodeFill(nodeId, { type: 'solid', color });
@@ -158,6 +164,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
               <PaintOpRows
                 label="Fill 1"
                 value={fill as PaintOpOptions}
+                // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
                 onChange={(next) => setNodeFill(nodeId, withPaintOp(fill, next))}
               />
             )}
@@ -216,6 +223,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
               value={f.type}
               onChange={(e) => {
                 const next = [...fills];
+                // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
                 next[i + 1] = convertFill(f, e.target.value as FillType);
                 setNodeFills(nodeId, next);
               }}
@@ -234,6 +242,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                   f.type === 'solid'
                     ? solidFill(hex)
                     : { ...f, stops: f.stops.map((s, si) => (si === 0 ? { ...s, color: hex } : s)) };
+                // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
                 setNodeFills(nodeId, next);
               }}
               aria-label={`Fill ${i + 2} color`}
@@ -242,6 +251,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
               type="button"
               className={effStyles.remove}
               aria-label={`Remove fill ${i + 2}`}
+              // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
               onClick={() => setNodeFills(nodeId, fills.filter((_, fi) => fi !== i + 1))}
             >
               <Icon name="close" size="sm" />
@@ -253,6 +263,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
             onChange={(opts) => {
               const next = [...fills];
               next[i + 1] = withPaintOp(f, opts);
+              // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
               setNodeFills(nodeId, next);
             }}
           />
@@ -263,6 +274,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
             type="button"
             className={effStyles.addChip}
             style={{ gap: 5 }}
+            // B3-legacy: engine gap — layer fill paints (fx.fill / fx.fills: solid / gradient objects) have no API property or group (`contents/<fill>`).
             onClick={() => setNodeFills(nodeId, [...fills, solidFill('#ffffff')])}
           >
             <Icon name="plus" size="sm" />

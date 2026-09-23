@@ -23,6 +23,7 @@ import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
 
 const NODE = 'kf-node';
 
@@ -37,8 +38,18 @@ beforeAll(() => {
   );
 });
 
+/** The composition the layer lives in: the engine addresses LAYERS (nodes inside a comp). */
+const ROOT = 'kf-root';
+
 function addNode(x: number): void {
-  defaultSceneGraph.addNode({
+  if (!defaultSceneGraph.getNode(ROOT)) {
+    defaultSceneGraph.addNode({
+      id: ROOT, name: 'Comp', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [],
+    } as unknown as SceneNode);
+  }
+  defaultSceneGraph.addChild(ROOT, {
     id: NODE, name: NODE, parent: null, children: [], visible: true, locked: false,
     transform: { position: { x, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
     components: [
@@ -89,18 +100,25 @@ const shownX = (): number => Number(xField().getAttribute('aria-valuenow'));
  * row's stopwatch is the group's, so the name is "Position", not "Position X".
  * Everything below still asserts on X alone.
  */
-function lightXStopwatch(): void {
+async function lightXStopwatch(): Promise<void> {
   const sw = screen.getByRole('button', { name: /(Enable|Disable) Position animation/ });
   fireEvent.click(sw);
+  await idle();
+}
+
+/** Inspector writes are engine commands (B3): asynchronous. */
+async function idle(): Promise<void> {
+  await act(async () => { await engineIdle(); });
 }
 
 /** Type an exact value into a resting ValueField (Enter opens the input). */
-function typeValue(field: HTMLElement, value: string): void {
+async function typeValue(field: HTMLElement, value: string): Promise<void> {
   fireEvent.keyDown(field, { key: 'Enter' });
   const input = field.querySelector('input');
   if (!input) throw new Error('ValueField did not open an input on Enter');
   fireEvent.change(input, { target: { value } });
   fireEvent.keyDown(input, { key: 'Enter' });
+  await idle();
 }
 
 describe('keyframing position from the inspector', () => {
@@ -121,19 +139,19 @@ describe('keyframing position from the inspector', () => {
 
   afterEach(cleanup);
 
-  it('a value set at 5s does not disturb the keyframe at 1s', () => {
+  it('a value set at 5s does not disturb the keyframe at 1s', async () => {
     setTime(1);
     defaultAnimation.setKeyframe(NODE, 'x', getRemappedTime(NODE, 1), -400);
 
     setTime(5);
     render(<TransformSection nodeId={NODE} />);
-    typeValue(xField(), '0');
+    await typeValue(xField(), '0');
 
     expect(defaultAnimation.sample(NODE, 'x', getRemappedTime(NODE, 5))).toBeCloseTo(0);
     expect(defaultAnimation.sample(NODE, 'x', getRemappedTime(NODE, 1))).toBeCloseTo(-400);
   });
 
-  it('shows the value you set at each time, on a layer whose clip starts at 1s', () => {
+  it('shows the value you set at each time, on a layer whose clip starts at 1s', async () => {
     // THE REPRODUCTION. Before the fix the field read -300 here: the write went
     // to layer time 0/4 while the read sampled raw comp time 1, landing a
     // quarter of the way along the curve.
@@ -142,12 +160,12 @@ describe('keyframing position from the inspector', () => {
 
     setTime(1);
     rerender(<TransformSection nodeId={NODE} />);
-    lightXStopwatch();          // stopwatch on -> keyframe at 1s
-    typeValue(xField(), '-400');
+    await lightXStopwatch();          // stopwatch on -> keyframe at 1s
+    await typeValue(xField(), '-400');
 
     setTime(5);
     rerender(<TransformSection nodeId={NODE} />);
-    typeValue(xField(), '0');
+    await typeValue(xField(), '0');
     expect(shownX()).toBeCloseTo(0);
 
     // Go back: the first keyframe must still read exactly what was set.
@@ -156,7 +174,7 @@ describe('keyframing position from the inspector', () => {
     expect(shownX()).toBeCloseTo(-400);
   });
 
-  it('agrees with the renderer about the value at a given comp time', () => {
+  it('agrees with the renderer about the value at a given comp time', async () => {
     // The inspector and buildSnapshot must sample the same axis, or the number
     // in the panel disagrees with the pixels on the canvas.
     addClip(30);
@@ -164,11 +182,11 @@ describe('keyframing position from the inspector', () => {
 
     setTime(1);
     rerender(<TransformSection nodeId={NODE} />);
-    lightXStopwatch();
-    typeValue(xField(), '-400');
+    await lightXStopwatch();
+    await typeValue(xField(), '-400');
     setTime(5);
     rerender(<TransformSection nodeId={NODE} />);
-    typeValue(xField(), '0');
+    await typeValue(xField(), '0');
 
     for (const t of [1, 3, 5]) {
       setTime(t);

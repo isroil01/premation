@@ -71,6 +71,7 @@ export function StylePresetsSection({ nodeId }: { nodeId: string }): JSX.Element
   if (!node) return null;
 
   const apply = (id: string, label: string): void => {
+    // B3-legacy: engine gap — a style preset writes paint/stroke/style objects with no API properties.
     if (applyStylePreset(nodeId, id, accent)) {
       useUIStore.getState().notify({ level: 'success', message: `Applied “${label}”`, durationMs: 2000 });
     }

@@ -164,6 +164,7 @@ export function Ik3DSection({ nodeId }: { nodeId: string }): JSX.Element | null 
           size="sm"
           variant="secondary"
           disabled={!target}
+          // B3-legacy: engine gap — 3D IK bake has no API command.
           onClick={() => { if (target) bakeIk3DToTarget(chain, target, opts); }}
           title="Solve every frame of the composition and bake rotation keyframes onto the joints"
         >

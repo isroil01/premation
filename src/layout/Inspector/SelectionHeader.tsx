@@ -25,18 +25,21 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
+import type { Command, LayerSwitchesPatch } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { batchHistory } from '@stores/historyStore';
 import { useUIStore } from '@stores/uiStore';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { KIND_ICON, readNodeKind } from '@core/scene/sceneDerive';
 import { renameLayer } from '@core/scene/renameLayer';
 import { findLayerKind } from '@core/plugins/layerKindRegistry';
-import { LABEL_COLORS, getNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
-import { canBe3D, is3DEnabled, set3DEnabled } from '@core/scene/threeD';
-import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
-import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import { enableLayerMotionBlurWithFeedback, disableLayerMotionBlur, setAdjustmentWithFeedback } from '@core/effects/layerSwitchFeedback';
+import { LABEL_COLORS, getNodeLabelColor } from '@core/scene/labelColor';
+import { canBe3D, is3DEnabled } from '@core/scene/threeD';
+import { getNodeMotionBlur } from '@core/effects/motionBlur';
+import { getNodeAdjustment } from '@core/effects/adjustment';
+import { getNodeEffects } from '@core/effects/effects';
+import { isLayer } from '@core/engine/doc';
+import { edit } from '@core/engine/uiEdits';
 import { useNodesRevision } from '@hooks/useNodeRevision';
 import styles from './SelectionHeader.module.css';
 
@@ -50,7 +53,10 @@ export interface LayerSwitchSpec {
   label: string;
   applies: (id: string) => boolean;
   read: (id: string) => boolean;
-  write: (id: string, on: boolean) => void;
+  /** The engine's `setLayerSwitches` patch that sets this switch (B3). */
+  patch: (on: boolean) => LayerSwitchesPatch;
+  /** What the user is told after the switch landed (the old "WithFeedback" helpers). */
+  after?: (ids: readonly string[], on: boolean) => void;
 }
 
 function isRenderable(id: string): boolean {
@@ -65,43 +71,69 @@ export const LAYER_SWITCHES: ReadonlyArray<LayerSwitchSpec> = [
     id: 'visible', icon: 'eye', label: 'Visible',
     applies: () => true,
     read: (id) => defaultSceneGraph.getNode(id)?.visible !== false,
-    write: (id, on) => { const n = defaultSceneGraph.getNode(id); if (n) n.visible = on; },
+    patch: (on) => ({ visible: on }),
   },
   {
     id: 'solo', icon: 'circle', label: 'Solo',
     applies: () => true,
     read: (id) => defaultSceneGraph.getNode(id)?.solo === true,
-    write: (id, on) => { const n = defaultSceneGraph.getNode(id); if (n) n.solo = on; },
+    patch: (on) => ({ solo: on }),
   },
   {
     id: 'locked', icon: 'lock', label: 'Lock',
     applies: () => true,
     read: (id) => defaultSceneGraph.getNode(id)?.locked === true,
-    write: (id, on) => { const n = defaultSceneGraph.getNode(id); if (n) n.locked = on; },
+    patch: (on) => ({ locked: on }),
   },
   {
     id: '3d', icon: '3d', label: '3D layer',
     applies: (id) => { const n = defaultSceneGraph.getNode(id); return !!n && canBe3D(n); },
     read: (id) => { const n = defaultSceneGraph.getNode(id); return !!n && is3DEnabled(n); },
-    write: (id, on) => set3DEnabled(id, on),
+    patch: (on) => ({ threeD: on }),
   },
   {
     id: 'motionBlur', icon: 'motion-blur', label: 'Motion blur',
     applies: isRenderable,
     read: (id) => getNodeMotionBlur(id),
-    write: (id, on) => { if (on) enableLayerMotionBlurWithFeedback(id, setNodeMotionBlur); else disableLayerMotionBlur(id, setNodeMotionBlur); },
+    patch: (on) => ({ motionBlur: on }),
+    after: (_ids, on) => { if (on) motionBlurFeedback(); },
   },
   {
     id: 'adjustment', icon: 'adjustment', label: 'Adjustment layer',
     applies: isRenderable,
     read: (id) => getNodeAdjustment(id),
-    write: (id, on) => setAdjustmentWithFeedback(id, on, setNodeAdjustment),
+    patch: (on) => ({ adjustment: on }),
+    after: (ids, on) => {
+      if (on && ids.some((id) => getNodeEffects(id).length === 0)) {
+        notify('info', 'Adjustment layer is on — add effects to grade layers beneath it', 3200);
+      }
+    },
   },
 ];
 
-/** The selected layers this switch can be set on — live nodes only. */
+/**
+ * AE's dual gate: a layer's motion-blur switch changes pixels only with the
+ * composition's master on, so turning the layer on turns the master on too
+ * (and says so); warn when draft preview is suppressing the samples.
+ */
+function motionBlurFeedback(): void {
+  const mb = useMotionBlurStore.getState();
+  if (!mb.enabled) {
+    // B3-legacy: engine gap — the composition's motion-blur MASTER switch is not in `setCompositionSettings` (only shutter/samples are).
+    mb.setEnabled(true);
+    notify('info', 'Motion Blur enabled for this layer and the composition', 3200);
+  }
+  if (useRenderQualityStore.getState().draft) {
+    notify('warning', 'Draft preview is on — motion blur samples are paused until draft is off', 3200);
+  }
+}
+
+/**
+ * The selected LAYERS this switch can be set on. A composition root is an
+ * item in the engine API, not a layer, and has no layer switches there.
+ */
 function switchTargets(nodeIds: ReadonlyArray<string>, t: LayerSwitchSpec): string[] {
-  return nodeIds.filter((id) => !!defaultSceneGraph.getNode(id) && t.applies(id));
+  return nodeIds.filter((id) => !!defaultSceneGraph.getNode(id) && isLayer(id) && t.applies(id));
 }
 
 /** All / none / mixed over the layers the switch applies to. */
@@ -116,14 +148,15 @@ export function layerSwitchState(nodeIds: ReadonlyArray<string>, t: LayerSwitchS
  * Flip a switch for the whole selection: all on → all off, otherwise (none or
  * mixed) → all on. ONE undo entry however many layers it writes.
  */
-export function applyLayerSwitch(nodeIds: ReadonlyArray<string>, t: LayerSwitchSpec): void {
+export async function applyLayerSwitch(nodeIds: ReadonlyArray<string>, t: LayerSwitchSpec): Promise<void> {
   const targets = switchTargets(nodeIds, t);
   if (targets.length === 0) return;
   const next = layerSwitchState(targets, t) !== 'all';
-  batchHistory(`switch:${t.id}:${targets.join(',')}`, () => {
-    for (const id of targets) t.write(id, next);
-    bumpScene();
-  });
+  // One command per layer (`setLayerSwitches` takes ONE composition's layers
+  // and a selection may span a precomp and its parent), one batch = one entry.
+  const cmds = targets.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch: t.patch(next) }) as Command);
+  const res = await edit(`${next ? 'Enable' : 'Disable'} ${t.label}`, cmds);
+  if (res.ok) t.after?.(targets, next);
 }
 
 /** The switches that apply to at least one selected layer, in display order. */
@@ -150,7 +183,7 @@ export function layerSwitchMenuItems(nodeIds: ReadonlyArray<string>): DropdownIt
     id: `switch-${t.id}`,
     label: t.label,
     checked: layerSwitchState(nodeIds, t) === 'all',
-    onChange: () => applyLayerSwitch(nodeIds, t),
+    onChange: () => { void applyLayerSwitch(nodeIds, t); },
   }));
 }
 
@@ -224,6 +257,7 @@ function notify(level: 'info' | 'warning', message: string, durationMs: number):
  * panel's, so a rename reports the same thing wherever it was made.
  */
 function commitLayerRename(id: string, name: string): void {
+  // B3-legacy: engine gap — the API's `renameLayer` does not follow the expressions that name the layer (repair + capture report).
   const result = renameLayer(id, name);
   if (!result.ok) return;
   if (result.repaired.length > 0) {
@@ -334,11 +368,17 @@ function SelectionHeaderInner({ nodeIds = [], actions }: SelectionHeaderProps): 
   if (!primary || !node) return null;
 
   const current = getNodeLabelColor(primary);
+  // Label colour = the `label` layer switch (index into LABEL_COLORS, 0 = by kind).
+  const setLabel = (color: string | undefined): void => {
+    const index = color === undefined ? 0 : LABEL_COLORS.findIndex((c) => c.color === color) + 1;
+    const ids = nodeIds.filter((id) => isLayer(id));
+    void edit('Label Colour', ids.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch: { label: index } }) as Command));
+  };
   const colorItems: DropdownItem[] = [
     {
       type: 'item', id: 'default', label: 'Default (by kind)',
       icon: current === undefined ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(nodeIds, undefined),
+      onSelect: () => setLabel(undefined),
     },
     { type: 'separator' },
     ...LABEL_COLORS.map((c): DropdownItem => ({
@@ -350,7 +390,7 @@ function SelectionHeaderInner({ nodeIds = [], actions }: SelectionHeaderProps): 
         </span>
       ),
       icon: current === c.color ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(nodeIds, c.color),
+      onSelect: () => setLabel(c.color),
     })),
   ];
 

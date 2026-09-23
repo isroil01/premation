@@ -30,9 +30,6 @@ import { PropertyRow, KeyframeLane } from '@components/PropertyRow';
 import { PickWhip } from '@components/PickWhip';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { whipExpression } from '@core/whip/whipTarget';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
@@ -40,8 +37,11 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { ExpressionEditor } from '@layout/Motion/ExpressionEditor';
 import { ModifierChips } from './ModifierChips';
+import { edit } from '@core/engine/uiEdits';
+import { expressionCommands, moveKeysCommands } from './inspectorEdits';
 import {
   groupNavigatorState,
+  legacyExpressions,
   toggleAnimationGroupEach,
   toggleKeyframeGroup,
   useMultiPropertyField,
@@ -152,15 +152,10 @@ function MultiPropertyPairRowInner({
     // ONE undo step for the whole row. A drop on a layer links each member to
     // the same-named property there; a drop on a property links every member
     // to that one property.
-    runAnimEdit(`Link ${group}`, () => defaultAnimation.batch(() => {
-      for (const p of memberProps) {
-        const src = whipExpression(name, target.prop ?? p);
-        for (const id of nodeIds) {
-          defaultAnimation.setExpression(id, p, src);
-          defaultAnimation.setExpressionEnabled(id, p, true);
-        }
-      }
-    }));
+    const list = memberProps.flatMap((p) => nodeIds.map((id) => ({ nodeId: id, prop: p, src: whipExpression(name, target.prop ?? p) })));
+    const cmds = expressionCommands(list.map((x) => ({ nodeId: x.nodeId, track: x.prop, source: x.src })));
+    if (cmds) void edit(`Link ${group}`, cmds);
+    else legacyExpressions(`Link ${group}`, list);
     for (const s of slots) s.field.setExprOpen(true);
   };
 
@@ -206,13 +201,8 @@ function MultiPropertyPairRowInner({
     (s.field.laneTimes ?? []).some((t) => Math.abs(t - compT) <= SAME_TIME);
 
   const onLaneRetime = (fromC: number, toC: number): void => {
-    runAnimEdit(`Move ${group} keyframe`, () => defaultAnimation.batch(() => {
-      for (const s of laneOwners) {
-        if (!ownsTime(s, fromC)) continue;
-        const p = s.spec.prop;
-        defaultAnimation.moveKeyframe(nodeId, p, compToKeyframeTime(nodeId, fromC, p), compToKeyframeTime(nodeId, toC, p));
-      }
-    }));
+    const owners = laneOwners.filter((s) => ownsTime(s, fromC)).map((s) => s.spec.prop);
+    void moveKeysCommands(nodeId, owners, fromC, toC).then((cmds) => edit(`Move ${group} keyframe`, cmds));
   };
 
   const stacks = slots.filter((s) => s.field.hasStack);

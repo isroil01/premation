@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { alignNodes, type AlignMode } from '@core/scene/alignNodes';
+import type { AlignMode } from '@core/scene/alignNodes';
+import { alignLayers } from './inspectorEdits';
 import { Icon, type IconName } from '@components/Icon';
 import styles from './AlignSection.module.css';
 
@@ -70,7 +71,7 @@ export function AlignSection(): JSX.Element | null {
               aria-label={a.label}
               title={titleTip}
               disabled={isDisabled}
-              onClick={() => alignNodes([...selectedIds], a.id, alignTo, compWidth, compHeight)}
+              onClick={() => alignLayers(selectedIds, a.id, alignTo, compWidth, compHeight)}
             >
               <Icon name={a.icon} size="sm" />
             </button>

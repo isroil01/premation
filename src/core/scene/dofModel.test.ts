@@ -123,7 +123,8 @@ describe('the control reaches the model', () => {
 
   it('CameraSection writes the prop', () => {
     const ui = readSource('layout/Inspector/CameraSection.tsx');
-    expect(ui).toMatch(/useNodeComponentProp\([^)]*'fStop'\)/);
+    // B3: `useComponentProp` (the engine API where it addresses the prop, the legacy writer otherwise).
+    expect(ui).toMatch(/useComponentProp\([^)]*'fStop'\)/);
     expect(ui).toMatch(/prop="fStop"/);
   });
 

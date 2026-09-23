@@ -46,6 +46,7 @@ export function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: Fill
   const ramp = sortedOpacityStops(paint.opacityStops);
 
   const write = (next: OpacityStop[] | undefined): void => {
+    // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
     setNodeFill(nodeId, { ...paint, opacityStops: next && next.length > 0 ? next : undefined });
   };
 
@@ -138,6 +139,7 @@ export function StopList({
 }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   if (paint.type === 'solid') return null;
+  // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
   const layerT = compToKeyframeTime(nodeId, time);
   const canAnimate = target === 'fill';
 
@@ -154,6 +156,7 @@ export function StopList({
     : sortedStops(paint.stops);
   const write = (next: ColorStop[]): void => {
     if (stopsAnimated) {
+      // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
       runAnimEdit('Edit gradient stops keyframe', () => {
         defaultAnimation.setDataKeyframe(
           nodeId, 'fill.stops', 'gradientStops', layerT,
@@ -161,6 +164,7 @@ export function StopList({
         );
       }, `gradStops:${nodeId}`);
     } else if (target === 'stroke') {
+      // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
       updateNodeStrokeAt(nodeId, strokeIndex, { paint: { ...paint, stops: next } });
     } else {
       setNodeFill(nodeId, { ...paint, stops: next });
@@ -168,11 +172,13 @@ export function StopList({
   };
   const toggleStopwatch = (): void => {
     if (stopsAnimated) {
+      // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
       runAnimEdit('Remove gradient stop keyframes', () => {
         defaultAnimation.setDataTrack(nodeId, 'fill.stops', null);
       });
     } else {
       runAnimEdit('Animate gradient stops', () => {
+        // B3-legacy: engine gap — gradient stops are paint data (data track `gradientStops` on fills/strokes) with no API property.
         defaultAnimation.setDataKeyframe(
           nodeId, 'fill.stops', 'gradientStops', layerT,
           stops.map((s) => ({ pos: s.offset, color: s.color })),

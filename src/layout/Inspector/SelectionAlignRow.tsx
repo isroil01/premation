@@ -15,7 +15,8 @@
 
 import { useState } from 'react';
 import { useCompositionStore } from '@stores/compositionStore';
-import { alignNodes, distributeMinimum, type AlignMode } from '@core/scene/alignNodes';
+import { distributeMinimum, type AlignMode } from '@core/scene/alignNodes';
+import { alignLayers } from './inspectorEdits';
 import { Icon, type IconName } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
 import styles from './SelectionAlignRow.module.css';
@@ -50,7 +51,7 @@ export function SelectionAlignRow({ nodeIds = [] }: { nodeIds?: ReadonlyArray<st
         aria-label={a.label}
         tooltip={disabled ? `${a.label} — select ${min}+ layers` : a.label}
         disabled={disabled}
-        onClick={() => alignNodes([...nodeIds], a.id, alignTo, compWidth, compHeight)}
+        onClick={() => alignLayers(nodeIds, a.id, alignTo, compWidth, compHeight)}
       >
         <Icon name={a.icon} size="sm" />
       </IconButton>
@@ -62,6 +63,7 @@ export function SelectionAlignRow({ nodeIds = [] }: { nodeIds?: ReadonlyArray<st
     <div className={styles.row} role="toolbar" aria-label="Align selected layers">
       {ALIGN.map((a) => button(a, toComp ? 1 : 2))}
       <span className={styles.divider} aria-hidden="true" />
+      {/* B3-legacy: not a write — `distributeMinimum` is a pure count the ratchet's verb match flags (rule false positive). */}
       {DISTRIBUTE.map((a) => button(a, distributeMinimum(alignTo)))}
       <span className={styles.divider} aria-hidden="true" />
       <IconButton

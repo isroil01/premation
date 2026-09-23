@@ -21,11 +21,13 @@ import { AnimatablePaintRow } from './AnimatablePaintRow';
 import styles from '../TransformSection.module.css';
 
 export function CornerRows({ nodeId, styleCompId }: { nodeId: string; styleCompId: string }): JSX.Element | null {
+  // B3-legacy: engine gap — per-corner radii (cornerRadii) are not catalog properties; linked writes need one entry.
   const [cornerRadiusRaw, setCornerRadius] = useNodeComponentProp(defaultSceneGraph, nodeId, styleCompId, 'cornerRadius');
   const cornerRadius = typeof cornerRadiusRaw === 'number' ? cornerRadiusRaw : 0;
   const [cornerTLRaw, setCornerTL] = useNodeComponentProp(defaultSceneGraph, nodeId, styleCompId, 'cornerRadiusTL');
   const [cornerTRRaw, setCornerTR] = useNodeComponentProp(defaultSceneGraph, nodeId, styleCompId, 'cornerRadiusTR');
   const [cornerBRRaw, setCornerBR] = useNodeComponentProp(defaultSceneGraph, nodeId, styleCompId, 'cornerRadiusBR');
+  // B3-legacy: engine gap — per-corner radii (cornerRadii) are not catalog properties; linked writes need one entry.
   const [cornerBLRaw, setCornerBL] = useNodeComponentProp(defaultSceneGraph, nodeId, styleCompId, 'cornerRadiusBL');
   const [cornersLinkedRaw, setCornersLinked] = useNodeComponentProp(defaultSceneGraph, nodeId, styleCompId, 'cornersLinked');
   const cornerTL = typeof cornerTLRaw === 'number' ? cornerTLRaw : cornerRadius;
@@ -48,6 +50,7 @@ export function CornerRows({ nodeId, styleCompId }: { nodeId: string; styleCompI
    */
   const writeAllCorners = (v: number, link: boolean) => {
     const r = Math.max(0, v);
+    // B3-legacy: engine gap — per-corner radii (cornerRadii) are not catalog properties; linked writes need one entry.
     batchHistory(`corners:${nodeId}`, () => {
       setCornerRadius(r);
       setCornerTL(r);
@@ -68,6 +71,7 @@ export function CornerRows({ nodeId, styleCompId }: { nodeId: string; styleCompI
       writeAllCorners(r, true);
       return;
     }
+    // B3-legacy: engine gap — per-corner radii (cornerRadii) are not catalog properties; linked writes need one entry.
     batchHistory(`corners:${nodeId}`, () => {
       setOne(r);
       // Keep `cornerRadius` as the max so extrusion / legacy readers stay sensible.
@@ -84,6 +88,7 @@ export function CornerRows({ nodeId, styleCompId }: { nodeId: string; styleCompI
   const toggleCornersLinked = () => {
     if (cornersLinked) {
       // Unlink: seed each corner from the current values so fields don't jump.
+      // B3-legacy: engine gap — per-corner radii (cornerRadii) are not catalog properties; linked writes need one entry.
       batchHistory(`corners:${nodeId}`, () => {
         setCornerTL(cornerTL);
         setCornerTR(cornerTR);

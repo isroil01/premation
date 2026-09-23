@@ -103,6 +103,7 @@ describe('auto-orient is offered only where it is read', () => {
     expect(motionPathRow).not.toMatch(/showAutoOrient/);
     // Anchor the slice: if the label is ever renamed this must fail loudly
     // rather than silently assert against an empty-ish tail.
-    expect(motionPathRow).toMatch(/smoothMotionPath|straightenMotionPath/);
+    // B3: the buttons send the smooth/straighten macro through the engine API.
+    expect(motionPathRow).toMatch(/reshapePath\(nodeId, '(smooth|straighten)'\)/);
   });
 });

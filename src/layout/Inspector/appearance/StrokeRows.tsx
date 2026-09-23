@@ -87,6 +87,7 @@ function patchTaper(nodeId: string, index: number, patch: Partial<StrokeTaper>):
   const ramp = next.lengthUnits === 'pixels' ? DEFAULT_RAMP_PX : DEFAULT_RAMP;
   if (next.startWidth < 1 && next.startLength <= 0 && patch.startLength === undefined) next.startLength = ramp;
   if (next.endWidth < 1 && next.endLength <= 0 && patch.endLength === undefined) next.endLength = ramp;
+  // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
   updateNodeStrokeAt(nodeId, index, { taper: next });
 }
 
@@ -99,6 +100,7 @@ function patchWave(nodeId: string, index: number, patch: Partial<StrokeWave>): v
   if (next.amount !== 0 && next.wavelength <= 0 && patch.wavelength === undefined) {
     next.wavelength = next.units === 'cycles' ? DEFAULT_CYCLES : DEFAULT_WAVELENGTH;
   }
+  // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
   updateNodeStrokeAt(nodeId, index, { wave: next });
 }
 
@@ -163,6 +165,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
   const armedTarget = useGradientEditStore((s) => s.target);
   const armedIndex = useGradientEditStore((s) => s.fillIndex);
   const gradientArmed = armedId === nodeId && armedTarget === 'shapeStroke' && armedIndex === index;
+  // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
   const update = (patch: Partial<Stroke>): void => updateNodeStrokeAt(nodeId, index, patch);
 
   const addDash = (): void => {
@@ -182,6 +185,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
     // The slot's keyframes go with it — left behind they would bind to the next
     // dash added here, which never asked for them.
     if (prop && defaultAnimation.isAnimated(nodeId, prop)) {
+      // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
       runAnimEdit('Remove dash animation', () => defaultAnimation.removeTrack(nodeId, prop));
     }
     update({ dash: s.dash.slice(0, -1) });
@@ -197,6 +201,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
 
       <AnimatablePaintRow
         nodeId={nodeId} prop={path('width')} label="Width"
+        // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
         access={acc('width', (s) => s.width, (id, width) => updateNodeStrokeAt(id, index, { width, enabled: width > 0 }))}
       />
 
@@ -212,6 +217,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
           alpha, so an alpha keyed through the colour row still reads. */}
       <AnimatablePaintRow
         nodeId={nodeId} prop={path('opacity')} label="Opacity"
+        // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
         access={acc('opacity', (s) => s.opacity, (id, opacity) => updateNodeStrokeAt(id, index, { opacity }))}
       />
 
@@ -266,6 +272,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
       {stroke.join === 'miter' && (
         <AnimatablePaintRow
           nodeId={nodeId} prop={path('miterLimit')} label="Miter Limit" precision={1}
+          // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
           access={acc('miterLimit', (s) => s.miterLimit ?? 4, (id, miterLimit) => updateNodeStrokeAt(id, index, { miterLimit }))}
         />
       )}
@@ -307,6 +314,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
               if (!s || k >= s.dash.length) return;
               const dash = [...s.dash];
               dash[k] = Math.max(0, v);
+              // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
               updateNodeStrokeAt(id, index, { dash });
             })}
           />
@@ -316,6 +324,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
       {stroke.dash.length > 0 && (
         <AnimatablePaintRow
           nodeId={nodeId} prop={path('dashOffset')} label="Dash Offset"
+          // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
           access={acc('dashOffset', (s) => s.dashOffset ?? 0, (id, dashOffset) => updateNodeStrokeAt(id, index, { dashOffset }))}
         />
       )}
@@ -434,6 +443,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
           onChange={(e) => {
             const t = e.target.value as FillType;
             if (t === 'solid') update({ paint: undefined, gradient: undefined });
+            // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
             else update({ paint: convertFill(stroke.paint, t) });
           }}
           aria-label={index === 0 ? 'Stroke paint type' : `Stroke ${index + 1} paint type`}
@@ -457,6 +467,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
                 access={acc(key, (s, id) => (s.paint && s.paint.type !== 'solid' ? gradientOf(id, s)[field] : undefined), (id, v) => {
                   const s = getNodeStrokeAt(id, index);
                   if (!s?.paint || s.paint.type === 'solid') return;
+                  // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
                   updateNodeStrokeAt(id, index, { gradient: { ...gradientOf(id, s), [field]: v } });
                 })}
               />
@@ -469,6 +480,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
                 access={acc('highlightLength', (s, id) => (s.paint?.type === 'radial' ? gradientOf(id, s).highlightLength ?? 0 : undefined), (id, v) => {
                   const s = getNodeStrokeAt(id, index);
                   if (s?.paint?.type !== 'radial') return;
+                  // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
                   updateNodeStrokeAt(id, index, { gradient: { ...gradientOf(id, s), highlightLength: v } });
                 })}
               />
@@ -477,6 +489,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
                 access={acc('highlightAngle', (s, id) => (s.paint?.type === 'radial' ? gradientOf(id, s).highlightAngle ?? 0 : undefined), (id, v) => {
                   const s = getNodeStrokeAt(id, index);
                   if (s?.paint?.type !== 'radial') return;
+                  // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
                   updateNodeStrokeAt(id, index, { gradient: { ...gradientOf(id, s), highlightAngle: v } });
                 })}
               />
@@ -524,6 +537,7 @@ export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
           <span className={styles.popoverLabel}>Enabled</span>
           <Checkbox
             checked={primary?.enabled ?? false}
+            // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
             onChange={() => updateNodeStrokeAt(nodeId, 0, { enabled: !(primary?.enabled ?? false) })}
           />
         </div>
@@ -542,6 +556,7 @@ export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Checkbox
                     checked={s.enabled}
+                    // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
                     onChange={() => updateNodeStrokeAt(nodeId, index, { enabled: !s.enabled })}
                     aria-label={`Stroke ${index + 1} enabled`}
                   />
@@ -549,6 +564,7 @@ export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                     type="button"
                     className={effStyles.remove}
                     aria-label={`Remove stroke ${index + 1}`}
+                    // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
                     onClick={() => removeNodeStrokeAt(nodeId, index)}
                   >
                     <Icon name="close" size="sm" />
@@ -564,6 +580,7 @@ export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
             type="button"
             className={effStyles.addChip}
             style={{ gap: 5 }}
+            // B3-legacy: engine gap — the layer stroke stack (fx.strokes) has no API group/properties (`contents/<stroke>`).
             onClick={() => setNodeStrokes(nodeId, [...(strokes.length ? strokes : [defaultStroke()]), normalizeStroke({ ...defaultStroke('#ffffff'), width: 2 })])}
           >
             <Icon name="plus" size="sm" /> Add stroke

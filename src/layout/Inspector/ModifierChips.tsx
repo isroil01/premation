@@ -76,6 +76,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
 
   const commit = (next: Modifier[]): void => {
     if (next.length === 0) {
+      // B3-legacy: engine gap — modifier stacks (procedural modifiers on a property) have no API group.
       removeModifierStack(nodeId, prop);
       setOpen(null);
       return;
@@ -103,6 +104,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                 onDragStart={() => setDragFrom(i)}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => {
+                  // B3-legacy: engine gap — modifier stacks (procedural modifiers on a property) have no API group.
                   if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i));
                   setDragFrom(null);
                 }}
@@ -124,6 +126,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                   aria-label={`Remove ${label} modifier`}
                   onClick={(e) => {
                     e.stopPropagation();
+                    // B3-legacy: engine gap — modifier stacks (procedural modifiers on a property) have no API group.
                     commit(removeModifier(modifiers, m.id));
                   }}
                 >

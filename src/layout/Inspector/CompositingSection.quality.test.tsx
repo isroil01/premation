@@ -13,6 +13,7 @@ import { getNodeQuality } from '@core/effects/layerQuality';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
 import { CompositingSection } from './CompositingSection';
+import { addLayer, idle } from './__testHelpers__/engineLayers';
 
 const ID = 'quality_row_probe';
 
@@ -28,7 +29,7 @@ function solidNode(id: string): SceneNode {
 }
 
 beforeAll(() => {
-  // The row writes through runDocumentEdit (one undo step), which needs a command system.
+  // The row writes through the engine API (one undo step on the command system's history).
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   if (!('ResizeObserver' in globalThis)) {
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -41,7 +42,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  defaultSceneGraph.addNode(solidNode(ID));
+  addLayer(solidNode(ID));
 });
 
 afterEach(() => {
@@ -56,11 +57,13 @@ describe('CompositingSection Quality row', () => {
     expect(screen.getByRole('radio', { name: 'Best' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('writes the picked quality to the layer', () => {
+  it('writes the picked quality to the layer', async () => {
     render(<TooltipProvider><CompositingSection nodeId={ID} /></TooltipProvider>);
     fireEvent.click(screen.getByRole('radio', { name: 'Wireframe' }));
+    await idle();
     expect(getNodeQuality(ID)).toBe('wireframe');
     fireEvent.click(screen.getByRole('radio', { name: 'Draft' }));
+    await idle();
     expect(getNodeQuality(ID)).toBe('draft');
   });
 });

@@ -46,7 +46,7 @@ import {
 import { ensureEnvironmentSh } from '@core/scene/environmentImage';
 import { useAssetStore } from '@stores/assetStore';
 import { kelvinToHex, nearestKelvin, KELVIN_MIN, KELVIN_MAX } from '@core/scene/colorTemperature';
-import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { legacyComponentWrite, useComponentProp, writeComponentProps } from './useComponentProp';
 import styles from './TransformSection.module.css';
 import { KeyframeRow as KfRow } from './KeyframeRow';
 
@@ -91,29 +91,29 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const node = defaultSceneGraph.getNode(nodeId);
   const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
   const sComp = useMemo(() => node?.components.find((c) => c.type === 'Style'), [node]);
-  const [intensityRaw, setIntensity] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'intensity');
-  const [radiusRaw, setRadius] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'radius');
-  const [typeRaw, setType] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightType');
-  const [angleRaw, setAngle] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightAngle');
-  const [coneRaw, setCone] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightCone');
-  const [fillRaw, setFill] = useNodeComponentProp(defaultSceneGraph, nodeId, sComp?.id, 'fill');
-  const [shadowsRaw, setShadows] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'castShadows');
-  const [glowRaw, setGlow] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightGlow');
-  const [featherRaw, setFeather] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightConeFeather');
-  const [falloffRaw, setFalloff] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloff');
-  const [falloffDistRaw, setFalloffDist] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloffDistance');
-  const [darknessRaw, setDarkness] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowDarkness');
-  const [diffusionRaw, setDiffusion] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowDiffusion');
-  const [shadowMapRaw, setShadowMap] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowMap');
-  const [mapSizeRaw, setMapSize] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowMapSize');
-  const [shadowBiasRaw, setShadowBias] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowBias');
-  const [shadowSoftRaw, setShadowSoft] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowSoftness');
-  const [poiXRaw, setPoiX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiX');
-  const [poiYRaw, setPoiY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiY');
-  const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
-  const [envPresetRaw, setEnvPreset] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envPreset');
-  const [envRotationRaw, setEnvRotation] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envRotation');
-  const [envReflRaw, setEnvRefl] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envReflections');
+  const [intensityRaw, setIntensity] = useComponentProp(nodeId, tComp?.id, 'intensity');
+  const [radiusRaw, setRadius] = useComponentProp(nodeId, tComp?.id, 'radius');
+  const [typeRaw] = useComponentProp(nodeId, tComp?.id, 'lightType');
+  const [angleRaw, setAngle] = useComponentProp(nodeId, tComp?.id, 'lightAngle');
+  const [coneRaw, setCone] = useComponentProp(nodeId, tComp?.id, 'lightCone');
+  const [fillRaw, setFill] = useComponentProp(nodeId, sComp?.id, 'fill');
+  const [shadowsRaw, setShadows] = useComponentProp(nodeId, tComp?.id, 'castShadows');
+  const [glowRaw, setGlow] = useComponentProp(nodeId, tComp?.id, 'lightGlow');
+  const [featherRaw, setFeather] = useComponentProp(nodeId, tComp?.id, 'lightConeFeather');
+  const [falloffRaw, setFalloff] = useComponentProp(nodeId, tComp?.id, 'falloff');
+  const [falloffDistRaw, setFalloffDist] = useComponentProp(nodeId, tComp?.id, 'falloffDistance');
+  const [darknessRaw, setDarkness] = useComponentProp(nodeId, tComp?.id, 'shadowDarkness');
+  const [diffusionRaw, setDiffusion] = useComponentProp(nodeId, tComp?.id, 'shadowDiffusion');
+  const [shadowMapRaw, setShadowMap] = useComponentProp(nodeId, tComp?.id, 'shadowMap');
+  const [mapSizeRaw, setMapSize] = useComponentProp(nodeId, tComp?.id, 'shadowMapSize');
+  const [shadowBiasRaw, setShadowBias] = useComponentProp(nodeId, tComp?.id, 'shadowBias');
+  const [shadowSoftRaw, setShadowSoft] = useComponentProp(nodeId, tComp?.id, 'shadowSoftness');
+  const [poiXRaw, setPoiX] = useComponentProp(nodeId, tComp?.id, 'poiX');
+  const [poiYRaw, setPoiY] = useComponentProp(nodeId, tComp?.id, 'poiY');
+  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, tComp?.id, 'poiZ');
+  const [envPresetRaw, setEnvPreset] = useComponentProp(nodeId, tComp?.id, 'envPreset');
+  const [envRotationRaw, setEnvRotation] = useComponentProp(nodeId, tComp?.id, 'envRotation');
+  const [envReflRaw, setEnvRefl] = useComponentProp(nodeId, tComp?.id, 'envReflections');
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
@@ -195,16 +195,18 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const applyPreset = (label: string): void => {
     const p = LIGHT_PRESETS.find((x) => x.label === label);
     if (!p) return;
+    const t = (k: string, v: unknown): void => { legacyComponentWrite(nodeId, tComp.id, k, v); };
+    // B3-legacy: engine gap — a light look writes `lightType` / `falloff` (strings) and the Style fill colour, none of which the API addresses; kept whole on the legacy writer so the pick stays ONE undo step.
     batchHistory(`light-preset:${nodeId}`, () => {
-      setType(p.type);
-      setIntensity(p.intensity);
-      setFill(kelvinToHex(p.kelvin));
+      t('lightType', p.type);
+      t('intensity', p.intensity);
+      if (sComp) legacyComponentWrite(nodeId, sComp.id, 'fill', kelvinToHex(p.kelvin));
       // Stored explicitly, `none` included: an ABSENT falloff is what the
       // 1.7.0 → 1.8.0 migration reads as the old radius ramp.
-      setFalloff(p.falloff);
+      t('falloff', p.falloff);
       if (p.type === 'spot') {
-        setCone(p.cone ?? LIGHT_DEFAULTS.cone);
-        setFeather(p.coneFeather ?? LIGHT_DEFAULTS.coneFeather);
+        t('lightCone', p.cone ?? LIGHT_DEFAULTS.cone);
+        t('lightConeFeather', p.coneFeather ?? LIGHT_DEFAULTS.coneFeather);
       }
     });
   };
@@ -262,15 +264,16 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               const next = coerceLightType(e.target.value);
               // One menu pick = one undo step, even though becoming an
               // environment light writes three props.
+              // B3-legacy: engine gap — `lightType` / `envPreset` are strings the API does not address; the whole pick stays on the legacy writer (one step).
               batchHistory(`light-type:${nodeId}`, () => {
-                setType(next);
+                legacyComponentWrite(nodeId, tComp.id, 'lightType', next);
                 // Switching TO environment has to land on a real sky:
                 // `envPreset` is what selects the SH probe, and an undefined
                 // one would leave the light silently reading the fallback with
                 // a menu that could not show which preset was in force.
                 if (next === 'environment') {
-                  if (!isEnvironmentSky(envPresetRaw)) setEnvPreset(DEFAULT_ENVIRONMENT_PRESET);
-                  if (typeof envRotationRaw !== 'number') setEnvRotation(0);
+                  if (!isEnvironmentSky(envPresetRaw)) legacyComponentWrite(nodeId, tComp.id, 'envPreset', DEFAULT_ENVIRONMENT_PRESET);
+                  if (typeof envRotationRaw !== 'number') legacyComponentWrite(nodeId, tComp.id, 'envRotation', 0);
                 }
               });
             }}
@@ -445,7 +448,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <Button
                   size="xs"
                   variant="ghost"
-                  onClick={() => { setPoiX(undefined); setPoiY(undefined); setPoiZ(undefined); }}
+                  onClick={() => writeComponentProps(nodeId, tComp.id, { poiX: undefined, poiY: undefined, poiZ: undefined }, 'Remove Point of Interest')}
                 >
                   Remove target (aim by angle)
                 </Button>
@@ -460,7 +463,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <Button
                   size="xs"
                   variant="secondary"
-                  onClick={() => { setPoiX(compWidth / 2); setPoiY(compHeight / 2); setPoiZ(0); }}
+                  onClick={() => writeComponentProps(nodeId, tComp.id, { poiX: compWidth / 2, poiY: compHeight / 2, poiZ: 0 }, 'Enable Point of Interest')}
                 >
                   Add target
                 </Button>

@@ -50,16 +50,19 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const off = !cfg.enabled;
 
   const write = (patch: Partial<ClonerConfig>): void => {
+    // B3-legacy: engine gap — cloner config (fx key) is a structured value with no API property.
     defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, { ...cfg, ...patch });
     bumpScene();
   };
 
   const removeCloner = (): void => {
+    // B3-legacy: engine gap — cloner config (fx key) is a structured value with no API property.
     defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, undefined);
     bumpScene();
   };
 
   const resetCloner = (): void => {
+    // B3-legacy: engine gap — cloner config (fx key) is a structured value with no API property.
     defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, DEFAULT_CLONER);
     bumpScene();
   };

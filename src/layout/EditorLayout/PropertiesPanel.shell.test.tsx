@@ -31,6 +31,7 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import { inspectorSectionsForSelection } from '@layout/Inspector/inspectorSections';
 import { LAYER_SWITCHES, applyLayerSwitch, kindBreakdown } from '@layout/Inspector/SelectionHeader';
+import { engine, engineIdle } from '@core/engine/engineInstance';
 import { PropertiesPanel } from './PropertiesPanel';
 
 const A = 'shell_shape_a';
@@ -75,6 +76,8 @@ function renderPanel(): ReturnType<typeof render> {
 }
 
 const SOLO = LAYER_SWITCHES.find((t) => t.id === 'solo')!;
+/** The composition the layers live in: layer switches go through the engine API (B3), which addresses LAYERS. */
+const ROOT = 'shell_root';
 const entries = (): number => getCommandSystem().getHistory().getEntries().length;
 
 beforeAll(() => {
@@ -83,9 +86,15 @@ beforeAll(() => {
 
 beforeEach(() => {
   for (const id of [A, B, T]) if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode(id);
-  defaultSceneGraph.addNode(shapeNode(A));
-  defaultSceneGraph.addNode(shapeNode(B));
-  defaultSceneGraph.addNode(textNode(T));
+  if (!defaultSceneGraph.getNode(ROOT)) {
+    defaultSceneGraph.addNode({
+      id: ROOT, name: 'Comp', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } }, components: [],
+    } as unknown as SceneNode);
+  }
+  defaultSceneGraph.addChild(ROOT, shapeNode(A));
+  defaultSceneGraph.addChild(ROOT, shapeNode(B));
+  defaultSceneGraph.addChild(ROOT, textNode(T));
   useSelectionStore.setState({ ids: [] } as never);
 });
 
@@ -209,18 +218,19 @@ describe('the switches live in the ⋯ menu', () => {
     expect(screen.getByText('Keyframe lanes under animated rows')).toBeInTheDocument();
   });
 
-  it('toggling a row writes every selected layer', () => {
+  it('toggling a row writes every selected layer', async () => {
     select([A, B]);
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Properties panel options' }));
     act(() => {
       fireEvent.click(screen.getByText('Solo'));
     });
+    await act(async () => { await engineIdle(); });
     expect(defaultSceneGraph.getNode(A)?.solo).toBe(true);
     expect(defaultSceneGraph.getNode(B)?.solo).toBe(true);
   });
 
-  it('a mixed switch turns everything on, as ONE undo entry', () => {
+  it('a mixed switch turns everything on, as ONE undo entry', async () => {
     // History wired the way boot wires it, and the debounce flushed before
     // counting — the same measurement modifierStack.test.ts makes.
     setEventBus(new EventBus());
@@ -229,11 +239,12 @@ describe('the switches live in the ⋯ menu', () => {
       defaultSceneGraph.getNode(A)!.solo = true;
       baselineHistory();
       const before = entries();
-      applyLayerSwitch([A, B], SOLO);
+      // B3: the switch is an engine batch — one entry on the one history.
+      await applyLayerSwitch([A, B], SOLO);
       useHistoryStore.getState().flush();
       expect([defaultSceneGraph.getNode(A)?.solo, defaultSceneGraph.getNode(B)?.solo]).toEqual([true, true]);
       expect(entries() - before).toBe(1);
-      getCommandSystem().getHistory().undo();
+      await engine().execute({ type: 'undo' });
       expect(defaultSceneGraph.getNode(B)?.solo).not.toBe(true);
     } finally {
       recording.dispose();

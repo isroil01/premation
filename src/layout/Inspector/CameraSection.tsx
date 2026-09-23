@@ -8,14 +8,15 @@
  */
 
 import { useMemo } from 'react';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { useComponentProp, writeComponentProps } from './useComponentProp';
+import { setLayersSwitch } from './inspectorEdits';
 import { useCompositionStore } from '@stores/compositionStore';
 import { Project3D } from '@motion/scene';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
+import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Checkbox } from '@components/Checkbox';
@@ -40,31 +41,28 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const compWidth = useCompositionStore((s) => s.width);
   const node = defaultSceneGraph.getNode(nodeId);
   const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
-  const [focalRaw, setFocal] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'focalLength');
-  const [filmSizeRaw, setFilmSize] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'filmSize');
-  const [yawRaw, setYaw] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orbitYaw');
-  const [pitchRaw, setPitch] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orbitPitch');
-  const [rollRaw, setRoll] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationZ');
-  const [oriXRaw, setOriX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationX');
-  const [oriYRaw, setOriY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationY');
-  const [dofRaw, setDofStrength] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofStrength');
-  const [focusRaw, setFocusDistance] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'focusDistance');
-  const [apertureRaw, setAperture] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofAperture');
-  const [fStopRaw, setFStop] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fStop');
-  const [irisBladesRaw, setIrisBlades] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'irisBlades');
-  const [irisRoundnessRaw, setIrisRoundness] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'irisRoundness');
-  const [highlightGainRaw, setHighlightGain] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'highlightGain');
-  const [irisRotationRaw, setIrisRotation] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'irisRotation');
-  const [irisAspectRaw, setIrisAspect] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'irisAspect');
-  const [highlightThresholdRaw, setHighlightThreshold] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'highlightThreshold');
-  const [highlightSaturationRaw, setHighlightSaturation] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'highlightSaturation');
-  const [diffractionFringeRaw, setDiffractionFringe] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'diffractionFringe');
-  const [poiXRaw, setPoiX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiX');
-  const [poiYRaw, setPoiY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiY');
-  const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
-  const [, setX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'x');
-  const [, setY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'y');
-  const [, setZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'z');
+  const [focalRaw, setFocal, focalField] = useComponentProp(nodeId, tComp?.id, 'focalLength');
+  const [filmSizeRaw, setFilmSize] = useComponentProp(nodeId, tComp?.id, 'filmSize');
+  const [yawRaw, setYaw] = useComponentProp(nodeId, tComp?.id, 'orbitYaw');
+  const [pitchRaw, setPitch] = useComponentProp(nodeId, tComp?.id, 'orbitPitch');
+  const [rollRaw, setRoll] = useComponentProp(nodeId, tComp?.id, 'orientationZ');
+  const [oriXRaw, setOriX] = useComponentProp(nodeId, tComp?.id, 'orientationX');
+  const [oriYRaw, setOriY] = useComponentProp(nodeId, tComp?.id, 'orientationY');
+  const [dofRaw, setDofStrength] = useComponentProp(nodeId, tComp?.id, 'dofStrength');
+  const [focusRaw, setFocusDistance] = useComponentProp(nodeId, tComp?.id, 'focusDistance');
+  const [apertureRaw, setAperture] = useComponentProp(nodeId, tComp?.id, 'dofAperture');
+  const [fStopRaw, setFStop] = useComponentProp(nodeId, tComp?.id, 'fStop');
+  const [irisBladesRaw, setIrisBlades] = useComponentProp(nodeId, tComp?.id, 'irisBlades');
+  const [irisRoundnessRaw, setIrisRoundness] = useComponentProp(nodeId, tComp?.id, 'irisRoundness');
+  const [highlightGainRaw, setHighlightGain] = useComponentProp(nodeId, tComp?.id, 'highlightGain');
+  const [irisRotationRaw, setIrisRotation] = useComponentProp(nodeId, tComp?.id, 'irisRotation');
+  const [irisAspectRaw, setIrisAspect] = useComponentProp(nodeId, tComp?.id, 'irisAspect');
+  const [highlightThresholdRaw, setHighlightThreshold] = useComponentProp(nodeId, tComp?.id, 'highlightThreshold');
+  const [highlightSaturationRaw, setHighlightSaturation] = useComponentProp(nodeId, tComp?.id, 'highlightSaturation');
+  const [diffractionFringeRaw, setDiffractionFringe] = useComponentProp(nodeId, tComp?.id, 'diffractionFringe');
+  const [poiXRaw, setPoiX] = useComponentProp(nodeId, tComp?.id, 'poiX');
+  const [poiYRaw, setPoiY] = useComponentProp(nodeId, tComp?.id, 'poiY');
+  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, tComp?.id, 'poiZ');
   const compHeight = useCompositionStore((s) => s.height);
   if (!node || !tComp) return null;
 
@@ -94,8 +92,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const contentLayers = flattenComposition(defaultSceneGraph, activeCompRootId()).filter((n) => canBe3D(n));
   const threeDCount = contentLayers.filter((n) => is3DEnabled(n)).length;
   const enableAll3D = (): void => {
-    for (const n of contentLayers) set3DEnabled(n.id, true);
-    bumpScene();
+    void setLayersSwitch(contentLayers.filter((n) => !is3DEnabled(n)).map((n) => n.id), { threeD: true }, 'Make All Layers 3D');
   };
 
   return (
@@ -134,6 +131,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             step={0.5}
             unit="°"
             onChange={(v) => setFocal(Math.round(Project3D.focalLengthForFov(compWidth, v)))}
+            {...focalField.scrub}
             aria-label="Angle of view"
           />
         </div>
@@ -197,9 +195,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                     onClick={() => {
                       // Enable a two-node camera aimed at the comp centre; from
                       // here the camera always LOOKS AT this target.
-                      setPoiX(compWidth / 2);
-                      setPoiY(compHeight / 2);
-                      setPoiZ(0);
+                      writeComponentProps(nodeId, tComp.id, { poiX: compWidth / 2, poiY: compHeight / 2, poiZ: 0 }, 'Enable Point of Interest');
                     }}
                   >
                     Enable target (two-node camera)
@@ -224,9 +220,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                   variant="ghost"
                   onClick={() => {
                     // Back to a one-node (free) camera: drop the POI props.
-                    setPoiX(undefined);
-                    setPoiY(undefined);
-                    setPoiZ(undefined);
+                    writeComponentProps(nodeId, tComp.id, { poiX: undefined, poiY: undefined, poiZ: undefined }, 'Remove Point of Interest');
                   }}
                 >
                   Remove target (free camera)
@@ -374,11 +368,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             onClick={() => {
               // Back to the default framing: comp centre, pulled back by the
               // focal length so the comp plane renders exactly 1:1, no orbit.
-              setX(compWidth / 2);
-              setY(compHeight / 2);
-              setZ(-Math.round(focal));
-              setYaw(0);
-              setPitch(0);
+              writeComponentProps(nodeId, tComp.id, { x: compWidth / 2, y: compHeight / 2, z: -Math.round(focal), orbitYaw: 0, orbitPitch: 0 }, 'Reset Camera');
             }}
           >
             Reset camera

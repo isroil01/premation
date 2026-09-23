@@ -91,6 +91,7 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
         <select
           className={s.select}
           value={spec.type}
+          // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
           onChange={(e) => setPrimitiveType(nodeId, e.currentTarget.value as PrimitiveMeshType)}
           aria-label="Primitive shape"
         >
@@ -109,6 +110,7 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
             max={SIZE_ROWS[f].max}
             step={1}
             unit="px"
+            // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
             onChange={(v) => setPrimitiveParam(nodeId, f, v)}
             aria-label={SIZE_ROWS[f].label}
           />
@@ -123,6 +125,7 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
             min={3}
             max={256}
             step={1}
+            // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
             onChange={(v) => setPrimitiveParam(nodeId, f, Math.round(v))}
             aria-label={SEG_LABELS[spec.type][f]}
           />
@@ -134,6 +137,7 @@ export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | 
           <span className={s.label}>End Caps</span>
           <Switch
             checked={spec.capped}
+            // B3-legacy: engine gap — 3D primitive type/params (Primitive component) are not catalog properties (`geometry/…`).
             onChange={(e) => setPrimitiveParam(nodeId, 'capped', e.currentTarget.checked)}
             aria-label="End caps"
           />

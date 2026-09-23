@@ -1,4 +1,3 @@
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * PathOpControls (MG Phase C) — "Path Operator" inspector section for shape
  * layers. Deform the outline with Zig-Zag, Round Corners, Pucker & Bloat or
@@ -11,15 +10,12 @@ import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 
 import { useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { edit } from '@core/engine/uiEdits';
+import { paths } from '@core/engine/propRefs';
 import {
   readPathOps,
-  removePathOp,
-  reorderPathOp,
   updatePathOp,
   pathOpPropPath,
   pathOpParamSpecs,
@@ -32,6 +28,15 @@ import type { OffsetLineJoin } from '@core/scene/pathOps';
 import styles from './TextAnimatorControls.module.css';
 import { AnimToggle } from './AnimToggle';
 import { InspectorSection } from './InspectorSection';
+import { useKeyedParam } from './useKeyedParam';
+
+/** Reorder / remove an operator: the API's property-group commands on `contents/<opId>`. */
+function moveOp(nodeId: string, opId: string, toIndex: number): void {
+  void edit('Move Path Operator', { type: 'movePropertyGroup', group: { layer: nodeId, path: paths.contents(opId) }, toIndex });
+}
+function removeOp(nodeId: string, opId: string): void {
+  void edit('Remove Path Operator', { type: 'removePropertyGroups', groups: [{ layer: nodeId, path: paths.contents(opId) }] });
+}
 
 const TYPES: { id: PathOpType; label: string }[] = [
   { id: 'zigzag', label: 'Zig-Zag' },
@@ -119,25 +124,11 @@ function ParamRow({
   step?: number;
   unit?: string;
 }): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
   const path = pathOpPropPath(opId, param);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
-  // ONE axis for reads and writes: the canonical keyframe time.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
-
-  const onChange = (v: number): void => {
-    if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v), `pathop:${nodeId}:${path}:${layerT}`);
-    } else {
-      updatePathOp(nodeId, opId, { [param]: v } as Partial<PathOp>);
-    }
-  };
-  const toggle = (): void => {
-    if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, value));
-  };
+  // B3: `contents/<opId>/<param>` through the engine API (key at the playhead
+  // when animated, else the static value; a drag is one gesture).
+  const { animated, display, onChange, toggle, scrub } = useKeyedParam(nodeId, path, label, value);
 
   return (
     <div className={styles.paramRow}>
@@ -145,7 +136,7 @@ function ParamRow({
         <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={animated} onToggle={toggle} values={() => [display]} />
       </span>
       <span className={styles.paramLabel}>{label}</span>
-      <ValueField value={display} onChange={onChange} min={min} max={max} step={step} unit={unit} aria-label={label} />
+      <ValueField value={display} onChange={onChange} {...scrub} min={min} max={max} step={step} unit={unit} aria-label={label} />
     </div>
   );
 }
@@ -175,6 +166,7 @@ function PathOpCard({
     id: t.id,
     label: t.label,
     icon: t.id === op.type ? 'check' : undefined,
+    // B3-legacy: engine gap — an operator's TYPE (and composite / line join / trim mode / seed below) are not catalog properties of `contents/<opId>`.
     onSelect: () => updatePathOp(nodeId, op.id, { type: t.id }),
   }));
 
@@ -192,7 +184,7 @@ function PathOpCard({
             <button
               type="button"
               className={styles.remove}
-              onClick={() => reorderPathOp(nodeId, op.id, index - 1)}
+              onClick={() => moveOp(nodeId, op.id, index - 1)}
               aria-label={`Move ${typeLabel} up`}
               title="Move up — operators apply top to bottom"
             >
@@ -203,7 +195,7 @@ function PathOpCard({
             <button
               type="button"
               className={styles.remove}
-              onClick={() => reorderPathOp(nodeId, op.id, index + 1)}
+              onClick={() => moveOp(nodeId, op.id, index + 1)}
               aria-label={`Move ${typeLabel} down`}
               title="Move down — operators apply top to bottom"
             >
@@ -213,7 +205,7 @@ function PathOpCard({
           <button
             type="button"
             className={styles.remove}
-            onClick={() => removePathOp(nodeId, op.id)}
+            onClick={() => removeOp(nodeId, op.id)}
             aria-label={`Remove ${typeLabel}`}
             title="Remove path operator"
           >
@@ -261,6 +253,7 @@ function PathOpCard({
               id: c.id,
               label: c.label,
               icon: (op.composite ?? 'above') === c.id ? 'check' : undefined,
+              // B3-legacy: engine gap — Repeater composite (enum) is not a catalog property.
               onSelect: () => updatePathOp(nodeId, op.id, { composite: c.id }),
             }))}
           />
@@ -284,6 +277,7 @@ function PathOpCard({
               id: j.id,
               label: j.label,
               icon: (op.lineJoin ?? 'miter') === j.id ? 'check' : undefined,
+              // B3-legacy: engine gap — Offset Paths line join (enum) is not a catalog property.
               onSelect: () => updatePathOp(nodeId, op.id, { lineJoin: j.id }),
             }))}
           />
@@ -307,6 +301,7 @@ function PathOpCard({
               // Same fallback as the label above and `readPathOps`: absent is
               // Simultaneously, so the checkmark and the trigger always agree.
               icon: (op.trimMultipleShapes ?? 'simultaneously') === c.id ? 'check' : undefined,
+              // B3-legacy: engine gap — Trim Paths "Trim Multiple Shapes" (enum) is not a catalog property.
               onSelect: () => updatePathOp(nodeId, op.id, { trimMultipleShapes: c.id }),
             }))}
           />
@@ -367,6 +362,7 @@ function PathOpCard({
             <span className={styles.paramLabel}>Random Seed</span>
             <ValueField
               value={op.seed ?? 0}
+              // B3-legacy: engine gap — Wiggle seed is a non-keyframeable integer the catalog does not list.
               onChange={(v) => updatePathOp(nodeId, op.id, { seed: Math.round(v) })}
               min={0}
               aria-label="Random Seed"

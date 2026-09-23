@@ -25,6 +25,9 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { Icon } from '@components/Icon';
 import { groupSelectedNodes, ungroupSelectedNode } from '@core/scene/sceneInsert';
 import { useSelectionStore } from '@stores/selectionStore';
+import { isLayer } from '@core/engine/doc';
+import { edit } from '@core/engine/uiEdits';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { applyAppearancePreset, captureAppearancePreset } from '@core/inspector/sectionPresets';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
@@ -50,6 +53,7 @@ export function AppearancePresetAction({
   const capturePreset = useCallback(() => captureAppearancePreset(nodeId), [nodeId]);
   const applyPreset = useCallback(
     (values: Readonly<Record<string, number | string | boolean>>) =>
+      // B3-legacy: engine gap — a Fill & Stroke preset writes fill/stroke PAINT objects (solid / gradient / stroke stack), which have no API property yet.
       applyAppearancePreset(effectiveNodeIds, values),
     [effectiveNodeIds],
   );
@@ -62,6 +66,37 @@ export function AppearancePresetAction({
       apply={applyPreset}
     />
   );
+}
+
+/**
+ * Group the selection (`groupLayers`, one entry) and select the group. The
+ * API groups layers that share a parent; a selection spanning parents keeps
+ * the legacy grouping (engine gap).
+ */
+async function groupSelection(ids: ReadonlyArray<string>): Promise<void> {
+  const layers = ids.filter((id) => isLayer(id));
+  const parent = layers.length > 0 ? defaultSceneGraph.getNode(layers[0]!)?.parent : undefined;
+  if (layers.length !== ids.length || layers.some((id) => defaultSceneGraph.getNode(id)?.parent !== parent)) {
+    // B3-legacy: engine gap — `groupLayers` needs one parent; the legacy grouping reparents a mixed selection under a new group in the active comp.
+    groupSelectedNodes();
+    return;
+  }
+  const res = await edit('Group Layers', { type: 'groupLayers', layers, name: 'Group Assembly' });
+  const group = res.ok ? (res.value[0] as { layer?: string } | undefined)?.layer : undefined;
+  if (group) useSelectionStore.getState().set([group]);
+}
+
+/** Detach a group's parts (`ungroupLayer`, one entry) and select them. */
+async function ungroupNode(nodeId: string): Promise<void> {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node || !isLayer(nodeId) || readNodeKind(node) !== 'group') {
+    // B3-legacy: engine gap — `ungroupLayer` takes group LAYERS only; detaching the children of any other parent node has no API form.
+    ungroupSelectedNode(nodeId);
+    return;
+  }
+  const res = await edit('Ungroup', { type: 'ungroupLayer', group: nodeId });
+  const parts = res.ok ? (res.value[0] as { layers?: string[] } | undefined)?.layers : undefined;
+  if (parts && parts.length > 0) useSelectionStore.getState().set(parts);
 }
 
 function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -95,7 +130,7 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
             type="button"
             className={effStyles.addChip}
             style={{ flex: 1, justifyContent: 'center', background: 'rgba(245, 176, 65, 0.12)', color: '#f5b041', borderColor: 'rgba(245, 176, 65, 0.35)', gap: 5 }}
-            onClick={() => groupSelectedNodes()}
+            onClick={() => { void groupSelection(selectedIds); }}
           >
             <Icon name="folder" size="sm" style={{ color: '#f5b041' }} />
             <span>Group Parts (⌘G)</span>
@@ -106,7 +141,7 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
             type="button"
             className={effStyles.addChip}
             style={{ flex: 1, justifyContent: 'center', borderColor: 'var(--color-border-glass)', gap: 5 }}
-            onClick={() => ungroupSelectedNode(nodeId)}
+            onClick={() => { void ungroupNode(nodeId); }}
           >
             <Icon name="layout" size="sm" />
             <span>Detach Parts (Ungroup)</span>

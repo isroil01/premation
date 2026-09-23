@@ -35,7 +35,6 @@ import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import {
   is3DEnabled,
-  set3DEnabled,
   canBe3D,
   readNode3D,
   setNodeExtrusionDepth,
@@ -52,6 +51,8 @@ import { readNodeLayerStyles } from '@core/effects/layerStyles';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useUIStore } from '@stores/uiStore';
 import { AnimToggle } from './AnimToggle';
+import { allAddressable, scalarValueCommands, setLayersSwitch, stopwatchCommands } from './inspectorEdits';
+import { useEngineEdit } from './useEngineEdit';
 import s from './ThreeDControl.module.css';
 
 /** Menu labels for the bevel profiles — the union stays the source of truth. */
@@ -71,25 +72,37 @@ interface DepthRowProps {
   min: number;
   max: number;
   unit: string;
-  /** Playhead on this layer's own keyframe axis. */
+  /** Playhead on this layer's own keyframe axis (display + the legacy writer). */
   layerT: number;
+  /** Playhead, comp seconds (the engine route). */
+  time: number;
   autoKeyframe: boolean;
   /** The static write — the setter that knows the prop's default and clamp. */
   onStatic: (v: number) => void;
 }
 
 /**
- * One keyframeable geometry row. Hook-free, like ModelSection's MorphRow: the
- * set of rows changes with the layer's state (no bevel ⇒ no hole row), and a
- * hook inside a conditional row would change the hook count between renders.
+ * One keyframeable geometry row. The set of rows changes with the layer's
+ * state (no bevel ⇒ no hole row); each row is its own component, so its one
+ * hook (the scrub gesture) never shifts the section's hook count.
+ *
+ * B3: through the engine API (`geometry/<prop>`) when its catalog lists the
+ * property on this layer; otherwise the legacy writers below.
  */
-function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT, autoKeyframe, onStatic }: DepthRowProps): JSX.Element {
+function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT, time, autoKeyframe, onStatic }: DepthRowProps): JSX.Element {
+  const e = useEngineEdit();
   const animated = defaultAnimation.isAnimated(nodeId, prop);
   const value = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? base : base;
+  const onEngine = (): boolean => allAddressable([nodeId], [prop]);
   const write = (v: number): void => {
     if (!Number.isFinite(v)) return;
     const clamped = Math.max(min, Math.min(max, v));
+    if (onEngine()) {
+      e.send(`Set ${label}`, scalarValueCommands(prop, [{ nodeId, value: clamped }], { seconds: time, autoKeyframe }));
+      return;
+    }
     if (animated || autoKeyframe) {
+      // B3-legacy: engine gap — a geometry depth the catalog does not list on this layer (Hole Bevel Depth outside text/paths).
       runAnimEdit(
         `Set ${label}`,
         () => defaultAnimation.setKeyframe(nodeId, prop, layerT, clamped),
@@ -108,6 +121,11 @@ function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT
         animated={animated}
         values={() => [value]}
         onToggle={() => {
+          if (onEngine()) {
+            e.send(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
+            return;
+          }
+          // B3-legacy: engine gap — same (a depth outside the catalog).
           if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
           else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
         }}
@@ -120,6 +138,7 @@ function DepthRow({ nodeId, prop, label, ariaLabel, base, min, max, unit, layerT
         step={1}
         unit={unit}
         onChange={write}
+        {...e.scrub(`Set ${label}`, onEngine)}
         aria-label={ariaLabel}
       />
     </div>
@@ -150,6 +169,7 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
 
   const on = is3DEnabled(node);
   const three = readNode3D(node);
+  // B3-legacy: display read (animated depths drawn at the playhead) + the legacy depth writer's key axis.
   const layerT = compToKeyframeTime(nodeId, time);
   // Per-character 3D is a text-only affordance (AE parity).
   const isTextLayer = hasTextComponent(node);
@@ -173,7 +193,7 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
           checked={on}
           onChange={(e) => {
             const next = e.currentTarget.checked;
-            set3DEnabled(nodeId, next);
+            void setLayersSwitch([nodeId], { threeD: next }, next ? 'Enable 3D Layer' : 'Disable 3D Layer');
             if (next) {
               notifyCameraTipIfMissing((message, level) =>
                 useUIStore.getState().notify({ level, message, durationMs: 3200 }),
@@ -192,6 +212,7 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               <span className={s.label}>Per-character 3D</span>
               <Switch
                 checked={isPerChar3D(node)}
+                // B3-legacy: engine gap — Per-character 3D (a text layer flag) has no switch or property in the API.
                 onChange={(e) => setNodePerChar3D(nodeId, e.currentTarget.checked)}
                 aria-label="Enable per-character 3D"
               />
@@ -208,6 +229,7 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               <select
                 className={s.select}
                 value={three.bevelStyle}
+                // B3-legacy: engine gap — Bevel Style (an enum on the Transform component) is not a `geometry/bevelStyle` choice property in the catalog.
                 onChange={(e) => setNodeBevelStyle(nodeId, e.currentTarget.value as BevelStyle)}
                 aria-label="Bevel style"
               >
@@ -230,7 +252,9 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               max={200}
               unit="px"
               layerT={layerT}
+              time={time}
               autoKeyframe={autoKeyframe}
+              // B3-legacy: engine gap — a geometry depth outside the catalog (static writer fallback).
               onStatic={(v) => setNodeBevelDepth(nodeId, v)}
             />
           )}
@@ -245,7 +269,9 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
               max={100}
               unit="%"
               layerT={layerT}
+              time={time}
               autoKeyframe={autoKeyframe}
+              // B3-legacy: engine gap — a geometry depth outside the catalog (static writer fallback).
               onStatic={(v) => setNodeHoleBevelDepth(nodeId, v)}
             />
           )}
@@ -259,7 +285,9 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
             max={1000}
             unit="px"
             layerT={layerT}
+            time={time}
             autoKeyframe={autoKeyframe}
+            // B3-legacy: engine gap — a geometry depth outside the catalog (static writer fallback).
             onStatic={(v) => setNodeExtrusionDepth(nodeId, v)}
           />
           {styled && (

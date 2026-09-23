@@ -200,6 +200,7 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
     if (!activePath) return;
     setBusy(true);
     try {
+      // B3-legacy: engine gap — audio driver (analysis → keyframes) is an editor-side job; needs startJob/applyJobResult.
       const result = await applyAudioDriver(nodeId, { ...draft, prop: activePath });
       setNote(
         result.error
@@ -406,6 +407,7 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
           <Button
             size="sm"
             variant="secondary"
+            // B3-legacy: engine gap — audio driver (analysis → keyframes) is an editor-side job; needs startJob/applyJobResult.
             onClick={() => { removeAudioDriver(nodeId, activePath); setNote('Driver removed.'); }}
             disabled={busy}
           >

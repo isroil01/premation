@@ -30,7 +30,7 @@ import { ColorPicker } from '@components/ColorPicker';
 import { AngleDial } from '@components/AngleDial';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
-import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { useComponentProp } from './useComponentProp';
 import {
   customLayerComponent,
   customPropPath,
@@ -194,7 +194,7 @@ function PropRow({
   allStored: Record<string, unknown>;
   inert: boolean;
 }): JSX.Element | null {
-  const [raw, write] = useNodeComponentProp(defaultSceneGraph, nodeId, componentId, name);
+  const [raw, write, handle] = useComponentProp(nodeId, componentId, name);
   const value = raw ?? stored;
   /*
     `showIf`, evaluated AFTER every hook above.
@@ -239,7 +239,7 @@ function PropRow({
         );
       }
       return (
-        <div className={styles.popoverRow}>
+        <div className={styles.popoverRow} {...handle.press}>
           <span className={styles.popoverLabel}>{label}</span>
           <input
             type="number"
@@ -257,7 +257,7 @@ function PropRow({
 
     case 'boolean':
       return (
-        <div className={styles.popoverRow}>
+        <div className={styles.popoverRow} {...handle.press}>
           <span className={styles.popoverLabel}>{label}</span>
           <Checkbox checked={value === true} onChange={(e) => write(e.target.checked)} aria-label={label} />
         </div>
@@ -265,7 +265,7 @@ function PropRow({
 
     case 'enum':
       return (
-        <div className={styles.popoverRow}>
+        <div className={styles.popoverRow} {...handle.press}>
           <span className={styles.popoverLabel}>{label}</span>
           <select
             className={styles.select}
@@ -283,7 +283,7 @@ function PropRow({
 
     case 'color':
       return (
-        <div className={styles.popoverRow}>
+        <div className={styles.popoverRow} {...handle.press}>
           <span className={styles.popoverLabel}>{label}</span>
           <ColorPicker
             value={typeof value === 'string' ? value : (schema.default as string)}
@@ -300,7 +300,7 @@ function PropRow({
       // A dial, not a number field: the value is degrees and unbounded, and a
       // dial is the control that makes a revolution obvious.
       return (
-        <div className={styles.popoverRow}>
+        <div className={styles.popoverRow} {...handle.press}>
           <span className={styles.popoverLabel}>{label}</span>
           <AngleDial
             value={typeof value === 'number' ? value : (schema.default as number) ?? 0}
@@ -313,7 +313,7 @@ function PropRow({
     case 'string':
       if (schema.multiline) {
         return (
-          <div className={styles.popoverRow}>
+          <div className={styles.popoverRow} {...handle.press}>
             <span className={styles.popoverLabel}>{label}</span>
             <textarea
               className={own.textInput}
@@ -327,7 +327,7 @@ function PropRow({
         );
       }
       return (
-        <div className={styles.popoverRow}>
+        <div className={styles.popoverRow} {...handle.press}>
           <span className={styles.popoverLabel}>{label}</span>
           <input
             type="text"

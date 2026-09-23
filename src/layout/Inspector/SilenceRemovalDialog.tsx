@@ -94,6 +94,7 @@ export function SilenceRemovalDialog({ nodeId, onDone }: Props): JSX.Element {
   const apply = async (): Promise<void> => {
     setBusy(true);
     try {
+      // B3-legacy: engine gap — silence removal (analysis → split/ripple) has no API command.
       const result = await removeSilences(paired, ranges);
       useUIStore.getState().notify(
         result.error

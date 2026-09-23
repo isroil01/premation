@@ -110,6 +110,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
           <Button
             size="xs"
             variant="ghost"
+            // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
             onClick={() => clearNodeFaceMaterials(nodeId)}
             title="Back to one colour for the whole object"
           >
@@ -143,6 +144,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
               <ColorPicker
                 compact
                 value={custom ? m!.fill! : layerFill}
+                // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
                 onChange={(hex) => setNodeFaceMaterial(nodeId, kind, { fill: hex })}
                 aria-label={`${label} face color`}
               />
@@ -150,6 +152,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
                 <Button
                   size="xs"
                   variant="ghost"
+                  // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
                   onClick={() => setNodeFaceMaterial(nodeId, kind, null)}
                   title={`Track the layer fill again instead of a fixed ${label.toLowerCase()} colour`}
                   aria-label={`Reset ${label.toLowerCase()} face colour`}
@@ -163,6 +166,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   unit="%"
                   min={0}
                   max={200}
+                  // B3-legacy: engine gap — per-face material overrides (front/side/bevel/back) have no API property.
                   onChange={(v) => setNodeFaceMaterial(nodeId, kind, { gain: Number(v) / 100 })}
                   aria-label={`${label} face brightness`}
                 />

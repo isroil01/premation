@@ -37,17 +37,11 @@ import {
   readNodeMaterial,
   materialParamsOf,
   setNodeAcceptsLights,
-  setNodeMaterialPct,
   setNodeShadowMode,
-  setNodeShininess,
-  setNodeSpecular,
   setNodeShadingModel,
   setNodeToonBands,
   setNodeHeightMap,
-  setNodeDisplacement,
   setNodeDisplacementSubdivisions,
-  setNodeIor,
-  MATERIAL_PCT_DEFAULTS,
   type MaterialParams,
 } from '@core/scene/material';
 import { useAssetStore } from '@stores/assetStore';
@@ -59,6 +53,9 @@ import {
 } from '@stores/materialStore';
 import { applyMaterialPreset, captureMaterialPreset } from '@core/inspector/sectionPresets';
 import { FaceMaterialsSection } from './FaceMaterialsSection';
+import { getTime } from '@stores/playbackClockStore';
+import { scalarValueCommands } from './inspectorEdits';
+import { useEngineEdit } from './useEngineEdit';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import s from './MaterialSection.module.css';
 
@@ -184,6 +181,7 @@ function MaterialRow({
   step = 1,
   unit = '%',
   onChange,
+  engineProp,
 }: {
   label: string;
   value: number;
@@ -191,10 +189,29 @@ function MaterialRow({
   max?: number;
   step?: number;
   unit?: string;
-  onChange: (v: number) => void;
+  /** The legacy writer — for a material field the engine does not address. */
+  onChange?: (v: number) => void;
+  /**
+   * B3: a `material/<prop>` property of this layer's catalog (a 3D layer lists
+   * every keyframeable Material Option). Written through the engine API as ONE
+   * command — keyed at the playhead when animated (the old static write was
+   * invisible under a live track) — and a slider or field drag is ONE gesture.
+   */
+  engineProp?: { nodeId: string; prop: string };
 }): JSX.Element {
+  const e = useEngineEdit();
+  const write = (v: number): void => {
+    if (!Number.isFinite(v)) return;
+    if (engineProp) {
+      const clamped = Math.max(min, Math.min(max, v));
+      e.send(`Set ${label}`, scalarValueCommands(engineProp.prop, [{ nodeId: engineProp.nodeId, value: clamped }], { seconds: getTime() }));
+      return;
+    }
+    onChange?.(v);
+  };
+  const on = (): boolean => engineProp !== undefined;
   return (
-    <div className={s.row}>
+    <div className={s.row} {...e.press(`Set ${label}`, on)}>
       <span className={s.label}>{label}</span>
       <input
         type="range"
@@ -203,7 +220,7 @@ function MaterialRow({
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onChange(Number(e.currentTarget.value))}
+        onChange={(ev) => write(Number(ev.currentTarget.value))}
         aria-label={`${label} slider`}
       />
       <span className={s.value}>
@@ -213,7 +230,8 @@ function MaterialRow({
           max={max}
           step={step}
           unit={unit}
-          onChange={onChange}
+          onChange={write}
+          {...e.scrub(`Set ${label}`, on)}
           aria-label={label}
         />
       </span>
@@ -309,6 +327,7 @@ export function MaterialPresetAction({
   const capturePreset = useCallback(() => captureMaterialPreset(nodeId), [nodeId]);
   const applyPreset = useCallback(
     (values: Readonly<Record<string, number | string | boolean>>) =>
+      // B3-legacy: engine gap — a material preset bag mixes numbers with shading / shadow-mode / bool fields that have no API property (see the Material Options gaps).
       applyMaterialPreset(effectiveTargets, values),
     [effectiveTargets],
   );
@@ -432,6 +451,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             <select
               className={s.select}
               value={material.shading}
+              // B3-legacy: engine gap — Shading model (phong / pbr / toon) is not a `material/shading` choice property.
               onChange={(e) => setNodeShadingModel(
                 nodeId,
                 e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong',
@@ -447,6 +467,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             <span className={s.label}>Accepts Lights</span>
             <Switch
               checked={material.acceptsLights}
+              // B3-legacy: engine gap — Accepts Lights is a scalar row in the catalog but stored as a boolean; a bool write through `material/acceptsLights` would store 1/0.
               onChange={(e) => setNodeAcceptsLights(nodeId, e.currentTarget.checked)}
               aria-label="Accepts lights"
             />
@@ -466,17 +487,17 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
       <MaterialRow
         label="Ambient"
         value={material.ambient}
-        onChange={(v) => setNodeMaterialPct(nodeId, 'ambient', v, MATERIAL_PCT_DEFAULTS.ambient)}
+        engineProp={{ nodeId, prop: 'ambient' }}
       />
       <MaterialRow
         label="Diffuse"
         value={material.diffuse}
-        onChange={(v) => setNodeMaterialPct(nodeId, 'diffuse', v, MATERIAL_PCT_DEFAULTS.diffuse)}
+        engineProp={{ nodeId, prop: 'diffuse' }}
       />
       <MaterialRow
         label="Specular"
         value={material.specular}
-        onChange={(v) => setNodeSpecular(nodeId, v)}
+        engineProp={{ nodeId, prop: 'specular' }}
       />
       {/* The rows that only mean something under the chosen model. Phong has no
           roughness and no metalness — they are the microfacet model's terms —
@@ -488,14 +509,14 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           min={1}
           max={128}
           unit=""
-          onChange={(v) => setNodeShininess(nodeId, v)}
+          engineProp={{ nodeId, prop: 'shininess' }}
         />
       )}
       {material.shading === 'pbr' && (
         <MaterialRow
           label="Roughness"
           value={material.roughness}
-          onChange={(v) => setNodeMaterialPct(nodeId, 'roughness', v, MATERIAL_PCT_DEFAULTS.roughness)}
+          engineProp={{ nodeId, prop: 'roughness' }}
         />
       )}
       {/* Phong reads metal too — it tints the highlight — so the row stays. */}
@@ -503,7 +524,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <MaterialRow
           label="Metal"
           value={material.metal}
-          onChange={(v) => setNodeMaterialPct(nodeId, 'metal', v, MATERIAL_PCT_DEFAULTS.metal)}
+          engineProp={{ nodeId, prop: 'metal' }}
         />
       )}
       {material.shading === 'toon' && (
@@ -513,6 +534,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           min={2}
           max={8}
           unit=""
+          // B3-legacy: engine gap — Toon Bands is not a catalog property (`material/toonBands`).
           onChange={(v) => setNodeToonBands(nodeId, v)}
         />
       )}
@@ -541,17 +563,17 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           <MaterialRow
             label="Reflection Intensity"
             value={material.reflectionIntensity}
-            onChange={(v) => setNodeMaterialPct(nodeId, 'reflectionIntensity', v, MATERIAL_PCT_DEFAULTS.reflectionIntensity)}
+            engineProp={{ nodeId, prop: 'reflectionIntensity' }}
           />
           <MaterialRow
             label="Reflection Sharpness"
             value={material.reflectionSharpness}
-            onChange={(v) => setNodeMaterialPct(nodeId, 'reflectionSharpness', v, MATERIAL_PCT_DEFAULTS.reflectionSharpness)}
+            engineProp={{ nodeId, prop: 'reflectionSharpness' }}
           />
           <MaterialRow
             label="Reflection Rolloff"
             value={material.reflectionRolloff}
-            onChange={(v) => setNodeMaterialPct(nodeId, 'reflectionRolloff', v, MATERIAL_PCT_DEFAULTS.reflectionRolloff)}
+            engineProp={{ nodeId, prop: 'reflectionRolloff' }}
           />
           <p className={s.hint}>
             Reflections mirror the comp&rsquo;s Environment light — add one to see
@@ -570,12 +592,12 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
       <MaterialRow
         label="Transparency"
         value={material.transparency}
-        onChange={(v) => setNodeMaterialPct(nodeId, 'transparency', v, MATERIAL_PCT_DEFAULTS.transparency)}
+        engineProp={{ nodeId, prop: 'transparency' }}
       />
       <MaterialRow
         label="Transparency Rolloff"
         value={material.transparencyRolloff}
-        onChange={(v) => setNodeMaterialPct(nodeId, 'transparencyRolloff', v, MATERIAL_PCT_DEFAULTS.transparencyRolloff)}
+        engineProp={{ nodeId, prop: 'transparencyRolloff' }}
       />
       <MaterialRow
         label="Index of Refraction"
@@ -584,7 +606,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         max={4}
         step={0.01}
         unit=""
-        onChange={(v) => setNodeIor(nodeId, v)}
+        engineProp={{ nodeId, prop: 'ior' }}
       />
       {material.transparency > 0 && !material.acceptsLights && (
         <p className={s.hint}>
@@ -607,6 +629,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <select
           className={s.select}
           value={material.heightMapAssetId ?? ''}
+          // B3-legacy: engine gap — the height-map asset (an item reference) has no `material/heightMap` item property.
           onChange={(e) => setNodeHeightMap(nodeId, e.target.value || undefined)}
           aria-label="Height map asset"
         >
@@ -624,7 +647,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             min={-200}
             max={200}
             unit="px"
-            onChange={(v) => setNodeDisplacement(nodeId, v)}
+            engineProp={{ nodeId, prop: 'displacement' }}
           />
           <MaterialRow
             label="Subdivide"
@@ -632,6 +655,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             min={0}
             max={3}
             unit=""
+            // B3-legacy: engine gap — Displacement Subdivisions is not a catalog property (`material/displacementSubdivisions`).
             onChange={(v) => setNodeDisplacementSubdivisions(nodeId, v)}
           />
         </>
@@ -649,6 +673,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <select
           className={s.select}
           value={material.castsShadowsMode}
+          // B3-legacy: engine gap — the tri-state shadow modes (off / on / only) are scalar rows in the catalog, stored as booleans + 'only'.
           onChange={(e) => setNodeShadowMode(nodeId, 'castsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
           aria-label="Casts shadows"
         >
@@ -662,6 +687,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
         <select
           className={s.select}
           value={material.acceptsShadowsMode}
+          // B3-legacy: engine gap — same (tri-state Accepts Shadows).
           onChange={(e) => setNodeShadowMode(nodeId, 'acceptsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
           aria-label="Accepts shadows"
         >
@@ -679,7 +705,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
       <MaterialRow
         label="Light Transmission"
         value={material.lightTransmission}
-        onChange={(v) => setNodeMaterialPct(nodeId, 'lightTransmission', v, MATERIAL_PCT_DEFAULTS.lightTransmission)}
+        engineProp={{ nodeId, prop: 'lightTransmission' }}
       />
 
       {/* ── Per-face overrides ──────────────────────────────────── */}

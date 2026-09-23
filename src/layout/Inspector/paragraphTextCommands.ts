@@ -107,6 +107,7 @@ function holdStill(id: string, before: Vec2, after: Vec2, label: string): void {
   const shift = { x: after.x - before.x, y: after.y - before.y };
   if (Math.abs(shift.x) < 1e-6 && Math.abs(shift.y) < 1e-6) return;
   const next = compensatePosition(poseOf(id), shift);
+  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
   writeTransformProps(id, [{ prop: 'x', value: next.x }, { prop: 'y', value: next.y }], label);
 }
 
@@ -125,6 +126,7 @@ export function selectedTextLayers(kind: 'point' | 'paragraph'): string[] {
 /** Point text → paragraph text with a box that fits it. Returns the converted ids. */
 export function convertToParagraphText(ids: ReadonlyArray<string>): string[] {
   const done: string[] = [];
+  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
   runDocumentEdit('Convert to Paragraph Text', () => {
     for (const id of ids) {
       const node = defaultSceneGraph.getNode(id);
@@ -146,6 +148,7 @@ export function convertToParagraphText(ids: ReadonlyArray<string>): string[] {
       const override = { boxWidth, boxHeight, boxAutoSize: 'off' };
       const afterStyle = readMeasuredTextStyle(node, override);
       const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
+      // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
       updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxWidth', boxWidth);
       updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxHeight', boxHeight);
       updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxAutoSize', 'off');
@@ -159,6 +162,7 @@ export function convertToParagraphText(ids: ReadonlyArray<string>): string[] {
 /** Paragraph text → point text: soft wraps become returns, the box goes. */
 export function convertToPointText(ids: ReadonlyArray<string>): string[] {
   const done: string[] = [];
+  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
   runDocumentEdit('Convert to Point Text', () => {
     for (const id of ids) {
       const node = defaultSceneGraph.getNode(id);
@@ -189,6 +193,7 @@ export function convertToPointText(ids: ReadonlyArray<string>): string[] {
           changed = true;
           return { ...kf, value: wrapped };
         });
+        // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
         if (changed) defaultAnimation.setDataTrack(id, 'text.source', { ...track, keyframes });
       }
       const bake: Record<string, number> = {};
@@ -199,6 +204,7 @@ export function convertToPointText(ids: ReadonlyArray<string>): string[] {
       }
       const afterStyle = readMeasuredTextStyle(node, { content, boxWidth: 0, boxHeight: 0, ...bake });
       const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
+      // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
       if (content !== raw) updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'content', content);
       for (const [key, value] of Object.entries(bake)) updateNodeComponentProp(defaultSceneGraph, id, tc.id, key, value);
       updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxWidth', 0);
@@ -229,6 +235,7 @@ export function setBoxAutoSize(id: string, mode: BoxAutoSize): boolean {
   const tc = textComponent(node);
   const box = node ? readParagraphBox(node) : null;
   if (!node || !tc || !box) return false;
+  // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
   runDocumentEdit('Box Auto-Size', () => {
     const align = alignOf(node);
     const dir = directionOf(node);
@@ -239,6 +246,7 @@ export function setBoxAutoSize(id: string, mode: BoxAutoSize): boolean {
     // of a pixel taller than its lines would nudge them up by half of it.
     const contentH = Math.max(MIN_BOX_SIZE, m?.contentHeight ?? (style ? style.fontSize * style.lineHeight : MIN_BOX_SIZE));
     if (mode !== 'height' ? !box.fixedHeight : !(box.boxHeight > 0)) {
+      // B3-legacy: engine gap — paragraph / box text props (strings, runs, box size) are not API properties; Source Text runs arrive later (ENGINE_API.md §15.4).
       updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxHeight', contentH);
     }
     updateNodeComponentProp(defaultSceneGraph, id, tc.id, 'boxAutoSize', mode);

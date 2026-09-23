@@ -128,6 +128,7 @@ function FieldRow({ field }: { field: TemplateField }): JSX.Element {
       {field.kind === 'color' ? (
         <ColorPicker
           value={value || '#ffffff'}
+          // B3-legacy: engine gap — Mograph template fields are not catalog properties.
           onChange={(hex) => writeTemplateField(field, hex)}
           aria-label={field.label}
         />
@@ -135,6 +136,7 @@ function FieldRow({ field }: { field: TemplateField }): JSX.Element {
         <Input
           value={value}
           size="sm"
+          // B3-legacy: engine gap — Mograph template fields are not catalog properties.
           onChange={(e) => writeTemplateField(field, e.target.value)}
           aria-label={field.label}
         />

@@ -21,6 +21,9 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from './useEngineEdit';
+import { allAddressable, scalarValueCommands, stopwatchCommands } from './inspectorEdits';
 import styles from './TransformSection.module.css';
 
 export interface KeyframeRowProps {
@@ -52,12 +55,20 @@ export function KeyframeRow({
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const animated = defaultAnimation.isAnimated(nodeId, prop);
-  // The canonical keyframe axis — what the renderer samples for this node.
+  // B3-legacy: display read (the value at the playhead) + the legacy key axis below; B4's mirror replaces it.
   const layerT = compToKeyframeTime(nodeId, time);
   const display = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
+  // B3: through the engine API when it addresses this property on this layer.
+  const onEngine = (): boolean => allAddressable([nodeId], [prop]);
+  const e = useEngineEdit();
 
   const handleChange = (v: number): void => {
+    if (onEngine()) {
+      e.send(`Set ${label}`, scalarValueCommands(prop, [{ nodeId, value: v }], { seconds: time, autoKeyframe }));
+      return;
+    }
     if (animated || autoKeyframe) {
+      // B3-legacy: engine gap — a component prop the catalog does not list yet (camera orbit / POI / DOF before their first write).
       runAnimEdit(
         `Set ${prop}`,
         () => defaultAnimation.setKeyframe(nodeId, prop, layerT, v),
@@ -81,6 +92,11 @@ export function KeyframeRow({
           animated={animated}
           values={() => [display]}
           onToggle={() => {
+            if (onEngine()) {
+              void edit(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));
+              return;
+            }
+            // B3-legacy: engine gap — same (a prop outside the catalog; an animated one is always listed, so only "start" lands here).
             if (animated) runAnimEdit(`Remove ${prop} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
             else runAnimEdit(`Animate ${prop}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
           }}
@@ -94,6 +110,7 @@ export function KeyframeRow({
         {...(max !== undefined ? { max } : {})}
         {...(precision > 0 ? { precision } : {})}
         onChange={(v) => handleChange(Number(v))}
+        {...e.scrub(`Set ${label}`, onEngine)}
         aria-label={label}
       />
     </div>

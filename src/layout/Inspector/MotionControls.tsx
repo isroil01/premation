@@ -11,17 +11,20 @@ import { useEffect, useReducer } from 'react';
 import { Switch } from '@components/Switch';
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { canAutoOrient, readAutoOrientMode, setAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
+import { canAutoOrient, readAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
 import { canBe3D, is3DEnabled } from '@core/scene/threeD';
-import {
-  hasPositionAnimation,
-  hasPathTangents,
-  smoothMotionPath,
-  straightenMotionPath,
-} from '@core/motion/motionPath';
-import { runAnimEdit } from '@core/animation/animationCommands';
+import { hasPositionAnimation, hasPathTangents } from '@core/motion/motionPath';
+import { edit } from '@core/engine/uiEdits';
+import { motionPathCommands, setLayersSwitch } from './inspectorEdits';
+
+/** The engine's auto-orient switch value for the stored mode. */
+const API_AUTO_ORIENT: Record<AutoOrientMode, 'off' | 'alongPath' | 'towardsCamera'> = { off: 'off', path: 'alongPath', camera: 'towardsCamera' };
+
+function reshapePath(nodeId: string, mode: 'smooth' | 'straighten'): void {
+  void motionPathCommands(nodeId, mode).then((cmds) => edit(mode === 'smooth' ? 'Smooth motion path' : 'Straighten motion path', cmds));
+}
 import styles from './ParentControl.module.css';
 
 export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -69,7 +72,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             className={styles.select}
             style={{ width: 128, fontSize: 'var(--font-size-xs)' }}
             value={autoOrient}
-            onChange={(e) => setAutoOrientMode(nodeId, e.currentTarget.value as AutoOrientMode)}
+            onChange={(e) => { void setLayersSwitch([nodeId], { autoOrient: API_AUTO_ORIENT[e.currentTarget.value as AutoOrientMode] }, 'Auto-Orient'); }}
             aria-label="Auto-orient"
           >
             <option value="off">Off</option>
@@ -94,7 +97,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             type="button"
             className={styles.trigger}
             disabled={!animated}
-            onClick={() => runAnimEdit('Smooth motion path', () => smoothMotionPath(nodeId))}
+            onClick={() => reshapePath(nodeId, 'smooth')}
             title="Auto-bezier: curve the path smoothly through every keyframe (drag the square handles on the canvas to shape it)"
           >
             Smooth
@@ -103,7 +106,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             type="button"
             className={styles.trigger}
             disabled={!animated || !hasPathTangents(nodeId)}
-            onClick={() => runAnimEdit('Straighten motion path', () => straightenMotionPath(nodeId))}
+            onClick={() => reshapePath(nodeId, 'straighten')}
             title="Remove spatial tangents — straight lines between keyframes"
           >
             Straighten
@@ -115,9 +118,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         <Switch
           checked={separated}
           onChange={(e) => {
-            const val = e.currentTarget.checked;
-            defaultSceneGraph.setSeparateDimensions(nodeId, val);
-            bumpScene();
+            void edit('Separate Dimensions', { type: 'setDimensionsSeparated', layer: nodeId, path: 'transform/position', separated: e.currentTarget.checked });
           }}
           aria-label="Separate position into X and Y tracks"
         />

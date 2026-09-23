@@ -73,6 +73,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
     useRigSelectionStore.getState().selectBone(nodeId, boneId);
   // The canonical keyframe axis for this layer — the same forward map the
   // renderer samples, so a mode keyframe lands where the pose does.
+  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
   const layerT = compToKeyframeTime(nodeId, workspaceTime);
   const liveBones = resolveLiveBones(bones, nodeId, layerT, defaultAnimation);
   const posedBones = applyIk(liveBones, resolveActiveIkTargets(skel, nodeId, layerT));
@@ -176,6 +177,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       const base = weightPaintMatches(skel?.weightPaint, numVerts)
         ? skel!.weightPaint!
         : emptyWeightPaint(numVerts);
+      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
       const next = setVertexWeight(base, selectedVertex, boneId, percent / 100, influences);
       // Through the command, so a numeric edit is one undo step exactly like a
       // brush stroke — and an emptied map is dropped rather than serialised.
@@ -278,6 +280,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             const id = e.target.value as RigPresetId;
             if (!id) return;
             const geom = readGeometry(node);
+            // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
             const problems = applyRigPreset(
               nodeId,
               RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
@@ -341,6 +344,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               value={skel?.meshDensity ?? MESH_DENSITY_DEFAULT}
               min={2}
               max={50}
+              // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
               onChange={(v) => updateSkeletonSettings(nodeId, { meshDensity: Math.round(v) })}
               aria-label="Skinning mesh density"
             />
@@ -357,6 +361,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               value={skel?.meshMode ?? 'grid'}
               aria-label="Skinning mesh mode"
               onChange={(e) =>
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 updateSkeletonSettings(nodeId, {
                   meshMode: e.target.value as 'grid' | 'silhouette',
                 })
@@ -374,6 +379,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               min={0}
               max={100}
               unit="px"
+              // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
               onChange={(v) => updateSkeletonSettings(nodeId, { meshExpansion: Math.round(v) })}
               aria-label="Skinning mesh expansion"
             />
@@ -446,6 +452,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   placeholder={bone.id}
                   aria-label={`${bone.name || bone.id} name`}
                   onChange={(e) =>
+                    // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                     updateBone(nodeId, bone.id, { name: e.target.value || undefined })
                   }
                   style={{
@@ -471,6 +478,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 size="sm"
                 variant="ghost"
                 onClick={() => {
+                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                   deleteBone(nodeId, bone.id);
                   selectBone(null);
                 }}
@@ -499,6 +507,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 value={bone.length}
                 min={1}
                 unit="px"
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 onChange={(v) => updateBone(nodeId, bone.id, { length: Math.max(1, v) })}
                 aria-label={`${bone.name || bone.id} length`}
               />
@@ -516,6 +525,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 min={0}
                 unit="px"
                 onChange={(v) =>
+                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                   updateBone(nodeId, bone.id, {
                     influenceRadius: v > 0 ? v : undefined,
                   })
@@ -533,6 +543,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <ValueField
                 value={(bone.rotation * 180) / Math.PI}
                 unit="°"
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 onChange={(v) => updateBone(nodeId, bone.id, { rotation: (v * Math.PI) / 180 })}
                 aria-label={`${bone.name || bone.id} rotation`}
               />
@@ -543,11 +554,13 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <div style={{ display: 'flex', gap: 4 }}>
                 <ValueField
                   value={bone.scaleX ?? 1}
+                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                   onChange={(v) => updateBone(nodeId, bone.id, { scaleX: v })}
                   aria-label={`${bone.name || bone.id} scale x`}
                 />
                 <ValueField
                   value={bone.scaleY ?? 1}
+                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                   onChange={(v) => updateBone(nodeId, bone.id, { scaleY: v })}
                   aria-label={`${bone.name || bone.id} scale y`}
                 />
@@ -561,6 +574,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 variant={hasIK ? 'primary' : 'secondary'}
                 onClick={() => {
                   const effector = effectorFor(bone.id);
+                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                   setIKTarget(nodeId, {
                     boneId: bone.id,
                     x: ik?.x ?? effector.x,
@@ -591,6 +605,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   value={chainModeOf({ boneId: bone.id, ikMode: ik?.ikMode }, nodeId, layerT)}
                   aria-label={`${bone.name || bone.id} chain mode`}
                   onChange={(e) =>
+                    // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                     setChainMode(nodeId, bone.id, e.target.value as ChainMode, {
                       layerT,
                       keyframe:
@@ -614,6 +629,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     min={1}
                     max={8}
                     onChange={(v) =>
+                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                       setIKTarget(nodeId, {
                         ...ik!,
                         chainLength: Math.max(1, Math.min(8, Math.round(v))),
@@ -629,12 +645,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     <ValueField
                       value={ik!.x}
                       unit="px"
+                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                       onChange={(x) => setIKTarget(nodeId, { ...ik!, x, enabled: true })}
                       aria-label={`${bone.name || bone.id} IK goal x`}
                     />
                     <ValueField
                       value={ik!.y}
                       unit="px"
+                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                       onChange={(y) => setIKTarget(nodeId, { ...ik!, y, enabled: true })}
                       aria-label={`${bone.name || bone.id} IK goal y`}
                     />
@@ -655,6 +673,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   variant={ik?.pole ? 'primary' : 'secondary'}
                   onClick={() => {
                     const pole = poleFor(bone.id, ik!.chainLength);
+                    // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                     setIKTarget(nodeId, {
                       boneId: bone.id,
                       x: ik!.x,
@@ -673,6 +692,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     variant="ghost"
                     onClick={() => {
                       const { pole: _pole, ...withoutPole } = ik;
+                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                       setIKTarget(nodeId, { ...withoutPole, enabled: true });
                     }}
                   >
@@ -728,6 +748,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <select
                 value={c.shape}
                 aria-label={`${c.name ?? c.id} shape`}
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 onChange={(e) => updateController(nodeId, c.id, { shape: e.target.value as ControllerShape })}
                 style={selectStyle}
               >
@@ -736,6 +757,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <select
                 value={c.side}
                 aria-label={`${c.name ?? c.id} side`}
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 onChange={(e) => updateController(nodeId, c.id, { side: e.target.value as ControllerSide })}
                 style={selectStyle}
               >
@@ -746,12 +768,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 min={4}
                 unit="px"
                 aria-label={`${c.name ?? c.id} size`}
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 onChange={(v) => updateController(nodeId, c.id, { size: Math.max(4, v) })}
               />
               <Button
                 size="sm"
                 variant="ghost"
                 aria-label={`Delete controller ${c.name ?? c.id}`}
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 onClick={() => deleteController(nodeId, c.id)}
               >
                 <Icon name="trash" size="sm" />
@@ -770,6 +794,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 const v = e.target.value;
                 if (!v) return;
                 const [kind, boneId] = v.split(":") as ["bone" | "ikTarget", string];
+                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
                 addController(nodeId, defaultControllerFor({ kind, boneId }, controllers, bones));
                 e.currentTarget.value = "";
               }}

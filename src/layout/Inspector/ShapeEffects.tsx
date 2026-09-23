@@ -30,6 +30,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       label: 'Audio Waveform',
       icon: 'audio',
       disabled: hasAudioWave,
+      // B3-legacy: engine gap — audio-waveform generator config has no API property.
       onSelect: () => setAudioWaveform(nodeId, defaultAudioWaveform()),
     },
   ];

@@ -9,16 +9,12 @@
  * interpolating polygon → star has no meaning.
  */
 
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 
 import { useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { runDocumentEdit } from '@core/commands/documentEdit';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import {
@@ -27,12 +23,12 @@ import {
   polystarPropPath,
   readNodePolystar,
   updateNodePolystar,
-  type Polystar,
   type PolystarParam,
   type PolystarType,
 } from '@core/scene/polystar';
 import styles from './TextAnimatorControls.module.css';
 import { AnimToggle } from './AnimToggle';
+import { useKeyedParam } from './useKeyedParam';
 
 const TYPES: { id: PolystarType; label: string }[] = [
   { id: 'star', label: 'Star' },
@@ -58,25 +54,10 @@ function PolystarRow({
   step?: number;
   unit?: string;
 }): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
   const path = polystarPropPath(param);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
-  // ONE axis for reads and writes: the canonical keyframe time.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
-
-  const onChange = (v: number): void => {
-    if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v), `polystar:${nodeId}:${path}:${layerT}`);
-    } else {
-      runDocumentEdit(`Set Polystar ${label}`, () => updateNodePolystar(nodeId, { [param]: v } as Partial<Polystar>));
-    }
-  };
-  const toggle = (): void => {
-    if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, value));
-  };
+  // B3: `contents/polystar/<param>` through the engine API (one gesture per drag).
+  const { animated, display, onChange, toggle, scrub } = useKeyedParam(nodeId, path, label, value);
 
   return (
     <div className={styles.paramRow}>
@@ -84,7 +65,7 @@ function PolystarRow({
         <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={animated} onToggle={toggle} values={() => [display]} />
       </span>
       <span className={styles.paramLabel}>{label}</span>
-      <ValueField value={display} onChange={onChange} min={min} max={max} step={step} unit={unit} aria-label={label} />
+      <ValueField value={display} onChange={onChange} {...scrub} min={min} max={max} step={step} unit={unit} aria-label={label} />
     </div>
   );
 }
@@ -102,6 +83,7 @@ export function PolystarSection({ nodeId }: { nodeId: string }): JSX.Element | n
     id: t.id,
     label: t.label,
     icon: t.id === ps.starType ? 'check' : undefined,
+    // B3-legacy: engine gap — the Polystar TYPE (polygon / star, an enum) is not a catalog property of `contents/polystar`.
     onSelect: () =>
       runDocumentEdit(`Set Polystar Type`, () => updateNodePolystar(nodeId, { starType: t.id })),
   }));

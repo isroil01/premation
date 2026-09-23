@@ -128,11 +128,13 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
       };
 
   const write = (key: string, value: unknown): void => {
+    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
     defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
     bumpScene();
   };
 
   const fadeHere = (side: FadeSide): void => {
+    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
     runAnimEdit(side === 'in' ? 'Fade Audio In' : 'Fade Audio Out', () => {
       applyFade(nodeId, side);
       bumpScene();
@@ -146,16 +148,19 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
   // amount; the out-point measures from the head, hence `start + (out − in)`.
   const controller = getTimelineController();
   const setStart = (v: number): void => {
+    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
     if (timing.clipId) controller.setClipStart(timing.clipId, Math.max(0, v));
     else write('__start', Math.max(0, v));
   };
   const setIn = (v: number): void => {
     const next = clamp(v, 0, timing.outSec);
+    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
     if (timing.clipId) controller.trimClipTo(timing.clipId, 'start', timing.startSec + (next - timing.inSec));
     else write('__in', next);
   };
   const setOut = (v: number): void => {
     const next = clamp(v, timing.inSec, duration || Infinity);
+    // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
     if (timing.clipId) controller.trimClipTo(timing.clipId, 'end', timing.startSec + (next - timing.inSec));
     else write('__out', next);
   };
@@ -401,6 +406,7 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
   const apply = async (): Promise<void> => {
     setBusy(true);
     try {
+      // B3-legacy: engine gap — per-CLIP timing on multi-clip audio layers (clip ids) and audio fades/convert-to-keyframes macros are not API commands.
       const n = await convertAudioToKeyframes(nodeId, options);
       useUIStore.getState().notify(
         n > 0

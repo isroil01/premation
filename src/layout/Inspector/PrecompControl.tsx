@@ -11,8 +11,9 @@ import { Switch } from '@components/Switch';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { isPrecomp, setPrecomp, setCompCollapse } from '@core/scene/precomp';
-import { readContinuousRaster, setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
+import { isPrecomp, setPrecomp } from '@core/scene/precomp';
+import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
+import { setLayersSwitch } from './inspectorEdits';
 import { readCompCollapse } from '@core/scene/compInstance';
 import { CompOverridesSection } from './CompOverridesSection';
 import { RetimeSection } from './RetimeSection';
@@ -36,7 +37,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
           <span className={styles.label}>Collapse Transformations</span>
           <Switch
             checked={collapsed}
-            onChange={(e) => setCompCollapse(nodeId, e.currentTarget.checked)}
+            onChange={(e) => { void setLayersSwitch([nodeId], { collapse: e.currentTarget.checked }, 'Collapse Transformations'); }}
             aria-label="Collapse Transformations (join the host composition's 3D space)"
           />
         </div>
@@ -71,7 +72,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
           <span className={styles.label}>Continuous Rasterization</span>
           <Switch
             checked={cr}
-            onChange={(e) => setContinuousRaster(nodeId, e.currentTarget.checked)}
+            onChange={(e) => { void setLayersSwitch([nodeId], { collapse: e.currentTarget.checked }, 'Continuous Rasterization'); }}
             aria-label="Continuous Rasterization (re-render vector content at the scale it is drawn)"
           />
         </div>
@@ -94,6 +95,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
         <span className={styles.label}>Precompose</span>
         <Switch
           checked={on}
+          // B3-legacy: engine gap — a GROUP's Precompose switch (composite as one unit, isPrecomp) has no API form; `precompose` makes a new composition instead.
           onChange={(e) => setPrecomp(nodeId, e.currentTarget.checked)}
           aria-label="Precompose (composite group as one unit)"
         />

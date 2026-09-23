@@ -34,22 +34,23 @@ import { Popover } from '@components/Popover';
 import { PropertyRowLayoutContext } from '@components/PropertyRow';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled, canBe3D } from '@core/scene/threeD';
-import { setAnchor, estimateNodeBounds } from '@core/scene/anchor';
+import { estimateNodeBounds } from '@core/scene/anchor';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
 import { useNodeRevision } from '@hooks/useNodeRevision';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { type PropertyAccess } from '@core/inspector/multiSelection';
-import { applyTransformPreset, captureTransformPreset } from '@core/inspector/sectionPresets';
+import { captureTransformPreset } from '@core/inspector/sectionPresets';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { batchHistory } from '@stores/historyStore';
 import { MultiPropertyRow } from './MultiPropertyRow';
 import { MultiPropertyPairRow, type PairFieldSpec } from './MultiPropertyPairRow';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { ThreeDControl } from './ThreeDControl';
 import { useInspectorSelection } from './inspectorSelection';
 import { useCompositionStore } from '@stores/compositionStore';
+import { edit } from '@core/engine/uiEdits';
+import { applyPresetValues, trackWrites } from './inspectorEdits';
 import {
   anchorPercentDisplay,
   loadTransformUnits,
@@ -115,21 +116,10 @@ function accessFor(prop: string): PropertyAccess {
   let a = ACCESS.get(prop);
   if (a) return a;
   const present = STYLE_PROPS.has(prop) ? hasStyle : hasTransform;
+  // Writes go through the engine API (B3): an Anchor Point edit is
+  // `setProperty(transform/anchorPoint)` — AE's numeric anchor edit, which
+  // moves the pivot and leaves Position alone (what `setAnchor` did).
   a = { read: (id) => (present(id) ? staticOrDefaultValue(id, prop) : undefined) };
-  if (prop === 'anchorX' || prop === 'anchorY') {
-    // Anchor writes go through `setAnchor` so the position is compensated
-    // and the layer does not jump — the same path the canvas gizmo uses.
-    a = {
-      ...a,
-      writeStatic: (id, v) => {
-        if (!hasTransform(id)) return false;
-        const ax = prop === 'anchorX' ? v : staticOrDefaultValue(id, 'anchorX');
-        const ay = prop === 'anchorY' ? v : staticOrDefaultValue(id, 'anchorY');
-        setAnchor(id, ax, ay);
-        return true;
-      },
-    };
-  }
   ACCESS.set(prop, a);
   return a;
 }
@@ -154,7 +144,7 @@ export function TransformPresetAction({
   const capturePreset = useCallback(() => captureTransformPreset(nodeId, time), [nodeId, time]);
   const applyPreset = useCallback(
     (values: Readonly<Record<string, number | string | boolean>>) =>
-      applyTransformPreset(effectiveNodeIds, values, { compTime: time, autoKeyframe }),
+      applyPresetValues(effectiveNodeIds, values, { seconds: time, autoKeyframe }, 'Apply Transform preset'),
     [effectiveNodeIds, time, autoKeyframe],
   );
 
@@ -180,6 +170,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   const compH = useCompositionStore((s) => s.height);
   const moreRemembered = usePreferenceStore((s) => s.inspectorSections[MORE_KEY]);
   const setPref = usePreferenceStore((s) => s.set);
+  const time = useThrottledTime();
 
   // NO early return before the hooks below — the hook count must not depend
   // on whether the node exists (deleting a selected layer with this panel open
@@ -234,18 +225,18 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   const anchorY = read('anchorY');
 
   const applyAnchorPreset = (preset: typeof ANCHOR_PRESETS[number]): void => {
-    batchHistory(`anchorPreset:${preset.id}:${nodeIds.join(',')}`, () => {
-      for (const id of nodeIds) {
-        const n = defaultSceneGraph.getNode(id);
-        const t = n?.components.find((c) => c.type === 'Transform');
-        if (!n || !t) continue;
-        const w = t.props.width;
-        const h = t.props.height;
-        const b = typeof w === 'number' && typeof h === 'number' ? { width: w, height: h } : estimateNodeBounds(id);
-        const target = preset.getOffset(b.width, b.height);
-        setAnchor(id, target.x, target.y);
-      }
+    // One entry for the lot; each layer snaps against its OWN bounds.
+    const writes = nodeIds.flatMap((id) => {
+      const n = defaultSceneGraph.getNode(id);
+      const t = n?.components.find((c) => c.type === 'Transform');
+      if (!n || !t) return [];
+      const w = t.props.width;
+      const h = t.props.height;
+      const b = typeof w === 'number' && typeof h === 'number' ? { width: w, height: h } : estimateNodeBounds(id);
+      const target = preset.getOffset(b.width, b.height);
+      return trackWrites(id, { anchorX: target.x, anchorY: target.y }, time);
     });
+    if (writes.length > 0) void edit('Set Anchor Point', { type: 'setProperties', writes });
   };
 
   const isPresetActive = (preset: typeof ANCHOR_PRESETS[number]): boolean => {

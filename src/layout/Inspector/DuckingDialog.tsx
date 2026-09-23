@@ -126,6 +126,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
   const drop = async (): Promise<void> => {
     setBusy(true);
     try {
+      // B3-legacy: engine gap — ducking is an editor-side analysis that bakes keys; needs startJob/applyJobResult.
       const ok = await removeDucking(nodeId);
       useUIStore.getState().notify({
         level: ok ? 'success' : 'warning',
@@ -279,6 +280,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
             variant="primary"
             loading={busy}
             disabled={busy || !voiceNodeId}
+            // B3-legacy: engine gap — ducking is an editor-side analysis that bakes keys; needs startJob/applyJobResult.
             onClick={() => void run(() => applyDucking(nodeId, voiceNodeId, params), 'Ducked')}
           >
             {busy ? 'Applying…' : 'Apply'}

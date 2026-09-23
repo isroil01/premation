@@ -126,6 +126,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     const applyMode = asTransform ? 'transform' : mode;
     if (applyMode !== 'follow' && applyMode !== 'transform' && applyMode !== 'corner') return;
     if (applyMode === 'transform' && result.tracks.length < 2) return;
+    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
     const out = createNullAndApplyTrack({
       videoNodeId: nodeId,
       mode: applyMode,
@@ -155,6 +156,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
    */
   const onAttachToNull = (childId: string, nullId: string): void => {
     const nullName = defaultSceneGraph.getNode(nullId)?.name || nullId;
+    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
     const ok = reparentNode(childId, nullId);
     store.getState().finishTracking(
       result,
@@ -256,6 +258,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     if (mode === 'follow') {
       const targetNode = defaultSceneGraph.getNode(targetId);
       if (targetNode && readNodeKind(targetNode) === 'camera') {
+        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
         n = applyTrackToCamera({
           videoNodeId: nodeId,
           targetNodeId: targetId,
@@ -266,6 +269,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         });
         what = `camera position + look-at to “${targetName(targetId)}”`;
       } else {
+        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
         n = applyTrackToLayer({
           videoNodeId: nodeId,
           targetNodeId: targetId,
@@ -279,6 +283,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     } else if (mode === 'transform') {
       const targetNode = defaultSceneGraph.getNode(targetId);
       if (targetNode && readNodeKind(targetNode) === 'camera') {
+        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
         n = applyCameraSolveTrack({
           videoNodeId: nodeId,
           targetNodeId: targetId,
@@ -289,6 +294,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         });
         what = `camera solve (position + orientation) to “${targetName(targetId)}”`;
       } else {
+        // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
         n = applyTransformTrack({
           videoNodeId: nodeId,
           targetNodeId: targetId,
@@ -300,6 +306,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         what = `position/rotation/scale keyframes to “${targetName(targetId)}”`;
       }
     } else if (mode === 'stabilize') {
+      // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
       n = applyStabilizeToLayer({
         videoNodeId: nodeId,
         samples: result.tracks[0] ?? [],
@@ -309,6 +316,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       });
       what = 'stabilizing keyframes to this layer';
     } else if (mode === 'corner') {
+      // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
       n = applyCornerPinTrack({
         videoNodeId: nodeId,
         targetNodeId: targetId,
@@ -324,6 +332,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onApplyMesh = (): void => {
     if (!result || mode !== 'corner') return;
+    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
     const n = applyMeshWarpTrack({
       videoNodeId: nodeId,
       targetNodeId: targetId,
@@ -340,12 +349,14 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onSolveCamera = (): void => {
     if (!result || mode !== 'corner') return;
+    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
     const out = applySfmCameraSolve({
       videoNodeId: nodeId,
       tracks: result.tracks,
       sourceWidth: result.sourceWidth,
       sourceHeight: result.sourceHeight,
       comp,
+    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
     }) ?? applyPlanarCameraSolve({
       videoNodeId: nodeId,
       tracks: result.tracks,
@@ -412,6 +423,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onCreateNullsForPlanes = (): void => {
     if (!result || mode !== 'corner' || result.tracks.length < 8) return;
+    // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
     const out = createNullsForPlanes({
       videoNodeId: nodeId,
       tracks: result.tracks,
@@ -514,6 +526,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         expansion: 0,
         inverted: false,
       };
+      // B3-legacy: engine gap — tracker results are applied by editor-side jobs; needs startJob/applyJobResult.
       addMaskPath(nodeId, path);
       bumpScene();
     }

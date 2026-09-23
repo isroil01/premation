@@ -124,11 +124,13 @@ export function AnimatablePaintRow({
 
   /** Per-node engine values → one undo entry, keyframed where animated. */
   const commit = (writes: ReadonlyArray<{ nodeId: string; value: number }>): void => {
+    // B3-legacy: engine gap — fill/stroke paint (gradient geometry inside a paint object) has no API property; custom static writer.
     applyValues(prop, writes, { ...opts, mergeKey, label: `Set ${label}` });
     // The sibling tracks of a grouped property take keyframes only — the
     // primary prop's static write already covers every corner.
     for (const sibling of tracked.slice(1)) {
       if (autoKeyframe || nodeIds.some((id) => defaultAnimation.isAnimated(id, sibling))) {
+        // B3-legacy: engine gap — fill/stroke paint (gradient geometry inside a paint object) has no API property; custom static writer.
         applyValues(sibling, writes, { ...opts, writeStatic: () => true, mergeKey, label: `Set ${label}` });
       }
     }
@@ -171,6 +173,7 @@ export function AnimatablePaintRow({
       animated={animated}
       mixed={agg.mixed}
       hint={nodeIds.length > 1 && agg.present < nodeIds.length ? `${agg.present} of ${nodeIds.length}` : undefined}
+      // B3-legacy: engine gap — fill/stroke paint (gradient geometry inside a paint object) has no API property; custom static writer.
       onStopwatch={() => toggleAnimationGroup(nodeIds, tracked, time, label, access)}
       navigator={navigator}
     >

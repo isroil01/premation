@@ -30,10 +30,13 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import { PropertiesPanel } from './PropertiesPanel';
+import { engineIdle } from '@core/engine/engineInstance';
 
 const ID = 'dock_menu_probe_layer';
 const OTHER = 'dock_menu_probe_other_panel';
 const LANES_ROW = 'Keyframe lanes under animated rows';
+/** The composition the layer lives in: layer switches go through the engine API (B3), which addresses LAYERS. */
+const ROOT = 'dock_menu_probe_root';
 
 function textNode(id: string): SceneNode {
   return {
@@ -84,7 +87,13 @@ beforeEach(() => {
   layout.registerPanel({ id: OTHER, title: 'Other', icon: 'layers', region: 'rightInspector', closable: false } as never);
   layout.openPanel('properties');
 
-  defaultSceneGraph.addNode(textNode(ID));
+  if (!defaultSceneGraph.getNode(ROOT)) {
+    defaultSceneGraph.addNode({
+      id: ROOT, name: 'Comp', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } }, components: [],
+    } as unknown as SceneNode);
+  }
+  defaultSceneGraph.addChild(ROOT, textNode(ID));
   useSelectionStore.setState({ ids: [ID] } as never);
 });
 
@@ -130,7 +139,7 @@ describe('PropertiesPanel in a DockPanel with a layer selected', () => {
     expect(screen.queryByRole('button', { name: 'Solo' })).not.toBeInTheDocument();
   });
 
-  it('lists the layer switches as labelled menu rows, and settles after one is toggled', () => {
+  it('lists the layer switches as labelled menu rows, and settles after one is toggled', async () => {
     // The switch rows are derived from scene state, so toggling one MUST
     // change the menu — the case the memo has to get right without looping.
     renderDock();
@@ -139,6 +148,7 @@ describe('PropertiesPanel in a DockPanel with a layer selected', () => {
     act(() => {
       fireEvent.click(screen.getByText('Solo'));
     });
+    await act(async () => { await engineIdle(); });
     expect(defaultSceneGraph.getNode(ID)?.solo).toBe(true);
     expect(loopWarnings).toEqual([]);
   });

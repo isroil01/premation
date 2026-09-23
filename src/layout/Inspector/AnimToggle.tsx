@@ -21,6 +21,9 @@ import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { trackNavigatorState, toggleKeyframeAtPlayhead } from '@core/inspector/keyframeNavigator';
+import { defaultAnimation } from '@motion/animation';
+import { edit } from '@core/engine/uiEdits';
+import { allAddressable, keyToggleCommands } from './inspectorEdits';
 
 export type TrackNavigator = Omit<KeyframeNavigatorProps, 'label'>;
 
@@ -48,7 +51,18 @@ export function useTrackNavigator(
     atKeyframe: nav.atKeyframe,
     onPrev: () => { if (nav.prevT !== null) seek(nav.prevT); },
     onNext: () => { if (nav.nextT !== null) seek(nav.nextT); },
-    onToggleKeyframe: () => toggleKeyframeAtPlayhead(nodeId, tracks, time, label, values),
+    onToggleKeyframe: () => {
+      // The diamond acts on the ANIMATED tracks only; an animated track is
+      // always in the engine's catalog, so this is the API path in practice.
+      const live = tracks.filter((p) => defaultAnimation.isAnimated(nodeId, p));
+      if (live.length > 0 && allAddressable([nodeId], live)) {
+        const label2 = nav.atKeyframe ? `Remove ${label} keyframe` : `Add ${label} keyframe`;
+        void keyToggleCommands([nodeId], live, time).then((cmds) => edit(label2, cmds));
+        return;
+      }
+      // B3-legacy: engine gap — a track the catalog cannot address (a node that is not a layer of a composition).
+      toggleKeyframeAtPlayhead(nodeId, tracks, time, label, values);
+    },
   };
 }
 

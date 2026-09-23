@@ -36,16 +36,19 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
   const off = !cfg.enabled;
 
   const write = (patch: Partial<PhysicsBodyConfig>): void => {
+    // B3-legacy: engine gap — physics config (fx key) is a structured value with no API property.
     defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, { ...cfg, ...patch });
     bumpScene();
   };
 
   const removePhysics = (): void => {
+    // B3-legacy: engine gap — physics config (fx key) is a structured value with no API property.
     defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, undefined);
     bumpScene();
   };
 
   const resetPhysics = (): void => {
+    // B3-legacy: engine gap — physics config (fx key) is a structured value with no API property.
     defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, DEFAULT_PHYSICS_BODY);
     bumpScene();
   };

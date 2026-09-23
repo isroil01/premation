@@ -310,6 +310,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
 
   const commit = useCallback((next: Modifier[]): void => {
     if (!activePath) return;
+    // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
     applyModifierStack(nodeId, activePath, next);
     setNote(null);
   }, [nodeId, activePath]);
@@ -361,6 +362,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
               onDragStart={() => setDragFrom(i)}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => {
+                // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
                 if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i));
                 setDragFrom(null);
               }}
@@ -381,6 +383,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   className={styles.iconBtn}
                   aria-label={`Move ${label} up`}
                   disabled={i === 0}
+                  // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
                   onClick={() => commit(moveModifier(modifiers, i, i - 1))}
                 >▲</button>
                 <button
@@ -388,12 +391,14 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   className={styles.iconBtn}
                   aria-label={`Move ${label} down`}
                   disabled={i === modifiers.length - 1}
+                  // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
                   onClick={() => commit(moveModifier(modifiers, i, i + 1))}
                 >▼</button>
                 <button
                   type="button"
                   className={styles.iconBtn}
                   aria-label={`Remove ${label}`}
+                  // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
                   onClick={() => commit(removeModifier(modifiers, m.id))}
                 >✕</button>
               </div>
@@ -433,6 +438,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           onChange={(e) => {
             const recipe = BEHAVIOR_RECIPES.find((r) => r.preset === e.target.value);
             if (!recipe) return;
+            // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
             const done = applyBehaviorRecipe(nodeId, recipe);
             setProp(done[0] ?? activePath);
             setNote(`${recipe.label} added as an editable stack on ${done.join(', ')}.`);
@@ -460,6 +466,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           variant="secondary"
           disabled={!hasStack}
           onClick={() => {
+            // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
             const result = bakeModifierStack(nodeId, activePath);
             setNote(
               result.refusal
@@ -475,6 +482,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
           variant="secondary"
           disabled={!hasStack}
           onClick={() => {
+            // B3-legacy: engine gap — modifier stacks / behaviour recipes / bake have no API group or command.
             removeModifierStack(nodeId, activePath);
             setNote('Stack removed — any expression that was there first is back.');
           }}

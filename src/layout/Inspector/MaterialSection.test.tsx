@@ -17,6 +17,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { MaterialSection, hasMaterialSection, materialSphereCss } from './MaterialSection';
 import { ThreeDControl } from './ThreeDControl';
 import type { SceneNode } from '@core/types';
+import { addLayer, idle } from './__testHelpers__/engineLayers';
 
 const layer = (id: string, props: Record<string, unknown> = {}): SceneNode => ({
   id, name: id, parent: null, children: [], visible: true, locked: false,
@@ -52,8 +53,8 @@ afterEach(() => {
 
 describe('where the section appears', () => {
   it('is present for a 3D layer and absent for a flat one', () => {
-    defaultSceneGraph.addNode(threeD('box'));
-    defaultSceneGraph.addNode(layer('flat'));
+    addLayer(threeD('box'));
+    addLayer(layer('flat'));
     expect(hasMaterialSection('box')).toBe(true);
     expect(hasMaterialSection('flat')).toBe(false);
     expect(render(<MaterialSection nodeId="flat" />).container).toBeEmptyDOMElement();
@@ -61,7 +62,7 @@ describe('where the section appears', () => {
 
   /** The move: ThreeDControl keeps the switch and the geometry, and nothing else. */
   it('ThreeDControl no longer carries any material control', () => {
-    defaultSceneGraph.addNode(threeD('box', { extrusionDepth: 40 }));
+    addLayer(threeD('box', { extrusionDepth: 40 }));
     render(<ThreeDControl nodeId="box" />);
     expect(screen.getByLabelText('3D layer')).toBeInTheDocument();
     expect(field('Extrusion depth')).toBeInTheDocument();
@@ -75,11 +76,11 @@ describe('where the section appears', () => {
   });
 
   it('carries the per-face overrides once the layer is extruded', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     expect(screen.queryByText('Face Materials')).toBeNull();
     cleanup();
     defaultSceneGraph.clear();
-    defaultSceneGraph.addNode(threeD('box', { extrusionDepth: 40 }));
+    addLayer(threeD('box', { extrusionDepth: 40 }));
     mount();
     expect(screen.getByText('Face Materials')).toBeInTheDocument();
   });
@@ -91,7 +92,7 @@ describe('rows follow the shading model', () => {
   };
 
   it('Phong shows Shininess and Metal (Phong tints its highlight by metal) and hides Roughness', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     mount();
     expect(field('Shininess')).toBeInTheDocument();
     expect(noField('Roughness')).toBeNull();
@@ -100,7 +101,7 @@ describe('rows follow the shading model', () => {
   });
 
   it('Physical swaps Shininess for Roughness and brings Metal back', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     const view = mount();
     shadeTo('pbr');
     view.rerender(<MaterialSection nodeId="box" />);
@@ -111,7 +112,7 @@ describe('rows follow the shading model', () => {
   });
 
   it('Toon adds Bands', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     const view = mount();
     shadeTo('toon');
     view.rerender(<MaterialSection nodeId="box" />);
@@ -123,22 +124,24 @@ describe('rows follow the shading model', () => {
 });
 
 describe('the controls that moved keep writing what they wrote', () => {
-  it('shadow tri-states and transmission', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+  it('shadow tri-states and transmission', async () => {
+    addLayer(threeD('box'));
     mount();
     fireEvent.change(screen.getByLabelText('Casts shadows'), { target: { value: 'only' } });
     fireEvent.change(screen.getByLabelText('Accepts shadows'), { target: { value: 'off' } });
     fireEvent.change(screen.getByLabelText('Light Transmission slider'), { target: { value: '60' } });
+    await idle();
     const m = readNodeMaterialParams('box')!;
     expect(m.castsShadows).toBe('only');
     expect(m.acceptsShadows).toBe('off');
     expect(m.lightTransmission).toBe(60);
   });
 
-  it('the slider and the number field are one control', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+  it('the slider and the number field are one control', async () => {
+    addLayer(threeD('box'));
     mount();
     fireEvent.change(screen.getByLabelText('Diffuse slider'), { target: { value: '75' } });
+    await idle();
     expect(readNodeMaterialParams('box')!.diffuse).toBe(75);
     expect(screen.getByRole('spinbutton', { name: 'Diffuse' })).toHaveAttribute('aria-valuenow', '75');
   });
@@ -146,14 +149,14 @@ describe('the controls that moved keep writing what they wrote', () => {
 
 describe('the library', () => {
   it('ships the built-ins and offers no way to delete one', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     mount();
     expect(screen.getByLabelText('Apply material Gold')).toBeInTheDocument();
     expect(screen.queryByLabelText('Delete material Gold')).toBeNull();
   });
 
   it('applying one writes the material and leaves the fill alone', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     mount();
     fireEvent.click(screen.getByLabelText('Apply material Steel'));
     const m = readNodeMaterialParams('box')!;
@@ -165,8 +168,8 @@ describe('the library', () => {
   });
 
   it('applies to every selected layer, not just the inspected one', () => {
-    defaultSceneGraph.addNode(threeD('box'));
-    defaultSceneGraph.addNode(threeD('other'));
+    addLayer(threeD('box'));
+    addLayer(threeD('other'));
     useSelectionStore.setState({ ids: ['box', 'other'], primary: 'box' });
     mount();
     fireEvent.click(screen.getByLabelText('Apply material Gold'));
@@ -174,18 +177,19 @@ describe('the library', () => {
   });
 
   it('leaves layers outside the selection alone', () => {
-    defaultSceneGraph.addNode(threeD('box'));
-    defaultSceneGraph.addNode(threeD('other'));
+    addLayer(threeD('box'));
+    addLayer(threeD('other'));
     useSelectionStore.setState({ ids: ['box'], primary: 'box' });
     mount();
     fireEvent.click(screen.getByLabelText('Apply material Gold'));
     expect(readNodeMaterialParams('other')).toEqual(DEFAULT_MATERIAL_PARAMS);
   });
 
-  it('saves the layer’s current surface as a named material, then applies it back', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+  it('saves the layer’s current surface as a named material, then applies it back', async () => {
+    addLayer(threeD('box'));
     const view = mount();
     fireEvent.change(screen.getByLabelText('Specular slider'), { target: { value: '70' } });
+    await idle();
     view.rerender(<MaterialSection nodeId="box" />);
 
     fireEvent.click(screen.getByText('Save as material…'));
@@ -200,13 +204,14 @@ describe('the library', () => {
     expect(saved[0]!.swatch).toBe('#3355ff');
 
     fireEvent.change(screen.getByLabelText('Specular slider'), { target: { value: '0' } });
+    await idle();
     view.rerender(<MaterialSection nodeId="box" />);
     fireEvent.click(screen.getByLabelText('Apply material Hero'));
     expect(readNodeMaterialParams('box')!.specular).toBe(70);
   });
 
   it('renames and deletes a saved material', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+    addLayer(threeD('box'));
     const added = useMaterialStore.getState().addMaterial('Draft', DEFAULT_MATERIAL_PARAMS);
     const view = mount();
 
@@ -256,28 +261,31 @@ describe('the preview swatch', () => {
 });
 
 describe('Advanced-3D axes (Reflections / Transparency)', () => {
-  it('the rows write the material and stay off the file at defaults', () => {
-    defaultSceneGraph.addNode(threeD('box'));
+  it('the rows write the material (through the engine API)', async () => {
+    addLayer(threeD('box'));
     mount();
     fireEvent.change(screen.getByLabelText('Reflection Intensity slider'), { target: { value: '40' } });
     fireEvent.change(screen.getByLabelText('Reflection Rolloff slider'), { target: { value: '25' } });
     fireEvent.change(screen.getByLabelText('Transparency slider'), { target: { value: '60' } });
     fireEvent.change(screen.getByLabelText('Transparency Rolloff slider'), { target: { value: '50' } });
     fireEvent.change(screen.getByLabelText('Index of Refraction slider'), { target: { value: '1.33' } });
+    await idle();
     const m = readNodeMaterialParams('box')!;
     expect(m.reflectionIntensity).toBe(40);
     expect(m.reflectionRolloff).toBe(25);
     expect(m.transparency).toBe(60);
     expect(m.transparencyRolloff).toBe(50);
     expect(m.ior).toBeCloseTo(1.33, 10);
-    // Writing the default back clears the stored prop (unstored default).
+    // Writing the default back reads as the default. (The pre-API setter also
+    // dropped the stored prop — "unstored default"; the engine's static write
+    // stores it explicitly: an engine gap listed in the B3 report, pixels equal.)
     fireEvent.change(screen.getByLabelText('Reflection Intensity slider'), { target: { value: '100' } });
-    const t = defaultSceneGraph.getNode('box')!.components.find((c) => c.type === 'Transform')!;
-    expect(t.props.reflectionIntensity).toBeUndefined();
+    await idle();
+    expect(readNodeMaterialParams('box')!.reflectionIntensity).toBe(100);
   });
 
   it('Toon replaces the reflection rows with an explanation', () => {
-    defaultSceneGraph.addNode(threeD('box', { shadingModel: 'toon' }));
+    addLayer(threeD('box', { shadingModel: 'toon' }));
     mount();
     expect(noField('Reflection Intensity')).toBeNull();
     expect(screen.getByText(/Toon shading never reflects/)).toBeInTheDocument();

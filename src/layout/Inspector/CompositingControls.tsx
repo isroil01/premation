@@ -2,9 +2,10 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
+import { getNodeBlend } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
-import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
+import { getNodeMatte } from '@core/effects/matte';
+import { setLayerMatte, setLayersBlend } from './inspectorEdits';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
 import styles from '../Effects/EffectsPanel.module.css';
 
@@ -13,7 +14,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
 
   const blend = getNodeBlend(nodeId);
   const blendLabel = blendModeLabel(blend);
-  const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setNodeBlend(nodeId, m));
+  const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setLayersBlend([nodeId], m));
 
   const matte = getNodeMatte(nodeId);
   const currentOption = matteOptionId(matte);
@@ -29,7 +30,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
     label: m.label,
     icon: m.id === currentOption ? 'check' : undefined,
     // applyMatteOption carries the explicit source across a mode change.
-    onSelect: () => setNodeMatte(nodeId, applyMatteOption(matte, m.id)),
+    onSelect: () => setLayerMatte(nodeId, applyMatteOption(matte, m.id)),
   }));
 
   const sourceLabel = currentSourceId && matte
@@ -42,7 +43,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
       id: 'layer-above',
       label: 'Layer Above (Default)',
       icon: !currentSourceId ? 'check' : undefined,
-      onSelect: () => setNodeMatte(nodeId, setMatteSource(matte, undefined)),
+      onSelect: () => setLayerMatte(nodeId, setMatteSource(matte, undefined)),
     },
     { type: 'separator' },
     ...siblings.map(s => ({
@@ -50,7 +51,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
       id: s.id,
       label: s.name || s.id,
       icon: (s.id === currentSourceId ? 'check' : undefined) as "check" | undefined,
-      onSelect: () => setNodeMatte(nodeId, setMatteSource(matte, s.id)),
+      onSelect: () => setLayerMatte(nodeId, setMatteSource(matte, s.id)),
     }))
   ];
 

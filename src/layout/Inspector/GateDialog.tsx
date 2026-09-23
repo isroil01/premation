@@ -112,6 +112,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
         notify('That layer has no decodable audio to gate.', 'warning');
         return;
       }
+      // B3-legacy: engine gap — noise gate bakes keys from analysis; needs startJob/applyJobResult.
       const out = await applyGate(nodeId, res.env, {
         ...params,
         fps: res.fps,
@@ -128,6 +129,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
   const drop = async (): Promise<void> => {
     setBusy(true);
     try {
+      // B3-legacy: engine gap — noise gate bakes keys from analysis; needs startJob/applyJobResult.
       if (await removeGate(nodeId)) notify('Noise gate removed.');
       onDone();
     } finally {

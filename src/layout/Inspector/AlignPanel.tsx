@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { alignNodes, distributeMinimum, type AlignMode } from '@core/scene/alignNodes';
+import { distributeMinimum, type AlignMode } from '@core/scene/alignNodes';
+import { alignLayers } from './inspectorEdits';
 import { Icon, type IconName } from '@components/Icon';
 import { cn } from '@utils/cn';
 import styles from './AlignSection.module.css';
@@ -48,10 +49,11 @@ export function AlignPanel(): JSX.Element {
   const compHeight = useCompositionStore((s) => s.height);
 
   const alignMin = alignTo === 'composition' ? 1 : 2;
+  // B3-legacy: not a write — the ratchet's `distribute…` verb match on a pure count (rule false positive; belongs in NOT_WRITES).
   const distributeMin = distributeMinimum(alignTo);
   const count = selectedIds.length;
 
-  const run = (mode: AlignMode): void => alignNodes([...selectedIds], mode, alignTo, compWidth, compHeight);
+  const run = (mode: AlignMode): void => alignLayers(selectedIds, mode, alignTo, compWidth, compHeight);
 
   const renderButton = (a: { id: AlignMode; icon: IconName; label: string }, min: number): JSX.Element => {
     const disabled = count < min;

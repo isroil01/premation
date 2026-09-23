@@ -6,21 +6,33 @@ import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { eligibleParents, parentOfNode, reparentNode, parentOptionsFor } from '@core/scene/parenting';
-import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
+import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { getNodeBlend } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
-import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
+import { getNodeMatte } from '@core/effects/matte';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
-import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
-import { enableLayerMotionBlurWithFeedback, disableLayerMotionBlur, setAdjustmentWithFeedback } from '@core/effects/layerSwitchFeedback';
-import { getNodeLayerTime, updateNodeLayerTime, FRAME_BLENDS } from '@core/scene/layerTime';
+import { getNodeAdjustment } from '@core/effects/adjustment';
+import { getNodeMotionBlur } from '@core/effects/motionBlur';
+import { getNodeLayerTime, updateNodeLayerTime, FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
 import { applyTimeStretch, isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
-import { getNodeQuality, setNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
-import { runDocumentEdit } from '@core/commands/documentEdit';
+import { getNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { Segmented } from '@components/Segmented';
 import { createIdMatteLayer, cryptomatteForNode } from '@core/media/cryptomatteCommands';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from './useEngineEdit';
+import { LAYER_SWITCHES, applyLayerSwitch } from './SelectionHeader';
+import { parentLayer, setLayerMatte, setLayersBlend, setLayersSwitch } from './inspectorEdits';
 import styles from './CompositingSection.module.css';
+
+/** The engine's frame-blend switch value for the stored one. */
+const API_FRAME_BLEND: Record<FrameBlend, 'off' | 'frameMix' | 'pixelMotion'> = { none: 'off', mix: 'frameMix', pixelMotion: 'pixelMotion' };
+
+/** Set a switch from THIS section's Switch (its own on/off, not the selection-wide flip). */
+function setSwitch(nodeId: string, id: 'adjustment' | 'motionBlur', on: boolean): void {
+  const spec = LAYER_SWITCHES.find((t) => t.id === id)!;
+  if (spec.read(nodeId) === on) return;
+  void applyLayerSwitch([nodeId], spec);
+}
 
 /** "ID matte: <object>" entries for a layer whose EXR carries a Cryptomatte set; empty otherwise. */
 function idMatteItems(nodeId: string): DropdownItem[] {
@@ -36,6 +48,7 @@ function idMatteItems(nodeId: string): DropdownItem[] {
         type: 'item',
         id: `crypto:${layer.name}:${obj.name}`,
         label: `ID matte: ${obj.name}${found.set.layers.length > 1 ? ` (${layer.name})` : ''}`,
+        // B3-legacy: engine gap — the Cryptomatte ID matte bakes a PNG item + creates a layer + sets the matte (needs importFiles from bytes, createLayer, setTrackMatte as one entry).
         onSelect: () => { void createIdMatteLayer(nodeId, layer.name, [obj.name]); },
       });
     }
@@ -46,6 +59,7 @@ function idMatteItems(nodeId: string): DropdownItem[] {
 export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element {
   useSceneRevision((s) => s.rev);
   const mb = useMotionBlurStore();
+  const e = useEngineEdit();
 
   const node = defaultSceneGraph.getNode(nodeId);
   const isRoot = !node || nodeId === 'comp_root';
@@ -63,7 +77,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
       id: '__none__',
       label: 'None',
       icon: currentParent === null ? 'check' : undefined,
-      onSelect: (m) => reparentNode(nodeId, null, parentOptionsFor(m)),
+      onSelect: (m) => parentLayer(nodeId, null, m),
     },
     ...(parentOptions.length ? [{ type: 'separator' as const }] : []),
     ...parentOptions.map((o): DropdownItem => ({
@@ -71,14 +85,14 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
       id: o.id,
       label: o.name,
       icon: o.id === currentParent ? 'check' : undefined,
-      onSelect: (m) => reparentNode(nodeId, o.id, parentOptionsFor(m)),
+      onSelect: (m) => parentLayer(nodeId, o.id, m),
     })),
   ];
 
   // 2. Blend & Matte
   const blend = getNodeBlend(nodeId);
   const blendLabel = blendModeLabel(blend);
-  const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setNodeBlend(nodeId, m));
+  const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setLayersBlend([nodeId], m));
 
   const matte = getNodeMatte(nodeId);
   const currentMatteOption = matteOptionId(matte);
@@ -91,7 +105,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
     id: m.id,
     label: m.label,
     icon: m.id === currentMatteOption ? 'check' : undefined,
-    onSelect: () => setNodeMatte(nodeId, applyMatteOption(matte, m.id)),
+    onSelect: () => setLayerMatte(nodeId, applyMatteOption(matte, m.id)),
   }));
 
   const sourceLabel = currentSourceId && matte
@@ -104,7 +118,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
       id: 'layer-above',
       label: 'Layer Above (Default)',
       icon: !currentSourceId ? 'check' : undefined,
-      onSelect: () => setNodeMatte(nodeId, setMatteSource(matte, undefined)),
+      onSelect: () => setLayerMatte(nodeId, setMatteSource(matte, undefined)),
     },
     { type: 'separator' },
     ...siblings.map((s) => ({
@@ -112,7 +126,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
       id: s.id,
       label: s.name || s.id,
       icon: (s.id === currentSourceId ? 'check' : undefined) as 'check' | undefined,
-      onSelect: () => setNodeMatte(nodeId, setMatteSource(matte, s.id)),
+      onSelect: () => setLayerMatte(nodeId, setMatteSource(matte, s.id)),
     })),
     // Cryptomatte (plan C2): an EXR that carries ID mattes offers each object
     // here. Picking one bakes its coverage to a grey PNG layer above this one
@@ -131,7 +145,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
     id: b.value,
     label: b.label,
     icon: b.value === time.frameBlend ? 'check' : undefined,
-    onSelect: () => updateNodeLayerTime(nodeId, { frameBlend: b.value }),
+    onSelect: () => { void setLayersSwitch([nodeId], { frameBlend: API_FRAME_BLEND[b.value] }, 'Frame Blending'); },
   }));
 
   return (
@@ -145,7 +159,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
               <PickWhip
                 label="Parent pick-whip — drag onto a layer (Alt: keep values, layer jumps)"
                 accept={(target) => parentOptions.some((o) => o.id === target.nodeId)}
-                onPick={(target, m) => reparentNode(nodeId, target.nodeId, parentOptionsFor(m))}
+                onPick={(target, m) => parentLayer(nodeId, target.nodeId, m)}
               />
               <Dropdown
                 placement="bottom-end"
@@ -212,7 +226,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
           <span className={styles.label}>Adjustment Layer</span>
           <Switch
             checked={isAdjustment}
-            onChange={(e) => setAdjustmentWithFeedback(nodeId, e.currentTarget.checked, setNodeAdjustment)}
+            onChange={(e) => setSwitch(nodeId, 'adjustment', e.currentTarget.checked)}
             aria-label="Adjustment layer"
           />
         </div>
@@ -231,7 +245,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             <Segmented<LayerQuality>
               size="sm"
               value={getNodeQuality(nodeId)}
-              onChange={(q) => runDocumentEdit(q === 'best' ? 'Best Quality' : q === 'draft' ? 'Draft Quality' : 'Wireframe Quality', () => setNodeQuality(nodeId, q))}
+              onChange={(q) => { void setLayersSwitch([nodeId], { quality: q }, q === 'best' ? 'Best Quality' : q === 'draft' ? 'Draft Quality' : 'Wireframe Quality'); }}
               options={[
                 { value: 'best', label: 'Best' },
                 { value: 'draft', label: 'Draft' },
@@ -246,10 +260,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
           <span className={styles.label}>Motion Blur</span>
           <Switch
             checked={motionBlur}
-            onChange={(e) => {
-              if (e.currentTarget.checked) enableLayerMotionBlurWithFeedback(nodeId, setNodeMotionBlur);
-              else disableLayerMotionBlur(nodeId, setNodeMotionBlur);
-            }}
+            onChange={(e) => setSwitch(nodeId, 'motionBlur', e.currentTarget.checked)}
             aria-label="Motion blur"
           />
         </div>
@@ -299,7 +310,9 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 max={1000}
                 precision={0}
                 unit="%"
-                onChange={(v) => updateNodeLayerTime(nodeId, { stretch: v })}
+                // `setLayerTiming` stretch is signed (negative = reversed): keep the Reverse switch as it is.
+                onChange={(v) => e.send('Time Stretch', { type: 'setLayerTiming', items: [{ layer: nodeId, stretch: (time.reverse ? -v : v) / 100 }] })}
+                {...e.scrub('Time Stretch')}
                 aria-label="Time stretch"
               />
             ) : (
@@ -315,6 +328,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 onScrub={() => undefined}
                 onChange={(v) => {
                   const pct = Math.round(v);
+                  // B3-legacy: engine gap — `setLayerTiming{stretch}` writes the stretch field only; this bakes bar + keyframes + markers about the in-point.
                   if (pct !== 100 && pct !== 0) void applyTimeStretch([nodeId], pct, 'in');
                 }}
                 aria-label="Time stretch"
@@ -327,7 +341,8 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
           <span className={styles.label}>Reverse</span>
           <Switch
             checked={time.reverse}
-            onChange={(e) => updateNodeLayerTime(nodeId, { reverse: e.currentTarget.checked })}
+            // `timeReverseLayers` FLIPS the flag: sent only when the switch changes it.
+            onChange={(e) => { if (e.currentTarget.checked !== time.reverse) void edit('Reverse Playback', { type: 'timeReverseLayers', layers: [nodeId] }); }}
             aria-label="Reverse playback"
           />
         </div>
@@ -336,6 +351,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
           <span className={styles.label}>Freeze Frame</span>
           <Switch
             checked={time.freeze}
+            // B3-legacy: engine gap — `freezeFrame` always sets a new freeze time and nothing un-freezes; this switch toggles the flag keeping freezeTime.
             onChange={(e) => updateNodeLayerTime(nodeId, { freeze: e.currentTarget.checked })}
             aria-label="Freeze frame"
           />
@@ -350,6 +366,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 min={0}
                 precision={2}
                 unit="s"
+                // B3-legacy: engine gap — same (freezeTime is typed on the layer's keyframe axis; `freezeFrame` takes comp time).
                 onChange={(v) => updateNodeLayerTime(nodeId, { freezeTime: v })}
                 aria-label="Freeze time"
               />

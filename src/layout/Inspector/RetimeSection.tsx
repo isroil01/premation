@@ -27,7 +27,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
+import { getNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import {
@@ -57,6 +57,7 @@ import {
 } from '@core/animation/retimeCommands';
 import { AnimToggle } from './AnimToggle';
 import { RetimeGraph, type RetimeGraphKey } from './RetimeGraph';
+import { setLayersSwitch } from './inspectorEdits';
 import ts from './TransformSection.module.css';
 import styles from './RetimeSection.module.css';
 
@@ -102,6 +103,7 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const seek = (t: number): void => useProjectStore.getState().actions.setTime(t, Math.round(t * fps));
 
   const changeMode = (next: RetimeMode): void => {
+    // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
     const approximate = setRetimeMode([nodeId], next);
     setSelectedT(null);
     if (approximate) notify('Converted to Speed %. The frames at your old keys are kept; check the curve between them.');
@@ -181,6 +183,7 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                   type="button"
                   className={styles.linkButton}
                   onClick={() => {
+                    // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
                     if (fitSpeedToFootage(nodeId)) notify('Scaled the speed curve to end on the last frame.', 'success');
                   }}
                 >
@@ -202,7 +205,7 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             aria-label="Smooth motion (frame blending)"
             options={BLEND_OPTIONS}
             value={blend}
-            onChange={(v: FrameBlend) => updateNodeLayerTime(nodeId, { frameBlend: v })}
+            onChange={(v: FrameBlend) => { void setLayersSwitch([nodeId], { frameBlend: v === 'mix' ? 'frameMix' : v === 'pixelMotion' ? 'pixelMotion' : 'off' }, 'Frame Blending'); }}
           />
         </div>
       )}
@@ -224,6 +227,7 @@ interface ModeControlsProps {
 
 function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selectedT, onSelect, seek }: ModeControlsProps): JSX.Element {
   const tracks = defaultAnimation.getTrackKeyframes(nodeId, SPEED_PROP) ?? [];
+  // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
   const u = compToKeyframeTime(nodeId, time);
   const valueNow = defaultAnimation.sample(nodeId, SPEED_PROP, u) ?? 100;
   const curve = tracks.length > 1;
@@ -247,11 +251,13 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
           onToggle={() => {
             if (curve) {
               // Stopwatch off: back to one constant speed — the value showing now.
+              // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
               runAnimEdit('Constant speed', () => defaultAnimation.setKeyframes(nodeId, SPEED_PROP, [
                 { t: compToKeyframeTime(nodeId, inSec), value: valueNow, easing: 'linear' },
               ]));
               onSelect(null);
             } else {
+              // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
               addRetimeKey(nodeId, SPEED_PROP, time, valueNow);
             }
           }}
@@ -260,6 +266,7 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
         <div className={styles.field}>
           <ValueField
             value={Math.round(valueNow * 10) / 10}
+            // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
             onChange={(v) => setSpeedAt(nodeId, time, v, `retime:speed:${nodeId}:${u}`)}
             unit="%"
             precision={0}
@@ -277,22 +284,26 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
         fps={fps}
         time={time}
         keys={keys}
+        // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
         sample={(t) => defaultAnimation.sample(nodeId, SPEED_PROP, compToKeyframeTime(nodeId, t)) ?? 100}
         runsOutAtSec={runsOutAtSec}
         selectedT={selectedT}
         onSelect={onSelect}
         onMove={(fromT, compT, value) => {
+          // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
           const toT = compToKeyframeTime(nodeId, compT);
           moveRetimeKey(nodeId, SPEED_PROP, fromT, toT, value);
           onSelect(toT);
           return toT;
         }}
         onNudge={(fromT, compT, value) => {
+          // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
           const toT = compToKeyframeTime(nodeId, compT);
           runAnimEdit('Nudge speed point', () => moveRetimeKey(nodeId, SPEED_PROP, fromT, toT, value));
           onSelect(toT);
         }}
         onAdd={(compT, value) => { addRetimeKey(nodeId, SPEED_PROP, compT, value); onSelect(compToKeyframeTime(nodeId, compT)); }}
+        // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
         onRemove={(t) => { removeSpeedKey(nodeId, t); onSelect(null); }}
         onSeek={seek}
         ariaLabel="Speed curve across the clip"
@@ -310,6 +321,7 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
             aria-label="How speed changes after this point"
             options={RAMP_OPTIONS}
             value={ramp}
+            // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
             onChange={(style) => setRampStyle(nodeId, style, focusKey?.t ?? null)}
           />
         </div>
@@ -323,6 +335,7 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
             className={styles.chip}
             title={`${p.hint} — across the whole clip`}
             onClick={() => {
+              // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
               if (applySpeedPreset([nodeId], p.id) === 0) notify('This layer has no clip bar to shape a preset across.', 'warning');
               onSelect(null);
             }}
@@ -358,12 +371,14 @@ function FrameControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
           label="Source Frame"
           animated
           values={() => [chainOfFrame(frameNow)]}
+          // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
           onToggle={() => setRetimeMode([nodeId], 'normal')}
         />
         <span className={styles.label}>Source frame</span>
         <div className={styles.field}>
           <ValueField
             value={frameNow}
+            // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
             onChange={(v) => setSourceFrameAt(nodeId, time, Math.round(v), `retime:frame:${nodeId}:${time}`)}
             precision={0}
             min={0}
@@ -387,12 +402,14 @@ function FrameControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
         selectedT={selectedT}
         onSelect={onSelect}
         onMove={(fromT, compT, value) => {
+          // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
           const toT = compToKeyframeTime(nodeId, compT, REMAP_PROP);
           moveRetimeKey(nodeId, REMAP_PROP, fromT, toT, chainOfFrame(value));
           onSelect(toT);
           return toT;
         }}
         onNudge={(fromT, compT, value) => {
+          // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
           const toT = compToKeyframeTime(nodeId, compT, REMAP_PROP);
           runAnimEdit('Nudge frame key', () => moveRetimeKey(nodeId, REMAP_PROP, fromT, toT, chainOfFrame(value)));
           onSelect(toT);
@@ -400,6 +417,7 @@ function FrameControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
         onAdd={(compT, value) => addRetimeKey(nodeId, REMAP_PROP, compT, chainOfFrame(value))}
         onRemove={(t) => {
           if (remap.length <= 1) return;
+          // B3-legacy: engine gap — Twixtor-style retime keys (speed integration, ramp styles, presets, fit, source-frame keys, approximate-conversion report) have no API commands beyond setRetime.
           runAnimEdit('Remove frame key', () => defaultAnimation.removeKeyframe(nodeId, REMAP_PROP, t));
           onSelect(null);
         }}

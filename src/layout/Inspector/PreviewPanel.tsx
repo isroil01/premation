@@ -17,6 +17,9 @@ import { useCurrentTime, setTime as setPlayheadTime } from '@stores/playbackCloc
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { edit } from '@core/engine/uiEdits';
+import { compTime } from '@core/engine/propRefs';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { toDb, meterFraction } from '@core/audio/audioLevels';
 import { Icon } from '@components/Icon';
@@ -60,8 +63,11 @@ export function PreviewPanel(): JSX.Element {
   );
   const setRange = (next: PlayRange): void => {
     const tc = getTimelineController();
+    // B3-legacy: engine gap — `setWorkArea` cannot CLEAR the work area (no "none" range in the API).
     if (next === 'entire-comp') tc.clearWorkArea();
-    else if (next === 'current-forward') tc.setWorkArea(time, duration);
+    else if (next === 'current-forward' && duration > time) {
+      void edit('Work Area', { type: 'setWorkArea', comp: activeCompRootId(), range: { start: compTime(time), duration: compTime(duration - time) } });
+    }
     setRangeState(next);
   };
 

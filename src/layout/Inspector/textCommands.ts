@@ -69,6 +69,7 @@ export function isTypingInField(
 export function swapTextFillStroke(nodeIds: ReadonlyArray<string>): boolean {
   const targets = nodeIds.map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return false;
+  // B3-legacy: engine gap — text component props (strings / runs) are not API properties yet.
   runDocumentEdit('Swap Fill and Stroke', () => {
     for (const { node, compId, props } of targets) {
       const write = (key: string, value: unknown): void => {
@@ -99,6 +100,7 @@ export function toggleTextOrientation(nodeIds: ReadonlyArray<string>): 'vertical
   const targets = nodeIds.map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return null;
   const next = targets.some((t) => t.props.orientation !== 'vertical') ? 'vertical' : 'horizontal';
+  // B3-legacy: engine gap — text component props (strings / runs) are not API properties yet.
   runDocumentEdit(next === 'vertical' ? 'Convert to Vertical Text' : 'Convert to Horizontal Text', () => {
     for (const { node, compId } of targets) {
       updateNodeComponentProp(defaultSceneGraph, node.id, compId, 'orientation', next);

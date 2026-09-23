@@ -72,12 +72,14 @@ function MorphRow({ nodeId, componentId, index, label, layerT, autoKeyframe }: M
     if (!Number.isFinite(v)) return;
     const clamped = Math.max(MIN, Math.min(MAX, v));
     if (animated || autoKeyframe) {
+      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
       runAnimEdit(
         `Set ${label}`,
         () => defaultAnimation.setKeyframe(nodeId, prop, layerT, clamped),
         `set:${nodeId}:${prop}:${layerT}`,
       );
     } else {
+      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
       updateNodeComponentProp(defaultSceneGraph, nodeId, componentId, prop, clamped);
     }
   };
@@ -91,6 +93,7 @@ function MorphRow({ nodeId, componentId, index, label, layerT, autoKeyframe }: M
         animated={animated}
         values={() => [value]}
         onToggle={() => {
+          // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
           if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
           else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
         }}
@@ -141,6 +144,7 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const labels = morphTargetLabels(node);
   if (labels.length === 0) return null;
 
+  // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
   const layerT = compToKeyframeTime(nodeId, time);
 
   /**
@@ -157,6 +161,7 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
       .map((_, i) => `${MORPH_PROP_PREFIX}${i}`)
       .filter((prop) => autoKeyframe || defaultAnimation.isAnimated(nodeId, prop));
     if (keyed.length > 0) {
+      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
       runAnimEdit('Reset morph targets', () => {
         defaultAnimation.batch(() => {
           for (const prop of keyed) defaultAnimation.setKeyframe(nodeId, prop, layerT, 0);
@@ -166,6 +171,7 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
     for (let i = 0; i < labels.length; i++) {
       const prop = `${MORPH_PROP_PREFIX}${i}`;
       if (keyed.includes(prop)) continue;
+      // B3-legacy: engine gap — glTF morph targets / animation clip props are not catalog properties.
       updateNodeComponentProp(defaultSceneGraph, nodeId, transform.id, prop, 0);
     }
   };
