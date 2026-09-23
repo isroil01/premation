@@ -444,6 +444,110 @@ export type PixelFormat =
   | 'rgba8unorm';
 export const PixelFormatValues = ['rgba8unorm'] as const;
 
+export type RenderableKind =
+  | 'rect'
+  | 'image'
+  | 'video'
+  | 'text'
+  | 'path'
+  | 'group';
+export const RenderableKindValues = ['rect', 'image', 'video', 'text', 'path', 'group'] as const;
+
+/** packages/renderer BlendMode. */
+export type RenderBlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'add'
+  | 'subtract'
+  | 'darken'
+  | 'lighten'
+  | 'none';
+export const RenderBlendModeValues = ['normal', 'multiply', 'screen', 'overlay', 'add', 'subtract', 'darken', 'lighten', 'none'] as const;
+
+export type RenderSdfShape =
+  | 'rounded'
+  | 'ellipse';
+export const RenderSdfShapeValues = ['rounded', 'ellipse'] as const;
+
+export type RenderSampling =
+  | 'linear'
+  | 'nearest';
+export const RenderSamplingValues = ['linear', 'nearest'] as const;
+
+export type RenderMatteMode =
+  | 'alpha'
+  | 'luma';
+export const RenderMatteModeValues = ['alpha', 'luma'] as const;
+
+export type RenderTextureFormat =
+  | 'rgba8unorm'
+  | 'rgba8unormSrgb'
+  | 'bgra8unorm'
+  | 'rgba16float'
+  | 'rgba32float'
+  | 'r8unorm';
+export const RenderTextureFormatValues = ['rgba8unorm', 'rgba8unormSrgb', 'bgra8unorm', 'rgba16float', 'rgba32float', 'r8unorm'] as const;
+
+export type RenderLightType =
+  | 'ambient'
+  | 'point'
+  | 'spot'
+  | 'parallel';
+export const RenderLightTypeValues = ['ambient', 'point', 'spot', 'parallel'] as const;
+
+export type RenderMeshRole =
+  | 'front'
+  | 'back'
+  | 'side'
+  | 'bevel';
+export const RenderMeshRoleValues = ['front', 'back', 'side', 'bevel'] as const;
+
+export type RenderGeneratorPrimitive =
+  | 'point'
+  | 'sprite'
+  | 'quad'
+  | 'mesh';
+export const RenderGeneratorPrimitiveValues = ['point', 'sprite', 'quad', 'mesh'] as const;
+
+export type RenderGeneratorBlend =
+  | 'normal'
+  | 'add';
+export const RenderGeneratorBlendValues = ['normal', 'add'] as const;
+
+export type RenderIndexFormat =
+  | 'uint16'
+  | 'uint32';
+export const RenderIndexFormatValues = ['uint16', 'uint32'] as const;
+
+export type RenderWorkingSpace =
+  | 'srgbLinear'
+  | 'acesCg';
+export const RenderWorkingSpaceValues = ['srgbLinear', 'acesCg'] as const;
+
+export type RenderDisplayTransform =
+  | 'srgb'
+  | 'aces'
+  | 'pq'
+  | 'hlg';
+export const RenderDisplayTransformValues = ['srgb', 'aces', 'pq', 'hlg'] as const;
+
+export type RenderSsaoQuality =
+  | 'half'
+  | 'full';
+export const RenderSsaoQualityValues = ['half', 'full'] as const;
+
+/** What a RenderEffectParam carries: `number`, `numbers` (a list, a colour as [r,g,b,a], packed vec4 rows, a Float32Array), `text`, `texts`, or a boolean in `number` (0/1). */
+export type RenderParamKind =
+  | 'number'
+  | 'numbers'
+  | 'text'
+  | 'flag'
+  | 'color'
+  | 'texts';
+export const RenderParamKindValues = ['number', 'numbers', 'text', 'flag', 'color', 'texts'] as const;
+
 /** A layer (scene node) id. Stable for the layer's lifetime, survives save/load and undo. */
 export type LayerId = string;
 
@@ -2743,6 +2847,353 @@ export type FrameChannelMessage =
   | ({ type: 'release' } & FrameRelease)
   | ({ type: 'ping' } & FramePing);
 export type FrameChannelMessageType = FrameChannelMessage['type'];
+
+/** One field of an effect entry. Nested objects flatten to dotted names (`hostInputs.fps`). */
+export interface RenderEffectParam {
+  name: string;
+  kind: RenderParamKind;
+  number: number;
+  numbers: number[];
+  text: string;
+  texts: string[];
+}
+
+/** One entry of a renderable's spatial effect chain (FrameScene RenderableEffect), by its `type` tag. */
+export interface RenderEffect {
+  type: string;
+  params: RenderEffectParam[];
+}
+
+export interface RenderSdf {
+  shape: RenderSdfShape;
+  radiusPx: number;
+  width: number;
+  height: number;
+}
+
+export interface RenderColorMatrix {
+  /** Row-major 3×3. */
+  m: number[];
+  offset: number[];
+}
+
+export interface RenderGlass {
+  refraction: number;
+  edgeWidth: number;
+  aberration: number;
+  saturation: number;
+  tint: Color;
+  tintOpacity: number;
+  rim: Color;
+  rimOpacity: number;
+  rimWidth: number;
+  rimAngle: number;
+  specularAngle: number;
+  specularIntensity: number;
+  specularFalloff: number;
+  grain: number;
+}
+
+export interface RenderMotionSample {
+  modelMatrix: number[];
+  opacity: number;
+}
+
+export interface RenderAdjustment {
+  colorMatrix?: RenderColorMatrix;
+  lutTextureKey?: string;
+}
+
+export interface RenderMatte {
+  mode: RenderMatteMode;
+  inverted: boolean;
+  sourceId: string;
+}
+
+export interface RenderDeformedMesh {
+  /** f32 LE, 4 floats per vertex (x, y, u, v). */
+  vertices: Uint8Array;
+  /** u16 LE. */
+  triangles: Uint8Array;
+  /** f32 LE, one per vertex; absent = flat. */
+  depth?: Uint8Array;
+}
+
+export interface RenderGenerator {
+  /** f32 LE, `stride` floats per instance. */
+  instances: Uint8Array;
+  count: number;
+  stride: number;
+  primitive: RenderGeneratorPrimitive;
+  meshVertices?: Uint8Array;
+  meshIndices?: Uint8Array;
+  meshIndexFormat: RenderIndexFormat;
+  textureKey?: string;
+  cellSize: number[];
+  blend: RenderGeneratorBlend;
+  revision: number;
+  width: number;
+  height: number;
+  perspective?: number;
+}
+
+export interface RenderMeshRange {
+  role: RenderMeshRole;
+  first: number;
+  count: number;
+  color: Color;
+  gain: number;
+  textured: boolean;
+  textureKey?: string;
+}
+
+export interface RenderPbrMaps {
+  normalKey?: string;
+  metallicRoughnessKey?: string;
+  occlusionKey?: string;
+  emissiveKey?: string;
+  normalScale: number;
+  occlusionStrength: number;
+  emissive: number[];
+}
+
+export interface RenderExtrudedMesh {
+  key: string;
+  /** f32 LE, 8 floats per vertex (position xyz, normal xyz, uv). */
+  vertices: Uint8Array;
+  indices: Uint8Array;
+  indexFormat: RenderIndexFormat;
+  ranges: RenderMeshRange[];
+  pbr?: RenderPbrMaps;
+}
+
+export interface RenderShade3D {
+  specular: number;
+  shininess: number;
+  metal?: number;
+  roughness?: number;
+  toonBands?: number;
+  /** Empty = absent. */
+  quadGain: number[];
+  oneSided?: boolean;
+  ambient?: number;
+  diffuse?: number;
+  reflectionIntensity?: number;
+  reflectionSharpness?: number;
+  reflectionRolloff?: number;
+  transparency?: number;
+  transparencyRolloff?: number;
+  ior?: number;
+  acceptsShadows?: boolean;
+}
+
+export interface RenderThreeD {
+  /** Column-major 4×4. */
+  model: number[];
+  castsShadow?: boolean;
+  shade?: RenderShade3D;
+}
+
+export interface RenderDof {
+  strength: number;
+  focus: number;
+  aperture: number;
+  focalLength?: number;
+  fStop?: number;
+  irisBlades?: number;
+  irisRoundness?: number;
+  highlightGain?: number;
+  irisRotation?: number;
+  irisAspect?: number;
+  highlightThreshold?: number;
+  highlightSaturation?: number;
+  diffractionFringe?: number;
+}
+
+export interface RenderCamera3D {
+  view: number[];
+  projection: number[];
+  /** Empty = ortho (no eye). */
+  eye: number[];
+  dof?: RenderDof;
+}
+
+export interface RenderLight3D {
+  type: RenderLightType;
+  /** r, g, b. */
+  color: number[];
+  gain: number;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  aimX: number;
+  aimY: number;
+  aimZ: number;
+  halfConeRad: number;
+  coneFeatherRad: number;
+  falloffMode: number;
+  falloffDistance: number;
+  shadowMap?: boolean;
+  shadowMapSize?: number;
+  shadowBias?: number;
+  shadowSoftness?: number;
+  shadowDarkness?: number;
+}
+
+export interface RenderEnvMap {
+  id: string;
+  width: number;
+  height: number;
+  levels: number;
+  scale: number;
+  /** RGBA8. */
+  data: Uint8Array;
+  intensity: number;
+  rotationDeg: number;
+}
+
+export interface RenderSsao {
+  enabled: boolean;
+  radius: number;
+  intensity: number;
+  quality: RenderSsaoQuality;
+}
+
+/** An isolated precomp's own frame (FrameScene `Renderable.precomp` minus its children, which ride on the renderable as `precompChildren`). */
+export interface RenderPrecompFrame {
+  camera3d?: RenderCamera3D;
+  lights3d: RenderLight3D[];
+  envMap?: RenderEnvMap;
+  /** A 3D composition card: children are in the comp's own pixels. */
+  flatWidth?: number;
+  flatHeight?: number;
+}
+
+/** FrameScene `Renderable`. */
+export interface Renderable {
+  id: string;
+  kind: RenderableKind;
+  /** Mat3, column-major, 9 float32 values. */
+  modelMatrix: number[];
+  bounds: Rect;
+  opacity: number;
+  blend: RenderBlendMode;
+  advancedBlend?: number;
+  preserveTransparency: boolean;
+  depthExempt: boolean;
+  backdropBlur?: number;
+  glass?: RenderGlass;
+  sampling: RenderSampling;
+  color?: Color;
+  sdf?: RenderSdf;
+  colorMatrix?: RenderColorMatrix;
+  effects: RenderEffect[];
+  textureKey?: string;
+  uvRect?: Rect;
+  clip: boolean;
+  motionSamples: RenderMotionSample[];
+  /** 8 numbers (TL, TR, BR, BL); empty = no pin. */
+  cornerPin: number[];
+  maskId?: string;
+  maskTextureKey?: string;
+  lutTextureKey?: string;
+  adjustment?: RenderAdjustment;
+  matte?: RenderMatte;
+  matteSource: boolean;
+  lightWash: boolean;
+  precomp?: RenderPrecompFrame;
+  precompChildren: Renderable[];
+  generator?: RenderGenerator;
+  deformedMesh?: RenderDeformedMesh;
+  extrudedMesh?: RenderExtrudedMesh;
+  threeD?: RenderThreeD;
+}
+
+/** FrameScene. */
+export interface RenderFrameScene {
+  compositionId: string;
+  width: number;
+  height: number;
+  background?: Color;
+  renderables: Renderable[];
+  hasEffects: boolean;
+  dissolveFrame?: number;
+  camera3d?: RenderCamera3D;
+  lights3d: RenderLight3D[];
+  envMap?: RenderEnvMap;
+  ssao?: RenderSsao;
+}
+
+/** The viewport a FrameScene is drawn through, and the colour pipeline state the frame was rendered with. */
+export interface RenderView {
+  /** CSS size and device pixel ratio (Viewport); the framebuffer is round(css × dpr). */
+  cssWidth: number;
+  cssHeight: number;
+  devicePixelRatio: number;
+  /** Camera2D state: world point at the viewport centre, screen px per world unit. */
+  cameraCenterX: number;
+  cameraCenterY: number;
+  cameraZoom: number;
+  /** overlays.background — the ClearPass colour (display-referred). */
+  clearColor: Color;
+  /** Surface scissor (surface px, top-left origin); absent = none. */
+  frameClip?: Rect;
+  /** Any grid / proportional grid / guide overlay is on (OverlayPass would draw). */
+  overlaysActive: boolean;
+  workingSpace: RenderWorkingSpace;
+  displayTransform: RenderDisplayTransform;
+  /** Intermediate float depth: 16 or 32. */
+  bitDepth: number;
+  float16Textures: boolean;
+  float32Textures: boolean;
+  surfaceFormat: RenderTextureFormat;
+  /** A viewer LUT is active on the final blit (viewport-only; exports leave it off). */
+  viewerLutActive: boolean;
+  /** The GPU the producer rendered on (WebGPU adapter vendor, e.g. "amd", "nvidia"); a parity consumer renders on the same one. */
+  adapterVendor?: string;
+}
+
+/** A texture key the scene samples → the content it resolved to when the frame was rendered. */
+export interface RenderTextureRef {
+  key: string;
+  /** RenderBlob.hash; empty = the key did not resolve (the renderer skips the draw, as the TS one does). */
+  hash: string;
+  /** Already working-space (float EXR, graph RTs): skips the sRGB decode on sample. */
+  sampleLinear: boolean;
+  ready: boolean;
+}
+
+/** Texel content, stored once per distinct hash. Rows top-down, tightly packed. */
+export interface RenderBlob {
+  hash: string;
+  width: number;
+  height: number;
+  format: RenderTextureFormat;
+  pixels: Uint8Array;
+  /** The GPU texture carried a mip chain (only level 0 is stored; the consumer regenerates). */
+  mipmapped: boolean;
+}
+
+/** WGSL for a shader the scene names that is NOT a renderer builtin — a plugin effect's host-validated source, as registered with the TS ShaderRegistry. */
+export interface RenderShaderSource {
+  name: string;
+  wgsl: string;
+}
+
+/** One frame, self-contained: `premation-render --scene <file>` renders it with no other input. */
+export interface RenderFrameFile {
+  /** Bumped when the exporter's mapping changes meaning (not for additive fields). */
+  formatVersion: number;
+  sceneId: string;
+  frame: number;
+  view: RenderView;
+  scene: RenderFrameScene;
+  textures: RenderTextureRef[];
+  blobs: RenderBlob[];
+  /** Plugin effect shaders the frame uses (effect param `shader`), by name. */
+  shaders: RenderShaderSource[];
+}
 
 /** Every command, keyed by its schema id. */
 export type Command =

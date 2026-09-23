@@ -569,6 +569,138 @@ enum class PixelFormat : std::uint32_t {
 [[nodiscard]] std::string_view to_string(PixelFormat v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PixelFormat& out) noexcept;
 
+enum class RenderableKind : std::uint32_t {
+  rect = 0,
+  image = 1,
+  video = 2,
+  text = 3,
+  path = 4,
+  group = 5,
+};
+[[nodiscard]] std::string_view to_string(RenderableKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderableKind& out) noexcept;
+
+enum class RenderBlendMode : std::uint32_t {
+  normal = 0,
+  multiply = 1,
+  screen = 2,
+  overlay = 3,
+  add = 4,
+  subtract = 5,
+  darken = 6,
+  lighten = 7,
+  none = 8,
+};
+[[nodiscard]] std::string_view to_string(RenderBlendMode v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderBlendMode& out) noexcept;
+
+enum class RenderSdfShape : std::uint32_t {
+  rounded = 0,
+  ellipse = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderSdfShape v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderSdfShape& out) noexcept;
+
+enum class RenderSampling : std::uint32_t {
+  linear = 0,
+  nearest = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderSampling v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderSampling& out) noexcept;
+
+enum class RenderMatteMode : std::uint32_t {
+  alpha = 0,
+  luma = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderMatteMode v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderMatteMode& out) noexcept;
+
+enum class RenderTextureFormat : std::uint32_t {
+  rgba8unorm = 0,
+  rgba8unorm_srgb = 1,
+  bgra8unorm = 2,
+  rgba16float = 3,
+  rgba32float = 4,
+  r8unorm = 5,
+};
+[[nodiscard]] std::string_view to_string(RenderTextureFormat v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderTextureFormat& out) noexcept;
+
+enum class RenderLightType : std::uint32_t {
+  ambient = 0,
+  point = 1,
+  spot = 2,
+  parallel = 3,
+};
+[[nodiscard]] std::string_view to_string(RenderLightType v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderLightType& out) noexcept;
+
+enum class RenderMeshRole : std::uint32_t {
+  front = 0,
+  back = 1,
+  side = 2,
+  bevel = 3,
+};
+[[nodiscard]] std::string_view to_string(RenderMeshRole v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderMeshRole& out) noexcept;
+
+enum class RenderGeneratorPrimitive : std::uint32_t {
+  point = 0,
+  sprite = 1,
+  quad = 2,
+  mesh = 3,
+};
+[[nodiscard]] std::string_view to_string(RenderGeneratorPrimitive v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderGeneratorPrimitive& out) noexcept;
+
+enum class RenderGeneratorBlend : std::uint32_t {
+  normal = 0,
+  add = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderGeneratorBlend v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderGeneratorBlend& out) noexcept;
+
+enum class RenderIndexFormat : std::uint32_t {
+  uint16 = 0,
+  uint32 = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderIndexFormat v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderIndexFormat& out) noexcept;
+
+enum class RenderWorkingSpace : std::uint32_t {
+  srgb_linear = 0,
+  aces_cg = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderWorkingSpace v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderWorkingSpace& out) noexcept;
+
+enum class RenderDisplayTransform : std::uint32_t {
+  srgb = 0,
+  aces = 1,
+  pq = 2,
+  hlg = 3,
+};
+[[nodiscard]] std::string_view to_string(RenderDisplayTransform v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderDisplayTransform& out) noexcept;
+
+enum class RenderSsaoQuality : std::uint32_t {
+  half = 0,
+  full = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderSsaoQuality v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderSsaoQuality& out) noexcept;
+
+enum class RenderParamKind : std::uint32_t {
+  number = 0,
+  numbers = 1,
+  text = 2,
+  flag = 3,
+  color = 4,
+  texts = 5,
+};
+[[nodiscard]] std::string_view to_string(RenderParamKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderParamKind& out) noexcept;
+
 struct Empty;
 struct Vec2;
 struct Vec3;
@@ -894,6 +1026,34 @@ struct FramePong;
 struct FrameRelease;
 struct FramePing;
 struct FrameChannelMessage;
+struct RenderEffectParam;
+struct RenderEffect;
+struct RenderSdf;
+struct RenderColorMatrix;
+struct RenderGlass;
+struct RenderMotionSample;
+struct RenderAdjustment;
+struct RenderMatte;
+struct RenderDeformedMesh;
+struct RenderGenerator;
+struct RenderMeshRange;
+struct RenderPbrMaps;
+struct RenderExtrudedMesh;
+struct RenderShade3D;
+struct RenderThreeD;
+struct RenderDof;
+struct RenderCamera3D;
+struct RenderLight3D;
+struct RenderEnvMap;
+struct RenderSsao;
+struct RenderPrecompFrame;
+struct Renderable;
+struct RenderFrameScene;
+struct RenderView;
+struct RenderTextureRef;
+struct RenderBlob;
+struct RenderShaderSource;
+struct RenderFrameFile;
 
 struct Empty {
   bool operator==(const Empty&) const = default;
@@ -3655,6 +3815,344 @@ struct FrameChannelMessage {
   bool operator==(const FrameChannelMessage&) const = default;
 };
 
+struct RenderEffectParam {
+  std::string name;
+  RenderParamKind kind = RenderParamKind::number;
+  double number = 0.0;
+  std::vector<double> numbers;
+  std::string text;
+  std::vector<std::string> texts;
+  bool operator==(const RenderEffectParam&) const = default;
+};
+
+struct RenderEffect {
+  std::string type;
+  std::vector<RenderEffectParam> params;
+  bool operator==(const RenderEffect&) const = default;
+};
+
+struct RenderSdf {
+  RenderSdfShape shape = RenderSdfShape::rounded;
+  double radius_px = 0.0;
+  double width = 0.0;
+  double height = 0.0;
+  bool operator==(const RenderSdf&) const = default;
+};
+
+struct RenderColorMatrix {
+  std::vector<double> m;
+  std::vector<double> offset;
+  bool operator==(const RenderColorMatrix&) const = default;
+};
+
+struct RenderGlass {
+  double refraction = 0.0;
+  double edge_width = 0.0;
+  double aberration = 0.0;
+  double saturation = 0.0;
+  Color tint;
+  double tint_opacity = 0.0;
+  Color rim;
+  double rim_opacity = 0.0;
+  double rim_width = 0.0;
+  double rim_angle = 0.0;
+  double specular_angle = 0.0;
+  double specular_intensity = 0.0;
+  double specular_falloff = 0.0;
+  double grain = 0.0;
+  bool operator==(const RenderGlass&) const = default;
+};
+
+struct RenderMotionSample {
+  std::vector<double> model_matrix;
+  double opacity = 0.0;
+  bool operator==(const RenderMotionSample&) const = default;
+};
+
+struct RenderAdjustment {
+  std::optional<RenderColorMatrix> color_matrix;
+  std::optional<std::string> lut_texture_key;
+  bool operator==(const RenderAdjustment&) const = default;
+};
+
+struct RenderMatte {
+  RenderMatteMode mode = RenderMatteMode::alpha;
+  bool inverted = false;
+  std::string source_id;
+  bool operator==(const RenderMatte&) const = default;
+};
+
+struct RenderDeformedMesh {
+  std::vector<std::uint8_t> vertices;
+  std::vector<std::uint8_t> triangles;
+  std::optional<std::vector<std::uint8_t>> depth;
+  bool operator==(const RenderDeformedMesh&) const = default;
+};
+
+struct RenderGenerator {
+  std::vector<std::uint8_t> instances;
+  std::uint32_t count = 0;
+  std::uint32_t stride = 0;
+  RenderGeneratorPrimitive primitive = RenderGeneratorPrimitive::point;
+  std::optional<std::vector<std::uint8_t>> mesh_vertices;
+  std::optional<std::vector<std::uint8_t>> mesh_indices;
+  RenderIndexFormat mesh_index_format = RenderIndexFormat::uint16;
+  std::optional<std::string> texture_key;
+  std::vector<double> cell_size;
+  RenderGeneratorBlend blend = RenderGeneratorBlend::normal;
+  double revision = 0.0;
+  double width = 0.0;
+  double height = 0.0;
+  std::optional<double> perspective;
+  bool operator==(const RenderGenerator&) const = default;
+};
+
+struct RenderMeshRange {
+  RenderMeshRole role = RenderMeshRole::front;
+  std::uint32_t first = 0;
+  std::uint32_t count = 0;
+  Color color;
+  double gain = 0.0;
+  bool textured = false;
+  std::optional<std::string> texture_key;
+  bool operator==(const RenderMeshRange&) const = default;
+};
+
+struct RenderPbrMaps {
+  std::optional<std::string> normal_key;
+  std::optional<std::string> metallic_roughness_key;
+  std::optional<std::string> occlusion_key;
+  std::optional<std::string> emissive_key;
+  double normal_scale = 0.0;
+  double occlusion_strength = 0.0;
+  std::vector<double> emissive;
+  bool operator==(const RenderPbrMaps&) const = default;
+};
+
+struct RenderExtrudedMesh {
+  std::string key;
+  std::vector<std::uint8_t> vertices;
+  std::vector<std::uint8_t> indices;
+  RenderIndexFormat index_format = RenderIndexFormat::uint16;
+  std::vector<RenderMeshRange> ranges;
+  std::optional<RenderPbrMaps> pbr;
+  bool operator==(const RenderExtrudedMesh&) const = default;
+};
+
+struct RenderShade3D {
+  double specular = 0.0;
+  double shininess = 0.0;
+  std::optional<double> metal;
+  std::optional<double> roughness;
+  std::optional<double> toon_bands;
+  std::vector<double> quad_gain;
+  std::optional<bool> one_sided;
+  std::optional<double> ambient;
+  std::optional<double> diffuse;
+  std::optional<double> reflection_intensity;
+  std::optional<double> reflection_sharpness;
+  std::optional<double> reflection_rolloff;
+  std::optional<double> transparency;
+  std::optional<double> transparency_rolloff;
+  std::optional<double> ior;
+  std::optional<bool> accepts_shadows;
+  bool operator==(const RenderShade3D&) const = default;
+};
+
+struct RenderThreeD {
+  std::vector<double> model;
+  std::optional<bool> casts_shadow;
+  std::optional<RenderShade3D> shade;
+  bool operator==(const RenderThreeD&) const = default;
+};
+
+struct RenderDof {
+  double strength = 0.0;
+  double focus = 0.0;
+  double aperture = 0.0;
+  std::optional<double> focal_length;
+  std::optional<double> f_stop;
+  std::optional<double> iris_blades;
+  std::optional<double> iris_roundness;
+  std::optional<double> highlight_gain;
+  std::optional<double> iris_rotation;
+  std::optional<double> iris_aspect;
+  std::optional<double> highlight_threshold;
+  std::optional<double> highlight_saturation;
+  std::optional<double> diffraction_fringe;
+  bool operator==(const RenderDof&) const = default;
+};
+
+struct RenderCamera3D {
+  std::vector<double> view;
+  std::vector<double> projection;
+  std::vector<double> eye;
+  std::optional<RenderDof> dof;
+  bool operator==(const RenderCamera3D&) const = default;
+};
+
+struct RenderLight3D {
+  RenderLightType type = RenderLightType::ambient;
+  std::vector<double> color;
+  double gain = 0.0;
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+  double radius = 0.0;
+  double aim_x = 0.0;
+  double aim_y = 0.0;
+  double aim_z = 0.0;
+  double half_cone_rad = 0.0;
+  double cone_feather_rad = 0.0;
+  double falloff_mode = 0.0;
+  double falloff_distance = 0.0;
+  std::optional<bool> shadow_map;
+  std::optional<double> shadow_map_size;
+  std::optional<double> shadow_bias;
+  std::optional<double> shadow_softness;
+  std::optional<double> shadow_darkness;
+  bool operator==(const RenderLight3D&) const = default;
+};
+
+struct RenderEnvMap {
+  std::string id;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::uint32_t levels = 0;
+  double scale = 0.0;
+  std::vector<std::uint8_t> data;
+  double intensity = 0.0;
+  double rotation_deg = 0.0;
+  bool operator==(const RenderEnvMap&) const = default;
+};
+
+struct RenderSsao {
+  bool enabled = false;
+  double radius = 0.0;
+  double intensity = 0.0;
+  RenderSsaoQuality quality = RenderSsaoQuality::half;
+  bool operator==(const RenderSsao&) const = default;
+};
+
+struct RenderPrecompFrame {
+  std::optional<RenderCamera3D> camera3d;
+  std::vector<RenderLight3D> lights3d;
+  std::optional<RenderEnvMap> env_map;
+  std::optional<double> flat_width;
+  std::optional<double> flat_height;
+  bool operator==(const RenderPrecompFrame&) const = default;
+};
+
+struct Renderable {
+  std::string id;
+  RenderableKind kind = RenderableKind::rect;
+  std::vector<double> model_matrix;
+  Rect bounds;
+  double opacity = 0.0;
+  RenderBlendMode blend = RenderBlendMode::normal;
+  std::optional<double> advanced_blend;
+  bool preserve_transparency = false;
+  bool depth_exempt = false;
+  std::optional<double> backdrop_blur;
+  std::optional<RenderGlass> glass;
+  RenderSampling sampling = RenderSampling::linear;
+  std::optional<Color> color;
+  std::optional<RenderSdf> sdf;
+  std::optional<RenderColorMatrix> color_matrix;
+  std::vector<RenderEffect> effects;
+  std::optional<std::string> texture_key;
+  std::optional<Rect> uv_rect;
+  bool clip = false;
+  std::vector<RenderMotionSample> motion_samples;
+  std::vector<double> corner_pin;
+  std::optional<std::string> mask_id;
+  std::optional<std::string> mask_texture_key;
+  std::optional<std::string> lut_texture_key;
+  std::optional<RenderAdjustment> adjustment;
+  std::optional<RenderMatte> matte;
+  bool matte_source = false;
+  bool light_wash = false;
+  std::optional<RenderPrecompFrame> precomp;
+  std::vector<Renderable> precomp_children;
+  std::optional<RenderGenerator> generator;
+  std::optional<RenderDeformedMesh> deformed_mesh;
+  std::optional<RenderExtrudedMesh> extruded_mesh;
+  std::optional<RenderThreeD> three_d;
+  bool operator==(const Renderable&) const = default;
+};
+
+struct RenderFrameScene {
+  std::string composition_id;
+  double width = 0.0;
+  double height = 0.0;
+  std::optional<Color> background;
+  std::vector<Renderable> renderables;
+  bool has_effects = false;
+  std::optional<double> dissolve_frame;
+  std::optional<RenderCamera3D> camera3d;
+  std::vector<RenderLight3D> lights3d;
+  std::optional<RenderEnvMap> env_map;
+  std::optional<RenderSsao> ssao;
+  bool operator==(const RenderFrameScene&) const = default;
+};
+
+struct RenderView {
+  double css_width = 0.0;
+  double css_height = 0.0;
+  double device_pixel_ratio = 0.0;
+  double camera_center_x = 0.0;
+  double camera_center_y = 0.0;
+  double camera_zoom = 0.0;
+  Color clear_color;
+  std::optional<Rect> frame_clip;
+  bool overlays_active = false;
+  RenderWorkingSpace working_space = RenderWorkingSpace::srgb_linear;
+  RenderDisplayTransform display_transform = RenderDisplayTransform::srgb;
+  std::uint32_t bit_depth = 0;
+  bool float16_textures = false;
+  bool float32_textures = false;
+  RenderTextureFormat surface_format = RenderTextureFormat::rgba8unorm;
+  bool viewer_lut_active = false;
+  std::optional<std::string> adapter_vendor;
+  bool operator==(const RenderView&) const = default;
+};
+
+struct RenderTextureRef {
+  std::string key;
+  std::string hash;
+  bool sample_linear = false;
+  bool ready = false;
+  bool operator==(const RenderTextureRef&) const = default;
+};
+
+struct RenderBlob {
+  std::string hash;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  RenderTextureFormat format = RenderTextureFormat::rgba8unorm;
+  std::vector<std::uint8_t> pixels;
+  bool mipmapped = false;
+  bool operator==(const RenderBlob&) const = default;
+};
+
+struct RenderShaderSource {
+  std::string name;
+  std::string wgsl;
+  bool operator==(const RenderShaderSource&) const = default;
+};
+
+struct RenderFrameFile {
+  std::uint32_t format_version = 0;
+  std::string scene_id;
+  std::int64_t frame = 0;
+  RenderView view;
+  RenderFrameScene scene;
+  std::vector<RenderTextureRef> textures;
+  std::vector<RenderBlob> blobs;
+  std::vector<RenderShaderSource> shaders;
+  bool operator==(const RenderFrameFile&) const = default;
+};
+
 void encode(wire::Writer& w, const Empty& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Empty& out);
 void encode(wire::Writer& w, const Vec2& v);
@@ -4305,6 +4803,62 @@ void encode(wire::Writer& w, const FramePing& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FramePing& out);
 void encode(wire::Writer& w, const FrameChannelMessage& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameChannelMessage& out);
+void encode(wire::Writer& w, const RenderEffectParam& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderEffectParam& out);
+void encode(wire::Writer& w, const RenderEffect& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderEffect& out);
+void encode(wire::Writer& w, const RenderSdf& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderSdf& out);
+void encode(wire::Writer& w, const RenderColorMatrix& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderColorMatrix& out);
+void encode(wire::Writer& w, const RenderGlass& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderGlass& out);
+void encode(wire::Writer& w, const RenderMotionSample& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderMotionSample& out);
+void encode(wire::Writer& w, const RenderAdjustment& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderAdjustment& out);
+void encode(wire::Writer& w, const RenderMatte& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderMatte& out);
+void encode(wire::Writer& w, const RenderDeformedMesh& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderDeformedMesh& out);
+void encode(wire::Writer& w, const RenderGenerator& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderGenerator& out);
+void encode(wire::Writer& w, const RenderMeshRange& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderMeshRange& out);
+void encode(wire::Writer& w, const RenderPbrMaps& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderPbrMaps& out);
+void encode(wire::Writer& w, const RenderExtrudedMesh& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderExtrudedMesh& out);
+void encode(wire::Writer& w, const RenderShade3D& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderShade3D& out);
+void encode(wire::Writer& w, const RenderThreeD& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderThreeD& out);
+void encode(wire::Writer& w, const RenderDof& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderDof& out);
+void encode(wire::Writer& w, const RenderCamera3D& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderCamera3D& out);
+void encode(wire::Writer& w, const RenderLight3D& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderLight3D& out);
+void encode(wire::Writer& w, const RenderEnvMap& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderEnvMap& out);
+void encode(wire::Writer& w, const RenderSsao& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderSsao& out);
+void encode(wire::Writer& w, const RenderPrecompFrame& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderPrecompFrame& out);
+void encode(wire::Writer& w, const Renderable& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, Renderable& out);
+void encode(wire::Writer& w, const RenderFrameScene& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderFrameScene& out);
+void encode(wire::Writer& w, const RenderView& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderView& out);
+void encode(wire::Writer& w, const RenderTextureRef& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderTextureRef& out);
+void encode(wire::Writer& w, const RenderBlob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderBlob& out);
+void encode(wire::Writer& w, const RenderShaderSource& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderShaderSource& out);
+void encode(wire::Writer& w, const RenderFrameFile& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderFrameFile& out);
 
 /// Decode `bytes` as the message type named `type`, re-encode it into `out`.
 /// Used by the cross-language round-trip test; unknown names return bad_type.

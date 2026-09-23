@@ -168,8 +168,22 @@ const ONLY = (process.env.HARNESS_SCENES || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+/**
+ * Where the `native` backend's inputs go: <dir>/<sceneId>/<frame>.pfs, one
+ * RenderFrameFile (engine-api 96_render.eapi) per webgpu frame. Unset = no
+ * export, and the webgpu run is byte-for-byte what it was.
+ */
+const SCENE_OUT = process.env.HARNESS_SCENE_OUT || '';
+
 ipcMain.on('harness:config', (e) => {
-  e.returnValue = { backends: BACKENDS, only: ONLY };
+  e.returnValue = { backends: BACKENDS, only: ONLY, exportScenes: !!SCENE_OUT, bench: process.env.HARNESS_BENCH === '1' };
+});
+
+ipcMain.handle('harness:scene-file', (_e, p) => {
+  if (!SCENE_OUT) return;
+  const dir = path.join(SCENE_OUT, p.sceneId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${p.frame}.pfs`), Buffer.from(p.bytes));
 });
 
 ipcMain.handle('harness:manifest', (_e, scenes) => {

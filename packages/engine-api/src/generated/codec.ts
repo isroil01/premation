@@ -204,6 +204,66 @@ const PixelFormat_TO_NUM: Record<string, number> = { 'rgba8unorm': 0 };
 const PixelFormat_FROM_NUM: readonly (T.PixelFormat | undefined)[] = ['rgba8unorm'];
 function enc_PixelFormat(v: T.PixelFormat): number { const n = PixelFormat_TO_NUM[v]; if (n === undefined) throw new RangeError('PixelFormat: invalid value ' + String(v)); return n; }
 function dec_PixelFormat(n: number): T.PixelFormat { const v = PixelFormat_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PixelFormat: unknown value ' + n, 'badEnum'); return v; }
+const RenderableKind_TO_NUM: Record<string, number> = { 'rect': 0, 'image': 1, 'video': 2, 'text': 3, 'path': 4, 'group': 5 };
+const RenderableKind_FROM_NUM: readonly (T.RenderableKind | undefined)[] = ['rect', 'image', 'video', 'text', 'path', 'group'];
+function enc_RenderableKind(v: T.RenderableKind): number { const n = RenderableKind_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderableKind: invalid value ' + String(v)); return n; }
+function dec_RenderableKind(n: number): T.RenderableKind { const v = RenderableKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderableKind: unknown value ' + n, 'badEnum'); return v; }
+const RenderBlendMode_TO_NUM: Record<string, number> = { 'normal': 0, 'multiply': 1, 'screen': 2, 'overlay': 3, 'add': 4, 'subtract': 5, 'darken': 6, 'lighten': 7, 'none': 8 };
+const RenderBlendMode_FROM_NUM: readonly (T.RenderBlendMode | undefined)[] = ['normal', 'multiply', 'screen', 'overlay', 'add', 'subtract', 'darken', 'lighten', 'none'];
+function enc_RenderBlendMode(v: T.RenderBlendMode): number { const n = RenderBlendMode_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderBlendMode: invalid value ' + String(v)); return n; }
+function dec_RenderBlendMode(n: number): T.RenderBlendMode { const v = RenderBlendMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderBlendMode: unknown value ' + n, 'badEnum'); return v; }
+const RenderSdfShape_TO_NUM: Record<string, number> = { 'rounded': 0, 'ellipse': 1 };
+const RenderSdfShape_FROM_NUM: readonly (T.RenderSdfShape | undefined)[] = ['rounded', 'ellipse'];
+function enc_RenderSdfShape(v: T.RenderSdfShape): number { const n = RenderSdfShape_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderSdfShape: invalid value ' + String(v)); return n; }
+function dec_RenderSdfShape(n: number): T.RenderSdfShape { const v = RenderSdfShape_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderSdfShape: unknown value ' + n, 'badEnum'); return v; }
+const RenderSampling_TO_NUM: Record<string, number> = { 'linear': 0, 'nearest': 1 };
+const RenderSampling_FROM_NUM: readonly (T.RenderSampling | undefined)[] = ['linear', 'nearest'];
+function enc_RenderSampling(v: T.RenderSampling): number { const n = RenderSampling_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderSampling: invalid value ' + String(v)); return n; }
+function dec_RenderSampling(n: number): T.RenderSampling { const v = RenderSampling_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderSampling: unknown value ' + n, 'badEnum'); return v; }
+const RenderMatteMode_TO_NUM: Record<string, number> = { 'alpha': 0, 'luma': 1 };
+const RenderMatteMode_FROM_NUM: readonly (T.RenderMatteMode | undefined)[] = ['alpha', 'luma'];
+function enc_RenderMatteMode(v: T.RenderMatteMode): number { const n = RenderMatteMode_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderMatteMode: invalid value ' + String(v)); return n; }
+function dec_RenderMatteMode(n: number): T.RenderMatteMode { const v = RenderMatteMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderMatteMode: unknown value ' + n, 'badEnum'); return v; }
+const RenderTextureFormat_TO_NUM: Record<string, number> = { 'rgba8unorm': 0, 'rgba8unormSrgb': 1, 'bgra8unorm': 2, 'rgba16float': 3, 'rgba32float': 4, 'r8unorm': 5 };
+const RenderTextureFormat_FROM_NUM: readonly (T.RenderTextureFormat | undefined)[] = ['rgba8unorm', 'rgba8unormSrgb', 'bgra8unorm', 'rgba16float', 'rgba32float', 'r8unorm'];
+function enc_RenderTextureFormat(v: T.RenderTextureFormat): number { const n = RenderTextureFormat_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderTextureFormat: invalid value ' + String(v)); return n; }
+function dec_RenderTextureFormat(n: number): T.RenderTextureFormat { const v = RenderTextureFormat_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderTextureFormat: unknown value ' + n, 'badEnum'); return v; }
+const RenderLightType_TO_NUM: Record<string, number> = { 'ambient': 0, 'point': 1, 'spot': 2, 'parallel': 3 };
+const RenderLightType_FROM_NUM: readonly (T.RenderLightType | undefined)[] = ['ambient', 'point', 'spot', 'parallel'];
+function enc_RenderLightType(v: T.RenderLightType): number { const n = RenderLightType_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderLightType: invalid value ' + String(v)); return n; }
+function dec_RenderLightType(n: number): T.RenderLightType { const v = RenderLightType_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderLightType: unknown value ' + n, 'badEnum'); return v; }
+const RenderMeshRole_TO_NUM: Record<string, number> = { 'front': 0, 'back': 1, 'side': 2, 'bevel': 3 };
+const RenderMeshRole_FROM_NUM: readonly (T.RenderMeshRole | undefined)[] = ['front', 'back', 'side', 'bevel'];
+function enc_RenderMeshRole(v: T.RenderMeshRole): number { const n = RenderMeshRole_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderMeshRole: invalid value ' + String(v)); return n; }
+function dec_RenderMeshRole(n: number): T.RenderMeshRole { const v = RenderMeshRole_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderMeshRole: unknown value ' + n, 'badEnum'); return v; }
+const RenderGeneratorPrimitive_TO_NUM: Record<string, number> = { 'point': 0, 'sprite': 1, 'quad': 2, 'mesh': 3 };
+const RenderGeneratorPrimitive_FROM_NUM: readonly (T.RenderGeneratorPrimitive | undefined)[] = ['point', 'sprite', 'quad', 'mesh'];
+function enc_RenderGeneratorPrimitive(v: T.RenderGeneratorPrimitive): number { const n = RenderGeneratorPrimitive_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderGeneratorPrimitive: invalid value ' + String(v)); return n; }
+function dec_RenderGeneratorPrimitive(n: number): T.RenderGeneratorPrimitive { const v = RenderGeneratorPrimitive_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderGeneratorPrimitive: unknown value ' + n, 'badEnum'); return v; }
+const RenderGeneratorBlend_TO_NUM: Record<string, number> = { 'normal': 0, 'add': 1 };
+const RenderGeneratorBlend_FROM_NUM: readonly (T.RenderGeneratorBlend | undefined)[] = ['normal', 'add'];
+function enc_RenderGeneratorBlend(v: T.RenderGeneratorBlend): number { const n = RenderGeneratorBlend_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderGeneratorBlend: invalid value ' + String(v)); return n; }
+function dec_RenderGeneratorBlend(n: number): T.RenderGeneratorBlend { const v = RenderGeneratorBlend_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderGeneratorBlend: unknown value ' + n, 'badEnum'); return v; }
+const RenderIndexFormat_TO_NUM: Record<string, number> = { 'uint16': 0, 'uint32': 1 };
+const RenderIndexFormat_FROM_NUM: readonly (T.RenderIndexFormat | undefined)[] = ['uint16', 'uint32'];
+function enc_RenderIndexFormat(v: T.RenderIndexFormat): number { const n = RenderIndexFormat_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderIndexFormat: invalid value ' + String(v)); return n; }
+function dec_RenderIndexFormat(n: number): T.RenderIndexFormat { const v = RenderIndexFormat_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderIndexFormat: unknown value ' + n, 'badEnum'); return v; }
+const RenderWorkingSpace_TO_NUM: Record<string, number> = { 'srgbLinear': 0, 'acesCg': 1 };
+const RenderWorkingSpace_FROM_NUM: readonly (T.RenderWorkingSpace | undefined)[] = ['srgbLinear', 'acesCg'];
+function enc_RenderWorkingSpace(v: T.RenderWorkingSpace): number { const n = RenderWorkingSpace_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderWorkingSpace: invalid value ' + String(v)); return n; }
+function dec_RenderWorkingSpace(n: number): T.RenderWorkingSpace { const v = RenderWorkingSpace_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderWorkingSpace: unknown value ' + n, 'badEnum'); return v; }
+const RenderDisplayTransform_TO_NUM: Record<string, number> = { 'srgb': 0, 'aces': 1, 'pq': 2, 'hlg': 3 };
+const RenderDisplayTransform_FROM_NUM: readonly (T.RenderDisplayTransform | undefined)[] = ['srgb', 'aces', 'pq', 'hlg'];
+function enc_RenderDisplayTransform(v: T.RenderDisplayTransform): number { const n = RenderDisplayTransform_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderDisplayTransform: invalid value ' + String(v)); return n; }
+function dec_RenderDisplayTransform(n: number): T.RenderDisplayTransform { const v = RenderDisplayTransform_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderDisplayTransform: unknown value ' + n, 'badEnum'); return v; }
+const RenderSsaoQuality_TO_NUM: Record<string, number> = { 'half': 0, 'full': 1 };
+const RenderSsaoQuality_FROM_NUM: readonly (T.RenderSsaoQuality | undefined)[] = ['half', 'full'];
+function enc_RenderSsaoQuality(v: T.RenderSsaoQuality): number { const n = RenderSsaoQuality_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderSsaoQuality: invalid value ' + String(v)); return n; }
+function dec_RenderSsaoQuality(n: number): T.RenderSsaoQuality { const v = RenderSsaoQuality_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderSsaoQuality: unknown value ' + n, 'badEnum'); return v; }
+const RenderParamKind_TO_NUM: Record<string, number> = { 'number': 0, 'numbers': 1, 'text': 2, 'flag': 3, 'color': 4, 'texts': 5 };
+const RenderParamKind_FROM_NUM: readonly (T.RenderParamKind | undefined)[] = ['number', 'numbers', 'text', 'flag', 'color', 'texts'];
+function enc_RenderParamKind(v: T.RenderParamKind): number { const n = RenderParamKind_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderParamKind: invalid value ' + String(v)); return n; }
+function dec_RenderParamKind(n: number): T.RenderParamKind { const v = RenderParamKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderParamKind: unknown value ' + n, 'badEnum'); return v; }
 
 function encS_Empty(w: Writer, v: T.Empty): void {
   void w; void v;
@@ -9477,6 +9537,1500 @@ function decS_FramePing(r: Reader, end: number, o: any): T.FramePing {
   o.nonce = v_nonce;
   return o;
 }
+function encS_RenderEffectParam(w: Writer, v: T.RenderEffectParam): void {
+  w.byte(10); w.str(v.name);
+  w.byte(16); w.varint(enc_RenderParamKind(v.kind));
+  w.byte(25); w.f64(v.number);
+  { const a = v.numbers; if (a.length) { w.byte(34); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(42); w.str(v.text);
+  { const a = v.texts; for (let i = 0; i < a.length; i++) { w.byte(50); w.str(a[i]!); } }
+}
+function decS_RenderEffectParam(r: Reader, end: number, o: any): T.RenderEffectParam {
+  const l_numbers: number[] = [];
+  const l_texts: string[] = [];
+  let h_name = false;
+  let h_kind = false;
+  let h_number = false;
+  let h_text = false;
+  let v_name: string | undefined;
+  let v_kind: T.RenderParamKind | undefined;
+  let v_number: number | undefined;
+  let v_text: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_name = r.str(); h_name = true; break;
+      case 16: v_kind = dec_RenderParamKind(r.varint()); h_kind = true; break;
+      case 25: v_number = r.f64(); h_number = true; break;
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_numbers.push(r.f64()); r.expectAt(e); break; }
+      case 42: v_text = r.str(); h_text = true; break;
+      case 50: l_texts.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('RenderEffectParam.name: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('RenderEffectParam.kind: missing', 'missingField');
+  if (!h_number) throw new DecodeError('RenderEffectParam.number: missing', 'missingField');
+  if (!h_text) throw new DecodeError('RenderEffectParam.text: missing', 'missingField');
+  o.name = v_name;
+  o.kind = v_kind;
+  o.number = v_number;
+  o.numbers = l_numbers;
+  o.text = v_text;
+  o.texts = l_texts;
+  return o;
+}
+function encS_RenderEffect(w: Writer, v: T.RenderEffect): void {
+  w.byte(10); w.str(v.type);
+  { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_RenderEffectParam(w, a[i]!); w.endLd(s); } } }
+}
+function decS_RenderEffect(r: Reader, end: number, o: any): T.RenderEffect {
+  const l_params: T.RenderEffectParam[] = [];
+  let h_type = false;
+  let v_type: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_type = r.str(); h_type = true; break;
+      case 18: l_params.push(decS_RenderEffectParam(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_type) throw new DecodeError('RenderEffect.type: missing', 'missingField');
+  o.type = v_type;
+  o.params = l_params;
+  return o;
+}
+function encS_RenderSdf(w: Writer, v: T.RenderSdf): void {
+  w.byte(8); w.varint(enc_RenderSdfShape(v.shape));
+  w.byte(17); w.f64(v.radiusPx);
+  w.byte(25); w.f64(v.width);
+  w.byte(33); w.f64(v.height);
+}
+function decS_RenderSdf(r: Reader, end: number, o: any): T.RenderSdf {
+  let h_shape = false;
+  let h_radiusPx = false;
+  let h_width = false;
+  let h_height = false;
+  let v_shape: T.RenderSdfShape | undefined;
+  let v_radiusPx: number | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_shape = dec_RenderSdfShape(r.varint()); h_shape = true; break;
+      case 17: v_radiusPx = r.f64(); h_radiusPx = true; break;
+      case 25: v_width = r.f64(); h_width = true; break;
+      case 33: v_height = r.f64(); h_height = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_shape) throw new DecodeError('RenderSdf.shape: missing', 'missingField');
+  if (!h_radiusPx) throw new DecodeError('RenderSdf.radiusPx: missing', 'missingField');
+  if (!h_width) throw new DecodeError('RenderSdf.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('RenderSdf.height: missing', 'missingField');
+  o.shape = v_shape;
+  o.radiusPx = v_radiusPx;
+  o.width = v_width;
+  o.height = v_height;
+  return o;
+}
+function encS_RenderColorMatrix(w: Writer, v: T.RenderColorMatrix): void {
+  { const a = v.m; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.offset; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_RenderColorMatrix(r: Reader, end: number, o: any): T.RenderColorMatrix {
+  const l_m: number[] = [];
+  const l_offset: number[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: { const e = r.ldEnd(); while (r.pos < e) l_m.push(r.f64()); r.expectAt(e); break; }
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_offset.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.m = l_m;
+  o.offset = l_offset;
+  return o;
+}
+function encS_RenderGlass(w: Writer, v: T.RenderGlass): void {
+  w.byte(9); w.f64(v.refraction);
+  w.byte(17); w.f64(v.edgeWidth);
+  w.byte(25); w.f64(v.aberration);
+  w.byte(33); w.f64(v.saturation);
+  w.byte(42); { const s = w.beginLd(); encS_Color(w, v.tint); w.endLd(s); }
+  w.byte(49); w.f64(v.tintOpacity);
+  w.byte(58); { const s = w.beginLd(); encS_Color(w, v.rim); w.endLd(s); }
+  w.byte(65); w.f64(v.rimOpacity);
+  w.byte(73); w.f64(v.rimWidth);
+  w.byte(81); w.f64(v.rimAngle);
+  w.byte(89); w.f64(v.specularAngle);
+  w.byte(97); w.f64(v.specularIntensity);
+  w.byte(105); w.f64(v.specularFalloff);
+  w.byte(113); w.f64(v.grain);
+}
+function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
+  let h_refraction = false;
+  let h_edgeWidth = false;
+  let h_aberration = false;
+  let h_saturation = false;
+  let h_tint = false;
+  let h_tintOpacity = false;
+  let h_rim = false;
+  let h_rimOpacity = false;
+  let h_rimWidth = false;
+  let h_rimAngle = false;
+  let h_specularAngle = false;
+  let h_specularIntensity = false;
+  let h_specularFalloff = false;
+  let h_grain = false;
+  let v_refraction: number | undefined;
+  let v_edgeWidth: number | undefined;
+  let v_aberration: number | undefined;
+  let v_saturation: number | undefined;
+  let v_tint: T.Color | undefined;
+  let v_tintOpacity: number | undefined;
+  let v_rim: T.Color | undefined;
+  let v_rimOpacity: number | undefined;
+  let v_rimWidth: number | undefined;
+  let v_rimAngle: number | undefined;
+  let v_specularAngle: number | undefined;
+  let v_specularIntensity: number | undefined;
+  let v_specularFalloff: number | undefined;
+  let v_grain: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_refraction = r.f64(); h_refraction = true; break;
+      case 17: v_edgeWidth = r.f64(); h_edgeWidth = true; break;
+      case 25: v_aberration = r.f64(); h_aberration = true; break;
+      case 33: v_saturation = r.f64(); h_saturation = true; break;
+      case 42: v_tint = decS_Color(r, r.ldEnd(), {}); h_tint = true; break;
+      case 49: v_tintOpacity = r.f64(); h_tintOpacity = true; break;
+      case 58: v_rim = decS_Color(r, r.ldEnd(), {}); h_rim = true; break;
+      case 65: v_rimOpacity = r.f64(); h_rimOpacity = true; break;
+      case 73: v_rimWidth = r.f64(); h_rimWidth = true; break;
+      case 81: v_rimAngle = r.f64(); h_rimAngle = true; break;
+      case 89: v_specularAngle = r.f64(); h_specularAngle = true; break;
+      case 97: v_specularIntensity = r.f64(); h_specularIntensity = true; break;
+      case 105: v_specularFalloff = r.f64(); h_specularFalloff = true; break;
+      case 113: v_grain = r.f64(); h_grain = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_refraction) throw new DecodeError('RenderGlass.refraction: missing', 'missingField');
+  if (!h_edgeWidth) throw new DecodeError('RenderGlass.edgeWidth: missing', 'missingField');
+  if (!h_aberration) throw new DecodeError('RenderGlass.aberration: missing', 'missingField');
+  if (!h_saturation) throw new DecodeError('RenderGlass.saturation: missing', 'missingField');
+  if (!h_tint) throw new DecodeError('RenderGlass.tint: missing', 'missingField');
+  if (!h_tintOpacity) throw new DecodeError('RenderGlass.tintOpacity: missing', 'missingField');
+  if (!h_rim) throw new DecodeError('RenderGlass.rim: missing', 'missingField');
+  if (!h_rimOpacity) throw new DecodeError('RenderGlass.rimOpacity: missing', 'missingField');
+  if (!h_rimWidth) throw new DecodeError('RenderGlass.rimWidth: missing', 'missingField');
+  if (!h_rimAngle) throw new DecodeError('RenderGlass.rimAngle: missing', 'missingField');
+  if (!h_specularAngle) throw new DecodeError('RenderGlass.specularAngle: missing', 'missingField');
+  if (!h_specularIntensity) throw new DecodeError('RenderGlass.specularIntensity: missing', 'missingField');
+  if (!h_specularFalloff) throw new DecodeError('RenderGlass.specularFalloff: missing', 'missingField');
+  if (!h_grain) throw new DecodeError('RenderGlass.grain: missing', 'missingField');
+  o.refraction = v_refraction;
+  o.edgeWidth = v_edgeWidth;
+  o.aberration = v_aberration;
+  o.saturation = v_saturation;
+  o.tint = v_tint;
+  o.tintOpacity = v_tintOpacity;
+  o.rim = v_rim;
+  o.rimOpacity = v_rimOpacity;
+  o.rimWidth = v_rimWidth;
+  o.rimAngle = v_rimAngle;
+  o.specularAngle = v_specularAngle;
+  o.specularIntensity = v_specularIntensity;
+  o.specularFalloff = v_specularFalloff;
+  o.grain = v_grain;
+  return o;
+}
+function encS_RenderMotionSample(w: Writer, v: T.RenderMotionSample): void {
+  { const a = v.modelMatrix; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(17); w.f64(v.opacity);
+}
+function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotionSample {
+  const l_modelMatrix: number[] = [];
+  let h_opacity = false;
+  let v_opacity: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: { const e = r.ldEnd(); while (r.pos < e) l_modelMatrix.push(r.f64()); r.expectAt(e); break; }
+      case 17: v_opacity = r.f64(); h_opacity = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_opacity) throw new DecodeError('RenderMotionSample.opacity: missing', 'missingField');
+  o.modelMatrix = l_modelMatrix;
+  o.opacity = v_opacity;
+  return o;
+}
+function encS_RenderAdjustment(w: Writer, v: T.RenderAdjustment): void {
+  if (v.colorMatrix !== undefined) { w.byte(10); { const s = w.beginLd(); encS_RenderColorMatrix(w, v.colorMatrix); w.endLd(s); } }
+  if (v.lutTextureKey !== undefined) { w.byte(18); w.str(v.lutTextureKey); }
+}
+function decS_RenderAdjustment(r: Reader, end: number, o: any): T.RenderAdjustment {
+  let v_colorMatrix: T.RenderColorMatrix | undefined;
+  let v_lutTextureKey: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_colorMatrix = decS_RenderColorMatrix(r, r.ldEnd(), {}); break;
+      case 18: v_lutTextureKey = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_colorMatrix !== undefined) o.colorMatrix = v_colorMatrix;
+  if (v_lutTextureKey !== undefined) o.lutTextureKey = v_lutTextureKey;
+  return o;
+}
+function encS_RenderMatte(w: Writer, v: T.RenderMatte): void {
+  w.byte(8); w.varint(enc_RenderMatteMode(v.mode));
+  w.byte(16); w.bool(v.inverted);
+  w.byte(26); w.str(v.sourceId);
+}
+function decS_RenderMatte(r: Reader, end: number, o: any): T.RenderMatte {
+  let h_mode = false;
+  let h_inverted = false;
+  let h_sourceId = false;
+  let v_mode: T.RenderMatteMode | undefined;
+  let v_inverted: boolean | undefined;
+  let v_sourceId: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_mode = dec_RenderMatteMode(r.varint()); h_mode = true; break;
+      case 16: v_inverted = r.bool(); h_inverted = true; break;
+      case 26: v_sourceId = r.str(); h_sourceId = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_mode) throw new DecodeError('RenderMatte.mode: missing', 'missingField');
+  if (!h_inverted) throw new DecodeError('RenderMatte.inverted: missing', 'missingField');
+  if (!h_sourceId) throw new DecodeError('RenderMatte.sourceId: missing', 'missingField');
+  o.mode = v_mode;
+  o.inverted = v_inverted;
+  o.sourceId = v_sourceId;
+  return o;
+}
+function encS_RenderDeformedMesh(w: Writer, v: T.RenderDeformedMesh): void {
+  w.byte(10); w.bytes(v.vertices);
+  w.byte(18); w.bytes(v.triangles);
+  if (v.depth !== undefined) { w.byte(26); w.bytes(v.depth); }
+}
+function decS_RenderDeformedMesh(r: Reader, end: number, o: any): T.RenderDeformedMesh {
+  let h_vertices = false;
+  let h_triangles = false;
+  let v_vertices: Uint8Array | undefined;
+  let v_triangles: Uint8Array | undefined;
+  let v_depth: Uint8Array | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_vertices = r.bytes(); h_vertices = true; break;
+      case 18: v_triangles = r.bytes(); h_triangles = true; break;
+      case 26: v_depth = r.bytes(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_vertices) throw new DecodeError('RenderDeformedMesh.vertices: missing', 'missingField');
+  if (!h_triangles) throw new DecodeError('RenderDeformedMesh.triangles: missing', 'missingField');
+  o.vertices = v_vertices;
+  o.triangles = v_triangles;
+  if (v_depth !== undefined) o.depth = v_depth;
+  return o;
+}
+function encS_RenderGenerator(w: Writer, v: T.RenderGenerator): void {
+  w.byte(10); w.bytes(v.instances);
+  w.byte(16); w.u32(v.count);
+  w.byte(24); w.u32(v.stride);
+  w.byte(32); w.varint(enc_RenderGeneratorPrimitive(v.primitive));
+  if (v.meshVertices !== undefined) { w.byte(42); w.bytes(v.meshVertices); }
+  if (v.meshIndices !== undefined) { w.byte(50); w.bytes(v.meshIndices); }
+  w.byte(56); w.varint(enc_RenderIndexFormat(v.meshIndexFormat));
+  if (v.textureKey !== undefined) { w.byte(66); w.str(v.textureKey); }
+  { const a = v.cellSize; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(80); w.varint(enc_RenderGeneratorBlend(v.blend));
+  w.byte(89); w.f64(v.revision);
+  w.byte(97); w.f64(v.width);
+  w.byte(105); w.f64(v.height);
+  if (v.perspective !== undefined) { w.byte(113); w.f64(v.perspective); }
+}
+function decS_RenderGenerator(r: Reader, end: number, o: any): T.RenderGenerator {
+  const l_cellSize: number[] = [];
+  let h_instances = false;
+  let h_count = false;
+  let h_stride = false;
+  let h_primitive = false;
+  let h_meshIndexFormat = false;
+  let h_blend = false;
+  let h_revision = false;
+  let h_width = false;
+  let h_height = false;
+  let v_instances: Uint8Array | undefined;
+  let v_count: number | undefined;
+  let v_stride: number | undefined;
+  let v_primitive: T.RenderGeneratorPrimitive | undefined;
+  let v_meshVertices: Uint8Array | undefined;
+  let v_meshIndices: Uint8Array | undefined;
+  let v_meshIndexFormat: T.RenderIndexFormat | undefined;
+  let v_textureKey: string | undefined;
+  let v_blend: T.RenderGeneratorBlend | undefined;
+  let v_revision: number | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  let v_perspective: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_instances = r.bytes(); h_instances = true; break;
+      case 16: v_count = r.u32(); h_count = true; break;
+      case 24: v_stride = r.u32(); h_stride = true; break;
+      case 32: v_primitive = dec_RenderGeneratorPrimitive(r.varint()); h_primitive = true; break;
+      case 42: v_meshVertices = r.bytes(); break;
+      case 50: v_meshIndices = r.bytes(); break;
+      case 56: v_meshIndexFormat = dec_RenderIndexFormat(r.varint()); h_meshIndexFormat = true; break;
+      case 66: v_textureKey = r.str(); break;
+      case 74: { const e = r.ldEnd(); while (r.pos < e) l_cellSize.push(r.f64()); r.expectAt(e); break; }
+      case 80: v_blend = dec_RenderGeneratorBlend(r.varint()); h_blend = true; break;
+      case 89: v_revision = r.f64(); h_revision = true; break;
+      case 97: v_width = r.f64(); h_width = true; break;
+      case 105: v_height = r.f64(); h_height = true; break;
+      case 113: v_perspective = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_instances) throw new DecodeError('RenderGenerator.instances: missing', 'missingField');
+  if (!h_count) throw new DecodeError('RenderGenerator.count: missing', 'missingField');
+  if (!h_stride) throw new DecodeError('RenderGenerator.stride: missing', 'missingField');
+  if (!h_primitive) throw new DecodeError('RenderGenerator.primitive: missing', 'missingField');
+  if (!h_meshIndexFormat) throw new DecodeError('RenderGenerator.meshIndexFormat: missing', 'missingField');
+  if (!h_blend) throw new DecodeError('RenderGenerator.blend: missing', 'missingField');
+  if (!h_revision) throw new DecodeError('RenderGenerator.revision: missing', 'missingField');
+  if (!h_width) throw new DecodeError('RenderGenerator.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('RenderGenerator.height: missing', 'missingField');
+  o.instances = v_instances;
+  o.count = v_count;
+  o.stride = v_stride;
+  o.primitive = v_primitive;
+  if (v_meshVertices !== undefined) o.meshVertices = v_meshVertices;
+  if (v_meshIndices !== undefined) o.meshIndices = v_meshIndices;
+  o.meshIndexFormat = v_meshIndexFormat;
+  if (v_textureKey !== undefined) o.textureKey = v_textureKey;
+  o.cellSize = l_cellSize;
+  o.blend = v_blend;
+  o.revision = v_revision;
+  o.width = v_width;
+  o.height = v_height;
+  if (v_perspective !== undefined) o.perspective = v_perspective;
+  return o;
+}
+function encS_RenderMeshRange(w: Writer, v: T.RenderMeshRange): void {
+  w.byte(8); w.varint(enc_RenderMeshRole(v.role));
+  w.byte(16); w.u32(v.first);
+  w.byte(24); w.u32(v.count);
+  w.byte(34); { const s = w.beginLd(); encS_Color(w, v.color); w.endLd(s); }
+  w.byte(41); w.f64(v.gain);
+  w.byte(48); w.bool(v.textured);
+  if (v.textureKey !== undefined) { w.byte(58); w.str(v.textureKey); }
+}
+function decS_RenderMeshRange(r: Reader, end: number, o: any): T.RenderMeshRange {
+  let h_role = false;
+  let h_first = false;
+  let h_count = false;
+  let h_color = false;
+  let h_gain = false;
+  let h_textured = false;
+  let v_role: T.RenderMeshRole | undefined;
+  let v_first: number | undefined;
+  let v_count: number | undefined;
+  let v_color: T.Color | undefined;
+  let v_gain: number | undefined;
+  let v_textured: boolean | undefined;
+  let v_textureKey: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_role = dec_RenderMeshRole(r.varint()); h_role = true; break;
+      case 16: v_first = r.u32(); h_first = true; break;
+      case 24: v_count = r.u32(); h_count = true; break;
+      case 34: v_color = decS_Color(r, r.ldEnd(), {}); h_color = true; break;
+      case 41: v_gain = r.f64(); h_gain = true; break;
+      case 48: v_textured = r.bool(); h_textured = true; break;
+      case 58: v_textureKey = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_role) throw new DecodeError('RenderMeshRange.role: missing', 'missingField');
+  if (!h_first) throw new DecodeError('RenderMeshRange.first: missing', 'missingField');
+  if (!h_count) throw new DecodeError('RenderMeshRange.count: missing', 'missingField');
+  if (!h_color) throw new DecodeError('RenderMeshRange.color: missing', 'missingField');
+  if (!h_gain) throw new DecodeError('RenderMeshRange.gain: missing', 'missingField');
+  if (!h_textured) throw new DecodeError('RenderMeshRange.textured: missing', 'missingField');
+  o.role = v_role;
+  o.first = v_first;
+  o.count = v_count;
+  o.color = v_color;
+  o.gain = v_gain;
+  o.textured = v_textured;
+  if (v_textureKey !== undefined) o.textureKey = v_textureKey;
+  return o;
+}
+function encS_RenderPbrMaps(w: Writer, v: T.RenderPbrMaps): void {
+  if (v.normalKey !== undefined) { w.byte(10); w.str(v.normalKey); }
+  if (v.metallicRoughnessKey !== undefined) { w.byte(18); w.str(v.metallicRoughnessKey); }
+  if (v.occlusionKey !== undefined) { w.byte(26); w.str(v.occlusionKey); }
+  if (v.emissiveKey !== undefined) { w.byte(34); w.str(v.emissiveKey); }
+  w.byte(41); w.f64(v.normalScale);
+  w.byte(49); w.f64(v.occlusionStrength);
+  { const a = v.emissive; if (a.length) { w.byte(58); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_RenderPbrMaps(r: Reader, end: number, o: any): T.RenderPbrMaps {
+  const l_emissive: number[] = [];
+  let h_normalScale = false;
+  let h_occlusionStrength = false;
+  let v_normalKey: string | undefined;
+  let v_metallicRoughnessKey: string | undefined;
+  let v_occlusionKey: string | undefined;
+  let v_emissiveKey: string | undefined;
+  let v_normalScale: number | undefined;
+  let v_occlusionStrength: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_normalKey = r.str(); break;
+      case 18: v_metallicRoughnessKey = r.str(); break;
+      case 26: v_occlusionKey = r.str(); break;
+      case 34: v_emissiveKey = r.str(); break;
+      case 41: v_normalScale = r.f64(); h_normalScale = true; break;
+      case 49: v_occlusionStrength = r.f64(); h_occlusionStrength = true; break;
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_emissive.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_normalScale) throw new DecodeError('RenderPbrMaps.normalScale: missing', 'missingField');
+  if (!h_occlusionStrength) throw new DecodeError('RenderPbrMaps.occlusionStrength: missing', 'missingField');
+  if (v_normalKey !== undefined) o.normalKey = v_normalKey;
+  if (v_metallicRoughnessKey !== undefined) o.metallicRoughnessKey = v_metallicRoughnessKey;
+  if (v_occlusionKey !== undefined) o.occlusionKey = v_occlusionKey;
+  if (v_emissiveKey !== undefined) o.emissiveKey = v_emissiveKey;
+  o.normalScale = v_normalScale;
+  o.occlusionStrength = v_occlusionStrength;
+  o.emissive = l_emissive;
+  return o;
+}
+function encS_RenderExtrudedMesh(w: Writer, v: T.RenderExtrudedMesh): void {
+  w.byte(10); w.str(v.key);
+  w.byte(18); w.bytes(v.vertices);
+  w.byte(26); w.bytes(v.indices);
+  w.byte(32); w.varint(enc_RenderIndexFormat(v.indexFormat));
+  { const a = v.ranges; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_RenderMeshRange(w, a[i]!); w.endLd(s); } } }
+  if (v.pbr !== undefined) { w.byte(50); { const s = w.beginLd(); encS_RenderPbrMaps(w, v.pbr); w.endLd(s); } }
+}
+function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrudedMesh {
+  const l_ranges: T.RenderMeshRange[] = [];
+  let h_key = false;
+  let h_vertices = false;
+  let h_indices = false;
+  let h_indexFormat = false;
+  let v_key: string | undefined;
+  let v_vertices: Uint8Array | undefined;
+  let v_indices: Uint8Array | undefined;
+  let v_indexFormat: T.RenderIndexFormat | undefined;
+  let v_pbr: T.RenderPbrMaps | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_key = r.str(); h_key = true; break;
+      case 18: v_vertices = r.bytes(); h_vertices = true; break;
+      case 26: v_indices = r.bytes(); h_indices = true; break;
+      case 32: v_indexFormat = dec_RenderIndexFormat(r.varint()); h_indexFormat = true; break;
+      case 42: l_ranges.push(decS_RenderMeshRange(r, r.ldEnd(), {})); break;
+      case 50: v_pbr = decS_RenderPbrMaps(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_key) throw new DecodeError('RenderExtrudedMesh.key: missing', 'missingField');
+  if (!h_vertices) throw new DecodeError('RenderExtrudedMesh.vertices: missing', 'missingField');
+  if (!h_indices) throw new DecodeError('RenderExtrudedMesh.indices: missing', 'missingField');
+  if (!h_indexFormat) throw new DecodeError('RenderExtrudedMesh.indexFormat: missing', 'missingField');
+  o.key = v_key;
+  o.vertices = v_vertices;
+  o.indices = v_indices;
+  o.indexFormat = v_indexFormat;
+  o.ranges = l_ranges;
+  if (v_pbr !== undefined) o.pbr = v_pbr;
+  return o;
+}
+function encS_RenderShade3D(w: Writer, v: T.RenderShade3D): void {
+  w.byte(9); w.f64(v.specular);
+  w.byte(17); w.f64(v.shininess);
+  if (v.metal !== undefined) { w.byte(25); w.f64(v.metal); }
+  if (v.roughness !== undefined) { w.byte(33); w.f64(v.roughness); }
+  if (v.toonBands !== undefined) { w.byte(41); w.f64(v.toonBands); }
+  { const a = v.quadGain; if (a.length) { w.byte(50); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.oneSided !== undefined) { w.byte(56); w.bool(v.oneSided); }
+  if (v.ambient !== undefined) { w.byte(65); w.f64(v.ambient); }
+  if (v.diffuse !== undefined) { w.byte(73); w.f64(v.diffuse); }
+  if (v.reflectionIntensity !== undefined) { w.byte(81); w.f64(v.reflectionIntensity); }
+  if (v.reflectionSharpness !== undefined) { w.byte(89); w.f64(v.reflectionSharpness); }
+  if (v.reflectionRolloff !== undefined) { w.byte(97); w.f64(v.reflectionRolloff); }
+  if (v.transparency !== undefined) { w.byte(105); w.f64(v.transparency); }
+  if (v.transparencyRolloff !== undefined) { w.byte(113); w.f64(v.transparencyRolloff); }
+  if (v.ior !== undefined) { w.byte(121); w.f64(v.ior); }
+  if (v.acceptsShadows !== undefined) { w.varint(128); w.bool(v.acceptsShadows); }
+}
+function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
+  const l_quadGain: number[] = [];
+  let h_specular = false;
+  let h_shininess = false;
+  let v_specular: number | undefined;
+  let v_shininess: number | undefined;
+  let v_metal: number | undefined;
+  let v_roughness: number | undefined;
+  let v_toonBands: number | undefined;
+  let v_oneSided: boolean | undefined;
+  let v_ambient: number | undefined;
+  let v_diffuse: number | undefined;
+  let v_reflectionIntensity: number | undefined;
+  let v_reflectionSharpness: number | undefined;
+  let v_reflectionRolloff: number | undefined;
+  let v_transparency: number | undefined;
+  let v_transparencyRolloff: number | undefined;
+  let v_ior: number | undefined;
+  let v_acceptsShadows: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_specular = r.f64(); h_specular = true; break;
+      case 17: v_shininess = r.f64(); h_shininess = true; break;
+      case 25: v_metal = r.f64(); break;
+      case 33: v_roughness = r.f64(); break;
+      case 41: v_toonBands = r.f64(); break;
+      case 50: { const e = r.ldEnd(); while (r.pos < e) l_quadGain.push(r.f64()); r.expectAt(e); break; }
+      case 56: v_oneSided = r.bool(); break;
+      case 65: v_ambient = r.f64(); break;
+      case 73: v_diffuse = r.f64(); break;
+      case 81: v_reflectionIntensity = r.f64(); break;
+      case 89: v_reflectionSharpness = r.f64(); break;
+      case 97: v_reflectionRolloff = r.f64(); break;
+      case 105: v_transparency = r.f64(); break;
+      case 113: v_transparencyRolloff = r.f64(); break;
+      case 121: v_ior = r.f64(); break;
+      case 128: v_acceptsShadows = r.bool(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_specular) throw new DecodeError('RenderShade3D.specular: missing', 'missingField');
+  if (!h_shininess) throw new DecodeError('RenderShade3D.shininess: missing', 'missingField');
+  o.specular = v_specular;
+  o.shininess = v_shininess;
+  if (v_metal !== undefined) o.metal = v_metal;
+  if (v_roughness !== undefined) o.roughness = v_roughness;
+  if (v_toonBands !== undefined) o.toonBands = v_toonBands;
+  o.quadGain = l_quadGain;
+  if (v_oneSided !== undefined) o.oneSided = v_oneSided;
+  if (v_ambient !== undefined) o.ambient = v_ambient;
+  if (v_diffuse !== undefined) o.diffuse = v_diffuse;
+  if (v_reflectionIntensity !== undefined) o.reflectionIntensity = v_reflectionIntensity;
+  if (v_reflectionSharpness !== undefined) o.reflectionSharpness = v_reflectionSharpness;
+  if (v_reflectionRolloff !== undefined) o.reflectionRolloff = v_reflectionRolloff;
+  if (v_transparency !== undefined) o.transparency = v_transparency;
+  if (v_transparencyRolloff !== undefined) o.transparencyRolloff = v_transparencyRolloff;
+  if (v_ior !== undefined) o.ior = v_ior;
+  if (v_acceptsShadows !== undefined) o.acceptsShadows = v_acceptsShadows;
+  return o;
+}
+function encS_RenderThreeD(w: Writer, v: T.RenderThreeD): void {
+  { const a = v.model; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.castsShadow !== undefined) { w.byte(16); w.bool(v.castsShadow); }
+  if (v.shade !== undefined) { w.byte(26); { const s = w.beginLd(); encS_RenderShade3D(w, v.shade); w.endLd(s); } }
+}
+function decS_RenderThreeD(r: Reader, end: number, o: any): T.RenderThreeD {
+  const l_model: number[] = [];
+  let v_castsShadow: boolean | undefined;
+  let v_shade: T.RenderShade3D | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: { const e = r.ldEnd(); while (r.pos < e) l_model.push(r.f64()); r.expectAt(e); break; }
+      case 16: v_castsShadow = r.bool(); break;
+      case 26: v_shade = decS_RenderShade3D(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.model = l_model;
+  if (v_castsShadow !== undefined) o.castsShadow = v_castsShadow;
+  if (v_shade !== undefined) o.shade = v_shade;
+  return o;
+}
+function encS_RenderDof(w: Writer, v: T.RenderDof): void {
+  w.byte(9); w.f64(v.strength);
+  w.byte(17); w.f64(v.focus);
+  w.byte(25); w.f64(v.aperture);
+  if (v.focalLength !== undefined) { w.byte(33); w.f64(v.focalLength); }
+  if (v.fStop !== undefined) { w.byte(41); w.f64(v.fStop); }
+  if (v.irisBlades !== undefined) { w.byte(49); w.f64(v.irisBlades); }
+  if (v.irisRoundness !== undefined) { w.byte(57); w.f64(v.irisRoundness); }
+  if (v.highlightGain !== undefined) { w.byte(65); w.f64(v.highlightGain); }
+  if (v.irisRotation !== undefined) { w.byte(73); w.f64(v.irisRotation); }
+  if (v.irisAspect !== undefined) { w.byte(81); w.f64(v.irisAspect); }
+  if (v.highlightThreshold !== undefined) { w.byte(89); w.f64(v.highlightThreshold); }
+  if (v.highlightSaturation !== undefined) { w.byte(97); w.f64(v.highlightSaturation); }
+  if (v.diffractionFringe !== undefined) { w.byte(105); w.f64(v.diffractionFringe); }
+}
+function decS_RenderDof(r: Reader, end: number, o: any): T.RenderDof {
+  let h_strength = false;
+  let h_focus = false;
+  let h_aperture = false;
+  let v_strength: number | undefined;
+  let v_focus: number | undefined;
+  let v_aperture: number | undefined;
+  let v_focalLength: number | undefined;
+  let v_fStop: number | undefined;
+  let v_irisBlades: number | undefined;
+  let v_irisRoundness: number | undefined;
+  let v_highlightGain: number | undefined;
+  let v_irisRotation: number | undefined;
+  let v_irisAspect: number | undefined;
+  let v_highlightThreshold: number | undefined;
+  let v_highlightSaturation: number | undefined;
+  let v_diffractionFringe: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_strength = r.f64(); h_strength = true; break;
+      case 17: v_focus = r.f64(); h_focus = true; break;
+      case 25: v_aperture = r.f64(); h_aperture = true; break;
+      case 33: v_focalLength = r.f64(); break;
+      case 41: v_fStop = r.f64(); break;
+      case 49: v_irisBlades = r.f64(); break;
+      case 57: v_irisRoundness = r.f64(); break;
+      case 65: v_highlightGain = r.f64(); break;
+      case 73: v_irisRotation = r.f64(); break;
+      case 81: v_irisAspect = r.f64(); break;
+      case 89: v_highlightThreshold = r.f64(); break;
+      case 97: v_highlightSaturation = r.f64(); break;
+      case 105: v_diffractionFringe = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_strength) throw new DecodeError('RenderDof.strength: missing', 'missingField');
+  if (!h_focus) throw new DecodeError('RenderDof.focus: missing', 'missingField');
+  if (!h_aperture) throw new DecodeError('RenderDof.aperture: missing', 'missingField');
+  o.strength = v_strength;
+  o.focus = v_focus;
+  o.aperture = v_aperture;
+  if (v_focalLength !== undefined) o.focalLength = v_focalLength;
+  if (v_fStop !== undefined) o.fStop = v_fStop;
+  if (v_irisBlades !== undefined) o.irisBlades = v_irisBlades;
+  if (v_irisRoundness !== undefined) o.irisRoundness = v_irisRoundness;
+  if (v_highlightGain !== undefined) o.highlightGain = v_highlightGain;
+  if (v_irisRotation !== undefined) o.irisRotation = v_irisRotation;
+  if (v_irisAspect !== undefined) o.irisAspect = v_irisAspect;
+  if (v_highlightThreshold !== undefined) o.highlightThreshold = v_highlightThreshold;
+  if (v_highlightSaturation !== undefined) o.highlightSaturation = v_highlightSaturation;
+  if (v_diffractionFringe !== undefined) o.diffractionFringe = v_diffractionFringe;
+  return o;
+}
+function encS_RenderCamera3D(w: Writer, v: T.RenderCamera3D): void {
+  { const a = v.view; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.projection; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.eye; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.dof !== undefined) { w.byte(34); { const s = w.beginLd(); encS_RenderDof(w, v.dof); w.endLd(s); } }
+}
+function decS_RenderCamera3D(r: Reader, end: number, o: any): T.RenderCamera3D {
+  const l_view: number[] = [];
+  const l_projection: number[] = [];
+  const l_eye: number[] = [];
+  let v_dof: T.RenderDof | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: { const e = r.ldEnd(); while (r.pos < e) l_view.push(r.f64()); r.expectAt(e); break; }
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_projection.push(r.f64()); r.expectAt(e); break; }
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_eye.push(r.f64()); r.expectAt(e); break; }
+      case 34: v_dof = decS_RenderDof(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.view = l_view;
+  o.projection = l_projection;
+  o.eye = l_eye;
+  if (v_dof !== undefined) o.dof = v_dof;
+  return o;
+}
+function encS_RenderLight3D(w: Writer, v: T.RenderLight3D): void {
+  w.byte(8); w.varint(enc_RenderLightType(v.type));
+  { const a = v.color; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(25); w.f64(v.gain);
+  w.byte(33); w.f64(v.x);
+  w.byte(41); w.f64(v.y);
+  w.byte(49); w.f64(v.z);
+  w.byte(57); w.f64(v.radius);
+  w.byte(65); w.f64(v.aimX);
+  w.byte(73); w.f64(v.aimY);
+  w.byte(81); w.f64(v.aimZ);
+  w.byte(89); w.f64(v.halfConeRad);
+  w.byte(97); w.f64(v.coneFeatherRad);
+  w.byte(105); w.f64(v.falloffMode);
+  w.byte(113); w.f64(v.falloffDistance);
+  if (v.shadowMap !== undefined) { w.byte(120); w.bool(v.shadowMap); }
+  if (v.shadowMapSize !== undefined) { w.varint(129); w.f64(v.shadowMapSize); }
+  if (v.shadowBias !== undefined) { w.varint(137); w.f64(v.shadowBias); }
+  if (v.shadowSoftness !== undefined) { w.varint(145); w.f64(v.shadowSoftness); }
+  if (v.shadowDarkness !== undefined) { w.varint(153); w.f64(v.shadowDarkness); }
+}
+function decS_RenderLight3D(r: Reader, end: number, o: any): T.RenderLight3D {
+  const l_color: number[] = [];
+  let h_type = false;
+  let h_gain = false;
+  let h_x = false;
+  let h_y = false;
+  let h_z = false;
+  let h_radius = false;
+  let h_aimX = false;
+  let h_aimY = false;
+  let h_aimZ = false;
+  let h_halfConeRad = false;
+  let h_coneFeatherRad = false;
+  let h_falloffMode = false;
+  let h_falloffDistance = false;
+  let v_type: T.RenderLightType | undefined;
+  let v_gain: number | undefined;
+  let v_x: number | undefined;
+  let v_y: number | undefined;
+  let v_z: number | undefined;
+  let v_radius: number | undefined;
+  let v_aimX: number | undefined;
+  let v_aimY: number | undefined;
+  let v_aimZ: number | undefined;
+  let v_halfConeRad: number | undefined;
+  let v_coneFeatherRad: number | undefined;
+  let v_falloffMode: number | undefined;
+  let v_falloffDistance: number | undefined;
+  let v_shadowMap: boolean | undefined;
+  let v_shadowMapSize: number | undefined;
+  let v_shadowBias: number | undefined;
+  let v_shadowSoftness: number | undefined;
+  let v_shadowDarkness: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_type = dec_RenderLightType(r.varint()); h_type = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_color.push(r.f64()); r.expectAt(e); break; }
+      case 25: v_gain = r.f64(); h_gain = true; break;
+      case 33: v_x = r.f64(); h_x = true; break;
+      case 41: v_y = r.f64(); h_y = true; break;
+      case 49: v_z = r.f64(); h_z = true; break;
+      case 57: v_radius = r.f64(); h_radius = true; break;
+      case 65: v_aimX = r.f64(); h_aimX = true; break;
+      case 73: v_aimY = r.f64(); h_aimY = true; break;
+      case 81: v_aimZ = r.f64(); h_aimZ = true; break;
+      case 89: v_halfConeRad = r.f64(); h_halfConeRad = true; break;
+      case 97: v_coneFeatherRad = r.f64(); h_coneFeatherRad = true; break;
+      case 105: v_falloffMode = r.f64(); h_falloffMode = true; break;
+      case 113: v_falloffDistance = r.f64(); h_falloffDistance = true; break;
+      case 120: v_shadowMap = r.bool(); break;
+      case 129: v_shadowMapSize = r.f64(); break;
+      case 137: v_shadowBias = r.f64(); break;
+      case 145: v_shadowSoftness = r.f64(); break;
+      case 153: v_shadowDarkness = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_type) throw new DecodeError('RenderLight3D.type: missing', 'missingField');
+  if (!h_gain) throw new DecodeError('RenderLight3D.gain: missing', 'missingField');
+  if (!h_x) throw new DecodeError('RenderLight3D.x: missing', 'missingField');
+  if (!h_y) throw new DecodeError('RenderLight3D.y: missing', 'missingField');
+  if (!h_z) throw new DecodeError('RenderLight3D.z: missing', 'missingField');
+  if (!h_radius) throw new DecodeError('RenderLight3D.radius: missing', 'missingField');
+  if (!h_aimX) throw new DecodeError('RenderLight3D.aimX: missing', 'missingField');
+  if (!h_aimY) throw new DecodeError('RenderLight3D.aimY: missing', 'missingField');
+  if (!h_aimZ) throw new DecodeError('RenderLight3D.aimZ: missing', 'missingField');
+  if (!h_halfConeRad) throw new DecodeError('RenderLight3D.halfConeRad: missing', 'missingField');
+  if (!h_coneFeatherRad) throw new DecodeError('RenderLight3D.coneFeatherRad: missing', 'missingField');
+  if (!h_falloffMode) throw new DecodeError('RenderLight3D.falloffMode: missing', 'missingField');
+  if (!h_falloffDistance) throw new DecodeError('RenderLight3D.falloffDistance: missing', 'missingField');
+  o.type = v_type;
+  o.color = l_color;
+  o.gain = v_gain;
+  o.x = v_x;
+  o.y = v_y;
+  o.z = v_z;
+  o.radius = v_radius;
+  o.aimX = v_aimX;
+  o.aimY = v_aimY;
+  o.aimZ = v_aimZ;
+  o.halfConeRad = v_halfConeRad;
+  o.coneFeatherRad = v_coneFeatherRad;
+  o.falloffMode = v_falloffMode;
+  o.falloffDistance = v_falloffDistance;
+  if (v_shadowMap !== undefined) o.shadowMap = v_shadowMap;
+  if (v_shadowMapSize !== undefined) o.shadowMapSize = v_shadowMapSize;
+  if (v_shadowBias !== undefined) o.shadowBias = v_shadowBias;
+  if (v_shadowSoftness !== undefined) o.shadowSoftness = v_shadowSoftness;
+  if (v_shadowDarkness !== undefined) o.shadowDarkness = v_shadowDarkness;
+  return o;
+}
+function encS_RenderEnvMap(w: Writer, v: T.RenderEnvMap): void {
+  w.byte(10); w.str(v.id);
+  w.byte(16); w.u32(v.width);
+  w.byte(24); w.u32(v.height);
+  w.byte(32); w.u32(v.levels);
+  w.byte(41); w.f64(v.scale);
+  w.byte(50); w.bytes(v.data);
+  w.byte(57); w.f64(v.intensity);
+  w.byte(65); w.f64(v.rotationDeg);
+}
+function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
+  let h_id = false;
+  let h_width = false;
+  let h_height = false;
+  let h_levels = false;
+  let h_scale = false;
+  let h_data = false;
+  let h_intensity = false;
+  let h_rotationDeg = false;
+  let v_id: string | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  let v_levels: number | undefined;
+  let v_scale: number | undefined;
+  let v_data: Uint8Array | undefined;
+  let v_intensity: number | undefined;
+  let v_rotationDeg: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 16: v_width = r.u32(); h_width = true; break;
+      case 24: v_height = r.u32(); h_height = true; break;
+      case 32: v_levels = r.u32(); h_levels = true; break;
+      case 41: v_scale = r.f64(); h_scale = true; break;
+      case 50: v_data = r.bytes(); h_data = true; break;
+      case 57: v_intensity = r.f64(); h_intensity = true; break;
+      case 65: v_rotationDeg = r.f64(); h_rotationDeg = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('RenderEnvMap.id: missing', 'missingField');
+  if (!h_width) throw new DecodeError('RenderEnvMap.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('RenderEnvMap.height: missing', 'missingField');
+  if (!h_levels) throw new DecodeError('RenderEnvMap.levels: missing', 'missingField');
+  if (!h_scale) throw new DecodeError('RenderEnvMap.scale: missing', 'missingField');
+  if (!h_data) throw new DecodeError('RenderEnvMap.data: missing', 'missingField');
+  if (!h_intensity) throw new DecodeError('RenderEnvMap.intensity: missing', 'missingField');
+  if (!h_rotationDeg) throw new DecodeError('RenderEnvMap.rotationDeg: missing', 'missingField');
+  o.id = v_id;
+  o.width = v_width;
+  o.height = v_height;
+  o.levels = v_levels;
+  o.scale = v_scale;
+  o.data = v_data;
+  o.intensity = v_intensity;
+  o.rotationDeg = v_rotationDeg;
+  return o;
+}
+function encS_RenderSsao(w: Writer, v: T.RenderSsao): void {
+  w.byte(8); w.bool(v.enabled);
+  w.byte(17); w.f64(v.radius);
+  w.byte(25); w.f64(v.intensity);
+  w.byte(32); w.varint(enc_RenderSsaoQuality(v.quality));
+}
+function decS_RenderSsao(r: Reader, end: number, o: any): T.RenderSsao {
+  let h_enabled = false;
+  let h_radius = false;
+  let h_intensity = false;
+  let h_quality = false;
+  let v_enabled: boolean | undefined;
+  let v_radius: number | undefined;
+  let v_intensity: number | undefined;
+  let v_quality: T.RenderSsaoQuality | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_enabled = r.bool(); h_enabled = true; break;
+      case 17: v_radius = r.f64(); h_radius = true; break;
+      case 25: v_intensity = r.f64(); h_intensity = true; break;
+      case 32: v_quality = dec_RenderSsaoQuality(r.varint()); h_quality = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_enabled) throw new DecodeError('RenderSsao.enabled: missing', 'missingField');
+  if (!h_radius) throw new DecodeError('RenderSsao.radius: missing', 'missingField');
+  if (!h_intensity) throw new DecodeError('RenderSsao.intensity: missing', 'missingField');
+  if (!h_quality) throw new DecodeError('RenderSsao.quality: missing', 'missingField');
+  o.enabled = v_enabled;
+  o.radius = v_radius;
+  o.intensity = v_intensity;
+  o.quality = v_quality;
+  return o;
+}
+function encS_RenderPrecompFrame(w: Writer, v: T.RenderPrecompFrame): void {
+  if (v.camera3d !== undefined) { w.byte(10); { const s = w.beginLd(); encS_RenderCamera3D(w, v.camera3d); w.endLd(s); } }
+  { const a = v.lights3d; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_RenderLight3D(w, a[i]!); w.endLd(s); } } }
+  if (v.envMap !== undefined) { w.byte(26); { const s = w.beginLd(); encS_RenderEnvMap(w, v.envMap); w.endLd(s); } }
+  if (v.flatWidth !== undefined) { w.byte(33); w.f64(v.flatWidth); }
+  if (v.flatHeight !== undefined) { w.byte(41); w.f64(v.flatHeight); }
+}
+function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecompFrame {
+  const l_lights3d: T.RenderLight3D[] = [];
+  let v_camera3d: T.RenderCamera3D | undefined;
+  let v_envMap: T.RenderEnvMap | undefined;
+  let v_flatWidth: number | undefined;
+  let v_flatHeight: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_camera3d = decS_RenderCamera3D(r, r.ldEnd(), {}); break;
+      case 18: l_lights3d.push(decS_RenderLight3D(r, r.ldEnd(), {})); break;
+      case 26: v_envMap = decS_RenderEnvMap(r, r.ldEnd(), {}); break;
+      case 33: v_flatWidth = r.f64(); break;
+      case 41: v_flatHeight = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_camera3d !== undefined) o.camera3d = v_camera3d;
+  o.lights3d = l_lights3d;
+  if (v_envMap !== undefined) o.envMap = v_envMap;
+  if (v_flatWidth !== undefined) o.flatWidth = v_flatWidth;
+  if (v_flatHeight !== undefined) o.flatHeight = v_flatHeight;
+  return o;
+}
+function encS_Renderable(w: Writer, v: T.Renderable): void {
+  w.byte(10); w.str(v.id);
+  w.byte(16); w.varint(enc_RenderableKind(v.kind));
+  { const a = v.modelMatrix; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(34); { const s = w.beginLd(); encS_Rect(w, v.bounds); w.endLd(s); }
+  w.byte(41); w.f64(v.opacity);
+  w.byte(48); w.varint(enc_RenderBlendMode(v.blend));
+  if (v.advancedBlend !== undefined) { w.byte(57); w.f64(v.advancedBlend); }
+  w.byte(64); w.bool(v.preserveTransparency);
+  w.byte(72); w.bool(v.depthExempt);
+  if (v.backdropBlur !== undefined) { w.byte(81); w.f64(v.backdropBlur); }
+  if (v.glass !== undefined) { w.byte(90); { const s = w.beginLd(); encS_RenderGlass(w, v.glass); w.endLd(s); } }
+  w.byte(96); w.varint(enc_RenderSampling(v.sampling));
+  if (v.color !== undefined) { w.byte(106); { const s = w.beginLd(); encS_Color(w, v.color); w.endLd(s); } }
+  if (v.sdf !== undefined) { w.byte(114); { const s = w.beginLd(); encS_RenderSdf(w, v.sdf); w.endLd(s); } }
+  if (v.colorMatrix !== undefined) { w.byte(122); { const s = w.beginLd(); encS_RenderColorMatrix(w, v.colorMatrix); w.endLd(s); } }
+  { const a = v.effects; for (let i = 0; i < a.length; i++) { w.varint(130); { const s = w.beginLd(); encS_RenderEffect(w, a[i]!); w.endLd(s); } } }
+  if (v.textureKey !== undefined) { w.varint(138); w.str(v.textureKey); }
+  if (v.uvRect !== undefined) { w.varint(146); { const s = w.beginLd(); encS_Rect(w, v.uvRect); w.endLd(s); } }
+  w.varint(152); w.bool(v.clip);
+  { const a = v.motionSamples; for (let i = 0; i < a.length; i++) { w.varint(162); { const s = w.beginLd(); encS_RenderMotionSample(w, a[i]!); w.endLd(s); } } }
+  { const a = v.cornerPin; if (a.length) { w.varint(170); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.maskId !== undefined) { w.varint(178); w.str(v.maskId); }
+  if (v.maskTextureKey !== undefined) { w.varint(186); w.str(v.maskTextureKey); }
+  if (v.lutTextureKey !== undefined) { w.varint(194); w.str(v.lutTextureKey); }
+  if (v.adjustment !== undefined) { w.varint(202); { const s = w.beginLd(); encS_RenderAdjustment(w, v.adjustment); w.endLd(s); } }
+  if (v.matte !== undefined) { w.varint(210); { const s = w.beginLd(); encS_RenderMatte(w, v.matte); w.endLd(s); } }
+  w.varint(216); w.bool(v.matteSource);
+  w.varint(224); w.bool(v.lightWash);
+  if (v.precomp !== undefined) { w.varint(234); { const s = w.beginLd(); encS_RenderPrecompFrame(w, v.precomp); w.endLd(s); } }
+  { const a = v.precompChildren; for (let i = 0; i < a.length; i++) { w.varint(242); { const s = w.beginLd(); encS_Renderable(w, a[i]!); w.endLd(s); } } }
+  if (v.generator !== undefined) { w.varint(250); { const s = w.beginLd(); encS_RenderGenerator(w, v.generator); w.endLd(s); } }
+  if (v.deformedMesh !== undefined) { w.varint(258); { const s = w.beginLd(); encS_RenderDeformedMesh(w, v.deformedMesh); w.endLd(s); } }
+  if (v.extrudedMesh !== undefined) { w.varint(266); { const s = w.beginLd(); encS_RenderExtrudedMesh(w, v.extrudedMesh); w.endLd(s); } }
+  if (v.threeD !== undefined) { w.varint(274); { const s = w.beginLd(); encS_RenderThreeD(w, v.threeD); w.endLd(s); } }
+}
+function decS_Renderable(r: Reader, end: number, o: any): T.Renderable {
+  const l_modelMatrix: number[] = [];
+  const l_effects: T.RenderEffect[] = [];
+  const l_motionSamples: T.RenderMotionSample[] = [];
+  const l_cornerPin: number[] = [];
+  const l_precompChildren: T.Renderable[] = [];
+  let h_id = false;
+  let h_kind = false;
+  let h_bounds = false;
+  let h_opacity = false;
+  let h_blend = false;
+  let h_preserveTransparency = false;
+  let h_depthExempt = false;
+  let h_sampling = false;
+  let h_clip = false;
+  let h_matteSource = false;
+  let h_lightWash = false;
+  let v_id: string | undefined;
+  let v_kind: T.RenderableKind | undefined;
+  let v_bounds: T.Rect | undefined;
+  let v_opacity: number | undefined;
+  let v_blend: T.RenderBlendMode | undefined;
+  let v_advancedBlend: number | undefined;
+  let v_preserveTransparency: boolean | undefined;
+  let v_depthExempt: boolean | undefined;
+  let v_backdropBlur: number | undefined;
+  let v_glass: T.RenderGlass | undefined;
+  let v_sampling: T.RenderSampling | undefined;
+  let v_color: T.Color | undefined;
+  let v_sdf: T.RenderSdf | undefined;
+  let v_colorMatrix: T.RenderColorMatrix | undefined;
+  let v_textureKey: string | undefined;
+  let v_uvRect: T.Rect | undefined;
+  let v_clip: boolean | undefined;
+  let v_maskId: string | undefined;
+  let v_maskTextureKey: string | undefined;
+  let v_lutTextureKey: string | undefined;
+  let v_adjustment: T.RenderAdjustment | undefined;
+  let v_matte: T.RenderMatte | undefined;
+  let v_matteSource: boolean | undefined;
+  let v_lightWash: boolean | undefined;
+  let v_precomp: T.RenderPrecompFrame | undefined;
+  let v_generator: T.RenderGenerator | undefined;
+  let v_deformedMesh: T.RenderDeformedMesh | undefined;
+  let v_extrudedMesh: T.RenderExtrudedMesh | undefined;
+  let v_threeD: T.RenderThreeD | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 16: v_kind = dec_RenderableKind(r.varint()); h_kind = true; break;
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_modelMatrix.push(r.f64()); r.expectAt(e); break; }
+      case 34: v_bounds = decS_Rect(r, r.ldEnd(), {}); h_bounds = true; break;
+      case 41: v_opacity = r.f64(); h_opacity = true; break;
+      case 48: v_blend = dec_RenderBlendMode(r.varint()); h_blend = true; break;
+      case 57: v_advancedBlend = r.f64(); break;
+      case 64: v_preserveTransparency = r.bool(); h_preserveTransparency = true; break;
+      case 72: v_depthExempt = r.bool(); h_depthExempt = true; break;
+      case 81: v_backdropBlur = r.f64(); break;
+      case 90: v_glass = decS_RenderGlass(r, r.ldEnd(), {}); break;
+      case 96: v_sampling = dec_RenderSampling(r.varint()); h_sampling = true; break;
+      case 106: v_color = decS_Color(r, r.ldEnd(), {}); break;
+      case 114: v_sdf = decS_RenderSdf(r, r.ldEnd(), {}); break;
+      case 122: v_colorMatrix = decS_RenderColorMatrix(r, r.ldEnd(), {}); break;
+      case 130: l_effects.push(decS_RenderEffect(r, r.ldEnd(), {})); break;
+      case 138: v_textureKey = r.str(); break;
+      case 146: v_uvRect = decS_Rect(r, r.ldEnd(), {}); break;
+      case 152: v_clip = r.bool(); h_clip = true; break;
+      case 162: l_motionSamples.push(decS_RenderMotionSample(r, r.ldEnd(), {})); break;
+      case 170: { const e = r.ldEnd(); while (r.pos < e) l_cornerPin.push(r.f64()); r.expectAt(e); break; }
+      case 178: v_maskId = r.str(); break;
+      case 186: v_maskTextureKey = r.str(); break;
+      case 194: v_lutTextureKey = r.str(); break;
+      case 202: v_adjustment = decS_RenderAdjustment(r, r.ldEnd(), {}); break;
+      case 210: v_matte = decS_RenderMatte(r, r.ldEnd(), {}); break;
+      case 216: v_matteSource = r.bool(); h_matteSource = true; break;
+      case 224: v_lightWash = r.bool(); h_lightWash = true; break;
+      case 234: v_precomp = decS_RenderPrecompFrame(r, r.ldEnd(), {}); break;
+      case 242: l_precompChildren.push(decS_Renderable(r, r.ldEnd(), {})); break;
+      case 250: v_generator = decS_RenderGenerator(r, r.ldEnd(), {}); break;
+      case 258: v_deformedMesh = decS_RenderDeformedMesh(r, r.ldEnd(), {}); break;
+      case 266: v_extrudedMesh = decS_RenderExtrudedMesh(r, r.ldEnd(), {}); break;
+      case 274: v_threeD = decS_RenderThreeD(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('Renderable.id: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('Renderable.kind: missing', 'missingField');
+  if (!h_bounds) throw new DecodeError('Renderable.bounds: missing', 'missingField');
+  if (!h_opacity) throw new DecodeError('Renderable.opacity: missing', 'missingField');
+  if (!h_blend) throw new DecodeError('Renderable.blend: missing', 'missingField');
+  if (!h_preserveTransparency) throw new DecodeError('Renderable.preserveTransparency: missing', 'missingField');
+  if (!h_depthExempt) throw new DecodeError('Renderable.depthExempt: missing', 'missingField');
+  if (!h_sampling) throw new DecodeError('Renderable.sampling: missing', 'missingField');
+  if (!h_clip) throw new DecodeError('Renderable.clip: missing', 'missingField');
+  if (!h_matteSource) throw new DecodeError('Renderable.matteSource: missing', 'missingField');
+  if (!h_lightWash) throw new DecodeError('Renderable.lightWash: missing', 'missingField');
+  o.id = v_id;
+  o.kind = v_kind;
+  o.modelMatrix = l_modelMatrix;
+  o.bounds = v_bounds;
+  o.opacity = v_opacity;
+  o.blend = v_blend;
+  if (v_advancedBlend !== undefined) o.advancedBlend = v_advancedBlend;
+  o.preserveTransparency = v_preserveTransparency;
+  o.depthExempt = v_depthExempt;
+  if (v_backdropBlur !== undefined) o.backdropBlur = v_backdropBlur;
+  if (v_glass !== undefined) o.glass = v_glass;
+  o.sampling = v_sampling;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_sdf !== undefined) o.sdf = v_sdf;
+  if (v_colorMatrix !== undefined) o.colorMatrix = v_colorMatrix;
+  o.effects = l_effects;
+  if (v_textureKey !== undefined) o.textureKey = v_textureKey;
+  if (v_uvRect !== undefined) o.uvRect = v_uvRect;
+  o.clip = v_clip;
+  o.motionSamples = l_motionSamples;
+  o.cornerPin = l_cornerPin;
+  if (v_maskId !== undefined) o.maskId = v_maskId;
+  if (v_maskTextureKey !== undefined) o.maskTextureKey = v_maskTextureKey;
+  if (v_lutTextureKey !== undefined) o.lutTextureKey = v_lutTextureKey;
+  if (v_adjustment !== undefined) o.adjustment = v_adjustment;
+  if (v_matte !== undefined) o.matte = v_matte;
+  o.matteSource = v_matteSource;
+  o.lightWash = v_lightWash;
+  if (v_precomp !== undefined) o.precomp = v_precomp;
+  o.precompChildren = l_precompChildren;
+  if (v_generator !== undefined) o.generator = v_generator;
+  if (v_deformedMesh !== undefined) o.deformedMesh = v_deformedMesh;
+  if (v_extrudedMesh !== undefined) o.extrudedMesh = v_extrudedMesh;
+  if (v_threeD !== undefined) o.threeD = v_threeD;
+  return o;
+}
+function encS_RenderFrameScene(w: Writer, v: T.RenderFrameScene): void {
+  w.byte(10); w.str(v.compositionId);
+  w.byte(17); w.f64(v.width);
+  w.byte(25); w.f64(v.height);
+  if (v.background !== undefined) { w.byte(34); { const s = w.beginLd(); encS_Color(w, v.background); w.endLd(s); } }
+  { const a = v.renderables; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_Renderable(w, a[i]!); w.endLd(s); } } }
+  w.byte(48); w.bool(v.hasEffects);
+  if (v.dissolveFrame !== undefined) { w.byte(57); w.f64(v.dissolveFrame); }
+  if (v.camera3d !== undefined) { w.byte(66); { const s = w.beginLd(); encS_RenderCamera3D(w, v.camera3d); w.endLd(s); } }
+  { const a = v.lights3d; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_RenderLight3D(w, a[i]!); w.endLd(s); } } }
+  if (v.envMap !== undefined) { w.byte(82); { const s = w.beginLd(); encS_RenderEnvMap(w, v.envMap); w.endLd(s); } }
+  if (v.ssao !== undefined) { w.byte(90); { const s = w.beginLd(); encS_RenderSsao(w, v.ssao); w.endLd(s); } }
+}
+function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameScene {
+  const l_renderables: T.Renderable[] = [];
+  const l_lights3d: T.RenderLight3D[] = [];
+  let h_compositionId = false;
+  let h_width = false;
+  let h_height = false;
+  let h_hasEffects = false;
+  let v_compositionId: string | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  let v_background: T.Color | undefined;
+  let v_hasEffects: boolean | undefined;
+  let v_dissolveFrame: number | undefined;
+  let v_camera3d: T.RenderCamera3D | undefined;
+  let v_envMap: T.RenderEnvMap | undefined;
+  let v_ssao: T.RenderSsao | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_compositionId = r.str(); h_compositionId = true; break;
+      case 17: v_width = r.f64(); h_width = true; break;
+      case 25: v_height = r.f64(); h_height = true; break;
+      case 34: v_background = decS_Color(r, r.ldEnd(), {}); break;
+      case 42: l_renderables.push(decS_Renderable(r, r.ldEnd(), {})); break;
+      case 48: v_hasEffects = r.bool(); h_hasEffects = true; break;
+      case 57: v_dissolveFrame = r.f64(); break;
+      case 66: v_camera3d = decS_RenderCamera3D(r, r.ldEnd(), {}); break;
+      case 74: l_lights3d.push(decS_RenderLight3D(r, r.ldEnd(), {})); break;
+      case 82: v_envMap = decS_RenderEnvMap(r, r.ldEnd(), {}); break;
+      case 90: v_ssao = decS_RenderSsao(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_compositionId) throw new DecodeError('RenderFrameScene.compositionId: missing', 'missingField');
+  if (!h_width) throw new DecodeError('RenderFrameScene.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('RenderFrameScene.height: missing', 'missingField');
+  if (!h_hasEffects) throw new DecodeError('RenderFrameScene.hasEffects: missing', 'missingField');
+  o.compositionId = v_compositionId;
+  o.width = v_width;
+  o.height = v_height;
+  if (v_background !== undefined) o.background = v_background;
+  o.renderables = l_renderables;
+  o.hasEffects = v_hasEffects;
+  if (v_dissolveFrame !== undefined) o.dissolveFrame = v_dissolveFrame;
+  if (v_camera3d !== undefined) o.camera3d = v_camera3d;
+  o.lights3d = l_lights3d;
+  if (v_envMap !== undefined) o.envMap = v_envMap;
+  if (v_ssao !== undefined) o.ssao = v_ssao;
+  return o;
+}
+function encS_RenderView(w: Writer, v: T.RenderView): void {
+  w.byte(9); w.f64(v.cssWidth);
+  w.byte(17); w.f64(v.cssHeight);
+  w.byte(25); w.f64(v.devicePixelRatio);
+  w.byte(33); w.f64(v.cameraCenterX);
+  w.byte(41); w.f64(v.cameraCenterY);
+  w.byte(49); w.f64(v.cameraZoom);
+  w.byte(58); { const s = w.beginLd(); encS_Color(w, v.clearColor); w.endLd(s); }
+  if (v.frameClip !== undefined) { w.byte(66); { const s = w.beginLd(); encS_Rect(w, v.frameClip); w.endLd(s); } }
+  w.byte(72); w.bool(v.overlaysActive);
+  w.byte(80); w.varint(enc_RenderWorkingSpace(v.workingSpace));
+  w.byte(88); w.varint(enc_RenderDisplayTransform(v.displayTransform));
+  w.byte(96); w.u32(v.bitDepth);
+  w.byte(104); w.bool(v.float16Textures);
+  w.byte(112); w.bool(v.float32Textures);
+  w.byte(120); w.varint(enc_RenderTextureFormat(v.surfaceFormat));
+  w.varint(128); w.bool(v.viewerLutActive);
+  if (v.adapterVendor !== undefined) { w.varint(138); w.str(v.adapterVendor); }
+}
+function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
+  let h_cssWidth = false;
+  let h_cssHeight = false;
+  let h_devicePixelRatio = false;
+  let h_cameraCenterX = false;
+  let h_cameraCenterY = false;
+  let h_cameraZoom = false;
+  let h_clearColor = false;
+  let h_overlaysActive = false;
+  let h_workingSpace = false;
+  let h_displayTransform = false;
+  let h_bitDepth = false;
+  let h_float16Textures = false;
+  let h_float32Textures = false;
+  let h_surfaceFormat = false;
+  let h_viewerLutActive = false;
+  let v_cssWidth: number | undefined;
+  let v_cssHeight: number | undefined;
+  let v_devicePixelRatio: number | undefined;
+  let v_cameraCenterX: number | undefined;
+  let v_cameraCenterY: number | undefined;
+  let v_cameraZoom: number | undefined;
+  let v_clearColor: T.Color | undefined;
+  let v_frameClip: T.Rect | undefined;
+  let v_overlaysActive: boolean | undefined;
+  let v_workingSpace: T.RenderWorkingSpace | undefined;
+  let v_displayTransform: T.RenderDisplayTransform | undefined;
+  let v_bitDepth: number | undefined;
+  let v_float16Textures: boolean | undefined;
+  let v_float32Textures: boolean | undefined;
+  let v_surfaceFormat: T.RenderTextureFormat | undefined;
+  let v_viewerLutActive: boolean | undefined;
+  let v_adapterVendor: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_cssWidth = r.f64(); h_cssWidth = true; break;
+      case 17: v_cssHeight = r.f64(); h_cssHeight = true; break;
+      case 25: v_devicePixelRatio = r.f64(); h_devicePixelRatio = true; break;
+      case 33: v_cameraCenterX = r.f64(); h_cameraCenterX = true; break;
+      case 41: v_cameraCenterY = r.f64(); h_cameraCenterY = true; break;
+      case 49: v_cameraZoom = r.f64(); h_cameraZoom = true; break;
+      case 58: v_clearColor = decS_Color(r, r.ldEnd(), {}); h_clearColor = true; break;
+      case 66: v_frameClip = decS_Rect(r, r.ldEnd(), {}); break;
+      case 72: v_overlaysActive = r.bool(); h_overlaysActive = true; break;
+      case 80: v_workingSpace = dec_RenderWorkingSpace(r.varint()); h_workingSpace = true; break;
+      case 88: v_displayTransform = dec_RenderDisplayTransform(r.varint()); h_displayTransform = true; break;
+      case 96: v_bitDepth = r.u32(); h_bitDepth = true; break;
+      case 104: v_float16Textures = r.bool(); h_float16Textures = true; break;
+      case 112: v_float32Textures = r.bool(); h_float32Textures = true; break;
+      case 120: v_surfaceFormat = dec_RenderTextureFormat(r.varint()); h_surfaceFormat = true; break;
+      case 128: v_viewerLutActive = r.bool(); h_viewerLutActive = true; break;
+      case 138: v_adapterVendor = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_cssWidth) throw new DecodeError('RenderView.cssWidth: missing', 'missingField');
+  if (!h_cssHeight) throw new DecodeError('RenderView.cssHeight: missing', 'missingField');
+  if (!h_devicePixelRatio) throw new DecodeError('RenderView.devicePixelRatio: missing', 'missingField');
+  if (!h_cameraCenterX) throw new DecodeError('RenderView.cameraCenterX: missing', 'missingField');
+  if (!h_cameraCenterY) throw new DecodeError('RenderView.cameraCenterY: missing', 'missingField');
+  if (!h_cameraZoom) throw new DecodeError('RenderView.cameraZoom: missing', 'missingField');
+  if (!h_clearColor) throw new DecodeError('RenderView.clearColor: missing', 'missingField');
+  if (!h_overlaysActive) throw new DecodeError('RenderView.overlaysActive: missing', 'missingField');
+  if (!h_workingSpace) throw new DecodeError('RenderView.workingSpace: missing', 'missingField');
+  if (!h_displayTransform) throw new DecodeError('RenderView.displayTransform: missing', 'missingField');
+  if (!h_bitDepth) throw new DecodeError('RenderView.bitDepth: missing', 'missingField');
+  if (!h_float16Textures) throw new DecodeError('RenderView.float16Textures: missing', 'missingField');
+  if (!h_float32Textures) throw new DecodeError('RenderView.float32Textures: missing', 'missingField');
+  if (!h_surfaceFormat) throw new DecodeError('RenderView.surfaceFormat: missing', 'missingField');
+  if (!h_viewerLutActive) throw new DecodeError('RenderView.viewerLutActive: missing', 'missingField');
+  o.cssWidth = v_cssWidth;
+  o.cssHeight = v_cssHeight;
+  o.devicePixelRatio = v_devicePixelRatio;
+  o.cameraCenterX = v_cameraCenterX;
+  o.cameraCenterY = v_cameraCenterY;
+  o.cameraZoom = v_cameraZoom;
+  o.clearColor = v_clearColor;
+  if (v_frameClip !== undefined) o.frameClip = v_frameClip;
+  o.overlaysActive = v_overlaysActive;
+  o.workingSpace = v_workingSpace;
+  o.displayTransform = v_displayTransform;
+  o.bitDepth = v_bitDepth;
+  o.float16Textures = v_float16Textures;
+  o.float32Textures = v_float32Textures;
+  o.surfaceFormat = v_surfaceFormat;
+  o.viewerLutActive = v_viewerLutActive;
+  if (v_adapterVendor !== undefined) o.adapterVendor = v_adapterVendor;
+  return o;
+}
+function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {
+  w.byte(10); w.str(v.key);
+  w.byte(18); w.str(v.hash);
+  w.byte(24); w.bool(v.sampleLinear);
+  w.byte(32); w.bool(v.ready);
+}
+function decS_RenderTextureRef(r: Reader, end: number, o: any): T.RenderTextureRef {
+  let h_key = false;
+  let h_hash = false;
+  let h_sampleLinear = false;
+  let h_ready = false;
+  let v_key: string | undefined;
+  let v_hash: string | undefined;
+  let v_sampleLinear: boolean | undefined;
+  let v_ready: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_key = r.str(); h_key = true; break;
+      case 18: v_hash = r.str(); h_hash = true; break;
+      case 24: v_sampleLinear = r.bool(); h_sampleLinear = true; break;
+      case 32: v_ready = r.bool(); h_ready = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_key) throw new DecodeError('RenderTextureRef.key: missing', 'missingField');
+  if (!h_hash) throw new DecodeError('RenderTextureRef.hash: missing', 'missingField');
+  if (!h_sampleLinear) throw new DecodeError('RenderTextureRef.sampleLinear: missing', 'missingField');
+  if (!h_ready) throw new DecodeError('RenderTextureRef.ready: missing', 'missingField');
+  o.key = v_key;
+  o.hash = v_hash;
+  o.sampleLinear = v_sampleLinear;
+  o.ready = v_ready;
+  return o;
+}
+function encS_RenderBlob(w: Writer, v: T.RenderBlob): void {
+  w.byte(10); w.str(v.hash);
+  w.byte(16); w.u32(v.width);
+  w.byte(24); w.u32(v.height);
+  w.byte(32); w.varint(enc_RenderTextureFormat(v.format));
+  w.byte(42); w.bytes(v.pixels);
+  w.byte(48); w.bool(v.mipmapped);
+}
+function decS_RenderBlob(r: Reader, end: number, o: any): T.RenderBlob {
+  let h_hash = false;
+  let h_width = false;
+  let h_height = false;
+  let h_format = false;
+  let h_pixels = false;
+  let h_mipmapped = false;
+  let v_hash: string | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  let v_format: T.RenderTextureFormat | undefined;
+  let v_pixels: Uint8Array | undefined;
+  let v_mipmapped: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_hash = r.str(); h_hash = true; break;
+      case 16: v_width = r.u32(); h_width = true; break;
+      case 24: v_height = r.u32(); h_height = true; break;
+      case 32: v_format = dec_RenderTextureFormat(r.varint()); h_format = true; break;
+      case 42: v_pixels = r.bytes(); h_pixels = true; break;
+      case 48: v_mipmapped = r.bool(); h_mipmapped = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_hash) throw new DecodeError('RenderBlob.hash: missing', 'missingField');
+  if (!h_width) throw new DecodeError('RenderBlob.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('RenderBlob.height: missing', 'missingField');
+  if (!h_format) throw new DecodeError('RenderBlob.format: missing', 'missingField');
+  if (!h_pixels) throw new DecodeError('RenderBlob.pixels: missing', 'missingField');
+  if (!h_mipmapped) throw new DecodeError('RenderBlob.mipmapped: missing', 'missingField');
+  o.hash = v_hash;
+  o.width = v_width;
+  o.height = v_height;
+  o.format = v_format;
+  o.pixels = v_pixels;
+  o.mipmapped = v_mipmapped;
+  return o;
+}
+function encS_RenderShaderSource(w: Writer, v: T.RenderShaderSource): void {
+  w.byte(10); w.str(v.name);
+  w.byte(18); w.str(v.wgsl);
+}
+function decS_RenderShaderSource(r: Reader, end: number, o: any): T.RenderShaderSource {
+  let h_name = false;
+  let h_wgsl = false;
+  let v_name: string | undefined;
+  let v_wgsl: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_name = r.str(); h_name = true; break;
+      case 18: v_wgsl = r.str(); h_wgsl = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('RenderShaderSource.name: missing', 'missingField');
+  if (!h_wgsl) throw new DecodeError('RenderShaderSource.wgsl: missing', 'missingField');
+  o.name = v_name;
+  o.wgsl = v_wgsl;
+  return o;
+}
+function encS_RenderFrameFile(w: Writer, v: T.RenderFrameFile): void {
+  w.byte(8); w.u32(v.formatVersion);
+  w.byte(18); w.str(v.sceneId);
+  w.byte(24); w.i64(v.frame);
+  w.byte(34); { const s = w.beginLd(); encS_RenderView(w, v.view); w.endLd(s); }
+  w.byte(42); { const s = w.beginLd(); encS_RenderFrameScene(w, v.scene); w.endLd(s); }
+  { const a = v.textures; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_RenderTextureRef(w, a[i]!); w.endLd(s); } } }
+  { const a = v.blobs; for (let i = 0; i < a.length; i++) { w.byte(58); { const s = w.beginLd(); encS_RenderBlob(w, a[i]!); w.endLd(s); } } }
+  { const a = v.shaders; for (let i = 0; i < a.length; i++) { w.byte(66); { const s = w.beginLd(); encS_RenderShaderSource(w, a[i]!); w.endLd(s); } } }
+}
+function decS_RenderFrameFile(r: Reader, end: number, o: any): T.RenderFrameFile {
+  const l_textures: T.RenderTextureRef[] = [];
+  const l_blobs: T.RenderBlob[] = [];
+  const l_shaders: T.RenderShaderSource[] = [];
+  let h_formatVersion = false;
+  let h_sceneId = false;
+  let h_frame = false;
+  let h_view = false;
+  let h_scene = false;
+  let v_formatVersion: number | undefined;
+  let v_sceneId: string | undefined;
+  let v_frame: number | undefined;
+  let v_view: T.RenderView | undefined;
+  let v_scene: T.RenderFrameScene | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_formatVersion = r.u32(); h_formatVersion = true; break;
+      case 18: v_sceneId = r.str(); h_sceneId = true; break;
+      case 24: v_frame = r.i64(); h_frame = true; break;
+      case 34: v_view = decS_RenderView(r, r.ldEnd(), {}); h_view = true; break;
+      case 42: v_scene = decS_RenderFrameScene(r, r.ldEnd(), {}); h_scene = true; break;
+      case 50: l_textures.push(decS_RenderTextureRef(r, r.ldEnd(), {})); break;
+      case 58: l_blobs.push(decS_RenderBlob(r, r.ldEnd(), {})); break;
+      case 66: l_shaders.push(decS_RenderShaderSource(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_formatVersion) throw new DecodeError('RenderFrameFile.formatVersion: missing', 'missingField');
+  if (!h_sceneId) throw new DecodeError('RenderFrameFile.sceneId: missing', 'missingField');
+  if (!h_frame) throw new DecodeError('RenderFrameFile.frame: missing', 'missingField');
+  if (!h_view) throw new DecodeError('RenderFrameFile.view: missing', 'missingField');
+  if (!h_scene) throw new DecodeError('RenderFrameFile.scene: missing', 'missingField');
+  o.formatVersion = v_formatVersion;
+  o.sceneId = v_sceneId;
+  o.frame = v_frame;
+  o.view = v_view;
+  o.scene = v_scene;
+  o.textures = l_textures;
+  o.blobs = l_blobs;
+  o.shaders = l_shaders;
+  return o;
+}
 function encU_Value(w: Writer, v: T.Value): void {
   switch (v.kind) {
     case 'none': w.varint(10); w.byte(0); return;
@@ -10762,6 +12316,34 @@ export const codecs = {
   FrameRelease: mk<T.FrameRelease>(encS_FrameRelease, (r, e) => decS_FrameRelease(r, e, {})),
   FramePing: mk<T.FramePing>(encS_FramePing, (r, e) => decS_FramePing(r, e, {})),
   FrameChannelMessage: mk<T.FrameChannelMessage>(encU_FrameChannelMessage, decU_FrameChannelMessage),
+  RenderEffectParam: mk<T.RenderEffectParam>(encS_RenderEffectParam, (r, e) => decS_RenderEffectParam(r, e, {})),
+  RenderEffect: mk<T.RenderEffect>(encS_RenderEffect, (r, e) => decS_RenderEffect(r, e, {})),
+  RenderSdf: mk<T.RenderSdf>(encS_RenderSdf, (r, e) => decS_RenderSdf(r, e, {})),
+  RenderColorMatrix: mk<T.RenderColorMatrix>(encS_RenderColorMatrix, (r, e) => decS_RenderColorMatrix(r, e, {})),
+  RenderGlass: mk<T.RenderGlass>(encS_RenderGlass, (r, e) => decS_RenderGlass(r, e, {})),
+  RenderMotionSample: mk<T.RenderMotionSample>(encS_RenderMotionSample, (r, e) => decS_RenderMotionSample(r, e, {})),
+  RenderAdjustment: mk<T.RenderAdjustment>(encS_RenderAdjustment, (r, e) => decS_RenderAdjustment(r, e, {})),
+  RenderMatte: mk<T.RenderMatte>(encS_RenderMatte, (r, e) => decS_RenderMatte(r, e, {})),
+  RenderDeformedMesh: mk<T.RenderDeformedMesh>(encS_RenderDeformedMesh, (r, e) => decS_RenderDeformedMesh(r, e, {})),
+  RenderGenerator: mk<T.RenderGenerator>(encS_RenderGenerator, (r, e) => decS_RenderGenerator(r, e, {})),
+  RenderMeshRange: mk<T.RenderMeshRange>(encS_RenderMeshRange, (r, e) => decS_RenderMeshRange(r, e, {})),
+  RenderPbrMaps: mk<T.RenderPbrMaps>(encS_RenderPbrMaps, (r, e) => decS_RenderPbrMaps(r, e, {})),
+  RenderExtrudedMesh: mk<T.RenderExtrudedMesh>(encS_RenderExtrudedMesh, (r, e) => decS_RenderExtrudedMesh(r, e, {})),
+  RenderShade3D: mk<T.RenderShade3D>(encS_RenderShade3D, (r, e) => decS_RenderShade3D(r, e, {})),
+  RenderThreeD: mk<T.RenderThreeD>(encS_RenderThreeD, (r, e) => decS_RenderThreeD(r, e, {})),
+  RenderDof: mk<T.RenderDof>(encS_RenderDof, (r, e) => decS_RenderDof(r, e, {})),
+  RenderCamera3D: mk<T.RenderCamera3D>(encS_RenderCamera3D, (r, e) => decS_RenderCamera3D(r, e, {})),
+  RenderLight3D: mk<T.RenderLight3D>(encS_RenderLight3D, (r, e) => decS_RenderLight3D(r, e, {})),
+  RenderEnvMap: mk<T.RenderEnvMap>(encS_RenderEnvMap, (r, e) => decS_RenderEnvMap(r, e, {})),
+  RenderSsao: mk<T.RenderSsao>(encS_RenderSsao, (r, e) => decS_RenderSsao(r, e, {})),
+  RenderPrecompFrame: mk<T.RenderPrecompFrame>(encS_RenderPrecompFrame, (r, e) => decS_RenderPrecompFrame(r, e, {})),
+  Renderable: mk<T.Renderable>(encS_Renderable, (r, e) => decS_Renderable(r, e, {})),
+  RenderFrameScene: mk<T.RenderFrameScene>(encS_RenderFrameScene, (r, e) => decS_RenderFrameScene(r, e, {})),
+  RenderView: mk<T.RenderView>(encS_RenderView, (r, e) => decS_RenderView(r, e, {})),
+  RenderTextureRef: mk<T.RenderTextureRef>(encS_RenderTextureRef, (r, e) => decS_RenderTextureRef(r, e, {})),
+  RenderBlob: mk<T.RenderBlob>(encS_RenderBlob, (r, e) => decS_RenderBlob(r, e, {})),
+  RenderShaderSource: mk<T.RenderShaderSource>(encS_RenderShaderSource, (r, e) => decS_RenderShaderSource(r, e, {})),
+  RenderFrameFile: mk<T.RenderFrameFile>(encS_RenderFrameFile, (r, e) => decS_RenderFrameFile(r, e, {})),
   Command: mk<T.Command>(encU_Command, decU_Command),
   CommandResult: mk<T.CommandResult>(encU_CommandResult, decU_CommandResult),
   Query: mk<T.Query>(encU_Query, decU_Query),

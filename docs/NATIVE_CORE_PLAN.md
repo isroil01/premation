@@ -226,6 +226,45 @@ engines (9/9, 0 mismatches; the C2-subset session 41/41 compared). Real app:
 | D4 | RAM and disk frame cache in the engine, sized by the machine, not by Chromium's heap | Cached playback of a heavy comp holds full rate | 3 wk |
 | D5 | Engine viewport default-on; the TS renderer stays behind the flag for one release | HUD frame time ≤ TS path on every bench comp | 2 wk |
 
+**D2 progress (2026-09-23): the render graph runs in C++ on Dawn, at parity
+on the whole golden suite.** Decoupled from the C++ document (still C2's
+subset) through a **serialized FrameScene** — engine-api family `Render`,
+`96_render.eapi`: the flat render description `snapshotToFrameScene` produces,
+the viewport, the colour-pipeline state, the WGSL of any plugin shader it
+names, and every sampled texture's texels (read back after upload, deduped by
+content hash) so TS-produced text / vector / video rasters ride along until
+E3/E1 produce them natively. The same struct is what the engine will build in
+process from its own document. `native/engine/src/render_graph/`:
+`graph.cpp` (passes, reads/writes/after, Kahn order with the TS tie-break,
+cycle report, orphaned-target pruning, per-pass failure isolation — GPU-free,
+unit-tested), `resource_pool.hpp` (keyed pools, frame-stamped GC, VRAM meter),
+`device.cpp` (Dawn: transient targets pooled by name + size, textures by
+content hash, pipelines by material × blend × format × samples, a per-frame
+uniform arena with DYNAMIC OFFSETS so bind groups are cached across frames —
+the TS path allocates one per draw), `composition_pass.cpp` + `effect_chain.cpp`
++ `threed.cpp` (CompositionPass ported branch by branch: precomps, mattes,
+adjustments, glass/backdrop blur, advanced blends, motion blur, deformed meshes,
+generators, plugin effects, the whole effect chain incl. every packFxBlock
+table effect, 3D depth groups with lights, env reflections, extruded/glTF PBR
+meshes, two shadow maps, SSAO, camera DOF gather, sealed-precomp 3D scopes).
+Every shader and material is extracted verbatim from packages/renderer
+(`shaders/extract.mjs`, 207 shaders, 211 materials, `--check` for drift).
+Colour: rgba16float scene-linear intermediates, the TS transfer functions and
+ODTs unchanged; OCIO is a hook on `ColorPipeline` (D3), output untouched.
+Parity: render-tests backend `native` (`premation-render --batch` over the
+FrameScenes the webgpu pass exports, compared against the webgpu frame of the
+same run, ratchet `native-baseline.json`): **428/428 frames ported, 428/428
+within tolerance, 421/428 bit-identical** (the other 7 are low-alpha pixels in
+backdrop-combine modes, ≤ 11/255). Bench (AMD 780M, both measured as render +
+submit + GPU idle): heavy 1080p comp 232 vs 295 ms (TS), 1500-layer comp
+8.3 vs 26.5 ms; C++ on the RTX 4060: 64.7 / 6.0 ms. **Remaining for D2**: the
+engine producing its own FrameScene from the C++ document (with D1/E*), wiring
+the graph into the render thread behind the engine flag (replacing C2's
+compositor), the OverlayPass and viewer-LUT blit (viewport-only, no golden
+covers them), mip-mapped textures, 32-bit float intermediates, the 7 non-exact
+low-alpha frames, clang-tidy/ASan runs over the graph, and a WebGPU-free
+software parity path for CI (the gate needs a real adapter today).
+
 ### Phase E — Media, audio, text, effects
 
 | Step | What | Exit | Size |

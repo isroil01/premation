@@ -21,9 +21,11 @@ versioning · §12 automation · §13 frames · §14 gaps against After Effects 
 §15 B2 implementation notes (what B3 deletes) · §16 files.
 
 Schema size today: **121 commands** (91 document edits, 25 controls, 5 project
-I/O — B1 miscounted; corrected in B2 from the meta table), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 314 structs,
-11 unions, 50 enums — `SCHEMA_COUNTS` in `generated/meta.ts` (C3 added the five
-frame-channel messages, their union and `PixelFormat`, §13).
+I/O — B1 miscounted; corrected in B2 from the meta table), **32 queries**, **27 events** (13 revisioned, 14 ephemeral), 342 structs,
+11 unions, 65 enums — `SCHEMA_COUNTS` in `generated/meta.ts` (C3 added the five
+frame-channel messages, their union and `PixelFormat`, §13; D2 added the
+`Render` family, `96_render.eapi` — the serialized FrameScene the C++ render
+graph consumes, a file format and in-process value, never a pipe message).
 
 ---
 

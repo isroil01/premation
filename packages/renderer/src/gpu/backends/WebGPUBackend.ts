@@ -124,6 +124,8 @@ export class WebGPUBackend implements RenderBackend {
     timestampQueries: false,
   };
 
+  /** Adapter vendor (`GPUAdapterInfo.vendor`, e.g. 'amd', 'nvidia'); '' when unknown. */
+  adapterVendor = '';
   private device!: GPUDevice;
   private context!: GPUCanvasContext;
   private surfaceFormat = 'bgra8unorm';
@@ -296,6 +298,9 @@ export class WebGPUBackend implements RenderBackend {
       adapter = await gpu.requestAdapter();
     }
     if (!adapter) throw new Error('No WebGPU adapter');
+    // Which GPU this backend renders on — recorded by the FrameScene exporter so
+    // the C++ parity renderer picks the same adapter (D2).
+    this.adapterVendor = String((adapter as { info?: { vendor?: string } }).info?.vendor ?? '');
 
     const hasFloat32Filterable = !!adapter.features?.has?.('float32-filterable');
     const requiredFeatures: string[] = [];
@@ -384,8 +389,12 @@ export class WebGPUBackend implements RenderBackend {
     // copyExternalImageToTexture (bitmap/canvas/video uploads) requires the
     // destination texture to have RENDER_ATTACHMENT usage per the WebGPU spec,
     // so `externalCopy` textures get it too — not just render targets.
+    // COPY_SRC so `readTextureAsync` can read an uploaded texture back — the
+    // FrameScene exporter (D2) ships the exact texels this backend sampled to the
+    // C++ renderer. Output-neutral: usage flags change what a texture may be
+    // used for, never what it holds.
     const usage =
-      TEX.TEXTURE_BINDING | TEX.COPY_DST | (desc.renderable || desc.externalCopy ? TEX.RENDER_ATTACHMENT : 0);
+      TEX.TEXTURE_BINDING | TEX.COPY_DST | TEX.COPY_SRC | (desc.renderable || desc.externalCopy ? TEX.RENDER_ATTACHMENT : 0);
     const maxDim = this.capabilities.maxTextureSize || 8192;
     const tw = Math.max(1, Math.min(maxDim, desc.width));
     const th = Math.max(1, Math.min(maxDim, desc.height));
@@ -834,6 +843,43 @@ export class WebGPUBackend implements RenderBackend {
       }
       buffer.unmap();
       return out;
+    } catch {
+      return null;
+    } finally {
+      try { buffer.destroy(); } catch { /* */ }
+    }
+  }
+
+  /**
+   * Read a sampled texture's level 0 back as tightly packed rows (top-down), in
+   * its own format — the bytes the shaders actually sample, after every upload
+   * conversion (premultiply, colour-space) has been applied.
+   *
+   * For the FrameScene exporter (D2 parity harness), never a frame path: it
+   * submits its own copy and awaits a map.
+   */
+  async readTextureAsync(texture: TextureHandle): Promise<{
+    width: number; height: number; format: string; data: Uint8Array; mipmapped: boolean;
+  } | null> {
+    const tex = texture.native as GPUTexture & { width?: number; height?: number; format?: string; mipLevelCount?: number };
+    const width = tex.width ?? 0;
+    const height = tex.height ?? 0;
+    const format = String(tex.format ?? 'rgba8unorm');
+    if (width <= 0 || height <= 0) return null;
+    const bpp = format === 'rgba32float' ? 16 : format === 'rgba16float' ? 8 : format === 'r8unorm' ? 1 : 4;
+    const rowBytes = width * bpp;
+    const bytesPerRow = Math.ceil(rowBytes / 256) * 256;
+    const buffer = this.device.createBuffer({ size: bytesPerRow * height, usage: BUF.COPY_DST | BUF.MAP_READ });
+    try {
+      const enc = this.device.createCommandEncoder();
+      enc.copyTextureToBuffer({ texture: tex }, { buffer, bytesPerRow }, { width, height });
+      this.device.queue.submit([enc.finish()]);
+      await buffer.mapAsync(typeof GPUMapMode !== 'undefined' ? GPUMapMode.READ : 0x0001);
+      const src = new Uint8Array(buffer.getMappedRange());
+      const data = new Uint8Array(rowBytes * height);
+      for (let y = 0; y < height; y++) data.set(src.subarray(y * bytesPerRow, y * bytesPerRow + rowBytes), y * rowBytes);
+      buffer.unmap();
+      return { width, height, format, data, mipmapped: (tex.mipLevelCount ?? 1) > 1 };
     } catch {
       return null;
     } finally {

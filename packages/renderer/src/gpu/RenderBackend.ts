@@ -216,6 +216,15 @@ export interface RenderBackend {
     height: number,
   ): Promise<Float32Array | null>;
 
+  /**
+   * Read a sampled texture's level 0 back as tightly packed top-down rows in its
+   * own format. Optional: WebGPU only. Used by the FrameScene exporter (the D2
+   * native-renderer parity harness), never on a frame path.
+   */
+  readTextureAsync?(texture: TextureHandle): Promise<{
+    width: number; height: number; format: string; data: Uint8Array; mipmapped: boolean;
+  } | null>;
+
   resize(width: number, height: number, devicePixelRatio: number): void;
 
   dispose(): void;

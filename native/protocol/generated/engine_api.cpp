@@ -1081,6 +1081,270 @@ bool from_u32(std::uint32_t n, PixelFormat& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(RenderableKind v) noexcept {
+  switch (v) {
+    case RenderableKind::rect: return "rect";
+    case RenderableKind::image: return "image";
+    case RenderableKind::video: return "video";
+    case RenderableKind::text: return "text";
+    case RenderableKind::path: return "path";
+    case RenderableKind::group: return "group";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderableKind& out) noexcept {
+  switch (n) {
+    case 0: out = RenderableKind::rect; return true;
+    case 1: out = RenderableKind::image; return true;
+    case 2: out = RenderableKind::video; return true;
+    case 3: out = RenderableKind::text; return true;
+    case 4: out = RenderableKind::path; return true;
+    case 5: out = RenderableKind::group; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderBlendMode v) noexcept {
+  switch (v) {
+    case RenderBlendMode::normal: return "normal";
+    case RenderBlendMode::multiply: return "multiply";
+    case RenderBlendMode::screen: return "screen";
+    case RenderBlendMode::overlay: return "overlay";
+    case RenderBlendMode::add: return "add";
+    case RenderBlendMode::subtract: return "subtract";
+    case RenderBlendMode::darken: return "darken";
+    case RenderBlendMode::lighten: return "lighten";
+    case RenderBlendMode::none: return "none";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderBlendMode& out) noexcept {
+  switch (n) {
+    case 0: out = RenderBlendMode::normal; return true;
+    case 1: out = RenderBlendMode::multiply; return true;
+    case 2: out = RenderBlendMode::screen; return true;
+    case 3: out = RenderBlendMode::overlay; return true;
+    case 4: out = RenderBlendMode::add; return true;
+    case 5: out = RenderBlendMode::subtract; return true;
+    case 6: out = RenderBlendMode::darken; return true;
+    case 7: out = RenderBlendMode::lighten; return true;
+    case 8: out = RenderBlendMode::none; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderSdfShape v) noexcept {
+  switch (v) {
+    case RenderSdfShape::rounded: return "rounded";
+    case RenderSdfShape::ellipse: return "ellipse";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderSdfShape& out) noexcept {
+  switch (n) {
+    case 0: out = RenderSdfShape::rounded; return true;
+    case 1: out = RenderSdfShape::ellipse; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderSampling v) noexcept {
+  switch (v) {
+    case RenderSampling::linear: return "linear";
+    case RenderSampling::nearest: return "nearest";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderSampling& out) noexcept {
+  switch (n) {
+    case 0: out = RenderSampling::linear; return true;
+    case 1: out = RenderSampling::nearest; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderMatteMode v) noexcept {
+  switch (v) {
+    case RenderMatteMode::alpha: return "alpha";
+    case RenderMatteMode::luma: return "luma";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderMatteMode& out) noexcept {
+  switch (n) {
+    case 0: out = RenderMatteMode::alpha; return true;
+    case 1: out = RenderMatteMode::luma; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderTextureFormat v) noexcept {
+  switch (v) {
+    case RenderTextureFormat::rgba8unorm: return "rgba8unorm";
+    case RenderTextureFormat::rgba8unorm_srgb: return "rgba8unormSrgb";
+    case RenderTextureFormat::bgra8unorm: return "bgra8unorm";
+    case RenderTextureFormat::rgba16float: return "rgba16float";
+    case RenderTextureFormat::rgba32float: return "rgba32float";
+    case RenderTextureFormat::r8unorm: return "r8unorm";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderTextureFormat& out) noexcept {
+  switch (n) {
+    case 0: out = RenderTextureFormat::rgba8unorm; return true;
+    case 1: out = RenderTextureFormat::rgba8unorm_srgb; return true;
+    case 2: out = RenderTextureFormat::bgra8unorm; return true;
+    case 3: out = RenderTextureFormat::rgba16float; return true;
+    case 4: out = RenderTextureFormat::rgba32float; return true;
+    case 5: out = RenderTextureFormat::r8unorm; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderLightType v) noexcept {
+  switch (v) {
+    case RenderLightType::ambient: return "ambient";
+    case RenderLightType::point: return "point";
+    case RenderLightType::spot: return "spot";
+    case RenderLightType::parallel: return "parallel";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderLightType& out) noexcept {
+  switch (n) {
+    case 0: out = RenderLightType::ambient; return true;
+    case 1: out = RenderLightType::point; return true;
+    case 2: out = RenderLightType::spot; return true;
+    case 3: out = RenderLightType::parallel; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderMeshRole v) noexcept {
+  switch (v) {
+    case RenderMeshRole::front: return "front";
+    case RenderMeshRole::back: return "back";
+    case RenderMeshRole::side: return "side";
+    case RenderMeshRole::bevel: return "bevel";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderMeshRole& out) noexcept {
+  switch (n) {
+    case 0: out = RenderMeshRole::front; return true;
+    case 1: out = RenderMeshRole::back; return true;
+    case 2: out = RenderMeshRole::side; return true;
+    case 3: out = RenderMeshRole::bevel; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderGeneratorPrimitive v) noexcept {
+  switch (v) {
+    case RenderGeneratorPrimitive::point: return "point";
+    case RenderGeneratorPrimitive::sprite: return "sprite";
+    case RenderGeneratorPrimitive::quad: return "quad";
+    case RenderGeneratorPrimitive::mesh: return "mesh";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderGeneratorPrimitive& out) noexcept {
+  switch (n) {
+    case 0: out = RenderGeneratorPrimitive::point; return true;
+    case 1: out = RenderGeneratorPrimitive::sprite; return true;
+    case 2: out = RenderGeneratorPrimitive::quad; return true;
+    case 3: out = RenderGeneratorPrimitive::mesh; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderGeneratorBlend v) noexcept {
+  switch (v) {
+    case RenderGeneratorBlend::normal: return "normal";
+    case RenderGeneratorBlend::add: return "add";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderGeneratorBlend& out) noexcept {
+  switch (n) {
+    case 0: out = RenderGeneratorBlend::normal; return true;
+    case 1: out = RenderGeneratorBlend::add; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderIndexFormat v) noexcept {
+  switch (v) {
+    case RenderIndexFormat::uint16: return "uint16";
+    case RenderIndexFormat::uint32: return "uint32";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderIndexFormat& out) noexcept {
+  switch (n) {
+    case 0: out = RenderIndexFormat::uint16; return true;
+    case 1: out = RenderIndexFormat::uint32; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderWorkingSpace v) noexcept {
+  switch (v) {
+    case RenderWorkingSpace::srgb_linear: return "srgbLinear";
+    case RenderWorkingSpace::aces_cg: return "acesCg";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderWorkingSpace& out) noexcept {
+  switch (n) {
+    case 0: out = RenderWorkingSpace::srgb_linear; return true;
+    case 1: out = RenderWorkingSpace::aces_cg; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderDisplayTransform v) noexcept {
+  switch (v) {
+    case RenderDisplayTransform::srgb: return "srgb";
+    case RenderDisplayTransform::aces: return "aces";
+    case RenderDisplayTransform::pq: return "pq";
+    case RenderDisplayTransform::hlg: return "hlg";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderDisplayTransform& out) noexcept {
+  switch (n) {
+    case 0: out = RenderDisplayTransform::srgb; return true;
+    case 1: out = RenderDisplayTransform::aces; return true;
+    case 2: out = RenderDisplayTransform::pq; return true;
+    case 3: out = RenderDisplayTransform::hlg; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderSsaoQuality v) noexcept {
+  switch (v) {
+    case RenderSsaoQuality::half: return "half";
+    case RenderSsaoQuality::full: return "full";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderSsaoQuality& out) noexcept {
+  switch (n) {
+    case 0: out = RenderSsaoQuality::half; return true;
+    case 1: out = RenderSsaoQuality::full; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderParamKind v) noexcept {
+  switch (v) {
+    case RenderParamKind::number: return "number";
+    case RenderParamKind::numbers: return "numbers";
+    case RenderParamKind::text: return "text";
+    case RenderParamKind::flag: return "flag";
+    case RenderParamKind::color: return "color";
+    case RenderParamKind::texts: return "texts";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderParamKind& out) noexcept {
+  switch (n) {
+    case 0: out = RenderParamKind::number; return true;
+    case 1: out = RenderParamKind::numbers; return true;
+    case 2: out = RenderParamKind::text; return true;
+    case 3: out = RenderParamKind::flag; return true;
+    case 4: out = RenderParamKind::color; return true;
+    case 5: out = RenderParamKind::texts; return true;
+    default: return false;
+  }
+}
 
 void encode(wire::Writer& w, const Empty& v) {
   (void)w;
@@ -17608,6 +17872,2151 @@ Status decode(wire::Reader& r, FrameChannelMessage& out) {
   return seen ? Status::ok : Status::unknown_variant;
 }
 
+void encode(wire::Writer& w, const RenderEffectParam& v) {
+  w.varint(10U); w.str(v.name);
+  w.varint(16U); w.varint(static_cast<std::uint32_t>(v.kind));
+  w.varint(25U); w.f64(v.number);
+  if (!v.numbers.empty()) { w.varint(34U); const std::size_t s = w.begin_ld(); for (const auto& e : v.numbers) w.f64(e); w.end_ld(s); }
+  w.varint(42U); w.str(v.text);
+  for (const auto& e : v.texts) { w.varint(50U); w.str(e); }
+}
+
+Status decode(wire::Reader& r, RenderEffectParam& out) {
+  bool has_name = false;
+  bool has_kind = false;
+  bool has_number = false;
+  bool has_text = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.name)) return Status::truncated;
+        has_name = true;
+        break;
+      }
+      case 16U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.kind)) return Status::bad_enum; }
+        has_kind = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.number)) return Status::truncated;
+        has_number = true;
+        break;
+      }
+      case 34U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.numbers.push_back(e); }
+        break;
+      }
+      case 42U: {
+        if (!r.str(out.text)) return Status::truncated;
+        has_text = true;
+        break;
+      }
+      case 50U: {
+        auto& e = out.texts.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_name) return Status::missing_field;
+  if (!has_kind) return Status::missing_field;
+  if (!has_number) return Status::missing_field;
+  if (!has_text) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderEffect& v) {
+  w.varint(10U); w.str(v.type);
+  for (const auto& e : v.params) { w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderEffect& out) {
+  bool has_type = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.type)) return Status::truncated;
+        has_type = true;
+        break;
+      }
+      case 18U: {
+        auto& e = out.params.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_type) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderSdf& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.shape));
+  w.varint(17U); w.f64(v.radius_px);
+  w.varint(25U); w.f64(v.width);
+  w.varint(33U); w.f64(v.height);
+}
+
+Status decode(wire::Reader& r, RenderSdf& out) {
+  bool has_shape = false;
+  bool has_radius_px = false;
+  bool has_width = false;
+  bool has_height = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.shape)) return Status::bad_enum; }
+        has_shape = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.radius_px)) return Status::truncated;
+        has_radius_px = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.width)) return Status::truncated;
+        has_width = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.height)) return Status::truncated;
+        has_height = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_shape) return Status::missing_field;
+  if (!has_radius_px) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderColorMatrix& v) {
+  if (!v.m.empty()) { w.varint(10U); const std::size_t s = w.begin_ld(); for (const auto& e : v.m) w.f64(e); w.end_ld(s); }
+  if (!v.offset.empty()) { w.varint(18U); const std::size_t s = w.begin_ld(); for (const auto& e : v.offset) w.f64(e); w.end_ld(s); }
+}
+
+Status decode(wire::Reader& r, RenderColorMatrix& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.m.push_back(e); }
+        break;
+      }
+      case 18U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.offset.push_back(e); }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderGlass& v) {
+  w.varint(9U); w.f64(v.refraction);
+  w.varint(17U); w.f64(v.edge_width);
+  w.varint(25U); w.f64(v.aberration);
+  w.varint(33U); w.f64(v.saturation);
+  w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, v.tint); w.end_ld(s); }
+  w.varint(49U); w.f64(v.tint_opacity);
+  w.varint(58U); { const std::size_t s = w.begin_ld(); encode(w, v.rim); w.end_ld(s); }
+  w.varint(65U); w.f64(v.rim_opacity);
+  w.varint(73U); w.f64(v.rim_width);
+  w.varint(81U); w.f64(v.rim_angle);
+  w.varint(89U); w.f64(v.specular_angle);
+  w.varint(97U); w.f64(v.specular_intensity);
+  w.varint(105U); w.f64(v.specular_falloff);
+  w.varint(113U); w.f64(v.grain);
+}
+
+Status decode(wire::Reader& r, RenderGlass& out) {
+  bool has_refraction = false;
+  bool has_edge_width = false;
+  bool has_aberration = false;
+  bool has_saturation = false;
+  bool has_tint = false;
+  bool has_tint_opacity = false;
+  bool has_rim = false;
+  bool has_rim_opacity = false;
+  bool has_rim_width = false;
+  bool has_rim_angle = false;
+  bool has_specular_angle = false;
+  bool has_specular_intensity = false;
+  bool has_specular_falloff = false;
+  bool has_grain = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.refraction)) return Status::truncated;
+        has_refraction = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.edge_width)) return Status::truncated;
+        has_edge_width = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.aberration)) return Status::truncated;
+        has_aberration = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.saturation)) return Status::truncated;
+        has_saturation = true;
+        break;
+      }
+      case 42U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.tint); st != Status::ok) return st; }
+        has_tint = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.tint_opacity)) return Status::truncated;
+        has_tint_opacity = true;
+        break;
+      }
+      case 58U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.rim); st != Status::ok) return st; }
+        has_rim = true;
+        break;
+      }
+      case 65U: {
+        if (!r.f64(out.rim_opacity)) return Status::truncated;
+        has_rim_opacity = true;
+        break;
+      }
+      case 73U: {
+        if (!r.f64(out.rim_width)) return Status::truncated;
+        has_rim_width = true;
+        break;
+      }
+      case 81U: {
+        if (!r.f64(out.rim_angle)) return Status::truncated;
+        has_rim_angle = true;
+        break;
+      }
+      case 89U: {
+        if (!r.f64(out.specular_angle)) return Status::truncated;
+        has_specular_angle = true;
+        break;
+      }
+      case 97U: {
+        if (!r.f64(out.specular_intensity)) return Status::truncated;
+        has_specular_intensity = true;
+        break;
+      }
+      case 105U: {
+        if (!r.f64(out.specular_falloff)) return Status::truncated;
+        has_specular_falloff = true;
+        break;
+      }
+      case 113U: {
+        if (!r.f64(out.grain)) return Status::truncated;
+        has_grain = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_refraction) return Status::missing_field;
+  if (!has_edge_width) return Status::missing_field;
+  if (!has_aberration) return Status::missing_field;
+  if (!has_saturation) return Status::missing_field;
+  if (!has_tint) return Status::missing_field;
+  if (!has_tint_opacity) return Status::missing_field;
+  if (!has_rim) return Status::missing_field;
+  if (!has_rim_opacity) return Status::missing_field;
+  if (!has_rim_width) return Status::missing_field;
+  if (!has_rim_angle) return Status::missing_field;
+  if (!has_specular_angle) return Status::missing_field;
+  if (!has_specular_intensity) return Status::missing_field;
+  if (!has_specular_falloff) return Status::missing_field;
+  if (!has_grain) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderMotionSample& v) {
+  if (!v.model_matrix.empty()) { w.varint(10U); const std::size_t s = w.begin_ld(); for (const auto& e : v.model_matrix) w.f64(e); w.end_ld(s); }
+  w.varint(17U); w.f64(v.opacity);
+}
+
+Status decode(wire::Reader& r, RenderMotionSample& out) {
+  bool has_opacity = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.model_matrix.push_back(e); }
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.opacity)) return Status::truncated;
+        has_opacity = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_opacity) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderAdjustment& v) {
+  if (v.color_matrix.has_value()) { w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, *v.color_matrix); w.end_ld(s); } }
+  if (v.lut_texture_key.has_value()) { w.varint(18U); w.str(*v.lut_texture_key); }
+}
+
+Status decode(wire::Reader& r, RenderAdjustment& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        RenderColorMatrix e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.color_matrix = std::move(e);
+        break;
+      }
+      case 18U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.lut_texture_key = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderMatte& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.mode));
+  w.varint(16U); w.boolean(v.inverted);
+  w.varint(26U); w.str(v.source_id);
+}
+
+Status decode(wire::Reader& r, RenderMatte& out) {
+  bool has_mode = false;
+  bool has_inverted = false;
+  bool has_source_id = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.mode)) return Status::bad_enum; }
+        has_mode = true;
+        break;
+      }
+      case 16U: {
+        if (!r.boolean(out.inverted)) return Status::truncated;
+        has_inverted = true;
+        break;
+      }
+      case 26U: {
+        if (!r.str(out.source_id)) return Status::truncated;
+        has_source_id = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_mode) return Status::missing_field;
+  if (!has_inverted) return Status::missing_field;
+  if (!has_source_id) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderDeformedMesh& v) {
+  w.varint(10U); w.bytes(v.vertices);
+  w.varint(18U); w.bytes(v.triangles);
+  if (v.depth.has_value()) { w.varint(26U); w.bytes(*v.depth); }
+}
+
+Status decode(wire::Reader& r, RenderDeformedMesh& out) {
+  bool has_vertices = false;
+  bool has_triangles = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.bytes(out.vertices)) return Status::truncated;
+        has_vertices = true;
+        break;
+      }
+      case 18U: {
+        if (!r.bytes(out.triangles)) return Status::truncated;
+        has_triangles = true;
+        break;
+      }
+      case 26U: {
+        std::vector<std::uint8_t> e;
+        if (!r.bytes(e)) return Status::truncated;
+        out.depth = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_vertices) return Status::missing_field;
+  if (!has_triangles) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderGenerator& v) {
+  w.varint(10U); w.bytes(v.instances);
+  w.varint(16U); w.varint(v.count);
+  w.varint(24U); w.varint(v.stride);
+  w.varint(32U); w.varint(static_cast<std::uint32_t>(v.primitive));
+  if (v.mesh_vertices.has_value()) { w.varint(42U); w.bytes(*v.mesh_vertices); }
+  if (v.mesh_indices.has_value()) { w.varint(50U); w.bytes(*v.mesh_indices); }
+  w.varint(56U); w.varint(static_cast<std::uint32_t>(v.mesh_index_format));
+  if (v.texture_key.has_value()) { w.varint(66U); w.str(*v.texture_key); }
+  if (!v.cell_size.empty()) { w.varint(74U); const std::size_t s = w.begin_ld(); for (const auto& e : v.cell_size) w.f64(e); w.end_ld(s); }
+  w.varint(80U); w.varint(static_cast<std::uint32_t>(v.blend));
+  w.varint(89U); w.f64(v.revision);
+  w.varint(97U); w.f64(v.width);
+  w.varint(105U); w.f64(v.height);
+  if (v.perspective.has_value()) { w.varint(113U); w.f64(*v.perspective); }
+}
+
+Status decode(wire::Reader& r, RenderGenerator& out) {
+  bool has_instances = false;
+  bool has_count = false;
+  bool has_stride = false;
+  bool has_primitive = false;
+  bool has_mesh_index_format = false;
+  bool has_blend = false;
+  bool has_revision = false;
+  bool has_width = false;
+  bool has_height = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.bytes(out.instances)) return Status::truncated;
+        has_instances = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.count)) return Status::bad_value;
+        has_count = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.stride)) return Status::bad_value;
+        has_stride = true;
+        break;
+      }
+      case 32U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.primitive)) return Status::bad_enum; }
+        has_primitive = true;
+        break;
+      }
+      case 42U: {
+        std::vector<std::uint8_t> e;
+        if (!r.bytes(e)) return Status::truncated;
+        out.mesh_vertices = std::move(e);
+        break;
+      }
+      case 50U: {
+        std::vector<std::uint8_t> e;
+        if (!r.bytes(e)) return Status::truncated;
+        out.mesh_indices = std::move(e);
+        break;
+      }
+      case 56U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.mesh_index_format)) return Status::bad_enum; }
+        has_mesh_index_format = true;
+        break;
+      }
+      case 66U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.texture_key = std::move(e);
+        break;
+      }
+      case 74U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.cell_size.push_back(e); }
+        break;
+      }
+      case 80U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.blend)) return Status::bad_enum; }
+        has_blend = true;
+        break;
+      }
+      case 89U: {
+        if (!r.f64(out.revision)) return Status::truncated;
+        has_revision = true;
+        break;
+      }
+      case 97U: {
+        if (!r.f64(out.width)) return Status::truncated;
+        has_width = true;
+        break;
+      }
+      case 105U: {
+        if (!r.f64(out.height)) return Status::truncated;
+        has_height = true;
+        break;
+      }
+      case 113U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.perspective = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_instances) return Status::missing_field;
+  if (!has_count) return Status::missing_field;
+  if (!has_stride) return Status::missing_field;
+  if (!has_primitive) return Status::missing_field;
+  if (!has_mesh_index_format) return Status::missing_field;
+  if (!has_blend) return Status::missing_field;
+  if (!has_revision) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderMeshRange& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.role));
+  w.varint(16U); w.varint(v.first);
+  w.varint(24U); w.varint(v.count);
+  w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, v.color); w.end_ld(s); }
+  w.varint(41U); w.f64(v.gain);
+  w.varint(48U); w.boolean(v.textured);
+  if (v.texture_key.has_value()) { w.varint(58U); w.str(*v.texture_key); }
+}
+
+Status decode(wire::Reader& r, RenderMeshRange& out) {
+  bool has_role = false;
+  bool has_first = false;
+  bool has_count = false;
+  bool has_color = false;
+  bool has_gain = false;
+  bool has_textured = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.role)) return Status::bad_enum; }
+        has_role = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.first)) return Status::bad_value;
+        has_first = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.count)) return Status::bad_value;
+        has_count = true;
+        break;
+      }
+      case 34U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.color); st != Status::ok) return st; }
+        has_color = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.gain)) return Status::truncated;
+        has_gain = true;
+        break;
+      }
+      case 48U: {
+        if (!r.boolean(out.textured)) return Status::truncated;
+        has_textured = true;
+        break;
+      }
+      case 58U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.texture_key = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_role) return Status::missing_field;
+  if (!has_first) return Status::missing_field;
+  if (!has_count) return Status::missing_field;
+  if (!has_color) return Status::missing_field;
+  if (!has_gain) return Status::missing_field;
+  if (!has_textured) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderPbrMaps& v) {
+  if (v.normal_key.has_value()) { w.varint(10U); w.str(*v.normal_key); }
+  if (v.metallic_roughness_key.has_value()) { w.varint(18U); w.str(*v.metallic_roughness_key); }
+  if (v.occlusion_key.has_value()) { w.varint(26U); w.str(*v.occlusion_key); }
+  if (v.emissive_key.has_value()) { w.varint(34U); w.str(*v.emissive_key); }
+  w.varint(41U); w.f64(v.normal_scale);
+  w.varint(49U); w.f64(v.occlusion_strength);
+  if (!v.emissive.empty()) { w.varint(58U); const std::size_t s = w.begin_ld(); for (const auto& e : v.emissive) w.f64(e); w.end_ld(s); }
+}
+
+Status decode(wire::Reader& r, RenderPbrMaps& out) {
+  bool has_normal_scale = false;
+  bool has_occlusion_strength = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.normal_key = std::move(e);
+        break;
+      }
+      case 18U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.metallic_roughness_key = std::move(e);
+        break;
+      }
+      case 26U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.occlusion_key = std::move(e);
+        break;
+      }
+      case 34U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.emissive_key = std::move(e);
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.normal_scale)) return Status::truncated;
+        has_normal_scale = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.occlusion_strength)) return Status::truncated;
+        has_occlusion_strength = true;
+        break;
+      }
+      case 58U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.emissive.push_back(e); }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_normal_scale) return Status::missing_field;
+  if (!has_occlusion_strength) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderExtrudedMesh& v) {
+  w.varint(10U); w.str(v.key);
+  w.varint(18U); w.bytes(v.vertices);
+  w.varint(26U); w.bytes(v.indices);
+  w.varint(32U); w.varint(static_cast<std::uint32_t>(v.index_format));
+  for (const auto& e : v.ranges) { w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.pbr.has_value()) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, *v.pbr); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
+  bool has_key = false;
+  bool has_vertices = false;
+  bool has_indices = false;
+  bool has_index_format = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.key)) return Status::truncated;
+        has_key = true;
+        break;
+      }
+      case 18U: {
+        if (!r.bytes(out.vertices)) return Status::truncated;
+        has_vertices = true;
+        break;
+      }
+      case 26U: {
+        if (!r.bytes(out.indices)) return Status::truncated;
+        has_indices = true;
+        break;
+      }
+      case 32U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.index_format)) return Status::bad_enum; }
+        has_index_format = true;
+        break;
+      }
+      case 42U: {
+        auto& e = out.ranges.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 50U: {
+        RenderPbrMaps e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.pbr = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_key) return Status::missing_field;
+  if (!has_vertices) return Status::missing_field;
+  if (!has_indices) return Status::missing_field;
+  if (!has_index_format) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderShade3D& v) {
+  w.varint(9U); w.f64(v.specular);
+  w.varint(17U); w.f64(v.shininess);
+  if (v.metal.has_value()) { w.varint(25U); w.f64(*v.metal); }
+  if (v.roughness.has_value()) { w.varint(33U); w.f64(*v.roughness); }
+  if (v.toon_bands.has_value()) { w.varint(41U); w.f64(*v.toon_bands); }
+  if (!v.quad_gain.empty()) { w.varint(50U); const std::size_t s = w.begin_ld(); for (const auto& e : v.quad_gain) w.f64(e); w.end_ld(s); }
+  if (v.one_sided.has_value()) { w.varint(56U); w.boolean(*v.one_sided); }
+  if (v.ambient.has_value()) { w.varint(65U); w.f64(*v.ambient); }
+  if (v.diffuse.has_value()) { w.varint(73U); w.f64(*v.diffuse); }
+  if (v.reflection_intensity.has_value()) { w.varint(81U); w.f64(*v.reflection_intensity); }
+  if (v.reflection_sharpness.has_value()) { w.varint(89U); w.f64(*v.reflection_sharpness); }
+  if (v.reflection_rolloff.has_value()) { w.varint(97U); w.f64(*v.reflection_rolloff); }
+  if (v.transparency.has_value()) { w.varint(105U); w.f64(*v.transparency); }
+  if (v.transparency_rolloff.has_value()) { w.varint(113U); w.f64(*v.transparency_rolloff); }
+  if (v.ior.has_value()) { w.varint(121U); w.f64(*v.ior); }
+  if (v.accepts_shadows.has_value()) { w.varint(128U); w.boolean(*v.accepts_shadows); }
+}
+
+Status decode(wire::Reader& r, RenderShade3D& out) {
+  bool has_specular = false;
+  bool has_shininess = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.specular)) return Status::truncated;
+        has_specular = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.shininess)) return Status::truncated;
+        has_shininess = true;
+        break;
+      }
+      case 25U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.metal = std::move(e);
+        break;
+      }
+      case 33U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.roughness = std::move(e);
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.toon_bands = std::move(e);
+        break;
+      }
+      case 50U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.quad_gain.push_back(e); }
+        break;
+      }
+      case 56U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.one_sided = std::move(e);
+        break;
+      }
+      case 65U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.ambient = std::move(e);
+        break;
+      }
+      case 73U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.diffuse = std::move(e);
+        break;
+      }
+      case 81U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.reflection_intensity = std::move(e);
+        break;
+      }
+      case 89U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.reflection_sharpness = std::move(e);
+        break;
+      }
+      case 97U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.reflection_rolloff = std::move(e);
+        break;
+      }
+      case 105U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.transparency = std::move(e);
+        break;
+      }
+      case 113U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.transparency_rolloff = std::move(e);
+        break;
+      }
+      case 121U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.ior = std::move(e);
+        break;
+      }
+      case 128U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.accepts_shadows = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_specular) return Status::missing_field;
+  if (!has_shininess) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderThreeD& v) {
+  if (!v.model.empty()) { w.varint(10U); const std::size_t s = w.begin_ld(); for (const auto& e : v.model) w.f64(e); w.end_ld(s); }
+  if (v.casts_shadow.has_value()) { w.varint(16U); w.boolean(*v.casts_shadow); }
+  if (v.shade.has_value()) { w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, *v.shade); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderThreeD& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.model.push_back(e); }
+        break;
+      }
+      case 16U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.casts_shadow = std::move(e);
+        break;
+      }
+      case 26U: {
+        RenderShade3D e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.shade = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderDof& v) {
+  w.varint(9U); w.f64(v.strength);
+  w.varint(17U); w.f64(v.focus);
+  w.varint(25U); w.f64(v.aperture);
+  if (v.focal_length.has_value()) { w.varint(33U); w.f64(*v.focal_length); }
+  if (v.f_stop.has_value()) { w.varint(41U); w.f64(*v.f_stop); }
+  if (v.iris_blades.has_value()) { w.varint(49U); w.f64(*v.iris_blades); }
+  if (v.iris_roundness.has_value()) { w.varint(57U); w.f64(*v.iris_roundness); }
+  if (v.highlight_gain.has_value()) { w.varint(65U); w.f64(*v.highlight_gain); }
+  if (v.iris_rotation.has_value()) { w.varint(73U); w.f64(*v.iris_rotation); }
+  if (v.iris_aspect.has_value()) { w.varint(81U); w.f64(*v.iris_aspect); }
+  if (v.highlight_threshold.has_value()) { w.varint(89U); w.f64(*v.highlight_threshold); }
+  if (v.highlight_saturation.has_value()) { w.varint(97U); w.f64(*v.highlight_saturation); }
+  if (v.diffraction_fringe.has_value()) { w.varint(105U); w.f64(*v.diffraction_fringe); }
+}
+
+Status decode(wire::Reader& r, RenderDof& out) {
+  bool has_strength = false;
+  bool has_focus = false;
+  bool has_aperture = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.strength)) return Status::truncated;
+        has_strength = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.focus)) return Status::truncated;
+        has_focus = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.aperture)) return Status::truncated;
+        has_aperture = true;
+        break;
+      }
+      case 33U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.focal_length = std::move(e);
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.f_stop = std::move(e);
+        break;
+      }
+      case 49U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.iris_blades = std::move(e);
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.iris_roundness = std::move(e);
+        break;
+      }
+      case 65U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.highlight_gain = std::move(e);
+        break;
+      }
+      case 73U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.iris_rotation = std::move(e);
+        break;
+      }
+      case 81U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.iris_aspect = std::move(e);
+        break;
+      }
+      case 89U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.highlight_threshold = std::move(e);
+        break;
+      }
+      case 97U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.highlight_saturation = std::move(e);
+        break;
+      }
+      case 105U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.diffraction_fringe = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_strength) return Status::missing_field;
+  if (!has_focus) return Status::missing_field;
+  if (!has_aperture) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderCamera3D& v) {
+  if (!v.view.empty()) { w.varint(10U); const std::size_t s = w.begin_ld(); for (const auto& e : v.view) w.f64(e); w.end_ld(s); }
+  if (!v.projection.empty()) { w.varint(18U); const std::size_t s = w.begin_ld(); for (const auto& e : v.projection) w.f64(e); w.end_ld(s); }
+  if (!v.eye.empty()) { w.varint(26U); const std::size_t s = w.begin_ld(); for (const auto& e : v.eye) w.f64(e); w.end_ld(s); }
+  if (v.dof.has_value()) { w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, *v.dof); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderCamera3D& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.view.push_back(e); }
+        break;
+      }
+      case 18U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.projection.push_back(e); }
+        break;
+      }
+      case 26U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.eye.push_back(e); }
+        break;
+      }
+      case 34U: {
+        RenderDof e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.dof = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderLight3D& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.type));
+  if (!v.color.empty()) { w.varint(18U); const std::size_t s = w.begin_ld(); for (const auto& e : v.color) w.f64(e); w.end_ld(s); }
+  w.varint(25U); w.f64(v.gain);
+  w.varint(33U); w.f64(v.x);
+  w.varint(41U); w.f64(v.y);
+  w.varint(49U); w.f64(v.z);
+  w.varint(57U); w.f64(v.radius);
+  w.varint(65U); w.f64(v.aim_x);
+  w.varint(73U); w.f64(v.aim_y);
+  w.varint(81U); w.f64(v.aim_z);
+  w.varint(89U); w.f64(v.half_cone_rad);
+  w.varint(97U); w.f64(v.cone_feather_rad);
+  w.varint(105U); w.f64(v.falloff_mode);
+  w.varint(113U); w.f64(v.falloff_distance);
+  if (v.shadow_map.has_value()) { w.varint(120U); w.boolean(*v.shadow_map); }
+  if (v.shadow_map_size.has_value()) { w.varint(129U); w.f64(*v.shadow_map_size); }
+  if (v.shadow_bias.has_value()) { w.varint(137U); w.f64(*v.shadow_bias); }
+  if (v.shadow_softness.has_value()) { w.varint(145U); w.f64(*v.shadow_softness); }
+  if (v.shadow_darkness.has_value()) { w.varint(153U); w.f64(*v.shadow_darkness); }
+}
+
+Status decode(wire::Reader& r, RenderLight3D& out) {
+  bool has_type = false;
+  bool has_gain = false;
+  bool has_x = false;
+  bool has_y = false;
+  bool has_z = false;
+  bool has_radius = false;
+  bool has_aim_x = false;
+  bool has_aim_y = false;
+  bool has_aim_z = false;
+  bool has_half_cone_rad = false;
+  bool has_cone_feather_rad = false;
+  bool has_falloff_mode = false;
+  bool has_falloff_distance = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.type)) return Status::bad_enum; }
+        has_type = true;
+        break;
+      }
+      case 18U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.color.push_back(e); }
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.gain)) return Status::truncated;
+        has_gain = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.x)) return Status::truncated;
+        has_x = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.y)) return Status::truncated;
+        has_y = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.z)) return Status::truncated;
+        has_z = true;
+        break;
+      }
+      case 57U: {
+        if (!r.f64(out.radius)) return Status::truncated;
+        has_radius = true;
+        break;
+      }
+      case 65U: {
+        if (!r.f64(out.aim_x)) return Status::truncated;
+        has_aim_x = true;
+        break;
+      }
+      case 73U: {
+        if (!r.f64(out.aim_y)) return Status::truncated;
+        has_aim_y = true;
+        break;
+      }
+      case 81U: {
+        if (!r.f64(out.aim_z)) return Status::truncated;
+        has_aim_z = true;
+        break;
+      }
+      case 89U: {
+        if (!r.f64(out.half_cone_rad)) return Status::truncated;
+        has_half_cone_rad = true;
+        break;
+      }
+      case 97U: {
+        if (!r.f64(out.cone_feather_rad)) return Status::truncated;
+        has_cone_feather_rad = true;
+        break;
+      }
+      case 105U: {
+        if (!r.f64(out.falloff_mode)) return Status::truncated;
+        has_falloff_mode = true;
+        break;
+      }
+      case 113U: {
+        if (!r.f64(out.falloff_distance)) return Status::truncated;
+        has_falloff_distance = true;
+        break;
+      }
+      case 120U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.shadow_map = std::move(e);
+        break;
+      }
+      case 129U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.shadow_map_size = std::move(e);
+        break;
+      }
+      case 137U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.shadow_bias = std::move(e);
+        break;
+      }
+      case 145U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.shadow_softness = std::move(e);
+        break;
+      }
+      case 153U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.shadow_darkness = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_type) return Status::missing_field;
+  if (!has_gain) return Status::missing_field;
+  if (!has_x) return Status::missing_field;
+  if (!has_y) return Status::missing_field;
+  if (!has_z) return Status::missing_field;
+  if (!has_radius) return Status::missing_field;
+  if (!has_aim_x) return Status::missing_field;
+  if (!has_aim_y) return Status::missing_field;
+  if (!has_aim_z) return Status::missing_field;
+  if (!has_half_cone_rad) return Status::missing_field;
+  if (!has_cone_feather_rad) return Status::missing_field;
+  if (!has_falloff_mode) return Status::missing_field;
+  if (!has_falloff_distance) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderEnvMap& v) {
+  w.varint(10U); w.str(v.id);
+  w.varint(16U); w.varint(v.width);
+  w.varint(24U); w.varint(v.height);
+  w.varint(32U); w.varint(v.levels);
+  w.varint(41U); w.f64(v.scale);
+  w.varint(50U); w.bytes(v.data);
+  w.varint(57U); w.f64(v.intensity);
+  w.varint(65U); w.f64(v.rotation_deg);
+}
+
+Status decode(wire::Reader& r, RenderEnvMap& out) {
+  bool has_id = false;
+  bool has_width = false;
+  bool has_height = false;
+  bool has_levels = false;
+  bool has_scale = false;
+  bool has_data = false;
+  bool has_intensity = false;
+  bool has_rotation_deg = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.id)) return Status::truncated;
+        has_id = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.width)) return Status::bad_value;
+        has_width = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.height)) return Status::bad_value;
+        has_height = true;
+        break;
+      }
+      case 32U: {
+        if (!r.u32(out.levels)) return Status::bad_value;
+        has_levels = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.scale)) return Status::truncated;
+        has_scale = true;
+        break;
+      }
+      case 50U: {
+        if (!r.bytes(out.data)) return Status::truncated;
+        has_data = true;
+        break;
+      }
+      case 57U: {
+        if (!r.f64(out.intensity)) return Status::truncated;
+        has_intensity = true;
+        break;
+      }
+      case 65U: {
+        if (!r.f64(out.rotation_deg)) return Status::truncated;
+        has_rotation_deg = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_id) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  if (!has_levels) return Status::missing_field;
+  if (!has_scale) return Status::missing_field;
+  if (!has_data) return Status::missing_field;
+  if (!has_intensity) return Status::missing_field;
+  if (!has_rotation_deg) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderSsao& v) {
+  w.varint(8U); w.boolean(v.enabled);
+  w.varint(17U); w.f64(v.radius);
+  w.varint(25U); w.f64(v.intensity);
+  w.varint(32U); w.varint(static_cast<std::uint32_t>(v.quality));
+}
+
+Status decode(wire::Reader& r, RenderSsao& out) {
+  bool has_enabled = false;
+  bool has_radius = false;
+  bool has_intensity = false;
+  bool has_quality = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.boolean(out.enabled)) return Status::truncated;
+        has_enabled = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.radius)) return Status::truncated;
+        has_radius = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.intensity)) return Status::truncated;
+        has_intensity = true;
+        break;
+      }
+      case 32U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.quality)) return Status::bad_enum; }
+        has_quality = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_enabled) return Status::missing_field;
+  if (!has_radius) return Status::missing_field;
+  if (!has_intensity) return Status::missing_field;
+  if (!has_quality) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderPrecompFrame& v) {
+  if (v.camera3d.has_value()) { w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, *v.camera3d); w.end_ld(s); } }
+  for (const auto& e : v.lights3d) { w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.env_map.has_value()) { w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, *v.env_map); w.end_ld(s); } }
+  if (v.flat_width.has_value()) { w.varint(33U); w.f64(*v.flat_width); }
+  if (v.flat_height.has_value()) { w.varint(41U); w.f64(*v.flat_height); }
+}
+
+Status decode(wire::Reader& r, RenderPrecompFrame& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        RenderCamera3D e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.camera3d = std::move(e);
+        break;
+      }
+      case 18U: {
+        auto& e = out.lights3d.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 26U: {
+        RenderEnvMap e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.env_map = std::move(e);
+        break;
+      }
+      case 33U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.flat_width = std::move(e);
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.flat_height = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const Renderable& v) {
+  w.varint(10U); w.str(v.id);
+  w.varint(16U); w.varint(static_cast<std::uint32_t>(v.kind));
+  if (!v.model_matrix.empty()) { w.varint(26U); const std::size_t s = w.begin_ld(); for (const auto& e : v.model_matrix) w.f64(e); w.end_ld(s); }
+  w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, v.bounds); w.end_ld(s); }
+  w.varint(41U); w.f64(v.opacity);
+  w.varint(48U); w.varint(static_cast<std::uint32_t>(v.blend));
+  if (v.advanced_blend.has_value()) { w.varint(57U); w.f64(*v.advanced_blend); }
+  w.varint(64U); w.boolean(v.preserve_transparency);
+  w.varint(72U); w.boolean(v.depth_exempt);
+  if (v.backdrop_blur.has_value()) { w.varint(81U); w.f64(*v.backdrop_blur); }
+  if (v.glass.has_value()) { w.varint(90U); { const std::size_t s = w.begin_ld(); encode(w, *v.glass); w.end_ld(s); } }
+  w.varint(96U); w.varint(static_cast<std::uint32_t>(v.sampling));
+  if (v.color.has_value()) { w.varint(106U); { const std::size_t s = w.begin_ld(); encode(w, *v.color); w.end_ld(s); } }
+  if (v.sdf.has_value()) { w.varint(114U); { const std::size_t s = w.begin_ld(); encode(w, *v.sdf); w.end_ld(s); } }
+  if (v.color_matrix.has_value()) { w.varint(122U); { const std::size_t s = w.begin_ld(); encode(w, *v.color_matrix); w.end_ld(s); } }
+  for (const auto& e : v.effects) { w.varint(130U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.texture_key.has_value()) { w.varint(138U); w.str(*v.texture_key); }
+  if (v.uv_rect.has_value()) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, *v.uv_rect); w.end_ld(s); } }
+  w.varint(152U); w.boolean(v.clip);
+  for (const auto& e : v.motion_samples) { w.varint(162U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (!v.corner_pin.empty()) { w.varint(170U); const std::size_t s = w.begin_ld(); for (const auto& e : v.corner_pin) w.f64(e); w.end_ld(s); }
+  if (v.mask_id.has_value()) { w.varint(178U); w.str(*v.mask_id); }
+  if (v.mask_texture_key.has_value()) { w.varint(186U); w.str(*v.mask_texture_key); }
+  if (v.lut_texture_key.has_value()) { w.varint(194U); w.str(*v.lut_texture_key); }
+  if (v.adjustment.has_value()) { w.varint(202U); { const std::size_t s = w.begin_ld(); encode(w, *v.adjustment); w.end_ld(s); } }
+  if (v.matte.has_value()) { w.varint(210U); { const std::size_t s = w.begin_ld(); encode(w, *v.matte); w.end_ld(s); } }
+  w.varint(216U); w.boolean(v.matte_source);
+  w.varint(224U); w.boolean(v.light_wash);
+  if (v.precomp.has_value()) { w.varint(234U); { const std::size_t s = w.begin_ld(); encode(w, *v.precomp); w.end_ld(s); } }
+  for (const auto& e : v.precomp_children) { w.varint(242U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.generator.has_value()) { w.varint(250U); { const std::size_t s = w.begin_ld(); encode(w, *v.generator); w.end_ld(s); } }
+  if (v.deformed_mesh.has_value()) { w.varint(258U); { const std::size_t s = w.begin_ld(); encode(w, *v.deformed_mesh); w.end_ld(s); } }
+  if (v.extruded_mesh.has_value()) { w.varint(266U); { const std::size_t s = w.begin_ld(); encode(w, *v.extruded_mesh); w.end_ld(s); } }
+  if (v.three_d.has_value()) { w.varint(274U); { const std::size_t s = w.begin_ld(); encode(w, *v.three_d); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, Renderable& out) {
+  bool has_id = false;
+  bool has_kind = false;
+  bool has_bounds = false;
+  bool has_opacity = false;
+  bool has_blend = false;
+  bool has_preserve_transparency = false;
+  bool has_depth_exempt = false;
+  bool has_sampling = false;
+  bool has_clip = false;
+  bool has_matte_source = false;
+  bool has_light_wash = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.id)) return Status::truncated;
+        has_id = true;
+        break;
+      }
+      case 16U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.kind)) return Status::bad_enum; }
+        has_kind = true;
+        break;
+      }
+      case 26U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.model_matrix.push_back(e); }
+        break;
+      }
+      case 34U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.bounds); st != Status::ok) return st; }
+        has_bounds = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.opacity)) return Status::truncated;
+        has_opacity = true;
+        break;
+      }
+      case 48U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.blend)) return Status::bad_enum; }
+        has_blend = true;
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.advanced_blend = std::move(e);
+        break;
+      }
+      case 64U: {
+        if (!r.boolean(out.preserve_transparency)) return Status::truncated;
+        has_preserve_transparency = true;
+        break;
+      }
+      case 72U: {
+        if (!r.boolean(out.depth_exempt)) return Status::truncated;
+        has_depth_exempt = true;
+        break;
+      }
+      case 81U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.backdrop_blur = std::move(e);
+        break;
+      }
+      case 90U: {
+        RenderGlass e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.glass = std::move(e);
+        break;
+      }
+      case 96U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.sampling)) return Status::bad_enum; }
+        has_sampling = true;
+        break;
+      }
+      case 106U: {
+        Color e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.color = std::move(e);
+        break;
+      }
+      case 114U: {
+        RenderSdf e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.sdf = std::move(e);
+        break;
+      }
+      case 122U: {
+        RenderColorMatrix e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.color_matrix = std::move(e);
+        break;
+      }
+      case 130U: {
+        auto& e = out.effects.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 138U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.texture_key = std::move(e);
+        break;
+      }
+      case 146U: {
+        Rect e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.uv_rect = std::move(e);
+        break;
+      }
+      case 152U: {
+        if (!r.boolean(out.clip)) return Status::truncated;
+        has_clip = true;
+        break;
+      }
+      case 162U: {
+        auto& e = out.motion_samples.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 170U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.corner_pin.push_back(e); }
+        break;
+      }
+      case 178U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.mask_id = std::move(e);
+        break;
+      }
+      case 186U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.mask_texture_key = std::move(e);
+        break;
+      }
+      case 194U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.lut_texture_key = std::move(e);
+        break;
+      }
+      case 202U: {
+        RenderAdjustment e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.adjustment = std::move(e);
+        break;
+      }
+      case 210U: {
+        RenderMatte e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.matte = std::move(e);
+        break;
+      }
+      case 216U: {
+        if (!r.boolean(out.matte_source)) return Status::truncated;
+        has_matte_source = true;
+        break;
+      }
+      case 224U: {
+        if (!r.boolean(out.light_wash)) return Status::truncated;
+        has_light_wash = true;
+        break;
+      }
+      case 234U: {
+        RenderPrecompFrame e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.precomp = std::move(e);
+        break;
+      }
+      case 242U: {
+        auto& e = out.precomp_children.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 250U: {
+        RenderGenerator e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.generator = std::move(e);
+        break;
+      }
+      case 258U: {
+        RenderDeformedMesh e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.deformed_mesh = std::move(e);
+        break;
+      }
+      case 266U: {
+        RenderExtrudedMesh e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.extruded_mesh = std::move(e);
+        break;
+      }
+      case 274U: {
+        RenderThreeD e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.three_d = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_id) return Status::missing_field;
+  if (!has_kind) return Status::missing_field;
+  if (!has_bounds) return Status::missing_field;
+  if (!has_opacity) return Status::missing_field;
+  if (!has_blend) return Status::missing_field;
+  if (!has_preserve_transparency) return Status::missing_field;
+  if (!has_depth_exempt) return Status::missing_field;
+  if (!has_sampling) return Status::missing_field;
+  if (!has_clip) return Status::missing_field;
+  if (!has_matte_source) return Status::missing_field;
+  if (!has_light_wash) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderFrameScene& v) {
+  w.varint(10U); w.str(v.composition_id);
+  w.varint(17U); w.f64(v.width);
+  w.varint(25U); w.f64(v.height);
+  if (v.background.has_value()) { w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, *v.background); w.end_ld(s); } }
+  for (const auto& e : v.renderables) { w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  w.varint(48U); w.boolean(v.has_effects);
+  if (v.dissolve_frame.has_value()) { w.varint(57U); w.f64(*v.dissolve_frame); }
+  if (v.camera3d.has_value()) { w.varint(66U); { const std::size_t s = w.begin_ld(); encode(w, *v.camera3d); w.end_ld(s); } }
+  for (const auto& e : v.lights3d) { w.varint(74U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.env_map.has_value()) { w.varint(82U); { const std::size_t s = w.begin_ld(); encode(w, *v.env_map); w.end_ld(s); } }
+  if (v.ssao.has_value()) { w.varint(90U); { const std::size_t s = w.begin_ld(); encode(w, *v.ssao); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderFrameScene& out) {
+  bool has_composition_id = false;
+  bool has_width = false;
+  bool has_height = false;
+  bool has_has_effects = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.composition_id)) return Status::truncated;
+        has_composition_id = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.width)) return Status::truncated;
+        has_width = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.height)) return Status::truncated;
+        has_height = true;
+        break;
+      }
+      case 34U: {
+        Color e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.background = std::move(e);
+        break;
+      }
+      case 42U: {
+        auto& e = out.renderables.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 48U: {
+        if (!r.boolean(out.has_effects)) return Status::truncated;
+        has_has_effects = true;
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.dissolve_frame = std::move(e);
+        break;
+      }
+      case 66U: {
+        RenderCamera3D e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.camera3d = std::move(e);
+        break;
+      }
+      case 74U: {
+        auto& e = out.lights3d.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 82U: {
+        RenderEnvMap e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.env_map = std::move(e);
+        break;
+      }
+      case 90U: {
+        RenderSsao e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.ssao = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_composition_id) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  if (!has_has_effects) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderView& v) {
+  w.varint(9U); w.f64(v.css_width);
+  w.varint(17U); w.f64(v.css_height);
+  w.varint(25U); w.f64(v.device_pixel_ratio);
+  w.varint(33U); w.f64(v.camera_center_x);
+  w.varint(41U); w.f64(v.camera_center_y);
+  w.varint(49U); w.f64(v.camera_zoom);
+  w.varint(58U); { const std::size_t s = w.begin_ld(); encode(w, v.clear_color); w.end_ld(s); }
+  if (v.frame_clip.has_value()) { w.varint(66U); { const std::size_t s = w.begin_ld(); encode(w, *v.frame_clip); w.end_ld(s); } }
+  w.varint(72U); w.boolean(v.overlays_active);
+  w.varint(80U); w.varint(static_cast<std::uint32_t>(v.working_space));
+  w.varint(88U); w.varint(static_cast<std::uint32_t>(v.display_transform));
+  w.varint(96U); w.varint(v.bit_depth);
+  w.varint(104U); w.boolean(v.float16_textures);
+  w.varint(112U); w.boolean(v.float32_textures);
+  w.varint(120U); w.varint(static_cast<std::uint32_t>(v.surface_format));
+  w.varint(128U); w.boolean(v.viewer_lut_active);
+  if (v.adapter_vendor.has_value()) { w.varint(138U); w.str(*v.adapter_vendor); }
+}
+
+Status decode(wire::Reader& r, RenderView& out) {
+  bool has_css_width = false;
+  bool has_css_height = false;
+  bool has_device_pixel_ratio = false;
+  bool has_camera_center_x = false;
+  bool has_camera_center_y = false;
+  bool has_camera_zoom = false;
+  bool has_clear_color = false;
+  bool has_overlays_active = false;
+  bool has_working_space = false;
+  bool has_display_transform = false;
+  bool has_bit_depth = false;
+  bool has_float16_textures = false;
+  bool has_float32_textures = false;
+  bool has_surface_format = false;
+  bool has_viewer_lut_active = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.css_width)) return Status::truncated;
+        has_css_width = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.css_height)) return Status::truncated;
+        has_css_height = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.device_pixel_ratio)) return Status::truncated;
+        has_device_pixel_ratio = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.camera_center_x)) return Status::truncated;
+        has_camera_center_x = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.camera_center_y)) return Status::truncated;
+        has_camera_center_y = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.camera_zoom)) return Status::truncated;
+        has_camera_zoom = true;
+        break;
+      }
+      case 58U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.clear_color); st != Status::ok) return st; }
+        has_clear_color = true;
+        break;
+      }
+      case 66U: {
+        Rect e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.frame_clip = std::move(e);
+        break;
+      }
+      case 72U: {
+        if (!r.boolean(out.overlays_active)) return Status::truncated;
+        has_overlays_active = true;
+        break;
+      }
+      case 80U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.working_space)) return Status::bad_enum; }
+        has_working_space = true;
+        break;
+      }
+      case 88U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.display_transform)) return Status::bad_enum; }
+        has_display_transform = true;
+        break;
+      }
+      case 96U: {
+        if (!r.u32(out.bit_depth)) return Status::bad_value;
+        has_bit_depth = true;
+        break;
+      }
+      case 104U: {
+        if (!r.boolean(out.float16_textures)) return Status::truncated;
+        has_float16_textures = true;
+        break;
+      }
+      case 112U: {
+        if (!r.boolean(out.float32_textures)) return Status::truncated;
+        has_float32_textures = true;
+        break;
+      }
+      case 120U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.surface_format)) return Status::bad_enum; }
+        has_surface_format = true;
+        break;
+      }
+      case 128U: {
+        if (!r.boolean(out.viewer_lut_active)) return Status::truncated;
+        has_viewer_lut_active = true;
+        break;
+      }
+      case 138U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.adapter_vendor = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_css_width) return Status::missing_field;
+  if (!has_css_height) return Status::missing_field;
+  if (!has_device_pixel_ratio) return Status::missing_field;
+  if (!has_camera_center_x) return Status::missing_field;
+  if (!has_camera_center_y) return Status::missing_field;
+  if (!has_camera_zoom) return Status::missing_field;
+  if (!has_clear_color) return Status::missing_field;
+  if (!has_overlays_active) return Status::missing_field;
+  if (!has_working_space) return Status::missing_field;
+  if (!has_display_transform) return Status::missing_field;
+  if (!has_bit_depth) return Status::missing_field;
+  if (!has_float16_textures) return Status::missing_field;
+  if (!has_float32_textures) return Status::missing_field;
+  if (!has_surface_format) return Status::missing_field;
+  if (!has_viewer_lut_active) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderTextureRef& v) {
+  w.varint(10U); w.str(v.key);
+  w.varint(18U); w.str(v.hash);
+  w.varint(24U); w.boolean(v.sample_linear);
+  w.varint(32U); w.boolean(v.ready);
+}
+
+Status decode(wire::Reader& r, RenderTextureRef& out) {
+  bool has_key = false;
+  bool has_hash = false;
+  bool has_sample_linear = false;
+  bool has_ready = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.key)) return Status::truncated;
+        has_key = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.hash)) return Status::truncated;
+        has_hash = true;
+        break;
+      }
+      case 24U: {
+        if (!r.boolean(out.sample_linear)) return Status::truncated;
+        has_sample_linear = true;
+        break;
+      }
+      case 32U: {
+        if (!r.boolean(out.ready)) return Status::truncated;
+        has_ready = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_key) return Status::missing_field;
+  if (!has_hash) return Status::missing_field;
+  if (!has_sample_linear) return Status::missing_field;
+  if (!has_ready) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderBlob& v) {
+  w.varint(10U); w.str(v.hash);
+  w.varint(16U); w.varint(v.width);
+  w.varint(24U); w.varint(v.height);
+  w.varint(32U); w.varint(static_cast<std::uint32_t>(v.format));
+  w.varint(42U); w.bytes(v.pixels);
+  w.varint(48U); w.boolean(v.mipmapped);
+}
+
+Status decode(wire::Reader& r, RenderBlob& out) {
+  bool has_hash = false;
+  bool has_width = false;
+  bool has_height = false;
+  bool has_format = false;
+  bool has_pixels = false;
+  bool has_mipmapped = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.hash)) return Status::truncated;
+        has_hash = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.width)) return Status::bad_value;
+        has_width = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.height)) return Status::bad_value;
+        has_height = true;
+        break;
+      }
+      case 32U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.format)) return Status::bad_enum; }
+        has_format = true;
+        break;
+      }
+      case 42U: {
+        if (!r.bytes(out.pixels)) return Status::truncated;
+        has_pixels = true;
+        break;
+      }
+      case 48U: {
+        if (!r.boolean(out.mipmapped)) return Status::truncated;
+        has_mipmapped = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_hash) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  if (!has_format) return Status::missing_field;
+  if (!has_pixels) return Status::missing_field;
+  if (!has_mipmapped) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderShaderSource& v) {
+  w.varint(10U); w.str(v.name);
+  w.varint(18U); w.str(v.wgsl);
+}
+
+Status decode(wire::Reader& r, RenderShaderSource& out) {
+  bool has_name = false;
+  bool has_wgsl = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.name)) return Status::truncated;
+        has_name = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.wgsl)) return Status::truncated;
+        has_wgsl = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_name) return Status::missing_field;
+  if (!has_wgsl) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderFrameFile& v) {
+  w.varint(8U); w.varint(v.format_version);
+  w.varint(18U); w.str(v.scene_id);
+  w.varint(24U); w.svarint(v.frame);
+  w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, v.view); w.end_ld(s); }
+  w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, v.scene); w.end_ld(s); }
+  for (const auto& e : v.textures) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.blobs) { w.varint(58U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.shaders) { w.varint(66U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, RenderFrameFile& out) {
+  bool has_format_version = false;
+  bool has_scene_id = false;
+  bool has_frame = false;
+  bool has_view = false;
+  bool has_scene = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.format_version)) return Status::bad_value;
+        has_format_version = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.scene_id)) return Status::truncated;
+        has_scene_id = true;
+        break;
+      }
+      case 24U: {
+        if (!r.svarint(out.frame)) return Status::truncated;
+        has_frame = true;
+        break;
+      }
+      case 34U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.view); st != Status::ok) return st; }
+        has_view = true;
+        break;
+      }
+      case 42U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.scene); st != Status::ok) return st; }
+        has_scene = true;
+        break;
+      }
+      case 50U: {
+        auto& e = out.textures.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 58U: {
+        auto& e = out.blobs.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 66U: {
+        auto& e = out.shaders.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_format_version) return Status::missing_field;
+  if (!has_scene_id) return Status::missing_field;
+  if (!has_frame) return Status::missing_field;
+  if (!has_view) return Status::missing_field;
+  if (!has_scene) return Status::missing_field;
+  return Status::ok;
+}
+
 namespace {
 template <class M>
 Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>& out) {
@@ -17619,7 +20028,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 325> kNames = {
+constexpr std::array<std::string_view, 353> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -17940,6 +20349,34 @@ constexpr std::array<std::string_view, 325> kNames = {
     "FrameRelease",
     "FramePing",
     "FrameChannelMessage",
+    "RenderEffectParam",
+    "RenderEffect",
+    "RenderSdf",
+    "RenderColorMatrix",
+    "RenderGlass",
+    "RenderMotionSample",
+    "RenderAdjustment",
+    "RenderMatte",
+    "RenderDeformedMesh",
+    "RenderGenerator",
+    "RenderMeshRange",
+    "RenderPbrMaps",
+    "RenderExtrudedMesh",
+    "RenderShade3D",
+    "RenderThreeD",
+    "RenderDof",
+    "RenderCamera3D",
+    "RenderLight3D",
+    "RenderEnvMap",
+    "RenderSsao",
+    "RenderPrecompFrame",
+    "Renderable",
+    "RenderFrameScene",
+    "RenderView",
+    "RenderTextureRef",
+    "RenderBlob",
+    "RenderShaderSource",
+    "RenderFrameFile",
     "Command",
     "CommandResult",
     "Query",
@@ -18271,6 +20708,34 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "FrameRelease") return roundtrip<FrameRelease>(bytes, out);
   if (type == "FramePing") return roundtrip<FramePing>(bytes, out);
   if (type == "FrameChannelMessage") return roundtrip<FrameChannelMessage>(bytes, out);
+  if (type == "RenderEffectParam") return roundtrip<RenderEffectParam>(bytes, out);
+  if (type == "RenderEffect") return roundtrip<RenderEffect>(bytes, out);
+  if (type == "RenderSdf") return roundtrip<RenderSdf>(bytes, out);
+  if (type == "RenderColorMatrix") return roundtrip<RenderColorMatrix>(bytes, out);
+  if (type == "RenderGlass") return roundtrip<RenderGlass>(bytes, out);
+  if (type == "RenderMotionSample") return roundtrip<RenderMotionSample>(bytes, out);
+  if (type == "RenderAdjustment") return roundtrip<RenderAdjustment>(bytes, out);
+  if (type == "RenderMatte") return roundtrip<RenderMatte>(bytes, out);
+  if (type == "RenderDeformedMesh") return roundtrip<RenderDeformedMesh>(bytes, out);
+  if (type == "RenderGenerator") return roundtrip<RenderGenerator>(bytes, out);
+  if (type == "RenderMeshRange") return roundtrip<RenderMeshRange>(bytes, out);
+  if (type == "RenderPbrMaps") return roundtrip<RenderPbrMaps>(bytes, out);
+  if (type == "RenderExtrudedMesh") return roundtrip<RenderExtrudedMesh>(bytes, out);
+  if (type == "RenderShade3D") return roundtrip<RenderShade3D>(bytes, out);
+  if (type == "RenderThreeD") return roundtrip<RenderThreeD>(bytes, out);
+  if (type == "RenderDof") return roundtrip<RenderDof>(bytes, out);
+  if (type == "RenderCamera3D") return roundtrip<RenderCamera3D>(bytes, out);
+  if (type == "RenderLight3D") return roundtrip<RenderLight3D>(bytes, out);
+  if (type == "RenderEnvMap") return roundtrip<RenderEnvMap>(bytes, out);
+  if (type == "RenderSsao") return roundtrip<RenderSsao>(bytes, out);
+  if (type == "RenderPrecompFrame") return roundtrip<RenderPrecompFrame>(bytes, out);
+  if (type == "Renderable") return roundtrip<Renderable>(bytes, out);
+  if (type == "RenderFrameScene") return roundtrip<RenderFrameScene>(bytes, out);
+  if (type == "RenderView") return roundtrip<RenderView>(bytes, out);
+  if (type == "RenderTextureRef") return roundtrip<RenderTextureRef>(bytes, out);
+  if (type == "RenderBlob") return roundtrip<RenderBlob>(bytes, out);
+  if (type == "RenderShaderSource") return roundtrip<RenderShaderSource>(bytes, out);
+  if (type == "RenderFrameFile") return roundtrip<RenderFrameFile>(bytes, out);
   if (type == "Command") return roundtrip<Command>(bytes, out);
   if (type == "CommandResult") return roundtrip<CommandResult>(bytes, out);
   if (type == "Query") return roundtrip<Query>(bytes, out);

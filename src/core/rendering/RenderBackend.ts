@@ -872,6 +872,10 @@ export interface RenderBackend {
   /** Enable preview-only chrome (float shadow + transparency checkerboard).
    *  Left off for export so transparent comps yield real alpha. */
   setPreviewChrome?(on: boolean): void;
+  /** D2 parity harness: remember each frame's FrameScene for `exportLastFrameScene`. */
+  captureFrameScenes?: boolean;
+  /** The last frame as a RenderFrameFile (engine-api `96_render.eapi`), for the C++ renderer. */
+  exportLastFrameScene?(sceneId: string, frame: number): Promise<Uint8Array | null>;
   dispose(): void;
   /** Promise that resolves when async initialization FINISHED (success or
    *  failure — check `initFailed` after it resolves; resolving is not a

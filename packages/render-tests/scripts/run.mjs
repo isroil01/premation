@@ -24,6 +24,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareAgainstReference, readPng, compareFrames } from './comparator.mjs';
+import { findRenderExe, runNativeRenderer, gateNative } from './nativeBackend.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG = path.resolve(__dirname, '..');
@@ -33,6 +34,17 @@ const REFERENCES = path.join(PKG, 'references');
 const ARTIFACTS = path.join(PKG, '.artifacts');
 const ACTUAL = path.join(ARTIFACTS, 'actual');
 const MANIFEST_OUT = path.join(ARTIFACTS, 'manifest.json');
+/** The native backend's inputs (RenderFrameFiles written by the webgpu pass) and report. */
+const SCENES_OUT = path.join(ARTIFACTS, 'scenes');
+const NATIVE_REPORT = path.join(ARTIFACTS, 'native-report.json');
+const REPO_ROOT = path.resolve(PKG, '..', '..');
+/**
+ * The C++ render graph (docs/NATIVE_CORE_PLAN.md D2) — see scripts/nativeBackend.mjs.
+ * Not an Electron backend: it renders the FrameScenes the webgpu pass exports.
+ */
+const NATIVE_BACKEND = 'native';
+/** Set per run: whether the webgpu pass must export its FrameScenes. */
+let exportScenesForNative = false;
 
 /**
  * The backend the golden PNGs are blessed from and diffed against.
@@ -139,6 +151,7 @@ function runElectron(backends) {
       HARNESS_OUT: ACTUAL,
       HARNESS_MANIFEST_OUT: MANIFEST_OUT,
       HARNESS_BACKENDS: backends.join(','),
+      ...(exportScenesForNative && backends.includes('webgpu') ? { HARNESS_SCENE_OUT: SCENES_OUT } : {}),
       HARNESS_HTML: HARNESS_HTML,
       // 180000 was one scene away from flaking, and not on the fast backend.
       // The two backends are wildly asymmetric on SwiftShader: measured on this
@@ -765,21 +778,56 @@ function printReport(rows) {
 }
 
 async function main() {
-  await rmrf(ACTUAL);
+  // HARNESS_REUSE=1: skip the Electron passes and gate the .artifacts of the
+  // previous run (the native renderer still re-runs) — the C++ iteration loop.
+  const reuse = process.env.HARNESS_REUSE === '1';
+  if (!reuse) {
+    await rmrf(ACTUAL);
+    await rmrf(SCENES_OUT);
+  }
   await fs.mkdir(ARTIFACTS, { recursive: true });
 
-  await buildHarness();
+  if (!reuse) await buildHarness();
 
   // Every backend renders in its own process (see renderBackendsIsolated).
   // GATE_BACKEND is the one whose output must match the references; any others
   // are measured and printed but never fail the build.
-  const backends = (process.env.HARNESS_BACKENDS || DEFAULT_BACKENDS.join(','))
+  const requested = (process.env.HARNESS_BACKENDS || DEFAULT_BACKENDS.join(','))
     .split(',').map((s) => s.trim()).filter(Boolean);
+  // The native backend rides on the webgpu pass (it renders what webgpu
+  // exported). In the default set it runs only when premation-render is built;
+  // asked for explicitly, a missing exe is a failure.
+  const nativeExe = findRenderExe(REPO_ROOT);
+  const nativeExplicit = requested.includes(NATIVE_BACKEND);
+  const wantNative = nativeExplicit || (!process.env.HARNESS_BACKENDS && !!nativeExe);
+  const backends = requested.filter((b) => b !== NATIVE_BACKEND);
+  if (wantNative && !backends.includes('webgpu')) backends.push('webgpu');
   if (!backends.includes(GATE_BACKEND)) backends.unshift(GATE_BACKEND);
-  const run = await renderBackendsIsolated(backends);
+  exportScenesForNative = wantNative;
+  const run = reuse ? { ok: true, skipped: [] } : await renderBackendsIsolated(backends);
   if (!run.ok) {
     process.stdout.write(red(`\n✗ render harness exited ${run.code} on [${run.backend}] — no pixels produced.\n`));
     process.exit(1);
+  }
+  let nativeRan = false;
+  if (wantNative && !run.skipped?.includes('webgpu')) {
+    if (!nativeExe) {
+      process.stdout.write((nativeExplicit ? red : yellow)(
+        `  ! [native] premation-render not built (node scripts/native.mjs build --engine)${nativeExplicit ? '' : ' — SKIPPED'}.\n`));
+      if (nativeExplicit) process.exit(1);
+    } else {
+      process.stdout.write(dim(`· rendering [native] with ${path.relative(REPO_ROOT, nativeExe)}…\n`));
+      await rmrf(path.join(ACTUAL, NATIVE_BACKEND));
+      const code = await runNativeRenderer({
+        exe: nativeExe,
+        scenesDir: SCENES_OUT,
+        outDir: path.join(ACTUAL, NATIVE_BACKEND),
+        reportFile: NATIVE_REPORT,
+        only: sceneOnly ? [sceneOnly] : [],
+      });
+      nativeRan = true;
+      if (code !== 0) process.stdout.write(red(`  x [native] premation-render exited ${code}\n`));
+    }
   }
 
   const scenes = await loadManifest();
@@ -862,6 +910,20 @@ async function main() {
     if (updateBackendBaselineMode) await updateBackendBaseline(scenes, backend);
     else backendFail += await gateSecondaryBackend(scenes, backend);
   }
+  if (nativeRan) {
+    backendFail += await gateNative(scenes, {
+      actualDir: ACTUAL,
+      referencesDir: REFERENCES,
+      reportFile: NATIVE_REPORT,
+      baselineFile: backendBaselinePath(NATIVE_BACKEND),
+      updateBaseline: updateBackendBaselineMode,
+      compareFrames,
+      readPngSafe,
+      tolerance: BACKEND_TOLERANCE,
+      slack: BACKEND_RATCHET_SLACK,
+      tighten: BACKEND_RATCHET_TIGHTEN,
+    });
+  }
 
   if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0
     && pluginFail === 0 && extrusionFail === 0 && backendFail === 0) {
@@ -880,7 +942,7 @@ async function main() {
       `properties that stopped animating: ${animFail}, ` +
       `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}, ` +
       `plugin effects: ${pluginFail}, extrusion face reach: ${extrusionFail}, ` +
-      `webgpu pixel ratchet: ${backendFail}.\n`) +
+      `webgpu/native pixel ratchets: ${backendFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );
   process.exit(1);

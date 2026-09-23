@@ -1,0 +1,311 @@
+// Render: a SERIALIZED FrameScene — the flat, paint-ordered render description
+// the renderer consumes (packages/renderer/src/scene/FrameScene.ts), plus the
+// viewport it is drawn through and the pixels of every texture it samples.
+//
+// Phase D2 of docs/NATIVE_CORE_PLAN.md. The C++ render graph
+// (native/engine/src/render_graph) consumes exactly this. Two producers:
+//
+//   today   the TypeScript engine: buildSnapshot → snapshotToFrameScene, exported
+//           by src/core/rendering/frameSceneExport.ts (render-tests `native`
+//           backend, `premation-render`). Text / vector / video rasters are
+//           produced on the TS side and ride along as blobs until E3/E1 port them.
+//   later   the C++ engine itself, from its own document (D1 + E*): the same
+//           struct, built in-process, never serialized.
+//
+// NOT part of EngineMessage: nothing here travels over the command pipe. It is a
+// file format (one RenderFrameFile per frame) and an in-process value.
+//
+// Mapping rules (the exporter is the reference):
+//   * Every `Mat3` is carried as its 9 float32 values, column-major, exactly.
+//   * Absent TS optionals stay absent; an empty list and an absent list are the
+//     same thing (every renderer branch tests `length > 0` / `length > 1`).
+//   * An effect entry is a tagged parameter bag (RenderEffect): FrameScene has
+//     ~170 effect kinds whose fields ARE the renderer's uniform inputs, and a
+//     struct per kind would freeze the parameter vocabulary into the wire
+//     identity. The bag is lossless: every field of the TS entry, by name.
+//   * Raw geometry (Float32Array / Uint16Array / Uint32Array) is `bytes`,
+//     little-endian, element-packed.
+//   * Textures are referenced by the renderer's KEY; `textures` maps each key to
+//     a content hash and `blobs` holds each distinct content once.
+
+family "Render";
+
+enum RenderableKind { rect = 0; image = 1; video = 2; text = 3; path = 4; group = 5; }
+/// packages/renderer BlendMode.
+enum RenderBlendMode { normal = 0; multiply = 1; screen = 2; overlay = 3; add = 4; subtract = 5; darken = 6; lighten = 7; none = 8; }
+enum RenderSdfShape { rounded = 0; ellipse = 1; }
+enum RenderSampling { linear = 0; nearest = 1; }
+enum RenderMatteMode { alpha = 0; luma = 1; }
+enum RenderTextureFormat { rgba8unorm = 0; rgba8unormSrgb = 1; bgra8unorm = 2; rgba16float = 3; rgba32float = 4; r8unorm = 5; }
+enum RenderLightType { ambient = 0; point = 1; spot = 2; parallel = 3; }
+enum RenderMeshRole { front = 0; back = 1; side = 2; bevel = 3; }
+enum RenderGeneratorPrimitive { point = 0; sprite = 1; quad = 2; mesh = 3; }
+enum RenderGeneratorBlend { normal = 0; add = 1; }
+enum RenderIndexFormat { uint16 = 0; uint32 = 1; }
+enum RenderWorkingSpace { srgbLinear = 0; acesCg = 1; }
+enum RenderDisplayTransform { srgb = 0; aces = 1; pq = 2; hlg = 3; }
+enum RenderSsaoQuality { half = 0; full = 1; }
+/// What a RenderEffectParam carries: `number`, `numbers` (a list, a colour as [r,g,b,a], packed vec4 rows, a Float32Array), `text`, `texts`, or a boolean in `number` (0/1).
+enum RenderParamKind { number = 0; numbers = 1; text = 2; flag = 3; color = 4; texts = 5; }
+
+/// One field of an effect entry. Nested objects flatten to dotted names (`hostInputs.fps`).
+struct RenderEffectParam {
+  name: string = 1;
+  kind: RenderParamKind = 2;
+  number: f64 = 3;
+  numbers: f64[] = 4;
+  text: string = 5;
+  texts: string[] = 6;
+}
+
+/// One entry of a renderable's spatial effect chain (FrameScene RenderableEffect), by its `type` tag.
+struct RenderEffect {
+  type: string = 1;
+  params: RenderEffectParam[] = 2;
+}
+
+struct RenderSdf { shape: RenderSdfShape = 1; radiusPx: f64 = 2; width: f64 = 3; height: f64 = 4; }
+
+struct RenderColorMatrix {
+  /// Row-major 3×3.
+  m: f64[] = 1;
+  offset: f64[] = 2;
+}
+
+struct RenderGlass {
+  refraction: f64 = 1; edgeWidth: f64 = 2; aberration: f64 = 3; saturation: f64 = 4;
+  tint: Color = 5; tintOpacity: f64 = 6; rim: Color = 7; rimOpacity: f64 = 8; rimWidth: f64 = 9;
+  rimAngle: f64 = 10; specularAngle: f64 = 11; specularIntensity: f64 = 12; specularFalloff: f64 = 13; grain: f64 = 14;
+}
+
+struct RenderMotionSample { modelMatrix: f64[] = 1; opacity: f64 = 2; }
+struct RenderAdjustment { colorMatrix?: RenderColorMatrix = 1; lutTextureKey?: string = 2; }
+struct RenderMatte { mode: RenderMatteMode = 1; inverted: bool = 2; sourceId: string = 3; }
+
+struct RenderDeformedMesh {
+  /// f32 LE, 4 floats per vertex (x, y, u, v).
+  vertices: bytes = 1;
+  /// u16 LE.
+  triangles: bytes = 2;
+  /// f32 LE, one per vertex; absent = flat.
+  depth?: bytes = 3;
+}
+
+struct RenderGenerator {
+  /// f32 LE, `stride` floats per instance.
+  instances: bytes = 1;
+  count: u32 = 2;
+  stride: u32 = 3;
+  primitive: RenderGeneratorPrimitive = 4;
+  meshVertices?: bytes = 5;
+  meshIndices?: bytes = 6;
+  meshIndexFormat: RenderIndexFormat = 7;
+  textureKey?: string = 8;
+  cellSize: f64[] = 9;
+  blend: RenderGeneratorBlend = 10;
+  revision: f64 = 11;
+  width: f64 = 12;
+  height: f64 = 13;
+  perspective?: f64 = 14;
+}
+
+struct RenderMeshRange {
+  role: RenderMeshRole = 1; first: u32 = 2; count: u32 = 3; color: Color = 4; gain: f64 = 5;
+  textured: bool = 6; textureKey?: string = 7;
+}
+
+struct RenderPbrMaps {
+  normalKey?: string = 1; metallicRoughnessKey?: string = 2; occlusionKey?: string = 3; emissiveKey?: string = 4;
+  normalScale: f64 = 5; occlusionStrength: f64 = 6; emissive: f64[] = 7;
+}
+
+struct RenderExtrudedMesh {
+  key: string = 1;
+  /// f32 LE, 8 floats per vertex (position xyz, normal xyz, uv).
+  vertices: bytes = 2;
+  indices: bytes = 3;
+  indexFormat: RenderIndexFormat = 4;
+  ranges: RenderMeshRange[] = 5;
+  pbr?: RenderPbrMaps = 6;
+}
+
+struct RenderShade3D {
+  specular: f64 = 1; shininess: f64 = 2; metal?: f64 = 3; roughness?: f64 = 4; toonBands?: f64 = 5;
+  /// Empty = absent.
+  quadGain: f64[] = 6;
+  oneSided?: bool = 7; ambient?: f64 = 8; diffuse?: f64 = 9;
+  reflectionIntensity?: f64 = 10; reflectionSharpness?: f64 = 11; reflectionRolloff?: f64 = 12;
+  transparency?: f64 = 13; transparencyRolloff?: f64 = 14; ior?: f64 = 15; acceptsShadows?: bool = 16;
+}
+
+struct RenderThreeD {
+  /// Column-major 4×4.
+  model: f64[] = 1;
+  castsShadow?: bool = 2;
+  shade?: RenderShade3D = 3;
+}
+
+struct RenderDof {
+  strength: f64 = 1; focus: f64 = 2; aperture: f64 = 3; focalLength?: f64 = 4; fStop?: f64 = 5;
+  irisBlades?: f64 = 6; irisRoundness?: f64 = 7; highlightGain?: f64 = 8; irisRotation?: f64 = 9;
+  irisAspect?: f64 = 10; highlightThreshold?: f64 = 11; highlightSaturation?: f64 = 12; diffractionFringe?: f64 = 13;
+}
+
+struct RenderCamera3D {
+  view: f64[] = 1;
+  projection: f64[] = 2;
+  /// Empty = ortho (no eye).
+  eye: f64[] = 3;
+  dof?: RenderDof = 4;
+}
+
+struct RenderLight3D {
+  type: RenderLightType = 1;
+  /// r, g, b.
+  color: f64[] = 2;
+  gain: f64 = 3; x: f64 = 4; y: f64 = 5; z: f64 = 6; radius: f64 = 7;
+  aimX: f64 = 8; aimY: f64 = 9; aimZ: f64 = 10; halfConeRad: f64 = 11; coneFeatherRad: f64 = 12;
+  falloffMode: f64 = 13; falloffDistance: f64 = 14;
+  shadowMap?: bool = 15; shadowMapSize?: f64 = 16; shadowBias?: f64 = 17; shadowSoftness?: f64 = 18; shadowDarkness?: f64 = 19;
+}
+
+struct RenderEnvMap {
+  id: string = 1; width: u32 = 2; height: u32 = 3; levels: u32 = 4; scale: f64 = 5;
+  /// RGBA8.
+  data: bytes = 6;
+  intensity: f64 = 7; rotationDeg: f64 = 8;
+}
+
+struct RenderSsao { enabled: bool = 1; radius: f64 = 2; intensity: f64 = 3; quality: RenderSsaoQuality = 4; }
+
+/// An isolated precomp's own frame (FrameScene `Renderable.precomp` minus its children, which ride on the renderable as `precompChildren`).
+struct RenderPrecompFrame {
+  camera3d?: RenderCamera3D = 1;
+  lights3d: RenderLight3D[] = 2;
+  envMap?: RenderEnvMap = 3;
+  /// A 3D composition card: children are in the comp's own pixels.
+  flatWidth?: f64 = 4;
+  flatHeight?: f64 = 5;
+}
+
+/// FrameScene `Renderable`.
+struct Renderable {
+  id: string = 1;
+  kind: RenderableKind = 2;
+  /// Mat3, column-major, 9 float32 values.
+  modelMatrix: f64[] = 3;
+  bounds: Rect = 4;
+  opacity: f64 = 5;
+  blend: RenderBlendMode = 6;
+  advancedBlend?: f64 = 7;
+  preserveTransparency: bool = 8;
+  depthExempt: bool = 9;
+  backdropBlur?: f64 = 10;
+  glass?: RenderGlass = 11;
+  sampling: RenderSampling = 12;
+  color?: Color = 13;
+  sdf?: RenderSdf = 14;
+  colorMatrix?: RenderColorMatrix = 15;
+  effects: RenderEffect[] = 16;
+  textureKey?: string = 17;
+  uvRect?: Rect = 18;
+  clip: bool = 19;
+  motionSamples: RenderMotionSample[] = 20;
+  /// 8 numbers (TL, TR, BR, BL); empty = no pin.
+  cornerPin: f64[] = 21;
+  maskId?: string = 22;
+  maskTextureKey?: string = 23;
+  lutTextureKey?: string = 24;
+  adjustment?: RenderAdjustment = 25;
+  matte?: RenderMatte = 26;
+  matteSource: bool = 27;
+  lightWash: bool = 28;
+  precomp?: RenderPrecompFrame = 29;
+  precompChildren: Renderable[] = 30;
+  generator?: RenderGenerator = 31;
+  deformedMesh?: RenderDeformedMesh = 32;
+  extrudedMesh?: RenderExtrudedMesh = 33;
+  threeD?: RenderThreeD = 34;
+}
+
+/// FrameScene.
+struct RenderFrameScene {
+  compositionId: string = 1;
+  width: f64 = 2;
+  height: f64 = 3;
+  background?: Color = 4;
+  renderables: Renderable[] = 5;
+  hasEffects: bool = 6;
+  dissolveFrame?: f64 = 7;
+  camera3d?: RenderCamera3D = 8;
+  lights3d: RenderLight3D[] = 9;
+  envMap?: RenderEnvMap = 10;
+  ssao?: RenderSsao = 11;
+}
+
+/// The viewport a FrameScene is drawn through, and the colour pipeline state the frame was rendered with.
+struct RenderView {
+  /// CSS size and device pixel ratio (Viewport); the framebuffer is round(css × dpr).
+  cssWidth: f64 = 1;
+  cssHeight: f64 = 2;
+  devicePixelRatio: f64 = 3;
+  /// Camera2D state: world point at the viewport centre, screen px per world unit.
+  cameraCenterX: f64 = 4;
+  cameraCenterY: f64 = 5;
+  cameraZoom: f64 = 6;
+  /// overlays.background — the ClearPass colour (display-referred).
+  clearColor: Color = 7;
+  /// Surface scissor (surface px, top-left origin); absent = none.
+  frameClip?: Rect = 8;
+  /// Any grid / proportional grid / guide overlay is on (OverlayPass would draw).
+  overlaysActive: bool = 9;
+  workingSpace: RenderWorkingSpace = 10;
+  displayTransform: RenderDisplayTransform = 11;
+  /// Intermediate float depth: 16 or 32.
+  bitDepth: u32 = 12;
+  float16Textures: bool = 13;
+  float32Textures: bool = 14;
+  surfaceFormat: RenderTextureFormat = 15;
+  /// A viewer LUT is active on the final blit (viewport-only; exports leave it off).
+  viewerLutActive: bool = 16;
+  /// The GPU the producer rendered on (WebGPU adapter vendor, e.g. "amd", "nvidia"); a parity consumer renders on the same one.
+  adapterVendor?: string = 17;
+}
+
+/// A texture key the scene samples → the content it resolved to when the frame was rendered.
+struct RenderTextureRef {
+  key: string = 1;
+  /// RenderBlob.hash; empty = the key did not resolve (the renderer skips the draw, as the TS one does).
+  hash: string = 2;
+  /// Already working-space (float EXR, graph RTs): skips the sRGB decode on sample.
+  sampleLinear: bool = 3;
+  ready: bool = 4;
+}
+
+/// Texel content, stored once per distinct hash. Rows top-down, tightly packed.
+struct RenderBlob {
+  hash: string = 1;
+  width: u32 = 2;
+  height: u32 = 3;
+  format: RenderTextureFormat = 4;
+  pixels: bytes = 5;
+  /// The GPU texture carried a mip chain (only level 0 is stored; the consumer regenerates).
+  mipmapped: bool = 6;
+}
+
+/// WGSL for a shader the scene names that is NOT a renderer builtin — a plugin effect's host-validated source, as registered with the TS ShaderRegistry.
+struct RenderShaderSource { name: string = 1; wgsl: string = 2; }
+
+/// One frame, self-contained: `premation-render --scene <file>` renders it with no other input.
+struct RenderFrameFile {
+  /// Bumped when the exporter's mapping changes meaning (not for additive fields).
+  formatVersion: u32 = 1;
+  sceneId: string = 2;
+  frame: i64 = 3;
+  view: RenderView = 4;
+  scene: RenderFrameScene = 5;
+  textures: RenderTextureRef[] = 6;
+  blobs: RenderBlob[] = 7;
+  /// Plugin effect shaders the frame uses (effect param `shader`), by name.
+  shaders: RenderShaderSource[] = 8;
+}

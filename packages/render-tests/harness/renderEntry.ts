@@ -19,6 +19,7 @@ import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/re
 import { SCENES } from './scenes/registry';
 import type { Scene } from './sceneKit';
 import { registeredEffects } from '@core/plugins/pluginEffects';
+import { BENCH_SCENES } from './benchScenes';
 
 /**
  * Block until no registered plugin effect is still `pending`.
@@ -42,7 +43,13 @@ async function waitForPluginEffects(timeoutMs = 8000): Promise<void> {
 }
 
 interface HarnessBridge {
-  config: { backends: BackendChoice[]; only?: string[] };
+  config: { backends: BackendChoice[]; only?: string[]; exportScenes?: boolean; bench?: boolean };
+  /**
+   * The `native` backend (docs/NATIVE_CORE_PLAN.md D2): one RenderFrameFile per
+   * rendered webgpu frame — the FrameScene it was drawn from, for the C++
+   * renderer to draw again. Present only when main was asked to export.
+   */
+  sceneFile?: (payload: { sceneId: string; frame: number; bytes: Uint8Array }) => Promise<void>;
   /** Sends one rendered frame to main. Resolves when written. */
   frame: (payload: {
     sceneId: string;
@@ -208,6 +215,8 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
   be.attach(canvas);
   be.resize(w, h, 1);
   be.setExactMediaTiming?.(true);
+  const exporting = backend === 'webgpu' && !!window.harnessBridge.config.exportScenes && !!window.harnessBridge.sceneFile;
+  if (exporting) be.captureFrameScenes = true;
   if (be.readyPromise) await be.readyPromise;
 
   /*
@@ -329,6 +338,13 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
       // reading a WebGL2 surface through the WebGPU path (or vice versa) is a
       // silently V-flipped or blank frame.
       const rgba = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);
+      // The native backend's input: exactly the FrameScene (and texels) these
+      // pixels were drawn from. Exported before the determinism re-render so
+      // the capture is this frame's, not a re-render's.
+      if (exporting) {
+        const bytes = await be.exportLastFrameScene?.(scene.id, i);
+        if (bytes) await window.harnessBridge.sceneFile!({ sceneId: scene.id, frame: i, bytes });
+      }
       // Determinism gate (real GPU, not Null): re-render the scene's FIRST
       // frame from the same snapshot and require byte-identical output —
       // "same machine + same driver ⇒ same bytes".
@@ -346,6 +362,24 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
       // nondeterminism, since t = 0 collapses many time-derived values to a
       // constant. Do not read a green run here as "the pipeline is
       // deterministic" — it means "the renderer is, for this one frame".
+      // D2 bench: the TS WebGPU frame time of this FrameScene, measured the way
+      // premation-render --bench measures the C++ one — render + submit + GPU idle.
+      if (window.harnessBridge.config.bench && backend === 'webgpu') {
+        const device = (be as unknown as { renderer?: { backend?: { device?: { queue: { onSubmittedWorkDone(): Promise<void> } } } } })
+          .renderer?.backend?.device;
+        if (device) {
+          const times: number[] = [];
+          for (let k = 0; k < 110; k++) {
+            const t0 = performance.now();
+            be.renderFrame(snap);
+            await device.queue.onSubmittedWorkDone();
+            if (k >= 10) times.push(performance.now() - t0);
+          }
+          times.sort((a, b) => a - b);
+          const mean = times.reduce((a, b) => a + b, 0) / times.length;
+          console.log(`[harness] bench ${scene.id} webgpu frames=${times.length} meanMs=${mean.toFixed(3)} p50Ms=${times[times.length >> 1]!.toFixed(3)} p95Ms=${times[Math.floor(times.length * 0.95)]!.toFixed(3)}`);
+        }
+      }
       if (i === scene.frames[0]) {
         be.renderFrame(snap);
         const again = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);
@@ -428,7 +462,9 @@ async function main(): Promise<void> {
       unrendered scene as missing.
     */
     const only = new Set(window.harnessBridge.config.only ?? []);
-    const toRender = only.size > 0 ? SCENES.filter((s) => only.has(s.id)) : SCENES;
+    const toRender = window.harnessBridge.config.bench
+      ? BENCH_SCENES
+      : only.size > 0 ? SCENES.filter((s) => only.has(s.id)) : SCENES;
     await window.harnessBridge.manifest(
       SCENES.map((s) => ({
         id: s.id,

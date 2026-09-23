@@ -35,6 +35,7 @@ export default defineConfig({
       '@motion/animation': r('packages/animation/src/index.ts'),
       '@motion/renderer': r('packages/renderer/src/index.ts'),
       '@motion/ai-tools': r('packages/ai-tools/src/index.ts'),
+      '@motion/engine-api': r('packages/engine-api/src/index.ts'),
     },
   },
   build: {

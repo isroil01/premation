@@ -8,6 +8,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('harnessBridge', {
   config: ipcRenderer.sendSync('harness:config'),
   frame: (payload) => ipcRenderer.invoke('harness:frame', payload),
+  // D2 `native` backend: a RenderFrameFile per webgpu frame (Uint8Array rides structured clone).
+  sceneFile: (payload) => ipcRenderer.invoke('harness:scene-file', payload),
   manifest: (scenes) => ipcRenderer.invoke('harness:manifest', scenes),
   done: (error) => ipcRenderer.invoke('harness:done', error ?? null),
 });

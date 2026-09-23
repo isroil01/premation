@@ -22,8 +22,12 @@ import {
   WebGPUBackend,
   setActiveColorPipeline,
   setActiveViewerLut,
+  getActiveColorPipeline,
+  getActiveViewerLut,
   type RenderBackend as GpuBackend,
+  type FrameScene,
 } from '@motion/renderer';
+import { exportFrameFile, type FrameCapture } from './frameSceneExport';
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, takeSceneLayerErrors, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { framePerf, perfBegin, perfEnd, PerfStage } from '@core/perf/framePerf';
@@ -199,6 +203,15 @@ export class MotionRendererBackend implements RenderBackend {
   private detachPluginEffects: (() => void) | null = null;
   private viewport: Viewport | null = null;
   private textures: AppTextureProvider | null = null;
+  /**
+   * D2 parity harness: keep what the last frame was drawn from, so
+   * `exportLastFrameScene` can hand the C++ renderer the same FrameScene. Off
+   * everywhere except the render-tests `native` backend; costs one reference.
+   */
+  captureFrameScenes = false;
+  private lastFrameCapture: FrameCapture | null = null;
+  /** The surface clip rect handed to the backend this frame (surface px). */
+  private lastFrameClip: { x: number; y: number; width: number; height: number } | null = null;
   private ready = false;
   private disposed = false;
   private pending: RenderSnapshot | null = null;
@@ -1238,13 +1251,15 @@ export class MotionRendererBackend implements RenderBackend {
       const clipH = roi ? roi.height : snapshot.height;
       const toScreen = (world: number, center: number, cssExtent: number): number =>
         ((world - center) * cam.zoom + cssExtent / 2) * this.dpr;
-      this.renderer.backend.setFrameClip?.({
+      this.lastFrameClip = {
         x: toScreen(clipX, cam.center.x, this.cssW),
         y: toScreen(clipY, cam.center.y, this.cssH),
         width: clipW * cam.zoom * this.dpr,
         height: clipH * cam.zoom * this.dpr,
-      });
+      };
+      this.renderer.backend.setFrameClip?.(this.lastFrameClip);
     } else {
+      this.lastFrameClip = null;
       this.renderer.backend.setFrameClip?.(null);
     }
 
@@ -1301,6 +1316,7 @@ export class MotionRendererBackend implements RenderBackend {
     perfBegin(PerfStage.gpuSubmit);
     const result = this.renderer.render(vp, frameScene);
     perfEnd(PerfStage.gpuSubmit);
+    if (this.captureFrameScenes) this.lastFrameCapture = this.captureOf(vp, frameScene);
     // The VRAM gauge: the renderer's resource pools already count their bytes
     // per frame; this is two field reads, no allocation.
     if (this.role === 'viewport') framePerf.reportGpuMemory(result.resources.gpuBytes, result.resources.gpuBytesPeak);
@@ -1326,6 +1342,54 @@ export class MotionRendererBackend implements RenderBackend {
     // renderBackendStore, and re-emitting frame problems through it flipped
     // the viewport badge to "Software rendering" over one offline image.
     reportFrameDiagnostics(this.frameDiagnostics, this.role, `motion-${this.resolvedKind ?? this.preferred}`);
+  }
+
+  /** The viewport + colour state `scene` was just rendered with (D2 capture). */
+  private captureOf(vp: Viewport, scene: FrameScene): FrameCapture {
+    const cam = vp.camera.getState();
+    const o = vp.overlays;
+    const pipe = getActiveColorPipeline();
+    const renderer = this.renderer!;
+    const caps = renderer.backend.capabilities;
+    return {
+      scene,
+      view: {
+        cssWidth: vp.width,
+        cssHeight: vp.height,
+        devicePixelRatio: vp.devicePixelRatio,
+        center: { x: cam.center.x, y: cam.center.y },
+        zoom: cam.zoom,
+        clearColor: { ...o.background },
+        frameClip: this.lastFrameClip ? { ...this.lastFrameClip } : null,
+        overlaysActive: o.grid || o.proportionalGrid || o.guides.length > 0,
+      },
+      colorPipeline: { workingSpace: pipe.workingSpace, displayTransform: pipe.displayTransform, bitDepth: pipe.bitDepth },
+      viewerLutActive: getActiveViewerLut() !== null,
+      capabilities: { float16Textures: caps.float16Textures, float32Textures: !!caps.float32Textures },
+      surfaceFormat: renderer.colorFormat,
+      adapterVendor: (renderer.backend as { adapterVendor?: string }).adapterVendor ?? '',
+    };
+  }
+
+  /**
+   * Serialise the last rendered frame as a RenderFrameFile (engine-api
+   * `96_render.eapi`): FrameScene, viewport, colour state, and the texels of
+   * every texture it sampled, read back from the GPU. For the render-tests
+   * `native` backend (docs/NATIVE_CORE_PLAN.md D2); null unless
+   * `captureFrameScenes` was on and the backend can read textures back.
+   */
+  async exportLastFrameScene(sceneId: string, frame: number): Promise<Uint8Array | null> {
+    const cap = this.lastFrameCapture;
+    const textures = this.textures;
+    const backend = this.renderer?.backend;
+    if (!cap || !textures || !backend?.readTextureAsync) return null;
+    const read = backend.readTextureAsync.bind(backend);
+    const registry = this.renderer!.shaders;
+    return exportFrameFile(cap, sceneId, frame, (key) => {
+      const res = textures.get(key);
+      if (!res) return null;
+      return { sampleLinear: !!res.sampleLinear, ready: res.ready, read: () => read(res.texture) };
+    }, (name) => registry.get(name)?.wgsl);
   }
 
   /**

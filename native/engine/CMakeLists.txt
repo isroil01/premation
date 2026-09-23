@@ -44,6 +44,12 @@ if(MSVC)
   target_compile_options(engine_core PRIVATE /bigobj)  # std::visit over the command union
 endif()
 
+# ── render graph, GPU-free half (D2): graph ordering + resource pools ───────
+add_library(engine_rg_core STATIC src/render_graph/graph.cpp)
+target_include_directories(engine_rg_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/render_graph)
+target_compile_features(engine_rg_core PUBLIC cxx_std_20)
+target_link_libraries(engine_rg_core PRIVATE motion::options)
+
 # ── GPU + process ───────────────────────────────────────────────────────────
 if(Dawn_FOUND)
   add_library(engine_gpu STATIC
@@ -62,6 +68,32 @@ if(Dawn_FOUND)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
   target_link_libraries(engine_gpu PUBLIC engine_core dawn::webgpu_dawn PRIVATE motion::options)
+
+  # D2: the render graph on Dawn — FrameScene (engine-api 96_render.eapi) in,
+  # pixels out; WGSL + material table extracted verbatim from packages/renderer
+  # (shaders/extract.mjs → builtin_shaders.inc, materials.inc).
+  add_library(engine_render_graph STATIC
+    src/render_graph/device.cpp
+    src/render_graph/shader_library.cpp
+    src/render_graph/render_context.cpp
+    src/render_graph/passes.cpp
+    src/render_graph/composition_pass.cpp
+    src/render_graph/effect_chain.cpp
+    src/render_graph/support.cpp
+    src/render_graph/threed.cpp
+    src/render_graph/scene_renderer.cpp
+  )
+  target_include_directories(engine_render_graph PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render_graph
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+  target_link_libraries(engine_render_graph PUBLIC engine_rg_core engine_protocol dawn::webgpu_dawn PRIVATE motion::options)
+  if(MSVC)
+    target_compile_options(engine_render_graph PRIVATE /bigobj)
+  endif()
+
+  add_executable(premation-render tools/premation_render.cpp)
+  target_include_directories(premation-render PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+  target_link_libraries(premation-render PRIVATE engine_render_graph motion::options)
 
   add_executable(premation-engine
     src/main.cpp
@@ -84,6 +116,7 @@ if(Dawn_FOUND)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxc_bin}/dxcompiler.dll" "${_dxc_bin}/dxil.dll"
               "$<TARGET_FILE_DIR:premation-engine>"
       VERBATIM)
+    # premation-render lands in the same directory; the copy above covers it.
   endif()
 else()
   message(STATUS "premation-engine: Dawn not found — building engine_core, its tests and the fuzzer only")
@@ -96,8 +129,9 @@ if(MOTION_BUILD_TESTS)
     tests/test_framing.cpp
     tests/test_session.cpp
     tests/test_stress.cpp
+    tests/test_render_graph.cpp
   )
-  target_link_libraries(engine_tests PRIVATE engine_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_tests PRIVATE engine_core engine_rg_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_tests PRIVATE /bigobj)
     target_compile_definitions(engine_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv in test setup
@@ -105,8 +139,11 @@ if(MOTION_BUILD_TESTS)
   add_test(NAME engine_tests COMMAND engine_tests --reporter compact)
 
   if(TARGET engine_gpu)
-    add_executable(engine_gpu_tests tests/test_render.cpp)
-    target_link_libraries(engine_gpu_tests PRIVATE engine_gpu motion::options Catch2::Catch2WithMain)
+    add_executable(engine_gpu_tests tests/test_render.cpp tests/test_render_graph_gpu.cpp)
+    target_link_libraries(engine_gpu_tests PRIVATE engine_gpu engine_render_graph motion::options Catch2::Catch2WithMain)
+    if(MSVC)
+      target_compile_options(engine_gpu_tests PRIVATE /bigobj)
+    endif()
     add_test(NAME engine_gpu_tests COMMAND engine_gpu_tests --reporter compact)
     if(WIN32 AND DEFINED _dxc_bin)
       add_custom_command(TARGET engine_gpu_tests POST_BUILD
