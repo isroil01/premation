@@ -66,7 +66,16 @@ import {
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { motionPathKeyframeMenuItems, guideContextMenuItems, convertMotionPathVertex } from './viewportPrecisionMenus';
 import { openGuideEditor } from './GuideEditorDialog';
-import { beginViewportGesture, endViewportGesture, gestureAnimEdit } from '@core/workspace/viewportGesture';
+import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
+import type { Command } from '@motion/engine-api';
+import { GestureSession } from '@core/engine/uiEdits';
+import {
+  capturePositionTracks,
+  positionKeyPatchCommands,
+  resolvePositionKeyIds,
+  type PositionKeyIds,
+  type PositionTracks,
+} from './viewportEdits';
 import { parentWorld2DAt } from '@core/scene/layerSpace';
 import { Matrix } from '@motion/scene';
 import { useTextEditStore } from '@stores/textEditStore';
@@ -219,7 +228,25 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
   // Active on-canvas motion-path drag (E4): a keyframe point or one of its
   // spatial tangent handles ('in'/'out'), or null.
-  const mpDragRef = useRef<{ nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null>(null);
+  //
+  // The drag is ONE engine gesture: `start` is the Position tracks as the
+  // press found them and every move sends the ABSOLUTE result (start + pointer)
+  // as `updateKeyframes` on the engine's key ids (`ids`, resolved once — until
+  // they arrive the latest move waits in `latest`). `broken` sticks once Alt
+  // breaks the handle pair, as the legacy continuous flag did.
+  const mpDragRef = useRef<{
+    nodeId: string;
+    t: number;
+    part: 'point' | 'in' | 'out';
+    gesture: GestureSession;
+    start: PositionTracks;
+    ids: PositionKeyIds | null;
+    latest: (() => Command[]) | null;
+    continuous: boolean;
+    broken: boolean;
+    /** Settles when `ids` are in (and the move that waited for them is sent). */
+    ready: Promise<void>;
+  } | null>(null);
   // Active Brush-tool paint pass: comp[] commits to the layer on release,
   // screen[] previews the wet stroke on the overlay while dragging.
   // `mode` is captured when the stroke STARTS (see the paint branch): the
@@ -1957,11 +1984,25 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // AE Convert Vertex: Ctrl/Cmd(+Alt)-click a path vertex toggles it
         // between a corner (Linear) and Auto Bezier — a click, not a drag.
         if (hit.part === 'point' && (e.ctrlKey || e.metaKey)) {
-          convertMotionPathVertex(hit.nodeId, hit.t);
-          controller.requestRender();
+          void convertMotionPathVertex(hit.nodeId, hit.t).then(() => controller.requestRender());
           return;
         }
-        mpDragRef.current = hit;
+        const start = capturePositionTracks(hit.nodeId);
+        const mp = {
+          ...hit,
+          gesture: new GestureSession(hit.part === 'point' ? 'Move keyframe' : 'Adjust path tangent'),
+          start,
+          ids: null as PositionKeyIds | null,
+          latest: null as (() => Command[]) | null,
+          continuous: isPathTangentContinuous(hit.nodeId, hit.t),
+          broken: false,
+          ready: Promise.resolve(),
+        };
+        mp.ready = resolvePositionKeyIds(hit.nodeId, start).then((ids) => {
+          mp.ids = ids;
+          if (mp.latest) mp.gesture.send(mp.latest());
+        });
+        mpDragRef.current = mp;
         try {
           overlay.setPointerCapture(e.pointerId);
         } catch {
@@ -2153,36 +2194,33 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (drag) {
         const w = controller.ws.screenToWorld(local(e));
         const part = drag.part;
-        // One coalesced undo step for the whole drag (stable merge key).
-        if (part === 'point') {
+        // Back through the parent chain: `w` is where the pointer is in COMP
+        // space and the x/y tracks hold parent-space values.
+        const lp = compToPath(drag.nodeId, playheadTime(), w);
+        // Alt breaks the handle pair and it STAYS broken for the rest of the
+        // drag (and, via Keyframe.continuous, for the next one).
+        if (e.altKey) drag.broken = true;
+        const mirror = drag.continuous && !drag.broken;
+        const { nodeId, t, start } = drag;
+        // One undo step for the whole drag: the engine gesture opened on press.
+        // Every message is built from the PRESS state (`start`) + this pointer.
+        drag.latest = part === 'point'
           // Move the point in 2D (both axis tracks get a key at this time;
           // spatial tangents are relative offsets, so they travel with it).
-          // `drag.t` is ALREADY the stored keyframe time — converting it again
-          // (the old toLayerTime call) shifted the write off the keyframe being
-          // dragged on any clip that doesn't start at 0. The tangent branch
-          // below always passed it raw; now both do.
-          // Back through the parent chain: `w` is where the pointer is in COMP
-          // space and the x/y tracks hold parent-space values.
-          const lp = compToPath(drag.nodeId, playheadTime(), w);
-          gestureAnimEdit(
-            'Move keyframe',
-            () => {
-              defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, lp.x);
-              defaultAnimation.setKeyframe(drag.nodeId, 'y', drag.t, lp.y);
-            },
-            `mpdrag:${drag.nodeId}:${drag.t}`,
-          );
-        } else {
+          // `t` is ALREADY the stored keyframe time.
+          ? () => positionKeyPatchCommands(nodeId, start, drag.ids!, (scratch) => {
+            scratch.setKeyframe(nodeId, 'x', t, lp.x);
+            scratch.setKeyframe(nodeId, 'y', t, lp.y);
+          })
           // Pull a spatial tangent handle — bends the path. Mirrored when the
-          // point is still continuous (AE smooth); Alt-drag breaks and STICKS
-          // via Keyframe.continuous so the next non-Alt drag does not remirror.
-          const mirror = isPathTangentContinuous(drag.nodeId, drag.t) && !e.altKey;
-          gestureAnimEdit(
-            'Adjust path tangent',
-            () => setPathTangent(drag.nodeId, drag.t, part, compToPath(drag.nodeId, playheadTime(), w), mirror),
-            `mptan:${drag.nodeId}:${drag.t}:${part}`,
-          );
-        }
+          // point is still continuous (AE smooth).
+          : () => positionKeyPatchCommands(nodeId, start, drag.ids!, (scratch) => {
+            // B3-legacy: not a write — the tangent arithmetic runs on the scratch engine passed
+            // in; the document edit is the `updateKeyframes` built from it (rule false positive).
+            setPathTangent(nodeId, t, part, lp, mirror, scratch);
+          });
+        if (drag.ids) drag.gesture.send(drag.latest());
+        controller.requestRender();
         return;
       }
       if (creationDragRef.current) {
@@ -2270,6 +2308,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             // it when the stroke began. Size is a comp-pixel diameter → the
             // layer's local units, measured through the same mapping as the
             // points, so parent, animated and 3D scale all count.
+            // B3-legacy: engine gap — paint strokes are not an API group (`addPropertyGroup` /
+            // `removePropertyGroups` do not take `paint`), the eraser / continue-stroke / replace-
+            // selected-path modes rewrite the stroke list, and a stroke's Path has no readable
+            // static value to key (`paint/<id>/path` is a data track).
             const result = commitPaintDrag({
               nodeId: pd.nodeId,
               mode: pd.mode,
@@ -2311,7 +2353,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         return;
       }
       if (mpDragRef.current) {
+        const mp = mpDragRef.current;
         mpDragRef.current = null;
+        // Commit once the key ids (and so the last move) have landed.
+        void mp.ready.then(() => mp.gesture.end());
         useUIStore.getState().setDragging(false);
         return;
       }
@@ -2496,6 +2541,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // plugin bracket included, which suppresses history while it is open.
       cancelPluginGesture();
       endViewportGesture();
+      // …nor an open engine gesture (an open one refuses undo): commit it.
+      const mp = mpDragRef.current;
+      mpDragRef.current = null;
+      if (mp) void mp.ready.then(() => mp.gesture.end());
       useUIStore.getState().setDragging(false);
       overlay.style.cursor = '';
     };
@@ -3214,6 +3263,8 @@ let mpHover: { nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null 
 function motionPathWindowFor(nodeId: string, compTime: number): { min: number; max: number } | null {
   const g = useGuidesStore.getState();
   if (g.motionPathShow === 'all') return { min: -Infinity, max: Infinity };
+  // B3-legacy: display read — the drawn window is on the keyframe axis the path is sampled on
+  // (B4's mirror replaces it); nothing is written.
   return motionPathTimeWindow(g.motionPathShow, g.motionPathWindowSeconds, compToKeyframeTime(nodeId, compTime, 'x'));
 }
 

@@ -46,6 +46,9 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
   const focalPx = Math.round(Project3D.focalLengthForFov(compWidth, fov));
 
   const create = (): void => {
+    // B3-legacy: engine gap — `createLayer{kind:'camera'}` builds the factory's one-node camera;
+    // the dialog's options (two-node + Point of Interest, lens → focal length, placement,
+    // selection) have no init form (`camera/…` init paths the factory node lacks).
     insertCamera({ name, focalLength: focalPx, twoNode });
     close();
   };
@@ -125,6 +128,8 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
   );
 
   const create = (): void => {
+    // B3-legacy: engine gap — `createLayer{kind:'light'}` seeds one point light; light type,
+    // cone angle/feather, environment preset and shadow options have no init form.
     insertLight({
       name,
       type,

@@ -32,15 +32,16 @@ import { cn } from '@utils/cn';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readCompRef } from '@core/scene/compInstance';
-import { readNodeMask, readNodeMaskAt, removeMaskPath, updateMaskPath, type MaskMode } from '@core/effects/mask';
+import { readNodeMask, readNodeMaskAt, type MaskMode } from '@core/effects/mask';
 import { compSizeOf } from '@core/composition/compSizes';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { defaultAnimation } from '@motion/animation';
+import { trimBar } from '@layout/Timeline/timelineEdits';
+import { deleteMaskEdit, setMaskFlagsEdit } from '@layout/Workspace/viewportEdits';
 import { useLayerViewerStore, type LayerMaskTool } from '@stores/layerViewerStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import { useCurrentTime, setTime } from '@stores/playbackClockStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -175,8 +176,12 @@ export function LayerViewer(): JSX.Element | null {
   const [heldLayerTime, setHeldLayerTime] = useState<number | null>(null);
   useEffect(() => { setHeldLayerTime(null); }, [nodeId]);
   const layerT = heldLayerTime ?? layerTimeAt(compTime);
-  /** Where the renderer reads the layer's mask — and where mask edits land. */
+  /** Where the renderer reads the layer's mask (its keyframe axis) — drawing only. */
+  // B3-legacy: display read — the keyframe-axis time the mask is SAMPLED at (B4's mirror
+  // replaces it); mask writes go through the engine in comp time (`maskCompTime`).
   const maskTime = heldLayerTime ?? (nodeId && node ? compToKeyframeTime(nodeId, compTime) : 0);
+  /** The same moment in comp seconds — where mask edits land (the engine maps it to the key axis). */
+  const maskCompTime = heldLayerTime !== null ? compTimeAt(heldLayerTime) : compTime;
 
   const frame = node ? layerFrame(node) : { width: 1, height: 1 };
   const stageRef = useRef<HTMLDivElement>(null);
@@ -230,8 +235,9 @@ export function LayerViewer(): JSX.Element | null {
   const clampOut = (v: number): number => Math.max(Math.min(clip?.sourceDur ?? Infinity, v), (clip?.inT ?? 0) + minLen);
   const commitTrim = (edge: 'start' | 'end', lt: number): void => {
     if (!clip) return;
-    getTimelineController().trimClipTo(clip.id, edge, compTimeAt(lt));
-    bumpScene();
+    // The timeline's own trim (engine API, one "Trim Layer" entry; its legacy
+    // fallback for a bar the API cannot express lives there).
+    void trimBar(clip.id, edge, compTimeAt(lt));
   };
 
   const onRulerDown = (e: ReactPointerEvent<HTMLDivElement>, kind: Drag): void => {
@@ -275,18 +281,17 @@ export function LayerViewer(): JSX.Element | null {
   // The picked mask, as the renderer reads it now.
   const masks = (readNodeMaskAt(node, maskTime) ?? readNodeMask(node))?.paths ?? [];
   const pickedMask = maskSelection ? masks.find((p) => p.id === maskSelection.pathId) : undefined;
+  // Mode / Invert hold across every shape keyframe (the engine writes them on
+  // the static mask and each key), as AE's mask switches do.
   const editMask = (label: string, patch: { mode?: MaskMode; inverted?: boolean }): void => {
     if (!pickedMask) return;
-    const pathId = pickedMask.id;
-    runDocumentEdit(label, () => updateMaskPath(nodeId, pathId, patch, maskTime));
-    bumpScene();
+    void setMaskFlagsEdit(nodeId, pickedMask.id, label, patch);
   };
   const deleteMask = (): void => {
     if (!pickedMask) return;
     const pathId = pickedMask.id;
-    runDocumentEdit('Delete Mask', () => removeMaskPath(nodeId, pathId));
     selectMask(null);
-    bumpScene();
+    void deleteMaskEdit(nodeId, pathId);
   };
 
   const openViewMenu = (e: React.MouseEvent): void => {
@@ -416,6 +421,7 @@ export function LayerViewer(): JSX.Element | null {
             stageWidth={stage.width}
             stageHeight={stage.height}
             maskTime={maskTime}
+            maskCompTime={maskCompTime}
           />
         ) : null}
         {view ? (

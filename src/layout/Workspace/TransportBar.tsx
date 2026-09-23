@@ -40,7 +40,8 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { bumpScene } from '@stores/sceneStore';
+import { splitSelectedAtPlayhead, trimSelectedEndToPlayhead, trimSelectedStartToPlayhead } from '@layout/Timeline/timelineEdits';
+import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead } from '@layout/Timeline/markerCommands';
 import { ViewportTools } from './ViewportTools';
 import { ViewportDisplayControlsView, displayOverflowItems, useViewportDisplayModel } from './ViewportDisplayControls';
 import { ZoomField, useZoomPercent, zoomMenuItems } from './ZoomField';
@@ -84,26 +85,19 @@ export function TransportBar(): JSX.Element {
   const display = useViewportDisplayModel();
   const zoom = useZoomPercent();
 
-  const splitAtPlayhead = (): void => {
-    getTimelineController().splitSelectedAtPlayhead(selectedIds);
-    bumpScene();
-  };
-  const trimInToPlayhead = (): void => {
-    getTimelineController().trimSelectedStartToPlayhead(selectedIds);
-    bumpScene();
-  };
-  const trimOutToPlayhead = (): void => {
-    getTimelineController().trimSelectedEndToPlayhead(selectedIds);
-    bumpScene();
-  };
+  // The timeline's own edits (engine API, one entry each, the legacy labels).
+  const splitAtPlayhead = (): void => { void splitSelectedAtPlayhead(selectedIds); };
+  const trimInToPlayhead = (): void => { void trimSelectedStartToPlayhead(selectedIds); };
+  const trimOutToPlayhead = (): void => { void trimSelectedEndToPlayhead(selectedIds); };
   const toggleLoop = (): void => {
     getTimelineController().setLooping(!looping);
     setLooping(!looping);
   };
+  // One layer selected → a layer marker on it; otherwise a comp marker. The
+  // timeline's marker commands (their colour gap is documented there).
   const addMarker = (): void => {
-    const ctrl = getTimelineController();
-    if (selectedIds.length === 1 && ctrl.addLayerMarkerAtPlayhead(selectedIds[0]!)) return;
-    ctrl.addMarkerAtPlayhead();
+    if (selectedIds.length === 1 && addLayerMarkersAtPlayhead() > 0) return;
+    addCompMarkerAtPlayhead();
   };
 
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);

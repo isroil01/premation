@@ -170,11 +170,14 @@ function writeStrokeGradientPoints(t: EditTarget, next: StrokeGradientGeometry, 
         { prop: strokeTrackPath(t.strokeIndex, 'gradientEndY'), value: next.endY },
       ];
   const autoKey = usePreferenceStore.getState().timelineAutoKeyframe;
+  // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
   batchHistory(historyKey(t), () => {
     let anyStatic = false;
     for (const { prop, value } of props) {
       if (defaultAnimation.isAnimated(t.nodeId, prop) || autoKey) {
+        // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
         const at = compToKeyframeTime(t.nodeId, t.time, prop);
+        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
         runAnimEdit(`Set ${prop}`, () => defaultAnimation.setKeyframe(t.nodeId, prop, at, value), `gradGeom:${t.nodeId}:${prop}`);
       } else {
         anyStatic = true;
@@ -185,6 +188,7 @@ function writeStrokeGradientPoints(t: EditTarget, next: StrokeGradientGeometry, 
     // highlight keep their stored values, not the keyframed ones on screen.
     const stored = getNodeStrokeAt(t.nodeId, t.strokeIndex);
     const base = stored?.gradient ?? strokeGradientGeometryFor(stored?.paint, t.width, t.height);
+    // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
     updateNodeStrokeAt(t.nodeId, t.strokeIndex, {
       gradient: grip === 'start'
         ? { ...base, startX: next.startX, startY: next.startY }
@@ -195,9 +199,11 @@ function writeStrokeGradientPoints(t: EditTarget, next: StrokeGradientGeometry, 
 
 /** The paint itself — the text stroke, the fill stack's slot, or the primary-fill shortcut. */
 function writePaintStatic(t: EditTarget, paint: GradientPaint): void {
+  // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
   batchHistory(historyKey(t), () => {
     if (t.channel === 'shapeStroke') {
       // A shape stroke's gradient (colour stops) lives on its stack entry.
+      // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
       updateNodeStrokeAt(t.nodeId, t.strokeIndex, { paint });
       return;
     }
@@ -205,16 +211,19 @@ function writePaintStatic(t: EditTarget, paint: GradientPaint): void {
       // A text stroke gradient lives on the Text component, where the stroke
       // rows write it (`TextStrokeRows`).
       if (t.textComponentId) {
+        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
         updateNodeComponentProp(defaultSceneGraph, t.nodeId, t.textComponentId, 'strokePaint', paint);
       }
       return;
     }
     if (t.fillIndex === 0) {
+      // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
       setNodeFill(t.nodeId, paint);
       return;
     }
     const next = [...t.fills];
     next[t.fillIndex] = paint;
+    // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
     setNodeFills(t.nodeId, next);
   });
 }
@@ -228,9 +237,11 @@ function writePaintStatic(t: EditTarget, paint: GradientPaint): void {
  */
 function writeGradientStops(t: EditTarget, next: ColorStop[]): void {
   if (t.stopsAnimated) {
+    // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
     runAnimEdit(
       'Edit gradient stops keyframe',
       () => {
+        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
         defaultAnimation.setDataKeyframe(
           t.nodeId,
           'fill.stops',
@@ -281,13 +292,17 @@ function writeGradientGeometry(t: EditTarget, next: GradientPaint, grip: Gradien
   ) as GradientPaint;
 
   const autoKey = usePreferenceStore.getState().timelineAutoKeyframe;
+  // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
   batchHistory(historyKey(t), () => {
     let anyStatic = false;
     for (const { prop, value } of props) {
       if (defaultAnimation.isAnimated(t.nodeId, prop) || autoKey) {
+        // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
         const at = compToKeyframeTime(t.nodeId, t.time, prop);
+        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
         runAnimEdit(
           `Set ${prop}`,
+          // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
           () => defaultAnimation.setKeyframe(t.nodeId, prop, at, value),
           `gradGeom:${t.nodeId}:${prop}`,
         );
@@ -342,6 +357,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
     : strokePaint && textComponentId && ((armed && armedTarget === 'stroke') || !fillPaint) ? 'stroke' : 'fill';
   const storedPaint = channel === 'shapeStroke' ? shapeStrokePaint : channel === 'stroke' ? strokePaint : fillPaint;
 
+  // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
   const layerT = nodeId ? compToKeyframeTime(nodeId, time) : 0;
   // Stop KEYFRAMES bind to the primary FILL only — the same gating the panel
   // applies, because `fill.stops` is one track per node, not per stack slot.
@@ -361,6 +377,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
     const sampled = new Map<string, number>();
     for (const prop of [names.angle, names.centerX, names.centerY, names.radius]) {
       if (!defaultAnimation.isAnimated(nodeId, prop)) continue;
+      // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
       const v = defaultAnimation.sample(nodeId, prop, compToKeyframeTime(nodeId, time, prop));
       if (v !== undefined) sampled.set(prop, v);
     }
@@ -408,6 +425,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
     const read = (param: 'gradientStartX' | 'gradientStartY' | 'gradientEndX' | 'gradientEndY', fallback: number): number => {
       const prop = strokeTrackPath(fillIndexRaw, param);
       if (!defaultAnimation.isAnimated(nodeId, prop)) return fallback;
+      // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
       const v = defaultAnimation.sample(nodeId, prop, compToKeyframeTime(nodeId, time, prop));
       return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
     };

@@ -142,7 +142,11 @@ export function EmptyCompositionView(): JSX.Element {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
+      // B3-legacy: engine gap — `importFiles` takes filesystem paths; a picked/dropped browser
+      // `File` has none (no path bridge in preload), so the asset store ingests it.
       const asset = await useAssetStore.getState().addAsset(file);
+      // B3-legacy: engine gap — `createComposition{fromItems}` does not conform the comp to the
+      // footage as `createCompositionFromFootage` does (probed fps, open tab, selection).
       await createCompositionFromFootage(asset);
     } catch (err) {
       useUIStore.getState().notify({
@@ -188,7 +192,9 @@ export function EmptyCompositionView(): JSX.Element {
     }
     if (file) {
       try {
+        // B3-legacy: engine gap — browser `File` import (see `handleFileSelected`).
         const asset = await useAssetStore.getState().addAsset(file);
+        // B3-legacy: engine gap — comp-from-footage conform (see `handleFileSelected`).
         await createCompositionFromFootage(asset);
       } catch (err) {
         useUIStore.getState().notify({

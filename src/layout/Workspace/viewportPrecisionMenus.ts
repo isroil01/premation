@@ -10,11 +10,11 @@
  */
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import type { SpatialInterp } from '@motion/animation';
 import { setSpatialInterpolation, spatialInterpAt, toggleVertexInterpolation } from '@core/motion/motionPath';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { openGuideEditor } from './GuideEditorDialog';
+import { editPositionKeys } from './viewportEdits';
 
 const SPATIAL_LABELS: ReadonlyArray<{ mode: SpatialInterp; label: string }> = [
   { mode: 'linear', label: 'Linear' },
@@ -23,15 +23,26 @@ const SPATIAL_LABELS: ReadonlyArray<{ mode: SpatialInterp; label: string }> = [
   { mode: 'auto', label: 'Auto Bezier' },
 ];
 
-/** Undoable: one entry per conversion. */
-export function applySpatialInterpolation(nodeId: string, t: number, mode: SpatialInterp): void {
+/**
+ * Undoable: one entry per conversion. The conversion arithmetic is the motion
+ * path module's, run on a SCRATCH copy of the Position tracks; the changed
+ * keys go to the engine as one `updateKeyframes` (see `editPositionKeys`).
+ */
+export function applySpatialInterpolation(nodeId: string, t: number, mode: SpatialInterp): Promise<void> {
   const label = SPATIAL_LABELS.find((s) => s.mode === mode)?.label ?? mode;
-  runAnimEdit(`Spatial Interpolation: ${label}`, () => setSpatialInterpolation(nodeId, t, mode));
+  return editPositionKeys(nodeId, `Spatial Interpolation: ${label}`, (scratch) => {
+    // B3-legacy: not a write — the helper runs on the scratch engine passed in; the document
+    // edit is the `updateKeyframes` built from its result (rule false positive by name).
+    setSpatialInterpolation(nodeId, t, mode, scratch);
+  });
 }
 
 /** Undoable Convert Vertex (Ctrl/Cmd+click a motion-path keyframe). */
-export function convertMotionPathVertex(nodeId: string, t: number): void {
-  runAnimEdit('Convert Vertex', () => { toggleVertexInterpolation(nodeId, t); });
+export function convertMotionPathVertex(nodeId: string, t: number): Promise<void> {
+  return editPositionKeys(nodeId, 'Convert Vertex', (scratch) => {
+    // B3-legacy: not a write — scratch engine (see `applySpatialInterpolation`).
+    toggleVertexInterpolation(nodeId, t, scratch);
+  });
 }
 
 export function motionPathKeyframeMenuItems(nodeId: string, t: number): ContextMenuItem[] {
@@ -44,14 +55,14 @@ export function motionPathKeyframeMenuItems(nodeId: string, t: number): ContextM
         id: `mp-spatial-${mode}`,
         label,
         icon: current === mode ? 'check' : undefined,
-        onSelect: () => applySpatialInterpolation(nodeId, t, mode),
+        onSelect: () => { void applySpatialInterpolation(nodeId, t, mode); },
       })),
     },
     { id: 'mp-sep', separator: true },
     {
       id: 'mp-convert',
       label: current === 'linear' ? 'Convert Vertex to Auto Bezier (Ctrl+Click)' : 'Convert Vertex to Corner (Ctrl+Click)',
-      onSelect: () => convertMotionPathVertex(nodeId, t),
+      onSelect: () => { void convertMotionPathVertex(nodeId, t); },
     },
   ];
 }

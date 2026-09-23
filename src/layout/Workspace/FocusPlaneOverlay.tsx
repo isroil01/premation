@@ -72,6 +72,10 @@ import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
+import { GestureSession } from '@core/engine/uiEdits';
+import { useProjectStore } from '@stores/projectStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { trackValueCommands } from './viewportEdits';
 import {
   buildFocusPlaneGizmo,
   focusDistanceFromDrag,
@@ -295,6 +299,8 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
       startDistance: number;
       startPt: { x: number; y: number };
       axisPerUnit: { x: number; y: number };
+      /** One undo entry for the whole drag. */
+      gesture: GestureSession;
     } | null = null;
 
     const onDown = (e: PointerEvent): void => {
@@ -322,6 +328,7 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
         // that has itself moved feeds the gesture back into its own input and
         // makes a slow drag accelerate.
         axisPerUnit: screenAxisPerUnit(giz.centre, giz.forward, project),
+        gesture: new GestureSession('Focus Distance'),
       };
       // The drag flag: without it the RAM preview kept serving the pre-drag
       // frame while the focus plane moved (see beginViewportGesture).
@@ -350,12 +357,21 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
       // animated or Auto-Keyframe is on. A base-only write is invisible on an
       // animated property — the renderer having sampled the track first — which
       // is exactly how a handle drag ends up looking broken on a rack focus.
-      applyNodePropsKeyframed(drag.nodeId, { focusDistance: next }, `focusplane:${drag.nodeId}`);
+      const s = useProjectStore.getState();
+      const cmds = trackValueCommands([{ nodeId: drag.nodeId, values: { focusDistance: next } }], {
+        seconds: s.tabs[s.activeTabId ?? '']?.time ?? 0,
+        autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe,
+      });
+      if (cmds) drag.gesture.send(cmds);
+      // B3-legacy: engine gap — a camera that is not a composition's layer, or whose Focus
+      // Distance the catalog does not list, has no API address.
+      else applyNodePropsKeyframed(drag.nodeId, { focusDistance: next }, `focusplane:${drag.nodeId}`);
       useFocusPlaneStore.getState().setDragDistance(next);
     };
 
     const onUp = (e: PointerEvent): void => {
       if (!drag) return;
+      void drag.gesture.end();
       drag = null;
       endViewportGesture();
       useFocusPlaneStore.getState().setDragDistance(null);
@@ -371,7 +387,7 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
       svg.removeEventListener('pointermove', onMove);
       svg.removeEventListener('pointerup', onUp);
       svg.removeEventListener('pointercancel', onUp);
-      if (drag) { drag = null; endViewportGesture(); }
+      if (drag) { void drag.gesture.end(); drag = null; endViewportGesture(); }
       useFocusPlaneStore.getState().setDragDistance(null);
     };
   }, [mounted]);

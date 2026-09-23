@@ -202,6 +202,7 @@ export function LayerPaintSurface({
     }
     if (painting && live) {
       setLive(null);
+      // B3-legacy: engine gap — paint strokes are not an API group (addPropertyGroup / removePropertyGroups do not take paint), erase / continue / replace-selected-path rewrite the stroke list, and a stroke's Path (paint/<id>/path) is a data track with no readable static value to key.
       const result = commitPaintDrag({
         nodeId,
         mode: tool === 'eraser' ? 'erase' : paintMode === 'clone' ? 'clone' : 'paint',

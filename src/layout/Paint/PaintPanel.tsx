@@ -271,6 +271,8 @@ export function PaintPanel(): JSX.Element {
                       title="Video switch"
                       onClick={(e) => {
                         e.stopPropagation();
+                        // B3-legacy: engine gap — paint strokes are not an API group, so a stroke's
+                        // video switch (visible) has no address (`setGroupEnabled` does not take paint).
                         runDocumentEdit(s.visible === false ? 'Show Paint Stroke' : 'Hide Paint Stroke', () =>
                           updatePaintStroke(layerId, s.id, { visible: s.visible === false ? undefined : false }));
                       }}
@@ -286,6 +288,9 @@ export function PaintPanel(): JSX.Element {
                       title={keyed ? 'Path is keyframed — click to remove its keyframes' : 'Key the Path at the current time'}
                       onClick={(e) => {
                         e.stopPropagation();
+                        // B3-legacy: engine gap — `setAnimated` on `paint/<id>/path` cannot turn it ON:
+                        // the path is a data track with no readable static value (readStatic → none), so the
+                        // first key has no value; the legacy toggle keys the stroke's stored points.
                         runDocumentEdit(keyed ? 'Disable Path Animation' : 'Enable Path Animation', () =>
                           toggleStrokePathAnimation(layerId, s.id, layerTime()));
                       }}
@@ -299,6 +304,7 @@ export function PaintPanel(): JSX.Element {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (selected) paint.set({ selectedStroke: null });
+                        // B3-legacy: engine gap — `removePropertyGroups` does not take paint strokes.
                         runDocumentEdit('Delete Paint Stroke', () => removePaintStroke(layerId, s.id));
                       }}
                     >
@@ -314,7 +320,11 @@ export function PaintPanel(): JSX.Element {
             <Checkbox
               label="Paint on Transparent"
               checked={cfg.onTransparent === true}
-              onChange={() => runDocumentEdit('Paint on Transparent', () => setPaintOnTransparent(layerId, cfg.onTransparent !== true))}
+              onChange={() => {
+                // B3-legacy: engine gap — Paint on Transparent is a layer paint setting with no API
+                // property (`paint/onTransparent` is not in the catalog).
+                runDocumentEdit('Paint on Transparent', () => setPaintOnTransparent(layerId, cfg.onTransparent !== true));
+              }}
             />
           </>
         )}

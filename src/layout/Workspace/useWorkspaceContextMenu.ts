@@ -27,20 +27,16 @@
  */
 
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
-import { getRemappedTime } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
+import { is3DEnabled } from '@core/scene/threeD';
 import { type WorkspaceController } from '@core/workspace/WorkspaceController';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
-import { bumpScene } from '@stores/sceneStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { renameLayer } from '@core/scene/renameLayer';
 import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
@@ -49,20 +45,26 @@ import { assetIdOf } from '@core/source/sourceInfo';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useAssetStore } from '@stores/assetStore';
-import {
-  duplicateSelectedLayers,
-  deleteSelectedLayers,
-  toggleSelectedLocked,
-  toggleSelectedSolo,
-  toggleSelectedVisible,
-  groupSelectedLayers,
-  ungroupSelected,
-} from '@core/scene/sceneInsert';
+import { groupSelectedLayers } from '@core/scene/sceneInsert';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { arrangeNodes } from '@core/scene/parenting';
-import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
+import { LABEL_COLORS, readNodeLabelColor } from '@core/scene/labelColor';
 import { customPrompt } from '@components/Modal/Dialogs';
+import { toggleLayerSwitchAnchored } from '@layout/Scene/layerSwitchEdits';
+import {
+  addKeyframesAtPlayheadEdit,
+  arrangeLayersEdit,
+  deleteSelectedLayersEdit,
+  duplicateSelectedLayersEdit,
+  freezeFrameEdit,
+  groupSelectedLayersEdit,
+  set3DEdit,
+  setFrameBlendEdit,
+  setLabelColorEdit,
+  setStretchEdit,
+  timeReverseEdit,
+  ungroupSelectedEdit,
+} from './layerMenuEdits';
 
 /**
  * Right-click menu for a canvas node — the same actions as the scene-tree menu
@@ -89,36 +91,11 @@ export function compSize(): { w: number; h: number } {
 }
 
 /**
- * The value a property has right now (sampled keyframes → component prop →
- * type default) — what an added keyframe must capture so nothing jumps.
+ * Keyframe `props` at the playhead (the live clock), each holding its current
+ * value — the engine's `addKeyframes` samples it, so nothing jumps.
  */
-function currentPropValue(id: string, prop: string): number {
-  const t = getPlayheadTime();
-  const layerT = getRemappedTime(id, t);
-  const sampled = defaultAnimation.sample(id, prop, layerT);
-  if (sampled !== undefined) return sampled;
-  const node = defaultSceneGraph.getNode(id);
-  if (node) {
-    for (const c of node.components) {
-      const v = (c.props as Record<string, unknown>)[prop];
-      if (typeof v === 'number') return v;
-    }
-    if (prop === 'x') return node.transform.position.x;
-    if (prop === 'y') return node.transform.position.y;
-  }
-  const DEFAULTS: Record<string, number> = { scaleX: 1, scaleY: 1, opacity: 100 };
-  return DEFAULTS[prop] ?? 0;
-}
-
-/** Keyframe `props` at the playhead, capturing their current values. */
 function addKeyframesAtPlayhead(id: string, label: string, props: readonly string[]): void {
-  const t = getPlayheadTime();
-  const layerT = getRemappedTime(id, t);
-  runAnimEdit(`Add ${label} keyframe`, () => {
-    for (const p of props) {
-      defaultAnimation.setKeyframe(id, p, layerT, currentPropValue(id, p));
-    }
-  });
+  void addKeyframesAtPlayheadEdit(id, label, props, getPlayheadTime());
 }
 
 function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
@@ -126,19 +103,21 @@ function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
   const ids: string[] = sel.includes(targetId) ? [...sel] : [targetId];
   const node = defaultSceneGraph.getNode(targetId);
   const current = node ? readNodeLabelColor(node) : undefined;
+  // Every swatch here is a layer-label colour, so the API's label index covers it.
+  const pick = (color: string | undefined) => (): void => { void setLabelColorEdit(ids, color); };
   return [
     {
       id: 'label-none',
       label: 'None (Default)',
       icon: current === undefined ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(ids, undefined),
+      onSelect: pick(undefined),
     },
     { id: 'label-sep', separator: true },
     ...LABEL_COLORS.map((c): ContextMenuItem => ({
       id: `label-${c.id}`,
       label: c.label,
       icon: current === c.color ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(ids, c.color),
+      onSelect: pick(c.color),
     })),
   ];
 }
@@ -160,13 +139,13 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
     id: `spd-${stretch}`,
     label,
     icon: time.stretch === stretch ? 'check' : undefined,
-    onSelect: () => updateNodeLayerTime(id, { stretch }),
+    onSelect: () => { void setStretchEdit(id, stretch, time.reverse); },
   });
   const blend = (label: string, mode: FrameBlend): ContextMenuItem => ({
     id: `fb-${mode}`,
     label,
     icon: time.frameBlend === mode ? 'check' : undefined,
-    onSelect: () => updateNodeLayerTime(id, { frameBlend: mode }),
+    onSelect: () => { void setFrameBlendEdit(id, mode); },
   });
   return {
     id: 'video',
@@ -182,13 +161,21 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         speed('200% (2× faster)', 50),
         speed('400% (4× faster)', 25),
       ] },
-      { id: 'reverse', label: time.reverse ? 'Un-reverse' : 'Reverse', onSelect: () => updateNodeLayerTime(id, { reverse: !time.reverse }) },
+      { id: 'reverse', label: time.reverse ? 'Un-reverse' : 'Reverse', onSelect: () => { void timeReverseEdit(id); } },
       {
         id: 'freeze',
         label: time.freeze ? 'Un-freeze Frame' : 'Freeze Frame at Playhead',
-        onSelect: () => updateNodeLayerTime(id, time.freeze
-          ? { freeze: false }
-          : { freeze: true, freezeTime: playhead }),
+        onSelect: () => {
+          if (time.freeze) {
+            // B3-legacy: engine gap — `freezeFrame` only sets a freeze; there is no command (or
+            // `setLayerTiming` field) that clears one. Un-freeze keeps the legacy layer-time write.
+            updateNodeLayerTime(id, { freeze: false });
+            return;
+          }
+          // The engine stores the freeze on the layer's keyframe axis (the frame under the
+          // playhead); the legacy write stored raw comp time, off by the bar's offset.
+          void freezeFrameEdit(id, playhead);
+        },
       },
       { id: 'fb', label: 'Frame Blending', children: [
         blend('Off', 'none'),
@@ -255,6 +242,9 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
       // Re-read: the dialog is async now, so the node could have been deleted
       // while it was open. The old synchronous prompt could not have this gap.
       if (!defaultSceneGraph.getNode(id)) return;
+      // B3-legacy: engine gap — `renameLayer` renames only; the legacy rename also rewrites every
+      // expression whose `layer('<old name>')` RESOLVED to this layer (keeping each expression's
+      // enabled flag and plugin `authoredBy`) and reports captured references, in one entry.
       const result = renameLayer(id, newName);
       if (!result.ok) return;
       if (result.repaired.length > 0) {
@@ -276,15 +266,15 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
   };
   return [
     { id: 'rename', label: 'Rename…', onSelect: renameNode },
-    { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+    { id: 'duplicate', label: 'Duplicate', onSelect: () => { void duplicateSelectedLayersEdit(); } },
     // One call for the whole selection — see `reorderSiblings` for what looping
-    // over it did to a multi-selection. Same helper the Layer menu and the
-    // Scene panel's context menu use.
+    // over it did to a multi-selection. Same sibling rules as the Layer menu
+    // and the Scene panel's context menu (`arrangeNodes`).
     { id: 'arrange', label: 'Arrange', children: [
-      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'front'); } },
-      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'forward'); } },
-      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'backward'); } },
-      { id: 'arr-back', label: 'Send to Back', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'back'); } },
+      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { void arrangeLayersEdit(useSelectionStore.getState().ids, 'front'); } },
+      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { void arrangeLayersEdit(useSelectionStore.getState().ids, 'forward'); } },
+      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { void arrangeLayersEdit(useSelectionStore.getState().ids, 'backward'); } },
+      { id: 'arr-back', label: 'Send to Back', onSelect: () => { void arrangeLayersEdit(useSelectionStore.getState().ids, 'back'); } },
     ] },
     { id: 'sep0', separator: true },
     { id: 'kf', label: 'Add Keyframe', children: [
@@ -297,25 +287,33 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
     // Footage verbs on the footage itself — see videoContextMenuItems.
     ...(isVideo ? [videoContextMenuItems(id), { id: 'sep-vid', separator: true } as ContextMenuItem] : []),
     { id: 'sep1', separator: true },
-    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleSelectedVisible },
-    { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },
-    { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo() },
+    // Anchored on the right-clicked layer: its state (what the item says) decides
+    // the direction for the whole selection when it is part of it.
+    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: () => { void toggleLayerSwitchAnchored(id, 'visible'); } },
+    { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => { void toggleLayerSwitchAnchored(id, 'locked'); } },
+    { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => { void toggleLayerSwitchAnchored(id, 'solo'); } },
     {
       id: 'toggle-3d',
       label: node && is3DEnabled(node) ? 'Disable 3D Layer' : 'Enable 3D Layer',
       onSelect: () => {
         const ids = useSelectionStore.getState().ids;
-        for (const nid of (ids.includes(id) ? ids : [id])) {
-          const n = defaultSceneGraph.getNode(nid);
-          if (n && canBe3D(n)) set3DEnabled(nid, !is3DEnabled(n));
-        }
-        bumpScene();
+        void set3DEdit(ids.includes(id) ? ids : [id]);
       },
     },
     { id: 'labelColor', label: 'Label Color', children: labelColorCanvasMenuItems(id) },
     { id: 'sep2', separator: true },
-    { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
-    ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
+    {
+      id: 'group',
+      label: 'Group Selection',
+      onSelect: () => {
+        void groupSelectedLayersEdit().then((handled) => {
+          // B3-legacy: engine gap — `groupLayers` needs every layer under ONE parent; the legacy
+          // grouping reparents a mixed selection (world transform kept) under a new group.
+          if (!handled) groupSelectedLayers();
+        });
+      },
+    },
+    ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => { void ungroupSelectedEdit(); } }] : []),
     { id: 'precompose', label: 'Pre-compose…', onSelect: () => openPrecomposeDialog() },
     { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
     ...svgContextMenuItems(id),
@@ -331,16 +329,21 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
               { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
               { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
               { id: 'merge-sep', label: '—', disabled: true },
+              // B3-legacy: engine gap — no command bakes a boolean path merge (the result is a new
+              // path layer computed from the operands' outlines; `convertLayer` does not cover it).
               { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
+              // B3-legacy: engine gap — boolean path merge (see Bake Union).
               { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
+              // B3-legacy: engine gap — boolean path merge (see Bake Union).
               { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
+              // B3-legacy: engine gap — boolean path merge (see Bake Union).
               { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
             ],
           },
         ]
       : []),
     { id: 'sep3', separator: true },
-    { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteSelectedLayers() },
+    { id: 'delete', label: 'Delete', danger: true, onSelect: () => { void deleteSelectedLayersEdit(); } },
   ];
 }
 

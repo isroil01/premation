@@ -60,7 +60,6 @@ import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { addEffectAndReveal } from '@layout/Effects/revealEffectControls';
-import { applyPresetByName } from '@core/animation/animationPresets';
 import { insertAnimPreset } from '@core/template/animPresets';
 import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
 
@@ -94,7 +93,10 @@ import { InlineAiPrompt } from './InlineAiPrompt';
 import { installViewportCommands } from './viewportCommands';
 import { installLayerSettingsCommands } from '@layout/Composition/layerSettingsCommands';
 import { useGuideSync } from './useGuideSync';
-import { replaceLayerSourceWithAsset, resolveReplaceTarget } from '@core/scene/replaceSourceDrop';
+import { resolveReplaceTarget } from '@core/scene/replaceSourceDrop';
+import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
+import { edit } from '@core/engine/uiEdits';
+import { compTime } from '@core/engine/propRefs';
 import styles from './Workspace.module.css';
 
 export interface WorkspaceViewportProps {
@@ -494,6 +496,9 @@ export function WorkspaceViewport({
         useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
         return;
       }
+      // B3-legacy: engine gap — `importFiles` takes filesystem PATHS through the engine ports; an
+      // OS drop hands the renderer browser `File` objects (no path bridge in preload), so the
+      // import goes through the asset store's own ingest.
       const imported = await useAssetStore.getState().addAssetsBatch(media.map((file) => ({ file })));
       // "Empty" = no content layers anywhere in the scene. Counting the comp
       // root's children breaks on fresh unsaved projects (layers hang off the
@@ -502,9 +507,13 @@ export function WorkspaceViewport({
       defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
       const first = imported[0];
       if (!hasContent && imported.length === 1 && first && first.type === 'video') {
+        // B3-legacy: engine gap — `createComposition{fromItems}` does not conform the comp to the
+        // footage the way `createCompositionFromFootage` does (probed fps, tab + selection, fit).
         await createCompositionFromFootage(first);
         return;
       }
+      // B3-legacy: engine gap — `createLayer` builds the factory's minimal footage node; the
+      // insert router (`insertMedia`: contain-fit, PAR, SVG parse, audio layers, sequences) has no API form.
       for (const asset of imported) await insertMedia(asset);
       return;
     }
@@ -521,15 +530,22 @@ export function WorkspaceViewport({
     // The insert helpers select the new node; land it under the cursor.
     const placeSelection = (): void => {
       const id = useSelectionStore.getState().ids[0];
+      // B3-legacy: engine gap — the placement belongs to the legacy insert just before it (the
+      // insert helpers have no API form, see below); an engine write here would split the drop
+      // into two undo entries.
       if (id) setNodeWorldPosition(id, world.x, world.y);
     };
 
     switch (payload.kind) {
       case 'shape':
+        // B3-legacy: engine gap — `createLayer` has no parametric-outline init (shape outlines,
+        // tangents, open lines are built client-side by `insertShape`).
         insertShape(payload.primitive, payload.label);
         placeSelection();
         break;
       case 'text':
+        // B3-legacy: engine gap — `createLayer` text init carries no style props (font size,
+        // weight, fill, preset extras) nor the continuous-raster default `insertText` sets.
         insertText(payload.label, payload.fontSize, payload.weight, payload.extra ?? {});
         placeSelection();
         break;
@@ -538,11 +554,12 @@ export function WorkspaceViewport({
         // the selected one), keeping its transform, keyframes and effects.
         if (e.altKey) {
           const hit = controller.ws.hitTestScreen(local);
-          replaceLayerSourceWithAsset(resolveReplaceTarget(hit?.id), payload.assetId);
+          void replaceSourceWithAsset(resolveReplaceTarget(hit?.id), payload.assetId);
           break;
         }
         const asset = useAssetStore.getState().assets.find((a) => a.id === payload.assetId);
         if (asset) {
+          // B3-legacy: engine gap — the footage insert router (see the file drop above).
           await insertMedia(asset);
           placeSelection();
         }
@@ -550,6 +567,7 @@ export function WorkspaceViewport({
       }
       case 'component': {
         const gid = useComponentStore.getState().insert(payload.componentId);
+        // B3-legacy: engine gap — placement of a legacy component insert (one entry with it).
         if (gid) setNodeWorldPosition(gid, world.x, world.y);
         break;
       }
@@ -557,6 +575,7 @@ export function WorkspaceViewport({
         const preset = UI_COMPONENT_PRESETS.find((p) => p.id === payload.presetId);
         if (preset) {
           const gid = preset.insert();
+          // B3-legacy: engine gap — placement of a legacy component insert (one entry with it).
           if (gid) setNodeWorldPosition(gid, world.x, world.y);
         }
         break;
@@ -571,35 +590,48 @@ export function WorkspaceViewport({
       case 'motionPreset': {
         const node = controller.ws.hitTestScreen(local);
         if (node) {
-          const playhead = getPlayheadTime();
-          applyPresetByName(node.id, payload.name, playhead);
+          // The Motion Presets panel's write: the preset's keys (and any 3D
+          // switch it flips) as one entry, addressed by name.
+          void edit('Apply animation preset', {
+            type: 'applyPreset', layers: [node.id], preset: payload.name, time: compTime(getPlayheadTime()),
+          });
         } else {
           useUIStore.getState().notify({ level: 'warning', message: 'Drop a motion preset onto a layer.', durationMs: 2400 });
         }
         break;
       }
+      // B3-legacy: engine gap (every library case below) — library items are client-side node
+      // builders (layers + keys + effects + expressions); the API would need them as a
+      // `pasteLayers` DocumentFragment or `applyPreset` entries in the engine's library.
       case 'animPreset':
         // A self-contained animated element — insert at the drop point.
+        // B3-legacy: engine gap — library item (see above).
         insertAnimPreset(payload.presetId, world.x, world.y);
         break;
       case 'cursor':
+        // B3-legacy: engine gap — library item (see above).
         insertCursorItem(payload.cursorId, world.x, world.y);
         break;
       case 'uikit':
+        // B3-legacy: engine gap — library item (see above).
         insertUiComponent(payload.componentId, world.x, world.y);
         break;
       case 'mograph':
+        // B3-legacy: engine gap — library item (see above).
         insertMographItem(payload.mographId, world.x, world.y);
         break;
       case 'transition':
         // Position-independent: applies to the selection at the playhead,
         // or drops a choreographed solid.
+        // B3-legacy: engine gap — library item (see above).
         applyTransitionItem(payload.transId);
         break;
       case 'sfx':
+        // B3-legacy: engine gap — library item (an audio layer from the SFX library, see above).
         void insertSfxItem(payload.sfxId);
         break;
       case 'lottie':
+        // B3-legacy: engine gap — library item (see above).
         insertLottieItem(payload.lottieId, world.x, world.y);
         break;
     }

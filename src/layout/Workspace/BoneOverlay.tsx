@@ -240,6 +240,7 @@ export function BoneOverlay(): JSX.Element | null {
       }
       if (selectedBoneId && boneRigMode === 'draw' && (e.key === 'Delete' || e.key === 'Backspace')) {
         e.preventDefault();
+        // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
         deleteBone(selectedNodeId, selectedBoneId);
         setSelectedBoneId(null);
         return;
@@ -295,6 +296,7 @@ export function BoneOverlay(): JSX.Element | null {
     mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
   // Canonical keyframe axis — the same forward map buildSnapshot samples.
+  // B3-legacy: display read + the legacy skeleton writers' key axis (skeletons have no API property yet, see below).
   const layerT = compToKeyframeTime(node.id, time);
 
   // Evaluate live animated bone poses (rotation in RADIANS — the engine unit).
@@ -305,6 +307,8 @@ export function BoneOverlay(): JSX.Element | null {
   // Shared with buildSnapshot and PuppetOverlay — one reader, so the canvas and
   // the render cannot disagree about which chains are solving.
   const activeIkTargets: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
+  // B3-legacy: not a write — `applyIk` is the pure IK solve over a bone list (the ratchet's
+  // exact-name match; belongs in the rule's NOT_WRITES).
   const posedBones = applyIk(animatedBones, activeIkTargets);
   const worldTransforms = computeWorldTransforms({ bones: posedBones });
   const restWorldTransforms = computeWorldTransforms({ bones });
@@ -408,6 +412,7 @@ export function BoneOverlay(): JSX.Element | null {
         rotation: Math.atan2(dy, dx),
       };
     }
+    // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
     addBone(node.id, bone);
     setSelectedBoneId(id);
   };
@@ -421,7 +426,9 @@ export function BoneOverlay(): JSX.Element | null {
     );
 
   const writeIkTargetKeyframes = (boneId: string, local: { x: number; y: number }) => {
+    // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
     defaultAnimation.setKeyframe(node.id, `ikTarget.${boneId}.x`, layerT, local.x);
+    // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
     defaultAnimation.setKeyframe(node.id, `ikTarget.${boneId}.y`, layerT, local.y);
   };
 
@@ -551,6 +558,7 @@ export function BoneOverlay(): JSX.Element | null {
       kind,
       boneId: c.link.boneId,
       startScreen,
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       animTx: keyframes ? beginAnimEdit() : null,
       startRotation: bone?.rotation ?? 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
@@ -600,6 +608,7 @@ export function BoneOverlay(): JSX.Element | null {
       kind,
       boneId: ik ? ik.boneId : boneId,
       startScreen,
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       animTx: keyframes ? beginAnimEdit() : null,
       startRotation: bone?.rotation ?? 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
@@ -624,6 +633,7 @@ export function BoneOverlay(): JSX.Element | null {
       kind: 'pole',
       boneId,
       startScreen,
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       animTx: keyframes ? beginAnimEdit() : null,
       startRotation: 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
@@ -646,6 +656,7 @@ export function BoneOverlay(): JSX.Element | null {
       kind: 'ik',
       boneId,
       startScreen,
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       animTx: keyframes ? beginAnimEdit() : null,
       startRotation: 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
@@ -744,7 +755,9 @@ export function BoneOverlay(): JSX.Element | null {
         controller.requestRender();
         return;
       }
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       defaultAnimation.setKeyframe(node.id, `ikPole.${drag.boneId}.x`, layerT, local.x);
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       defaultAnimation.setKeyframe(node.id, `ikPole.${drag.boneId}.y`, layerT, local.y);
       controller.requestRender();
       return;
@@ -782,6 +795,7 @@ export function BoneOverlay(): JSX.Element | null {
         controller.requestRender();
         return;
       }
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.rotation`, layerT, newRot);
     } else {
       const x = (drag.startBoneX ?? bone.x) + (local.x - drag.startLocal.x);
@@ -791,7 +805,9 @@ export function BoneOverlay(): JSX.Element | null {
         controller.requestRender();
         return;
       }
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.x`, layerT, x);
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.y`, layerT, y);
     }
 
@@ -818,6 +834,7 @@ export function BoneOverlay(): JSX.Element | null {
       if (svg) {
         try { svg.releasePointerCapture(e.pointerId); } catch {}
       }
+      // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
       setWeightPaint(node.id, isWeightPaintEmpty(painted) ? undefined : painted);
       downScreenRef.current = null;
       suppressClickAddRef.current = true;
@@ -854,6 +871,7 @@ export function BoneOverlay(): JSX.Element | null {
       bumpScene();
       return;
     }
+    // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
     recordAnimEdit(
       drag.animTx.commit(
         drag.kind === 'pole' ? `Move IK Pole ${drag.boneId}`
@@ -1113,6 +1131,7 @@ export function BoneOverlay(): JSX.Element | null {
             onDoubleClick={(e) => {
               e.stopPropagation();
               const stored = ikTargets.find((s) => s.boneId === tg.boneId);
+              // B3-legacy: engine gap — skeletons are not API groups/properties in the TS engine (bones, IK targets/poles, weight paint live in fx.skeleton; bone.<id>.* / ikTarget.* / ikPole.* keys have no static binding) — the bone drags / add / delete / weight paint stay one legacy transaction.
               setIKTarget(node.id, {
                 boneId: tg.boneId,
                 x: tg.x,

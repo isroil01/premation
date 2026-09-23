@@ -25,16 +25,13 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
-  addMaskPath,
   readNodeMask,
   readNodeMaskAt,
-  removeMaskPath,
-  setMaskPoints,
   type MaskPath,
   type MaskPoint,
 } from '@core/effects/mask';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { bumpScene } from '@stores/sceneStore';
+import { edit } from '@core/engine/uiEdits';
+import { addMaskEdit, deleteMaskEdit, maskPathCommand } from '@layout/Workspace/viewportEdits';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
 import { cn } from '@utils/cn';
 import { shortId } from '@utils/lang';
@@ -58,8 +55,10 @@ export interface LayerMaskEditorProps {
   view: ViewFit;
   stageWidth: number;
   stageHeight: number;
-  /** The mask's time — where the renderer reads it and where edits land. */
+  /** The mask's time on the layer's keyframe axis — where the renderer reads it (drawing). */
   maskTime: number;
+  /** The same moment in comp seconds — where edits land (the engine maps it to the key axis). */
+  maskCompTime: number;
 }
 
 type Drag =
@@ -91,7 +90,7 @@ function pathD(points: ReadonlyArray<MaskPoint>, closed: boolean, map: (x: numbe
 }
 
 export function LayerMaskEditor({
-  nodeId, frameWidth: w, frameHeight: h, view, stageWidth, stageHeight, maskTime,
+  nodeId, frameWidth: w, frameHeight: h, view, stageWidth, stageHeight, maskTime, maskCompTime,
 }: LayerMaskEditorProps): JSX.Element | null {
   const tool = useLayerViewerStore((s) => s.maskTool);
   const selection = useLayerViewerStore((s) => s.maskSelection);
@@ -117,14 +116,17 @@ export function LayerMaskEditor({
     return screenToLocal(view, w, h, e.clientX - (r?.left ?? 0), e.clientY - (r?.top ?? 0));
   };
 
-  const commitPoints = (pathId: string, points: MaskPoint[], label: string): void => {
-    runDocumentEdit(label, () => setMaskPoints(nodeId, pathId, points, maskTime));
-    bumpScene();
+  // One entry per release. On an animated mask the engine keys the shape at
+  // this moment (AE); on a static one it reshapes the mask itself.
+  const commitPoints = async (pathId: string, points: MaskPoint[], label: string): Promise<void> => {
+    const closed = paths.find((p) => p.id === pathId)?.closed ?? true;
+    await edit(label, maskPathCommand(nodeId, pathId, points, closed, maskCompTime));
   };
   const commitNew = (path: MaskPath): void => {
-    runDocumentEdit('New Mask', () => addMaskPath(nodeId, path));
-    selectMask({ pathId: path.id, point: null });
-    bumpScene();
+    // The engine mints the mask's id; the new mask is selected once it exists.
+    void addMaskEdit(nodeId, path).then((id) => {
+      if (id) selectMask({ pathId: id, point: null });
+    });
   };
   const finishPen = (): void => {
     const path = penPath(pen, `mask_lp_${shortId()}`);
@@ -210,7 +212,14 @@ export function LayerMaskEditor({
       setPen((pts) => [...pts, penPoint(drag.x, drag.y, drag.dragX, drag.dragY)]);
     } else if (draftPoints) {
       const label = drag.kind === 'path' ? 'Move Mask' : 'Edit Mask';
-      commitPoints(draftPoints.pathId, draftPoints.points, label);
+      // The draft stays drawn until the engine has applied the edit, so the
+      // outline never flashes back to its pre-drag shape for a frame.
+      const committed = draftPoints;
+      setDrag(null);
+      void commitPoints(committed.pathId, committed.points, label).finally(() => {
+        setDraftPoints((d) => (d === committed ? null : d));
+      });
+      return;
     }
     setDrag(null);
     setDraftPoints(null);
@@ -227,9 +236,8 @@ export function LayerMaskEditor({
       setPen((pts) => pts.slice(0, -1));
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && selection && !locked) {
       const pathId = selection.pathId;
-      runDocumentEdit('Delete Mask', () => removeMaskPath(nodeId, pathId));
       selectMask(null);
-      bumpScene();
+      void deleteMaskEdit(nodeId, pathId);
     } else {
       return;
     }

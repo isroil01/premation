@@ -27,6 +27,8 @@ import { defaultAnimation } from '@motion/animation';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
@@ -294,5 +296,52 @@ describe('bound to a secondary pane’s view', () => {
     // … and the pane's is the same point through the PANE's comp → canvas map.
     expect(at(pane.container).x).toBeCloseTo(compPt.x * PANE_VIEW.scale + PANE_VIEW.offsetX, 6);
     expect(at(pane.container).y).toBeCloseTo(compPt.y * PANE_VIEW.scale + PANE_VIEW.offsetY, 6);
+  });
+});
+
+/**
+ * B3: a camera that is a LAYER of a composition (the editor's case) is written
+ * through the engine API — the whole drag is one undo entry, and undo puts the
+ * focus back.
+ */
+describe('through the engine API', () => {
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  let cam: string;
+
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    cam = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] })).layer;
+    const tid = defaultSceneGraph.getNode(cam)!.components.find((c) => c.type === 'Transform')!.id;
+    for (const [k, v] of Object.entries({ x: 960, y: 540, z: -1000, focalLength: 1000, focusDistance: 2000, dofStrength: 40 })) {
+      defaultSceneGraph.writeProp(cam, tid, k, v);
+    }
+    useGuidesStore.getState().setCamera3dMode('top');
+  });
+
+  afterEach(async () => {
+    await h.dispose();
+  });
+
+  function dragBy(container: HTMLElement, d: { x: number; y: number }): void {
+    const hit = handle(container)!;
+    const at = { x: Number(hit.getAttribute('cx')), y: Number(hit.getAttribute('cy')) };
+    fireEvent.pointerDown(hit, { clientX: at.x, clientY: at.y, button: 0, pointerId: 1 });
+    for (let i = 1; i <= 3; i++) fireEvent.pointerMove(hit, { clientX: at.x + (d.x * i) / 3, clientY: at.y + (d.y * i) / 3, pointerId: 1 });
+    fireEvent.pointerUp(hit, { clientX: at.x + d.x, clientY: at.y + d.y, pointerId: 1 });
+  }
+
+  it('a drag is ONE "Focus Distance" entry; undo restores it', async () => {
+    const { container } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    const entries = historyLabels().length;
+    await act(async () => {
+      dragBy(container, { x: 0, y: -300 });
+      await engineIdle();
+    });
+    expect(focusProp(cam)).toBeCloseTo(2300, 3);
+    expect(historyLabels().length).toBe(entries + 1);
+    expect(historyLabels().at(-1)).toBe('Focus Distance');
+    await act(async () => { await h.run({ type: 'undo' }); });
+    expect(focusProp(cam)).toBeCloseTo(2000, 3);
   });
 });

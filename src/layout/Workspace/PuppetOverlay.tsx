@@ -142,6 +142,7 @@ export function PuppetOverlay(): JSX.Element | null {
   const deletePin = useCallback((nodeId: string, pinId: string) => {
     // One undoable command: removes the pin AND its animation tracks
     // (position/rotation/stiffness); undo restores both.
+    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
     deletePuppetPin(nodeId, pinId);
     if (selectedPinId === pinId) setSelectedPinId(null);
   }, [selectedPinId]);
@@ -198,6 +199,7 @@ export function PuppetOverlay(): JSX.Element | null {
     mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
   // Canonical keyframe axis — the same forward map buildSnapshot samples.
+  // B3-legacy: display read + the legacy puppet writers' key axis (puppet pins have no API property yet, see below).
   const layerT = compToKeyframeTime(node.id, time);
 
   // Same assembly BoneOverlay and the renderer use. `authoringPreview` hugs the
@@ -235,6 +237,8 @@ export function PuppetOverlay(): JSX.Element | null {
     // Shared resolver. This copy had DRIFTED — it never sampled the pole, so a
     // keyframed pole previewed here differently from how it rendered.
     const activeIk: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
+    // B3-legacy: not a write — `applyIk` is the pure IK solve over a bone list (the ratchet's
+    // exact-name match; belongs in the rule's NOT_WRITES).
     const posedBones = applyIk(animatedBones, activeIk);
     skelPoseWorld = computeWorldTransforms({ bones: posedBones });
     // BIND to the rig's rest pose, POSE with the live one — same rule as
@@ -360,6 +364,7 @@ export function PuppetOverlay(): JSX.Element | null {
     }
 
     // Begin drag undo-redo transaction
+    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
     const animTx = beginAnimEdit();
     dragInfoRef.current = { pinId, startScreen, animTx, mode, startAngleDeg, startRotationDeg };
     capturePointer(svg, e.pointerId);
@@ -380,6 +385,7 @@ export function PuppetOverlay(): JSX.Element | null {
     dragInfoRef.current = {
       pinId,
       startScreen,
+      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
       animTx: beginAnimEdit(),
       mode: 'scale',
       startAngleDeg: 0,
@@ -401,6 +407,7 @@ export function PuppetOverlay(): JSX.Element | null {
     suppressClickAddRef.current = true;
     const svg = svgRef.current;
     if (!svg) return;
+    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
     tangentDragRef.current = { pinId, kfT, which, animTx: beginAnimEdit() };
     capturePointer(svg, e.pointerId);
   };
@@ -423,6 +430,7 @@ export function PuppetOverlay(): JSX.Element | null {
       const keyframes = setDataSpatialTangent(
         track.keyframes, tan.kfT, 0, tan.which, handle, !e.altKey,
       );
+      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
       defaultAnimation.setDataTrack(node.id, prop, { ...track, keyframes });
       controller.requestRender();
       return;
@@ -448,6 +456,7 @@ export function PuppetOverlay(): JSX.Element | null {
       let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
       // Shift constrains rotation to 15° increments, matching AE's gizmo.
       if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
+      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
       defaultAnimation.setKeyframe(node.id, `puppet.${drag.pinId}.rotation`, layerT, rotation);
       controller.requestRender();
       return;
@@ -459,6 +468,7 @@ export function PuppetOverlay(): JSX.Element | null {
       let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
       // Shift constrains scale to 5% steps, matching AE's gizmo.
       if (e.shiftKey) scale = Math.round(scale * 20) / 20;
+      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
       defaultAnimation.setKeyframe(
         node.id, `puppet.${drag.pinId}.scale`, layerT, Math.max(0.01, scale),
       );
@@ -469,6 +479,7 @@ export function PuppetOverlay(): JSX.Element | null {
     if (drag.mode === 'sketch') {
       // Record against the LIVE playhead so the captured path is spread across
       // real time rather than collapsing onto one frame.
+      // B3-legacy: display read + the legacy puppet writers' key axis (puppet pins have no API property yet, see below).
       sketchRef.current?.add(localCoords.x, localCoords.y, compToKeyframeTime(node.id, time));
       controller.requestRender();
       return;
@@ -483,6 +494,7 @@ export function PuppetOverlay(): JSX.Element | null {
     };
     const value = [{ x: localCoords.x, y: localCoords.y }];
     const updatedKeyframes = upsertDataKeyframe(track.keyframes, { t: layerT, value });
+    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
     defaultAnimation.setDataTrack(node.id, `puppet.${drag.pinId}.position`, {
       ...track,
       keyframes: updatedKeyframes,
@@ -499,6 +511,7 @@ export function PuppetOverlay(): JSX.Element | null {
       if (svg) {
         try { svg.releasePointerCapture(e.pointerId); } catch {}
       }
+      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
       recordAnimEdit(tan.animTx.commit(`Curve Puppet Pin Path ${tan.pinId}`));
       bumpScene();
       return;
@@ -523,6 +536,7 @@ export function PuppetOverlay(): JSX.Element | null {
       if (kfs.length > 0) {
         const prop = `puppet.${drag.pinId}.position`;
         const existing = defaultAnimation.getDataTrack(node.id, prop);
+        // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
         defaultAnimation.setDataTrack(node.id, prop, {
           nodeId: node.id,
           prop,
@@ -531,6 +545,7 @@ export function PuppetOverlay(): JSX.Element | null {
           keyframes: kfs.map((k) => ({ t: k.t, value: k.value, easing: k.easing })),
         } as never);
       }
+      // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
       recordAnimEdit(drag.animTx.commit(`Sketch Puppet Pin ${drag.pinId}`));
       bumpScene();
       return;
@@ -541,6 +556,7 @@ export function PuppetOverlay(): JSX.Element | null {
       drag.mode === 'rotate' ? `Rotate Puppet Pin ${drag.pinId}`
         : drag.mode === 'scale' ? `Scale Puppet Pin ${drag.pinId}`
         : `Move Puppet Pin ${drag.pinId}`;
+    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
     recordAnimEdit(drag.animTx.commit(label));
     bumpScene();
   };
@@ -605,6 +621,7 @@ export function PuppetOverlay(): JSX.Element | null {
       restPoint.y,
     );
     const displaced = Math.hypot(restPoint.x - localCoords.x, restPoint.y - localCoords.y) > 1e-3;
+    // B3-legacy: engine gap — puppet pins are not API groups/properties in the TS engine (no addPropertyGroup('puppet'), no removePropertyGroups on pins, no puppet/<pinId>/position|rotation|stiffness bindings; positions are the `puppet.<pin>.position` points data track) — the pin drag / sketch / tangent / add / delete stay one legacy transaction.
     addPuppetPin(
       node.id,
       newPin,

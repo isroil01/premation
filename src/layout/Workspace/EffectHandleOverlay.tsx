@@ -49,6 +49,8 @@ import {
   type HandlePoint,
 } from '@core/effects/effectHandles';
 import { writeEffectParams } from '@core/effects/writeEffectParams';
+import { GestureSession } from '@core/engine/uiEdits';
+import { trackValueCommands } from './viewportEdits';
 
 /** Drawn radius. Smaller than the PICK radius on purpose — see the note below. */
 const VERTEX_R = 5;
@@ -65,7 +67,7 @@ export function EffectHandleOverlay(): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   const comp = useCompositionStore((s) => s.comp());
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const dragRef = useRef<{ handle: EffectHandle; nodeId: string; effectId: string } | null>(null);
+  const dragRef = useRef<{ handle: EffectHandle; nodeId: string; effectId: string; gesture: GestureSession } | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
 
   const nodeId = activeNode && ids.includes(activeNode) ? activeNode : null;
@@ -75,6 +77,8 @@ export function EffectHandleOverlay(): JSX.Element | null {
     : null;
   const geom = node ? readGeometry(node) : null;
 
+  // B3-legacy: display read — the keyframe-axis time the handles are SAMPLED at (B4's mirror
+  // replaces it); the drag's writes go through the engine in comp time.
   const layerT = nodeId ? compToKeyframeTime(nodeId, time) : 0;
 
   /**
@@ -145,7 +149,8 @@ export function EffectHandleOverlay(): JSX.Element | null {
       if (!hit) return;
       e.stopPropagation();
       e.preventDefault();
-      dragRef.current = { handle: hit, nodeId, effectId: effect.id };
+      // One drag = one undo entry: an engine gesture for the whole press.
+      dragRef.current = { handle: hit, nodeId, effectId: effect.id, gesture: new GestureSession(`Move ${hit.spec.label}`) };
       svg.setPointerCapture(e.pointerId);
     };
     const onMove = (e: PointerEvent): void => {
@@ -156,22 +161,41 @@ export function EffectHandleOverlay(): JSX.Element | null {
         return;
       }
       const target = fromScreen(local(e));
-      writeEffectParams(
-        drag.nodeId, drag.effectId, handleDragValues(drag.handle, target),
-        {
-          time,
-          // Stable for the whole gesture and distinct between gestures, so one
-          // drag collapses to one undo entry.
-          mergeKey: `fxhandle:${drag.nodeId}:${drag.effectId}:${drag.handle.spec.id}`,
-          label: `Move ${drag.handle.spec.label}`,
-        },
-      );
+      const values = handleDragValues(drag.handle, target);
+      // The numeric field's rule (writeEffectParams): an animated param keys at
+      // the playhead, a static one takes the value — per param, absolute.
+      const tracks: Record<string, number> = {};
+      for (const [key, v] of Object.entries(values)) tracks[effectPropPath(drag.effectId, key)] = v;
+      const cmds = trackValueCommands([{ nodeId: drag.nodeId, values: tracks }], { seconds: time });
+      if (cmds) {
+        drag.gesture.send(cmds);
+        return;
+      }
+      // B3-legacy: engine gap — a node that is not a composition's layer, or an effect param the
+      // catalog does not list (`effects/<id>/<param>` missing), keeps the legacy writer.
+      writeEffectParams(drag.nodeId, drag.effectId, values, {
+        time,
+        mergeKey: `fxhandle:${drag.nodeId}:${drag.effectId}:${drag.handle.spec.id}`,
+        label: `Move ${drag.handle.spec.label}`,
+      });
     };
     const onUp = (e: PointerEvent): void => {
-      if (!dragRef.current) return;
+      const drag = dragRef.current;
+      if (!drag) return;
       dragRef.current = null;
+      void drag.gesture.end();
       if (svg.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
     };
+    // Escape mid-drag reverts it (the engine undoes every move of the gesture).
+    const onKey = (e: KeyboardEvent): void => {
+      const drag = dragRef.current;
+      if (e.key !== 'Escape' || !drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragRef.current = null;
+      void drag.gesture.cancel();
+    };
+    window.addEventListener('keydown', onKey, true);
 
     svg.addEventListener('pointerdown', onDown);
     svg.addEventListener('pointermove', onMove);
@@ -182,8 +206,16 @@ export function EffectHandleOverlay(): JSX.Element | null {
       svg.removeEventListener('pointermove', onMove);
       svg.removeEventListener('pointerup', onUp);
       svg.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('keydown', onKey, true);
     };
   }, [handles, toScreen, fromScreen, effect, nodeId, time]);
+
+  // Unmount mid-drag commits (nothing the user saw is lost).
+  useEffect(() => () => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (drag) void drag.gesture.end();
+  }, []);
 
   if (!node || !effect || !toScreen || handles.length === 0) return null;
 

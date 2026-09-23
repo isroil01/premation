@@ -34,6 +34,8 @@ import { readParagraphBox, readParagraphDirection, resolveAlignForDirection } fr
 import { isAutoTextLayerName, textLayerNameFor } from '@core/text/textLayerName';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { isLayer } from '@core/engine/doc';
+import { commitSourceTextEdit } from './viewportEdits';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { installTextCommands } from '@layout/Inspector/textCommands';
@@ -292,11 +294,22 @@ export function TextEditOverlay(): JSX.Element | null {
     // Source Text keyframed (AE): an edit becomes a keyframe at the playhead —
     // the renderer reads the data track, so writing the static prop would be
     // an edit that changes nothing on screen.
+    const t = getPlayheadTime();
+    // Through the engine API when the node is a composition's layer (the
+    // editor's case). The overlay stays up until the edit has landed, so the
+    // layer's glyphs never show the old text for a frame.
+    const viaEngine = !!node && isLayer(node.id);
     if (node && textComp && defaultAnimation.isDataAnimated(node.id, 'text.source')) {
-      const t = getPlayheadTime();
       const layerT = getRemappedTime(node.id, t);
       if (next !== defaultAnimation.sampleData(node.id, 'text.source', layerT)) {
+        if (viaEngine) {
+          // Source Text is animated: `setProperty` at the playhead keys it (AE).
+          void commitSourceTextEdit(node.id, next, { seconds: t, label: 'Edit Source Text keyframe' }).finally(end);
+          return;
+        }
+        // B3-legacy: engine gap — a text node that is not a layer of a composition has no API address.
         runAnimEdit('Edit Source Text keyframe', () => {
+          // B3-legacy: engine gap — same (not a layer).
           defaultAnimation.setDataKeyframe(node.id, 'text.source', 'text', layerT, next);
         });
       }
@@ -305,6 +318,16 @@ export function TextEditOverlay(): JSX.Element | null {
       end();
       return;
     }
+    if (node && textComp && next !== prev && viaEngine && readRuns(node).length === 0) {
+      // Content (+ the auto-name that follows it) as ONE entry.
+      const auto = isAutoTextLayerName(node.name, prev) ? textLayerNameFor(next) : null;
+      const rename = auto && auto !== node.name ? auto : undefined;
+      void commitSourceTextEdit(node.id, next, { seconds: t, label: 'Edit Text', ...(rename ? { rename } : {}) }).finally(end);
+      return;
+    }
+    // B3-legacy: engine gap (the block below) — styled text: `text/sourceText` writes carry plain
+    // text and the TS engine DROPS the `__runs` style runs on a content change (ENGINE_API.md
+    // §15.4), where this edit re-indexes them; and a text node that is not a layer.
     if (node && textComp && next !== prev) {
       // Emits NodeUpdated, which the history snapshot records — the same
       // undoable path every canvas prop edit uses. (Not runAnimEdit: that is
@@ -316,8 +339,10 @@ export function TextEditOverlay(): JSX.Element | null {
       // one event for the Layers panel to re-derive from, one undo entry.
       if (isAutoTextLayerName(node.name, prev)) {
         const auto = textLayerNameFor(next);
+        // B3-legacy: engine gap — styled / non-layer text (see above).
         if (auto && auto !== node.name) node.name = auto;
       }
+      // B3-legacy: engine gap — styled / non-layer text (see above).
       updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, 'content', next);
       // Runs address characters by index, so an edit that shifts characters
       // must shift the runs with them — otherwise typing a word at the front
@@ -326,7 +351,9 @@ export function TextEditOverlay(): JSX.Element | null {
       // so the rewrite is stamped grapheme-indexed.
       const runs = readRuns(node);
       if (runs.length > 0) {
+        // B3-legacy: engine gap — style runs through the API (textDocument runs are not applied).
         updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, RUNS_INDEX_PROP, RUNS_INDEX_GRAPHEME);
+        // B3-legacy: engine gap — same (the re-indexed runs).
         updateNodeComponentProp(
           defaultSceneGraph,
           node.id,

@@ -93,24 +93,30 @@ export function beginBoxReflow(nodeId: string, handle: BoxHandle): BoxReflowSess
         round: true,
       });
       const id = nodeId as ID;
+      // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
       defaultSceneGraph.writeProp(id, textComp.id, 'boxWidth', next.width);
       if (vertical) {
         // Dragging a top/bottom handle of an auto-height box fixes its height,
         // as AE turns auto-size off when you size the box by hand.
         if (!box.fixedHeight && !madeFixed) {
+          // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
           defaultSceneGraph.writeProp(id, textComp.id, 'boxAutoSize', 'off');
           madeFixed = true;
         }
+        // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
         defaultSceneGraph.writeProp(id, textComp.id, 'boxHeight', next.height);
       }
       // Base Position through the router; the keyframe (when the stopwatch is
       // lit) is set in the gesture edit below.
+      // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
       writeTransformBase(nodeId, [{ prop: 'x', value: next.x }, { prop: 'y', value: next.y }], transformComp.id);
       if (keyPosition) {
         gestureAnimEdit(
           'Resize Text Box',
           () => {
+            // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
             defaultAnimation.setKeyframe(nodeId, 'x', layerTime, next.x);
+            // B3-legacy: engine gap — the paragraph box (Text.boxWidth / boxHeight / boxAutoSize) has no API property (text/boxWidth …); the reflow's compensating Position rides the same legacy viewport gesture.
             defaultAnimation.setKeyframe(nodeId, 'y', layerTime, next.y);
           },
           `textbox:${nodeId}:${layerTime}`,

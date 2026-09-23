@@ -9,19 +9,18 @@
  * the wrong three seconds. So the assertions here are on `Clip` itself
  * (`sourceIn`, `duration`, `start`, in FRAMES) rather than on the fact that an
  * insert happened.
+ *
+ * B3: the range, the overwrite trims and the splits go through the engine
+ * API — ONE undo entry after the insert's, and undo restores the document.
  */
 
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { insertFromSource, applySourceRange, overwriteUnder, compEndSeconds } from './sourceMonitorOps';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { useProjectStore } from '@stores/projectStore';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useAssetStore } from '@stores/assetStore';
-import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
-import type { CommandServices } from '@core/commands/Command';
-import type { ImportedAsset } from '@stores/assetStore';
-import type { SceneNode } from '@core/types';
+import { insertFromSource, sourceRangeEdit, overwriteUnder, compEndSeconds } from './sourceMonitorOps';
+import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 
 /**
  * The real `insertMedia` fits, PAR-corrects and routes by file type — none of
@@ -34,6 +33,7 @@ jest.mock('@core/scene/sceneInsert', () => {
   // exact bug shape these tests exist to catch.
   let seq = 0;
   return {
+    ...jest.requireActual('@core/scene/sceneInsert'),
     insertMedia: jest.fn(async (asset: { id: string; name: string; src: string }) => {
       const graph = jest.requireActual('@core/scene/DefaultSceneGraph').default;
       const { useSelectionStore: sel } = jest.requireActual('@stores/selectionStore');
@@ -57,39 +57,26 @@ const ASSET: ImportedAsset = {
   metadata: { width: 64, height: 48, duration: 10, fps: 30 },
 };
 
-function resetScene(): void {
-  const ids: string[] = [];
-  defaultSceneGraph.traverse((n) => ids.push(n.id));
-  for (const id of ids) defaultSceneGraph.removeNode(id);
-}
+let h: Harness & { engine: LocalEngine };
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
-  getTimelineController().reset();
-  resetScene();
-  defaultSceneGraph.addNode({
-    id: 'comp_root', name: 'Main', parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: 'comp_root_meta', type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }],
-  } as unknown as SceneNode);
-  useProjectStore.getState().actions.replaceComps({
-    comp_root: {
-      id: 'comp_root', name: 'Main', width: 1920, height: 1080, fps: 30,
-      durationSeconds: 10, background: '#101014', transparent: false, startFrame: 0,
-    },
-  });
-  const proj = useProjectStore.getState();
-  proj.actions.setActiveTab(proj.actions.openTab('comp_root', ['comp_root'], 'Main'));
-  useSelectionStore.getState().clear();
-  useAssetStore.setState({ assets: [ASSET] });
+beforeEach(async () => {
+  h = await setupAppEngine();
+  // A 30 fps, 10 s composition (the fixture every assertion below counts in).
+  await h.run({ type: 'setCompositionSettings', comp: 'comp_root', patch: { frameRate: { num: 30, den: 1 }, duration: 10 * 705_600_000 } });
+  useAssetStore.setState({ assets: [...useAssetStore.getState().assets, ASSET] });
+});
+
+afterEach(async () => {
+  await h.dispose();
 });
 
 describe('insertFromSource', () => {
-  it('lands the MARKED part of the file, at the playhead', async () => {
+  it('lands the MARKED part of the file, at the playhead — one entry, undoable', async () => {
     const c = getTimelineController();
     c.seekSeconds(1);
 
     const nodeId = await insertFromSource(ASSET, { inSec: 2, outSec: 5 }, { at: 'playhead' });
+    await engineIdle();
     expect(nodeId).not.toBeNull();
 
     const clip = c.getLayersForNode(nodeId!)[0]!.clip;
@@ -97,11 +84,18 @@ describe('insertFromSource', () => {
     expect(clip.sourceIn).toBe(60);
     expect(clip.duration).toBe(90);
     expect(clip.start).toBe(30);
+    expect(historyLabels().at(-1)).toBe('Insert from Source');
+
+    await h.run({ type: 'undo' });
+    const back = c.getLayersForNode(nodeId!)[0]!.clip;
+    expect(back.sourceIn).toBe(0);
+    expect(back.start).toBe(0);
   });
 
   it('an unmarked clip inserts whole — the range falls back to the file', async () => {
     const c = getTimelineController();
     const nodeId = await insertFromSource(ASSET, { inSec: 0, outSec: 10 }, { at: 'time', seconds: 0 });
+    await engineIdle();
     const clip = c.getLayersForNode(nodeId!)[0]!.clip;
     expect(clip.sourceIn).toBe(0);
     expect(clip.duration).toBe(300);
@@ -111,8 +105,10 @@ describe('insertFromSource', () => {
     const c = getTimelineController();
     c.seekSeconds(4); // deliberately NOT where the answer should be
     await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 0 });
+    await engineIdle();
 
     const second = await insertFromSource(ASSET, { inSec: 4, outSec: 6 }, { at: 'end' });
+    await engineIdle();
     const clip = c.getLayersForNode(second!)[0]!.clip;
     expect(clip.start).toBe(60); // frame 60 = the first clip's 2s end
     expect(clip.sourceIn).toBe(120);
@@ -124,55 +120,64 @@ describe('insertFromSource', () => {
   });
 });
 
-describe('applySourceRange', () => {
-  it('is a no-op on a node with no clip bar', () => {
-    expect(applySourceRange('nope', { inSec: 0, outSec: 1 }, 0)).toBeNull();
+describe('sourceRangeEdit', () => {
+  it('is null for a node with no clip bar', () => {
+    expect(sourceRangeEdit('nope', { inSec: 0, outSec: 1 }, 0)).toBeNull();
   });
 });
 
 describe('overwrite', () => {
-  it('trims the clip the new one lands on the tail of', async () => {
+  it('trims the clip the new one lands on the tail of — with the insert, one entry', async () => {
     const c = getTimelineController();
     // An existing clip covering 0–6s.
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 6 }, { at: 'time', seconds: 0 });
-    const firstClipId = c.getLayersForNode(first!)[0]!.id;
+    await engineIdle();
 
     // A new one over 4–7s, with overwrite.
+    const entries = historyLabels().length;
     const second = await insertFromSource(ASSET, { inSec: 0, outSec: 3 }, { at: 'time', seconds: 4 }, { overwrite: true });
+    await engineIdle();
 
-    expect(c.timeline.getLayer(firstClipId)!.clip.duration).toBe(120); // 0–4s
+    expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(120); // 0–4s
     const newClip = c.getLayersForNode(second!)[0]!.clip;
     expect(newClip.start).toBe(120);
     expect(newClip.duration).toBe(90);
+    // The insert's own entry (legacy router) + ONE for the range and the trims.
+    expect(historyLabels().slice(entries).filter((l) => l === 'Overwrite from Source')).toHaveLength(1);
   });
 
   it('splits a clip that spans the whole insert, leaving a hole', async () => {
     const c = getTimelineController();
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 10 }, { at: 'time', seconds: 0 });
-    const firstClipId = c.getLayersForNode(first!)[0]!.id;
+    await engineIdle();
     const before = c.layersOfComp().length;
 
     await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 4 }, { overwrite: true });
+    await engineIdle();
 
-    expect(c.timeline.getLayer(firstClipId)!.clip.duration).toBe(120); // trimmed to 0–4s
-    // +1 for the inserted clip, +1 for the right-hand piece of the split.
+    expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(120); // trimmed to 0–4s
+    // +1 for the inserted clip, +1 for the right-hand piece of the split
+    // (a new layer, AE's split — the left part keeps the original's id).
     expect(c.layersOfComp().length).toBe(before + 2);
+    const right = c.layersOfComp().find((l) => l.start === 180);
+    expect(right).toBeDefined();
   });
 
   it('leaves a clip that sits ENTIRELY inside the range alone, and says so', async () => {
     const c = getTimelineController();
     const inner = await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 3 });
-    const innerClipId = c.getLayersForNode(inner!)[0]!.id;
-    const covered = overwriteUnder('none', 2, 6);
+    await engineIdle();
+    const covered = await overwriteUnder('none', 2, 6);
     expect(covered).toBe(1);
-    expect(c.timeline.getLayer(innerClipId)!.clip.duration).toBe(60);
+    expect(c.getLayersForNode(inner!)[0]!.clip.duration).toBe(60);
   });
 
   it('a plain Insert touches nothing else', async () => {
     const c = getTimelineController();
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 6 }, { at: 'time', seconds: 0 });
-    const firstClipId = c.getLayersForNode(first!)[0]!.id;
+    await engineIdle();
     await insertFromSource(ASSET, { inSec: 0, outSec: 3 }, { at: 'time', seconds: 4 });
-    expect(c.timeline.getLayer(firstClipId)!.clip.duration).toBe(180);
+    await engineIdle();
+    expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(180);
   });
 });

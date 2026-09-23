@@ -36,6 +36,8 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import type { SceneNode } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 
 /**
  * The MAIN viewport's transform, distinct from every pane view below — so a
@@ -255,5 +257,52 @@ describe('dragging a handle in a pane writes the transform', () => {
       fireEvent.pointerUp(window, { clientX: 5060, clientY: 5000, pointerId: 8 });
     });
     expect(transformProps().x).toBeCloseTo(START.x, 6);
+  });
+});
+
+/**
+ * B3: on a composition's LAYER (the editor's case) the drag goes through the
+ * engine API — every move an absolute Position, the whole drag ONE undo entry.
+ */
+describe('through the engine API', () => {
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  let id: string;
+
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    id = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'rectangle', name: 'Box', init: [] })).layer;
+    await h.run({ type: 'setLayerSwitches', layers: [id], patch: { threeD: true } });
+    await h.run({ type: 'setProperty', prop: { layer: id, path: 'transform/position' }, value: { kind: 'vec3', value: START } });
+    useGuidesStore.getState().setGizmo3dState('position');
+  });
+
+  afterEach(async () => {
+    await h.dispose();
+  });
+
+  it('a pane drag moves the layer — ONE "Move" entry, undo restores it', async () => {
+    act(() => useSelectionStore.getState().set([id]));
+    const { container, getByTestId } = render(
+      <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
+    );
+    act(() => undefined);
+    const stage = getByTestId('stage');
+    const tip = xArmTip(container);
+    const entries = historyLabels().length;
+    await act(async () => {
+      fireEvent.pointerDown(stage, { clientX: tip.x, clientY: tip.y, button: 0, pointerId: 9 });
+      for (const dx of [20, 40, 60]) fireEvent.pointerMove(window, { clientX: tip.x + dx, clientY: tip.y, pointerId: 9 });
+      fireEvent.pointerUp(window, { clientX: tip.x + 60, clientY: tip.y, pointerId: 9 });
+      await engineIdle();
+    });
+    const t = defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Transform')!.props as Record<string, number>;
+    expect(t.x).toBeCloseTo(tip.x + 60, 3);
+    expect(t.y).toBeCloseTo(START.y, 6);
+    expect(t.z).toBeCloseTo(START.z, 6);
+    expect(historyLabels().length).toBe(entries + 1);
+    expect(historyLabels().at(-1)).toBe('Move');
+    await act(async () => { await h.run({ type: 'undo' }); });
+    const back = defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Transform')!.props as Record<string, number>;
+    expect(back.x).toBeCloseTo(START.x, 6);
   });
 });

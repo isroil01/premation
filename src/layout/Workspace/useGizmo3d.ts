@@ -35,6 +35,10 @@ import {
 } from '@core/workspace/ports';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
+import { GestureSession } from '@core/engine/uiEdits';
+import { useProjectStore } from '@stores/projectStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { trackValueCommands } from './viewportEdits';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import { Project3D, type Vec3 } from '@motion/scene';
@@ -139,6 +143,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   // handler effect's deps is what stops every pointermove from tearing down
   // and re-attaching the stage/window listeners.
   const dragRef = useRef<DragState3D | null>(null);
+  /** The drag's engine gesture: every move's absolute values, one undo entry. */
+  const gestureRef = useRef<GestureSession | null>(null);
   const dragHudRaf = useRef<number | null>(null);
   /**
    * Snap features for the current TRANSLATE drag, collected once at grab time
@@ -486,7 +492,18 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
             ...(handle === 'scale_z' ? { scaleZ: st.scale.scaleZ * scaleFactorZ } : {}),
           },
         }));
-        applyGizmo3DTransforms(updates);
+        // The dual path as commands: a property with a lit stopwatch (or any
+        // while Auto-Keyframe is on) keys at the playhead, the rest take the
+        // value. Absolute (drag-start state + this move), latest wins.
+        const s = useProjectStore.getState();
+        const cmds = trackValueCommands(
+          updates.map((u) => ({ nodeId: u.id, values: u.values as Record<string, number> })),
+          { seconds: s.tabs[s.activeTabId ?? '']?.time ?? 0, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe },
+        );
+        if (cmds) gestureRef.current?.send(cmds);
+        // B3-legacy: engine gap — a node that is not a composition's layer, or a transform member
+        // without an API property on it (the catalog returned none), keeps the ports' legacy dual write.
+        else applyGizmo3DTransforms(updates);
 
         // Live truth into the ref; the React mirror (which the measurement
         // HUD renders from) syncs at most once per frame.
@@ -584,6 +601,10 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // — applyGizmo3DTransforms is called per pointermove and would
         // otherwise pay a full engine snapshot + structural scene walk each.
         beginViewportGesture();
+        void gestureRef.current?.end();
+        gestureRef.current = new GestureSession(
+          hit.startsWith('rot_') ? 'Rotate' : hit.startsWith('scale_') ? 'Scale' : 'Move',
+        );
         setActiveHandle(hit);
         const start: DragState3D = {
           active: true,
@@ -612,6 +633,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
           /* best-effort */
         }
         endViewportGesture();
+        void gestureRef.current?.end();
+        gestureRef.current = null;
         endSnap();
         dragRef.current = null;
         if (dragHudRaf.current !== null) {
@@ -641,6 +664,9 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         endViewportGesture();
         dragRef.current = null;
       }
+      // Commit (nothing the user saw is lost) — the rebinding / unmount rule.
+      void gestureRef.current?.end();
+      gestureRef.current = null;
       endSnap();
       if (dragHudRaf.current !== null) {
         cancelAnimationFrame(dragHudRaf.current);

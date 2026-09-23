@@ -34,14 +34,14 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { hasPositionAnimation, smoothMotionPath, straightenMotionPath, hasPathTangents } from '@core/motion/motionPath';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
+import { editPositionKeys } from './viewportEdits';
+import { set3DEdit } from './layerMenuEdits';
 import { useRenderBackendStore } from '@stores/renderBackendStore';
 import styles from './ViewportTools.module.css';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
-import { bumpScene } from '@stores/sceneStore';
+import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useUIStore } from '@stores/uiStore';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
@@ -144,8 +144,7 @@ export function ViewportTools(): JSX.Element | null {
   const all3DOn = eligible3D.length > 0 && eligible3D.every((n) => is3DEnabled(n));
   const toggleSelection3D = (): void => {
     const on = !all3DOn;
-    for (const n of eligible3D) set3DEnabled(n.id, on);
-    bumpScene();
+    void set3DEdit(eligible3D.map((n) => n.id), on);
     if (on) {
       notifyCameraTipIfMissing((message, level) =>
         useUIStore.getState().notify({ level, message, durationMs: 3200 }),
@@ -178,7 +177,7 @@ export function ViewportTools(): JSX.Element | null {
           </button>
           <button
             className={styles.headerBtn}
-            onClick={() => singleId && runAnimEdit('Smooth motion path', () => smoothMotionPath(singleId!))}
+            onClick={() => { if (singleId) void editPositionKeys(singleId, 'Smooth motion path', (scratch) => smoothMotionPath(singleId, scratch)); }}
             aria-label="Auto-Bezier — smooth the path through all keyframes"
             title="Auto-Bezier: smooth path through all keyframes (Ctrl+Alt+S)"
           >
@@ -187,7 +186,7 @@ export function ViewportTools(): JSX.Element | null {
           {hasTangents && (
             <button
               className={styles.headerBtn}
-              onClick={() => singleId && runAnimEdit('Straighten motion path', () => straightenMotionPath(singleId!))}
+              onClick={() => { if (singleId) void editPositionKeys(singleId, 'Straighten motion path', (scratch) => straightenMotionPath(singleId, scratch)); }}
               aria-label="Straighten — remove the spatial tangents"
               title="Straighten: remove spatial tangents"
             >
