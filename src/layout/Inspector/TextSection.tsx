@@ -12,12 +12,13 @@
 import { memo, useCallback } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { applyTextPreset, captureTextPreset } from '@core/inspector/sectionPresets';
+import { captureTextPreset } from '@core/inspector/sectionPresets';
 import type { PresetValues } from '@stores/sectionPresetStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { TextSettingsBody } from './CharacterPanel';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
+import { textPresetEdit } from '@layout/Text/textEdits';
 
 /**
  * Whether the Text section belongs on this layer. The Text component is checked
@@ -60,7 +61,7 @@ export function TextPresetAction({
   const selection = useInspectorSelection(nodeId);
   const targets = nodeIds && nodeIds.length > 0 ? nodeIds : selection;
   const capture = useCallback(() => captureTextPreset(nodeId), [nodeId]);
-  const apply = useCallback((values: PresetValues) => { applyTextPreset(targets, values); }, [targets]);
+  const apply = useCallback((values: PresetValues) => { textPresetEdit(targets, values); }, [targets]);
   return <SectionPresetMenu sectionId="text" label="Text style presets" capture={capture} apply={apply} />;
 }
 

@@ -16,7 +16,6 @@
  */
 
 import { useEffect, useState } from 'react';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
@@ -30,18 +29,11 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { applyTypewriter } from '@core/animation/keyframeAssistants';
 import { toHexColor } from '@core/text/cssColor';
 import {
   hasTextComponent,
   readAnimatorData,
-  addTextAnimator,
-  removeTextAnimator,
   updateAnimator,
-  addSelector,
-  removeSelector,
   updateSelector,
   animatorPropPath,
   selectorPropPath,
@@ -79,6 +71,16 @@ import { loadFamilyAxes } from '@core/text/fontAxesLoader';
 import { runDocumentEdit } from '@core/commands/documentEdit';
 import { bumpScene } from '@stores/sceneStore';
 import { is3DEnabled, isPerChar3D } from '@core/scene/threeD';
+import {
+  addAnimatorEdit,
+  addSelectorEdit,
+  removeAnimatorEdit,
+  removeSelectorEdit,
+  setAnimatorEnabledEdit,
+  setSelectorEnabledEdit,
+  typewriterEdit,
+  useTextParam,
+} from '@layout/Text/textEdits';
 import styles from './TextAnimatorControls.module.css';
 
 const BASED_ON: { id: RangeBasedOn; label: string }[] = [
@@ -176,50 +178,29 @@ function ParamRow({
   path: string;
   label: string;
   value: number;
-  onStatic: (v: number) => void;
+  onStatic?: (v: number) => void;
   unit?: string;
   min?: number;
   max?: number;
   step?: number;
 }): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
-  // ONE axis for reads and writes: the canonical keyframe time.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
-
-  const onChange = (v: number): void => {
-    if (animated) {
-      runAnimEdit(
-        `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, path, layerT, v),
-        `ta:${nodeId}:${path}:${layerT}`,
-      );
-    } else {
-      onStatic(v);
-    }
-  };
-
-  const toggle = (): void => {
-    if (animated) {
-      runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    } else {
-      runAnimEdit(`Animate ${label}`, () =>
-        defaultAnimation.setKeyframe(nodeId, path, layerT, value),
-      );
-    }
-  };
+  // Engine API (B3): a key at the playhead when animated, else the static
+  // value; a scrub is one gesture. `onStatic` is the caller's custom static
+  // writer, when the value is stored somewhere other than its track.
+  const p = useTextParam(nodeId, path, label, value, onStatic);
+  const { animated, display } = p;
 
   return (
     <div className={styles.paramRow}>
       <span className={styles.rowToggle}>
-        <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={animated} onToggle={toggle} values={() => [display]} />
+        <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={animated} onToggle={p.toggle} values={() => [display]} />
       </span>
       <span className={styles.paramLabel}>{label}</span>
       <ValueField
         value={display}
-        onChange={onChange}
+        onChange={p.onChange}
+        {...p.scrub}
         unit={unit}
         min={min}
         max={max}
@@ -230,7 +211,7 @@ function ParamRow({
   );
 }
 
-/** An animator property row — writes the static value onto the animator. */
+/** An animator property row (`text/animators/<id>/props/<param>`). */
 function AnimatorParamRow(props: {
   nodeId: string;
   index: number;
@@ -247,15 +228,12 @@ function AnimatorParamRow(props: {
     <ParamRow
       nodeId={nodeId}
       path={animatorPropPath(index, param)}
-      onStatic={(v) =>
-        updateAnimator(nodeId, index, { [param]: v } as Partial<TextAnimatorData>)
-      }
       {...rest}
     />
   );
 }
 
-/** A selector parameter row — writes the static value onto the selector. */
+/** A selector parameter row (`text/animators/<id>/selectors/<id>/<param>`). */
 function SelectorParamRow(props: {
   nodeId: string;
   index: number;
@@ -273,7 +251,6 @@ function SelectorParamRow(props: {
     <ParamRow
       nodeId={nodeId}
       path={selectorPropPath(index, selIndex, param)}
-      onStatic={(v) => updateSelector(nodeId, index, selIndex, { [param]: v })}
       {...rest}
     />
   );
@@ -281,18 +258,24 @@ function SelectorParamRow(props: {
 
 function SelectorPanel({
   nodeId,
+  animatorId,
   index,
   selIndex,
   sel,
   removable,
 }: {
   nodeId: string;
+  animatorId: string;
   index: number;
   selIndex: number;
   sel: SelectorData;
   removable: boolean;
 }): JSX.Element {
+  // Kind / Based On / Mode / Units / Shape / Randomize Order / Random Seed /
+  // Lock Dimensions / the expression — every selector field that is not a
+  // keyframeable number.
   const patch = (p: Record<string, unknown>): void =>
+    // B3-legacy: engine gap — non-numeric selector fields (choice / bool / string, and the unkeyed Random Seed) have no API property under text/animators/<id>/selectors/<id>/; recorded by the history debounce.
     updateSelector(nodeId, index, selIndex, p);
 
   return (
@@ -304,7 +287,7 @@ function SelectorPanel({
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Checkbox
             checked={sel.enabled !== false}
-            onChange={() => patch({ enabled: sel.enabled === false })}
+            onChange={() => { void setSelectorEnabledEdit(nodeId, animatorId, sel.id, sel.enabled === false); }}
             title="Enable selector"
             style={{ width: 14, height: 14 }}
           />
@@ -312,7 +295,7 @@ function SelectorPanel({
             <button
               type="button"
               className={styles.remove}
-              onClick={() => removeSelector(nodeId, index, selIndex)}
+              onClick={() => { void removeSelectorEdit(nodeId, animatorId, sel.id); }}
               aria-label={`Remove selector ${selIndex + 1}`}
               title="Remove selector"
             >
@@ -539,6 +522,27 @@ const TRACKING_TYPES: { id: TrackingType; label: string }[] = [
  * The optional properties of one group that this animator has ADDED, each
  * keyframeable, each removable — AE's Animator ▸ Add ▸ Property rows.
  */
+/** Animator edits the engine API cannot address yet — the one place this section writes them. */
+type LegacyAnimatorOp =
+  | { op: 'addProperties'; params: ReadonlyArray<AnimatorParam> }
+  | { op: 'removeProperty'; param: string }
+  | { op: 'addAxis'; tag: string }
+  | { op: 'patch'; patch: Partial<TextAnimatorData> };
+
+function legacyAnimatorEdit(nodeId: string, index: number, e: LegacyAnimatorOp): boolean {
+  // B3-legacy: engine gap — AE's Add ▸ Property / Font Axis (an optional animator property or axis
+  // does not exist until added; no add/remove-property command), and the animator's non-numeric
+  // fields (Tracking Type, Character Range: choices; Fill / Stroke colour: an optional colour —
+  // absent ≠ black) have no API property. Recorded by the history debounce.
+  switch (e.op) {
+    case 'addProperties': addAnimatorProperties(nodeId, index, e.params); return true;
+    case 'removeProperty': removeAnimatorProperty(nodeId, index, e.param); return true;
+    case 'addAxis': return addAnimatorAxis(nodeId, index, e.tag);
+    case 'patch': updateAnimator(nodeId, index, e.patch); return true;
+    default: return false;
+  }
+}
+
 function OptionalParamRows({
   nodeId,
   index,
@@ -577,7 +581,7 @@ function OptionalParamRows({
           <button
             type="button"
             className={styles.remove}
-            onClick={() => removeAnimatorProperty(nodeId, index, o.param)}
+            onClick={() => legacyAnimatorEdit(nodeId, index, { op: 'removeProperty', param: o.param })}
             aria-label={`Remove ${o.label}`}
             title="Remove property"
           >
@@ -615,7 +619,7 @@ function AnimatorGroup({
       type: 'item',
       id: 'allTransform',
       label: 'All Transform Properties',
-      onSelect: () => addAnimatorProperties(nodeId, index, ALL_TRANSFORM_OPTIONAL),
+      onSelect: () => { legacyAnimatorEdit(nodeId, index, { op: 'addProperties', params: ALL_TRANSFORM_OPTIONAL }); },
     },
     { type: 'separator' },
     ...OPTIONAL_ANIMATOR_PROPERTIES.filter((o) => o.param !== 'anchorZ' || show3D).map((o): DropdownItem => ({
@@ -623,7 +627,7 @@ function AnimatorGroup({
       id: o.param,
       label: o.label,
       disabled: stored[o.param] !== undefined,
-      onSelect: () => addAnimatorProperties(nodeId, index, [o.param]),
+      onSelect: () => { legacyAnimatorEdit(nodeId, index, { op: 'addProperties', params: [o.param] }); },
     })),
     { type: 'separator' },
     {
@@ -636,7 +640,7 @@ function AnimatorGroup({
         label: `${axisLabel(tag)} (${tag})`,
         disabled: !!data.axes && tag in data.axes,
         onSelect: () => {
-          if (!addAnimatorAxis(nodeId, index, tag)) {
+          if (!legacyAnimatorEdit(nodeId, index, { op: 'addAxis', tag })) {
             notify({ level: 'warning', message: `A text layer's animators can drive at most ${MAX_ANIMATED_AXES} font axes.`, durationMs: 2400 });
           }
         },
@@ -653,7 +657,7 @@ function AnimatorGroup({
         type: 'item',
         id: k.id,
         label: `${k.label} Selector`,
-        onSelect: () => addSelector(nodeId, index, k.id),
+        onSelect: () => { void addSelectorEdit(nodeId, data.id, k.id); },
       })),
     },
   ];
@@ -665,7 +669,7 @@ function AnimatorGroup({
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Checkbox
             checked={data.enabled !== false}
-            onChange={() => updateAnimator(nodeId, index, { enabled: data.enabled === false })}
+            onChange={() => { void setAnimatorEnabledEdit(nodeId, data.id, data.enabled === false); }}
             title="Enable animator"
             style={{ width: 14, height: 14 }}
           />
@@ -681,7 +685,7 @@ function AnimatorGroup({
           <button
             type="button"
             className={styles.remove}
-            onClick={() => removeTextAnimator(nodeId, index)}
+            onClick={() => { void removeAnimatorEdit(nodeId, data.id); }}
             aria-label={`Remove animator ${index + 1}`}
             title="Remove animator"
           >
@@ -694,6 +698,7 @@ function AnimatorGroup({
         <SelectorPanel
           key={s.id}
           nodeId={nodeId}
+          animatorId={data.id}
           index={index}
           selIndex={j}
           sel={s}
@@ -730,7 +735,7 @@ function AnimatorGroup({
         label="Tracking Type"
         value={data.trackingType ?? 'after'}
         options={TRACKING_TYPES}
-        onSelect={(id) => updateAnimator(nodeId, index, { trackingType: id === 'after' ? undefined : id })}
+        onSelect={(id) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { trackingType: id === 'after' ? undefined : id } })}
       />
       <AnimatorParamRow nodeId={nodeId} index={index} param="lineSpacing" label="Line Spacing" value={data.lineSpacing ?? 0} unit="px" />
       {/* Character Offset walks each glyph through its own alphabet — the
@@ -740,7 +745,7 @@ function AnimatorGroup({
         label="Character Range"
         value={data.characterRange ?? 'preserve'}
         options={CHARACTER_RANGES}
-        onSelect={(id) => updateAnimator(nodeId, index, { characterRange: id === 'preserve' ? undefined : id })}
+        onSelect={(id) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { characterRange: id === 'preserve' ? undefined : id } })}
       />
       <OptionalParamRows nodeId={nodeId} index={index} data={data} group="typography" show3D={show3D} />
       {Object.entries(data.axes ?? {}).map(([tag, value]) => (
@@ -751,13 +756,12 @@ function AnimatorGroup({
               path={animatorAxisPropPath(index, tag)}
               label={`Font Axis ${tag}`}
               value={value}
-              onStatic={(v) => updateAnimator(nodeId, index, { axes: { ...(data.axes ?? {}), [tag]: v } })}
             />
           </div>
           <button
             type="button"
             className={styles.remove}
-            onClick={() => removeAnimatorProperty(nodeId, index, `axis${tag}`)}
+            onClick={() => legacyAnimatorEdit(nodeId, index, { op: 'removeProperty', param: `axis${tag}` })}
             aria-label={`Remove Font Axis ${tag}`}
             title="Remove property"
           >
@@ -781,12 +785,12 @@ function AnimatorGroup({
       <ColorRow
         label="Fill colour"
         value={data.color}
-        onSet={(hex) => updateAnimator(nodeId, index, { color: hex })}
+        onSet={(hex) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { color: hex } })}
       />
       <ColorRow
         label="Stroke colour"
         value={data.strokeColor}
-        onSet={(hex) => updateAnimator(nodeId, index, { strokeColor: hex })}
+        onSet={(hex) => legacyAnimatorEdit(nodeId, index, { op: 'patch', patch: { strokeColor: hex } })}
       />
     </div>
   );
@@ -854,7 +858,10 @@ function MoreOptionsGroup({ nodeId }: { nodeId: string }): JSX.Element | null {
   const comp = node?.components.find((c) => c.type === 'Text');
   if (!node || !comp) return null;
   const o = readTextMoreOptions(node);
+  const stored = (key: string): boolean => typeof (comp.props as Record<string, unknown>)[key] === 'number';
+  // Anchor Point Grouping / Fill & Stroke / Inter-Character Blending (choices).
   const write = (label: string, key: string, value: unknown): void =>
+    // B3-legacy: engine gap — Text component enum props (More Options' choices) have no API property.
     runDocumentEdit(label, () => {
       defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
       bumpScene();
@@ -870,10 +877,14 @@ function MoreOptionsGroup({ nodeId }: { nodeId: string }): JSX.Element | null {
         options={ANCHOR_GROUPINGS.map((g) => ({ id: g.value, label: g.label }))}
         onSelect={(v) => write('Anchor Point Grouping', 'anchorGrouping', v)}
       />
+      {/* Through the engine once the Text component stores the value. Before
+          that the engine's static writer would home it on the Transform
+          component, where nothing reads it (engine gap), so the first static
+          write keeps the legacy writer. */}
       <ParamRow nodeId={nodeId} path="groupingAlignX" label="Grouping Alignment X" value={o.groupingAlignX} unit="%"
-        onStatic={(v) => write('Grouping Alignment X', 'groupingAlignX', v)} />
+        onStatic={stored('groupingAlignX') ? undefined : (v) => write('Grouping Alignment X', 'groupingAlignX', v)} />
       <ParamRow nodeId={nodeId} path="groupingAlignY" label="Grouping Alignment Y" value={o.groupingAlignY} unit="%"
-        onStatic={(v) => write('Grouping Alignment Y', 'groupingAlignY', v)} />
+        onStatic={stored('groupingAlignY') ? undefined : (v) => write('Grouping Alignment Y', 'groupingAlignY', v)} />
       <PickRow<FillStrokeMode>
         label="Fill & Stroke"
         value={o.fillStrokeMode}
@@ -917,8 +928,8 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
 
   const animators = readAnimatorData(node);
 
-  const handleAutoTypewriter = (): void => {
-    if (applyTypewriter(nodeId, time)) {
+  const handleAutoTypewriter = async (): Promise<void> => {
+    if (await typewriterEdit(nodeId, time)) {
       useUIStore.getState().notify({
         level: 'success',
         message: 'Created typewriter typing motion!',
@@ -933,7 +944,7 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
         <button
           type="button"
           className={styles.add}
-          onClick={() => addTextAnimator(nodeId)}
+          onClick={() => { void addAnimatorEdit(nodeId); }}
           aria-label="Add text animator"
           title="Add animator"
         >
@@ -948,7 +959,7 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
           variant="secondary"
           icon="type"
           fullWidth
-          onClick={handleAutoTypewriter}
+          onClick={() => { void handleAutoTypewriter(); }}
           title="Auto-creates typewriter rig keyframed over 1.5s"
         >
           Auto-Animate Typing

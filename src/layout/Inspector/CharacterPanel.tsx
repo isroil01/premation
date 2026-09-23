@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -7,16 +7,19 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { runDocumentEdit } from '@core/commands/documentEdit';
-import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { legacyComponentWrite, useComponentProp, type ComponentPropHandle } from './useComponentProp';
+import { useGesture } from '@hooks/useGesture';
+import { edit } from '@core/engine/uiEdits';
+import { hasStyleRuns, sourceTextCommand, sourceTextStopwatchCommand, textPresetEdit } from '@layout/Text/textEdits';
 import { getFontWeights, WEIGHT_LABELS } from '@core/text/fontCatalog';
 import { useTextEditStore, hasRange, TEXT_EDIT_KEEP_ATTR } from '@stores/textEditStore';
 import { readRuns, writeRuns, applyStyleToRange, styleOverRange, type RunStyleKey, type RichRun } from '@core/text/richText';
 import type { TextStyle } from '@core/text/textLayout';
 import { graphemeCount } from '@core/text/graphemes';
 import { AUTO_LEADING, STROKE_ORDERS, strokeOrderOf, type StrokeOrder, type StrokeLineJoin } from '@core/text/textExtras';
-import { readTextPathConfig, updateTextPath, setTextPath, defaultTextPath } from '@core/text/textPath';
+import { readTextPathConfig, setTextPath, defaultTextPath } from '@core/text/textPath';
 import type { MaskPath } from '@core/effects/mask';
-import { applyTextPreset, captureTextPreset } from '@core/inspector/sectionPresets';
+import { captureTextPreset } from '@core/inspector/sectionPresets';
 import { FontPicker } from './FontPicker';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { installTextCommands, swapTextFillStroke } from './textCommands';
@@ -122,47 +125,52 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   const tComp = useMemo(() => node?.components.find((c) => c.type === 'Text'), [node]);
 
   // Bound layer hooks — Character properties
-  const [content, setContent] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'content');
-  const [fontSize, setFontSize] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fontSize');
-  const [fontFamily, setFontFamily] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fontFamily');
-  const [fontWeight, setFontWeight] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fontWeight');
-  const [fontStyle, setFontStyle] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fontStyle');
-  const [fill, setFill] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fill');
-  const [stroke, setStroke] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'stroke');
-  const [strokeWidth, setStrokeWidth] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'strokeWidth');
-  const [letterSpacing, setLetterSpacing] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'letterSpacing');
-  const [lineHeight, setLineHeight] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'lineHeight');
-  const [strokeOverFill] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'strokeOverFill');
-  const [strokeOrder] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'strokeOrder');
-  const [strokeLineJoin, setStrokeLineJoin] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'strokeLineJoin');
-  const [noFill, setNoFill] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'noFill');
-  const [noStroke, setNoStroke] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'noStroke');
-  const [fauxBold, setFauxBold] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fauxBold');
-  const [fauxItalic, setFauxItalic] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fauxItalic');
-  const [kerningMode, setKerningMode] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'kerningMode');
-  const [boxWidth, setBoxWidth] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'boxWidth');
-  const [boxHeight, setBoxHeight] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'boxHeight');
-  const [boxVerticalAlign, setBoxVerticalAlign] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'boxVerticalAlign');
-  const [verticalScale, setVerticalScale] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'verticalScale');
-  const [horizontalScale, setHorizontalScale] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'horizontalScale');
-  const [baselineShift, setBaselineShift] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'baselineShift');
-  const [textTransform, setTextTransform] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'textTransform');
-  const [fontVariant, setFontVariant] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'fontVariant');
-  const [verticalAlign, setVerticalAlign] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'verticalAlign');
+  const [content, setContent] = useComponentProp(primary, tComp?.id, 'content');
+  const [fontSize, setFontSize, fontSizeH] = useComponentProp(primary, tComp?.id, 'fontSize');
+  const [fontFamily, setFontFamily] = useComponentProp(primary, tComp?.id, 'fontFamily');
+  const [fontWeight, setFontWeight] = useComponentProp(primary, tComp?.id, 'fontWeight');
+  const [fontStyle, setFontStyle] = useComponentProp(primary, tComp?.id, 'fontStyle');
+  const [fill, setFill] = useComponentProp(primary, tComp?.id, 'fill');
+  const [stroke, setStroke] = useComponentProp(primary, tComp?.id, 'stroke');
+  const [strokeWidth, setStrokeWidth, strokeWidthH] = useComponentProp(primary, tComp?.id, 'strokeWidth');
+  const [letterSpacing, setLetterSpacing, letterSpacingH] = useComponentProp(primary, tComp?.id, 'letterSpacing');
+  const [lineHeight, setLineHeight, lineHeightH] = useComponentProp(primary, tComp?.id, 'lineHeight');
+  const [strokeOverFill] = useComponentProp(primary, tComp?.id, 'strokeOverFill');
+  const [strokeOrder] = useComponentProp(primary, tComp?.id, 'strokeOrder');
+  const [strokeLineJoin, setStrokeLineJoin] = useComponentProp(primary, tComp?.id, 'strokeLineJoin');
+  const [noFill, setNoFill] = useComponentProp(primary, tComp?.id, 'noFill');
+  const [noStroke, setNoStroke] = useComponentProp(primary, tComp?.id, 'noStroke');
+  const [fauxBold, setFauxBold] = useComponentProp(primary, tComp?.id, 'fauxBold');
+  const [fauxItalic, setFauxItalic] = useComponentProp(primary, tComp?.id, 'fauxItalic');
+  const [kerningMode, setKerningMode] = useComponentProp(primary, tComp?.id, 'kerningMode');
+  const [boxWidth, setBoxWidth] = useComponentProp(primary, tComp?.id, 'boxWidth');
+  const [boxHeight, setBoxHeight] = useComponentProp(primary, tComp?.id, 'boxHeight');
+  const [boxVerticalAlign, setBoxVerticalAlign] = useComponentProp(primary, tComp?.id, 'boxVerticalAlign');
+  const [verticalScale, setVerticalScale] = useComponentProp(primary, tComp?.id, 'verticalScale');
+  const [horizontalScale, setHorizontalScale] = useComponentProp(primary, tComp?.id, 'horizontalScale');
+  const [baselineShift, setBaselineShift] = useComponentProp(primary, tComp?.id, 'baselineShift');
+  const [textTransform, setTextTransform] = useComponentProp(primary, tComp?.id, 'textTransform');
+  const [fontVariant, setFontVariant] = useComponentProp(primary, tComp?.id, 'fontVariant');
+  const [verticalAlign, setVerticalAlign] = useComponentProp(primary, tComp?.id, 'verticalAlign');
 
   // Bound layer hooks — Paragraph properties
-  const [align, setAlign] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'align');
-  const [paragraphSpacing, setParagraphSpacing] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'paragraphSpacing');
-  const [leftIndent, setLeftIndent] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'leftIndent');
-  const [rightIndent, setRightIndent] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'rightIndent');
-  const [firstLineIndent, setFirstLineIndent] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'firstLineIndent');
-  const [spaceBefore, setSpaceBefore] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'spaceBefore');
-  const [spaceAfter, setSpaceAfter] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'spaceAfter');
-  const [direction, setDirection] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'direction');
-  const [orientation, setOrientation] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'orientation');
-  const [verticalRomanAlignment, setVerticalRomanAlignment] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'verticalRomanAlignment');
-  const [tateChuYokoAuto] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'tateChuYokoAuto');
-  const [tateChuYokoDigits] = useNodeComponentProp(defaultSceneGraph, primary, tComp?.id, 'tateChuYokoDigits');
+  const [align, setAlign] = useComponentProp(primary, tComp?.id, 'align');
+  const [paragraphSpacing, setParagraphSpacing] = useComponentProp(primary, tComp?.id, 'paragraphSpacing');
+  const [leftIndent, setLeftIndent] = useComponentProp(primary, tComp?.id, 'leftIndent');
+  const [rightIndent, setRightIndent] = useComponentProp(primary, tComp?.id, 'rightIndent');
+  const [firstLineIndent, setFirstLineIndent] = useComponentProp(primary, tComp?.id, 'firstLineIndent');
+  const [spaceBefore, setSpaceBefore] = useComponentProp(primary, tComp?.id, 'spaceBefore');
+  const [spaceAfter, setSpaceAfter] = useComponentProp(primary, tComp?.id, 'spaceAfter');
+  const [direction, setDirection] = useComponentProp(primary, tComp?.id, 'direction');
+  const [orientation, setOrientation] = useComponentProp(primary, tComp?.id, 'orientation');
+  const [verticalRomanAlignment, setVerticalRomanAlignment] = useComponentProp(primary, tComp?.id, 'verticalRomanAlignment');
+  const [tateChuYokoAuto] = useComponentProp(primary, tComp?.id, 'tateChuYokoAuto');
+  const [tateChuYokoDigits] = useComponentProp(primary, tComp?.id, 'tateChuYokoDigits');
+
+  /** The Content box's typing session (one gesture per focus — see onContentEdit). */
+  const sourceTyping = useGesture({ quiet: true });
+  /** Per number field: is a typing session open, and on which route (see `typing`). */
+  const typingState = useRef<Record<string, { open: boolean; legacy: boolean }>>({});
 
   // Local fallback states when no text layer is active
   const [fallbackFamily, setFallbackFamily] = useState('Inter');
@@ -215,9 +223,16 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   // Grapheme clusters — the index space runs and the edit selection use.
   const textLen = graphemeCount(contentStrRaw);
 
-  /** Run writes are one undo step each (writeRuns alone bypasses history). */
-  const commitRuns = (label: string, runs: RichRun[]): void => {
-    if (!primary) return;
+  /**
+   * Style the characters `lo..hi` — the ONE place this panel writes style runs,
+   * one undo step each (writeRuns alone bypasses history).
+   */
+  const restyleRange = (label: string, lo: number, hi: number, patch: Partial<TextStyle>): void => {
+    if (!primary || !node) return;
+    // B3-legacy: engine gap — per-character style runs: `text/sourceText` carries plain text and the
+    // TS engine drops `__runs` (ENGINE_API.md §15.4); `applyStyleToRange` itself is pure (the rule's
+    // `apply…` verb match — belongs in NOT_WRITES).
+    const runs: RichRun[] = applyStyleToRange(readRuns(node), lo, hi, patch, textLen);
     runDocumentEdit(label, () => writeRuns(primary, runs));
   };
 
@@ -230,30 +245,57 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
       setLayerWide(val);
       return;
     }
-    commitRuns(
-      'Style Characters',
-      applyStyleToRange(readRuns(node), selection.start, selection.end, { [key]: val }, textLen),
-    );
+    restyleRange('Style Characters', selection.start, selection.end, { [key]: val });
   };
+
+  /**
+   * A number field's typing (and its spinner) inside one focus = ONE entry on
+   * the engine route (ENGINE_API.md §5.3: text field focus → commit). Ranged
+   * edits write style runs, which the engine cannot address, so they never
+   * open the gesture.
+   */
+  const typing = (
+    key: string,
+    h: ComponentPropHandle,
+    set: (v: unknown) => void,
+  ): { begin: () => void; set: (v: unknown) => void; onBlur: () => void } => {
+    const s = (typingState.current[key] ??= { open: false, legacy: false });
+    return {
+      begin: () => {
+        if (ranged || s.open) return;
+        s.open = true;
+        h.scrub.onScrubStart();
+        // A prop the engine does not address when the session starts (a
+        // Tracking / Leading the component does not store yet) stays on the
+        // legacy writer for the WHOLE session: switching route mid-typing
+        // would split it into two undo entries.
+        s.legacy = !h.active();
+      },
+      set: (v) => {
+        if (s.open && s.legacy && primary && tComp) legacyComponentWrite(primary, tComp.id, key, v);
+        else set(v);
+      },
+      onBlur: () => {
+        s.open = false;
+        s.legacy = false;
+        h.scrub.onScrubEnd();
+      },
+    };
+  };
+  const sizeTyping = typing('fontSize', fontSizeH, setFontSize);
+  const leadingTyping = typing('lineHeight', lineHeightH, setLineHeight);
+  const trackingTyping = typing('letterSpacing', letterSpacingH, setLetterSpacing);
+  const strokeWidthTyping = typing('strokeWidth', strokeWidthH, setStrokeWidth);
 
   const clearRunStyling = (): void => {
     if (!ranged || !node || !primary) return;
-    commitRuns(
-      'Reset Character Styling',
-      applyStyleToRange(
-        readRuns(node),
-        selection.start,
-        selection.end,
-        {
-          fontSize: undefined, fontFamily: undefined, fontWeight: undefined, fontStyle: undefined,
-          letterSpacing: undefined, fill: undefined, kerning: undefined, fauxBold: undefined, fauxItalic: undefined,
-          strokeColor: undefined, strokeWidth: undefined, lineHeight: undefined, horizontalScale: undefined,
-          verticalScale: undefined, baselineShift: undefined, tsume: undefined, allCaps: undefined,
-          smallCaps: undefined, verticalAlign: undefined, tateChuYoko: undefined,
-        },
-        textLen,
-      ),
-    );
+    restyleRange('Reset Character Styling', selection.start, selection.end, {
+      fontSize: undefined, fontFamily: undefined, fontWeight: undefined, fontStyle: undefined,
+      letterSpacing: undefined, fill: undefined, kerning: undefined, fauxBold: undefined, fauxItalic: undefined,
+      strokeColor: undefined, strokeWidth: undefined, lineHeight: undefined, horizontalScale: undefined,
+      verticalScale: undefined, baselineShift: undefined, tsume: undefined, allCaps: undefined,
+      smallCaps: undefined, verticalAlign: undefined, tateChuYoko: undefined,
+    });
   };
 
   const activeFamily = hasTarget ? String(fontFamily ?? 'Inter') : fallbackFamily;
@@ -333,28 +375,40 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     : undefined;
   const contentStr = typeof sampledSource === 'string' ? sampledSource : contentStrRaw;
 
+  /** A Source Text key edit on a node the API cannot address (see below). */
+  const legacySourceKeys = (label: string, next: string | null): void => {
+    if (!primary) return;
+    // B3-legacy: engine gap — a text node that is not a layer of a composition has no API address;
+    // and the stopwatch OFF on styled text (setAnimated's static write drops the style runs).
+    runAnimEdit(label, () => {
+      if (next === null) defaultAnimation.setDataTrack(primary, 'text.source', null);
+      else defaultAnimation.setDataKeyframe(primary, 'text.source', 'text', layerT, next);
+    }, `srcText:${primary}`);
+  };
+
+  /**
+   * The Content box: every keystroke sends the WHOLE text (absolute — latest
+   * wins) into one gesture that ends when the box loses focus, so a typing
+   * session is one undo entry and the canvas follows each keystroke.
+   */
   const onContentEdit = (next: string): void => {
-    if (!hasTarget) return;
-    if (sourceAnimated && primary) {
-      runAnimEdit('Edit Source Text keyframe', () => {
-        defaultAnimation.setDataKeyframe(primary, 'text.source', 'text', layerT, next);
-      }, `srcText:${primary}`);
-    } else {
-      setContent(next);
+    if (!hasTarget || !primary) return;
+    const cmd = sourceTextCommand(primary, next, time);
+    if (cmd) {
+      if (!sourceTyping.isActive()) sourceTyping.begin(sourceAnimated ? 'Edit Source Text keyframe' : 'Edit Text');
+      sourceTyping.send(cmd);
+      return;
     }
+    if (sourceAnimated) legacySourceKeys('Edit Source Text keyframe', next);
+    // Styled text (runs) or not a layer: the pre-API component write (useComponentProp's funnel).
+    else setContent(next);
   };
 
   const toggleSourceStopwatch = (): void => {
     if (!primary) return;
-    if (sourceAnimated) {
-      runAnimEdit('Remove Source Text keyframes', () => {
-        defaultAnimation.setDataTrack(primary, 'text.source', null);
-      });
-    } else {
-      runAnimEdit('Animate Source Text', () => {
-        defaultAnimation.setDataKeyframe(primary, 'text.source', 'text', layerT, contentStr);
-      });
-    }
+    const cmd = sourceAnimated && hasStyleRuns(primary) ? null : sourceTextStopwatchCommand(primary, !sourceAnimated, time);
+    if (cmd) void edit(sourceAnimated ? 'Remove Source Text keyframes' : 'Animate Source Text', cmd);
+    else legacySourceKeys(sourceAnimated ? 'Remove Source Text keyframes' : 'Animate Source Text', sourceAnimated ? null : contentStr);
   };
 
   // Mask path riding
@@ -390,7 +444,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
 
   const handleSizeChange = (s: number) => {
     setCharProp('fontSize', s, (v) => {
-      if (hasTarget) setFontSize(v as number);
+      if (hasTarget) sizeTyping.set(v as number);
       else setFallbackSize(v as number);
     });
   };
@@ -399,16 +453,16 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
    *  (AE uses the largest leading on each line). */
   const handleLeadingChange = (l: number | undefined) => {
     if (ranged && node && primary) {
-      commitRuns('Leading', applyStyleToRange(readRuns(node), selection.start, selection.end, { lineHeight: l }, textLen));
+      restyleRange('Leading', selection.start, selection.end, { lineHeight: l });
       return;
     }
-    if (hasTarget) setLineHeight(l);
+    if (hasTarget) leadingTyping.set(l);
     else setFallbackLeading(l);
   };
 
   const handleTrackingChange = (tr: number) => {
     setCharProp('letterSpacing', tr, (v) => {
-      if (hasTarget) setLetterSpacing(v as number);
+      if (hasTarget) trackingTyping.set(v as number);
       else setFallbackTracking(v as number);
     });
   };
@@ -429,7 +483,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
 
   const handleStrokeWidthChange = (w: number) => {
     setCharProp('strokeWidth', w, (v) => {
-      if (hasTarget) setStrokeWidth(v as number);
+      if (hasTarget) strokeWidthTyping.set(v as number);
       else setFallbackStrokeWidth(v as number);
     });
   };
@@ -460,6 +514,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     }
     // The legacy boolean is kept in step so older readers (the extrusion trace
     // key, Create Shapes From Text) agree about which paint is on top.
+    // B3-legacy: engine gap — Text component enum/bool props (strokeOrder, strokeOverFill) have no API property.
     runDocumentEdit('Fill and Stroke Order', () => {
       defaultSceneGraph.writeProp(primary, tComp.id, 'strokeOrder', order);
       defaultSceneGraph.writeProp(
@@ -474,10 +529,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   const handleKerningChange = (v: number) => {
     if (!kernRange || !node || !primary) return;
     const value = Math.round(v);
-    commitRuns(
-      'Kerning',
-      applyStyleToRange(readRuns(node), kernRange.lo, kernRange.hi, { kerning: value === 0 ? undefined : value }, textLen),
-    );
+    restyleRange('Kerning', kernRange.lo, kernRange.hi, { kerning: value === 0 ? undefined : value });
   };
 
   const handleAlignChange = (visual: string) => {
@@ -504,6 +556,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   /** Auto tate-chu-yoko (layer-wide): digit runs up to N set horizontally. */
   const writeTcyProp = (label: string, prop: 'tateChuYokoAuto' | 'tateChuYokoDigits', value: boolean | number): void => {
     if (!hasTarget || !primary || !tComp) return;
+    // B3-legacy: engine gap — tateChuYokoAuto (bool) / tateChuYokoDigits (a number with no property meta) have no API property.
     runDocumentEdit(label, () => defaultSceneGraph.writeProp(primary, tComp.id, prop, value));
   };
   const handleTcyAutoChange = (on: boolean) => {
@@ -547,28 +600,25 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   };
 
   const applyPreset = (preset: typeof PRESETS[number]) => {
+    const bag = {
+      fontSize: preset.fontSize,
+      fontWeight: preset.fontWeight,
+      fontStyle: preset.fontStyle,
+      ...(preset.fontFamily ? { fontFamily: preset.fontFamily } : {}),
+    };
     if (ranged && node && primary) {
-      commitRuns(
-        'Apply Text Preset',
-        applyStyleToRange(
-          readRuns(node),
-          selection.start,
-          selection.end,
-          {
-            fontSize: preset.fontSize,
-            fontWeight: preset.fontWeight,
-            fontStyle: preset.fontStyle,
-            ...(preset.fontFamily ? { fontFamily: preset.fontFamily } : {}),
-          },
-          textLen,
-        ),
-      );
+      restyleRange('Apply Text Preset', selection.start, selection.end, bag);
       return;
     }
-    handleSizeChange(preset.fontSize);
-    handleWeightChange(preset.fontWeight);
-    handleStyleChange(preset.fontStyle);
-    if (preset.fontFamily) handleFamilyChange(preset.fontFamily);
+    if (hasTarget && primary) {
+      // The whole chip is ONE entry (it used to be three or four writes).
+      textPresetEdit([primary], bag, 'Apply Text Preset');
+      return;
+    }
+    setFallbackSize(preset.fontSize);
+    setFallbackWeight(preset.fontWeight);
+    setFallbackStyle(preset.fontStyle);
+    if (preset.fontFamily) setFallbackFamily(preset.fontFamily);
   };
 
   // Faux Bold / Faux Italic are SYNTHETIC styles, independent of the font's
@@ -613,7 +663,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
             sectionId="text"
             label="Text style presets"
             capture={() => (primary ? captureTextPreset(primary) : {})}
-            apply={(values) => applyTextPreset(selected.length > 0 ? selected : [], values)}
+            apply={(values) => textPresetEdit(selected.length > 0 ? selected : [], values)}
           />
         )}
       </div>
@@ -652,6 +702,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
             className={styles.contentTextarea}
             value={contentStr}
             onChange={(e) => onContentEdit(e.target.value)}
+            onBlur={() => { void sourceTyping.end(); }}
             placeholder="Type text content here..."
             rows={2}
           />
@@ -688,7 +739,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               aria-label="Font Size"
               className={styles.metricInput}
               value={activeSize}
-              onChange={(e) => handleSizeChange(Math.max(1, Number(e.target.value)))}
+              onChange={(e) => { sizeTyping.begin(); handleSizeChange(Math.max(1, Number(e.target.value))); }}
+              onBlur={sizeTyping.onBlur}
             />
             <span className={styles.metricUnit}>px</span>
           </div>
@@ -707,8 +759,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               placeholder="Auto"
               onChange={(e) => {
                 if (e.target.value === '') handleLeadingChange(undefined);
-                else handleLeadingChange(Math.max(0.5, Number(e.target.value)));
+                else { leadingTyping.begin(); handleLeadingChange(Math.max(0.5, Number(e.target.value))); }
               }}
+              onBlur={leadingTyping.onBlur}
             />
             <button
               type="button"
@@ -1160,7 +1213,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               min="0"
               className={styles.metricInput}
               value={shownStrokeWidth}
-              onChange={(e) => handleStrokeWidthChange(Math.max(0, Number(e.target.value)))}
+              onChange={(e) => { strokeWidthTyping.begin(); handleStrokeWidthChange(Math.max(0, Number(e.target.value))); }}
+              onBlur={strokeWidthTyping.onBlur}
             />
             <span className={styles.metricUnit}>px</span>
           </div>
@@ -1209,7 +1263,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               aria-label="Tracking (Letter Spacing)"
               className={styles.metricInput}
               value={activeTracking}
-              onChange={(e) => handleTrackingChange(Number(e.target.value))}
+              onChange={(e) => { trackingTyping.begin(); handleTrackingChange(Number(e.target.value)); }}
+              onBlur={trackingTyping.onBlur}
             />
             <span className={styles.metricUnit}>px</span>
           </div>
@@ -1448,8 +1503,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               onChange={(e) => {
                 if (!primary) return;
                 const id = e.target.value;
-                if (!id) setTextPath(primary, null);
-                else updateTextPath(primary, { ...(textPathCfg ?? defaultTextPath()), pathId: id });
+                // B3-legacy: engine gap — text on a path (attach / detach / which mask) has no API property
+                // (AE's Path Options ▸ Path, a reference to one of the layer's masks); recorded by the history debounce.
+                setTextPath(primary, id ? { ...(textPathCfg ?? defaultTextPath()), pathId: id } : null);
               }}
               className={`${styles.fontSelect} ${styles.pathSelect}`}
             >

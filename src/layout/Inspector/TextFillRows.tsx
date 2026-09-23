@@ -51,6 +51,7 @@ function gradientOf(nodeId: string): Exclude<FillPaint, { type: 'solid' }> | nul
   return f && f.type !== 'solid' ? f : null;
 }
 
+// B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
 const ANGLE: PropertyAccess = {
   read: (id) => {
     const f = gradientOf(id);
@@ -64,6 +65,7 @@ const ANGLE: PropertyAccess = {
   },
 };
 
+// B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
 function radial(field: 'cx' | 'cy' | 'radius'): PropertyAccess {
   return {
     read: (id) => {
@@ -96,6 +98,7 @@ export function TextFillRows({ nodeId, textColor }: { nodeId: string; textColor:
 
   const setType = (next: TextFillType): void => {
     if (next === type) return;
+    // B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
     runDocumentEdit('Text Fill Type', () => {
       if (next === 'solid') setNodeFill(nodeId, undefined);
       // A new gradient starts from the text's own colour.
@@ -168,6 +171,7 @@ type StrokeGradient = LinearFill | RadialFill;
  * gradient gizmo's Fill/Stroke chip, or "Edit on canvas" here, arms it on the
  * stroke.
  */
+// B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
 function strokeGeometry(prop: 'strokeAngle' | 'strokeCenterX' | 'strokeCenterY' | 'strokeRadius'): PropertyAccess {
   return {
     read: (id) => {
@@ -198,6 +202,7 @@ export function TextStrokeRows({ nodeId, strokeColor }: { nodeId: string; stroke
   const strokeArmed = armedId === nodeId && armedTarget === 'stroke';
 
   const write = (label: string, next: FillPaint | undefined): void => {
+    // B3-legacy: engine gap — fill/stroke paints (a text gradient in fx.fill / the Text component's strokePaint: type, stops, geometry) have no API property.
     runDocumentEdit(label, () => {
       updateNodeComponentProp(defaultSceneGraph, nodeId, tc.id, 'strokePaint', next);
     });

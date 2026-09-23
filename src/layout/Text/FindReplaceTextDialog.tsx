@@ -60,6 +60,8 @@ export function FindReplaceTextBody({ close, initialScope }: { close: () => void
   );
 
   const replaceAll = (): void => {
+    // B3-legacy: engine gap — a replace re-indexes the layers' style runs (`text/sourceText` writes drop
+    // `__runs`, ENGINE_API.md §15.4) and rewrites Source Text keyframe values on layers of every comp; one runDocumentEdit entry.
     const r = replaceAllInScope(scope, find, replacement, opts);
     setDone(`Replaced ${plural(r.matches, 'match')} in ${plural(r.layers, 'layer')}.`);
   };

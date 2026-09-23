@@ -9,20 +9,16 @@
  *   OpenTypeControls     standard / discretionary ligatures, contextual
  *                        alternates, stylistic sets 1–20
  *
- * Every keyframeable value uses one idiom: a stopwatch that keys the path at
- * the canonical keyframe time (`compToKeyframeTime`) through `runAnimEdit`,
- * and a static write through `runDocumentEdit` — so every edit is one undo.
+ * Every keyframeable value uses one idiom (B3, `useTextParam`): the engine API
+ * keys the property at the playhead when it is animated and writes the static
+ * value otherwise; a scrub is one gesture — so every edit is one undo.
  */
 
 import { useEffect, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene, useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/projectStore';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { runDocumentEdit } from '@core/commands/documentEdit';
-import { readTextPathConfig, updateTextPath, textPathPropPath, textPathParamValue, type TextPathParam } from '@core/text/textPath';
+import { readTextPathConfig, textPathPropPath, textPathParamValue, type TextPathParam } from '@core/text/textPath';
 import { axisPropPath, axisLabel, readFontAxesProp } from '@core/text/fontAxes';
 import { loadFamilyAxes, registeredAxisFallback, type FamilyAxes } from '@core/text/fontAxesLoader';
 import type { FvarAxis } from '@core/text/variableFontProbe';
@@ -30,6 +26,7 @@ import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Icon } from '@components/Icon';
 import { AnimToggle } from './AnimToggle';
+import { useTextParam } from '@layout/Text/textEdits';
 import styles from './CharacterPanel.module.css';
 
 function textComp(nodeId: string): { id: string; props: Record<string, unknown> } | null {
@@ -46,32 +43,24 @@ export function KeyframeableNumberCell({
   path: string;
   label: string;
   value: number;
-  onStatic: (v: number) => void;
+  /** A custom static writer, for a value stored somewhere other than its track. */
+  onStatic?: (v: number) => void;
   unit?: string;
   min?: number;
   max?: number;
   step?: number;
   title?: string;
 }): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
-  const layerT = compToKeyframeTime(nodeId, time);
-  const shown = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
-  const onChange = (v: number): void => {
-    if (animated) runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v), `txo:${nodeId}:${path}:${layerT}`);
-    else onStatic(v);
-  };
-  const toggle = (): void => {
-    if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, shown));
-  };
+  // Engine API (B3): keyed at the playhead when animated, else static; a scrub is one gesture.
+  const p = useTextParam(nodeId, path, label, value, onStatic);
+  const shown = p.display;
   return (
     <div className={`${styles.metricCell} ${styles.metricCellWide}`}>
-      <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={animated} onToggle={toggle} values={() => [shown]} />
+      <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={p.animated} onToggle={p.toggle} values={() => [shown]} />
       <span className={styles.metricLabel} title={title ?? label}>{label}</span>
       <div className={styles.metricValue}>
-        <ValueField aria-label={label} value={shown} onChange={onChange} min={min} max={max} step={step} unit={unit} />
+        <ValueField aria-label={label} value={shown} onChange={p.onChange} {...p.scrub} min={min} max={max} step={step} unit={unit} />
       </div>
     </div>
   );
@@ -79,24 +68,16 @@ export function KeyframeableNumberCell({
 
 /** A keyframeable ON/OFF — a 0/1 track read at a 0.5 threshold. */
 function KeyframeableSwitch({
-  nodeId, path, label, on, onStatic, title,
-}: { nodeId: string; path: string; label: string; on: boolean; onStatic: (v: boolean) => void; title?: string }): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
+  nodeId, path, label, on, title,
+}: { nodeId: string; path: string; label: string; on: boolean; title?: string }): JSX.Element {
   useSceneRevision((s) => s.rev);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
-  const layerT = compToKeyframeTime(nodeId, time);
-  const shown = animated ? (defaultAnimation.sample(nodeId, path, layerT) ?? (on ? 1 : 0)) >= 0.5 : on;
-  const set = (v: boolean): void => {
-    if (animated) runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v ? 1 : 0));
-    else onStatic(v);
-  };
-  const toggle = (): void => {
-    if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, shown ? 1 : 0));
-  };
+  // Engine API (B3): the 0/1 track keyed at the playhead when animated, else the static flag.
+  const p = useTextParam(nodeId, path, label, on ? 1 : 0);
+  const shown = p.display >= 0.5;
+  const set = (v: boolean): void => p.onChange(v ? 1 : 0);
   return (
     <div className={styles.metricCell}>
-      <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={animated} onToggle={toggle} values={() => [shown ? 1 : 0]} />
+      <AnimToggle nodeId={nodeId} tracks={[path]} label={label} animated={p.animated} onToggle={p.toggle} values={() => [shown ? 1 : 0]} />
       <button
         type="button"
         className={styles.metricToggle}
@@ -147,12 +128,18 @@ export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element
     if (a.tag === 'slnt') return typeof comp.props.fontSlant === 'number' ? comp.props.fontSlant : a.default;
     return stored[a.tag] ?? a.default;
   };
-  const writeStatic = (tag: string, v: number): void => {
+  /**
+   * wght / wdth / slnt keep their static value in fontWeight (a string) /
+   * fontWidth / fontSlant while their keyframes live on the axis track; every
+   * other axis is stored under its track (`text/axes/<tag>`) and goes through
+   * the engine.
+   */
+  const REGISTERED: Readonly<Record<string, string>> = { wght: 'fontWeight', wdth: 'fontWidth', slnt: 'fontSlant' };
+  const writeRegistered = (tag: string, v: number): void => {
+    const key = REGISTERED[tag]!;
+    // B3-legacy: engine gap — a registered axis' static value lives in another prop than its track (fontWeight is a string); no API property addresses it.
     runDocumentEdit(`Font Axis ${tag}`, () => {
-      if (tag === 'wght') defaultSceneGraph.writeProp(nodeId, comp.id, 'fontWeight', String(Math.round(v)));
-      else if (tag === 'wdth') defaultSceneGraph.writeProp(nodeId, comp.id, 'fontWidth', v);
-      else if (tag === 'slnt') defaultSceneGraph.writeProp(nodeId, comp.id, 'fontSlant', v);
-      else defaultSceneGraph.writeProp(nodeId, comp.id, 'fontAxes', { ...stored, [tag]: v });
+      defaultSceneGraph.writeProp(nodeId, comp.id, key, tag === 'wght' ? String(Math.round(v)) : v);
       bumpScene();
     });
   };
@@ -184,7 +171,7 @@ export function VariableAxesSection({ nodeId }: { nodeId: string }): JSX.Element
               min={a.min}
               max={a.max}
               step={a.max - a.min <= 2 ? 0.01 : 1}
-              onStatic={(v) => writeStatic(a.tag, v)}
+              onStatic={REGISTERED[a.tag] ? (v) => writeRegistered(a.tag, v) : undefined}
             />
           ))}
         </div>
@@ -206,8 +193,6 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
   const node = defaultSceneGraph.getNode(nodeId);
   const cfg = node ? readTextPathConfig(node) : null;
   if (!cfg) return null;
-  const write = (label: string, patch: Parameters<typeof updateTextPath>[1]): void =>
-    runDocumentEdit(label, () => updateTextPath(nodeId, patch));
   return (
     <div className={styles.metricGrid} role="group" aria-label="Path Options">
       {SWITCHES.map((s) => (
@@ -218,7 +203,6 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
           label={s.label}
           title={s.title}
           on={textPathParamValue(cfg, s.param) >= 0.5}
-          onStatic={(v) => write(s.label, { [s.param]: v })}
         />
       ))}
       <KeyframeableNumberCell
@@ -227,7 +211,6 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
         label="First Margin"
         unit="px"
         value={cfg.firstMargin}
-        onStatic={(v) => write('First Margin', { firstMargin: v })}
       />
       <KeyframeableNumberCell
         nodeId={nodeId}
@@ -235,7 +218,6 @@ export function TextPathOptions({ nodeId }: { nodeId: string }): JSX.Element | n
         label="Last Margin"
         unit="px"
         value={cfg.lastMargin ?? 0}
-        onStatic={(v) => write('Last Margin', { lastMargin: v })}
       />
     </div>
   );
@@ -253,6 +235,7 @@ export function OpenTypeControls({ nodeId }: { nodeId: string }): JSX.Element | 
   const calt = p.contextualAlternates !== false;
   const sets = Array.isArray(p.stylisticSets) ? (p.stylisticSets as number[]) : [];
   const write = (label: string, key: string, value: unknown): void =>
+    // B3-legacy: engine gap — Text component OpenType props (booleans, the stylistic-set list) have no API property.
     runDocumentEdit(label, () => {
       defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
       bumpScene();

@@ -126,6 +126,8 @@ export interface ComponentPropHandle {
   scrub: { onScrubStart: () => void; onScrubEnd: () => void };
   /** Wrapper props for a control with no scrub events (a range input): press-drag-release = one gesture. */
   press: { onPointerDownCapture: () => void };
+  /** True while this prop's gesture (scrub / press / typing) is open. */
+  active: () => boolean;
 }
 
 export function useComponentProp(
@@ -147,7 +149,7 @@ export function useComponentProp(
   const handle = useMemo<ComponentPropHandle>(() => {
     const label = `Set ${resolvePropertyMeta(key, nodeId).label || key}`;
     const onEngine = (): boolean => !!nodeId && !!componentId && trackRef(nodeId, key) !== null;
-    return { scrub: e.scrub(label, onEngine), press: e.press(label, onEngine) };
+    return { scrub: e.scrub(label, onEngine), press: e.press(label, onEngine), active: () => e.active() };
   }, [e, key, nodeId, componentId]);
 
   return [value, set, handle];

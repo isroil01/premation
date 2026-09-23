@@ -49,6 +49,7 @@ export function ReplaceFontsBody({ usages, missingKeys, close }: ReplaceFontsBod
   const pending = Object.entries(choices).filter(([from, to]) => to && familyKey(to) !== familyKey(from));
 
   const apply = (): void => {
+    // B3-legacy: engine gap — fontFamily is a Text component string (no API property) and the swap also rewrites style runs (`__runs`).
     const { layers } = replaceFontFamilies(new Map(pending));
     useUIStore.getState().notify({
       level: 'success',
