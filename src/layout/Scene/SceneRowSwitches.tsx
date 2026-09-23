@@ -10,9 +10,10 @@
  * That is the rule the context menu's labels already promised ("Unlock" locks
  * nothing else) and the rule the timeline follows.
  *
- * The switch VERBS are not here — they are in `@core/scene/layerFlags`, beside
- * the graph they write, so this file is only the buttons over them and the
- * timeline's copy of the same buttons cannot mean something different.
+ * The switch VERBS are not here — they are engine commands built in
+ * `./layerSwitchEdits` (availability and naming from `@core/scene/layerFlags`),
+ * so this file is only the buttons over them and the timeline's copy of the
+ * same buttons cannot mean something different.
  */
 
 import { Icon, type IconName } from '@components/Icon';
@@ -22,22 +23,12 @@ import {
   describeLayerFlag,
   layerFlagAvailable,
   readLayerFlag,
-  toggleLayerFlags,
   type LayerFlag,
 } from '@core/scene/layerFlags';
-import { toggleLayerSwitchAnchored } from './layerSwitchEdits';
-import { isLayerAudioMuted, toggleLayerAudioMute } from '@core/audio/audioLayerSwitches';
+import { anchoredLayerIds, toggleAudioAnchoredEdit, toggleLayerFlagsEdit, toggleLayerSwitchAnchored } from './layerSwitchEdits';
+import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
 import { videoHasAudioTrack } from '@core/audio/audioScene';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { bumpScene } from '@stores/sceneStore';
-import { useSelectionStore } from '@stores/selectionStore';
 import styles from '@layout/EditorLayout/panels.module.css';
-
-/** The ids this action applies to: the selection when `id` is in it, else `id`. */
-function anchoredIds(id: string): string[] {
-  const sel = useSelectionStore.getState().ids;
-  return sel.includes(id) ? [...sel] : [id];
-}
 
 /** Does this layer make sound? Same test the timeline's A/V column uses. */
 function hasAudio(nodeId: string): boolean {
@@ -47,15 +38,9 @@ function hasAudio(nodeId: string): boolean {
   return kind === 'audio' || (kind === 'video' && videoHasAudioTrack(node) !== false);
 }
 
+/** The speaker, anchored on the clicked row (`setLayerSwitches{audioEnabled}`, one entry). */
 function toggleAudioAnchored(id: string): void {
-  const ids = anchoredIds(id).filter(hasAudio);
-  if (ids.length === 0) return;
-  const edits = ids.map((n) => toggleLayerAudioMute(n)).filter((e): e is NonNullable<typeof e> => !!e);
-  if (edits.length === 0) return;
-  runDocumentEdit(edits.length === 1 ? edits[0]!.label : `${edits[0]!.label} (${edits.length} layers)`, () => {
-    for (const e of edits) e.apply();
-    bumpScene();
-  });
+  void toggleAudioAnchoredEdit(id, hasAudio);
 }
 
 export interface SceneRowSwitchesProps {
@@ -160,11 +145,10 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
             title={face.title}
             onClick={(e) => {
               e.stopPropagation();
-              // Shy is a pure switch → the engine API. The other flags carry
-              // feedback (camera tip, motion-blur comp switch) and migrate
-              // with the layers area.
+              // One `setLayerSwitches` entry over the anchored set, with the
+              // feedback the legacy toggle gave (camera tip, motion-blur comp switch).
               if (flag === 'shy') void toggleLayerSwitchAnchored(nodeId, 'shy');
-              else toggleLayerFlags(anchoredIds(nodeId), flag, nodeId);
+              else void toggleLayerFlagsEdit(anchoredLayerIds(nodeId), flag, nodeId);
             }}
           >
             {face.glyph

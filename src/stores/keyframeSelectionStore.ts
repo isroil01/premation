@@ -7,7 +7,8 @@
  */
 
 import { create } from 'zustand';
-import { parseKeyframeId } from '@motion/animation';
+// The positional selection-id codec lives in ONE place (layout/Timeline/keyframeSelectionIds).
+import { parseUiKey } from '@layout/Timeline/keyframeSelectionIds';
 
 interface KeyframeSelectionStore {
   ids: Set<string>;
@@ -43,7 +44,7 @@ export function pruneKeyframeSelectionToNodes(nodeIds: ReadonlySet<string>): voi
   useKeyframeSelectionStore.setState((s) => {
     const ids = new Set(
       [...s.ids].filter((id) => {
-        const ref = parseKeyframeId(id);
+        const ref = parseUiKey(id);
         return ref !== null && nodeIds.has(ref.nodeId);
       }),
     );

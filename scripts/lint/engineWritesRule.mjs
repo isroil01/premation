@@ -119,8 +119,57 @@ const NOT_WRITES = new Set([
   'applyTextPath', // pure glyph layout along a path (core/text/textPath)
   'resetProjectWorkspace', // project lifecycle (tabs/timelines), not an edit
   'deleteEffectPreset', 'deletePreset', 'importPresets', 'importPresetObjects', // preset LIBRARY, not the document
+  'distributeMinimum', // core/scene/alignNodes: returns the minimum layer count for a distribute mode
+  'precomposeTargets', // core/composition/precompose: reads which selected layers a Pre-compose would move
+  'convertFill', // core/paint/fill: returns a new FillPaint value (the caller sends it)
+  'applyDeletionsToWords', // core/captions/transcriptEdit: returns the transcript words after cuts (pure)
+  'applyStyleToRange', // core/text/richText: returns new style runs (pure; the caller writes them)
+  'applyIk', // core/rig/rigDeform: solves a pose, returns new Bone objects (pure; also used by the renderer)
+  'reorderSiblings', // core/scene/parenting: returns a reordered id array (pure; the caller sends reorderLayers)
 ]);
 const NOT_WRITE_SHAPE = /^create\w*(Player|Renderer|Painter|Port|Cache|Backend|Store)$|ForTests?$/;
+
+/**
+ * A helper whose LAST argument is the identifier `scratch` runs on a scratch
+ * AnimationEngine copy, not the document: the motion-path macros
+ * (layout/Workspace/viewportEdits.ts `editPositionKeys` / `positionKeyPatchCommands`)
+ * seed one with the layer's Position keys, let the legacy arithmetic
+ * (`setPathTangent`, `setSpatialInterpolation`, `toggleVertexInterpolation`, …)
+ * mutate it, and send the difference as one `updateKeyframes`. The same helpers
+ * called WITHOUT a scratch engine default to `defaultAnimation` and still count.
+ */
+const SCRATCH_ENGINE_ARG = 'scratch';
+
+/**
+ * Modules that ARE a counted writer: their body's call of the underlying
+ * writer is the same write every one of their call sites is already counted
+ * for, so it is not a second site. Repo-relative path → reason.
+ */
+const WRITER_MODULES = new Map([
+  ['src/hooks/useNodeComponentProp.ts', 'the legacy hook; every useNodeComponentProp() call is counted where it is made'],
+]);
+
+/**
+ * A store's own module delegating to its own write action (compositionStore's
+ * `setState` → `update`) is the store's implementation, not a UI call site:
+ * the callers of both actions are counted where they call them.
+ */
+function isOwnStoreModule(relPath, storeRoot) {
+  const m = /^use(\w+)Store$/.exec(storeRoot);
+  if (!m) return false;
+  const file = `${m[1].charAt(0).toLowerCase()}${m[1].slice(1)}Store`;
+  return new RegExp(`(^|/)src/stores/${file}\\.tsx?$`).test(relPath);
+}
+
+function relPathOf(context) {
+  const cwd = (context.cwd ?? process.cwd()).replace(/\\/g, '/');
+  const file = (context.filename ?? '').replace(/\\/g, '/');
+  return file.startsWith(`${cwd}/`) ? file.slice(cwd.length + 1) : file;
+}
+function lastArgIsScratch(call) {
+  const last = call.arguments[call.arguments.length - 1];
+  return !!last && last.type === 'Identifier' && last.name === SCRATCH_ENGINE_ARG;
+}
 
 /** Module-owned write helpers under these prefixes are candidates for rule B's verb check. */
 const WRITER_PREFIX = '@core/';
@@ -183,6 +232,8 @@ const rule = {
     },
   },
   create(context) {
+    const rel = relPathOf(context);
+    if (WRITER_MODULES.has(rel)) return {};
     const imports = new Map(); // local name → { source, imported }
     const report = (node, kind, what) => context.report({ node, messageId: 'write', data: { kind, what } });
 
@@ -216,7 +267,7 @@ const rule = {
         if (callee.type === 'Identifier') {
           const imp = imports.get(callee.name);
           const w = imp ? writerName(imp, callee.name) : null;
-          if (w) report(node, 'helper', w);
+          if (w && !lastArgIsScratch(node)) report(node, 'helper', w);
           return;
         }
         const method = propName(callee);
@@ -241,7 +292,7 @@ const rule = {
         }
         // C: store chains (useXStore.getState()…X(…))
         const root = rootIdentifier(callee.object);
-        if (root && STORE_WRITES[root] && STORE_WRITES[root].has(method)) {
+        if (root && STORE_WRITES[root] && STORE_WRITES[root].has(method) && !isOwnStoreModule(rel, root)) {
           report(node, 'store', `${root}.${method}`);
           return;
         }
@@ -250,7 +301,7 @@ const rule = {
           const imp = imports.get(obj.name);
           if (imp.imported === '*') {
             const w = writerName({ source: imp.source, imported: method }, method);
-            if (w) report(node, 'helper', w);
+            if (w && !lastArgIsScratch(node)) report(node, 'helper', w);
           }
         }
       },

@@ -41,6 +41,9 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     // the timeline stays empty.
     const c = useCompositionStore.getState();
     const tc = getTimelineController();
+    // B3-legacy: engine gap — a template's `build()` constructs a whole scene with the legacy
+    // helpers (rich createLayer: styled text, paints, rigs); these two re-sync the timeline mirror
+    // to the comp record that build wrote, and go with it.
     tc.setFrameRate(c.fps);
     tc.setDurationSeconds(c.durationSeconds);
     tc.syncFromScene();
@@ -72,6 +75,9 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     const t = get().active;
     const field = t?.fields.find((f) => f.id === fieldId);
     if (!field) return;
+    // B3-legacy: engine gap — Mograph template fields: a field targets an arbitrary component prop
+    // (text content, fill colour) or fills a media slot (source swap + reframe to the slot rect);
+    // no command addresses either (generic component-prop binding; replaceLayerSource has no fit).
     writeTemplateField(field, value);
     set((s) => ({ values: { ...s.values, [fieldId]: value } }));
   },

@@ -26,39 +26,35 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
+import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { groupSelectedLayers } from '@core/scene/sceneInsert';
+import { toggleLayerFlagsEdit, toggleLayerSwitchAnchored } from './layerSwitchEdits';
+import { deleteLayersEdit, freezeLayersEdit, reverseLayersEdit } from './sceneEdits';
 import {
-  arrangeNodes,
-  eligibleParents,
-  parentOfNode,
-  parentOptionsFor,
-  reparentNode,
-} from '@core/scene/parenting';
-import {
-  deleteSelectedLayers,
-  duplicateSelectedLayers,
-  groupSelectedLayers,
-  ungroupSelected,
-} from '@core/scene/sceneInsert';
-import { toggleLayerSwitchAnchored } from './layerSwitchEdits';
+  arrangeLayersEdit,
+  duplicateSelectedLayersEdit,
+  groupSelectedLayersEdit,
+  setLabelColorEdit,
+  ungroupSelectedEdit,
+} from '@layout/Workspace/layerMenuEdits';
+import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout/Inspector/inspectorEdits';
+import { splitSelectedAtPlayhead } from '@layout/Timeline/timelineEdits';
 import { liveMergeSelectedPaths, mergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { createNullsFromPathUndoable } from '@core/scene/nullsFromPaths';
 import { canCreateShapesFromText, createShapesFromText } from '@core/scene/shapesFromText';
 import { createMasksFromText } from '@core/scene/masksFromText';
-import { LAYER_FLAGS, describeLayerFlag, layerFlagAvailable, readLayerFlag, toggleLayerFlags } from '@core/scene/layerFlags';
-import { LABEL_COLORS, nodesWithLabelColor, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
-import { alignNodes, type AlignMode } from '@core/scene/alignNodes';
-import { readNodeBlend, setNodeBlend, type LayerBlendMode } from '@core/effects/blendMode';
+import { LAYER_FLAGS, describeLayerFlag, layerFlagAvailable, readLayerFlag } from '@core/scene/layerFlags';
+import { LABEL_COLORS, nodesWithLabelColor, readNodeLabelColor } from '@core/scene/labelColor';
+import { type AlignMode } from '@core/scene/alignNodes';
+import { readNodeBlend, type LayerBlendMode } from '@core/effects/blendMode';
 import { blendModeLabel, blendModeSections } from '@layout/Inspector/blendMenu';
 import { MATTE_OPTIONS, applyMatteOption, matteOptionId } from '@components/MatteControl/matteMenu';
-import { readNodeMatte, setNodeMatte } from '@core/effects/matte';
-import { isRetimableLayer, toggleFreeze, toggleReverse } from '@core/animation/layerTimeCommands';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { readNodeMatte } from '@core/effects/matte';
+import { isRetimableLayer, toggleFreeze } from '@core/animation/layerTimeCommands';
 import { getTime } from '@stores/playbackClockStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { bumpScene } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import styles from '@layout/EditorLayout/panels.module.css';
 
@@ -88,7 +84,7 @@ export function labelColorMenuItems(targetId: string): ContextMenuItem[] {
       id: 'label-none',
       label: 'None (Default)',
       icon: current === undefined ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(ids, undefined),
+      onSelect: () => { void setLabelColorEdit(ids, undefined); },
     },
     { id: 'label-sep', separator: true },
     ...LABEL_COLORS.map((c): ContextMenuItem => ({
@@ -100,7 +96,8 @@ export function labelColorMenuItems(targetId: string): ContextMenuItem[] {
         </>
       ),
       icon: current === c.color ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(ids, c.color),
+      // Every swatch here is a layer-label colour, so the API's label index covers it.
+      onSelect: () => { void setLabelColorEdit(ids, c.color); },
     })),
     { id: 'label-select-sep', separator: true },
     {
@@ -130,7 +127,7 @@ function switchesMenuItems(targetId: string, ids: ReadonlyArray<string>): Contex
     icon: readLayerFlag(node, def.id) ? 'check' : undefined,
     onSelect: def.id === 'shy'
       ? () => { void toggleLayerSwitchAnchored(targetId, 'shy'); }
-      : () => toggleLayerFlags(ids, def.id, targetId),
+      : () => { void toggleLayerFlagsEdit(ids, def.id, targetId); },
   }));
 }
 
@@ -152,11 +149,9 @@ function blendMenuItems(targetId: string, ids: ReadonlyArray<string>): ContextMe
   return out;
 }
 
+/** One `setBlendMode` per layer, one "Blending Mode" entry (the inspector's writer). */
 function applyBlendMode(ids: ReadonlyArray<string>, mode: LayerBlendMode): void {
-  runDocumentEdit(ids.length === 1 ? 'Blending Mode' : `Blending Mode (${ids.length} layers)`, () => {
-    for (const id of ids) setNodeBlend(id, mode);
-    bumpScene();
-  });
+  setLayersBlend(ids, mode);
 }
 
 function matteMenuItems(targetId: string): ContextMenuItem[] {
@@ -168,20 +163,17 @@ function matteMenuItems(targetId: string): ContextMenuItem[] {
     id: `matte-${opt.id}`,
     label: opt.label,
     icon: currentId === opt.id ? 'check' : undefined,
-    onSelect: () => {
-      runDocumentEdit('Track Matte', () => {
-        setNodeMatte(targetId, applyMatteOption(stored, opt.id));
-        bumpScene();
-      });
-    },
+    // `setTrackMatte` by reference (the inspector's writer); the positional "Layer Above" matte
+    // keeps the legacy writer inside `setLayerMatte` (engine gap, see there).
+    onSelect: () => setLayerMatte(targetId, applyMatteOption(stored, opt.id)),
   }));
 }
 
 /**
  * Parent submenu — the drop-down half of the timeline's parent control. The
  * pick-whip half is on the row itself (`ScenePanel`'s `renderLead`); both call
- * the same `reparentNode`, so parenting cannot mean two different things
- * depending on which control was used.
+ * the same `parentLayer` (the inspector's `setParent`), so parenting cannot
+ * mean two different things depending on which control was used.
  */
 function parentMenuItems(targetId: string): ContextMenuItem[] {
   const options = eligibleParents(targetId);
@@ -191,14 +183,14 @@ function parentMenuItems(targetId: string): ContextMenuItem[] {
       id: 'parent-none',
       label: 'None',
       icon: current === null ? 'check' : undefined,
-      onSelect: () => reparentNode(targetId, null),
+      onSelect: () => parentLayer(targetId, null),
     },
     ...(options.length ? [{ id: 'parent-sep', separator: true } as ContextMenuItem] : []),
     ...options.map((o): ContextMenuItem => ({
       id: `parent-${o.id}`,
       label: o.name,
       icon: current === o.id ? 'check' : undefined,
-      onSelect: () => reparentNode(targetId, o.id, parentOptionsFor({ altKey: false, shiftKey: false })),
+      onSelect: () => parentLayer(targetId, o.id, { altKey: false, shiftKey: false }),
     })),
   ];
 }
@@ -218,12 +210,7 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
     ...ALIGN_ITEMS.map((a): ContextMenuItem => ({
       id: `align-${a.id}`,
       label: a.label,
-      onSelect: () => {
-        runDocumentEdit('Align Layers', () => {
-          alignNodes([...ids], a.id, 'selection', comp.width, comp.height);
-          bumpScene();
-        });
-      },
+      onSelect: () => alignLayers(ids, a.id, 'selection', comp.width, comp.height),
     })),
     { id: 'align-sep', separator: true },
     ...(['distribute-h', 'distribute-v'] as const).map((mode): ContextMenuItem => ({
@@ -232,12 +219,7 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
       // AE greys distribution out below three layers, because two layers are
       // already evenly distributed and the command would be a no-op.
       disabled: ids.length < 3,
-      onSelect: () => {
-        runDocumentEdit('Distribute Layers', () => {
-          alignNodes([...ids], mode as AlignMode, 'selection', comp.width, comp.height);
-          bumpScene();
-        });
-      },
+      onSelect: () => alignLayers(ids, mode as AlignMode, 'selection', comp.width, comp.height),
     })),
   ];
 }
@@ -296,16 +278,16 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
 
   return [
     { id: 'rename', label: 'Rename', shortcut: 'F2', onSelect: () => deps.startRename(targetId) },
-    { id: 'duplicate', label: 'Duplicate', shortcut: 'Ctrl+D', onSelect: () => duplicateSelectedLayers() },
-    // `arrangeNodes` over the WHOLE selection, never a loop over it — the
+    { id: 'duplicate', label: 'Duplicate', shortcut: 'Ctrl+D', onSelect: () => { void duplicateSelectedLayersEdit(); } },
+    // `arrangeLayersEdit` over the WHOLE selection, never a loop over it — the
     // loop moved a multi-selection one layer at a time and the members
     // leapfrogged each other (see `reorderSiblings`). Same call the Layer ▸
     // Arrange commands and the viewport's context menu make.
     { id: 'arrange', label: 'Arrange', children: [
-      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { arrangeNodes(ids, 'front'); } },
-      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { arrangeNodes(ids, 'forward'); } },
-      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { arrangeNodes(ids, 'backward'); } },
-      { id: 'arr-back', label: 'Send to Back', onSelect: () => { arrangeNodes(ids, 'back'); } },
+      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { void arrangeLayersEdit(ids, 'front'); } },
+      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { void arrangeLayersEdit(ids, 'forward'); } },
+      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { void arrangeLayersEdit(ids, 'backward'); } },
+      { id: 'arr-back', label: 'Send to Back', onSelect: () => { void arrangeLayersEdit(ids, 'back'); } },
     ] },
     { id: 'sep1', separator: true },
 
@@ -356,32 +338,51 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
           id: 'reverse',
           label: 'Time-Reverse Layer',
           disabled: !retimable,
-          onSelect: () => toggleReverse(ids),
+          onSelect: () => { void reverseLayersEdit(ids); },
         },
         {
           id: 'freeze',
           label: 'Freeze Frame at Playhead',
           disabled: !retimable,
-          onSelect: () => toggleFreeze(ids, getTime()),
+          onSelect: () => {
+            const at = getTime();
+            void freezeLayersEdit(ids, at).then((done) => {
+              // B3-legacy: engine gap — `freezeFrame` only sets a freeze; nothing clears one, so
+              // un-freezing (every layer already frozen) keeps the legacy layer-time write.
+              if (!done) toggleFreeze(ids, at);
+            });
+          },
         },
       ],
     },
     { id: 'sep4', separator: true },
 
     // ── Create: turn this layer into other layers ───────────────────────
-    { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
-    ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
+    {
+      id: 'group',
+      label: 'Group Selection',
+      onSelect: () => {
+        void groupSelectedLayersEdit().then((handled) => {
+          // B3-legacy: engine gap — `groupLayers` needs every layer under ONE parent; the legacy
+          // grouping reparents a mixed selection (world transform kept) under a new group.
+          if (!handled) groupSelectedLayers();
+        });
+      },
+    },
+    ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => { void ungroupSelectedEdit(); } }] : []),
     { id: 'precompose', label: 'Pre-compose…', shortcut: 'Ctrl+Shift+C', onSelect: () => openPrecomposeDialog() },
     ...(isText
       ? [
           {
             id: 'shapes-from-text',
             label: 'Create Shapes from Text',
+            // B3-legacy: engine gap — `convertLayer{shapesFromText}` answers unsupported on the TS engine.
             onSelect: () => { void createShapesFromText(targetId).then((r) => { if (!r) notify('That text could not be traced to shapes', 'warning'); }); },
           },
           {
             id: 'masks-from-text',
             label: 'Create Masks from Text',
+            // B3-legacy: engine gap — `convertLayer{masksFromText}` answers unsupported on the TS engine.
             onSelect: () => { void createMasksFromText(targetId); },
           },
         ]
@@ -391,6 +392,8 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
           id: 'nulls-from-paths',
           label: 'Create Nulls from Path Points',
           onSelect: () => {
+            // B3-legacy: engine gap — no command creates nulls bound to path vertices (a set of
+            // createLayer nulls plus the vertex expressions linking them, as one entry).
             const made = createNullsFromPathUndoable(targetId, getTime());
             if (!made) notify('That layer has no path points to bind nulls to', 'warning');
           },
@@ -411,9 +414,14 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
               { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
               { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
               { id: 'merge-sep', separator: true },
+              // B3-legacy: engine gap — no command bakes a boolean path merge (the result is a new
+              // path layer computed from the operands' outlines; `convertLayer` does not cover it).
               { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
+              // B3-legacy: engine gap — boolean path merge (see Bake Union).
               { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
+              // B3-legacy: engine gap — boolean path merge (see Bake Union).
               { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
+              // B3-legacy: engine gap — boolean path merge (see Bake Union).
               { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
             ],
           },
@@ -429,15 +437,14 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
       label: many ? `Delete ${ids.length} Layers` : 'Delete',
       danger: true,
       shortcut: 'Del',
-      onSelect: () => deleteLayersWithFeedback(ids),
+      onSelect: () => { void deleteLayersWithFeedback(ids); },
     },
   ];
 }
 
-/** Split at the playhead, the same call the transport bar's scissors makes. */
+/** Split at the playhead, the same call the transport bar's scissors makes (`splitLayers`). */
 function splitAtPlayhead(ids: ReadonlyArray<string>): void {
-  getTimelineController().splitSelectedAtPlayhead(ids);
-  bumpScene();
+  void splitSelectedAtPlayhead(ids);
 }
 
 /** Every layer of the active comp that is NOT currently selected. */
@@ -458,13 +465,14 @@ export function invertSelection(): void {
 /**
  * Delete, and SAY what was skipped.
  *
- * `deleteSelectedLayers` has always filtered locked layers out; it did it
- * silently, so selecting five layers of which two were locked deleted three and
- * looked like a partial failure with no cause on screen.
+ * Deleting has always filtered locked layers out; it did it silently, so
+ * selecting five layers of which two were locked deleted three and looked like
+ * a partial failure with no cause on screen. One `deleteLayers` entry
+ * (`deleteLayersEdit`) over exactly these ids.
  */
-export function deleteLayersWithFeedback(ids: ReadonlyArray<string>): void {
+export async function deleteLayersWithFeedback(ids: ReadonlyArray<string>): Promise<void> {
   const lockedCount = ids.filter((id) => defaultSceneGraph.getNode(id)?.locked).length;
-  deleteSelectedLayers();
+  await deleteLayersEdit(ids);
   if (lockedCount > 0) {
     notify(
       lockedCount === ids.length

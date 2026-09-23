@@ -72,6 +72,9 @@ export async function renderVersionFrame(doc: EditorDocument): Promise<string> {
   const h = useHistoryStore.getState();
   h.flush();
   const live = captureDocument();
+  // B3-legacy: not an edit — the version is swapped in only to render one frame and swapped back
+  // (invisible to undo). Needs a render query over a document other than the open one (§13), which
+  // the engine does not have; until then the engine sees the swap as an external change and resyncs.
   h.runRestoring(() => {
     restoreDocument(structuredClone(doc));
     bumpScene();

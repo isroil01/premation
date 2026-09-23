@@ -43,6 +43,31 @@ function byComp(ids: Iterable<string>): Map<string, string[]> {
 // ── Delete ────────────────────────────────────────────────────────────
 
 /**
+ * `ids` plus the members of every GROUP layer among them (recursively, never
+ * into a precomp, locked members left out). `deleteLayers` unparents the
+ * children of a deleted layer keeping their world transform (AE's rule for a
+ * parent link, right for a null); a group is a container, and deleting it has
+ * always taken what is inside it (`deleteLayerNode` removes the subtree).
+ */
+export function withGroupMembers(ids: Iterable<string>): string[] {
+  const out = new Set<string>();
+  const walk = (id: string): void => {
+    for (const kid of defaultSceneGraph.getChildOrder(id)) {
+      const k = defaultSceneGraph.getNode(kid);
+      if (!k || k.locked || out.has(kid)) continue;
+      out.add(kid);
+      if (readNodeKind(k) === 'group' && !isPrecomp(k)) walk(kid);
+    }
+  };
+  for (const id of ids) {
+    out.add(id);
+    const n = defaultSceneGraph.getNode(id);
+    if (n && n.parent && readNodeKind(n) === 'group' && !isPrecomp(n)) walk(id);
+  }
+  return [...out];
+}
+
+/**
  * Delete the selected layers (locked ones and composition roots are skipped,
  * as `deleteSelectedLayers` skipped them) and clear the selection. One entry,
  * "Delete layer(s)"; one `deleteLayers` per composition inside it.
@@ -52,9 +77,9 @@ export async function deleteSelectedLayersEdit(): Promise<void> {
     const n = defaultSceneGraph.getNode(id);
     return !!n && !n.locked && n.parent !== null;
   });
-  const groups = byComp(ids);
-  const count = [...groups.values()].reduce((a, l) => a + l.length, 0);
-  if (count === 0) return;
+  const count = ids.filter((id) => compOfLayer(id)).length;
+  const groups = byComp(withGroupMembers(ids));
+  if (count === 0 || groups.size === 0) return;
   const cmds: Command[] = [...groups.values()].map((layers) => ({ type: 'deleteLayers', layers }));
   const res = await edit(count === 1 ? 'Delete layer' : 'Delete layers', cmds);
   if (res.ok) useSelectionStore.getState().clear();

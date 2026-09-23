@@ -30,7 +30,6 @@ import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
 import { easePresetsByFamily, type EasePreset } from '@core/animation/easePresets';
 import { useCustomEaseStore, type CustomEase } from '@stores/customEaseStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
-import { bumpScene } from '@stores/sceneStore';
 import { easeCurvePath, easeCurveGuides, EASE_THUMB } from './easeCurvePath';
 import styles from './EaseLibrarySection.module.css';
 
@@ -67,8 +66,7 @@ export function EaseLibrarySection({ keyframeIds, bezier }: EaseLibrarySectionPr
   // the same one the ease clipboard's paste uses, and undoable the same way.
   const applyCustom = (curve: CustomEase): void => {
     if (keyframeIds.length === 0) return;
-    applyCustomBezier([...keyframeIds], curve.bezier);
-    bumpScene();
+    void applyCustomBezier([...keyframeIds], curve.bezier);
   };
 
   const saveCurrent = (): void => {

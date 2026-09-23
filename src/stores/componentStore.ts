@@ -67,6 +67,9 @@ function instantiate(def: SerializedNode, parentId: string, pos: { x: number; y:
     if (t) { (t.props as Record<string, unknown>).x = pos.x; (t.props as Record<string, unknown>).y = pos.y; }
   }
   const node: SceneNode = { id, name: def.name, parent: parentId, children: [], visible: true, locked: false, transform, components } as unknown as SceneNode;
+  // B3-legacy: engine gap — instantiating a saved component (a serialized layer tree with its
+  // components) has no command: `createLayer` takes a kind + init values, and `pasteLayers` only a
+  // fragment minted by the `copyLayers` query from live layers.
   defaultSceneGraph.addChild(parentId, node);
   for (const child of def.children) instantiate(child, id, null);
   return id;

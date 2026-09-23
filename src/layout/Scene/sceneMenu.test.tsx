@@ -157,7 +157,7 @@ describe('invert selection', () => {
 });
 
 describe('delete', () => {
-  it('says what it skipped instead of silently leaving locked layers behind', () => {
+  it('says what it skipped instead of silently leaving locked layers behind', async () => {
     Object.assign(defaultSceneGraph.getNode('b')!, { locked: true });
     useSelectionStore.getState().set(['a', 'b']);
     const notices: string[] = [];
@@ -166,7 +166,7 @@ describe('delete', () => {
       return 'noticeId';
     });
 
-    deleteLayersWithFeedback(['a', 'b']);
+    await deleteLayersWithFeedback(['a', 'b']);
 
     expect(defaultSceneGraph.getNode('a')).toBeUndefined();
     expect(defaultSceneGraph.getNode('b')).toBeDefined();
@@ -177,10 +177,10 @@ describe('delete', () => {
     spy.mockRestore();
   });
 
-  it('says nothing extra when nothing was skipped', () => {
+  it('says nothing extra when nothing was skipped', async () => {
     useSelectionStore.getState().set(['a']);
     const spy = jest.spyOn(useUIStore.getState(), 'notify').mockImplementation(() => 'noticeId');
-    deleteLayersWithFeedback(['a']);
+    await deleteLayersWithFeedback(['a']);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });

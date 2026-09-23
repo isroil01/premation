@@ -192,6 +192,8 @@ export function ComponentsPanel(): JSX.Element {
 
 export function ShapesPanel(): JSX.Element {
   const handleShapeInsert = (preset: typeof SHAPE_PRESETS[number]) => {
+    // B3-legacy: engine gap — rich createLayer: a shape preset carries its primitive's path/polystar
+    // settings and the toolbar fill/stroke, placed and sized to the comp (`placeInComp`).
     insertShape(preset.primitive, preset.label);
   };
 
@@ -223,6 +225,8 @@ export function ShapesPanel(): JSX.Element {
 
 export function TextPanel(): JSX.Element {
   const handleTextInsert = (preset: typeof TEXT_PRESETS[number]) => {
+    // B3-legacy: engine gap — rich createLayer: a text preset's size / weight / style extras are text
+    // component props with no init path (`createLayer{text}` takes the default style).
     insertText(preset.label, preset.fontSize, preset.weight, (preset as any).extra ?? {});
   };
 
@@ -285,6 +289,8 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'mograph', mographId: item.id, name: item.name })}
       onClick={() => {
+        // B3-legacy: engine gap — a motion-graphics item builds a whole rigged layer set (shapes,
+        // styled text, keyframes, expressions) in one go; no command instantiates such a set.
         const id = insertMographItem(item.id);
         if (id) notify({ level: 'success', message: `Inserted motion graphic: ${item.name}`, durationMs: 1500 });
         else notify({ level: 'warning', message: `Could not insert ${item.name}`, durationMs: 2000 });
@@ -391,6 +397,8 @@ const TRANSITION_CATEGORIES: readonly TransitionCategory[] =
 function TransitionsContent(): JSX.Element {
   const notify = useUIStore((s) => s.notify);
   const apply = (id: string, name: string): void => {
+    // B3-legacy: engine gap — no transition commands (a transition's keyframed in/out rig on the
+    // selected layers' cut).
     const result = applyTransitionItem(id);
     if (!result) {
       notify({ level: 'warning', message: `Could not apply ${name}`, durationMs: 2000 });
@@ -483,6 +491,8 @@ function SoundFXContent(): JSX.Element {
     if (busy) return;
     setBusy(id);
     try {
+      // B3-legacy: engine gap — importFiles without a path: a bundled sound is fetched as bytes
+      // (no file on disk for `importFiles`), then placed as an audio layer at the playhead.
       const nodeId = await insertSfxItem(id);
       if (nodeId) notify({ level: 'success', message: `Added Sound FX: ${name}`, durationMs: 1500 });
       else notify({ level: 'warning', message: `Could not add ${name}`, durationMs: 2000 });
@@ -569,6 +579,8 @@ function LottieContent(): JSX.Element {
     e.target.value = '';
     if (!file) return;
     try {
+      // B3-legacy: engine gap — a Lottie file becomes a layer tree (shapes, keyframes, parenting) the
+      // importer builds directly; `importProject` covers .motion/.aep only and `importFiles` needs a path.
       reportLottieImport(file.name, await importLottieFile(file));
     } catch (err) {
       reportLottieImportFailure(file.name, err);
@@ -608,6 +620,8 @@ function LottieContent(): JSX.Element {
               onMouseEnter={() => setHovered(item.id)}
               onMouseLeave={() => setHovered((h) => (h === item.id ? null : h))}
               onClick={() => {
+                // B3-legacy: engine gap — a bundled Lottie becomes a layer tree built by the importer
+                // (see the file import above).
                 const ids = insertLottieItem(item.id);
                 if (ids.length > 0) notify({ level: 'success', message: `Inserted ${item.name} (${ids.length} layer${ids.length > 1 ? 's' : ''})`, durationMs: 1800 });
                 else notify({ level: 'warning', message: `Could not insert ${item.name}`, durationMs: 2000 });

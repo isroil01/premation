@@ -20,7 +20,16 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
 import { toggleSelectedLocked, toggleSelectedSolo, toggleSelectedVisible } from '@core/scene/sceneInsert';
+import { layerFlagAvailable, layerFlagDef, readLayerFlag, type LayerFlag } from '@core/scene/layerFlags';
+import { nextQuality, readNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
+import { notifyGuideLayerChange } from '@core/effects/layerSwitchFeedback';
+import { getNodeEffects } from '@core/effects/effects';
+import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
+import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useUIStore } from '@stores/uiStore';
 
 export type LayerSwitch = 'visible' | 'locked' | 'solo' | 'shy';
 
@@ -78,4 +87,102 @@ export async function toggleLayerSwitchAnchored(anchorId: string, sw: LayerSwitc
   const [on, off] = LABELS[sw];
   const verb = next ? on : off;
   await edit(cmds.length === 1 ? verb : `${verb} (${cmds.length} layers)`, cmds);
+}
+
+// ── The AE switch column (layerFlags) over a selection ────────────────
+
+const QUALITY_LABEL: Readonly<Record<LayerQuality, string>> = {
+  best: 'Quality: Best',
+  draft: 'Quality: Draft',
+  wireframe: 'Quality: Wireframe',
+};
+
+/** The `setLayerSwitches` patch that puts `flag` at `next`. */
+export function flagPatch(flag: LayerFlag, next: boolean | LayerQuality): LayerSwitchesPatch {
+  const on = next === true;
+  switch (flag) {
+    case 'quality': return { quality: next as LayerQuality };
+    case 'fxEnabled': return { effectsEnabled: on };
+    case 'frameBlend': return { frameBlend: on ? 'frameMix' : 'off' };
+    case 'shy': return { shy: on };
+    case 'collapse': return { collapse: on };
+    case 'motionBlur': return { motionBlur: on };
+    case 'adjustment': return { adjustment: on };
+    case 'guide': return { guide: on };
+    case 'preserveTransparency': return { preserveTransparency: on };
+    case 'threeD': return { threeD: on };
+  }
+}
+
+function notify(message: string, level: 'info' | 'success' | 'warning' = 'info', durationMs = 3200): void {
+  useUIStore.getState().notify({ level, message, durationMs });
+}
+
+/**
+ * One AE switch across a selection as ONE undo step, anchored on `anchorId`
+ * — `layerFlags.toggleLayerFlags`' rules through the engine: the anchor's state
+ * decides the direction (a cycling switch lands the whole set on the anchor's
+ * NEXT position), layers that cannot carry the flag are skipped and reported
+ * once, and the label names the position the set moves TO. One
+ * `setLayerSwitches` per layer (a selection may span compositions) in one
+ * batch, with the feedback the legacy toggle gave.
+ */
+export async function toggleLayerFlagsEdit(ids: ReadonlyArray<string>, flag: LayerFlag, anchorId?: string): Promise<void> {
+  const targets = ids.filter((id) => {
+    const n = defaultSceneGraph.getNode(id);
+    return !!n && isLayer(id) && layerFlagAvailable(n, flag);
+  });
+  const def = layerFlagDef(flag);
+  const refused = ids.length - targets.length;
+  if (refused > 0) {
+    notify(refused === 1 ? `${def.label} isn't available for that layer` : `${def.label} isn't available for ${refused} of the selected layers`, 'warning', 2600);
+  }
+  if (targets.length === 0) return;
+  const anchor = defaultSceneGraph.getNode(anchorId && targets.includes(anchorId) ? anchorId : targets[0]!);
+  if (!anchor) return;
+  const next: boolean | LayerQuality = def.cycles ? nextQuality(readNodeQuality(anchor)) : !readLayerFlag(anchor, flag);
+  const verb = typeof next === 'string' ? QUALITY_LABEL[next] : `${next ? 'Enable' : 'Disable'} ${def.label}`;
+  const patch = flagPatch(flag, next);
+  const res = await edit(
+    targets.length === 1 ? verb : `${verb} (${targets.length} layers)`,
+    targets.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch }) as Command),
+  );
+  if (!res.ok || typeof next !== 'boolean') return;
+  // The feedback `toggleLayerFlag` gave (layerSwitchFeedback.ts / cameraNav).
+  if (flag === 'guide') notifyGuideLayerChange(next, targets.length > 1);
+  else if (flag === 'threeD' && next) notifyCameraTipIfMissing((message, level) => notify(message, level));
+  else if (flag === 'motionBlur' && next) {
+    const mb = useMotionBlurStore.getState();
+    if (!mb.enabled) {
+      // B3-legacy: engine gap — the composition motion-blur MASTER (`enabled`) is not a field of the
+      // API's MotionBlurSettings; AE's dual gate still turns it on here (a store setting, as before).
+      mb.setEnabled(true);
+      notify('Motion Blur enabled for this layer and the composition', 'success');
+    }
+    if (useRenderQualityStore.getState().draft) {
+      notify('Draft preview is on — motion blur samples are paused until draft is off', 'warning');
+    }
+  } else if (flag === 'adjustment' && next && targets.some((id) => getNodeEffects(id).length === 0)) {
+    notify('Adjustment layer is on — add effects to grade layers beneath it');
+  }
+}
+
+// ── The audio switch (the speaker next to the eye) ────────────────────
+
+/**
+ * The speaker, anchored like the other row switches: the clicked row's state
+ * decides mute or unmute for every audible layer of the set. `audible` is the
+ * row's own "makes sound" test. One `setLayerSwitches{audioEnabled}` entry.
+ */
+export async function toggleAudioAnchoredEdit(anchorId: string, audible: (id: string) => boolean): Promise<void> {
+  const ids = anchoredLayerIds(anchorId).filter((id) => isLayer(id) && audible(id));
+  if (ids.length === 0) return;
+  const anchor = ids.includes(anchorId) ? anchorId : ids[0]!;
+  // Muted anchor → unmute the set (audioEnabled: true), and vice versa.
+  const audioEnabled = isLayerAudioMuted(anchor);
+  const verb = audioEnabled ? 'Unmute layer audio' : 'Mute layer audio';
+  await edit(
+    ids.length === 1 ? verb : `${verb} (${ids.length} layers)`,
+    ids.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch: { audioEnabled } }) as Command),
+  );
 }

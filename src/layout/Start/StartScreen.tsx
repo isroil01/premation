@@ -303,6 +303,9 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
                 // New can be declined (the unsaved-changes confirmation) —
                 // importing into no project would drop the clip on the floor.
                 if (!getProjectManager().getState().current) return;
+                // B3-legacy: engine gap — an <input type=file> File has no path for `importFiles`, and
+                // `createComposition{fromItems}` does not conform the comp to the clip (pristine-comp
+                // adoption, PAR-corrected size, probed rate, full-frame placement) as this does.
                 const asset = await useAssetStore.getState().addAsset(f);
                 await createCompositionFromFootage(asset);
               };

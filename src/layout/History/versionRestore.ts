@@ -15,10 +15,14 @@ import { useHistoryStore } from '@stores/historyStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 
 export async function restoreVersionAsOneEdit(versionId: string): Promise<void> {
+  // B3-legacy: engine gap — restoring a saved cloud version replaces the whole document as ONE
+  // undoable entry; the engine's document-replacing commands (openProject / revertProject) clear
+  // history instead, and there is no undoable "replace document" command.
   useHistoryStore.getState().flush();
   await useVersionHistoryStore.getState().restore(versionId);
   // A named record always produces a row (see `historyStore.record`); the
   // later debounced auto-record then sees an unchanged state and records
   // nothing, so the restore is exactly one entry.
+  // B3-legacy: see above.
   useHistoryStore.getState().record('Restore version', true);
 }

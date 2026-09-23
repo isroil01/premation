@@ -38,6 +38,8 @@ export function HistoryPanel(): JSX.Element {
   const rename = (i: number, label: string) => {
     getCommandSystem().getHistory().setLabel(i, label);
   };
+  // B3-legacy: engine gap — "Snapshot current state" pins a named history entry holding the current
+  // document; the engine's history has no named-snapshot entry (it records only edits).
   const record = useHistoryStore((s) => s.record);
 
   const [editing, setEditing] = useState<number | null>(null);

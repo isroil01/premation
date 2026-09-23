@@ -50,15 +50,16 @@ import {
 } from '@stores/sceneViewStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { renameLayer } from '@core/scene/renameLayer';
+import type { RenameLayerResult } from '@core/scene/renameLayer';
+import { isLayer } from '@core/engine/doc';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
 import { KIND_LABEL, flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { canReparent, moveNodeAdjacent, parentOptionsFor, reparentNode, canBeParentOf } from '@core/scene/parenting';
+import { canBeParentOf } from '@core/scene/parenting';
+import { parentLayer } from '@layout/Inspector/inspectorEdits';
+import { moveLayersInTreeEdit, renameLayerEdit } from './sceneEdits';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { LAYER_FLAGS } from '@core/scene/layerFlags';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { batchScene } from '@stores/sceneStore';
 import {
   countSceneMatches,
   filterSceneTree,
@@ -323,10 +324,15 @@ export function ScenePanel(): JSX.Element {
     // Not a bare `node.name = name`. Expressions reference layers by NAME and
     // resolve at evaluation time, so a plain rename silently zeroes every
     // reference to this layer — with the symptom appearing nowhere near the
-    // rename that caused it. `renameLayer` follows the rename through those
-    // references in the SAME undo entry, and reports the two cases it will not
-    // guess at.
-    const result = renameLayer(id, name);
+    // rename that caused it. `renameLayerEdit` sends the engine's rename when
+    // no expression names the old or new name, and otherwise keeps
+    // `renameLayer`, which follows the rename through those references in the
+    // SAME undo entry and reports the two cases it will not guess at.
+    void renameLayerEdit(id, name).then((result) => reportRename(result, name));
+  };
+
+  /** What a rename did to expressions, said once (see `renameLayer`). */
+  const reportRename = (result: RenameLayerResult, name: string): void => {
     if (!result.ok) return;
 
     if (result.repaired.length > 0) {
@@ -383,7 +389,7 @@ export function ScenePanel(): JSX.Element {
     const movable = ids.filter((id) => {
       const n = defaultSceneGraph.getNode(id);
       // A composition root is not a layer and cannot be moved into one.
-      return !!n && n.parent !== null && !n.locked;
+      return !!n && n.parent !== null && !n.locked && isLayer(id);
     });
     if (movable.length === 0) {
       if (ids.length > 0) refuseIfLocked(ids[0]!, 'move it');
@@ -401,29 +407,9 @@ export function ScenePanel(): JSX.Element {
       }
     }
 
-    const label = movable.length === 1 ? 'Move layer' : `Move ${movable.length} layers`;
-    runDocumentEdit(label, () => {
-      batchScene(() => {
-        for (const id of [...movable].reverse()) {
-          if (targetId === null) {
-            // Dropped below the last row: out to the enclosing composition.
-            const root = activeCompRootId();
-            if (root && canReparent(id, root)) reparentNode(id, root);
-            continue;
-          }
-          if (pos === 'inside') {
-            if (canReparent(id, targetId)) reparentNode(id, targetId);
-            // Cannot nest: land it just in front of the target instead. Display
-            // "before" is child-order "after" — the same flip as the branch
-            // below; passing the display word straight through dropped it on
-            // the far side.
-            else moveNodeAdjacent(id, targetId, 'after');
-          } else {
-            moveNodeAdjacent(id, targetId, pos === 'before' ? 'after' : 'before');
-          }
-        }
-      });
-    });
+    // One entry: `setParent` + `reorderLayers` through the engine (the drop
+    // rules are spelled out on `moveLayersInTreeEdit`).
+    void moveLayersInTreeEdit(movable, targetId, pos);
   };
 
   const openNodeMenu = (id: string, e: React.MouseEvent): void => {
@@ -662,7 +648,7 @@ export function ScenePanel(): JSX.Element {
             onRename={commitRename}
             onRenameCancel={() => setRenamingId(null)}
             onRenameRequest={startRename}
-            onDelete={(ids) => deleteLayersWithFeedback(ids)}
+            onDelete={(ids) => { void deleteLayersWithFeedback(ids); }}
             /*
               The parent pick-whip, the gesture AE users reach for a hundred
               times a day. The tree was already a whip TARGET; being only a
@@ -677,7 +663,8 @@ export function ScenePanel(): JSX.Element {
                 <PickWhip
                   label="Parent pick-whip — drag onto a layer (Shift: jump to the parent · Alt: keep values)"
                   accept={(target) => canBeParentOf(node.id, target.nodeId)}
-                  onPick={(target, m) => reparentNode(node.id, target.nodeId, parentOptionsFor(m))}
+                  // The inspector's writer (`setParent`); a composition root = no parent.
+                  onPick={(target, m) => parentLayer(node.id, isLayer(target.nodeId) ? target.nodeId : null, m)}
                 />
               );
             }}

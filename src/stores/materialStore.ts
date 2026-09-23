@@ -220,6 +220,9 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
 export function applyMaterialToNodes(ids: readonly string[], materialRefId: string): boolean {
   const material = useMaterialStore.getState().find(materialRefId);
   if (!material) return false;
+  // B3-legacy: engine gap — a library material mixes numbers with shading model / shadow modes /
+  // accepts-lights fields that have no API property (generic component-prop binding; the inspector's
+  // material preset stays legacy for the same reason).
   batchHistory(`material:apply:${materialRefId}`, () => {
     for (const id of ids) applyMaterialParams(id, material.params);
   });

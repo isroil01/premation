@@ -38,8 +38,7 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { setCompDuration } from '@layout/Timeline/timelineEdits';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { deleteComposition, duplicateComposition } from '@core/composition/compositionOps';
+import { deleteCompositionEdit, deleteCompositionWarning, duplicateCompositionEdit } from '@layout/Scene/sceneEdits';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { customConfirm } from '@components/Modal';
 import { parseGoToTime } from '@layout/Timeline/goToTime';
@@ -531,8 +530,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                       },
                       ...(isGroupTab ? [] : [
                       { id: 'duplicate', label: 'Duplicate', icon: 'copy' as const, onSelect: () => {
-                        // B3-legacy: engine gap — the API's duplicateComposition names the copy "<name> 2"; the editor's is "<name> copy".
-                        duplicateComposition(compId);
+                        // `duplicateComposition` + `renameItem` ("<name> copy") in one entry.
+                        void duplicateCompositionEdit(compId);
                       } },
                       { id: 'sep', separator: true },
                       {
@@ -541,13 +540,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                         icon: 'trash' as const,
                         danger: true,
                         onSelect: async () => {
-                          const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
-                          const warn = layers > 0
-                            ? `Delete “${label}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
-                            : `Delete “${label}”?`;
+                          const warn = deleteCompositionWarning(label, compId);
                           if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
-                            // B3-legacy: engine gap — removeItems does not close the comp's tabs or re-seed an empty project (compositionOps does).
-                            deleteComposition(compId);
+                            // `removeItems` (+ its tabs closed); the LAST comp keeps the legacy re-seed (see there).
+                            await deleteCompositionEdit(compId);
                           }
                         },
                       },

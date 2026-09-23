@@ -165,7 +165,7 @@ describe('EaseLibrarySection', () => {
     }
   });
 
-  it('saves the focused keyframe’s curve as a named entry that then applies', () => {
+  it('saves the focused keyframe’s curve as a named entry that then applies', async () => {
     const custom: [number, number, number, number] = [0.9, 0.02, 0.1, 0.98];
     const { unmount } = renderSection(custom);
     fireEvent.change(screen.getByLabelText('New ease curve name'), { target: { value: 'Snap' } });
@@ -178,6 +178,8 @@ describe('EaseLibrarySection', () => {
     defaultAnimation.setKeyframe(NODE, PROP, 0, 0, 'linear');
     render(<EaseLibrarySection keyframeIds={[makeKeyframeId(NODE, PROP, 0)]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Snap' }));
+    // Resolves engine key ids first (B3); NODE is not a layer, so the legacy writer lands a few microtasks later.
+    await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
     expect(kfAt0().bezier).toEqual(custom);
   });
 

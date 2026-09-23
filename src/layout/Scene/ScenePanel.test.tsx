@@ -370,11 +370,12 @@ describe('drag', () => {
     fireEvent.drop(target, { dataTransfer });
   };
 
-  it('moves the WHOLE selection, not just the row under the cursor', () => {
+  it('moves the WHOLE selection, not just the row under the cursor', async () => {
     renderPanel();
     act(() => { useSelectionStore.getState().set(['alpha', 'beta']); });
-    // Middle of the row = "inside".
+    // Middle of the row = "inside". One engine entry (setParent ×2), asynchronous.
     dragOnto('beta', 'grp', 0.5);
+    await act(async () => { await engineIdle(); });
     expect(defaultSceneGraph.getNode('alpha')?.parent).toBe('grp');
     expect(defaultSceneGraph.getNode('beta')?.parent).toBe('grp');
   });
@@ -412,10 +413,11 @@ describe('keyboard', () => {
     expect(useSelectionStore.getState().ids).toEqual(expect.arrayContaining(['grp', 'beta', 'alpha']));
   });
 
-  it('Delete removes the selection', () => {
+  it('Delete removes the selection', async () => {
     renderPanel();
     fireEvent.click(rowFor('beta'));
     fireEvent.keyDown(rowFor('beta'), { key: 'Delete' });
+    await act(async () => { await engineIdle(); });
     expect(defaultSceneGraph.getNode('beta')).toBeUndefined();
   });
 });

@@ -38,8 +38,7 @@ import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { openFootagePreview, useLastFootagePreview, clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
-import { deleteComposition } from '@core/composition/compositionOps';
-import { flattenComposition } from '@core/scene/sceneDerive';
+import { deleteCompositionEdit, deleteCompositionWarning } from '@layout/Scene/sceneEdits';
 import { customConfirm } from '@components/Modal';
 import styles from './EditorTabs.module.css';
 
@@ -391,12 +390,9 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
                     const compId = st.activeTabId ? st.tabs[st.activeTabId]?.compositionId : undefined;
                     if (!compId) return;
                     const comp = st.comps[compId];
-                    const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
-                    const warn = layers > 0
-                      ? `Delete “${comp?.name ?? 'this composition'}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
-                      : `Delete “${comp?.name ?? 'this composition'}”?`;
+                    const warn = deleteCompositionWarning(comp?.name ?? 'this composition', compId);
                     if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
-                      deleteComposition(compId);
+                      await deleteCompositionEdit(compId);
                     }
                   },
                 },

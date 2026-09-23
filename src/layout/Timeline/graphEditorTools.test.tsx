@@ -151,7 +151,7 @@ describe('ease copy / paste', () => {
     expect(screen.getByRole('button', { name: 'Paste ease' })).not.toBeDisabled();
   });
 
-  it('carries a curve from one keyframe onto every selected one', () => {
+  it('carries a curve from one keyframe onto every selected one', async () => {
     defaultAnimation.setBezier(NODE, 'x', 0, [0.9, 0.02, 0.1, 0.98]);
     renderGraph();
     pick(0);
@@ -160,6 +160,7 @@ describe('ease copy / paste', () => {
     pick(1);
     pick(2, true);
     fireEvent.click(screen.getByRole('button', { name: 'Paste ease' }));
+    await settle();
 
     expect(kfAt(1).bezier).toEqual([0.9, 0.02, 0.1, 0.98]);
     expect(kfAt(2).bezier).toEqual([0.9, 0.02, 0.1, 0.98]);

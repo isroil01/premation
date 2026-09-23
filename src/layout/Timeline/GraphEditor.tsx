@@ -1857,7 +1857,7 @@ export function GraphEditor({
               className={styles.iconBtn}
               aria-label="Paste ease"
               disabled={!hasCopiedEase}
-              onClick={() => { pasteEase(targetKfIds); bumpScene(); }}
+              onClick={() => { void pasteEase(targetKfIds); }}
               title={hasCopiedEase ? 'Paste the copied easing onto the selected keyframes' : 'Nothing copied yet'}
             >
               <Icon name="download" size="sm" />

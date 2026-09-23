@@ -1,6 +1,8 @@
 import { create } from 'zustand';
-import { defaultAnimation, parseKeyframeId, expandKeyframeProp } from '@motion/animation';
+import { defaultAnimation, expandKeyframeProp, type BezierHandles, type EasingKind } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { bumpScene } from '@stores/sceneStore';
+import { easeKeyframes, parseUiKey } from '@layout/Timeline/keyframeEdits';
 
 export interface EaseClipboard {
   easing: 'linear' | 'bezier' | 'step';
@@ -10,8 +12,34 @@ export interface EaseClipboard {
 
 interface EaseClipboardActions {
   copyEase(kfId: string): void;
-  pasteEase(kfIds: string[] | Set<string>): void;
-  applyCustomBezier(kfIds: string[] | Set<string>, bezier: [number, number, number, number]): void;
+  /** One `updateKeyframes` entry ("Paste keyframe easing"); resolves when it has landed. */
+  pasteEase(kfIds: string[] | Set<string>): Promise<void>;
+  /** A saved curve onto keys (the ease library), one entry; resolves when it has landed. */
+  applyCustomBezier(kfIds: string[] | Set<string>, bezier: [number, number, number, number]): Promise<void>;
+}
+
+/**
+ * The legacy writer for keys the API cannot address alone (a lone member row
+ * of a grouped property whose sibling is keyed at the same time — see
+ * layout/Timeline/keyframeEdits.ts): same easing + handles, one entry.
+ */
+function legacyEase(label: string, kfIds: readonly string[], easing: EasingKind, bezier: BezierHandles | undefined): void {
+  // B3-legacy: a key the API cannot address alone (keyframeEdits' file header).
+  runAnimEdit(label, () => {
+    for (const kfId of kfIds) {
+      const ref = parseUiKey(kfId);
+      if (!ref) continue;
+      for (const prop of expandKeyframeProp(ref.prop)) {
+        const kf = defaultAnimation.getTrackKeyframes(ref.nodeId, prop)?.find((k) => Math.abs(k.t - ref.t) < 1e-6);
+        if (!kf) continue;
+        // B3-legacy: see above.
+        defaultAnimation.setKeyframe(ref.nodeId, prop, ref.t, kf.value, easing);
+        // B3-legacy: see above.
+        if (easing === 'bezier' && bezier) defaultAnimation.setBezier(ref.nodeId, prop, ref.t, bezier);
+      }
+    }
+  });
+  bumpScene();
 }
 
 export const useEaseClipboardStore = create<EaseClipboard & EaseClipboardActions>((set, get) => ({
@@ -19,10 +47,9 @@ export const useEaseClipboardStore = create<EaseClipboard & EaseClipboardActions
   copied: false,
 
   copyEase: (kfId) => {
-    const ref = parseKeyframeId(kfId);
+    const ref = parseUiKey(kfId);
     if (!ref) return;
-    const props = expandKeyframeProp(ref.prop);
-    const prop = props[0];
+    const prop = expandKeyframeProp(ref.prop)[0];
     if (!prop) return;
 
     const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, prop);
@@ -36,49 +63,23 @@ export const useEaseClipboardStore = create<EaseClipboard & EaseClipboardActions
     });
   },
 
-  pasteEase: (kfIds) => {
+  // Through the engine (B3): `updateKeyframes` patches by engine key id
+  // (`easeKeyframes`); the legacy writer only for keys the API cannot address.
+  pasteEase: async (kfIds) => {
     const { easing, bezier, copied } = get();
     if (!copied) return;
-    const idArray = Array.from(kfIds);
-    if (idArray.length === 0) return;
-
-    runAnimEdit('Paste keyframe easing', () => {
-      for (const kfId of idArray) {
-        const ref = parseKeyframeId(kfId);
-        if (!ref) continue;
-        const { nodeId, t } = ref;
-        for (const prop of expandKeyframeProp(ref.prop)) {
-          const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-          const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-          if (!kf) continue;
-          
-          defaultAnimation.setKeyframe(nodeId, prop, t, kf.value, easing);
-          if (easing === 'bezier' && bezier) {
-            defaultAnimation.setBezier(nodeId, prop, t, bezier);
-          }
-        }
-      }
-    });
+    const ids = Array.from(kfIds);
+    if (ids.length === 0) return;
+    const label = 'Paste keyframe easing';
+    const handles = easing === 'bezier' ? bezier : undefined;
+    await easeKeyframes(ids, { easing: easing as EasingKind, ...(handles ? { bezier: handles } : {}) }, label,
+      () => legacyEase(label, ids, easing as EasingKind, handles));
   },
 
-  applyCustomBezier: (kfIds, bezier) => {
-    const idArray = Array.from(kfIds);
-    if (idArray.length === 0) return;
-
-    runAnimEdit('Apply Custom Easing Curve', () => {
-      for (const kfId of idArray) {
-        const ref = parseKeyframeId(kfId);
-        if (!ref) continue;
-        const { nodeId, t } = ref;
-        for (const prop of expandKeyframeProp(ref.prop)) {
-          const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-          const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-          if (!kf) continue;
-
-          defaultAnimation.setKeyframe(nodeId, prop, t, kf.value, 'bezier');
-          defaultAnimation.setBezier(nodeId, prop, t, bezier);
-        }
-      }
-    });
+  applyCustomBezier: async (kfIds, bezier) => {
+    const ids = Array.from(kfIds);
+    if (ids.length === 0) return;
+    const label = 'Apply Custom Easing Curve';
+    await easeKeyframes(ids, { easing: 'bezier', bezier }, label, () => legacyEase(label, ids, 'bezier', bezier));
   },
 }));

@@ -53,6 +53,8 @@ export function restoreSnapshotState(state: DocState): void {
   // A private copy: the stores keep what they are given, and these objects
   // are shared with neighbouring entries.
   const copy = cloneStateForRestore(state);
+  // B3-legacy: not a UI edit — the legacy recorder's own undo/redo restore of its snapshot entries;
+  // ENGINE_API.md §15.3 deletes it with the recorder once every area is 0.
   if (copy.clips) {
     batchScene(() => {
       sceneProjectIO.restore(copy.scene);
@@ -61,6 +63,7 @@ export function restoreSnapshotState(state: DocState): void {
     });
   } else {
     sceneProjectIO.restore(copy.scene);
+    // B3-legacy: see above (recorder restore).
     defaultAnimation.restore(copy.anim);
   }
   noteRestoredState(state.scene, state.anim, state.clips);

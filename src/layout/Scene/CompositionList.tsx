@@ -13,10 +13,13 @@ import { Icon } from '@components/Icon';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { useProjectStore, type CompositionSettings, type TabInfo } from '@stores/projectStore';
 import { openContextMenu } from '@stores/contextMenuStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { deleteComposition, duplicateComposition, renameComposition } from '@core/composition/compositionOps';
 import { isRealComposition } from '@core/composition/compNavigation';
+import {
+  deleteCompositionWarning,
+  deleteCompositionEdit,
+  duplicateCompositionEdit,
+  renameCompositionEdit,
+} from './sceneEdits';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import styles from '@layout/EditorLayout/panels.module.css';
@@ -71,19 +74,15 @@ export function CompositionList({ collapsible = false }: CompositionListProps): 
   const confirmDeleteComp = async (compId: string): Promise<void> => {
     const comp = comps[compId];
     if (!comp || comp.pristine) return;
-    const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
-    const warn = layers > 0
-      ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
-      : `Delete “${comp.name}”?`;
-    if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
-      deleteComposition(compId);
+    if (await customConfirm('Delete Composition', deleteCompositionWarning(comp.name, compId), { isDanger: true, confirmLabel: 'Delete' })) {
+      await deleteCompositionEdit(compId);
     }
   };
 
   const promptRename = async (compId: string): Promise<void> => {
     const current = comps[compId]?.name ?? '';
     const next = await customPrompt('Rename Composition', 'Composition name', current, { confirmLabel: 'Rename' });
-    if (next !== null && next.trim() && next.trim() !== current) renameComposition(compId, next);
+    if (next !== null && next.trim() && next.trim() !== current) await renameCompositionEdit(compId, next);
   };
 
   const openCompMenu = (compId: string, e: React.MouseEvent): void => {
@@ -102,7 +101,7 @@ export function CompositionList({ collapsible = false }: CompositionListProps): 
           openCompositionSettings();
         },
       },
-      { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateComposition(compId) },
+      { id: 'duplicate', label: 'Duplicate', onSelect: () => { void duplicateCompositionEdit(compId); } },
       // The placeholder comp cannot be deleted (`confirmDeleteComp` refuses),
       // so it is not offered rather than offered and ignored.
       ...(comp?.pristine
