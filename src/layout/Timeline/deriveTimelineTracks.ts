@@ -20,7 +20,8 @@ import { is3DEnabled } from '@core/scene/threeD';
 import { readNodeKind, stackOrderedChildren, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { defaultAnimation } from '@motion/animation';
+import { uiKeyId } from './keyframeSelectionIds';
 import { getTimelineController, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { buildPropertyRows } from './buildPropertyRows';
 
@@ -132,7 +133,7 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
             for (const track of defaultAnimation.tracksFor(node.id)) {
               for (const kf of track.keyframes) {
                 out.push({
-                  id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
+                  id: uiKeyId(node.id, track.prop, kf.t) as KeyId,
                   nodeId: node.id as NodeId,
                   time: keyframeToCompTime(node.id, kf.t, track.prop),
                   roving: kf.roving,
@@ -144,7 +145,7 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
             for (const dt of defaultAnimation.dataTracksFor(node.id)) {
               for (const kf of dt.keyframes) {
                 out.push({
-                  id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
+                  id: uiKeyId(node.id, dt.prop, kf.t) as KeyId,
                   nodeId: node.id as NodeId,
                   time: keyframeToCompTime(node.id, kf.t, dt.prop),
                   isHold: dt.kind === 'text' || kf.easing === 'hold' || kf.easing === 'step' || undefined,

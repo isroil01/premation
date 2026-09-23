@@ -19,6 +19,7 @@ import type { SelectModifiers } from './trackRangeSelect';
 import { createEdgeAutoScroller } from './playheadFollow';
 import { snapForDrag } from './snapCommands';
 import { ROLL_GRAB_PX } from './timelineShared';
+import { rollBars } from './timelineEdits';
 import type { Dispatch, SetStateAction, MutableRefObject } from 'react';
 import { hudLines, staggerHudLines, type DragHudState } from './DragHudOverlay';
 import type { TimelineEditMode } from './timelineEditMode';
@@ -602,15 +603,11 @@ export function useClipDrag({
         return;
       }
       if (d.mode === 'roll') {
-        // Straight to the controller, like the razor and for the same reason:
+        // Straight to the engine, like the razor and for the same reason:
         // a roll is one edit over TWO bars on two different scene nodes, which
         // none of this component's per-clip callbacks can express.
         if (d.roll && d.roll.deltaSec !== 0) {
-          getTimelineController().rollEditSeconds(
-            d.roll.cut.leftNodeId,
-            d.roll.cut.rightNodeId,
-            d.roll.deltaSec,
-          );
+          void rollBars(d.roll.cut.leftClipId, d.roll.cut.rightClipId, d.roll.deltaSec);
         }
       } else if (d.mode === 'slip') onClipSlip?.(d.id, sourceInSec);
       else if (d.mode === 'slide') onClipSlide?.(d.id, start);

@@ -21,13 +21,21 @@
  * A burst of presses is ONE undo step: holding → for a second moves the key
  * thirty frames and should cost one Ctrl+Z, not thirty. The batcher applies
  * every press live and commits once the keys have been quiet for
- * {@link NUDGE_BATCH_MS}.
+ * {@link NUDGE_BATCH_MS}. Through the engine API (B3): the burst is a GESTURE
+ * whose every message carries the ABSOLUTE time/value for the running total
+ * (`updateKeyframes`), so a dropped intermediate message loses nothing.
  */
 
-import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
-import { defaultAnimation, expandKeyframeProp, makeKeyframeId, parseKeyframeId } from '@motion/animation';
-import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import type { KeyframePatch, ValueType } from '@motion/engine-api';
+import { defaultAnimation, expandKeyframeProp } from '@motion/animation';
+import { keyframeToCompTime } from '@core/timeline/TimelineController';
+import { GestureSession } from '@core/engine/uiEdits';
+import { engineIdle } from '@core/engine/engineInstance';
+import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
+import { apiUnitFactor } from '@core/engine/props';
+import { readPropertyValue } from '@core/inspector/multiSelection';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { parseUiKey, resolveKeys, uiKeyId, type UiKey } from './keyframeEdits';
 
 export const NUDGE_BATCH_MS = 300;
 
@@ -122,62 +130,160 @@ export function createNudgeBatcher(
   };
 }
 
-/**
- * The engine side: move / re-value every selected keyframe by `delta`, and
- * keep the selection pointing at the keys after they retime — a keyframe id
- * embeds its time, so a moved key would otherwise silently drop out of the
- * selection on the next press.
- */
-export function applyNudgeToSelection(delta: NudgeDelta): void {
-  const store = useKeyframeSelectionStore.getState();
-  const next = new Set<string>();
-  for (const id of store.ids) {
-    const ref = parseKeyframeId(id);
-    if (!ref) {
-      next.add(id);
-      continue;
-    }
-    let newT = ref.t;
-    for (const prop of expandKeyframeProp(ref.prop)) {
-      const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, prop);
-      const kf = kfs?.find((k) => Math.abs(k.t - ref.t) < 1e-9);
-      if (!kf) continue;
-      const patch: { t?: number; value?: number } = {};
-      if (delta.dt !== 0) {
-        const compT = keyframeToCompTime(ref.nodeId, ref.t, prop) + delta.dt;
-        patch.t = Math.max(0, compToKeyframeTime(ref.nodeId, Math.max(0, compT), prop));
-        newT = patch.t;
-      }
-      if (delta.dv !== 0) patch.value = kf.value + delta.dv;
-      // A move onto an occupied frame would swallow the neighbour; refuse it.
-      if (patch.t !== undefined && kfs?.some((k) => k.t !== ref.t && Math.abs(k.t - patch.t!) < 1e-9)) {
-        delete patch.t;
-        newT = ref.t;
-      }
-      if (patch.t === undefined && patch.value === undefined) continue;
-      defaultAnimation.updateKeyframe(ref.nodeId, prop, ref.t, patch);
-    }
-    next.add(makeKeyframeId(ref.nodeId, ref.prop, newT));
-  }
-  store.set(next);
+/** One selected key, snapshotted when a burst opens. */
+interface NudgeKey {
+  ui: UiKey;
+  /** Engine keyframe id. */
+  id: string;
+  /** Comp time of the key at burst start (seconds). */
+  startCompT: number;
+  /** Member tracks keyed at the start time, with their stored values. */
+  members: Array<{ prop: string; value: number }>;
+  /** Every member of the API property, in order (for a whole-value write). */
+  allMembers: readonly string[];
+  valueType: ValueType;
+  /** Comp times of the property's OTHER keys — a move onto one is refused, as before. */
+  otherCompTimes: number[];
 }
 
-/** A batcher wired to the animation engine's transaction API. */
+function snapshotKey(ui: UiKey): Omit<NudgeKey, 'id'> | null {
+  const members: Array<{ prop: string; value: number }> = [];
+  const otherTimes = new Set<number>();
+  let lead: string | null = null;
+  for (const prop of expandKeyframeProp(ui.prop)) {
+    const kfs = defaultAnimation.getTrackKeyframes(ui.nodeId, prop);
+    const kf = kfs?.find((k) => Math.abs(k.t - ui.t) < 1e-9);
+    for (const k of kfs ?? []) if (Math.abs(k.t - ui.t) >= 1e-9) otherTimes.add(keyframeToCompTime(ui.nodeId, k.t, prop));
+    if (!kf) continue;
+    lead ??= prop;
+    members.push({ prop, value: kf.value });
+  }
+  if (!lead) return null;
+  const r = propRefForTrack(ui.nodeId, lead);
+  if (!r) return null;
+  return {
+    ui,
+    startCompT: keyframeToCompTime(ui.nodeId, ui.t, lead),
+    members,
+    allMembers: r.members,
+    valueType: r.valueType,
+    otherCompTimes: [...otherTimes],
+  };
+}
+
+/** The absolute patch for one key after a running total. */
+function patchFor(k: NudgeKey, total: NudgeDelta): KeyframePatch | null {
+  const patch: KeyframePatch = { id: k.id, spatialIn: [], spatialOut: [] };
+  let any = false;
+  if (total.dt !== 0) {
+    const to = Math.max(0, k.startCompT + total.dt);
+    // A move onto an occupied time would swallow the neighbour; refuse it.
+    if (!k.otherCompTimes.some((t) => Math.abs(t - to) < 1e-6)) {
+      patch.time = compTime(to);
+      any = true;
+    }
+  }
+  if (total.dv !== 0) {
+    // Every keyed member moves by dv in STORED units (Scale's multiplier
+    // included), as the per-track writer did; the API takes the whole value.
+    const nums = k.allMembers.map((m) => {
+      const mv = k.members.find((x) => x.prop === m);
+      const base = mv ? mv.value + total.dv : readPropertyValue(k.ui.nodeId, m, k.startCompT) ?? 0;
+      return base * apiUnitFactor(m);
+    });
+    patch.value = valueOfNumbers(k.valueType, nums);
+    any = true;
+  }
+  return any ? patch : null;
+}
+
+/**
+ * The selection ids after the engine moved the keys: each key is found by
+ * its ENGINE id on its tracks, and renamed to its new position (the selection
+ * store's positional format — see keyframeEdits).
+ */
+function reselect(keys: ReadonlyArray<NudgeKey>, untouched: ReadonlySet<string>): void {
+  const next = new Set<string>(untouched);
+  for (const k of keys) {
+    let t: number | null = null;
+    for (const m of k.members) {
+      const kf = defaultAnimation.getTrackKeyframes(k.ui.nodeId, m.prop)?.find((x) => x.id === k.id);
+      if (kf) { t = kf.t; break; }
+    }
+    next.add(t === null ? k.ui.id : uiKeyId(k.ui.nodeId, k.ui.prop, t));
+  }
+  useKeyframeSelectionStore.getState().set(next);
+}
+
+function nudgeLabel(total: NudgeDelta): string {
+  return total.dt !== 0 && total.dv !== 0
+    ? 'Nudge keyframes'
+    : total.dv !== 0
+      ? 'Nudge keyframe value'
+      : 'Nudge keyframes in time';
+}
+
+/**
+ * A batcher wired to the engine: the burst is one gesture (one undo entry),
+ * named after the burst's first press. Keys are resolved to engine ids when
+ * the burst opens; presses that land before that finishes are folded into the
+ * running total, which the first message then carries.
+ */
 export function createSelectionNudger(): NudgeBatcher {
-  let tx: ReturnType<typeof beginAnimEdit> | null = null;
+  let session: GestureSession | null = null;
+  let keys: NudgeKey[] | null = null;
+  let untouched = new Set<string>();
+  let total: NudgeDelta = { dt: 0, dv: 0 };
+  let ready: Promise<void> | null = null;
+
+  const send = (): void => {
+    if (!session || !keys) return;
+    const patches = keys.map((k) => patchFor(k, total)).filter((p): p is KeyframePatch => p !== null);
+    if (patches.length === 0) return;
+    session.send({ type: 'updateKeyframes', patches });
+    const sent = keys;
+    const keep = untouched;
+    void engineIdle().then(() => reselect(sent, keep));
+  };
+
   return createNudgeBatcher({
     begin: () => {
-      tx = beginAnimEdit();
+      total = { dt: 0, dv: 0 };
+      const snaps: Array<Omit<NudgeKey, 'id'>> = [];
+      untouched = new Set<string>();
+      for (const id of useKeyframeSelectionStore.getState().ids) {
+        const ui = parseUiKey(id);
+        const snap = ui ? snapshotKey(ui) : null;
+        if (snap) snaps.push(snap);
+        else untouched.add(id);
+      }
+      ready = (async () => {
+        const resolved = await resolveKeys(snaps.map((x) => x.ui));
+        // Null: the API cannot address one of the keys (keyframeEdits header);
+        // nothing moves, as for a selection the writer could not find.
+        if (!resolved) return;
+        keys = snaps.flatMap((x) => {
+          const id = resolved.get(x.ui.id);
+          return id ? [{ ...x, id }] : [];
+        });
+        session = new GestureSession(nudgeLabel(total));
+        send();
+      })();
     },
-    apply: applyNudgeToSelection,
-    commit: (total) => {
-      const label = total.dt !== 0 && total.dv !== 0
-        ? 'Nudge keyframes'
-        : total.dv !== 0
-          ? 'Nudge keyframe value'
-          : 'Nudge keyframes in time';
-      recordAnimEdit(tx?.commit(label) ?? null);
-      tx = null;
+    apply: (delta) => {
+      total = { dt: total.dt + delta.dt, dv: total.dv + delta.dv };
+      if (keys) send();
+    },
+    commit: () => {
+      const s = session;
+      const r = ready;
+      session = null;
+      keys = null;
+      ready = null;
+      void (async () => {
+        await r;
+        await s?.end();
+      })();
     },
   });
 }

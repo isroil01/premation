@@ -13,7 +13,8 @@
  * value changed.
  */
 
-import { defaultAnimation, expandKeyframeProp, parseKeyframeId } from '@motion/animation';
+import { defaultAnimation, expandKeyframeProp } from '@motion/animation';
+import { parseUiKey } from './keyframeSelectionIds';
 import { framesToTimecode } from '@core/time/timecode';
 
 export interface KeyframeLabelInput {
@@ -68,7 +69,7 @@ export function keyframeDragLines(input: {
 
 /** The engine's values for a keyframe id, in the prop's display order. */
 export function keyframeValues(kfId: string): number[] {
-  const ref = parseKeyframeId(kfId);
+  const ref = parseUiKey(kfId);
   if (!ref) return [];
   const out: number[] = [];
   for (const prop of expandKeyframeProp(ref.prop)) {

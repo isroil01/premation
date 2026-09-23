@@ -39,6 +39,11 @@ export function hasClipboard(): boolean {
   return _clipboard.length > 0;
 }
 
+/** What Ctrl+C captured (read-only) — the engine-API paste builds its commands from it. */
+export function clipboardEntries(): readonly ClipboardEntry[] {
+  return _clipboard;
+}
+
 /** Test helper — wipe the module clipboard between cases. */
 export function clearClipboard(): void {
   _clipboard = [];

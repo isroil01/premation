@@ -39,7 +39,8 @@ import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
 import { readTransitionDrag, isTransitionDrag } from './transitionPalette';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
-import { replaceLayerSourceWithAsset, resolveReplaceTarget } from '@core/scene/replaceSourceDrop';
+import { resolveReplaceTarget } from '@core/scene/replaceSourceDrop';
+import { barOf, replaceSourceWithAsset, splitLayersAt } from './timelineEdits';
 import {
   layoutTransitions,
   durationFromEdgeDrag,
@@ -59,7 +60,6 @@ import {
   DEFAULT_TRANSITION_FRAMES,
   TRANSITION_LABEL,
 } from '@core/timeline/transitions';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { registerTimelineScroll, setTimelineLaneGeometry, setTimelineViewportWidth } from './timelineViewport';
 import { zoomAroundTime, zoomStep } from './zoomAnchor';
 import { resolveTrackSelection, selectIntentFor, type SelectModifiers } from './trackRangeSelect';
@@ -205,6 +205,11 @@ export interface TimelineProps {
   onTrackRename?: (trackId: string, newName: string) => void;
   onKeyframeSeek?: (keyframeId: string) => void;
   onKeyframeMove?: (keyframeId: string, time: number) => void;
+  /**
+   * A multi-keyframe drag's release — every dragged key in ONE undoable edit.
+   * Without it the drag falls back to one `onKeyframeMove` per key.
+   */
+  onKeyframesMove?: (moves: ReadonlyArray<{ keyframeId: string; time: number }>) => void;
   onKeyframesDelete?: (keyframeIds: ReadonlyArray<string>) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
   /**
@@ -303,6 +308,7 @@ function Timeline({
   onTrackRename,
   onKeyframeSeek,
   onKeyframeMove,
+  onKeyframesMove,
   onKeyframesDelete,
   onKeyframeContextMenu,
   onPropertyKeyframeToggle,
@@ -1428,21 +1434,22 @@ function Timeline({
    * audio engine for the same kind of reason.
    *
    * `all` is Shift+click: every bar the frame falls inside, on every track,
-   * which is how you cut a stack of layers at one beat. Each split is its own
-   * history entry, matching `splitSelectedAtPlayhead`.
+   * which is how you cut a stack of layers at one beat. One `splitLayers`
+   * through the engine API — one history entry, like `splitSelectedAtPlayhead`.
    */
   const razorAtTime = useCallback(
     (time: number, all: boolean, clipId?: string): void => {
-      const controller = getTimelineController();
       const inside = (c: TimelineClip): boolean => time > c.start && time < c.start + c.duration;
-      const targets: TimelineClip[] = [];
+      const layers: string[] = [];
       for (const track of model.tracks) {
         for (const clip of track.clips ?? []) {
           if (!inside(clip)) continue;
-          if (all || clip.id === clipId) targets.push(clip);
+          if (!all && clip.id !== clipId) continue;
+          const bar = barOf(clip.id);
+          if (bar) layers.push(bar.nodeId);
         }
       }
-      for (const clip of targets) controller.splitClip(clip.id, time);
+      if (layers.length > 0) void splitLayersAt(layers, time);
     },
     [model.tracks],
   );
@@ -1477,6 +1484,8 @@ function Timeline({
    */
   const applyTransition = useCallback(
     (cut: ClipCut, kind: Parameters<typeof addTransition>[2]): void => {
+      // B3-legacy: engine gap — no transition command (an overlap + a dissolve
+      // record on two layers); the transition helpers keep their writer.
       void addTransition(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred').then(
         (res) => {
           if (!res.ok) setTransitionError(res.reason);
@@ -1564,7 +1573,7 @@ function Timeline({
         const payload = e.altKey ? readCanvasDrag(e) : null;
         if (payload?.kind === 'asset') {
           e.preventDefault();
-          replaceLayerSourceWithAsset(resolveReplaceTarget(lanesTrackIdAt(e.clientY)), payload.assetId);
+          void replaceSourceWithAsset(resolveReplaceTarget(lanesTrackIdAt(e.clientY)), payload.assetId);
         }
         return;
       }
@@ -1648,6 +1657,7 @@ function Timeline({
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
       if (!d) return;
+      // B3-legacy: engine gap — no transition command (see applyTransition).
       void commitTransitionPreview(d.compId, d.id, d.frames);
     };
     window.addEventListener('pointermove', onMove);
@@ -1672,6 +1682,7 @@ function Timeline({
       const rec = allTransitions.find((t) => t.id === id);
       if (!rec) return;
       setSelectedTransitionId(id);
+      // B3-legacy: engine gap — no transition command (see applyTransition).
       void setTransition(compIdForTransition(rec), rec.id, {
         alignment: nextTransitionAlignment(rec.alignment),
       }).then((res) => {
@@ -1700,6 +1711,7 @@ function Timeline({
       e.preventDefault();
       e.stopPropagation();
       setSelectedTransitionId(null);
+      // B3-legacy: engine gap — no transition command (see applyTransition).
       void removeTransition(compIdForTransition(rec), rec.id);
     };
     window.addEventListener('keydown', onKeyDown, true);
@@ -1882,6 +1894,7 @@ function Timeline({
     lanesRef,
     setDragHud,
     onKeyframeMove,
+    onKeyframesMove,
     onKeyframeSeek,
   });
 
@@ -2265,6 +2278,10 @@ function Timeline({
                     // AE's Transform group "Reset": keyframes off, defaults back.
                     onReset={
                       row.categoryKey === 'transform'
+                        // B3-legacy: shared with the Inspector's Reset (layerTransformOps): AE's
+                        // Transform Reset turns keyframes OFF and writes the group defaults (Position =
+                        // comp centre); the API's resetProperty keys an animated property instead, so
+                        // this becomes a setAnimated+setProperty macro when that helper migrates.
                         ? () => { resetTransforms([row.track.id], useCompositionStore.getState()); }
                         : undefined
                     }
@@ -2341,6 +2358,7 @@ function Timeline({
                         label: 'Reset',
                         disabled: !canResetProperties(row.track.id, props),
                         onSelect: () => {
+                          // B3-legacy: shared Reset helper (see the Transform group's Reset above).
                           resetProperties(row.track.id, props, useCompositionStore.getState(), `Reset ${row.prop.label}`);
                         },
                       },
@@ -2382,6 +2400,7 @@ function Timeline({
                 }
                 onReset={
                   stickyCategory.row.categoryKey === 'transform'
+                    // B3-legacy: shared Reset helper (see the Transform group's Reset above).
                     ? () => { resetTransforms([stickyCategory.row.track.id], useCompositionStore.getState()); }
                     : undefined
                 }

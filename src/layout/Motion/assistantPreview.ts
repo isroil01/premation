@@ -44,6 +44,11 @@ export interface TrackPreview {
   commit(label: string): void;
 }
 
+/**
+ * B3-legacy: engine gap — the preview writes whole PER-MEMBER keyframe lists
+ * (the Smoother drops keys from x and y independently); the API has no
+ * "replace a property's keyframes" command and does not address member keys.
+ */
 export function beginTrackPreview(
   nodeId: string,
   props: ReadonlyArray<PropPath>,

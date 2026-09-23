@@ -33,10 +33,21 @@ import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { claimsChord } from '@core/commands/ShortcutManager';
 import { performRedo, performUndo } from '@stores/historyStore';
-import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
+import { copyKeyframes } from '@core/animation/keyframeClipboard';
+import { pasteKeyframesAt } from './keyframeEdits';
 import { smoothMotionPath } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { createSelectionNudger, nudgeForKey } from './keyframeNudge';
+import {
+  moveSelectedEndToPlayhead,
+  moveSelectedStartToPlayhead,
+  nudgeSelectedLayers,
+  setWorkAreaIn,
+  setWorkAreaOut,
+  splitSelectedAtPlayhead,
+  trimSelectedEndToPlayhead,
+  trimSelectedStartToPlayhead,
+} from './timelineEdits';
 
 export function useTimelineKeys(): void {
   useEffect(() => {
@@ -86,7 +97,7 @@ export function useTimelineKeys(): void {
         // Split selected layers at the playhead (After Effects: Ctrl/Cmd+Shift+D).
         if (e.shiftKey && (e.key === 'd' || e.key === 'D')) {
           e.preventDefault();
-          c.splitSelectedAtPlayhead(useSelectionStore.getState().ids);
+          void splitSelectedAtPlayhead(useSelectionStore.getState().ids);
           return;
         }
         // Undo / redo via the unified global CommandSystem history.
@@ -115,7 +126,7 @@ export function useTimelineKeys(): void {
           if (targetIds.length > 0) {
             e.preventDefault();
             const playhead = getTimelineController().currentSeconds;
-            pasteKeyframes(targetIds, playhead);
+            void pasteKeyframesAt(targetIds, playhead);
           }
           return;
         }
@@ -124,6 +135,9 @@ export function useTimelineKeys(): void {
           e.preventDefault();
           const ids = useSelectionStore.getState().ids;
           if (ids.length > 0) {
+            // B3-legacy: engine gap — the smoothed tangents are per member track
+            // (x, y); a key whose tangent is set on one axis and absent on the
+            // other has no API spelling (`spatialIn` covers every member, 0 ≠ absent).
             runAnimEdit('Smooth motion path', () => {
               for (const id of ids) smoothMotionPath(id);
             });
@@ -168,7 +182,7 @@ export function useTimelineKeys(): void {
             // frames. One undoable engine transaction per press. The key is
             // left alone (no preventDefault) when there was nothing to nudge.
             const frames = (later ? 1 : -1) * (e.shiftKey ? 10 : 1);
-            if (c.nudgeSelectedLayers(useSelectionStore.getState().ids, frames)) e.preventDefault();
+            if (nudgeSelectedLayers(useSelectionStore.getState().ids, frames)) e.preventDefault();
             break;
           }
           e.preventDefault();
@@ -193,26 +207,27 @@ export function useTimelineKeys(): void {
           break;
         case 'b':
           e.preventDefault();
-          c.setWorkAreaIn();
+          void setWorkAreaIn();
           break;
         case 'B': // Shift+B
           e.preventDefault();
+          // B3-legacy: engine gap — no command CLEARS a work area (setWorkArea needs a range).
           c.clearWorkArea();
           break;
         case 'n':
         case 'N':
           e.preventDefault();
-          c.setWorkAreaOut();
+          void setWorkAreaOut();
           break;
         case '[':
           e.preventDefault();
-          if (e.altKey) c.trimSelectedStartToPlayhead(useSelectionStore.getState().ids);
-          else c.moveSelectedStartToPlayhead(useSelectionStore.getState().ids);
+          if (e.altKey) void trimSelectedStartToPlayhead(useSelectionStore.getState().ids);
+          else void moveSelectedStartToPlayhead(useSelectionStore.getState().ids);
           break;
         case ']':
           e.preventDefault();
-          if (e.altKey) c.trimSelectedEndToPlayhead(useSelectionStore.getState().ids);
-          else c.moveSelectedEndToPlayhead(useSelectionStore.getState().ids);
+          if (e.altKey) void trimSelectedEndToPlayhead(useSelectionStore.getState().ids);
+          else void moveSelectedEndToPlayhead(useSelectionStore.getState().ids);
           break;
         default:
           break;

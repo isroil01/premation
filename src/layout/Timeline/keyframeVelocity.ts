@@ -27,7 +27,10 @@
  */
 
 import { defaultAnimation, expandKeyframeProp, type Keyframe } from '@motion/animation';
+import type { KeyframePatch } from '@motion/engine-api';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { edit } from '@core/engine/uiEdits';
+import { memberAddressable, memberKeyPatches, toCubic } from './keyframeEdits';
 import {
   effectiveBezier,
   incomingSpeed,
@@ -164,33 +167,57 @@ export function applyKeyframeVelocity(
 ): boolean {
   const tracks = neighbourhoods(nodeId, prop, t);
   if (tracks.length === 0) return false;
-  let wrote = false;
 
+  // The writes, solved per track against the CURRENT curves.
+  const writes: Array<{ prop: string; t: number; bezier: Bezier }> = [];
+  for (const n of tracks) {
+    const incoming = incomingSegment(n.keyframes, n.index);
+    const prev = n.keyframes[n.index - 1];
+    if (incoming && prev) {
+      let b = withIncomingInfluence(incoming.bezier, incoming.dv, incoming.dt, v.inInfluence);
+      b = withIncomingSpeed(b, incoming.dv, incoming.dt, v.inSpeed);
+      // The incoming half belongs to the PREVIOUS keyframe.
+      writes.push({ prop: n.prop, t: prev.t, bezier: b });
+    }
+    const outgoing = outgoingSegment(n.keyframes, n.index);
+    if (outgoing) {
+      let b = withOutgoingInfluence(outgoing.bezier, outgoing.dv, outgoing.dt, v.outInfluence);
+      b = withOutgoingSpeed(b, outgoing.dv, outgoing.dt, v.outSpeed);
+      writes.push({ prop: n.prop, t: n.keyframes[n.index]!.t, bezier: b });
+    }
+  }
+  if (writes.length === 0) return false;
+
+  // Through the engine when every track IS its own property (a scalar, a
+  // separated dimension): per-axis handles on a merged Position are
+  // member-level writes the API cannot address yet (keyframeEdits.memberKeyPatches).
+  if (tracks.every((n) => memberAddressable(nodeId, n.prop))) {
+    void (async () => {
+      const patches: KeyframePatch[] = [];
+      for (const n of tracks) {
+        const mine = writes.filter((w) => w.prop === n.prop);
+        const p = await memberKeyPatches(nodeId, n.prop, mine.map((w) => ({
+          t: w.t, patch: { easing: 'bezier', bezier: toCubic(w.bezier) },
+        })));
+        if (!p) {
+          legacyWrite(nodeId, writes);
+          return;
+        }
+        patches.push(...p);
+      }
+      await edit('Keyframe velocity', { type: 'updateKeyframes', patches });
+    })();
+    return true;
+  }
+  legacyWrite(nodeId, writes);
+  return true;
+}
+
+/** B3-legacy: engine gap — per-member handles on a grouped property (see above). */
+function legacyWrite(nodeId: string, writes: ReadonlyArray<{ prop: string; t: number; bezier: Bezier }>): void {
   runAnimEdit('Keyframe velocity', () => {
     defaultAnimation.batch(() => {
-      for (const n of tracks) {
-        const incoming = incomingSegment(n.keyframes, n.index);
-        const prev = n.keyframes[n.index - 1];
-        if (incoming && prev) {
-          let b = withIncomingInfluence(incoming.bezier, incoming.dv, incoming.dt, v.inInfluence);
-          b = withIncomingSpeed(b, incoming.dv, incoming.dt, v.inSpeed);
-          // The incoming half belongs to the PREVIOUS keyframe.
-          defaultAnimation.updateKeyframe(nodeId, n.prop, prev.t, { easing: 'bezier', bezier: b });
-          wrote = true;
-        }
-        const outgoing = outgoingSegment(n.keyframes, n.index);
-        if (outgoing) {
-          let b = withOutgoingInfluence(outgoing.bezier, outgoing.dv, outgoing.dt, v.outInfluence);
-          b = withOutgoingSpeed(b, outgoing.dv, outgoing.dt, v.outSpeed);
-          defaultAnimation.updateKeyframe(nodeId, n.prop, n.keyframes[n.index]!.t, {
-            easing: 'bezier',
-            bezier: b,
-          });
-          wrote = true;
-        }
-      }
+      for (const w of writes) defaultAnimation.updateKeyframe(nodeId, w.prop, w.t, { easing: 'bezier', bezier: w.bezier });
     });
   });
-
-  return wrote;
 }

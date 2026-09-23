@@ -24,7 +24,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { framesToSeconds } from '@motion/timeline';
 import { assetIdOf } from '@core/source/sourceInfo';
-import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
+import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 import {
   alignMulticamByAudio,
   multicamLayersInActiveComp,
@@ -70,7 +70,8 @@ function liveAngleAt(views: ReadonlyArray<AngleView>, t: number): number | null 
   let best: number | null = null;
   let bestOpacity = -1;
   for (const v of views) {
-    const sampled = defaultAnimation.sample(v.id, 'opacity', compToKeyframeTime(v.id, t));
+    // A display READ (B4 keeps these direct): the keyframe axis for sampling.
+    const sampled = defaultAnimation.sample(v.id, 'opacity', getRemappedTime(v.id, t));
     const node = defaultSceneGraph.getNode(v.id);
     const styleProps = node?.components.find((c) => c.type === 'Style')?.props as
       | Record<string, unknown>
@@ -139,6 +140,8 @@ export function MulticamViewerBody(): JSX.Element {
   const onSync = async (): Promise<void> => {
     setSyncing(true);
     try {
+      // B3-legacy: the audio-sync analysis and the bar shifts it implies live in
+      // one core helper (multicam); it becomes analysis + setLayerTiming when it moves.
       const report = await alignMulticamByAudio();
       setSyncNote(report.note);
       useUIStore.getState().notify({ level: report.shifted > 0 ? 'success' : 'info', message: report.note, durationMs: 5000 });

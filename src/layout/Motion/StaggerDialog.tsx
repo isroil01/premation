@@ -33,6 +33,7 @@ import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { moveBars } from '@layout/Timeline/timelineEdits';
 import { sequenceLayers } from '@core/animation/keyframeAssistants';
 import {
   clampOffsetsToStart,
@@ -104,6 +105,9 @@ function StaggerBody({ nodeIds, close, onDone }: StaggerBodyProps): JSX.Element 
     if (target === 'animation') {
       // The assistant walks the layers itself and applies the same pattern to
       // each one's keyframes, as one undoable command.
+      // B3-legacy: engine gap — it shifts whole tracks in STORED time (sub-frame
+      // offsets, times before 0); `moveKeyframes` moves through comp time, which
+      // frame-quantizes inside a clip.
       const ok = sequenceLayers(nodeIds, step, undefined, { mode, reverse, balance, seed });
       onDone(ok ? `Animation staggered across ${nodeIds.length} layers` : null);
       close();
@@ -142,7 +146,7 @@ function StaggerBody({ nodeIds, close, onDone }: StaggerBodyProps): JSX.Element 
       close();
       return;
     }
-    controller.setClipStarts(moves, 'Stagger Layers');
+    void moveBars(moves.map((m) => ({ clipId: m.layerId, start: m.startSeconds })), 'Stagger Layers');
     onDone(`${nodeIds.length} layers staggered — ${preview.min} to ${preview.max}f`);
     close();
   };

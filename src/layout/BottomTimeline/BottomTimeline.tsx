@@ -36,6 +36,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { useFocusStore } from '@stores/focusStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { setCompDuration } from '@layout/Timeline/timelineEdits';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { deleteComposition, duplicateComposition } from '@core/composition/compositionOps';
@@ -200,7 +201,6 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const setTimelineTranscriptLane = useUIStore((s) => s.setTimelineTranscriptLane);
   const hasTranscript = useTranscriptStore((s) => activeCompRootId() in s.byComp);
   
-  const updateComp = useCompositionStore((s) => s.update);
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
 
@@ -530,7 +530,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                         },
                       },
                       ...(isGroupTab ? [] : [
-                      { id: 'duplicate', label: 'Duplicate', icon: 'copy' as const, onSelect: () => duplicateComposition(compId) },
+                      { id: 'duplicate', label: 'Duplicate', icon: 'copy' as const, onSelect: () => {
+                        // B3-legacy: engine gap — the API's duplicateComposition names the copy "<name> 2"; the editor's is "<name> copy".
+                        duplicateComposition(compId);
+                      } },
                       { id: 'sep', separator: true },
                       {
                         id: 'delete',
@@ -543,6 +546,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                             ? `Delete “${label}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
                             : `Delete “${label}”?`;
                           if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+                            // B3-legacy: engine gap — removeItems does not close the comp's tabs or re-seed an empty project (compositionOps does).
                             deleteComposition(compId);
                           }
                         },
@@ -834,10 +838,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             searchQuery={searchQuery}
             globalShy={globalShy}
             columns={timelineColumns}
-            onDurationChange={(v) => {
-              updateComp({ durationSeconds: v });
-              getTimelineController().setDurationSeconds(v);
-            }}
+            onDurationChange={(v) => { void setCompDuration(v); }}
             onScroll={(px) => {
               setScrollLeft(px);
               timelineProps.onScroll?.(px);

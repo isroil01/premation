@@ -28,6 +28,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { DEFAULT_MARKER_COLOR } from './markerGeometry';
+import { deleteMarkers, editMarker, markerPatchNeedsLegacy, type MarkerEditPatch } from './timelineEdits';
 
 export const TIMELINE_ADD_MARKER_COMMAND = asCommandId('timeline.addMarker');
 export const TIMELINE_ADD_LAYER_MARKER_COMMAND = asCommandId('timeline.addLayerMarker');
@@ -44,7 +45,13 @@ export function markersChanged(): void {
   bumpScene();
 }
 
-/** Add a comp marker at the playhead. Returns the label used. */
+/**
+ * Add a comp marker at the playhead.
+ *
+ * B3-legacy: engine gap — a marker's colour is a timeline swatch TOKEN
+ * (`MARKER_COLORS`), and `addMarkers` only carries a LAYER-label index, which
+ * has none of them; a marker added through the API would lose its colour.
+ */
 export function addCompMarkerAtPlayhead(label = 'Marker'): void {
   getTimelineController().addMarkerAtPlayhead(label, DEFAULT_MARKER_COLOR);
   markersChanged();
@@ -56,6 +63,8 @@ export function addCompMarkerAtPlayhead(label = 'Marker'): void {
  * Every selected layer, not just the first: "mark this moment on these two
  * shots" is one act, and adding it to whichever layer happened to be first in
  * the selection order is the kind of half-obeyed command that gets typed twice.
+ *
+ * B3-legacy: engine gap — the marker colour (see `addCompMarkerAtPlayhead`).
  */
 export function addLayerMarkersAtPlayhead(label = 'Marker'): number {
   const controller = getTimelineController();
@@ -68,17 +77,27 @@ export function addLayerMarkersAtPlayhead(label = 'Marker'): number {
 }
 
 export function deleteMarker(id: string): void {
-  getTimelineController().removeMarker(id);
-  markersChanged();
+  void deleteMarkers([id]);
 }
 
+/**
+ * Edit a marker — name, comment, span or position through the engine (one
+ * undo entry: "Move Marker" for a pure move, "Edit Marker" otherwise). Returns
+ * false when there is no such marker (deleted under a dialog still open).
+ */
 export function updateMarker(
   id: string,
-  patch: { label?: string; color?: string | null; comment?: string; time?: number; duration?: number },
+  patch: MarkerEditPatch,
 ): boolean {
-  const ok = getTimelineController().updateMarker(id, patch);
-  if (ok) markersChanged();
-  return ok;
+  if (!getTimelineController().timeline.getMarker(id)) return false;
+  if (markerPatchNeedsLegacy(id, patch)) {
+    // B3-legacy: engine gap — marker colour tokens (see `markerPatchNeedsLegacy`).
+    const ok = getTimelineController().updateMarker(id, patch);
+    if (ok) markersChanged();
+    return ok;
+  }
+  void editMarker(id, patch);
+  return true;
 }
 
 export function buildTimelineMarkerCommands(): ReadonlyArray<Command> {

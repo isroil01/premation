@@ -25,7 +25,6 @@ import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import {
   listPresets,
-  applyPreset,
   deletePreset,
   presetFolder,
   saveCurrentAsPreset,
@@ -52,6 +51,8 @@ import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { getEventBus } from '@core/events/EventBus';
 import { PresetPreview } from './PresetPreview';
+import { edit } from '@core/engine/uiEdits';
+import { compTime } from '@core/engine/propRefs';
 import styles from './MotionPresetsPanel.module.css';
 
 type SortOrder = 'default' | 'alphabetical-asc' | 'alphabetical-desc';
@@ -187,13 +188,18 @@ export function MotionPresetsBody(): JSX.Element {
       });
       return;
     }
-    const ok = applyPreset(preset, id, playhead);
-    notify(
-      ok
-        ? { level: 'success', message: `Applied "${preset.name}"`, durationMs: 2000 }
-        : { level: 'warning', message: `Failed to apply "${preset.name}"`, durationMs: 2000 },
-    );
-    bumpScene();
+    // Through the engine API (B3): the preset's keys AND the 3D switch it may
+    // flip are one undo entry. The preset is addressed by name (the library the
+    // engine reads is this panel's `listPresets`).
+    void edit('Apply animation preset', {
+      type: 'applyPreset', layers: [id], preset: preset.name, time: compTime(playhead),
+    }, { quiet: true }).then((res) => {
+      notify(
+        res.ok
+          ? { level: 'success', message: `Applied "${preset.name}"`, durationMs: 2000 }
+          : { level: 'warning', message: `Failed to apply "${preset.name}"`, durationMs: 2000 },
+      );
+    });
   };
 
   /**

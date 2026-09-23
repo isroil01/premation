@@ -11,13 +11,17 @@
  *     buttons that do nothing is the failure mode a snapshot test would miss.
  */
 
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { cubicBezierEase, defaultAnimation, makeKeyframeId } from '@motion/animation';
 import { EaseLibrarySection } from './EaseLibrarySection';
 import { easeCurvePath, easeCurveGuides, EASE_THUMB } from './easeCurvePath';
 import { EASE_PRESETS, easePresetById } from '@core/animation/easePresets';
 import { useCustomEaseStore } from '@stores/customEaseStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 
 const NODE = 'ease-layer';
 const PROP = 'transform.x';
@@ -82,8 +86,31 @@ describe('easeCurvePath', () => {
 });
 
 describe('EaseLibrarySection', () => {
+  // Applying writes through the engine API (B3): a real layer with Opacity
+  // keys at 0 s and 1 s, built through the engine; a click is awaited.
+  let h: Harness & { engine: LocalEngine };
+  let L = '';
+  const OP = 'opacity';
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    L = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'L', init: [] })).layer;
+    await h.run({
+      type: 'addKeyframes',
+      keys: [0, 1].map((sec) => ({
+        prop: { layer: L, path: 'transform/opacity' }, time: sec * 705_600_000,
+        value: { kind: 'scalar' as const, value: sec * 100 }, easing: 'linear' as const, spatialIn: [], spatialOut: [],
+      })),
+    });
+  });
+  afterEach(async () => {
+    await h.dispose();
+  });
+  const idle = async (): Promise<void> => {
+    await act(async () => { await engineIdle(); await engineIdle(); });
+  };
+  const keyAt = (t: number) => defaultAnimation.getTrackKeyframes(L, OP)!.find((k) => Math.abs(k.t - t) < 1e-9)!;
   const renderSection = (bezier?: [number, number, number, number]) =>
-    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(NODE, PROP, 0)]} bezier={bezier} />);
+    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(L, OP, 0)]} bezier={bezier} />);
 
   it('offers every curve in the library', () => {
     renderSection();
@@ -92,12 +119,18 @@ describe('EaseLibrarySection', () => {
     }
   });
 
-  it('applying a curve writes its handles onto the keyframe', () => {
+  it('applying a curve writes its handles onto the keyframe — one undo entry', async () => {
     renderSection();
     fireEvent.click(screen.getByRole('button', { name: 'Expo Out' }));
-    const kf = kfAt0();
+    await idle();
+    const kf = keyAt(0);
     expect(kf.easing).toBe('bezier');
     expect(kf.bezier).toEqual(easePresetById('expo-out')!.bezier);
+    expect(historyLabels().at(-1)).toBe('Set keyframe easing: expo-out');
+    await h.run({ type: 'undo' });
+    expect(keyAt(0).easing ?? 'linear').toBe('linear');
+    await h.run({ type: 'redo' });
+    expect(keyAt(0).bezier).toEqual(easePresetById('expo-out')!.bezier);
   });
 
   it('marks the curve the keyframe is already on, and only that one', () => {
@@ -116,19 +149,19 @@ describe('EaseLibrarySection', () => {
     ).toHaveLength(0);
   });
 
-  it('applies to EVERY selected keyframe, not just the focused one', () => {
+  it('applies to EVERY selected keyframe, not just the focused one', async () => {
     // The reason this takes ids instead of one (node, prop, t): the graph
     // editor's selection spans keyframes, and "ease these eight" is the whole
     // point of having a library.
     render(
       <EaseLibrarySection
-        keyframeIds={[makeKeyframeId(NODE, PROP, 0), makeKeyframeId(NODE, PROP, 1)]}
+        keyframeIds={[makeKeyframeId(L, OP, 0), makeKeyframeId(L, OP, 1)]}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Quart In' }));
+    await idle();
     for (const t of [0, 1]) {
-      const kf = defaultAnimation.getTrackKeyframes(NODE, PROP)!.find((k) => k.t === t)!;
-      expect(kf.bezier).toEqual(easePresetById('quart-in')!.bezier);
+      expect(keyAt(t).bezier).toEqual(easePresetById('quart-in')!.bezier);
     }
   });
 
@@ -141,6 +174,7 @@ describe('EaseLibrarySection', () => {
     unmount();
 
     // A saved curve is a chip like any other, and applies to the selection.
+    // (Custom curves still paste through the ease clipboard store's writer.)
     defaultAnimation.setKeyframe(NODE, PROP, 0, 0, 'linear');
     render(<EaseLibrarySection keyframeIds={[makeKeyframeId(NODE, PROP, 0)]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Snap' }));

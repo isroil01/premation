@@ -438,7 +438,7 @@ export function applyWiggler(
 export type EasingPreset = 'Linear' | 'Ease' | 'EaseIn' | 'EaseOut' | 'Hold' | EasePresetId;
 
 /** The (easing, bezier) a preset resolves to — shared by scalar and data paths. */
-function presetCurve(preset: EasingPreset): { easing: EasingKind; bezier?: BezierHandles } {
+export function presetCurve(preset: EasingPreset): { easing: EasingKind; bezier?: BezierHandles } {
   switch (preset) {
     case 'Linear': return { easing: 'linear' };
     case 'Ease': return { easing: 'bezier', bezier: EASY_EASE_BEZIER };

@@ -25,6 +25,7 @@ export interface UseKeyframeDragArgs {
   lanesRef: MutableRefObject<HTMLDivElement | null>;
   setDragHud: Dispatch<SetStateAction<DragHudState | null>>;
   onKeyframeMove: TimelineProps['onKeyframeMove'];
+  onKeyframesMove?: TimelineProps['onKeyframesMove'];
   onKeyframeSeek: TimelineProps['onKeyframeSeek'];
 }
 
@@ -38,6 +39,7 @@ export function useKeyframeDrag({
   lanesRef,
   setDragHud,
   onKeyframeMove,
+  onKeyframesMove,
   onKeyframeSeek,
 }: UseKeyframeDragArgs) {
   // ── Multi-keyframe selection ────────────────────────────────────────────────
@@ -191,11 +193,14 @@ export function useKeyframeDrag({
       setKfSnap(null);
       setDragHud(null);
       if (d.moved) {
-        // Commit moves for all dragged keyframes
-        for (const [id, origTime] of d.times) {
+        // Commit moves for all dragged keyframes — as ONE edit when the host
+        // takes the whole set (one undo entry per drag).
+        const moves = [...d.times].map(([id, origTime]) => {
           const dtSec = (kfPreviewRef.current.get(id) ?? origTime) - origTime;
-          onKeyframeMove?.(id, Math.max(0, origTime + dtSec));
-        }
+          return { keyframeId: id, time: Math.max(0, origTime + dtSec) };
+        });
+        if (onKeyframesMove) onKeyframesMove(moves);
+        else for (const m of moves) onKeyframeMove?.(m.keyframeId, m.time);
       } else {
         // Click without move → seek
         const singleId = d.ids[0];
@@ -212,7 +217,7 @@ export function useKeyframeDrag({
       window.removeEventListener('pointerup', onUp);
     };
   }, [
-    pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframeSeek, snapOn,
+    pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframesMove, onKeyframeSeek, snapOn,
     // Stable for the life of the composer (a ref + a state setter); listed so the array is honest.
     lanesRef, setDragHud,
   ]);

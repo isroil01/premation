@@ -26,7 +26,7 @@
 import { useMemo, useState } from 'react';
 import { cn } from '@utils/cn';
 import type { BezierHandles } from '@motion/animation';
-import { applyEasingToKeyframes } from '@core/animation/keyframeAssistants';
+import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
 import { easePresetsByFamily, type EasePreset } from '@core/animation/easePresets';
 import { useCustomEaseStore, type CustomEase } from '@stores/customEaseStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
@@ -60,8 +60,7 @@ export function EaseLibrarySection({ keyframeIds, bezier }: EaseLibrarySectionPr
 
   const apply = (preset: EasePreset): void => {
     if (keyframeIds.length === 0) return;
-    applyEasingToKeyframes([...keyframeIds], preset.id);
-    bumpScene();
+    void easePresetOnKeys([...keyframeIds], preset.id);
   };
 
   // A saved curve has no preset id, so it goes through the raw-handles write —

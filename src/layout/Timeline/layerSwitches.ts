@@ -26,20 +26,51 @@
  * overlay painter strokes its oriented box. Output paths never pass the flag,
  * so export renders a wireframe layer as Best.
  *
- * Every write is one undo step (`runDocumentEdit`).
+ * Every write is one undo step: a `setLayerSwitches` through the engine API
+ * (B3), labelled as the legacy `toggleLayerFlags` labelled it.
  */
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import type { LayerSwitchesPatch } from '@motion/engine-api';
 import {
   collapseSwitchKind as collapseKindOf,
   layerFlagAvailable,
+  layerFlagDef,
   readLayerFlag,
-  toggleLayerFlags,
+  type LayerFlag,
 } from '@core/scene/layerFlags';
 import { nextQuality, readNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { nodesWithLabelColor } from '@core/scene/labelColor';
+import { edit } from '@core/engine/uiEdits';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useUIStore } from '@stores/uiStore';
+
+const QUALITY_LABEL: Readonly<Record<LayerQuality, string>> = {
+  best: 'Quality: Best',
+  draft: 'Quality: Draft',
+  wireframe: 'Quality: Wireframe',
+};
+
+/**
+ * One timeline switch on one layer through the engine (the three below).
+ * Unavailable → the same one-line refusal `toggleLayerFlags` showed.
+ */
+function setSwitch(nodeId: string, flag: 'collapse' | 'quality' | 'frameBlend', next: boolean | LayerQuality): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const def = layerFlagDef(flag as LayerFlag);
+  if (!layerFlagAvailable(node, flag)) {
+    useUIStore.getState().notify({ level: 'warning', message: `${def.label} isn't available for that layer`, durationMs: 2600 });
+    return;
+  }
+  const patch: LayerSwitchesPatch =
+    flag === 'quality' ? { quality: next as LayerQuality }
+      : flag === 'frameBlend' ? { frameBlend: next ? 'frameMix' : 'off' }
+        : { collapse: next as boolean };
+  const label = typeof next === 'string' ? QUALITY_LABEL[next] : `${next ? 'Enable' : 'Disable'} ${def.label}`;
+  void edit(label, { type: 'setLayerSwitches', layers: [nodeId], patch });
+}
 
 export type CollapseSwitchKind = 'collapse' | 'raster';
 
@@ -51,7 +82,9 @@ export function readCollapseSwitch(node: SceneNode): boolean {
 }
 
 export function toggleCollapseSwitch(nodeId: string): void {
-  toggleLayerFlags([nodeId], 'collapse', nodeId);
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  setSwitch(nodeId, 'collapse', !readLayerFlag(node, 'collapse'));
 }
 
 /** Layers with pixels to sample: everything but the chrome-only kinds. */
@@ -64,7 +97,7 @@ export function toggleQualitySwitch(nodeId: string): LayerQuality | null {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const next = nextQuality(readNodeQuality(node));
-  toggleLayerFlags([nodeId], 'quality', nodeId);
+  setSwitch(nodeId, 'quality', next);
   return next;
 }
 
@@ -80,7 +113,9 @@ export function readFrameBlendSwitch(nodeId: string): boolean {
 
 /** Off → Frame Mix; any mode → Off (AE's switch cycles the same way). */
 export function toggleFrameBlendSwitch(nodeId: string): void {
-  toggleLayerFlags([nodeId], 'frameBlend', nodeId);
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  setSwitch(nodeId, 'frameBlend', !readLayerFlag(node, 'frameBlend'));
 }
 
 /** AE's label menu "Select Label Group": every layer carrying this label. */

@@ -15,7 +15,7 @@
  * only on which element it hit — and nothing here drags.
  */
 
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { GraphEditor } from './GraphEditor';
 import { defaultAnimation, makeKeyframeId } from '@motion/animation';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -52,6 +52,16 @@ afterEach(() => {
 });
 
 let view: ReturnType<typeof render>;
+
+/**
+ * The writes resolve the selection to engine keyframe ids first (B3), so they
+ * land a few microtasks after the click. NODE is not a scene layer, so the API
+ * cannot address it and the legacy writer runs — these tests pin the UI's
+ * targeting (the whole selection), which is the same on either path.
+ */
+async function settle(): Promise<void> {
+  await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+}
 
 const renderGraph = (): ReturnType<typeof render> => {
   view = render(
@@ -111,21 +121,23 @@ describe('the easing-kind selector', () => {
     expect(select.value).toBe('linear');
   });
 
-  it('applies to the WHOLE selection, not just the focused keyframe', () => {
+  it('applies to the WHOLE selection, not just the focused keyframe', async () => {
     renderGraph();
     pick(0);
     pick(1, true);
     fireEvent.change(screen.getByLabelText('Easing kind'), { target: { value: 'easeOut' } });
+    await settle();
     expect(kfAt(0).easing).toBe('easeOut');
     expect(kfAt(1).easing).toBe('easeOut');
     // Untouched: it was never selected.
     expect(kfAt(2).easing).toBe('linear');
   });
 
-  it('reads back the kind it wrote — the selector never lies about state', () => {
+  it('reads back the kind it wrote — the selector never lies about state', async () => {
     renderGraph();
     pick(0);
     fireEvent.change(screen.getByLabelText('Easing kind'), { target: { value: 'hold' } });
+    await settle();
     expect((screen.getByLabelText('Easing kind') as HTMLSelectElement).value).toBe('hold');
   });
 });
@@ -174,7 +186,7 @@ describe('rove across time', () => {
 });
 
 describe('the ease library popover', () => {
-  it('opens, applies a named curve to the selection, and closes on Escape', () => {
+  it('opens, applies a named curve to the selection, and closes on Escape', async () => {
     renderGraph();
     pick(0);
     pick(1, true);
@@ -183,6 +195,7 @@ describe('the ease library popover', () => {
     expect(screen.getByRole('dialog', { name: 'Ease library' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Expo Out' }));
+    await settle();
     expect(kfAt(0).bezier).toEqual(easePresetById('expo-out')!.bezier);
     expect(kfAt(1).bezier).toEqual(easePresetById('expo-out')!.bezier);
     expect(kfAt(0).easing).toBe('bezier');
@@ -191,7 +204,7 @@ describe('the ease library popover', () => {
     expect(screen.queryByRole('dialog', { name: 'Ease library' })).toBeNull();
   });
 
-  it('applies through the shared keyframe ids, so the selection is the target', () => {
+  it('applies through the shared keyframe ids, so the selection is the target', async () => {
     renderGraph();
     pick(2);
     expect([...useKeyframeSelectionStore.getState().ids]).toEqual([
@@ -199,6 +212,7 @@ describe('the ease library popover', () => {
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Ease library' }));
     fireEvent.click(screen.getByRole('button', { name: 'Quint In' }));
+    await settle();
     expect(kfAt(2).bezier).toEqual(easePresetById('quint-in')!.bezier);
     expect(kfAt(0).bezier).toBeUndefined();
   });

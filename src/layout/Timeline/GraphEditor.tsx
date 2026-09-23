@@ -41,20 +41,26 @@
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { clampPps, TIMELINE_PPS_MAX } from './zoomAnchor';
 import { Icon } from '@components/Icon';
-import { defaultAnimation, makeKeyframeId, parseKeyframeId, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
+import { defaultAnimation, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
-import { applyEasingToSelection } from '@core/animation/easingSelection';
+import { easingTargetKeyframes } from '@core/animation/easingSelection';
+import { easeKindOnKeys, easePresetOnKeys } from './keyframeEdits';
 import {
   EASING_KINDS,
   activeEasingKind,
-  applyEasingKindToKeyframes,
 } from '@core/animation/easingVocabulary';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { bumpScene } from '@stores/sceneStore';
 import { EaseLibrarySection } from '@layout/Motion/EaseLibrarySection';
-import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import { compToKeyframeTime, getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import type { KeyframePatch, ValueType } from '@motion/engine-api';
+import { GestureSession, edit } from '@core/engine/uiEdits';
+import { propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
+import { apiUnitFactor } from '@core/engine/props';
+import { memberAddressable, memberKeyPatches, toCubic } from './keyframeEdits';
+import { parseUiKey, uiKeyId } from './keyframeSelectionIds';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -206,6 +212,14 @@ interface DragState {
   mode: 'value' | 'speed';
   moved: boolean;
   tx?: ReturnType<typeof beginAnimEdit>;
+  /**
+   * Handle drags on a track the API addresses on its own: the drag is ONE
+   * engine gesture, every move sending the absolute handles it computed.
+   * `keyIds` (stored time → engine keyframe id) arrives asynchronously; moves
+   * before it are dropped (the next one carries the whole state anyway).
+   */
+  gesture?: GestureSession;
+  keyIds?: Map<number, string>;
   /** Live box-zoom corner (svg); start corner is ox/oy. */
   boxX?: number;
   boxY?: number;
@@ -253,21 +267,104 @@ function fmtAxis(v: number): string {
 }
 
 /**
+ * One write to ONE member track's key at stored time `t`, with the legacy
+ * setters' semantics resolved up front: a `bezier` is `setBezier` (easing
+ * becomes bezier; `continuous` = the given flag, else the key's, else true),
+ * `value` / `continuous` alone are `updateKeyframe`. The graph editor COMPUTES
+ * these from the current curves and then sends them — through the engine API
+ * (B3) when the track is its own property, else through the legacy writer.
+ */
+interface MemberWrite {
+  t: number;
+  value?: number;
+  bezier?: Bezier;
+  continuous?: boolean;
+}
+
+function bezierWrite(kf: { t: number; continuous?: boolean }, bz: Bezier, continuous?: boolean): MemberWrite {
+  return { t: kf.t, bezier: bz, continuous: continuous ?? kf.continuous ?? true };
+}
+
+/**
+ * A handle drag's writes for the current pointer position: into the drag's
+ * engine gesture (absolute handles, one entry for the drag), or — for a track
+ * the API cannot address alone — straight into the legacy transaction.
+ */
+function sendHandleWrites(d: DragState, writes: ReadonlyArray<MemberWrite>): void {
+  if (writes.length === 0) return;
+  if (!d.gesture) {
+    applyMemberWritesLegacy(d.nodeId, d.prop, writes);
+    return;
+  }
+  if (!d.keyIds) return;
+  const patches: KeyframePatch[] = [];
+  for (const w of writes) {
+    const id = d.keyIds.get(w.t);
+    if (!id) return;
+    patches.push({ id, ...memberPatch(d.nodeId, d.prop, w), spatialIn: [], spatialOut: [] });
+  }
+  d.gesture.send({ type: 'updateKeyframes', patches });
+}
+
+/**
+ * B3-legacy: the member-level writer — for a track the API cannot address on
+ * its own (one axis of a merged Position, Scale X, a colour channel: an API
+ * keyframe patch reaches every member), and inside the diamond drag, which
+ * retimes in stored time (see `moveKeyframe`).
+ */
+function applyMemberWritesLegacy(nodeId: string, prop: string, writes: ReadonlyArray<MemberWrite>): void {
+  for (const w of writes) {
+    if (w.bezier) defaultAnimation.setBezier(nodeId, prop, w.t, w.bezier, w.continuous);
+    else if (w.value !== undefined || w.continuous !== undefined) {
+      defaultAnimation.updateKeyframe(nodeId, prop, w.t, {
+        ...(w.value !== undefined ? { value: w.value } : {}),
+        ...(w.continuous !== undefined ? { continuous: w.continuous } : {}),
+      });
+    }
+  }
+}
+
+function valueTypeOf(nodeId: string, prop: string): ValueType {
+  return propRefForTrack(nodeId, prop)?.valueType ?? 'scalar';
+}
+
+function memberPatch(nodeId: string, prop: string, w: MemberWrite): Omit<KeyframePatch, 'id' | 'spatialIn' | 'spatialOut'> {
+  return {
+    ...(w.bezier ? { easing: 'bezier' as const, bezier: toCubic(w.bezier) } : {}),
+    ...(w.continuous !== undefined ? { continuous: w.continuous } : {}),
+    ...(w.value !== undefined ? { value: valueOfNumbers(valueTypeOf(nodeId, prop), [w.value * apiUnitFactor(prop)]) } : {}),
+  };
+}
+
+/** One click / typed field = one undo entry, through the engine when it can address the track. */
+async function commitMemberWrites(label: string, nodeId: string, prop: string, writes: ReadonlyArray<MemberWrite>): Promise<void> {
+  if (writes.length === 0) return;
+  const patches = memberAddressable(nodeId, prop)
+    ? await memberKeyPatches(nodeId, prop, writes.map((w) => ({ t: w.t, patch: memberPatch(nodeId, prop, w) })))
+    : null;
+  if (patches) {
+    await edit(label, { type: 'updateKeyframes', patches });
+    return;
+  }
+  runAnimEdit(label, () => applyMemberWritesLegacy(nodeId, prop, writes));
+}
+
+/**
  * Make the keyframe at `t` linked (continuous) by re-solving the PREVIOUS
  * segment's arriving slope to match the outgoing slope — the value-graph
- * meaning of "link": collinear tangents.
+ * meaning of "link": collinear tangents. Returns the write (none at the ends).
  */
-function alignKeyframeTangents(nodeId: string, prop: string, t: number): void {
+function alignTangentsWrites(nodeId: string, prop: string, t: number): MemberWrite[] {
   const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-  if (!kfs) return;
+  if (!kfs) return [];
   const idx = findKfIndex(kfs, t);
-  if (idx <= 0 || idx >= kfs.length - 1) return;
+  if (idx <= 0 || idx >= kfs.length - 1) return [];
   const prevKf = kfs[idx - 1]!;
   const kf = kfs[idx]!;
   const nextKf = kfs[idx + 1]!;
   const slope = outgoingSlope(effectiveBezier(kf), nextKf.value - kf.value, nextKf.t - kf.t);
   const prevBz = withIncomingSlope(effectiveBezier(prevKf), kf.value - prevKf.value, kf.t - prevKf.t, slope);
-  defaultAnimation.setBezier(nodeId, prop, prevKf.t, prevBz, prevKf.continuous);
+  return [bezierWrite(prevKf, prevBz, prevKf.continuous)];
 }
 
 /**
@@ -275,17 +372,18 @@ function alignKeyframeTangents(nodeId: string, prop: string, t: number): void {
  * rewritten: 'in' / 'out' touch ONE side only; 'linked' writes the outgoing
  * side and, when the keyframe is continuous, the incoming one too.
  */
-function applySpeedAt(
+function speedWrites(
   nodeId: string,
   prop: string,
   t: number,
   speed: number,
   side: 'in' | 'out' | 'linked',
-): void {
+): MemberWrite[] {
   const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-  if (!kfs) return;
+  if (!kfs) return [];
   const i = findKfIndex(kfs, t);
-  if (i < 0) return;
+  if (i < 0) return [];
+  const out: MemberWrite[] = [];
   const self = kfs[i]!;
   const next = kfs[i + 1];
   const prev = kfs[i - 1];
@@ -296,12 +394,13 @@ function applySpeedAt(
 
   if (doOut && next) {
     const bz = withOutgoingSpeed(effectiveBezier(self), next.value - self.value, next.t - self.t, target);
-    defaultAnimation.setBezier(nodeId, prop, self.t, bz, self.continuous);
+    out.push(bezierWrite(self, bz, self.continuous));
   }
   if (doIn && prev) {
     const bz = withIncomingSpeed(effectiveBezier(prev), self.value - prev.value, self.t - prev.t, target);
-    defaultAnimation.setBezier(nodeId, prop, prev.t, bz, prev.continuous);
+    out.push(bezierWrite(prev, bz, prev.continuous));
   }
+  return out;
 }
 
 export function GraphEditor({
@@ -456,7 +555,8 @@ export function GraphEditor({
       if (!kfs || kfs.length === 0) continue;
 
       const toAbs = (layerT: number): number => keyframeToCompTime(nodeId, layerT, prop);
-      const toLayer = (absT: number): number => compToKeyframeTime(nodeId, absT, prop);
+      // A display READ (B4 keeps these direct) — the sampling axis.
+      const toLayer = (absT: number): number => getRemappedTime(nodeId, absT);
       const valueAt = (layerT: number): number => defaultAnimation.sample(nodeId, prop, layerT) ?? 0;
 
       /**
@@ -617,7 +717,7 @@ export function GraphEditor({
    */
   const boxSelectIds = useCallback(
     (rect: { x0: number; y0: number; x1: number; y1: number }): Set<string> =>
-      keyframesInBox(sampledPaths, rect, handleGeomRef.current, pps, makeKeyframeId),
+      keyframesInBox(sampledPaths, rect, handleGeomRef.current, pps, uiKeyId),
     [sampledPaths, pps],
   );
 
@@ -800,7 +900,12 @@ export function GraphEditor({
       // the rectangle. A box that never moved leaves the selection alone
       // rather than emptying it: shift-click on empty space is "add nothing".
       setBoxSelect(null);
+    } else if (d.gesture) {
+      // Nothing sent (a click on a handle) → nothing recorded.
+      void (d.moved ? d.gesture.end() : d.gesture.cancel());
     } else if (d.tx) {
+      // B3-legacy: the legacy drag transactions (the diamond drag; a handle drag
+      // on one axis of a grouped property) — see their pointer-down handlers.
       if (d.moved) {
         const label = d.kind === 'kf' ? 'Move Keyframe' : 'Edit Curve';
         recordAnimEdit(d.tx.commit(label));
@@ -825,7 +930,7 @@ export function GraphEditor({
   const onKfPointerDown = useCallback(
     (e: React.PointerEvent<SVGElement>, kf: KfPoint) => {
       if (e.button !== 0) return;
-      const id = makeKeyframeId(kf.nodeId, kf.prop, kf.t);
+      const id = uiKeyId(kf.nodeId, kf.prop, kf.t);
       const next = new Set(selectedKfIds);
       if (e.shiftKey) {
         if (next.has(id)) next.delete(id);
@@ -842,7 +947,7 @@ export function GraphEditor({
       const idsForGroup = next.has(id) && next.size > 1 ? next : new Set([id]);
       const group: GraphGroupMemberStart[] = [];
       for (const sid of idsForGroup) {
-        const ref = parseKeyframeId(sid);
+        const ref = parseUiKey(sid);
         if (!ref) continue;
         let point: KfPoint | undefined;
         for (const p of sampledPaths) {
@@ -879,6 +984,10 @@ export function GraphEditor({
         minV: kf.minV,
         maxV: kf.maxV,
         mode,
+        // B3-legacy: engine gap — the diamond drag clamps each key half a frame
+        // short of its neighbours in STORED time; an API move is comp time,
+        // re-quantized to the frame grid inside a clip, and could land the key
+        // ON its neighbour (which `updateKeyframes` would then replace).
         tx: beginAnimEdit(),
         group: group.length > 0 ? group : undefined,
         grabIndex,
@@ -901,7 +1010,7 @@ export function GraphEditor({
       if (!near) return;
       const kf = path.keyframes.find((k) => Math.abs(k.t - near.t) < 1e-9);
       if (!kf) return;
-      const id = makeKeyframeId(kf.nodeId, kf.prop, kf.t);
+      const id = uiKeyId(kf.nodeId, kf.prop, kf.t);
       const next = new Set(selectedKfIds);
       if (e.shiftKey) {
         if (next.has(id)) next.delete(id);
@@ -921,7 +1030,23 @@ export function GraphEditor({
     (e: React.PointerEvent<SVGElement>, kf: KfPoint, which: 'handle-in' | 'handle-out', hx: number, hy: number) => {
       if (e.button !== 0) return;
       const { x, y } = svgCoords(e);
-      const tx = beginAnimEdit();
+      // Through the engine when the track is its own property. B3-legacy: one
+      // axis of a grouped property keeps the legacy transaction (an API keyframe
+      // patch would reach the other axes too — see applyMemberWritesLegacy).
+      const viaEngine = memberAddressable(kf.nodeId, kf.prop);
+      const gesture = viaEngine ? new GestureSession('Edit Curve') : undefined;
+      const tx = viaEngine ? undefined : beginAnimEdit();
+      if (gesture) {
+        // The keys a handle drag can touch: this one and its two neighbours.
+        const kfs = defaultAnimation.getTrackKeyframes(kf.nodeId, kf.prop) ?? [];
+        const i = findKfIndex(kfs, kf.t);
+        const near = [kfs[i - 1], kfs[i], kfs[i + 1]].filter((k): k is NonNullable<typeof k> => !!k);
+        void memberKeyPatches(kf.nodeId, kf.prop, near.map((k) => ({ t: k.t, patch: {} }))).then((patches) => {
+          const d = dragRef.current;
+          if (!patches || !d || d.gesture !== gesture) return;
+          d.keyIds = new Map(near.map((k, n) => [k.t, patches[n]!.id]));
+        });
+      }
       beginDrag(e, {
         kind: which,
         nodeId: kf.nodeId,
@@ -935,7 +1060,8 @@ export function GraphEditor({
         minV: kf.minV,
         maxV: kf.maxV,
         mode,
-        tx,
+        ...(tx ? { tx } : {}),
+        ...(gesture ? { gesture } : {}),
       });
     },
     [svgCoords, beginDrag, mode],
@@ -1011,6 +1137,11 @@ export function GraphEditor({
   );
 
   // ── Drag: keyframe diamond ────────────────────────────────────
+  // B3-legacy: engine gap — every write below is the legacy drag transaction
+  // (opened in onKfPointerDown): the retime clamps each key half a frame short
+  // of its neighbours in STORED time, which an API move (comp time, re-quantized
+  // to frames inside a clip) cannot express without risking landing ON the
+  // neighbour, which `updateKeyframes` would replace.
   const moveKeyframe = useCallback(
     (d: DragState, ex: number, ey: number, e: React.PointerEvent) => {
       const frameDur = frameRate > 0 ? 1 / frameRate : 0;
@@ -1022,7 +1153,7 @@ export function GraphEditor({
         const vals: number[] = [];
         for (const p of sampledPaths) {
           for (const k of p.keyframes) {
-            const id = makeKeyframeId(p.nodeId, p.prop, k.t);
+            const id = uiKeyId(p.nodeId, p.prop, k.t);
             if (!movingIds.has(id)) vals.push(k.value);
           }
         }
@@ -1032,11 +1163,11 @@ export function GraphEditor({
       // Multi-select body: move every selected diamond by the same time (and
       // value) delta. Single-diamond path below stays the neighbour-clamped one.
       if (d.group && d.group.length > 1 && d.groupCurrentT && d.grabIndex !== undefined) {
-        const moving = new Set(d.group.map((m, i) => makeKeyframeId(m.nodeId, m.prop, d.groupCurrentT![i]!)));
+        const moving = new Set(d.group.map((m, i) => uiKeyId(m.nodeId, m.prop, d.groupCurrentT![i]!)));
         const otherTimes: number[] = [];
         for (const p of sampledPaths) {
           for (const k of p.keyframes) {
-            const id = makeKeyframeId(p.nodeId, p.prop, k.t);
+            const id = uiKeyId(p.nodeId, p.prop, k.t);
             if (!moving.has(id)) otherTimes.push(k.tAbs);
           }
         }
@@ -1097,12 +1228,12 @@ export function GraphEditor({
             defaultAnimation.updateKeyframe(m.nodeId, m.prop, fromT, { t: newT, value: m.startValue });
             if (d.mode === 'speed' && i === d.grabIndex) {
               const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
-              applySpeedAt(m.nodeId, m.prop, newT, speed, 'linked');
+              applyMemberWritesLegacy(m.nodeId, m.prop, speedWrites(m.nodeId, m.prop, newT, speed, 'linked'));
             }
           }
-          const oldId = makeKeyframeId(m.nodeId, m.prop, fromT);
+          const oldId = uiKeyId(m.nodeId, m.prop, fromT);
           d.groupCurrentT[i] = newT;
-          rewriteSelectedKeyframeId(oldId, makeKeyframeId(m.nodeId, m.prop, newT));
+          rewriteSelectedKeyframeId(oldId, uiKeyId(m.nodeId, m.prop, newT));
           if (i === d.grabIndex) {
             d.kfT = newT;
             setSelectedKf({ nodeId: m.nodeId, prop: m.prop, t: newT });
@@ -1148,7 +1279,7 @@ export function GraphEditor({
       let valueSnap: ValueSnapTarget | null = null;
       if (d.mode === 'value') {
         const rawV = yToValue(d.oy + ey, d.minV, d.maxV, INNER_H);
-        const moving = new Set([makeKeyframeId(d.nodeId, d.prop, d.kfT)]);
+        const moving = new Set([uiKeyId(d.nodeId, d.prop, d.kfT)]);
         const snapped = snapKeyframeValue(rawV, {
           pixelsPerUnit,
           keyframeValues: collectOtherValues(moving),
@@ -1159,7 +1290,7 @@ export function GraphEditor({
       } else {
         defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.kfT, { t: newT, value: d.origValue });
         const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
-        applySpeedAt(d.nodeId, d.prop, newT, speed, 'linked');
+        applyMemberWritesLegacy(d.nodeId, d.prop, speedWrites(d.nodeId, d.prop, newT, speed, 'linked'));
       }
 
       setGraphSnap({
@@ -1169,10 +1300,10 @@ export function GraphEditor({
         maxV: d.maxV,
       });
 
-      const oldId = makeKeyframeId(d.nodeId, d.prop, d.kfT);
+      const oldId = uiKeyId(d.nodeId, d.prop, d.kfT);
       d.kfT = newT;
       setSelectedKf({ nodeId: d.nodeId, prop: d.prop, t: newT });
-      rewriteSelectedKeyframeId(oldId, makeKeyframeId(d.nodeId, d.prop, newT));
+      rewriteSelectedKeyframeId(oldId, uiKeyId(d.nodeId, d.prop, newT));
     },
     [pps, duration, INNER_H, frameRate, currentTime, sampledPaths],
   );
@@ -1186,9 +1317,10 @@ export function GraphEditor({
       if (selfIdx < 0) return;
       const selfKf = kfs[selfIdx]!;
 
+      const writes: MemberWrite[] = [];
       // Alt breaks the link for this keyframe (AE: Alt/Option-drag a handle).
       if (e.altKey && selfKf.continuous !== false) {
-        defaultAnimation.updateKeyframe(d.nodeId, d.prop, selfKf.t, { continuous: false });
+        writes.push({ t: selfKf.t, continuous: false });
       }
       const linked = selfKf.continuous !== false && !e.altKey;
 
@@ -1213,19 +1345,19 @@ export function GraphEditor({
           const vHover = yToValue(hy, d.minV, d.maxV, INNER_H);
           const y1 = dv === 0 ? curBz[1] : clamp((vHover - selfKf.value) / dv, MIN_HANDLE_Y, MAX_HANDLE_Y);
           const bz: Bezier = [influence, y1, curBz[2], curBz[3]];
-          defaultAnimation.setBezier(d.nodeId, d.prop, selfKf.t, bz, linked);
+          writes.push(bezierWrite(selfKf, bz, linked));
           if (linked && prevKf && !isHoldEasing(prevKf.easing)) {
             const slope = outgoingSlope(bz, dv, dt);
             const prevBz = withIncomingSlope(effectiveBezier(prevKf), selfKf.value - prevKf.value, selfKf.t - prevKf.t, slope);
-            defaultAnimation.setBezier(d.nodeId, d.prop, prevKf.t, prevBz, prevKf.continuous);
+            writes.push(bezierWrite(prevKf, prevBz, prevKf.continuous));
           }
         } else {
           const speed = Math.max(0, yToValue(hy, d.minV, d.maxV, INNER_H));
           const bz = withOutgoingSpeed([influence, curBz[1], curBz[2], curBz[3]], dv, dt, speed);
-          defaultAnimation.setBezier(d.nodeId, d.prop, selfKf.t, bz, linked);
+          writes.push(bezierWrite(selfKf, bz, linked));
           if (linked && prevKf && !isHoldEasing(prevKf.easing)) {
             const prevBz = withIncomingSpeed(effectiveBezier(prevKf), selfKf.value - prevKf.value, selfKf.t - prevKf.t, speed);
-            defaultAnimation.setBezier(d.nodeId, d.prop, prevKf.t, prevBz, prevKf.continuous);
+            writes.push(bezierWrite(prevKf, prevBz, prevKf.continuous));
           }
         }
       } else if (d.kind === 'handle-in') {
@@ -1245,22 +1377,23 @@ export function GraphEditor({
             ? prevBz[3]
             : clamp(1 - (selfKf.value - vHover) / dvPrev, 1 - MAX_HANDLE_Y, 1 - MIN_HANDLE_Y);
           const bz: Bezier = [prevBz[0], prevBz[1], 1 - influence, y2];
-          defaultAnimation.setBezier(d.nodeId, d.prop, prevKf.t, bz, prevKf.continuous);
+          writes.push(bezierWrite(prevKf, bz, prevKf.continuous));
           if (linked && nextKf && !isHoldEasing(selfKf.easing)) {
             const slope = incomingSlope(bz, dvPrev, dtPrev);
             const curBz = withOutgoingSlope(effectiveBezier(selfKf), nextKf.value - selfKf.value, nextKf.t - selfKf.t, slope);
-            defaultAnimation.setBezier(d.nodeId, d.prop, selfKf.t, curBz, true);
+            writes.push(bezierWrite(selfKf, curBz, true));
           }
         } else {
           const speed = Math.max(0, yToValue(hy, d.minV, d.maxV, INNER_H));
           const bz = withIncomingSpeed([prevBz[0], prevBz[1], 1 - influence, prevBz[3]], dvPrev, dtPrev, speed);
-          defaultAnimation.setBezier(d.nodeId, d.prop, prevKf.t, bz, prevKf.continuous);
+          writes.push(bezierWrite(prevKf, bz, prevKf.continuous));
           if (linked && nextKf && !isHoldEasing(selfKf.easing)) {
             const curBz = withOutgoingSpeed(effectiveBezier(selfKf), nextKf.value - selfKf.value, nextKf.t - selfKf.t, speed);
-            defaultAnimation.setBezier(d.nodeId, d.prop, selfKf.t, curBz, true);
+            writes.push(bezierWrite(selfKf, curBz, true));
           }
         }
       }
+      sendHandleWrites(d, writes);
     },
     [pps, INNER_H],
   );
@@ -1376,7 +1509,8 @@ export function GraphEditor({
     : null;
 
   const handleApplyPreset = useCallback((preset: EasingPreset) => {
-    applyEasingToSelection(preset);
+    const ids = easingTargetKeyframes();
+    if (ids.length > 0) void easePresetOnKeys(ids, preset);
   }, []);
 
   // ── Keyframe-level tools (were the Motion panel's) ────────────
@@ -1391,7 +1525,7 @@ export function GraphEditor({
   const targetKfIds = useMemo(() => {
     const ids = [...selectedKfIds];
     if (ids.length > 0) return ids;
-    return selectedKf ? [makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t)] : [];
+    return selectedKf ? [uiKeyId(selectedKf.nodeId, selectedKf.prop, selectedKf.t)] : [];
   }, [selectedKfIds, selectedKf]);
 
   const copyEase = useEaseClipboardStore((s) => s.copyEase);
@@ -1402,8 +1536,7 @@ export function GraphEditor({
 
   const applyKind = useCallback(
     (kind: EasingKind) => {
-      applyEasingKindToKeyframes(targetKfIds, kind);
-      bumpScene();
+      void easeKindOnKeys(targetKfIds, kind);
     },
     [targetKfIds],
   );
@@ -1421,9 +1554,12 @@ export function GraphEditor({
     if (targetKfIds.length === 0) return;
     const next = !selectedKfData?.roving;
     const rewrites: Array<[string, string]> = [];
+    // B3-legacy: engine gap — `updateKeyframes{roving}` sets the flag but does
+    // not re-solve the roving key's TIME (AnimationEngine.setRoving /
+    // applyRoving[Spatial]); roving would silently stop moving the key.
     runAnimEdit(next ? 'Rove Across Time' : 'Stop Roving', () => {
       for (const id of targetKfIds) {
-        const ref = parseKeyframeId(id);
+        const ref = parseUiKey(id);
         if (!ref) continue;
         let movedTo: number | null = null;
         for (const prop of expandKeyframeProp(ref.prop)) {
@@ -1437,15 +1573,15 @@ export function GraphEditor({
           movedTo = defaultAnimation.getTrackKeyframes(ref.nodeId, prop)?.[i]?.t ?? null;
         }
         if (movedTo !== null && Math.abs(movedTo - ref.t) > 1e-9) {
-          rewrites.push([id, makeKeyframeId(ref.nodeId, ref.prop, movedTo)]);
+          rewrites.push([id, uiKeyId(ref.nodeId, ref.prop, movedTo)]);
         }
       }
     });
     for (const [oldId, newId] of rewrites) rewriteSelectedKeyframeId(oldId, newId);
     const focused = rewrites.find(([oldId]) =>
-      selectedKf && oldId === makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t));
+      selectedKf && oldId === uiKeyId(selectedKf.nodeId, selectedKf.prop, selectedKf.t));
     if (focused && selectedKf) {
-      const t = parseKeyframeId(focused[1])?.t;
+      const t = parseUiKey(focused[1])?.t;
       if (t !== undefined) setSelectedKf({ ...selectedKf, t });
     }
     bumpScene();
@@ -1711,7 +1847,7 @@ export function GraphEditor({
               type="button"
               className={styles.iconBtn}
               aria-label="Copy ease"
-              onClick={() => copyEase(makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t))}
+              onClick={() => copyEase(uiKeyId(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t))}
               title="Copy this keyframe's easing"
             >
               <Icon name="copy" size="sm" />
@@ -1766,13 +1902,16 @@ export function GraphEditor({
                 max={duration}
                 onChange={(newT: number) => {
                   const oldT = selectedKfData.t;
+                  // B3-legacy: engine gap — this field types a STORED (layer)
+                  // time; API moves are comp time, re-quantized to the frame
+                  // grid inside a clip, so a typed 1.23 s would not land at 1.23.
                   runAnimEdit('Move Keyframe', () => {
                     defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, oldT, { t: newT });
                   });
                   setSelectedKf(selectedKf ? { ...selectedKf, t: newT } : null);
                   rewriteSelectedKeyframeId(
-                    makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, oldT),
-                    makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, newT),
+                    uiKeyId(selectedKfData.nodeId, selectedKfData.prop, oldT),
+                    uiKeyId(selectedKfData.nodeId, selectedKfData.prop, newT),
                   );
                 }}
               />
@@ -1785,9 +1924,9 @@ export function GraphEditor({
                   value={selectedKfData.value}
                   precision={2}
                   onChange={(newV: number) => {
-                    runAnimEdit('Set Keyframe Value', () => {
-                      defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { value: newV });
-                    });
+                    void commitMemberWrites('Set Keyframe Value', selectedKfData.nodeId, selectedKfData.prop, [
+                      { t: selectedKfData.t, value: newV },
+                    ]);
                   }}
                 />
               </div>
@@ -1801,13 +1940,12 @@ export function GraphEditor({
                       precision={1}
                       min={0}
                       onChange={(newSpeed: number) => {
-                        runAnimEdit('Set Incoming Speed', () => {
-                          applySpeedAt(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'in');
-                          // Typing a one-sided speed is an explicit split.
-                          if (selectedKfData.outSpeed !== undefined && Math.abs(newSpeed - selectedKfData.outSpeed) > 1e-6) {
-                            defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { continuous: false });
-                          }
-                        });
+                        const writes = speedWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'in');
+                        // Typing a one-sided speed is an explicit split.
+                        if (selectedKfData.outSpeed !== undefined && Math.abs(newSpeed - selectedKfData.outSpeed) > 1e-6) {
+                          writes.push({ t: selectedKfData.t, continuous: false });
+                        }
+                        void commitMemberWrites('Set Incoming Speed', selectedKfData.nodeId, selectedKfData.prop, writes);
                       }}
                     />
                   </div>
@@ -1829,9 +1967,9 @@ export function GraphEditor({
                           const dtPrev = selectedKfData.t - prevKf.t;
                           const dvPrev = selectedKfData.value - prevKf.value;
                           const bz = withIncomingInfluence(effectiveBezier(prevKf), dvPrev, dtPrev, newPct / 100);
-                          runAnimEdit('Set Incoming Influence', () => {
-                            defaultAnimation.setBezier(selectedKfData.nodeId, selectedKfData.prop, prevKf.t, bz, prevKf.continuous);
-                          });
+                          void commitMemberWrites('Set Incoming Influence', selectedKfData.nodeId, selectedKfData.prop, [
+                            bezierWrite(prevKf, bz, prevKf.continuous),
+                          ]);
                         }
                       }}
                     />
@@ -1845,12 +1983,11 @@ export function GraphEditor({
                       precision={1}
                       min={0}
                       onChange={(newSpeed: number) => {
-                        runAnimEdit('Set Outgoing Speed', () => {
-                          applySpeedAt(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'out');
-                          if (selectedKfData.inSpeed !== undefined && Math.abs(newSpeed - selectedKfData.inSpeed) > 1e-6) {
-                            defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { continuous: false });
-                          }
-                        });
+                        const writes = speedWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'out');
+                        if (selectedKfData.inSpeed !== undefined && Math.abs(newSpeed - selectedKfData.inSpeed) > 1e-6) {
+                          writes.push({ t: selectedKfData.t, continuous: false });
+                        }
+                        void commitMemberWrites('Set Outgoing Speed', selectedKfData.nodeId, selectedKfData.prop, writes);
                       }}
                     />
                   </div>
@@ -1873,9 +2010,9 @@ export function GraphEditor({
                           const dt = nextKf.t - self.t;
                           const dv = nextKf.value - self.value;
                           const bz = withOutgoingInfluence(effectiveBezier(self), dv, dt, newPct / 100);
-                          runAnimEdit('Set Outgoing Influence', () => {
-                            defaultAnimation.setBezier(selectedKfData.nodeId, selectedKfData.prop, self.t, bz, self.continuous);
-                          });
+                          void commitMemberWrites('Set Outgoing Influence', selectedKfData.nodeId, selectedKfData.prop, [
+                            bezierWrite(self, bz, self.continuous),
+                          ]);
                         }
                       }}
                     />
@@ -1894,12 +2031,9 @@ export function GraphEditor({
                   : 'Handles are split — each side moves alone. Click to link.'}
                 onClick={() => {
                   const nextContinuous = selectedKfData.continuous === false;
-                  runAnimEdit(nextContinuous ? 'Link Tangents' : 'Break Tangents', () => {
-                    defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, {
-                      continuous: nextContinuous,
-                    });
-                    if (nextContinuous) alignKeyframeTangents(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t);
-                  });
+                  const writes: MemberWrite[] = [{ t: selectedKfData.t, continuous: nextContinuous }];
+                  if (nextContinuous) writes.push(...alignTangentsWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t));
+                  void commitMemberWrites(nextContinuous ? 'Link Tangents' : 'Break Tangents', selectedKfData.nodeId, selectedKfData.prop, writes);
                 }}
               >
                 {selectedKfData.continuous !== false ? '🔗 Linked' : '🔓 Broken'}
@@ -2050,7 +2184,7 @@ export function GraphEditor({
               {keyframes.map((kf) => {
                 const kx = kf.tAbs * pps;
                 const ky = kf.y;
-                const isSelected = selectedKfIds.has(makeKeyframeId(kf.nodeId, kf.prop, kf.t));
+                const isSelected = selectedKfIds.has(uiKeyId(kf.nodeId, kf.prop, kf.t));
                 const inView = kf.tAbs >= visT0 && kf.tAbs <= visT1;
                 const showLabel = inView && (isSelected || showDenseLabels);
                 const hasInJump = mode === 'speed' && kf.inSpeed !== undefined && kf.outSpeed !== undefined
@@ -2234,8 +2368,15 @@ function KeyframeNumericStrip({
           value={kf.value}
           aria-label="Keyframe value"
           onChange={(v) => {
+            const members = expandKeyframeProp(kf.prop);
+            if (members.length === 1) {
+              void commitMemberWrites('Set Keyframe Value', kf.nodeId, members[0]!, [{ t: kf.t, value: v }]);
+              return;
+            }
+            // B3-legacy: the merged Position row sets ONE number on every axis —
+            // a member-level write the API cannot express (it takes the vec2).
             runAnimEdit('Set Keyframe Value', () => {
-              for (const prop of expandKeyframeProp(kf.prop)) {
+              for (const prop of members) {
                 defaultAnimation.updateKeyframe(kf.nodeId, prop, kf.t, { value: v });
               }
             });

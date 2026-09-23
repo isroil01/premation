@@ -8,41 +8,38 @@
  * is observable.
  */
 
-import { renderHook } from '@testing-library/react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { act, renderHook } from '@testing-library/react';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
-import type { SceneNode } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { useTimelineKeys } from './useTimelineKeys';
 
-const ROOT = 'comp_root';
+// The bar edits go through the engine API (B3): the scene is built through
+// the engine too, and every press is awaited (`engineIdle`) before reading.
+let h: Harness & { engine: LocalEngine };
+let A = '';
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode({
-    id: ROOT, name: 'Composition 1', parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: 'comp_root_meta', type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }],
-  } as unknown as SceneNode);
-  defaultSceneGraph.addChild(ROOT, {
-    id: 'a', name: 'a', parent: ROOT, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: 'a_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 50, height: 50 } },
-    ],
-  } as unknown as SceneNode);
+beforeEach(async () => {
+  h = await setupAppEngine();
+  A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'a', init: [] })).layer;
   const c = getTimelineController();
-  c.reset();
-  c.getLayersForNode('a');
-  c.syncFromScene(ROOT);
-  useSelectionStore.getState().set(['a']);
+  c.syncFromScene('comp_root');
+  useSelectionStore.getState().set([A]);
   document.body.innerHTML = '';
 });
 
-const bar = () => getTimelineController().getLayersForNode('a')[0]!;
+afterEach(async () => {
+  await h.dispose();
+});
+
+async function idle(): Promise<void> {
+  await act(async () => { await engineIdle(); });
+}
+
+const bar = () => getTimelineController().getLayersForNode(A)[0]!;
 
 function press(target: EventTarget, init: KeyboardEventInit): KeyboardEvent {
   const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
@@ -71,37 +68,47 @@ describe('Alt+Page Down / Page Up — nudge the selected layers', () => {
     expect(bar().start).toBe(0);
   });
 
-  it('Alt+Page Down moves the layer one frame later and leaves the playhead alone', () => {
+  it('Alt+Page Down moves the layer one frame later and leaves the playhead alone', async () => {
     renderHook(() => useTimelineKeys());
     const c = getTimelineController();
     c.timeline.seek(10);
     const e = press(window, { key: 'PageDown', altKey: true });
+    await idle();
     expect(bar().start).toBe(1);
+    expect(historyLabels().at(-1)).toBe('Nudge Layer');
     expect(Math.round(c.timeline.currentFrame)).toBe(10);
     expect(e.defaultPrevented).toBe(true);
   });
 
-  it('Alt+Page Up moves it one frame earlier', () => {
+  it('Alt+Page Up moves it one frame earlier', async () => {
     renderHook(() => useTimelineKeys());
-    getTimelineController().setClipStart(bar().id, 1); // 30 frames
+    await h.run({ type: 'moveLayersInTime', layers: [A], delta: 705_600_000, ripple: false }); // 1 s = 30 frames
     press(window, { key: 'PageUp', altKey: true });
+    await idle();
     expect(bar().start).toBe(29);
   });
 
-  it('Shift makes it ten frames, both ways', () => {
+  it('Shift makes it ten frames, both ways', async () => {
     renderHook(() => useTimelineKeys());
     press(window, { key: 'PageDown', altKey: true, shiftKey: true });
+    await idle();
     expect(bar().start).toBe(10);
     press(window, { key: 'PageUp', altKey: true, shiftKey: true });
+    await idle();
     expect(bar().start).toBe(0);
   });
 
-  it('is undoable', () => {
+  it('is undoable, one entry per press', async () => {
     renderHook(() => useTimelineKeys());
+    const before = historyLabels().length;
     press(window, { key: 'PageDown', altKey: true, shiftKey: true });
+    await idle();
     expect(bar().start).toBe(10);
-    getCommandSystem().getHistory().undo();
+    expect(historyLabels().length).toBe(before + 1);
+    await h.run({ type: 'undo' });
     expect(bar().start).toBe(0);
+    await h.run({ type: 'redo' });
+    expect(bar().start).toBe(10);
   });
 
   it('leaves the key alone with no layer selected', () => {
@@ -122,12 +129,14 @@ describe('Alt+Page Down / Page Up — nudge the selected layers', () => {
 });
 
 describe('] from the keyboard', () => {
-  it('moves the out point of a full-length layer to the playhead', () => {
+  it('moves the out point of a full-length layer to the playhead', async () => {
     renderHook(() => useTimelineKeys());
     const c = getTimelineController();
     c.timeline.seek(60);
     press(window, { key: ']' });
+    await idle();
     expect(bar().end).toBe(60);
+    expect(historyLabels().at(-1)).toBe('Move Layer Out Point');
   });
 });
 

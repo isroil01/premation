@@ -32,6 +32,7 @@ import { bumpScene } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { extractRange, liftRange, workAreaRange } from '@core/timeline/rangeEdits';
+import { barOf, rippleDeleteLayers } from './timelineEdits';
 
 function notify(message: string, level: 'success' | 'info' | 'warning' | 'error' = 'success'): void {
   useUIStore.getState().notify({ level, message, durationMs: 4000 });
@@ -49,8 +50,8 @@ export const TIMELINE_EXTRACT_COMMAND = asCommandId('timeline.extract');
  * back through the scene node would delete whichever came first.
  */
 export function rippleDeleteClip(clipId: string): void {
-  getTimelineController().rippleDeleteLayer(clipId);
-  bumpScene();
+  const bar = barOf(clipId);
+  if (bar) void rippleDeleteLayers([bar.nodeId]);
 }
 
 /**
@@ -68,8 +69,10 @@ export function rippleDeleteSelection(): number {
     .layersOfComp()
     .filter((l) => l.sourceId !== null && selected.has(l.sourceId) && !l.locked)
     .sort((a, b) => b.start - a.start);
-  for (const bar of bars) controller.rippleDeleteLayer(bar.id);
-  if (bars.length > 0) bumpScene();
+  // ONE engine command over the layers: the engine closes the union of the
+  // gaps in one pass, so the order problem above cannot arise (and the whole
+  // selection is one undo entry).
+  if (bars.length > 0) void rippleDeleteLayers([...new Set(bars.map((b) => b.sourceId!))]);
   return bars.length;
 }
 

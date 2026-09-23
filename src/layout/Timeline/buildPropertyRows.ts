@@ -23,9 +23,10 @@
  */
 
 import type { KeyId, NodeId } from '@app-types/common';
-import { defaultAnimation, makeKeyframeId, parseKeyframeId, POSITION_PSEUDO_PROP } from '@motion/animation';
+import { defaultAnimation, POSITION_PSEUDO_PROP } from '@motion/animation';
+import { parseUiKey, uiKeyId } from './keyframeSelectionIds';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { keyframeToCompTime, compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyframeToCompTime, getRemappedTime } from '@core/timeline/TimelineController';
 import { propertyLabel, resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { canWriteStaticPropertyValue } from '@core/inspector/propertyValue';
 import {
@@ -47,7 +48,7 @@ function scalarRow(nodeId: string, prop: string, keyframes: ReadonlyArray<{
     // node so `effect.<id>.<key>` reads "Glow Radius" and not its raw path.
     label: propertyLabel(prop, nodeId),
     keyframes: keyframes.map((kf, i, all) => ({
-      id: makeKeyframeId(nodeId, prop, kf.t) as KeyId,
+      id: uiKeyId(nodeId, prop, kf.t) as KeyId,
       nodeId: nodeId as NodeId,
       // Diamonds draw at the comp time where the renderer actually applies the
       // keyframe — the canonical inverse, which honors trim/sourceIn, the
@@ -85,7 +86,7 @@ function dataRow(
     prop,
     label: propertyLabel(prop, nodeId),
     keyframes: keyframes.map((kf, i, all) => ({
-      id: makeKeyframeId(nodeId, prop, kf.t) as KeyId,
+      id: uiKeyId(nodeId, prop, kf.t) as KeyId,
       nodeId: nodeId as NodeId,
       time: keyframeToCompTime(nodeId, kf.t, prop),
       // `text` can never tween, so its rows are always hold. Otherwise report
@@ -121,8 +122,9 @@ function mergedPositionRow(
       // — `kf.time` is absolute. The source row's id already encodes the exact
       // stored time, so lift it from there rather than round-tripping through
       // the (frame-quantizing) inverse conversion.
-      const layerT = parseKeyframeId(kf.id)?.t ?? compToKeyframeTime(nodeId, kf.time);
-      merged.set(kf.time, { ...kf, id: makeKeyframeId(nodeId, POSITION_PSEUDO_PROP, layerT) as KeyId });
+      // A display READ (the sampling axis), only when the id carries no time.
+      const layerT = parseUiKey(kf.id)?.t ?? getRemappedTime(nodeId, kf.time);
+      merged.set(kf.time, { ...kf, id: uiKeyId(nodeId, POSITION_PSEUDO_PROP, layerT) as KeyId });
     }
   }
   const members = axisRows.map((r) => r.prop);
@@ -149,7 +151,7 @@ function maskRow(nodeId: string, spec: StaticPropertyRow): TimelinePropertyTrack
     group: spec.group,
     animated: anim.length > 0 ? undefined : false,
     keyframes: anim.map((kf, i, all) => ({
-      id: makeKeyframeId(nodeId, MASK_ANIM_PROP, kf.t) as KeyId,
+      id: uiKeyId(nodeId, MASK_ANIM_PROP, kf.t) as KeyId,
       nodeId: nodeId as NodeId,
       time: keyframeToCompTime(nodeId, kf.t, MASK_ANIM_PROP),
       isFirst: i === 0,

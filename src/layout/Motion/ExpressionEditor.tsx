@@ -38,6 +38,9 @@ import {
 import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { unsupportedRangeKeys } from '@core/textExpr/applySourceTextResult';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import type { PropRef } from '@motion/engine-api';
+import { edit } from '@core/engine/uiEdits';
+import { propRefForTrack } from '@core/engine/propRefs';
 import { PickWhip } from '@components/PickWhip';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { insertAtCaret, whipExpression } from '@core/whip/whipTarget';
@@ -140,6 +143,10 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 
   const commit = (src: string): void => {
     setDraft(src);
+    // B3-legacy: engine gap — `setExpression` stores a FAILING expression
+    // disabled (AE's rule) while this editor keeps it on and shows the error
+    // live; and on a grouped property it sets every member, where this editor
+    // edits one member track.
     runAnimEdit('Set Expression', () => {
       defaultAnimation.setExpression(nodeId, prop, src);
     });
@@ -294,6 +301,14 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
               className={cn(styles.toggle, !enabled && styles.toggleOff)}
               title={enabled ? 'Disable expression (keeps the formula)' : 'Enable expression'}
               onClick={() => {
+                const ref = soleMemberRef(nodeId, prop);
+                if (ref) {
+                  void edit(enabled ? 'Disable Expression' : 'Enable Expression', {
+                    type: 'setExpressionEnabled', props: [ref], enabled: !enabled,
+                  });
+                  return;
+                }
+                // B3-legacy: engine gap — one member of a grouped property (see commit).
                 runAnimEdit(enabled ? 'Disable Expression' : 'Enable Expression', () => {
                   defaultAnimation.setExpressionEnabled(nodeId, prop, !enabled);
                 });
@@ -308,6 +323,12 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
               aria-label="Remove expression"
               onClick={() => {
                 setDraft('');
+                const ref = soleMemberRef(nodeId, prop);
+                if (ref) {
+                  void edit('Remove Expression', { type: 'setExpression', prop: ref, source: '', enabled: false });
+                  return;
+                }
+                // B3-legacy: engine gap — one member of a grouped property (see commit).
                 runAnimEdit('Remove Expression', () => {
                   defaultAnimation.removeExpression(nodeId, prop);
                 });
@@ -458,3 +479,13 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 }
 
 export default ExpressionEditor;
+
+/**
+ * The API property an expression row edits, when the row IS the whole property
+ * (a scalar, a data track, a separated dimension). Null for one member of a
+ * grouped property: an API expression command would reach every member.
+ */
+function soleMemberRef(nodeId: string, prop: string): PropRef | null {
+  const r = propRefForTrack(nodeId, prop);
+  return r && r.members.length <= 1 ? r.ref : null;
+}

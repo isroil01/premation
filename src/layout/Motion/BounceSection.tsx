@@ -144,6 +144,9 @@ export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
    * written is the only thing that distinguishes a bounce from nothing.
    */
   const run = (mode: 'append' | 'drop', ifNothing: string): void => {
+    // B3-legacy: a core assistant that computes AND writes per-member tracks
+    // (x/y, scale) in one call; it becomes an addKeyframes macro when the
+    // keyframe assistants migrate (their pure halves already exist).
     const result = applyBounce(nodeId, { atTime: playhead, mode, drop, bounce, squash: squashOpts });
     if (result) {
       revealBounce(nodeId);

@@ -16,13 +16,16 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { toggleLayerAudioMute } from '@core/audio/audioLayerSwitches';
-import { runDocumentEdit } from '@core/commands/documentEdit';
+import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { edit } from '@core/engine/uiEdits';
+import { labelIndexOf } from '@core/engine/model';
+import { moveBars, setWorkArea } from '@layout/Timeline/timelineEdits';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { setNodeLabelColor } from '@core/scene/labelColor';
 
@@ -130,23 +133,31 @@ export function PopoutTimeline(): JSX.Element {
       locked: node.locked ? 'Unlock layer' : 'Lock layer',
       solo: node.solo ? 'Unsolo layer' : 'Solo layer',
     };
-    runDocumentEdit(labels[field], () => {
-      if (field === 'visible') node.visible = node.visible === false;
-      else if (field === 'locked') node.locked = !node.locked;
-      else node.solo = !node.solo;
-      bumpScene();
-    });
+    const next = field === 'visible' ? node.visible === false : field === 'locked' ? !node.locked : !node.solo;
+    void edit(labels[field], { type: 'setLayerSwitches', layers: [trackId], patch: { [field]: next } });
   }, []);
 
   // The speaker switch, shared with the docked timeline so the pop-out is not a
-  // second implementation of one prop.
+  // second implementation of one prop. `toggleLayerAudioMute` only READS here
+  // (where the flag lives, which way it goes); the write is the engine's.
   const toggleAudioMute = useCallback((trackId: string): void => {
-    const edit = toggleLayerAudioMute(trackId);
-    if (!edit) return;
-    runDocumentEdit(edit.label, () => {
-      edit.apply();
-      bumpScene();
+    if (!defaultSceneGraph.getNode(trackId)) return;
+    const kind = readNodeKind(defaultSceneGraph.getNode(trackId)!);
+    if (kind !== 'audio' && kind !== 'video') return;
+    const muted = isLayerAudioMuted(trackId);
+    void edit(muted ? 'Unmute layer audio' : 'Mute layer audio', {
+      type: 'setLayerSwitches', layers: [trackId], patch: { audioEnabled: muted },
     });
+  }, []);
+
+  const setLabelColor = useCallback((trackId: string, color: string | undefined): void => {
+    const label = labelIndexOf(color);
+    if (color && label === 0) {
+      // B3-legacy: engine gap — a colour outside the layer label palette has no API label index.
+      setNodeLabelColor(trackId, color);
+      return;
+    }
+    void edit('Label Color', { type: 'setLayerSwitches', layers: [trackId], patch: { label } });
   }, []);
 
   return (
@@ -164,7 +175,7 @@ export function PopoutTimeline(): JSX.Element {
     <BottomTimeline
       model={model}
       onScrub={(t) => getTimelineController().seekSeconds(t)}
-      onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
+      onWorkAreaChange={(start, end) => { void setWorkArea(start, end); }}
       onScroll={(px) => getTimelineController().setScrollPixels(px)}
       onZoom={(next, anchorSeconds) => {
         const c = getTimelineController();
@@ -175,12 +186,7 @@ export function PopoutTimeline(): JSX.Element {
         else useSelectionStore.getState().set([trackId]);
       }}
       onTrackSelectMany={(trackIds) => useSelectionStore.getState().set([...trackIds])}
-      onClipMoveMany={(moves, label) =>
-        getTimelineController().setClipStarts(
-          moves.map((mv) => ({ layerId: mv.clipId, startSeconds: mv.start })),
-          label,
-        )
-      }
+      onClipMoveMany={(moves, label) => { void moveBars(moves, label); }}
       onTrackToggleVisible={(id) => toggleFlag(id, 'visible')}
       onTrackToggleLock={(id) => toggleFlag(id, 'locked')}
       onTrackToggleSolo={(id) => toggleFlag(id, 'solo')}
@@ -190,7 +196,7 @@ export function PopoutTimeline(): JSX.Element {
       onTrackToggleExpand={(id) => {
         setExpandedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
       }}
-      onTrackColorChange={(trackId, color) => setNodeLabelColor(trackId, color)}
+      onTrackColorChange={setLabelColor}
     />
       </div>
     </div>

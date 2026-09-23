@@ -33,6 +33,8 @@ import { getTime as playheadNow } from '@stores/playbackClockStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { clipRippleMenuItems } from '@layout/Timeline/clipEditCommands';
+import { deleteKeyframesUi, moveKeyframesTo } from '@layout/Timeline/keyframeEdits';
+import { moveBar, moveBars, setWorkArea as setTimelineWorkArea, slideBar, slipBar, trimBar } from '@layout/Timeline/timelineEdits';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { staticOrDefaultValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
@@ -929,7 +931,10 @@ function EditorShellInner(): JSX.Element {
     handleScrub(keyframeToCompTime(ref.nodeId, ref.t, ref.prop));
     setSelected([ref.nodeId]);
   };
-  const handleKeyframeMove = (kfId: string, time: number): void => {
+  // B3-legacy: the writers below run only when the engine API cannot address a
+  // key (a lone member of a grouped property keyed with its sibling — see
+  // layout/Timeline/keyframeEdits). Everything else goes through the engine.
+  const legacyKeyframeMove = (kfId: string, time: number): void => {
     const ref = parseKeyframeId(kfId);
     // The timeline commits once on release, so one move = one undoable command.
     if (ref) {
@@ -972,7 +977,7 @@ function EditorShellInner(): JSX.Element {
       }
     }
   };
-  const handleKeyframesDelete = (keyframeIds: ReadonlyArray<string>): void => {
+  const legacyKeyframesDelete = (keyframeIds: ReadonlyArray<string>): void => {
     const refs = keyframeIds
       .map((id) => parseKeyframeId(id))
       .filter((ref): ref is NonNullable<ReturnType<typeof parseKeyframeId>> => ref !== null);
@@ -990,6 +995,20 @@ function EditorShellInner(): JSX.Element {
         }
       }
     });
+  };
+  // Through the engine API (B3): one undo entry per release / delete.
+  const handleKeyframeMove = (kfId: string, time: number): void => {
+    if (time < 0) void deleteKeyframesUi([kfId], () => legacyKeyframeMove(kfId, time));
+    else void moveKeyframesTo([{ id: kfId, time }], () => legacyKeyframeMove(kfId, time));
+  };
+  const handleKeyframesMove = (moves: ReadonlyArray<{ keyframeId: string; time: number }>): void => {
+    void moveKeyframesTo(
+      moves.map((m) => ({ id: m.keyframeId, time: m.time })),
+      () => { for (const m of moves) legacyKeyframeMove(m.keyframeId, m.time); },
+    );
+  };
+  const handleKeyframesDelete = (keyframeIds: ReadonlyArray<string>): void => {
+    void deleteKeyframesUi(keyframeIds, () => legacyKeyframesDelete(keyframeIds));
   };
   /**
    * The keyframe navigator's diamond — the only affordance that creates a
@@ -1308,40 +1327,26 @@ function EditorShellInner(): JSX.Element {
   };
 
   // ── Clip editing (Timeline Engine layers) ─────────────────────────
+  // Through the engine API (B3): one undo entry per release, bar geometry
+  // computed with the timeline's own clip math — see layout/Timeline/timelineEdits.
   const handleClipMove = (clipId: string, start: number): void => {
-    getTimelineController().setClipStart(clipId, start);
+    void moveBar(clipId, start);
   };
   // A multi-row drag or a stagger: one undo entry for the whole gesture.
   const handleClipMoveMany = (
     moves: ReadonlyArray<{ clipId: string; start: number }>,
     label?: string,
   ): void => {
-    getTimelineController().setClipStarts(
-      moves.map((m) => ({ layerId: m.clipId, startSeconds: m.start })),
-      label,
-    );
+    void moveBars(moves, label);
   };
   const handleClipTrim = (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }): void => {
-    const c = getTimelineController();
-    if (opts?.ripple && edge === 'end') c.rippleTrimClipEnd(clipId, time);
-    else if (opts?.ripple && edge === 'start') c.rippleTrimClipStart(clipId, time);
-    else c.trimClipTo(clipId, edge, time);
+    void trimBar(clipId, edge, time, opts);
   };
   const handleClipSlip = (clipId: string, sourceInSec: number): void => {
-    const c = getTimelineController();
-    const layer = c.timeline.getLayer(clipId);
-    if (!layer) return;
-    const fps = c.timeline.getFrameRate().fps;
-    const currentIn = layer.clip.sourceIn / fps;
-    c.slipClip(clipId, sourceInSec - currentIn);
+    void slipBar(clipId, sourceInSec);
   };
   const handleClipSlide = (clipId: string, startSec: number): void => {
-    const c = getTimelineController();
-    const layer = c.timeline.getLayer(clipId);
-    if (!layer) return;
-    const fps = c.timeline.getFrameRate().fps;
-    const currentStart = layer.clip.start / fps;
-    c.slideClip(clipId, startSec - currentStart);
+    void slideBar(clipId, startSec);
   };
   /**
    * Is there a clip after this one on the same track?
@@ -1687,7 +1692,7 @@ function EditorShellInner(): JSX.Element {
             <BottomTimeline
               model={timelineModel}
               onScrub={handleScrub}
-              onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
+              onWorkAreaChange={(start, end) => { void setTimelineWorkArea(start, end); }}
               onClipMove={handleClipMove}
               onClipMoveMany={handleClipMoveMany}
               onClipTrim={handleClipTrim}
@@ -1730,6 +1735,7 @@ function EditorShellInner(): JSX.Element {
               }}
               onKeyframeSeek={handleKeyframeSeek}
               onKeyframeMove={handleKeyframeMove}
+              onKeyframesMove={handleKeyframesMove}
               onKeyframesDelete={handleKeyframesDelete}
               onKeyframeContextMenu={handleKeyframeContextMenu}
               onPropertyKeyframeToggle={handlePropertyKeyframeToggle}

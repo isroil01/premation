@@ -161,8 +161,16 @@ Rules:
   position** (start value + delta), never an increment: sends are
   latest-wins, intermediate messages may be dropped.
 - **Coalescable commands** (`setProperty`, `setProperties`, `setLayerTiming`,
-  `moveLayersInTime`, `moveKeyframes`, `updateKeyframes`, `trimLayers`, …, see
-  `[coalesce]` in the schema) are the ones to send per move.
+  `updateKeyframes`, …, see `[coalesce]` in the schema) are the ones to send
+  per move — and only in their **absolute** forms.
+- **Never send a relative command inside a gesture** (`moveKeyframes {delta}`,
+  `moveLayersInTime {delta}`, `trimLayers {delta}`): the engine applies each
+  message on top of the previous one and `GestureSession` drops intermediate
+  messages, so deltas double-apply or go missing. Compute the target from the
+  drag-start state and send `updateKeyframes {time}` / `setLayerTiming`
+  (absolute). Relative commands are for one-shot actions (a nudge key press,
+  a menu item). Found by the timeline migration; `layout/Timeline/
+  timelineEdits.ts` and `keyframeEdits.ts` are the reference.
 - **The gizmo moves from pointer state immediately**; the engine's refresh
   follows within a frame. Do not await sends in a pointermove handler.
 - **No React state per move** (CLAUDE.md performance rule): `useGesture` does
@@ -195,8 +203,12 @@ return [{ type: 'addKeyframes', keys: animated.map((r) => ({ prop: r.ref, time, 
   (AE setValueAtTime) — it creates or replaces the key at the playhead.
   Auto-keyframe on an unanimated property is `addKeyframes` with a value
   (`valueCommands` decides per layer).
-- **Moving keys** in a drag: `moveKeyframes { ids, delta }` per move inside a
-  gesture, delta from the drag START.
+- **Moving keys** in a drag: `updateKeyframes { patches: [{ id, time }] }`
+  with each key's ABSOLUTE target time (its drag-start time + the drag
+  delta) per move inside a gesture — not `moveKeyframes {delta}` (see §3). A
+  multi-key drag release is one undo entry
+  (`layout/Timeline/keyframeEdits.ts`). `moveKeyframes {delta}` is right for a
+  one-shot nudge.
 - **Easing / handles / hold / roving / labels**: `updateKeyframes` patches.
   Easy Ease, Keyframe Velocity, Toggle Hold are client macros that compute
   patches (ENGINE_API.md §1 rule 7).
