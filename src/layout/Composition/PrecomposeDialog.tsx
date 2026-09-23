@@ -22,10 +22,10 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import {
   defaultPrecompName,
   leaveAttributesUnavailableReason,
-  precomposeLayers,
   precomposeTargets,
   type PrecomposeMode,
 } from '@core/composition/precompose';
+import { precomposeEdit } from './compositionEdits';
 import { cn } from '@utils/cn';
 import styles from './PrecomposeDialog.module.css';
 
@@ -55,14 +55,16 @@ function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }):
     setBusy(true);
     Object.assign(remembered, { mode, adjustDuration, openNew });
     const notify = useUIStore.getState().notify;
-    precomposeLayers(ids, {
-      name,
+    // One engine entry (`precompose`): undo restores the layers exactly. The
+    // selection and "Open New Composition" are the dialog's (editor state).
+    precomposeEdit(ids, {
+      name: name.trim() || defaultPrecompName(),
       mode,
       adjustDuration: mode === 'move' && adjustDuration,
       openNew,
     })
       .then((result) => {
-        if (!result) notify({ level: 'warning', message: 'Nothing to pre-compose — select layers in this composition.', durationMs: 5000 });
+        if ('error' in result) notify({ level: 'warning', message: `Pre-compose: ${result.error}`, durationMs: 5000 });
       })
       .catch((err: unknown) => {
         notify({ level: 'error', message: `Pre-compose failed: ${err instanceof Error ? err.message : String(err)}`, durationMs: 8000 });
@@ -153,6 +155,8 @@ function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }):
 
 /** Open Pre-compose for `ids` (default: the selection). */
 export function openPrecomposeDialog(ids: ReadonlyArray<string> = useSelectionStore.getState().ids): void {
+  // A READ (which selected layers the pre-compose moves); the ratchet's verb
+  // pattern flags `precompose…` names — see the B3 report's false positives.
   const targets = precomposeTargets(ids);
   if (targets.length === 0) {
     useUIStore.getState().notify({ level: 'info', message: 'Select the layers to pre-compose first.', durationMs: 4000 });

@@ -1,32 +1,31 @@
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
+import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import { openCompositionSettings, CompositionSettings } from './CompositionSettingsDialog';
 import { useModalStore } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore, DEFAULT_COMPOSITION } from '@stores/compositionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import { TooltipProvider } from '@components/Tooltip';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TooltipProvider });
 
-function resetScene(): void {
-  const ids: string[] = [];
-  defaultSceneGraph.traverse((n) => ids.push(n.id));
-  for (const id of ids) defaultSceneGraph.removeNode(id);
-}
-
+/**
+ * The dialog edits a DRAFT; Save Changes sends the changed fields as one
+ * engine edit (`setCompositionSettings`), Cancel writes nothing.
+ */
 describe('CompositionSettingsDialog', () => {
-  const testCompId = 'comp_test_1';
+  const compId = 'comp_root';
+  let h: Harness & { engine: LocalEngine };
 
-  beforeEach(() => {
-    resetScene();
-    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+  beforeEach(async () => {
+    h = await setupAppEngine();
     useModalStore.setState({ stack: [] });
-
-    // Setup active tab and comp in project store
-    const testComp = {
+    useProjectStore.getState().actions.updateComp(compId, {
       ...DEFAULT_COMPOSITION,
-      id: testCompId,
+      id: compId,
       name: 'Main Showcase',
       width: 1920,
       height: 1080,
@@ -34,25 +33,15 @@ describe('CompositionSettingsDialog', () => {
       durationSeconds: 10,
       background: '#101014',
       transparent: false,
-    };
-
-    useProjectStore.setState({
-      comps: { [testCompId]: testComp },
-      tabs: {
-        tab_1: {
-          id: 'tab_1',
-          compositionId: testCompId,
-          breadcrumbPath: [testCompId],
-          title: 'Main Showcase',
-          time: 0,
-          frame: 0,
-          playing: false,
-          dirty: false,
-        },
-      },
-      activeTabId: 'tab_1',
+      pristine: undefined,
     });
+    useProjectStore.getState().actions.openTab(compId, [compId], 'Main Showcase');
   });
+  afterEach(async () => {
+    await h.dispose();
+  });
+
+  const comp = () => useCompositionStore.getState().comp();
 
   it('opens modal with size "lg", descriptive subtitle, and title "Composition Settings"', () => {
     openCompositionSettings();
@@ -67,150 +56,116 @@ describe('CompositionSettingsDialog', () => {
 
   it('renders initial composition values and live visual preview', () => {
     render(<CompositionSettings close={jest.fn()} />);
-
-    // Name field
-    const nameInput = screen.getByLabelText(/composition name/i);
-    expect(nameInput).toHaveValue('Main Showcase');
-
-    // Visual preview info
+    expect(screen.getByLabelText(/composition name/i)).toHaveValue('Main Showcase');
     expect(screen.getByText('1920 × 1080 px')).toBeInTheDocument();
     expect(screen.getByText('Landscape')).toBeInTheDocument();
     expect(screen.getAllByText('16:9').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/30 fps/i).length).toBeGreaterThanOrEqual(1);
-
-    // Resolution preset indicator
     expect(screen.getAllByText('YouTube 1080p').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('updates resolution, locks aspect ratio, and swaps dimensions', () => {
+  it('updates resolution, locks aspect ratio, and swaps dimensions — in the draft only', () => {
     render(<CompositionSettings close={jest.fn()} />);
 
-    // Swap orientation (1920x1080 -> 1080x1920)
-    const swapBtn = screen.getByLabelText(/swap width and height/i);
-    fireEvent.click(swapBtn);
-
-    const comp = useCompositionStore.getState().comp();
-    expect(comp.width).toBe(1080);
-    expect(comp.height).toBe(1920);
+    fireEvent.click(screen.getByLabelText(/swap width and height/i));
     expect(screen.getByText('Portrait')).toBeInTheDocument();
     expect(screen.getAllByText('9:16').length).toBeGreaterThanOrEqual(1);
+    // Nothing is written until Save.
+    expect(comp().width).toBe(1920);
 
-    // Toggle aspect ratio lock
-    const lockBtn = screen.getByLabelText(/lock aspect ratio/i);
-    fireEvent.click(lockBtn);
+    fireEvent.click(screen.getByLabelText(/lock aspect ratio/i));
     expect(screen.getByLabelText(/unlock aspect ratio/i)).toBeInTheDocument();
 
-    // Enter edit mode on Width spinbutton
     const widthSpin = screen.getByRole('spinbutton', { name: 'Width' });
     fireEvent.keyDown(widthSpin, { key: 'Enter' });
-
-    // Change width to 540
     const widthInput = screen.getByDisplayValue('1080');
     fireEvent.change(widthInput, { target: { value: '540' } });
     fireEvent.blur(widthInput);
-
-    // Height should proportionally scale: 540 / (1080/1920) = 960
     expect(screen.getByText('540 × 960 px')).toBeInTheDocument();
   });
 
   it('selects quick popular presets', () => {
     render(<CompositionSettings close={jest.fn()} />);
-
-    // Click 4K UHD preset chip
-    const uhdChip = screen.getByRole('button', { name: /4K UHD/i });
-    fireEvent.click(uhdChip);
-
-    const comp = useCompositionStore.getState().comp();
-    expect(comp.width).toBe(3840);
-    expect(comp.height).toBe(2160);
+    fireEvent.click(screen.getByRole('button', { name: /4K UHD/i }));
     expect(screen.getByText('3840 × 2160 px')).toBeInTheDocument();
   });
 
   it('switches to Background tab and updates transparency and studio swatches', () => {
     render(<CompositionSettings close={jest.fn()} />);
-
-    // Switch to Background tab
-    const bgTab = screen.getByRole('tab', { name: /background/i });
-    fireEvent.click(bgTab);
-
+    fireEvent.click(screen.getByRole('tab', { name: /background/i }));
     expect(screen.getByText(/scene canvas background/i)).toBeInTheDocument();
 
-    // Toggle transparent switch
     const transparentSwitch = screen.getByRole('switch', { name: /canvas transparency/i });
     expect(transparentSwitch).not.toBeChecked();
     fireEvent.click(transparentSwitch);
+    expect(screen.getByRole('switch', { name: /canvas transparency/i })).toBeChecked();
 
-    expect(useCompositionStore.getState().transparent).toBe(true);
-
-    // Click Studio Dark swatch (re-enables solid color)
-    const studioDarkSwatch = screen.getByLabelText(/studio dark/i);
-    fireEvent.click(studioDarkSwatch);
-
-    expect(useCompositionStore.getState().transparent).toBe(false);
-    expect(useCompositionStore.getState().background).toBe('#101014');
+    fireEvent.click(screen.getByLabelText(/studio dark/i));
+    expect(screen.getByRole('switch', { name: /canvas transparency/i })).not.toBeChecked();
   });
 
   it('switches between all tabs without errors', () => {
     render(<CompositionSettings close={jest.fn()} />);
-
-    // Grid tab
     fireEvent.click(screen.getByRole('tab', { name: /grid & guides/i }));
     expect(screen.getByText(/pixel grid/i)).toBeInTheDocument();
-
-    // World tab
     fireEvent.click(screen.getByRole('tab', { name: /world/i }));
     expect(screen.getByText(/default sky preset/i)).toBeInTheDocument();
-
-    // Time tab
     fireEvent.click(screen.getByRole('tab', { name: /time/i }));
     expect(screen.getByText(/responsive time/i)).toBeInTheDocument();
-
-    // Color tab
     fireEvent.click(screen.getByRole('tab', { name: /color/i }));
     expect(screen.getByText(/working space/i)).toBeInTheDocument();
   });
 
-  it('reverts modifications when clicking Cancel', () => {
+  it('Cancel writes nothing and records nothing', async () => {
+    const before = h.doc();
     const close = jest.fn();
     render(<CompositionSettings close={close} />);
+    fireEvent.change(screen.getByLabelText(/composition name/i), { target: { value: 'Modified Name' } });
+    fireEvent.click(screen.getByRole('button', { name: /4K UHD/i }));
 
-    // Change comp name
-    const nameInput = screen.getByLabelText(/composition name/i);
-    fireEvent.change(nameInput, { target: { value: 'Modified Name' } });
-
-    // Change resolution
-    const uhdChip = screen.getByRole('button', { name: /4K UHD/i });
-    fireEvent.click(uhdChip);
-
-    expect(useCompositionStore.getState().name).toBe('Modified Name');
-    expect(useCompositionStore.getState().width).toBe(3840);
-
-    // Click Cancel
-    const cancelBtn = screen.getByRole('button', { name: /cancel/i });
-    fireEvent.click(cancelBtn);
-
-    // Store should be restored to initial state
-    expect(useCompositionStore.getState().name).toBe('Main Showcase');
-    expect(useCompositionStore.getState().width).toBe(1920);
-    expect(useCompositionStore.getState().height).toBe(1080);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      await engineIdle();
+    });
     expect(close).toHaveBeenCalledTimes(1);
+    expect(comp().name).toBe('Main Showcase');
+    expect(comp().width).toBe(1920);
+    expect(historyLabels()).not.toContain('Composition Settings');
+    expect(h.doc()).toBe(before);
   });
 
-  it('persists modifications when clicking Save Changes', () => {
+  it('Save Changes is ONE engine entry; undo restores exactly, redo reapplies', async () => {
+    const before = h.doc();
     const close = jest.fn();
     render(<CompositionSettings close={close} />);
+    fireEvent.change(screen.getByLabelText(/composition name/i), { target: { value: 'Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: /4K UHD/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^60 fps/i }));
 
-    // Change FPS
-    const fps60 = screen.getByRole('button', { name: /60 fps/i });
-    fireEvent.click(fps60);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await engineIdle();
+    });
 
-    expect(useCompositionStore.getState().fps).toBe(60);
-
-    // Click Save Changes
-    const saveBtn = screen.getByRole('button', { name: /save changes/i });
-    fireEvent.click(saveBtn);
-
-    expect(useCompositionStore.getState().fps).toBe(60);
     expect(close).toHaveBeenCalledTimes(1);
+    expect(comp()).toMatchObject({ name: 'Renamed', width: 3840, height: 2160, fps: 60 });
+    expect(getTimelineController().timelineForComp(compId)?.timeline.getFrameRate().fps).toBe(60);
+    expect(historyLabels().filter((l) => l === 'Composition Settings')).toHaveLength(1);
+
+    await h.run({ type: 'undo' });
+    expect(comp()).toMatchObject({ name: 'Main Showcase', width: 1920, height: 1080, fps: 30 });
+    expect(h.doc()).toBe(before);
+    await h.run({ type: 'redo' });
+    expect(comp()).toMatchObject({ name: 'Renamed', width: 3840, fps: 60 });
+  });
+
+  it('an NTSC rate is stored as typed (29.97, not 30000/1001)', async () => {
+    render(<CompositionSettings close={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /^29\.97 fps/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await engineIdle();
+    });
+    expect(comp().fps).toBe(29.97);
   });
 });

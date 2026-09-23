@@ -247,6 +247,7 @@ export async function deleteTimeRanges(
     ? 'Delete Transcript Selection'
     : `Delete ${merged.length} Transcript Selections`;
 
+  // B3-legacy: engine gap — a TIME-RANGE ripple delete: cut only the unlocked (optionally restricted) bars at both edges, delete what lies inside, then close the gap ONCE over every unlocked bar. `editWorkArea{extract}` works on the work area only, ignores locks and ripples only the layers it cuts.
   return runAsOneHistoryEntry(label, () => {
     const result: DeleteRangesResult = { removedSeconds: deletedDuration(merged), splits: 0, deletedClips: 0 };
     const fps = controller.fps;
@@ -363,6 +364,7 @@ export function addTranscriptAsCaptions(rootId: string = activeCompRootId()): nu
   // Replacing, not adding — the same argument `captionCommands.importCaptions`
   // makes: a second pass over an unremoved first is doubled text on screen,
   // which reads as a renderer bug rather than as the user's own second click.
+  // B3-legacy: engine gap — caption layers are styled text layers (`__caption`, caption style); rich createLayer (text styles) is not in the API yet.
   if (existing > 0) removeCaptionLayers(rootId);
   const result = insertCaptionLayers(cues);
   notify(

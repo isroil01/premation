@@ -115,6 +115,7 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
       title={`${preset.name} — click to add, drag to place`}
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'animPreset', presetId: preset.id })}
+      // B3-legacy: engine gap — an animation preset from the LIBRARY inserts a whole styled layer tree (rich createLayer / library items).
       onClick={() => insertAnimPreset(preset.id)}
     >
       <span className={styles.previewFrame} data-aspect="16:9">
@@ -236,6 +237,7 @@ export function TemplateAuthoringSection(): JSX.Element | null {
 
       {fields.length > 0 && (
         <>
+          {/* B3-legacy: engine gap — authored template fields (label, id, removal) live on the composition ROOT node's props; compositions are items, and no API command addresses comp-root props. */}
           <div className={styles.authoredList}>
             {fields.map((f) => (
               <div key={f.id} className={styles.authoredCard}>

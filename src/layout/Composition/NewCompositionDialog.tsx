@@ -8,14 +8,8 @@ import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { type CompositionSettings } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { createOrAdoptComposition, deleteComposition, pristineCompToAdopt } from '@core/composition/compositionOps';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
-import { shortId } from '@utils/lang';
+import { createCompositionEdit } from './compositionEdits';
 import {
   SIZE_PRESETS,
   SIZE_GROUPS,
@@ -50,39 +44,12 @@ const STUDIO_COLOR_SWATCHES = [
 
 type CategoryFilter = 'popular' | 'social' | 'video' | 'cinema' | 'all';
 
-/**
- * "New Composition" ADDS a composition — it does not touch the existing scene.
+/*
+ * "New Composition" ADDS a composition — it does not touch the existing scene
+ * (in a fresh project it configures the auto-minted pristine comp instead;
+ * see `createCompositionEdit`). One engine entry; undo removes the comp (or
+ * restores the adopted one) exactly.
  */
-export class CreateCompositionCommand implements IUndoableCommand {
-  readonly label = 'New Composition';
-  private createdId: string | null = null;
-  private adoptedPrevious: CompositionSettings | null = null;
-
-  constructor(
-    private readonly init: Partial<CompositionSettings> & { id: string },
-    private readonly previousTabId: string | null,
-  ) {}
-
-  execute(_ctx: CommandContext): void {
-    const adoptId = pristineCompToAdopt();
-    this.adoptedPrevious = adoptId
-      ? structuredClone(useProjectStore.getState().comps[adoptId] ?? null)
-      : null;
-    this.createdId = createOrAdoptComposition(this.init);
-  }
-
-  undo(_ctx: CommandContext): void {
-    if (this.createdId && this.adoptedPrevious && this.createdId === this.adoptedPrevious.id) {
-      useProjectStore.getState().actions.updateComp(this.createdId, this.adoptedPrevious);
-      const root = defaultSceneGraph.getNode(this.createdId);
-      if (root) root.name = this.adoptedPrevious.name;
-      bumpScene();
-    } else if (this.createdId) {
-      deleteComposition(this.createdId);
-    }
-    if (this.previousTabId) useProjectStore.getState().actions.setActiveTab(this.previousTabId);
-  }
-}
 
 export function NewComposition({ close }: { close: () => void }): JSX.Element {
   // Generate a smart, non-colliding default name like "Comp 1", "Comp 2", etc.
@@ -218,24 +185,16 @@ export function NewComposition({ close }: { close: () => void }): JSX.Element {
   const timecodeString = framesToTimecode(duration, fps);
 
   const handleCreate = (): void => {
-    const previousTabId = useProjectStore.getState().activeTabId;
-    const command = new CreateCompositionCommand(
-      {
-        id: `comp_${shortId()}`,
-        name: name.trim() || 'Comp 1',
-        width: clampDimension(width),
-        height: clampDimension(height),
-        fps: clampFps(fps),
-        durationSeconds: clampDuration(duration),
-        background,
-        transparent,
-      },
-      previousTabId,
-    );
-
-    command.execute({} as CommandContext);
-    getCommandSystem().getHistory().push(command);
     close();
+    void createCompositionEdit({
+      name: name.trim() || 'Comp 1',
+      width: clampDimension(width),
+      height: clampDimension(height),
+      fps: clampFps(fps),
+      durationSeconds: clampDuration(duration),
+      background,
+      transparent,
+    });
   };
 
   // Enter creates the comp

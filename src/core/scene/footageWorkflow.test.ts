@@ -152,6 +152,7 @@ describe('the controls are reachable', () => {
     expect(dlg).toMatch(/Add to Comp/);
     expect(dlg).toMatch(/Add at Playhead/);
     expect(dlg).toMatch(/createCompositionFromFootage/);
-    expect(dlg).toMatch(/retargetLayerSource/);
+    // Replace goes through the engine (`replaceLayerSource`), one undo entry.
+    expect(dlg).toMatch(/replaceSourceWithAsset/);
   });
 });

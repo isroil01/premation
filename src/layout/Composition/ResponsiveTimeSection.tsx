@@ -51,6 +51,7 @@ export function ResponsiveTimeSection(): JSX.Element {
   const stretch = flexAuthored > 1e-9 ? flexCurrent / flexAuthored : 1;
 
   const write = (next: ProtectedRegion[]): void => {
+    // B3-legacy: engine gap — Responsive Time lives on the composition ROOT node's props; compositions are items, not layers, and no API command (nor CompSettingsPatch field) carries protected regions.
     setResponsiveTime(rootId, next.length > 0
       ? { authoredDurationSec: authored, protectedRegions: next }
       : undefined);
@@ -62,6 +63,7 @@ export function ResponsiveTimeSection(): JSX.Element {
       // Capture the authored duration HERE — at the moment of marking — not on
       // every write. Re-deriving it later would make the map an identity
       // forever, because authored and current would always be equal.
+      // B3-legacy: engine gap — comp-root Responsive Time (see `write`).
       setResponsiveTime(rootId, {
         authoredDurationSec: comp.durationSeconds,
         protectedRegions: [first],

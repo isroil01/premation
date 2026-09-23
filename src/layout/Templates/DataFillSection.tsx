@@ -95,6 +95,7 @@ export function DataFillSection({ fields }: { fields: ReadonlyArray<TemplateFiel
     if (!table || batch) return;
     const r = table.rows[index];
     if (!r) return;
+    // B3-legacy: engine gap — template fields bind arbitrary component props (text content, colours, image sources); no generic component-prop binding in the API yet.
     const result = applyDataRow(fields, r, `Fill row ${index + 1}`);
     setRow(index);
     if (result.filled.length === 0) {

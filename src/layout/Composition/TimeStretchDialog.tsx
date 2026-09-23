@@ -106,6 +106,7 @@ function TimeStretchDialog({ ids, close }: { ids: string[]; close: () => void })
     }
     remembered.hold = hold;
     // One undo entry; the edit is applied synchronously inside, so closing now is safe.
+    // B3-legacy: engine gap — `setLayerTiming.stretch` sets only the factor: no Hold in Place (bar scaled about the in point / current frame / out point with sourceIn re-solved), no non-footage bake (bar + keyframes + layer markers scaled, negative = reversed).
     void applyTimeStretch(ids, clampSignedStretch(percent), hold);
     close();
   };

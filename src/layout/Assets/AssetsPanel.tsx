@@ -85,7 +85,8 @@ import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { insertMedia } from '@core/scene/sceneInsert';
-import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { insertMediaAtPlayhead, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { setPanelAssetSelection } from '@core/composition/assetSelection';
 import { assetIdOf } from '@core/source/sourceInfo';
@@ -101,6 +102,16 @@ import { AssetDrawer } from './AssetDrawer';
 import { MediaBrowser, canBrowseMedia } from './MediaBrowser';
 import { installAssetCommands, revealLabel, setAssetImportOpeners } from './assetCommands';
 import { assetDiskPath, canRevealAssets, revealAsset } from './assetReveal';
+import {
+  createFolderEdit,
+  createFolderTreeEdit,
+  importPathsEdit,
+  layersUsingItems,
+  moveItemsEdit,
+  removeItemsEdit,
+  renameItemEdit,
+  setItemTagsEdit,
+} from './assetEdits';
 import {
   filterAssets,
   formatBytes,
@@ -165,15 +176,11 @@ export function AssetsPanel(): JSX.Element {
 
   const assets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
+  // B3-legacy: engine gap — `importFiles` imports by PATH; a browser `File` (the picker's <input>, an OS drop, Import Folder) carries none in Electron 44, so those routes keep the store's importer (desktop Import Files… goes through the engine, see `openImportFiles`).
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
-  const removeAsset = useAssetStore((s) => s.removeAsset);
-  const removeAssets = useAssetStore((s) => s.removeAssets);
-  const createFolder = useAssetStore((s) => s.createFolder);
-  const renameFolder = useAssetStore((s) => s.renameFolder);
-  const removeFolder = useAssetStore((s) => s.removeFolder);
-  const moveAssetToFolder = useAssetStore((s) => s.moveAssetToFolder);
-  const setTags = useAssetStore((s) => s.setTags);
+  // B3-legacy: engine gap — the store keeps a LABEL_COLORS id (`'slate'`) in `label`; `setItemLabel` writes the label's hex colour, which this panel (and the bundle's saved labels) would no longer recognise.
   const setLabel = useAssetStore((s) => s.setLabel);
+  const setTags = (assetId: string, tags: string[]): void => { void setItemTagsEdit([{ id: assetId, tags }]); };
 
   const view = useAssetsViewStore((s) => s.view);
   const setView = useAssetsViewStore((s) => s.setView);
@@ -215,15 +222,48 @@ export function AssetsPanel(): JSX.Element {
   const modelInputRef = useRef<HTMLInputElement | null>(null);
   // The pickers as COMMANDS ("Assets: Import Files…" in the palette, a File
   // menu row when one is added) — they can only open while the inputs exist.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  /*
+    Import Files… On the desktop the OS dialog hands back PATHS, which is what
+    the engine's `importFiles` takes: the import is one undo entry and every
+    record keeps the file's path (Reveal, Collect Files). The browser build —
+    and a desktop without the bridge — keeps the <input> picker. 3D models are
+    not media: the path dialog filters them out, and "Import 3D Model…" keeps
+    its own <input> (a .gltf needs its sidecars as bytes).
+  */
+  const currentFolderRef = useRef<string | null>(null);
+  currentFolderRef.current = currentFolderId;
+  const openImportFiles = (): void => {
+    const pick = typeof window !== 'undefined' ? window.motionEditor?.shell?.pickFiles : undefined;
+    if (typeof pick !== 'function') {
+      fileInputRef.current?.click();
+      return;
+    }
+    void (async () => {
+      const chosen = await pick();
+      if (!chosen || chosen.length === 0) return;
+      const folder = currentFolderRef.current;
+      const { imported, failed } = await importPathsEdit(
+        chosen,
+        folder && useAssetStore.getState().folders.some((f) => f.id === folder) ? folder : null,
+      );
+      if (failed.length > 0) {
+        const names = failed.map((p) => p.replace(/^.*[\\/]/, ''));
+        useUIStore.getState().notify({ level: 'error', message: `Could not import ${names.join(', ')}.`, durationMs: 5000 });
+      }
+      announceImport(imported);
+    })();
+  };
+  const openImportFilesRef = useRef(openImportFiles);
+  openImportFilesRef.current = openImportFiles;
   useEffect(() => {
     setAssetImportOpeners({
-      files: () => fileInputRef.current?.click(),
+      files: () => openImportFilesRef.current(),
       folder: () => folderInputRef.current?.click(),
     });
     return () => setAssetImportOpeners(null);
   }, []);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [scrollToKey, setScrollToKey] = useState<string | null>(null);
@@ -312,6 +352,7 @@ export function AssetsPanel(): JSX.Element {
         label: 'Add to composition',
         onSelect: () => {
           void (async () => {
+            // B3-legacy: engine gap — `createLayer` has no media fitting (contain-fit, PAR, SVG paths, sequences, audio routing, placement at the active comp's playhead) that `insertMedia` applies.
             for (const a of created) await insertMedia(a);
           })();
         },
@@ -331,6 +372,7 @@ export function AssetsPanel(): JSX.Element {
       useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
       return;
     }
+    // B3-legacy: engine gap — an OS drop gives `File`s without paths (see addAssetsBatch).
     const created = await addAssetsBatch(media.map((file) => ({ file, folderId: currentFolderId })));
     announceImport(created);
   };
@@ -409,34 +451,26 @@ export function AssetsPanel(): JSX.Element {
   const handleFolderChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    // Cache of "relative path → folderId" so shared parents are created once.
-    const pathToId = new Map<string, string | null>();
-    pathToId.set('', currentFolderId);
-    const ensureFolder = (segments: string[]): string | null => {
-      let parentId = currentFolderId;
-      let key = '';
-      for (const seg of segments) {
-        key = key ? `${key}/${seg}` : seg;
-        if (!pathToId.has(key)) {
-          const created = createFolder(seg, parentId);
-          pathToId.set(key, created.id);
-        }
-        parentId = pathToId.get(key) ?? null;
+    // Recreate the full picked structure: "MyPack/logos/a.png" → folders
+    // "MyPack" then "MyPack/logos", with a.png filed in the leaf. Every folder
+    // path, parents first, created as ONE engine entry.
+    const picked = Array.from(files).map((file) => ({
+      file,
+      dir: ((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name).split('/').slice(0, -1).join('/'),
+    }));
+    const folderPaths: string[] = [];
+    for (const { dir } of picked) {
+      const segs = dir ? dir.split('/') : [];
+      for (let i = 1; i <= segs.length; i++) {
+        const key = segs.slice(0, i).join('/');
+        if (!folderPaths.includes(key)) folderPaths.push(key);
       }
-      return parentId;
-    };
-    const items: Array<{ file: File; folderId: string | null }> = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file) continue;
-      const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      const parts = rel.split('/');
-      // Recreate the full picked structure: "MyPack/logos/a.png" → folders
-      // "MyPack" then "MyPack/logos", with a.png filed in the leaf.
-      const folderSegments = parts.slice(0, -1);
-      const targetFolder = ensureFolder(folderSegments);
-      items.push({ file, folderId: targetFolder });
     }
+    const pathToId = await createFolderTreeEdit(folderPaths, currentFolderId);
+    const items: Array<{ file: File; folderId: string | null }> = picked.map(({ file, dir }) => ({
+      file,
+      folderId: dir ? pathToId.get(dir) ?? currentFolderId : currentFolderId,
+    }));
     if (items.length > 0) {
       announceImport(await addAssetsBatch(items));
     }
@@ -457,36 +491,42 @@ export function AssetsPanel(): JSX.Element {
     let name = base;
     let n = 2;
     while (siblings.some((f) => f.name === name)) name = `${base} ${n++}`;
-    const created = createFolder(name, validParentId);
-    setCurrentFolderId(created.id);
-    setRenamingId(created.id);
-    setScrollToKey(created.id);
-    setSelectedAssetIds(new Set());
-    setSelectionAnchor(null);
+    void createFolderEdit(name, validParentId).then((id) => {
+      if (!id) return;
+      setCurrentFolderId(id);
+      setRenamingId(id);
+      setScrollToKey(id);
+      setSelectedAssetIds(new Set());
+      setSelectionAnchor(null);
+    });
   };
 
   /*
    * Confirmed deletes.
    *
-   * Both are reached only from the right-click menu now, so a confirm is the
-   * one guard between "opened a menu" and "the file is gone" — there is no
-   * undo for an asset removal.
+   * Removing an item is an engine edit (`removeItems`): one undo entry, and
+   * undo brings the item — and any layer that used it — back with the same
+   * ids. The confirm stays because a delete also takes the LAYERS that show
+   * the file (AE asks the same), and it says how many.
    */
+  const usageNote = (ids: readonly string[]): string => {
+    const n = layersUsingItems(ids);
+    return n === 0 ? '' : ` ${n} layer${n === 1 ? ' uses' : 's use'} ${ids.length === 1 ? 'it' : 'them'} and will be deleted too.`;
+  };
   const deleteAsset = async (asset: ImportedAsset): Promise<void> => {
     const ok = await customConfirm(
       `Delete “${asset.name}”`,
-      'This removes the asset from the project. This can’t be undone.',
+      `This removes the asset from the project.${usageNote([asset.id])} Undo brings it back.`,
       { confirmLabel: 'Delete', isDanger: true },
     );
-    if (ok) removeAsset(asset.id);
+    if (ok) await removeItemsEdit([asset.id], 'Delete Asset');
   };
 
   /**
    * Delete the whole selection.
    *
    * Names are listed up to a point and then counted. A confirm that renders
-   * fifty filenames is a confirm nobody reads, and this is the dialog standing
-   * in front of an action with no undo.
+   * fifty filenames is a confirm nobody reads.
    */
   const deleteSelectedAssets = async (): Promise<void> => {
     const ids = [...selectedAssetIds];
@@ -503,11 +543,11 @@ export function AssetsPanel(): JSX.Element {
     const rest = names.length - Math.min(names.length, 5);
     const ok = await customConfirm(
       `Delete ${ids.length} assets`,
-      `${shown}${rest > 0 ? `\n…and ${rest} more` : ''}\n\nThis removes them from the project. This can’t be undone.`,
+      `${shown}${rest > 0 ? `\n…and ${rest} more` : ''}\n\nThis removes them from the project.${usageNote(ids)} Undo brings them back.`,
       { confirmLabel: `Delete ${ids.length}`, isDanger: true },
     );
     if (!ok) return;
-    removeAssets(ids);
+    if (!(await removeItemsEdit(ids, `Delete ${ids.length} Assets`))) return;
     setSelectedAssetIds(new Set());
     setSelectionAnchor(null);
   };
@@ -518,14 +558,14 @@ export function AssetsPanel(): JSX.Element {
     const ok = await customConfirm(
       `Delete “${folder.name}”`,
       assetCount || subCount
-        ? `This deletes the folder and everything inside it (${assetCount} asset${assetCount === 1 ? '' : 's'}${subCount ? `, ${subCount} subfolder${subCount === 1 ? '' : 's'}` : ''}). This can’t be undone.`
+        ? `This deletes the folder and everything inside it (${assetCount} asset${assetCount === 1 ? '' : 's'}${subCount ? `, ${subCount} subfolder${subCount === 1 ? '' : 's'}` : ''}). Undo brings it back.`
         : 'Delete this empty folder?',
       { confirmLabel: 'Delete', isDanger: true },
     );
     if (ok) {
       if (currentFolderId === folder.id) setCurrentFolderId(null);
       if (scrollToKey === folder.id) setScrollToKey(null);
-      removeFolder(folder.id);
+      await removeItemsEdit([folder.id], 'Delete Folder');
     }
   };
 
@@ -544,11 +584,12 @@ export function AssetsPanel(): JSX.Element {
     );
     if (text === null || text === undefined) return;
     const next = parseTags(text);
-    for (const a of targets) {
+    // One entry for the whole selection.
+    await setItemTagsEdit(targets.map((a) => {
       // Multi-edit replaces only the SHARED tags; each asset keeps its own.
       const own = targets.length === 1 ? [] : (a.tags ?? []).filter((t) => !shared.includes(t));
-      setTags(a.id, parseTags([...own, ...next].join(',')));
-    }
+      return { id: a.id, tags: parseTags([...own, ...next].join(',')) };
+    }));
   };
 
   /** "Label" submenu — the same palette the Layers panel uses. */
@@ -603,6 +644,7 @@ export function AssetsPanel(): JSX.Element {
         id: 'add',
         label: many ? `Add ${count} to Composition` : 'Add to Composition',
         onSelect: () => {
+          // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
           if (!many) { void insertMedia(asset); return; }
           // In the panel's own row order, so what lands in the comp matches
           // what the user sees rather than the order they happened to click.
@@ -621,6 +663,7 @@ export function AssetsPanel(): JSX.Element {
         id: 'add-at-playhead',
         label: many ? `Add ${count} at Playhead` : 'Add at Playhead',
         onSelect: () => {
+          // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
           if (!many) { void insertMediaAtPlayhead(asset); return; }
           for (const a of targets) void insertMediaAtPlayhead(a);
         },
@@ -633,6 +676,7 @@ export function AssetsPanel(): JSX.Element {
         id: 'comp-from-footage',
         label: 'New Comp from Footage',
         disabled: many,
+        // B3-legacy: engine gap — `createComposition{fromItems}` does not conform like this does (adopting the fresh project's pristine comp, the clip name sans extension, the app-default fallbacks, `insertMedia`'s full-frame placement).
         onSelect: () => { void createCompositionFromFootage(asset); },
       },
       {
@@ -683,7 +727,8 @@ export function AssetsPanel(): JSX.Element {
         return [{
           id: 'use-as-source',
           label: `Use as Source for “${name}”`,
-          onSelect: () => { retargetLayerSource(target, asset); },
+          // `replaceLayerSource` (keep size): undoable, where the old direct write was not.
+          onSelect: () => { void replaceSourceWithAsset(target, asset.id); },
         }];
       })(),
       { id: 'sep-org', separator: true },
@@ -718,11 +763,13 @@ export function AssetsPanel(): JSX.Element {
         id: 'new',
         label: 'New Subfolder',
         onSelect: () => {
-          const created = createFolder('New Folder', folder.id);
-          // Open the parent, or the folder just created is filed somewhere the
-          // user cannot see and the rename box appears attached to nothing.
-          setExpandedFolders((cur) => new Set(cur).add(folder.id));
-          setRenamingId(created.id);
+          void createFolderEdit('New Folder', folder.id).then((id) => {
+            if (!id) return;
+            // Open the parent, or the folder just created is filed somewhere the
+            // user cannot see and the rename box appears attached to nothing.
+            setExpandedFolders((cur) => new Set(cur).add(folder.id));
+            setRenamingId(id);
+          });
         },
       },
       { id: 'sep-f', separator: true },
@@ -975,7 +1022,7 @@ export function AssetsPanel(): JSX.Element {
           onDrop={(e) => {
             e.preventDefault();
             const assetId = e.dataTransfer.getData('text/asset-id');
-            if (assetId) moveAssetToFolder(assetId, row.folder.id);
+            if (assetId) void moveItemsEdit([assetId], row.folder.id);
             setDropFolderId(null);
           }}
         >
@@ -1003,14 +1050,14 @@ export function AssetsPanel(): JSX.Element {
               onClick={(e) => e.stopPropagation()}
               onBlur={(e) => {
                 const val = e.target.value.trim();
-                if (val) renameFolder(row.folder.id, val);
+                if (val) void renameItemEdit(row.folder.id, val);
                 setRenamingId(null);
               }}
               onKeyDown={(e) => {
                 e.stopPropagation();
                 if (e.key === 'Enter') {
                   const val = (e.target as HTMLInputElement).value.trim();
-                  if (val) renameFolder(row.folder.id, val);
+                  if (val) void renameItemEdit(row.folder.id, val);
                   setRenamingId(null);
                 }
                 if (e.key === 'Escape') setRenamingId(null);
@@ -1046,7 +1093,7 @@ export function AssetsPanel(): JSX.Element {
         onDrop={(e) => {
           e.preventDefault();
           const assetId = e.dataTransfer.getData('text/asset-id');
-          if (assetId) moveAssetToFolder(assetId, row.folder.id);
+          if (assetId) void moveItemsEdit([assetId], row.folder.id);
           setDropFolderId(null);
         }}
       >
@@ -1074,14 +1121,14 @@ export function AssetsPanel(): JSX.Element {
             onClick={(e) => e.stopPropagation()}
             onBlur={(e) => {
               const val = e.target.value.trim();
-              if (val) renameFolder(row.folder.id, val);
+              if (val) void renameItemEdit(row.folder.id, val);
               setRenamingId(null);
             }}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === 'Enter') {
                 const val = (e.target as HTMLInputElement).value.trim();
-                if (val) renameFolder(row.folder.id, val);
+                if (val) void renameItemEdit(row.folder.id, val);
                 setRenamingId(null);
               }
               if (e.key === 'Escape') setRenamingId(null);
@@ -1105,7 +1152,7 @@ export function AssetsPanel(): JSX.Element {
       onDrop={(e) => {
         e.preventDefault();
         const assetId = e.dataTransfer.getData('text/asset-id');
-        if (assetId) moveAssetToFolder(assetId, row.folder.id);
+        if (assetId) void moveItemsEdit([assetId], row.folder.id);
         setDropFolderId(null);
       }}
     >
@@ -1276,7 +1323,7 @@ export function AssetsPanel(): JSX.Element {
                   type="button"
                   className={styles.assetImportMain}
                   title="Import files into the project (they are not added to the composition)"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openImportFiles}
                 >
                   <Icon name="upload" size="sm" />
                   <span>Import</span>
@@ -1295,7 +1342,7 @@ export function AssetsPanel(): JSX.Element {
                     </button>
                   }
                   items={[
-                    { type: 'item', id: 'files', label: 'Import Files…', icon: 'upload', onSelect: () => fileInputRef.current?.click() },
+                    { type: 'item', id: 'files', label: 'Import Files…', icon: 'upload', onSelect: openImportFiles },
                     { type: 'item', id: 'folder', label: 'Import Folder…', icon: 'folder-open', onSelect: () => folderInputRef.current?.click() },
                     { type: 'separator' },
                     { type: 'item', id: 'model', label: 'Import 3D Model…', icon: 'cube', onSelect: () => modelInputRef.current?.click() },
@@ -1418,7 +1465,7 @@ export function AssetsPanel(): JSX.Element {
                 openContextMenu(e.clientX, e.clientY, [
                   { id: 'new-folder', label: 'New Folder', onSelect: handleNewFolder },
                   { id: 'sep-e1', separator: true },
-                  { id: 'import-files', label: 'Import Files…', onSelect: () => fileInputRef.current?.click() },
+                  { id: 'import-files', label: 'Import Files…', onSelect: openImportFiles },
                   { id: 'import-folder', label: 'Import Folder…', onSelect: () => folderInputRef.current?.click() },
                 ]);
               }
@@ -1490,7 +1537,7 @@ export function AssetsPanel(): JSX.Element {
                       size="sm"
                       variant="primary"
                       icon={<Icon name="upload" size="sm" />}
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={openImportFiles}
                     >
                       Import
                     </Button>
@@ -1548,6 +1595,7 @@ export function AssetsPanel(): JSX.Element {
                 disabled={!singleSelectedAsset || singleSelectedAsset.type === 'audio'}
                 title="Create New Composition from Footage (or drag & drop footage here)"
                 onClick={() => {
+                  // B3-legacy: engine gap — comp-from-footage conform (see the row menu's New Comp from Footage).
                   if (singleSelectedAsset) void createCompositionFromFootage(singleSelectedAsset);
                 }}
                 onDragOver={(e) => {
@@ -1561,6 +1609,7 @@ export function AssetsPanel(): JSX.Element {
                   const assetId = e.dataTransfer.getData('text/asset-id');
                   const dropped = assets.find((a) => a.id === assetId);
                   if (dropped && dropped.type !== 'audio') {
+                    // B3-legacy: engine gap — comp-from-footage conform.
                     void createCompositionFromFootage(dropped);
                   }
                 }}
@@ -1591,6 +1640,7 @@ export function AssetsPanel(): JSX.Element {
                 onClick={() => {
                   const picked = assets.filter((a) => selectedAssetIds.has(a.id));
                   void (async () => {
+                    // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
                     for (const a of picked) await insertMedia(a);
                   })();
                 }}
@@ -1605,6 +1655,7 @@ export function AssetsPanel(): JSX.Element {
                 aria-label="Add at playhead"
                 onClick={() => {
                   const picked = assets.filter((a) => selectedAssetIds.has(a.id));
+                  // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
                   for (const a of picked) void insertMediaAtPlayhead(a);
                 }}
               >

@@ -12,11 +12,11 @@
  * PRE-MINTED asset id. The viewport accepts the drag (it carries the shared
  * MIME) but does not yet know this kind, so on `dragend` — which fires on the
  * source after the drop, with `dropEffect` saying whether anything took it —
- * the row imports the file and, if no layer picked the asset up in the
- * meantime, adds it to the composition itself. A drop target that learns
- * the kind later can call `importMediaFile` with the payload's id and place
- * the layer under the cursor; this fallback then sees the asset in use and
- * stays out of the way.
+ * the row imports the file through the engine (`importFiles`, one undo entry)
+ * and adds it to the composition itself. A drop target that learns the kind
+ * later must import through `importFiles` too (the engine mints item ids, so
+ * the payload's pre-minted id is not the item's) and this fallback must then
+ * learn to stand aside.
  *
  * Desktop only: the tab is not rendered without `window.motionEditor.shell`.
  */
@@ -31,10 +31,8 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { insertMedia } from '@core/scene/sceneInsert';
 import { insertMediaAtPlayhead } from '@core/scene/footageWorkflow';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { assetIdOf } from '@core/source/sourceInfo';
-import { importMediaFile, mintAssetId } from '@core/assets/local/importFromDisk';
-import type { ImportedAsset } from '@stores/assetStore';
+import { mintAssetId } from '@core/assets/local/importFromDisk';
+import { importPathsEdit } from './assetEdits';
 import { getAssetVisualInfo } from './assetVisuals';
 import { formatBytes } from './assetListLogic';
 import { baseName, flattenMediaTree, mediaKindOf, type DirEntry, type MediaRow } from './mediaBrowserTree';
@@ -49,32 +47,24 @@ export function canBrowseMedia(): boolean {
   return typeof shell?.listDir === 'function' && typeof shell?.pickFolder === 'function';
 }
 
-/** Is any layer already using this asset? The drag-end fallback's guard. */
-function assetInUse(assetId: string): boolean {
-  let used = false;
-  defaultSceneGraph.traverse((n) => {
-    if (!used && assetIdOf(n) === assetId) used = true;
-  });
-  return used;
-}
-
-const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 /**
- * Import a path and, unless something already placed it, add it to the
- * comp. `at` picks the insert verb: the playhead for a timeline-shaped
- * gesture, the default placement otherwise.
+ * Import a path through the engine (`importFiles`: one undo entry, the record
+ * keeps the path) and add it to the comp. `at` picks the insert verb: the
+ * playhead for a timeline-shaped gesture, the default placement otherwise.
+ *
+ * No drop target handles the `mediaFile` drag kind yet, so the drag-end
+ * fallback always lands here; the engine mints the item id, so a target that
+ * learns the kind must import through `importFiles` itself rather than reuse
+ * the payload's pre-minted id.
  */
-async function importAndInsert(path: string, id: string, at: 'default' | 'playhead'): Promise<void> {
-  const asset = await importMediaFile(path, { id });
+async function importAndInsert(path: string, at: 'default' | 'playhead'): Promise<void> {
+  const { imported } = await importPathsEdit([path]);
+  const asset = imported[0];
   if (!asset) {
     useUIStore.getState().notify({ level: 'error', message: `Could not import “${baseName(path)}”.`, durationMs: 4000 });
     return;
   }
-  // A drop target that handles `mediaFile` inserts right after its own
-  // import resolves; give it a beat before deciding nobody did.
-  await wait(150);
-  if (assetInUse(id)) return;
+  // B3-legacy: engine gap — `createLayer` has no media fitting (contain-fit, PAR, SVG paths, sequences, audio routing, playhead placement) that `insertMedia` applies.
   if (at === 'playhead') await insertMediaAtPlayhead(asset);
   else await insertMedia(asset);
 }
@@ -168,15 +158,9 @@ export function MediaBrowser(): JSX.Element {
     if (!pick) return;
     const chosen = await pick();
     if (!chosen || chosen.length === 0) return;
-    const imported: ImportedAsset[] = [];
-    const failed: string[] = [];
-    for (const p of chosen) {
-      const asset = await importMediaFile(p);
-      if (asset) imported.push(asset);
-      else failed.push(baseName(p));
-    }
+    const { imported, failed } = await importPathsEdit(chosen);
     if (failed.length > 0) {
-      useUIStore.getState().notify({ level: 'error', message: `Could not import ${failed.join(', ')}.`, durationMs: 5000 });
+      useUIStore.getState().notify({ level: 'error', message: `Could not import ${failed.map(baseName).join(', ')}.`, durationMs: 5000 });
     }
     if (imported.length === 0) return;
     useUIStore.getState().notify({
@@ -187,6 +171,7 @@ export function MediaBrowser(): JSX.Element {
         label: 'Add to composition',
         onSelect: () => {
           void (async () => {
+            // B3-legacy: engine gap — no media fitting in `createLayer` (see importAndInsert).
             for (const a of imported) await insertMedia(a);
           })();
         },
@@ -196,7 +181,7 @@ export function MediaBrowser(): JSX.Element {
   const canPickFiles = typeof window.motionEditor?.shell?.pickFiles === 'function';
 
   const importOnly = async (path: string): Promise<void> => {
-    const asset = await importMediaFile(path);
+    const asset = (await importPathsEdit([path])).imported[0];
     useUIStore.getState().notify(
       asset
         ? { level: 'success', message: `Imported “${asset.name}” to the project.`, durationMs: 2200 }
@@ -219,8 +204,8 @@ export function MediaBrowser(): JSX.Element {
     }
     openContextMenu(e.clientX, e.clientY, [
       { id: 'import', label: 'Import to Project', onSelect: () => { void importOnly(entry.path); } },
-      { id: 'add', label: 'Import and Add to Composition', onSelect: () => { void importAndInsert(entry.path, mintAssetId(), 'default'); } },
-      { id: 'add-playhead', label: 'Import and Add at Playhead', onSelect: () => { void importAndInsert(entry.path, mintAssetId(), 'playhead'); } },
+      { id: 'add', label: 'Import and Add to Composition', onSelect: () => { void importAndInsert(entry.path, 'default'); } },
+      { id: 'add-playhead', label: 'Import and Add at Playhead', onSelect: () => { void importAndInsert(entry.path, 'playhead'); } },
       { id: 'sep', separator: true },
       { id: 'reveal', label: revealLabel(), onSelect: () => { void window.motionEditor?.shell?.revealInFolder?.(entry.path); } },
     ]);
@@ -256,7 +241,7 @@ export function MediaBrowser(): JSX.Element {
         if (!row) return;
         e.preventDefault();
         if (row.entry.kind === 'dir') toggleDir(row.entry.path);
-        else void importAndInsert(row.entry.path, mintAssetId(), 'default');
+        else void importAndInsert(row.entry.path, 'default');
         break;
       default:
         return;
@@ -335,7 +320,7 @@ export function MediaBrowser(): JSX.Element {
                   title={entry.path}
                   draggable={!isDir}
                   onClick={() => { setFocusIndex(i); if (isDir) toggleDir(entry.path); }}
-                  onDoubleClick={() => { if (!isDir) void importAndInsert(entry.path, mintAssetId(), 'default'); }}
+                  onDoubleClick={() => { if (!isDir) void importAndInsert(entry.path, 'default'); }}
                   onContextMenu={(e) => openRowMenu(row, e)}
                   onDragStart={(e) => {
                     if (isDir) return;
@@ -349,7 +334,7 @@ export function MediaBrowser(): JSX.Element {
                     const assetId = el.dataset.pendingAssetId;
                     delete el.dataset.pendingAssetId;
                     if (!assetId || e.dataTransfer.dropEffect === 'none') return;
-                    void importAndInsert(entry.path, assetId, 'default');
+                    void importAndInsert(entry.path, 'default');
                   }}
                 >
                   {isDir ? (

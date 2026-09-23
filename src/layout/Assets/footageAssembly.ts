@@ -68,6 +68,7 @@ export async function runNewCompFromClips(assets: ReadonlyArray<ImportedAsset>):
   }
 
   try {
+    // B3-legacy: engine gap — built on `createCompositionFromFootage` + `insertMedia` (comp-from-footage conform, media fitting) and sequenced with opacity cross-dissolves; `assembleComposition` has neither the fitting nor the dissolves.
     const result = await runAsOneHistoryEntry('New Composition from Clips', () =>
       createCompositionFromClips(assets, overlapFrames),
     );
@@ -150,6 +151,7 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
     if (target.kind === 'layer') {
       nodeId = target.nodeId;
     } else {
+      // B3-legacy: engine gap — comp-from-footage conform (`createComposition{fromItems}` has no pristine adoption / full-frame fitting).
       await createCompositionFromFootage(target.asset);
       const placed = useSelectionStore.getState().ids[0];
       if (!placed) {
@@ -169,6 +171,7 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
       return;
     }
 
+    // B3-legacy: not converted yet — split at every cut → drop the runts → re-anchor → sequence with dissolves needs each split's new id in turn (an engine gesture of `splitLayers`/`deleteLayers`/`setLayerTiming`/`sequenceLayers`), and `sequenceLayers{crossfade}`'s parity with `sequenceLayerBars`' opacity dissolve is unverified.
     const report = await runAsOneHistoryEntry('Assemble from Footage', () =>
       applyAssembly(nodeId, cutsCompSec, opts),
     );

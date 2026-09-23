@@ -214,6 +214,7 @@ export function DashboardPage(): JSX.Element {
   // Shared AssetStore (synchronized with Editor Assets tab)
   const storeAssets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
+  // B3-legacy: engine gap — the dashboard manages the device LIBRARY with no project open (not a document edit an undo stack could own), and imports browser `File`s without paths; these stay store actions until the library gets its own API (B5).
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   const removeAsset = useAssetStore((s) => s.removeAsset);
   const createFolder = useAssetStore((s) => s.createFolder);
@@ -446,6 +447,7 @@ export function DashboardPage(): JSX.Element {
       };
       const p = await create(compName, initialDoc);
       if (!p?.id) throw new Error('The server did not return a project id.');
+      // B3-legacy: engine gap — project CREATION, not an edit: primes the live comp store and timeline for the document the editor is about to open (`openPath` then restores `initialDoc`); no engine command creates a project from settings with the editor still on the dashboard.
       useCompositionStore.getState().update(initialComp);
       getTimelineController().setFrameRate(fps);
       getTimelineController().setDurationSeconds(durationSeconds);

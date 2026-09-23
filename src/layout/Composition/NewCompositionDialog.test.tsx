@@ -1,10 +1,14 @@
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
+import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import { openNewCompositionDialog, NewComposition } from './NewCompositionDialog';
 import { useModalStore } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import { TooltipProvider } from '@components/Tooltip';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TooltipProvider });
 
@@ -147,18 +151,61 @@ describe('NewCompositionDialog', () => {
     expect(canvasFrame).toHaveStyle({ backgroundColor: 'transparent' });
   });
 
-  it('creates composition on clicking Create Composition and closes dialog', () => {
-    const close = jest.fn();
-    render(<NewComposition close={close} />);
+  describe('through the engine', () => {
+    let h: Harness & { engine: LocalEngine };
+    beforeEach(async () => {
+      h = await setupAppEngine();
+    });
+    afterEach(async () => {
+      await h.dispose();
+    });
 
-    const createBtn = screen.getByRole('button', { name: /create composition/i });
-    fireEvent.click(createBtn);
+    const create = async (): Promise<jest.Mock> => {
+      const close = jest.fn();
+      render(<NewComposition close={close} />);
+      fireEvent.change(screen.getByLabelText(/composition name/i), { target: { value: 'Promo' } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /create composition/i }));
+        await engineIdle();
+      });
+      return close;
+    };
 
-    // Dialog close should be called
-    expect(close).toHaveBeenCalledTimes(1);
+    it('adds a composition as ONE undo entry, opens its tab, and undo removes it exactly', async () => {
+      // A project whose only comp is the user's (not pristine): New Composition ADDS.
+      useProjectStore.getState().actions.updateComp('comp_root', { pristine: undefined });
+      const before = h.doc();
+      const count = Object.keys(useProjectStore.getState().comps).length;
+      const close = await create();
 
-    // ProjectStore should have a composition
-    const comps = useProjectStore.getState().comps;
-    expect(Object.keys(comps).length).toBeGreaterThan(0);
+      expect(close).toHaveBeenCalledTimes(1);
+      const comps = useProjectStore.getState().comps;
+      expect(Object.keys(comps)).toHaveLength(count + 1);
+      const made = Object.values(comps).find((c) => c.name === 'Promo')!;
+      expect(made).toMatchObject({ width: 1920, height: 1080, fps: 30, durationSeconds: 10, background: '#101014', transparent: false });
+      expect(defaultSceneGraph.getNode(made.id)?.name).toBe('Promo');
+      const s = useProjectStore.getState();
+      expect(s.tabs[s.activeTabId!]?.compositionId).toBe(made.id);
+      expect(historyLabels().at(-1)).toBe('New Composition');
+
+      await h.run({ type: 'undo' });
+      expect(useProjectStore.getState().comps[made.id]).toBeUndefined();
+      expect(h.doc()).toBe(before);
+      await h.run({ type: 'redo' });
+      expect(useProjectStore.getState().comps[made.id]?.name).toBe('Promo');
+    });
+
+    it('in a fresh project, configures the pristine comp instead of stacking a second', async () => {
+      useProjectStore.getState().actions.updateComp('comp_root', { pristine: true });
+      const before = h.doc();
+      await create();
+      const comps = useProjectStore.getState().comps;
+      expect(Object.keys(comps)).toEqual(['comp_root']);
+      expect(comps.comp_root).toMatchObject({ name: 'Promo', width: 1920 });
+      expect(comps.comp_root?.pristine).toBeUndefined();
+      await h.run({ type: 'undo' });
+      expect(useProjectStore.getState().comps.comp_root?.pristine).toBe(true);
+      expect(h.doc()).toBe(before);
+    });
   });
 });

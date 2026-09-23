@@ -317,16 +317,23 @@ export function openPreviousComposition(): boolean {
 /**
  * Close tabs whose nested comp no longer exists (an undo took the group away,
  * or it was deleted from the parent), stepping the view back out to the
- * nearest comp on its trail that still does. Tabs whose comp is the FIRST
- * entry of their trail are left alone — those are top-level comps, which are
- * never removed without their tab (`deleteComposition` closes it).
+ * nearest comp on its trail that still does. A tab whose comp is the FIRST
+ * entry of its trail (a top-level comp) closes only when the comp's settings
+ * record is gone too — `deleteComposition` closes its own tabs, but engine
+ * edits (undo of New Composition, `removeItems`) do not touch editor state.
  */
 export function repairNestedTabs(): void {
   const s = useProjectStore.getState();
   for (const tab of Object.values(s.tabs)) {
     if (defaultSceneGraph.getNode(tab.compositionId)) continue;
     const { path, via, at } = trailOf(tab);
-    if (at <= 0) continue;
+    if (at <= 0) {
+      // A TOP-LEVEL comp gone from the document with its record — an undone
+      // New Composition, an engine `removeItems` (neither knows about tabs,
+      // which are editor state). Its tab has nothing left to show.
+      if (!useProjectStore.getState().comps[tab.compositionId]) s.actions.closeTab(tab.id);
+      continue;
+    }
     const wasActive = s.activeTabId === tab.id;
     s.actions.closeTab(tab.id);
     if (!wasActive) continue;

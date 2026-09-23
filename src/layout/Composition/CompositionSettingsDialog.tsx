@@ -24,8 +24,17 @@ import {
 } from '@core/paint/fill';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { useCompositionStore } from '@stores/compositionStore';
-import { resolveSsao, resolvePixelAspect, DEFAULT_PIXEL_ASPECT, type SsaoSettings } from '@stores/projectStore';
+import { useCompositionStore, sanitize as sanitizeComp } from '@stores/compositionStore';
+import {
+  resolveSsao,
+  resolvePixelAspect,
+  useProjectStore,
+  DEFAULT_PIXEL_ASPECT,
+  type CompositionSettings as CompRecord,
+  type SsaoSettings,
+} from '@stores/projectStore';
+import { runDocumentEdit } from '@core/commands/documentEdit';
+import { gradientBackgroundChanged, saveCompositionSettingsEdit } from './compositionEdits';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
 import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
@@ -72,9 +81,45 @@ const POPULAR_PRESETS: readonly SizePreset[] = [
   SIZE_PRESETS.find((p) => p.id === 'ig_post')!,
 ].filter(Boolean);
 
+/** The comp record fields a draft carries (the store's action members dropped). */
+function recordOf(c: CompRecord): CompRecord {
+  return { ...c };
+}
+
+/** A gradient's representative flat colour — what `background` mirrors (compositionStore's rule). */
+function paintColor(p: FillPaint, fallback: string): string {
+  return p.type === 'solid' ? p.color : sortedStops(p.stops)[0]?.color ?? fallback;
+}
+
+/**
+ * The dialog edits a DRAFT of the comp record; nothing reaches the document
+ * until Save Changes, which sends the changed fields as ONE engine edit
+ * (`setCompositionSettings`, undoable — the live writes it replaced were
+ * not). Cancel just closes.
+ */
+function useDraft(initial: CompRecord): {
+  s: CompRecord;
+  update: (patch: Partial<CompRecord>) => void;
+  setBackgroundPaint: (paint: FillPaint) => void;
+  setTransparent: (v: boolean) => void;
+} {
+  const [s, setDraft] = useState<CompRecord>(() => recordOf(initial));
+  return {
+    s,
+    update: (patch) => setDraft((d) => ({ ...d, ...sanitizeComp(patch) })),
+    setBackgroundPaint: (paint) => setDraft((d) => (paint.type === 'solid'
+      ? { ...d, background: paint.color, backgroundPaint: undefined }
+      : { ...d, background: paintColor(paint, d.background), backgroundPaint: paint })),
+    setTransparent: (v) => setDraft((d) => ({ ...d, transparent: v })),
+  };
+}
+
+/** FPS chips match a typed rate within display precision (23.976 is not exactly representable). */
+const sameRate = (a: number, b: number): boolean => Math.abs(a - b) < 1e-3;
+
 export function CompositionSettings({ close }: { close?: () => void }): JSX.Element {
-  const s = useCompositionStore();
   const initialComp = useRef(useCompositionStore.getState().comp()).current;
+  const { s, update, setBackgroundPaint, setTransparent } = useDraft(initialComp);
 
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [aspectLocked, setAspectLocked] = useState(false);
@@ -108,18 +153,10 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   const loadViewerLut = useViewerLutStore((v) => v.loadFromText);
   const clearViewerLut = useViewerLutStore((v) => v.clear);
 
-  const setName = (name: string): void => s.update({ name });
-  const setFps = (fps: number): void => {
-    const clamped = clampFps(fps);
-    s.update({ fps: clamped });
-    getTimelineController().setFrameRate(clamped);
-  };
-  const setDuration = (durationSeconds: number): void => {
-    const clamped = clampDuration(durationSeconds);
-    s.update({ durationSeconds: clamped });
-    getTimelineController().setDurationSeconds(clamped);
-  };
-  const setStartFrame = (startFrame: number): void => s.update({ startFrame });
+  const setName = (name: string): void => update({ name });
+  const setFps = (fps: number): void => update({ fps: clampFps(fps) });
+  const setDuration = (durationSeconds: number): void => update({ durationSeconds: clampDuration(durationSeconds) });
+  const setStartFrame = (startFrame: number): void => update({ startFrame });
 
   // Aspect ratio lock toggle
   const toggleAspectLock = (): void => {
@@ -134,9 +171,9 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     const clampedW = clampDimension(newW);
     if (aspectLocked && lockRatio.current > 0) {
       const clampedH = clampDimension(Math.round(clampedW / lockRatio.current));
-      s.update({ width: clampedW, height: clampedH });
+      update({ width: clampedW, height: clampedH });
     } else {
-      s.update({ width: clampedW });
+      update({ width: clampedW });
     }
   };
 
@@ -144,9 +181,9 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     const clampedH = clampDimension(newH);
     if (aspectLocked && lockRatio.current > 0) {
       const clampedW = clampDimension(Math.round(clampedH * lockRatio.current));
-      s.update({ width: clampedW, height: clampedH });
+      update({ width: clampedW, height: clampedH });
     } else {
-      s.update({ height: clampedH });
+      update({ height: clampedH });
     }
   };
 
@@ -157,7 +194,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     if (aspectLocked && prevW > 0) {
       lockRatio.current = prevH / prevW;
     }
-    s.update({ width: prevH, height: prevW });
+    update({ width: prevH, height: prevW });
   };
 
   // Preset selection
@@ -165,7 +202,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     if (preset.width > 0 && preset.height > 0) {
       lockRatio.current = preset.width / preset.height;
     }
-    s.update({ width: preset.width, height: preset.height });
+    update({ width: preset.width, height: preset.height });
   };
 
   const matchingPreset = useMemo(() => {
@@ -178,8 +215,8 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   }, [s.width, s.height]);
 
   // Pixel aspect ratio
-  const pixelAspect = resolvePixelAspect(s.comp());
-  const setPixelAspect = (val: number): void => s.update({ pixelAspect: val });
+  const pixelAspect = resolvePixelAspect(s);
+  const setPixelAspect = (val: number): void => update({ pixelAspect: val });
   const parPresetId = findPixelAspectPreset(pixelAspect)?.id ?? '';
 
   // World (3D)
@@ -187,20 +224,21 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     ? s.defaultEnvPreset
     : DEFAULT_ENVIRONMENT_PRESET;
   const setDefaultEnvPreset = (v: string): void => {
-    if (isEnvironmentPresetId(v)) s.update({ defaultEnvPreset: v });
+    if (isEnvironmentPresetId(v)) update({ defaultEnvPreset: v });
   };
   const groundLevel = Number.isFinite(s.groundLevel) ? (s.groundLevel as number) : 0;
-  const setGroundLevel = (v: number): void => s.update({ groundLevel: v });
+  const setGroundLevel = (v: number): void => update({ groundLevel: v });
   const showSkyBackdrop = s.showSkyBackdrop === true;
-  const ssao = resolveSsao(s.comp());
-  const patchSsao = (patch: Partial<SsaoSettings>): void => s.update({ ssao: { ...ssao, ...patch } });
+  const ssao = resolveSsao(s);
+  const patchSsao = (patch: Partial<SsaoSettings>): void => update({ ssao: { ...ssao, ...patch } });
 
   // Background paint
   const bgPaint: FillPaint = s.backgroundPaint ?? solidFill(s.background);
-  const setBgType = (type: FillType): void => s.setBackgroundPaint(convertFill(bgPaint, type));
+  // `convertFill` is a pure paint conversion into the DRAFT (the ratchet's verb pattern flags the name).
+  const setBgType = (type: FillType): void => setBackgroundPaint(convertFill(bgPaint, type));
   const writeStops = (stops: ColorStop[]): void => {
     if (bgPaint.type === 'solid') return;
-    s.setBackgroundPaint({ ...bgPaint, stops });
+    setBackgroundPaint({ ...bgPaint, stops });
   };
   const writeStop = (id: string, patch: Partial<ColorStop>): void => {
     if (bgPaint.type === 'solid') return;
@@ -268,16 +306,30 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     return `linear-gradient(90deg, ${stopsStr})`;
   }, [bgPaint]);
 
-  // Cancel & Save handlers
+  // Cancel & Save handlers. Nothing was written while the dialog was open, so
+  // Cancel has nothing to revert.
   const handleCancel = (): void => {
-    s.update(initialComp);
-    getTimelineController().setFrameRate(initialComp.fps);
-    getTimelineController().setDurationSeconds(initialComp.durationSeconds);
     close?.();
   };
 
   const handleSave = (): void => {
     close?.();
+    const compId = initialComp.id;
+    if (!useProjectStore.getState().comps[compId]) return;
+    if (gradientBackgroundChanged(initialComp, s)) {
+      // B3-legacy: engine gap — `setCompositionSettings` refuses `backgroundGradient` until FillPaint is typed, so a save that sets or changes a gradient background writes the whole draft through the store, as one snapshot entry.
+      const draft = s;
+      runDocumentEdit('Composition Settings', () => {
+        const store = useCompositionStore.getState();
+        const { id: _id, backgroundPaint, ...fields } = draft;
+        store.update(fields);
+        if (backgroundPaint) store.setBackgroundPaint(backgroundPaint);
+        getTimelineController().setFrameRate(draft.fps);
+        getTimelineController().setDurationSeconds(draft.durationSeconds);
+      });
+      return;
+    }
+    void saveCompositionSettingsEdit(compId, initialComp, s);
   };
 
   useDialogPrimaryAction(handleSave);
@@ -561,7 +613,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                       key={f.value}
                       type="button"
                       title={f.label}
-                      className={`${styles.chip} ${f.value === s.fps ? styles.chipActive : ''}`}
+                      className={`${styles.chip} ${sameRate(f.value, s.fps) ? styles.chipActive : ''}`}
                       onClick={() => setFps(f.value)}
                     >
                       {f.value} fps
@@ -653,7 +705,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
               <Switch
                 checked={s.transparent}
                 aria-label="Canvas Transparency"
-                onChange={(e) => s.setTransparent(e.target.checked)}
+                onChange={(e) => setTransparent(e.target.checked)}
               />
             </div>
 
@@ -673,8 +725,8 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                       className={`${styles.colorSwatch} ${isSelected ? styles.colorSwatchActive : ''}`}
                       style={{ backgroundColor: swatch.hex }}
                       onClick={() => {
-                        s.setBackgroundPaint(solidFill(swatch.hex));
-                        s.setTransparent(false);
+                        setBackgroundPaint(solidFill(swatch.hex));
+                        setTransparent(false);
                       }}
                       title={swatch.label}
                       aria-label={swatch.label}
@@ -691,7 +743,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                     <span className={styles.colorCardLabel}>Solid Fill Color</span>
                     <ColorPicker
                       value={s.background}
-                      onChange={(hex) => s.setBackgroundPaint(solidFill(hex))}
+                      onChange={(hex) => setBackgroundPaint(solidFill(hex))}
                       aria-label="Background color"
                     />
                   </div>
@@ -703,7 +755,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                     <div style={{ width: 140 }}>
                       <ValueField
                         value={bgPaint.angle}
-                        onChange={(angle) => s.setBackgroundPaint({ ...bgPaint, angle })}
+                        onChange={(angle) => setBackgroundPaint({ ...bgPaint, angle })}
                         min={0}
                         max={360}
                         step={1}
@@ -720,7 +772,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                     <div style={{ width: 140 }}>
                       <ValueField
                         value={Math.round(bgPaint.radius * 100)}
-                        onChange={(v) => s.setBackgroundPaint({ ...bgPaint, radius: v / 100 })}
+                        onChange={(v) => setBackgroundPaint({ ...bgPaint, radius: v / 100 })}
                         min={1}
                         max={200}
                         step={1}
@@ -1007,7 +1059,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                 <Switch
                   checked={showSkyBackdrop}
                   disabled
-                  onChange={(e) => s.update({ showSkyBackdrop: e.target.checked })}
+                  onChange={(e) => update({ showSkyBackdrop: e.target.checked })}
                   aria-label="Show sky as backdrop"
                 />
               </div>

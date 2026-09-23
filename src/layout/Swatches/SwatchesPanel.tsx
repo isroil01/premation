@@ -41,6 +41,7 @@ import styles from './SwatchesPanel.module.css';
  * swatch" is the one the user can see happen and undo.
  */
 function applyToSelection(ids: readonly string[], hex: string): void {
+  // B3-legacy: engine gap — a layer's fill (the fill STACK and the legacy single-fill slot `setNodeFill` keeps agreeing) has no property path: the catalog lists no fill colour for shape, solid or text layers.
   batchHistory(`swatch:apply:${hex}`, () => {
     for (const id of ids) setNodeFill(id, solidFill(hex));
   });

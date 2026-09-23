@@ -30,7 +30,8 @@ import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { insertMedia } from '@core/scene/sceneInsert';
-import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { insertMediaAtPlayhead, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { webCodecsAvailable } from '@core/video/exactVideoSource';
@@ -127,12 +128,14 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
             <Icon name="tv" size="sm" /> Open in Source Monitor
           </Button>
         )}
+        {/* B3-legacy: engine gap — `createLayer` has no media fitting (contain-fit, PAR, SVG paths, sequences, audio routing, playhead placement) that `insertMedia` applies. */}
         <Button size="sm" variant="secondary" onClick={() => { void insertMedia(asset); close(); }}>
           <Icon name="plus" size="sm" /> Add to Comp
         </Button>
         <Button
           size="sm"
           variant="secondary"
+          // B3-legacy: engine gap — no media fitting in `createLayer` (as above).
           onClick={() => { void insertMediaAtPlayhead(asset); close(); }}
           title="Insert with the clip starting at the playhead instead of frame 0"
         >
@@ -142,6 +145,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
           <Button
             size="sm"
             variant="secondary"
+            // B3-legacy: engine gap — `createComposition{fromItems}` does not conform like `createCompositionFromFootage` (pristine-comp adoption, name sans extension, full-frame placement).
             onClick={() => { void createCompositionFromFootage(asset); close(); }}
             title="New composition sized, timed and paced to this clip"
           >
@@ -152,7 +156,8 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => { retargetLayerSource(replaceTarget, asset); close(); }}
+            // `replaceLayerSource` (keep size) — one undo entry; the old direct write had none.
+            onClick={() => { void replaceSourceWithAsset(replaceTarget, asset.id); close(); }}
             // The layer's NAME in the label, because "replace" without a target
             // named is a button that might do anything to anything.
             title={`Point the selected layer at this footage — keyframes, effects and masks survive`}

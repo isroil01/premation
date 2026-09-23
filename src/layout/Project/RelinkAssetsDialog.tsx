@@ -32,6 +32,7 @@ export function RelinkBody({
       const file = input.files?.[0];
       if (!file) return;
       const url = URL.createObjectURL(file);
+      // B3-legacy: engine gap — this relinks a LAYER's `src` to a picked browser `File` (a blob URL, no path; the missing refs are per node, often with no footage item behind them). `relinkItem` takes an item + a path, and the TS engine's relink only re-probes: it never re-reads the bytes, so the item's `src` would still be the dead one.
       if (relinkLiveAsset(ref.nodeId, url)) {
         setLeft((prev) => prev.filter((m) => m.nodeId !== ref.nodeId));
         bumpScene();

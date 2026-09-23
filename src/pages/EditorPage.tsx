@@ -25,9 +25,8 @@ import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { useAssetStore } from '@stores/assetStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { insertMedia } from '@core/scene/sceneInsert';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { setActiveCompFrameRateEdit } from '@layout/Composition/compositionEdits';
 
 /**
  * Opens the:projectId project into the already-booted editor, once, through
@@ -73,6 +72,7 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         // finishing the transition is strictly more correct than abandoning
         // it half-done, unmounted or not: these writes go to singleton
         // stores, not to this component.
+        // B3-legacy: engine gap — the 700 ms recorder's baseline after an open (history infrastructure, not an edit); it goes with the recorder when B3 deletes it (ENGINE_API.md §15.3).
         useHistoryStore.getState().reset();
         useHistoryStore.getState().record('Open', true);
         const ws = useWorkspaceStore.getState();
@@ -91,13 +91,11 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         const footage = takePendingFootage();
         if (footage) {
           try {
+            // B3-legacy: engine gap — the parked footage is a browser `File` with no path (`importFiles` imports by path), and `createLayer` has no media fitting (`insertMedia`).
             const asset = await useAssetStore.getState().addAsset(footage);
             await insertMedia(asset);
             const probedFps = asset.metadata?.fps;
-            if (probedFps && probedFps > 0) {
-              useCompositionStore.getState().update({ fps: probedFps });
-              getTimelineController().setFrameRate(probedFps);
-            }
+            if (probedFps && probedFps > 0) await setActiveCompFrameRateEdit(probedFps);
           } catch (err) {
             useUIStore.getState().notify({
               level: 'warning',

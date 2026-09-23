@@ -25,6 +25,7 @@ import {
   type LayerSettingsValues,
 } from '@core/scene/layerSettings';
 import { cn } from '@utils/cn';
+import { layerSettingsEdit } from './compositionEdits';
 import styles from './LayerSettingsDialog.module.css';
 
 type Mode = { mode: 'new' } | { mode: 'edit'; nodeId: string };
@@ -60,10 +61,17 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
     if (kind === 'solid') values.color = color;
     if (target.mode === 'edit') {
       values.labelColor = label;
-      if (!applyLayerSettings(target.nodeId, values)) {
-        useUIStore.getState().notify({ level: 'warning', message: 'That layer no longer exists.', durationMs: 3000 });
-      }
+      const nodeId = target.nodeId;
+      void layerSettingsEdit(nodeId, values).then((r) => {
+        if (r === 'gone') {
+          useUIStore.getState().notify({ level: 'warning', message: 'That layer no longer exists.', durationMs: 3000 });
+        } else if (r === 'legacy') {
+          // B3-legacy: engine gap — a solid's colour has no property path (`layer/fill` is not in the catalog), nor does an off-palette label colour; such an apply keeps the snapshot writer for the whole dialog (one step).
+          applyLayerSettings(nodeId, values);
+        }
+      });
     } else {
+      // B3-legacy: engine gap — `createLayer{solid}` cannot set the solid's colour (no fill property path) and places at the comp centre without `insertSolid`'s placement/selection.
       createSolidLayer(values);
     }
     close();

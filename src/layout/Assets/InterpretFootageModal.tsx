@@ -13,6 +13,7 @@ import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { bumpScene } from '@stores/sceneStore';
 import type { AlphaInterpretation, FootageInterpretation } from '@core/source/sourceInfo';
 import { canProbePulldown, probePulldown } from '@core/video/pulldownProbe';
+import { interpretFootageEdit, interpretationNeedsLegacy } from './assetEdits';
 import styles from './InterpretFootageModal.module.css';
 
 const PAR_PRESETS: Array<{ label: string; value: number }> = [
@@ -130,8 +131,15 @@ function InterpretFootageBody({
       pulldownPhase: pulldownPhase !== null ? pulldownPhase : undefined,
     };
 
-    useAssetStore.getState().setInterpretation(asset.id, patch);
-    bumpScene();
+    // Read the item as it is NOW (the dialog is floating; it may have changed).
+    const live = useAssetStore.getState().assets.find((a) => a.id === asset.id) ?? asset;
+    if (interpretationNeedsLegacy(live, patch)) {
+      // B3-legacy: engine gap — InterpretationPatch has no Remove Pulldown (3:2 phase) field; a change to it keeps the store write (and its bumpScene) for the whole dialog so OK stays one step.
+      useAssetStore.getState().setInterpretation(asset.id, patch);
+      bumpScene();
+    } else {
+      void interpretFootageEdit(live, patch);
+    }
     close();
   };
 
