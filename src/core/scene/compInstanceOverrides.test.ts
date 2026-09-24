@@ -343,10 +343,11 @@ describe('the control is reachable', () => {
     expect(compBranch.indexOf('<CompOverridesSection')).toBeGreaterThan(-1);
   });
 
-  it('the section writes through the same API these tests exercise', () => {
+  it('the section writes the same overrides through the engine (B3), one entry per action', () => {
     const ui = readSource('layout/Inspector/CompOverridesSection.tsx');
-    expect(ui).toMatch(/setCompOverride\(/);
-    expect(ui).toMatch(/clearCompOverridesFor\(/);
+    // Set / clear one property, and Reset — `layer/compOverrides` commands sent with `edit`.
+    expect(ui).toMatch(/edit\((overridden \? 'Clear Override' : 'Override Property'|'Override Property'|'Clear Override')/);
+    expect(ui).toMatch(/edit\('Reset Overrides'/);
     expect(ui).toMatch(/OVERRIDABLE_PROPS/);
     expect(ui).toMatch(/readEssentialProps/);
   });

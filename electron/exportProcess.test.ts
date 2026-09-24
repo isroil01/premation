@@ -33,6 +33,10 @@ import {
   type SupervisorDeps,
   type WorkerWindow,
 } from './exportProcess';
+import path from 'node:path';
+
+/** An absolute path on THIS platform (the supervisor refuses relative ones; `C:\\…` is relative on POSIX). */
+const abs = (...parts: string[]): string => path.join(process.platform === 'win32' ? 'C:\\' : '/', ...parts);
 
 /** A window the test can crash, hang or complete at will. */
 class FakeWindow implements WorkerWindow {
@@ -70,7 +74,7 @@ function harness(overrides: Partial<SupervisorDeps> = {}): Harness {
   const sup = new ExportSupervisor({
     createWindow: () => { const w = new FakeWindow(); windows.push(w); return w; },
     persist: { read: async () => disk.text, write: async (t) => { disk.text = t; } },
-    prepareSnapshot: async (id) => `C:\\snap\\${id}\\project.motion`,
+    prepareSnapshot: async (id) => abs('snap', `${id}`, 'project.motion'),
     removeSnapshot: async () => undefined,
     abortRenderJobsOwnedBy: (id) => { aborted.push(id); },
     now: () => clock.now,
@@ -82,8 +86,8 @@ function harness(overrides: Partial<SupervisorDeps> = {}): Harness {
 }
 
 const spec = (n = 1, totalFrames = 24): ExportJobSpec => ({
-  projectPath: `C:\\snap\\job${n}\\project.motion`,
-  outPath: `C:\\out\\job${n}.mp4`,
+  projectPath: abs('snap', `job${n}`, 'project.motion'),
+  outPath: abs('out', `job${n}.mp4`),
   format: 'mp4',
   fps: 24,
   startFrame: 0,
@@ -125,7 +129,7 @@ describe('the state machine', () => {
     expect(h.windows[0]!.loads).toBe(1);
 
     const task = h.sup.takeJob(h.windows[0]!.id);
-    expect(task).toEqual({ kind: 'render', job: expect.objectContaining({ outPath: 'C:\\out\\job1.mp4', endFrame: 23 }) });
+    expect(task).toEqual({ kind: 'render', job: expect.objectContaining({ outPath: abs('out', 'job1.mp4'), endFrame: 23 }) });
     expect(task!.job).not.toHaveProperty('label');
     expect(status(h, 'a')).toBe('rendering');
 
@@ -140,7 +144,7 @@ describe('the state machine', () => {
     expect(p.fps).toBeGreaterThan(0);
     expect(p.etaSec).toBe(0);
 
-    h.sup.reportDone(h.windows[0]!.id, { ok: true, outPath: 'C:\\out\\job1.mp4', frames: 24, warnings: [] });
+    h.sup.reportDone(h.windows[0]!.id, { ok: true, outPath: abs('out', 'job1.mp4'), frames: 24, warnings: [] });
     expect(status(h, 'a')).toBe('completed');
     expect(h.windows[0]!.destroyed).toBe(true);
     // A completed job's render cleaned up after itself; nothing to abort.
@@ -254,7 +258,7 @@ describe('cancel', () => {
         return w;
       },
       persist: { read: async () => null, write: async () => undefined },
-      prepareSnapshot: async () => 'C:\\s\\project.motion',
+      prepareSnapshot: async () => abs('s', 'project.motion'),
       removeSnapshot: async () => undefined,
       abortRenderJobsOwnedBy: () => { order.push('ffmpeg'); },
       log: () => undefined,
@@ -443,7 +447,7 @@ describe('idle', () => {
 describe('IPC', () => {
   it('registers the editor and worker channels through the guard, keyed by sender', async () => {
     const h = harness();
-    registerExportSupervisorIpc(h.sup, async () => 'C:\\out\\picked.mp4');
+    registerExportSupervisorIpc(h.sup, async () => abs('out', 'picked.mp4'));
     const mainFrame = { url: 'file:///C:/app/dist/index.html' };
     const sent: unknown[] = [];
     const editor = { id: 50, mainFrame, isDestroyed: () => false, send: (_c: string, e: unknown) => sent.push(e), once: () => undefined };
@@ -452,7 +456,7 @@ describe('IPC', () => {
     const invoke = (channel: string, event: unknown, ...args: unknown[]): unknown => handlers.get(channel)!(event, ...args);
 
     expect(await invoke('export:subscribe', editorEvent)).toEqual([]);
-    expect(await invoke('export:chooseOutputPath', editorEvent, 'x.mp4')).toBe('C:\\out\\picked.mp4');
+    expect(await invoke('export:chooseOutputPath', editorEvent, 'x.mp4')).toBe(abs('out', 'picked.mp4'));
     const job = (await invoke('export:enqueue', editorEvent, { id: 'a', spec: spec() })) as ExportJobRecord;
     expect(job.status).toBe('preparing');
     // queued, then preparing as dispatch opens its window — both pushed.

@@ -26,44 +26,40 @@ import { buildStaticCommands } from '@providers/Providers';
 import { RIG_PRESETS, RIG_PRESET_LABELS, validateRig, type RigPresetId } from './rigPresets';
 import { readNodeSkeleton } from './skeletonCommands';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { useSelectionStore } from '@stores/selectionStore';
-import type { SceneNode } from '@core/types';
 
-const NODE = 'palette_rig_node';
 /** Non-square on purpose — see the rule 3a note in `rigPresets.test.ts`. */
 const SIZE = { width: 260, height: 420 };
 
 const PRESET_IDS = Object.keys(RIG_PRESETS) as RigPresetId[];
 
-function addNode(): void {
-  if (defaultSceneGraph.getNode(NODE)) defaultSceneGraph.removeNode(NODE);
-  defaultSceneGraph.addNode({
-    id: NODE, name: NODE, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${NODE}_t`, type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, width: SIZE.width, height: SIZE.height },
-      },
-    ],
-  } as unknown as SceneNode);
-}
+// The palette entry writes through the engine (`applyRigPresetEdit`): a real
+// shape layer of the app's engine, sized SIZE.
+let h: Harness & { engine: LocalEngine };
+let NODE = '';
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  addNode();
+beforeEach(async () => {
+  h = await setupAppEngine();
+  NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'Rig me', init: [] })).layer;
+  await h.run({ type: 'setProperties', writes: [
+    { prop: { layer: NODE, path: 'layer/width' }, value: { kind: 'scalar', value: SIZE.width } },
+    { prop: { layer: NODE, path: 'layer/height' }, value: { kind: 'scalar', value: SIZE.height } },
+  ] });
   useSelectionStore.getState().set([NODE]);
 });
+afterEach(async () => { await h.dispose(); });
 
 const commandFor = (id: RigPresetId) =>
   buildStaticCommands().find((c) => String(c.id) === `rig.preset.${id}`);
 
-const historyDepth = (): number => {
-  const h = getCommandSystem().getHistory() as unknown as { undoStack?: unknown[] };
-  return h.undoStack?.length ?? 0;
-};
+async function run(id: RigPresetId): Promise<void> {
+  await commandFor(id)!.execute({} as never);
+  await engineIdle();
+}
 
 describe('the discovery found real subjects', () => {
   it('POSITIVE CONTROL: there is more than one preset to be missing an entry', () => {
@@ -92,36 +88,36 @@ describe.each(PRESET_IDS)('palette entry for preset "%s"', (id) => {
     expect(commandFor(id)!.enabled?.() ?? true).toBe(true);
   });
 
-  it('RUNNING it writes a valid rig onto the selected layer', () => {
+  it('RUNNING it writes a valid rig onto the selected layer', async () => {
     // The claim that a source-text guard cannot make: the command does the work.
-    void commandFor(id)!.execute({} as never);
+    await run(id);
     const rig = readNodeSkeleton(defaultSceneGraph.getNode(NODE)!)!;
     expect(validateRig(rig)).toEqual([]);
     expect(rig.bones!.length).toBeGreaterThan(0);
     expect(rig.controllers!.length).toBeGreaterThan(0);
   });
 
-  it('and it is exactly ONE undo entry, driven from the palette', () => {
+  it('and it is exactly ONE undo entry, driven from the palette', async () => {
     // Asserted here as well as in `rigPresets.test.ts` because the entry could
     // reasonably have been written as a loop of per-bone commands.
-    const d0 = historyDepth();
-    void commandFor(id)!.execute({} as never);
-    expect(historyDepth()).toBe(d0 + 1);
+    const n = historyLabels().length;
+    await run(id);
+    expect(historyLabels().slice(n)).toEqual([`Auto-Rig ${RIG_PRESET_LABELS[id]}`]);
   });
 
-  it('ONE undo removes the whole rig', () => {
-    void commandFor(id)!.execute({} as never);
-    getCommandSystem().getHistory().undo();
+  it('ONE undo removes the whole rig', async () => {
+    await run(id);
+    await h.run({ type: 'undo' });
     const rig = readNodeSkeleton(defaultSceneGraph.getNode(NODE)!);
     expect(rig?.bones ?? []).toEqual([]);
     expect(rig?.controllers ?? []).toEqual([]);
   });
 
-  it('sizes the rig from the LAYER, not from a constant', () => {
+  it('sizes the rig from the LAYER, not from a constant', async () => {
     // The entry has to reach `readGeometry`. If it passed the 200×200 fallback
     // instead, a 260×420 layer would get the same rig as any other — so the
     // check is that the rig differs from the fallback-sized one.
-    void commandFor(id)!.execute({} as never);
+    await run(id);
     const applied = readNodeSkeleton(defaultSceneGraph.getNode(NODE)!)!;
     const fallback = RIG_PRESETS[id]({ width: 200, height: 200 });
     expect(applied.bones).not.toEqual(fallback.bones);

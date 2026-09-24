@@ -13,6 +13,7 @@
  */
 
 import defaultSceneGraph from './DefaultSceneGraph';
+import { writeTransformProps } from './transformWrite';
 import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -240,14 +241,9 @@ export function setNodeWorldPosition(nodeId: string, x: number, y: number): void
   );
   const localX = pt.x;
   const localY = pt.y;
-  const t = node.components.find((c) => c.type === 'Transform');
-  if (t) {
-    // Through the graph: `getNode` hands out a VIEW, and assigning its props
-    // changed nothing (the canvas drop landed every insert at the comp centre).
-    defaultSceneGraph.writeProp(nodeId, t.id, 'x', localX);
-    defaultSceneGraph.writeProp(nodeId, t.id, 'y', localY);
-  }
-  bumpScene();
+  // Through the transform router (a keyed Position gets a key, not a base
+  // write the renderer would ignore); it bumps the scene itself.
+  writeTransformProps(nodeId, [{ prop: 'x', value: localX }, { prop: 'y', value: localY }], 'Move');
 }
 
 /**

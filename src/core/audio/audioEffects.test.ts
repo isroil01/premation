@@ -212,10 +212,13 @@ describe('the chain is readable, writable and reachable', () => {
     expect(out[0]!.params).toEqual({ mix: 50 });
   });
 
-  it('the inspector section writes the key the reader reads', () => {
+  it('the inspector section writes the key the reader reads (through the engine: the audio/effects field)', () => {
     const ui = readSource('layout/Inspector/AudioEffectsSection.tsx');
     expect(ui).toMatch(/AUDIO_EFFECTS_PROP/);
-    expect(ui).toMatch(/writeProp\(nodeId, fx\.id, AUDIO_EFFECTS_PROP/);
+    // B3: the whole chain as the `audio/effects` json field, which the engine
+    // stores on fx[AUDIO_EFFECTS_PROP] (layerFieldSpecs.ts) — the key readAudioEffects reads.
+    expect(ui).toMatch(/type: 'setProperty', prop: \{ layer: nodeId, path: 'audio\/effects' \}/);
+    expect(readSource('core/engine/layerFieldSpecs.ts')).toMatch(/path: 'audio\/effects', key: 'audioEffects'/);
   });
 
   it('and that section is actually MOUNTED — otherwise this is unreachable code', () => {
