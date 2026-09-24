@@ -198,7 +198,15 @@ providers, timeline upkeep, the plugin write hook), and the rule stops counting
 session state and camera-tool dispatch. What remains is listed by category with
 reasons in `docs/B4_MIRROR.md` §5 — per-frame viewport reads (the mirror is
 asynchronous) and the page renderer's inputs stay until C/D5; the rest are
-ordinary panel conversions. UI writes stay at 0.
+ordinary panel conversions. UI writes stay at 0. **B4-more: 681** (timeline
+69 → 23, inspector 112 → 107, comps/dialogs 61 → 50, commands 66 → 54, other
+135 → 126, layers 41 → 40): transport goes through `timelineView`; the work
+area, markers, transitions, the motion-blur master and `CompSettings.pristine`
+(now reported by both engines) come from the mirror; the timeline's row menus
+read the mirror and send `setExpression`; autosave / thumbnails wake on the
+mirror's `doc` key. **The B4 exit is met for the Inspector and the timeline**:
+every remaining read there is an engine job, the transport pump, or a named
+API gap with what closes it (B4_MIRROR.md §5, "The B4 exit").
 
 ### Phase C — The engine process and the viewport
 

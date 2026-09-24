@@ -122,13 +122,63 @@ commit. Files are CRLF: use the Edit tool, never `sed -i`. Never start Vite.
   but not which one.
 - Stroke-stack units (taper length units, wave units) used by the metadata
   registry.
+- Found converting the Inspector and timeline (each named where it is read,
+  and in the exit table below): an item's MEDIA TYPE (still / video / audio /
+  svg) and its probe state; the Essential Properties a comp PUBLISHES
+  (`__essentialProps`); the inserted-element tag (`__mographId`); an SVG
+  layer's stored document; the layer time config (freeze, a baked stretch);
+  per-MEMBER key lists; a text-layout query; clip source windows (roll limits);
+  a Lift (non-ripple range delete) command; a layer-as-preset capture query.
 
-## 5. What is left (2026-09-24: 765 reads, from 852)
+## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools
-239, other 135, inspector 112, timeline 69, AI/plugins/commands 66,
-comps/assets/dialogs 61, layers 41, text 25, effects 17. By kind: helper 452,
-singleton 153, store 67, revision 46, timeline 42, viewport 5.
+239, other 126, inspector 107, AI/plugins/commands 54, comps/assets/dialogs 50,
+layers 40, text 25, timeline 23, effects 17. By kind: helper 414, singleton
+150, store 57, revision 36, timeline 19, viewport 5.
+
+What came off in B4-more (765 → 681), and why each is sound:
+
+- **Transport is not the document.** The timeline's seeks, steps, keyframe /
+  marker navigation and `pauseInactiveComps` go through
+  `@core/timeline/timelineView` (a seam: ENGINE_API §6 control state)
+  instead of `getTimelineController()` — BottomTimeline, useTimelineKeys,
+  usePlaybackClock, markerCommands. The popout timeline installs the same
+  engine-side `timelineUpkeep` App.tsx does instead of its own
+  `SceneGraphChanged` subscription.
+- **The work area is a CompSettings fact.** The API states "no work area" as
+  the whole composition; `compFacts.settingsHasWorkArea` /
+  `settingsSetWorkArea` answer the controller's `getWorkArea() === null`
+  (timeline fit, the status-bar fit button, the preview-cache readout, Lift /
+  Extract enablement, the export form, the render queue). A work area set to
+  exactly the whole composition reads as none — it covers the same frames.
+- **Markers, transitions, row menus from the mirror.** The marker editor and
+  the marker commands (`mirrorMarkerById`, the layer's in point for a layer
+  marker), the timeline's transition boxes (`MirrorComp.transitions`), a row's
+  Reset availability (`mirrorCanResetProperties`) and its expression entries
+  (`expressionRowMenu.ts`: state from `trackExpressionFacts`, new, per member;
+  the actions are `setExpression` batches, not the legacy writers).
+- **`CompSettings.pristine` is reported** by both engines (TS `model.ts`,
+  native `readmodel.cpp`) — the API declared it, neither engine answered it, so
+  EditorTabs' existing read was always false. CompositionSummary and Smart
+  Animate now read it from the mirror.
+- **The motion-blur master is `CompSettings.motionBlur.enabled`.** The
+  Compositing card and the Preview menu read the mirror and write
+  `setCompositionSettings`; turning a layer's motion blur on turns the master
+  on in the SAME batch (Layers switches, the timeline switch column) — before,
+  a store write outside history.
+- **Document-change triggers use the mirror's `doc` key** (autosave, cloud /
+  local thumbnail workers): once per engine batch, writes around the engine
+  included; a landed video decode is not a revision.
+- **Panels:** the command palette's layer / comp lists, the export form
+  (chapters, range, transparent seed, name), the render queue's job, the Time
+  Stretch dialog (rate, bar, footage-or-bake), the paint tool options.
+- **Classification** (`PURE_READS`, each checked: arguments, a static table or
+  the editor's own module state): easing vocabulary, the keyframe-assistant
+  maths, bounce / stagger planning, the keyframe clipboard's entries, the user
+  preset library count, `previewChoreography` (transport only), SVG toasts,
+  `clampSignedStretch`, `propertyResetValue`; `expandKeyframeProp` is a string
+  table (Position → x/y/z), not engine state.
 
 What came off in the B4 finish, and why each is sound:
 
@@ -160,8 +210,54 @@ their owner moves into the engine process; the rest are ordinary conversions
 | **Per-frame playhead reads in the viewport** — overlays and gizmos (motion path, puppet / bone / IK, gradient and focus-plane handles, text-edit box, 3D axis widget, paint space, track points) drawing evaluated geometry (`readGeometry`, `motionPath*`, world matrices, `sample`, `evaluateNode`) | 75 | They redraw on every played frame. The mirror is asynchronous — `valueAt` answers the last known value until a batched `getPropertyValues` lands — and a query per played frame is forbidden (§2). They move with the viewport (C/D5): the engine returns `getLayerTransforms` / `getMotionPath` / `hitTest` answers with the frame it renders. **Left on purpose.** |
 | **The TypeScript renderer's inputs in the page** — `useViewportRenderer`, `useLayerViewerRenderer`, Presentation, Source Monitor, export preview (`buildSnapshot`, `compSizeOf`, snapshot signatures) | 32 | The renderer still runs in the page and its input IS the engine's document; D5 moves it into the engine process behind the flag. Not a display read to convert. |
 | **Engine jobs run from the UI** — tracking / scene-edit detection / auto-trace / bake (`@core/tracking`, `sceneEditCommand`, `bakeCommands`), and the command builders the palette calls (`build*Commands`) | 35 | Analysis that reads pixels and the document engine-side and returns commands. The API has `startJob` but these jobs are not registered as engine jobs yet (G-phase). |
-| **Legacy revision plumbing** — `useSceneRevision`, `useNodeRevision`, bus `AnimationChanged` / `SceneGraphChanged` / `NodeUpdated` subscriptions | 46 | Re-render triggers of components that still read the scene graph; each goes when its component reads the mirror (a `useMirror*` subscription replaces it). |
-| **Timeline controller** — clip geometry, `getLayersForNode`, markers, `getRemappedTime` in clip-edit commands, fit, the multicam viewer | 42 | The mirror carries `layer.timing` and markers; callers that need clip GEOMETRY (bars after stretch / remap, `clipGeometrySignature`) have no mirror field yet. |
-| **App-shell commands** (`Providers.tsx` 73, `App.tsx` 28) — command-palette `enabled` predicates, Select All, selection pruning on scene change, the property-reveal commands | ~100 | Each predicate reads a node / kind / animated fact at call time; convertible one by one to `documentMirror()` + `uiKindOf` / `isTrackAnimated`, but several rely on non-catalog tracks (legacy data tracks) the mirror does not list. |
-| **Panels not converted yet** — Layers tree (`sceneRows`: built from a `SceneGraph` the ordering tests pass in), Inspector tracker / paragraph / bone / mograph / SVG sections, Character panel, effect browser previews, export form, asset assembly | ~250 | Ordinary §1 conversions; several touch the §4 gaps (modifier stacks, per-member expressions, plugin layer kinds, stroke units) and keys outside the catalog (a mirror conversion would silently drop them). |
+| **Legacy revision plumbing** — `useSceneRevision`, `useNodeRevision`, bus `AnimationChanged` / `SceneGraphChanged` / `NodeUpdated` subscriptions | 36 | Re-render triggers of components that still read the scene graph (CharacterPanel, EffectsPanel's mask list, the Inspector sections in the exit table, the viewport renderers, the App shell); each goes when its component reads the mirror. Engine-side upkeep that FEEDS the scene revision (`Providers` AnimationChanged → bumpScene, historyStore's snapshot listeners, `useSceneRevisionFrame` itself) leaves with the TS engine. |
+| **Timeline controller** — `getLayersForNode` / `getRemappedTime` in the app-shell and clip commands, the transport pump, roll limits, footage assembly, transcripts | 19 | Transport and document facts the mirror has are converted (B4-more); what remains needs clip GEOMETRY (source windows after stretch / remap, `clipGeometrySignature`) or IS the TS clock (`usePlaybackClock`'s tick). |
+| **App-shell commands** (`Providers.tsx` 73, `App.tsx` 29, `appEdits` 17) — command-palette `enabled` predicates, Select All, selection pruning on scene change, the property-reveal commands | ~120 | Each predicate reads a node / kind / animated fact at call time. The ones left rely on non-catalog tracks (`animatedProps` over every stored track: Time-Reverse / Easy Ease All / reveal-animated), on the scene graph's node set (Select All walks `traverse` — the graph's nodes, not the API's layers + items; selection pruning runs synchronously with legacy writes the mirror sees a microtask later), or are command builders / engine jobs (row 3). |
+| **Panels not converted yet** — Layers tree (`sceneRows`: built from a `SceneGraph` the ordering tests pass in), Character panel, the Effects panel's mask list, Composition Settings' draft (the store's `CompositionSettings` record, gradient paint included), footage assembly, templates | ~200 | Ordinary §1 conversions; several touch the §4 gaps (modifier stacks, per-member expressions, plugin layer kinds, stroke units, media type) and keys outside the catalog (a mirror conversion would silently drop them). The Inspector's and the timeline's are all named in the exit table below. |
 | **Keyframe assistants / stagger** (`appEdits` `layerKeys`, `hasKeys`) | 6 | The legacy assistants act on EVERY stored track, including tracks outside the catalog; the mirror lists API properties only, so converting would change which keys move. Needs the catalog to cover those tracks first (B3z/G1). |
+
+### The B4 exit for the Inspector and the timeline (2026-09-24)
+
+"Inspector/timeline render from the mirror only": every display read the
+mirror can answer is converted. **Inspector 107** (from 112) and **timeline
+23** (from 69) remain, and each is one of the reasons below — none is an
+unconverted ordinary read. Each site carries a `B4-gap` / `B4-kept` comment
+(or sits under one) naming what would close it. Per-file counts:
+`node scripts/lint/engineReadsReport.mjs --files inspector` / `--files timeline`.
+
+**Inspector (107)**
+
+| Reason | Sites | Where | Closes with |
+|---|---|---|---|
+| **Engine jobs** — tracking and its apply / solve plans | 18 | `trackMotion/trackMotionActions` 13, `trackMotion/trackApplyEdits` 5 | registered engine jobs (G-phase; row 3 above) |
+| **Engine jobs** — audio decode and analysis (envelopes, waveform, ducking, gate, silence, voice) | 12 | `AudioControls` 2, `AudioDriverSection`, `AudioWaveformSection`, `DuckingDialog`, `GateDialog` 2, `SilenceRemovalDialog`, `MediaSection` (`audioVoiceFor`), `audioEdits` 3 | an audio-analysis job / query on the engine's decoder |
+| **Engine jobs** — particle / physics bakes, 3D IK pose and bake, environment SH | 5 | `ParticleSection`, `PhysicsSection`, `Ik3DSection`, `ikEdits`, `LightSection` (`ensureEnvironmentSh`) | engine jobs; SH is render infrastructure (D) |
+| **Engine jobs** — proxy generation / attach / detach / cancel | 4 | `ProxyRow` | proxy jobs as engine jobs (C-phase) |
+| Rig: live bone pose, IK goals and chain mode (rig tracks sampled by the animation engine), the skinning mesh (scene node + decoded alpha) | 8 | `BoneControls` | a rig-track sampler query; mesh building engine-side |
+| Drawn geometry: a layer's evaluated box (`readGeometry`), world bounds for Align | 5 | `appearance/StrokeRows` 2, `trackMotionActions` 2 (SAM segment box), `inspectorEdits` (`planAlign`) | `getLayerBounds` / `getLayerTransforms` answers (C/D5) |
+| Text layout: point ↔ paragraph conversion and box auto-size measure the text as it renders and hold it still through the evaluated pose; Swap Fill/Stroke composes per Text component | 11 | `paragraphTextCommands` 10, `textCommands` | a `getTextLayout` query (lines, box, fit scale); path-addressed text writes |
+| Inserted-element tag `__mographId` and its component-prop fields | 7 | `MographParamsSection` | a `layer/mographId` field |
+| SVG layer's stored document / retained source (convert, revert) | 9 | `svgLayerActions` 6, `SvgSection`, `inspectorSectionParts` 2 | a `layer/svg` json field |
+| Essential Properties a comp publishes (`__essentialProps`) | 5 | `CompOverridesSection` 2, `ColorKfRow`, `PinnedSection`, `propertyRowMenu` | a `CompInfo.essentialProps` |
+| Keyframe clipboard captures TS keyframe records | 1 | `propertyRowMenu` (`copyKeyframeAt`) | the clipboard in API form (paste already sends engine commands) |
+| Layer time config: freeze and its time, a baked stretch (`fx.__bakedStretch`), an EXR's Cryptomatte set | 5 | `CompositingSection` 4, `MediaSection` (`getNodeLayerTime`) | `LayerTiming.freeze?`, the baked factor on `LayerTiming`, a cryptomatte datum on the item |
+| Item media type (still / video / audio / svg) and probe state | 6 | `MediaSection`, `CustomLayerSection`, `LightSection`, `MaterialSection`, `ParticleSection`, `ProxyRow` (+ the proxy record) | `ItemInfo.mediaType` (+ `ItemInfo.proxy`) |
+| Path operators' Wiggles/Second and Correlation (not in the catalog) | 4 | `PathOpControls` | `contents/<opId>/…` properties |
+| Primitive's STORED params (a type switch fills unstored ones from the new type's defaults) | 2 | `PrimitiveSection` | the engine sizing the layer box on `primitive/type` |
+| Plugin layer record (`__schemaVersion`, component id; `generator` is '') | 1 | `CustomLayerSection` | `layer/pluginSchemaVersion` + a working `generator` |
+| Model blend-shape names | 1 | `ModelSection` | `model/targetNames` |
+| Component-id write layer / raw stored props (Style opacity, stored per-corner radii, the generic component list) | 3 | `StylePresetsSection`, `appearance/CornerRows`, `components/Inspector/NodeInspector` | path-addressed writes; absent-vs-default in the catalog |
+
+**Timeline (23)**
+
+| Reason | Sites | Where | Closes with |
+|---|---|---|---|
+| The transport pump — `tick` advances the TS clock every played frame | 1 | `usePlaybackClock` | the engine's transport clock (C/D) — per-frame, kept on purpose |
+| Keyframe assistants / choreography act on the stored MEMBER tracks (every stored track, catalog or not) | 9 | `SmootherDialog` 2, `WigglerDialog`, `assistantPreview`, `MotionEditorPanel`, `ChoreographySection` 3, `useTimelineKeys` (Smooth Motion Path) | per-member key lists in the API / the catalog covering those tracks (B3z/G1) |
+| Keyframe clipboard (Ctrl+C) | 1 | `useTimelineKeys` | the clipboard in API form |
+| Expression preview evaluates a draft per member and Source Text's text+style result | 3 | `ExpressionEditor` | `evaluateExpression` with `member?` and a textDocument result |
+| Multicam: playable media URL, the `__multicamAngle` tag, audio-sync analysis, the angle cut (a legacy write) | 4 | `MulticamViewer` | an ItemInfo media URL, `layer/multicamAngle`, an engine job |
+| Clip geometry: roll limits need the clips' source windows | 1 | `useClipDrag` | clip source-in on `LayerTiming` or a `rollLimits` query |
+| Lift has no API command (`rippleDeleteRange` is Extract and reports no counts) | 2 | `clipEditCommands` | a `liftRange` (delete range without ripple) returning split / delete counts |
+| Save as preset captures the layer as a preset | 1 | `MotionPresetsPanel` | a `capturePreset {layer}` query |
+| The AE row projection (sections, order, placeholder rows, legacy track names) | 1 | `buildPropertyRows` | moving the projection onto the mirror tree, a parity-checked step |
