@@ -8,6 +8,7 @@
 // against the TS-exported FrameScene lines up renderable for renderable.
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,8 @@ struct TextureRequest {
   double sourceTime = 0;
   bool video = false;
   bool premultiplied = false;
+  /// The layer's fill: an SVG source is recoloured with it (AppTextureProvider.rasterizeSvg).
+  std::optional<std::string> fill;
   /// The composition's frame rate (the frame-blend grid's last fallback).
   double compFps = 30;
   /// The layer this texture belongs to (diagnostics).

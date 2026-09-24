@@ -10,6 +10,7 @@
 #include "image_decode.hpp"
 #include "json.hpp"
 #include "raster_source.hpp"
+#include "svg_layer.hpp"
 
 #if defined(PREMATION_HAVE_MEDIA)
 #include "media_system.hpp"
@@ -289,15 +290,8 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
   space = api::RenderColorSpace::srgb;
   if (r.src.empty()) return {};
-  // SVG footage is rasterised by the browser in the TS engine; the engine has no SVG renderer yet.
-  const auto lower = [](std::string s) {
-    for (char& c : s) c = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
-    return s;
-  };
-  if (lower(r.src).ends_with(".svg") || r.src.starts_with("data:image/svg")) {
-    stats.unsupported.emplace_back(r.key, "SVG image footage");
-    return {};
-  }
+  // SVG footage and SVG layers: AppTextureProvider.rasterizeSvg, on the C++ SVG renderer (svg_layer.cpp).
+  if (is_svg_src(r.src)) return svg_ref(r, stats);
   if (r.src.starts_with("data:") || r.src.starts_with("blob:") || r.src.starts_with("http:") ||
       r.src.starts_with("https:")) {
     stats.unsupported.emplace_back(r.key, "footage that is not a file on disk");
@@ -358,6 +352,49 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   stats.unsupported.emplace_back(r.key, "footage (built without E1 media)");
   return {};
 #endif
+}
+
+std::string SceneTextures::svg_ref(const TextureRequest& r, PrepareStats& stats) {
+  // Cached by document (the src, or the file's path + stamp) × recolour fill.
+  std::string path;
+  std::uint64_t h = fnv1a(r.fill.value_or(""), fnv1a(r.src));
+  if (!r.src.starts_with("data:")) {
+    std::filesystem::path p = file_url_path(r.src);
+    if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
+    path = p.lexically_normal().string();
+    const FileStamp st = file_stamp(p);
+    std::array<char, 48> tail{};
+    std::snprintf(tail.data(), tail.size(), "|%llu|%llu", static_cast<unsigned long long>(st.size),  // NOLINT(cppcoreguidelines-pro-type-vararg)
+                  static_cast<unsigned long long>(st.modified));
+    h = fnv1a(tail.data(), fnv1a(path, h));
+  }
+  std::string hash = "img:svg:" + hex64(h);
+  if (const auto oe = openErrors_.find(hash); oe != openErrors_.end()) {
+    stats.unsupported.emplace_back(r.key, "SVG did not render: " + oe->second);
+    return {};
+  }
+  if (const std::shared_ptr<const RasterEntry> hit = find(hash)) {
+    ++stats.rasterHits;
+    for (const std::string& u : hit->unsupported) stats.unsupported.emplace_back(r.key, "SVG: " + u);
+    return hash;
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  raster::RasterOutput out = rasterize_svg_src(r.src, r.fill, path);
+  stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  ++stats.rasterMisses;
+  if (!out.ok) {
+    openErrors_.emplace(hash, out.error);
+    stats.unsupported.emplace_back(r.key, "SVG did not render: " + out.error);
+    return {};
+  }
+  for (const std::string& u : out.unsupported) stats.unsupported.emplace_back(r.key, "SVG: " + u);
+  auto e = std::make_shared<RasterEntry>();
+  e->width = out.width;
+  e->height = out.height;
+  e->rgba = std::move(out.rgba);
+  e->unsupported = std::move(out.unsupported);
+  insert(hash, std::move(e));
+  return hash;
 }
 
 }  // namespace premation::scene

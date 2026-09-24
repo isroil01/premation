@@ -500,6 +500,7 @@ add_library(engine_raster_core STATIC
   src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
   src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
+  src/raster/svg_doc.cpp          # SVG documents: XML, CSS cascade, path / transform micro-syntax (D2w)
 )
 target_include_directories(engine_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/raster)
 target_compile_features(engine_raster_core PUBLIC cxx_std_20)
@@ -532,6 +533,8 @@ if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenB
     src/raster/optical_kerning.cpp
     src/raster/text_paint.cpp
     src/raster/raster_source.cpp
+    src/raster/svg_raster.cpp       # AppTextureProvider.rasterizeSvg's sizing (D2w)
+    src/raster/svg_render_ffi.cpp   # the SVG painter, after Blink's SVG painters (D2w)
   )
   target_link_libraries(engine_raster
     PUBLIC engine_raster_core motion::jsmath
@@ -552,7 +555,8 @@ else()
   message(STATUS "premation-engine: Skia / HarfBuzz / SheenBidi / woff2 not found — E3 builds its Skia-free core only")
 endif()
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp)
+  add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
+                 tests/test_svg_doc.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
@@ -723,6 +727,9 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/text_measure.cpp
     src/scene/scene_textures.cpp
     src/scene/image_decode_ffi.cpp
+    src/scene/svg_layer.cpp
+    src/scene/text_port.cpp
+    src/scene/paint_port.cpp
     src/scene/native_scene.cpp
     src/scene/color_settings.cpp
     src/scene/glass_port.cpp
@@ -733,6 +740,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/plugins/scene_finish.cpp
   )
   target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
+  target_include_directories(engine_scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)  # eval.hpp: text selectors' ease (text_port.cpp)
   target_link_libraries(engine_scene PUBLIC engine_core engine_scene_core engine_plugins engine_raster engine_render_graph PRIVATE motion::options)
   if(WIN32)
     target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)

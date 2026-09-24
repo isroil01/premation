@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -32,5 +33,8 @@ struct FileStamp {
 
 /// Decode the first frame of an image file. False + `error` on failure.
 [[nodiscard]] bool decode_image_file(const std::filesystem::path& p, DecodedImage& out, std::string& error);
+
+/// Decode the first frame of an in-memory image (a data: URL's bytes). False + error on failure.
+[[nodiscard]] bool decode_image_bytes(std::span<const std::uint8_t> bytes, DecodedImage& out, std::string& error);
 
 }  // namespace premation::scene

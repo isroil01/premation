@@ -114,6 +114,7 @@ struct RLayer {
   Json runs;        ///< RichRun[] | undefined
   Json glyphs;      ///< GlyphTransform[] | undefined
   Json textPath;    ///< | undefined
+  Json paint;       ///< PaintConfig | undefined (paint_port.cpp)
   Json fontAxes;    ///< | undefined
   Json textStrokePaint;
   // ── compositing ──
