@@ -13,8 +13,11 @@
 //       file's rate, counting late frames (a frame not decoded by its deadline).
 //
 // Options: --vendor 0x10de|0x1002|0x8086 (render/decode adapter; default:
-// high-performance), --hw auto|sw|hw, --download (hardware frames to system
-// memory instead of the zero-copy surface), --threads N.
+// high-performance), --hw auto|sw|hw, --path d3d11va|d3d12va|dxva2|nvdec
+// (the hardware device; default d3d11va — nvdec is CUDA on the render
+// adapter, frames downloaded and uploaded), --download (hardware frames to
+// system memory instead of the zero-copy surface), --threads N.
+// `tools/run_decode_bench.mjs` runs the E1 matrix over gen_media_clips.mjs's clips.
 // Reports CPU % (all cores = 100 × cores), working set peak, cache stats and
 // the decode path. GPU decode-engine utilisation is sampled outside the
 // process (nvidia-smi / Windows "GPU Engine" counters) — see native/README.md.
@@ -51,6 +54,7 @@ struct Args {
   bool paced = false;
   std::uint32_t vendor = 0;
   HwPolicy hw = HwPolicy::automatic;
+  DecodePath path = DecodePath::d3d11va;
   bool download = false;
   int threads = 0;
 };
@@ -155,6 +159,7 @@ MediaConfig config_of(const Args& a, const Gpu& g, std::string& hwNote) {
   if (a.hw != HwPolicy::softwareOnly) {
     HwContextOptions ho;
     ho.adapterLuid = platform::adapter_luid(g.device);
+    ho.preferred = a.path;
     std::string error;
     c.hwContext = create_hw_context(ho, error);
     hwNote = c.hwContext ? to_string(hw_path(*c.hwContext)) + std::string(" on ") + hw_adapter(*c.hwContext) : "none (" + error + ")";
@@ -331,6 +336,10 @@ int main(int argc, char** argv) {
     else if (s == "--vendor") a.vendor = static_cast<std::uint32_t>(std::strtoul(next().c_str(), nullptr, 0));
     else if (s == "--download") a.download = true;
     else if (s == "--threads") a.threads = std::atoi(next().c_str());
+    else if (s == "--path") {
+      const std::string v = next();
+      a.path = v == "nvdec" ? DecodePath::nvdec : v == "d3d12va" ? DecodePath::d3d12va : v == "dxva2" ? DecodePath::dxva2 : DecodePath::d3d11va;
+    }
     else if (s == "--hw") {
       const std::string v = next();
       a.hw = v == "sw" ? HwPolicy::softwareOnly : v == "hw" ? HwPolicy::hardwareOnly : HwPolicy::automatic;
