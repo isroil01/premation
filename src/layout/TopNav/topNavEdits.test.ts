@@ -8,7 +8,7 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import { sec } from '@core/engine/__testHelpers__/harness';
 import { engineIdle } from '@core/engine/engineInstance';
-import { TEXT_RIGS, textRigEdit } from './topNavEdits';
+import { TEXT_RIGS, addExpressionControlEdit, textRigEdit } from './topNavEdits';
 
 let h: Harness;
 
@@ -66,5 +66,23 @@ describe('text rigs', () => {
     const entries = historyLabels().length;
     expect(await textRigEdit('nope', TEXT_RIGS.bounceInWords, 0)).toBe(false);
     expect(historyLabels()).toHaveLength(entries);
+  });
+});
+
+describe('Add Expression Control', () => {
+  it('one addPropertyGroup = ONE entry; resolves the name ctrl() takes; undo restores', async () => {
+    const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'null', name: 'Rig', init: [] });
+    await engineIdle();
+    const before = h.doc();
+    const entries = historyLabels().length;
+    expect(await addExpressionControlEdit(layer, 'point')).toBe('Point 1');
+    expect(await addExpressionControlEdit(layer, 'slider')).toBe('Slider 1');
+    await engineIdle();
+    expect(historyLabels().slice(entries)).toEqual(['Add Expression Control', 'Add Expression Control']);
+    const t = await h.query({ type: 'getPropertyTree', layer, path: 'effects', depth: 0 });
+    expect(t.nodes.find((n) => n.path === 'effects/ctrl_Point 1')?.matchName).toBe('ADBE Point Control');
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toBe(before);
   });
 });

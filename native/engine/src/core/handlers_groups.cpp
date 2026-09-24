@@ -9,7 +9,9 @@
 
 #include "anim_json.hpp"
 #include "catalog_data.hpp"
+#include "controls.hpp"
 #include "fxstate.hpp"
+#include "handlers_items.hpp"
 #include "handlers_layers.hpp"
 #include "handlers_native.hpp"
 #include "jsmath.hpp"
@@ -165,6 +167,89 @@ void move_group_tracks(Document& d, std::string_view layer, std::string_view pre
   restore_node(d, layer, std::move(next));
 }
 
+/// controlProps.ts `remapTracks`: rename (or drop, nullopt) EXACT keyframe tracks /
+/// expressions / data tracks of a layer; renamed ones move to the end.
+void remap_tracks(Document& d, std::string_view layer, const std::map<std::string, std::optional<std::string>, std::less<>>& map) {
+  auto snap = snapshot_node(d, layer);
+  if (!snap) return;
+  auto pick = [&](const auto& section) {
+    std::remove_cvref_t<decltype(section)> keep;
+    std::remove_cvref_t<decltype(section)> moved;
+    for (const auto& [k, v] : section) {
+      const auto it = map.find(k);
+      if (it == map.end()) {
+        keep.set(k, v);
+      } else if (it->second) {
+        moved.set(*it->second, v);
+      }
+    }
+    for (const auto& [k, v] : moved) keep.set(k, v);
+    return keep;
+  };
+  NodeAnim next;
+  next.tracks = pick(snap->tracks);
+  next.exprs = pick(snap->exprs);
+  next.data = pick(snap->data);
+  restore_node(d, layer, std::move(next));
+}
+
+/// The live Transform component id of a layer (controls live there).
+std::string transform_id(const Document& d, std::string_view layer) { return d.node(layer)->comp("Transform")->id; }
+
+/// A control name the API accepts: trimmed, non-empty, no '/'.
+std::string valid_control_name(const std::string& raw) {
+  std::string name = js_trim(raw);
+  if (name.empty() || name.find('/') != std::string::npos) {
+    fail(ErrorCode::invalid_argument, "'" + raw + "' is not a control name (empty, or contains '/')");
+  }
+  return name;
+}
+
+/// Refuse a name another control of the layer — or any of its stored keys — already uses.
+void require_free_control_name(const Node& node, const ControlSpec& spec, const std::string& name) {
+  const Json& props = node.comp("Transform")->props;
+  bool clash = false;
+  for (const LayerControl& c : read_controls(node)) clash = clash || c.name == name;
+  for (const std::string& sfx : spec.components) clash = clash || !props.at(std::string(kControlPrefix) + name + sfx).is_undefined();
+  clash = clash || !props.at(std::string(kControlKindPrefix) + name).is_undefined();
+  if (clash) {
+    fail(ErrorCode::conflict, "layer '" + node.id + "' already has a control named '" + name + "'",
+         {.layer = node.id, .path = control_group_path(name)});
+  }
+}
+
+/// Remove a control: its numbers, its kind marker, and every key / expression on its numbers.
+void remove_control(Document& d, const std::string& layer, const LayerControl& c) {
+  const std::string tid = transform_id(d, layer);
+  std::map<std::string, std::optional<std::string>, std::less<>> map;
+  for (const std::string& m : control_members(c)) {
+    (void)sg_write_prop(d, layer, tid, m, Json());
+    map.emplace(m, std::nullopt);
+  }
+  (void)sg_write_prop(d, layer, tid, std::string(kControlKindPrefix) + c.name, Json());
+  remap_tracks(d, layer, map);
+}
+
+/// Rename a control (validated by the caller): numbers, marker, keys and expressions follow the name.
+void rename_control(Document& d, const std::string& layer, const LayerControl& c, const std::string& name) {
+  auto move_prop = [&](const std::string& from, const std::string& to) {
+    const std::string tid = transform_id(d, layer);
+    const Json v = d.node(layer)->comp("Transform")->props.at(from);
+    if (v.is_undefined()) return;
+    (void)sg_write_prop(d, layer, tid, to, v);
+    (void)sg_write_prop(d, layer, tid, from, Json());
+  };
+  std::map<std::string, std::optional<std::string>, std::less<>> map;
+  for (const std::string& sfx : c.spec->components) {
+    const std::string from = std::string(kControlPrefix) + c.name + sfx;
+    const std::string to = std::string(kControlPrefix) + name + sfx;
+    map.emplace(from, to);
+    move_prop(from, to);
+  }
+  move_prop(std::string(kControlKindPrefix) + c.name, std::string(kControlKindPrefix) + name);
+  remap_tracks(d, layer, map);
+}
+
 /// `copyGroupTracks(layer, prefix, to, toLayer, ctx)`: keyframe ids re-minted.
 void copy_group_tracks(HCtx& x, std::string_view layer, std::string_view prefix, std::string_view to,
                        std::string_view toLayer) {
@@ -258,8 +343,8 @@ const Node& text_node_or_fail(const Document& d, const std::string& layer) {
 
 // ── group addressing ──────────────────────────────────────────────────────
 
-/// rig: a puppet / skeleton group (rig.hpp).
-enum class GK : std::uint8_t { effect, mask, animator, selector, style, pathop, rig };
+/// rig: a puppet / skeleton group (rig.hpp). control: an expression control `effects/ctrl_<name>` (controls.hpp).
+enum class GK : std::uint8_t { effect, mask, animator, selector, style, pathop, rig, control };
 
 struct GroupRef {
   GK kind = GK::effect;
@@ -269,6 +354,7 @@ struct GroupRef {
   int animIndex = -1;    ///< selector
   int index = 0;         ///< animator / selector index (`'index' in r`)
   std::optional<RigGroupRef> rig;  ///< GK::rig
+  std::optional<LayerControl> control;  ///< GK::control (id = `ctrl_<name>`)
   [[nodiscard]] bool has_index() const { return kind == GK::animator || kind == GK::selector; }
 };
 
@@ -299,6 +385,11 @@ GroupRef resolve_group(const Document& d, const api::PropRef& ref) {
   if (auto rig = resolve_rig_group(node, ref.layer, ref.path)) {
     GroupRef r = gref(GK::rig, ref.layer, rig_group_path(*rig));
     r.rig = std::move(rig);
+    return r;
+  }
+  if (auto control = resolve_control(node, ref.path)) {
+    GroupRef r = gref(GK::control, ref.layer, seg[1]);
+    r.control = std::move(control);
     return r;
   }
   if (seg[0] == "effects" && seg.size() == 2) {
@@ -349,6 +440,7 @@ std::string group_path(const GroupRef& g) {
     case GK::style: return "styles/" + g.id;
     case GK::pathop: return "contents/" + g.id;
     case GK::rig: return rig_group_path(*g.rig);
+    case GK::control: return "effects/" + g.id;
   }
   return {};
 }
@@ -446,6 +538,9 @@ void remove_group(Document& d, const GroupRef& r) {
     case GK::rig:
       remove_rig_group(d, *r.rig);
       return;
+    case GK::control:
+      remove_control(d, r.layer, *r.control);
+      return;
     case GK::effect: {
       std::vector<Json> list = get_node_effects(d, r.layer);
       std::erase_if(list, [&](const Json& e) { return id_is(e, r.id); });
@@ -518,6 +613,8 @@ void set_enabled(Document& d, const GroupRef& r, bool on) {
     case GK::rig:
       set_rig_group_enabled(d, *r.rig, on);
       return;
+    case GK::control:
+      fail(ErrorCode::unsupported, "an expression control has no enable switch");
     case GK::effect: {
       std::vector<Json> list = get_node_effects(d, r.layer);
       for (Json& e : list) {
@@ -603,6 +700,7 @@ std::string mint_for(HCtx& x, const GroupRef& r, const std::string& layer) {
     case GK::selector: return x.mint_group_id("sel_", [](const std::string&) { return false; });
     case GK::style: return r.id;
     case GK::rig: fail(ErrorCode::unsupported, "rig groups cannot be copied");
+    case GK::control: fail(ErrorCode::unsupported, "expression controls cannot be copied");
   }
   return {};
 }
@@ -693,6 +791,7 @@ std::string copy_group(HCtx& x, const GroupRef& r, const std::string& to, const 
     }
     case GK::selector: fail(ErrorCode::unsupported, "duplicate the animator to copy its selectors");
     case GK::rig: fail(ErrorCode::unsupported, "rig groups cannot be copied");
+    case GK::control: fail(ErrorCode::unsupported, "expression controls cannot be copied");
   }
   return {};
 }
@@ -1338,6 +1437,24 @@ ResultOf<api::AddPropertyGroup> handle(const api::AddPropertyGroup& c, HCtx& x) 
       set_path_ops(d, layer, next);
       return "contents/" + id;
     };
+  } else if (const ControlSpec* spec = parent == "effects" ? control_spec_for_match_name(c.match_name) : nullptr) {
+    // B3: an expression control (controls.hpp): named by `name`, else the next
+    // free "Slider 1"-style name; `init` writes its value.
+    if (node0.comp("Transform") == nullptr) {
+      fail(ErrorCode::invalid_argument, "layer '" + layer + "' has no Transform to hold an expression control", {.layer = layer});
+    }
+    if (c.index) fail(ErrorCode::unsupported, "expression controls are appended; they have no index", {.layer = layer, .path = "effects"});
+    const std::string name = c.name && !js_trim(*c.name).empty() ? valid_control_name(*c.name) : next_free_control_name(d, *spec);
+    require_free_control_name(node0, *spec, name);
+    run = [&d, layer, spec, name]() {
+      const std::string tid = transform_id(d, layer);
+      for (std::size_t i = 0; i < spec->components.size(); ++i) {
+        const double v = i < spec->defaults.size() ? spec->defaults[i] : 0.0;
+        (void)sg_write_prop(d, layer, tid, std::string(kControlPrefix) + name + spec->components[i], Json::number(v));
+      }
+      (void)sg_write_prop(d, layer, tid, std::string(kControlKindPrefix) + name, Json::string(spec->kind));
+      return control_group_path(name);
+    };
   } else if (auto rigPlan = plan_rig_add(d, layer, parent, c.match_name, c.index, c.name, c.init,
                                            [&x](std::string_view prefix, const std::function<bool(const std::string&)>& taken) {
                                              return x.mint_group_id(prefix, taken);
@@ -1440,6 +1557,7 @@ ResultOf<api::MovePropertyGroup> handle(const api::MovePropertyGroup& c, HCtx& x
     }
     case GK::style: fail(ErrorCode::unsupported, "layer styles have a fixed order");
     case GK::rig: move_rig_group(d, *r.rig, to); break;
+    case GK::control: fail(ErrorCode::unsupported, "expression controls keep the order they were added in");
   }
   return {};
 }
@@ -1455,6 +1573,9 @@ ResultOf<api::DuplicatePropertyGroups> handle(const api::DuplicatePropertyGroups
   for (const auto& r : refs) {
     if (r.kind == GK::rig) fail(ErrorCode::unsupported, "rig groups are duplicated by adding a new pin / bone in this engine");
   }
+  for (const auto& r : refs) {
+    if (r.kind == GK::control) fail(ErrorCode::unsupported, "expression controls are added by name with addPropertyGroup");
+  }
   std::vector<std::string> newIds;
   for (const auto& r : refs) newIds.push_back(mint_for(x, r, r.layer));
   x.label = "Duplicate " + plural(refs.size(), "Group");
@@ -1468,6 +1589,9 @@ ResultOf<api::SetGroupEnabled> handle(const api::SetGroupEnabled& c, HCtx& x) {
   if (c.groups.empty()) fail(ErrorCode::invalid_argument, "no groups given");
   std::vector<GroupRef> refs;
   for (const auto& g : c.groups) refs.push_back(resolve_group(d, g));
+  for (const auto& r : refs) {
+    if (r.kind == GK::control) fail(ErrorCode::unsupported, "an expression control has no enable switch");
+  }
   x.label = c.enabled ? "Enable" : "Disable";
   for (const auto& r : refs) set_enabled(d, r, c.enabled);
   return {};
@@ -1481,6 +1605,14 @@ ResultOf<api::RenamePropertyGroup> handle(const api::RenamePropertyGroup& c, HCt
   }
   if (r.kind == GK::rig && r.rig->kind != "pin" && r.rig->kind != "bone" && r.rig->kind != "controller") {
     fail(ErrorCode::unsupported, "'" + group_path(r) + "' cannot be renamed");
+  }
+  // An expression control's name is its `ctrl('<name>')` key and its path id: the path follows the name.
+  if (r.kind == GK::control) {
+    const std::string name = valid_control_name(c.name);
+    if (name != r.control->name) require_free_control_name(*d.node(r.layer), *r.control->spec, name);
+    x.label = "Rename Group";
+    if (name != r.control->name) rename_control(d, r.layer, *r.control, name);
+    return {};
   }
   x.label = "Rename Group";
   if (r.kind == GK::rig) {
@@ -1639,6 +1771,9 @@ ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx&
   }
   for (const auto& r : refs) {
     if (r.kind == GK::rig) fail(ErrorCode::unsupported, "a rig is copied whole through layer/puppet or layer/skeleton in this engine");
+  }
+  for (const auto& r : refs) {
+    if (r.kind == GK::control) fail(ErrorCode::unsupported, "expression controls are added by name with addPropertyGroup");
   }
   for (const auto& l : c.to_layers) (void)require_layer(d, l);
   struct Plan {

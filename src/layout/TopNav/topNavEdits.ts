@@ -1,12 +1,13 @@
 /**
  * The top bar's document edits through the engine API (B3z,
- * docs/B3_PATTERNS.md): the Animate menu's text-animator rigs and the Image
- * Sequence picker. One user action = one undo entry.
+ * docs/B3_PATTERNS.md): the Animate menu's text-animator rigs, expression
+ * controls and the Image Sequence picker. One user action = one undo entry.
  */
 
 import type { Command, CubicBezier, Easing, PropRef } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { reportEngineError } from '@core/engine/uiEdits';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
+import { controlSpecOf, CONTROL_PREFIX, type ControlKind } from '@core/engine/controlSpecs';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { isLayer } from '@core/engine/doc';
 import { compTime, paths, values } from '@core/engine/propRefs';
@@ -14,6 +15,24 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { makeNode } from '@core/scene/sceneInsert';
 import { detectImageSequence } from '@core/scene/imageSequence';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
+
+// ── Expression controls (Animate ▸ Add Expression Control) ──────────────
+
+/**
+ * Add an expression control of `kind` to a layer: ONE `addPropertyGroup` on
+ * `effects` with the kind's match name — the engine picks the next free
+ * "Slider 1"-style name. Resolves to the control's name (what `ctrl('…')`
+ * takes), or null when the engine refused (toasted).
+ */
+export async function addExpressionControlEdit(nodeId: string, kind: ControlKind): Promise<string | null> {
+  const res = await edit('Add Expression Control', {
+    type: 'addPropertyGroup', layer: nodeId, parent: 'effects', matchName: controlSpecOf(kind).matchName, init: [],
+  });
+  if (!res.ok) return null;
+  const path = (res.value[0] as { groups?: string[] } | undefined)?.groups?.[0];
+  const id = path?.slice(path.indexOf('/') + 1);
+  return id?.startsWith(CONTROL_PREFIX) ? id.slice(CONTROL_PREFIX.length) : null;
+}
 
 // ── Text animator rigs (Animate ▸ Bounce In Words, …) ─────────────────
 

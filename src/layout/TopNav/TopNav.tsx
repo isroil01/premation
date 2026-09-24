@@ -32,7 +32,7 @@ import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { insertPrimitive, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { typewriterEdit } from '@layout/Text/textEdits';
-import { TEXT_RIGS, insertImageSequenceEdit, textRigEdit } from './topNavEdits';
+import { TEXT_RIGS, addExpressionControlEdit, insertImageSequenceEdit, textRigEdit } from './topNavEdits';
 import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -45,7 +45,7 @@ import { applyAnimationPresetEdit, createLayerEdit } from '@layout/Menu/appEdits
 import { describeBounce, revealBounce } from '@core/animation/bounce';
 import { bounceEdit } from '@layout/Motion/bounceEdits';
 import { useBounceStore, currentSquash } from '@stores/bounceStore';
-import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
+import { CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
 import { asCommandId } from '@app-types/common';
 
 /** The control kinds offered in the rig menu, in the order AE lists them. */
@@ -257,15 +257,15 @@ function buildAnimateItems(
         id: `anim-control-${k.kind}`,
         label: k.label,
         onSelect: () => {
-          // B3-legacy: engine gap — expression controls (named `ctrl()` props on the Transform) have no API group type:
-          // `addPropertyGroup` answers unsupported for every expression-control match name (`listGroupTypes` has none).
-          const name = addControl(id, k.kind);
-          if (!name) return;
-          // Multi-component kinds expose several names, so tell the user what
-          // to actually type — `ctrl('Point 1')` alone would resolve to 0.
-          const parts = CONTROL_COMPONENTS[k.kind];
-          const refs = parts.map((suffix) => `ctrl('${name}${suffix}')`).join(' / ');
-          notify(`Added “${name}” — reference it with ${refs}`);
+          // One `addPropertyGroup` on `effects` (the control is `effects/ctrl_<name>`).
+          void addExpressionControlEdit(id, k.kind).then((name) => {
+            if (!name) return;
+            // Multi-component kinds expose several names, so tell the user what
+            // to actually type — `ctrl('Point 1')` alone would resolve to 0.
+            const parts = CONTROL_COMPONENTS[k.kind];
+            const refs = parts.map((suffix) => `ctrl('${name}${suffix}')`).join(' / ');
+            notify(`Added “${name}” — reference it with ${refs}`);
+          });
         },
       })),
     },

@@ -128,6 +128,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_session.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
+    tests/test_expression_controls.cpp
     tests/test_stress.cpp
     tests/test_render_graph.cpp
   )
@@ -239,6 +240,7 @@ set(ENGINE_DOC_SOURCES
   src/core/events.cpp
   src/core/fields.cpp
   src/core/rig.cpp
+  src/core/controls.cpp
   src/core/fxstate.cpp
   src/core/handlers_common.cpp
   src/core/handlers_comps.cpp
