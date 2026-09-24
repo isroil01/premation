@@ -455,7 +455,8 @@ if(MOTION_BUILD_TESTS)
   add_executable(engine_media_tests tests/test_media.cpp)
   target_link_libraries(engine_media_tests PRIVATE engine_media_core motion::options Catch2::Catch2WithMain)
   if(TARGET engine_media)
-    target_sources(engine_media_tests PRIVATE tests/test_media_decode.cpp tests/media_fixture_ffi.cpp)
+    target_sources(engine_media_tests PRIVATE tests/test_media_decode.cpp tests/media_fixture_ffi.cpp
+                                              tests/test_media_color.cpp tests/swscale_ref_ffi.cpp)
     target_include_directories(engine_media_tests SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
     target_link_libraries(engine_media_tests PRIVATE engine_media)
     target_compile_definitions(engine_media_tests PRIVATE
