@@ -26,7 +26,7 @@
  *   | Plugin loops forever | Editor frozen, needs a kill | Worker terminated, editor untouched |
  *   | Plugin reads the JWT | `localStorage.getItem(…)` | No `localStorage` in the realm |
  *   | Plugin phones home | `fetch(…)` anywhere | Only hosts it declared and the user approved |
- *   | Plugin deletes the project | Direct `defaultSceneGraph` handle | Needs `scene:write`, and it is one undo |
+ *   | Plugin deletes the project | Direct scene-graph handle | Needs `scene:write`, and it is one undo |
  *   | User reloads | Everything uninstalled | Installs persist |
  *
  * The `postMessage` origin-gating for plugin PANELS (`registerFrame` below) is
@@ -51,13 +51,10 @@ import {
 import { clearPluginDrawList, configurePluginCanvas, type PluginCanvasEvent } from './uiCanvas';
 import { clearPluginStatus } from './uiStatus';
 import { findShortcutClash, describeClash } from './uiShortcuts';
-import { clearLayerChangeListeners, notifyAuthoredChange } from './layerChangeNotifier';
+import { clearLayerChangeListeners } from './layerChangeNotifier';
 import { revocationFor, refreshRevocations } from './revocation';
 import { fetchRevocationList } from './registry';
-import { noteManualEdit } from './proxySubtree';
-import { setPluginPropWriteHandler } from '@core/scene/pluginPropWrites';
-import { readCustomLayer, customLayerComponent } from './customLayers';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { installAuthoredWriteHook } from './authoredWriteHook';
 import { splitKind } from './layerKindSchema';
 import { usePluginStore, type InstalledPlugin } from '@stores/pluginStore';
 import { createHostApi } from './hostApi';
@@ -331,30 +328,9 @@ class PluginHost {
     this.hidePanelHook = opts.hidePanel ?? null;
     this.activateToolHook = opts.activateTool ?? null;
 
-    /*
-      Two plugin behaviours, hooked at the ONE place an authored property write
-      happens (`SceneGraph.writeProp`).
-
-      Doing it here rather than in the inspector is what makes both structural:
-      a user editing a plugin-generated layer detaches it wherever the edit came
-      from, and `onLayerChanged` cannot fire during playback at all — animation
-      samples tracks, it never writes props, so it cannot reach that path.
-    */
-    setPluginPropWriteHandler((nodeId, componentId, propName) => {
-      // A generated child the user touched: the plugin stops managing it.
-      noteManualEdit(nodeId);
-
-      // An authored edit on a custom layer's OWN property: tell its plugin.
-      const node = defaultSceneGraph.getNode(nodeId);
-      if (!node) return;
-      const record = readCustomLayer(node);
-      if (!record) return;
-      // Only the component carrying the declared props, so a transform nudge
-      // is not reported as a schema change.
-      if (customLayerComponent(node)?.id !== componentId) return;
-      if (propName.startsWith('__')) return;
-      notifyAuthoredChange(nodeId, record.kind, propName);
-    });
+    // The plugin system's one hook on the document's write path (manual-edit
+    // detach + authored-change events) — engine-side, see authoredWriteHook.ts.
+    installAuthoredWriteHook();
 
     /*
       The CACHED list is enforced first, before anything is brought up.
