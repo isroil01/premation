@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <string>
+#include <vector>
 
 namespace premation::effects {
 
@@ -33,9 +34,21 @@ constexpr std::array<std::string_view, 120> kPorted{
 
 }  // namespace
 
-std::span<const std::string_view> ported_kernels() noexcept { return kPorted; }
+std::span<const std::string_view> ported_kernels() noexcept {
+  static const std::vector<std::string_view> all = [] {
+    std::vector<std::string_view> v(kPorted.begin(), kPorted.end());
+    const auto more = generate_kernels();
+    v.insert(v.end(), more.begin(), more.end());
+    return v;
+  }();
+  return all;
+}
 
 bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, ThreadPool* pool) {
+  return run_kernel(type, a, [](std::string_view) { return std::vector<double>{}; }, img, pool);
+}
+
+bool run_kernel(std::string_view type, const KernelArgs& a, const KernelLists& lists, RgbaView img, ThreadPool* pool) {
   const auto b = [&](std::string_view k, bool def) { return a(k, def ? 1 : 0) != 0; };
   const auto key = [&] { return Rgb{a("keyR", 0), a("keyG", 255), a("keyB", 0)}; };
   // An RGB triple stored as <name>R / <name>G / <name>B.
@@ -350,7 +363,7 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
   } else if (type == "card-dance") {
     card_dance(img, a("rows", 4), a("columns", 6), a("amount", 50), a("cardRotation", 30), a("phase", 0), pool);
   } else {
-    return false;
+    return run_generate_kernel(type, a, lists, img, pool);
   }
   return true;
 }

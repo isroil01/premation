@@ -55,13 +55,32 @@ import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from '
 import { selectiveColorData, selectiveRange, shadowHighlightData } from '../toneEffects';
 import { bilateralBlurData, smartBlurData, cameraLensBlurData } from '../aeBlurAdvanced';
 import { sharpenData, addNoiseData } from '../canvas2dEffects';
+import { pathStrokeData } from '../pathStroke';
+import { scribbleData } from '../scribble';
+import { writeOnBrushData } from '../writeOnBrush';
+import { defaultWarpPoints, bezierWarpData, type WarpPoints } from '../bezierWarp';
+import { cellPatternData } from '../generatePatterns';
+import { applyLutToImageData, fromStoredLut } from '../cubeLut';
+import { deepGlowData } from '../deepGlow';
+import { beamPathData, beamSpine, BEAM_PEN_UP } from '../beamPath';
+import {
+  ccTilerData, ripplePulseData, radialScaleWipeData, glassWipeData, imageWipeData, type ImageWipeChannel,
+} from '../aeRoundSevenDistort';
+import { particleSystemsData, bubblesData } from '../aeRoundSevenSimulation';
+import { starBurstData, snowfallData, rainfallData, writeOnData, writeOnPathData, lightBurstData } from '../generateRoundFive';
+import { pickMaskPaths, unpackMaskPaths } from '../strokePaint';
+import type { EffectParams } from '../effects';
 
-export type Args = Record<string, number>;
+/** Kernel arguments by name: numbers (booleans as 0/1), and numeric arrays for the resolved lists (packed mask paths, brush trails, LUT tables). */
+export type Args = Record<string, number | number[]>;
 
 /** Runs the TS kernel for `type` IN PLACE, exactly as kernel_dispatch.cpp does. */
 export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: number, h: number): void {
-  const n = (k: string, d: number): number => a[k] ?? d;
-  const b = (k: string, d: boolean): boolean => (a[k] ?? (d ? 1 : 0)) !== 0;
+  const n = (k: string, d: number): number => {
+    const v = a[k];
+    return typeof v === 'number' ? v : d;
+  };
+  const b = (k: string, d: boolean): boolean => n(k, d ? 1 : 0) !== 0;
   const key = (): [number, number, number] => [n('keyR', 0), n('keyG', 255), n('keyB', 0)];
   const rgb = (name: string, d: [number, number, number]): [number, number, number] =>
     [n(`${name}R`, d[0]), n(`${name}G`, d[1]), n(`${name}B`, d[2])];
@@ -468,6 +487,7 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       data.set(cardDanceData(data, w, h, n('rows', 4), n('columns', 6), n('amount', 50), n('cardRotation', 30), n('phase', 0)));
       return;
     default:
+      if (runGenerateKernel(type, a, n, b, rgb, data, w, h)) return;
       throw new Error(`no kernel for ${type}`);
   }
 }
@@ -507,3 +527,163 @@ export function makeImage(w: number, h: number, salt: number): Uint8ClampedArray
   return d;
 }
 
+
+type Num = (k: string, d: number) => number;
+type Bool = (k: string, d: boolean) => boolean;
+type Rgb3 = (name: string, d: [number, number, number]) => [number, number, number];
+
+/**
+ * The E4 second batch — kernel_dispatch_generate.cpp's table: the path / paint
+ * effects, the generators and the round-seven kernels. False for any other type.
+ */
+function runGenerateKernel(
+  type: string, a: Args, n: Num, b: Bool, rgb: Rgb3, data: Uint8ClampedArray, w: number, h: number,
+): boolean {
+  const arr = (k: string): number[] => {
+    const v = a[k];
+    return Array.isArray(v) ? v : [];
+  };
+  const maskParams = (): EffectParams => ({
+    maskPathsMeta: arr('maskPathsMeta'),
+    maskPathsXY: arr('maskPathsXY'),
+    // A non-empty id: the pick is `pathMaskIndex` as resolved by buildSnapshot.
+    pathMaskId: 'mask',
+    pathMaskIndex: n('pathMaskIndex', 0),
+  }) as unknown as EffectParams;
+  switch (type) {
+    case 'path-stroke':
+      data.set(pathStrokeData(data, w, h, pickMaskPaths(maskParams(), w, h, b('allMasks', false)), {
+        rgb: rgb('color', [255, 255, 255]), brushSize: n('brushSize', 10), hardness: n('hardness', 75),
+        opacity: n('opacity', 100), start: n('start', 0), end: n('end', 100), spacing: n('spacing', 15),
+        paintStyle: n('paintStyle', 0), sequential: b('sequential', false),
+      }));
+      return true;
+    case 'scribble': {
+      const p = maskParams();
+      const masks = unpackMaskPaths(p.maskPathsMeta, p.maskPathsXY, w, h);
+      data.set(scribbleData(data, w, h, masks, pickMaskPaths(p, w, h, false), {
+        mode: n('mode', 0), fillType: n('fillType', 0), edgeWidth: n('edgeWidth', 10), endCap: n('endCap', 1),
+        join: n('join', 1), miterLimit: n('miterLimit', 4), rgb: rgb('color', [255, 255, 255]),
+        opacity: n('opacity', 100), angle: n('angle', 45), strokeWidth: n('strokeWidth', 2),
+        curviness: n('curviness', 50), curvinessVariation: n('curvinessVariation', 0), spacing: n('spacing', 5),
+        spacingVariation: n('spacingVariation', 0), pathOverlap: n('pathOverlap', 0),
+        pathOverlapVariation: n('pathOverlapVariation', 0), start: n('start', 0), end: n('end', 100),
+        sequential: b('sequential', true), seed: n('seed', 0), wiggleState: n('wiggleState', 0),
+        smoothWiggle: b('smoothWiggle', false), composite: n('composite', 0),
+      }));
+      return true;
+    }
+    case 'write-on':
+      if (Math.round(n('mode', 0)) !== 0) {
+        const flat = arr('pathPoints');
+        data.set(flat.length >= 4
+          ? writeOnPathData(data, w, h, flat, n('completion', 100), n('brushSize', 8), rgb('color', [255, 255, 255]), n('taper', 0))
+          : writeOnData(
+            data, w, h, n('startX', -100), n('startY', 0), n('endX', 100), n('endY', 0), n('completion', 100),
+            n('brushSize', 8), rgb('color', [255, 255, 255]), n('wobble', 0), n('taper', 0),
+          ));
+        return true;
+      }
+      data.set(writeOnBrushData(
+        data, w, h,
+        { xy: arr('brushTrailXY'), size: arr('brushTrailSize'), attr: arr('brushTrailAttr'), filled: b('filled', false) },
+        {
+          brushX: n('brushX', 0), brushY: n('brushY', 0), rgb: rgb('color', [255, 255, 255]), size: n('size', 8),
+          hardness: n('hardness', 75), opacity: n('opacity', 100), paintTimeProps: n('paintTimeProps', 0),
+          brushTimeProps: n('brushTimeProps', 0), paintStyle: n('paintStyle', 0),
+        },
+      ));
+      return true;
+    case 'star-burst':
+      data.set(starBurstData(data, w, h, n('phase', 0), n('amount', 50), n('size', 2), rgb('color', [255, 255, 255]), n('blend', 0), n('seed', 0)));
+      return true;
+    case 'snowfall':
+      data.set(snowfallData(data, w, h, n('amount', 50), n('size', 2), n('evolution', 0), n('wind', 0), n('opacity', 100), rgb('color', [255, 255, 255]), n('seed', 0)));
+      return true;
+    case 'rainfall':
+      data.set(rainfallData(data, w, h, n('amount', 50), n('length', 20), n('angle', 10), n('evolution', 0), n('opacity', 60), rgb('color', [207, 230, 255]), n('seed', 0)));
+      return true;
+    case 'light-burst':
+      data.set(lightBurstData(data, w, h, n('centerX', 0), n('centerY', 0), n('intensity', 100), n('rayLength', 50)));
+      return true;
+    case 'cc-tiler':
+      data.set(ccTilerData(data, w, h, n('scale', 100), n('centerX', 0), n('centerY', 0), n('blendWithOriginal', 0)));
+      return true;
+    case 'ripple-pulse':
+      data.set(ripplePulseData(data, w, h, n('centerX', 0), n('centerY', 0), n('pulseRadius', 0), n('amplitude', 40), n('width', 60), b('renderBump', true)));
+      return true;
+    case 'radial-scale-wipe':
+      data.set(radialScaleWipeData(data, w, h, n('completion', 0), n('centerX', 0), n('centerY', 0), b('reverse', false)));
+      return true;
+    case 'glass-wipe':
+      data.set(glassWipeData(data, w, h, n('completion', 0), n('displacement', 40), n('softness', 30)));
+      return true;
+    case 'image-wipe':
+      data.set(imageWipeData(data, w, h, n('completion', 0), n('borderSoftness', 20), n('gradientChannel', 0) as ImageWipeChannel, b('invertGradient', false)));
+      return true;
+    case 'particle-systems': {
+      const [br, bg, bb] = rgb('birth', [255, 226, 122]);
+      const [dr, dg, db] = rgb('death', [255, 59, 0]);
+      data.set(particleSystemsData(data, w, h, n('time', 0), {
+        birthRate: n('birthRate', 10), longevity: n('longevity', 2), producerX: n('producerX', 0),
+        producerY: n('producerY', 0), producerRadiusX: n('producerRadiusX', 5), producerRadiusY: n('producerRadiusY', 5),
+        animation: n('animation', 0), direction: n('direction', 0), spread: n('spread', 30), velocity: n('velocity', 50),
+        velocityVariation: n('velocityVariation', 20), gravity: n('gravity', 0), resistance: n('resistance', 0),
+        birthSize: n('birthSize', 4), deathSize: n('deathSize', 1), sizeVariation: n('sizeVariation', 0),
+        birthR: br, birthG: bg, birthB: bb, deathR: dr, deathG: dg, deathB: db,
+        opacity: n('opacity', 100), blend: n('blend', 0), seed: n('seed', 0),
+      }));
+      return true;
+    }
+    case 'cc-bubbles': {
+      const [cr, cg, cb] = rgb('color', [255, 255, 255]);
+      data.set(bubblesData(
+        data, w, h, n('bubbleAmount', 100), n('bubbleSpeed', 300), n('wobbleAmplitude', 10), n('wobbleFrequency', 2),
+        n('bubbleSize', 12), n('sizeVariation', 40), n('shading', 0), cr, cg, cb, n('opacity', 80), n('evolution', 0),
+        n('seed', 1),
+      ));
+      return true;
+    }
+    case 'bezier-warp': {
+      const keys = ['topLeft', 'top1', 'top2', 'topRight', 'right1', 'right2', 'bottomRight', 'bottom1', 'bottom2', 'bottomLeft', 'left1', 'left2'];
+      const pts = defaultWarpPoints(w, h).map((p, i) => ({ x: p.x + n(`${keys[i]!}X`, 0), y: p.y + n(`${keys[i]!}Y`, 0) }));
+      data.set(bezierWarpData(data, w, h, pts as unknown as WarpPoints));
+      return true;
+    }
+    case 'cell-pattern':
+      cellPatternData(data, w, h, n('size', 40), n('evolution', 0), n('contrast', 100), b('invert', false), b('membrane', false));
+      return true;
+    case 'apply-color-lut': {
+      const three = (k: string): number[] | undefined => (arr(k).length === 3 ? arr(k) : undefined);
+      const lut = fromStoredLut({ size: n('size', 0), size1d: n('size1d', 0), data: arr('lut'), domainMin: three('domainMin'), domainMax: three('domainMax') });
+      if (lut) applyLutToImageData(data, lut, n('intensity', 1));
+      return true;
+    }
+    case 'deep-glow':
+      data.set(deepGlowData(data, w, h, {
+        radius: n('radius', 20), gain: n('gain', 1), threshold: n('threshold', 0), aspect: [n('aspectX', 1), n('aspectY', 1)],
+        chroma: rgb('chroma', [1, 1, 1]), tint: rgb('tint', [1, 1, 1]), tintAmount: n('tintAmount', 0),
+        glowOnly: b('glowOnly', false), dither: b('dither', true), octaves: n('octaves', 6),
+      }));
+      return true;
+    case 'beam-path': {
+      const flat = arr('pathPoints');
+      const { points, totalLen } = beamSpine(flat.length >= 4 ? flat : [n('startX', -100), n('startY', 0), n('endX', 100), n('endY', 0)]);
+      for (let i = 0; i + 1 < points.length; i += 2) {
+        if (points[i]! >= BEAM_PEN_UP) continue;
+        points[i] = points[i]! + w / 2; points[i + 1] = points[i + 1]! + h / 2;
+      }
+      data.set(beamPathData(data, w, h, {
+        points, totalLen, coreWidth: n('coreWidth', 6), coreSoftness: n('coreSoftness', 0.3),
+        coreColor: rgb('coreColor', [1, 1, 1]), glowColor: rgb('glowColor', [0.05, 0.4, 1]),
+        glowSpread: n('glowSpread', 8), glowIntensity: n('glowIntensity', 1), glowExponent: n('glowExponent', 2),
+        start: n('start', 0), end: n('end', 1), startSize: n('startSize', 1), endSize: n('endSize', 1),
+        distortion: n('distortion', 0), distortionScale: n('distortionScale', 40), evolution: n('evolution', 0),
+        composite: n('composite', 0), flicker: n('flicker', 1),
+      }));
+      return true;
+    }
+    default:
+      return false;
+  }
+}

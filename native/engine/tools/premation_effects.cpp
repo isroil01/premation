@@ -73,14 +73,14 @@ std::vector<std::uint8_t> make_image(int w, int h, std::uint32_t salt) {
   return d;
 }
 
-double time_ms(const std::string& effect, const fx::KernelArgs& args, const std::vector<std::uint8_t>& input, int w, int h,
-               fx::ThreadPool* pool, int iterations) {
+double time_ms(const std::string& effect, const fx::KernelArgs& args, const fx::KernelLists& lists,
+               const std::vector<std::uint8_t>& input, int w, int h, fx::ThreadPool* pool, int iterations) {
   std::vector<std::uint8_t> buf;
   double best = 1e300;
   for (int i = 0; i < iterations + 1; ++i) {  // first run warms caches and is dropped
     buf = input;
     const auto t0 = std::chrono::steady_clock::now();
-    fx::run_kernel(effect, args, fx::RgbaView{buf, w, h}, pool);
+    fx::run_kernel(effect, args, lists, fx::RgbaView{buf, w, h}, pool);
     const auto t1 = std::chrono::steady_clock::now();
     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     if (i > 0) best = std::min(best, ms);
@@ -139,9 +139,16 @@ int main(int argc, char** argv) {
     const std::string effect = c["effect"].str();
     if (!only.empty() && effect != only) continue;
     const json::Value& args = c["args"];
-    const fx::KernelArgs ka = [&](std::string_view k, double def) { return args.has(k) ? args[k].num() : def; };
-    const double one = time_ms(effect, ka, input, w, h, nullptr, iterations);
-    const double many = time_ms(effect, ka, input, w, h, &pool, iterations);
+    const fx::KernelArgs ka = [&](std::string_view k, double def) { return args.has(k) ? args[k].num(def) : def; };
+    const fx::KernelLists kl = [&](std::string_view k) {
+      std::vector<double> v;
+      if (args.has(k) && args[k].is_array()) {
+        for (const json::Value& x : args[k].items()) v.push_back(x.num());
+      }
+      return v;
+    };
+    const double one = time_ms(effect, ka, kl, input, w, h, nullptr, iterations);
+    const double many = time_ms(effect, ka, kl, input, w, h, &pool, iterations);
     std::printf("%-18s %10.2f %10.2f %7.1fx\n", effect.c_str(), one, many, one / many);  // NOLINT(cppcoreguidelines-pro-type-vararg)
   }
   return 0;

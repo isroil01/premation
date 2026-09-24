@@ -624,7 +624,14 @@ add_library(engine_effects STATIC
   src/effects/round_five_stylize_kernels.cpp
   src/effects/round_five_distort_kernels.cpp
   src/effects/round_five_transition_kernels.cpp
+  src/effects/paint_kernels.cpp
+  src/effects/generate_round_five_kernels.cpp
+  src/effects/round_seven_distort_kernels.cpp
+  src/effects/simulation_kernels.cpp
+  src/effects/pattern_warp_lut_kernels.cpp
+  src/effects/glow_beam_kernels.cpp
   src/effects/kernel_dispatch.cpp
+  src/effects/kernel_dispatch_generate.cpp
 )
 target_include_directories(engine_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
 target_compile_features(engine_effects PUBLIC cxx_std_20)

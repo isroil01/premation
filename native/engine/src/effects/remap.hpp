@@ -16,19 +16,35 @@ struct RemapPt {
   double x, y;
 };
 
-template <class Invert>
-void remap_rgba(RgbaView img, ThreadPool* pool, Invert&& invert) {
+/// `remap` with the inverse built per destination row: `make_row(dy + 0.5)`
+/// returns that row's `invert(dx + 0.5, dy + 0.5)`, so a kernel can hoist
+/// what depends only on the row (or cull what cannot reach it) without
+/// touching the per-pixel arithmetic.
+template <class MakeRow>
+void remap_rgba_rows(RgbaView img, ThreadPool* pool, MakeRow&& make_row) {
   const int w = img.w;
   const int h = img.h;
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
     for (int dy = y0; dy < y1; ++dy) {
+      auto&& invert = make_row(dy + 0.5);
       for (int dx = 0; dx < w; ++dx) {
         std::uint8_t* o = out + idx4(dx, dy, w);
         const std::optional<RemapPt> s = invert(dx + 0.5, dy + 0.5);
         if (!s) {
           o[0] = o[1] = o[2] = o[3] = 0;
+          continue;
+        }
+        if (s->x == dx + 0.5 && s->y == dy + 0.5) {
+          // The pixel's own centre: fx = fy = 0, so the TS's sum is
+          // 0 + p·1 + q·0 + … = p exactly. Copy it (most pixels of a local
+          // warp — drizzle rings, ripple bands — take this path).
+          const std::uint8_t* p = src.data() + idx4(dx, dy, w);
+          o[0] = p[0];
+          o[1] = p[1];
+          o[2] = p[2];
+          o[3] = p[3];
           continue;
         }
         const double sx = s->x - 0.5;
@@ -62,6 +78,11 @@ void remap_rgba(RgbaView img, ThreadPool* pool, Invert&& invert) {
       }
     }
   });
+}
+
+template <class Invert>
+void remap_rgba(RgbaView img, ThreadPool* pool, Invert&& invert) {
+  remap_rgba_rows(img, pool, [&](double /*dy*/) -> Invert& { return invert; });
 }
 
 }  // namespace premation::effects

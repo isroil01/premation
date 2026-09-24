@@ -441,9 +441,10 @@ wiring, 18 canvas-drawn effects), macOS system fonts (CoreText), variation axes 
 the 'vert' face through alias faces, the D2w scene builder's own paint resolution
 (`snapshot_build.cpp` still marks paint unported), pixel parity of the above.
 
-**E4 progress (2026-09-24, branch `e4-effects`).** `native/engine/src/effects`
-(`engine_effects`, Skia- and GPU-free) holds C++ ports of **120 of the 166 CPU
-effect passes** the bake chain runs (`applyCanvas2dEffect`,
+**E4 progress (2026-09-24, branches `e4-effects`, `e4-more`).** `native/engine/src/effects`
+(`engine_effects`, Skia- and GPU-free) holds C++ ports of **139 of the 166 CPU
+effect passes** the bake chain runs — every pure buffer kernel; the 27 left
+draw through Canvas2D (`applyCanvas2dEffect`,
 `src/core/effects/canvas2dEffects.ts`); see `native/README.md` § CPU effect
 kernels. Each is a port of its TS kernel operation for operation, including
 JavaScript's store rounding (`Uint8ClampedArray` half-to-even, `Uint8Array` /
@@ -454,15 +455,18 @@ window per pixel, the C++ uses algorithms that give the same result: sliding
 integer sums, van Herk min / max, Huang running-median histograms, lattices
 computed once. Where the TS sums floats, the C++ keeps the TS's order.
 **Parity:** `nativeKernelCrossEngine.test.ts` writes
-`native/engine/tests/data/effect_kernel_parity.json`: 297 cases over three
+`native/engine/tests/data/effect_kernel_parity.json`: 359 cases over three
 synthetic inputs, one of them > 512 px for the edge-aware blurs' budget proxy.
 `engine_effects_tests` matches **every FNV-1a 64 exactly, on 1 thread and on
-4**, with zero tolerance.
+4**, with zero tolerance. Kernels whose TS arguments are resolved lists
+(packed mask paths, brush trails, spines, `.cube` tables) take them as named
+numeric arrays; kernels that stamp in sequence (dabs, particles, streaks)
+replay the whole stamp list per row chunk, so every pixel sees the TS's order.
 
 The plan's "28 Canvas2D-only effects" count predates GPU-port rounds 6–14.
 Today `CANVAS2D_ONLY` (no WGSL, so it forces a bake) has **9** members. 7 of
-them draw through Canvas2D. `path-stroke` and `scribble` are pure buffer kernels
-and are next. The other 157 passes run on the CPU only when a layer is baked
+them draw through Canvas2D; the other two, `path-stroke` and `scribble`, are pure
+buffer kernels over the resolved mask paths and are ported. The other 157 passes run on the CPU only when a layer is baked
 for another reason (interior styles, effect masks, fill opacity, paths), where
 they are the WGSL's parity twins.
 
@@ -473,17 +477,33 @@ jobs (Linux CPU pressure 10–85 % during the runs; a pure-compute parallel loop
 scaled only 1.2× on 4 threads under that load). The thread column is therefore
 a floor, not a scaling measurement. Summary:
 
-- Median over the 120 effects: C++ on **1 thread is 2.1× the TS**, and on
-  **4 threads 5.0×**. The range runs from 0.5× (Vignette, whose TS memoises its
+- Median over the 139 effects: C++ on **1 thread is 2.2× the TS**, and on
+  **4 threads 5.1×**. The range runs from 0.5× (Vignette, whose TS memoises its
   gain map across frames) to 80× (Median, now a running histogram instead of a
   sort).
-- 93 of the 120 TS kernels take more than 41.7 ms (24 fps) on a 1080p layer.
-  On 4 contended threads, 77 of the C++ ports are under 41.7 ms and 43 are not.
-  The slowest are the per-pixel noise and trig resamples (Vector Blur, Radial
-  Fast Blur, Turbulent Displace, Drizzle, CC Scatterize) at 110–250 ms. They
-  are the next optimisation targets, via lattice caching or a lower-precision
-  twin behind the golden gate. Measuring the exit criterion ("no effect drops
-  the bench comp below 24 fps") needs the chain wired into the engine first.
+- 107 of the 139 TS kernels take more than 41.7 ms (24 fps) on a 1080p layer.
+  On 4 contended threads, 91 of the C++ ports are under 41.7 ms and 48 are not.
+- Optimised without changing a byte (`e4-more`, interleaved A/B against the
+  previous build, same session): Radial Fast Blur 4.8× on 1 thread (source
+  column / row per tap tabulated, Bright / Dark gain a table of the byte sum),
+  Drizzle 4.5× (drops culled per row and pixel by |vy| − ringR and
+  |vx| − ringR, which `Math.hypot` never undercuts), Turbulent Displace 2.9× and
+  Curl Noise 2.3× (per-row fbm with each octave's lattice corners reused along
+  the row), Hex Tile 2.3× (candidate cells tabulated per column / row), Vector
+  Blur 1.6× (integer tap sums, a vectorisable `Math.round`), CC Scatterize 1.2×
+  on 1 thread and 2.1× on 4 (destinations in parallel, writes replayed in scan
+  order). Shared by every kernel: V8's two-argument `Math.hypot` inlined
+  (checked bit for bit against `motion::js::hypot`), `remap` copying a pixel
+  that maps to its own centre, and `hash2`'s ToInt32 off the `fmod` path —
+  Bulge, Liquify, Magnify, Smear, Mirror, Ripple Pulse and Cell Pattern gained
+  1.7–2.8× from those alone.
+- The slowest now are Deep Glow (1.3 s on 4 threads at radius 60: eight
+  33-tap separable Float32 passes per octave, the TS order kept) and Energy
+  Beam (0.9 s: per-pixel distance to 64 spine segments plus a 4-fbm curl), then
+  Light Burst, Radial Blur, Cross Blur and Vector Blur at 150–230 ms. Deep Glow
+  and Beam are candidates for a lower-precision twin behind the golden gate.
+  Measuring the exit criterion ("no effect drops the bench comp below 24 fps")
+  needs the chain wired into the engine first.
 
 Ported, with parity (every row byte-identical) and ms per 1080p frame:
 
@@ -566,8 +586,8 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `dust-scratches` | `aeTransitionsAdvanced.ts` | 8867 | 140 | 52.9 | 63.2 | 167.7 |
 | `noise-alpha` | `aeTransitionsAdvanced.ts` | 31.4 | 31.6 | 11.5 | 1.0 | 2.7 |
 | `wave-warp` | `warp.ts` | 178 | 135 | 48.0 | 1.3 | 3.7 |
-| `turbulent-displace` | `warp.ts` | 507 | 510 | 181 | 1.0 | 2.8 |
-| `curl-noise` | `warp.ts` | 846 | 286 | 110 | 3.0 | 7.7 |
+| `turbulent-displace` | `warp.ts` | 507 | 176 | 95.7 | 2.9 | 5.3 |
+| `curl-noise` | `warp.ts` | 846 | 124 | 66.8 | 6.8 | 12.7 |
 | `roughen-edges` | `stylize.ts` | 188 | 153 | 112 | 1.2 | 1.7 |
 | `scatter` | `stylize.ts` | 137 | 44.9 | 27.5 | 3.1 | 5.0 |
 | `ripple` | `aeDistortAdvanced.ts` | 430 | 231 | 83.7 | 1.9 | 5.1 |
@@ -589,8 +609,8 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `fractal` | `aeRoundSevenStylize.ts` | 465 | 242 | 120 | 1.9 | 3.9 |
 | `unmult` | `aeRoundSix.ts` | 54.7 | 28.9 | 15.3 | 1.9 | 3.6 |
 | `cc-composite` | `aeRoundSix.ts` | 49.2 | 25.4 | 17.6 | 1.9 | 2.8 |
-| `cc-scatterize` | `aeRoundSix.ts` | 278 | 182 | 172 | 1.5 | 1.6 |
-| `radial-fast-blur` | `aeRoundSix.ts` | 1059 | 509 | 242 | 2.1 | 4.4 |
+| `cc-scatterize` | `aeRoundSix.ts` | 278 | 146 | 84.4 | 1.9 | 3.3 |
+| `radial-fast-blur` | `aeRoundSix.ts` | 1059 | 108 | 55.9 | 9.8 | 18.9 |
 | `cross-blur` | `aeRoundSix.ts` | 708 | 314 | 161 | 2.3 | 4.4 |
 | `scale-wipe` | `aeRoundSix.ts` | 253 | 105 | 51.9 | 2.4 | 4.9 |
 | `plastic` | `aeRoundSix.ts` | 555 | 197 | 111 | 2.8 | 5.0 |
@@ -598,33 +618,54 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `texturize` | `aeStylizeRoundFive.ts` | 222 | 186 | 90.7 | 1.2 | 2.4 |
 | `threads` | `aeStylizeRoundFive.ts` | 70.9 | 48.5 | 25.6 | 1.5 | 2.8 |
 | `chromatic-aberration` | `aeStylizeRoundFive.ts` | 582 | 247 | 120 | 2.4 | 4.9 |
-| `hex-tile` | `aeStylizeRoundFive.ts` | 127 | 134 | 120 | 0.9 | 1.1 |
-| `vector-blur` | `aeStylizeRoundFive.ts` | 788 | 449 | 248 | 1.8 | 3.2 |
+| `hex-tile` | `aeStylizeRoundFive.ts` | 127 | 60.1 | 17.1 | 2.1 | 7.4 |
+| `vector-blur` | `aeStylizeRoundFive.ts` | 788 | 288 | 153 | 2.7 | 5.2 |
 | `flo-motion` | `aeDistortRoundFive.ts` | 329 | 181 | 72.3 | 1.8 | 4.6 |
 | `lens` | `aeDistortRoundFive.ts` | 138 | 48.9 | 26.7 | 2.8 | 5.2 |
 | `griddler` | `aeDistortRoundFive.ts` | 195 | 96.0 | 48.9 | 2.0 | 4.0 |
 | `ball-action` | `aeDistortRoundFive.ts` | 206 | 94.4 | 72.0 | 2.2 | 2.9 |
-| `drizzle` | `aeDistortRoundFive.ts` | 1362 | 313 | 172 | 4.4 | 7.9 |
+| `drizzle` | `aeDistortRoundFive.ts` | 1362 | 76.1 | 47.1 | 17.9 | 28.9 |
 | `jaws` | `aeTransitionsRoundFive.ts` | 116 | 93.9 | 37.7 | 1.2 | 3.1 |
 | `pixel-polly` | `aeTransitionsRoundFive.ts` | 56.6 | 34.6 | 12.7 | 1.6 | 4.4 |
 | `twister` | `aeTransitionsRoundFive.ts` | 50.2 | 28.5 | 12.4 | 1.8 | 4.0 |
 | `card-dance` | `aeTransitionsRoundFive.ts` | 41.9 | 32.6 | 15.6 | 1.3 | 2.7 |
+| `path-stroke` | `pathStroke.ts` | 116 | 34.7 | 26.3 | 3.3 | 4.4 |
+| `scribble` | `scribble.ts` | 134 | 39.7 | 37.0 | 3.4 | 3.6 |
+| `write-on` | `writeOnBrush.ts` | 74.0 | 23.8 | 22.2 | 3.1 | 3.3 |
+| `star-burst` | `generateRoundFive.ts` | 23.1 | 15.6 | 11.5 | 1.5 | 2.0 |
+| `snowfall` | `generateRoundFive.ts` | 17.7 | 2.6 | 1.7 | 6.8 | 10.4 |
+| `rainfall` | `generateRoundFive.ts` | 9.5 | 1.0 | 2.5 | 9.5 | 3.8 |
+| `light-burst` | `generateRoundFive.ts` | 1034 | 676 | 233 | 1.5 | 4.4 |
+| `cc-tiler` | `aeRoundSevenDistort.ts` | 344 | 137 | 47.3 | 2.5 | 7.3 |
+| `ripple-pulse` | `aeRoundSevenDistort.ts` | 466 | 56.0 | 23.8 | 8.3 | 19.6 |
+| `radial-scale-wipe` | `aeRoundSevenDistort.ts` | 174 | 49.0 | 20.3 | 3.6 | 8.6 |
+| `glass-wipe` | `aeRoundSevenDistort.ts` | 428 | 110 | 40.9 | 3.9 | 10.5 |
+| `image-wipe` | `aeRoundSevenDistort.ts` | 57.4 | 17.2 | 6.3 | 3.3 | 9.1 |
+| `particle-systems` | `aeRoundSevenSimulation.ts` | 14.7 | 1.6 | 0.8 | 9.2 | 18.4 |
+| `cc-bubbles` | `aeRoundSevenSimulation.ts` | 38.1 | 9.2 | 3.6 | 4.1 | 10.6 |
+| `bezier-warp` | `bezierWarp.ts` | 1926 | 296 | 109 | 6.5 | 17.7 |
+| `cell-pattern` | `generatePatterns.ts` | 803 | 224 | 88.4 | 3.6 | 9.1 |
+| `apply-color-lut` | `cubeLut.ts` | 223 | 78.3 | 29.8 | 2.8 | 7.5 |
+| `deep-glow` | `deepGlow.ts` | 7398 | 2730 | 1287 | 2.7 | 5.7 |
+| `beam-path` | `beamPath.ts` | 13728 | 2578 | 934 | 5.3 | 14.7 |
 
-Not ported yet (46):
+Not ported (27) — all draw through Canvas2D and need the E3 `raster::Canvas`
+in the chain before they can move:
 
 | status | effects (`applyCanvas2dEffect` cases) |
 |---|---|
-| **Forces a bake today** (`CANVAS2D_ONLY`, no WGSL) — canvas-drawn, needs the E3 `raster::Canvas` | `vegas`, `numbers`, `timecode`, `audio-spectrum`, `audio-waveform`, `lightning`, `plexus` |
-| **Forces a bake today** — pure buffer kernels over mask polylines resolved into params; next to port | `path-stroke` (`pathStroke.ts`), `scribble` (`scribble.ts`) |
-| Pure kernel, not ported yet (same recipe as above) | `bezier-warp`, `cell-pattern`, `apply-color-lut` (`applyLutToImageData`), `write-on` (+ brush form), `star-burst`, `snowfall`, `rainfall`, `light-burst`, `deep-glow`, `beam-path`, `cc-tiler`, `ripple-pulse`, `radial-scale-wipe`, `glass-wipe`, `image-wipe`, `particle-systems`, `cc-bubbles` |
-| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs), needs `raster::Canvas` in the chain | `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `transform`, `beam`, `lens-flare`, `cc-repetile` — ported to `engine_canvas_effects` (on the Canvas2D interface, op-for-op with the TS; E3 round two): `fill`, `linear-wipe`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves` |
+| **Forces a bake today** (`CANVAS2D_ONLY`, no WGSL) | `vegas`, `numbers`, `timecode`, `audio-spectrum`, `audio-waveform`, `lightning`, `plexus` |
+| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs) | `fill`, `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `linear-wipe`, `transform`, `beam`, `lens-flare`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves`, `cc-repetile` |
+| Canvas-drawn, ported by E3 on `raster::Canvas` (`engine_canvas_effects`, call-log parity; not yet in the chain) | `fill`, `linear-wipe`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves`, `light-rays`, `light-sweep` |
+
 Open work for E4:
 - **Wire the chain.** Map each effect's params onto its kernel arguments (the
   TS `apply*` wrappers), and interleave the kernels with the canvas-drawn
   passes, masks, fill opacity and interior styles. `layer_is_baked` layers then
   render through `engine_effects` instead of being reported as unported by
   `frame_build.cpp`, and the golden gate runs on whole frames.
-- Port the remaining kernels (above), and the non-effect CPU bake sites in
+- The 27 canvas-drawn effects (above, after E3's canvas lands in the chain),
+  and the non-effect CPU bake sites in
   `src/core/rendering` (`pixelMotion*`, `deinterlace`, `channelView`,
   `frameTap`, `AppTextureProvider`'s read-backs).
 - Toolchain not checked here: clang-tidy (CI runs it on `native/libs` only),

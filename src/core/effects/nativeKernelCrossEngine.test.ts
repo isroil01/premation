@@ -31,6 +31,81 @@ const IMAGES: Image[] = [
 interface Case { effect: string; image: string; args: Args }
 const C = (effect: string, image: string, args: Args): Case => ({ effect, image, args });
 
+// ── Resolved mask paths (strokePaint.ts `packMaskPaths` layout, layer-centred px) ──
+interface MaskSpec { pts: Array<[number, number]>; closed?: boolean; mode?: number; inverted?: boolean }
+const q = (v: number): number => Math.round(v * 1000) / 1000;
+function packMasks(...ms: MaskSpec[]): { maskPathsMeta: number[]; maskPathsXY: number[] } {
+  const maskPathsMeta: number[] = [];
+  const maskPathsXY: number[] = [];
+  for (const m of ms) {
+    maskPathsMeta.push(m.pts.length, m.closed === false ? 0 : 1, m.mode ?? 1, m.inverted ? 1 : 0);
+    for (const [x, y] of m.pts) maskPathsXY.push(q(x), q(y));
+  }
+  return { maskPathsMeta, maskPathsXY };
+}
+/** A star (r1 ≠ r2) or polygon (r1 = r2), `n` points. */
+function star(cx: number, cy: number, r1: number, r2: number, n: number, rotDeg: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < n * 2; i++) {
+    const a = (rotDeg * Math.PI) / 180 + (i * Math.PI) / n;
+    const r = i % 2 === 0 ? r1 : r2;
+    out.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  return out;
+}
+function wave(x0: number, x1: number, y: number, amp: number, n: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i <= n; i++) out.push([x0 + ((x1 - x0) * i) / n, y + Math.sin(i * 0.9) * amp]);
+  return out;
+}
+const MASKS_SMALL = packMasks(
+  { pts: star(-4, 2, 17, 8, 5, -90) },
+  { pts: star(8, -3, 9, 9, 6, 10), mode: 2 },
+  { pts: wave(-26, 24, 12, 5, 14), closed: false },
+  // A self-overlapping bow tie: nonzero winding fills both lobes.
+  { pts: [[-20, -18], [20, 15], [20, -18], [-20, 15]], mode: 6 },
+);
+const MASKS_WIDE = packMasks(
+  { pts: star(-200, 0, 11, 11, 3, 0) },
+  { pts: wave(-280, 250, -2, 6, 40), closed: false, mode: 0 },
+  { pts: star(120, 1, 10, 4, 7, 33), mode: 3, inverted: true },
+);
+const MASKS_TALL = packMasks(
+  { pts: [[-7, -30], [6, -12], [-5, 5], [7, 25], [0, 38]], closed: false },
+  { pts: star(0, -8, 8.5, 8.5, 4, 45), mode: 5 },
+);
+/** Test LUTs: a 3D table (red fastest) with a hue-twisting look, a 1D curve. */
+function lut3d(size: number): number[] {
+  const out: number[] = [];
+  for (let b = 0; b < size; b++) {
+    for (let g = 0; g < size; g++) {
+      for (let r = 0; r < size; r++) {
+        const R = r / (size - 1); const G = g / (size - 1); const B = b / (size - 1);
+        out.push(q(R * 0.8 + G * 0.25), q(G * G * 0.9 + B * 0.1), q(Math.sqrt(B) * 0.7 + R * 0.2 + 0.05));
+      }
+    }
+  }
+  return out;
+}
+const LUT_3D_5 = lut3d(5);
+const LUT_3D_3 = lut3d(3);
+const LUT_1D_8 = Array.from({ length: 8 * 3 }, (_, i) => q(Math.pow(Math.floor(i / 3) / 7, 0.6 + (i % 3) * 0.4)));
+/** A long spine (> BEAM_MAX_POINTS) for Beam Path's resampler. */
+const WAVE_TALL = wave(-8, 8, 0, 6, 90).flatMap(([x, y]) => [q(y), q(x * 4.5)]);
+/** A Write-on brush trail: `n` dabs along a curl, per-dab size / hardness / opacity / colour. */
+function trail(n: number, cx: number, cy: number, r: number): { brushTrailXY: number[]; brushTrailSize: number[]; brushTrailAttr: number[] } {
+  const brushTrailXY: number[] = [];
+  const brushTrailSize: number[] = [];
+  const brushTrailAttr: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / Math.max(1, n - 1);
+    brushTrailXY.push(q(cx + Math.cos(t * 7) * r * t), q(cy + Math.sin(t * 7) * r * t * 0.8));
+    brushTrailSize.push(q(2 + 6 * t));
+    brushTrailAttr.push(q(30 + 60 * t), q(100 - 50 * t), q(255 * t), q(200 - 150 * t), 90);
+  }
+  return { brushTrailXY, brushTrailSize, brushTrailAttr };
+}
+
 const CASES: Case[] = [
   C('gaussian-blur', 'small', { radius: 6 }),
   C('gaussian-blur', 'small', { radius: 2.7, dimensions: 1, repeatEdge: 0 }),
@@ -330,6 +405,73 @@ const CASES: Case[] = [
   C('twister', 'tall', { completion: 25, centerY: -10, twist: -360 }),
   C('card-dance', 'small', { rows: 4, columns: 6, amount: 50, cardRotation: 30, phase: 10 }),
   C('card-dance', 'wide', { rows: 2, columns: 20, amount: 80, cardRotation: -60, phase: 55 }),
+  // ── E4 second batch: path / paint effects ──
+  C('path-stroke', 'small', { ...MASKS_SMALL, brushSize: 6, hardness: 50, spacing: 20, start: 10, end: 85, colorR: 250, colorG: 30, colorB: 90 }),
+  C('path-stroke', 'small', { ...MASKS_SMALL, allMasks: 1, sequential: 1, brushSize: 4.5, hardness: 100, opacity: 70, start: 20, end: 90, paintStyle: 1 }),
+  C('path-stroke', 'wide', { ...MASKS_WIDE, allMasks: 1, brushSize: 3, hardness: 20, spacing: 0, start: 95, end: 5, paintStyle: 2 }),
+  C('path-stroke', 'tall', { ...MASKS_TALL, brushSize: 9, hardness: 0, start: 40, end: 40, paintStyle: 1, colorR: 10, colorG: 200, colorB: 255 }),
+  C('path-stroke', 'tall', { ...MASKS_TALL, pathMaskIndex: 1, brushSize: 2, spacing: 35, opacity: 55 }),
+  C('scribble', 'small', { ...MASKS_SMALL, mode: 0, fillType: 0, angle: 30, spacing: 3, spacingVariation: 1, curviness: 60, curvinessVariation: 30, pathOverlap: 20, pathOverlapVariation: 40, strokeWidth: 1.5, seed: 4, start: 5, end: 80 }),
+  C('scribble', 'small', { ...MASKS_SMALL, mode: 2, fillType: 1, edgeWidth: 6, endCap: 1, join: 0, miterLimit: 3, angle: -60, spacing: 2.5, composite: 1, colorR: 20, colorG: 40, colorB: 220, opacity: 80 }),
+  C('scribble', 'wide', { ...MASKS_WIDE, mode: 1, fillType: 4, edgeWidth: 5, endCap: 2, join: 2, angle: 90, spacing: 2, curviness: 0, wiggleState: 2.4, smoothWiggle: 1, sequential: 0, composite: 2, start: 10, end: 70 }),
+  C('scribble', 'tall', { ...MASKS_TALL, mode: 1, fillType: 2, edgeWidth: 4, endCap: 0, join: 1, angle: 0, spacing: 1.5, pathOverlap: -30, strokeWidth: 3, wiggleState: 3.7 }),
+  C('scribble', 'small', { ...MASKS_SMALL, mode: 1, fillType: 3, edgeWidth: 3, endCap: 1, join: 1, angle: 135, spacing: 2, strokeWidth: 1, seed: -3, pathOverlap: 50 }),
+  C('scribble', 'wide', { ...MASKS_WIDE, mode: 0, pathMaskIndex: 1, fillType: 5, edgeWidth: 8, endCap: 1, join: 0, angle: 12, spacing: 3, strokeWidth: 2.5, composite: 1 }),
+  C('write-on', 'small', { ...trail(12, 0, 0, 18), size: 5, hardness: 60, colorR: 255, colorG: 220, colorB: 40 }),
+  C('write-on', 'small', { ...trail(9, -5, 3, 20), filled: 1, paintTimeProps: 1, brushTimeProps: 3, opacity: 70 }),
+  C('write-on', 'wide', { ...trail(30, -150, 0, 200), filled: 1, paintTimeProps: 2, brushTimeProps: 2, paintStyle: 1, size: 4 }),
+  C('write-on', 'tall', { brushX: 3, brushY: -10, size: 12, hardness: 90, paintStyle: 2, opacity: 80 }),
+  C('write-on', 'small', { mode: 1, startX: -22, startY: 10, endX: 20, endY: -12, completion: 70, brushSize: 5, wobble: 40, taper: 30, colorR: 30, colorG: 250, colorB: 120 }),
+  C('write-on', 'wide', { mode: 1, startX: -280, startY: -3, endX: 260, endY: 4, completion: 100, brushSize: 3.5, wobble: 0, taper: 0 }),
+  C('write-on', 'tall', { mode: 1, pathPoints: MASKS_TALL.maskPathsXY.slice(0, 10), completion: 85, brushSize: 4, taper: 50, colorR: 255, colorG: 0, colorB: 0 }),
+  C('write-on', 'small', { mode: 1, pathPoints: MASKS_SMALL.maskPathsXY.slice(0, 20), completion: 60, brushSize: 2 }),
+  // ── generateRoundFive.ts ──
+  C('star-burst', 'small', { phase: 120, amount: 60, size: 2, blend: 0, seed: 3 }),
+  C('star-burst', 'wide', { phase: -340, amount: 100, size: 1.2, colorR: 255, colorG: 200, colorB: 120, blend: 40, seed: 11 }),
+  C('snowfall', 'small', { amount: 100, size: 2.5, evolution: 35, wind: 30, opacity: 90, seed: 2 }),
+  C('snowfall', 'wide', { amount: 100, size: 1.5, evolution: 210, wind: -80, opacity: 60, colorR: 200, colorG: 220, colorB: 255, seed: 5 }),
+  C('rainfall', 'small', { amount: 100, length: 12, angle: 20, evolution: 17, opacity: 80, seed: 1 }),
+  C('rainfall', 'tall', { amount: 90, length: 30.5, angle: -35, evolution: 260, opacity: 100, seed: 9 }),
+  C('light-burst', 'small', { centerX: 3, centerY: -4, intensity: 150, rayLength: 60 }),
+  C('light-burst', 'wide', { centerX: -120, centerY: 5, intensity: 80, rayLength: 100 }),
+  // ── aeRoundSevenDistort.ts ──
+  C('cc-tiler', 'small', { scale: 45, centerX: 3, centerY: -2, blendWithOriginal: 0 }),
+  C('cc-tiler', 'wide', { scale: 130, centerX: -50, centerY: 4, blendWithOriginal: 35 }),
+  C('ripple-pulse', 'small', { centerX: -2, centerY: 3, pulseRadius: 14, amplitude: 6, width: 8, renderBump: 1 }),
+  C('ripple-pulse', 'wide', { centerX: 60, centerY: 0, pulseRadius: 120, amplitude: -9, width: 40, renderBump: 0 }),
+  C('radial-scale-wipe', 'small', { completion: 35, centerX: 4, centerY: -6 }),
+  C('radial-scale-wipe', 'tall', { completion: 60, centerX: 0, centerY: 10, reverse: 1 }),
+  C('glass-wipe', 'small', { completion: 45, displacement: 30, softness: 25 }),
+  C('glass-wipe', 'wide', { completion: 70, displacement: 80, softness: 1 }),
+  C('image-wipe', 'small', { completion: 40, borderSoftness: 20, gradientChannel: 0 }),
+  C('image-wipe', 'small', { completion: 55, borderSoftness: 5, gradientChannel: 1, invertGradient: 1 }),
+  C('image-wipe', 'tall', { completion: 30, borderSoftness: 0, gradientChannel: 2 }),
+  C('image-wipe', 'wide', { completion: 65, borderSoftness: 50, gradientChannel: 3 }),
+  C('image-wipe', 'wide', { completion: 50, borderSoftness: 10, gradientChannel: 4, invertGradient: 1 }),
+  // ── aeRoundSevenSimulation.ts ──
+  C('particle-systems', 'small', { time: 2.3, birthRate: 30, longevity: 1.5, producerRadiusX: 4, producerRadiusY: 2, animation: 0, velocity: 25, velocityVariation: 40, gravity: 5, birthSize: 5, deathSize: 1, sizeVariation: 30, opacity: 90, blend: 0, seed: 2 }),
+  C('particle-systems', 'wide', { time: 7.9, birthRate: 60, longevity: 3, producerX: -100, producerRadiusX: 20, producerRadiusY: 3, animation: 2, direction: 290, spread: 60, velocity: 90, velocityVariation: 10, gravity: 12, resistance: 0.8, birthSize: 3, deathSize: 7, opacity: 100, blend: 1, seed: 7, birthR: 40, birthG: 200, birthB: 255 }),
+  C('particle-systems', 'tall', { time: 400, birthRate: 5, longevity: 2, animation: 1, direction: 80, spread: 20, velocity: 15, birthSize: 6, deathSize: 6, opacity: 70, seed: -3 }),
+  C('cc-bubbles', 'small', { bubbleAmount: 30, bubbleSpeed: 200, wobbleAmplitude: 4, bubbleSize: 8, sizeVariation: 50, shading: 0, opacity: 90, evolution: 33, seed: 2 }),
+  C('cc-bubbles', 'small', { bubbleAmount: 12, bubbleSize: 14, shading: 2, colorR: 120, colorG: 200, colorB: 255, evolution: -71, seed: 5 }),
+  C('cc-bubbles', 'wide', { bubbleAmount: 80, bubbleSpeed: 500, wobbleAmplitude: 12, wobbleFrequency: 5, bubbleSize: 6, shading: 1, opacity: 60, evolution: 250, seed: 1 }),
+  // ── bezierWarp.ts, generatePatterns.ts, cubeLut.ts ──
+  C('bezier-warp', 'small', { topLeftX: 4, topLeftY: 3, top1Y: -6, top2Y: 5, right1X: 7, right2X: -4, bottomRightX: -5, bottomRightY: -2, bottom1Y: 4, left2X: 6 }),
+  C('bezier-warp', 'wide', { topLeftX: 40, top1Y: 10, top2Y: -8, topRightX: -60, topRightY: 4, bottomRightX: -20, bottom1Y: -9, bottom2Y: 7, bottomLeftX: 70, left1X: 12.5 }),
+  C('bezier-warp', 'tall', { top1X: 30, top2X: -30, bottom1X: -25, bottom2X: 25, left1X: 15, right2X: -15 }),
+  C('cell-pattern', 'small', { size: 8, evolution: 1.3, contrast: 150 }),
+  C('cell-pattern', 'tall', { size: 5.5, evolution: -2.7, contrast: 90, invert: 1, membrane: 1 }),
+  C('cell-pattern', 'wide', { size: 20, evolution: 7, contrast: 80, membrane: 1 }),
+  C('apply-color-lut', 'small', { size: 5, lut: LUT_3D_5, intensity: 1 }),
+  C('apply-color-lut', 'tall', { size1d: 8, lut: LUT_1D_8, domainMin: [-0.1, 0, 0.05], domainMax: [1.2, 1, 0.9], intensity: 0.6 }),
+  C('apply-color-lut', 'wide', { size: 3, lut: LUT_3D_3, domainMin: [0.1, 0, 0], domainMax: [0.9, 1, 1], intensity: 2 }),
+  // ── deepGlow.ts, beamPath.ts ──
+  C('deep-glow', 'small', { radius: 6, gain: 1.5, threshold: 0.2, octaves: 4, dither: 1 }),
+  C('deep-glow', 'wide', { radius: 40, gain: 2.2, aspectX: 1, aspectY: 0.3, chromaR: 1.3, chromaG: 1, chromaB: 0.7, tintR: 1, tintG: 0.5, tintB: 0.2, tintAmount: 0.5, glowOnly: 1, dither: 0, octaves: 6 }),
+  C('deep-glow', 'tall', { radius: 12, gain: 0.8, aspectX: 0.4, aspectY: 1, octaves: 8, dither: 1 }),
+  C('beam-path', 'small', { pathPoints: [-25, -10, -5, 12, 10, -6, 1e9, 0, 5, 15, 25, 18], coreWidth: 4, coreSoftness: 0.5, distortion: 3, distortionScale: 12, evolution: 40, start: 0.1, end: 0.9, startSize: 0.5, endSize: 1.5, glowSpread: 5, glowIntensity: 1.2 }),
+  C('beam-path', 'wide', { startX: -270, startY: -4, endX: 250, endY: 5, coreWidth: 3, glowSpread: 6, glowExponent: 1.5, composite: 1, coreColorR: 1, coreColorG: 0.9, coreColorB: 0.6 }),
+  C('beam-path', 'tall', { pathPoints: WAVE_TALL, coreWidth: 5, glowExponent: 3.5, flicker: 0.7, start: 0, end: 0.75, glowColorR: 1, glowColorG: 0.1, glowColorB: 0.3 }),
 ];
 
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {

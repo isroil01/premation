@@ -19,6 +19,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <span>
 
 #include "jsmath.hpp"
@@ -105,6 +106,16 @@ struct RgbaView {
   return r;
 }
 
+/// `round_index` for a caller that has checked |x| < 2^51 once, up front:
+/// the same value, with selects instead of branches so a loop of them
+/// vectorises.
+[[nodiscard]] inline double round_js_small(double x) noexcept {
+  double r = round_half_even(x);
+  r += r < x ? 1.0 : 0.0;
+  r -= r - 0.5 > x ? 1.0 : 0.0;
+  return r;
+}
+
 /// `v < 0 ? 0 : v > 255 ? 255 : v` (colorSpace.ts `clamp255`; NaN passes through).
 [[nodiscard]] inline double clamp255(double v) noexcept { return v < 0 ? 0 : v > 255 ? 255 : v; }
 /// `clamp01`.
@@ -120,6 +131,24 @@ struct RgbaView {
 }
 
 [[nodiscard]] inline int clampi(int v, int lo, int hi) noexcept { return v < lo ? lo : v > hi ? hi : v; }
+
+/// `Math.hypot(a, b)`, inline: V8's algorithm (motion::js::hypot) unrolled
+/// for two arguments. The first Kahan step leaves the compensation at zero
+/// (sum = n1², exactly), so the result is sqrt(n1² + n2²)·max with nᵢ = |xᵢ| / max
+/// — the same operations, so the same bits, without the span call.
+[[nodiscard]] inline double jhypot2(double a, double b) noexcept {
+  const double x = std::fabs(a);
+  const double y = std::fabs(b);
+  if (std::isnan(a) || std::isnan(b)) {
+    return x == HUGE_VAL || y == HUGE_VAL ? HUGE_VAL : std::numeric_limits<double>::quiet_NaN();
+  }
+  const double max = x > y ? x : y;
+  if (max == HUGE_VAL) return HUGE_VAL;
+  if (max == 0) return 0;
+  const double n1 = x / max;
+  const double n2 = y / max;
+  return std::sqrt(n1 * n1 + n2 * n2) * max;
+}
 
 /// `Math.round(x)` of a finite double as an int (callers clamp first).
 [[nodiscard]] inline int jround_i(double x) noexcept { return static_cast<int>(js::round(x)); }
