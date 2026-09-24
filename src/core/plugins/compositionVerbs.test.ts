@@ -39,7 +39,8 @@ const api = createHostApi(manifest, {
   granted: () => new Set(['composition:write', 'scene:read']) as never,
 });
 
-const create = (s?: unknown): string => api['composition.create']!(s) as string;
+// An engine `createComposition` since B5: the verb resolves to the new id.
+const create = async (s?: unknown): Promise<string> => (await api['composition.create']!(s)) as string;
 const list = (): Array<Record<string, unknown>> =>
   api['composition.list']!() as Array<Record<string, unknown>>;
 
@@ -56,88 +57,88 @@ beforeAll(() => {
 });
 
 describe('reading the project', () => {
-  it('lists the compositions that exist', () => {
+  it('lists the compositions that exist', async () => {
     const before = list().length;
-    create({ name: 'Scene 2' });
+    await create({ name: 'Scene 2' });
     const after = list();
     expect(after.length).toBe(before + 1);
     expect(after.some((c) => c.name === 'Scene 2')).toBe(true);
   });
 
-  it('★ marks which one is active, rather than leaving it to be inferred', () => {
+  it('★ marks which one is active, rather than leaving it to be inferred', async () => {
     // Comparing against `composition.get().name` is the obvious workaround and
     // it is wrong: names are not unique, so two comps called "Scene" make the
     // comparison pick whichever comes first.
-    const id = create({ name: 'Duplicate' });
-    create({ name: 'Duplicate' });
+    const id = await create({ name: 'Duplicate' });
+    await create({ name: 'Duplicate' });
     const actives = list().filter((c) => c.active === true);
     expect(actives).toHaveLength(1);
     expect(actives[0]!.id).not.toBe(id); // the second one is open
   });
 
-  it('reports each composition’s own settings', () => {
-    const id = create({ name: 'Reel', width: 1080, height: 1920, fps: 60 });
+  it('reports each composition’s own settings', async () => {
+    const id = await create({ name: 'Reel', width: 1080, height: 1920, fps: 60 });
     const c = list().find((x) => x.id === id)!;
     expect(c).toMatchObject({ width: 1080, height: 1920, fps: 60 });
   });
 });
 
 describe('creating', () => {
-  it('returns the new id and opens it', () => {
-    const id = create({ name: 'Opened' });
+  it('returns the new id and opens it', async () => {
+    const id = await create({ name: 'Opened' });
     expect(typeof id).toBe('string');
     expect(list().find((c) => c.id === id)!.active).toBe(true);
   });
 
-  it('accepts no settings at all', () => {
-    expect(typeof create()).toBe('string');
+  it('accepts no settings at all', async () => {
+    expect(typeof (await create())).toBe('string');
   });
 
-  it('★ refuses a size that is an allocation failure, not a composition', () => {
+  it('★ refuses a size that is an allocation failure, not a composition', async () => {
     // These become a render target. The numbers crossed `postMessage`.
-    expect(() => create({ width: 900_000 })).toThrow(/between 1 and 16384/);
-    expect(() => create({ height: 0 })).toThrow(/between 1 and 16384/);
+    await expect(create({ width: 900_000 })).rejects.toThrow(/between 1 and 16384/);
+    await expect(create({ height: 0 })).rejects.toThrow(/between 1 and 16384/);
   });
 
-  it('refuses a nonsense frame rate or duration', () => {
-    expect(() => create({ fps: 0 })).toThrow(/between 1 and 240/);
-    expect(() => create({ fps: 100_000 })).toThrow(/between 1 and 240/);
-    expect(() => create({ durationSeconds: 0 })).toThrow(/between 0.1 and 36000/);
+  it('refuses a nonsense frame rate or duration', async () => {
+    await expect(create({ fps: 0 })).rejects.toThrow(/between 1 and 240/);
+    await expect(create({ fps: 100_000 })).rejects.toThrow(/between 1 and 240/);
+    await expect(create({ durationSeconds: 0 })).rejects.toThrow(/between 0.1 and 36000/);
   });
 
-  it('refuses NaN, which passes a naive range check', () => {
+  it('refuses NaN, which passes a naive range check', async () => {
     // `NaN < 1` and `NaN > 16384` are both false, so a bounds test written as
     // two comparisons lets it straight through.
-    expect(() => create({ width: Number.NaN })).toThrow(/between 1 and 16384/);
+    await expect(create({ width: Number.NaN })).rejects.toThrow(/between 1 and 16384/);
   });
 
-  it('bounds the name rather than storing an essay', () => {
-    const id = create({ name: 'x'.repeat(500) });
+  it('bounds the name rather than storing an essay', async () => {
+    const id = await create({ name: 'x'.repeat(500) });
     expect((list().find((c) => c.id === id)!.name as string).length).toBeLessThanOrEqual(120);
   });
 });
 
 describe('renaming, opening, deleting', () => {
-  it('renames', () => {
-    const id = create({ name: 'Before' });
-    expect(api['composition.rename']!(id, 'After')).toBe(true);
+  it('renames', async () => {
+    const id = await create({ name: 'Before' });
+    expect(await api['composition.rename']!(id, 'After')).toBe(true);
     expect(list().find((c) => c.id === id)!.name).toBe('After');
   });
 
-  it('refuses an empty name instead of leaving a nameless comp', () => {
-    const id = create({ name: 'Named' });
+  it('refuses an empty name instead of leaving a nameless comp', async () => {
+    const id = await create({ name: 'Named' });
     expect(() => api['composition.rename']!(id, '   ')).toThrow(/cannot be empty/);
     expect(list().find((c) => c.id === id)!.name).toBe('Named');
   });
 
-  it('opens an existing composition', () => {
-    const first = create({ name: 'First' });
-    create({ name: 'Second' });
+  it('opens an existing composition', async () => {
+    const first = await create({ name: 'First' });
+    await create({ name: 'Second' });
     expect(api['composition.open']!(first)).toBe(true);
     expect(list().find((c) => c.id === first)!.active).toBe(true);
   });
 
-  it('★ names the id it could not find, for all three verbs', () => {
+  it('★ names the id it could not find, for all three verbs', async () => {
     // A plugin holding a stale id gets a message it can act on rather than a
     // silent no-op that looks like the call worked.
     for (const verb of ['composition.open', 'composition.rename', 'composition.delete'] as const) {
@@ -145,31 +146,31 @@ describe('renaming, opening, deleting', () => {
     }
   });
 
-  it('deletes', () => {
-    const id = create({ name: 'Doomed' });
-    create({ name: 'Survivor' });
-    expect(api['composition.delete']!(id)).toBe(true);
+  it('deletes', async () => {
+    const id = await create({ name: 'Doomed' });
+    await create({ name: 'Survivor' });
+    expect(await api['composition.delete']!(id)).toBe(true);
     expect(list().some((c) => c.id === id)).toBe(false);
   });
 
-  it('★ deleting the LAST composition replaces it rather than emptying the project', () => {
+  it('★ deleting the LAST composition replaces it rather than emptying the project', async () => {
     // A project with no composition has nowhere to draw, so the host mints a
     // fresh pristine one. Worth pinning because it is the surprising half: the
     // call reports `true` (the named comp really is gone) and the project is
     // still usable — a plugin cannot leave the editor with nothing open.
     const ids = list().map((c) => c.id as string);
-    for (const id of ids.slice(1)) api['composition.delete']!(id);
+    for (const id of ids.slice(1)) await api['composition.delete']!(id);
     expect(list()).toHaveLength(1);
 
     const last = list()[0]!.id as string;
-    expect(api['composition.delete']!(last)).toBe(true);
+    expect(await api['composition.delete']!(last)).toBe(true);
     expect(list()).toHaveLength(1);
     expect(list()[0]!.id).not.toBe(last);
   });
 });
 
 describe('the permission it rides on', () => {
-  it('★ does not fold into scene:write', () => {
+  it('★ does not fold into scene:write', async () => {
     /*
       "Modify your layers" is a statement about the composition the user is
       looking at. Adding and removing compositions restructures the project
@@ -181,11 +182,11 @@ describe('the permission it rides on', () => {
     }
   });
 
-  it('reading the list is scene:read, like reading layer names', () => {
+  it('reading the list is scene:read, like reading layer names', async () => {
     expect(METHOD_PERMISSIONS['composition.list']).toBe('scene:read');
   });
 
-  it('reading the ACTIVE composition still needs nothing', () => {
+  it('reading the ACTIVE composition still needs nothing', async () => {
     // Unchanged: `composition.get` is settings for the comp you were opened
     // in, and gating it would break every plugin that sizes its output.
     expect(METHOD_PERMISSIONS['composition.get']).toBeNull();

@@ -88,6 +88,31 @@ export function layerIdsOfComp(compId: string): string[] {
   return out;
 }
 
+/**
+ * A layer and every layer nested under it (parent first), as ONE composition's
+ * layers — what a subtree delete sends as a single `deleteLayers` (the doomed
+ * set: nothing is re-parented). Null when `id` is not a layer or the subtree
+ * crosses a precomp barrier (its nested layers belong to another composition,
+ * which one `deleteLayers` cannot address).
+ */
+export function layerSubtree(id: string): string[] | null {
+  const root = graph.getNode(id);
+  if (!root || !isLayer(id)) return null;
+  const comp = compOfLayer(id);
+  const out: string[] = [];
+  const walk = (nodeId: string): boolean => {
+    out.push(nodeId);
+    const node = graph.getNode(nodeId);
+    if (!node) return false;
+    if (node.children.length > 0 && isBarrier(node)) return false;
+    for (const child of graph.getChildOrder(nodeId)) {
+      if (compOfLayer(child) !== comp || !walk(child)) return false;
+    }
+    return true;
+  };
+  return walk(id) ? out : null;
+}
+
 /** The API parent of a layer: its tree parent unless that is the comp root. */
 export function apiParentOf(id: string): string | null {
   const node = graph.getNode(id);

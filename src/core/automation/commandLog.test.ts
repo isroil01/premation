@@ -22,6 +22,13 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import { setupRecordingAppEngine, historyLabels } from './__testHelpers__/recordingAppEngine';
 import { recordSession, replaySession, isRecording, CommandLogUnavailable, logFromJsonl } from './commandLog';
 import { performUndo, performRedo, performJumpTo } from '@stores/historyStore';
+import { activeCompRootId } from '@core/scene/activeComp';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { defaultAnimation } from '@motion/animation';
+import { getNodeEffects } from '@core/effects/effects';
+import { useProjectStore } from '@stores/projectStore';
+import { createHostApi } from '@core/plugins/hostApi';
+import type { PluginManifest } from '@core/plugins/manifest';
 
 let h: Harness & { engine: LocalEngine };
 beforeEach(async () => { h = await setupRecordingAppEngine(); });
@@ -201,5 +208,85 @@ describe('record → replay', () => {
 
   it('refuses a file that is not a command log', async () => {
     await expect(replaySession(JSON.stringify({ header: {} }))).rejects.toThrow(CommandLogUnavailable);
+  });
+});
+
+/**
+ * B5: plugins call the same API. A plugin's document verbs — compositions,
+ * properties, effect parameters, keyframes in layer time, a subtree delete —
+ * and the AI tools that used to write around the engine (update_layer's
+ * material options and track matte, delete_layer on a parent) are engine
+ * commands now: the session is exact (`writesAroundEngine` 0) and replays to
+ * a byte-identical saved project.
+ */
+describe('record → replay: plugins and the formerly-legacy AI tools', () => {
+  const manifest = {
+    id: 'studio.acme.tool', name: 'Tool', version: '1.0.0', description: 'A tool.', apiVersion: 5,
+    main: 'main.js', permissions: [], activationEvents: ['onStartup'],
+    contributes: { commands: [], panels: [], layerKinds: [], effects: [], net: null },
+  } as unknown as PluginManifest;
+  const api = createHostApi(manifest, {
+    registerCommand: () => {}, openPanel: () => {}, closePanel: () => {}, warn: () => {},
+    granted: () => new Set<never>(),
+  });
+  const call = async (verb: string, ...args: unknown[]): Promise<unknown> => api[verb]!(...args);
+
+  async function solid(name: string): Promise<string> {
+    const r = await edit('New Solid', { type: 'createLayer', comp: activeCompRootId(), kind: 'solid', name, init: [] });
+    if (!r.ok) throw new Error(r.error.message);
+    return (r.value[0] as { layer: string }).layer;
+  }
+
+  it('reproduces a plugin + AI session exactly, with no write around the engine', async () => {
+    const rec = await recordSession();
+    const a = await solid('A');
+    const b = await solid('B');
+    const c = await solid('C');
+
+    // ── The plugin ──
+    const comp = String(await call('composition.create', { name: 'Plugged', width: 640, height: 360, fps: 25, durationSeconds: 3 }));
+    expect(useProjectStore.getState().comps[comp]).toMatchObject({ name: 'Plugged', width: 640, height: 360, fps: 25 });
+    await call('composition.rename', comp, 'Plugged (renamed)');
+    await call('composition.delete', comp);
+    expect(useProjectStore.getState().comps[comp]).toBeUndefined();
+    await call('scene.setProperty', a, 'opacity', 40);
+    const fx = String(await call('effects.add', a, 'blur'));
+    await call('effects.setParam', a, fx, 'amount', 12);
+    await call('animation.setKeyframes', a, 'rotation', [{ t: 0, value: 0 }, { t: 1, value: 90, easing: 'easeInOut' }, { t: 2, value: 45 }]);
+    await call('animation.setKeyframe', a, 'y', 0.5, 300);
+    await call('animation.removeKeyframe', a, 'rotation', 2);
+    // Layer time, stored units, exactly where the legacy writers put them.
+    expect(defaultAnimation.getTrackKeyframes(a, 'rotation')?.map((k) => [k.t, k.value, k.easing])).toEqual([[0, 0, 'linear'], [1, 90, 'easeInOut']]);
+    expect(defaultAnimation.getTrackKeyframes(a, 'y')?.map((k) => [k.t, k.value])).toEqual([[0.5, 300]]);
+    expect(getNodeEffects(a).find((x) => x.id === fx)?.params?.amount).toBe(12);
+    await call('scene.setParent', c, b);
+    await call('scene.deleteLayer', b);
+    expect(defaultSceneGraph.getNode(b)).toBeUndefined();
+    expect(defaultSceneGraph.getNode(c)).toBeUndefined();
+
+    // ── An AI turn through the tools that used to go around the engine ──
+    const d = await solid('D');
+    const e = await solid('E');
+    const f = await solid('F');
+    await edit('Parent', { type: 'setParent', layers: [f], parent: e, keepWorldTransform: true });
+    const turn = await runToolTurn('AI: light and matte', [
+      { name: 'update_layer', args: { nodeId: d, threeD: true, acceptsLights: true, ambient: 40, specular: 70, shininess: 12 } },
+      { name: 'update_layer', args: { nodeId: d, matte: { mode: 'luma', inverted: true } } },
+      { name: 'delete_layer', args: { nodeIds: [e] } },
+    ]);
+    expect(turn.outcome.kind).toBe('engine');
+    expect(defaultSceneGraph.getNode(f)).toBeUndefined();
+    await engineIdle();
+
+    const jsonl = rec.stop();
+    expect(rec.writesAroundEngine).toBe(0);
+    // Eleven plugin calls, eleven engine entries named after the plugin.
+    const entries = h.engine.historyState().entries;
+    expect(entries.filter((x) => x.origin === 'plugin').map((x) => x.label.split(':')[0])).toEqual(Array(11).fill('Tool'));
+    const savedLive = await save('C:/p/plugin-live.motion');
+
+    const replay = await replaySession(jsonl);
+    expect(replay.mismatches).toEqual([]);
+    expect(await save('C:/p/plugin-replay.motion')).toBe(savedLive);
   });
 });

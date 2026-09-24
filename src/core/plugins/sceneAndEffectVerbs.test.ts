@@ -156,7 +156,7 @@ describe('effects', () => {
     // closes; the refusal is pinned below.
     const id = newLayer();
     const fx = await (api['effects.add']!(id, 'blur') as Promise<string>);
-    api['effects.setParam']!(id, fx, 'amount', 12);
+    await api['effects.setParam']!(id, fx, 'amount', 12);
     expect(getNodeEffects(id).find((e) => e.id === fx)?.params?.amount).toBe(12);
   });
 

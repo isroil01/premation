@@ -96,12 +96,13 @@ describe('scene.setProperty — names', () => {
     expect(transformProps(id)).not.toHaveProperty('opactiy');
   });
 
-  it('keeps every name the bundled examples use working', () => {
+  it('keeps every name the bundled examples use working', async () => {
     // examples/plugins/depth-stack writes rotationX, rotationY and z; the
     // starter and the batch tests write x and opacity.
     const id = newLayer();
     for (const [prop, value] of [['x', 10], ['rotationX', 0], ['rotationY', 0], ['z', 3], ['opacity', 40]] as const) {
-      expect(call('scene.setProperty', id, prop, value)).toBe(true);
+      // A plain write is an engine `setProperty` (B5): the verb resolves.
+      expect(await call('scene.setProperty', id, prop, value)).toBe(true);
     }
   });
 
@@ -156,9 +157,9 @@ describe('scene.setProperty — fill', () => {
     expect(JSON.stringify(getNodeFill(id))).toBe(before);
   });
 
-  it('turns a hex colour on `fill` into a solid fill rather than overwriting the fill record', () => {
+  it('turns a hex colour on `fill` into a solid fill rather than overwriting the fill record', async () => {
     const id = newLayer();
-    expect(call('scene.setProperty', id, 'fill', '#00ff00')).toBe(true);
+    expect(await call('scene.setProperty', id, 'fill', '#00ff00')).toBe(true);
     expect(getNodeFill(id)).toEqual({ type: 'solid', color: '#00ff00' });
   });
 });
@@ -171,9 +172,9 @@ describe('animation.setKeyframes — names', () => {
     expect(track(id, 'opactiy')).toBeUndefined();
   });
 
-  it('still writes numbers to a real track', () => {
+  it('still writes numbers to a real track', async () => {
     const id = newLayer();
-    call('animation.setKeyframes', id, 'x', [{ t: 0, value: 0 }, { t: 1, value: 100 }]);
+    await call('animation.setKeyframes', id, 'x', [{ t: 0, value: 0 }, { t: 1, value: 100 }]);
     expect(track(id, 'x')?.map((k) => k.value)).toEqual([0, 100]);
   });
 
@@ -220,12 +221,12 @@ describe('animation.setKeyframes — typed values', () => {
     expect(track(id, `effect.${fx}.color_g`)).toEqual([expect.objectContaining({ t: 0.5, value: 1 })]);
   });
 
-  it('★ writes a point to its axis tracks', () => {
+  it('★ writes a point to its axis tracks', async () => {
     const id = newLayer();
-    call('animation.setKeyframes', id, 'position', [{ t: 0, value: { x: 10, y: 20 } }, { t: 1, value: { x: 30, y: 40 } }]);
+    await call('animation.setKeyframes', id, 'position', [{ t: 0, value: { x: 10, y: 20 } }, { t: 1, value: { x: 30, y: 40 } }]);
     expect(track(id, 'x')?.map((k) => k.value)).toEqual([10, 30]);
     expect(track(id, 'y')?.map((k) => k.value)).toEqual([20, 40]);
-    call('animation.setKeyframes', id, 'anchor', [{ t: 0, value: { x: 1, y: 2, z: 3 } }]);
+    await call('animation.setKeyframes', id, 'anchor', [{ t: 0, value: { x: 1, y: 2, z: 3 } }]);
     expect(track(id, 'anchorZ')![0]!.value).toBe(3);
   });
 
@@ -273,8 +274,8 @@ describe('effects.setParam — keys and ranges', () => {
     const fx = await (call('effects.add', id, 'glow') as Promise<string>);
     expect(() => call('effects.setParam', id, fx, 'color', 'red')).toThrow(/colour string/);
     expect(() => call('effects.setParam', id, fx, 'radius', '12')).toThrow(/finite number/);
-    expect(call('effects.setParam', id, fx, 'color', '#ff0000')).toBe(true);
-    expect(call('effects.setParam', id, fx, 'radius', 60)).toBe(true);
+    expect(await call('effects.setParam', id, fx, 'color', '#ff0000')).toBe(true);
+    expect(await call('effects.setParam', id, fx, 'radius', 60)).toBe(true);
   });
 });
 

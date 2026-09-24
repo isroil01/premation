@@ -76,8 +76,6 @@ import {
   removeEffect,
   getNodeEffects,
   primaryParamKey,
-  effectDefFor,
-  parseColorChannels,
 } from '@core/effects/effects';
 import { defaultPrecompName, precomposeNow } from '@core/composition/precompose';
 import { setPrecomp } from '@core/scene/precomp';
@@ -86,9 +84,10 @@ import type { EffectType } from '@core/effects/effects';
 import { listPresets } from '@core/animation/animationPresets';
 import { bumpScene } from '@stores/sceneStore';
 import { engine } from '@core/engine/engineInstance';
-import { propRefForTrack, memberWrite, fieldWrite } from '@core/engine/propRefs';
+import { layerSubtree } from '@core/engine/doc';
+import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, propWriteCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
+import { propRefForTrack, memberWrite } from '@core/engine/propRefs';
 import { readRuns } from '@core/text/richText';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { apiUnitFactor } from '@core/engine/props';
 import type { ID, SceneNode } from '@core/types';
 import { EngineTurnSession } from './aiEngineSession';
@@ -193,7 +192,7 @@ export function isAnimatableProp(prop: string): boolean {
 export const LEGACY_GAPS = {
   createKind: 'create_layer kind the engine has no layer kind for',
   createRefused: 'create_layer refused by the engine (active comp is not a composition item)',
-  removeSubtree: 'deleting a layer with children (the engine un-parents them; the tool deletes the subtree)',
+  removeSubtree: 'deleting a layer whose subtree is not one composition\'s layers (a legacy nested precomp group), or a delete the engine refused (a locked layer)',
   reparent: 'reparent refused by the engine',
   setProp: 'static write the catalog does not address exactly (the Transform width/height of a text layer, shapeType, owner-component mismatch, UI-kit SVG, a gradient fill given as a colour)',
   effectId: 'add_effect with a caller-chosen effect id (the engine mints ids)',
@@ -462,12 +461,6 @@ export async function engineOr<T>(
   return legacy();
 }
 
-const ENGINE_EASINGS: ReadonlySet<string> = new Set<Easing>([
-  'linear', 'hold', 'bezier', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'step', 'autoBezier', 'continuousBezier',
-]);
-
-const POSITION_DIMS = new Set(['x', 'y', 'z']);
-
 /**
  * "Member `prop` := `value` at comp time `t`" as the WHOLE vector value of
  * its property (the other members at their value there), or null when `prop`
@@ -480,37 +473,6 @@ function vectorMemberKey(nodeId: string, prop: string, value: number, t: number)
   const w = memberWrite(nodeId, prop, value, t);
   return w ? { prop: w.prop, value: w.value } : null;
 }
-
-/**
- * The ONE engine property a tool's track name keys on its own: a single-member
- * property, or one dimension of Position (which the engine separates first,
- * AE's Separate Dimensions — the storage is per-dimension either way).
- */
-function keyTarget(nodeId: string, prop: string): { ref: PropRef; separate: boolean; member: string } | null {
-  if (!defaultSceneGraph.getNode(nodeId as ID)) return null;
-  const r = propRefForTrack(nodeId, prop);
-  if (!r || !r.animatable) return null;
-  if (r.members.length === 1 && r.members[0] === prop && r.valueType === 'scalar') {
-    return { ref: r.ref, separate: false, member: prop };
-  }
-  if (POSITION_DIMS.has(prop) && r.ref.path === 'transform/position' && r.members.includes(prop)) {
-    return { ref: { layer: nodeId, path: `transform/position/${prop}` }, separate: true, member: prop };
-  }
-  return null;
-}
-
-/**
- * An EXISTING key of `prop` is its own API key: always for a single-member
- * property; for a Position dimension only once dimensions are separated
- * (merged, the API key is the whole vector — patching it would touch the
- * other dimensions too).
- */
-function addressable(nodeId: string, prop: string, target: { ref: PropRef; separate: boolean }): boolean {
-  return !target.separate || propRefForTrack(nodeId, prop)?.ref.path === target.ref.path;
-}
-
-const separateCmd = (nodeId: string): Command =>
-  ({ type: 'setDimensionsSeparated', layer: nodeId, path: 'transform/position', separated: true }) as Command;
 
 const fpsNow = (): number => useCompositionStore.getState().fps || 30;
 
@@ -538,12 +500,6 @@ async function keyIdAt(session: AiEngineSession, ref: PropRef, t: number): Promi
 function storedKeyAt(nodeId: string, prop: string, t: number) {
   const lt = compToKeyframeTime(nodeId, t);
   return defaultAnimation.getTrackKeyframes(nodeId, prop)?.find((k) => k.t === lt);
-}
-
-function hexToColor(s: string): Value | null {
-  if (!/^#?[0-9a-fA-F]{3,8}$/.test(s.trim())) return null;
-  const [r, g, b, a] = parseColorChannels(s);
-  return { kind: 'color', value: { r, g, b, a } };
 }
 
 /** Kinds the engine's layer factory builds exactly as the AI wants them. */
@@ -635,12 +591,13 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
     },
 
     remove: async (id) => {
-      const node = defaultSceneGraph.getNode(id as ID);
-      const childless = !!node && node.children.length === 0;
+      // The whole subtree in ONE `deleteLayers` (the doomed set: nothing is
+      // re-parented), which is what the tool means by deleting a layer.
+      const subtree = layerSubtree(id);
       await engineOr(
         session,
         LEGACY_GAPS.removeSubtree,
-        childless ? [{ type: 'deleteLayers', layers: [id] } as Command] : null,
+        subtree ? [{ type: 'deleteLayers', layers: subtree } as Command] : null,
         () => undefined,
         () => {
           defaultSceneGraph.removeNode(id as ID);
@@ -699,7 +656,7 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
       await engineOr(
         session,
         `${LEGACY_GAPS.effectParam}: ${effect.type}.${key}`,
-        effectParamCommand(nodeId, effectId, key, amount),
+        effectParamCommand(nodeId, effectId, key, amount, playheadSeconds()),
         () => undefined,
         () => updateEffect(nodeId, effectId, amount),
       );
@@ -708,7 +665,7 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
       await engineOr(
         session,
         `${LEGACY_GAPS.effectParam}: ${key}`,
-        effectParamCommand(nodeId, effectId, key, value),
+        effectParamCommand(nodeId, effectId, key, value, playheadSeconds()),
         () => undefined,
         () => {
           updateEffectParam(nodeId, effectId, key, value as never);
@@ -799,62 +756,12 @@ function setPropCommand(node: SceneNode, ownerId: string, prop: string, value: u
       : [];
     return [set, ...keep];
   }
-  // Static fields (G1): a layer's own fill colour, the Text component's
-  // strings / choices (font family, alignment…).
-  const fw = fieldWrite(node.id, ownerId, prop, value, t);
-  if (fw) return [{ type: 'setProperty', prop: fw.prop, value: fw.value, ...(fw.time !== undefined ? { time: fw.time } : {}) } as Command];
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  // The engine writes a member onto the FIRST component carrying it as a number
-  // (a text prop the layer has not stored as a number yet: its Text component).
-  const first = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number')
-    ?? (resolvePropertyMeta(prop, node.id).group === 'text' ? node.components.find((c) => c.type === 'Text') : undefined)
-    // A text layer's box (layer/width, layer/height): the Transform, like the legacy writer.
-    ?? ((prop === 'width' || prop === 'height') ? node.components.find((c) => c.type === 'Transform') : undefined);
-  if (!first || first.id !== ownerId) return null;
-  const r = propRefForTrack(node.id, prop);
-  if (!r || !r.members.includes(prop)) return null;
-  const w = memberWrite(node.id, prop, value, t);
-  if (!w) return null;
-  return [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) } as Command];
+  // Static fields (G1) and numeric members, as the plugin host sends them too.
+  return propWriteCommand(node, ownerId, prop, value, t);
 }
 
 /** The active composition's playhead, comp seconds (the comp facade's `playhead`). */
-function playheadSeconds(): number {
-  const s = useProjectStore.getState();
-  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
-}
-
-/** The engine command for an effect parameter write, or null (see the gap list). */
-function effectParamCommand(nodeId: string, effectId: string, key: string, value: number | string | boolean): Command[] | null {
-  const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);
-  if (!effect) return null;
-  const ref: PropRef = { layer: nodeId, path: `effects/${effectId}/${key}` };
-  // An animated param takes a key at the playhead (AE setValue on a keyed property).
-  const time = secondsToFlicks(playheadSeconds());
-  // A dropdown given BY VALUE (the stored option value, as a number or its
-  // string) or by label: the API takes the option's label (G1).
-  const def = effectDefFor(effect.type)?.params.find((p) => p.key === key);
-  if (def?.type === 'enum') {
-    const opt = def.options?.find((o) => String(o.value) === String(value) || o.label === value);
-    return opt ? [{ type: 'setProperty', prop: ref, value: { kind: 'choice', value: opt.label } } as Command] : null;
-  }
-  if (typeof value === 'number') {
-    const member = `effect.${effectId}.${key}`;
-    const r = propRefForTrack(nodeId, member);
-    if (!r || r.members.length !== 1 || r.members[0] !== member) return null;
-    return [{ type: 'setProperty', prop: r.ref, value: { kind: 'scalar', value: value * apiUnitFactor(member) }, time } as Command];
-  }
-  if (typeof value === 'boolean') {
-    const r = propRefForTrack(nodeId, ref.path);
-    if (!r || r.valueType !== 'bool') return null;
-    return [{ type: 'setProperty', prop: ref, value: { kind: 'bool', value } } as Command];
-  }
-  const color = hexToColor(value);
-  if (!color) return null;
-  const r = propRefForTrack(nodeId, `effect.${effectId}.${key}_r`) ?? propRefForTrack(nodeId, ref.path);
-  if (!r || r.valueType !== 'color') return null;
-  return [{ type: 'setProperty', prop: r.ref, value: color, time } as Command];
-}
+const playheadSeconds = activePlayheadSeconds;
 
 export function createAnimFacade(session: AiEngineSession = freeSession()): AnimFacade {
   /** Patch the key at comp time `t` through the engine, or run the legacy writer. */
@@ -866,11 +773,11 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     patch: (stored: ReturnType<typeof storedKeyAt>) => Record<string, unknown> | null,
     legacy: () => void,
   ): Promise<void> => {
-    const target = keyTarget(nodeId, prop);
+    const target = keyTargetFor(nodeId, prop);
     const stored = storedKeyAt(nodeId, prop, t);
     // No key there: the legacy writers are silent no-ops, and so is this.
     if (!stored) return;
-    const fields = target && addressable(nodeId, prop, target) ? patch(stored) : null;
+    const fields = target && keyAddressable(nodeId, prop, target) ? patch(stored) : null;
     let cmds: Command[] | null = null;
     if (target && fields) {
       const id = await keyIdAt(session, target.ref, t);
@@ -883,7 +790,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     isValidProp: async (_nodeId, prop) => isAnimatableProp(prop),
 
     setKeyframe: async (nodeId, prop, t, value, easing) => {
-      const target = keyTarget(nodeId, prop);
+      const target = keyTargetFor(nodeId, prop);
       const ok = target && (easing === undefined || ENGINE_EASINGS.has(easing)) && Number.isFinite(value);
       let cmds: Command[] | null = null;
       if (target && ok) {
@@ -898,7 +805,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
             spatialOut: [],
           }],
         } as Command;
-        cmds = addressable(nodeId, prop, target) ? [add] : [separateCmd(nodeId), add];
+        cmds = keyAddressable(nodeId, prop, target) ? [add] : [separateDimensionsCommand(nodeId), add];
       } else if (!target && (easing === undefined || ENGINE_EASINGS.has(easing)) && Number.isFinite(value)) {
         // One member of a vector property that has no separate dimensions
         // (Scale X / Y, an anchor axis — AE keys the whole vector): a key of the
@@ -927,13 +834,13 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     },
 
     removeKeyframe: async (nodeId, prop, t) => {
-      const target = keyTarget(nodeId, prop);
+      const target = keyTargetFor(nodeId, prop);
       const legacy = (): void => defaultAnimation.removeKeyframe(nodeId, prop, compToKeyframeTime(nodeId, t));
       const stored = storedKeyAt(nodeId, prop, t);
       if (!stored) return; // nothing there — the legacy writer is a no-op too
       let cmds: Command[] | null = null;
       // AE: deleting a property's last key leaves it static at that key's value (G1).
-      if (target && addressable(nodeId, prop, target)) {
+      if (target && keyAddressable(nodeId, prop, target)) {
         const id = await keyIdAt(session, target.ref, t);
         if (id) cmds = [{ type: 'deleteKeyframes', ids: [id] } as Command];
       }
@@ -1033,7 +940,7 @@ export function createCompFacade(session: AiEngineSession = freeSession()): Comp
         else p.frameRate = null;
       }
       if (patch.background !== undefined) {
-        const c = hexToColor(patch.background);
+        const c = apiColorOfHex(patch.background);
         p.background = c && c.kind === 'color' ? c.value : null;
       }
       const exact = Object.values(p).every((v) => v !== null);

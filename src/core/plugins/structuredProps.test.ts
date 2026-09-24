@@ -280,9 +280,10 @@ describe('the gate around all of it', () => {
     expect(() => setProp(id, 'opacity', (() => undefined) as unknown)).toThrow(/number, string or boolean/);
   });
 
-  it('leaves ordinary scalar writes exactly as they were', () => {
+  it('leaves ordinary scalar writes exactly as they were', async () => {
     const id = newLayer();
-    expect(setProp(id, 'opacity', 50)).toBe(true);
+    // An engine `setProperty` since B5: the verb resolves.
+    expect(await setProp(id, 'opacity', 50)).toBe(true);
   });
 
   it('★ refuses null, which typeof calls an object', () => {

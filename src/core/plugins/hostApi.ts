@@ -28,13 +28,20 @@ import { useProjectStore } from '@stores/projectStore';
 import { audioComponent } from '@core/audio/audioScene';
 import { amplitudeAt, type WaveformPeaks } from '@core/audio/waveform';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { createComposition, renameComposition, deleteComposition } from '@core/composition/compositionOps';
 import { useUIStore } from '@stores/uiStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { getTimelineController, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { runDocumentEdit } from '@core/commands/documentEdit';
-import type { Command, CommandResult, EngineError } from '@motion/engine-api';
+import {
+  secondsToFlicks, type Command, type CommandResult, type CompSettingsPatch, type Easing, type EngineError, type Keyframe,
+  type PropRef, type Rational, type Value,
+} from '@motion/engine-api';
+import {
+  activePlayheadSeconds, effectParamCommand, ENGINE_EASINGS, keyAddressable, keyTargetFor, propWriteCommand,
+  separateDimensionsCommand,
+} from '@core/engine/trackWrites';
+import { apiUnitFactor } from '@core/engine/props';
 import { engine } from '@core/engine/engineInstance';
-import { isLayer } from '@core/engine/doc';
+import { compItemIds, isCompItem, isLayer, layerSubtree } from '@core/engine/doc';
 import { describeEngineError } from '@core/engine/uiEdits';
 import { insertPrimitive } from '@core/scene/sceneInsert';
 import { readNodeKind } from '@core/scene/sceneDerive';
@@ -47,7 +54,7 @@ import { normaliseFillWrite, planStructuredWrite, STRUCTURED_PROP_NAMES } from '
 import {
   describeEffect, effectParamProblem, propertyProblem, unknownEffectTypeMessage,
 } from './propValidation';
-import { planKeyframeWrites } from './typedKeyframes';
+import { planKeyframeWrites, type TrackWrite } from './typedKeyframes';
 import { regenerateProxyChildren } from './proxySubtree';
 import { onLayerChanged } from './layerChangeNotifier';
 import type { PluginManifest, PluginPermission } from './manifest';
@@ -101,6 +108,17 @@ function notifyScene(): void {
 class PluginApiError extends Error {}
 
 const fail = (msg: string): never => { throw new PluginApiError(msg); };
+
+/** A frame rate as a Rational that reads back as the SAME float (29.97 stays 29.97), as the New Composition dialog sends it. */
+const rateOf = (fps: number): Rational =>
+  Number.isInteger(fps) ? { num: fps, den: 1 } : { num: Math.round(fps * 1_000_000), den: 1_000_000 };
+
+type HostNode = NonNullable<ReturnType<typeof defaultSceneGraph.getNode>>;
+
+/** What a `scene.setProperty` call will write, decided before anything is. */
+type PropertyWritePlan =
+  | { kind: 'structured'; label: string; apply: () => void }
+  | { kind: 'plain'; node: HostNode; target: HostNode['components'][number]; prop: string; value: number | string | boolean };
 
 const str = (v: unknown, what: string): string => {
   if (typeof v !== 'string' || v.length === 0 || v.length > MAX_STRING) {
@@ -267,6 +285,71 @@ export function createHostApi(
     return found ?? fail(
       `No inspector panel "${id}" in this plugin's manifest. Declared: ${panels.map((p) => p.id).join(', ')}.`,
     );
+  };
+
+  /**
+   * `scene.setProperty`'s validation and routing, shared by the legacy handler
+   * (and `scene.apply`, which dispatches to it inside one synchronous
+   * document edit) and the engine route below. Complete before anything is
+   * written: a refusal has changed nothing.
+   */
+  const planPropertyWrite = (id: unknown, prop: unknown, value: unknown): PropertyWritePlan => {
+    const n = node(id);
+    const p = str(prop, 'property name');
+    // Reserved. A plugin's own declared props are addressed by name through
+    // its layer kind, not by their internal track path — writing one here
+    // would create a junk key on the Transform component that renders
+    // nothing and animates nothing.
+    if (isReservedPropPath(p)) {
+      return fail(`"${p}" is reserved. Set a layer kind's own property by its declared name.`);
+    }
+    /*
+      `fill` → `fillPaint`, for the name an author actually types. A gradient
+      object or a hex colour is rerouted to the fill stack; a CSS gradient
+      string is refused with the object form. See `normaliseFillWrite`.
+    */
+    let writeProp = p;
+    let writeValue = value;
+    const fillRoute = normaliseFillWrite(
+      p,
+      value,
+      n.components.some((c) => typeof (c.props as Record<string, unknown>).fill === 'string'),
+    );
+    if (fillRoute && !fillRoute.ok) return fail(fillRoute.message);
+    if (fillRoute?.ok) { writeProp = fillRoute.prop; writeValue = fillRoute.value; }
+    /*
+      Structured values — a path, a gradient, a stroke.
+
+      Routed by the VALUE's shape rather than by the prop name, so a scalar
+      written to a structured prop still takes the ordinary path and fails the
+      way it always did. `planStructuredWrite` validates completely before it
+      returns the applier, so a refusal here has changed nothing.
+    */
+    if (writeValue !== null && typeof writeValue === 'object') {
+      const plan = planStructuredWrite(writeProp, writeValue, n.id);
+      if (!plan.ok) return fail(plan.message);
+      return { kind: 'structured', label: p, apply: plan.apply };
+    }
+    if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
+      return fail(
+        'Property values must be a number, string or boolean — or a structured value for: '
+        + `${STRUCTURED_PROP_NAMES.join(', ')}.`,
+      );
+    }
+    /*
+      Refused BY NAME before anything is written.
+
+      An unknown name used to fall through to the Transform below and be
+      written there — a key that renders nothing, animates nothing, and is
+      saved into the document. The refusal names the closest real property.
+      See `propValidation.ts` for what counts as known.
+    */
+    const problem = propertyProblem(n, p);
+    if (problem) return fail(problem);
+    const target = n.components.find((c) => p in (c.props as Record<string, unknown>))
+      ?? n.components.find((c) => c.type === 'Transform');
+    if (!target) return fail(`Layer "${n.name}" has no component that can hold "${p}".`);
+    return { kind: 'plain', node: n, target, prop: p, value };
   };
 
   const table: Record<string, (...args: unknown[]) => unknown> = {
@@ -520,7 +603,24 @@ export function createHostApi(
         }
         init[key] = v;
       }
-      return edit('create composition', () => createComposition(init));
+      // One engine command (`createComposition`, origin plugin), additive like
+      // the legacy verb: a plugin's composition never adopts the pristine one.
+      // Opening its tab and clearing the selection are editor state, after it.
+      const patch: CompSettingsPatch = {
+        ...(typeof init.name === 'string' ? { name: init.name } : {}),
+        ...(typeof init.width === 'number' ? { width: Math.round(init.width) } : {}),
+        ...(typeof init.height === 'number' ? { height: Math.round(init.height) } : {}),
+        ...(typeof init.fps === 'number' ? { frameRate: rateOf(init.fps) } : {}),
+        ...(typeof init.durationSeconds === 'number' ? { duration: secondsToFlicks(init.durationSeconds) } : {}),
+      };
+      return send('create composition', [{ type: 'createComposition', settings: patch, fromItems: [] }]).then((r) => {
+        const id = (r[0] as { item?: string } | undefined)?.item;
+        if (!id) return fail('The composition could not be created.');
+        const name = useProjectStore.getState().comps[id]?.name ?? (typeof init.name === 'string' ? init.name : 'Composition');
+        useProjectStore.getState().actions.openTab(id, [id], name);
+        useSelectionStore.getState().clear();
+        return id;
+      });
     },
     'composition.open': (id) => {
       const cid = str(id, 'composition id');
@@ -536,7 +636,7 @@ export function createHostApi(
       if (!useProjectStore.getState().comps[cid]) return fail(`No composition "${cid}".`);
       const next = str(name, 'composition name').trim().slice(0, 120);
       if (!next) return fail('A composition name cannot be empty.');
-      return edit('rename composition', () => { renameComposition(cid, next); return true; });
+      return send('rename composition', [{ type: 'renameItem', item: cid, name: next }]).then(() => true);
     },
     'composition.delete': (id) => {
       const cid = str(id, 'composition id');
@@ -551,7 +651,25 @@ export function createHostApi(
         `composition:write` says deleting one removes every layer it contains,
         which is exactly the power being granted.
       */
-      return edit('delete composition', () => deleteComposition(cid));
+      // A group opened in its own tab carries a settings record too, but it is
+      // a LAYER, not a composition — refused, as the legacy verb did.
+      if (!isCompItem(cid) || defaultSceneGraph.getNode(cid)?.parent) return false;
+      // `removeItems` with the layers that place it (After Effects removes a
+      // deleted comp's instances too; so did the legacy verb, through the
+      // subtree). The last one leaves the empty project's pristine placeholder
+      // in its place, created first in the same entry.
+      const last = compItemIds().length <= 1;
+      const cmds: Command[] = [
+        ...(last ? [{ type: 'createComposition', settings: { name: 'Composition 1', pristine: true }, fromItems: [] } as Command] : []),
+        { type: 'removeItems', items: [cid], removeUsingLayers: true },
+      ];
+      return send('delete composition', cmds).then(() => {
+        const st = useProjectStore.getState();
+        for (const tab of Object.values(st.tabs)) {
+          if (tab.compositionId === cid) st.actions.closeTab(tab.id);
+        }
+        return true;
+      });
     },
 
     // ── Scene, read ──────────────────────────────────────────────────────
@@ -727,67 +845,16 @@ export function createHostApi(
     },
 
     'scene.setProperty': (id, prop, value) => {
-      const n = node(id);
-      const p = str(prop, 'property name');
-      // Reserved. A plugin's own declared props are addressed by name through
-      // its layer kind, not by their internal track path — writing one here
-      // would create a junk key on the Transform component that renders
-      // nothing and animates nothing.
-      if (isReservedPropPath(p)) {
-        return fail(`"${p}" is reserved. Set a layer kind's own property by its declared name.`);
-      }
-      /*
-        `fill` → `fillPaint`, for the name an author actually types. A gradient
-        object or a hex colour is rerouted to the fill stack; a CSS gradient
-        string is refused with the object form. See `normaliseFillWrite`.
-      */
-      let writeProp = p;
-      let writeValue = value;
-      const fillRoute = normaliseFillWrite(
-        p,
-        value,
-        n.components.some((c) => typeof (c.props as Record<string, unknown>).fill === 'string'),
-      );
-      if (fillRoute && !fillRoute.ok) return fail(fillRoute.message);
-      if (fillRoute?.ok) { writeProp = fillRoute.prop; writeValue = fillRoute.value; }
-      /*
-        Structured values — a path, a gradient, a stroke.
-
-        Routed by the VALUE's shape rather than by the prop name, so a scalar
-        written to a structured prop still takes the ordinary path and fails the
-        way it always did. `planStructuredWrite` validates completely before it
-        returns the applier, so a refusal here has changed nothing.
-      */
-      if (writeValue !== null && typeof writeValue === 'object') {
-        const plan = planStructuredWrite(writeProp, writeValue, n.id);
-        if (!plan.ok) return fail(plan.message);
-        return edit(`set ${p}`, () => {
+      const plan = planPropertyWrite(id, prop, value);
+      if (plan.kind === 'structured') {
+        return edit(`set ${plan.label}`, () => {
           plan.apply();
           notifyScene();
           return true;
         });
       }
-      if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
-        return fail(
-          'Property values must be a number, string or boolean — or a structured value for: '
-          + `${STRUCTURED_PROP_NAMES.join(', ')}.`,
-        );
-      }
-      /*
-        Refused BY NAME before anything is written.
-
-        An unknown name used to fall through to the Transform below and be
-        written there — a key that renders nothing, animates nothing, and is
-        saved into the document. The refusal names the closest real property.
-        See `propValidation.ts` for what counts as known.
-      */
-      const problem = propertyProblem(n, p);
-      if (problem) return fail(problem);
-      const target = n.components.find((c) => p in (c.props as Record<string, unknown>))
-        ?? n.components.find((c) => c.type === 'Transform');
-      if (!target) return fail(`Layer "${n.name}" has no component that can hold "${p}".`);
-      return edit(`set ${p}`, () => {
-        const ok = defaultSceneGraph.writeProp(n.id, target.id, p, value);
+      return edit(`set ${plan.prop}`, () => {
+        const ok = defaultSceneGraph.writeProp(plan.node.id, plan.target.id, plan.prop, plan.value);
         notifyScene();
         return ok;
       });
@@ -1328,9 +1395,14 @@ export function createHostApi(
     'scene.deleteLayer': (id) => {
       const n = node(id);
       if (n.parent === null) return fail('That is a composition root, not a layer.');
-      // B3-legacy: engine gap — `deleteLayers` re-parents a deleted layer's children (keeping their world pose); this verb removes the whole subtree (a group with its members, a custom layer with its proxy children), so a layer WITH children keeps the legacy handler.
-      if (!isLayer(n.id) || n.children.length > 0) return table['scene.deleteLayer']!(id);
-      return send(`delete ${n.name}`, [{ type: 'deleteLayers', layers: [n.id] }]).then(() => true);
+      // This verb removes the whole subtree (a group with its members, a custom
+      // layer with its proxy children): ONE `deleteLayers` of every layer in it
+      // (the doomed set — nothing is re-parented). A subtree the API cannot
+      // name as one composition's layers (a legacy nested precomp group) keeps
+      // the legacy handler.
+      const subtree = layerSubtree(n.id);
+      if (!subtree) return table['scene.deleteLayer']!(id);
+      return send(`delete ${n.name}`, [{ type: 'deleteLayers', layers: subtree }]).then(() => true);
     },
 
     'scene.setParent': (id, parentId) => {
@@ -1384,9 +1456,147 @@ export function createHostApi(
       if (!isLayer(n.id)) return table['effects.remove']!(id, effectId);
       return send('remove effect', [{ type: 'removePropertyGroups', groups: [{ layer: n.id, path: `effects/${fx}` }] }]).then(() => true);
     },
+
+    /*
+      B5: a plain property write — a static field or one numeric member — is
+      the `setProperty` the Inspector sends (a key at the playhead when the
+      property is animated, After Effects' setValue). Structured values (paths,
+      gradients, strokes) and what the catalog does not address exactly keep
+      the legacy handler.
+    */
+    'scene.setProperty': (id, prop, value) => {
+      const plan = planPropertyWrite(id, prop, value);
+      if (plan.kind === 'plain' && isLayer(plan.node.id)) {
+        const cmds = propWriteCommand(plan.node, plan.target.id, plan.prop, plan.value, activePlayheadSeconds());
+        if (cmds) return send(`set ${plan.prop}`, cmds).then(() => true);
+      }
+      return table['scene.setProperty']!(id, prop, value);
+    },
+
+    'effects.setParam': (id, effectId, key, value) => {
+      const n = node(id);
+      const fx = str(effectId, 'effect id');
+      const k = str(key, 'parameter name');
+      if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
+        return fail('Effect parameter values must be a number, string or boolean.');
+      }
+      const target = getNodeEffects(n.id).find((e) => e.id === fx);
+      if (!target) return fail(`"${n.name}" has no effect "${fx}".`);
+      const def = effectDefFor(target.type);
+      if (def) {
+        const problem = effectParamProblem(def, k, value);
+        if (problem) return fail(problem);
+      }
+      // The same `setProperty` of `effects/<id>/<key>` the Effect Controls
+      // panel sends; a param the API does not take keeps the legacy handler.
+      const cmds = isLayer(n.id) ? effectParamCommand(n.id, fx, k, value, activePlayheadSeconds()) : null;
+      if (!cmds) return table['effects.setParam']!(id, effectId, key, value);
+      return send(`set ${k}`, cmds).then(() => true);
+    },
+
+    /*
+      Keyframes in LAYER time (the plugin API's axis, docs/PLUGINS.md) on the
+      API's comp-time axis: `keyframeToCompTime`, the inverse of the conversion
+      the engine applies to every key. Each output track of the typed plan
+      must be ONE engine property on its own (a single-member scalar, or a
+      Position dimension — separated first, AE's Separate Dimensions);
+      colour channels, other vector members and non-API easings keep the
+      legacy handler.
+    */
+    'animation.setKeyframe': (id, prop, time, value, easing) => {
+      const n = node(id);
+      const p = str(prop, 'property');
+      const t = finite(time, 'time');
+      const writes = planKeyframeWrites(n, p, [{ t, value, ...(typeof easing === 'string' ? { easing } : {}) }]);
+      const cmds = isLayer(n.id) ? keyframeCommands(n.id, writes, 'add') : null;
+      if (!cmds) return table['animation.setKeyframe']!(id, prop, time, value, easing);
+      return send(`keyframe ${p}`, cmds).then(() => true);
+    },
+
+    'animation.setKeyframes': (id, prop, kfs) => {
+      const n = node(id);
+      const p = str(prop, 'property');
+      if (!Array.isArray(kfs)) return fail('setKeyframes expects an array.');
+      if (kfs.length > MAX_KEYFRAMES_PER_CALL) {
+        return fail(`A single call may write at most ${MAX_KEYFRAMES_PER_CALL} keyframes.`);
+      }
+      const clean = kfs.map((k, i) => {
+        const o = (k ?? {}) as Record<string, unknown>;
+        return { t: finite(o.t, `keyframe[${i}].t`), value: o.value, ...(typeof o.easing === 'string' ? { easing: o.easing } : {}) };
+      });
+      const writes = planKeyframeWrites(n, p, clean);
+      // An empty list clears the track (legacy); the API's `setKeyframes` needs keys.
+      const cmds = isLayer(n.id) && clean.length > 0 ? keyframeCommands(n.id, writes, 'replace') : null;
+      if (!cmds) return table['animation.setKeyframes']!(id, prop, kfs);
+      return send(`animate ${p}`, cmds).then(() => true);
+    },
+
+    'animation.removeKeyframe': (id, prop, time) => {
+      const n = node(id);
+      const p = str(prop, 'property');
+      const t = finite(time, 'time');
+      const target = isLayer(n.id) ? keyTargetFor(n.id, p) : null;
+      // No stored key there: the legacy writer is a silent no-op, and so is this.
+      const stored = defaultAnimation.getTrackKeyframes(n.id, p)?.some((k) => k.t === t) ?? false;
+      if (!target || !stored || !keyAddressable(n.id, p, target)) return table['animation.removeKeyframe']!(id, prop, time);
+      return engineKeyIdAt(target.ref, keyframeToCompTime(n.id, t)).then((keyId) => {
+        if (!keyId) return table['animation.removeKeyframe']!(id, prop, time);
+        return send(`remove keyframe ${p}`, [{ type: 'deleteKeyframes', ids: [keyId] }]).then(() => true);
+      });
+    },
   };
 
   return { ...table, ...viaEngine };
+}
+
+/**
+ * A typed keyframe plan (`planKeyframeWrites`, LAYER time) as engine commands,
+ * or null when any output track is not ONE API property on its own or a key
+ * is not expressible (a non-API easing, a non-finite value). `add` merges the
+ * keys (`addKeyframes`, the legacy `setKeyframe`); `replace` replaces each
+ * track's keys (`setKeyframes`, the legacy bulk writer).
+ */
+function keyframeCommands(nodeId: string, writes: readonly TrackWrite[], mode: 'add' | 'replace'): Command[] | null {
+  const out: Command[] = [];
+  let separate = false;
+  for (const w of writes) {
+    const target = keyTargetFor(nodeId, w.path);
+    if (!target) return null;
+    if (w.keyframes.some((k) => !Number.isFinite(k.value) || (k.easing !== undefined && !ENGINE_EASINGS.has(k.easing)))) return null;
+    if (!keyAddressable(nodeId, w.path, target)) separate = true;
+    const factor = apiUnitFactor(target.member);
+    const keyed = w.keyframes.map((k) => ({
+      time: secondsToFlicks(keyframeToCompTime(nodeId, k.t)),
+      value: { kind: 'scalar', value: k.value * factor } as Value,
+      ...(k.easing !== undefined ? { easing: k.easing as Easing } : {}),
+    }));
+    if (new Set(keyed.map((k) => k.time)).size !== keyed.length) return null;
+    if (mode === 'add') {
+      out.push({ type: 'addKeyframes', keys: keyed.map((k) => ({ prop: target.ref, ...k, spatialIn: [], spatialOut: [] })) });
+    } else {
+      out.push({
+        type: 'setKeyframes',
+        prop: target.ref,
+        keys: keyed.map((k): Keyframe => ({
+          id: '', time: k.time, value: k.value, easing: k.easing ?? 'linear', continuous: false, roving: false,
+          spatialInterp: 'legacy', spatialIn: [], spatialOut: [], label: 0, dims: [],
+        })),
+      });
+    }
+  }
+  return separate ? [separateDimensionsCommand(nodeId), ...out] : out;
+}
+
+/** The engine id of the key of `ref` at comp time `seconds` (within a flick), or null. */
+async function engineKeyIdAt(ref: PropRef, seconds: number): Promise<string | null> {
+  const at = secondsToFlicks(seconds);
+  const res = await engine().query({ type: 'getKeyframes', props: [ref], range: { start: Math.max(0, at - 1), duration: 3 } });
+  if (!res.ok) return null;
+  for (const set of res.value.sets) {
+    const hit = set.keyframes.find((k) => Math.abs(k.time - at) <= 1);
+    if (hit) return hit.id;
+  }
+  return null;
 }
 
 /**

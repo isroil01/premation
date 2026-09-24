@@ -92,6 +92,8 @@ import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { CRAFT_HANDLERS } from './craftHandlers';
 import { mapSeq, filterSeq } from './asyncList';
 import { engineOr } from './toolContext';
+import { activePlayheadSeconds, trackMatteCommand } from '@core/engine/trackWrites';
+import { memberWrite } from '@core/engine/propRefs';
 import type { Command } from '@motion/engine-api';
 
 const def = (name: string) => {
@@ -422,29 +424,30 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
   // switch AND `acceptsLights`, the flag defaults to false, and the only writer
   // was the inspector checkbox. A light could be created, positioned and tuned,
   // and nothing in the scene would ever be lit by it.
-  // B5 gap: material options (accepts lights, ambient, diffuse, specular,
-  // shininess) and track mattes keep their legacy writers.
-  const legacyMaterial = i.acceptsLights !== undefined || typeof i.ambient === 'number' || typeof i.diffuse === 'number' ||
-    typeof i.specular === 'number' || typeof i.shininess === 'number' || i.removeMatte || i.matte !== undefined;
-  if (legacyMaterial && node) ctx.engine.legacy('update_layer material options / track matte');
-  if (i.acceptsLights !== undefined && node) {
-    setNodeAcceptsLights(i.nodeId, !!i.acceptsLights);
-    applied.push(`acceptsLights=${!!i.acceptsLights}`);
-  }
+  // Material Options are the catalog's `material/…` rows (B3z): ONE
+  // `setProperty` per option, a key at the playhead where the option is
+  // animated — what the Inspector sends. Clamped as the legacy setters clamp.
+  // A layer whose catalog does not address them (not 3D yet on a backend
+  // that refuses) keeps the legacy setters, as ONE named gap.
+  const material: Array<[string, number, () => void]> = [];
+  if (i.acceptsLights !== undefined) material.push(['acceptsLights', i.acceptsLights ? 1 : 0, () => setNodeAcceptsLights(i.nodeId, !!i.acceptsLights)]);
   for (const key of ['ambient', 'diffuse'] as const) {
     const v = i[key];
-    if (typeof v === 'number' && node) {
-      setNodeMaterialPct(i.nodeId, key, v, MATERIAL_PCT_DEFAULTS[key]);
-      applied.push(`${key}=${v}`);
+    if (typeof v === 'number') material.push([key, Math.max(0, Math.min(100, v)), () => setNodeMaterialPct(i.nodeId, key, v, MATERIAL_PCT_DEFAULTS[key])]);
+  }
+  if (typeof i.specular === 'number') { const v = i.specular; material.push(['specular', Math.max(0, Math.min(100, v)), () => setNodeSpecular(i.nodeId, v)]); }
+  if (typeof i.shininess === 'number') { const v = i.shininess; material.push(['shininess', Math.max(1, v), () => setNodeShininess(i.nodeId, v)]); }
+  if (material.length > 0 && node) {
+    const at = activePlayheadSeconds();
+    const writes = material.map(([track, v]) => memberWrite(i.nodeId, track, v, at));
+    const cmds = writes.every((w) => w !== null)
+      ? [{ type: 'setProperties', writes: writes.map((w) => ({ prop: w!.prop, value: w!.value, ...(w!.time !== undefined ? { time: w!.time } : {}) })) } as Command]
+      : null;
+    await engineOr(ctx.engine, 'update_layer material options the catalog does not address', cmds, () => undefined, () => { for (const [, , legacy] of material) legacy(); });
+    if (i.acceptsLights !== undefined) applied.push(`acceptsLights=${!!i.acceptsLights}`);
+    for (const key of ['ambient', 'diffuse', 'specular', 'shininess'] as const) {
+      if (typeof i[key] === 'number') applied.push(`${key}=${i[key]}`);
     }
-  }
-  if (typeof i.specular === 'number' && node) {
-    setNodeSpecular(i.nodeId, i.specular);
-    applied.push(`specular=${i.specular}`);
-  }
-  if (typeof i.shininess === 'number' && node) {
-    setNodeShininess(i.nodeId, i.shininess);
-    applied.push(`shininess=${i.shininess}`);
   }
   if (i.name !== undefined && node) {
     const name = String(i.name);
@@ -468,13 +471,15 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
     applied.push(`blendMode=${i.blendMode}`);
   }
   if (i.removeMatte && node) {
-    setNodeMatte(i.nodeId, undefined);
+    await engineOr(ctx.engine, 'update_layer track matte refused by the engine', [trackMatteCommand(i.nodeId, undefined)], () => undefined, () => setNodeMatte(i.nodeId, undefined));
     applied.push('removeMatte');
   } else if (i.matte !== undefined && node) {
     // readMatte normalises whatever the model sent: the 1.2.0 {mode,inverted}
     // shape or the legacy four-value spelling. Tolerating both means the tool
-    // schema and the prompt do not need a flag day.
-    setNodeMatte(i.nodeId, readMatte(i.matte));
+    // schema and the prompt do not need a flag day. `setTrackMatte`, as the
+    // Inspector's Track Matte menu sends it.
+    const matte = readMatte(i.matte);
+    await engineOr(ctx.engine, 'update_layer track matte refused by the engine', [trackMatteCommand(i.nodeId, matte)], () => undefined, () => setNodeMatte(i.nodeId, matte));
     applied.push(`matte=${JSON.stringify(i.matte)}`);
   }
 

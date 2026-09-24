@@ -159,7 +159,8 @@ async function authorDocument(): Promise<{ worker: FakeWorker; customLayerId: st
   const effectId = (await worker.callAsync(
     'effects.add', nativeLayerId, `${PLUGIN}.${EFFECT.id}`,
   ) as { value: string }).value;
-  worker.callAndWait('effects.setParam', nativeLayerId, effectId, 'amount', 2.5);
+  // An engine `setProperty` since B5 (async, like effects.add).
+  await worker.callAsync('effects.setParam', nativeLayerId, effectId, 'amount', 2.5);
 
   return { worker, customLayerId, nativeLayerId };
 }

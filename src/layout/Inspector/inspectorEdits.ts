@@ -37,7 +37,6 @@ import type {
   KeyframeInsert,
   KeyframePatch,
   LayerSwitchesPatch,
-  MatteMode as ApiMatteMode,
   PropRef,
   PropertyWrite,
 } from '@motion/engine-api';
@@ -56,6 +55,7 @@ import { compTime, propRefForTrack, valueOfNumbers, type TrackRef } from '@core/
 import { apiUnitFactor } from '@core/engine/props';
 import { engine } from '@core/engine/engineInstance';
 import { isLayer } from '@core/engine/doc';
+import { trackMatteCommand } from '@core/engine/trackWrites';
 import { KEYFRAME_EPS, readTrack } from '@core/mirror/selection';
 import { numbersOfValue } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
@@ -333,27 +333,13 @@ export function parentLayer(nodeId: string, parentId: string | null, modifiers?:
   });
 }
 
-/** The API's matte mode for a stored matte. */
-function apiMatteMode(m: TrackMatte): ApiMatteMode {
-  const base = m.mode === 'luma' ? 'luma' : 'alpha';
-  return (m.inverted ? `${base}Inverted` : base) as ApiMatteMode;
-}
-
 /**
  * Set a layer's track matte. The API addresses a matte BY REFERENCE (AE 2023);
  * a matte with no explicit source is AE's classic positional "Layer Above"
  * matte (`setTrackMatte` without `matte.layer`).
  */
 export function setLayerMatte(nodeId: string, matte: TrackMatte | undefined): void {
-  if (!matte) {
-    void edit('Track Matte', { type: 'setTrackMatte', layer: nodeId, matte: { mode: 'none' } });
-    return;
-  }
-  void edit('Track Matte', {
-    type: 'setTrackMatte',
-    layer: nodeId,
-    matte: { ...(matte.sourceId ? { layer: matte.sourceId } : {}), mode: apiMatteMode(matte) },
-  });
+  void edit('Track Matte', trackMatteCommand(nodeId, matte));
 }
 
 /** Blending mode on these layers, one entry. */
