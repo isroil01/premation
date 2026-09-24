@@ -17,16 +17,15 @@ import { Popover } from '@components/Popover';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import type { SceneNode } from '@core/types';
+import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
+import { mirrorModifierStack } from '@core/mirror/modifierStacks';
 import {
   MODIFIER_KINDS,
   MODIFIER_LABELS,
   defaultModifier,
   describeModifier,
-  MODIFIERS_PROP,
-  readModifierStack,
   type Modifier,
   type ModifierKind,
 } from '@core/animation/modifierStack';
@@ -72,12 +71,10 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
   // From the mirror (`layer/modifiers`, the raw record), so the chips redraw on
   // every change of the stack — the next reorder / × computes from what is
   // stored, never from a stale list. Normalised exactly as the document reader
-  // normalises it (`readModifierStack` reads only the Transform's props).
+  // normalises it (`mirrorModifierStack`: `readModifierStack` over the record).
   const layer = useMirrorLayer(nodeId);
   const raw = useMirrorJson<unknown>(nodeId, 'layer/modifiers');
-  const stack = raw === undefined
-    ? null
-    : readModifierStack({ components: [{ type: 'Transform', props: { [MODIFIERS_PROP]: raw } }] } as unknown as SceneNode, prop);
+  const stack = raw === undefined ? null : mirrorModifierStack(documentMirror(), nodeId, prop);
   const modifiers: readonly Modifier[] = stack?.modifiers ?? [];
 
   if (!layer) return null;

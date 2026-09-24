@@ -21,12 +21,14 @@
  */
 
 import type { Command, PropRef } from '@motion/engine-api';
-import { defaultAnimation, type ExpressionState } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import type { ExpressionState } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
 import { compileModifierStack } from '@core/animation/modifierCompile';
+import { mirrorModifierStacks } from '@core/mirror/modifierStacks';
+import { memberExpressionOf } from '@core/mirror/memberExpressions';
+import { trackRef } from '@core/mirror/selection';
 import {
   instantiateRecipe,
-  readModifierStacks,
   type BehaviorRecipe,
   type Modifier,
   type ModifierStack,
@@ -55,9 +57,12 @@ export function expressionTarget(nodeId: string, track: string): ExpressionTarge
 
 /** The track's current expression, or null — what a new stack records as `previous`. */
 function currentExpressionState(nodeId: string, track: string): ExpressionState | null {
-  const src = defaultAnimation.getExpressionSrc(nodeId, track);
-  if (src === undefined || src.trim() === '') return null;
-  return { src, enabled: defaultAnimation.isExpressionEnabled(nodeId, track) };
+  // The mirror's record at call time: the property's expression, or — one
+  // dimension of an unseparated vector — that member's own.
+  const r = trackRef(documentMirror(), nodeId, track);
+  const e = r ? memberExpressionOf(r.info, r.member) : null;
+  if (!e || e.source.trim() === '') return null;
+  return { src: e.source, enabled: e.enabled };
 }
 
 function setExpression(t: ExpressionTarget, source: string, enabled: boolean): Command {
@@ -75,9 +80,9 @@ function recordCommands(nodeId: string, next: Record<string, ModifierStack>): Co
  * a track is not addressable.
  */
 export function modifierStacksCommands(nodeId: string, changes: ReadonlyArray<{ track: string; modifiers: readonly Modifier[] | null }>): Command[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasLayerField(nodeId, MODIFIERS_PATH)) return [];
-  const stacks = readModifierStacks(node);
+  const m = documentMirror();
+  if (!m.layer(nodeId) || !hasLayerField(nodeId, MODIFIERS_PATH)) return [];
+  const stacks = mirrorModifierStacks(m, nodeId);
   const next: Record<string, ModifierStack> = { ...stacks };
   const exprs: Command[] = [];
   for (const { track, modifiers } of changes) {

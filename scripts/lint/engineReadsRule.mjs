@@ -100,6 +100,38 @@ const PURE_READS = new Set([
   'thinSamples', // core/paint/paintSpace: point thinning
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given
+  // B4 Inspector (checked: arguments only — no singleton, store, controller or engine default on any path).
+  'polystarPropPath', 'polystarParamSpecs', // core/scene/polystar: a track name; the static row table per star type
+  'pathOpPropPath', 'pathOpParamSpecs', // core/scene/pathOps: a track name; the static row table per operator type
+  'overrideKey', 'parseOverrideKey', 'isOverridableProp', 'isValidOverrideValue', // core/scene/compInstanceOverrides: key strings, the static kind table
+  'describeModifier', 'patchModifier', 'defaultModifier', 'instantiateRecipe', // core/animation/modifierStack: over the Modifier(s) given; ids from a counter
+  'defaultStroke', 'normalizeStroke', // core/paint/stroke (and paint/paintStrokes): a default record; normalises the value given
+  'normalizePaintOpOptions', // core/rendering/raster/paintBlend: normalises the value given
+  'solidFill', 'sortedOpacityStops', 'defaultOpacityStops', 'makeOpacityStop', // core/paint/fill: paint / stop-list constructors and sorting
+  'readMatte', // core/effects/matte: parses the stored matte value it is given (every legacy shape)
+  'rampStyleOf', 'fittedSpeed', // core/animation/retimeCommands: easing → ramp style; speed rounding
+  'hasFlag', // core/audio/audioEffects: a flag test on the AudioEffect given
+  'thinLevels', // core/audio/ducking: keyframe thinning over the levels given
+  'gateLevels', 'planGate', // core/audio/audioGate: gate curve and keys over the envelope given (time mapping is the caller's)
+  'styledSurfaceFill', // core/effects/layerStyles: colour mixing over the LayerStyles given
+  'nextFaceMaterials', // core/scene/faceMaterials: patches the FaceMaterials given
+  'materialParamsOf', 'normalizeMaterialParams', // core/scene/material: reshapes / normalises the record given
+  'primitiveLayerBox', // core/scene/primitiveLayer: the bounds of the mesh built from the spec given
+  'isDistributeMode', // core/scene/alignNodes: a type guard over a static table
+  'defaultAudioDriver', 'expressionBlocker', // core/audio/audioDriver: a default record; a check over the AudioDriver given
+  'defaultAudioWaveform', // core/audio/audioWaveformGen: a default record
+  'detectSilences', 'totalSilenceSec', // core/audio/silenceRemoval: analysis over the samples / ranges given
+  'readAudioEffects', // core/audio/audioEffects: validates the chain on the component-shaped object given
+  'hasClipboard', // core/animation/keyframeClipboard: the editor's keyframe clipboard — not the document
+  'getMographItem', 'mographDuration', 'mographRestTime', // core/library/mographLibrary: the static MOGRAPH_ITEMS catalog and its choreography maths
+  'amplitudeEnvelope', 'planAudioKeyframes', // core/audio/audioKeyframes: over the AudioBuffer / envelope given
+  'rangesToCompIntervals', // core/audio/silenceRemoval: interval maths over the timings and ranges given
+  'canSolveCamera', // core/tracking/applyTrack: a count check over the tracks given
+  'describeConversion', // core/svg/svgConvert: sentences about the SvgLayerData given
+  'requestExpressionEditor', 'consumeExpressionEditorRequest', 'onExpressionEditorRequest', // core/animation/expressionCommands: the editor's "open this expression field" channel — UI state, not the document
+  'parentOptionsFor', // core/scene/parenting: modifier keys → reparent options
+  'audioDriverExpression', // core/audio/audioDriver: expression source for the AudioDriver given
+  'canGenerateProxy', 'proxyRefusal', // core/assets/proxyManager: a platform capability check; a check over the asset record given
 ]);
 
 /**

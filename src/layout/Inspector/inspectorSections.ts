@@ -69,9 +69,8 @@ import { AppearanceSection, AppearancePresetAction } from './AppearanceSection';
 import { TextSection, TextPresetAction, hasTextSection } from './TextSection';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from './EffectsSection';
 import { AudioControls } from './AudioControls';
-import { PinnedSection } from './PinnedSection';
+import { PinnedSection, hasPinnedSection } from './PinnedSection';
 import { PluginParamsSection, hasPluginParamsSection, pluginParamsTitle } from './PluginParamsSection';
-import { hasPinnedSection } from '@core/inspector/pinnedProps';
 import { CameraSection } from './CameraSection';
 import { CompositingSection } from './CompositingSection';
 import { CustomLayerSection } from './CustomLayerSection';
@@ -206,7 +205,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     category: 'pinned',
     defaultOpen: true,
     keywords: 'pinned essential favourite favorite shortlist',
-    // B4-gap: pinned / essential properties (`__pinnedProps`, `__essentialProps`) — layer data with no catalog path (B4_MIRROR.md §4).
+    // Pins are `LayerInfo.pinned`; B4-gap: the Essential Properties (`__essentialProps`) — see PinnedSection.
     appliesTo: hasPinnedSection,
     Component: PinnedSection,
   },

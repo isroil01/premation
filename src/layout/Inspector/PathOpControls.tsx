@@ -141,7 +141,6 @@ function ParamRow({
   step?: number;
   unit?: string;
 }): JSX.Element {
-  useSceneRevision((s) => s.rev);
   const path = pathOpPropPath(opId, param);
   // B3: `contents/<opId>/<param>` through the engine API (key at the playhead
   // when animated, else the static value; a drag is one gesture).
@@ -391,6 +390,9 @@ function PathOpCard({
 }
 
 export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | null {
+  // B4-gap: an operator's Wiggles/Second and Correlation (`fx.pathOps[i].wigglesPerSecond|correlation`) — the
+  // catalog lists neither under `contents/<opId>/`, so `mirrorPathOps` reads them as 0. Closes when both are
+  // `contents/<opId>/…` properties; then this is `mirrorPathOps(useMirrorTree(nodeId))`.
   useSceneRevision((s) => s.rev);
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || readNodeKind(node) !== 'shape') return null;

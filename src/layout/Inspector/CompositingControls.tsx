@@ -1,27 +1,28 @@
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getNodeBlend } from '@core/effects/blendMode';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorMatte } from '@core/mirror/layerFacts';
+import type { LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
-import { getNodeMatte } from '@core/effects/matte';
 import { setLayerMatte, setLayersBlend } from './inspectorEdits';
+import { siblingsOf, useCompLayersWatch } from './inspectorMirror';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
 import styles from '../Effects/EffectsPanel.module.css';
 
 export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element {
-  useSceneRevision((s) => s.rev);
+  // The header (blend, matte) and every layer of the comp (the matte-source list).
+  const layer = useCompLayersWatch(nodeId);
 
-  const blend = getNodeBlend(nodeId);
+  const blend = (layer?.blendMode ?? 'normal') as LayerBlendMode;
   const blendLabel = blendModeLabel(blend);
   const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setLayersBlend([nodeId], m));
 
-  const matte = getNodeMatte(nodeId);
+  const matte = mirrorMatte(layer);
   const currentOption = matteOptionId(matte);
   const currentSourceId = matte?.sourceId;
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  const siblings = node && node.parent ? defaultSceneGraph.getChildren(node.parent).filter(n => n.id !== nodeId) : [];
+  // Back to front, the order the matte-source list has always used.
+  const siblings = layer ? siblingsOf(documentMirror(), layer) : [];
 
   const matteLabel = MATTE_OPTIONS.find((m) => m.id === currentOption)?.label ?? 'No matte';
   const matteItems: DropdownItem[] = MATTE_OPTIONS.map((m) => ({

@@ -7,10 +7,11 @@
  */
 
 import { flicksToSeconds, type LayerInfo } from '@motion/engine-api';
-import { documentMirror } from '@stores/documentMirror';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
 import { uiKindOf, isAbstractKind } from '@core/mirror/layerKinds';
-import { useActiveMirrorComp } from '@hooks/useMirror';
+import { childOrderOf } from '@core/mirror/layerTree';
+import { useActiveMirrorComp, useMirrorComp, useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
 
 /** The layer's mirror header, or undefined when it is gone (or not a layer). */
 export function mirrorLayer(id: string | null | undefined): LayerInfo | undefined {
@@ -85,4 +86,29 @@ export function useActiveCompDurationSeconds(): number {
 export function useActiveCompSize(): { width: number; height: number } {
   const s = useActiveMirrorComp()?.settings;
   return { width: s?.width ?? 0, height: s?.height ?? 0 };
+}
+
+/**
+ * Re-render when anything a picker over `nodeId`'s composition lists changes —
+ * the comp's stack, membership, or any of its layers' headers (a rename, a
+ * reparent, a 3D switch) — the parent / IK-target dropdowns. Returns the
+ * layer's header.
+ */
+export function useCompLayersWatch(nodeId: string | null | undefined): LayerInfo | undefined {
+  const layer = useMirrorLayer(nodeId);
+  const comp = useMirrorComp(layer?.comp);
+  useMirrorKeys(comp ? ['layers', ...comp.layers.map((id) => `layer:${id}`)] : []);
+  return layer;
+}
+
+/**
+ * The other layers under `layer`'s parent (the composition's top layers when it
+ * has none), BACK to FRONT — the scene graph's `getChildren(parent)` order,
+ * minus the layer itself. What the matte-source pickers list.
+ */
+export function siblingsOf(m: DocumentMirror, layer: LayerInfo): LayerInfo[] {
+  return childOrderOf(m, layer.parent ?? layer.comp)
+    .filter((id) => id !== layer.id)
+    .map((id) => m.layer(id))
+    .filter((l): l is LayerInfo => l !== undefined);
 }

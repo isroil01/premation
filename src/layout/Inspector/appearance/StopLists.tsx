@@ -8,6 +8,7 @@
  * sections.
  */
 
+import { useMemo } from 'react';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Icon } from '@components/Icon';
@@ -21,12 +22,17 @@ import {
   type ColorStop,
   type OpacityStop,
 } from '@core/paint/fill';
-import { defaultAnimation } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { secondsToFlicks } from '@motion/engine-api';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { FILL_STOPS_PATH, gradientValueStops } from '@core/mirror/paintFields';
 import { useEngineEdit } from '../useEngineEdit';
 import { fillPaintCommands, fillStopsCommands, fillStopsStopwatch, setFillPaintEdit, strokePatchCommands } from './paintEdits';
 import effStyles from '../../Effects/EffectsPanel.module.css';
+
+/** What the colour stop list watches: the primary fill's keyframeable stops. */
+const STOPS_WATCH: ReadonlyArray<string> = [FILL_STOPS_PATH];
 
 /**
  * Editor for a gradient's OPACITY stops — a second, independent list.
@@ -144,22 +150,20 @@ export function StopList({
 }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   const e = useEngineEdit();
+  // B4: the `layer/fillStops` keys and value at the playhead (comp time).
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  useMirrorTrackWatch(watchIds, STOPS_WATCH);
   if (paint.type === 'solid') return null;
-  // Display only: the sampled stop list at the playhead, on the track's key axis.
-  const layerT = keyAxisTimeForDisplay(nodeId, time, 'fill.stops');
+  const m = documentMirror();
   const canAnimate = target === 'fill';
 
   // Gradient-stop keyframes (data track): when live, the rows show the
   // SAMPLED stop list at the playhead and every edit writes a keyframe there —
   // the renderer reads the track, so writing the static paint would be an
   // edit that changes nothing on screen.
-  const stopsAnimated = canAnimate && defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
-  const sampled = stopsAnimated
-    ? (defaultAnimation.sampleData(nodeId, 'fill.stops', layerT) as Array<{ pos: number; color: string }> | undefined)
-    : undefined;
-  const stops = sampled
-    ? sortedStops(sampled.map((s, i) => ({ id: `anim_${i}`, offset: s.pos, color: s.color })))
-    : sortedStops(paint.stops);
+  const stopsAnimated = canAnimate && m.keyframes(nodeId, FILL_STOPS_PATH).length > 0;
+  const sampled = stopsAnimated ? gradientValueStops(m.valueAt(nodeId, FILL_STOPS_PATH, secondsToFlicks(time))) : undefined;
+  const stops = sampled ? sortedStops(sampled) : sortedStops(paint.stops);
   const write = (next: ColorStop[], label = 'Gradient Stops'): void => {
     if (stopsAnimated) {
       // A Colors key at the playhead (the renderer reads the track).

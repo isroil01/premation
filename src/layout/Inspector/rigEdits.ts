@@ -25,11 +25,9 @@
  */
 
 import type { Command, PropertyInit, Value } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isLayer } from '@core/engine/doc';
 import { compTime, values } from '@core/engine/propRefs';
 import { rigMatch, rigPaths } from '@core/engine/rigPaths';
-import { readNodePuppet } from '@core/rig/puppet';
 import type { IKTarget } from '@core/rig/skeletonCommands';
 import type { Bone } from '@core/rig/skeleton';
 import { planChainSwitch, type ChainMode } from '@core/rig/ikfk';
@@ -73,10 +71,11 @@ export interface PuppetMeshPatch {
 
 /** Mesh settings as ONE action; creates the (empty) rig first when the layer has none, as the legacy writer did. */
 export function puppetMeshCommands(nodeId: string, patch: PuppetMeshPatch): Command[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !isLayer(nodeId)) return [];
+  const m = documentMirror();
+  if (!m.layer(nodeId) || !isLayer(nodeId)) return [];
   const out: Command[] = [];
-  if (!readNodePuppet(node)) out.push({ type: 'addPropertyGroup', layer: nodeId, parent: '', matchName: rigMatch.puppet, init: [] });
+  // The rig's `puppet` group exists exactly when the layer has a puppet (rigProps.ts `rigGroupPaths`).
+  if (!m.tree(nodeId)?.nodes.has(rigPaths.puppet)) out.push({ type: 'addPropertyGroup', layer: nodeId, parent: '', matchName: rigMatch.puppet, init: [] });
   if (patch.density !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('density'), values.scalar(patch.density)));
   if (patch.expansion !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('expansion'), values.scalar(patch.expansion)));
   if (patch.mode !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('mode'), values.choice(patch.mode)));

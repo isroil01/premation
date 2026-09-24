@@ -28,13 +28,15 @@
 import { AnimToggle } from './AnimToggle';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
+import { useMemo } from 'react';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch, useMirrorTree } from '@hooks/useMirror';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { isTrackAnimated, readTrack, trackRef as mirrorTrackRef } from '@core/mirror/selection';
+import { mirrorHasTransform } from '@core/mirror/layerFacts';
+import { storedNumber, tracksIn } from '@core/mirror/trackIndex';
 import { edit } from '@core/engine/uiEdits';
 import { MORPH_PROP_PREFIX, morphTargetLabels } from '@core/scene/modelMorph';
 import { scalarValueCommands, stopwatchCommands, trackRef, valueCommands } from './inspectorEdits';
@@ -46,16 +48,15 @@ const MIN = 0;
 const MAX = 1;
 const STEP = 0.01;
 
+/** A morph weight's track name (`morph0`…`morphN-1`). */
+const MORPH_TRACK = new RegExp(`^${MORPH_PROP_PREFIX}\\d+$`);
+
 interface MorphRowProps {
   nodeId: string;
-  /** Transform component id — where the static weight lives. */
-  componentId: string;
   index: number;
   label: string;
-  /** The playhead, comp seconds (what commands take). */
+  /** The playhead, comp seconds (what commands take, and where the sampled value is drawn). */
   time: number;
-  /** The playhead on this layer's keyframe axis — for DRAWING the sampled value only. */
-  layerT: number;
   autoKeyframe: boolean;
   /** The section's send half: a drag of any row is one gesture. */
   e: EngineEdit;
@@ -66,13 +67,15 @@ interface MorphRowProps {
  * the selected layer, and a hook inside a list whose length changes is the
  * exact crash `conditionalHooks.test.tsx` exists to catch.
  */
-function MorphRow({ nodeId, componentId, index, label, time, layerT, autoKeyframe, e }: MorphRowProps): JSX.Element {
+function MorphRow({ nodeId, index, label, time, autoKeyframe, e }: MorphRowProps): JSX.Element {
   const prop = `${MORPH_PROP_PREFIX}${index}`;
-  const animated = defaultAnimation.isAnimated(nodeId, prop);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const raw = node?.components.find((c) => c.id === componentId)?.props[prop];
-  const base = typeof raw === 'number' ? raw : 0;
-  const value = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? base : base;
+  // B4: the weight from the document mirror — the static value of the (latent)
+  // `morph<i>` property, or under a lit stopwatch the value at the playhead.
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, prop);
+  const ref = mirrorTrackRef(m, nodeId, prop);
+  const base = (ref ? storedNumber(ref, ref.info.value) : undefined) ?? 0;
+  const value = animated ? readTrack(m, nodeId, prop, time) ?? base : base;
 
   const write = (v: number): void => {
     if (!Number.isFinite(v)) return;
@@ -125,25 +128,24 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // Every hook first — this section disappears entirely for a layer with no
   // morph targets, and a hook below that guard would change the hook count
   // between renders (see conditionalHooks.test.tsx).
-  useSceneRevision((st) => st.rev);
-  // Keyframe writes do not bump the SCENE revision, so without this a lit
-  // stopwatch (and every value the track then drives) would not repaint until
-  // something unrelated touched the graph.
-  useAnimationRevision();
+  // B4: the layer's header, property tree and every `morph<i>` weight (info,
+  // keys, value) — a lit stopwatch and the values it drives repaint with it.
+  const tree = useMirrorTree(nodeId);
+  const morphTracks = useMemo(() => tracksIn(tree).filter((t) => MORPH_TRACK.test(t)), [tree]);
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  useMirrorTrackWatch(watchIds, morphTracks);
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((st) => st.timelineAutoKeyframe);
   const e = useEngineEdit();
 
+  const m = documentMirror();
+  if (!m.layer(nodeId) || !mirrorHasTransform(tree)) return null;
+
+  // B4-gap: the model's blend-shape NAMES and target count (the Model component's `targetNames` / mesh) — no API
+  // field; the weights themselves are the `morph<i>` properties. Closes with a `model/targetNames` field.
   const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const transform = node.components.find((c) => c.type === 'Transform');
-  if (!transform) return null;
-
-  const labels = morphTargetLabels(node);
+  const labels = node ? morphTargetLabels(node) : [];
   if (labels.length === 0) return null;
-
-  // Display only (the sampled weight under a lit stopwatch): never sent.
-  const layerT = keyAxisTimeForDisplay(nodeId, time);
 
   /**
    * Every weight back to 0, in ONE history entry: one batch — keyed targets
@@ -175,11 +177,9 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
           <MorphRow
             key={`${MORPH_PROP_PREFIX}${i}`}
             nodeId={nodeId}
-            componentId={transform.id}
             index={i}
             label={label}
             time={time}
-            layerT={layerT}
             autoKeyframe={autoKeyframe}
             e={e}
           />

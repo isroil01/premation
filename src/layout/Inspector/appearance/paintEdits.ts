@@ -10,7 +10,9 @@
 
 import type { Command, Value } from '@motion/engine-api';
 import type { ColorStop, FillPaint } from '@core/paint/fill';
-import { defaultStroke, getNodeStrokes, normalizeStroke, type Stroke } from '@core/paint/stroke';
+import { defaultStroke, normalizeStroke, type Stroke } from '@core/paint/stroke';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorStrokes } from '@core/mirror/paintFields';
 import { parseColorChannels } from '@core/effects/effects';
 import { isLayer } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
@@ -52,7 +54,8 @@ export function strokesCommands(nodeId: string, strokes: ReadonlyArray<Stroke>):
  */
 export function strokePatchCommands(nodeId: string, index: number, patch: Partial<Stroke>): Command[] {
   if (!isLayer(nodeId)) return [];
-  const stack = getNodeStrokes(nodeId);
+  // The stack as it is NOW (the mirror, read at call time).
+  const stack = mirrorStrokes(documentMirror(), nodeId);
   if (index > 0 && !stack[index]) return [];
   const next = stack.length > 0 ? [...stack] : [defaultStroke()];
   next[index] = normalizeStroke({ ...(next[index] ?? defaultStroke()), ...patch });

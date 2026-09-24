@@ -18,19 +18,19 @@
  * as they always did.
  */
 
-import { memo, useMemo, useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import type { Command } from '@motion/engine-api';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { Icon } from '@components/Icon';
 import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
+import { useMirrorComp, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { childOrderOf } from '@core/mirror/layerTree';
 import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
-import { captureAppearancePreset } from '@core/inspector/sectionPresets';
+import { mirrorFill, mirrorStrokeAt } from '@core/mirror/paintFields';
 import type { Stroke } from '@core/paint/stroke';
-import type { PresetValues } from '@stores/sectionPresetStore';
+import type { PresetValue, PresetValues } from '@stores/sectionPresetStore';
 import { fillPaintCommands, strokePatchCommands } from './appearance/paintEdits';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
@@ -47,13 +47,12 @@ export function AppearancePresetAction({
   nodeId: string;
   nodeIds?: ReadonlyArray<string>;
 }): JSX.Element {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const isText = node ? node.components.some((c) => c.type === 'Text') : false;
+  const isText = uiKindOf(useMirrorLayer(nodeId)) === 'text';
   const label = isText ? 'Stroke presets' : 'Fill & Stroke presets';
   const targetIds = useInspectorSelection(nodeId);
   const effectiveNodeIds = nodeIds && nodeIds.length > 0 ? nodeIds : targetIds;
 
-  const capturePreset = useCallback(() => captureAppearancePreset(nodeId), [nodeId]);
+  const capturePreset = useCallback(() => captureAppearance(nodeId), [nodeId]);
   const applyPreset = useCallback(
     (values: PresetValues) => { void applyAppearancePresetEdit(effectiveNodeIds, values); },
     [effectiveNodeIds],
@@ -71,6 +70,31 @@ export function AppearancePresetAction({
 
 /** The stroke fields a Fill & Stroke preset holds (`captureAppearancePreset`'s `stroke.<key>`). */
 const STROKE_PRESET_KEYS: ReadonlyArray<keyof Stroke> = ['enabled', 'color', 'width', 'opacity', 'align', 'cap', 'join'];
+
+function isPresetValue(v: unknown): v is PresetValue {
+  return typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' || typeof v === 'boolean';
+}
+
+/**
+ * The layer's Fill & Stroke as a preset (the twin of `captureAppearancePreset`,
+ * read from the document mirror at call time): the primary fill's colour when
+ * it is solid ('' for no fill), and the primary stroke's preset keys.
+ */
+function captureAppearance(nodeId: string): PresetValues {
+  const m = documentMirror();
+  const out: Record<string, PresetValue> = {};
+  const fill = mirrorFill(m, nodeId);
+  if (fill?.type === 'solid') out.fillColor = fill.color;
+  else if (fill === undefined) out.fillColor = '';
+  const stroke = mirrorStrokeAt(m, nodeId, 0);
+  if (stroke) {
+    for (const key of STROKE_PRESET_KEYS) {
+      const v = stroke[key];
+      if (isPresetValue(v)) out[`stroke.${key}`] = v;
+    }
+  }
+  return out;
+}
 
 /**
  * A Fill & Stroke preset over these layers as commands: `fillColor` is the
@@ -154,26 +178,29 @@ export async function ungroupNode(nodeId: string, children: ReadonlyArray<string
 }
 
 function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  useAnimationRevision();
-  const node = defaultSceneGraph.getNode(nodeId);
+  // B4: the header (kind), the property tree (whether the layer has a Style —
+  // its catalog lists `layer/cornersLinked` exactly then) and the composition's
+  // stack (the layers parented to this one). The rows below watch their own
+  // properties.
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
+  useMirrorComp(layer?.comp);
 
   // No early return above this line: every hook below has to run on every
   // render, including the ones for a node that has just been deleted. Returning
   // before them made React render fewer hooks than the previous pass and throw
   // — deleting a selected layer with this panel open took the editor down.
-  const styleComp = useMemo(() => node?.components.find((c) => c.type === 'Style'), [node]);
-  const textComp = useMemo(() => node?.components.find((c) => c.type === 'Text'), [node]);
-  const sComp = styleComp ?? textComp;
+  const hasStyle = tree?.nodes.has('layer/cornersLinked') === true;
+  const isText = uiKindOf(layer) === 'text';
 
-  // Hoisted above the `!node || !sComp` guard with the other hooks — it used to
-  // sit below it, which is what made the hook count vary between renders.
+  // Hoisted above the `!layer` guard with the other hooks — it used to sit
+  // below it, which is what made the hook count vary between renders.
   const selectedIds = useSelectionStore((s) => s.ids);
 
-  if (!node || !sComp) return null;
+  if (!layer || (!hasStyle && !isText)) return null;
 
-  const childIds = defaultSceneGraph.getChildren(node.id).map((c) => c.id);
-  const isGroupNode = childIds.length > 0 || node.components.some((c) => c.type === 'group');
+  const childIds = childOrderOf(documentMirror(), nodeId);
+  const isGroupNode = childIds.length > 0 || layer.kind === 'group';
 
   return (
     <div className={styles.section}>
@@ -214,11 +241,11 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
         {/* Text layers own Character Color in CharacterPanel. Editing paint fill
             here wrote the same prop and looked like a duplicate background
             picker — hide Fill chrome on text; Stroke remains. */}
-        {!textComp && <FillRows nodeId={nodeId} />}
+        {!isText && <FillRows nodeId={nodeId} />}
 
         <StrokeRows nodeId={nodeId} />
 
-        {styleComp && <CornerRows nodeId={nodeId} styleCompId={styleComp.id} />}
+        {hasStyle && <CornerRows nodeId={nodeId} />}
       </div>
     </div>
   );

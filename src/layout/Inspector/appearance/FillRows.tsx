@@ -9,14 +9,14 @@
  * `—` where they disagree and a drag turns all three.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { ColorPicker } from '@components/ColorPicker';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { mirrorFill, mirrorFills } from '@core/mirror/paintFields';
+import { isTrackAnimated } from '@core/mirror/selection';
 import {
-  getNodeFill,
-  getNodeFills,
   convertFill,
   sortedStops,
   solidFill,
@@ -54,7 +54,7 @@ import effStyles from '../../Effects/EffectsPanel.module.css';
  */
 const FILL_ANGLE: PropertyAccess = {
   read: (id) => {
-    const f = getNodeFill(id);
+    const f = mirrorFill(documentMirror(), id);
     return f?.type === 'linear' ? f.angle : undefined;
   },
 };
@@ -62,7 +62,7 @@ const FILL_ANGLE: PropertyAccess = {
 function radialAccess(field: 'cx' | 'cy' | 'radius'): PropertyAccess {
   return {
     read: (id) => {
-      const f = getNodeFill(id);
+      const f = mirrorFill(documentMirror(), id);
       return f?.type === 'radial' ? f[field] : undefined;
     },
   };
@@ -71,6 +71,9 @@ function radialAccess(field: 'cx' | 'cy' | 'radius'): PropertyAccess {
 const FILL_CX = radialAccess('cx');
 const FILL_CY = radialAccess('cy');
 const FILL_RADIUS = radialAccess('radius');
+
+/** What the rows read: the primary paint, the fill stack and the plain fill colour (paths — the track index answers paths too). */
+const WATCHED: ReadonlyArray<string> = ['layer/fill', 'layer/fillPaint', 'layer/fills'];
 
 export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
   const [, setSavedFill] = useState<FillPaint | null>(null);
@@ -87,11 +90,15 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
   const armGradient = useGradientEditStore((s) => s.arm);
   const disarmGradient = useGradientEditStore((s) => s.disarm);
   const gradientArmed = gradientArmedId === nodeId;
+  // B4: wake on this layer's header and its fill properties (info, keys, value).
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  useMirrorTrackWatch(watchIds, WATCHED);
 
-  if (!defaultSceneGraph.getNode(nodeId)) return null;
+  const m = documentMirror();
+  if (!m.layer(nodeId)) return null;
 
-  const fill = getNodeFill(nodeId);
-  const fills = getNodeFills(nodeId);
+  const fill = mirrorFill(m, nodeId);
+  const fills = mirrorFills(m, nodeId);
 
   const handleFillTypeChange = (type: FillType | 'none') => {
     if (type === 'none') {
@@ -120,7 +127,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
     }
   };
 
-  const isFillAnimated = defaultAnimation.isAnimated(nodeId, 'fill') || defaultAnimation.isAnimated(nodeId, 'fill_r') || defaultAnimation.isAnimated(nodeId, 'fill_g') || defaultAnimation.isAnimated(nodeId, 'fill_b');
+  const isFillAnimated = ['fill', 'fill_r', 'fill_g', 'fill_b'].some((t) => isTrackAnimated(m, nodeId, t));
 
   return (
     <>
