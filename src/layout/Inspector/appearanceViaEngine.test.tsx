@@ -155,11 +155,28 @@ test('a style preset the engine addresses whole is ONE entry: fills, strokes, st
   expect(h.doc()).toBe(before);
 });
 
-test('a style preset with a backdrop blur or a 3D material response is reported unaddressed (kept on the legacy writer)', () => {
-  const node = defaultSceneGraph.getNode(s.A)!;
-  const style = node.components.find((c) => c.type === 'Style');
-  expect(stylePresetCommands(s.A, style, stylePreset('glass')!, '#2b7eff', 0).unaddressed).toContain('backdropBlur');
-  expect(stylePresetCommands(s.A, style, stylePreset('gold')!, '#2b7eff', 0).unaddressed).toEqual(expect.arrayContaining(['specular', 'shininess']));
+test('Glass sets the backdrop blur and switching away clears it; a 3D layer takes a material preset — each ONE entry, undo exact', async () => {
+  const style = () => defaultSceneGraph.getNode(s.A)!.components.find((c) => c.type === 'Style');
+  const before = h.doc();
+  const glass = stylePresetCommands(s.A, style(), stylePreset('glass')!, '#2b7eff', 0);
+  expect(glass.unaddressed).not.toContain('backdropBlur');
+  expect((await edit('Apply Glass Style', glass.cmds)).ok).toBe(true);
+  expect(stored(s.A, 'backdropBlur')).toBe(stylePreset('glass')!.backdropBlur);
+  const sticker = stylePresetCommands(s.A, style(), stylePreset('sticker')!, '#2b7eff', 0);
+  expect((await edit('Apply Sticker Style', sticker.cmds)).ok).toBe(true);
+  expect(stored(s.A, 'backdropBlur')).toBeUndefined();
+  await h.run({ type: 'undo' });
+  await h.run({ type: 'undo' });
+  expect(h.doc()).toBe(before);
+
+  await h.run({ type: 'setLayerSwitches', layers: [s.B], patch: { threeD: true } });
+  const gold = stylePreset('gold')!;
+  const bStyle = defaultSceneGraph.getNode(s.B)!.components.find((c) => c.type === 'Style');
+  const plan = stylePresetCommands(s.B, bStyle, gold, '#2b7eff', 0);
+  expect(plan.unaddressed).not.toEqual(expect.arrayContaining(['specular']));
+  expect((await edit('Apply Gold Style', plan.cmds)).ok).toBe(true);
+  expect(stored(s.B, 'specular')).toBe(gold.specular);
+  expect(stored(s.B, 'shininess')).toBe(gold.shininess);
 });
 
 test('clicking a style swatch applies it as ONE entry named for the preset', async () => {

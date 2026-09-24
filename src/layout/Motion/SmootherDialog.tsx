@@ -66,7 +66,7 @@ function SmootherBody({ nodeId, tracks, close, onDone }: SmootherBodyProps): JSX
   );
   const [after, setAfter] = useState(0);
 
-  const preview = useRef(beginTrackPreview(nodeId, tracks.map((t) => t.prop)));
+  const [preview] = useState(() => ({ current: beginTrackPreview(nodeId, tracks.map((t) => t.prop), 'The Smoother') }));
   // Set by OK/Cancel so the unmount cleanup knows whether the preview has
   // already been settled. Without it, closing via the scrim would leave the
   // last previewed value applied and unrecorded.
@@ -95,7 +95,7 @@ function SmootherBody({ nodeId, tracks, close, onDone }: SmootherBodyProps): JSX
   // buttons, and an abandoned preview must not survive that.
   useEffect(
     () => () => {
-      if (!settled.current) preview.current.restore();
+      if (!settled.current) void preview.current.restore();
     },
     [],
   );
@@ -105,7 +105,7 @@ function SmootherBody({ nodeId, tracks, close, onDone }: SmootherBodyProps): JSX
   // resolves the promise with null first and the summary is lost.
   const cancel = (): void => {
     settled.current = true;
-    preview.current.restore();
+    void preview.current.restore();
     onDone(null);
     close();
   };
@@ -116,12 +116,12 @@ function SmootherBody({ nodeId, tracks, close, onDone }: SmootherBodyProps): JSX
     if (chosen.size === 0) {
       // Nothing changed — `commit` would return null anyway, but saying so is
       // better than a success toast for a no-op.
-      p.restore();
+      void p.restore();
       onDone(null);
       close();
       return;
     }
-    p.commit('The Smoother');
+    void p.commit();
     onDone(
       `Smoothed ${chosen.size} track${chosen.size === 1 ? '' : 's'}: ${before} → ${after} keyframes`,
     );

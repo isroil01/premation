@@ -365,6 +365,7 @@ export function ActiveTemplateFields(): JSX.Element {
 function FieldRow({ field }: { field: TemplateField }): JSX.Element {
   const value = useTemplateStore((s) => s.values[field.id]);
   const setField = useTemplateStore((s) => s.setField);
+  const fillMediaField = useTemplateStore((s) => s.fillMediaField);
   const fileRef = useRef<HTMLInputElement>(null);
   // Engine route (templateFieldEdits.ts): a colour drag / number scrub is ONE
   // gesture, a typing session (first keystroke → blur) is ONE undo entry; a
@@ -380,10 +381,9 @@ function FieldRow({ field }: { field: TemplateField }): JSX.Element {
   const onPickImage = (e: ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // A blob URL renders immediately with no CSP issues. (Note: object URLs are
-    // session-scoped — a saved project would need the asset re-imported.)
-    setField(field.id, URL.createObjectURL(file));
     e.target.value = ''; // allow re-picking the same file
+    // Imported into the project (it saves with it), then the slot is refilled.
+    void fillMediaField(field.id, file);
   };
 
   return (

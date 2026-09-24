@@ -42,7 +42,8 @@ import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets } from '@core/animation/animationPresets';
 import { applyAnimationPresetEdit, createLayerEdit } from '@layout/Menu/appEdits';
-import { applyBounce, describeBounce, revealBounce } from '@core/animation/bounce';
+import { describeBounce, revealBounce } from '@core/animation/bounce';
+import { bounceEdit } from '@layout/Motion/bounceEdits';
 import { useBounceStore, currentSquash } from '@stores/bounceStore';
 import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
 import { asCommandId } from '@app-types/common';
@@ -234,9 +235,8 @@ function buildAnimateItems(
     // the menu is a shortcut to that panel's current shape, not a second,
     // hardcoded bounce. `applyBounce` (not `bounceKeyframes`) so the item is
     // never a no-op: with nothing to rebound from it generates the fall too.
-    // B3-legacy: engine gap — per-member keys: the Bounce generator (bounce.ts) keys Position / Scale member tracks at
-    // different times (and reads back its own writes to place the rebounds); the API keys a vector as one value.
-    { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); const r = applyBounce(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }); if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); } },
+    // Off-document, sent as setKeyframes (layout/Motion/bounceEdits.ts): one entry.
+    { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); void bounceEdit(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }).then((r) => { if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); }); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { void getCommandSystem().execute(asCommandId('animation.timeReverseKeyframes')); } },
     // Sequence / stagger live as registered commands (Animation menu + palette);
     // TopNav reuses them so the prompt and undo path stay one.

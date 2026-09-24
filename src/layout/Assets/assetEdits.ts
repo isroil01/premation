@@ -24,6 +24,7 @@ import { rateOf } from '@layout/Composition/compositionEdits';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useUIStore } from '@stores/uiStore';
+import { documentMirror } from '@stores/documentMirror';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
@@ -212,8 +213,7 @@ export async function createFolderTreeEdit(
 const pendingRename = new Map<string, string>();
 
 function currentName(id: string): string | undefined {
-  const s = useAssetStore.getState();
-  return s.folders.find((f) => f.id === id)?.name ?? s.assets.find((a) => a.id === id)?.name;
+  return documentMirror().item(id)?.name;
 }
 
 /** Rename a folder or footage item. Blank or unchanged names are no-ops. */

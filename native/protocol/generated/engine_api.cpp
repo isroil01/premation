@@ -4117,6 +4117,7 @@ void encode(wire::Writer& w, const CompSettingsPatch& v) {
   if (v.responsive_time.has_value()) { w.varint(170U); w.str(*v.responsive_time); }
   if (v.template_fields.has_value()) { w.varint(178U); w.str(*v.template_fields); }
   if (v.background_paint.has_value()) { w.varint(186U); w.str(*v.background_paint); }
+  if (v.pristine.has_value()) { w.varint(192U); w.boolean(*v.pristine); }
 }
 
 Status decode(wire::Reader& r, CompSettingsPatch& out) {
@@ -4260,6 +4261,12 @@ Status decode(wire::Reader& r, CompSettingsPatch& out) {
         std::string e;
         if (!r.str(e)) return Status::truncated;
         out.background_paint = std::move(e);
+        break;
+      }
+      case 192U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.pristine = std::move(e);
         break;
       }
       default:
@@ -14278,6 +14285,7 @@ void encode(wire::Writer& w, const CompSettings& v) {
   if (v.responsive_time.has_value()) { w.varint(170U); w.str(*v.responsive_time); }
   if (v.template_fields.has_value()) { w.varint(178U); w.str(*v.template_fields); }
   if (v.background_paint.has_value()) { w.varint(186U); w.str(*v.background_paint); }
+  if (v.pristine.has_value()) { w.varint(192U); w.boolean(*v.pristine); }
 }
 
 Status decode(wire::Reader& r, CompSettings& out) {
@@ -14415,6 +14423,12 @@ Status decode(wire::Reader& r, CompSettings& out) {
         std::string e;
         if (!r.str(e)) return Status::truncated;
         out.background_paint = std::move(e);
+        break;
+      }
+      case 192U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.pristine = std::move(e);
         break;
       }
       default:

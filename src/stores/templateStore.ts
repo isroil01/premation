@@ -9,7 +9,7 @@
 import { create } from 'zustand';
 import type { TemplateDefinition } from '@core/template/templateTypes';
 import { getTemplate } from '@core/template/registry';
-import { readTemplateFieldValue, writeTemplateField } from '@core/template/templateFields';
+import { readTemplateFieldValue } from '@core/template/templateFields';
 import { readAuthoredFields } from '@core/template/templateAuthoring';
 import { useCompositionStore } from '@stores/compositionStore';
 import type { Command } from '@motion/engine-api';
@@ -22,7 +22,7 @@ import { buildLayerFragment } from '@core/engine/offDocument';
 import { layerIdsOfComp } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { hexToColor } from '@core/engine/model';
-import { isMediaField, templateFieldCommands } from '@layout/Templates/templateFieldEdits';
+import { fillMediaFieldEdit, isMediaField, templateFieldCommands } from '@layout/Templates/templateFieldEdits';
 import { getTime } from './playbackClockStore';
 import { useSelectionStore } from './selectionStore';
 
@@ -49,6 +49,11 @@ interface TemplateState {
    * `send`). A field the engine does not address is left as it is.
    */
   setField: (fieldId: string, value: string | number, send?: TemplateFieldSend) => void;
+  /**
+   * Fill a MEDIA field with a picked file: imported, then the slot layer's
+   * source swapped and reframed (templateFieldEdits.fillMediaFieldEdit).
+   */
+  fillMediaField: (fieldId: string, file: File) => Promise<void>;
   /** Leave fill-in mode (back to the gallery); the built scene stays as-is. */
   exit: () => void;
 }
@@ -146,17 +151,17 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     const t = get().active;
     const field = t?.fields.find((f) => f.id === fieldId);
     if (!field) return;
+    // A media field is filled from a File (`fillMediaField`), never from a value.
     const cmds = templateFieldCommands(field, value, getTime());
-    if (cmds) {
-      send(`Edit ${field.label}`, cmds);
-    } else if (isMediaField(field)) {
-      // B3-gap: import from bytes + a fitted source swap — a media slot fill is a picked browser `File` (a blob URL, no path:
-      // no import from bytes) plus a reframe to the slot rect (`replaceLayerSource` has no fit).
-      writeTemplateField(field, value);
-    } else {
-      return;
-    }
+    if (!cmds) return;
+    send(`Edit ${field.label}`, cmds);
     set((s) => ({ values: { ...s.values, [fieldId]: value } }));
+  },
+  fillMediaField: async (fieldId, file) => {
+    const field = get().active?.fields.find((f) => f.id === fieldId);
+    if (!field || !isMediaField(field)) return;
+    const asset = await fillMediaFieldEdit(field, file, getTime());
+    if (asset) set((s) => ({ values: { ...s.values, [fieldId]: asset.src } }));
   },
   exit: () => set({ active: null, values: {} }),
 }));

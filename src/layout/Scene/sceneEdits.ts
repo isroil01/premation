@@ -23,7 +23,6 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { canReparent, enclosingCompRootOf } from '@core/scene/parenting';
 import type { RenameLayerResult, RepairedRef } from '@core/scene/renameLayer';
 import { getNodeLayerTime } from '@core/scene/layerTime';
-import { deleteComposition } from '@core/composition/compositionOps';
 import { apiParentOf, compOfLayer, isCompItem, isLayer, layersUsingItem } from '@core/engine/doc';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -330,13 +329,16 @@ export function deleteCompositionWarning(name: string, compId: string): string {
 export async function deleteCompositionEdit(compId: string): Promise<boolean> {
   const state = useProjectStore.getState();
   if (!state.comps[compId] || defaultSceneGraph.getNode(compId)?.parent) return false;
-  if (Object.keys(state.comps).length <= 1 || !isCompItem(compId)) {
-    // B3-gap: a pristine placeholder comp — deleting the LAST composition re-seeds the empty
-    // project's pristine comp (AE's "no compositions" state); `removeItems` has no such mode and
-    // `createComposition` cannot mark a comp `pristine` (CompSettingsPatch has no such field).
-    return deleteComposition(compId);
-  }
-  const res = await edit('Delete Composition', { type: 'removeItems', items: [compId], removeUsingLayers: true });
+  if (!isCompItem(compId)) return false;
+  // Deleting the LAST composition leaves the empty project's placeholder in its
+  // place (AE's "no compositions" state: pristine, adopted by New Composition,
+  // no tab opened) — created first, in the same entry.
+  const last = Object.keys(state.comps).length <= 1;
+  const cmds: Command[] = [
+    ...(last ? [{ type: 'createComposition', settings: { name: 'Composition 1', pristine: true }, fromItems: [] } as Command] : []),
+    { type: 'removeItems', items: [compId], removeUsingLayers: true },
+  ];
+  const res = await edit('Delete Composition', cmds);
   if (!res.ok) return false;
   const s = useProjectStore.getState();
   for (const tab of Object.values(s.tabs)) {

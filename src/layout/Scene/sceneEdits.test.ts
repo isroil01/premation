@@ -164,4 +164,15 @@ describe('compositions', () => {
     await roundTrip(() => deleteCompositionEdit(s.comp2), 'Delete Composition');
     expect(useProjectStore.getState().comps[s.comp2]).toBeUndefined();
   });
+
+  test('deleting the LAST composition leaves the pristine placeholder, one entry, undoable', async () => {
+    await deleteCompositionEdit(s.comp2);
+    const only = Object.keys(useProjectStore.getState().comps);
+    expect(only).toHaveLength(1);
+    await roundTrip(() => deleteCompositionEdit(only[0]!), 'Delete Composition');
+    const comps = Object.values(useProjectStore.getState().comps);
+    expect(comps).toHaveLength(1);
+    expect(comps[0]).toMatchObject({ name: 'Composition 1', pristine: true });
+    expect(comps[0]!.id).not.toBe(only[0]);
+  });
 });

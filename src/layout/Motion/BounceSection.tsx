@@ -29,7 +29,6 @@ import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
-import { bumpScene } from '@stores/sceneStore';
 import { useBounceStore } from '@stores/bounceStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
@@ -37,13 +36,13 @@ import { layerHasAnimation } from '@core/mirror/motionAssist';
 import { sampleTrack, type Keyframe } from '@motion/animation';
 import {
   BOUNCE_STYLES,
-  applyBounce,
   bounceInTracks,
   describeBounce,
   matchBounceStyle,
   revealBounce,
   type DropDirection,
 } from '@core/animation/bounce';
+import { bounceEdit } from './bounceEdits';
 import panel from './MotionEditorPanel.module.css';
 import styles from './BounceSection.module.css';
 
@@ -146,19 +145,16 @@ export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
    * written is the only thing that distinguishes a bounce from nothing.
    */
   const run = (mode: 'append' | 'drop', ifNothing: string): void => {
-    // B3-legacy: a core assistant that computes AND writes per-member tracks
-    // (x/y, scale) in one call; it becomes an addKeyframes macro when the
-    // keyframe assistants migrate (their pure halves already exist).
     // The playhead at the click (read here, not subscribed: the panel does not
-    // re-render per played frame).
-    const result = applyBounce(nodeId, { atTime: getTime(), mode, drop, bounce, squash: squashOpts });
-    if (result) {
-      revealBounce(nodeId);
-      notify({ level: 'success', message: describeBounce(result), durationMs: 3200 });
-    } else {
-      notify({ level: 'warning', message: ifNothing, durationMs: 2800 });
-    }
-    bumpScene();
+    // re-render per played frame). Off-document + setKeyframes: one entry.
+    void bounceEdit(nodeId, { atTime: getTime(), mode, drop, bounce, squash: squashOpts }).then((result) => {
+      if (result) {
+        revealBounce(nodeId);
+        notify({ level: 'success', message: describeBounce(result), durationMs: 3200 });
+      } else {
+        notify({ level: 'warning', message: ifNothing, durationMs: 2800 });
+      }
+    });
   };
 
   const dropIn = (): void => run('drop', 'Set a distance and a fall time first');

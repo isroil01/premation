@@ -9,7 +9,7 @@
 
 import { useMemo } from 'react';
 import type { Command, PropertyInit } from '@motion/engine-api';
-import { STYLE_PRESETS, applyStylePreset, type StylePreset, type StylePresetCategory } from '@core/style/stylePresets';
+import { STYLE_PRESETS, type StylePreset, type StylePresetCategory } from '@core/style/stylePresets';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer, useMirrorProperty } from '@hooks/useMirror';
@@ -91,14 +91,14 @@ export function StylePresetsSection({ nodeId }: { nodeId: string }): JSX.Element
   const apply = (id: string, label: string): void => {
     const preset = STYLE_PRESETS.find((p) => p.id === id);
     if (!preset) return;
-    // B4-gap: the layer's Style / Text COMPONENT (its id, which `componentPropsCommands` writes opacity through, and its `backdropBlur`, not an API property) — no API field; closes when opacity is addressed by path here and backdropBlur gets a `layer/backdropBlur` field.
+    // B4-gap: the layer's Style / Text COMPONENT (its id, which `componentPropsCommands` writes opacity through) — closes when opacity is addressed by path here.
     const styleComp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'Style' || c.type === 'Text');
     const plan = stylePresetCommands(nodeId, styleComp, preset, accent, getTime());
-    if (plan.unaddressed.length > 0) {
-      // B3-legacy: engine gap — Style `backdropBlur` (Glass / Soft UI, and clearing it) and the Transform's `specular` / `shininess` (the 3D material presets) are not API properties; such a preset keeps the legacy writer whole rather than half-applying.
-      if (applyStylePreset(nodeId, id, accent)) applied(label);
+    if (plan.cmds.length === 0) {
+      useUIStore.getState().notify({ level: 'warning', message: `“${label}” does not apply to this layer`, durationMs: 3000 });
       return;
     }
+    // What the layer cannot carry (an image layer has no fill stack…) is left out.
     void edit(`Apply ${label} Style`, plan.cmds).then((res) => { if (res.ok) applied(label); });
   };
 
@@ -241,10 +241,19 @@ export function stylePresetCommands(
       unaddressed.push(...Object.keys(o.rest));
       cmds.push(...o.cmds);
     }
-    // Written unconditionally by the legacy apply (switching away from Glass clears the frost).
-    if (preset.backdropBlur !== undefined || styleComp.props.backdropBlur !== undefined) unaddressed.push('backdropBlur');
+    // Written unconditionally: a preset states a COMPLETE look, so switching
+    // away from Glass clears the frost (0 = absent). A Text layer has none.
+    if (preset.backdropBlur !== undefined || styleComp.props.backdropBlur !== undefined) {
+      const blur = fieldCommands(nodeId, 'layer/backdropBlur', preset.backdropBlur ?? 0);
+      if (blur.length === 0 && preset.backdropBlur) unaddressed.push('backdropBlur');
+      cmds.push(...blur);
+    }
   }
-  if (preset.specular !== undefined) unaddressed.push('specular');
-  if (preset.shininess !== undefined) unaddressed.push('shininess');
+  // Material response (a 3D layer's material/specular | shininess). Only a
+  // preset that states one touches it; a 2D layer has no material to set.
+  const material: Record<string, number> = {};
+  if (preset.specular !== undefined && trackRef(nodeId, 'specular')) material.specular = preset.specular;
+  if (preset.shininess !== undefined && trackRef(nodeId, 'shininess')) material.shininess = preset.shininess;
+  if (Object.keys(material).length > 0) cmds.push(...valueCommands([{ nodeId, values: material }], { seconds }));
   return { cmds, unaddressed };
 }

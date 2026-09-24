@@ -135,6 +135,8 @@ struct CompSettings {
   templateFields?: string = 22;
   /// B3z — the background PAINT when it is not a flat colour (JSON FillPaint as the editor stores it: `{type: 'linear', angle, stops: [{id, offset, color}], opacityStops?}` / `{type: 'radial', cx, cy, radius, stops, …}`); absent = `background` alone.
   backgroundPaint?: string = 23;
+  /// B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too.
+  pristine?: bool = 24;
 }
 
 struct CompSettingsPatch {
@@ -164,6 +166,8 @@ struct CompSettingsPatch {
   templateFields?: string = 22;
   /// B3z — the background paint as JSON FillPaint (`type` linear / radial / solid); '' clears it (as clearBackgroundGradient). The typed `backgroundGradient` stays `unsupported` (FillPaint carries stop ids, an angle / centre and opacity stops a Gradient does not).
   backgroundPaint?: string = 23;
+  /// B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too.
+  pristine?: bool = 24;
 }
 
 /// Create a composition. `fromItems` makes it from footage (size/duration/rate from the first item, one layer per item).

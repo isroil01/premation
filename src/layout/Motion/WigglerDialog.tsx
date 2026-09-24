@@ -64,7 +64,7 @@ function WigglerBody({ nodeId, tracks, close, onDone }: WigglerBodyProps): JSX.E
   const [dimension, setDimension] = useState<WiggleDimension>('both');
   const [added, setAdded] = useState(0);
 
-  const preview = useRef(beginTrackPreview(nodeId, tracks));
+  const [preview] = useState(() => ({ current: beginTrackPreview(nodeId, tracks, 'The Wiggler') }));
   const settled = useRef(false);
 
   const targets = useMemo(
@@ -100,7 +100,7 @@ function WigglerBody({ nodeId, tracks, close, onDone }: WigglerBodyProps): JSX.E
 
   useEffect(
     () => () => {
-      if (!settled.current) preview.current.restore();
+      if (!settled.current) void preview.current.restore();
     },
     [],
   );
@@ -109,7 +109,7 @@ function WigglerBody({ nodeId, tracks, close, onDone }: WigglerBodyProps): JSX.E
   // resolves the promise.
   const cancel = (): void => {
     settled.current = true;
-    preview.current.restore();
+    void preview.current.restore();
     onDone(null);
     close();
   };
@@ -118,12 +118,12 @@ function WigglerBody({ nodeId, tracks, close, onDone }: WigglerBodyProps): JSX.E
     settled.current = true;
     const p = preview.current;
     if (targets.length === 0 || !(frequency > 0) || amplitude === 0) {
-      p.restore();
+      void p.restore();
       onDone(null);
       close();
       return;
     }
-    p.commit('The Wiggler');
+    void p.commit();
     const what = targets.length === 2 ? 'x and y' : `${targets[0]}`;
     onDone(`Wiggled ${what} — ${added} keyframes added`);
     close();

@@ -22,7 +22,7 @@ import {
   type UnpackResult,
 } from './portableMotion';
 import { DocumentVersionError } from './migrations';
-import { findMissingAssets, relinkNodeSrc, type MissingAssetRef } from './missingAssets';
+import { findMissingAssets, type MissingAssetRef } from './missingAssets';
 import type { EditorDocument } from '@core/api/cloudDocument';
 
 export type LocalSaveStatus = 'saved' | 'cancelled' | 'failed';
@@ -191,13 +191,4 @@ export async function openLocalMotionFile(): Promise<LocalOpenResult> {
       error: err instanceof Error ? err.message : 'Could not open that project.',
     };
   }
-}
-
-/** Apply a relink (new blob/http src) to the LIVE document via capture/restore. */
-export function relinkLiveAsset(nodeId: string, src: string): boolean {
-  const doc = captureDocument();
-  if (!relinkNodeSrc(doc, nodeId, src)) return false;
-  restoreDocument(doc);
-  bumpScene();
-  return true;
 }

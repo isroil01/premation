@@ -74,6 +74,7 @@ function patchToStore(p: CompSettingsPatch): Partial<ExtraComp> {
     }
   }
   if (p.transparent !== undefined) out.transparent = p.transparent;
+  if (p.pristine !== undefined) out.pristine = p.pristine ? true : undefined;
   if (p.renderer3d !== undefined) out.renderer3d = p.renderer3d;
   if (p.globalLightAngle !== undefined) out.globalLightAngle = p.globalLightAngle;
   if (p.globalLightAltitude !== undefined) {

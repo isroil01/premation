@@ -13,7 +13,9 @@ import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { TemplateField } from '@core/template/templateTypes';
 import { useTemplateStore } from '@stores/templateStore';
-import { fillDataRowEdit, templateFieldCommands } from './templateFieldEdits';
+import { fillDataRowEdit, fillMediaFieldEdit, templateFieldCommands } from './templateFieldEdits';
+import { declareSlot } from '@core/template/mediaSlots';
+import { useAssetStore } from '@stores/assetStore';
 
 let h: Harness & { engine: LocalEngine };
 let s: Scene;
@@ -119,5 +121,31 @@ describe('templateStore.setField', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]![0]).toBe('Edit Accent');
     expect(sent[0]![1][0]).toMatchObject({ type: 'setProperty', prop: { layer: s.T, path: 'layer/fill' } });
+  });
+});
+
+describe('media slot fill (from a picked File)', () => {
+  it('imports the file, then swaps the source and fits the slot in one entry', async () => {
+    const V = s.V;
+    await h.run({ type: 'setProperties', writes: [
+      { prop: { layer: V, path: 'layer/width' }, value: { kind: 'scalar', value: 400 } },
+      { prop: { layer: V, path: 'layer/height' }, value: { kind: 'scalar', value: 400 } },
+    ] });
+    declareSlot(V, 'contain');
+    const field: TemplateField = {
+      id: 'shot', label: 'Shot', kind: 'media', default: '',
+      target: { nodeId: V, componentType: 'Transform', prop: 'src' },
+    };
+    const file = new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' });
+    const asset = await fillMediaFieldEdit(field, file, 0);
+    await engineIdle();
+    expect(asset).not.toBeNull();
+    // (The slot declaration above is a legacy setup write the recorder files separately.)
+    expect(historyLabels().slice(-2)).toEqual(['Import File', 'Edit Shot']);
+    expect(useAssetStore.getState().assets.some((a) => a.id === asset!.id)).toBe(true);
+    expect(prop(V, 'Transform', 'assetId')).toBe(asset!.id);
+    // The fake importer reports 640 × 360: contained in the 400 × 400 slot.
+    expect(prop(V, 'Transform', 'width')).toBe(400);
+    expect(prop(V, 'Transform', 'height')).toBe(225);
   });
 });

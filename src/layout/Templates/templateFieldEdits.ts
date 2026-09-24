@@ -11,9 +11,10 @@
  *                       playhead when the fill is animated, AE setValueAtTime)
  *   a number          → the catalog property of that prop (`scalarValueCommands`)
  *
- * A MEDIA field is a slot fill (source swap + reframe to the slot rect) of a
- * picked browser `File` — import from bytes is an engine gap, so it keeps the
- * legacy writer at its call site (templateStore.setField).
+ * A MEDIA field is a slot fill of a picked browser `File`: the bytes are
+ * imported (`importBytes`), then the layer's source is swapped and its size
+ * set to the slot's fitted box (`replaceLayerSource` + `layer/width|height`)
+ * in one entry — `fillMediaFieldEdit`.
  *
  * Display reads stay direct until B4's mirror.
  */
@@ -27,6 +28,9 @@ import type { DataRow } from '@core/template/dataTable';
 import type { TemplateField } from '@core/template/templateTypes';
 import { sourceTextCommand } from '@layout/Text/textEdits';
 import { scalarValueCommands, trackRef } from '@layout/Inspector/inspectorEdits';
+import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
+import { slotBoxFor } from '@core/template/mediaSlots';
+import type { ImportedAsset } from '@stores/assetStore';
 
 const HEX = /^#?([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
@@ -103,4 +107,29 @@ export async function fillDataRowEdit(
   const res = await edit(label, cmds);
   if (!res.ok) return { filled: [], skippedKind: result.skippedKind, failed: [...result.filled, ...result.failed] };
   return result;
+}
+
+/**
+ * Fill a media field with a picked `File`: import it (its own entry, like any
+ * import), then swap the slot layer's source and reframe it to the slot rect
+ * as ONE entry, "Edit <label>". Resolves to the imported item, or null when
+ * the import or the edit was refused (toasted).
+ */
+export async function fillMediaFieldEdit(field: TemplateField, file: File, seconds: number): Promise<ImportedAsset | null> {
+  if (!isMediaField(field)) return null;
+  const { imported: [asset] } = await importBrowserFilesEdit([{ file }]);
+  if (!asset) return null;
+  const nodeId = field.target.nodeId;
+  const cmds: Command[] = [{ type: 'replaceLayerSource', layer: nodeId, source: asset.id, keepSize: true }];
+  const w = asset.metadata?.width;
+  const h = asset.metadata?.height;
+  const box = slotBoxFor(nodeId, w && h ? { width: Math.round(w * (asset.interpret?.par ?? 1)), height: h } : null);
+  if (box) {
+    cmds.push(
+      ...scalarValueCommands('width', [{ nodeId, value: box.width }], { seconds }),
+      ...scalarValueCommands('height', [{ nodeId, value: box.height }], { seconds }),
+    );
+  }
+  const res = await edit(`Edit ${field.label}`, cmds);
+  return res.ok ? asset : null;
 }

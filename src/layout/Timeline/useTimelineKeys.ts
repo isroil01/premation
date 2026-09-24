@@ -36,7 +36,7 @@ import { performRedo, performUndo } from '@stores/historyStore';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { pasteKeyframesAt } from './keyframeEdits';
 import { smoothMotionPath } from '@core/motion/motionPath';
-import { runAnimEdit } from '@core/animation/animationCommands';
+import { assistantKeyframesEdit } from '@core/engine/assistantKeys';
 import { createSelectionNudger, nudgeForKey } from './keyframeNudge';
 import {
   moveSelectedEndToPlayhead,
@@ -136,10 +136,9 @@ export function useTimelineKeys(): void {
           e.preventDefault();
           const ids = useSelectionStore.getState().ids;
           if (ids.length > 0) {
-            // B3-legacy: engine gap — the smoothed tangents are per member track
-            // (x, y); a key whose tangent is set on one axis and absent on the
-            // other has no API spelling (`spatialIn` covers every member, 0 ≠ absent).
-            runAnimEdit('Smooth motion path', () => {
+            // Off-document, sent as setKeyframes per property: one entry
+            // (core/engine/assistantKeys.ts).
+            void assistantKeyframesEdit('Smooth motion path', ids, () => {
               for (const id of ids) smoothMotionPath(id);
             });
           }

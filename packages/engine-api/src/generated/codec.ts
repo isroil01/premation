@@ -2528,6 +2528,7 @@ function encS_CompSettings(w: Writer, v: T.CompSettings): void {
   if (v.responsiveTime !== undefined) { w.varint(170); w.str(v.responsiveTime); }
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
+  if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
 }
 function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let h_name = false;
@@ -2569,6 +2570,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let v_responsiveTime: string | undefined;
   let v_templateFields: string | undefined;
   let v_backgroundPaint: string | undefined;
+  let v_pristine: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2594,6 +2596,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
       case 170: v_responsiveTime = r.str(); break;
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
+      case 192: v_pristine = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -2637,6 +2640,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   if (v_responsiveTime !== undefined) o.responsiveTime = v_responsiveTime;
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
+  if (v_pristine !== undefined) o.pristine = v_pristine;
   return o;
 }
 function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
@@ -2663,6 +2667,7 @@ function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
   if (v.responsiveTime !== undefined) { w.varint(170); w.str(v.responsiveTime); }
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
+  if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
 }
 function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsPatch {
   let v_name: string | undefined;
@@ -2688,6 +2693,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   let v_responsiveTime: string | undefined;
   let v_templateFields: string | undefined;
   let v_backgroundPaint: string | undefined;
+  let v_pristine: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2714,6 +2720,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
       case 170: v_responsiveTime = r.str(); break;
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
+      case 192: v_pristine = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -2741,6 +2748,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   if (v_responsiveTime !== undefined) o.responsiveTime = v_responsiveTime;
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
+  if (v_pristine !== undefined) o.pristine = v_pristine;
   return o;
 }
 function encS_CreateComposition(w: Writer, v: T.CreateComposition): void {

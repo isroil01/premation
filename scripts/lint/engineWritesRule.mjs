@@ -157,7 +157,7 @@ const SCRATCH_ENGINE_ARG = 'scratch';
  * `pasteLayers` command the caller sends. Writer calls lexically inside such a
  * callback are scratch writes, like a helper called with a `scratch` engine.
  */
-const OFF_DOCUMENT_BUILDERS = new Set(['buildLayerFragment', 'insertBuiltLayers', 'offDocument']);
+const OFF_DOCUMENT_BUILDERS = new Set(['buildLayerFragment', 'insertBuiltLayers', 'offDocument', 'assistantKeyframesEdit', 'assistantKeyframeCommands']);
 
 function insideOffDocumentBuilder(context, node) {
   const ancestors = context.sourceCode.getAncestors(node);

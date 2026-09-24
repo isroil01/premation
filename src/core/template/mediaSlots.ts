@@ -151,6 +151,19 @@ export function fittedBoxFor(source: Size, slot: Size, fit: SlotFit): Size {
   return computeFit(source, slot, fit === 'native' ? 'native' : 'contain');
 }
 
+/**
+ * The box a slot's layer should take for a source of `source` size (the
+ * engine route's half of `fillSlot`: the caller sends the source swap and
+ * this size as commands). Null when the node is gone, has no slot rect, or
+ * the source size is unknown — the swap then keeps the layer's size.
+ */
+export function slotBoxFor(nodeId: string, source: Size | null): Size | null {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const slot = node ? slotRectOf(node) : null;
+  if (!node || !slot || !source || !(source.width > 0) || !(source.height > 0)) return null;
+  return fittedBoxFor(source, slot, slotFitOf(node) ?? DEFAULT_SLOT_FIT);
+}
+
 export interface FillResult {
   /** The box written to the layer. */
   box: Size;

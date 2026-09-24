@@ -9,12 +9,26 @@ import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { EmptyState } from '@components/EmptyState';
 import { openModal } from '@stores/modalStore';
-import { relinkLiveAsset } from '@core/project/localProjectIO';
+import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
+import { edit } from '@core/engine/uiEdits';
 import type { MissingAssetRef } from '@core/project/missingAssets';
-import { bumpScene } from '@stores/sceneStore';
 import { useState } from 'react';
 
 /** Exported so the relinked-everything state can be asserted directly. */
+/**
+ * Relink a layer whose source is missing to a picked file: the file is imported
+ * (its own entry), then the layer's source is swapped to it, keeping its size
+ * (`replaceLayerSource`, "Relink"). The layer's missing ref often has no
+ * footage item behind it (a dead blob URL), so relinking the ITEM would not
+ * reach it. Resolves to whether the layer now shows the file.
+ */
+export async function relinkToFileEdit(nodeId: string, file: File): Promise<boolean> {
+  const { imported: [asset] } = await importBrowserFilesEdit([{ file }]);
+  if (!asset) return false;
+  const res = await edit('Relink', { type: 'replaceLayerSource', layer: nodeId, source: asset.id, keepSize: true });
+  return res.ok;
+}
+
 export function RelinkBody({
   missing,
   close,
@@ -31,16 +45,9 @@ export function RelinkBody({
     input.addEventListener('change', () => {
       const file = input.files?.[0];
       if (!file) return;
-      const url = URL.createObjectURL(file);
-      // B3-gap: relink to bytes — this relinks a LAYER's `src` to a picked browser `File` (a blob URL, no path; the missing refs are per node, often with no footage item behind them). `relinkItem` takes an item + a path, and the TS engine's relink only re-probes: it never re-reads the bytes, so the item's `src` would still be the dead one.
-      if (relinkLiveAsset(ref.nodeId, url)) {
-        setLeft((prev) => prev.filter((m) => m.nodeId !== ref.nodeId));
-        bumpScene();
-      } else {
-        // The node was not relinked (it vanished, or has no src slot), so no
-        // layer will ever load this URL — release the file it pins.
-        URL.revokeObjectURL(url);
-      }
+      void relinkToFileEdit(ref.nodeId, file).then((ok) => {
+        if (ok) setLeft((prev) => prev.filter((m) => m.nodeId !== ref.nodeId));
+      });
     });
     input.click();
   };

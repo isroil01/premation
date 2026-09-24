@@ -90,6 +90,7 @@ Json patch_to_store(const api::CompSettingsPatch& p) {
     }
   }
   if (p.transparent) out.set("transparent", Json::boolean(*p.transparent));
+  if (p.pristine) out.set("pristine", *p.pristine ? Json::boolean(true) : Json());
   if (p.renderer3d) out.set("renderer3d", Json::string(std::string(api::to_string(*p.renderer3d))));
   if (p.global_light_angle) out.set("globalLightAngle", Json::number(*p.global_light_angle));
   if (p.global_light_altitude) {

@@ -1643,6 +1643,7 @@ struct CompSettingsPatch {
   std::optional<std::string> responsive_time;
   std::optional<std::string> template_fields;
   std::optional<std::string> background_paint;
+  std::optional<bool> pristine;
   bool operator==(const CompSettingsPatch&) const = default;
 };
 
@@ -3309,6 +3310,7 @@ struct CompSettings {
   std::optional<std::string> responsive_time;
   std::optional<std::string> template_fields;
   std::optional<std::string> background_paint;
+  std::optional<bool> pristine;
   bool operator==(const CompSettings&) const = default;
 };
 

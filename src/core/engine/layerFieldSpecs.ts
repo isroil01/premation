@@ -238,4 +238,9 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
     path: 'layer/cornersLinked', key: 'cornersLinked', label: 'Link Corners', type: 'bool', default: true,
     store: { component: 'Style', key: 'cornersLinked' }, when: { component: 'Style' },
   },
+  // ── B3: Glass / Frosted's REAL backdrop blur (Style.backdropBlur, px; absent = none) ──
+  {
+    path: 'layer/backdropBlur', key: 'backdropBlur', label: 'Backdrop Blur', type: 'scalar', default: 0, min: 0,
+    clearAtDefault: true, store: { component: 'Style', key: 'backdropBlur' }, when: { component: 'Style' },
+  },
 ];
