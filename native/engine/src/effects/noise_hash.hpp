@@ -94,4 +94,15 @@ class VnoisePoint {
   std::uint32_t xy_[4]{};  // NOLINT(cppcoreguidelines-avoid-c-arrays)
 };
 
+/// aeStylizeAdvanced.ts / aeTransitionsAdvanced.ts `hash2`: `(a·C1 + b·C2) | 0`, then a JS-double multiply
+/// (rounds past 2^53) and ToInt32 / ToUint32 at the shifts.
+[[nodiscard]] inline double hash2(double a, double b) {
+  const std::int32_t n = js::to_int32(a * 374761393.0 + b * 668265263.0);
+  const auto un = static_cast<std::uint32_t>(n);
+  const auto t = static_cast<std::int32_t>(static_cast<std::uint32_t>(n) ^ (un >> 13U));
+  const double m = static_cast<double>(static_cast<std::int64_t>(t) * 1274126177LL);
+  const auto um = static_cast<std::uint32_t>(static_cast<std::uint64_t>(static_cast<std::int64_t>(m)));
+  return static_cast<double>(um ^ (um >> 16U)) / 4294967296.0;
+}
+
 }  // namespace premation::effects

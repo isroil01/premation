@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 70> kPorted{
+constexpr std::array<std::string_view, 76> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -20,7 +20,8 @@ constexpr std::array<std::string_view, 70> kPorted{
     "auto-color",      "change-color",    "change-to-color", "leave-color",   "toner",            "venetian-blinds",
     "gradient-wipe",   "card-wipe",       "radial-wipe",   "block-dissolve",  "alpha-levels",     "solid-composite",
     "channel-combiner", "remove-color-matting", "cartoon",   "brush-strokes",   "strobe-light",     "color-emboss",
-    "halftone",        "kaleidoscope",    "vignette",      "burn-film",
+    "halftone",        "kaleidoscope",    "vignette",      "burn-film",       "iris-wipe",        "light-wipe",
+    "line-sweep",      "grid-wipe",       "dust-scratches", "noise-alpha",
 };
 
 }  // namespace
@@ -221,6 +222,22 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
   } else if (type == "burn-film") {
     burn_film(img, a("burn", 0), a("centerX", 0), a("centerY", 0), rgb("burnColor", {0, 0, 0}),
               rgb("charColor", {60, 30, 10}), a("randomness", 50), a("seed", 0), pool);
+  } else if (type == "iris-wipe") {
+    iris_wipe(img, a("completion", 0), a("centerX", 0), a("centerY", 0), a("points", 6), a("rotation", 0),
+              a("innerRadius", 0), b("useInnerRadius", false), a("feather", 0), b("invert", false), pool);
+  } else if (type == "light-wipe") {
+    light_wipe(img, a("completion", 0), a("shape", 0), a("angle", 0), a("centerX", 0), a("centerY", 0), a("width", 40),
+               rgb("color", {255, 255, 255}), a("intensity", 100), a("feather", 0), pool);
+  } else if (type == "line-sweep") {
+    line_sweep(img, a("completion", 0), a("lineCount", 8), a("angle", 0), a("stagger", 50), a("feather", 0),
+               b("invert", false), pool);
+  } else if (type == "grid-wipe") {
+    grid_wipe(img, a("completion", 0), a("columns", 8), a("rows", 6), a("shape", 0), a("random", 50), a("feather", 0),
+              b("invert", false), pool);
+  } else if (type == "dust-scratches") {
+    dust_and_scratches(img, a("radius", 2), a("threshold", 20), pool);
+  } else if (type == "noise-alpha") {
+    noise_alpha(img, a("amount", 50), b("uniform", true), a("seed", 0), a("phase", 0), b("clipResult", true), pool);
   } else {
     return false;
   }

@@ -214,6 +214,21 @@ const CASES: Case[] = [
   C('vignette', 'wide', { amount: -40, size: 20, feather: 80, roundness: 30, centerX: 100, centerY: -5 }),
   C('burn-film', 'small', { burn: 40, centerX: 0, centerY: 0, randomness: 50, seed: 3 }),
   C('burn-film', 'wide', { burn: 75, centerX: -150, centerY: 6, burnColorR: 20, burnColorG: 0, burnColorB: 0, randomness: 100, seed: -7 }),
+  C('iris-wipe', 'small', { completion: 40, points: 6, rotation: 10, feather: 2 }),
+  C('iris-wipe', 'tall', { completion: 60, centerX: 3, centerY: -10, points: 0, innerRadius: 8, useInnerRadius: 1, feather: 1, invert: 1 }),
+  C('iris-wipe', 'wide', { completion: 25, points: 3, rotation: -30, feather: 0 }),
+  C('light-wipe', 'small', { completion: 40, shape: 0, angle: 30, width: 12, colorR: 255, colorG: 230, colorB: 180, intensity: 80, feather: 2 }),
+  C('light-wipe', 'wide', { completion: 55, shape: 1, centerX: 40, centerY: 2, width: 60, intensity: 100, feather: 5 }),
+  C('line-sweep', 'small', { completion: 45, lineCount: 8, angle: 20, stagger: 50, feather: 5 }),
+  C('line-sweep', 'tall', { completion: 70, lineCount: 3, angle: 100, stagger: 0, feather: 0, invert: 1 }),
+  C('grid-wipe', 'small', { completion: 40, columns: 6, rows: 4, shape: 0, random: 50, feather: 5 }),
+  C('grid-wipe', 'wide', { completion: 55, columns: 30, rows: 2, shape: 1, random: 100, feather: 0 }),
+  C('grid-wipe', 'tall', { completion: 35, columns: 2, rows: 9, shape: 2, random: 0, feather: 10, invert: 1 }),
+  C('dust-scratches', 'small', { radius: 2, threshold: 20 }),
+  C('dust-scratches', 'tall', { radius: 5, threshold: 0 }),
+  C('dust-scratches', 'wide', { radius: 8, threshold: 60 }),
+  C('noise-alpha', 'small', { amount: 50, uniform: 1, seed: 3, phase: 0, clipResult: 1 }),
+  C('noise-alpha', 'wide', { amount: 90, uniform: 0, seed: -8, phase: 5, clipResult: 0 }),
 ];
 
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {

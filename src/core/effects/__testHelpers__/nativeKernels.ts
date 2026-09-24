@@ -14,6 +14,9 @@ import {
 } from '../keyingEffects';
 import { applyKeyData, chokeAlpha, softenAlpha } from '../keylight';
 import {
+  irisWipeData, lightWipeData, lineSweepData, gridWipeData, dustAndScratchesData, noiseAlphaData,
+} from '../aeTransitionsAdvanced';
+import {
   cartoonData, brushStrokesData, strobeLightData, colorEmbossData, halftoneData, kaleidoscopeData, vignetteData,
   burnFilmData,
 } from '../aeStylizeAdvanced';
@@ -280,6 +283,24 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'burn-film':
       burnFilmData(data, w, h, n('burn', 0), n('centerX', 0), n('centerY', 0), rgb('burnColor', [0, 0, 0]), rgb('charColor', [60, 30, 10]), n('randomness', 50), n('seed', 0));
+      return;
+    case 'iris-wipe':
+      irisWipeData(data, w, h, n('completion', 0), n('centerX', 0), n('centerY', 0), n('points', 6), n('rotation', 0), n('innerRadius', 0), b('useInnerRadius', false), n('feather', 0), b('invert', false));
+      return;
+    case 'light-wipe':
+      lightWipeData(data, w, h, n('completion', 0), n('shape', 0), n('angle', 0), n('centerX', 0), n('centerY', 0), n('width', 40), rgb('color', [255, 255, 255]), n('intensity', 100), n('feather', 0));
+      return;
+    case 'line-sweep':
+      lineSweepData(data, w, h, n('completion', 0), n('lineCount', 8), n('angle', 0), n('stagger', 50), n('feather', 0), b('invert', false));
+      return;
+    case 'grid-wipe':
+      gridWipeData(data, w, h, n('completion', 0), n('columns', 8), n('rows', 6), n('shape', 0), n('random', 50), n('feather', 0), b('invert', false));
+      return;
+    case 'dust-scratches':
+      data.set(dustAndScratchesData(data, w, h, n('radius', 2), n('threshold', 20)));
+      return;
+    case 'noise-alpha':
+      noiseAlphaData(data, w, n('amount', 50), b('uniform', true), n('seed', 0), n('phase', 0), b('clipResult', true));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

@@ -72,6 +72,12 @@
     { "effect": "halftone", "args": { "cellSize": 8, "angle": 45, "contrast": 100 } },
     { "effect": "kaleidoscope", "args": { "segments": 6, "rotation": 20 } },
     { "effect": "vignette", "args": { "amount": 60, "size": 40, "feather": 50 } },
-    { "effect": "burn-film", "args": { "burn": 40, "randomness": 50, "seed": 3 } }
+    { "effect": "burn-film", "args": { "burn": 40, "randomness": 50, "seed": 3 } },
+    { "effect": "iris-wipe", "args": { "completion": 40, "points": 6, "rotation": 10, "feather": 2 } },
+    { "effect": "light-wipe", "args": { "completion": 40, "angle": 30, "width": 60, "intensity": 80, "feather": 2 } },
+    { "effect": "line-sweep", "args": { "completion": 45, "lineCount": 8, "angle": 20, "stagger": 50, "feather": 5 } },
+    { "effect": "grid-wipe", "args": { "completion": 40, "columns": 16, "rows": 9, "random": 50, "feather": 5 } },
+    { "effect": "dust-scratches", "args": { "radius": 3, "threshold": 20 } },
+    { "effect": "noise-alpha", "args": { "amount": 50, "seed": 3 } }
   ]
 }

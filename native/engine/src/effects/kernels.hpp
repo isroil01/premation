@@ -210,6 +210,25 @@ void vignette(RgbaView img, double amount, double size, double feather, double r
 void burn_film(RgbaView img, double burn, double center_x, double center_y, const Rgb& burn_color,
                const Rgb& char_color, double randomness, double seed, ThreadPool* pool);
 
+// ── aeTransitionsAdvanced.ts ────────────────────────────────────────────────
+/// `irisWipeData(data, w, h, completion %, centerX, centerY, points, rotation, innerRadius, useInnerRadius, feather, invert)`.
+void iris_wipe(RgbaView img, double completion, double center_x, double center_y, double points, double rotation,
+               double inner_radius, bool use_inner_radius, double feather, bool invert, ThreadPool* pool);
+/// `lightWipeData(data, w, h, completion %, shape, angle, centerX, centerY, width, color, intensity, feather)`.
+void light_wipe(RgbaView img, double completion, double shape, double angle, double center_x, double center_y,
+                double width, const Rgb& color, double intensity, double feather, ThreadPool* pool);
+/// `lineSweepData(data, w, h, completion %, lineCount, angle, stagger, feather, invert)`.
+void line_sweep(RgbaView img, double completion, double line_count, double angle, double stagger, double feather,
+                bool invert, ThreadPool* pool);
+/// `gridWipeData(data, w, h, completion %, columns, rows, shape, random, feather, invert)`.
+void grid_wipe(RgbaView img, double completion, double columns, double rows, double shape, double random,
+               double feather, bool invert, ThreadPool* pool);
+/// `dustAndScratchesData(src, w, h, radius, threshold)`.
+void dust_and_scratches(RgbaView img, double radius, double threshold, ThreadPool* pool);
+/// `noiseAlphaData(data, w, amount, uniform, seed, phase, clipResult)`.
+void noise_alpha(RgbaView img, double amount, bool uniform, double seed, double phase, bool clip_result,
+                 ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

@@ -6,6 +6,7 @@
 
 #include "kernels.hpp"
 #include "noise_hash.hpp"
+#include "rank_hist.hpp"
 
 namespace premation::effects {
 
@@ -154,37 +155,8 @@ void add_grain(RgbaView img, double intensity, double size, double saturation, d
 // The TS sorts the (clipped) window per pixel per channel and takes element
 // `count >> 1`. The same order statistic comes out of a sliding 256-bin
 // histogram per channel (Huang's algorithm): the window moves one column at a
-// time, and the running median moves by the few bins the update shifted.
-
-namespace {
-
-struct RankHist {
-  std::array<int, 256> bins{};
-  int med = 0;  // current candidate
-  int lt = 0;   // samples < med
-  void add(int v) noexcept {
-    ++bins[static_cast<std::size_t>(v)];
-    if (v < med) ++lt;
-  }
-  void remove(int v) noexcept {
-    --bins[static_cast<std::size_t>(v)];
-    if (v < med) --lt;
-  }
-  /// The k-th smallest sample (0-based).
-  int kth(int k) noexcept {
-    while (lt > k) {
-      --med;
-      lt -= bins[static_cast<std::size_t>(med)];
-    }
-    while (lt + bins[static_cast<std::size_t>(med)] <= k) {
-      lt += bins[static_cast<std::size_t>(med)];
-      ++med;
-    }
-    return med;
-  }
-};
-
-}  // namespace
+// time, and the running median moves by the few bins the update shifted
+// (rank_hist.hpp).
 
 void median(RgbaView img, double radius, ThreadPool* pool) {
   const int r = static_cast<int>(std::max(0.0, std::min(8.0, js::round(radius))));
