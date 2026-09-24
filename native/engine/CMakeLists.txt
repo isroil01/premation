@@ -539,6 +539,55 @@ if(MOTION_BUILD_TESTS)
   add_test(NAME engine_raster_tests COMMAND engine_raster_tests --reporter compact)
 endif()
 
+# ── E4: CPU effect kernels (src/effects; kept in its own block) ──────────────
+#   engine_effects      the TS bake chain's pixel kernels, byte-exact ports,
+#                       rows split over a std::jthread pool. No Skia, no GPU.
+#   premation-effects   the kernel bench (TS side: tests/bench_effects_ts.mjs)
+#   engine_effects_tests  parity vs tests/data/effect_kernel_parity.json
+#                       (src/core/effects/nativeKernelCrossEngine.test.ts)
+add_library(engine_effects STATIC
+  src/effects/thread_pool.cpp
+  src/effects/blur_kernels.cpp
+  src/effects/noise_kernels.cpp
+  src/effects/morph_kernels.cpp
+  src/effects/stylize_kernels.cpp
+  src/effects/advanced_blur_kernels.cpp
+  src/effects/color_kernels.cpp
+  src/effects/keying_kernels.cpp
+  src/effects/distort_kernels.cpp
+  src/effects/auto_color_kernels.cpp
+  src/effects/transition_kernels.cpp
+  src/effects/ae_stylize_kernels.cpp
+  src/effects/ae_transitions_kernels.cpp
+  src/effects/warp_kernels.cpp
+  src/effects/ae_distort_kernels.cpp
+  src/effects/round_seven_kernels.cpp
+  src/effects/round_six_kernels.cpp
+  src/effects/round_five_stylize_kernels.cpp
+  src/effects/round_five_distort_kernels.cpp
+  src/effects/round_five_transition_kernels.cpp
+  src/effects/kernel_dispatch.cpp
+)
+target_include_directories(engine_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
+target_compile_features(engine_effects PUBLIC cxx_std_20)
+target_link_libraries(engine_effects PUBLIC motion::jsmath PRIVATE motion::options)
+
+add_executable(premation-effects tools/premation_effects.cpp)
+target_link_libraries(premation-effects PRIVATE engine_effects engine_raster_core motion::options)
+if(MSVC)
+  target_compile_definitions(premation-effects PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  if(MSVC)
+    target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv
+  endif()
+  add_test(NAME engine_effects_tests COMMAND engine_effects_tests --reporter compact)
+endif()
+
 # ── E2: audio — decode, effects, mix, playback, the master clock (src/audio;
 #    kept in its own block) ───────────────────────────────────────────────────
 #   engine_audio_core  ffmpeg-free, device-free: the Web Audio node DSP (biquad,

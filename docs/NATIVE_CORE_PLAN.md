@@ -373,6 +373,196 @@ Open: the GPU (Graphite) raster path, CPU-baked effect chains (E4), paint stroke
 vertical optical kerning, alias FontFace features, Intl word breaks, macOS / Linux
 system fonts.
 
+**E4 progress (2026-09-24, branch `e4-effects`).** `native/engine/src/effects`
+(`engine_effects`, Skia- and GPU-free) holds C++ ports of **120 of the 166 CPU
+effect passes** the bake chain runs (`applyCanvas2dEffect`,
+`src/core/effects/canvas2dEffects.ts`); see `native/README.md` § CPU effect
+kernels. Each is a port of its TS kernel operation for operation, including
+JavaScript's store rounding (`Uint8ClampedArray` half-to-even, `Uint8Array` /
+`Uint16Array` truncation, `Float32Array` rounding), V8's `Math` (`motion::jsmath`)
+and the TS hashes' double arithmetic. Rows (or column strips) are split across a
+`std::jthread` pool in a way that cannot change a byte. Where the TS scans a
+window per pixel, the C++ uses algorithms that give the same result: sliding
+integer sums, van Herk min / max, Huang running-median histograms, lattices
+computed once. Where the TS sums floats, the C++ keeps the TS's order.
+**Parity:** `nativeKernelCrossEngine.test.ts` writes
+`native/engine/tests/data/effect_kernel_parity.json`: 297 cases over three
+synthetic inputs, one of them > 512 px for the edge-aware blurs' budget proxy.
+`engine_effects_tests` matches **every FNV-1a 64 exactly, on 1 thread and on
+4**, with zero tolerance.
+
+The plan's "28 Canvas2D-only effects" count predates GPU-port rounds 6–14.
+Today `CANVAS2D_ONLY` (no WGSL, so it forces a bake) has **9** members. 7 of
+them draw through Canvas2D. `path-stroke` and `scribble` are pure buffer kernels
+and are next. The other 157 passes run on the CPU only when a layer is baked
+for another reason (interior styles, effect masks, fill opacity, paths), where
+they are the WGSL's parity twins.
+
+**Bench** (`premation-effects --bench` vs `tests/bench_effects_ts.mjs`, same
+cases in `tests/data/effect_kernel_bench.json`, 1920×1080, best of N, TS and C++
+interleaved per effect). Measured on a shared 4-vCPU container running other
+jobs (Linux CPU pressure 10–85 % during the runs; a pure-compute parallel loop
+scaled only 1.2× on 4 threads under that load). The thread column is therefore
+a floor, not a scaling measurement. Summary:
+
+- Median over the 120 effects: C++ on **1 thread is 2.1× the TS**, and on
+  **4 threads 5.0×**. The range runs from 0.5× (Vignette, whose TS memoises its
+  gain map across frames) to 80× (Median, now a running histogram instead of a
+  sort).
+- 93 of the 120 TS kernels take more than 41.7 ms (24 fps) on a 1080p layer.
+  On 4 contended threads, 77 of the C++ ports are under 41.7 ms and 43 are not.
+  The slowest are the per-pixel noise and trig resamples (Vector Blur, Radial
+  Fast Blur, Turbulent Displace, Drizzle, CC Scatterize) at 110–250 ms. They
+  are the next optimisation targets, via lattice caching or a lower-precision
+  twin behind the golden gate. Measuring the exit criterion ("no effect drops
+  the bench comp below 24 fps") needs the chain wired into the engine first.
+
+Ported, with parity (every row byte-identical) and ms per 1080p frame:
+
+| effect | TS kernel | TS ms | C++ 1 thr ms | C++ 4 thr ms | ×TS (1 thr) | ×TS (4 thr) |
+|---|---|--:|--:|--:|--:|--:|
+| `gaussian-blur` | `blurs.ts` | 249 | 112 | 56.0 | 2.2 | 4.4 |
+| `fast-box-blur` | `blurs.ts` | 116 | 56.9 | 33.2 | 2.0 | 3.5 |
+| `radial-blur` | `blurs.ts` | 1833 | 480 | 172 | 3.8 | 10.7 |
+| `channel-blur` | `blurs.ts` | 1275 | 50.1 | 28.0 | 25.4 | 45.5 |
+| `unsharp-mask` | `blurs.ts` | 282 | 129 | 64.8 | 2.2 | 4.3 |
+| `sharpen` | `canvas2dEffects.ts` | 50.4 | 18.4 | 7.4 | 2.7 | 6.8 |
+| `noise` | `canvas2dEffects.ts` | 54.2 | 23.4 | 8.9 | 2.3 | 6.1 |
+| `add-grain` | `noiseEffects.ts` | 355 | 177 | 64.3 | 2.0 | 5.5 |
+| `turbulent-noise` | `noiseEffects.ts` | 639 | 324 | 117 | 2.0 | 5.5 |
+| `median` | `noiseEffects.ts` | 17022 | 212 | 72.8 | 80.3 | 233.7 |
+| `minimax` | `keyingEffects.ts` | 1939 | 98.5 | 38.9 | 19.7 | 49.9 |
+| `simple-choker` | `keyingEffects.ts` | 146 | 18.7 | 7.2 | 7.8 | 20.3 |
+| `mosaic` | `stylize.ts` | 18.9 | 6.6 | 3.2 | 2.8 | 5.9 |
+| `find-edges` | `stylize.ts` | 427 | 31.7 | 13.1 | 13.5 | 32.7 |
+| `emboss` | `stylize.ts` | 87.4 | 57.0 | 23.7 | 1.5 | 3.7 |
+| `vibrance` | `colorEffects.ts` | 23.1 | 21.3 | 7.7 | 1.1 | 3.0 |
+| `bilateral-blur` | `aeBlurAdvanced.ts` | 159 | 82.3 | 38.1 | 1.9 | 4.2 |
+| `smart-blur` | `aeBlurAdvanced.ts` | 165 | 79.7 | 34.9 | 2.1 | 4.7 |
+| `camera-lens-blur` | `aeBlurAdvanced.ts` | 164 | 82.0 | 37.3 | 2.0 | 4.4 |
+| `photo-filter` | `aeColor.ts` | 28.0 | 22.8 | 8.6 | 1.2 | 3.3 |
+| `black-and-white` | `aeColor.ts` | 68.8 | 47.2 | 18.1 | 1.5 | 3.8 |
+| `tritone` | `aeColor.ts` | 35.9 | 25.4 | 9.8 | 1.4 | 3.6 |
+| `threshold` | `aeColor.ts` | 8.4 | 5.3 | 1.7 | 1.6 | 4.9 |
+| `selective-color` | `toneEffects.ts` | 67.7 | 32.6 | 12.5 | 2.1 | 5.4 |
+| `shadow-highlight` | `toneEffects.ts` | 183 | 134 | 63.9 | 1.4 | 2.9 |
+| `colorama` | `colorEffects.ts` | 137 | 39.6 | 14.7 | 3.5 | 9.3 |
+| `keylight` | `keylight.ts` | 239 | 59.4 | 24.1 | 4.0 | 9.9 |
+| `linear-color-key` | `keyingEffects.ts` | 75.3 | 27.8 | 9.9 | 2.7 | 7.6 |
+| `luma-key` | `keyingEffects.ts` | 30.4 | 9.7 | 3.6 | 3.1 | 8.4 |
+| `shift-channels` | `keyingEffects.ts` | 39.3 | 11.2 | 4.0 | 3.5 | 9.9 |
+| `color-key` | `aeKeyingAdvanced.ts` | 22.1 | 10.9 | 4.0 | 2.0 | 5.6 |
+| `color-range` | `aeKeyingAdvanced.ts` | 45.3 | 15.9 | 6.1 | 2.8 | 7.5 |
+| `extract` | `aeKeyingAdvanced.ts` | 24.7 | 16.4 | 6.0 | 1.5 | 4.1 |
+| `spill-suppressor` | `aeKeyingAdvanced.ts` | 92.0 | 48.4 | 19.7 | 1.9 | 4.7 |
+| `matte-choker` | `aeKeyingAdvanced.ts` | 656 | 96.8 | 54.8 | 6.8 | 12.0 |
+| `bulge` | `distort.ts` | 290 | 95.7 | 36.8 | 3.0 | 7.9 |
+| `spherize` | `distort.ts` | 342 | 130 | 46.3 | 2.6 | 7.4 |
+| `twirl` | `distort.ts` | 332 | 115 | 42.9 | 2.9 | 7.7 |
+| `corner-pin` | `distort.ts` | 186 | 72.2 | 27.3 | 2.6 | 6.8 |
+| `polar-coordinates` | `distort.ts` | 353 | 169 | 61.9 | 2.1 | 5.7 |
+| `mirror` | `distort.ts` | 210 | 64.2 | 24.9 | 3.3 | 8.4 |
+| `offset` | `distort.ts` | 1323 | 200 | 76.0 | 6.6 | 17.4 |
+| `optics-compensation` | `distort.ts` | 320 | 147 | 52.9 | 2.2 | 6.0 |
+| `mesh-warp` | `distort.ts` | 280 | 136 | 48.5 | 2.1 | 5.8 |
+| `liquify` | `distort.ts` | 283 | 90.2 | 33.3 | 3.1 | 8.5 |
+| `equalize` | `aeColorAdvanced.ts` | 22.8 | 13.4 | 4.9 | 1.7 | 4.7 |
+| `auto-levels` | `aeColorAdvanced.ts` | 23.8 | 13.4 | 5.0 | 1.8 | 4.7 |
+| `auto-contrast` | `aeColorAdvanced.ts` | 22.3 | 13.4 | 5.1 | 1.7 | 4.4 |
+| `auto-color` | `aeColorAdvanced.ts` | 24.0 | 13.4 | 4.9 | 1.8 | 4.9 |
+| `change-color` | `aeColorAdvanced.ts` | 121 | 62.6 | 22.5 | 1.9 | 5.4 |
+| `change-to-color` | `aeColorAdvanced.ts` | 112 | 54.5 | 19.0 | 2.1 | 5.9 |
+| `leave-color` | `aeColorAdvanced.ts` | 76.3 | 42.1 | 15.6 | 1.8 | 4.9 |
+| `toner` | `aeColorAdvanced.ts` | 25.8 | 22.6 | 8.5 | 1.1 | 3.0 |
+| `venetian-blinds` | `transitions.ts` | 37.9 | 24.3 | 9.2 | 1.6 | 4.1 |
+| `gradient-wipe` | `transitions.ts` | 31.0 | 6.0 | 4.2 | 5.2 | 7.4 |
+| `card-wipe` | `transitions.ts` | 92.0 | 39.0 | 14.8 | 2.4 | 6.2 |
+| `radial-wipe` | `transitions.ts` | 104 | 48.3 | 17.1 | 2.1 | 6.1 |
+| `block-dissolve` | `transitions.ts` | 27.5 | 12.7 | 4.8 | 2.2 | 5.8 |
+| `alpha-levels` | `aeChannel.ts` | 2.4 | 0.7 | 0.5 | 3.3 | 4.4 |
+| `solid-composite` | `aeChannel.ts` | 40.5 | 26.2 | 10.3 | 1.5 | 3.9 |
+| `channel-combiner` | `aeChannel.ts` | 70.2 | 30.3 | 15.2 | 2.3 | 4.6 |
+| `remove-color-matting` | `aeChannel.ts` | 14.6 | 6.8 | 2.5 | 2.1 | 5.8 |
+| `cartoon` | `aeStylizeAdvanced.ts` | 460 | 245 | 93.6 | 1.9 | 4.9 |
+| `brush-strokes` | `aeStylizeAdvanced.ts` | 475 | 329 | 117 | 1.4 | 4.1 |
+| `strobe-light` | `aeStylizeAdvanced.ts` | 15.9 | 9.0 | 3.5 | 1.8 | 4.6 |
+| `color-emboss` | `aeStylizeAdvanced.ts` | 59.7 | 26.2 | 10.2 | 2.3 | 5.9 |
+| `halftone` | `aeStylizeAdvanced.ts` | 237 | 87.5 | 46.9 | 2.7 | 5.1 |
+| `kaleidoscope` | `aeStylizeAdvanced.ts` | 438 | 256 | 88.2 | 1.7 | 5.0 |
+| `vignette` | `aeStylizeAdvanced.ts` | 12.6 | 27.3 | 10.0 | 0.5 | 1.3 |
+| `burn-film` | `aeStylizeAdvanced.ts` | 187 | 100 | 36.7 | 1.9 | 5.1 |
+| `iris-wipe` | `aeTransitionsAdvanced.ts` | 169 | 81.4 | 28.8 | 2.1 | 5.9 |
+| `light-wipe` | `aeTransitionsAdvanced.ts` | 27.6 | 15.5 | 5.5 | 1.8 | 5.0 |
+| `line-sweep` | `aeTransitionsAdvanced.ts` | 27.2 | 28.6 | 10.6 | 1.0 | 2.6 |
+| `grid-wipe` | `aeTransitionsAdvanced.ts` | 56.3 | 57.3 | 20.8 | 1.0 | 2.7 |
+| `dust-scratches` | `aeTransitionsAdvanced.ts` | 8867 | 140 | 52.9 | 63.2 | 167.7 |
+| `noise-alpha` | `aeTransitionsAdvanced.ts` | 31.4 | 31.6 | 11.5 | 1.0 | 2.7 |
+| `wave-warp` | `warp.ts` | 178 | 135 | 48.0 | 1.3 | 3.7 |
+| `turbulent-displace` | `warp.ts` | 507 | 510 | 181 | 1.0 | 2.8 |
+| `curl-noise` | `warp.ts` | 846 | 286 | 110 | 3.0 | 7.7 |
+| `roughen-edges` | `stylize.ts` | 188 | 153 | 112 | 1.2 | 1.7 |
+| `scatter` | `stylize.ts` | 137 | 44.9 | 27.5 | 3.1 | 5.0 |
+| `ripple` | `aeDistortAdvanced.ts` | 430 | 231 | 83.7 | 1.9 | 5.1 |
+| `magnify` | `aeDistortAdvanced.ts` | 263 | 79.3 | 28.0 | 3.3 | 9.4 |
+| `warp` | `aeDistortAdvanced.ts` | 299 | 161 | 56.1 | 1.9 | 5.3 |
+| `page-turn` | `aeDistortAdvanced.ts` | 63.9 | 29.2 | 11.2 | 2.2 | 5.7 |
+| `split` | `aeDistortAdvanced.ts` | 200 | 83.2 | 28.9 | 2.4 | 6.9 |
+| `slant` | `aeDistortAdvanced.ts` | 199 | 73.0 | 24.7 | 2.7 | 8.1 |
+| `smear` | `aeDistortAdvanced.ts` | 292 | 88.3 | 32.1 | 3.3 | 9.1 |
+| `rolling-shutter` | `aeDistortAdvanced.ts` | 237 | 132 | 47.6 | 1.8 | 5.0 |
+| `radial-shadow` | `aeDistortAdvanced.ts` | 159 | 75.8 | 31.8 | 2.1 | 5.0 |
+| `color-difference-key` | `aeRoundSevenColor.ts` | 183 | 106 | 38.1 | 1.7 | 4.8 |
+| `wire-removal` | `aeRoundSevenColor.ts` | 13.4 | 5.9 | 2.9 | 2.3 | 4.6 |
+| `broadcast-colors` | `aeRoundSevenColor.ts` | 100 | 34.8 | 12.5 | 2.9 | 8.0 |
+| `noise-hls` | `aeRoundSevenColor.ts` | 273 | 195 | 124 | 1.4 | 2.2 |
+| `block-load` | `aeRoundSevenStylize.ts` | 22.4 | 7.8 | 4.5 | 2.9 | 5.0 |
+| `kernel` | `aeRoundSevenStylize.ts` | 237 | 107 | 61.1 | 2.2 | 3.9 |
+| `3d-glasses` | `aeRoundSevenStylize.ts` | 105 | 20.2 | 7.9 | 5.2 | 13.4 |
+| `fractal` | `aeRoundSevenStylize.ts` | 465 | 242 | 120 | 1.9 | 3.9 |
+| `unmult` | `aeRoundSix.ts` | 54.7 | 28.9 | 15.3 | 1.9 | 3.6 |
+| `cc-composite` | `aeRoundSix.ts` | 49.2 | 25.4 | 17.6 | 1.9 | 2.8 |
+| `cc-scatterize` | `aeRoundSix.ts` | 278 | 182 | 172 | 1.5 | 1.6 |
+| `radial-fast-blur` | `aeRoundSix.ts` | 1059 | 509 | 242 | 2.1 | 4.4 |
+| `cross-blur` | `aeRoundSix.ts` | 708 | 314 | 161 | 2.3 | 4.4 |
+| `scale-wipe` | `aeRoundSix.ts` | 253 | 105 | 51.9 | 2.4 | 4.9 |
+| `plastic` | `aeRoundSix.ts` | 555 | 197 | 111 | 2.8 | 5.0 |
+| `glass` | `aeStylizeRoundFive.ts` | 463 | 197 | 107 | 2.4 | 4.3 |
+| `texturize` | `aeStylizeRoundFive.ts` | 222 | 186 | 90.7 | 1.2 | 2.4 |
+| `threads` | `aeStylizeRoundFive.ts` | 70.9 | 48.5 | 25.6 | 1.5 | 2.8 |
+| `chromatic-aberration` | `aeStylizeRoundFive.ts` | 582 | 247 | 120 | 2.4 | 4.9 |
+| `hex-tile` | `aeStylizeRoundFive.ts` | 127 | 134 | 120 | 0.9 | 1.1 |
+| `vector-blur` | `aeStylizeRoundFive.ts` | 788 | 449 | 248 | 1.8 | 3.2 |
+| `flo-motion` | `aeDistortRoundFive.ts` | 329 | 181 | 72.3 | 1.8 | 4.6 |
+| `lens` | `aeDistortRoundFive.ts` | 138 | 48.9 | 26.7 | 2.8 | 5.2 |
+| `griddler` | `aeDistortRoundFive.ts` | 195 | 96.0 | 48.9 | 2.0 | 4.0 |
+| `ball-action` | `aeDistortRoundFive.ts` | 206 | 94.4 | 72.0 | 2.2 | 2.9 |
+| `drizzle` | `aeDistortRoundFive.ts` | 1362 | 313 | 172 | 4.4 | 7.9 |
+| `jaws` | `aeTransitionsRoundFive.ts` | 116 | 93.9 | 37.7 | 1.2 | 3.1 |
+| `pixel-polly` | `aeTransitionsRoundFive.ts` | 56.6 | 34.6 | 12.7 | 1.6 | 4.4 |
+| `twister` | `aeTransitionsRoundFive.ts` | 50.2 | 28.5 | 12.4 | 1.8 | 4.0 |
+| `card-dance` | `aeTransitionsRoundFive.ts` | 41.9 | 32.6 | 15.6 | 1.3 | 2.7 |
+
+Not ported yet (46):
+
+| status | effects (`applyCanvas2dEffect` cases) |
+|---|---|
+| **Forces a bake today** (`CANVAS2D_ONLY`, no WGSL) — canvas-drawn, needs the E3 `raster::Canvas` | `vegas`, `numbers`, `timecode`, `audio-spectrum`, `audio-waveform`, `lightning`, `plexus` |
+| **Forces a bake today** — pure buffer kernels over mask polylines resolved into params; next to port | `path-stroke` (`pathStroke.ts`), `scribble` (`scribble.ts`) |
+| Pure kernel, not ported yet (same recipe as above) | `bezier-warp`, `cell-pattern`, `apply-color-lut` (`applyLutToImageData`), `write-on` (+ brush form), `star-burst`, `snowfall`, `rainfall`, `light-burst`, `deep-glow`, `beam-path`, `cc-tiler`, `ripple-pulse`, `radial-scale-wipe`, `glass-wipe`, `image-wipe`, `particle-systems`, `cc-bubbles` |
+| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs), needs `raster::Canvas` in the chain | `fill`, `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `linear-wipe`, `transform`, `beam`, `lens-flare`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves`, `cc-repetile` |
+Open work for E4:
+- **Wire the chain.** Map each effect's params onto its kernel arguments (the
+  TS `apply*` wrappers), and interleave the kernels with the canvas-drawn
+  passes, masks, fill opacity and interior styles. `layer_is_baked` layers then
+  render through `engine_effects` instead of being reported as unported by
+  `frame_build.cpp`, and the golden gate runs on whole frames.
+- Port the remaining kernels (above), and the non-effect CPU bake sites in
+  `src/core/rendering` (`pixelMotion*`, `deinterlace`, `channelView`,
+  `frameTap`, `AppTextureProvider`'s read-backs).
+- Toolchain not checked here: clang-tidy (CI runs it on `native/libs` only),
+  the sanitizers (this container has no compiler-rt runtime, which also stops
+  `engine_fuzz` from linking), MSVC / clang-cl and WASM builds.
+
 ### Phase F — Export and ownership
 
 | Step | What | Exit | Size |

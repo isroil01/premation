@@ -528,6 +528,62 @@ effect chains (E4), paint brush strokes, vertical optical kerning, variable
 mask feather, alias FontFace features, `capitalize`, anisotropic blur,
 Intl word-break joins, WOFF1, system fonts on macOS / Linux.
 
+## CPU effect kernels (engine/src/effects, E4)
+
+The TS bake chain (`applyCanvas2dEffect` in `src/core/effects/canvas2dEffects.ts`)
+runs each CPU effect as a pure kernel over the layer's straight RGBA8
+`getImageData` buffer. `engine_effects` ports those kernels one for one, with
+no Skia and no GPU:
+
+| file | TS it ports |
+|---|---|
+| `blur_kernels.cpp` | `blurs.ts` (box / Gaussian, radial, channel, unsharp), `sharpenData` |
+| `noise_kernels.cpp` | `noiseEffects.ts` (turbulent noise, add grain, median), `addNoiseData` |
+| `morph_kernels.cpp` | `minimaxData`, `simpleChokerData` (van Herk / Gil-Werman min / max) |
+| `stylize_kernels.cpp` | `stylize.ts` (mosaic, find edges, emboss), `vibranceData` |
+| `advanced_blur_kernels.cpp` | `aeBlurAdvanced.ts` (bilateral, smart, camera lens + the ≤ 512 px budget proxy) |
+| `color_kernels.cpp` | `aeColor.ts`, `toneEffects.ts`, `coloramaData` |
+| `keying_kernels.cpp` | `keylight.ts`, `keyingEffects.ts`, `aeKeyingAdvanced.ts` |
+| `distort_kernels.cpp` | `distort.ts` (`remap` + bulge … liquify) |
+| `auto_color_kernels.cpp` | `aeColorAdvanced.ts` (histogram autos, HSL selectors, toner) |
+| `transition_kernels.cpp` | `transitions.ts`, `aeChannel.ts` |
+| `ae_*_kernels.cpp`, `round_*_kernels.cpp`, `warp_kernels.cpp` | the AE rounds: `aeStylizeAdvanced`, `aeTransitionsAdvanced`, `aeDistortAdvanced`, `aeRoundSix`, `aeRoundSeven*`, `ae*RoundFive`, `warp.ts` + `stylize.ts` noise bites |
+| `kernel_dispatch.cpp` | effect type + the TS kernel's argument names → kernel (120 effects) |
+
+**Byte-exact.** Every kernel keeps the TS's operation order and its JavaScript
+store semantics (`pixel_ops.hpp`): `Uint8ClampedArray` rounds half to even,
+`Uint8Array` / `Uint16Array` truncate, `Float32Array` rounds to float; `Math.*`
+is V8's (`motion::jsmath`); `-ffp-contract=off`. Where the TS sums integers the
+C++ may slide a window (the sum is exact either way); where it sums floats
+(Float32 box blurs, the vertical box pass past r ≈ 128) the C++ keeps the TS's
+tap order. Min / max and rank filters use O(1)-per-pixel algorithms that give
+the same order statistic.
+
+**Threads.** `ThreadPool` (`std::jthread` workers) splits OUTPUT rows (or
+column strips for vertical passes), so no output depends on the thread count;
+the parity test runs every row on 1 and on 4 threads. No intrinsics: the loops
+are plain C++ (branch-free JS stores, no libm in the inner loops, since baseline
+x86-64 has no `roundsd`), one path for every target.
+
+**Parity.** `npx jest nativeKernelCrossEngine` (with `GEN_NATIVE_EFFECT_KERNELS=1`
+to regenerate) runs the TS kernels on three synthetic inputs (odd sizes, a
+transparent band with junk colour, a soft alpha ramp, one > 512 px wide for the
+budget proxy) and writes `tests/data/effect_kernel_parity.json` (input bytes +
+per-case FNV-1a 64); `engine_effects_tests` must match every hash.
+`EFFECT_KERNEL_DUMP=<dir>` on either side dumps outputs as raw RGBA.
+
+**Bench.** Same cases, same 1920×1080 input (`tests/data/effect_kernel_bench.json`):
+
+```
+premation-effects --bench native/engine/tests/data/effect_kernel_bench.json [--threads N] [--only <effect>]
+node native/engine/tests/bench_effects_ts.mjs [--only <effect>]
+```
+
+Not wired yet: the bake CHAIN (compositing the kernels between Canvas2D-drawn
+effects, masks, fill opacity, the effect-param → kernel-argument mapping of the
+`apply*` wrappers) and the canvas-drawn effects; see the E4 table in
+`docs/NATIVE_CORE_PLAN.md`.
+
 ## Adding a library (N2+)
 
 `libs/<name>/CMakeLists.txt` with a `STATIC` target linking `motion::options`
