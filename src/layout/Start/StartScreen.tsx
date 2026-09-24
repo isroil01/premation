@@ -322,7 +322,7 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
                 // New can be declined (the unsaved-changes confirmation) —
                 // importing into no project would drop the clip on the floor.
                 if (!getProjectManager().getState().current) return;
-                // B3-legacy: engine gap — an <input type=file> File has no path for `importFiles` (no import from bytes).
+                // B3-gap: import from bytes / a File's path — an <input type=file> File has no path for `importFiles` (no import from bytes).
                 const asset = await useAssetStore.getState().addAsset(f);
                 await newCompFromFootageEdit(asset);
               };

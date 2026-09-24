@@ -150,7 +150,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     if (cmds) {
       send(`Edit ${field.label}`, cmds);
     } else if (isMediaField(field)) {
-      // B3-legacy: engine gap — a media slot fill is a picked browser `File` (a blob URL, no path:
+      // B3-gap: import from bytes + a fitted source swap — a media slot fill is a picked browser `File` (a blob URL, no path:
       // no import from bytes) plus a reframe to the slot rect (`replaceLayerSource` has no fit).
       writeTemplateField(field, value);
     } else {

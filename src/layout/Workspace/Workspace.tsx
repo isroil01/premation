@@ -51,8 +51,9 @@ import { insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
 import { buildMographItem, previewMographItem } from '@core/library/mographLibrary';
-import { applyTransitionItem } from '@core/library/transitionLibrary';
-import { insertSfxItem } from '@core/library/sfxLibrary';
+import { getTransitionItem } from '@core/library/transitionLibrary';
+import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
+import { insertSfxEdit } from '@layout/EditorLayout/sfxInsertEdits';
 import { insertLottieItemEdit } from '@layout/EditorLayout/lottieInsertEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { useAssetStore } from '@stores/assetStore';
@@ -496,8 +497,8 @@ export function WorkspaceViewport({
         useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
         return;
       }
-      // B3-legacy: engine gap — `importFiles` takes filesystem PATHS through the engine ports; an
-      // OS drop hands the renderer browser `File` objects (no path bridge in preload), so the
+      // B3-gap: import from bytes / a File's path — `importFiles` takes filesystem PATHS; an OS
+      // drop hands the renderer browser `File` objects (no path bridge in preload), so the
       // import goes through the asset store's own ingest.
       const imported = await useAssetStore.getState().addAssetsBatch(media.map((file) => ({ file })));
       // "Empty" = no content layers anywhere in the scene. Counting the comp
@@ -617,13 +618,13 @@ export function WorkspaceViewport({
       }
       case 'transition':
         // Position-independent: applies to the selection at the playhead,
-        // or drops a choreographed solid.
-        // B3-legacy: engine gap — a transition item changes EXISTING layers (the timeline workstream's).
-        applyTransitionItem(payload.transId);
+        // or drops a choreographed solid — the Library card's path (solid
+        // panels: one pasteLayers; layer mode's gap lives in transitionInsertEdits).
+        void applyTransitionEdit(payload.transId, `Apply ${getTransitionItem(payload.transId)?.name ?? 'Transition'}`);
         break;
       case 'sfx':
-        // B3-legacy: engine gap — an SFX item is an audio asset + layer (media import, not an off-document build).
-        void insertSfxItem(payload.sfxId);
+        // The audio layer as one pasteLayers entry (the item import's gap: sfxInsertEdits).
+        void insertSfxEdit(payload.sfxId);
         break;
       case 'lottie':
         void insertLottieItemEdit(payload.lottieId, world.x, world.y);

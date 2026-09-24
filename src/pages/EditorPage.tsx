@@ -91,7 +91,7 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         const footage = takePendingFootage();
         if (footage) {
           try {
-            // B3-legacy: engine gap — the parked footage is a browser `File` with no path (`importFiles` imports by path only; no import from bytes).
+            // B3-gap: import from bytes / a File's path — the parked footage is a browser `File` with no path (`importFiles` imports by path only; no import from bytes).
             const asset = await useAssetStore.getState().addAsset(footage);
             await insertMediaEdit([asset]);
             const probedFps = asset.metadata?.fps;

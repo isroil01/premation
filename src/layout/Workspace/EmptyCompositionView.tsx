@@ -166,7 +166,7 @@ export function EmptyCompositionView(): JSX.Element {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      // B3-legacy: engine gap — `importFiles` takes filesystem paths; a picked/dropped browser
+      // B3-gap: import from bytes / a File's path — `importFiles` takes filesystem paths; a picked/dropped browser
       // `File` has none (no path bridge in preload), so the asset store ingests it.
       const asset = await useAssetStore.getState().addAsset(file);
       await newCompFromFootageEdit(asset);
@@ -214,7 +214,7 @@ export function EmptyCompositionView(): JSX.Element {
     }
     if (file) {
       try {
-        // B3-legacy: engine gap — browser `File` import (see `handleFileSelected`).
+        // B3-gap: import from bytes / a File's path (see `handleFileSelected`).
         const asset = await useAssetStore.getState().addAsset(file);
         await newCompFromFootageEdit(asset);
       } catch (err) {

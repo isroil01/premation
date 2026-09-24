@@ -24,6 +24,7 @@ import {
 } from '@core/composition/presets';
 import { useAssetStore, type AssetFolder } from '@stores/assetStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
+import { createFolderEdit, createFolderTreeEdit, renameItemEdit } from '@layout/Assets/assetEdits';
 import {
   api,
   type AccountRecord,
@@ -214,11 +215,15 @@ export function DashboardPage(): JSX.Element {
   // Shared AssetStore (synchronized with Editor Assets tab)
   const storeAssets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
-  // B3-legacy: engine gap — the dashboard manages the device LIBRARY with no project open (not a document edit an undo stack could own), and imports browser `File`s without paths; these stay store actions until the library gets its own API (B5).
+  // The asset store IS the document's item list (captureProjectItems saves every folder and item
+  // in it), and a project opened in the editor stays loaded behind the dashboard — so these are
+  // document writes. Folders go through the engine (createFolder / renameItem; off the editor
+  // route `engine()` is a portless engine, which item commands do not need).
+  // B3-gap: import from bytes / a File's path — the dashboard's pickers hand browser `File`s (no path for `importFiles`).
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
+  // B3-gap: delete an item's stored bytes — the dashboard's Delete removes the asset from the device library and the cloud ("cannot be undone"); `removeItems` deliberately keeps storage so undo can restore it.
   const removeAsset = useAssetStore((s) => s.removeAsset);
-  const createFolder = useAssetStore((s) => s.createFolder);
-  const renameFolder = useAssetStore((s) => s.renameFolder);
+  // B3-gap: delete stored bytes (as removeAsset) — removing a folder deletes the assets inside it from the library.
   const removeFolder = useAssetStore((s) => s.removeFolder);
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -447,7 +452,7 @@ export function DashboardPage(): JSX.Element {
       };
       const p = await create(compName, initialDoc);
       if (!p?.id) throw new Error('The server did not return a project id.');
-      // B3-legacy: engine gap — project CREATION, not an edit: primes the live comp store and timeline for the document the editor is about to open (`openPath` then restores `initialDoc`); no engine command creates a project from settings with the editor still on the dashboard.
+      // B3-gap: create a project FROM SETTINGS — project creation, not an edit: primes the live comp store and timeline for the document the editor is about to open (`openPath` then restores `initialDoc`'s comps, but not a timeline: it has none). `newProject` takes only a template, and the store written here still belongs to whatever project is loaded behind the dashboard, so an engine `setCompositionSettings` would edit (and dirty) THAT project.
       useCompositionStore.getState().update(initialComp);
       getTimelineController().setFrameRate(fps);
       getTimelineController().setDurationSeconds(durationSeconds);
@@ -552,31 +557,24 @@ export function DashboardPage(): JSX.Element {
     setAssetsBusy(true);
     setDataError('');
     try {
-      const pathToId = new Map<string, string | null>();
-      pathToId.set('', currentFolderId);
-      const ensureFolder = (segments: string[]): string | null => {
-        let parentId = currentFolderId;
-        let key = '';
-        for (const seg of segments) {
-          key = key ? `${key}/${seg}` : seg;
-          if (!pathToId.has(key)) {
-            const created = createFolder(seg, parentId);
-            pathToId.set(key, created.id);
-          }
-          parentId = pathToId.get(key) ?? null;
-        }
-        return parentId;
-      };
-      const items: Array<{ file: File; folderId: string | null }> = [];
+      // The folder tree first — ONE engine entry, parents before children —
+      // then each file into the folder its relative path names.
+      const picked: Array<{ file: File; dir: string }> = [];
+      const dirs: string[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (!file) continue;
         const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        const parts = rel.split('/');
-        const folderSegments = parts.slice(0, -1);
-        const targetFolder = ensureFolder(folderSegments);
-        items.push({ file, folderId: targetFolder });
+        const segments = rel.split('/').slice(0, -1);
+        for (let n = 1; n <= segments.length; n++) {
+          const key = segments.slice(0, n).join('/');
+          if (!dirs.includes(key)) dirs.push(key);
+        }
+        picked.push({ file, dir: segments.join('/') });
       }
+      const pathToId = await createFolderTreeEdit(dirs, currentFolderId);
+      if (dirs.length > 0 && pathToId.size === 0) throw new Error('Could not create the folders.');
+      const items = picked.map(({ file, dir }) => ({ file, folderId: dir ? pathToId.get(dir) ?? currentFolderId : currentFolderId }));
       if (items.length > 0) {
         await addAssetsBatch(items);
       }
@@ -587,14 +585,14 @@ export function DashboardPage(): JSX.Element {
     }
   };
 
-  const handleNewFolder = () => {
+  const handleNewFolder = async (): Promise<void> => {
     const siblings = folders.filter((f) => f.parentId === currentFolderId);
     const base = 'New Folder';
     let name = base;
     let n = 2;
     while (siblings.some((f) => f.name === name)) name = `${base} ${n++}`;
-    const created = createFolder(name, currentFolderId);
-    setRenamingFolderId(created.id);
+    const created = await createFolderEdit(name, currentFolderId);
+    if (created) setRenamingFolderId(created);
   };
 
   const handleDeleteFolder = async (folder: AssetFolder): Promise<void> => {
@@ -859,7 +857,7 @@ export function DashboardPage(): JSX.Element {
                 <button
                   type="button"
                   className={styles.btnSecondary}
-                  onClick={handleNewFolder}
+                  onClick={() => { void handleNewFolder(); }}
                   title="Create new folder"
                 >
                   <Icon name="folder-plus" size="md" style={{ color: FOLDER_COLOR }} />
@@ -980,9 +978,9 @@ export function DashboardPage(): JSX.Element {
                             className={styles.assetName}
                             style={{ background: 'var(--color-surface-0)', border: '1px solid var(--color-primary)', borderRadius: 3, color: 'var(--color-text-primary)', width: '100%' }}
                             onClick={(e) => e.stopPropagation()}
-                            onBlur={(e) => { renameFolder(folder.id, e.target.value); setRenamingFolderId(null); }}
+                            onBlur={(e) => { void renameItemEdit(folder.id, e.target.value); setRenamingFolderId(null); }}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') { renameFolder(folder.id, (e.target as HTMLInputElement).value); setRenamingFolderId(null); }
+                              if (e.key === 'Enter') { void renameItemEdit(folder.id, (e.target as HTMLInputElement).value); setRenamingFolderId(null); }
                               if (e.key === 'Escape') setRenamingFolderId(null);
                             }}
                           />

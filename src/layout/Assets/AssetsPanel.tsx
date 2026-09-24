@@ -176,7 +176,7 @@ export function AssetsPanel(): JSX.Element {
 
   const assets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
-  // B3-legacy: engine gap — `importFiles` imports by PATH; a browser `File` (the picker's <input>, an OS drop, Import Folder) carries none in Electron 44, so those routes keep the store's importer (desktop Import Files… goes through the engine, see `openImportFiles`).
+  // B3-gap: import from bytes / a File's path — `importFiles` imports by PATH; a browser `File` (the picker's <input>, an OS drop, Import Folder) carries none in Electron 44, so those routes keep the store's importer (desktop Import Files… goes through the engine, see `openImportFiles`).
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   // The label menu through the engine (B3z): setItemLabel stores the palette id this panel reads.
   const setLabel = (ids: string[], labelId: string | null): void => {

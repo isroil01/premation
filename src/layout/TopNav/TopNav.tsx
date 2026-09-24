@@ -363,7 +363,7 @@ export function TopNav(): JSX.Element {
     return () => sub.dispose();
   }, []);
 
-  // B3-legacy: engine gap — `importFiles` imports by PATH; the audio picker hands a browser `File` (no path).
+  // B3-gap: import from bytes / a File's path — `importFiles` imports by PATH; the audio picker hands a browser `File` (no path).
   const addAsset = useAssetStore((s) => s.addAsset);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {

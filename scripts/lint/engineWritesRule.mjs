@@ -134,6 +134,7 @@ const NOT_WRITES = new Set([
   'replaceAllInString', 'replaceAllWithRuns', // core/textTools/findReplaceText: return the replaced text / shifted runs (pure; textEdits sends them)
   'applyIk', // core/rig/rigDeform: solves a pose, returns new Bone objects (pure; also used by the renderer)
   'reorderSiblings', // core/scene/parenting: returns a reordered id array (pure; the caller sends reorderLayers)
+  'importLocalAsset', // core/assets/local: content-addresses a File's bytes into the bundle BLOB store and returns a record + src (storage, dedup by hash); it adds no item — assetStore's importer (also the engine's importFiles port) does
 ]);
 const NOT_WRITE_SHAPE = /^create\w*(Player|Renderer|Painter|Port|Cache|Backend|Store)$|ForTests?$/;
 

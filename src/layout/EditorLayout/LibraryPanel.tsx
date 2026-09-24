@@ -40,7 +40,8 @@ import { componentThumb, onComponentThumbReady } from '@core/rendering/component
 import { MOGRAPH_ITEMS, buildMographItem, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
 import { TRANSITION_ITEMS, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { applyTransitionEdit } from './transitionInsertEdits';
-import { SFX_ITEMS, insertSfxItem, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
+import { SFX_ITEMS, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
+import { insertSfxEdit } from './sfxInsertEdits';
 import { LOTTIE_ITEMS, type LottieCategory } from '@core/library/lottieLibrary';
 import { importLottieFileEdit, insertLottieItemEdit } from './lottieInsertEdits';
 import { prepareLottiePreview, drawLottiePreview } from '@core/library/lottiePreview';
@@ -496,9 +497,8 @@ function SoundFXContent(): JSX.Element {
     if (busy) return;
     setBusy(id);
     try {
-      // B3-legacy: engine gap — importFiles without a path: a bundled sound is fetched as bytes
-      // (no file on disk for `importFiles`), then placed as an audio layer at the playhead.
-      const nodeId = await insertSfxItem(id);
+      // The audio layer is one pasteLayers entry; the first insert's item import stays a B3-gap (sfxInsertEdits).
+      const nodeId = await insertSfxEdit(id);
       if (nodeId) notify({ level: 'success', message: `Added Sound FX: ${name}`, durationMs: 1500 });
       else notify({ level: 'warning', message: `Could not add ${name}`, durationMs: 2000 });
     } finally {

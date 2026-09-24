@@ -317,7 +317,7 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     const compId = initialComp.id;
     if (!useProjectStore.getState().comps[compId]) return;
     if (gradientBackgroundChanged(initialComp, s)) {
-      // B3-legacy: engine gap — `setCompositionSettings` refuses `backgroundGradient` until FillPaint is typed, so a save that sets or changes a gradient background writes the whole draft through the store, as one snapshot entry.
+      // B3-gap: the comp background PAINT — `setCompositionSettings` refuses the typed `backgroundGradient`, and the TS engine accepts the JSON `backgroundPaint` field but does not store it (answers ok, records an entry, changes nothing), so a save that sets or changes a gradient background writes the whole draft through the store, as one snapshot entry.
       const draft = s;
       runDocumentEdit('Composition Settings', () => {
         const store = useCompositionStore.getState();

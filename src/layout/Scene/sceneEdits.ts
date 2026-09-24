@@ -331,8 +331,9 @@ export async function deleteCompositionEdit(compId: string): Promise<boolean> {
   const state = useProjectStore.getState();
   if (!state.comps[compId] || defaultSceneGraph.getNode(compId)?.parent) return false;
   if (Object.keys(state.comps).length <= 1 || !isCompItem(compId)) {
-    // B3-legacy: engine gap — deleting the LAST composition re-seeds the empty project's pristine
-    // placeholder comp (AE's "no compositions" state); `removeItems` has no such mode.
+    // B3-gap: a pristine placeholder comp — deleting the LAST composition re-seeds the empty
+    // project's pristine comp (AE's "no compositions" state); `removeItems` has no such mode and
+    // `createComposition` cannot mark a comp `pristine` (CompSettingsPatch has no such field).
     return deleteComposition(compId);
   }
   const res = await edit('Delete Composition', { type: 'removeItems', items: [compId], removeUsingLayers: true });

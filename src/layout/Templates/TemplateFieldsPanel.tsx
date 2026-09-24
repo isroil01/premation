@@ -241,7 +241,7 @@ export function TemplateAuthoringSection(): JSX.Element | null {
 
       {fields.length > 0 && (
         <>
-          {/* B3-legacy: engine gap — authored template fields (label, id, removal) live on the composition ROOT node's props; compositions are items, and no API command addresses comp-root props. */}
+          {/* B3-gap: comp-root template fields — authored fields (label, id, removal) live on the composition ROOT node's props; the schema has `CompSettingsPatch.templateFields` (JSON), but neither engine applies it (the TS `setCompositionSettings` answers ok and stores nothing), so these stay direct writes. */}
           <div className={styles.authoredList}>
             {fields.map((f) => (
               <div key={f.id} className={styles.authoredCard}>

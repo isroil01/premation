@@ -37,9 +37,10 @@ export async function applyTransitionEdit(transId: string, label: string): Promi
       reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
       return null;
     }
-    // B3-legacy: engine gap — per-member keys: layer mode keys the selected layers' member tracks
+    // B3-gap: per-member keyframes — layer mode keys the selected layers' member tracks
     // (x / y / scaleX / scaleY at the recipe's own times), adds a Blur effect and the motion-blur
-    // switch; the API keys a vector property as one value.
+    // switch; the API keys a vector property as one value. (Not `addTransition`: these recipes
+    // are keyframe choreography on any layer, not a cut transition between two bars.)
     return applyTransitionItem(transId);
   }
   const r = made as ApplyTransitionResult | null;
