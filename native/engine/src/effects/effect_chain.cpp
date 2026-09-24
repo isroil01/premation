@@ -22,10 +22,8 @@ using raster::json::Value;
 
 /// Canvas-drawn effects the chain cannot draw yet (canvas2dEffects.ts cases with
 /// no port in canvas_effects.cpp). Reported, never drawn wrong.
-constexpr std::array<std::string_view, 18> kUnportedCanvas{
-    "stroke",   "four-color-gradient", "inner-shadow", "inner-glow",  "satin",          "bevel",
-    "directional-blur", "transform", "beam",       "lens-flare",  "cc-repetile",    "vegas",
-    "numbers",  "timecode",            "audio-spectrum", "audio-waveform", "lightning", "plexus",
+constexpr std::array<std::string_view, 8> kUnportedCanvas{
+    "lens-flare", "vegas", "numbers", "timecode", "audio-spectrum", "audio-waveform", "lightning", "plexus",
 };
 
 /// effectBake.ts DRAWN_CANVAS_EFFECTS: the batch lands before (and is dropped after) these.
@@ -76,6 +74,7 @@ class Chain final {
     const bool fading = fill_opacity < 1;
     if (fading) {
       silhouette_ = scratch();
+      canvas_.silhouette = silhouette_.get();
       Canvas2D& cc = *silhouette_;
       cc.setTransform({});
       (void)cc.setGlobalCompositeOperation("source-over");
@@ -293,7 +292,7 @@ class Chain final {
       if (drawn) flush_batch();
       if (is_pixel_effect(type)) {
         pixel_pass([&](PixelPass& pass) { (void)apply_pixel_effect(type, p, pass); });
-      } else if (!run_canvas_effect(type, p, oc_, w_, h_)) {
+      } else if (!run_canvas_effect(type, p, oc_, w_, h_, canvas_)) {
         report_.unported.push_back(type + ": canvas-drawn effect not ported to raster::Canvas2D yet");
       }
       if (drawn) flush_batch();
@@ -313,6 +312,7 @@ class Chain final {
   bool dirty_ = false;
   std::unique_ptr<Canvas2D> silhouette_;
   std::unique_ptr<Canvas2D> noise_;
+  CanvasEffectContext canvas_;  // declared after silhouette_: it points at it
 };
 
 }  // namespace

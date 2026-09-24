@@ -347,11 +347,12 @@ export class RecordingCanvas {
   /**
    * The canvas's id in the CURRENT program. A canvas kept alive across
    * programs (a painter's module-level scratch pool) re-registers, blank, in
-   * the next one — each program then reads as if it ran in a fresh realm,
-   * which is what the C++ (a pool per bake) does.
+   * the next one, with a fresh context — each program then reads as if it ran
+   * in a fresh realm, which is what the C++ (a pool per bake) does.
    */
   id(): number {
     if (this.cid < 0 || this.sess !== session) {
+      if (this.sess !== null && this.sess !== session) this.ctx = null;
       this.sess = session;
       this.px = null;
       this.cid = session.nextCanvas++;

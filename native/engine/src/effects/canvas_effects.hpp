@@ -14,15 +14,38 @@
 // putImageData (straight RGBA, like the TS's ImageData).
 #pragma once
 
+#include <cstdint>
+#include <memory>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "raster/canvas.hpp"
 #include "raster/json.hpp"
 
 namespace premation::effects {
 
+/// What the drawn effects share across one bake (canvas2dEffects.ts module state).
+class CanvasEffectContext {
+ public:
+  /// `scratch(role, w, h)`: one working canvas per role, reused by every effect
+  /// of the bake that asks for it (resized when the size differs, as the TS
+  /// pool does — which keeps its contents and its context state otherwise).
+  raster::Canvas2D& scratch(const raster::Canvas2D& oc, std::string_view role, std::uint32_t w, std::uint32_t h);
+  /// `withStyleSilhouette`: the alpha the style generators (stroke, the
+  /// interior styles, bevel) shape themselves from; null = the canvas itself.
+  const raster::Canvas2D* silhouette = nullptr;
+
+ private:
+  std::vector<std::pair<std::string, std::unique_ptr<raster::Canvas2D>>> pool_;
+};
+
 /// Draw canvas effect `type` onto `oc`. False when `type` is not ported here.
+bool run_canvas_effect(std::string_view type, const raster::json::Value& params, raster::Canvas2D& oc, double w, double h,
+                       CanvasEffectContext& ctx);
+/// The same with a context of its own (no pool shared with other effects, no silhouette).
 bool run_canvas_effect(std::string_view type, const raster::json::Value& params, raster::Canvas2D& oc, double w, double h);
 
 /// Every effect type `run_canvas_effect` accepts.

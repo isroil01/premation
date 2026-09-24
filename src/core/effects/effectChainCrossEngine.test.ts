@@ -47,9 +47,7 @@ const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/effect_ch
  * case here carries one.
  */
 const NOT_NATIVE = new Set<string>([
-  'stroke', 'four-color-gradient', 'inner-shadow', 'inner-glow', 'satin', 'bevel', 'directional-blur', 'transform',
-  'beam', 'lens-flare', 'cc-repetile', 'vegas', 'numbers', 'timecode', 'audio-spectrum', 'audio-waveform', 'lightning',
-  'plexus',
+  'lens-flare', 'vegas', 'numbers', 'timecode', 'audio-spectrum', 'audio-waveform', 'lightning', 'plexus',
 ]);
 
 type Route = 'lut' | 'css' | 'color' | 'procedural' | 'canvas2d' | 'none';
@@ -313,6 +311,17 @@ function buildCases(): Case[] {
       fx('linear-wipe', { completion: 30, wipeAngle: 20, feather: 6 }), fx('light-sweep', { position: 40, sweepWidth: 20 }),
       fx('radio-waves', { waveCount: 3 }), fx('channel-blur', { redBlurriness: 3, alphaBlurriness: 2 }),
       fx('ellipse', { ellipseWidth: 30, ellipseHeight: 20, rotation: 15 }), fx('light-rays', { rayCount: 7 }),
+    ]],
+    ['styles-over-faded-fill', [
+      fx('stroke', { width: 3, position: 'outside' }), fx('inner-shadow', { distance: 3, softness: 2 }),
+      fx('satin', { size: 3, distance: 4 }), fx('bevel', { size: 3, depth: 150 }), fx('inner-glow', { size: 2 }),
+      fx('stroke', { width: 2, position: 'center', color: '#ff0000' }), fx('stroke', { width: 2, position: 'inside' }),
+    ], 0.4],
+    ['drawn-passes', [
+      fx('four-color-gradient', { blend: 60 }), fx('directional-blur', { length: 6, direction: 30 }),
+      fx('transform', { scale: 80, rotation: 10, positionX: 3 }), fx('beam', { length: 70, thickness: 3 }),
+      fx('cc-repetile', { expandLeft: 5, expandUp: 3.5, tiling: 2 }), fx('satin', { size: 2, distance: 3, invert: true }, { opacity: 70 }),
+      fx('cc-repetile', { expandRight: 4, expandDown: 2, tiling: 1 }),
     ]],
     ['paths-and-brushes', [
       fx('path-stroke', { brushSize: 4, color: '#ff00aa', end: 70 }), fx('scribble', { strokeWidth: 1.5, angle: 30 }),
