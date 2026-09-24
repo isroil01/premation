@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "json.hpp"
+#include "line_break.hpp"
 
 namespace premation::raster {
 
@@ -225,11 +226,6 @@ struct VerticalForm {
 /// verticalForms.ts resolveVerticalForm; `alternates` = the face has a vertical
 /// alternate for this code point (no alias faces here: always false today).
 [[nodiscard]] VerticalForm resolve_vertical_form(const std::string& cluster, bool alternates, bool romanUpright);
-/// lineBreak.ts kinsokuAllows / breakOpportunities (without Intl word joins) / wrapUnits.
-[[nodiscard]] bool kinsoku_allows(const std::vector<std::string>& units, std::size_t i);
-[[nodiscard]] std::vector<bool> break_opportunities(const std::vector<std::string>& units);
-[[nodiscard]] std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const std::vector<double>& lengths, double limit);
-
 struct VerticalLayoutOptions {
   const std::vector<RichRun>* runs = nullptr;
   const std::vector<GlyphTransform>* transforms = nullptr;
@@ -245,10 +241,5 @@ struct VerticalLayoutOptions {
 [[nodiscard]] TextLayout layout_vertical_text(const std::string& text, const TextStyle& base, const MeasureGlyph& measure,
                                               const VerticalLayoutOptions& opts);
 inline constexpr double kSidewaysAngle = std::numbers::pi / 2;
-
-/// verticalForms.ts: Vertical_Orientation of a code point ('U', 'R', 'u' = Tu, 'r' = Tr).
-[[nodiscard]] char vertical_orientation_of(char32_t cp);
-/// lineBreak.ts isIdeographicUnit.
-[[nodiscard]] bool is_ideographic_unit(const std::string& unit);
 
 }  // namespace premation::raster
