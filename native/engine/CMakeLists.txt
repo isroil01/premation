@@ -410,6 +410,21 @@ if(MOTION_BUILD_TESTS)
     target_link_options(engine_d1_parity_tests PRIVATE ${_doc_stack})
   endif()
   add_test(NAME engine_d1_parity_tests COMMAND engine_d1_parity_tests --reporter compact)
+  # F2's exit: the undo parity suite — the replay corpus with its history
+  # probed after every request, then walked (undo/redo/jumps/gestures/
+  # checkpoints/limit), against the TypeScript engine's, byte for byte
+  # (tests/data/undo_parity.bin, written by
+  # src/core/engine/__tests__/undoParity.test.ts).
+  add_executable(engine_undo_parity_tests tests/test_undo_parity.cpp)
+  target_link_libraries(engine_undo_parity_tests PRIVATE engine_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_undo_parity_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  if(MSVC)
+    target_compile_options(engine_undo_parity_tests PRIVATE /bigobj)
+  endif()
+  if(WIN32)
+    target_link_options(engine_undo_parity_tests PRIVATE ${_doc_stack})
+  endif()
+  add_test(NAME engine_undo_parity_tests COMMAND engine_undo_parity_tests --reporter compact)
 endif()
 if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).
