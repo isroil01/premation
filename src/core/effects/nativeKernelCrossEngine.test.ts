@@ -416,7 +416,30 @@ const CASES: Case[] = [
   C('rainfall', 'tall', { amount: 90, length: 30.5, angle: -35, evolution: 260, opacity: 100, seed: 9 }),
   C('light-burst', 'small', { centerX: 3, centerY: -4, intensity: 150, rayLength: 60 }),
   C('light-burst', 'wide', { centerX: -120, centerY: 5, intensity: 80, rayLength: 100 }),
-];function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {
+  // ── aeRoundSevenDistort.ts ──
+  C('cc-tiler', 'small', { scale: 45, centerX: 3, centerY: -2, blendWithOriginal: 0 }),
+  C('cc-tiler', 'wide', { scale: 130, centerX: -50, centerY: 4, blendWithOriginal: 35 }),
+  C('ripple-pulse', 'small', { centerX: -2, centerY: 3, pulseRadius: 14, amplitude: 6, width: 8, renderBump: 1 }),
+  C('ripple-pulse', 'wide', { centerX: 60, centerY: 0, pulseRadius: 120, amplitude: -9, width: 40, renderBump: 0 }),
+  C('radial-scale-wipe', 'small', { completion: 35, centerX: 4, centerY: -6 }),
+  C('radial-scale-wipe', 'tall', { completion: 60, centerX: 0, centerY: 10, reverse: 1 }),
+  C('glass-wipe', 'small', { completion: 45, displacement: 30, softness: 25 }),
+  C('glass-wipe', 'wide', { completion: 70, displacement: 80, softness: 1 }),
+  C('image-wipe', 'small', { completion: 40, borderSoftness: 20, gradientChannel: 0 }),
+  C('image-wipe', 'small', { completion: 55, borderSoftness: 5, gradientChannel: 1, invertGradient: 1 }),
+  C('image-wipe', 'tall', { completion: 30, borderSoftness: 0, gradientChannel: 2 }),
+  C('image-wipe', 'wide', { completion: 65, borderSoftness: 50, gradientChannel: 3 }),
+  C('image-wipe', 'wide', { completion: 50, borderSoftness: 10, gradientChannel: 4, invertGradient: 1 }),
+  // ── aeRoundSevenSimulation.ts ──
+  C('particle-systems', 'small', { time: 2.3, birthRate: 30, longevity: 1.5, producerRadiusX: 4, producerRadiusY: 2, animation: 0, velocity: 25, velocityVariation: 40, gravity: 5, birthSize: 5, deathSize: 1, sizeVariation: 30, opacity: 90, blend: 0, seed: 2 }),
+  C('particle-systems', 'wide', { time: 7.9, birthRate: 60, longevity: 3, producerX: -100, producerRadiusX: 20, producerRadiusY: 3, animation: 2, direction: 290, spread: 60, velocity: 90, velocityVariation: 10, gravity: 12, resistance: 0.8, birthSize: 3, deathSize: 7, opacity: 100, blend: 1, seed: 7, birthR: 40, birthG: 200, birthB: 255 }),
+  C('particle-systems', 'tall', { time: 400, birthRate: 5, longevity: 2, animation: 1, direction: 80, spread: 20, velocity: 15, birthSize: 6, deathSize: 6, opacity: 70, seed: -3 }),
+  C('cc-bubbles', 'small', { bubbleAmount: 30, bubbleSpeed: 200, wobbleAmplitude: 4, bubbleSize: 8, sizeVariation: 50, shading: 0, opacity: 90, evolution: 33, seed: 2 }),
+  C('cc-bubbles', 'small', { bubbleAmount: 12, bubbleSize: 14, shading: 2, colorR: 120, colorG: 200, colorB: 255, evolution: -71, seed: 5 }),
+  C('cc-bubbles', 'wide', { bubbleAmount: 80, bubbleSpeed: 500, wobbleAmplitude: 12, wobbleFrequency: 5, bubbleSize: 6, shading: 1, opacity: 60, evolution: 250, seed: 1 }),
+];
+
+function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {
   // 64-bit FNV-1a in two 32-bit halves (BigInt per byte is slow at 57 kB).
   let hi = 0xcbf29ce4, lo = 0x84222325;
   for (let i = 0; i < bytes.length; i++) {

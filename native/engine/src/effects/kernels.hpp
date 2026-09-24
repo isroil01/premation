@@ -432,4 +432,36 @@ void write_on_path(RgbaView img, std::span<const double> flat, double completion
 void light_burst(RgbaView img, double center_x, double center_y, double intensity, double ray_length,
                  ThreadPool* pool);
 
+// ── aeRoundSevenDistort.ts ──────────────────────────────────────────────────
+void cc_tiler(RgbaView img, double scale, double center_x, double center_y, double blend_with_original,
+              ThreadPool* pool);
+void ripple_pulse(RgbaView img, double center_x, double center_y, double pulse_radius, double amplitude, double width,
+                  bool render_bump, ThreadPool* pool);
+void radial_scale_wipe(RgbaView img, double completion, double center_x, double center_y, bool reverse,
+                       ThreadPool* pool);
+void glass_wipe(RgbaView img, double completion, double displacement, double softness, ThreadPool* pool);
+void image_wipe(RgbaView img, double completion, double border_softness, double gradient_channel,
+                bool invert_gradient, ThreadPool* pool);
+
+// ── aeRoundSevenSimulation.ts ───────────────────────────────────────────────
+/// `ParticleOptions`.
+struct ParticleOptions {
+  double birth_rate = 0, longevity = 0, producer_x = 0, producer_y = 0, producer_radius_x = 0, producer_radius_y = 0,
+         animation = 0, direction = 0, spread = 0, velocity = 0, velocity_variation = 0, gravity = 0, resistance = 0,
+         birth_size = 0, death_size = 0, size_variation = 0;
+  Rgb birth{255, 226, 122};
+  Rgb death{255, 59, 0};
+  double opacity = 0, blend = 0, seed = 0;
+};
+/// `particleSystemsData(src, w, h, time, o)`.
+void particle_systems(RgbaView img, double time, const ParticleOptions& o, ThreadPool* pool);
+/// `bubblesData(src, w, h, …)`'s arguments.
+struct BubbleOptions {
+  double amount = 100, speed = 300, wobble_amplitude = 10, wobble_frequency = 2, size = 12, size_variation = 40,
+         shading = 0;
+  Rgb color{255, 255, 255};
+  double opacity = 80, evolution = 0, seed = 1;
+};
+void bubbles(RgbaView img, const BubbleOptions& o, ThreadPool* pool);
+
 }  // namespace premation::effects

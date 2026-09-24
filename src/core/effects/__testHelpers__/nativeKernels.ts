@@ -58,6 +58,10 @@ import { sharpenData, addNoiseData } from '../canvas2dEffects';
 import { pathStrokeData } from '../pathStroke';
 import { scribbleData } from '../scribble';
 import { writeOnBrushData } from '../writeOnBrush';
+import {
+  ccTilerData, ripplePulseData, radialScaleWipeData, glassWipeData, imageWipeData, type ImageWipeChannel,
+} from '../aeRoundSevenDistort';
+import { particleSystemsData, bubblesData } from '../aeRoundSevenSimulation';
 import { starBurstData, snowfallData, rainfallData, writeOnData, writeOnPathData, lightBurstData } from '../generateRoundFive';
 import { pickMaskPaths, unpackMaskPaths } from '../strokePaint';
 import type { EffectParams } from '../effects';
@@ -597,6 +601,44 @@ function runGenerateKernel(
     case 'light-burst':
       data.set(lightBurstData(data, w, h, n('centerX', 0), n('centerY', 0), n('intensity', 100), n('rayLength', 50)));
       return true;
+    case 'cc-tiler':
+      data.set(ccTilerData(data, w, h, n('scale', 100), n('centerX', 0), n('centerY', 0), n('blendWithOriginal', 0)));
+      return true;
+    case 'ripple-pulse':
+      data.set(ripplePulseData(data, w, h, n('centerX', 0), n('centerY', 0), n('pulseRadius', 0), n('amplitude', 40), n('width', 60), b('renderBump', true)));
+      return true;
+    case 'radial-scale-wipe':
+      data.set(radialScaleWipeData(data, w, h, n('completion', 0), n('centerX', 0), n('centerY', 0), b('reverse', false)));
+      return true;
+    case 'glass-wipe':
+      data.set(glassWipeData(data, w, h, n('completion', 0), n('displacement', 40), n('softness', 30)));
+      return true;
+    case 'image-wipe':
+      data.set(imageWipeData(data, w, h, n('completion', 0), n('borderSoftness', 20), n('gradientChannel', 0) as ImageWipeChannel, b('invertGradient', false)));
+      return true;
+    case 'particle-systems': {
+      const [br, bg, bb] = rgb('birth', [255, 226, 122]);
+      const [dr, dg, db] = rgb('death', [255, 59, 0]);
+      data.set(particleSystemsData(data, w, h, n('time', 0), {
+        birthRate: n('birthRate', 10), longevity: n('longevity', 2), producerX: n('producerX', 0),
+        producerY: n('producerY', 0), producerRadiusX: n('producerRadiusX', 5), producerRadiusY: n('producerRadiusY', 5),
+        animation: n('animation', 0), direction: n('direction', 0), spread: n('spread', 30), velocity: n('velocity', 50),
+        velocityVariation: n('velocityVariation', 20), gravity: n('gravity', 0), resistance: n('resistance', 0),
+        birthSize: n('birthSize', 4), deathSize: n('deathSize', 1), sizeVariation: n('sizeVariation', 0),
+        birthR: br, birthG: bg, birthB: bb, deathR: dr, deathG: dg, deathB: db,
+        opacity: n('opacity', 100), blend: n('blend', 0), seed: n('seed', 0),
+      }));
+      return true;
+    }
+    case 'cc-bubbles': {
+      const [cr, cg, cb] = rgb('color', [255, 255, 255]);
+      data.set(bubblesData(
+        data, w, h, n('bubbleAmount', 100), n('bubbleSpeed', 300), n('wobbleAmplitude', 10), n('wobbleFrequency', 2),
+        n('bubbleSize', 12), n('sizeVariation', 40), n('shading', 0), cr, cg, cb, n('opacity', 80), n('evolution', 0),
+        n('seed', 1),
+      ));
+      return true;
+    }
     default:
       return false;
   }

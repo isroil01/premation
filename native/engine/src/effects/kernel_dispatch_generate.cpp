@@ -13,8 +13,9 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 7> kGenerate{
-    "path-stroke", "scribble", "write-on", "star-burst", "snowfall", "rainfall", "light-burst",
+constexpr std::array<std::string_view, 14> kGenerate{
+    "path-stroke", "scribble",   "write-on",          "star-burst", "snowfall",   "rainfall",         "light-burst",
+    "cc-tiler",    "ripple-pulse", "radial-scale-wipe", "glass-wipe", "image-wipe", "particle-systems", "cc-bubbles",
 };
 
 }  // namespace
@@ -105,6 +106,56 @@ bool run_generate_kernel(std::string_view type, const KernelArgs& a, const Kerne
              rgb("color", {207, 230, 255}), a("seed", 0), pool);
   } else if (type == "light-burst") {
     light_burst(img, a("centerX", 0), a("centerY", 0), a("intensity", 100), a("rayLength", 50), pool);
+  } else if (type == "cc-tiler") {
+    cc_tiler(img, a("scale", 100), a("centerX", 0), a("centerY", 0), a("blendWithOriginal", 0), pool);
+  } else if (type == "ripple-pulse") {
+    ripple_pulse(img, a("centerX", 0), a("centerY", 0), a("pulseRadius", 0), a("amplitude", 40), a("width", 60),
+                 b("renderBump", true), pool);
+  } else if (type == "radial-scale-wipe") {
+    radial_scale_wipe(img, a("completion", 0), a("centerX", 0), a("centerY", 0), b("reverse", false), pool);
+  } else if (type == "glass-wipe") {
+    glass_wipe(img, a("completion", 0), a("displacement", 40), a("softness", 30), pool);
+  } else if (type == "image-wipe") {
+    image_wipe(img, a("completion", 0), a("borderSoftness", 20), a("gradientChannel", 0), b("invertGradient", false),
+               pool);
+  } else if (type == "particle-systems") {
+    ParticleOptions o;
+    o.birth_rate = a("birthRate", 10);
+    o.longevity = a("longevity", 2);
+    o.producer_x = a("producerX", 0);
+    o.producer_y = a("producerY", 0);
+    o.producer_radius_x = a("producerRadiusX", 5);
+    o.producer_radius_y = a("producerRadiusY", 5);
+    o.animation = a("animation", 0);
+    o.direction = a("direction", 0);
+    o.spread = a("spread", 30);
+    o.velocity = a("velocity", 50);
+    o.velocity_variation = a("velocityVariation", 20);
+    o.gravity = a("gravity", 0);
+    o.resistance = a("resistance", 0);
+    o.birth_size = a("birthSize", 4);
+    o.death_size = a("deathSize", 1);
+    o.size_variation = a("sizeVariation", 0);
+    o.birth = rgb("birth", {255, 226, 122});
+    o.death = rgb("death", {255, 59, 0});
+    o.opacity = a("opacity", 100);
+    o.blend = a("blend", 0);
+    o.seed = a("seed", 0);
+    particle_systems(img, a("time", 0), o, pool);
+  } else if (type == "cc-bubbles") {
+    BubbleOptions o;
+    o.amount = a("bubbleAmount", 100);
+    o.speed = a("bubbleSpeed", 300);
+    o.wobble_amplitude = a("wobbleAmplitude", 10);
+    o.wobble_frequency = a("wobbleFrequency", 2);
+    o.size = a("bubbleSize", 12);
+    o.size_variation = a("sizeVariation", 40);
+    o.shading = a("shading", 0);
+    o.color = rgb("color", {255, 255, 255});
+    o.opacity = a("opacity", 80);
+    o.evolution = a("evolution", 0);
+    o.seed = a("seed", 1);
+    bubbles(img, o, pool);
   } else {
     return false;
   }
