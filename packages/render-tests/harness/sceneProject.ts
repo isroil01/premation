@@ -28,6 +28,7 @@ import type { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import type { Scene } from './sceneKit';
 import { useAssetStore } from '@stores/assetStore';
+import { CURRENT_DOCUMENT_VERSION } from '@core/project/migrations';
 
 /** The composition root id a wrapped scene gets (sceneProjectIO's default). */
 export const HARNESS_COMP_ROOT = 'comp_root';
@@ -160,7 +161,10 @@ export function sceneToProject(scene: Scene, graph: SceneGraph, anim: AnimationE
   }
   const mb = scene.motionBlur;
   const document: Record<string, unknown> = {
-    version: '1.1.0',
+    // The CURRENT document version: the scene is authored in memory with today's
+    // code, so it must not be run through the load-time migrations again (1.8.0
+    // stamps every light alloff: 'legacy', which the TypeScript frame never had).
+    version: CURRENT_DOCUMENT_VERSION,
     scene: { version: '1.0.0', nodes },
     animation: anim.snapshot(),
     comps,
