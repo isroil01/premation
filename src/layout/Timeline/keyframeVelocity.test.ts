@@ -8,18 +8,32 @@
  * side you were editing does not, which reads as "the dialog does nothing".
  */
 
+import { act } from '@testing-library/react';
 import { defaultAnimation, POSITION_PSEUDO_PROP } from '@motion/animation';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { incomingSpeed, outgoingSpeed, effectiveBezier, influences } from './speedGraph';
 import { applyKeyframeVelocity, readKeyframeVelocity } from './keyframeVelocity';
 
-const NODE = 'kf_velocity_node';
+// The write goes through the engine API (B3): a real layer in the app engine,
+// its Position keyed through the engine. x runs 0 → 100 → 300 and y a tenth of
+// that, 0 → 10 → 30, over 0..2 s.
+let NODE = '';
+let keyIds: string[] = [];
+let h: Harness & { engine: LocalEngine };
 
-function seedX(): void {
-  defaultAnimation.removeTrack(NODE, 'x');
-  defaultAnimation.setKeyframe(NODE, 'x', 0, 0);
-  defaultAnimation.setKeyframe(NODE, 'x', 1, 100);
-  defaultAnimation.setKeyframe(NODE, 'x', 2, 300);
+/** Apply, then let the engine land the edit the helper sent. */
+async function apply(prop: string, t: number, v: Parameters<typeof applyKeyframeVelocity>[3]): Promise<boolean> {
+  let ok = false;
+  await act(async () => {
+    ok = applyKeyframeVelocity(NODE, prop, t, v);
+    await engineIdle();
+    await engineIdle();
+  });
+  return ok;
 }
 
 function kf(prop: string, t: number) {
@@ -27,18 +41,22 @@ function kf(prop: string, t: number) {
 }
 
 describe('keyframe velocity', () => {
-  beforeAll(() => {
-    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  });
-
-  beforeEach(() => {
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'V', init: [] })).layer;
+    keyIds = (await h.run({
+      type: 'addKeyframes',
+      keys: [[0, 0, 0], [1, 100, 10], [2, 300, 30]].map(([t, x, y]) => ({
+        prop: { layer: NODE, path: 'transform/position' }, time: sec(t!),
+        value: { kind: 'vec2' as const, value: { x: x!, y: y! } }, spatialIn: [], spatialOut: [],
+      })),
+    })).ids;
+    // Each test starts from an empty undo stack.
     getCommandSystem().getHistory().clear();
-    seedX();
   });
 
-  afterEach(() => {
-    defaultAnimation.removeTrack(NODE, 'x');
-    defaultAnimation.removeTrack(NODE, 'y');
+  afterEach(async () => {
+    await h.dispose();
   });
 
   it('reports both sides for a middle keyframe', () => {
@@ -61,9 +79,10 @@ describe('keyframe velocity', () => {
     expect(r!.hasOutgoing).toBe(false);
   });
 
-  it('is null for a lone keyframe — no segment, no velocity', () => {
-    defaultAnimation.removeTrack(NODE, 'x');
-    defaultAnimation.setKeyframe(NODE, 'x', 0, 0);
+  it('is null for a lone keyframe — no segment, no velocity', async () => {
+    await h.run({ type: 'deleteKeyframes', ids: keyIds.slice(1) });
+    expect(kf('x', 0)).toBeDefined();
+    expect(kf('x', 1)).toBeUndefined();
     expect(readKeyframeVelocity(NODE, 'x', 0)).toBeNull();
   });
 
@@ -71,11 +90,11 @@ describe('keyframe velocity', () => {
     expect(readKeyframeVelocity(NODE, 'x', 0.5)).toBeNull();
   });
 
-  it('writes the incoming half onto the PREVIOUS keyframe, the outgoing onto this one', () => {
+  it('writes the incoming half onto the PREVIOUS keyframe, the outgoing onto this one', async () => {
     const before0 = { ...kf('x', 0)! };
     const before1 = { ...kf('x', 1)! };
 
-    applyKeyframeVelocity(NODE, 'x', 1, {
+    await apply('x', 1, {
       inSpeed: 40,
       outSpeed: 500,
       inInfluence: 0.5,
@@ -89,8 +108,8 @@ describe('keyframe velocity', () => {
     expect(kf('x', 2)!.bezier).toBeUndefined();
   });
 
-  it('round-trips the numbers it was given', () => {
-    applyKeyframeVelocity(NODE, 'x', 1, {
+  it('round-trips the numbers it was given', async () => {
+    await apply('x', 1, {
       inSpeed: 40,
       outSpeed: 500,
       inInfluence: 0.5,
@@ -108,29 +127,36 @@ describe('keyframe velocity', () => {
     expect(influences(outB).out).toBeCloseTo(0.25, 4);
   });
 
-  it('records exactly one undo entry for the whole write', () => {
-    const depth = getCommandSystem().getHistory().getIndex() + 1;
-    applyKeyframeVelocity(NODE, 'x', 1, {
+  it('records exactly one undo entry for the whole write, and undo restores both halves', async () => {
+    const before0 = { ...kf('x', 0)! };
+    const before1 = { ...kf('x', 1)! };
+    expect(historyLabels()).toEqual([]);
+    await apply('x', 1, {
       inSpeed: 10,
       outSpeed: 20,
       inInfluence: 0.4,
       outInfluence: 0.4,
     });
-    expect(getCommandSystem().getHistory().getIndex() + 1).toBe(depth + 1);
+    // Two keyframes patched (the previous one's incoming, this one's outgoing), one entry.
+    expect(historyLabels()).toEqual(['Keyframe velocity']);
+    expect(kf('x', 0)!.bezier).not.toEqual(before0.bezier);
+
+    await act(async () => { await h.run({ type: 'undo' }); });
+    expect(kf('x', 0)!.bezier).toEqual(before0.bezier);
+    expect(kf('x', 1)!.bezier).toEqual(before1.bezier);
   });
 
-  it('solves each axis of a merged Position separately for the same speed', () => {
-    // y moves a tenth as far as x over the same segment, so the bezier that
-    // expresses "leaves at 50/s" is necessarily different on each track. One
-    // shared bezier would mean two different speeds, which is the bug.
-    defaultAnimation.setKeyframe(NODE, 'y', 0, 0);
-    defaultAnimation.setKeyframe(NODE, 'y', 1, 10);
-    defaultAnimation.setKeyframe(NODE, 'y', 2, 30);
+  it('solves each axis of a merged Position separately for the same speed', async () => {
+    // y moves a tenth as far as x over the same segment (seeded in beforeEach),
+    // so the bezier that expresses "leaves at 50/s" is necessarily different on
+    // each track. One shared bezier would mean two different speeds, which is the bug.
+    expect(kf('y', 1)!.value).toBe(10);
+    expect(kf('y', 2)!.value).toBe(30);
 
     const r = readKeyframeVelocity(NODE, POSITION_PSEUDO_PROP, 1);
     expect(r!.props).toEqual(expect.arrayContaining(['x', 'y']));
 
-    applyKeyframeVelocity(NODE, POSITION_PSEUDO_PROP, 1, {
+    await apply(POSITION_PSEUDO_PROP, 1, {
       inSpeed: 50,
       outSpeed: 50,
       inInfluence: 1 / 3,

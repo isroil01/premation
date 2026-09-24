@@ -37,7 +37,6 @@ import {
 } from '@motion/animation';
 import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { unsupportedRangeKeys } from '@core/textExpr/applySourceTextResult';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import type { PropRef } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { propRefForTrack } from '@core/engine/propRefs';
@@ -143,12 +142,12 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 
   const commit = (src: string): void => {
     setDraft(src);
-    // B3-legacy: engine gap — `setExpression` stores a FAILING expression
-    // disabled (AE's rule) while this editor keeps it on and shows the error
-    // live; and on a grouped property it sets every member, where this editor
-    // edits one member track.
-    runAnimEdit('Set Expression', () => {
-      defaultAnimation.setExpression(nodeId, prop, src);
+    const t = expressionTarget(nodeId, prop);
+    if (!t) return;
+    // A new expression starts on; an edited one keeps its switch (a failing one
+    // stays as asked and shows its error live — the engine stores it verbatim).
+    void edit(src.trim() === '' ? 'Remove Expression' : 'Set Expression', {
+      type: 'setExpression', prop: t.ref, source: src, enabled: attached ? enabled : true, ...t.member,
     });
   };
 
@@ -301,16 +300,10 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
               className={cn(styles.toggle, !enabled && styles.toggleOff)}
               title={enabled ? 'Disable expression (keeps the formula)' : 'Enable expression'}
               onClick={() => {
-                const ref = soleMemberRef(nodeId, prop);
-                if (ref) {
-                  void edit(enabled ? 'Disable Expression' : 'Enable Expression', {
-                    type: 'setExpressionEnabled', props: [ref], enabled: !enabled,
-                  });
-                  return;
-                }
-                // B3-legacy: engine gap — one member of a grouped property (see commit).
-                runAnimEdit(enabled ? 'Disable Expression' : 'Enable Expression', () => {
-                  defaultAnimation.setExpressionEnabled(nodeId, prop, !enabled);
+                const t = expressionTarget(nodeId, prop);
+                if (!t) return;
+                void edit(enabled ? 'Disable Expression' : 'Enable Expression', {
+                  type: 'setExpressionEnabled', props: [t.ref], enabled: !enabled, ...t.member,
                 });
               }}
             >
@@ -323,15 +316,9 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
               aria-label="Remove expression"
               onClick={() => {
                 setDraft('');
-                const ref = soleMemberRef(nodeId, prop);
-                if (ref) {
-                  void edit('Remove Expression', { type: 'setExpression', prop: ref, source: '', enabled: false });
-                  return;
-                }
-                // B3-legacy: engine gap — one member of a grouped property (see commit).
-                runAnimEdit('Remove Expression', () => {
-                  defaultAnimation.removeExpression(nodeId, prop);
-                });
+                const t = expressionTarget(nodeId, prop);
+                if (!t) return;
+                void edit('Remove Expression', { type: 'setExpression', prop: t.ref, source: '', enabled: false, ...t.member });
               }}
             >
               <Icon name="close" size="sm" />
@@ -481,11 +468,14 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 export default ExpressionEditor;
 
 /**
- * The API property an expression row edits, when the row IS the whole property
- * (a scalar, a data track, a separated dimension). Null for one member of a
- * grouped property: an API expression command would reach every member.
+ * The API property an expression row edits. A row that is one member of a
+ * grouped property (X of an unseparated Position) addresses that dimension
+ * alone (`member`); a scalar, data track or separated dimension is the whole
+ * property.
  */
-function soleMemberRef(nodeId: string, prop: string): PropRef | null {
+function expressionTarget(nodeId: string, prop: string): { ref: PropRef; member: { member?: number } } | null {
   const r = propRefForTrack(nodeId, prop);
-  return r && r.members.length <= 1 ? r.ref : null;
+  if (!r) return null;
+  const one = r.members.length > 1 && r.members.includes(prop);
+  return { ref: r.ref, member: one ? { member: r.member } : {} };
 }

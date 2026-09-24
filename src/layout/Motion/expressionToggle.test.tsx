@@ -23,31 +23,42 @@
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { ExpressionEditor } from './ExpressionEditor';
 import { defaultAnimation } from '@motion/animation';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
-const NODE = 'expr-node';
+// The panel writes through the engine API (B3): a real layer in the app engine.
+let NODE = '';
+let h: Harness & { engine: LocalEngine };
 
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+beforeEach(async () => {
+  h = await setupAppEngine();
   // Providers binds this at boot; without it nothing tells React the engine moved.
   defaultAnimation.setChangeListener((nodeId) =>
     getEventBus().emit('AnimationChanged', { nodeId }),
   );
-});
-
-beforeEach(() => {
-  defaultAnimation.clear();
-  getCommandSystem().getHistory().clear();
+  NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'S', init: [] })).layer;
   // x: 0 → 100 over 0..2s. The panel renders at the store's playhead, which is
   // 0 in a bare test — so the numbers below are read at t=0, where the
   // keyframed value is 0 and the expression's is 200.
   defaultAnimation.setKeyframe(NODE, 'x', 0, 0);
   defaultAnimation.setKeyframe(NODE, 'x', 2, 100);
   defaultAnimation.setExpression(NODE, 'x', 'value + 200');
+  getCommandSystem().getHistory().clear();
 });
 
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+/** Fire, then let the engine apply the edit it sent. */
+const settle = async (fire: () => void): Promise<void> => {
+  await act(async () => { fire(); await engineIdle(); });
+};
 
 const toggle = (): HTMLElement => screen.getByRole('switch', { name: 'Expression enabled' });
 
@@ -76,11 +87,11 @@ describe('the toggle exists and reports the engine state', () => {
 });
 
 describe('clicking the toggle drives the engine, undoably', () => {
-  test('click disables the expression and the property falls back to its keyframes', () => {
+  test('click disables the expression and the property falls back to its keyframes', async () => {
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
     expect(defaultAnimation.sample(NODE, 'x', 1)).toBeCloseTo(250);
 
-    act(() => { fireEvent.click(toggle()); });
+    await settle(() => fireEvent.click(toggle()));
 
     expect(defaultAnimation.isExpressionEnabled(NODE, 'x')).toBe(false);
     expect(defaultAnimation.hasExpression(NODE, 'x')).toBe(true);
@@ -88,23 +99,24 @@ describe('clicking the toggle drives the engine, undoably', () => {
     expect(toggle()).toHaveAttribute('aria-checked', 'false');
   });
 
-  test('clicking twice returns to the original state', () => {
+  test('clicking twice returns to the original state', async () => {
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
-    act(() => { fireEvent.click(toggle()); });
-    act(() => { fireEvent.click(toggle()); });
+    await settle(() => fireEvent.click(toggle()));
+    await settle(() => fireEvent.click(toggle()));
     expect(defaultAnimation.isExpressionEnabled(NODE, 'x')).toBe(true);
     expect(defaultAnimation.sample(NODE, 'x', 1)).toBeCloseTo(250);
   });
 
-  test('the toggle records ONE undoable command, and undo re-enables', () => {
+  test('the toggle records ONE undoable command, and undo re-enables', async () => {
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
     const before = getCommandSystem().getHistory().canUndo();
     expect(before).toBe(false);
 
-    act(() => { fireEvent.click(toggle()); });
+    await settle(() => fireEvent.click(toggle()));
     expect(defaultAnimation.isExpressionEnabled(NODE, 'x')).toBe(false);
+    expect(historyLabels()).toEqual(['Disable Expression']);
 
-    act(() => { getCommandSystem().getHistory().undo(); });
+    await act(async () => { await h.run({ type: 'undo' }); });
     expect(defaultAnimation.isExpressionEnabled(NODE, 'x')).toBe(true);
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('value + 200');
   });
@@ -180,40 +192,42 @@ describe('completion at the caret', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
-  test('Enter accepts the highlighted row and writes the expression through', () => {
+  test('Enter accepts the highlighted row and writes the expression through', async () => {
     const el = render1();
     type(el, 'wig');
-    act(() => { fireEvent.keyDown(el, { key: 'Enter' }); });
+    await settle(() => fireEvent.keyDown(el, { key: 'Enter' }));
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
+    // One dimension of the unseparated Position (`member`), not every one.
+    expect(defaultAnimation.hasExpression(NODE, 'y')).toBe(false);
     // …and the list is gone, so a second Enter is a newline again.
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
-  test('Tab accepts too', () => {
+  test('Tab accepts too', async () => {
     const el = render1();
     type(el, 'wig');
-    act(() => { fireEvent.keyDown(el, { key: 'Tab' }); });
+    await settle(() => fireEvent.keyDown(el, { key: 'Tab' }));
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
   });
 
-  test('the arrows move the highlight, and Enter takes what is highlighted', () => {
+  test('the arrows move the highlight, and Enter takes what is highlighted', async () => {
     const el = render1();
     type(el, 'loop');
     const before = screen.getAllByRole('option').map((o) => o.textContent ?? '');
     act(() => { fireEvent.keyDown(el, { key: 'ArrowDown' }); });
     expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
     expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'false');
-    act(() => { fireEvent.keyDown(el, { key: 'Enter' }); });
+    await settle(() => fireEvent.keyDown(el, { key: 'Enter' }));
     // Whatever row two was, that is what landed — asserted through the list
     // rather than against a hardcoded name, so ranking can change freely.
     const label = (before[1] ?? '').replace(/\(\).*$/, '');
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')?.startsWith(label)).toBe(true);
   });
 
-  test('Escape dismisses without touching the text', () => {
+  test('Escape dismisses without touching the text', async () => {
     const el = render1();
     type(el, 'wig');
-    act(() => { fireEvent.keyDown(el, { key: 'Escape' }); });
+    await settle(() => fireEvent.keyDown(el, { key: 'Escape' }));
     expect(screen.queryByRole('listbox')).toBeNull();
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wig');
   });
@@ -227,18 +241,18 @@ describe('completion at the caret', () => {
     expect(screen.getByRole('listbox')).toBeTruthy();
   });
 
-  test('clicking a row accepts it', () => {
+  test('clicking a row accepts it', async () => {
     const el = render1();
     type(el, 'wig');
-    act(() => { fireEvent.mouseDown(screen.getAllByRole('option')[0]!); });
+    await settle(() => fireEvent.mouseDown(screen.getAllByRole('option')[0]!));
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
   });
 
-  test('a dotted access offers that object’s members', () => {
+  test('a dotted access offers that object’s members', async () => {
     const el = render1();
     type(el, 'thisComp.wi');
     expect(screen.getAllByRole('option')[0]?.textContent).toContain('thisComp.width');
-    act(() => { fireEvent.keyDown(el, { key: 'Enter' }); });
+    await settle(() => fireEvent.keyDown(el, { key: 'Enter' }));
     // The object the user already typed is not duplicated — the bug the
     // insert-at-caret chip strip had in every form.
     expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('thisComp.width');

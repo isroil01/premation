@@ -121,6 +121,8 @@ const NOT_WRITES = new Set([
   'applyTextPath', // pure glyph layout along a path (core/text/textPath)
   'resetProjectWorkspace', // project lifecycle (tabs/timelines), not an edit
   'deleteEffectPreset', 'deletePreset', 'importPresets', 'importPresetObjects', // preset LIBRARY, not the document
+  'resetTransformWrites', // core/scene/layerTransformOps: the Reset defaults as a list (pure; resetEdits sends them)
+  'resetInputFor', // core/scene/layerTransformOps: gathers a layer's Reset inputs (a read)
   'setVertexWeight', // core/rig/weightPaint: returns the next weight map (pure; rigEdits sends skeleton/weightPaint)
   'groupNavigatorFor', // core/mirror/selection: keyframe-navigator state for a property group (a mirror read)
   'distributeMinimum', // core/scene/alignNodes: returns the minimum layer count for a distribute mode

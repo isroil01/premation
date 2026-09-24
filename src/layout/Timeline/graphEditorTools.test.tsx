@@ -21,9 +21,20 @@ import { defaultAnimation, makeKeyframeId } from '@motion/animation';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { easePresetById } from '@core/animation/easePresets';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { getEventBus } from '@core/events/EventBus';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
-const NODE = 'graph-tools';
+// The tools write through the engine API (B3): a real layer in the app engine
+// with three linear Opacity keys (0 → 50 → 100 over 0..2 s), keyed through the
+// engine. Opacity is one scalar track, so the canvas has exactly three diamonds.
+let NODE = '';
+const PROP = 'opacity';
+let keyIds: string[] = [];
+let h: Harness & { engine: LocalEngine };
 
 class NoopResizeObserver {
   observe(): void { /* no layout in jsdom */ }
@@ -32,35 +43,37 @@ class NoopResizeObserver {
 }
 
 beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   globalThis.ResizeObserver ??= NoopResizeObserver as unknown as typeof ResizeObserver;
 });
 
-beforeEach(() => {
-  defaultAnimation.clear();
+beforeEach(async () => {
+  h = await setupAppEngine();
+  // Providers binds this at boot; without it nothing tells React the engine moved.
+  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   useKeyframeSelectionStore.getState().clear();
   useEaseClipboardStore.setState({ easing: 'linear', bezier: undefined, copied: false });
-  defaultAnimation.setKeyframe(NODE, 'x', 0, 0, 'linear');
-  defaultAnimation.setKeyframe(NODE, 'x', 1, 100, 'linear');
-  defaultAnimation.setKeyframe(NODE, 'x', 2, 200, 'linear');
+  NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'G', init: [] })).layer;
+  keyIds = (await h.run({
+    type: 'addKeyframes',
+    keys: [0, 1, 2].map((t) => ({
+      prop: { layer: NODE, path: 'transform/opacity' }, time: sec(t),
+      value: { kind: 'scalar' as const, value: t * 50 }, easing: 'linear' as const, spatialIn: [], spatialOut: [],
+    })),
+  })).ids;
+  getCommandSystem().getHistory().clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   useKeyframeSelectionStore.getState().clear();
-  defaultAnimation.clear();
+  await h.dispose();
 });
 
 let view: ReturnType<typeof render>;
 
-/**
- * The writes resolve the selection to engine keyframe ids first (B3), so they
- * land a few microtasks after the click. NODE is not a scene layer, so the API
- * cannot address it and the legacy writer runs — these tests pin the UI's
- * targeting (the whole selection), which is the same on either path.
- */
+/** Let the engine apply the edit a tool sent (it resolves engine key ids first, B3). */
 async function settle(): Promise<void> {
-  await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+  await act(async () => { await engineIdle(); await engineIdle(); });
 }
 
 const renderGraph = (): ReturnType<typeof render> => {
@@ -94,7 +107,7 @@ function pick(index: number, shiftKey = false): void {
 }
 
 const kfAt = (t: number) =>
-  defaultAnimation.getTrackKeyframes(NODE, 'x')!.find((k) => Math.abs(k.t - t) < 1e-6)!;
+  defaultAnimation.getTrackKeyframes(NODE, PROP)!.find((k) => Math.abs(k.t - t) < 1e-6)!;
 
 describe('the tools appear only with a keyframe in hand', () => {
   it('shows nothing until one is selected, then the whole set', () => {
@@ -131,6 +144,11 @@ describe('the easing-kind selector', () => {
     expect(kfAt(1).easing).toBe('easeOut');
     // Untouched: it was never selected.
     expect(kfAt(2).easing).toBe('linear');
+    // Both keys in ONE undo entry, and undo puts both back.
+    expect(historyLabels()).toHaveLength(1);
+    await act(async () => { await h.run({ type: 'undo' }); });
+    expect(kfAt(0).easing).toBe('linear');
+    expect(kfAt(1).easing).toBe('linear');
   });
 
   it('reads back the kind it wrote — the selector never lies about state', async () => {
@@ -152,7 +170,11 @@ describe('ease copy / paste', () => {
   });
 
   it('carries a curve from one keyframe onto every selected one', async () => {
-    defaultAnimation.setBezier(NODE, 'x', 0, [0.9, 0.02, 0.1, 0.98]);
+    await h.run({
+      type: 'updateKeyframes',
+      patches: [{ id: keyIds[0]!, easing: 'bezier', bezier: { x1: 0.9, y1: 0.02, x2: 0.1, y2: 0.98 }, spatialIn: [], spatialOut: [] }],
+    });
+    getCommandSystem().getHistory().clear();
     renderGraph();
     pick(0);
     fireEvent.click(screen.getByRole('button', { name: 'Copy ease' }));
@@ -164,17 +186,21 @@ describe('ease copy / paste', () => {
 
     expect(kfAt(1).bezier).toEqual([0.9, 0.02, 0.1, 0.98]);
     expect(kfAt(2).bezier).toEqual([0.9, 0.02, 0.1, 0.98]);
+    expect(historyLabels()).toEqual(['Paste keyframe easing']);
   });
 });
 
 describe('rove across time', () => {
-  it('roves an interior keyframe', () => {
+  it('roves an interior keyframe', async () => {
     renderGraph();
     pick(1);
     const rove = screen.getByRole('button', { name: 'Rove across time' });
     expect(rove).not.toBeDisabled();
     fireEvent.click(rove);
+    await settle();
+    // 0 → 50 → 100 is already constant speed, so roving leaves it at 1 s.
     expect(kfAt(1).roving).toBe(true);
+    expect(historyLabels()).toEqual(['Enable roving keyframe']);
   });
 
   it('is disabled on an end keyframe — there is nothing to rove between', () => {
@@ -200,6 +226,7 @@ describe('the ease library popover', () => {
     expect(kfAt(0).bezier).toEqual(easePresetById('expo-out')!.bezier);
     expect(kfAt(1).bezier).toEqual(easePresetById('expo-out')!.bezier);
     expect(kfAt(0).easing).toBe('bezier');
+    expect(historyLabels()).toEqual(['Set keyframe easing: expo-out']);
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Ease library' })).toBeNull();
@@ -209,7 +236,7 @@ describe('the ease library popover', () => {
     renderGraph();
     pick(2);
     expect([...useKeyframeSelectionStore.getState().ids]).toEqual([
-      makeKeyframeId(NODE, 'x', 2),
+      makeKeyframeId(NODE, PROP, 2),
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Ease library' }));
     fireEvent.click(screen.getByRole('button', { name: 'Quint In' }));

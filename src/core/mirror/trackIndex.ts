@@ -64,6 +64,9 @@ export function membersOf(info: PropertyInfo): readonly string[] {
   }
   const mask = /^masks\/([^/]+)\/(feather|opacity|expansion)$/.exec(info.path);
   if (mask) return [`mask.${mask[1]}.${mask[2]}`];
+  // Compositing ▸ Effect Opacity keys on `effect.<id>.fx.opacity` (effects.ts `effectOpacityPath`).
+  const fxOpacity = /^effects\/([^/]+)\/compositing\/opacity$/.exec(info.path);
+  if (fxOpacity) return [`effect.${fxOpacity[1]}.fx.opacity`];
   if (info.dimensions <= 1) return [info.matchName];
   return [];
 }

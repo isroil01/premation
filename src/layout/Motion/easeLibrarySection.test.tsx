@@ -17,37 +17,18 @@ import { EaseLibrarySection } from './EaseLibrarySection';
 import { easeCurvePath, easeCurveGuides, EASE_THUMB } from './easeCurvePath';
 import { EASE_PRESETS, easePresetById } from '@core/animation/easePresets';
 import { useCustomEaseStore } from '@stores/customEaseStore';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 
-const NODE = 'ease-layer';
-const PROP = 'transform.x';
-
-// Applying goes through `runAnimEdit`, so it needs the command system — which is
-// the point: a click here lands as a real undo step, not a raw track write.
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-});
-
-beforeEach(() => {
-  defaultAnimation.clear();
-  defaultAnimation.setKeyframe(NODE, PROP, 0, 0, 'linear');
-  defaultAnimation.setKeyframe(NODE, PROP, 1, 100, 'linear');
-});
-
 afterEach(() => {
   cleanup();
-  defaultAnimation.clear();
   // The saved-curve library is persistent by design, so a test that saves one
   // would otherwise add a chip to every later test's grid.
   useCustomEaseStore.setState({ curves: [] });
   globalThis.localStorage?.clear();
 });
-
-const kfAt0 = () => defaultAnimation.getTrackKeyframes(NODE, PROP)!.find((k) => k.t === 0)!;
 
 describe('easeCurvePath', () => {
   it('starts at the bottom-left and ends at the top-right of the padded box', () => {
@@ -174,13 +155,18 @@ describe('EaseLibrarySection', () => {
     unmount();
 
     // A saved curve is a chip like any other, and applies to the selection.
-    // (Custom curves still paste through the ease clipboard store's writer.)
-    defaultAnimation.setKeyframe(NODE, PROP, 0, 0, 'linear');
-    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(NODE, PROP, 0)]} />);
+    // (Custom curves go through the ease clipboard store's raw-handles write.)
+    const before = historyLabels().length;
+    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(L, OP, 0)]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Snap' }));
-    // Resolves engine key ids first (B3); NODE is not a layer, so the legacy writer lands a few microtasks later.
-    await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
-    expect(kfAt0().bezier).toEqual(custom);
+    await idle();
+    expect(keyAt(0).bezier).toEqual(custom);
+    expect(keyAt(0).easing).toBe('bezier');
+    // One undo entry, and undo takes the curve back off.
+    expect(historyLabels()).toHaveLength(before + 1);
+    expect(historyLabels().at(-1)).toBe('Apply Custom Easing Curve');
+    await h.run({ type: 'undo' });
+    expect(keyAt(0).bezier).toBeUndefined();
   });
 
   it('says where Elastic and Bounce actually live', () => {
