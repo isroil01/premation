@@ -54,7 +54,9 @@ if(Dawn_FOUND)
     src/gpu.cpp
     src/os_ffi.cpp
     src/render/compositor.cpp
+    src/render/frame_cache.cpp
     src/render/render_thread.cpp
+    src/render/vram_ffi.cpp
   )
   if(WIN32)
     target_sources(engine_gpu PRIVATE src/shared_texture_ffi.cpp)
@@ -140,7 +142,7 @@ if(MOTION_BUILD_TESTS)
   add_test(NAME engine_tests COMMAND engine_tests --reporter compact)
 
   if(TARGET engine_gpu)
-    add_executable(engine_gpu_tests tests/test_render.cpp tests/test_render_graph_gpu.cpp)
+    add_executable(engine_gpu_tests tests/test_render.cpp tests/test_render_graph_gpu.cpp tests/test_frame_cache.cpp)
     target_link_libraries(engine_gpu_tests PRIVATE engine_gpu engine_render_graph motion::options Catch2::Catch2WithMain)
     if(MSVC)
       target_compile_options(engine_gpu_tests PRIVATE /bigobj)

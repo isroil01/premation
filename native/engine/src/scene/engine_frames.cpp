@@ -1,9 +1,12 @@
 #include "engine_frames.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <span>
 #include <exception>
 #include <map>
 #include <set>
@@ -234,12 +237,86 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
       file.view.css_height = height;
       file.view.device_pixel_ratio = 1;
     }
+    // D4: a frame is final unless footage on it was drawn from the nearest
+    // decoded frame (playing, MediaTextures preview mode).
+    exact_ = !frame.playing || ps.mediaRefs == 0;
     rg::FrameStats st;
     return renderer_->render_into(file, target, wgpu::TextureFormat::RGBA8Unorm, st, error);
   }
 
+  /// D4: everything that decides the frame's pixels — the encoded
+  /// RenderFrameFile (FrameScene, view, colour, blobs), the texture feed each
+  /// key resolves through (raster drawables, footage paths and source times),
+  /// the font families and the slot size. The draw is a pure function of these
+  /// (CLAUDE.md determinism), so equal keys draw equal pixels.
+  [[nodiscard]] std::optional<std::uint64_t> content_key(const BuiltFrame& frame, std::uint32_t width,
+                                                         std::uint32_t height) const override {
+    // One writer reused across frames: encoding allocates only when a frame
+    // outgrows the last one. The raster specs' JSON text is a per-frame
+    // string per texture request (small, bounded by the layer count).
+    keyWriter_.clear();
+    api::encode(keyWriter_, frame.file);
+    ContentHash h;
+    h.bytes(keyWriter_.bytes());
+    h.u64(width);
+    h.u64(height);
+    for (const TextureRequest& t : frame.textures) {
+      h.str(t.key);
+      h.u64(static_cast<std::uint64_t>(t.kind));
+      if (!t.spec.is_undefined()) h.str(js::stringify(t.spec));
+      h.f64(t.resolutionScale);
+      h.f64(t.padding);
+      h.str(t.src);
+      h.f64(t.sourceTime);
+      h.u64((t.video ? 1U : 0U) | (t.premultiplied ? 2U : 0U));
+      h.f64(t.compFps);
+    }
+    for (const std::string& f : frame.fontFamilies) h.str(f);
+    return h.value();
+  }
+
+  [[nodiscard]] bool last_frame_exact() const override { return exact_; }
+
  private:
+  /// A fast 64-bit content hash (8 bytes per step, multiply-xorshift mix): the
+  /// file can carry megabytes of mesh and environment blobs, so byte-wise
+  /// FNV would cost milliseconds per frame. Not cryptographic; a collision
+  /// shows a wrong cached frame, at ~2^-64 per pair.
+  class ContentHash {
+   public:
+    void bytes(std::span<const std::uint8_t> b) {
+      std::size_t i = 0;
+      for (; i + 8 <= b.size(); i += 8) {
+        std::uint64_t w = 0;
+        std::memcpy(&w, b.data() + i, 8);
+        mix(w);
+      }
+      std::uint64_t tail = 0;
+      if (i < b.size()) std::memcpy(&tail, b.data() + i, b.size() - i);
+      mix(tail ^ (static_cast<std::uint64_t>(b.size()) << 56U));
+    }
+    void str(std::string_view s) { bytes({reinterpret_cast<const std::uint8_t*>(s.data()), s.size()}); }  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): chars → bytes
+    void u64(std::uint64_t v) { mix(v); }
+    void f64(double v) { mix(std::bit_cast<std::uint64_t>(v)); }
+    [[nodiscard]] std::uint64_t value() const {
+      std::uint64_t x = h_;
+      x ^= x >> 33U;
+      x *= 0xff51afd7ed558ccdULL;
+      x ^= x >> 33U;
+      return x;
+    }
+
+   private:
+    void mix(std::uint64_t w) {
+      h_ ^= w * 0x9e3779b97f4a7c15ULL;
+      h_ = std::rotl(h_, 27) * 0xc2b2ae3d27d4eb4fULL + 0x165667b19e3779f9ULL;
+    }
+    std::uint64_t h_ = 0x243f6a8885a308d3ULL;
+  };
+
   explicit ViewportDrawer(const EngineFramesOptions& o) : fonts_(o) {}
+  mutable wire::Writer keyWriter_;
+  bool exact_ = false;
   Fonts fonts_;
   std::unique_ptr<rg::SceneRenderer> renderer_;
   std::unique_ptr<SceneTextures> textures_;

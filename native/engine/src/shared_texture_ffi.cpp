@@ -126,7 +126,13 @@ bool SharedTexturePool::init(const Gpu& gpu, std::uint32_t width, std::uint32_t 
     wgpu::TextureDescriptor desc{};
     desc.size = {width, height, 1};
     desc.format = wgpu::TextureFormat::RGBA8Unorm;
-    desc.usage = wgpu::TextureUsage::RenderAttachment;
+    // D4: copies in (a frame-cache hit) and out (a drawn frame kept) where the
+    // imported memory allows them; without them the cache simply never hits.
+    wgpu::SharedTextureMemoryProperties props{};
+    slot.memory.GetProperties(&props);
+    const wgpu::TextureUsage copies = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
+    desc.usage = wgpu::TextureUsage::RenderAttachment | (props.usage & copies);
+    slot.copyable = (props.usage & copies) == copies;
     slot.texture = slot.memory.CreateTexture(&desc);
     slot.view = slot.texture.CreateView();
     slot.remoteHandle = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(remote));

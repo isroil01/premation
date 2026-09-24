@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "compositor.hpp"
+#include "frame_cache.hpp"
 #include "frame_ring.hpp"
 #include "frame_scene.hpp"
 #include "gpu.hpp"
@@ -43,10 +44,25 @@ class BuiltFrameDrawer {
   /// Encode + submit the frame into `target` (RGBA8Unorm, width × height).
   virtual bool draw(const BuiltFrame& frame, const wgpu::TextureView& target, std::uint32_t width,
                     std::uint32_t height, std::string& error) = 0;
+
+  /// D4: the frame's content key for the frame cache (frame_cache.hpp) — equal
+  /// keys draw identical pixels into a width × height slot. nullopt = do not cache.
+  [[nodiscard]] virtual std::optional<std::uint64_t> content_key(const BuiltFrame& /*frame*/, std::uint32_t /*width*/,
+                                                                 std::uint32_t /*height*/) const {
+    return std::nullopt;
+  }
+  /// D4: whether the frame `draw` just drew is final — false while footage on
+  /// it may show a nearest decoded frame instead of the exact one.
+  [[nodiscard]] virtual bool last_frame_exact() const { return false; }
 };
+
+/// RenderOptions::frameCacheBytes: size the cache from the adapter (frame_cache.hpp).
+inline constexpr std::size_t kFrameCacheAuto = static_cast<std::size_t>(-1);
 
 struct RenderOptions {
   std::uint32_t slots = 3;
+  /// D4 frame cache budget in bytes; kFrameCacheAuto = default_frame_cache_budget, 0 = off.
+  std::size_t frameCacheBytes = kFrameCacheAuto;
   /// Makes the drawer for built frames on the render thread's device (null = C2's quads only).
   std::function<std::unique_ptr<BuiltFrameDrawer>(const Gpu& gpu, std::string& error)> makeDrawer;
   std::uint32_t hostPid = 0;     // Electron main; shared handles are duplicated into it
@@ -81,6 +97,8 @@ class RenderThread final : public FrameSink {
   [[nodiscard]] RenderCounters counters() const override;
   [[nodiscard]] std::string adapter() const override;
   [[nodiscard]] std::string backend() const override;
+  /// D4: the frame cache's counters (zeros when the cache is off).
+  [[nodiscard]] FrameCacheStats cache_stats() const;
 
  private:
   struct SlotSet;
@@ -107,6 +125,7 @@ class RenderThread final : public FrameSink {
   std::optional<Gpu> gpu_;
   std::unique_ptr<Compositor> compositor_;
   std::unique_ptr<BuiltFrameDrawer> drawer_;
+  std::unique_ptr<FrameCache> cache_;
   std::unique_ptr<SlotSet> slots_;
   std::vector<std::unique_ptr<SlotSet>> retired_;
   std::uint32_t generation_ = 0;
@@ -114,6 +133,7 @@ class RenderThread final : public FrameSink {
 
   // Counters (m_).
   RenderCounters counters_;
+  FrameCacheStats cacheStats_;
   std::uint64_t windowFrames_ = 0;
   double windowGpuMs_ = 0;
   std::chrono::steady_clock::time_point windowStart_ = std::chrono::steady_clock::now();
