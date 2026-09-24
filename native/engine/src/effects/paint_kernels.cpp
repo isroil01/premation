@@ -24,10 +24,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kInf = std::numeric_limits<double>::infinity();
 
-double hyp(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hyp(double a, double b) { return jhypot2(a, b); }
 
 // ── strokePaint.ts ──────────────────────────────────────────────────────────
 

@@ -19,10 +19,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kSqrt1_2 = 0.7071067811865476;  // Math.SQRT1_2
 
-double hyp(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hyp(double a, double b) { return jhypot2(a, b); }
 
 double fract(double v) { return v - std::floor(v); }
 

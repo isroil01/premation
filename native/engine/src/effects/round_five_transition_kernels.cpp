@@ -15,10 +15,7 @@ namespace {
 
 constexpr double kPi = 3.141592653589793;
 
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 
 void clear(RgbaView img) { std::fill(img.data.begin(), img.data.end(), std::uint8_t{0}); }
 

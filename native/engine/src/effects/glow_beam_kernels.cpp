@@ -22,10 +22,7 @@ constexpr double kReach = 4;       // DEEP_GLOW_REACH
 constexpr double kPenUp = 1e9;     // BEAM_PEN_UP
 constexpr std::size_t kBeamMaxPoints = 64;
 
-double hyp(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hyp(double a, double b) { return jhypot2(a, b); }
 
 double srgb_to_linear01(double c) { return c <= 0.04045 ? c / 12.92 : js::pow((c + 0.055) / 1.055, 2.4); }
 

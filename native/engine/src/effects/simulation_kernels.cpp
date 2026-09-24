@@ -18,10 +18,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kMaxParticles = 512;
 
-double hyp(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hyp(double a, double b) { return jhypot2(a, b); }
 
 struct Particle {
   double x, y, size, r, g, b, alpha;

@@ -15,10 +15,7 @@ namespace {
 
 constexpr double kPi = 3.141592653589793;
 
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 
 }  // namespace
 
@@ -172,22 +169,35 @@ void drizzle(RgbaView img, double drip_rate, double ripple_height, double spread
   }
   const double band_w = std::max(3.0, spread * 0.08);
   const double freq = kPi / (band_w * 0.6);
-  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
-    double ox = 0;
-    double oy = 0;
+  const double reach = band_w * 2.5;
+  // A drop is skipped (`continue`) when |r − ringR| > reach. r = hypot(vx, vy)
+  // is never below |vx| or |vy| (in floating point too), so |vy| − ringR >
+  // reach rules a drop out for the whole row and |vx| − ringR > reach for the
+  // pixel, before any hypot. Culled drops are exactly the ones the TS skips;
+  // the survivors accumulate in drop order, so the sums are unchanged.
+  remap_rgba_rows(img, pool, [&](double dy) {
+    std::vector<const Drop*> row;
     for (const Drop& d : drops) {
-      const double vx = dx - d.x;
-      const double vy = dy - d.y;
-      const double r = hypot2(vx, vy);
-      const double off = r - d.ring_r;
-      if (std::fabs(off) > band_w * 2.5 || r < 1e-3) continue;
-      const double env = js::exp(-(off * off) / (2 * band_w * band_w));
-      const double wave = js::sin(off * freq) * d.amp * env;
-      ox += (vx / r) * wave;
-      oy += (vy / r) * wave;
+      if (!(std::fabs(dy - d.y) - d.ring_r > reach)) row.push_back(&d);
     }
-    if (ox == 0 && oy == 0) return RemapPt{dx, dy};
-    return RemapPt{dx + ox, dy + oy};
+    return [row = std::move(row), dy, reach, band_w, freq](double dx, double) -> std::optional<RemapPt> {
+      double ox = 0;
+      double oy = 0;
+      for (const Drop* d : row) {
+        const double vx = dx - d->x;
+        if (std::fabs(vx) - d->ring_r > reach) continue;
+        const double vy = dy - d->y;
+        const double r = hypot2(vx, vy);
+        const double off = r - d->ring_r;
+        if (std::fabs(off) > reach || r < 1e-3) continue;
+        const double env = js::exp(-(off * off) / (2 * band_w * band_w));
+        const double wave = js::sin(off * freq) * d->amp * env;
+        ox += (vx / r) * wave;
+        oy += (vy / r) * wave;
+      }
+      if (ox == 0 && oy == 0) return RemapPt{dx, dy};
+      return RemapPt{dx + ox, dy + oy};
+    };
   });
 }
 

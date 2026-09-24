@@ -19,10 +19,7 @@ namespace premation::effects {
 
 namespace {
 
-double hyp(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hyp(double a, double b) { return jhypot2(a, b); }
 
 // ── bezierWarp.ts ───────────────────────────────────────────────────────────
 

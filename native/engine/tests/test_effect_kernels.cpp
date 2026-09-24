@@ -8,6 +8,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <bit>
+#include <cmath>
+#include <limits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +22,7 @@
 #include <vector>
 
 #include "effects/kernel_dispatch.hpp"
+#include "jsmath.hpp"
 #include "raster/json.hpp"
 
 namespace fx = premation::effects;
@@ -129,6 +133,48 @@ TEST_CASE("effect kernels: C++ equals the TS kernels byte for byte, 1 thread and
     INFO(k);
     CHECK(covered.count(std::string(k)) == 1);
   }
+}
+
+TEST_CASE("effect kernels: jhypot2 is motion::js::hypot bit for bit", "[effects][math]") {
+  std::uint64_t s = 0x9e3779b97f4a7c15ULL;
+  const auto next = [&] {
+    s ^= s << 13U;
+    s ^= s >> 7U;
+    s ^= s << 17U;
+    return s;
+  };
+  const auto same = [](double a, double b) {
+    const std::array<double, 2> v{a, b};
+    const double want = motion::js::hypot(v);
+    const double got = fx::jhypot2(a, b);
+    return (std::isnan(want) && std::isnan(got)) || std::bit_cast<std::uint64_t>(want) == std::bit_cast<std::uint64_t>(got);
+  };
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (const auto& [a, b] : std::array<std::array<double, 2>, 9>{{{0, 0}, {-0.0, 0}, {3, 4}, {inf, nan}, {nan, -inf},
+                                                                  {nan, 1}, {1e-310, 3e-310}, {1e300, 1e300}, {-5, 5}}}) {
+    CHECK(same(a, b));
+  }
+  int bad = 0;
+  for (int i = 0; i < 200000; ++i) {
+    // Pixel-scale offsets and arbitrary finite doubles.
+    const double a = static_cast<double>(static_cast<std::int64_t>(next() % 8000001) - 4000000) / 1024.0;
+    const double b = static_cast<double>(static_cast<std::int64_t>(next() % 8000001) - 4000000) / 3.0;
+    const double c = std::bit_cast<double>(next() & 0x7FEFFFFFFFFFFFFFULL);
+    const double d = std::bit_cast<double>(next() & 0xFFEFFFFFFFFFFFFFULL);
+    if (!same(a, b) || !same(c, d) || !same(a, c)) ++bad;
+  }
+  CHECK(bad == 0);
+  // ji32 (the kernels' inline ToInt32) against motion::js::to_int32, over
+  // hash-scale sums, huge magnitudes and every exponent.
+  int bad32 = 0;
+  for (int i = 0; i < 200000; ++i) {
+    const double a = static_cast<double>(static_cast<std::int64_t>(next() % 20001) - 10000) * 374761393.0 +
+                     static_cast<double>(static_cast<std::int64_t>(next() % 20001) - 10000) * 668265263.0;
+    const double c = std::bit_cast<double>(next() & 0xFFEFFFFFFFFFFFFFULL);
+    if (fx::ji32(a) != motion::js::to_int32(a) || fx::ji32(c) != motion::js::to_int32(c)) ++bad32;
+  }
+  CHECK(bad32 == 0);
 }
 
 TEST_CASE("effect kernels: the thread pool covers every row exactly once", "[effects][pool]") {

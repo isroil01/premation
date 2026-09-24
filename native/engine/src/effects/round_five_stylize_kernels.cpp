@@ -19,10 +19,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kDeg = kPi / 180;
 
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 
 /// `gradAt(field, w, h, x, y)`.
 std::array<double, 2> grad_at(const std::vector<float>& f, int w, int h, int x, int y) {
@@ -275,6 +272,10 @@ void vector_blur(RgbaView img, double amount, double angle_offset, double smooth
   const double sin_r = js::sin(rot);
   const int K = static_cast<int>(std::max(2.0, std::min(24.0, js::round(amount))));
   const double step = amount / K;
+  const auto taps = static_cast<std::size_t>(2 * K + 1);
+  // |flow| ≤ 1 (a rotated unit vector), so every tap is within
+  // max(w, h) + K·step (+ rounding slack) of the origin.
+  const bool fast_round = std::max(w, h) + 2 * K * step < 1125899906842624.0;  // 2^50
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
@@ -292,21 +293,40 @@ void vector_blur(RgbaView img, double amount, double angle_offset, double smooth
         }
         std::uint8_t* o = out + idx4(x, y, w);
         if (fx == 0 && fy == 0) continue;  // source pixel, already in place
-        std::array<double, 4> acc{};
-        double cnt = 0;
-        for (int k = -K; k <= K; ++k) {
-          const double sx = round_index(x + fx * k * step);
-          const double sy = round_index(y + fy * k * step);
-          if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
+        // The TS sums bytes in doubles: at most 49 · 255 per channel, exact
+        // either way, so integer sums give the same quotient.
+        std::array<std::uint32_t, 4> acc{};
+        std::uint32_t cnt = 0;
+        const auto take = [&](double sx, double sy) {
+          if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
           const std::uint8_t* s = src.data() + idx4(static_cast<int>(sx), static_cast<int>(sy), w);
-          for (std::size_t c = 0; c < 4; ++c) acc[c] += s[c];
-          cnt += 1;
+          acc[0] += s[0];
+          acc[1] += s[1];
+          acc[2] += s[2];
+          acc[3] += s[3];
+          ++cnt;
+        };
+        if (fast_round) {
+          // Every tap coordinate is inside ±2^50, where `Math.round` is the
+          // branch-free round_js_small: all taps' coordinates in one
+          // vectorisable pass, then the gather in tap order.
+          std::array<double, 49> txs{};
+          std::array<double, 49> tys{};
+          for (int k = -K; k <= K; ++k) {
+            const auto i = static_cast<std::size_t>(k + K);
+            txs[i] = round_js_small(x + fx * k * step);
+            tys[i] = round_js_small(y + fy * k * step);
+          }
+          for (std::size_t i = 0; i < taps; ++i) take(txs[i], tys[i]);
+        } else {
+          for (int k = -K; k <= K; ++k) take(round_index(x + fx * k * step), round_index(y + fy * k * step));
         }
         if (cnt == 0) {
           o[0] = o[1] = o[2] = o[3] = 0;
           continue;
         }
-        for (std::size_t c = 0; c < 4; ++c) o[c] = u8c(clamp255(acc[c] / cnt));
+        const double n = cnt;
+        for (std::size_t c = 0; c < 4; ++c) o[c] = u8c(clamp255(acc[c] / n));
       }
     }
   });

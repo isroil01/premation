@@ -4,6 +4,8 @@
 // arithmetic with ToInt32 / ToUint32 at the bit operators).
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <vector>
 
 #include "kernels.hpp"
@@ -50,35 +52,6 @@ inline double hash01_warp(double x, double y, double seed) {
 }
 
 inline double smooth(double t) { return t * t * (3 - 2 * t); }
-
-inline double value_noise2(double x, double y, double seed) {
-  const double xi = floor_fast(x);
-  const double yi = floor_fast(y);
-  const double fx = smooth(x - xi);
-  const double fy = smooth(y - yi);
-  const double a = hash01_warp(xi, yi, seed);
-  const double b = hash01_warp(xi + 1, yi, seed);
-  const double c = hash01_warp(xi, yi + 1, seed);
-  const double d = hash01_warp(xi + 1, yi + 1, seed);
-  const double top = a + (b - a) * fx;
-  const double bot = c + (d - c) * fx;
-  return (top + (bot - top) * fy) * 2 - 1;
-}
-
-inline double fbm(double x, double y, double seed, double octaves) {
-  double total = 0;
-  double amp = 1;
-  double freq = 1;
-  double max_a = 0;
-  const int n = static_cast<int>(clampd(std::floor(octaves), 1, 6));
-  for (int i = 0; i < n; ++i) {
-    total += value_noise2(x * freq, y * freq, seed + i * 101) * amp;
-    max_a += amp;
-    amp *= 0.5;
-    freq *= 2;
-  }
-  return total / max_a;
-}
 
 /// stylize.ts `valueNoise` hash — `>>` (arithmetic) where warp.ts has `>>>`,
 /// a seed term of ~1.4e18 (the sum rounds), and / (2^32 − 1).
@@ -131,6 +104,68 @@ void wave_warp(RgbaView img, double wave_height, double wave_width, double direc
   });
 }
 
+namespace {
+
+/// warp.ts `fbm(X, Y, seed, octaves)` (octaves of `valueNoise2`, seed + i·101,
+/// amplitude halving) along one row: Y is fixed, X only grows, so
+/// each octave's lattice row (yi, fy) is computed once per row and the four
+/// corner hashes are reused while X stays in the same lattice cell. The
+/// arithmetic per sample is `fbm`'s own, in its order; only repeated hash
+/// evaluations of the same integer corner are skipped.
+class FbmRow {
+ public:
+  FbmRow(double y, double seed, double octaves) : seed_(seed) {
+    n_ = static_cast<int>(clampd(std::floor(octaves), 1, 6));
+    double freq = 1;
+    for (int i = 0; i < n_; ++i) {
+      Oct& o = oct_[static_cast<std::size_t>(i)];
+      const double yv = y * freq;
+      o.yi = floor_fast(yv);
+      o.fy = smooth(yv - o.yi);
+      o.seed = seed_ + i * 101;
+      freq *= 2;
+    }
+  }
+  double at(double x) {
+    double total = 0;
+    double amp = 1;
+    double freq = 1;
+    double max_a = 0;
+    for (int i = 0; i < n_; ++i) {
+      Oct& o = oct_[static_cast<std::size_t>(i)];
+      const double xv = x * freq;
+      const double xi = floor_fast(xv);
+      const double fx = smooth(xv - xi);
+      if (!(xi == o.xi)) {
+        o.xi = xi;
+        o.a = hash01_warp(xi, o.yi, o.seed);
+        o.b = hash01_warp(xi + 1, o.yi, o.seed);
+        o.c = hash01_warp(xi, o.yi + 1, o.seed);
+        o.d = hash01_warp(xi + 1, o.yi + 1, o.seed);
+      }
+      const double top = o.a + (o.b - o.a) * fx;
+      const double bot = o.c + (o.d - o.c) * fx;
+      total += ((top + (bot - top) * o.fy) * 2 - 1) * amp;
+      max_a += amp;
+      amp *= 0.5;
+      freq *= 2;
+    }
+    return total / max_a;
+  }
+
+ private:
+  struct Oct {
+    double yi = 0, fy = 0, seed = 0;
+    double xi = std::numeric_limits<double>::quiet_NaN();
+    double a = 0, b = 0, c = 0, d = 0;
+  };
+  double seed_;
+  int n_ = 1;
+  std::array<Oct, 6> oct_{};
+};
+
+}  // namespace
+
 void turbulent_displace(RgbaView img, double amount, double size, double complexity, double evolution,
                         ThreadPool* pool) {
   if (amount == 0 || size <= 0) return;
@@ -142,9 +177,11 @@ void turbulent_displace(RgbaView img, double amount, double size, double complex
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
     for (int y = y0; y < y1; ++y) {
+      FbmRow fx_noise(y * inv, 7, complexity);
+      FbmRow fy_noise(y * inv + ev, 131, complexity);
       for (int x = 0; x < w; ++x) {
-        const double nx = fbm(x * inv + ev, y * inv, 7, complexity) * amount;
-        const double ny = fbm(x * inv, y * inv + ev, 131, complexity) * amount;
+        const double nx = fx_noise.at(x * inv + ev) * amount;
+        const double ny = fy_noise.at(x * inv) * amount;
         bilinear(src.data(), w, h, x - nx, y - ny, out + idx4(x, y, w));
       }
     }
@@ -165,10 +202,11 @@ void curl_noise(RgbaView img, double amount, double size, double complexity, dou
   for_rows(pool, h + 2, [&](int r0, int r1) {
     for (int r = r0; r < r1; ++r) {
       const int y = r - 1;
+      FbmRow row(y * inv - ev, 53, complexity);
       for (int c = 0; c < pw; ++c) {
         const int x = c - 1;
         psi[static_cast<std::size_t>(r) * static_cast<std::size_t>(pw) + static_cast<std::size_t>(c)] =
-            fbm(x * inv + ev, y * inv - ev, 53, complexity);
+            row.at(x * inv + ev);
       }
     }
   });

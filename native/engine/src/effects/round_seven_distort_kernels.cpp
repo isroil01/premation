@@ -18,10 +18,7 @@ namespace {
 
 constexpr double kPi = 3.141592653589793;
 
-double hyp(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hyp(double a, double b) { return jhypot2(a, b); }
 
 /// `pmod(a, m)`: `((a % m) + m) % m`.
 double pmod(double a, double m) { return std::fmod(std::fmod(a, m) + m, m); }

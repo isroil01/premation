@@ -4,6 +4,7 @@
 // through a canvas drawImage: it stays with the canvas-drawn effects.)
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <optional>
 #include <vector>
 
@@ -19,10 +20,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kDeg = kPi / 180;
 
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 double hypot3(double a, double b, double c) {
   const std::array<double, 3> v{a, b, c};
   return js::hypot(v);
@@ -188,10 +186,12 @@ void cc_composite(RgbaView img, double opacity, double blend_mode, bool rgb_only
 }
 
 void cc_scatterize(RgbaView img, double amount, double wind_x, double wind_y, double twist, double seed,
-                   ThreadPool* /*pool*/) {
+                   ThreadPool* pool) {
   // A FORWARD scatter: pixels later in scan order overwrite earlier ones that
-  // land on the same destination, so the scan stays serial to keep the TS's
-  // winner (rows cannot be split without changing which write lands last).
+  // land on the same destination. The expensive part — each source pixel's
+  // destination (two hashes, a hypot, fdlibm cos / sin) — depends only on the
+  // source pixel, so it is computed for all pixels across the pool first; the
+  // writes then run serially in scan order, so the TS's last writer wins.
   if (amount <= 0.001) return;
   const int w = img.w;
   const int h = img.h;
@@ -199,29 +199,34 @@ void cc_scatterize(RgbaView img, double amount, double wind_x, double wind_y, do
   const double twist_rad = twist * kDeg;
   const double cx = w / 2.0;
   const double cy = h / 2.0;
+  constexpr std::uint32_t kNone = 0xFFFFFFFFU;
+  std::vector<std::uint32_t> dest(img.pixels(), kNone);
+  const std::uint8_t* in = img.data.data();
+  for_rows(pool, h, [&](int y0, int y1) {
+    for (int y = y0; y < y1; ++y) {
+      for (int x = 0; x < w; ++x) {
+        if (in[idx4(x, y, w) + 3] == 0) continue;
+        const double h1 = hash2(x + seed * 997, y + seed * 997);
+        const double h2 = hash2(y + seed * 613, x + seed * 613);
+        const double dist = h1 * amt;
+        const double ang = h2 * kPi * 2 + twist_rad * (hypot2(x - cx, y - cy) / std::max(1.0, cx));
+        const double dx = js::cos(ang) * dist + (wind_x * amt) / 100;
+        const double dy = js::sin(ang) * dist + (wind_y * amt) / 100;
+        const double dest_x = round_index(x + dx);
+        const double dest_y = round_index(y + dy);
+        if (dest_x >= 0 && dest_x < w && dest_y >= 0 && dest_y < h) {
+          dest[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] =
+              static_cast<std::uint32_t>(dest_y) * static_cast<std::uint32_t>(w) + static_cast<std::uint32_t>(dest_x);
+        }
+      }
+    }
+  });
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   std::fill(img.data.begin(), img.data.end(), std::uint8_t{0});
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      const std::uint8_t* s = src.data() + idx4(x, y, w);
-      if (s[3] == 0) continue;
-      const double h1 = hash2(x + seed * 997, y + seed * 997);
-      const double h2 = hash2(y + seed * 613, x + seed * 613);
-      const double dist = h1 * amt;
-      const double ang = h2 * kPi * 2 + twist_rad * (hypot2(x - cx, y - cy) / std::max(1.0, cx));
-      const double dx = js::cos(ang) * dist + (wind_x * amt) / 100;
-      const double dy = js::sin(ang) * dist + (wind_y * amt) / 100;
-      const double dest_x = round_index(x + dx);
-      const double dest_y = round_index(y + dy);
-      if (dest_x >= 0 && dest_x < w && dest_y >= 0 && dest_y < h) {
-        std::uint8_t* d = out + idx4(static_cast<int>(dest_x), static_cast<int>(dest_y), w);
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
-        d[3] = s[3];
-      }
-    }
+  for (std::size_t i = 0; i < dest.size(); ++i) {
+    if (dest[i] == kNone) continue;
+    std::memcpy(out + static_cast<std::size_t>(dest[i]) * 4, src.data() + i * 4, 4);
   }
 }
 
@@ -234,36 +239,71 @@ void radial_fast_blur(RgbaView img, double amount, double center_x, double cente
   const double cy = h / 2.0 + center_y;
   const double amt = (amount / 100) * 0.8;
   constexpr int kSteps = 16;
+  // A tap's source column depends only on (x, step) and its row only on
+  // (y, step): vx = cx − x, vy = cy − y. Both are tabulated once, with the
+  // TS's rounding and clamping, so the per-pixel loop is gathers and sums.
+  std::array<std::vector<std::uint32_t>, kSteps> col;
+  std::array<std::vector<std::size_t>, kSteps> row;
+  std::array<double, kSteps> step_w{};
+  for (std::size_t s = 0; s < kSteps; ++s) {
+    const double frac = (static_cast<double>(s) / kSteps) * amt;
+    col[s].resize(static_cast<std::size_t>(w));
+    row[s].resize(static_cast<std::size_t>(h));
+    for (int x = 0; x < w; ++x) {
+      const double vx = cx - x;
+      col[s][static_cast<std::size_t>(x)] = static_cast<std::uint32_t>(
+          std::min(static_cast<double>(w - 1), std::max(0.0, round_index(x + vx * frac))));
+    }
+    for (int y = 0; y < h; ++y) {
+      const double vy = cy - y;
+      row[s][static_cast<std::size_t>(y)] =
+          static_cast<std::size_t>(std::min(static_cast<double>(h - 1), std::max(0.0, round_index(y + vy * frac)))) *
+          static_cast<std::size_t>(w);
+    }
+    step_w[s] = 1 - (static_cast<double>(s) / kSteps) * 0.5;
+  }
+  // `weight *= 1 + lum·2` (Bright) / `1 + (1 − lum)·2` (Dark) with
+  // lum = (r + g + b) / 765: a function of the byte sum, tabulated.
+  std::vector<double> lum_gain(766, 1.0);
+  for (std::size_t sum = 0; sum < lum_gain.size(); ++sum) {
+    const double lum = static_cast<double>(sum) / (255.0 * 3);
+    lum_gain[sum] = m == 1 ? 1 + lum * 2 : 1 + (1 - lum) * 2;
+  }
+  // Standard mode's weights do not depend on the pixel: neither does their sum.
+  double std_total = 0;
+  for (const double sw : step_w) std_total += sw;
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
     for (int y = y0; y < y1; ++y) {
+      std::array<const std::uint8_t*, kSteps> rows{};
+      for (std::size_t s = 0; s < kSteps; ++s) rows[s] = src.data() + row[s][static_cast<std::size_t>(y)] * 4;
       for (int x = 0; x < w; ++x) {
-        const double vx = cx - x;
-        const double vy = cy - y;
         double r_acc = 0;
         double g_acc = 0;
         double b_acc = 0;
         double a_acc = 0;
         double total = 0;
-        for (int s = 0; s < kSteps; ++s) {
-          const double frac = (static_cast<double>(s) / kSteps) * amt;
-          const double sx = std::min(static_cast<double>(w - 1), std::max(0.0, round_index(x + vx * frac)));
-          const double sy = std::min(static_cast<double>(h - 1), std::max(0.0, round_index(y + vy * frac)));
-          const std::uint8_t* p = src.data() + idx4(static_cast<int>(sx), static_cast<int>(sy), w);
-          double weight = 1 - (static_cast<double>(s) / kSteps) * 0.5;
-          if (m == 1) {
-            const double lum = (p[0] + p[1] + p[2]) / (255.0 * 3);
-            weight *= 1 + lum * 2;
-          } else if (m == 2) {
-            const double lum = (p[0] + p[1] + p[2]) / (255.0 * 3);
-            weight *= 1 + (1 - lum) * 2;
+        if (m == 0) {
+          for (std::size_t s = 0; s < kSteps; ++s) {
+            const std::uint8_t* p = rows[s] + static_cast<std::size_t>(col[s][static_cast<std::size_t>(x)]) * 4;
+            const double weight = step_w[s];
+            r_acc += p[0] * weight;
+            g_acc += p[1] * weight;
+            b_acc += p[2] * weight;
+            a_acc += p[3] * weight;
           }
-          r_acc += p[0] * weight;
-          g_acc += p[1] * weight;
-          b_acc += p[2] * weight;
-          a_acc += p[3] * weight;
-          total += weight;
+          total = std_total;
+        } else {
+          for (std::size_t s = 0; s < kSteps; ++s) {
+            const std::uint8_t* p = rows[s] + static_cast<std::size_t>(col[s][static_cast<std::size_t>(x)]) * 4;
+            const double weight = step_w[s] * lum_gain[static_cast<std::size_t>(p[0] + p[1] + p[2])];
+            r_acc += p[0] * weight;
+            g_acc += p[1] * weight;
+            b_acc += p[2] * weight;
+            a_acc += p[3] * weight;
+            total += weight;
+          }
         }
         std::uint8_t* o = out + idx4(x, y, w);
         if (total > 0) {
