@@ -54,8 +54,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const SINGLETONS = new Set(['defaultSceneGraph', 'defaultAnimation']);
 
-/** A @core module is an engine reader when its own source mentions one of these. */
-const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useProjectStore|useCompositionStore|useAssetStore|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
+/**
+ * A @core module is an engine reader when its own source mentions one of these —
+ * or reads `useProjectStore` AND mentions `comps` (the same test the store rule D
+ * applies at a call site: the project store's tabs, dirty flags and active tab
+ * are editor session state; its `comps` records are the document).
+ */
+const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useCompositionStore|useAssetStore|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
+const PROJECT_STORE_MARKER = /\buseProjectStore\b/;
+const PROJECT_COMPS_MARKER = /\bcomps\b/;
 
 /** @core modules that are the sanctioned seam or UI state, never counted. */
 const SEAM_MODULES = [
@@ -163,6 +170,16 @@ const PURE_READS = new Set([
  */
 const WORKSPACE_READS = new Set(['getNodeScreenPlacement', 'sceneNodes', 'hitTestScreen', 'scene']);
 
+/**
+ * Engine-side TOOL operations the viewport dispatches pointer / wheel input to
+ * (src/core/workspace — the write ratchet's `tools/core` area, camera
+ * navigation): they move the camera layer or change view state. They are not
+ * reads for display; the reads they make happen inside the tool port, which
+ * leaves the page with the engine (D5). Resolving WHICH camera a gesture will
+ * move (`findNavTarget`, `resolveOrbitPivot`, …) stays counted.
+ */
+const TOOL_DISPATCH = new Set(['orbitNavBy', 'trackNavBy', 'dollyNavBy', 'smoothDollyNavBy', 'cancelSmoothDolly']);
+
 /** Document stores. `useProjectStore` only counts where the read mentions `comps`. */
 const DOC_STORES = new Set(['useCompositionStore', 'useAssetStore', 'useSceneStore', 'useMotionBlurStore']);
 
@@ -212,7 +229,7 @@ export function isEngineReaderModule(source) {
           // Comments do not read anything.
           .replace(/\/\*[\s\S]*?\*\//g, '')
           .replace(/(^|[^:])\/\/.*$/gm, '$1');
-        out = ENGINE_MARKER.test(text);
+        out = ENGINE_MARKER.test(text) || (PROJECT_STORE_MARKER.test(text) && PROJECT_COMPS_MARKER.test(text));
       } catch {
         out = false;
       }
@@ -294,6 +311,7 @@ const rule = {
       if (DOC_STORES.has(name) || name === 'useProjectStore') return null; // counted as store reads
       if (!isEngineReaderModule(imp.source)) return null;
       if (PURE_READS.has(name)) return null;
+      if (TOOL_DISPATCH.has(name) && imp.source.startsWith('@core/workspace/')) return null; // tool dispatch, not a read
       if (WRITE_VERB.test(name)) return null; // a write: the write ratchet counts it
       if (/^[A-Z_0-9]+$/.test(name)) return null; // a constant table
       return name;

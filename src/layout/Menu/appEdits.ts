@@ -202,10 +202,13 @@ function refsFor(nodeId: string, tracks: readonly string[]): TrackRef[] | null {
   return out;
 }
 
-/** A property is animated — member tracks for numbers, the data track for text / paths / gradients. */
-function refAnimated(nodeId: string, r: TrackRef, track: string): boolean {
-  if (r.members.length === 0) return defaultAnimation.isDataAnimated(nodeId, track) || defaultAnimation.isAnimated(nodeId, track);
-  return r.members.some((m) => defaultAnimation.isAnimated(nodeId, m));
+/**
+ * A property is animated: the document mirror holds keys for its API property
+ * (B4 — one key list per property: any member track keyed for numbers, the data
+ * track for text / paths / gradients).
+ */
+function refAnimated(nodeId: string, r: TrackRef): boolean {
+  return documentMirror().keyframes(nodeId, r.ref.path).length > 0;
 }
 
 /**
@@ -218,7 +221,7 @@ export async function propertyKeyToggleEdit(nodeId: string, prop: string, second
   if (tracks.length === 0) return true;
   const refs = refsFor(nodeId, tracks);
   if (!refs) return false;
-  const animated = refs.filter((r, i) => refAnimated(nodeId, r, tracks[i] ?? prop)).map((r) => r.ref);
+  const animated = refs.filter((r) => refAnimated(nodeId, r)).map((r) => r.ref);
   if (animated.length === 0) return true;
   const at = await keyIdsAt(animated, seconds);
   if (at.length > 0) {
@@ -242,10 +245,7 @@ export async function propertyStopwatchEdit(nodeId: string, props: readonly stri
   if (node.switches.locked) return true;
   const refs = refsFor(nodeId, props);
   if (!refs || refs.length === 0 || refs.some((r) => !r.animatable)) return false;
-  const anyAnimated = props.some((p, i) => {
-    const r = trackRef(nodeId, p);
-    return !!r && refAnimated(nodeId, r, props[i]!);
-  });
+  const anyAnimated = refs.some((r) => refAnimated(nodeId, r));
   const time = compTime(seconds);
   await edit(anyAnimated ? 'Disable animation' : 'Enable animation', refs.map((r) => ({ type: 'setAnimated', prop: r.ref, animated: !anyAnimated, time }) as Command));
   return true;
