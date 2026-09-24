@@ -2,9 +2,10 @@
  * The batch-fill panel.
  *
  * Its logic is thin on purpose — parsing and coercion are unit-tested in
- * `dataTable.test.ts` / `dataFill.test.ts`. What is only testable HERE is the
- * wiring: that a bad file reports next to the picker instead of vanishing into
- * a toast, that stepping rows applies the row you are looking at, and that a
+ * `dataTable.test.ts` / `dataFill.test.ts`, the engine edit in
+ * `templateFieldEdits.test.ts`. What is only testable HERE is the wiring:
+ * that a bad file reports next to the picker instead of vanishing into a
+ * toast, that stepping rows applies the row you are looking at, and that a
  * field with no column gets a warning rather than silently keeping its authored
  * value on every row.
  *
@@ -24,8 +25,10 @@ type FillResult = { filled: string[]; skippedKind: string[]; failed: string[] };
 const applyDataRow = jest.fn<FillResult, [readonly TemplateField[], Row, string?]>(
   () => ({ filled: ['name'], skippedKind: [], failed: [] }),
 );
-jest.mock('@core/template/dataFill', () => ({
-  applyDataRow: (fields: readonly TemplateField[], row: Row, label?: string) =>
+// The row is applied through the engine (templateFieldEdits.ts, tested there);
+// this file is about the panel's wiring, so the edit is mocked at its module.
+jest.mock('./templateFieldEdits', () => ({
+  fillDataRowEdit: async (fields: readonly TemplateField[], row: Row, label?: string) =>
     applyDataRow(fields, row, label),
 }));
 

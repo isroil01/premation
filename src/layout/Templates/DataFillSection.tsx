@@ -2,9 +2,9 @@
  * Batch fill — load a table, step through its rows.
  *
  * The reachable half of data-driven templates. `dataTable.ts` parses and
- * `dataFill.ts` applies; this is only the surface, deliberately, so the rules
- * about quoting and coercion stay unit-tested rather than tangled in a
- * component.
+ * `templateFieldEdits.ts` applies (one engine batch per row); this is only the
+ * surface, deliberately, so the rules about quoting and coercion stay
+ * unit-tested rather than tangled in a component.
  *
  * ── Stepping AND rendering ─────────────────────────────────────────────
  * Applying a row is instant and reversible, so stepping through rows lets you
@@ -29,12 +29,13 @@ import { Input } from '@components/Input';
 import { Dropdown } from '@components/Dropdown';
 import { useUIStore } from '@stores/uiStore';
 import { parseDataTable, matchColumns, DataTableError, type DataTable } from '@core/template/dataTable';
-import { applyDataRow } from '@core/template/dataFill';
 import { patternVariesPerRow, OutputPatternError, resolveOutputName } from '@core/template/batchRender';
 import { BATCH_FORMATS, batchFileName, runEditorBatchRender } from '@core/template/batchRenderEditor';
 import { canChooseOutputDir, useRenderQueueStore } from '@stores/renderQueueStore';
 import type { OutputFormat } from '@core/export/renderJob';
 import type { TemplateField } from '@core/template/templateTypes';
+import { getTime } from '@stores/playbackClockStore';
+import { fillDataRowEdit } from './templateFieldEdits';
 import styles from './DataFillSection.module.css';
 
 /**
@@ -95,16 +96,17 @@ export function DataFillSection({ fields }: { fields: ReadonlyArray<TemplateFiel
     if (!table || batch) return;
     const r = table.rows[index];
     if (!r) return;
-    // B3-legacy: engine gap — template fields bind arbitrary component props (text content, colours, image sources); no generic component-prop binding in the API yet.
-    const result = applyDataRow(fields, r, `Fill row ${index + 1}`);
     setRow(index);
-    if (result.filled.length === 0) {
-      notify('Nothing in that row matched a field', 'warning');
-    } else if (result.failed.length > 0) {
-      notify(`Filled ${result.filled.length}, ${result.failed.length} could not be read`, 'warning');
-    } else {
-      notify(`Filled ${result.filled.length} field${result.filled.length === 1 ? '' : 's'}`);
-    }
+    // ONE engine batch for the row (templateFieldEdits.ts) — one undo entry.
+    void fillDataRowEdit(fields, r, `Fill row ${index + 1}`, getTime()).then((result) => {
+      if (result.filled.length === 0) {
+        notify('Nothing in that row matched a field', 'warning');
+      } else if (result.failed.length > 0) {
+        notify(`Filled ${result.filled.length}, ${result.failed.length} could not be read`, 'warning');
+      } else {
+        notify(`Filled ${result.filled.length} field${result.filled.length === 1 ? '' : 's'}`);
+      }
+    });
   };
 
   /**

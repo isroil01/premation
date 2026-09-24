@@ -35,7 +35,9 @@ import { cloudProjectsEnabled } from '@core/config/edition';
 import { customPrompt } from '@components/Modal';
 import { useUIStore } from '@stores/uiStore';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { useTemplateStore } from '@stores/templateStore';
+import { useTemplateStore, type TemplateFieldSend } from '@stores/templateStore';
+import { useGesture } from '@hooks/useGesture';
+import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { DataFillSection } from './DataFillSection';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -361,6 +363,16 @@ function FieldRow({ field }: { field: TemplateField }): JSX.Element {
   const value = useTemplateStore((s) => s.values[field.id]);
   const setField = useTemplateStore((s) => s.setField);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Engine route (templateFieldEdits.ts): a colour drag / number scrub is ONE
+  // gesture, a typing session (first keystroke → blur) is ONE undo entry; a
+  // typed number or a click is one `edit`.
+  const eng = useEngineEdit();
+  const typing = useGesture();
+  const label = `Edit ${field.label}`;
+  const typeInto: TemplateFieldSend = (l, cmds) => {
+    if (!typing.isActive()) typing.begin(l);
+    typing.send(cmds);
+  };
 
   const onPickImage = (e: ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0];
@@ -377,22 +389,26 @@ function FieldRow({ field }: { field: TemplateField }): JSX.Element {
       {field.kind === 'text' && (
         <Input
           value={String(value ?? '')}
-          onChange={(e) => setField(field.id, e.target.value)}
+          onChange={(e) => setField(field.id, e.target.value, typeInto)}
+          onBlur={() => { void typing.end(); }}
           aria-label={field.label}
         />
       )}
       {field.kind === 'color' && (
-        <ColorPicker
-          value={String(value ?? '#000000')}
-          onChange={(hex) => setField(field.id, hex)}
-          className={styles.colorTrigger}
-          aria-label={field.label}
-        />
+        <span style={{ display: 'contents' }} {...eng.press(label)}>
+          <ColorPicker
+            value={String(value ?? '#000000')}
+            onChange={(hex) => setField(field.id, hex, eng.send)}
+            className={styles.colorTrigger}
+            aria-label={field.label}
+          />
+        </span>
       )}
       {field.kind === 'number' && (
         <ValueField
           value={Number(value ?? 0)}
-          onChange={(v) => setField(field.id, v)}
+          {...eng.scrub(label)}
+          onChange={(v) => setField(field.id, v, eng.send)}
           aria-label={field.label}
         />
       )}

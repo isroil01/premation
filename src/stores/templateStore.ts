@@ -1,8 +1,9 @@
 /**
  * Template store — the active fill-in-the-blanks template and its field values.
  * `apply` builds a template's scene and seeds the value map from field defaults;
- * `setField` writes the change through the scene graph (templateFields) and keeps
- * the value map in sync so the panel's controls stay live.
+ * `setField` writes the change through the engine API (templateFieldEdits.ts —
+ * the caller's `send` puts it in a typing / scrub gesture) and keeps the value
+ * map in sync so the panel's controls stay live.
  */
 
 import { create } from 'zustand';
@@ -16,12 +17,19 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { liveKf } from '@core/template/templates/builders';
 import { engine } from '@core/engine/engineInstance';
-import { reportEngineError } from '@core/engine/uiEdits';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { buildLayerFragment } from '@core/engine/offDocument';
 import { layerIdsOfComp } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { hexToColor } from '@core/engine/model';
+import { isMediaField, templateFieldCommands } from '@layout/Templates/templateFieldEdits';
+import { getTime } from './playbackClockStore';
 import { useSelectionStore } from './selectionStore';
+
+/** Where a field's commands go: a gesture of the caller's control, else one `edit`. */
+export type TemplateFieldSend = (label: string, cmds: Command[]) => void;
+
+const editNow: TemplateFieldSend = (label, cmds) => { void edit(label, cmds); };
 
 interface TemplateState {
   /** The template currently loaded for fill-in editing, or null (gallery view). */
@@ -36,7 +44,11 @@ interface TemplateState {
   /** Enter fill-in mode for the CURRENT composition using the fields the user
    *  authored on it (no rebuild — the scene already exists). No-op if none. */
   previewAuthored: () => void;
-  setField: (fieldId: string, value: string | number) => void;
+  /**
+   * Write one field (one undo entry, or into the caller's gesture through
+   * `send`). A field the engine does not address is left as it is.
+   */
+  setField: (fieldId: string, value: string | number, send?: TemplateFieldSend) => void;
   /** Leave fill-in mode (back to the gallery); the built scene stays as-is. */
   exit: () => void;
 }
@@ -130,14 +142,20 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       values,
     });
   },
-  setField: (fieldId, value) => {
+  setField: (fieldId, value, send = editNow) => {
     const t = get().active;
     const field = t?.fields.find((f) => f.id === fieldId);
     if (!field) return;
-    // B3-legacy: engine gap — Mograph template fields: a field targets an arbitrary component prop
-    // (text content, fill colour) or fills a media slot (source swap + reframe to the slot rect);
-    // no command addresses either (generic component-prop binding; replaceLayerSource has no fit).
-    writeTemplateField(field, value);
+    const cmds = templateFieldCommands(field, value, getTime());
+    if (cmds) {
+      send(`Edit ${field.label}`, cmds);
+    } else if (isMediaField(field)) {
+      // B3-legacy: engine gap — a media slot fill is a picked browser `File` (a blob URL, no path:
+      // no import from bytes) plus a reframe to the slot rect (`replaceLayerSource` has no fit).
+      writeTemplateField(field, value);
+    } else {
+      return;
+    }
     set((s) => ({ values: { ...s.values, [fieldId]: value } }));
   },
   exit: () => set({ active: null, values: {} }),
