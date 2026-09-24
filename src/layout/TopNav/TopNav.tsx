@@ -29,18 +29,20 @@ import { toolShortcut, toolLabelWithShortcut } from './toolShortcuts';
 import { useElementWidth } from './useElementWidth';
 import { collapseFor } from './toolbarCollapse';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { insertPrimitive, insertAudio, insertImageSequence, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { insertPrimitive, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { insertMediaEdit } from '@layout/Workspace/footageEdits';
+import { typewriterEdit } from '@layout/Text/textEdits';
+import { TEXT_RIGS, insertImageSequenceEdit, textRigEdit } from './topNavEdits';
 import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFileEdit } from '@layout/EditorLayout/lottieInsertEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets } from '@core/animation/animationPresets';
 import { applyAnimationPresetEdit, createLayerEdit } from '@layout/Menu/appEdits';
-import { applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
 import { applyBounce, describeBounce, revealBounce } from '@core/animation/bounce';
 import { useBounceStore, currentSquash } from '@stores/bounceStore';
 import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
@@ -221,18 +223,19 @@ function buildAnimateItems(
   return [
     ...presetItems,
     { type: 'separator' },
-    // B3-legacy: not converted — the text-animator rigs (animator + selectors + keyed selector params) belong with the text area's animator migration; as engine commands they need each new group id mid-macro (a gesture of addPropertyGroup / addKeyframes).
-    { type: 'item', id: 'anim-typewriter', label: 'Typewriter (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTypewriter(id, playhead)) notify('Typewriter rig created'); } },
-    { type: 'item', id: 'anim-bounce-in-words', label: 'Bounce In Words (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyBounceInWords(id, playhead)) notify('Bounce In Words rig created'); } },
-    { type: 'item', id: 'anim-spin-fade-chars', label: 'Spin & Fade Characters (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applySpinFadeCharacters(id, playhead)) notify('Spin & Fade Characters rig created'); } },
-    { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created'); } },
+    // Text-animator rigs: addPropertyGroup (animator + init) then the selector's options and keys, one entry.
+    { type: 'item', id: 'anim-typewriter', label: 'Typewriter (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { void typewriterEdit(id, playhead).then((ok) => { if (ok) notify('Typewriter rig created'); }); } },
+    { type: 'item', id: 'anim-bounce-in-words', label: 'Bounce In Words (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { void textRigEdit(id, TEXT_RIGS.bounceInWords, playhead).then((ok) => { if (ok) notify('Bounce In Words rig created'); }); } },
+    { type: 'item', id: 'anim-spin-fade-chars', label: 'Spin & Fade Characters (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { void textRigEdit(id, TEXT_RIGS.spinFadeCharacters, playhead).then((ok) => { if (ok) notify('Spin & Fade Characters rig created'); }); } },
+    { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { void textRigEdit(id, TEXT_RIGS.trackingReveal, playhead).then((ok) => { if (ok) notify('Tracking Reveal rig created'); }); } },
     { type: 'separator' },
     { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { void getCommandSystem().execute(asCommandId('animation.easyEaseAll')); } },
     // Applies the settings the Bounce section in the Graph panel is showing —
     // the menu is a shortcut to that panel's current shape, not a second,
     // hardcoded bounce. `applyBounce` (not `bounceKeyframes`) so the item is
     // never a no-op: with nothing to rebound from it generates the fall too.
-    // B3-legacy: engine gap — the Bounce generator (keys + squash, ounce.ts) is not ported to commands (it reads back its own writes to place the rebounds).
+    // B3-legacy: engine gap — per-member keys: the Bounce generator (bounce.ts) keys Position / Scale member tracks at
+    // different times (and reads back its own writes to place the rebounds); the API keys a vector as one value.
     { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); const r = applyBounce(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }); if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { void getCommandSystem().execute(asCommandId('animation.timeReverseKeyframes')); } },
     // Sequence / stagger live as registered commands (Animation menu + palette);
@@ -254,7 +257,8 @@ function buildAnimateItems(
         id: `anim-control-${k.kind}`,
         label: k.label,
         onSelect: () => {
-          // B3-legacy: engine gap — expression controls (named `ctrl()` props on the Transform) have no API group type (`listGroupTypes` has none).
+          // B3-legacy: engine gap — expression controls (named `ctrl()` props on the Transform) have no API group type:
+          // `addPropertyGroup` answers unsupported for every expression-control match name (`listGroupTypes` has none).
           const name = addControl(id, k.kind);
           if (!name) return;
           // Multi-component kinds expose several names, so tell the user what
@@ -359,21 +363,23 @@ export function TopNav(): JSX.Element {
     return () => sub.dispose();
   }, []);
 
-  // B3-legacy: engine gap — `importFiles` imports by PATH; the pickers below hand browser `File`s (no path), and `createLayer` has no media fitting / image-sequence / Lottie conversion.
+  // B3-legacy: engine gap — `importFiles` imports by PATH; the audio picker hands a browser `File` (no path).
   const addAsset = useAssetStore((s) => s.addAsset);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
     if (!file) return;
     const asset = await addAsset(file);
-    insertAudio(asset);
+    // The layer through the media insert router: one pasteLayers, one entry.
+    await insertMediaEdit([asset]);
   };
   const seqInputRef = useRef<HTMLInputElement | null>(null);
   const onPickSequence = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ''; // allow re-picking the same set
     if (files.length < 2) return;
-    await insertImageSequence(files);
+    // Frames are object URLs on the layer (no import): built off-document, one pasteLayers.
+    await insertImageSequenceEdit(files);
   };
   const lottieInputRef = useRef<HTMLInputElement | null>(null);
   const onPickLottie = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -724,8 +730,8 @@ export function TopNav(): JSX.Element {
                 }
                 items={[
                   // The shape / text inserts (pointer placement, comp-scaled size) run off-document → ONE pasteLayers entry.
-                  { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => { void insertBuiltLayers('New Shape Layer', activeCompRootId(), () => insertPrimitive('shape', 'Shape')); } },
-                  { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => { void insertBuiltLayers('New Text Layer', activeCompRootId(), () => insertPrimitive('text', 'Text')); } },
+                  { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New Shape Layer', t.comp, () => insertPrimitive('shape', 'Shape')); } },
+                  { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New Text Layer', t.comp, () => insertPrimitive('text', 'Text')); } },
                   { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'solid', onSelect: () => openSolidSettings({ mode: 'new' }) },
                   { type: 'separator' },
                   { type: 'item', id: 'new-group', label: 'Group', icon: 'layers', onSelect: () => { void createLayerEdit('group', { name: 'Group', label: 'New Group' }); } },

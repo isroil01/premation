@@ -34,6 +34,10 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import { engineIdle } from '@core/engine/engineInstance';
+import { catalogFor } from '@core/engine/props';
 
 const NODE = 'wire-node';
 const COMMAND_ID = 'animation.convertExpressionToKeyframes';
@@ -84,6 +88,42 @@ const command = () => buildStaticCommands().find((c) => c.id === COMMAND_ID);
  */
 const run = (): void => { void command()!.execute({} as never); };
 
+/**
+ * The command bakes through the engine API (`convertExpressionToKeyframes`,
+ * one undo entry), so executing it needs the app's engine and a layer made
+ * through it — the expressions set with the engine's own `setExpression`, on
+ * the member the legacy track names. The layer is selected.
+ */
+async function engineLayerWith(exprs: Record<string, string>): Promise<{ h: Harness; layer: string }> {
+  const h = await setupAppEngine();
+  const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'L', init: [] });
+  const cat = catalogFor(layer);
+  for (const [track, source] of Object.entries(exprs)) {
+    const b = cat.byMember.get(track)!;
+    await h.run({
+      type: 'setExpression', prop: { layer, path: b.path }, source, enabled: true,
+      ...(b.members.length > 1 ? { member: b.members.indexOf(track) } : {}),
+    });
+  }
+  await engineIdle();
+  useSelectionStore.getState().set([layer]);
+  return { h, layer };
+}
+
+/** Run the command, and check it made ONE undo entry that undo takes back whole. */
+async function runAsOneEntry(h: Harness): Promise<() => Promise<void>> {
+  const before = h.doc();
+  const entries = historyLabels().length;
+  run();
+  await engineIdle();
+  expect(historyLabels().slice(entries)).toEqual(['Convert Expression to Keyframes']);
+  return async () => {
+    await h.run({ type: 'undo' });
+    await engineIdle();
+    expect(h.doc()).toBe(before);
+  };
+}
+
 describe('the command', () => {
   test('is registered under the id the menu names', () => {
     expect(command()).toBeDefined();
@@ -106,16 +146,20 @@ describe('the command', () => {
     expect(command()!.enabled?.()).toBe(false);
   });
 
-  test('EXECUTING it bakes — not merely "the id exists"', () => {
-    defaultAnimation.setExpression(NODE, 'x', 'time * 90');
-    useSelectionStore.getState().set([NODE]);
+  test('EXECUTING it bakes — not merely "the id exists"', async () => {
+    const { h, layer } = await engineLayerWith({ x: 'time * 90' });
+    try {
+      const undoRestores = await runAsOneEntry(h);
 
-    run();
+      expect(defaultAnimation.isAnimated(layer, 'x')).toBe(true);
+      expect(defaultAnimation.isExpressionEnabled(layer, 'x')).toBe(false);
+      expect(defaultAnimation.getExpressionSrc(layer, 'x')).toBe('time * 90');
+      expect(defaultAnimation.sample(layer, 'x', 0.5)).toBeCloseTo(45);
 
-    expect(defaultAnimation.isAnimated(NODE, 'x')).toBe(true);
-    expect(defaultAnimation.isExpressionEnabled(NODE, 'x')).toBe(false);
-    expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('time * 90');
-    expect(defaultAnimation.sample(NODE, 'x', 0.5)).toBeCloseTo(45);
+      await undoRestores();
+    } finally {
+      await h.dispose();
+    }
   });
 });
 
@@ -188,14 +232,17 @@ describe('the property context menu', () => {
     expect(defaultAnimation.isExpressionEnabled(NODE, 'rotation')).toBe(true);
   });
 
-  test('the COMMAND, by contrast, bakes every eligible property', () => {
-    defaultAnimation.setExpression(NODE, 'x', 'time * 90');
-    defaultAnimation.setExpression(NODE, 'rotation', 'time * 45');
-    useSelectionStore.getState().set([NODE]);
+  test('the COMMAND, by contrast, bakes every eligible property', async () => {
+    const { h, layer } = await engineLayerWith({ x: 'time * 90', rotation: 'time * 45' });
+    try {
+      const undoRestores = await runAsOneEntry(h);
 
-    run();
+      expect(defaultAnimation.isAnimated(layer, 'x')).toBe(true);
+      expect(defaultAnimation.isAnimated(layer, 'rotation')).toBe(true);
 
-    expect(defaultAnimation.isAnimated(NODE, 'x')).toBe(true);
-    expect(defaultAnimation.isAnimated(NODE, 'rotation')).toBe(true);
+      await undoRestores();
+    } finally {
+      await h.dispose();
+    }
   });
 });

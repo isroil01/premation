@@ -38,7 +38,8 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { MOGRAPH_ITEMS, buildMographItem, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
-import { TRANSITION_ITEMS, applyTransitionItem, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
+import { TRANSITION_ITEMS, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
+import { applyTransitionEdit } from './transitionInsertEdits';
 import { SFX_ITEMS, insertSfxItem, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
 import { LOTTIE_ITEMS, type LottieCategory } from '@core/library/lottieLibrary';
 import { importLottieFileEdit, insertLottieItemEdit } from './lottieInsertEdits';
@@ -401,10 +402,9 @@ const TRANSITION_CATEGORIES: readonly TransitionCategory[] =
 
 function TransitionsContent(): JSX.Element {
   const notify = useUIStore((s) => s.notify);
-  const apply = (id: string, name: string): void => {
-    // B3-legacy: engine gap — no transition commands (a transition's keyframed in/out rig on the
-    // selected layers' cut).
-    const result = applyTransitionItem(id);
+  const apply = async (id: string, name: string): Promise<void> => {
+    // Solid panels: built off-document, one pasteLayers; layer mode stays legacy (transitionInsertEdits).
+    const result = await applyTransitionEdit(id, `Apply ${name}`);
     if (!result) {
       notify({ level: 'warning', message: `Could not apply ${name}`, durationMs: 2000 });
     } else if (result.mode === 'layer') {
@@ -422,7 +422,7 @@ function TransitionsContent(): JSX.Element {
       {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
-            <TransitionCard key={item.id} item={item} onApply={() => apply(item.id, item.name)} />
+            <TransitionCard key={item.id} item={item} onApply={() => { void apply(item.id, item.name); }} />
           ))}
         </div>
       )}

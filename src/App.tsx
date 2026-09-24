@@ -126,7 +126,7 @@ import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeComma
 import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
-import { renameLayer } from '@core/scene/renameLayer';
+import { renameLayerEdit } from '@layout/Scene/sceneEdits';
 import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -817,31 +817,33 @@ function EditorShellInner(): JSX.Element {
 
   // Rename a scene node — committed when user confirms via Enter or blur.
   const handleTrackRename = (trackId: string, newName: string): void => {
-    // B3-legacy: engine gap — `renameLayer` renames only; it does not follow the rename through the expressions that name the layer (renameLayer.ts repairs them and reports captures, one entry).
-    const result = renameLayer(trackId, newName);
-    if (!result.ok) return;
-    if (result.repaired.length > 0) {
-      const n = result.repaired.length;
-      useUIStore.getState().notify({
-        level: 'info',
-        message: `${n} expression${n === 1 ? '' : 's'} updated to follow the new name.`,
-        durationMs: 4000,
-      });
-    }
-    if (result.captured.length > 0) {
-      const n = result.captured.length;
-      useUIStore.getState().notify({
-        level: 'warning',
-        message: `${n} expression${n === 1 ? '' : 's'} naming “${newName.trim()}” now read this layer instead of the previous layer.`,
-        durationMs: 10000,
-      });
-    } else if (result.nameAlreadyInUse) {
-      useUIStore.getState().notify({
-        level: 'warning',
-        message: `Another layer is already called “${newName.trim()}”; expressions can reach only one of them by name.`,
-        durationMs: 6000,
-      });
-    }
+    // The Layers panel's rename: `renameLayer` / `renameItem` through the engine, or the legacy
+    // rename when an expression names the layer (it follows the rename through them — sceneEdits).
+    void renameLayerEdit(trackId, newName).then((result) => {
+      if (!result.ok) return;
+      if (result.repaired.length > 0) {
+        const n = result.repaired.length;
+        useUIStore.getState().notify({
+          level: 'info',
+          message: `${n} expression${n === 1 ? '' : 's'} updated to follow the new name.`,
+          durationMs: 4000,
+        });
+      }
+      if (result.captured.length > 0) {
+        const n = result.captured.length;
+        useUIStore.getState().notify({
+          level: 'warning',
+          message: `${n} expression${n === 1 ? '' : 's'} naming “${newName.trim()}” now read this layer instead of the previous layer.`,
+          durationMs: 10000,
+        });
+      } else if (result.nameAlreadyInUse) {
+        useUIStore.getState().notify({
+          level: 'warning',
+          message: `Another layer is already called “${newName.trim()}”; expressions can reach only one of them by name.`,
+          durationMs: 6000,
+        });
+      }
+    });
   };
 
   /**

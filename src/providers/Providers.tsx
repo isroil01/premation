@@ -18,6 +18,7 @@ import {
 import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { buildCustomLayerInto, customLayerLabel, wakeCustomLayerKind } from '@core/plugins/createCustomLayerFromMenu';
 import { insertBuiltLayers } from '@core/engine/offDocument';
+import { graph as docGraph, isLayer } from '@core/engine/doc';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -25,9 +26,11 @@ import { isPickArmed } from '@stores/trackerStore';
 import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { cutSelection, copySelection, pasteSelection } from '@core/commands/clipboard';
+import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
+import { audioSliderNullEdit, expressionBakeEdit, exponentialScaleEdit } from './menuCommandEdits';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
+import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
@@ -121,10 +124,8 @@ import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigP
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { readGeometry } from '@core/workspace/geometry';
 import { isAudioNode } from '@core/audio/audioScene';
-import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
-import { applyExponentialScale, eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
+import { eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import {
-  convertExpressionToKeyframes,
   eligibleExpressionProps,
   BAKE_REFUSAL_TEXT,
 } from '@core/animation/convertExpressionToKeyframes';
@@ -137,7 +138,7 @@ import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
@@ -156,16 +157,22 @@ import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneE
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
 import { createNullsFromPathUndoable, pathVertices } from '@core/scene/nullsFromPaths';
+import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreateEdits';
 import { buildPathCommands } from '@core/workspace/pathCommands';
-import { createShapesFromText, canCreateShapesFromText } from '@core/scene/shapesFromText';
+import { canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
-import { fitNodeTo, centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
+import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
 import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
 import { setLayersSwitch } from '@layout/Inspector/inspectorEdits';
-import { arrangeLayersEdit, deleteSelectedLayersEdit, duplicateSelectedLayersEdit } from '@layout/Workspace/layerMenuEdits';
+import {
+  arrangeLayersEdit,
+  bakeMergePathsEdit,
+  deleteSelectedLayersEdit,
+  duplicateSelectedLayersEdit,
+} from '@layout/Workspace/layerMenuEdits';
 import {
   centreAnchorEdit,
   centreInCompEdit,
@@ -178,7 +185,7 @@ import {
 } from '@layout/Menu/appEdits';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
-import { deleteComposition } from '@core/composition/compositionOps';
+import { deleteCompositionEdit, deleteCompositionWarning } from '@layout/Scene/sceneEdits';
 import { canOpenPreviousComposition, openPreviousComposition } from '@core/composition/compNavigation';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
 
@@ -653,7 +660,7 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  * commands exist with no menu home". They live in the Animation menu now (see
  * menuModel), so they're discoverable rather than shortcut-only.
  */
-import { mergeSelectedPaths, liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 import { compSizeOf } from '@core/composition/compSizes';
 import { installProductAnalytics, noteNextProjectSource } from '@core/analytics/productEvents';
 
@@ -699,10 +706,11 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     icon: 'layers' as const,
     enabled,
     execute: () => {
-      // B3-legacy: engine gap — the destructive Merge Paths bake (boolean of several shape layers into one new outline) has no API command (`convertLayer` has no boolean mode).
-      const ids = mergeSelectedPaths(op);
-      if (ids.length > 0) notify(`Merged paths (${op})`, 'success');
-      else notify('Select at least two shape layers to merge', 'warning');
+      // The boolean runs off-document; `deleteLayers` + `pasteLayers`, one entry (layerMenuEdits).
+      void bakeMergePathsEdit(op).then((ids) => {
+        if (ids.length > 0) notify(`Merged paths (${op})`, 'success');
+        else notify('Select at least two shape layers to merge', 'warning');
+      });
     },
   }));
   return [...live, ...baked];
@@ -859,7 +867,7 @@ function buildEasingCommands(): ReadonlyArray<Command> {
 }
 
 /** The playhead in comp seconds — where the registry's transform commands read and key. */
-const playheadSeconds = (): number => getTimelineController().currentSeconds;
+const playheadSeconds = (): number => getTime();
 
 function buildBuiltinCommands(): ReadonlyArray<Command> {
   return [
@@ -1064,11 +1072,13 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
-        // B3-legacy: not converted — Exponential Scale bakes per-frame Scale keys (a client macro over `addKeyframes`); left on the legacy writer with the other baking assistants.
-        const { written, refusal } = applyExponentialScale(nodeId);
-        if (refusal) { notify(REFUSAL_TEXT[refusal], 'warning'); return; }
-        const total = [...written.values()].reduce((a, b) => a + b, 0);
-        notify(`Exponential scale — ${total} keyframes across ${written.size} tracks`, 'success');
+        // A client macro: the geometric ramp planned here, ONE `setKeyframes` on Scale.
+        void exponentialScaleEdit(nodeId).then(({ written, refusal }) => {
+          if (refusal) { notify(REFUSAL_TEXT[refusal], 'warning'); return; }
+          if (written.size === 0) return;
+          const total = [...written.values()].reduce((a, b) => a + b, 0);
+          notify(`Exponential scale — ${total} keyframes across ${written.size} tracks`, 'success');
+        });
       },
     },
     {
@@ -1271,8 +1281,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
-        // B3-legacy: engine gap — it creates a null carrying expression-control sliders (named `ctrl()` props), and expression controls have no API group type.
-        void convertAudioToSliderNull(nodeId).then(({ nodeId: nullId, written }) => {
+        // The null (sliders and keys included) is built off-document and pasted: one entry.
+        void audioSliderNullEdit(nodeId).then(({ nodeId: nullId, written }) => {
           if (!nullId) {
             notify('That layer has no decodable audio.', 'warning');
             return;
@@ -1304,15 +1314,17 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
-        // B3-legacy: engine gap — the API's `convertExpressionToKeyframes` REMOVES the expression and bakes over in→out; the assistant (and AE) DISABLE it and bake over its own range rule.
-        const { written, refusal } = convertExpressionToKeyframes(nodeId);
-        if (refusal) { notify(BAKE_REFUSAL_TEXT[refusal], 'warning'); return; }
-        const total = [...written.values()].reduce((a, b) => a + b, 0);
-        notify(
-          `Expression baked — ${total} keyframes across ${written.size} ` +
-            `${written.size === 1 ? 'property' : 'properties'}. The expression is disabled, not deleted.`,
-          'success',
-        );
+        // `convertExpressionToKeyframes` per property: every frame over in → out, expression disabled.
+        void expressionBakeEdit(nodeId).then(({ written, refusal }) => {
+          if (refusal) { notify(BAKE_REFUSAL_TEXT[refusal], 'warning'); return; }
+          if (written.size === 0) return;
+          const total = [...written.values()].reduce((a, b) => a + b, 0);
+          notify(
+            `Expression baked — ${total} keyframes across ${written.size} ` +
+              `${written.size === 1 ? 'property' : 'properties'}. The expression is disabled, not deleted.`,
+            'success',
+          );
+        });
       },
     },
     {
@@ -1398,8 +1410,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'x', meta: true },
       enabled: () => hasCutCopyTarget(),
       execute: () => {
-        cutSelection();
-        notify('Cut', 'info');
+        void cutEdit().then((kind) => { if (kind) notify('Cut', 'info'); });
       },
     },
     {
@@ -1408,8 +1419,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'c', meta: true },
       enabled: () => hasCutCopyTarget(),
       execute: () => {
-        copySelection();
-        notify('Copied', 'info');
+        void copyEdit().then((kind) => { if (kind && kind !== 'path') notify('Copied', 'info'); });
       },
     },
     {
@@ -1420,8 +1430,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       // checked async on execute — we cannot sync-probe the system clipboard.
       enabled: () => true,
       execute: () => {
-        // B3-legacy: not converted — the clipboard module (keyframe entries, path paste, node-snapshot layers) predates `copyLayers`/`pasteLayers`; the Copy side must capture the engine fragment first.
-        void pasteSelection().then((kind) => {
+        // Keyframes: `pasteKeyframes`; layers: the `copyLayers` fragment as one `pasteLayers` (clipboardEdits).
+        void pasteEdit().then((kind) => {
           if (kind === 'svg') notify('Pasted SVG', 'success');
           else if (kind) notify('Pasted', 'success');
           else notify('Nothing to paste', 'info');
@@ -1697,13 +1707,10 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         if (!compId) return;
         const comp = st.comps[compId];
         if (!comp || comp.pristine) return;
-        const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
-        const warn = layers > 0
-          ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
-          : `Delete “${comp.name}”?`;
+        const warn = deleteCompositionWarning(comp.name, compId);
         if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
-          // B3-legacy: engine gap — `removeItems` does not close the comp's tabs or re-seed an empty project (compositionOps does).
-          deleteComposition(compId);
+          // `removeItems` with the layers that place it; the tabs close (sceneEdits).
+          await deleteCompositionEdit(compId);
         }
       },
     },
@@ -1770,16 +1777,16 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
         if (ids.length !== 1) return false;
-        const n = defaultSceneGraph.getNode(ids[0]!);
-        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, getTimelineController().currentSeconds).length > 0;
+        const n = docGraph.getNode(ids[0]!);
+        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, playheadSeconds()).length > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        // One labelled undo step for the nulls, their parenting and bindings.
-        // B3-legacy: engine gap — the nulls' links to the path vertices are expression bindings / vertex parenting with no API form.
-        const made = createNullsFromPathUndoable(id, getTimelineController().currentSeconds);
-        notify(made.length ? `Created ${made.length} null${made.length === 1 ? '' : 's'} on the path` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
+        // The nulls, built off-document INTO the shape: one pasteLayers, one entry.
+        void nullsFromPathEdit(id, playheadSeconds()).then((made) => {
+          notify(made.length ? `Created ${made.length} null${made.length === 1 ? '' : 's'} on the path` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
+        });
       },
     },
     {
@@ -1789,14 +1796,14 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
         if (ids.length !== 1) return false;
-        const n = defaultSceneGraph.getNode(ids[0]!);
-        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, getTimelineController().currentSeconds).length > 0;
+        const n = docGraph.getNode(ids[0]!);
+        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, playheadSeconds()).length > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        // B3-legacy: engine gap — as above (points-follow-nulls vertex bindings).
-        const made = createNullsFromPathUndoable(id, getTimelineController().currentSeconds, { pointsFollowNulls: true });
+        // B3-legacy: engine gap — the vertex → null bindings (`Geometry.pointBindings` on the shape) are not an API property.
+        const made = createNullsFromPathUndoable(id, playheadSeconds(), { pointsFollowNulls: true });
         notify(made.length ? `${made.length} null${made.length === 1 ? '' : 's'} now drive the path — move one and the outline follows` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
       },
     },
@@ -1813,8 +1820,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        // B3-legacy: engine gap — `convertLayer{shapesFromText}` answers unsupported in the TS engine.
-        const made = await createShapesFromText(id);
+        // A client macro: outlines in the editor, the shape built off-document + the text hidden, one entry.
+        const made = await shapesFromTextEdit(id, playheadSeconds());
         notify(
           !made
             ? 'Could not outline this text — is it empty?'
@@ -1906,11 +1913,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const frame = activeCompSize();
         const ids = useSelectionStore.getState().ids;
-        // Through the engine (B3): the whole selection, one entry.
-        void fitLayersEdit(ids, frame, mode, playheadSeconds()).then((done) => {
-          // B3-legacy: engine gap — a layer whose size is not a catalog property (width / height).
-          if (!done) for (const nodeId of ids) fitNodeTo(nodeId, frame, mode);
-        });
+        // Through the engine (B3): the whole selection, one entry. Every layer kind has a
+        // width / height property; a composition root (a comp's own row) is not a layer.
+        void fitLayersEdit(ids.filter((id) => isLayer(id)), frame, mode, playheadSeconds());
       },
     })),
     {

@@ -26,9 +26,10 @@
 
 import { create } from 'zustand';
 import { getEventBus } from '@core/events/EventBus';
-import { batchHistory } from '@stores/historyStore';
+import { edit } from '@core/engine/uiEdits';
+import { materialCommands } from '@layout/Inspector/materialEdits';
+import { getTime } from '@stores/playbackClockStore';
 import {
-  applyMaterialParams,
   normalizeMaterialParams,
   DEFAULT_MATERIAL_PARAMS,
   type MaterialParams,
@@ -209,24 +210,18 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
 }));
 
 /**
- * Apply one library material to every given layer, as ONE undo step.
+ * Apply one library material to every given layer, as ONE undo step: every
+ * Material Options axis through the engine (`materialCommands` — the
+ * Material section's own apply; animated axes keyed at the playhead), nothing
+ * outside Material Options touched.
  *
- * `batchHistory` is load-bearing rather than decoration: the history recorder
- * debounces per TARGET, so twelve prop writes across three layers would
- * otherwise land as up to thirty-six separate undo steps for one click on a
- * thumbnail. Mirrors `SwatchesPanel`'s apply-to-selection exactly.
- *
- * Returns false when the id names no material — the caller can then say so
+ * Resolves false when the id names no material — the caller can then say so
  * instead of reporting a silent success.
  */
-export function applyMaterialToNodes(ids: readonly string[], materialRefId: string): boolean {
+export async function applyMaterialToNodes(ids: readonly string[], materialRefId: string): Promise<boolean> {
   const material = useMaterialStore.getState().find(materialRefId);
   if (!material) return false;
-  // B3-legacy: engine gap — a library material mixes numbers with shading model / shadow modes /
-  // accepts-lights fields that have no API property (generic component-prop binding; the inspector's
-  // material preset stays legacy for the same reason).
-  batchHistory(`material:apply:${materialRefId}`, () => {
-    for (const id of ids) applyMaterialParams(id, material.params);
-  });
+  const cmds = materialCommands(ids, material.params, getTime());
+  if (cmds.length > 0) await edit(`Apply material ${material.name}`, cmds);
   return true;
 }

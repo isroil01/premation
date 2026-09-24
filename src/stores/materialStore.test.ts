@@ -21,19 +21,13 @@ import {
   normalizeMaterials,
   applyMaterialToNodes,
 } from './materialStore';
-import type { SceneNode } from '@core/types';
-
-function addNode(id: string): void {
-  defaultSceneGraph.addNode({
-    id, name: id, parent: null, children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true, locked: false,
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: {} },
-      { id: `${id}_s`, type: 'Style', props: { fill: '#3355ff', opacity: 100 } },
-    ],
-  } as unknown as SceneNode);
-}
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { values } from '@core/engine/propRefs';
+import { catalogFor, readStatic } from '@core/engine/props';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 
 beforeEach(() => {
   const ids: string[] = [];
@@ -138,34 +132,76 @@ describe('restore', () => {
 });
 
 describe('applying to layers', () => {
-  it('paints every given layer and leaves their other props alone', () => {
-    addNode('a');
-    addNode('b');
+  let h: Harness & { engine: LocalEngine };
+
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    useMaterialStore.setState({ materials: [] });
+  });
+
+  afterEach(async () => {
+    await h.dispose();
+  });
+
+  /**
+   * A 3D shape layer filled #3355ff (Material Options live on 3D layers), made
+   * through the engine, with Accepts Lights off — the default material, as the
+   * Material section's suite starts from.
+   */
+  async function addLayer(name: string): Promise<string> {
+    const { layer } = await h.run({
+      type: 'createLayer', comp: 'comp_root', kind: 'shape', name,
+      init: [{ path: 'layer/fill', value: values.color(0x33 / 255, 0x55 / 255, 1) }],
+    });
+    await h.batch('setup', [
+      { type: 'setLayerSwitches', layers: [layer], patch: { threeD: true } },
+      { type: 'setProperty', prop: { layer, path: 'material/acceptsLights' }, value: values.scalar(0) },
+    ]);
+    getCommandSystem().getHistory().clear();
+    return layer;
+  }
+
+  const fillOf = (id: string): unknown => readStatic(id, catalogFor(id).byPath.get('layer/fill')!);
+
+  it('paints every given layer and leaves their other props alone — one undo entry', async () => {
+    const a = await addLayer('a');
+    const b = await addLayer('b');
+    const fills = [fillOf(a), fillOf(b)];
+    expect(fills[0]).toEqual(values.color(0x33 / 255, 0x55 / 255, 1));
     const added = useMaterialStore.getState().addMaterial('Chrome', {
       ...DEFAULT_MATERIAL_PARAMS, shading: 'pbr', metal: 100, roughness: 8, specular: 90,
     });
+    const before = h.doc();
 
-    expect(applyMaterialToNodes(['a', 'b'], added.id)).toBe(true);
-    for (const id of ['a', 'b']) {
+    expect(await applyMaterialToNodes([a, b], added.id)).toBe(true);
+    await engineIdle();
+    for (const id of [a, b]) {
       const m = readNodeMaterialParams(id)!;
       expect(m.shading).toBe('pbr');
       expect(m.metal).toBe(100);
       expect(m.specular).toBe(90);
-      const style = defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Style')!;
-      expect(style.props.fill).toBe('#3355ff');
     }
+    expect([fillOf(a), fillOf(b)]).toEqual(fills);
+    expect(historyLabels()).toEqual(['Apply material Chrome']);
+
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toEqual(before);
   });
 
-  it('reports an unknown material rather than silently succeeding', () => {
-    addNode('a');
-    expect(applyMaterialToNodes(['a'], 'mat_nope')).toBe(false);
-    expect(readNodeMaterialParams('a')).toEqual(DEFAULT_MATERIAL_PARAMS);
+  it('reports an unknown material rather than silently succeeding', async () => {
+    const a = await addLayer('a');
+    expect(readNodeMaterialParams(a)).toEqual(DEFAULT_MATERIAL_PARAMS);
+    expect(await applyMaterialToNodes([a], 'mat_nope')).toBe(false);
+    await engineIdle();
+    expect(readNodeMaterialParams(a)).toEqual(DEFAULT_MATERIAL_PARAMS);
+    expect(historyLabels()).toEqual([]);
   });
 
-  it('applies a built-in by id', () => {
-    addNode('a');
-    expect(applyMaterialToNodes(['a'], 'builtin:steel')).toBe(true);
+  it('applies a built-in by id', async () => {
+    const a = await addLayer('a');
+    expect(await applyMaterialToNodes([a], 'builtin:steel')).toBe(true);
+    await engineIdle();
     const steel = builtinMaterials().find((m) => m.id === 'builtin:steel')!;
-    expect(readNodeMaterialParams('a')).toEqual(steel.params);
+    expect(readNodeMaterialParams(a)).toEqual(steel.params);
   });
 });

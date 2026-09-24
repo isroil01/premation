@@ -21,17 +21,18 @@
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { graph as docGraph } from '@core/engine/doc';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
-import { groupSelectedLayers } from '@core/scene/sceneInsert';
 import { toggleLayerFlagsEdit, toggleLayerSwitchAnchored } from './layerSwitchEdits';
 import { deleteLayersEdit, freezeLayersEdit, reverseLayersEdit } from './sceneEdits';
 import {
   arrangeLayersEdit,
+  bakeMergePathsEdit,
   duplicateSelectedLayersEdit,
   groupSelectedLayersEdit,
   setLabelColorEdit,
@@ -39,11 +40,11 @@ import {
 } from '@layout/Workspace/layerMenuEdits';
 import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout/Inspector/inspectorEdits';
 import { splitSelectedAtPlayhead, unfreezeEdit } from '@layout/Timeline/timelineEdits';
-import { liveMergeSelectedPaths, mergeSelectedPaths } from '@core/scene/mergePaths';
+import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { createNullsFromPathUndoable } from '@core/scene/nullsFromPaths';
-import { canCreateShapesFromText, createShapesFromText } from '@core/scene/shapesFromText';
-import { createMasksFromText } from '@core/scene/masksFromText';
+import { canCreateShapesFromText } from '@core/scene/shapesFromText';
+import { masksFromTextEdit } from '@layout/Text/textEdits';
+import { nullsFromPathEdit, shapesFromTextEdit } from './layerCreateEdits';
 import { LAYER_FLAGS, describeLayerFlag, layerFlagAvailable, readLayerFlag } from '@core/scene/layerFlags';
 import { LABEL_COLORS, nodesWithLabelColor, readNodeLabelColor } from '@core/scene/labelColor';
 import { type AlignMode } from '@core/scene/alignNodes';
@@ -362,9 +363,9 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
       label: 'Group Selection',
       onSelect: () => {
         void groupSelectedLayersEdit().then((handled) => {
-          // B3-legacy: engine gap — `groupLayers` needs every layer under ONE parent; the legacy
-          // grouping reparents a mixed selection (world transform kept) under a new group.
-          if (!handled) groupSelectedLayers();
+          // Layers of different compositions: a layer cannot move between
+          // compositions, so there is no one group to put them in.
+          if (!handled) notify('Group Selection needs layers of one composition.');
         });
       },
     },
@@ -375,14 +376,13 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
           {
             id: 'shapes-from-text',
             label: 'Create Shapes from Text',
-            // B3-legacy: engine gap — `convertLayer{shapesFromText}` answers unsupported on the TS engine.
-            onSelect: () => { void createShapesFromText(targetId).then((r) => { if (!r) notify('That text could not be traced to shapes', 'warning'); }); },
+            // A client macro: outlines in the editor, the shape built off-document, one pasteLayers.
+            onSelect: () => { void shapesFromTextEdit(targetId, getTime()).then((r) => { if (!r) notify('That text could not be traced to shapes', 'warning'); }); },
           },
           {
             id: 'masks-from-text',
             label: 'Create Masks from Text',
-            // B3-legacy: engine gap — `convertLayer{masksFromText}` answers unsupported on the TS engine.
-            onSelect: () => { void createMasksFromText(targetId); },
+            onSelect: () => { void masksFromTextEdit(targetId, getTime()); },
           },
         ]
       : []),
@@ -391,10 +391,9 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
           id: 'nulls-from-paths',
           label: 'Create Nulls from Path Points',
           onSelect: () => {
-            // B3-legacy: engine gap — no command creates nulls bound to path vertices (a set of
-            // createLayer nulls plus the vertex expressions linking them, as one entry).
-            const made = createNullsFromPathUndoable(targetId, getTime());
-            if (!made) notify('That layer has no path points to bind nulls to', 'warning');
+            void nullsFromPathEdit(targetId, getTime()).then((made) => {
+              if (made.length === 0) notify('That layer has no path points to bind nulls to', 'warning');
+            });
           },
         }]
       : []),
@@ -413,15 +412,11 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
               { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
               { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
               { id: 'merge-sep', separator: true },
-              // B3-legacy: engine gap — no command bakes a boolean path merge (the result is a new
-              // path layer computed from the operands' outlines; `convertLayer` does not cover it).
-              { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
-              // B3-legacy: engine gap — boolean path merge (see Bake Union).
-              { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
-              // B3-legacy: engine gap — boolean path merge (see Bake Union).
-              { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
-              // B3-legacy: engine gap — boolean path merge (see Bake Union).
-              { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
+              // The boolean runs off-document; deleteLayers + pasteLayers, one entry.
+              { id: 'merge-union', label: 'Bake Union', onSelect: () => { void bakeMergePathsEdit('union'); } },
+              { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => { void bakeMergePathsEdit('subtract'); } },
+              { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => { void bakeMergePathsEdit('intersect'); } },
+              { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => { void bakeMergePathsEdit('exclude'); } },
             ],
           },
         ]
@@ -470,7 +465,7 @@ export function invertSelection(): void {
  * (`deleteLayersEdit`) over exactly these ids.
  */
 export async function deleteLayersWithFeedback(ids: ReadonlyArray<string>): Promise<void> {
-  const lockedCount = ids.filter((id) => defaultSceneGraph.getNode(id)?.locked).length;
+  const lockedCount = ids.filter((id) => docGraph.getNode(id)?.locked).length;
   await deleteLayersEdit(ids);
   if (lockedCount > 0) {
     notify(
