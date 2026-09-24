@@ -138,6 +138,27 @@ void shadow_highlight(RgbaView img, double shadow_amount, double highlight_amoun
 void colorama(RgbaView img, int palette, double phase_shift, double cycle_repetitions, double blend_with_original,
               ThreadPool* pool);
 
+// ── aeColorAdvanced.ts: histogram autos and HSL selectors ───────────────────
+/// `equalizeData(data, mode, amount, blend)`.
+void equalize(RgbaView img, double mode, double amount, double blend, ThreadPool* pool);
+/// `autoLevelsData(data, blackClip, whiteClip, blend)`.
+void auto_levels(RgbaView img, double black_clip, double white_clip, double blend, ThreadPool* pool);
+/// `autoContrastData(data, blackClip, whiteClip, blend)`.
+void auto_contrast(RgbaView img, double black_clip, double white_clip, double blend, ThreadPool* pool);
+/// `autoColorData(data, blackClip, whiteClip, snapNeutral, blend)`.
+void auto_color(RgbaView img, double black_clip, double white_clip, double snap_neutral, double blend,
+                ThreadPool* pool);
+/// `changeColorData(data, target, hueTol, satTol, lightTol, softness, hueShift, satScale, lightScale, invert)`.
+void change_color(RgbaView img, const Rgb& target, double hue_tol, double sat_tol, double light_tol, double softness,
+                  double hue_shift, double sat_scale, double light_scale, bool invert, ThreadPool* pool);
+/// `changeToColorData(data, from, to, hueTol, satTol, lightTol, softness, preserveLightness)`.
+void change_to_color(RgbaView img, const Rgb& from, const Rgb& to, double hue_tol, double sat_tol, double light_tol,
+                     double softness, bool preserve_lightness, ThreadPool* pool);
+/// `leaveColorData(data, target, tolerance, softness, amount)`.
+void leave_color(RgbaView img, const Rgb& target, double tolerance, double softness, double amount, ThreadPool* pool);
+/// `tonerData(data, black, shadows, midtones, highlights, white, blend)`.
+void toner(RgbaView img, const std::array<Rgb, 5>& stops, double blend, ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

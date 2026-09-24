@@ -7,32 +7,12 @@
 #include <array>
 #include <vector>
 
+#include "color_space.hpp"
 #include "kernels.hpp"
 
 namespace premation::effects {
 
 namespace {
-
-/// @utils/lang `clamp01` (NaN → 0), which keylight.ts imports.
-[[nodiscard]] inline double clamp01_lang(double v) noexcept { return v > 0 ? (v > 1 ? 1 : v) : 0; }
-
-/// colorSpace.ts `smoothstep` (its clamp01 lets NaN through).
-[[nodiscard]] inline double smoothstep(double e0, double e1, double x) noexcept {
-  if (e1 <= e0) return x < e0 ? 0 : 1;
-  const double t = clamp01((x - e0) / (e1 - e0));
-  return t * t * (3 - 2 * t);
-}
-
-template <class Fn>
-void each_pixel(RgbaView img, ThreadPool* pool, Fn&& fn) {
-  std::uint8_t* data = img.data.data();
-  const auto w = static_cast<std::size_t>(img.w);
-  for_rows(pool, img.h, [&](int y0, int y1) {
-    std::uint8_t* p = data + static_cast<std::size_t>(y0) * w * 4;
-    std::uint8_t* const e = data + static_cast<std::size_t>(y1) * w * 4;
-    for (; p != e; p += 4) fn(p);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-  });
-}
 
 // ── keylight.ts ─────────────────────────────────────────────────────────────
 
@@ -121,33 +101,6 @@ double hue_of(double r, double g, double b) {
 double hypot3(double a, double b, double c) {
   const std::array<double, 3> v{a, b, c};
   return js::hypot(v);
-}
-
-/// colorSpace.ts `rgbToHsl` → [h, s].
-std::array<double, 2> hue_sat(double r, double g, double b) {
-  const double rn = r / 255;
-  const double gn = g / 255;
-  const double bn = b / 255;
-  const double mx = std::max(rn, std::max(gn, bn));
-  const double mn = std::min(rn, std::min(gn, bn));
-  const double l = (mx + mn) / 2;
-  const double d = mx - mn;
-  if (d == 0) return {0, 0};
-  const double s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
-  double h = 0;
-  if (mx == rn) {
-    h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
-  } else if (mx == gn) {
-    h = ((bn - rn) / d + 2) / 6;
-  } else {
-    h = ((rn - gn) / d + 4) / 6;
-  }
-  return {h, s};
-}
-
-double hue_distance(double a, double b) {
-  const double d = std::fmod(std::fabs(a - b), 1.0);
-  return d > 0.5 ? 1 - d : d;
 }
 
 }  // namespace
@@ -347,7 +300,7 @@ void extract_matte(RgbaView img, double channel, double black, double white, dou
 }
 
 void spill_suppressor(RgbaView img, const Rgb& key, double amount, bool preserve_luma, ThreadPool* pool) {
-  const double kh = hue_sat(key.r, key.g, key.b)[0];
+  const double kh = rgb_to_hsl(key.r, key.g, key.b).h;
   const double strength = clamp01(amount / 100);
   if (strength <= 0) return;
   each_pixel(img, pool, [&](std::uint8_t* px) {
@@ -355,8 +308,8 @@ void spill_suppressor(RgbaView img, const Rgb& key, double amount, bool preserve
     const double r = px[0];
     const double g = px[1];
     const double b = px[2];
-    const auto hs = hue_sat(r, g, b);
-    const double near = (1 - smoothstep(0.08, 0.25, hue_distance(hs[0], kh))) * clamp01(hs[1] * 2) * strength;
+    const Hsl hs = rgb_to_hsl(r, g, b);
+    const double near = (1 - smoothstep(0.08, 0.25, hue_distance(hs.h, kh))) * clamp01(hs.s * 2) * strength;
     if (near <= 0) return;
     const double before = luma709(r, g, b);
     double nr = r;

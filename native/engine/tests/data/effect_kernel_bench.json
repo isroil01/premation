@@ -47,6 +47,14 @@
     { "effect": "offset", "args": { "shiftX": 1300, "shiftY": 200, "blend": 0 } },
     { "effect": "optics-compensation", "args": { "fov": 60 } },
     { "effect": "mesh-warp", "args": { "mx5": 60, "my5": -40, "mx6": -35, "my6": 20, "mx9": 40, "my9": 70, "mx10": -80, "my10": -22 } },
-    { "effect": "liquify", "args": { "centerX": 960, "centerY": 540, "radius": 300, "pushX": 40, "twirl": 45, "pinch": 20 } }
+    { "effect": "liquify", "args": { "centerX": 960, "centerY": 540, "radius": 300, "pushX": 40, "twirl": 45, "pinch": 20 } },
+    { "effect": "equalize", "args": { "mode": 0, "amount": 100 } },
+    { "effect": "auto-levels", "args": { "blackClip": 0.5, "whiteClip": 0.5 } },
+    { "effect": "auto-contrast", "args": { "blackClip": 0.5, "whiteClip": 0.5 } },
+    { "effect": "auto-color", "args": { "blackClip": 0.5, "whiteClip": 0.5, "snapNeutral": 100 } },
+    { "effect": "change-color", "args": { "targetR": 250, "targetG": 40, "targetB": 20, "hueTol": 20, "hueShift": 120 } },
+    { "effect": "change-to-color", "args": { "fromR": 250, "fromG": 40, "fromB": 20, "toR": 20, "toG": 90, "toB": 250 } },
+    { "effect": "leave-color", "args": { "targetR": 250, "targetG": 40, "targetB": 20 } },
+    { "effect": "toner", "args": { "blend": 0 } }
   ]
 }

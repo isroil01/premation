@@ -7,75 +7,10 @@
 #include <array>
 #include <span>
 
+#include "color_space.hpp"
 #include "kernels.hpp"
 
 namespace premation::effects {
-
-namespace {
-
-/// @utils/lang `clamp01` — NaN → 0 (unlike colorSpace.ts `clamp01`).
-[[nodiscard]] inline double clamp01_lang(double v) noexcept { return v > 0 ? (v > 1 ? 1 : v) : 0; }
-
-/// Straight RGBA pixels [y0, y1) of `img`, as a flat byte range.
-template <class Fn>
-void each_pixel(RgbaView img, ThreadPool* pool, Fn&& fn) {
-  std::uint8_t* data = img.data.data();
-  const auto w = static_cast<std::size_t>(img.w);
-  for_rows(pool, img.h, [&](int y0, int y1) {
-    std::uint8_t* p = data + static_cast<std::size_t>(y0) * w * 4;
-    std::uint8_t* const e = data + static_cast<std::size_t>(y1) * w * 4;
-    for (; p != e; p += 4) fn(p);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-  });
-}
-
-struct Hsl {
-  double h;
-  double s;
-  double l;
-};
-
-Hsl rgb_to_hsl(double r, double g, double b) {
-  const double rn = r / 255;
-  const double gn = g / 255;
-  const double bn = b / 255;
-  const double mx = std::max(rn, std::max(gn, bn));
-  const double mn = std::min(rn, std::min(gn, bn));
-  const double l = (mx + mn) / 2;
-  const double d = mx - mn;
-  if (d == 0) return {0, 0, l};
-  const double s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
-  double h = 0;
-  if (mx == rn) {
-    h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
-  } else if (mx == gn) {
-    h = ((bn - rn) / d + 2) / 6;
-  } else {
-    h = ((rn - gn) / d + 4) / 6;
-  }
-  return {h, s, l};
-}
-
-double hue_to_channel(double p, double q, double t) {
-  if (t < 0) t += 1;
-  if (t > 1) t -= 1;
-  if (t < 1.0 / 6) return p + (q - p) * 6 * t;
-  if (t < 1.0 / 2) return q;
-  if (t < 2.0 / 3) return p + (q - p) * (2.0 / 3 - t) * 6;
-  return p;
-}
-
-std::array<double, 3> hsl_to_rgb(double h, double s, double l) {
-  if (s == 0) {
-    const double v = clamp255(l * 255);
-    return {v, v, v};
-  }
-  const double q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const double p = 2 * l - q;
-  return {clamp255(hue_to_channel(p, q, h + 1.0 / 3) * 255), clamp255(hue_to_channel(p, q, h) * 255),
-          clamp255(hue_to_channel(p, q, h - 1.0 / 3) * 255)};
-}
-
-}  // namespace
 
 void photo_filter(RgbaView img, double fr, double fg, double fb, double density, bool preserve_luminosity,
                   ThreadPool* pool) {
@@ -108,7 +43,7 @@ void photo_filter(RgbaView img, double fr, double fg, double fb, double density,
 }
 
 void black_and_white(RgbaView img, const BwWeights& wts, const std::array<double, 3>* tint, ThreadPool* pool) {
-  Hsl t{};
+  Hsl t{0, 0, 0};
   if (tint != nullptr) t = rgb_to_hsl((*tint)[0], (*tint)[1], (*tint)[2]);
   each_pixel(img, pool, [&](std::uint8_t* px) {
     const int r = px[0];

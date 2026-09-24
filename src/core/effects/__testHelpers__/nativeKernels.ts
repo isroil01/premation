@@ -14,6 +14,10 @@ import {
 } from '../keyingEffects';
 import { applyKeyData, chokeAlpha, softenAlpha } from '../keylight';
 import {
+  equalizeData, autoLevelsData, autoContrastData, autoColorData, changeColorData, changeToColorData, leaveColorData,
+  tonerData,
+} from '../aeColorAdvanced';
+import {
   bulgeData, spherizeData, twirlData, cornerPinData, polarCoordinatesData, polarConversion, mirrorData, offsetData,
   opticsCompensationData, meshWarpData, liquifyData,
 } from '../distort';
@@ -32,6 +36,8 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
   const n = (k: string, d: number): number => a[k] ?? d;
   const b = (k: string, d: boolean): boolean => (a[k] ?? (d ? 1 : 0)) !== 0;
   const key = (): [number, number, number] => [n('keyR', 0), n('keyG', 255), n('keyB', 0)];
+  const rgb = (name: string, d: [number, number, number]): [number, number, number] =>
+    [n(`${name}R`, d[0]), n(`${name}G`, d[1]), n(`${name}B`, d[2])];
   switch (type) {
     case 'gaussian-blur':
     case 'fast-box-blur':
@@ -190,6 +196,30 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
     }
     case 'liquify':
       data.set(liquifyData(data, w, h, n('centerX', w / 2), n('centerY', h / 2), n('radius', 50), n('pushX', 0), n('pushY', 0), n('twirl', 0), n('pinch', 0)));
+      return;
+    case 'equalize':
+      equalizeData(data, n('mode', 0), n('amount', 100), n('blend', 0));
+      return;
+    case 'auto-levels':
+      autoLevelsData(data, n('blackClip', 0.1), n('whiteClip', 0.1), n('blend', 0));
+      return;
+    case 'auto-contrast':
+      autoContrastData(data, n('blackClip', 0.1), n('whiteClip', 0.1), n('blend', 0));
+      return;
+    case 'auto-color':
+      autoColorData(data, n('blackClip', 0.1), n('whiteClip', 0.1), n('snapNeutral', 0), n('blend', 0));
+      return;
+    case 'change-color':
+      changeColorData(data, rgb('target', [255, 0, 0]), n('hueTol', 15), n('satTol', 50), n('lightTol', 50), n('softness', 20), n('hueShift', 0), n('satScale', 0), n('lightScale', 0), b('invert', false));
+      return;
+    case 'change-to-color':
+      changeToColorData(data, rgb('from', [255, 0, 0]), rgb('to', [0, 0, 255]), n('hueTol', 15), n('satTol', 50), n('lightTol', 50), n('softness', 20), b('preserveLightness', true));
+      return;
+    case 'leave-color':
+      leaveColorData(data, rgb('target', [255, 0, 0]), n('tolerance', 15), n('softness', 20), n('amount', 100));
+      return;
+    case 'toner':
+      tonerData(data, rgb('black', [0, 0, 0]), rgb('shadows', [60, 40, 90]), rgb('midtones', [140, 120, 100]), rgb('highlights', [220, 210, 180]), rgb('white', [255, 255, 255]), n('blend', 0));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

@@ -2,12 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <string>
 
 namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 45> kPorted{
+constexpr std::array<std::string_view, 53> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -15,7 +16,8 @@ constexpr std::array<std::string_view, 45> kPorted{
     "shadow-highlight", "colorama",        "keylight",        "linear-color-key", "luma-key",     "shift-channels",
     "color-key",       "color-range",     "extract",       "spill-suppressor", "matte-choker",     "bulge",
     "spherize",        "twirl",           "corner-pin",    "polar-coordinates", "mirror",          "offset",
-    "optics-compensation", "mesh-warp",   "liquify",
+    "optics-compensation", "mesh-warp",   "liquify",       "equalize",        "auto-levels",      "auto-contrast",
+    "auto-color",      "change-color",    "change-to-color", "leave-color",   "toner",
 };
 
 }  // namespace
@@ -25,6 +27,17 @@ std::span<const std::string_view> ported_kernels() noexcept { return kPorted; }
 bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, ThreadPool* pool) {
   const auto b = [&](std::string_view k, bool def) { return a(k, def ? 1 : 0) != 0; };
   const auto key = [&] { return Rgb{a("keyR", 0), a("keyG", 255), a("keyB", 0)}; };
+  // An RGB triple stored as <name>R / <name>G / <name>B.
+  const auto rgb = [&](std::string_view name, Rgb def) {
+    std::string k(name);
+    const std::size_t n = k.size();
+    k += 'R';
+    const double r = a(k, def.r);
+    k[n] = 'G';
+    const double g = a(k, def.g);
+    k[n] = 'B';
+    return Rgb{r, g, a(k, def.b)};
+  };
   if (type == "gaussian-blur" || type == "fast-box-blur") {
     // applyGaussianBlur fixes iterations at 3; Fast Box Blur exposes it.
     blur_rgba(img, a("radius", 0), blur_dims(a("dimensions", 0)),
@@ -141,6 +154,27 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
   } else if (type == "liquify") {
     liquify(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("radius", 50), a("pushX", 0), a("pushY", 0),
             a("twirl", 0), a("pinch", 0), pool);
+  } else if (type == "equalize") {
+    equalize(img, a("mode", 0), a("amount", 100), a("blend", 0), pool);
+  } else if (type == "auto-levels") {
+    auto_levels(img, a("blackClip", 0.1), a("whiteClip", 0.1), a("blend", 0), pool);
+  } else if (type == "auto-contrast") {
+    auto_contrast(img, a("blackClip", 0.1), a("whiteClip", 0.1), a("blend", 0), pool);
+  } else if (type == "auto-color") {
+    auto_color(img, a("blackClip", 0.1), a("whiteClip", 0.1), a("snapNeutral", 0), a("blend", 0), pool);
+  } else if (type == "change-color") {
+    change_color(img, rgb("target", {255, 0, 0}), a("hueTol", 15), a("satTol", 50), a("lightTol", 50), a("softness", 20),
+                 a("hueShift", 0), a("satScale", 0), a("lightScale", 0), b("invert", false), pool);
+  } else if (type == "change-to-color") {
+    change_to_color(img, rgb("from", {255, 0, 0}), rgb("to", {0, 0, 255}), a("hueTol", 15), a("satTol", 50),
+                    a("lightTol", 50), a("softness", 20), b("preserveLightness", true), pool);
+  } else if (type == "leave-color") {
+    leave_color(img, rgb("target", {255, 0, 0}), a("tolerance", 15), a("softness", 20), a("amount", 100), pool);
+  } else if (type == "toner") {
+    toner(img,
+          {rgb("black", {0, 0, 0}), rgb("shadows", {60, 40, 90}), rgb("midtones", {140, 120, 100}),
+           rgb("highlights", {220, 210, 180}), rgb("white", {255, 255, 255})},
+          a("blend", 0), pool);
   } else {
     return false;
   }
