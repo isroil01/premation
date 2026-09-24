@@ -83,6 +83,15 @@
     { "effect": "turbulent-displace", "args": { "amount": 20, "size": 60, "complexity": 3, "evolution": 40 } },
     { "effect": "curl-noise", "args": { "amount": 20, "size": 60, "complexity": 3, "evolution": 15 } },
     { "effect": "roughen-edges", "args": { "border": 8, "scale": 100, "complexity": 3, "evolution": 20, "seed": 3 } },
-    { "effect": "scatter", "args": { "amount": 6, "seed": 1 } }
+    { "effect": "scatter", "args": { "amount": 6, "seed": 1 } },
+    { "effect": "ripple", "args": { "amplitude": 8, "frequency": 6, "phase": 30, "decay": 1 } },
+    { "effect": "magnify", "args": { "magnification": 200, "radius": 300, "feather": 40 } },
+    { "effect": "warp", "args": { "style": 2, "bend": 40 } },
+    { "effect": "page-turn", "args": { "amount": 40, "angle": 45, "radius": 60, "backOpacity": 80, "shading": 50 } },
+    { "effect": "split", "args": { "offset": 40, "angle": 30 } },
+    { "effect": "slant", "args": { "slant": 60 } },
+    { "effect": "smear", "args": { "toX": 80, "toY": -20, "radius": 300, "elasticity": 60 } },
+    { "effect": "rolling-shutter", "args": { "sweep": 40, "wobble": 10 } },
+    { "effect": "radial-shadow", "args": { "lightX": -300, "lightY": -200, "projection": 30, "opacity": 60, "softness": 4 } }
   ]
 }

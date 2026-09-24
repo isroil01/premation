@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 81> kPorted{
+constexpr std::array<std::string_view, 90> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -22,7 +22,8 @@ constexpr std::array<std::string_view, 81> kPorted{
     "channel-combiner", "remove-color-matting", "cartoon",   "brush-strokes",   "strobe-light",     "color-emboss",
     "halftone",        "kaleidoscope",    "vignette",      "burn-film",       "iris-wipe",        "light-wipe",
     "line-sweep",      "grid-wipe",       "dust-scratches", "noise-alpha",    "wave-warp",        "turbulent-displace",
-    "curl-noise",      "roughen-edges",   "scatter",
+    "curl-noise",      "roughen-edges",   "scatter",       "ripple",          "magnify",          "warp",
+    "page-turn",       "split",           "slant",         "smear",           "rolling-shutter",  "radial-shadow",
 };
 
 }  // namespace
@@ -250,6 +251,27 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
                   a("edgeSharpness", 0), pool);
   } else if (type == "scatter") {
     scatter(img, a("amount", 5), a("grain", 0), a("seed", 0), a("evolution", 0), pool);
+  } else if (type == "ripple") {
+    ripple(img, a("centerX", 0), a("centerY", 0), a("radius", 0), a("amplitude", 10), a("frequency", 4), a("phase", 0),
+           a("decay", 0), pool);
+  } else if (type == "magnify") {
+    magnify(img, a("centerX", 0), a("centerY", 0), a("magnification", 200), a("radius", 50), a("shape", 0),
+            a("feather", 0), pool);
+  } else if (type == "warp") {
+    warp(img, a("style", 0), a("bend", 50), a("horizontal", 0), a("vertical", 0), a("axis", 0), pool);
+  } else if (type == "page-turn") {
+    page_turn(img, a("amount", 30), a("angle", 45), a("radius", 20), a("backOpacity", 100), a("shading", 50), pool);
+  } else if (type == "split") {
+    split(img, a("offset", 20), a("angle", 0), a("centerX", 0), a("centerY", 0), pool);
+  } else if (type == "slant") {
+    slant(img, a("slant", 20), a("axis", 0), a("floor", 0.5), pool);
+  } else if (type == "smear") {
+    smear(img, a("fromX", 0), a("fromY", 0), a("toX", 10), a("toY", 0), a("radius", 30), a("elasticity", 100), pool);
+  } else if (type == "rolling-shutter") {
+    rolling_shutter(img, a("sweep", 10), a("wobble", 0), a("direction", 0), b("vertical", false), pool);
+  } else if (type == "radial-shadow") {
+    radial_shadow(img, a("lightX", 0), a("lightY", 0), a("projection", 20), rgb("color", {0, 0, 0}), a("opacity", 50),
+                  a("softness", 0), a("renderMode", 0), pool);
   } else {
     return false;
   }

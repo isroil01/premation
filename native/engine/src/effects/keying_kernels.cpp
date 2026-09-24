@@ -338,8 +338,6 @@ void spill_suppressor(RgbaView img, const Rgb& key, double amount, bool preserve
   });
 }
 
-namespace {
-
 /// aeKeyingAdvanced.ts `boxBlurAlpha`: clamped box, Float32 stores, sums of
 /// floats in the TS's tap order (d = -r … r) per pixel.
 void box_blur_plane(std::vector<float>& a, int w, int h, double radius, ThreadPool* pool) {
@@ -371,8 +369,6 @@ void box_blur_plane(std::vector<float>& a, int w, int h, double radius, ThreadPo
     }
   });
 }
-
-}  // namespace
 
 void matte_choker(RgbaView img, double spread, double choke, double softness, double iterations, ThreadPool* pool) {
   const int w = img.w;

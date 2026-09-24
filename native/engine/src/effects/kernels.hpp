@@ -67,6 +67,10 @@ void simple_choker(RgbaView img, double choke_px, ThreadPool* pool);
 void alpha_min_max(RgbaView img, int r, bool take_max, ThreadPool* pool);
 /// The same on a float plane (aeKeyingAdvanced.ts `morph`).
 void plane_min_max(std::vector<float>& plane, int w, int h, int r, bool take_max, ThreadPool* pool);
+/// A clamped box blur of a float plane, r = max(1, round(radius)), Float32
+/// stores and float sums in the TS's tap order (aeKeyingAdvanced.ts
+/// `boxBlurAlpha`, aeDistortAdvanced.ts `blurField`).
+void box_blur_plane(std::vector<float>& plane, int w, int h, double radius, ThreadPool* pool);
 
 // ── keying: keylight.ts, keyingEffects.ts, aeKeyingAdvanced.ts ──────────────
 struct Rgb {
@@ -243,6 +247,22 @@ void roughen_edges(RgbaView img, double border, double scale, double complexity,
                    double edge_sharpness, ThreadPool* pool);
 /// `scatterData(src, w, h, amount, grain (0 both / 1 horizontal / 2 vertical), seed, evolution)`.
 void scatter(RgbaView img, double amount, double grain, double seed, double evolution, ThreadPool* pool);
+
+// ── aeDistortAdvanced.ts ────────────────────────────────────────────────────
+void ripple(RgbaView img, double center_x, double center_y, double radius, double amplitude, double frequency,
+            double phase, double decay, ThreadPool* pool);
+void magnify(RgbaView img, double center_x, double center_y, double magnification, double radius, double shape,
+             double feather, ThreadPool* pool);
+void warp(RgbaView img, double style, double bend, double horizontal, double vertical, double axis, ThreadPool* pool);
+void page_turn(RgbaView img, double amount, double angle, double radius, double back_opacity, double shading,
+               ThreadPool* pool);
+void split(RgbaView img, double offset, double angle, double center_x, double center_y, ThreadPool* pool);
+void slant(RgbaView img, double slant_px, double axis, double floor_v, ThreadPool* pool);
+void smear(RgbaView img, double from_x, double from_y, double to_x, double to_y, double radius, double elasticity,
+           ThreadPool* pool);
+void rolling_shutter(RgbaView img, double sweep, double wobble, double direction, bool vertical, ThreadPool* pool);
+void radial_shadow(RgbaView img, double light_x, double light_y, double projection, const Rgb& color, double opacity,
+                   double softness, double render_mode, ThreadPool* pool);
 
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).

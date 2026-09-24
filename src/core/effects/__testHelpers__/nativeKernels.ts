@@ -36,6 +36,9 @@ import {
 import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
 import { mosaicData, findEdgesData, embossData, roughenEdgesData, scatterData } from '../stylize';
 import { waveWarpData, turbulentDisplaceData, curlNoiseData } from '../warp';
+import {
+  rippleData, magnifyData, warpData, pageTurnData, splitData, slantData, smearData, rollingShutterData, radialShadowData,
+} from '../aeDistortAdvanced';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from '../colorEffects';
 import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from '../aeColor';
 import { selectiveColorData, selectiveRange, shadowHighlightData } from '../toneEffects';
@@ -332,6 +335,33 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       data.set(scatterData(data, w, h, n('amount', 5), grain >= 2 ? 'vertical' : grain >= 1 ? 'horizontal' : 'both', n('seed', 0), n('evolution', 0)));
       return;
     }
+    case 'ripple':
+      data.set(rippleData(data, w, h, n('centerX', 0), n('centerY', 0), n('radius', 0), n('amplitude', 10), n('frequency', 4), n('phase', 0), n('decay', 0)));
+      return;
+    case 'magnify':
+      data.set(magnifyData(data, w, h, n('centerX', 0), n('centerY', 0), n('magnification', 200), n('radius', 50), n('shape', 0), n('feather', 0)));
+      return;
+    case 'warp':
+      data.set(warpData(data, w, h, n('style', 0), n('bend', 50), n('horizontal', 0), n('vertical', 0), n('axis', 0)));
+      return;
+    case 'page-turn':
+      data.set(pageTurnData(data, w, h, n('amount', 30), n('angle', 45), n('radius', 20), n('backOpacity', 100), n('shading', 50)));
+      return;
+    case 'split':
+      data.set(splitData(data, w, h, n('offset', 20), n('angle', 0), n('centerX', 0), n('centerY', 0)));
+      return;
+    case 'slant':
+      data.set(slantData(data, w, h, n('slant', 20), n('axis', 0), n('floor', 0.5)));
+      return;
+    case 'smear':
+      data.set(smearData(data, w, h, n('fromX', 0), n('fromY', 0), n('toX', 10), n('toY', 0), n('radius', 30), n('elasticity', 100)));
+      return;
+    case 'rolling-shutter':
+      data.set(rollingShutterData(data, w, h, n('sweep', 10), n('wobble', 0), n('direction', 0), b('vertical', false)));
+      return;
+    case 'radial-shadow':
+      data.set(radialShadowData(data, w, h, n('lightX', 0), n('lightY', 0), n('projection', 20), rgb('color', [0, 0, 0]), n('opacity', 50), n('softness', 0), n('renderMode', 0)));
+      return;
     default:
       throw new Error(`no kernel for ${type}`);
   }
