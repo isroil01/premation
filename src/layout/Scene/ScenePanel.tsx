@@ -38,8 +38,10 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { PickWhip } from '@components/PickWhip';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompId, useMirrorRevision } from '@hooks/useMirror';
+import { mirrorCanBeParentOf } from '@core/mirror/parenting';
 import { useUIStore } from '@stores/uiStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import {
@@ -53,9 +55,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { RenameLayerResult } from '@core/scene/renameLayer';
 import { isLayer } from '@core/engine/doc';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
-import { KIND_LABEL, flattenComposition } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { canBeParentOf } from '@core/scene/parenting';
+import { KIND_LABEL } from '@core/scene/sceneDerive';
 import { parentLayer } from '@layout/Inspector/inspectorEdits';
 import { moveLayersInTreeEdit, renameLayerEdit } from './sceneEdits';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -98,36 +98,60 @@ const DENSITIES: ReadonlyArray<{ id: RowDensity; label: string }> = [
 export { sceneGraphToTree } from './sceneRows';
 
 /**
- * A counter that ticks on the things THIS tree draws: structure, and the node
- * values that appear on a row.
+ * A counter that ticks when the document changes (B4: the mirror's revision).
  *
- * Deliberately narrower than `useSceneRevision` — see the file header. A value
- * write announces itself as `NodeUpdated` whether or not it is one this panel
- * shows, which is still far less often than the raw revision and, unlike it,
- * never fires on a viewport drag tick for a node that is not being drawn here.
+ * The tree draws structure, the values that appear on a row (names, switches,
+ * labels, kinds, icons) and, for the filters, keyframes and effects — so any
+ * edit may change it, as the legacy `NodeUpdated` / `AnimationChanged` ticks
+ * it replaces said. An edit is a revision; a played frame or a viewport hover
+ * is not, so this never ticks per frame.
  */
-function useSceneStructure(): number {
-  const [rev, setRev] = useState(0);
-  useEffect(() => {
-    const bump = (): void => setRev((r) => r + 1);
-    const subs = [
-      getEventBus().on('SceneGraphChanged', bump),
-      getEventBus().on('NodeUpdated', bump),
-      getEventBus().on('LayerReparented', bump),
-    ];
-    return () => { for (const s of subs) s.dispose(); };
-  }, []);
-  return rev;
+function useDocumentRevision(): number {
+  return useMirrorRevision();
+}
+
+/**
+ * The ancestors of `id` in the tree, innermost first: its parent chain, then
+ * the composition it belongs to (the tree's root row). From the document mirror.
+ */
+function ancestorChain(id: string): string[] {
+  const m = documentMirror();
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let cur = m.layer(id);
+  let parent = cur?.parent;
+  while (parent && !seen.has(parent)) {
+    seen.add(parent);
+    chain.push(parent);
+    cur = m.layer(parent);
+    parent = cur?.parent;
+  }
+  if (cur && !seen.has(cur.comp)) chain.push(cur.comp);
+  return chain;
+}
+
+/**
+ * A row's lock and name: a layer's from the document mirror; a composition
+ * ROOT's from its node.
+ */
+function rowLock(id: string): { locked: boolean; name: string | undefined } | null {
+  const l = documentMirror().layer(id);
+  if (l) return { locked: l.switches.locked, name: l.name };
+  // B4-gap: a composition ROOT is not a layer in the API — its lock is a node flag the legacy
+  // writer toggles, with no mirror record.
+  const root = defaultSceneGraph.getNode(id);
+  return root ? { locked: root.locked === true, name: root.name } : null;
 }
 
 export function ScenePanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const setSelected = useSelectionStore((s) => s.set);
-  const rev = useSceneStructure();
+  const rev = useDocumentRevision();
 
-  const comps = useProjectStore((s) => s.comps);
   const activeTabId = useProjectStore((s) => s.activeTabId);
-  const activeCompId = activeTabId ? comps[useProjectStore.getState().tabs[activeTabId]?.compositionId ?? '']?.id : undefined;
+  // The active tab's composition (or a group opened in its own tab), when the document has it.
+  const tabCompId = useActiveCompId();
+  const activeCompId = tabCompId && (documentMirror().comp(tabCompId) || documentMirror().layer(tabCompId)) ? tabCompId : undefined;
 
   // ── View settings: panel-wide, persisted, outlive the panel's mount ──
   const scope = useSceneViewStore((s) => s.scope);
@@ -158,7 +182,7 @@ export function ScenePanel(): JSX.Element {
   const tree = useMemo(
     () => sceneGraphToTree(scope, { thumbnails }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rev, comps, activeTabId, scope, thumbnails],
+    [rev, activeTabId, scope, thumbnails],
   );
 
   const q = stored.query.trim().toLowerCase();
@@ -183,14 +207,9 @@ export function ScenePanel(): JSX.Element {
   };
   const filterActive = isSceneFilterActive(filter);
 
-  // Keyframes, effects and expressions do not live in the scene graph:
-  // `makeFactsReader` reads them from the animation engine, which announces
-  // edits as `AnimationChanged` (effects edits emit it too — see
-  // `writeNodeEffects`) and never bumps the structure counter `tree` is keyed
-  // on. Without this the "with keyframes" / "with effects" filters kept the
-  // answer from whenever the tree last rebuilt: add a keyframe and the layer
-  // stayed filtered out.
-  const animRev = useAnimationRevision();
+  // Keyframes, effects and expressions are edits like any other: the document
+  // revision (`rev`) ticks on them, so the "with keyframes" / "with effects"
+  // filters re-ask when a keyframe or an effect is added.
 
   /*
     ONE facts reader per pass, shared by the filter walk and the match count.
@@ -201,7 +220,7 @@ export function ScenePanel(): JSX.Element {
   const factsOf = useMemo(
     () => makeFactsReader(stored.fields, q.length > 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stored.fields, q, rev, animRev],
+    [stored.fields, q, rev],
   );
 
   const filtered = useMemo(
@@ -228,11 +247,26 @@ export function ScenePanel(): JSX.Element {
   // The ACTIVE composition's layers, root excluded. `defaultSceneGraph.size`
   // counted every node of every composition — each comp root included — so a
   // project with three comps reported a number that matched no list on screen.
+  // B4: the composition's layers from the document mirror (every layer of it, groups' members included).
   const itemCount = useMemo(
-    () => Math.max(0, flattenComposition(defaultSceneGraph, activeCompRootId()).length - 1),
-    // `activeCompRootId` reads the project store; the tab is the other input.
+    () => {
+      const m = documentMirror();
+      const id = tabCompId ?? m.compIds[0] ?? '';
+      const comp = m.comp(id);
+      if (comp) return comp.layers.length;
+      // A group opened in its own tab: its members, at any depth.
+      let n = 0;
+      const walk = (ids: readonly string[]): void => {
+        for (const c of ids) {
+          n += 1;
+          walk(m.layer(c)?.children ?? []);
+        }
+      };
+      walk(m.layer(id)?.children ?? []);
+      return n;
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rev, activeTabId],
+    [rev, tabCompId],
   );
 
   /*
@@ -252,15 +286,7 @@ export function ScenePanel(): JSX.Element {
   const [revealIds, setRevealIds] = useState<ReadonlyArray<string>>([]);
   useEffect(() => {
     const sub = getEventBus().on('LayerReparented', ({ parentId }) => {
-      const chain: string[] = [];
-      const seen = new Set<string>();
-      let cur: string | null = parentId;
-      while (cur && !seen.has(cur)) {
-        seen.add(cur);
-        chain.push(cur);
-        cur = defaultSceneGraph.getNode(cur)?.parent ?? null;
-      }
-      setRevealIds(chain);
+      setRevealIds(parentId ? [parentId, ...ancestorChain(parentId)] : []);
     });
     return () => sub.dispose();
   }, []);
@@ -286,14 +312,7 @@ export function ScenePanel(): JSX.Element {
     const id = selected[selected.length - 1];
     if (!id || ownSelection.current === id) return;
     setScrollToId(id);
-    const chain: string[] = [];
-    let cur: string | null = defaultSceneGraph.getNode(id)?.parent ?? null;
-    const seen = new Set<string>();
-    while (cur && !seen.has(cur)) {
-      seen.add(cur);
-      chain.push(cur);
-      cur = defaultSceneGraph.getNode(cur)?.parent ?? null;
-    }
+    const chain = ancestorChain(id);
     if (chain.length) setRevealIds(chain);
   }, [selected]);
 
@@ -306,9 +325,9 @@ export function ScenePanel(): JSX.Element {
 
   /** True (and says so) when the row is locked — locked means not editable here. */
   const refuseIfLocked = (id: string, what: string): boolean => {
-    const n = defaultSceneGraph.getNode(id);
-    if (!n?.locked) return false;
-    useUIStore.getState().notify({ level: 'info', message: `“${n.name ?? id}” is locked — unlock it to ${what}.`, durationMs: 3000 });
+    const row = rowLock(id);
+    if (!row?.locked) return false;
+    useUIStore.getState().notify({ level: 'info', message: `“${row.name ?? id}” is locked — unlock it to ${what}.`, durationMs: 3000 });
     return true;
   };
 
@@ -387,16 +406,16 @@ export function ScenePanel(): JSX.Element {
     pos: 'before' | 'after' | 'inside',
   ): void => {
     const movable = ids.filter((id) => {
-      const n = defaultSceneGraph.getNode(id);
       // A composition root is not a layer and cannot be moved into one.
-      return !!n && n.parent !== null && !n.locked && isLayer(id);
+      const l = documentMirror().layer(id);
+      return !!l && !l.switches.locked && isLayer(id);
     });
     if (movable.length === 0) {
       if (ids.length > 0) refuseIfLocked(ids[0]!, 'move it');
       return;
     }
     if (targetId !== null) {
-      const target = defaultSceneGraph.getNode(targetId);
+      const target = rowLock(targetId);
       if (target?.locked && pos === 'inside') {
         useUIStore.getState().notify({
           level: 'info',
@@ -657,12 +676,12 @@ export function ScenePanel(): JSX.Element {
               document, not a layer that can have a parent.
             */
             renderLead={(node) => {
-              const n = defaultSceneGraph.getNode(node.id);
-              if (!n || n.parent === null) return null;
+              // A composition root (no layer record) gets no whip.
+              if (!documentMirror().layer(node.id)) return null;
               return (
                 <PickWhip
                   label="Parent pick-whip — drag onto a layer (Shift: jump to the parent · Alt: keep values)"
-                  accept={(target) => canBeParentOf(node.id, target.nodeId)}
+                  accept={(target) => mirrorCanBeParentOf(documentMirror(), node.id, target.nodeId)}
                   // The inspector's writer (`setParent`); a composition root = no parent.
                   onPick={(target, m) => parentLayer(node.id, isLayer(target.nodeId) ? target.nodeId : null, m)}
                 />

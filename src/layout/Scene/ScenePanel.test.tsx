@@ -349,9 +349,10 @@ describe('rename', () => {
     expect(screen.getByLabelText('Rename')).toHaveValue('Beta');
   });
 
-  it('refuses to rename a locked layer and says so', () => {
+  it('refuses to rename a locked layer and says so', async () => {
     renderPanel();
-    act(() => { setNodeFlag('beta', { locked: true }); });
+    // The lock is read from the document mirror, which hears the write when the engine reports it.
+    await act(async () => { setNodeFlag('beta', { locked: true }); await engineIdle(); });
     fireEvent.doubleClick(rowFor('beta'));
     expect(screen.queryByLabelText('Rename')).toBeNull();
   });
