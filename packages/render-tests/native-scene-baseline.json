@@ -1,8 +1,10 @@
 {
-  "_comment": "Ceilings for how far the C++ engine's OWN frame (FrameScene built from the scene's project document by premation-scene, D2w) may differ from the TS WebGPU frame. A LIST OF DEBTS, meant to be removed. video-decoded-frame: the FrameScene is structurally identical and the native backend draws the TS-uploaded texel bit-identically; the difference is the decode itself — E1's ffmpeg YUV->RGB conversion (chroma siting / matrix rounding) vs Chromium's WebCodecs/VideoFrame decode of the same H.264 frame. Fixing it belongs to E1's conversion parity, not the scene builder. Frames not ported yet are not listed (reported as not-ported, never failed).",
+  "_comment": "Ceilings for how far the C++ engine's OWN frame (FrameScene built from the scene's project document by premation-scene, D2w) may differ from the TS WebGPU frame. A LIST OF DEBTS, meant to be removed. video-decoded-frame: the FrameScene is structurally identical and the native backend draws the TS-uploaded texel bit-identically; the difference is the decode itself — E1's ffmpeg YUV->RGB conversion (chroma siting / matrix rounding) vs Chromium's WebCodecs/VideoFrame decode of the same H.264 frame. Fixing it belongs to E1's conversion parity, not the scene builder. effect-posterize: the lut:<id> strip is byte-identical to the TS upload; the difference is the path raster underneath (Chromium draws a non-baked layer on a GPU-accelerated canvas, the engine on Skia's CPU raster: ellipse edge AA, posterize amplifies it) — the same debt and the same number as native-raster-baseline.json. effect-plexus: the bake's Canvas2D program is op-for-op the TS's (canvas_effects_parity.json); Chromium blends the plexus mesh in a GPU-accelerated float16 OffscreenCanvas, the engine in a Skia CPU F16 surface — thin-line / triangle-edge AA of hundreds of faint primitives (4.4 %, was 22 % on an 8-bit canvas). Both belong to the raster backend (E3), not the scene builder. Frames not ported yet are not listed (reported as not-ported, never failed).",
   "tolerance": 0.01,
   "frames": {
     "video-decoded-frame#5": 0.10694,
-    "video-decoded-frame#13": 0.10672
+    "video-decoded-frame#13": 0.10672,
+    "effect-posterize#0": 0.01105,
+    "effect-plexus#0": 0.04411
   }
 }
