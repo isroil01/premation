@@ -215,6 +215,7 @@ struct Snapshot {
   std::optional<api::RenderCamera3D> camera3d;
   std::vector<api::RenderLight3D> lights3d;
   std::optional<api::RenderSsao> ssao;
+  std::optional<api::RenderEnvMap> envMap;
 };
 
 /// SnapshotComp (buildSnapshot.ts) — comp-level inputs.

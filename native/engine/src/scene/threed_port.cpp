@@ -1062,8 +1062,9 @@ std::optional<RLayer> Scene3D::light_layer(const doc::Node& n) {
 void Scene3D::finish(std::vector<RLayer>& layers) {
   // environmentSpecularMap (the prefiltered reflection atlas) is not ported: a frame
   // that would carry envMap falls back.
-  if (envReflect_ && envReflect_->intensity > 0 && has_world3d(layers)) {
-    unported_.emplace_back(envReflect_->nodeId, "environment reflection map (prefiltered atlas)");
+  if (envReflect_ && envReflect_->intensity > 0 && has_world3d(layers) && envReflect_->sky.is_string() &&
+      envReflect_->sky.str().starts_with("asset:")) {
+    unported_.emplace_back(envReflect_->nodeId, "environment reflection map of an image (asset:) sky");
   }
   const auto findTop = [&layers](const std::string& id) -> std::ptrdiff_t {
     for (std::size_t i = 0; i < layers.size(); ++i) {
@@ -1272,6 +1273,22 @@ void Scene3D::emit(Snapshot& s, const std::vector<RLayer>& layers) const {
   s.camera3d = std::move(cam);
   const std::vector<SceneLight>& shipped = !sceneLights_.empty() ? sceneLights_ : formRigUsed_ ? formRig_ : sceneLights_;
   if (!shipped.empty()) s.lights3d = to_shader_lights(shipped);
+  if (envReflect_ && envReflect_->intensity > 0) {
+    // environmentSpecularMap(sky): the prefiltered atlas (memoised on the sky).
+    const std::string sky = envReflect_->sky.is_string() ? envReflect_->sky.str() : "studio";
+    if (const auto map = environment_specular_map(sky)) {
+      api::RenderEnvMap em;
+      em.id = map->id;
+      em.width = map->width;
+      em.height = map->height;
+      em.levels = map->levels;
+      em.scale = map->scale;
+      em.data = map->data;
+      em.intensity = envReflect_->intensity;
+      em.rotation_deg = envReflect_->rotationDeg;
+      s.envMap = std::move(em);
+    }
+  }
   if (const Json* rec = c_.d.comp(comp_.rootId)) {
     const Json& ss = rec->at("ssao");
     if (ss.is_object() && ss.at("enabled").is_bool() && ss.at("enabled").b()) {

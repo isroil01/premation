@@ -257,6 +257,7 @@ bool finish_frame_3d(const Snapshot& s, api::RenderFrameScene& sc) {
   }
   sc.camera3d = s.camera3d;
   if (!s.lights3d.empty()) sc.lights3d = s.lights3d;
+  if (s.envMap) sc.env_map = s.envMap;
   if (s.ssao && s.ssao->enabled) sc.ssao = s.ssao;
   return true;
 }

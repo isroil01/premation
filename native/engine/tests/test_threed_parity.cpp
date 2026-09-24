@@ -4,7 +4,9 @@
 // Lambert, the shader lights — must give the editor's doubles bit for bit.
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <optional>
@@ -284,6 +286,29 @@ TEST_CASE("3D parity: per-quad shading and shader lights", "[scene][threed][pari
       REQUIRE(deg.has_value() == aims[i].at("compDeg").is_number());
       if (deg) CHECK(same(*deg, aims[i].at("compDeg").num()));
     }
+  }
+}
+
+TEST_CASE("3D parity: environment reflection atlas", "[scene][threed][parity]") {
+  const Json fx = load();
+  REQUIRE(fx.at("specular").arr().size() == 3);
+  for (const Json& row : fx.at("specular").arr()) {
+    INFO(row.at("sky").str());
+    const auto m = sc::environment_specular_map(row.at("sky").str());
+    REQUIRE(m.has_value());
+    CHECK(m->id == row.at("id").str());
+    CHECK(m->width == static_cast<std::uint32_t>(row.at("width").num()));
+    CHECK(m->height == static_cast<std::uint32_t>(row.at("height").num()));
+    CHECK(m->levels == static_cast<std::uint32_t>(row.at("levels").num()));
+    CHECK(same(m->scale, row.at("scale").num()));
+    std::uint64_t h = 0xcbf29ce484222325ULL;
+    for (const std::uint8_t b : m->data) {
+      h ^= b;
+      h *= 0x100000001b3ULL;
+    }
+    std::array<char, 17> hex{};
+    std::snprintf(hex.data(), hex.size(), "%016llx", static_cast<unsigned long long>(h));  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    CHECK(std::string(hex.data()) == row.at("dataFnv").str());
   }
 }
 

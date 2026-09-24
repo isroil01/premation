@@ -5,11 +5,12 @@
 // expanded into one ambient floor + up to six axis parallels that ride the
 // ordinary light array. Pinned by tests/data/threed_parity.json.
 //
-// Not here yet: `environmentSpecularMap` (the prefiltered reflection atlas) and
-// image (`asset:`) skies.
+// Also the reflection half: `environmentSpecularMap` (the prefiltered equirect
+// atlas, 5 roughness levels, sqrt-encoded RGBA8). Not here: image (`asset:`) skies.
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -35,5 +36,19 @@ struct EnvRigLight {
 /// unknown preset falls back to 'studio'); nullopt for an `asset:` sky.
 [[nodiscard]] std::optional<std::vector<EnvRigLight>> environment_rig_for(std::string_view sky, double intensityPct,
                                                                           double rotationDeg);
+
+/// environmentLight.ts `EnvSpecularMap`.
+struct EnvSpecularMap {
+  std::string id;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;  ///< per-level height × levels
+  std::uint32_t levels = 0;
+  double scale = 0;
+  std::vector<std::uint8_t> data;
+};
+
+/// `environmentSpecularMap(sky)` for a preset sky (unknown → 'studio'); nullopt
+/// for an asset: sky. Memoised per content id (the TypeScript's LRU of 8).
+[[nodiscard]] std::optional<EnvSpecularMap> environment_specular_map(std::string_view sky);
 
 }  // namespace premation::scene

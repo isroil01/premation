@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <mutex>
 #include <numbers>
 
 #include "jsmath.hpp"
@@ -194,6 +196,176 @@ std::vector<EnvRigLight> environment_rig(const std::array<float, 27>& sh, double
     l.from = {kAxes[i].x, kAxes[i].y, kAxes[i].z};
     out.push_back(std::move(l));
   }
+  return out;
+}
+
+namespace {
+
+constexpr int kSpecW = 256;
+constexpr int kSpecH = 128;
+constexpr int kSpecLevels = 5;
+
+/// `boxRadiusFor(sigmaSamples)`.
+double box_radius_for(double sigma) {
+  if (!(sigma > 0)) return 0;
+  return std::max(0.0, motion::js::round((std::sqrt(6 * sigma * sigma + 1) - 1) / 2));
+}
+
+/// `boxRowsWrap(src, w, h, radiusOf)` — Float32Array prefix sums and output.
+std::vector<float> box_rows_wrap(const std::vector<float>& src, int w, int h, const std::function<double(int)>& radiusOf) {
+  std::vector<float> out(src.size());
+  std::vector<float> pre(static_cast<std::size_t>(w + 1) * 3);
+  const auto W = static_cast<std::size_t>(w);
+  for (int j = 0; j < h; ++j) {
+    const std::size_t base = static_cast<std::size_t>(j) * W * 3;
+    const double r = std::min(radiusOf(j), std::floor(w / 2.0));
+    if (r <= 0) {
+      std::copy(src.begin() + static_cast<std::ptrdiff_t>(base), src.begin() + static_cast<std::ptrdiff_t>(base + W * 3),
+                out.begin() + static_cast<std::ptrdiff_t>(base));
+      continue;
+    }
+    pre[0] = 0;
+    pre[1] = 0;
+    pre[2] = 0;
+    for (std::size_t i = 0; i < W; ++i) {
+      const std::size_t o = base + i * 3;
+      const std::size_t p = (i + 1) * 3;
+      pre[p] = static_cast<float>(static_cast<double>(pre[p - 3]) + src[o]);
+      pre[p + 1] = static_cast<float>(static_cast<double>(pre[p - 2]) + src[o + 1]);
+      pre[p + 2] = static_cast<float>(static_cast<double>(pre[p - 1]) + src[o + 2]);
+    }
+    const double t0 = pre[W * 3];
+    const double t1 = pre[W * 3 + 1];
+    const double t2 = pre[W * 3 + 2];
+    const double n = 2 * r + 1;
+    const double full = std::floor(n / w);
+    const double rem = std::fmod(n, static_cast<double>(w));
+    const auto ri = static_cast<long long>(r);
+    for (int i = 0; i < w; ++i) {
+      const auto a = static_cast<std::size_t>((((i - ri) % w) + w) % w);
+      double a0 = full * t0;
+      double a1 = full * t1;
+      double a2 = full * t2;
+      const auto b = a + static_cast<std::size_t>(rem);
+      if (b <= W) {
+        a0 += static_cast<double>(pre[b * 3]) - pre[a * 3];
+        a1 += static_cast<double>(pre[b * 3 + 1]) - pre[a * 3 + 1];
+        a2 += static_cast<double>(pre[b * 3 + 2]) - pre[a * 3 + 2];
+      } else {
+        const std::size_t c = b - W;
+        a0 += (t0 - pre[a * 3]) + pre[c * 3];
+        a1 += (t1 - pre[a * 3 + 1]) + pre[c * 3 + 1];
+        a2 += (t2 - pre[a * 3 + 2]) + pre[c * 3 + 2];
+      }
+      const std::size_t o = base + static_cast<std::size_t>(i) * 3;
+      out[o] = static_cast<float>(a0 / n);
+      out[o + 1] = static_cast<float>(a1 / n);
+      out[o + 2] = static_cast<float>(a2 / n);
+    }
+  }
+  return out;
+}
+
+/// `boxColsClamp(src, w, h, radius)`.
+std::vector<float> box_cols_clamp(const std::vector<float>& src, int w, int h, double radius) {
+  const double r = std::min(radius, static_cast<double>(h - 1));
+  if (r <= 0) return src;
+  std::vector<float> out(src.size());
+  std::vector<float> pre(static_cast<std::size_t>(h + 1) * 3);
+  const auto W = static_cast<std::size_t>(w);
+  for (std::size_t i = 0; i < W; ++i) {
+    pre[0] = 0;
+    pre[1] = 0;
+    pre[2] = 0;
+    for (int j = 0; j < h; ++j) {
+      const std::size_t o = (static_cast<std::size_t>(j) * W + i) * 3;
+      const std::size_t p = static_cast<std::size_t>(j + 1) * 3;
+      pre[p] = static_cast<float>(static_cast<double>(pre[p - 3]) + src[o]);
+      pre[p + 1] = static_cast<float>(static_cast<double>(pre[p - 2]) + src[o + 1]);
+      pre[p + 2] = static_cast<float>(static_cast<double>(pre[p - 1]) + src[o + 2]);
+    }
+    const std::size_t top = i * 3;
+    const std::size_t bot = (static_cast<std::size_t>(h - 1) * W + i) * 3;
+    for (int j = 0; j < h; ++j) {
+      const double lo = j - r;
+      const double hi = j + r + 1;
+      const double a = std::max(0.0, lo);
+      const double b = std::min(static_cast<double>(h), hi);
+      const double head = a - lo;
+      const double tail = hi - b;
+      const double n = (b - a) + head + tail;
+      const auto ai = static_cast<std::size_t>(a) * 3;
+      const auto bi = static_cast<std::size_t>(b) * 3;
+      const std::size_t o = (static_cast<std::size_t>(j) * W + i) * 3;
+      for (std::size_t c = 0; c < 3; ++c) {
+        out[o + c] = static_cast<float>(
+            ((static_cast<double>(pre[bi + c]) - pre[ai + c]) + head * src[top + c] + tail * src[bot + c]) / n);
+      }
+    }
+  }
+  return out;
+}
+
+/// `blurEquirectAngular(src, sigmaRad)`.
+std::vector<float> blur_equirect_angular(const std::vector<float>& src, int w, int h, double sigmaRad) {
+  if (!(sigmaRad > 0)) return src;
+  const double ry = box_radius_for((sigmaRad * h) / kPi);
+  const auto rowRadius = [&](int j) {
+    const double theta = ((j + 0.5) / h) * kPi;
+    return box_radius_for((sigmaRad * w) / (2 * kPi * std::max(motion::js::sin(theta), 1e-3)));
+  };
+  std::vector<float> d = box_rows_wrap(src, w, h, rowRadius);
+  d = box_rows_wrap(d, w, h, rowRadius);
+  d = box_cols_clamp(d, w, h, ry);
+  d = box_cols_clamp(d, w, h, ry);
+  return d;
+}
+
+}  // namespace
+
+std::optional<EnvSpecularMap> environment_specular_map(std::string_view sky) {
+  if (sky.starts_with("asset:")) return std::nullopt;
+  const std::string content(sky == "sky" || sky == "sunset" ? sky : std::string_view("studio"));
+  const std::string key = "v1|" + content + "|" + std::to_string(kSpecW) + "x" + std::to_string(kSpecH) + "x" +
+                          std::to_string(kSpecLevels);  // envAtlasKey (ENV_ATLAS_CACHE_VERSION 1)
+  static std::mutex m;
+  static std::vector<EnvSpecularMap> cache;  // a handful of presets: deterministic, bounded
+  {
+    const std::scoped_lock lock(m);
+    for (const EnvSpecularMap& e : cache) {
+      if (e.id == key) return e;
+    }
+  }
+  const std::vector<float> base = preset_pixels(content, kSpecW, kSpecH);
+  std::vector<std::vector<float>> levels;
+  for (int i = 0; i < kSpecLevels; ++i) {
+    const double r = static_cast<double>(i) / (kSpecLevels - 1);
+    levels.push_back(blur_equirect_angular(base, kSpecW, kSpecH, r * r));
+  }
+  double max = 0;
+  for (const auto& lv : levels) {
+    for (const float v : lv) {
+      if (v > max) max = v;
+    }
+  }
+  EnvSpecularMap out;
+  out.id = key;
+  out.width = kSpecW;
+  out.height = static_cast<std::uint32_t>(kSpecH * kSpecLevels);
+  out.levels = kSpecLevels;
+  out.scale = std::max(1e-4, max);
+  out.data.reserve(static_cast<std::size_t>(kSpecW) * kSpecH * kSpecLevels * 4);
+  for (const auto& lv : levels) {
+    for (std::size_t p = 0; p < static_cast<std::size_t>(kSpecW) * kSpecH; ++p) {
+      for (std::size_t c = 0; c < 3; ++c) {
+        const double v = std::sqrt(std::max(0.0, static_cast<double>(lv[p * 3 + c])) / out.scale);
+        out.data.push_back(static_cast<std::uint8_t>(std::max(0.0, std::min(255.0, motion::js::round(v * 255)))));
+      }
+      out.data.push_back(255);
+    }
+  }
+  const std::scoped_lock lock(m);
+  cache.push_back(out);
   return out;
 }
 
