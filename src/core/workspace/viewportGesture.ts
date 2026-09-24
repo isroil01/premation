@@ -107,11 +107,13 @@ export function endViewportGesture(): void {
 }
 
 /**
- * B3-legacy: engine gap — the legacy writers' transaction (`gestureAnimEdit`
- * below and the record in `endViewportGesture`), kept for the ports' edits
- * the engine cannot address yet (ports.ts): a shape layer's path edits that
- * leave the engine route (a vertex added / removed on every key of an
- * animated outline, split-handle / RotoBezier vertices) and the node-prop
+ * B3-gap: the legacy writers' transaction (`gestureAnimEdit` below and the
+ * record in `endViewportGesture`). Every viewport gizmo / tool drag already
+ * runs as ONE engine gesture (`ToolTransaction` above); this path is only
+ * reached by the ports' edits the engine cannot address yet (ports.ts): a
+ * static shape outline (`path.points` has no static value), a vertex added /
+ * removed on every key of an animated outline, split-handle / RotoBezier
+ * vertices (a BezierPath drops `broken` / `tension`), and the node-prop
  * fallback `applyNodePropsKeyframed` (a light's Point of Interest before the
  * layer stores it). Deleted with them.
  *

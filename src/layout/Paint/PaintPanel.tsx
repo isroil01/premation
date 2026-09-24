@@ -290,8 +290,9 @@ export function PaintPanel(): JSX.Element {
                       title="Video switch"
                       onClick={(e) => {
                         e.stopPropagation();
-                        // B3-legacy: engine gap — paint strokes are not an API group, so a stroke's
-                        // video switch (visible) has no address (`setGroupEnabled` does not take paint).
+                        // B3-gap: a paint stroke's video switch has no API address — `paint/<id>` is
+                        // not a group (`setGroupEnabled` answers notFound) and the catalog lists no
+                        // `paint/<id>/visible` property.
                         runDocumentEdit(s.visible === false ? 'Show Paint Stroke' : 'Hide Paint Stroke', () =>
                           updatePaintStroke(layerId, s.id, { visible: s.visible === false ? undefined : false }));
                       }}
@@ -307,11 +308,12 @@ export function PaintPanel(): JSX.Element {
                       title={keyed ? 'Path is keyframed — click to remove its keyframes' : 'Key the Path at the current time'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        // B3-legacy: engine gap — ON could be `addKeyframes` with the stroke's points, but
+                        // B3-gap: the Path stopwatch. ON could be `addKeyframes` with the stroke's points, but
                         // OFF cannot: once the Path is keyed, `catalogFor` binds `paint/<id>/path` as a scalar
                         // member row (propertyTree's paintRows lists the keyed data track as a member), so
                         // `setAnimated{false}` is a silent no-op, `setProperty{time}` answers typeMismatch and
-                        // `getKeyframes` returns none. Both halves stay here until the binding is fixed.
+                        // `getKeyframes` returns none. Both halves stay here until the binding is fixed, so
+                        // one toggle never mixes the two histories.
                         runDocumentEdit(keyed ? 'Disable Path Animation' : 'Enable Path Animation', () =>
                           toggleStrokePathAnimation(layerId, s.id, layerTime()));
                       }}
@@ -325,7 +327,8 @@ export function PaintPanel(): JSX.Element {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (selected) paint.set({ selectedStroke: null });
-                        // B3-legacy: engine gap — `removePropertyGroups` does not take paint strokes.
+                        // B3-gap: `removePropertyGroups` does not resolve `paint/<id>` (notFound) — the
+                        // TS engine has no paint-stroke group kind (schema reserves it, ENGINE_API §15 650–699).
                         runDocumentEdit('Delete Paint Stroke', () => removePaintStroke(layerId, s.id));
                       }}
                     >
@@ -342,8 +345,8 @@ export function PaintPanel(): JSX.Element {
               label="Paint on Transparent"
               checked={cfg.onTransparent === true}
               onChange={() => {
-                // B3-legacy: engine gap — Paint on Transparent is a layer paint setting with no API
-                // property (`paint/onTransparent` is not in the catalog).
+                // B3-gap: Paint on Transparent is a layer paint setting with no API property
+                // (`paint/onTransparent` is not in the catalog).
                 runDocumentEdit('Paint on Transparent', () => setPaintOnTransparent(layerId, cfg.onTransparent !== true));
               }}
             />
