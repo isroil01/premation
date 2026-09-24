@@ -67,8 +67,6 @@ import { newShapeFill, newShapeStroke } from '@core/workspace/shapeToolPaint';
 import {
   burstTransaction,
   currentToolTransaction,
-  gestureAnimEdit,
-  gestureSceneBump,
   sendToolEdit,
   runToolEdit,
   settleToolEdits,
@@ -787,17 +785,6 @@ function getParentIdForPorts(id: string) {
   return node?.parent ?? null;
 }
 
-/**
- * AE keyframing contract: a property with a lit stopwatch (an existing track)
- * ALWAYS keyframes on direct manipulation — the global Auto-Keyframe mode only
- * decides whether *un-animated* properties start recording. Writing a static
- * value to a tracked property is useless: the renderer reads animated values
- * first (`av.get(...) ?? g.x`), so the write would silently do nothing.
- */
-function hasAnyTrack(nodeId: ID, props: readonly string[]): boolean {
-  return defaultAnimation.tracksFor(nodeId).some((t) => props.includes(t.prop as string));
-}
-
 // ── 3D gizmo transform I/O (shared read/write path with canvas drags) ──
 
 /** The transform props the 3D gizmo reads & writes. */
@@ -847,23 +834,6 @@ function staticScaleZOf(node: SceneNode): number {
   const v = t ? (t.props as Record<string, unknown>).scaleZ : undefined;
   return typeof v === 'number' && Number.isFinite(v) ? v : 1;
 }
-
-/**
- * Per-prop stopwatch groups: which existing tracks force a keyframe write for
- * a given gizmo prop (position pair matches moveNodes; scale matches
- * resizeNode's aliases).
- */
-const GIZMO_TRACK_GROUPS: Record<keyof Transform3DValues, readonly string[]> = {
-  x: ['x', 'y'],
-  y: ['x', 'y'],
-  z: ['z'],
-  rotationX: ['rotationX'],
-  rotationY: ['rotationY'],
-  rotation: ['rotation'],
-  scaleX: ['scaleX', 'scaleY', 'scale'],
-  scaleY: ['scaleX', 'scaleY', 'scale'],
-  scaleZ: ['scaleZ'],
-};
 
 export interface Gizmo3DNodeUpdate {
   id: string;
@@ -915,51 +885,6 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): b
  * `mergeKey` coalesces a whole drag into one undo entry — pass something stable
  * for the gesture's duration.
  */
-// B3-legacy: kept for `cameraCommands` (Set Focus Distance to Layer,
-// Distribute Layers in Z call it directly, synchronously, beside their own
-// legacy expression / 3D-switch writes — that module's migration moves them to
-// `sendNodeValues`, the engine route), and as `sendNodeValues`' fallback for a
-// node that is not a composition's layer. A light's Point of Interest is
-// addressable now (`light/poiX|Y|Z`, latent like a one-node camera's).
-export function applyNodePropsKeyframed(
-  nodeId: string,
-  values: Readonly<Record<string, number>>,
-  mergeKey: string,
-): void {
-  const node = defaultSceneGraph.getNode(nodeId as ID);
-  if (!node || node.locked) return;
-  const transComp = node.components.find((c) => c.type === 'Transform');
-  if (!transComp) return;
-
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const lt = getRemappedTime(nodeId, rawTime);
-
-  const keyed: Array<{ prop: string; value: number }> = [];
-  let changed = false;
-  for (const [prop, value] of Object.entries(values)) {
-    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-    // Position keyframes as a group (x/y together) so a track lit on one axis
-    // keyframes both — the same rule the layer gizmo applies.
-    const group = GIZMO_TRACK_GROUPS[prop as keyof Transform3DValues] ?? [prop];
-    if (autoKeyframe || hasAnyTrack(nodeId, group)) keyed.push({ prop, value });
-    // B3-legacy: see above (cameraCommands' callers, non-layer nodes).
-    defaultSceneGraph.writeProp(nodeId as ID, transComp.id, prop, value);
-    changed = true;
-  }
-
-  if (keyed.length > 0) {
-    gestureAnimEdit(
-      'Keyframe Camera',
-      () => {
-        for (const k of keyed) defaultAnimation.setKeyframe(nodeId, k.prop, lt, k.value);
-      },
-      mergeKey,
-    );
-  }
-  if (changed) gestureSceneBump();
-}
-
 /**
  * A drag in an ORTHOGRAPHIC view moves the layer along that view's axes.
  *
@@ -1128,10 +1053,11 @@ export function sendNodeValues(
   const decide = (): 'engine' | 'legacy' => (addressable() ? 'engine' : 'legacy');
   const route = txn ? txn.memo(`route:${key}`, decide) : decide();
   if (route === 'legacy') {
-    // B3-legacy: a node that is not a composition's layer, or a prop with no
-    // API property on it (a light's / camera's Point of Interest is latent in
-    // the catalog, so the viewport handles route to the engine).
-    applyNodePropsKeyframed(nodeId, values, key);
+    // A node that is not a composition's layer, or a prop with no API property
+    // on it: nothing the engine can write — the handle does nothing rather
+    // than write around the engine (cameras and lights, their Point of
+    // Interest included, are all addressable).
+    console.warn(`[sendNodeValues] ${nodeId}: ${Object.keys(values).join(', ')} not addressable by the engine`);
     return;
   }
   sendLayerValues(label, [{ nodeId, values }], txn);

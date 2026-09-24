@@ -53,12 +53,17 @@ import {
   type CameraSample,
 } from '@core/scene/camera3d';
 import { nodeWorldWithParents3d, toWorldPointAt } from '@core/scene/liveWorld3d';
-import { canBe3D, is3DEnabled, readNode3D, set3DEnabled } from '@core/scene/threeD';
+import { canBe3D, is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { readNodeAnchor } from '@core/scene/anchor';
 import { world2DAt } from '@core/scene/layerSpace';
 import { enclosingCompRootOf, reparentNode } from '@core/scene/parenting';
 import { readGeometry } from '@core/workspace/geometry';
-import { applyNodePropsKeyframed } from '@core/workspace/ports';
+import type { Command as EngineCommand } from '@motion/engine-api';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
+import { engine } from '@core/engine/engineInstance';
+import { propRefForTrack } from '@core/engine/propRefs';
+import { trackValueCommands } from '@core/workspace/toolEdits';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { isCustomViewId, resolveCustomView, type CustomViewId } from '@core/workspace/customViews';
 import { runAnimEdit } from '@core/animation/animationCommands';
@@ -154,23 +159,31 @@ export function focusDepthToLayer(cam: SceneNode, target: SceneNode, time: numbe
 }
 
 /**
- * Write the focus distance through the same keyframe-aware path the camera
- * tools use: the base prop always, plus a keyframe when Focus Distance is
- * already animated or Auto-Keyframe is on — a rack focus is two of these at
- * two times. Also drops any Link expression, which would otherwise override
- * the value just written and make the command look like it did nothing.
+ * Set the focus distance through the engine (one entry): a key at `time` when
+ * Focus Distance is animated or Auto-Keyframe is on, else the static value — a
+ * rack focus is two of these at two times. Also drops any Link expression,
+ * which would otherwise override the value just written and make the command
+ * look like it did nothing. Resolves to the depth, or null when the layer is
+ * behind the camera (or the engine refused — toasted).
  */
-export function setFocusDistanceToLayer(camId: string, targetId: string, time: number): number | null {
+export async function setFocusDistanceToLayer(camId: string, targetId: string, time: number): Promise<number | null> {
   const cam = defaultSceneGraph.getNode(camId);
   const target = defaultSceneGraph.getNode(targetId);
   if (!cam || !target) return null;
   const depth = focusDepthToLayer(cam, target, time);
   if (depth === null) return null;
-  if (defaultAnimation.getExpressionSrc(camId, 'focusDistance')) {
-    defaultAnimation.setExpression(camId, 'focusDistance', '');
+  const cmds: EngineCommand[] = [];
+  const r = propRefForTrack(camId, 'focusDistance');
+  if (r && defaultAnimation.getExpressionSrc(camId, 'focusDistance')) {
+    cmds.push({ type: 'setExpression', prop: r.ref, source: '', enabled: false });
   }
-  applyNodePropsKeyframed(camId, { focusDistance: Math.round(depth * 100) / 100 }, `camera:focus:${camId}`);
-  return depth;
+  const values = trackValueCommands(
+    [{ nodeId: camId, values: { focusDistance: Math.round(depth * 100) / 100 } }],
+    { seconds: time, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe },
+  );
+  if (!values) return null;
+  const res = await edit('Set Focus Distance to Layer', [...cmds, ...values]);
+  return res.ok ? depth : null;
 }
 
 /** A layer name as an expression string literal. */
@@ -403,7 +416,7 @@ export function lookAt(nodes: ReadonlyArray<SceneNode>, time: number): CustomVie
  * which reads as damage, not as staging. Parented layers get depth only:
  * their world position rides a rig this command should not second-guess.
  */
-export function distributeLayersInZ(time: number): { count: number; span: number } | null {
+export async function distributeLayersInZ(time: number): Promise<{ count: number; span: number } | null> {
   const { width, height } = activeCompSize();
   const rootId = activeCompRootId();
   const selected = subjectLayers().filter(canBe3D);
@@ -424,10 +437,7 @@ export function distributeLayersInZ(time: number): { count: number; span: number
   );
 
   const av = sampleAt(time);
-  const mergeKey = `distributeZ:${time}:${sorted.map((n) => n.id).join(',')}`;
-  for (let i = 0; i < sorted.length; i++) {
-    const node = sorted[i]!;
-    if (!is3DEnabled(node)) set3DEnabled(node.id, true);
+  const entries = sorted.map((node, i) => {
     const z = Math.round(span - i * step);
     const values: Record<string, number> = { z };
     if (node.parent === rootId) {
@@ -441,10 +451,35 @@ export function distributeLayersInZ(time: number): { count: number; span: number
       values.scaleX = num('scaleX', g?.scaleX ?? 1) * factor;
       values.scaleY = num('scaleY', g?.scaleY ?? 1) * factor;
     }
-    applyNodePropsKeyframed(node.id, values, mergeKey);
+    return { nodeId: node.id, values };
+  });
+  const flat = sorted.filter((n) => !is3DEnabled(n)).map((n) => n.id);
+
+  // ONE entry: the 3D switch first (Z is a property only a 3D layer has), then
+  // the values, keyed where animated / under Auto-Keyframe.
+  const label = 'Distribute Layers in Z';
+  const client = engine();
+  const opened = await client.beginGesture(label);
+  if (!opened.ok) {
+    reportEngineError(label, opened.error);
+    return null;
   }
-  bumpScene();
-  return { count: sorted.length, span };
+  let ok = true;
+  if (flat.length > 0) {
+    const res = await client.execute({ type: 'setLayerSwitches', layers: flat, patch: { threeD: true } });
+    if (!res.ok) { reportEngineError(label, res.error); ok = false; }
+  }
+  if (ok) {
+    const cmds = trackValueCommands(entries, { seconds: time, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe });
+    const res = cmds && cmds.length > 0 ? await client.batch(label, cmds) : null;
+    if (!res || !res.ok) {
+      if (res && !res.ok) reportEngineError(label, res.error);
+      ok = false;
+    }
+  }
+  const closed = await client.endGesture(opened.value.gesture, ok);
+  if (!closed.ok) reportEngineError(label, closed.error);
+  return ok ? { count: sorted.length, span } : null;
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -473,8 +508,8 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       // Two selected content layers, or two in the comp: the command falls
       // back to every content layer when nothing useful is selected.
       enabled: () => subjectLayers().length >= 2 || frameableLayers().length >= 2,
-      execute: () => {
-        const r = distributeLayersInZ(playhead());
+      execute: async () => {
+        const r = await distributeLayersInZ(playhead());
         notify(
           r
             ? `Spread ${r.count} layers across ${r.span} px of depth — move the camera to see the parallax`
@@ -489,11 +524,11 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       description: 'Put the camera\'s focal plane on the selected layer',
       icon: 'camera',
       enabled: oneSubject,
-      execute: () => {
+      execute: async () => {
         const cam = commandCamera();
         const target = subjectLayers()[0];
         if (!cam || !target) return;
-        const d = setFocusDistanceToLayer(cam.id, target.id, playhead());
+        const d = await setFocusDistanceToLayer(cam.id, target.id, playhead());
         notify(d === null ? `${target.name} is behind the camera` : `Focus distance set to ${Math.round(d)} px (${target.name})`, d === null ? 'warning' : 'success');
       },
     },

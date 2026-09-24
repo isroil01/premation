@@ -15,7 +15,6 @@ import {
   linkFocusToLayerExpression,
   linkFocusToPoiExpression,
   lookAt,
-  setFocusDistanceToLayer,
   linkFocusDistanceToLayer,
   linkFocusDistanceToPoi,
 } from './cameraCommands';
@@ -99,24 +98,20 @@ describe('focus distance', () => {
     const subject = defaultSceneGraph.getNode(SUBJECT)!;
     // Straight-on camera: depth is the z gap, not the diagonal distance.
     expect(focusDepthToLayer(cam, subject, 0)).toBeCloseTo(FOCAL + 500, 6);
-    const written = setFocusDistanceToLayer(CAM, SUBJECT, 0);
-    expect(written).toBeCloseTo(FOCAL + 500, 6);
-    expect(props(CAM).focusDistance).toBeCloseTo(FOCAL + 500, 1);
+    // The write itself goes through the engine — cameraEdits.test.ts.
   });
 
   it('a layer behind the camera has no focus distance', () => {
     addCamera(false);
     defaultSceneGraph.writeProp(SUBJECT, `${SUBJECT}_t`, 'z', -FOCAL - 100);
-    expect(setFocusDistanceToLayer(CAM, SUBJECT, 0)).toBeNull();
+    expect(focusDepthToLayer(defaultSceneGraph.getNode(CAM)!, defaultSceneGraph.getNode(SUBJECT)!, 0)).toBeNull();
   });
 
-  it('Link writes AE\'s toWorld/length expression and Set removes it again', () => {
+  it('Link writes AE\'s toWorld/length expression', () => {
     addCamera(true);
     expect(linkFocusDistanceToLayer(CAM, SUBJECT)).toBe(true);
     expect(defaultAnimation.getExpressionSrc(CAM, 'focusDistance')).toBe(linkFocusToLayerExpression('Subject'));
     expect(linkFocusToLayerExpression('He said "hi"')).toContain('"He said \\"hi\\""');
-    setFocusDistanceToLayer(CAM, SUBJECT, 0);
-    expect(defaultAnimation.getExpressionSrc(CAM, 'focusDistance') ?? '').toBe('');
   });
 
   it('Link to Point of Interest needs a two-node camera', () => {
