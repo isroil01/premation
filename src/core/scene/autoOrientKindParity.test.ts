@@ -87,7 +87,8 @@ describe('auto-orient is offered only where it is read', () => {
 
   it('MotionControls gates the row on the predicate, not on hasTransform', () => {
     const ui = readSource('layout/Inspector/MotionControls.tsx');
-    expect(ui).toMatch(/canAutoOrient\(node\)/);
+    // The mirror twin of canAutoOrient (core/mirror/layerFacts), same predicate.
+    expect(ui).toMatch(/mirrorCanAutoOrient\(layer, tree\)/);
     // The row must be conditional. Without this, the import could stay while
     // the gate was dropped, and every assertion above would still pass.
     expect(ui).toMatch(/\{showAutoOrient && \(/);

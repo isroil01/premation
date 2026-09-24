@@ -6,7 +6,8 @@ import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { buildWorkspaceItems } from '@layout/Workspace/workspaceMenuItems';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import styles from './TitleBar.module.css';
 
@@ -25,8 +26,9 @@ export function EditorChromeActions({ showCustomize = true }: { showCustomize?: 
   const bottomCollapsed = useLayoutStore((s) => s.regions.bottomTimeline?.collapsed);
   const rightCollapsed = useLayoutStore((s) => s.regions.rightInspector?.collapsed);
   const enterPresentation = usePresentationStore((s) => s.enter);
-  const compFps = useCompositionStore((s) => s.fps);
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
+  const compSettings = useActiveMirrorComp()?.settings;
+  const compFps = settingsFps(compSettings);
+  const compDuration = settingsDurationSeconds(compSettings);
 
   return (
     <div className={styles.editorControls}>

@@ -58,7 +58,6 @@ const CONTROL_KINDS: ReadonlyArray<{ kind: ControlKind; label: string }> = [
   { kind: 'dropdown', label: 'Dropdown Control' },
   { kind: 'layer', label: 'Layer Control' },
 ];
-import { hasTextComponent } from '@core/text/textAnimators';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
@@ -66,13 +65,13 @@ import { SceneControls } from '@layout/SceneControls/SceneControls';
 import { PIN_KIND_CATALOG, PUPPET_PIN_ICONS, puppetPinLabel } from './puppetPinTools';
 
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { isRiggableLeafNode } from '@core/scene/rigLogo';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompId, useActiveMirrorComp, useMirrorComp, useMirrorComps, useMirrorLayer } from '@hooks/useMirror';
+import { isRiggableLayer, uiKindOf } from '@core/mirror/layerKinds';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import styles from './TopNav.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { usePresentationStore } from '@stores/presentationStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
@@ -295,14 +294,12 @@ const REDO_CHORD = MAC_KEYBOARD ? '⇧⌘Z' : 'Ctrl+Shift+Z';
  * bar, so both live here.)
  */
 function CompChip(): JSX.Element {
-  const name = useCompositionStore((s) => s.name);
-  const width = useCompositionStore((s) => s.width);
-  const height = useCompositionStore((s) => s.height);
-  const fps = useCompositionStore((s) => s.fps);
-  const activePristine = useProjectStore((s) => {
-    const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
-    return !!id && s.comps[id]?.pristine === true;
-  });
+  const settings = useActiveMirrorComp()?.settings;
+  const name = settings?.name ?? '';
+  const width = settings?.width ?? 1920;
+  const height = settings?.height ?? 1080;
+  const fps = settingsFps(settings);
+  const activePristine = useMirrorComp(useActiveCompId())?.settings.pristine === true;
   const label = activePristine ? 'No composition' : name || 'Untitled';
   return (
     <button type="button" className={styles.comp} title="Composition settings" onClick={() => openCompositionSettings()}>
@@ -320,24 +317,24 @@ export function TopNav(): JSX.Element {
   const setPuppetPinKind = useUIStore((s) => s.setPuppetPinKind);
   const setTool = useUIStore((s) => s.setActiveTool);
   const enterPresentation = usePresentationStore((s) => s.enter);
-  const compFps = useCompositionStore((s) => s.fps);
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
+  const compSettings = useActiveMirrorComp()?.settings;
+  const compFps = settingsFps(compSettings);
+  const compDuration = settingsDurationSeconds(compSettings);
 
-  useSceneRevision((s) => s.rev);
   const selectedIds = useSelectionStore((s) => s.ids);
   const selectedId = selectedIds[0];
 
-  const projComps = useProjectStore((s) => s.comps);
+  const mirrorComps = useMirrorComps();
   const activeCompId = useProjectStore((s) => s.tabs[s.activeTabId ?? '']?.compositionId);
   // Scene ROOTS only: a group opened in its own tab has a settings record but
   // is a layer, and placing it as a comp instance would reference a subtree
   // of some other comp.
-  const insertableComps = Object.values(projComps).filter(
-    (c) => c.id !== activeCompId && defaultSceneGraph.getNode(c.id) && !defaultSceneGraph.getNode(c.id)?.parent,
-  );
-  const selectedNode = selectedId ? defaultSceneGraph.getNode(selectedId) : undefined;
-  const isTextLayer = !!selectedNode && hasTextComponent(selectedNode);
-  const canRig = selectedIds.length === 1 && isRiggableLeafNode(selectedNode);
+  const insertableComps = [...mirrorComps.values()]
+    .filter((c) => c.id !== activeCompId && !documentMirror().hasLayer(c.id))
+    .map((c) => ({ id: c.id, name: c.settings.name }));
+  const selectedLayer = useMirrorLayer(selectedId);
+  const isTextLayer = uiKindOf(selectedLayer) === 'text';
+  const canRig = selectedIds.length === 1 && isRiggableLayer(selectedLayer);
   const rigHint = canRig ? '' : ' — select a shape or image layer (use Rig Logo for a group)';
 
   const playhead = useActiveWorkspace()?.time ?? 0;

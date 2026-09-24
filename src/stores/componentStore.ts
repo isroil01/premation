@@ -14,10 +14,10 @@
 import { create } from 'zustand';
 import type { SceneNode, Component, Transform } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { documentMirror } from './documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from './selectionStore';
-import { useCompositionStore } from './compositionStore';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { setNodeWorldPosition } from '@core/scene/sceneInsert';
 
@@ -74,11 +74,11 @@ function instantiate(def: SerializedNode, parentId: string, pos: { x: number; y:
 }
 
 function rootId(): string {
-  return activeCompRootId();
+  return activeCompIdNow() ?? 'comp_root';
 }
 function compCenter(): { x: number; y: number } {
-  const s = useCompositionStore.getState();
-  return { x: (s.width ?? 1920) / 2, y: (s.height ?? 1080) / 2 };
+  const s = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  return { x: (s?.width ?? 1920) / 2, y: (s?.height ?? 1080) / 2 };
 }
 
 function load(): ComponentDef[] {

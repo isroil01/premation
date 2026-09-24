@@ -21,9 +21,9 @@ import { addEffectEdit } from '@layout/Effects/effectEdits';
 import { applyAnimationPresetEdit } from '@layout/Menu/appEdits';
 import { listPresets, presetFolder, type AnimationPreset } from '@core/animation/animationPresets';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { documentMirror } from '@stores/documentMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { getEventBus } from '@core/events/EventBus';
 import { fuzzyScore } from './paletteSearch';
 
@@ -82,13 +82,9 @@ export function effectHits(term: string, limit: number): QuickApplyHit[] {
 /** Can this preset do anything on this layer? Text presets need a text layer,
  *  camera presets a camera — same gates the panel and `applyPreset` enforce. */
 function presetFits(p: AnimationPreset, nodeId: string): boolean {
-  if (p.requires === 'camera') {
-    const node = defaultSceneGraph.getNode(nodeId);
-    return !!node && readNodeKind(node) === 'camera';
-  }
+  if (p.requires === 'camera') return uiKindOf(documentMirror().layer(nodeId)) === 'camera';
   if (p.requires !== 'text' && !(p.animators && p.animators.length)) return true;
-  const node = defaultSceneGraph.getNode(nodeId);
-  return !!node && readNodeKind(node) === 'text';
+  return uiKindOf(documentMirror().layer(nodeId)) === 'text';
 }
 
 /**
@@ -113,7 +109,7 @@ export function presetHits(term: string, limit: number): QuickApplyHit[] {
       score,
       enabled: fits.length > 0,
       apply: () => {
-        const t = getTimelineController().currentSeconds;
+        const t = playheadSeconds();
         // `applyPreset` through the engine (B3): every fitting layer, one entry.
         void applyAnimationPresetEdit(fits, p.name, t).then((ok) => {
           // Show what just landed: the preset's keyframes are the whole point,

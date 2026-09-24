@@ -11,7 +11,8 @@
  */
 
 import { create } from 'zustand';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { childOrderOf } from '@core/mirror/layerTree';
 
 interface FocusStore {
   /** Entered precomp/group ids, root → deepest. */
@@ -68,10 +69,12 @@ export function focusActiveSet(
   if (isolatedId) return new Set([isolatedId]);
   const deepest = path[path.length - 1];
   if (!deepest) return null;
+  const m = documentMirror();
   const set = new Set<string>();
   const walk = (id: string): void => {
+    if (set.has(id)) return;
     set.add(id);
-    for (const child of defaultSceneGraph.getChildren(id)) walk(child.id);
+    for (const child of childOrderOf(m, id)) walk(child);
   };
   walk(deepest);
   return set;

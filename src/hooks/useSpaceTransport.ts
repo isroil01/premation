@@ -20,7 +20,7 @@
 import { useEffect } from 'react';
 import { keyFrom } from '@motion/workspace';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { togglePlayTransport } from '@core/timeline/timelineView';
 
 function isTextEntry(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -50,7 +50,7 @@ export function useSpaceTransport(): void {
       if (e.code !== 'Space' || isTextEntry(e.target)) return;
       e.preventDefault();
       getWorkspaceController().ws.feedKeyUp(keyFrom(e, performance.now()));
-      if (spaceDown && !panned) getTimelineController().togglePlay();
+      if (spaceDown && !panned) togglePlayTransport();
       spaceDown = false;
     };
 

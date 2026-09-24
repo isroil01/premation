@@ -20,6 +20,8 @@ import { uiKindOf } from './layerKinds';
 import { mirrorLabelColor } from './layerLabels';
 import { mirrorSupportsContinuousRaster } from './continuousRaster';
 import type { MirrorFieldRead } from './layerFields';
+import type { LayerFlag } from '@core/scene/layerFlags';
+import { mirrorCanBe3D } from './layerFacts';
 
 export type MirrorSwitch = 'collapse' | 'quality' | 'frameBlend';
 
@@ -63,4 +65,42 @@ export function mirrorLayersWithLabel(m: { layer(id: string): LayerInfo | undefi
   if (!layer) return [];
   const color = mirrorLabelColor(layer);
   return m.layerIds().filter((l) => mirrorLabelColor(m.layer(l)) === color);
+}
+
+/**
+ * Whether one AE switch-column flag is set on a layer — the twin of
+ * `layerFlags.readLayerFlag`, off the layer's `LayerSwitches`. A cycling switch
+ * (Quality) is "on" when it is off its default (`best`).
+ */
+export function mirrorLayerFlag(layer: Pick<LayerInfo, 'switches'> | undefined, flag: LayerFlag): boolean {
+  if (!layer) return false;
+  const s = layer.switches;
+  switch (flag) {
+    case 'threeD': return s.threeD;
+    case 'guide': return s.guide;
+    case 'motionBlur': return s.motionBlur;
+    case 'adjustment': return s.adjustment;
+    case 'preserveTransparency': return s.preserveTransparency;
+    case 'fxEnabled': return s.effectsEnabled;
+    case 'shy': return s.shy;
+    case 'collapse': return s.collapse;
+    case 'frameBlend': return frameBlendOn(layer);
+    case 'quality': return s.quality !== 'best';
+  }
+}
+
+/**
+ * Whether a layer has this switch at all — the twin of `layerFlags.layerFlagAvailable`
+ * (a composition's root is not a layer, so it has none).
+ */
+export function mirrorLayerFlagAvailable(m: Pick<MirrorFieldRead, 'layer' | 'property' | 'tree'>, id: string, flag: LayerFlag): boolean {
+  const layer = m.layer(id);
+  if (!layer) return false;
+  switch (flag) {
+    case 'threeD': return mirrorCanBe3D(layer, m.tree(id));
+    case 'collapse':
+    case 'frameBlend':
+    case 'quality': return mirrorSwitchAvailable(m, id, flag);
+    default: return true;
+  }
 }

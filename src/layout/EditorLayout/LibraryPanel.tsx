@@ -34,7 +34,7 @@ import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
 import { insertShape, insertText } from '@core/scene/sceneInsert';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { MOGRAPH_ITEMS, buildMographItem, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
@@ -198,7 +198,7 @@ export function ShapesPanel(): JSX.Element {
   const handleShapeInsert = (preset: typeof SHAPE_PRESETS[number]) => {
     // The shape builder (outline, tangents, stroke, comp-scaled placement) runs off-document →
     // ONE pasteLayers entry (offDocument.ts).
-    void insertBuiltLayers(`Insert ${preset.label}`, activeCompRootId(), () => insertShape(preset.primitive, preset.label));
+    void insertBuiltLayers(`Insert ${preset.label}`, (activeCompIdNow() ?? 'comp_root'), () => insertShape(preset.primitive, preset.label));
   };
 
   return (
@@ -231,7 +231,7 @@ export function TextPanel(): JSX.Element {
   const handleTextInsert = (preset: typeof TEXT_PRESETS[number]) => {
     // The text preset builder (size, weight, style extras, placement) runs off-document →
     // ONE pasteLayers entry (offDocument.ts).
-    void insertBuiltLayers(`Insert ${preset.label}`, activeCompRootId(), () => insertText(preset.label, preset.fontSize, preset.weight, (preset as any).extra ?? {}));
+    void insertBuiltLayers(`Insert ${preset.label}`, (activeCompIdNow() ?? 'comp_root'), () => insertText(preset.label, preset.fontSize, preset.weight, (preset as any).extra ?? {}));
   };
 
   return (
@@ -295,7 +295,7 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
       onClick={async () => {
         // The item's rigged layer set (shapes, styled text, keys, expressions) is built
         // off-document and lands as ONE pasteLayers entry; then its choreography previews.
-        const ids = await insertBuiltLayers(`Insert ${item.name}`, activeCompRootId(), () => buildMographItem(item.id));
+        const ids = await insertBuiltLayers(`Insert ${item.name}`, (activeCompIdNow() ?? 'comp_root'), () => buildMographItem(item.id));
         if (ids === null) return; // refused — already toasted
         const id = ids[0];
         if (id) previewMographItem(item.id);

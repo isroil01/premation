@@ -171,10 +171,13 @@ describe('property rows', () => {
     expect(defaultAnimation.isAnimated(s.A, 'rotation')).toBe(true);
   });
 
-  it('a locked layer gets no command', () => {
-    defaultSceneGraph.getNode(s.A)!.locked = true;
+  it('a locked layer gets no command', async () => {
+    // Locked through the engine: the lock is read from the document mirror (B4).
+    await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { locked: true } });
+    await engineIdle();
     expect(propertyValueCommands(s.A, 'opacity', 0.5, 0, false)).toEqual([]);
-    defaultSceneGraph.getNode(s.A)!.locked = false;
+    await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { locked: false } });
+    await engineIdle();
   });
 });
 

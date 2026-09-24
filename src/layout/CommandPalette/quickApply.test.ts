@@ -95,16 +95,24 @@ describe('effects', () => {
 });
 
 describe('presets', () => {
-  it('marks a text-only preset disabled on a shape, enabled on text', () => {
-    useSelectionStore.getState().set(['a']);
-    const onShape = presetHits('typewriter', 5).find((h) => /typewriter/i.test(h.label));
-    useSelectionStore.getState().set(['t']);
-    const onText = presetHits('typewriter', 5).find((h) => /typewriter/i.test(h.label));
-    // If the library carries no typewriter preset the assertion is vacuous —
-    // guard so a renamed preset fails loudly instead of passing silently.
-    expect(onShape && onText).toBeTruthy();
-    expect(onShape!.enabled).toBe(false);
-    expect(onText!.enabled).toBe(true);
+  it('marks a text-only preset disabled on a shape, enabled on text', async () => {
+    // Layers of a composition, built through the engine: the fit reads the
+    // document mirror's layer kinds (B4).
+    const h = await setupAppEngine();
+    try {
+      const s = await buildScene(h);
+      useSelectionStore.getState().set([s.B]);
+      const onShape = presetHits('typewriter', 5).find((x) => /typewriter/i.test(x.label));
+      useSelectionStore.getState().set([s.T]);
+      const onText = presetHits('typewriter', 5).find((x) => /typewriter/i.test(x.label));
+      // If the library carries no typewriter preset the assertion is vacuous —
+      // guard so a renamed preset fails loudly instead of passing silently.
+      expect(onShape && onText).toBeTruthy();
+      expect(onShape!.enabled).toBe(false);
+      expect(onText!.enabled).toBe(true);
+    } finally {
+      await h.dispose();
+    }
   });
 
   it('applies a preset at the playhead through the engine (one undo entry) and leaves keyframes behind', async () => {

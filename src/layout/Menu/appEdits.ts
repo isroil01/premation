@@ -16,17 +16,13 @@
 import type { Command, LayerKind, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
 import { defaultAnimation, expandKeyframeProp, type EasingKind } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
-import {
-  layerFlagAvailable,
-  layerFlagDef,
-  readLayerFlag,
-  type LayerFlag,
-} from '@core/scene/layerFlags';
-import { nextQuality, readNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
-import { getNodeEffects } from '@core/effects/effects';
+import { layerFlagDef, type LayerFlag } from '@core/scene/layerFlags';
+import { nextQuality, type LayerQuality } from '@core/effects/layerQuality';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { childOrderOf } from '@core/mirror/layerTree';
+import { mirrorLayerFlag, mirrorLayerFlagAvailable } from '@core/mirror/layerSwitchFacts';
 import { readNodeMask } from '@core/effects/mask';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
@@ -62,11 +58,9 @@ const SWITCH_LABEL: Record<TrackSwitch, [on: string, off: string]> = {
 };
 
 function readSwitch(nodeId: string, sw: TrackSwitch): boolean {
-  const n = defaultSceneGraph.getNode(nodeId);
-  if (!n) return false;
-  if (sw === 'visible') return n.visible !== false;
-  if (sw === 'locked') return n.locked === true;
-  return n.solo === true;
+  const l = documentMirror().layer(nodeId);
+  if (!l) return false;
+  return l.switches[sw];
 }
 
 /** Flip one switch on one track row. False when the row is not a layer (nothing sent). */
@@ -86,9 +80,10 @@ export async function soloExclusiveEdit(nodeId: string): Promise<boolean> {
   if (!isLayer(nodeId)) return false;
   const only = !readSwitch(nodeId, 'solo');
   const cmds: Command[] = [];
-  for (const n of flattenScene(defaultSceneGraph)) {
-    if ((only && n.id === nodeId) || !n.solo || !isLayer(n.id)) continue;
-    cmds.push({ type: 'setLayerSwitches', layers: [n.id], patch: { solo: false } });
+  const m = documentMirror();
+  for (const id of m.layerIds()) {
+    if ((only && id === nodeId) || !m.layer(id)?.switches.solo || !isLayer(id)) continue;
+    cmds.push({ type: 'setLayerSwitches', layers: [id], patch: { solo: false } });
   }
   if (only) cmds.push({ type: 'setLayerSwitches', layers: [nodeId], patch: { solo: true } });
   if (cmds.length === 0) return true;
@@ -98,11 +93,11 @@ export async function soloExclusiveEdit(nodeId: string): Promise<boolean> {
 
 /** The clip bar's speaker glyph: AE's audio switch (`audioEnabled`). */
 export async function toggleAudioMuteEdit(nodeId: string): Promise<void> {
-  const n = defaultSceneGraph.getNode(nodeId);
+  const n = documentMirror().layer(nodeId);
   if (!n || !isLayer(nodeId)) return;
-  const kind = readNodeKind(n);
+  const kind = uiKindOf(n);
   if (kind !== 'audio' && kind !== 'video') return;
-  const muted = isLayerAudioMuted(nodeId);
+  const muted = !n.switches.audioEnabled;
   await edit(muted ? 'Unmute layer audio' : 'Mute layer audio', {
     type: 'setLayerSwitches', layers: [nodeId], patch: { audioEnabled: muted },
   });
@@ -114,14 +109,15 @@ export async function toggleAudioMuteEdit(nodeId: string): Promise<void> {
  * false when the flag has no API switch (nothing sent).
  */
 export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Promise<boolean> {
-  const node = defaultSceneGraph.getNode(nodeId);
+  const m = documentMirror();
+  const node = m.layer(nodeId);
   if (!node || !isLayer(nodeId)) return false;
   const def = layerFlagDef(flag);
-  if (!layerFlagAvailable(node, flag)) {
+  if (!mirrorLayerFlagAvailable(m, nodeId, flag)) {
     notify(`${def.label} isn't available for that layer`, 'warning', 2600);
     return true;
   }
-  const next: boolean | LayerQuality = def.cycles ? nextQuality(readNodeQuality(node)) : !readLayerFlag(node, flag);
+  const next: boolean | LayerQuality = def.cycles ? nextQuality(node.switches.quality) : !mirrorLayerFlag(node, flag);
   const on = next === true;
   let patch: LayerSwitchesPatch;
   switch (flag) {
@@ -155,7 +151,7 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
     if (useRenderQualityStore.getState().draft) {
       notify('Draft preview is on — motion blur samples are paused until draft is off', 'warning');
     }
-  } else if (flag === 'adjustment' && on && getNodeEffects(nodeId).length === 0) {
+  } else if (flag === 'adjustment' && on && (documentMirror().layer(nodeId)?.effectCount ?? 0) === 0) {
     notify('Adjustment layer is on — add effects to grade layers beneath it');
   }
   return true;
@@ -170,19 +166,22 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
  * layer of the same parent.
  */
 export async function moveLayerAdjacentEdit(fromId: string, anchorId: string, position: 'before' | 'after'): Promise<boolean> {
-  const from = defaultSceneGraph.getNode(fromId);
-  const anchor = defaultSceneGraph.getNode(anchorId);
-  if (!from || !anchor || !from.parent || from.parent !== anchor.parent || !isLayer(fromId) || !isLayer(anchorId)) return false;
+  const m = documentMirror();
+  const from = m.layer(fromId);
+  const anchor = m.layer(anchorId);
+  // The scene parent: the group a layer sits in, else its composition.
+  const parent = from ? from.parent ?? from.comp : undefined;
+  if (!from || !anchor || !parent || parent !== (anchor.parent ?? anchor.comp) || !isLayer(fromId) || !isLayer(anchorId)) return false;
   const comp = compOfLayer(fromId);
   if (!comp) return false;
-  const kids = defaultSceneGraph.getChildOrder(from.parent);
+  const kids = childOrderOf(m, parent);
   const rest = kids.filter((id) => id !== fromId);
   const at = rest.indexOf(anchorId);
   if (at < 0) return false;
   const next = [...rest];
   next.splice(position === 'after' ? at + 1 : at, 0, fromId);
   if (next.every((id, i) => id === kids[i])) return true;
-  const cmds = reorderCommands(comp, from.parent, kids, next, new Set([fromId]));
+  const cmds = reorderCommands(comp, parent, kids, next, new Set([fromId]));
   if (cmds.length === 0) return true;
   await edit('Reorder layer', cmds);
   return true;
@@ -237,8 +236,10 @@ export async function propertyKeyToggleEdit(nodeId: string, prop: string, second
  * key at the playhead holding the current value. False when not addressable.
  */
 export async function propertyStopwatchEdit(nodeId: string, props: readonly string[], seconds: number): Promise<boolean> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || node.locked) return true;
+  const node = documentMirror().layer(nodeId);
+  // A composition is not a layer: its tracks are not addressable (false → legacy).
+  if (!node) return !isCompItem(nodeId);
+  if (node.switches.locked) return true;
   const refs = refsFor(nodeId, props);
   if (!refs || refs.length === 0 || refs.some((r) => !r.animatable)) return false;
   const anyAnimated = props.some((p, i) => {
@@ -277,9 +278,10 @@ export function propertyValueCommands(
   seconds: number,
   autoKeyframe: boolean,
 ): Command[] | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return [];
-  if (node.locked) return [];
+  const node = documentMirror().layer(nodeId);
+  // A composition is not a layer: its tracks are not addressable (null → legacy).
+  if (!node) return isCompItem(nodeId) ? null : [];
+  if (node.switches.locked) return [];
   const r = trackRef(nodeId, prop);
   if (!r || r.members.length === 0) return null;
   return valueCommands([{ nodeId, values: { [prop]: value } }], { seconds, autoKeyframe });
@@ -295,8 +297,8 @@ export async function addKeyframesForSelectionEdit(nodeIds: readonly string[], t
   const seen = new Set<string>();
   const time = compTime(seconds);
   for (const id of nodeIds) {
-    const n = defaultSceneGraph.getNode(id);
-    if (!n || n.locked) continue;
+    const n = documentMirror().layer(id);
+    if (!n || n.switches.locked) continue;
     for (const t of tracks) {
       const r = trackRef(id, t);
       if (!r || !r.animatable) continue;
@@ -332,8 +334,8 @@ export function setKeyRovingEdit(uiId: string, roving: boolean): Promise<void> {
 /** "Delete Layer" / "Delete Layer and Close Gap" on a clip bar. False when the bar has no layer. */
 export async function deleteClipLayerEdit(nodeId: string | null | undefined, ripple: boolean): Promise<boolean> {
   if (!nodeId || !isLayer(nodeId)) return false;
-  const n = defaultSceneGraph.getNode(nodeId);
-  if (!n || n.locked) return true;
+  const n = documentMirror().layer(nodeId);
+  if (!n || n.switches.locked) return true;
   if (ripple) {
     await rippleDeleteLayers([nodeId]);
   } else {
@@ -390,7 +392,7 @@ export function centreAnchorEdit(nodeIds: readonly string[], seconds: number): P
 /** Centre In View over the selection: Position to the middle of `frame`. One entry. */
 export function centreInCompEdit(nodeIds: readonly string[], frame: Size, seconds: number): Promise<boolean> {
   const entries = nodeIds
-    .filter((id) => defaultSceneGraph.getNode(id))
+    .filter((id) => isLayer(id) || isCompItem(id))
     .map((nodeId) => ({ nodeId, values: { x: Math.round(frame.width / 2), y: Math.round(frame.height / 2) } }));
   return sendTransform('Centre In Frame', entries, seconds);
 }
@@ -533,7 +535,8 @@ export async function applyAnimationPresetEdit(nodeIds: readonly string[], prese
  * drill-down tab whose "root" is a group layer — that group inside its comp.
  */
 export function insertTarget(): { comp: string; parent?: string } | null {
-  const root = activeCompRootId();
+  const root = activeCompIdNow();
+  if (!root) return null;
   if (isCompItem(root)) return { comp: root };
   if (isLayer(root)) {
     const comp = compOfLayer(root);
