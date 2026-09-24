@@ -28,7 +28,6 @@
  */
 
 import type { Command, PropertyInit, PropertyWrite, Value } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
 import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
 import { maskToBezier } from '@core/engine/props';
@@ -68,12 +67,24 @@ import { Color } from '@motion/renderer';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
+import { mirrorEffectHeaders } from '@core/mirror/effects';
+import { isTrackAnimated } from '@core/mirror/selection';
 import { getTime } from '@stores/playbackClockStore';
 import { scalarValueCommands, stopwatchCommands, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 
 // ── Addressing ─────────────────────────────────────────────────────────
 
 const effectGroup = (nodeId: string, effectId: string) => ref(nodeId, paths.effectGroup(effectId));
+
+/** The layer's applied effects (id / type / switch), stack order — B4: from the document mirror. */
+function effectsOf(nodeId: string): ReadonlyArray<{ id: string; type: string; enabled: boolean }> {
+  return mirrorEffectHeaders(documentMirror().tree(nodeId));
+}
+
+/** Whether the track is keyed on the layer — B4: from the document mirror. */
+function animated(nodeId: string, track: string): boolean {
+  return isTrackAnimated(documentMirror(), nodeId, track);
+}
 
 /** The layer ids among `ids` (a composition root or a stray node is not addressable). */
 function layersOf(ids: ReadonlyArray<string>): string[] {
@@ -117,7 +128,7 @@ export function duplicateEffectEdit(nodeId: string, effectId: string, name: stri
 
 /** Move an effect to stack index `toIndex` (its index AFTER the move). No-op when it is already there. */
 export async function moveEffectEdit(nodeId: string, effectId: string, toIndex: number): Promise<void> {
-  const list = getNodeEffects(nodeId);
+  const list = effectsOf(nodeId);
   const from = list.findIndex((e) => e.id === effectId);
   if (from < 0 || toIndex < 0 || toIndex >= list.length || toIndex === from) return;
   await edit('Reorder Effects', { type: 'movePropertyGroup', group: effectGroup(nodeId, effectId), toIndex });
@@ -125,7 +136,7 @@ export async function moveEffectEdit(nodeId: string, effectId: string, toIndex: 
 
 /** The header's up / down arrows. */
 export function nudgeEffectEdit(nodeId: string, effectId: string, dir: -1 | 1): Promise<void> {
-  const from = getNodeEffects(nodeId).findIndex((e) => e.id === effectId);
+  const from = effectsOf(nodeId).findIndex((e) => e.id === effectId);
   return moveEffectEdit(nodeId, effectId, from + dir);
 }
 
@@ -134,7 +145,7 @@ export function nudgeEffectEdit(nodeId: string, effectId: string, dir: -1 | 1): 
  * list (see `moveEffectTo`), translated to the effect's index after the move.
  */
 export function dropEffectEdit(nodeId: string, effectId: string, gap: number): Promise<void> {
-  const list = getNodeEffects(nodeId);
+  const list = effectsOf(nodeId);
   const from = list.findIndex((e) => e.id === effectId);
   const g = Math.max(0, Math.min(gap, list.length));
   // Dropping into the gap just above or below itself is a no-op; removing the
@@ -227,8 +238,8 @@ export function paramStopwatchCommands(nodeId: string, effectId: string, param: 
 /** True when any member track of the param is keyed. */
 function paramAnimated(nodeId: string, effectId: string, param: EffectParamDef): boolean {
   const base = effectPropPath(effectId, param.key);
-  if (param.type === 'color') return ['_r', '_g', '_b', '_a'].some((s) => defaultAnimation.isAnimated(nodeId, `${base}${s}`));
-  return defaultAnimation.isAnimated(nodeId, base);
+  if (param.type === 'color') return ['_r', '_g', '_b', '_a'].some((s) => animated(nodeId, `${base}${s}`));
+  return animated(nodeId, base);
 }
 
 /**
@@ -238,7 +249,7 @@ function paramAnimated(nodeId: string, effectId: string, param: EffectParamDef):
  * written.
  */
 export async function resetEffectEdit(nodeId: string, effectId: string, name: string): Promise<void> {
-  const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);
+  const effect = effectsOf(nodeId).find((e) => e.id === effectId);
   const def = effect ? effectDefFor(effect.type) : undefined;
   if (!effect || !def) return;
   const defaults = newInstanceParamsOf(def);
@@ -262,7 +273,7 @@ export async function resetEffectEdit(nodeId: string, effectId: string, name: st
  */
 export function effectOpacityCommands(nodeId: string, effectId: string, pct: number, seconds: number): Command[] | null {
   const track = effectOpacityPath(effectId);
-  if (!defaultAnimation.isAnimated(nodeId, track) || !trackRef(nodeId, track)) return null;
+  if (!animated(nodeId, track) || !trackRef(nodeId, track)) return null;
   return scalarValueCommands(track, [{ nodeId, value: Math.max(0, Math.min(100, pct)) }], { seconds });
 }
 
@@ -283,6 +294,8 @@ export async function pasteEffectsEdit(targets: ReadonlyArray<string>): Promise<
   if (layers.length === 0 || items.length === 0) return;
   const live = items.every((it) => {
     if (!it.sourceNodeId || !isLayer(it.sourceNodeId)) return false;
+    // B4-gap: the clipboard holds the legacy capture (`captureEffect`: stored params, tracks,
+    // expressions); telling "still as copied" apart needs the same capture of the live effect.
     const cur = getNodeEffects(it.sourceNodeId).find((e) => e.id === it.effect.id);
     if (!cur) return false;
     const { sourceNodeId: _src, ...copied } = it;
@@ -484,9 +497,9 @@ export function setEffectOpacityEdit(nodeId: string, effectId: string, pct: numb
  * did (the engine's setAnimated semantics).
  */
 export function effectOpacityStopwatchEdit(nodeId: string, effect: Effect, seconds: number): Promise<unknown> {
-  const animated = defaultAnimation.isAnimated(nodeId, effectOpacityPath(effect.id));
-  return edit(animated ? 'Remove Effect Opacity animation' : 'Animate Effect Opacity', {
-    type: 'setAnimated', prop: ref(nodeId, paths.effectOpacity(effect.id)), animated: !animated, time: compTime(seconds),
+  const keyed = animated(nodeId, effectOpacityPath(effect.id));
+  return edit(keyed ? 'Remove Effect Opacity animation' : 'Animate Effect Opacity', {
+    type: 'setAnimated', prop: ref(nodeId, paths.effectOpacity(effect.id)), animated: !keyed, time: compTime(seconds),
   });
 }
 

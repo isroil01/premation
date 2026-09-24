@@ -6,7 +6,7 @@
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from '../EffectsSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { addEffect, effectDefFor, getNodeEffects } from '@core/effects/effects';
+import { effectDefFor, getNodeEffects } from '@core/effects/effects';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
@@ -60,14 +60,22 @@ it('says so in one line when the layer has no effects', () => {
   expect(screen.getByText('No effects. Use + to add one.')).toBeInTheDocument();
 });
 
-it('renders the applied effects', () => {
-  addEffect(ID, 'gaussian-blur');
-  render(<EffectsSection nodeId={ID} />);
+it('renders the applied effects', async () => {
+  // The stack reads the document mirror (B4): a real layer in the app's engine.
+  const h = await setupAppEngine();
+  try {
+    const { layer: id } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'Probe', init: [] });
+    await h.run({ type: 'addEffect', layers: [id], effect: 'gaussian-blur', params: [] });
+    render(<EffectsSection nodeId={id} />);
 
-  const label = effectDefFor('gaussian-blur')!.label;
-  expect(screen.getByText(label)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: `Remove ${label}` })).toBeInTheDocument();
-  expect(screen.queryByText('No effects. Use + to add one.')).toBeNull();
+    const label = effectDefFor('gaussian-blur')!.label;
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Remove ${label}` })).toBeInTheDocument();
+    expect(screen.queryByText('No effects. Use + to add one.')).toBeNull();
+  } finally {
+    cleanup();
+    await h.dispose();
+  }
 });
 
 it('the header "+" opens a searchable add menu that adds to the layer', async () => {
