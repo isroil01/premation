@@ -107,10 +107,13 @@ export function endViewportGesture(): void {
 }
 
 /**
- * B3-legacy: the legacy writers' transaction (`gestureAnimEdit` below and the
- * record in `endViewportGesture`) — kept for the edits the engine cannot
- * address yet (drawn layers, shape paths, the knife, RotoBezier / split-handle
- * mask edits, the gizmo / camera fallbacks). Deleted with them.
+ * B3-legacy: engine gap — the legacy writers' transaction (`gestureAnimEdit`
+ * below and the record in `endViewportGesture`), kept for the ports' edits
+ * the engine cannot address yet (ports.ts): a shape layer's path edits that
+ * leave the engine route (a vertex added / removed on every key of an
+ * animated outline, split-handle / RotoBezier vertices) and the node-prop
+ * fallback `applyNodePropsKeyframed` (a light's Point of Interest before the
+ * layer stores it). Deleted with them.
  *
  * `runAnimEdit`, gesture-aware: inside a gesture the mutation applies directly
  * under the gesture's single transaction; outside it is the classic

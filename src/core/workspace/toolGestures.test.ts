@@ -10,15 +10,17 @@ import { commands } from '@motion/workspace';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeMask } from '@core/effects/mask';
+import { readNodePolystar } from '@core/scene/polystar';
+import { useTextEditStore } from '@stores/textEditStore';
 import { engineIdle as engineQueueIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
-import type { LocalEngine } from '@core/engine/LocalEngine';
+import { LocalEngine } from '@core/engine/LocalEngine';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
-import { createCommandPort, nudgeNodes, NUDGE_BURST_MS } from './ports';
+import { createCommandPort, insertDrawnLayers, nudgeNodes, NUDGE_BURST_MS } from './ports';
 import {
   beginViewportGesture,
   cancelToolGesture,
@@ -327,6 +329,100 @@ describe('delete, masks', () => {
       for (const dx of [5, 10, 15]) port().execute(commands.updateMaskPath(s.A, s.mask, pts(dx)));
     }));
     expect(readNodeMask(defaultSceneGraph.getNode(s.A)!)!.paths[0]!.points[1]!.x).toBe(115);
+  });
+});
+
+describe('drawn layers (shape, pen, type tools)', () => {
+  const OUTLINE = [
+    { x: -50, y: 40, inX: -50, inY: 40, outX: -50, outY: 40 },
+    { x: 0, y: -40, inX: 0, inY: -40, outX: 0, outY: -40 },
+    { x: 50, y: 40, inX: 50, inY: 40, outX: 50, outY: 40 },
+  ];
+  const newIds = (before: ReadonlySet<string>): string[] =>
+    defaultSceneGraph.getChildren(s.comp).map((n) => n.id as string).filter((id) => !before.has(id));
+  const layerIds = (): Set<string> => new Set(defaultSceneGraph.getChildren(s.comp).map((n) => n.id as string));
+
+  it('a drawn path is ONE engine insert: the outline, selected, undo removes it', async () => {
+    const before = layerIds();
+    await oneEntry('New Path', async () => {
+      port().execute(commands.createNode('Path', { x: 100, y: 100, width: 100, height: 80 }, OUTLINE, undefined, true));
+      await engineIdle();
+    });
+    const [id] = newIds(before);
+    expect(id).toBeDefined();
+    const node = defaultSceneGraph.getNode(id!)!;
+    const pts = node.components.find((c) => c.type === 'Geometry')!.props.points as Array<{ x: number }>;
+    expect(pts).toHaveLength(3);
+    expect(tp(id!).x).toBeCloseTo(150, 6);
+    expect(useSelectionStore.getState().ids).toEqual([id]);
+  });
+
+  it('a Star drag is a PARAMETRIC polystar layer', async () => {
+    const before = layerIds();
+    await oneEntry('New Star', async () => {
+      port().execute(commands.createNode('Star', { x: 0, y: 0, width: 200, height: 200 }));
+      await engineIdle();
+    });
+    const [id] = newIds(before);
+    const node = defaultSceneGraph.getNode(id!)!;
+    expect(readNodePolystar(node)).toMatchObject({ outerRadius: 100 });
+    expect(node.components.find((c) => c.type === 'Transform')!.props.shapeType).toBe('polystar');
+  });
+
+  it('the Type tool puts the new text layer straight into editing', async () => {
+    const before = layerIds();
+    useTextEditStore.getState().end();
+    await oneEntry('New Text Layer', async () => {
+      port().execute(commands.createNode('Text', { x: 300, y: 300, width: 0, height: 0 }));
+      await engineIdle();
+    });
+    // Undo / redo recreate it with the SAME id (pasteLayers' inverse).
+    const [id] = newIds(before);
+    expect(useTextEditStore.getState().nodeId).toBe(id);
+    useTextEditStore.getState().end();
+  });
+
+  it('several outlines are ONE entry (Convert Mask to Shape Layer)', async () => {
+    const before = layerIds();
+    const payload = commands.createNode('Path', { x: 0, y: 0, width: 100, height: 80 }, OUTLINE, undefined, true).payload as never;
+    let ids: string[] | null = null;
+    await oneEntry('Convert 2 Masks', async () => {
+      ids = await insertDrawnLayers('Convert 2 Masks', [payload, payload]);
+    });
+    expect(ids).toHaveLength(2);
+    expect(newIds(before)).toHaveLength(2);
+  });
+});
+
+describe('path reshape (Direct Selection on a shape layer)', () => {
+  const tri = (s: number) => [
+    { x: 0, y: -s, inX: 0, inY: -s, outX: 0, outY: -s },
+    { x: s, y: s, inX: s, inY: s, outX: s, outY: s },
+    { x: -s, y: s, inX: -s, inY: s, outX: -s, outY: s },
+  ];
+
+  it('an ANIMATED outline keys the Path at the playhead: one "Edit Path" engine gesture', async () => {
+    // B: a layer whose Path the catalog types as a path value (an animated
+    // `path.points` track). A drawn layer's Path row is typed scalar by the
+    // catalog today (engine gap), so its reshapes keep the legacy writer.
+    defaultAnimation.setDataKeyframe(s.B, 'path.points', 'points', 0, tri(10));
+    await engineIdle();
+    const sent: unknown[] = [];
+    const spy = jest.spyOn(h.engine, 'execute').mockImplementation(function (this: LocalEngine, ...args) {
+      sent.push(args[0]);
+      return LocalEngine.prototype.execute.apply(this, args);
+    });
+    try {
+      await oneEntry('Edit Path', () => drag(() => {
+        for (const k of [20, 30, 40]) port().execute(commands.updateNodePath(s.B, tri(k)));
+      }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(sent).toContainEqual(expect.objectContaining({ type: 'setProperty', prop: { layer: s.B, path: 'layer/path.points' } }));
+    const keys = defaultAnimation.getDataTrack(s.B, 'path.points')!.keyframes;
+    expect(keys).toHaveLength(1);
+    expect((keys[0]!.value as Array<{ x: number; y: number }>)[1]).toMatchObject({ x: 40, y: 40 });
   });
 });
 

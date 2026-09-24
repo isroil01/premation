@@ -72,11 +72,13 @@ import {
   gestureSceneBump,
   sendToolEdit,
   runToolEdit,
+  settleToolEdits,
   type ToolTransaction,
 } from '@core/workspace/viewportGesture';
-import type { Command, Value } from '@motion/engine-api';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import type { Command, PropRef, Value } from '@motion/engine-api';
 import { compOfLayer, isLayer } from '@core/engine/doc';
-import { compTime, paths } from '@core/engine/propRefs';
+import { compTime, paths, propRefForTrack } from '@core/engine/propRefs';
 import { hasVertexEditState, maskPointsToPath, trackValueCommands, type NodeTrackValues } from '@core/workspace/toolEdits';
 import { useProjectStore } from '@stores/projectStore';
 import { compToKeyframeTime, getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
@@ -869,53 +871,32 @@ export interface Gizmo3DNodeUpdate {
 }
 
 /**
- * Apply 3D-gizmo transform writes through the SAME dual path the canvas drag
- * uses (moveNodes/rotateNode/resizeNode): a prop with a lit stopwatch — or any
- * prop while Auto-Keyframe is on — keyframes at the current remapped playhead
- * (one coalesced undo entry per drag via the stable merge key); the static
- * base always follows too (harmless when animated — animated reads win — and
- * it keeps the inspector and every other consumer in agreement).
+ * Apply 3D-gizmo transform writes through the engine — the SAME rule the
+ * canvas drag uses (moveNodes / rotateNode / resizeNode): a property with a lit
+ * stopwatch — or any property while Auto-Keyframe is on — keys at the
+ * playhead, the rest take the value. Values are ABSOLUTE (drag-start state +
+ * drag); inside a viewport pointer gesture they go into its one engine
+ * gesture (one undo entry per drag), outside it as a one-shot edit. Locked
+ * and vanished nodes are skipped. Returns false when the API cannot address
+ * one of the writes (a node that is not a composition's layer, a member with
+ * no API property — a 2D layer's z) and nothing was sent.
+ *
+ * `useGizmo3d` builds the same commands itself (`trackValueCommands` into its
+ * own `GestureSession`); this is the port-level entry for other callers.
  */
-// B3-legacy: engine gap — the fallback `useGizmo3d` takes only when
-// `trackValueCommands` cannot address a write (a node that is not a
-// composition's layer, a transform member with no API property).
-export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): void {
-  if (updates.length === 0) return;
-  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-
-  const keyed: Array<{ nodeId: ID; prop: string; lt: number; value: number }> = [];
-  let changed = false;
-
+export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): boolean {
+  const items: NodeTrackValues[] = [];
   for (const u of updates) {
-    const node = defaultSceneGraph.getNode(u.id as ID);
-    if (!node || node.locked) continue;
-    const transComp = node.components.find((c) => c.type === 'Transform');
-    if (!transComp) continue;
-    const lt = getRemappedTime(node.id, rawTime);
+    const values: Record<string, number> = {};
     for (const [prop, value] of Object.entries(u.values)) {
-      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-      if (autoKeyframe || hasAnyTrack(node.id, GIZMO_TRACK_GROUPS[prop as keyof Transform3DValues] ?? [prop])) {
-        keyed.push({ nodeId: node.id, prop, lt, value });
-      }
-      defaultSceneGraph.writeProp(node.id, transComp.id, prop, value);
-      changed = true;
+      if (typeof value === 'number' && Number.isFinite(value)) values[prop] = value;
     }
+    if (Object.keys(values).length > 0) items.push({ nodeId: u.id, values });
   }
-
-  if (keyed.length > 0) {
-    gestureAnimEdit(
-      'Keyframe 3D Transform',
-      () => {
-        for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
-      },
-      // Stable for the whole drag (playhead can't move mid-drag) → ONE undo
-      // entry per gizmo drag, matching the canvas drag pattern above.
-      `gizmo3d:${rawTime}:${updates.map((u) => u.id).join(',')}`,
-    );
-  }
-
-  if (changed) gestureSceneBump();
+  if (items.length === 0) return true;
+  const props = items.flatMap((i) => Object.keys(i.values));
+  const label = props.some((p) => p.startsWith('rotation')) ? 'Rotate' : props.some((p) => p.startsWith('scale')) ? 'Scale' : 'Move';
+  return sendLayerValues(label, items);
 }
 
 /**
@@ -935,8 +916,11 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
  * for the gesture's duration.
  */
 // B3-legacy: engine gap — the fallback `sendNodeValues` takes for props the
-// API cannot address yet (camera orbitYaw/orbitPitch, camera/light POI before
-// the layer carries them).
+// API cannot address yet: a LIGHT's Point of Interest (`poiX/Y/Z`) before the
+// layer stores it (the catalog lists a one-node camera's POI and its orbit
+// props latent, not a light's), and a node that is not a composition's layer.
+// (`cameraCommands` still calls this directly for addressable props — its
+// migration belongs to that module: `sendNodeValues` is the engine route.)
 export function applyNodePropsKeyframed(
   nodeId: string,
   values: Readonly<Record<string, number>>,
@@ -1126,8 +1110,8 @@ function sendLayerValues(
 /**
  * Write numeric props to ONE node through the engine, as part of the current
  * tool action (a drag's gesture, or `txn`). The route is decided ONCE per
- * action (`key`): a node whose props the API cannot address yet (a camera's
- * first orbit — `orbitYaw` has no API property until the layer carries it)
+ * action (`key`): a node whose props the API cannot address yet (a light's
+ * Point of Interest has no API property until the layer stores it)
  * keeps the legacy dual write for the whole action, so one drag never mixes
  * the two histories.
  */
@@ -1144,8 +1128,8 @@ export function sendNodeValues(
   const route = txn ? txn.memo(`route:${key}`, decide) : decide();
   if (route === 'legacy') {
     // B3-legacy: engine gap — a prop with no API property on this layer yet
-    // (camera orbitYaw/orbitPitch, camera/light poiX/Y/Z before the layer
-    // carries them): the catalog lists them only once they exist.
+    // (a light's poiX/Y/Z before the layer stores them): the catalog lists
+    // them only once they exist.
     applyNodePropsKeyframed(nodeId, values, key);
     return;
   }
@@ -1386,6 +1370,65 @@ function createNode(payload: CreateNodePayload): void {
     return;
   }
 
+  const text = kind === 'text';
+  void insertDrawnLayers(drawnLayerLabel(payload), [payload]).then((ids) => {
+    // AE: creating text with the Type tool (click or drag) puts you straight
+    // into typing it.
+    const id = ids?.[0];
+    if (text && id) useTextEditStore.getState().begin(id);
+  });
+}
+
+/** The undo label of a drawn layer. */
+function drawnLayerLabel(payload: CreateNodePayload): string {
+  return KIND_FOR_CREATE[payload.kind] === 'text' ? 'New Text Layer' : `New ${payload.kind}`;
+}
+
+/**
+ * Draw layers into the active composition as ONE engine edit (one undo entry
+ * named `label`): the drawn-layer builder below runs off-document and the
+ * result goes to the engine as one `pasteLayers` (B3z, `insertBuiltLayers`) —
+ * the API's `createLayer` cannot carry what a drawn layer is born with (the
+ * toolbar Fill / Stroke paints, the drawn outline, a paragraph box, a
+ * Polystar's parameters, the continuous-raster default). The new layers are
+ * selected. Resolves to their ids in payload order, or null when the insert
+ * failed (toasted).
+ *
+ * Runs after any tool action still closing, so the build reads the document
+ * that action left. Also the entry point for commands that create drawn
+ * layers from computed outlines (Convert Mask to Shape Layer).
+ */
+export async function insertDrawnLayers(label: string, payloads: readonly CreateNodePayload[]): Promise<string[] | null> {
+  if (payloads.length === 0) return [];
+  await settleToolEdits();
+  const comp = activeCompRootId() as string;
+  return insertBuiltLayers(label, comp, () => {
+    for (const payload of payloads) {
+      // Built one after another so each name is unique against the last.
+      const { node, polystar } = drawnLayerOf(payload);
+      defaultSceneGraph.addChild(comp as ID, node);
+      if (polystar) defaultSceneGraph.setFxKey(node.id, POLYSTAR_FX_PROP, polystar);
+      // The same default every MENU and LIBRARY insert applies. This path —
+      // every layer the user DRAWS — was the one place that did not, so a pen
+      // path went soft past 400% while the identical shape from the Layer menu
+      // stayed sharp. Must follow `addChild`: the helper reads the node back.
+      enableContinuousRasterByDefault(node.id as string);
+    }
+  });
+}
+
+/**
+ * A drawn layer as a detached node (and its Polystar parameters, for the
+ * Polygon / Star tools). Pure: reads the tool options, writes nothing.
+ */
+function drawnLayerOf(payload: CreateNodePayload): { node: SceneNode; polystar: ReturnType<typeof defaultPolystar> | null } {
+  const kind = KIND_FOR_CREATE[payload.kind] ?? 'shape';
+  const cx = payload.bounds.x + payload.bounds.width / 2;
+  const cy = payload.bounds.y + payload.bounds.height / 2;
+  const ellipse = payload.kind === 'Ellipse';
+  const width = payload.bounds.width;
+  const height = payload.bounds.height;
+
   // ── Parametric Polystar (AE parity) ─────────────────────────────────
   // The Polygon / Star tools create a PARAMETRIC layer: the drag sets the
   // outer radius, the tool options seed points / inner radius, and the
@@ -1412,15 +1455,7 @@ function createNode(payload: CreateNodePayload): void {
         : Math.max(3, Math.min(12, Math.round(drawToolOptions.starPoints))),
       drawToolOptions.starInnerRatio,
     );
-    // B3-legacy: engine gap — `createLayer` cannot carry the toolbar Fill /
-    // Stroke paints (solid or gradient) or a Polystar's parametric config
-    // (`fx.polystar`); continuous raster is not a switch the API sets.
-    defaultSceneGraph.addChild(activeCompRootId() as ID, node);
-    defaultSceneGraph.setFxKey(node.id, POLYSTAR_FX_PROP, cfg);
-    enableContinuousRasterByDefault(node.id as string);
-    useSelectionStore.getState().set([node.id]);
-    bumpScene();
-    return;
+    return { node, polystar: cfg };
   }
 
   // Fit the layer box to the OUTLINE, not to the drag rectangle.
@@ -1494,24 +1529,7 @@ function createNode(payload: CreateNodePayload): void {
     // A fresh literal not yet in the graph (see the box props above).
     if (textComp) Object.assign(textComp.props, { orientation: 'vertical' });
   }
-  const rootId = activeCompRootId() as ID;
-  // B3-legacy: engine gap — a drawn layer through `createLayer` needs, beside
-  // its kind and name: the toolbar Fill / Stroke paints (solid or gradient),
-  // a drawn outline (`Geometry.points`, open or closed), a paragraph text box
-  // (`boxWidth`/`boxHeight`, vertical orientation) and the continuous-raster
-  // default — none of which the API can say yet.
-  defaultSceneGraph.addChild(rootId, node);
-  // The same default every MENU and LIBRARY insert applies. This path — every
-  // layer the user DRAWS — was the one place that did not, so a pen path went
-  // soft past 400% while the identical shape from the Layer menu stayed sharp.
-  // Must follow `addChild`: the helper reads the node back out of the graph.
-  enableContinuousRasterByDefault(node.id as string);
-
-  useSelectionStore.getState().set([node.id]);
-  bumpScene();
-  // AE: creating text with the Type tool (click or drag) puts you straight
-  // into typing it.
-  if (kind === 'text') useTextEditStore.getState().begin(node.id as string);
+  return { node, polystar: null };
 }
 
 function resizeNode(payload: ResizeNodePayload): void {
@@ -1840,13 +1858,33 @@ function writeGeometryFlags(node: SceneNode, flags: { closed?: boolean; rotoBezi
   if (flags.rotoBezier !== undefined) defaultSceneGraph.writeProp(node.id, geom.id, 'rotoBezier', flags.rotoBezier ? true : undefined);
 }
 
-/*
- * B3-legacy: engine gap — a shape layer's own outline. The TS engine gives
- * `path.points` no static value ("key it instead"), a keyed value's BezierPath
- * drops each vertex's `broken` / `tension` editing state, and Closed /
- * RotoBezier (`Geometry.open`, `rotoBezier`) and a vertex added or removed on
- * EVERY keyframe have no command. Direct Selection / Pen edits of a layer's
- * path keep the legacy writer, one gesture transaction per drag.
+/**
+ * The API property of a layer's ANIMATED outline (`path.points`, a path
+ * value), or null when the engine cannot take the write: not a composition's
+ * layer, or a static outline (the TS engine gives `path.points` no static
+ * value — "key it instead").
+ */
+function animatedPathRef(id: string): PropRef | null {
+  if (!isLayer(id) || !defaultAnimation.isDataAnimated(id, 'path.points')) return null;
+  const r = propRefForTrack(id, 'path.points');
+  return r && r.valueType === 'path' ? r.ref : null;
+}
+
+/**
+ * Direct Selection / Pen edits of a layer's own outline.
+ *
+ * A RESHAPE of an ANIMATED outline (the whole outline at the playhead,
+ * absolute) goes to the engine as the Path at the playhead — a key there, one
+ * gesture per drag, the comp time mapped onto the layer's keyframe axis by the
+ * engine. The route is decided once per drag, so one drag never mixes the two
+ * histories.
+ *
+ * B3-legacy: engine gap — everything else keeps the legacy writer, one
+ * gesture transaction per drag: the TS engine gives `path.points` no static
+ * value ("key it instead"), a BezierPath drops each vertex's `broken` /
+ * `tension` editing state, and Closed / RotoBezier (`Geometry.open`,
+ * `rotoBezier`) and a vertex added or removed on EVERY keyframe have no
+ * command.
  */
 function updateNodePath(payload: UpdateNodePathPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
@@ -1854,6 +1892,20 @@ function updateNodePath(payload: UpdateNodePathPayload): void {
   const id = node.id as string;
   const geomComponent = node.components.find((c) => c.type === 'Geometry');
   const topology = payload.topology;
+
+  if (!topology && payload.closed === undefined && payload.rotoBezier === undefined && !hasVertexEditState(payload.points)) {
+    const txn = currentToolTransaction();
+    const ref = txn ? txn.memo(`pathroute:${id}`, () => animatedPathRef(id)) : animatedPathRef(id);
+    if (ref) {
+      sendToolEdit('Edit Path', [{
+        type: 'setProperty',
+        prop: ref,
+        value: maskPointsToPath(payload.points as MaskPoint[], geomComponent?.props.open !== true),
+        time: compTime(getTimelineController().currentSeconds),
+      }], txn);
+      return;
+    }
+  }
 
   // An ANIMATED outline: write the track the renderer reads, like a mask edit.
   // A reshape keys the playhead (on the layer's keyframe axis, see

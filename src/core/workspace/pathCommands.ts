@@ -14,14 +14,23 @@
  * open at the next, and a vertex order that differs between keyframes makes
  * them morph through each other. So all four edit the static outline AND every
  * keyframe, the way `editMaskPathTopology` adds a vertex. Each command is one
- * undo step (`runDocumentEdit` snapshots scene and animation together).
+ * undo step.
  *
- * B3-legacy: engine gap — every verb here edits what the API cannot address
- * yet: a shape layer's own outline (`path.points` has no static value in the
- * TS engine; Closed / RotoBezier / a vertex order applied to EVERY key have
- * no command), a mask's RotoBezier switch, and per-vertex `broken` / `tension`
- * state (BezierPath drops it). They stay on `runDocumentEdit` until the
- * engine grows path topology commands.
+ * HOW IT IS WRITTEN (B3). A MASK outline goes through the engine API
+ * (`pathEdits.ts`: `masks/<id>/path` — its static value, every keyframe's
+ * value, a key at the playhead), one `edit` per verb. Convert Mask to Shape
+ * Layer is one `pasteLayers` of the Pen's drawn-layer payloads built
+ * off-document (`insertDrawnLayers`).
+ *
+ * B3-legacy: engine gap — what the API cannot address yet stays on
+ * `runDocumentEdit`, decided per verb so one action is one undo entry:
+ *   - a shape layer's own outline: the catalog has no path-valued property for
+ *     it (`path.points` is bound as a SCALAR `layer/path.points`, with no
+ *     static value), and Closed / RotoBezier (`Geometry.open`, `rotoBezier`)
+ *     have no property at all;
+ *   - a mask's RotoBezier switch (a mask-level flag no property carries);
+ *   - per-vertex `broken` / `tension` editing state (BezierPath drops it, so
+ *     a write through the API would re-join split handles).
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -39,6 +48,7 @@ import {
   type OutlineId,
   type PathTopologyEdit,
   type ToolContext,
+  type CreateNodePayload,
 } from '@motion/workspace';
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
@@ -56,7 +66,17 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { ID } from '@core/types';
 import { getWorkspaceController } from './WorkspaceController';
-import { createCommandPort, createSceneGraphPort } from './ports';
+import { createSceneGraphPort, insertDrawnLayers } from './ports';
+import { hasVertexEditState } from './toolEdits';
+import {
+  maskEveryStateCommands,
+  maskKeyAtCommands,
+  maskPasteCommands,
+  maskPathOnEngine,
+  sendPathEdit,
+  type MaskOutlineAt,
+  type MaskStateEdit,
+} from './pathEdits';
 
 /** The animation path of a shape layer's whole-path track (AE's Path property). */
 export const PATH_ANIM_PROP = 'path.points';
@@ -110,9 +130,11 @@ const toBezier = (v: unknown): BezierPoint[] | null =>
     : null;
 
 /**
- * Apply `fn` to an outline in EVERY state (static + each keyframe) and set its
- * switches. `fn` gets each state's points and the outline's closed state
- * AFTER the flags, and returns the new points (null = leave that state).
+ * B3-legacy: engine gap (see the file comment) — apply `fn` to an outline in
+ * EVERY state (static + each keyframe) and set its switches, on the scene
+ * graph and animation directly. The caller wraps it in ONE `runDocumentEdit`.
+ * `fn` gets each state's points and the outline's closed state AFTER the
+ * flags, and returns the new points (null = leave that state).
  */
 function editOutlineEverywhere(
   id: OutlineId,
@@ -150,28 +172,62 @@ function editOutlineEverywhere(
 const topologyFn = (edit: PathTopologyEdit) => (points: BezierPoint[], closed: boolean): BezierPoint[] | null =>
   applyPathTopology(points, edit, closed);
 
-/** Run `edit` over the targets as one undo step; false (and a hint) when there are none. */
-function onTargets(label: string, edit: (targets: PathTarget[]) => void): boolean {
-  const targets = resolvePathTargets();
-  if (targets.length === 0) {
-    notify('Select a path or mask first (Direct Selection, or a layer with a path)', 'warning');
-    return false;
-  }
+/** A per-state points edit and the closed state after it. */
+type StateFn = (points: BezierPoint[], closed: boolean) => BezierPoint[] | null;
+
+/**
+ * The engine route: every target is a mask outline the API can say
+ * (`maskPathOnEngine`). Decided once per verb, so one action never splits
+ * between the engine's history and the legacy recorder.
+ */
+function masksOnEngine(targets: ReadonlyArray<PathTarget>): boolean {
+  return targets.every((t) => t.outline.maskId !== null && maskPathOnEngine(t.outline.nodeId as string, t.outline.maskId));
+}
+
+/** Each target as a mask state edit (only called when `masksOnEngine`). */
+function maskStateEdits(targets: ReadonlyArray<PathTarget>, closedOf: (t: PathTarget) => boolean, fnOf: (t: PathTarget) => StateFn | undefined): MaskStateEdit[] {
+  return targets.map((t) => {
+    const fn = fnOf(t);
+    return { nodeId: t.outline.nodeId as string, maskId: t.outline.maskId!, closed: closedOf(t), ...(fn ? { fn } : {}) };
+  });
+}
+
+/** Send mask state edits as one entry, then redraw. */
+function sendMaskStates(label: string, edits: MaskStateEdit[]): void {
+  void maskEveryStateCommands(label, edits)
+    .then((cmds) => sendPathEdit(label, cmds))
+    .then(() => getWorkspaceController().requestRender());
+}
+
+function noTargetsHint(): void {
+  notify('Select a path or mask first (Direct Selection, or a layer with a path)', 'warning');
+}
+
+/** B3-legacy: engine gap — run the legacy `edit` over the targets as one undo step. */
+function legacyOnTargets(label: string, targets: PathTarget[], edit: (targets: PathTarget[]) => void): void {
   runDocumentEdit(label, () => edit(targets));
   getWorkspaceController().requestRender();
-  return true;
 }
 
 // ── The verbs ────────────────────────────────────────────────────────
 
 /** Layer ▸ Mask and Shape Path ▸ Closed — toggles, taking its lead from the first target. */
 export function toggleClosed(): boolean {
-  return onTargets('Closed', (targets) => {
-    const closed = !targets[0]!.outline.closed;
-    for (const t of targets) {
-      editOutlineEverywhere(t.outline, { closed }, t.outline.rotoBezier ? (pts, c) => rotoBezierPoints(pts, c) : undefined);
-    }
+  const targets = resolvePathTargets();
+  if (targets.length === 0) {
+    noTargetsHint();
+    return false;
+  }
+  const closed = !targets[0]!.outline.closed;
+  const rotoFn = (t: PathTarget): StateFn | undefined => (t.outline.rotoBezier ? (pts, c) => rotoBezierPoints(pts, c) : undefined);
+  if (masksOnEngine(targets)) {
+    sendMaskStates('Closed', maskStateEdits(targets, () => closed, rotoFn));
+    return true;
+  }
+  legacyOnTargets('Closed', targets, (ts) => {
+    for (const t of ts) editOutlineEverywhere(t.outline, { closed }, rotoFn(t));
   });
+  return true;
 }
 
 /** Set First Vertex — needs exactly one selected vertex on an outline. */
@@ -181,40 +237,59 @@ export function setFirstVertexCommand(): boolean {
     notify('Select one vertex with the Direct Selection tool to make it the first vertex', 'warning');
     return false;
   }
-  runDocumentEdit('Set First Vertex', () => {
-    for (const t of targets) {
-      editOutlineEverywhere(t.outline, {}, topologyFn({ op: 'firstVertex', index: t.indices[0]! }));
-    }
-  });
+  const fnOf = (t: PathTarget): StateFn => topologyFn({ op: 'firstVertex', index: t.indices[0]! });
+  if (masksOnEngine(targets)) {
+    sendMaskStates('Set First Vertex', maskStateEdits(targets, (t) => t.outline.closed, fnOf));
+  } else {
+    legacyOnTargets('Set First Vertex', targets, (ts) => {
+      for (const t of ts) editOutlineEverywhere(t.outline, {}, fnOf(t));
+    });
+  }
   // The selection indexed the old order.
   directSelection()?.clearVertexSelection();
-  getWorkspaceController().requestRender();
   return true;
 }
 
 /** Reverse Path Direction. */
 export function reversePathCommand(): boolean {
-  const ok = onTargets('Reverse Path Direction', (targets) => {
-    for (const t of targets) editOutlineEverywhere(t.outline, {}, (pts) => reversePath(pts));
-  });
-  if (ok) directSelection()?.clearVertexSelection();
-  return ok;
+  const targets = resolvePathTargets();
+  if (targets.length === 0) {
+    noTargetsHint();
+    return false;
+  }
+  const fn: StateFn = (pts) => reversePath(pts);
+  if (masksOnEngine(targets)) {
+    sendMaskStates('Reverse Path Direction', maskStateEdits(targets, (t) => t.outline.closed, () => fn));
+  } else {
+    legacyOnTargets('Reverse Path Direction', targets, (ts) => {
+      for (const t of ts) editOutlineEverywhere(t.outline, {}, fn);
+    });
+  }
+  directSelection()?.clearVertexSelection();
+  return true;
 }
 
 /**
  * RotoBezier — on computes every state's handles from its vertices; off keeps
  * the handles it last computed (AE: turning it off leaves the curve alone).
+ *
+ * B3-legacy: engine gap — the switch itself (`Geometry.rotoBezier`, a mask's
+ * `rotoBezier`) has no API property, for a shape path or a mask alike.
  */
 export function toggleRotoBezier(): boolean {
-  let on = false;
-  const ok = onTargets('RotoBezier', (targets) => {
-    on = !targets[0]!.outline.rotoBezier;
-    for (const t of targets) {
+  const targets = resolvePathTargets();
+  if (targets.length === 0) {
+    noTargetsHint();
+    return false;
+  }
+  const on = !targets[0]!.outline.rotoBezier;
+  legacyOnTargets('RotoBezier', targets, (ts) => {
+    for (const t of ts) {
       editOutlineEverywhere(t.outline, { rotoBezier: on }, on ? (pts, closed) => rotoBezierPoints(pts, closed) : undefined);
     }
   });
-  if (ok) notify(on ? 'RotoBezier on — drag a vertex with Convert Vertex to set its tension' : 'RotoBezier off', 'info');
-  return ok;
+  notify(on ? 'RotoBezier on — drag a vertex with Convert Vertex to set its tension' : 'RotoBezier off', 'info');
+  return true;
 }
 
 /** Whether the first target is closed / RotoBezier — the menu's check marks. */
@@ -242,6 +317,26 @@ export function freeTransformPoints(): boolean {
 }
 
 /**
+ * The masks to key per layer for Alt+Shift+M — every mask of each target's
+ * layer (they are keyed together), with the shape the viewport draws at the
+ * playhead — or null when a target is not a mask the API can key.
+ */
+function maskKeysByLayer(targets: ReadonlyArray<PathTarget>): Map<string, MaskOutlineAt[]> | null {
+  if (!masksOnEngine(targets)) return null;
+  const scene = outlineContext().scene;
+  const out = new Map<string, MaskOutlineAt[]>();
+  for (const t of targets) {
+    const nodeId = t.outline.nodeId as string;
+    if (out.has(nodeId)) continue;
+    const node = scene.getNode(nodeId);
+    const masks = node ? outlinesOfNode(node).filter((o) => o.maskId !== null) : [];
+    if (masks.some((o) => !maskPathOnEngine(nodeId, o.maskId!))) return null;
+    out.set(nodeId, masks.map((o) => ({ maskId: o.maskId!, points: o.points, closed: o.closed })));
+  }
+  return out;
+}
+
+/**
  * Alt+Shift+M — a Mask Path / Path keyframe at the playhead holding the
  * current shape (AE). A shape layer's path starts its `path.points` track here
  * if it had none; a mask keys its whole-mask snapshot.
@@ -253,6 +348,13 @@ export function keyframePathAtPlayhead(): boolean {
     return false;
   }
   const now = getTimelineController().currentSeconds;
+  const byLayer = maskKeysByLayer(targets);
+  if (byLayer) {
+    void sendPathEdit('Set Path Keyframe', [...byLayer].flatMap(([nodeId, masks]) => maskKeyAtCommands(nodeId, masks, now)));
+    return true;
+  }
+  // B3-legacy: engine gap — a shape layer's `path.points` has no path-valued
+  // property, and a mask key through the API drops `broken` / `tension`.
   runDocumentEdit('Set Path Keyframe', () => {
     const maskedLayers = new Set<string>();
     for (const t of targets) {
@@ -274,6 +376,10 @@ export function keyframePathAtPlayhead(): boolean {
  * The timeline Path row's stopwatch: start a `path.points` track from the
  * static outline, or — lit — end it, keeping the shape at the playhead as the
  * static path (AE leaves the value where the playhead is).
+ *
+ * B3-legacy: engine gap — a shape layer's Path has no path-valued property in
+ * the catalog (`path.points` is bound as a scalar `layer/path.points`, whose
+ * `setAnimated` would key a number), so its stopwatch stays on the legacy writer.
  */
 export function togglePathAnimation(nodeId: string): void {
   const node = defaultSceneGraph.getNode(nodeId as ID);
@@ -334,6 +440,16 @@ export function pastePathOntoSelection(): boolean {
   if (targets.length === 0) return false;
   const clip = pathClipboard;
   const now = getTimelineController().currentSeconds;
+  if (masksOnEngine(targets) && !hasVertexEditState(clip.points)) {
+    const onto = targets.map((t) => ({ nodeId: t.outline.nodeId as string, maskId: t.outline.maskId! }));
+    void maskPasteCommands('Paste Path', onto, clip.points, clip.closed, now)
+      .then((cmds) => sendPathEdit('Paste Path', cmds))
+      .then(() => getWorkspaceController().requestRender());
+    directSelection()?.clearVertexSelection();
+    return true;
+  }
+  // B3-legacy: engine gap — a shape layer's own outline, and split handles /
+  // RotoBezier tension on the pasted or the target outline (see the file comment).
   runDocumentEdit('Paste Path', () => {
     for (const t of targets) {
       const nodeId = t.outline.nodeId as string;
@@ -373,8 +489,12 @@ export function clearPathClipboard(): void {
  * (a rotated layer's mask comes out as a rotated path on an unrotated layer).
  * The source layer keeps its masks; AE's equivalent (copy the Mask Path into a
  * new shape) leaves them too.
+ *
+ * ONE entry: the layers are the Pen's own drawn-layer payloads, built
+ * off-document and inserted with one `pasteLayers` (`insertDrawnLayers`).
+ * Resolves to the new layers' ids, which end up selected.
  */
-export function convertMasksToShapeLayers(): string[] {
+export async function convertMasksToShapeLayers(): Promise<string[]> {
   const ids = useSelectionStore.getState().ids;
   const scene = createSceneGraphPort();
   const jobs: Array<{ world: BezierPoint[]; closed: boolean }> = [];
@@ -399,26 +519,22 @@ export function convertMasksToShapeLayers(): string[] {
     notify('Select a layer with masks to convert', 'warning');
     return [];
   }
-  const port = createCommandPort();
-  const made = runDocumentEdit(jobs.length > 1 ? `Convert ${jobs.length} Masks to Shape Layers` : 'Convert Mask to Shape Layer', () => {
-    const out: string[] = [];
-    for (const job of jobs) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const p of job.world) {
-        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-      }
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
-      const local = job.world.map((p) => ({ x: p.x - cx, y: p.y - cy, inX: p.inX - cx, inY: p.inY - cy, outX: p.outX - cx, outY: p.outY - cy }));
-      // The same command the Pen commits, so the layer is exactly a drawn path.
-      port.execute(commands.createNode('Path', { x: minX, y: minY, width: maxX - minX, height: maxY - minY }, local, undefined, job.closed));
-      const created = useSelectionStore.getState().ids[0];
-      if (created) out.push(created);
+  const label = jobs.length > 1 ? `Convert ${jobs.length} Masks to Shape Layers` : 'Convert Mask to Shape Layer';
+  const payloads = jobs.map((job) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of job.world) {
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
     }
-    return out;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const local = job.world.map((p) => ({ x: p.x - cx, y: p.y - cy, inX: p.inX - cx, inY: p.inY - cy, outX: p.outX - cx, outY: p.outY - cy }));
+    // The same payload the Pen commits, so the layer is exactly a drawn path.
+    return commands.createNode('Path', { x: minX, y: minY, width: maxX - minX, height: maxY - minY }, local, undefined, job.closed)
+      .payload as CreateNodePayload;
   });
-  if (made.length > 0) useSelectionStore.getState().set(made);
+  const made = await insertDrawnLayers(label, payloads);
+  if (!made || made.length === 0) return [];
   notify(`Created ${made.length} shape layer${made.length === 1 ? '' : 's'} from mask${made.length === 1 ? '' : 's'}`, 'success');
   return made;
 }
@@ -481,7 +597,7 @@ export function buildPathCommands(): ReadonlyArray<Command> {
       label: 'Convert Mask to Shape Layer',
       icon: 'shape',
       enabled: hasLayerSelection,
-      execute: () => { convertMasksToShapeLayers(); },
+      execute: () => { void convertMasksToShapeLayers(); },
     },
   ];
 }

@@ -24,6 +24,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode, ID } from '@core/types';
 import { createCommandPort, createSceneGraphPort } from './ports';
 import { engineIdle } from '@core/engine/engineInstance';
+import { settleToolEdits } from './viewportGesture';
 
 const corner = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
 const tri = (s: number): MaskPoint[] => [corner(0, -s), corner(s, s), corner(-s, s)];
@@ -147,6 +148,11 @@ describe('a vertex added / deleted on an ANIMATED mask', () => {
 
 describe('a Pen outline closed on its first vertex', () => {
   const OUTLINE = [corner(-50, 40), corner(0, -40), corner(50, 40)];
+  /** Every tool action closed and the engine idle. */
+  const drawn = async (): Promise<void> => {
+    await settleToolEdits();
+    await engineIdle();
+  };
   const created = (): SceneNode => {
     const ids = useSelectionStore.getState().ids;
     const node = defaultSceneGraph.getNode(ids[ids.length - 1] as ID)!;
@@ -154,8 +160,9 @@ describe('a Pen outline closed on its first vertex', () => {
     return node;
   };
 
-  it('becomes a closed, FILLED shape', () => {
+  it('becomes a closed, FILLED shape', async () => {
     createCommandPort().execute(commands.createNode('Path', { x: 0, y: 0, width: 100, height: 80 }, OUTLINE, undefined, true));
+    await drawn(); // a drawn layer is an engine insert (B3)
     const node = created();
     const geom = node.components.find((c) => c.type === 'Geometry')!;
     expect(geom.props.open).toBeUndefined();
@@ -164,8 +171,9 @@ describe('a Pen outline closed on its first vertex', () => {
     expect(createSceneGraphPort().getNode(node.id as string)!.pathClosed).toBe(true);
   });
 
-  it('CONTROL: an unclosed Pen outline is still an open stroke', () => {
+  it('CONTROL: an unclosed Pen outline is still an open stroke', async () => {
     createCommandPort().execute(commands.createNode('Path', { x: 0, y: 0, width: 100, height: 80 }, OUTLINE));
+    await drawn();
     const node = created();
     expect(node.components.find((c) => c.type === 'Geometry')!.props.open).toBe(true);
     expect(createSceneGraphPort().getNode(node.id as string)!.pathClosed).toBe(false);

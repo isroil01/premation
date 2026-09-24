@@ -30,9 +30,8 @@ import { runRotoBrush, type RotoBrushResult } from '@core/tracking/rotoBrush';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { useAssetStore } from '@stores/assetStore';
-import { bumpScene } from '@stores/sceneStore';
-import { getEventBus } from '@core/events/EventBus';
 import type { RotoStroke } from '@stores/rotoBrushStore';
+import { rotoMaskEdit } from './pathEdits';
 
 /** The name every path this tool writes carries, so a re-segment replaces it. */
 export const ROTO_PATH_NAME = 'Roto Brush';
@@ -161,8 +160,9 @@ export interface SegmentStrokesOptions {
 
 /**
  * Segment from the strokes and write the matte as the layer's roto mask
- * path (replacing the tool's previous path). Resolves to the written path's
- * id, or null when nothing usable came back.
+ * path (replacing the tool's previous path) through the engine API
+ * (`rotoMaskEdit`, one undo entry). Resolves to the written mask's id, or null
+ * when nothing usable came back or the layer is not addressable.
  */
 export async function segmentStrokesToMask(
   nodeId: string,
@@ -188,16 +188,14 @@ export async function segmentStrokesToMask(
   const path = matteToLayerPath(result.mask, source, layer, feather, opts.replacePathId ?? undefined);
   if (!path) return null;
 
-  const existing = getNodeMask(nodeId);
-  const kept = existing.paths.filter((p) => p.id !== opts.replacePathId && p.name !== ROTO_PATH_NAME);
-  // B3-legacy: engine gap — `addMask` carries no feather / opacity /
-  // expansion and assigns its own id, while the Roto Brush reuses the path id
-  // it replaces (`replacePathId`) and a follow-up feather write would need the
-  // new id inside the same entry.
-  defaultSceneGraph.setMask(nodeId, { paths: [...kept, path] });
-  getEventBus().emit('AnimationChanged', { nodeId });
-  bumpScene();
-  return path.id;
+  // The tool's previous paths go (the one it wrote last, by id, and any other
+  // it left by name) and the new outline is added with its feather — ONE
+  // entry; the returned id is the engine's new mask, the next re-segment's
+  // `replacePathId`.
+  const drop = getNodeMask(nodeId).paths
+    .filter((p) => p.id === opts.replacePathId || p.name === ROTO_PATH_NAME)
+    .map((p) => p.id);
+  return rotoMaskEdit(nodeId, drop, path);
 }
 
 /**

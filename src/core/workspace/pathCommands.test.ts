@@ -23,7 +23,6 @@ import { createCommandPort, createSceneGraphPort } from './ports';
 import { getWorkspaceController } from './WorkspaceController';
 import {
   clearPathClipboard,
-  convertMasksToShapeLayers,
   copyPathFromSelection,
   keyframePathAtPlayhead,
   pastePathOntoSelection,
@@ -192,7 +191,8 @@ describe('Layer ▸ Mask and Shape Path', () => {
   });
 });
 
-describe('mask ⇄ shape path clipboard, and Convert Mask to Shape Layer', () => {
+// Convert Mask to Shape Layer (one engine entry) is pinned in pathEdits.test.ts.
+describe('mask ⇄ shape path clipboard', () => {
   it('copies a mask path and pastes it onto a shape layer\'s path', () => {
     add(layer('pk_src', [{ id: 'pk_src_fx', type: 'fx', props: { mask: maskOf(25) } }] as SceneNode['components']));
     pathLayer('pk_dst', tri(40), true);
@@ -211,18 +211,4 @@ describe('mask ⇄ shape path clipboard, and Convert Mask to Shape Layer', () =>
     useUIStore.getState().setActiveTool('select');
   });
 
-  it('Convert Mask to Shape Layer draws the mask outline where it was', () => {
-    add(layer('pk_conv', [{ id: 'pk_conv_fx', type: 'fx', props: { mask: maskOf(10) } }] as SceneNode['components']));
-    useSelectionStore.getState().set(['pk_conv']);
-    const ids = convertMasksToShapeLayers();
-    made.push(...ids);
-    expect(ids).toHaveLength(1);
-    const wn = createSceneGraphPort().getNode(ids[0]!)!;
-    const srcWorld = createSceneGraphPort().getNode('pk_conv')!.worldMatrix;
-    const expectTL = { x: srcWorld.a * -10 + srcWorld.c * -10 + srcWorld.e, y: srcWorld.b * -10 + srcWorld.d * -10 + srcWorld.f };
-    const p = wn.pathPoints![0]!;
-    const w = wn.worldMatrix;
-    expect(w.a * p.x + w.c * p.y + w.e).toBeCloseTo(expectTL.x, 6);
-    expect(w.b * p.x + w.d * p.y + w.f).toBeCloseTo(expectTL.y, 6);
-  });
 });

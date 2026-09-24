@@ -29,12 +29,16 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import { createCommandPort, createSceneGraphPort } from '@core/workspace/ports';
 import { commands } from '@motion/workspace';
+import { settleToolEdits } from '@core/workspace/viewportGesture';
+import { engineIdle } from '@core/engine/engineInstance';
 
-/** A rectangle drawn the way the Rectangle tool (Q) draws one. */
-function newRect(): string {
+/** A rectangle drawn the way the Rectangle tool (Q) draws one (an engine insert, B3). */
+async function newRect(): Promise<string> {
   createCommandPort().execute(
     commands.createNode('shape' as never, { x: 700, y: 300, width: 400, height: 250 }),
   );
+  await settleToolEdits();
+  await engineIdle();
   const id = useSelectionStore.getState().ids.slice(-1)[0];
   if (!id) throw new Error('createNode selected nothing');
   return id;
@@ -59,8 +63,8 @@ beforeAll(() => {
 });
 
 describe('parenting a layer to a Null', () => {
-  it('announces the move so a collapsed destination can be opened', () => {
-    const rect = newRect();
+  it('announces the move so a collapsed destination can be opened', async () => {
+    const rect = await newRect();
     const nul = newNull();
     const seen: Array<{ nodeId: string; parentId: string }> = [];
     const sub = getEventBus().on('LayerReparented', (p) => { seen.push(p); });
@@ -76,8 +80,8 @@ describe('parenting a layer to a Null', () => {
     expect(seen).toEqual([{ nodeId: rect, parentId: nul }]);
   });
 
-  it('announces un-parenting too, back to the layer’s own comp root', () => {
-    const rect = newRect();
+  it('announces un-parenting too, back to the layer’s own comp root', async () => {
+    const rect = await newRect();
     const nul = newNull();
     reparentNode(rect, nul);
 
@@ -96,8 +100,8 @@ describe('parenting a layer to a Null', () => {
     expect(seen[0]?.parentId).toBe(defaultSceneGraph.getNode(rect as never)?.parent);
   });
 
-  it('says nothing when the move is refused, so no branch opens for a no-op', () => {
-    const rect = newRect();
+  it('says nothing when the move is refused, so no branch opens for a no-op', async () => {
+    const rect = await newRect();
     const seen: unknown[] = [];
     const sub = getEventBus().on('LayerReparented', (p) => { seen.push(p); });
     try {
@@ -109,8 +113,8 @@ describe('parenting a layer to a Null', () => {
     expect(seen).toEqual([]);
   });
 
-  it('still leaves the layer exactly where it was on canvas', () => {
-    const rect = newRect();
+  it('still leaves the layer exactly where it was on canvas', async () => {
+    const rect = await newRect();
     const nul = newNull();
     const before = worldBounds(rect);
 

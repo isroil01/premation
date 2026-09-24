@@ -26,6 +26,8 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { commands } from '@motion/workspace';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { createCommandPort } from './ports';
+import { settleToolEdits } from './viewportGesture';
+import { engineIdle } from '@core/engine/engineInstance';
 import type { SceneNode } from '@core/types';
 
 /** The id the last create selected — both paths select what they made. */
@@ -45,11 +47,18 @@ const OUTLINE = [
   { x: 50, y: 40, inX: 50, inY: 40, outX: 50, outY: 40 },
 ];
 
+/** A drawn layer is an engine insert (B3): wait for it to land. */
+async function drawn(): Promise<void> {
+  await settleToolEdits();
+  await engineIdle();
+}
+
 /** Draw a path the way the pen tool's `finish` does — through the command port. */
-function drawPath(): SceneNode {
+async function drawPath(): Promise<SceneNode> {
   createCommandPort().execute(
     commands.createNode('Path', { x: 0, y: 0, width: 100, height: 80 }, OUTLINE as never),
   );
+  await drawn();
   return lastCreated();
 }
 
@@ -58,31 +67,32 @@ beforeAll(() => {
 });
 
 describe('Continuous Rasterization is on by default however the layer was made', () => {
-  it('a DRAWN path gets it — the case that was missing', () => {
-    const node = drawPath();
+  it('a DRAWN path gets it — the case that was missing', async () => {
+    const node = await drawPath();
     // Guard: if the layer stopped qualifying, the assertion below would pass
     // for the wrong reason.
     expect(supportsContinuousRaster(node)).toBe(true);
     expect(readContinuousRaster(node)).toBe(true);
   });
 
-  it('matches what an INSERTED vector layer gets', () => {
-    const drawn = readContinuousRaster(drawPath());
+  it('matches what an INSERTED vector layer gets', async () => {
+    const drawnCR = readContinuousRaster(await drawPath());
     // `insertShape` is the Layer-menu path — one of the four that always
     // applied the default, and the baseline the drawn one had to match.
     insertShape('ellipse', 'Ellipse');
     const inserted = readContinuousRaster(lastCreated());
     expect(inserted).toBe(true);
-    expect(drawn).toBe(inserted);
+    expect(drawnCR).toBe(inserted);
   });
 
-  it('leaves a kind that cannot benefit alone', () => {
+  it('leaves a kind that cannot benefit alone', async () => {
     // A flat solid rect has no vector edge to re-rasterize; turning the switch
     // on there would cost memory and change nothing, so `makeNodeAt` must not
     // blanket-set it.
     createCommandPort().execute(
       commands.createNode('Rectangle', { x: 0, y: 0, width: 100, height: 100 }),
     );
+    await drawn();
     const node = lastCreated();
     expect(supportsContinuousRaster(node)).toBe(false);
     expect(readContinuousRaster(node)).toBe(false);
