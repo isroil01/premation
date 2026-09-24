@@ -479,11 +479,16 @@ void set_opt_sum(Json& g, const char* key, const Json& v, double w) {
 }  // namespace
 
 std::vector<Json> resolve_text_animators(const doc::Node& n, const Values& a) {
-  std::vector<Json> out;
   const doc::Component* t = n.comp("Text");
-  if (t == nullptr || !t->props.at("__animators").is_array()) return out;
+  if (t == nullptr) return {};
+  return resolve_text_animators_json(t->props.at("__animators"), a);
+}
+
+std::vector<Json> resolve_text_animators_json(const Json& stored, const Values& a) {
+  std::vector<Json> out;
+  if (!stored.is_array()) return out;
   std::size_t i = 0;
-  for (const Json& raw : t->props.at("__animators").arr()) {
+  for (const Json& raw : stored.arr()) {
     const Json d = raw.is_object() ? raw : Json::object();
     const std::string pre = "ta." + std::to_string(i) + ".";
     const auto val = [&](const char* param, double fb) { return a.get(pre + param).value_or(fb); };

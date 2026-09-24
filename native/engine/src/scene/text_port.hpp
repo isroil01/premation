@@ -30,6 +30,8 @@ namespace premation::scene {
 /// The node's animators resolved for a frame (`resolveAnimators(node, a)`), as JSON
 /// ResolvedAnimator objects. Empty when the node has none.
 [[nodiscard]] std::vector<Json> resolve_text_animators(const doc::Node& n, const Values& a);
+/// The same over a stored `__animators` array.
+[[nodiscard]] std::vector<Json> resolve_text_animators_json(const Json& stored, const Values& a);
 
 /// `evaluateTextAnimators(text, animators, time)` → GlyphTransform[] JSON. `why`
 /// names what the port does not evaluate (expression selectors, Character
