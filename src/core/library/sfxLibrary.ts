@@ -3,18 +3,14 @@
  *
  * Every item renders a deterministic mono PCM buffer with pure DSP (seeded
  * noise, sine sweeps, one-pole filters — no WebAudio, no network), encodes it
- * as a standard 16-bit WAV, and inserts it through the exact same pipeline an
- * imported audio file uses: assetStore.addAsset(File) → insertAudio(asset).
- * The result is a normal audio layer with a waveform, level/trim controls and
- * transport-synced playback.
+ * as a standard 16-bit WAV. The editor imports the bytes and inserts the
+ * item like any imported audio file, through the engine
+ * (layout/EditorLayout/sfxInsertEdits.ts): a normal audio layer with a
+ * waveform, level/trim controls and transport-synced playback.
  *
- * The synth + WAV encoder are PURE and unit-tested; only `insertSfxItem`
- * touches stores/DOM.
+ * Everything here is PURE and unit-tested — no stores, no DOM.
  */
 
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
-import { insertAudio } from '@core/scene/sceneInsert';
-import { useSelectionStore } from '@stores/selectionStore';
 
 export type SfxCategory = 'click' | 'whoosh' | 'impact' | 'ambient';
 
@@ -364,38 +360,4 @@ export function encodeWavPcm16(samples: Float32Array, sampleRate: number = SFX_S
     off += 2;
   }
   return buf;
-}
-
-// ── Insert into the live composition ───────────────────────────────
-
-/**
- * Insert a sound-effect item as a real audio layer. Synthesizes the WAV,
- * imports it through the normal asset pipeline (reusing the library asset if
- * this item was inserted before), and adds the audio layer. Returns the new
- * audio node id, or null on failure.
- */
-export async function insertSfxItem(sfxId: string): Promise<string | null> {
-  const item = getSfxItem(sfxId);
-  if (!item) return null;
-  const fileName = `${item.name}.wav`;
-
-  // Re-use the previously imported asset for this item — same bytes anyway.
-  const existing = useAssetStore.getState().assets.find((a) => a.type === 'audio' && a.name === fileName);
-  let asset: ImportedAsset;
-  if (existing) {
-    asset = existing;
-  } else {
-    const samples = renderSfxSamples(sfxId);
-    if (!samples) return null;
-    const wav = encodeWavPcm16(samples);
-    const file = new File([wav], fileName, { type: 'audio/wav' });
-    asset = await useAssetStore.getState().addAsset(file);
-  }
-  // Some decode paths can miss duration metadata on blob WAVs — the synth
-  // knows the exact length, so guarantee the layer gets a real out-point.
-  if (!asset.metadata?.duration) {
-    asset = { ...asset, metadata: { ...asset.metadata, duration: item.duration } };
-  }
-  insertAudio(asset);
-  return useSelectionStore.getState().ids[0] ?? null;
 }

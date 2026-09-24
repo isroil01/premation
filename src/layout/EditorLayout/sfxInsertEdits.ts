@@ -7,12 +7,13 @@
  * `pasteLayers`, one undo entry, the new layer selected) — the same path a
  * dropped audio file takes.
  *
- * The item itself stays on the asset store's importer: the bytes are made in
- * memory and `importFiles` imports by path only (see `sfxAsset`).
+ * The item is imported from its in-memory bytes (`importBytes`, its own undo
+ * entry) the first time it is used.
  */
 
 import { getSfxItem, renderSfxSamples, encodeWavPcm16 } from '@core/library/sfxLibrary';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
+import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 
 /** The project's audio item for `sfxId`, importing it on first use. Null for an unknown id. */
@@ -27,8 +28,10 @@ async function sfxAsset(sfxId: string): Promise<ImportedAsset | null> {
     const samples = renderSfxSamples(sfxId);
     if (!samples) return null;
     const file = new File([encodeWavPcm16(samples)], fileName, { type: 'audio/wav' });
-    // B3-gap: import from bytes — the WAV is synthesised in memory, there is no file on disk for `importFiles` (path only), so the item is added by the store's importer, outside undo.
-    asset = await useAssetStore.getState().addAsset(file);
+    // Synthesised in memory — no file on disk — so imported from its bytes.
+    const { imported: [made] } = await importBrowserFilesEdit([{ file }], `Import ${fileName}`);
+    if (!made) return null;
+    asset = made;
   }
   // Some decode paths miss the duration of a blob WAV; the synth knows the
   // exact length, so the layer always gets a real out-point.

@@ -68,14 +68,24 @@ describe('effects', () => {
     expect(hits[0]!.hint).toBe('Blur & Sharpen');
   });
 
-  it('is disabled with nothing selected, and applies to EVERY selected layer', () => {
+  it('is disabled with nothing selected, and applies to EVERY selected layer (one entry)', async () => {
     expect(effectHits('gaus', 1)[0]!.enabled).toBe(false);
-    useSelectionStore.getState().set(['a', 'b']);
-    const hit = effectHits('gaus', 1)[0]!;
-    expect(hit.enabled).toBe(true);
-    hit.apply();
-    expect(getNodeEffects('a')).toHaveLength(1);
-    expect(getNodeEffects('b')).toHaveLength(1);
+    // The add goes through the engine (addEffect addresses layers).
+    const h = await setupAppEngine();
+    try {
+      const s = await buildScene(h);
+      useSelectionStore.getState().set([s.B, s.P]);
+      const hit = effectHits('gaus', 1)[0]!;
+      expect(hit.enabled).toBe(true);
+      const before = historyLabels().length;
+      hit.apply();
+      await engineIdle();
+      expect(getNodeEffects(s.B)).toHaveLength(1);
+      expect(getNodeEffects(s.P)).toHaveLength(1);
+      expect(historyLabels().length).toBe(before + 1);
+    } finally {
+      await h.dispose();
+    }
   });
 
   it('matches on the folder name as a fallback, ranked below label hits', () => {

@@ -746,9 +746,26 @@ TEST_CASE("session: composition JSON fields are stored, read back, cleared and u
   REQUIRE(info.background_paint.has_value());
   CHECK(info.background_paint->find("linear") != std::string::npos);
 
+  // Undo of a root-only change restates the settings (the mirror follows it).
+  const std::size_t mark = h.messages.size();
   REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
   CHECK(state_of(h.session.document()) == before);
+  const auto undone = h.batches_since(mark);
+  REQUIRE(undone.size() == 1);
+  const auto changed = events_of<api::CompositionChangedEvent>(undone[0].events);
+  REQUIRE(changed.size() == 1);
+  CHECK_FALSE(changed[0].settings.template_fields.has_value());
   REQUIRE(is_ok(h.run(cmd(api::Redo{}))));
+
+  // A template-fields-only edit restates the settings too.
+  const std::size_t mark2 = h.messages.size();
+  api::SetCompositionSettings only;
+  only.comp = comp;
+  only.patch.template_fields = R"([{"id":"body","label":"Body"}])";
+  REQUIRE(is_ok(h.run(cmd(only))));
+  const auto set = events_of<api::CompositionChangedEvent>(h.batches_since(mark2).at(0).events);
+  REQUIRE(set.size() == 1);
+  CHECK(set[0].settings.template_fields.value_or("").find("\"body\"") != std::string::npos);
 
   api::SetCompositionSettings clear;
   clear.comp = comp;

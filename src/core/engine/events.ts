@@ -101,8 +101,14 @@ export class EventBuilder {
         case 'node': {
           const live = graph.getNode(id);
           if (live && !live.parent) {
-            // A composition root: its child list is the stack order.
-            if (isCompItem(id)) orderComps.add(id);
+            // A composition root: its child list is the stack order, and its
+            // meta component carries settings (Responsive Time, template
+            // fields — CompSettings), so a changed root restates both.
+            if (isCompItem(id)) {
+              orderComps.add(id);
+              const b = before.get(key) as SceneNode | undefined;
+              if (JSON.stringify(b?.components) !== JSON.stringify(live.components)) compsChanged.add(id);
+            }
             break;
           }
           if (live) {

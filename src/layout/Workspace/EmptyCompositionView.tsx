@@ -8,10 +8,9 @@
 
 import { useState, useRef, useEffect, type DragEvent } from 'react';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
-import { useAssetStore } from '@stores/assetStore';
 import { useUIStore } from '@stores/uiStore';
 import { setViewerEmpty } from '@stores/onboardingStore';
-import { importPathsEdit } from '@layout/Assets/assetEdits';
+import { importBrowserFilesEdit, importPathsEdit } from '@layout/Assets/assetEdits';
 import { newCompFromFootageEdit } from './footageEdits';
 import styles from './EmptyCompositionView.module.css';
 
@@ -166,10 +165,9 @@ export function EmptyCompositionView(): JSX.Element {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      // B3-gap: import from bytes / a File's path — `importFiles` takes filesystem paths; a picked/dropped browser
-      // `File` has none (no path bridge in preload), so the asset store ingests it.
-      const asset = await useAssetStore.getState().addAsset(file);
-      await newCompFromFootageEdit(asset);
+      // A picked browser `File` carries no path: imported from its bytes.
+      const { imported: [asset] } = await importBrowserFilesEdit([{ file }]);
+      if (asset) await newCompFromFootageEdit(asset);
     } catch (err) {
       useUIStore.getState().notify({
         level: 'error',
@@ -214,9 +212,8 @@ export function EmptyCompositionView(): JSX.Element {
     }
     if (file) {
       try {
-        // B3-gap: import from bytes / a File's path (see `handleFileSelected`).
-        const asset = await useAssetStore.getState().addAsset(file);
-        await newCompFromFootageEdit(asset);
+        const { imported: [asset] } = await importBrowserFilesEdit([{ file }]);
+        if (asset) await newCompFromFootageEdit(asset);
       } catch (err) {
         useUIStore.getState().notify({
           level: 'error',

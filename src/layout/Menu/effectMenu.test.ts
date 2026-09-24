@@ -20,6 +20,9 @@ import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { APP_MENU, type MenuItemModel } from './menuModel';
 import { buildEffectMenuCommands, buildEffectMenuItems, effectCommandId } from './effectMenu';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { buildScene } from '@core/engine/__testHelpers__/scene';
 
 const kids = (it: MenuItemModel): ReadonlyArray<MenuItemModel> =>
   !it.children ? [] : typeof it.children === 'function' ? it.children() : it.children;
@@ -113,11 +116,21 @@ describe('effect commands', () => {
     for (const c of buildEffectMenuCommands()) expect(c.enabled?.()).toBe(false);
   });
 
-  it('add the effect to every selected layer', () => {
-    useSelectionStore.getState().set(['a', 'b']);
-    expect(glow().enabled?.()).toBe(true);
-    void glow().execute({} as never);
-    expect(getNodeEffects('a').map((e) => e.type)).toEqual(['glow']);
-    expect(getNodeEffects('b').map((e) => e.type)).toEqual(['glow']);
+  it('add the effect to every selected layer, as one entry', async () => {
+    // The add goes through the engine (addEffect addresses layers).
+    const h = await setupAppEngine();
+    try {
+      const s = await buildScene(h);
+      useSelectionStore.getState().set([s.B, s.P]);
+      expect(glow().enabled?.()).toBe(true);
+      const before = historyLabels().length;
+      await glow().execute({} as never);
+      await engineIdle();
+      expect(getNodeEffects(s.B).map((e) => e.type)).toEqual(['glow']);
+      expect(getNodeEffects(s.P).map((e) => e.type)).toEqual(['glow']);
+      expect(historyLabels().length).toBe(before + 1);
+    } finally {
+      await h.dispose();
+    }
   });
 });

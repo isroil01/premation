@@ -47,6 +47,7 @@ import {
   setNodeWorldPosition,
 } from '@core/scene/sceneInsert';
 import { EmptyCompositionView } from './EmptyCompositionView';
+import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
 import { insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
@@ -497,10 +498,9 @@ export function WorkspaceViewport({
         useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
         return;
       }
-      // B3-gap: import from bytes / a File's path — `importFiles` takes filesystem PATHS; an OS
-      // drop hands the renderer browser `File` objects (no path bridge in preload), so the
-      // import goes through the asset store's own ingest.
-      const imported = await useAssetStore.getState().addAssetsBatch(media.map((file) => ({ file })));
+      // An OS drop hands the renderer browser `File`s (no path): imported from their bytes.
+      const { imported } = await importBrowserFilesEdit(media.map((file) => ({ file })));
+      if (imported.length === 0) return;
       // "Empty" = no content layers anywhere in the scene. Counting the comp
       // root's children breaks on fresh unsaved projects (layers hang off the
       // virtual comp_root), so ask the nodes themselves.

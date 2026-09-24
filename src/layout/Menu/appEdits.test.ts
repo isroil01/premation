@@ -234,7 +234,8 @@ describe('registry commands', () => {
   it('Sequence Layers lays bars end to end with the cross-dissolve in ONE entry', async () => {
     await roundTrip(() => sequenceLayerBarsEdit([s.A, s.P], 0.5, true), 'Sequence Layers');
     expect(defaultAnimation.isAnimated(s.P, 'opacity')).toBe(true);
-    expect(await sequenceLayerBarsEdit([s.A, s.c2layer], 0, false)).toBe(false);
+    // One layer in each of two comps: no composition has two to sequence.
+    expect(await sequenceLayerBarsEdit([s.A, s.c2layer], 0, false)).toBe('none');
   });
 
   it('animation preset through applyPreset', async () => {

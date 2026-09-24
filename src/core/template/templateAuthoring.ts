@@ -120,35 +120,14 @@ export function exposeNodeAsField(nodeId: string): TemplateField | null {
   return next;
 }
 
-/** `fields` without `fieldId` (pure — the UI sends the result as `setCompositionSettings.templateFields`). */
-export function withoutField(fields: readonly TemplateField[], fieldId: string): TemplateField[] {
-  return fields.filter((f) => f.id !== fieldId);
-}
-
-/** `fields` with `fieldId` relabelled (pure). */
-export function withFieldLabel(fields: readonly TemplateField[], fieldId: string, label: string): TemplateField[] {
-  return fields.map((f) => (f.id === fieldId ? { ...f, label } : f));
-}
-
-/**
- * `fields` with the public input id n8n will send changed (pure). Null when the
- * rename is rejected: a collision, or an id that is not a public slug.
- */
-export function withFieldId(fields: readonly TemplateField[], fieldId: string, nextId: string): TemplateField[] | null {
-  const id = nextId.trim();
-  if (!isPublicFieldId(id)) return null;
-  if (fields.some((f) => f.id === id && f.id !== fieldId)) return null;
-  return fields.map((f) => (f.id === fieldId ? { ...f, id } : f));
-}
-
 export function removeAuthoredField(fieldId: string): void {
   const rootId = activeCompRootId();
-  writeAuthoredFields(rootId, withoutField(readAuthoredFields(rootId), fieldId));
+  writeAuthoredFields(rootId, readAuthoredFields(rootId).filter((f) => f.id !== fieldId));
 }
 
 export function renameAuthoredField(fieldId: string, label: string): void {
   const rootId = activeCompRootId();
-  writeAuthoredFields(rootId, withFieldLabel(readAuthoredFields(rootId), fieldId, label));
+  writeAuthoredFields(rootId, readAuthoredFields(rootId).map((f) => (f.id === fieldId ? { ...f, label } : f)));
 }
 
 /**
@@ -156,9 +135,14 @@ export function renameAuthoredField(fieldId: string, label: string): void {
  * are not a public slug. Returns false when the rename did not apply.
  */
 export function renameAuthoredFieldId(fieldId: string, nextId: string): boolean {
+  const id = nextId.trim();
+  if (!isPublicFieldId(id)) return false;
   const rootId = activeCompRootId();
-  const next = withFieldId(readAuthoredFields(rootId), fieldId, nextId);
-  if (!next) return false;
-  writeAuthoredFields(rootId, next);
+  const fields = readAuthoredFields(rootId);
+  if (fields.some((f) => f.id === id && f.id !== fieldId)) return false;
+  writeAuthoredFields(
+    rootId,
+    fields.map((f) => (f.id === fieldId ? { ...f, id } : f)),
+  );
   return true;
 }

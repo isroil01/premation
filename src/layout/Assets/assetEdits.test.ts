@@ -13,6 +13,7 @@ import { useAssetStore } from '@stores/assetStore';
 import {
   createFolderEdit,
   createFolderTreeEdit,
+  importBrowserFilesEdit,
   importPathsEdit,
   interpretFootageEdit,
   layersUsingItems,
@@ -79,6 +80,39 @@ describe('import by path', () => {
     expect(r.imported.map((a) => a.name)).toEqual(['ok.png', 'ok2.png']);
     expect(r.failed).toEqual(['C:/media/bad.mov']);
     expect(entries('Import 3 Files')).toBe(1);
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toBe(before);
+  });
+});
+
+describe('import browser Files (from bytes)', () => {
+  const file = (name: string, bytes = [1, 2, 3], type = 'image/png'): File => new File([new Uint8Array(bytes)], name, { type });
+
+  it('imports picked Files into a folder as one entry', async () => {
+    let ids: string[] = [];
+    await oneEntry('Import 2 Files', async () => {
+      const r = await importBrowserFilesEdit([{ file: file('a.png'), folderId: s.folder }, { file: file('b.png') }]);
+      ids = r.imported.map((a) => a.id);
+      expect(r.failed).toEqual([]);
+    });
+    expect(asset(ids[0]!)).toMatchObject({ name: 'a.png', folderId: s.folder, size: 3 });
+    expect(asset(ids[1]!)?.folderId ?? null).toBeNull();
+  });
+
+  it('one bad file neither blocks the rest nor splits the entry', async () => {
+    const base = fakePorts(h.files);
+    h.engine.attachPorts({
+      ...base,
+      importBytes: async (f, id) => {
+        if (f.name.includes('bad')) throw new Error('cannot decode');
+        return base.importBytes!(f, id);
+      },
+    });
+    const before = h.doc();
+    const r = await importBrowserFilesEdit([{ file: file('ok.png') }, { file: file('bad.mov') }, { file: file('ok2.png') }], 'Drop');
+    expect(r.imported.map((a) => a.name)).toEqual(['ok.png', 'ok2.png']);
+    expect(r.failed).toEqual(['bad.mov']);
+    expect(entries('Drop')).toBe(1);
     await h.run({ type: 'undo' });
     expect(h.doc()).toBe(before);
   });

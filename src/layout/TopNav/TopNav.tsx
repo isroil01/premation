@@ -39,7 +39,6 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFileEdit } from '@layout/EditorLayout/lottieInsertEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
-import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets } from '@core/animation/animationPresets';
 import { applyAnimationPresetEdit, createLayerEdit } from '@layout/Menu/appEdits';
@@ -82,6 +81,7 @@ import { getUiPlatform, hasDesktopChrome } from '@core/config/uiPlatform';
 import { MacWindowControls } from '@layout/TitleBar/MacWindowControls';
 import { EditorChromeActions } from '@layout/TitleBar/EditorChromeActions';
 import { UpdateButton } from '@layout/TitleBar/UpdateButton';
+import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
 
 /**
  * A toolbar tool. NO `shortcut` field, deliberately.
@@ -363,13 +363,13 @@ export function TopNav(): JSX.Element {
     return () => sub.dispose();
   }, []);
 
-  // B3-gap: import from bytes / a File's path — `importFiles` imports by PATH; the audio picker hands a browser `File` (no path).
-  const addAsset = useAssetStore((s) => s.addAsset);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const asset = await addAsset(file);
+    // The audio picker hands a browser `File` (no path): imported from its bytes.
+    const { imported: [asset] } = await importBrowserFilesEdit([{ file }]);
+    if (!asset) return;
     // The layer through the media insert router: one pasteLayers, one entry.
     await insertMediaEdit([asset]);
   };

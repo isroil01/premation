@@ -10,20 +10,20 @@
  * an item never deletes the file or the library copy (undo can bring it
  * back).
  *
- * What stays legacy (each call site says so with `B3-legacy`):
- *   • importing a browser `File` (the picker's <input>, an OS drop): the API
- *     imports by PATH, and Electron 44 exposes none for a `File`;
+ * A browser `File` (the picker's <input>, an OS drop) carries no path in
+ * Electron 44, so it is imported from its bytes (`importBytes`).
  *
  * Display reads stay direct until B4's mirror.
  */
 
-import type { Command, InterpretationPatch } from '@motion/engine-api';
+import type { Command, ImportBytesFile, InterpretationPatch } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { layersUsingItem } from '@core/engine/doc';
 import { rateOf } from '@layout/Composition/compositionEdits';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { useUIStore } from '@stores/uiStore';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
@@ -75,6 +75,90 @@ export async function importPathsEdit(paths: readonly string[], folder: string |
   const closed = await client.endGesture(opened.value.gesture, imported.length > 0);
   if (!closed.ok) reportEngineError(label, closed.error);
   return { imported, failed };
+}
+
+// ── Import (browser Files) ────────────────────────────────────────────
+
+/** A picked / dropped browser `File` and the folder it lands in (null = root). */
+export interface BrowserFileImport {
+  file: File;
+  folderId?: string | null;
+}
+
+/** The `File`'s disk path when Electron exposes one (kept as the item's origin). */
+function originPathOf(file: File): string | undefined {
+  const p = (file as File & { path?: unknown }).path;
+  return typeof p === 'string' && p.length > 0 ? p : undefined;
+}
+
+/** A Blob's bytes (FileReader where `arrayBuffer` is missing — older runtimes, jsdom). */
+function blobBytes(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
+async function bytesFileOf({ file, folderId }: BrowserFileImport): Promise<ImportBytesFile> {
+  const origin = originPathOf(file);
+  return {
+    name: file.name,
+    data: new Uint8Array(await blobBytes(file)),
+    mimeType: file.type,
+    ...(folderId ? { folder: folderId } : {}),
+    ...(origin ? { originPath: origin } : {}),
+  };
+}
+
+/**
+ * Import browser `File`s (the picker's <input>, an OS drop, Import Folder, a
+ * start-screen drop) through `importBytes`: one entry, "Import File(s)", or
+ * `label`. Like `importPathsEdit`, a set with a bad file falls back to one
+ * command per file inside one gesture, so one undecodable file neither blocks
+ * the rest nor splits the undo entry. Files are read one at a time in the
+ * fallback, so a large set is never all in memory twice.
+ */
+export async function importBrowserFilesEdit(items: readonly BrowserFileImport[], label?: string): Promise<ImportPathsResult & { failedFiles: File[] }> {
+  if (items.length === 0) return { imported: [], failed: [], failedFiles: [] };
+  const name = label ?? (items.length === 1 ? 'Import File' : `Import ${plural(items.length, 'File')}`);
+  const all = await edit(name, { type: 'importBytes', files: await Promise.all(items.map(bytesFileOf)) }, { quiet: true });
+  if (all.ok) {
+    const ids = (all.value[0] as { items?: string[] } | undefined)?.items ?? [];
+    return { imported: ids.map(assetById).filter((a): a is ImportedAsset => !!a), failed: [], failedFiles: [] };
+  }
+  if (items.length === 1) {
+    reportEngineError(name, all.error);
+    return { imported: [], failed: [items[0]!.file.name], failedFiles: [items[0]!.file] };
+  }
+
+  const client = engine();
+  const opened = await client.beginGesture(name);
+  if (!opened.ok) {
+    reportEngineError(name, opened.error);
+    return { imported: [], failed: items.map((i) => i.file.name), failedFiles: items.map((i) => i.file) };
+  }
+  const imported: ImportedAsset[] = [];
+  const failedFiles: File[] = [];
+  for (const item of items) {
+    const res = await client.execute({ type: 'importBytes', files: [await bytesFileOf(item)] });
+    const id = res.ok ? (res.value as { items?: string[] }).items?.[0] : undefined;
+    const asset = id ? assetById(id) : undefined;
+    if (asset) imported.push(asset);
+    else failedFiles.push(item.file);
+  }
+  const closed = await client.endGesture(opened.value.gesture, imported.length > 0);
+  if (!closed.ok) reportEngineError(name, closed.error);
+  if (failedFiles.length > 0) {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: `Could not import ${failedFiles.map((f) => `“${f.name}”`).join(', ')}`,
+      durationMs: 6000,
+    });
+  }
+  return { imported, failed: failedFiles.map((f) => f.name), failedFiles };
 }
 
 // ── Folders ───────────────────────────────────────────────────────────

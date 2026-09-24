@@ -24,7 +24,6 @@ import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
-import { useAssetStore } from '@stores/assetStore';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { setActiveCompFrameRateEdit } from '@layout/Composition/compositionEdits';
 
@@ -91,8 +90,9 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         const footage = takePendingFootage();
         if (footage) {
           try {
-            // B3-gap: import from bytes / a File's path — the parked footage is a browser `File` with no path (`importFiles` imports by path only; no import from bytes).
-            const asset = await useAssetStore.getState().addAsset(footage);
+            // The parked footage is a browser `File` (no path): imported from its bytes.
+            const { imported: [asset] } = await importBrowserFilesEdit([{ file: footage }], 'Import Footage');
+            if (!asset) throw new Error('the file could not be read or decoded');
             await insertMediaEdit([asset]);
             const probedFps = asset.metadata?.fps;
             if (probedFps && probedFps > 0) await setActiveCompFrameRateEdit(probedFps);
@@ -148,6 +148,7 @@ import { useStartScreenVisible } from '@layout/Start/useStartScreenVisible';
 import { AboutCommandInstaller } from '@layout/Help/AboutDialog';
 import { setStartScreenVisible } from '@stores/onboardingStore';
 import { cloudProjectsEnabled } from '@core/config/edition';
+import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
 
 const LazyEditorShell = lazy(() => import('../App').then(m => ({ default: m.EditorShell })));
 

@@ -24,7 +24,7 @@
  *
  * Extracted once at import (`importExrWithFloat`) and cached by asset id like
  * the float planes; the Track Matte picker offers "ID matte: <name>" for a
- * layer whose asset carries a set, and `createIdMatteLayer` bakes the
+ * layer whose asset carries a set, and `createIdMatteLayerEdit` (layout/Inspector/idMatteEdits.ts) bakes the
  * coverage to a grey PNG asset, inserts it above and sets it as the luma
  * matte — the existing matte machinery does the rest.
  */
@@ -160,4 +160,22 @@ export function getCryptomatteForAsset(assetId: string): CryptomatteSet | undefi
 
 export function clearCryptomatteCache(): void {
   cache.clear();
+}
+
+/** Bake coverage to a PNG File named after the objects it isolates. */
+export async function idMattePngFile(set: CryptomatteSet, layerName: string, objectNames: ReadonlyArray<string>, baseName: string): Promise<File | null> {
+  const layer = set.layers.find((l) => l.name === layerName);
+  if (!layer) return null;
+  const hashes = layer.objects.filter((o) => objectNames.includes(o.name)).map((o) => o.hash);
+  if (hashes.length === 0) return null;
+  const coverage = idMatteCoverage(set, layer, hashes);
+  const canvas = document.createElement('canvas');
+  canvas.width = set.width; canvas.height = set.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.putImageData(new ImageData(coverageToRgba8(coverage), set.width, set.height), 0, 0);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) return null;
+  const label = objectNames.length === 1 ? objectNames[0]! : `${objectNames.length} objects`;
+  return new File([blob], `${baseName} — ID matte (${label}).png`, { type: 'image/png' });
 }

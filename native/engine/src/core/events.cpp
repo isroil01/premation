@@ -139,7 +139,13 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
   for (const auto& [id, bptr] : before.nodes) {
     const Node* live = d.node(id);
     if (live != nullptr && !live->parent) {
-      if (is_comp_item(d, id)) add_order(id);
+      // A composition root: its child list is the stack order, and its meta
+      // component carries settings (Responsive Time, template fields), so a
+      // changed component list restates the comp's settings too.
+      if (is_comp_item(d, id)) {
+        add_order(id);
+        if (bptr == nullptr || bptr->components != live->components) add_comp(id);
+      }
       continue;
     }
     if (live != nullptr) {

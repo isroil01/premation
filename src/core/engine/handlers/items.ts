@@ -153,12 +153,19 @@ export const itemHandlers: HandlerTable = {
       scope: itemsScope(),
       label: `Import ${plural(cmd.files.length, 'File')}`,
       prepare: async () => {
-        for (let i = 0; i < cmd.files.length; i++) {
-          try {
-            records.push(await port(cmd.files[i]!, ids[i]!));
-          } catch (err) {
-            fail('io', `could not import '${cmd.files[i]!.name}': ${err instanceof Error ? err.message : String(err)}`, { commandIndex: undefined });
-          }
+        // Ten at a time, like the store's batch importer: decoding and
+        // thumbnailing dominate, and they overlap well.
+        const CHUNK = 10;
+        for (let at = 0; at < cmd.files.length; at += CHUNK) {
+          const chunk = cmd.files.slice(at, at + CHUNK);
+          const got = await Promise.all(chunk.map(async (f, k) => {
+            try {
+              return await port(f, ids[at + k]!);
+            } catch (err) {
+              return fail('io', `could not import '${f.name}': ${err instanceof Error ? err.message : String(err)}`, { commandIndex: undefined });
+            }
+          }));
+          records.push(...got);
         }
       },
       apply: () => {

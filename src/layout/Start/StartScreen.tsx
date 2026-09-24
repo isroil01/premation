@@ -51,10 +51,9 @@ import { thumbUrl } from '@core/localIndex/thumbCache';
 import { isLocalFirst } from '@core/config/flags';
 import { TEMPLATES } from '@core/template/registry';
 import { ProjectCommands } from '@layout/Menu';
-import { useAssetStore } from '@stores/assetStore';
 import { useTemplateStore } from '@stores/templateStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { importPathsEdit } from '@layout/Assets/assetEdits';
+import { importBrowserFilesEdit, importPathsEdit } from '@layout/Assets/assetEdits';
 import { newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import { asCommandId } from '@app-types/common';
 import { Button } from '@components/Button';
@@ -322,9 +321,9 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
                 // New can be declined (the unsaved-changes confirmation) —
                 // importing into no project would drop the clip on the floor.
                 if (!getProjectManager().getState().current) return;
-                // B3-gap: import from bytes / a File's path — an <input type=file> File has no path for `importFiles` (no import from bytes).
-                const asset = await useAssetStore.getState().addAsset(f);
-                await newCompFromFootageEdit(asset);
+                // A picked browser `File` has no path: imported from its bytes.
+                const { imported: [asset] } = await importBrowserFilesEdit([{ file: f }]);
+                if (asset) await newCompFromFootageEdit(asset);
               };
               input.click();
             }}

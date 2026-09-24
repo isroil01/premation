@@ -91,7 +91,10 @@ export function createAppEnginePorts(project: ProjectFileAccess): EnginePorts {
     importBytes: async (file, id): Promise<ImportedAsset> => {
       // The same importer as a picked file (ingest, content addressing,
       // thumbnails, auto-proxy); the engine adds the record itself.
-      const blob = new File([file.data.slice()], file.name, file.mimeType ? { type: file.mimeType } : undefined);
+      // No copy: in-process the bytes are the caller's own read of the File
+      // (a video can be gigabytes); a detached/shared buffer would be copied.
+      const bytes = file.data.buffer instanceof ArrayBuffer ? file.data as Uint8Array<ArrayBuffer> : file.data.slice();
+      const blob = new File([bytes], file.name, file.mimeType ? { type: file.mimeType } : undefined);
       const asset = await useAssetStore.getState().addAsset(blob, null, {
         id,
         ...(file.originPath ? { path: file.originPath } : {}),

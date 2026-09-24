@@ -17,7 +17,8 @@ import { getNodeLayerTime, FRAME_BLENDS, type FrameBlend } from '@core/scene/lay
 import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
 import { getNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { Segmented } from '@components/Segmented';
-import { createIdMatteLayer, cryptomatteForNode } from '@core/media/cryptomatteCommands';
+import { cryptomatteForNode } from '@core/media/cryptomatteCommands';
+import { createIdMatteLayerEdit } from './idMatteEdits';
 import { edit } from '@core/engine/uiEdits';
 import { getTime } from '@stores/playbackClockStore';
 import { layerStretchCommands, setFreezeFrameEdit, setFreezeTimeEdit } from '@layout/Effects/effectEdits';
@@ -50,8 +51,8 @@ function idMatteItems(nodeId: string): DropdownItem[] {
         type: 'item',
         id: `crypto:${layer.name}:${obj.name}`,
         label: `ID matte: ${obj.name}${found.set.layers.length > 1 ? ` (${layer.name})` : ''}`,
-        // B3-legacy: engine gap — the Cryptomatte ID matte bakes a PNG item + creates a layer + sets the matte. The API can say the layer and the matte (createLayer, setTrackMatte) but not the item: `importFiles` takes paths only, and import-from-bytes (items ids 70–79, ENGINE_API.md §15) is not in packages/engine-api/schema/30_items.eapi yet.
-        onSelect: () => { void createIdMatteLayer(nodeId, layer.name, [obj.name]); },
+        // Import + insert + reorder + matte through the engine, one entry (idMatteEdits.ts).
+        onSelect: () => { void createIdMatteLayerEdit(nodeId, layer.name, [obj.name]); },
       });
     }
   }

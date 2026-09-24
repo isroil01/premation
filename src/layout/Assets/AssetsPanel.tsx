@@ -104,6 +104,7 @@ import { assetDiskPath, canRevealAssets, revealAsset } from './assetReveal';
 import {
   createFolderEdit,
   createFolderTreeEdit,
+  importBrowserFilesEdit,
   importPathsEdit,
   layersUsingItems,
   moveItemsEdit,
@@ -176,8 +177,6 @@ export function AssetsPanel(): JSX.Element {
 
   const assets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
-  // B3-gap: import from bytes / a File's path — `importFiles` imports by PATH; a browser `File` (the picker's <input>, an OS drop, Import Folder) carries none in Electron 44, so those routes keep the store's importer (desktop Import Files… goes through the engine, see `openImportFiles`).
-  const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   // The label menu through the engine (B3z): setItemLabel stores the palette id this panel reads.
   const setLabel = (ids: string[], labelId: string | null): void => {
     const items = ids.filter((id) => useAssetStore.getState().assets.some((a) => a.id === id));
@@ -369,9 +368,8 @@ export function AssetsPanel(): JSX.Element {
       useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
       return;
     }
-    // B3-legacy: engine gap — an OS drop gives `File`s without paths (see addAssetsBatch).
-    const created = await addAssetsBatch(media.map((file) => ({ file, folderId: currentFolderId })));
-    announceImport(created);
+    const { imported } = await importBrowserFilesEdit(media.map((file) => ({ file, folderId: currentFolderId })));
+    announceImport(imported);
   };
 
   // Import loose files into the current folder. Library only — see the
@@ -438,8 +436,8 @@ export function AssetsPanel(): JSX.Element {
       }
       items.push({ file, folderId: currentFolderId });
     }
-    const created = await addAssetsBatch(items);
-    announceImport(created);
+    const { imported } = await importBrowserFilesEdit(items);
+    announceImport(imported);
     e.target.value = '';
   };
 
@@ -469,7 +467,7 @@ export function AssetsPanel(): JSX.Element {
       folderId: dir ? pathToId.get(dir) ?? currentFolderId : currentFolderId,
     }));
     if (items.length > 0) {
-      announceImport(await addAssetsBatch(items));
+      announceImport((await importBrowserFilesEdit(items)).imported);
     }
     e.target.value = '';
   };

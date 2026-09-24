@@ -3,12 +3,13 @@
  * Controls' own body) plus a header "+" that adds from the effect catalogue.
  */
 
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from '../EffectsSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { addEffect, effectDefFor, getNodeEffects } from '@core/effects/effects';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 
 const ID = 'effects_section_probe';
 const CAMERA = 'effects_section_camera';
@@ -69,18 +70,25 @@ it('renders the applied effects', () => {
   expect(screen.queryByText('No effects. Use + to add one.')).toBeNull();
 });
 
-it('the header "+" opens a searchable add menu that adds to the layer', () => {
-  render(<EffectsSectionActions nodeId={ID} />);
+it('the header "+" opens a searchable add menu that adds to the layer', async () => {
+  // The add goes through the engine (addEffect): a real layer in the app's engine.
+  const h = await setupAppEngine();
+  try {
+    const { layer: id } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'Probe', init: [] });
+    render(<EffectsSectionActions nodeId={id} />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add effect' }));
-  const search = screen.getByRole('searchbox', { name: 'Search effects to add' });
-  expect(search).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add effect' }));
+    const search = screen.getByRole('searchbox', { name: 'Search effects to add' });
+    expect(search).toBeInTheDocument();
 
-  const label = effectDefFor('gaussian-blur')!.label;
-  fireEvent.change(search, { target: { value: label.slice(0, 5) } });
-  fireEvent.click(screen.getByTitle(`Add ${label}`));
+    const label = effectDefFor('gaussian-blur')!.label;
+    fireEvent.change(search, { target: { value: label.slice(0, 5) } });
+    fireEvent.click(screen.getByTitle(`Add ${label}`));
 
-  expect(getNodeEffects(ID).map((e) => e.type)).toContain('gaussian-blur');
-  // The menu closes once the effect is added.
-  expect(screen.queryByRole('searchbox', { name: 'Search effects to add' })).toBeNull();
+    await waitFor(() => expect(getNodeEffects(id).map((e) => e.type)).toContain('gaussian-blur'));
+    // The menu closes once the effect is added.
+    expect(screen.queryByRole('searchbox', { name: 'Search effects to add' })).toBeNull();
+  } finally {
+    await h.dispose();
+  }
 });

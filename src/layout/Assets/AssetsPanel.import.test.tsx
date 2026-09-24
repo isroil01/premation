@@ -133,7 +133,18 @@ const importViaPicker = (files: File[]): Promise<void> =>
     await new Promise((r) => setTimeout(r, 20));
   });
 
+/** The panel imports through the engine (`importBytes`): boot the app's one. */
+function withAppEngine(): void {
+  let h: Awaited<ReturnType<typeof setupAppEngine>> | null = null;
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    useAssetStore.setState({ assets: [], folders: [] });
+  });
+  afterEach(async () => { await h?.dispose(); h = null; });
+}
+
 describe('import never inserts', () => {
+  withAppEngine();
   it('the panel import adds to the project only — the composition is untouched', async () => {
     renderPanel();
     const before = contentLayerCount();
@@ -267,6 +278,7 @@ describe('the tabs explain themselves', () => {
 });
 
 describe('OS drop on the panel', () => {
+  withAppEngine();
   it('imports to the project without inserting', async () => {
     renderPanel();
     const before = contentLayerCount();
