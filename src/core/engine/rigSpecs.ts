@@ -99,7 +99,7 @@ export const RIG_PROPS: readonly RigPropSpec[] = [
   { owner: 'pin', path: 'rotation', label: 'Rotation', matchName: 'ADBE FreePin3 PosPin Rotation', type: 'scalar', codec: 'number', keys: ['rotation'], tracks: ['puppet.{id}.rotation'], default: 0, unit: '°' },
   { owner: 'pin', path: 'scale', label: 'Scale', matchName: 'ADBE FreePin3 PosPin Scale', type: 'scalar', codec: 'number', keys: ['scale'], tracks: ['puppet.{id}.scale'], default: 1, scale: 'percent', unit: '%' },
   { owner: 'pin', path: 'stiffness', label: 'Amount', matchName: 'ADBE FreePin3 Stiffness Amount', type: 'scalar', codec: 'number', keys: ['stiffness'], tracks: ['puppet.{id}.stiffness'], default: 0, min: 0 },
-  { owner: 'pin', path: 'overlap', label: 'In Front', matchName: 'ADBE FreePin3 PosPin Overlap', type: 'scalar', codec: 'number', keys: ['overlap'], tracks: ['puppet.{id}.overlap'], default: 0, min: -100, max: 100 },
+  { owner: 'pin', path: 'overlap', label: 'In Front', matchName: 'ADBE FreePin3 PosPin Overlap', type: 'scalar', codec: 'number', keys: ['overlap'], tracks: ['puppet.{id}.overlap'], default: 0, min: -100, max: 100, clearAtDefault: true },
   { owner: 'pin', path: 'overlapExtent', label: 'Extent', matchName: 'ADBE FreePin3 PosPin Overlap Extent', type: 'scalar', codec: 'number', keys: ['overlapExtent'], default: 1, min: 0.05 },
   { owner: 'pin', path: 'kind', label: 'Pin Type', matchName: 'Premation Puppet Pin Type', type: 'choice', codec: 'choice', keys: ['kind'], default: 'advanced', choices: ['position', 'starch', 'bend', 'advanced', 'overlap'] },
   { owner: 'pin', path: 'restPosition', label: 'Rest Position', matchName: 'Premation Puppet Pin Rest', type: 'vec2', codec: 'xy', keys: ['x', 'y'], default: [0, 0], unit: 'px' },
