@@ -395,9 +395,43 @@ scene tolerance of webgpu, and 1 ceiling in `native-raster-baseline.json`
 (`bench-raster.mjs`, RTX 4060 laptop): 200 animated text layers, TS 344.7 ms/frame
 (GPU canvas draw + upload) vs C++ 95.8 ms on 1 thread (3.6×) and 26.6 ms on 16 threads
 (13×). 1000 animated paths, TS 1762.9 ms/frame vs C++ 175.4 ms (10×) and 24.5 ms (72×).
-Open: the GPU (Graphite) raster path, CPU-baked effect chains (E4), paint strokes,
-vertical optical kerning, alias FontFace features, Intl word breaks, macOS / Linux
-system fonts.
+**E3 open items, round two (2026-09-24, branch `e3-text`, built on Linux without
+Skia / HarfBuzz / SheenBidi / woff2 / ICU headers — so the Skia-free core, with
+parity measured against the TS by call log and by value, not by pixels):**
+- **Paint strokes** — `paint_raster.cpp` ports `paintRaster.ts` + `paintDabs.ts`
+  onto the Canvas2D interface (direct and dab passes, erasers of every mode, self
+  clones, trim, transforms, dynamics, channels, blends, Paint On Transparent);
+  text and path rasters draw paint instead of reporting it. Against the TS
+  `drawPaint` on a recording canvas: 25/25 cases, 7078/7078 Canvas2D ops identical.
+- **Vertical optical kerning** — `optical_math.cpp` (`VerticalKerner`) +
+  `OpticalKerner::kern_vertical_px` + `opticalKernVertical` in the vertical layout:
+  24/24 profiles and 169/169 pair kerns (96 non-zero) bit-exact on synthetic glyph rasters.
+- **Intl word breaks** — `line_break.cpp` + `word_break_ffi.cpp` (ICU's word
+  iterator, loaded from the OS through its C ABI; the TS's no-Segmenter branch
+  when none loads): break opportunities 23/23 and wraps 23/23 exact over 23
+  texts (Thai, Lao, Khmer, Myanmar, CJK, bidi scripts) — OS ICU 74 vs Node's ICU 78.
+- **Linux system fonts** — `system_fonts_ffi.cpp`: fontconfig matched as
+  Chromium's font service accepts a match, plus Blink's generic defaults and
+  alternate names; 29/30 families resolve as Chromium 141 draws them on the same
+  machine (the miss is a quoted `"Serif"`, which the font parser treats as the keyword).
+- **Alias FontFace features** — `CanvasOptions::aliasFaces` (off for the
+  harness's `fv0`): OpenType features straight to HarfBuzz, no glyph-by-glyph
+  ligature fallback.
+- **Canvas-drawn effects** (with E4) — Canvas2D gained shadows and
+  `getImageData` / `putImageData`; `engine_canvas_effects` ports 9 of the 27
+  canvas-drawn effects (fill, linear-wipe, checkerboard, grid, circle, ellipse,
+  radio-waves, light-rays, light-sweep): 21/21 cases, 1224/1224 ops identical.
+
+Not compiled here (no Skia / HarfBuzz): `canvas_ffi.cpp` (create_canvas, shadows,
+ImageData) and `fonts_ffi.cpp` (the fontconfig call); every Skia-free painter is
+built or syntax-checked with the project's warning flags. Pixel parity of the new
+paths (`premation-raster --mode native` on the golden scenes) is still to run on a
+machine with the vcpkg `engine` feature.
+
+Open: the GPU (Graphite) raster path (needs a GPU), CPU-baked effect chains (E4:
+wiring, 18 canvas-drawn effects), macOS system fonts (CoreText), variation axes and
+the 'vert' face through alias faces, the D2w scene builder's own paint resolution
+(`snapshot_build.cpp` still marks paint unported), pixel parity of the above.
 
 **E4 progress (2026-09-24, branch `e4-effects`).** `native/engine/src/effects`
 (`engine_effects`, Skia- and GPU-free) holds C++ ports of **120 of the 166 CPU
@@ -575,7 +609,7 @@ Not ported yet (46):
 | **Forces a bake today** (`CANVAS2D_ONLY`, no WGSL) — canvas-drawn, needs the E3 `raster::Canvas` | `vegas`, `numbers`, `timecode`, `audio-spectrum`, `audio-waveform`, `lightning`, `plexus` |
 | **Forces a bake today** — pure buffer kernels over mask polylines resolved into params; next to port | `path-stroke` (`pathStroke.ts`), `scribble` (`scribble.ts`) |
 | Pure kernel, not ported yet (same recipe as above) | `bezier-warp`, `cell-pattern`, `apply-color-lut` (`applyLutToImageData`), `write-on` (+ brush form), `star-burst`, `snowfall`, `rainfall`, `light-burst`, `deep-glow`, `beam-path`, `cc-tiler`, `ripple-pulse`, `radial-scale-wipe`, `glass-wipe`, `image-wipe`, `particle-systems`, `cc-bubbles` |
-| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs), needs `raster::Canvas` in the chain | `fill`, `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `linear-wipe`, `transform`, `beam`, `lens-flare`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves`, `cc-repetile` |
+| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs), needs `raster::Canvas` in the chain | `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `transform`, `beam`, `lens-flare`, `cc-repetile` — ported to `engine_canvas_effects` (on the Canvas2D interface, op-for-op with the TS; E3 round two): `fill`, `linear-wipe`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves` |
 Open work for E4:
 - **Wire the chain.** Map each effect's params onto its kernel arguments (the
   TS `apply*` wrappers), and interleave the kernels with the canvas-drawn
