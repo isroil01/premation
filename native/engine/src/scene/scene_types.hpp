@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -75,6 +76,24 @@ struct LightWash {
   double cone = 45;
   double coneFeather = 50;
   bool pool = false;
+};
+
+/// RenderLayer.extrudedMesh.ranges[i] — one draw range of an extruded / primitive mesh.
+struct MeshRange3D {
+  api::RenderMeshRole role = api::RenderMeshRole::front;
+  std::uint32_t first = 0;
+  std::uint32_t count = 0;
+  std::string fill;  ///< the range colour as the snapshot names it (graded by the frame build)
+  double gain = 1;
+  bool textured = false;
+  bool paintTextured = false;
+};
+
+/// RenderLayer.extrudedMesh — the mesh a 3D solid draws (extrusion, primitive).
+struct ExtrudedMeshData {
+  /// Key + vertex / index bytes + index format (ranges left empty; see `ranges`).
+  api::RenderExtrudedMesh geometry;
+  std::vector<MeshRange3D> ranges;
 };
 
 /// RenderLayer — the fields the port carries (see the header note).
@@ -155,6 +174,11 @@ struct RLayer {
   std::optional<bool> acceptsShadows3d;
   /// A light layer's glow wash (RenderLayer.light).
   std::optional<LightWash> light;
+  /// A 3D solid's mesh. shared_ptr: the vertex bytes are immutable once built and
+  /// every copy of the layer (shadows, the depth sort's moves) shares them.
+  std::shared_ptr<const ExtrudedMeshData> extrudedMesh;
+  /// RenderLayer.flatFacet: a facet of a larger body (no SDF edge coverage).
+  bool flatFacet = false;
   // ── port bookkeeping ──
   /// Features this layer uses that the C++ port does not produce yet (the
   /// explicit fallback: reported per layer, never silently dropped).

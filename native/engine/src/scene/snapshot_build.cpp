@@ -1255,8 +1255,11 @@ void Walk::build_node(const doc::Node& n) {
     }
   }
   three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
-  three_->before_emit(s3, l);               // planar CoC under DOF
-  emit(std::move(l), n);
+  // Extrusion / primitive mesh carriers, then the front quad (inset, mesh-drawn, planar DOF).
+  RLayer notes;
+  notes.id = n.id;
+  three_->finish_layer(n, a, s3, std::move(l), [&](RLayer out) { emit(std::move(out), n); },
+                       [&](std::string what) { unported(notes, n, std::move(what)); });
 }
 
 Snapshot Walk::run() {

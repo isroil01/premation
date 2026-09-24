@@ -505,7 +505,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     }
   } else {
     // sdfFor(layer).
-    if (l.kind == LayerKind::shape && l.primitive != "path") {
+    if (l.kind == LayerKind::shape && l.primitive != "path" && !l.flatFacet) {  // a facet: no SDF edge coverage
       api::RenderSdf sdf;
       sdf.width = l.width;
       sdf.height = l.height;

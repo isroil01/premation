@@ -108,6 +108,13 @@ class Scene3D {
   /// CoC corners replace the uniform `dof` blur when the quad spans depth.
   void before_emit(const Layer3D& s, RLayer& l);
 
+  /// The end of the layer walk for one node: the extrusion mesh carrier, the
+  /// primitive mesh carrier, then the front quad (inset by the bevel, drawn by
+  /// the mesh, replaced by the primitive, or under the planar DOF) — buildSnapshot's
+  /// order. `emit` routes a layer (precomp routing); `report` records an unported feature.
+  void finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLayer layer,
+                    const std::function<void(RLayer)>& emit, const std::function<void(std::string)>& report);
+
   /// A light layer (buildSnapshot `kind === 'light'`): the wash layer, or none.
   [[nodiscard]] std::optional<RLayer> light_layer(const doc::Node& n);
 

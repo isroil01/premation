@@ -5,8 +5,10 @@
 #include <set>
 #include <string>
 
+#include "effects_port.hpp"
 #include "frame_build.hpp"
 #include "jsmath.hpp"
+#include "readers.hpp"
 #include "transform.hpp"
 
 namespace premation::scene {
@@ -129,6 +131,44 @@ void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r) {
     api::RenderThreeD t;
     t.model = model3d_for(*l.world3d, l);
     r.three_d = std::move(t);
+  }
+  // Extruded / primitive mesh: the vertices are in the layer's centred pixel
+  // frame, so the model is the bare world3d (no unit-quad bridge); it wins over the quad.
+  if (l.extrudedMesh && l.world3d && l.matrix && placement_ok(parent)) {
+    api::RenderThreeD t;
+    t.model.assign(l.world3d->begin(), l.world3d->end());
+    r.three_d = std::move(t);
+    const double pad = raster_padding(l);
+    if (!l.uvRect && pad > 0) {
+      api::Rect u;
+      u.x = pad / (l.width + 2 * pad);
+      u.y = pad / (l.height + 2 * pad);
+      u.width = l.width / (l.width + 2 * pad);
+      u.height = l.height / (l.height + 2 * pad);
+      r.uv_rect = u;
+    }
+    api::RenderExtrudedMesh em = l.extrudedMesh->geometry;
+    em.ranges.clear();
+    const ColorMatrix cm = l.effects.empty() ? ColorMatrix{} : effect_color_matrix(l.effects);
+    for (const MeshRange3D& src : l.extrudedMesh->ranges) {
+      api::RenderMeshRange o;
+      o.role = src.role;
+      o.first = src.first;
+      o.count = src.count;
+      Rgba c = color_from_hex(src.fill);
+      if (!(src.textured || src.paintTextured) && !l.effects.empty()) {  // gradeFillByEffects
+        const auto rgb = apply_color_matrix(cm, {c.r, c.g, c.b});
+        c = {rgb[0], rgb[1], rgb[2], c.a};
+      }
+      o.color.r = c.r;
+      o.color.g = c.g;
+      o.color.b = c.b;
+      o.color.a = c.a;
+      o.gain = src.gain;
+      if (src.textured) o.textured = true;
+      em.ranges.push_back(std::move(o));
+    }
+    r.extruded_mesh = std::move(em);
   }
   if (l.castsShadow3d && r.three_d) r.three_d->casts_shadow = true;
   if (l.lighting) {

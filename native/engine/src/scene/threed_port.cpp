@@ -7,6 +7,11 @@
 #include <utility>
 
 #include "anim.hpp"
+#include "extrusion_mesh.hpp"
+#include "fxstate.hpp"
+#include "layer_styles.hpp"
+#include "primitive_mesh.hpp"
+#include "text_measure.hpp"
 #include "jsmath.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
@@ -430,22 +435,14 @@ Material Scene3D::material_of(const doc::Node& n, const Values& a) const {
   return read_node_material(n, [&a](std::string_view k) { return a.get(k); });
 }
 
-std::vector<std::string> Scene3D::unported_features(const doc::Node& n, const Values& a) const {
+std::vector<std::string> Scene3D::unported_features(const doc::Node& n, const Values& /*a*/) const {
+  // Mesh bodies (extrusions, primitives, models) report from finish_layer, where
+  // the TypeScript decides between them; per-character planes replace the quad.
   std::vector<std::string> out;
-  bool primitive = false;
-  for (const doc::Component& c : n.components) {
-    if (c.type == "Primitive" && c.props.at("type").is_string()) primitive = true;
-    if (c.type == "Model" && c.props.at("modelKey").is_string()) out.emplace_back("glTF models placed in 3D");
-  }
-  if (primitive) out.emplace_back("3D primitives (mesh)");
-  const double depth = std::max(0.0, a.get("extrusionDepth").value_or(std::max(0.0, t3(n, "extrusionDepth"))));
-  if (depth > 0 && !primitive) out.emplace_back("3D extrusions (extruded body)");
   const doc::Component* t = n.comp("Transform");
   if (n.kind() == "text" && t != nullptr && t->props.at("perChar3D").is_bool() && t->props.at("perChar3D").b()) {
     out.emplace_back("per-character 3D text");
   }
-  const Material m = material_of(n, a);
-  if (m.displacement != 0 && (m.heightMapAssetId || m.heightMapSrc)) out.emplace_back("height-map displacement");
   return out;
 }
 
@@ -626,6 +623,347 @@ void Scene3D::before_emit(const Layer3D& s, RLayer& l) {
   // `emitLayer({...layer, effects})` emits a COPY: the shadow splice below can no
   // longer find the caster / receiver object in the stack.
   copiedOnEmit_.push_back(l.id);
+}
+
+namespace {
+
+/// colorLut.ts LUT_BUILDERS / effectColorMatrix.ts COLOR_MATRIX_BUILDERS.
+bool is_lut_type(std::string_view t) {
+  static constexpr std::array<std::string_view, 10> k = {"levels", "curves", "posterize", "exposure", "lumetri",
+                                                         "color-balance", "gamma-pedestal-gain", "color-offset",
+                                                         "threshold-rgb", "cineon-converter"};
+  return std::ranges::find(k, t) != k.end();
+}
+bool is_color_type(std::string_view t) {
+  static constexpr std::array<std::string_view, 10> k = {"brightness", "contrast", "saturate", "grayscale", "sepia",
+                                                         "hue-rotate", "hue-saturation", "invert", "tint", "channel-mixer"};
+  return std::ranges::find(k, t) != k.end();
+}
+std::string type_of(const Json& e) { return e.at("type").is_string() ? e.at("type").str() : std::string(); }
+bool fx_enabled(const Json& e) { return !(e.at("enabled").is_bool() && !e.at("enabled").b()); }
+bool is_dof(const Json& e) { return e.at("id").is_string() && e.at("id").str() == "dof"; }
+
+/// faceMaterials.ts `resolveFaceMaterial(materials, kind, layerFill)`.
+struct FaceMat {
+  std::string fill;
+  double gain = 1;
+  bool explicitFill = false;  ///< `materials[kind]?.fill` is set
+};
+FaceMat resolve_face_material(const Json& mats, std::string_view kind, const std::string& layerFill) {
+  const Json& m = mats.is_object() ? mats.at(kind) : Json();
+  FaceMat out;
+  const double def = kind == "back" ? 0.55 : 0.72;  // EXTRUSION_BACK_GAIN / EXTRUSION_WALL_GAIN
+  out.gain = m.at("gain").is_number() ? m.at("gain").num() : def;
+  out.explicitFill = m.at("fill").is_string();
+  out.fill = out.explicitFill ? m.at("fill").str() : layerFill;
+  return out;
+}
+
+std::string_view role_name(api::RenderMeshRole r) {
+  switch (r) {
+    case api::RenderMeshRole::front: return "front";
+    case api::RenderMeshRole::back: return "back";
+    case api::RenderMeshRole::side: return "side";
+    case api::RenderMeshRole::bevel: return "bevel";
+  }
+  return "side";
+}
+
+/// The shade3d of a lit mesh carrier (one-sided: its faces bound a volume).
+api::RenderShade3D mesh_shade(const Material& m) {
+  api::RenderShade3D s;
+  s.specular = m.specular / 100;
+  s.shininess = m.shininess;
+  s.one_sided = true;
+  s.ambient = m.ambient;
+  s.diffuse = m.diffuse;
+  if (m.shading == "pbr") {
+    s.roughness = m.roughness / 100;
+    s.metal = m.metal / 100;
+  }
+  if (m.shading == "toon") {
+    s.toon_bands = m.toonBands;
+    s.metal = m.metal / 100;
+  }
+  return s;
+}
+
+/// The scrub every mesh carrier gets (features the mesh path cannot stage).
+void scrub_carrier(RLayer& c) {
+  c.matte = std::nullopt;
+  c.isMatteSource = false;
+  c.isAdjustment = false;
+  c.motionSamples.clear();
+  c.deformedMesh = std::nullopt;
+  c.glass = std::nullopt;
+  c.backdropBlur = std::nullopt;
+  c.preserveTransparency = false;
+  c.lighting = std::nullopt;
+  c.shade3d = std::nullopt;
+}
+
+/// primitiveLayer.ts `readNodePrimitive(node)` → `primitiveKey(spec)`.
+std::optional<std::string> primitive_key_of(const doc::Node& n) {
+  const doc::Component* c = n.comp("Primitive");
+  if (c == nullptr) return std::nullopt;
+  const Json& p = c->props;
+  const std::string type = p.at("type").is_string() ? p.at("type").str() : "";
+  static constexpr std::array<std::string_view, 6> kTypes = {"sphere", "cylinder", "cone", "torus", "capsule", "box"};
+  if (std::ranges::find(kTypes, type) == kTypes.end()) return std::nullopt;
+  const double s = 240;
+  double radius = s / 2, radiusTop = s / 2, height = s, width = s, depth = s, tube = s / 6, radial = 32, heightSeg = 16;
+  if (type == "torus") {
+    radial = 48;
+    heightSeg = 16;
+  }
+  if (type == "capsule") {
+    radius = s / 4;
+    heightSeg = 8;
+  }
+  const auto clampNum = [&p](const char* k, double lo, double hi, double fb) {
+    const Json& v = p.at(k);
+    return v.is_number() && std::isfinite(v.num()) ? std::max(lo, std::min(hi, v.num())) : fb;
+  };
+  radius = clampNum("radius", 0.01, 100000, radius);
+  radiusTop = clampNum("radiusTop", 0, 100000, radiusTop);
+  height = clampNum("height", 0.01, 100000, height);
+  width = clampNum("width", 0.01, 100000, width);
+  depth = clampNum("depth", 0.01, 100000, depth);
+  tube = clampNum("tube", 0.01, 100000, tube);
+  radial = motion::js::round(clampNum("radialSegments", 3, 256, radial));
+  heightSeg = motion::js::round(clampNum("heightSegments", 2, 256, heightSeg));
+  const bool capped = !(p.at("capped").is_bool() && !p.at("capped").b());
+  const auto nn = [](double v) { return js::number_to_string(motion::js::round(v * 1000) / 1000); };
+  const auto ii = [](double v) { return js::number_to_string(v); };
+  if (type == "sphere") return "prim:sphere:" + nn(radius) + ":" + ii(radial) + ":" + ii(heightSeg);
+  if (type == "cylinder") return "prim:cyl:" + nn(radiusTop) + ":" + nn(radius) + ":" + nn(height) + ":" + ii(radial) + ":" + (capped ? "1" : "0");
+  if (type == "cone") return "prim:cone:" + nn(radius) + ":" + nn(height) + ":" + ii(radial) + ":" + (capped ? "1" : "0");
+  if (type == "torus") return "prim:torus:" + nn(radius) + ":" + nn(tube) + ":" + ii(heightSeg) + ":" + ii(radial);
+  if (type == "capsule") return "prim:capsule:" + nn(radius) + ":" + nn(height) + ":" + ii(radial) + ":" + ii(heightSeg);
+  return "prim:box:" + nn(width) + ":" + nn(height) + ":" + nn(depth);
+}
+
+}  // namespace
+
+void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLayer layer,
+                           const std::function<void(RLayer)>& emit, const std::function<void(std::string)>& report) {
+  if (!s.is3d || !layer.world3d) {
+    emit(std::move(layer));
+    return;
+  }
+  double frontInset = 0;
+  bool frontDrawnByMesh = false;
+  const std::optional<std::string> primKey = primitive_key_of(n);
+  const doc::Component* tc = n.comp("Transform");
+  const Json& tp = tc != nullptr ? tc->props : Json();
+  const bool perCharText = layer.kind == LayerKind::text && tp.at("perChar3D").is_bool() && tp.at("perChar3D").b();
+  const double layerW = layer.width;
+  const double layerH = layer.height;
+
+  // ── TRUE 3D extrusion: the mesh carrier (extrusionMesh.ts) ──
+  if (s.extrusionDepth > 0 && !primKey) {
+    const Material& extMat = s.mat;
+    const Json faceMats = tp.at("faceMaterials").is_object() ? tp.at("faceMaterials") : Json::object();
+    const bool extLit = extMat.acceptsLights && (!sceneLights_.empty() || !formRig_.empty());
+    if (extLit && sceneLights_.empty()) formRigUsed_ = true;
+    const Json styles = doc::get_node_layer_styles(n);
+    const bool anyStyle = styles.is_object() && std::ranges::any_of(styles.obj(), [](const Json::Member& m) {
+                            return m.value.is_object() && m.value.at("enabled").is_bool() && m.value.at("enabled").b();
+                          });
+    const std::string wallBase = layer.fill.value_or("#2a2a2a");  // EXTRUSION_WALL_FALLBACK_FILL
+    std::string wallFill = wallBase;
+    if (anyStyle) {
+      const auto overlayOn = [&](const char* k) {
+        const Json& o = styles.at(k);
+        return o.is_object() && o.at("enabled").is_bool() && o.at("enabled").b() && o.at("opacity").num() > 0;
+      };
+      if (overlayOn("colorOverlay") || overlayOn("gradientOverlay")) report("extrusion walls under a colour / gradient overlay style");
+    }
+    std::vector<Json> faceStyles;
+    if (anyStyle) {
+      const auto compiled = layer_styles_to_effects(styles, comp_.globalLightAngle, comp_.globalLightAltitude,
+                                                    [](std::string_view) { return false; });
+      if (compiled) {
+        static constexpr std::array<std::string_view, 5> kFace = {"layerstyle:innerShadow", "layerstyle:innerGlow",
+                                                                  "layerstyle:satin", "layerstyle:bevel", "layerstyle:stroke"};
+        for (const Json& e : *compiled) {
+          if (e.at("id").is_string() && std::ranges::find(kFace, e.at("id").str()) != kFace.end()) faceStyles.push_back(e);
+        }
+      }
+    }
+    const double meshBevel = std::max(0.0, a.get("bevelDepth").value_or(std::max(0.0, t3(n, "bevelDepth"))));
+    const bool complexOutline = layer.kind == LayerKind::text || (layer.kind == LayerKind::shape && layer.primitive == "path");
+    const double holeDepthStatic = tp.at("holeBevelDepth").is_number() ? std::max(0.0, std::min(100.0, tp.at("holeBevelDepth").num())) : 100;
+    const double holeBevelScale = std::max(0.0, std::min(100.0, a.get("holeBevelDepth").value_or(holeDepthStatic))) / 100;
+    const bool spatialFx = std::ranges::any_of(layer.effects, [](const Json& e) {
+      return fx_enabled(e) && !is_dof(e) && !is_color_type(type_of(e)) && !is_lut_type(type_of(e));
+    });
+    const bool meshBlockedByFx = spatialFx && !complexOutline;
+    const bool meshBlockedByStyles = !faceStyles.empty() && !complexOutline;
+    const bool styledFront = complexOutline && (spatialFx || !faceStyles.empty());
+    const bool meshOwnsFront = complexOutline && meshBevel > 0 && !perCharText && !styledFront;
+    std::vector<Json> meshEffects;
+    if (styledFront) {
+      for (const Json& e : layer.effects) {
+        if (fx_enabled(e) && (is_dof(e) || is_color_type(type_of(e)) || is_lut_type(type_of(e)))) meshEffects.push_back(e);
+      }
+    } else {
+      meshEffects = layer.effects;
+    }
+    if (perCharText) report("per-character 3D text (per-glyph extrusion)");
+    std::optional<KeyedMesh> built;
+    if (!(meshBlockedByFx || meshBlockedByStyles)) {
+      const raster::CanvasOptions* canvas = c_.measurer != nullptr ? c_.measurer->canvas_options() : nullptr;
+      if (const auto outline = extrusion_outline_for(layer, layerW, layerH, canvas)) {
+        ExtrusionMeshRequest req;
+        req.depth = s.extrusionDepth;
+        req.bevel = meshBevel;
+        req.bevelStyle = bevel_profile_of(tp.at("bevelStyle").is_string() ? tp.at("bevelStyle").str() : "angular");
+        req.frontCap = meshOwnsFront;
+        if (styledFront) req.frontBevel = false;
+        if (complexOutline) req.holeBevelScale = holeBevelScale;
+        built = extrusion_mesh_for(*outline, layerW, layerH, req);
+      }
+    }
+    bool meshEmitted = false;
+    if (built) {
+      const mesh::ExtrudedMesh& mesh = *built->mesh;
+      frontInset = mesh.bevel;
+      const xf::Mat4 M = [&] {
+        xf::Mat4 m{};
+        std::copy(layer.world3d->begin(), layer.world3d->end(), m.begin());
+        return m;
+      }();
+      const xf::Projected O = project(xf::transform_point(M, {0, 0, 0}));
+      if (!O.clipped) {
+        const bool isMedia = layer.kind == LayerKind::image || layer.kind == LayerKind::video;
+        const bool hasFrontCap = std::ranges::any_of(mesh.ranges, [](const mesh::MeshRange& r) { return api_role(r.role) == api::RenderMeshRole::front; });
+        const bool gradientFill = layer.fillPaint.is_object() && layer.fillPaint.at("type").is_string() && layer.fillPaint.at("type").str() != "solid";
+        const bool wallPaint = gradientFill && wallFill == wallBase;
+        auto data = std::make_shared<ExtrudedMeshData>();
+        mesh_to_api(built->key, mesh, data->geometry);
+        data->geometry.ranges.clear();
+        for (const mesh::MeshRange& r : mesh.ranges) {
+          MeshRange3D o;
+          o.role = api_role(r.role);
+          o.first = r.first;
+          o.count = r.count;
+          if (o.role == api::RenderMeshRole::front) {
+            o.fill = wallFill;
+            o.gain = 1;
+            o.textured = true;
+          } else {
+            const std::string_view rn = role_name(o.role);
+            const FaceMat fm = resolve_face_material(faceMats, rn, wallFill);
+            o.fill = fm.fill;
+            o.gain = fm.explicitFill ? 1 : fm.gain;
+            const Json& back = faceMats.at("back");
+            o.textured = isMedia && o.role == api::RenderMeshRole::back && !back.at("fill").is_string();
+            o.paintTextured = wallPaint && !o.textured && !fm.explicitFill;
+          }
+          data->ranges.push_back(std::move(o));
+        }
+        if (wallPaint) report("gradient-filled extrusion walls (paint plate)");
+        if (std::abs(extMat.displacement) > 1e-6 && (extMat.heightMapAssetId || extMat.heightMapSrc)) report("height-map displacement");
+        const bool carriesContent = isMedia || hasFrontCap;
+        RLayer carrier;
+        if (carriesContent) {
+          carrier = layer;
+          scrub_carrier(carrier);
+          carrier.effects = meshEffects;
+        } else {
+          carrier.effects = meshEffects;
+          carrier.kind = LayerKind::shape;
+          carrier.primitive = "rect";
+          carrier.blend = layer.blend;
+          carrier.x = layer.x;
+          carrier.y = layer.y;
+          carrier.rotation = layer.rotation;
+          carrier.scaleX = layer.scaleX;
+          carrier.scaleY = layer.scaleY;
+          carrier.matrix = layer.matrix;
+          carrier.world3d = layer.world3d;
+          carrier.depth = layer.depth;
+          carrier.opacity = layer.opacity;
+          carrier.width = layerW;
+          carrier.height = layerH;
+          carrier.fill = resolve_face_material(faceMats, "side", wallFill).fill;
+          carrier.visible = layer.visible;
+          carrier.flatFacet = true;
+          carrier.castsShadow3d = layer.castsShadow3d;
+        }
+        carrier.id = layer.id + "::ext-mesh";
+        carrier.extrudedMesh = std::move(data);
+        if (extLit) {
+          carrier.lighting = std::array<double, 3>{1, 1, 1};
+          carrier.shade3d = mesh_shade(extMat);
+        }
+        emit(std::move(carrier));
+        meshEmitted = true;
+        if (hasFrontCap) frontDrawnByMesh = true;
+      }
+    }
+    if (!meshEmitted) {
+      // perGlyphExtrusion / the slice stack / the geometric faces (extrusion.ts).
+      const bool isComplexContent = layer.kind == LayerKind::text || (layer.kind == LayerKind::shape && layer.primitive != "rect" && layer.primitive != "ellipse");
+      report(isComplexContent ? "3D extrusion slice stack (no traceable outline)" : "3D extrusion faces (effects or interior styles)");
+    }
+  }
+
+  // ── glTF models / parametric primitives: the mesh REPLACES the quad ──
+  std::optional<RLayer> modelLayer;
+  if (n.comp("Model") != nullptr && n.comp("Model")->props.at("modelKey").is_string()) {
+    report("glTF models placed in 3D");
+  } else if (primKey) {
+    if (const auto pm = primitive_mesh_for_key(*primKey)) {
+      const Material& mMat = s.mat;
+      const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
+      if (std::abs(mMat.displacement) > 1e-6 && (mMat.heightMapAssetId || mMat.heightMapSrc)) report("height-map displacement");
+      auto data = std::make_shared<ExtrudedMeshData>();
+      primitive_mesh_to_api(*pm, data->geometry);
+      data->geometry.ranges.clear();
+      MeshRange3D r;
+      r.role = pm->doubleSided ? api::RenderMeshRole::front : api::RenderMeshRole::side;
+      r.first = 0;
+      r.count = static_cast<std::uint32_t>(pm->indices.size());
+      r.fill = layer.fill.value_or("#3b8276");  // PRIMITIVE_FALLBACK_FILL
+      r.gain = 1;
+      data->ranges.push_back(std::move(r));
+      RLayer m = layer;
+      std::vector<Json> meshFx;
+      for (const Json& e : layer.effects) {
+        if (fx_enabled(e) && (is_color_type(type_of(e)) || is_lut_type(type_of(e)))) meshFx.push_back(e);
+      }
+      scrub_carrier(m);
+      m.effects = std::move(meshFx);
+      m.extrudedMesh = std::move(data);
+      if (mLit) {
+        m.lighting = std::array<double, 3>{1, 1, 1};
+        m.shade3d = mesh_shade(mMat);
+      }
+      modelLayer = std::move(m);
+    }
+  }
+
+  if (modelLayer) {
+    emit(std::move(*modelLayer));
+  } else if (frontDrawnByMesh) {
+    // The front cap is part of the extrusion mesh.
+  } else if (frontInset > 0) {
+    RLayer f = layer;
+    const auto insetR = [frontInset](double r) { return std::max(0.0, r - frontInset); };
+    f.width = layerW - 2 * frontInset;
+    f.height = layerH - 2 * frontInset;
+    f.cornerRadius = insetR(f.cornerRadius);
+    if (f.cornerRadii) {
+      for (double& r : *f.cornerRadii) r = insetR(r);
+    }
+    copiedOnEmit_.push_back(layer.id);
+    emit(std::move(f));
+  } else {
+    before_emit(s, layer);
+    emit(std::move(layer));
+  }
 }
 
 std::optional<RLayer> Scene3D::light_layer(const doc::Node& n) {
