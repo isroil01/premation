@@ -1,5 +1,6 @@
 /**
- * Commit a finished Paint-tool drag to the document — ONE undo step.
+ * A finished Paint-tool drag as engine commands — ONE undo step
+ * (`commitPaintDrag`, @core/engine/paintEdits.ts, sends them).
  *
  * The comp viewer and the Layer panel map pointer samples into the layer's own
  * space differently (a full world inverse vs. the panel's fit), and then both
@@ -15,21 +16,12 @@
  *  · Clone honours Source, Aligned, Lock Source Time and Source Time Shift.
  */
 
-import { defaultAnimation } from '@motion/animation';
+import { secondsToFlicks, type Command } from '@motion/engine-api';
 import { drawToolOptions } from '@motion/workspace';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 import { usePaintStore } from '@stores/paintStore';
-import {
-  addPaintStroke,
-  extendPaintStroke,
-  getNodePaint,
-  replaceStrokePath,
-  type PaintMode,
-  type PaintStroke,
-} from './paintStrokes';
+import { getNodePaint, type PaintMode, type PaintStroke } from './paintStrokes';
 import { cloneOffsetFor, durationRange, smoothSamples, strokeOptionsFrom, writeOnEndKeys } from './paintCapture';
-import { paintPropPath } from './paintProps';
 
 type Pt = { x: number; y: number };
 
@@ -55,16 +47,27 @@ export interface PaintDrag {
 
 export type PaintCommitResult = { ok: true; strokeId: string } | { ok: false; reason: string };
 
-const fail = (reason: string): PaintCommitResult => ({ ok: false, reason });
+/** The drag's edit: one batch named `label`. `strokeId` is null when the batch adds the stroke (the engine mints it). */
+export type PaintDragPlan =
+  | { ok: true; label: string; commands: Command[]; strokeId: string | null }
+  | { ok: false; reason: string };
 
-export function commitPaintDrag(d: PaintDrag): PaintCommitResult {
-  if (d.points.length === 0) return fail('');
+const refuse = (reason: string): PaintDragPlan => ({ ok: false, reason });
+
+/**
+ * Decide what a drag does (AE's rules above) and return the commands. Reads
+ * the layer's paint and the Paint settings; the only write is the Clone
+ * Stamp's remembered Aligned offset (editor state on `paintStore`).
+ */
+export function planPaintDrag(d: PaintDrag): PaintDragPlan {
+  if (d.points.length === 0) return refuse('');
   const s = usePaintStore.getState();
   const layerT = getRemappedTime(d.nodeId, d.compTime);
   const fps = getTimelineController().fps || 30;
   const points = smoothSamples(d.points, s.smoothing);
   const label = d.mode === 'erase' ? 'Erase' : 'Paint Stroke';
   const existing = getNodePaint(d.nodeId)?.strokes ?? [];
+  const layer = d.nodeId;
 
   const withPen = d.pen.length === points.length && points.length > 0 && d.pen.every((p) => p !== null);
   const pen = withPen
@@ -75,18 +78,34 @@ export function commitPaintDrag(d: PaintDrag): PaintCommitResult {
       }
     : {};
 
-  // A selected stroke: the drag is its new Path.
+  // A selected stroke: the drag is its new Path (a Path key when the Path is animated).
   const sel = s.selectedStroke;
   if (sel && sel.nodeId === d.nodeId && !d.continueStroke && existing.some((x) => x.id === sel.strokeId)) {
-    runDocumentEdit('Replace Paint Path', () => replaceStrokePath(d.nodeId, sel.strokeId, points, layerT));
-    return { ok: true, strokeId: sel.strokeId };
+    return {
+      ok: true,
+      label: 'Replace Paint Path',
+      strokeId: sel.strokeId,
+      commands: [{ type: 'setPaintStrokePath', layer, stroke: sel.strokeId, points: JSON.stringify(points), time: secondsToFlicks(d.compTime) }],
+    };
   }
 
   if (d.continueStroke) {
     const prev = [...existing].reverse().find((x) => x.mode === d.mode);
     if (prev) {
-      runDocumentEdit(label, () => extendPaintStroke(d.nodeId, prev.id, { points, ...pen }));
-      return { ok: true, strokeId: prev.id };
+      // AE joins the previous stroke's end to the new samples. Pen arrays extend
+      // in step; a side that lacks them is padded so they stay parallel.
+      const more = pen as { pressure?: number[]; tiltX?: number[]; tiltY?: number[] };
+      const cat = (a: ReadonlyArray<number> | undefined, b: ReadonlyArray<number> | undefined, fill: number): number[] | null => {
+        if (!a && !b) return null;
+        return [...(a ?? new Array<number>(prev.points.length).fill(fill)), ...(b ?? new Array<number>(points.length).fill(fill))];
+      };
+      const patch = {
+        points: [...prev.points, ...points],
+        pressure: cat(prev.pressure, more.pressure, 1),
+        tiltX: cat(prev.tiltX, more.tiltX, 0),
+        tiltY: cat(prev.tiltY, more.tiltY, 0),
+      };
+      return { ok: true, label, strokeId: prev.id, commands: [{ type: 'updatePaintStroke', layer, stroke: prev.id, patch: JSON.stringify(patch) }] };
     }
   }
 
@@ -115,7 +134,7 @@ export function commitPaintDrag(d: PaintDrag): PaintCommitResult {
     if (eraseMode !== 'layerAndPaint') stroke.eraseMode = eraseMode;
     if (eraseMode === 'lastStroke') {
       const target = [...existing].reverse().find((x) => x.mode !== 'erase');
-      if (!target) return fail('There is no stroke for Last Stroke Only to erase.');
+      if (!target) return refuse('There is no stroke for Last Stroke Only to erase.');
       stroke.eraseTargetId = target.id;
     }
   }
@@ -125,7 +144,7 @@ export function commitPaintDrag(d: PaintDrag): PaintCommitResult {
     // Another layer's point is honoured only when the Paint panel's Source
     // names that layer — otherwise it is a stale aim from a different target.
     const cross = !!src && src.nodeId !== d.nodeId && src.nodeId === s.cloneSourceLayerId;
-    if (!src || (src.nodeId !== d.nodeId && !cross)) return fail('Alt-click to set the clone source first.');
+    if (!src || (src.nodeId !== d.nodeId && !cross)) return refuse('Alt-click to set the clone source first.');
     const remembered = s.alignedOffset && s.alignedOffset.nodeId === d.nodeId ? s.alignedOffset : null;
     const { offset, remember } = cloneOffsetFor(s.cloneAligned, src, points[0]!, remembered);
     Object.assign(stroke, {
@@ -139,14 +158,9 @@ export function commitPaintDrag(d: PaintDrag): PaintCommitResult {
     usePaintStore.getState().set({ alignedOffset: remember ? { nodeId: d.nodeId, x: remember.x, y: remember.y } : null });
   }
 
-  let strokeId = '';
-  runDocumentEdit(label, () => {
-    strokeId = addPaintStroke(d.nodeId, stroke);
-    if (s.duration === 'writeOn') {
-      for (const k of writeOnEndKeys(points, d.times, layerT, fps)) {
-        defaultAnimation.setKeyframe(d.nodeId, paintPropPath(strokeId, 'end'), k.t, k.value);
-      }
-    }
-  });
-  return { ok: true, strokeId };
+  // Write On: End keys (in %) that replay the drawing speed — at layer seconds, the axis of inPoint.
+  const keys = s.duration === 'writeOn'
+    ? writeOnEndKeys(points, d.times, layerT, fps).map((k) => ({ param: 'end', time: k.t, value: k.value }))
+    : [];
+  return { ok: true, label, strokeId: null, commands: [{ type: 'addPaintStroke', layer, stroke: JSON.stringify(stroke), keys }] };
 }

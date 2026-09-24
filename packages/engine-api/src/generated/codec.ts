@@ -5789,6 +5789,228 @@ function decS_RemoveStroke(r: Reader, end: number, o: any): T.RemoveStroke {
   o.index = v_index;
   return o;
 }
+function encS_AddPaintStroke(w: Writer, v: T.AddPaintStroke): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); w.str(v.stroke);
+  { const a = v.keys; for (let i = 0; i < a.length; i++) { w.byte(26); { const s = w.beginLd(); encS_PaintKeyInit(w, a[i]!); w.endLd(s); } } }
+}
+function decS_AddPaintStroke(r: Reader, end: number, o: any): T.AddPaintStroke {
+  const l_keys: T.PaintKeyInit[] = [];
+  let h_layer = false;
+  let h_stroke = false;
+  let v_layer: string | undefined;
+  let v_stroke: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_stroke = r.str(); h_stroke = true; break;
+      case 26: l_keys.push(decS_PaintKeyInit(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('AddPaintStroke.layer: missing', 'missingField');
+  if (!h_stroke) throw new DecodeError('AddPaintStroke.stroke: missing', 'missingField');
+  o.layer = v_layer;
+  o.stroke = v_stroke;
+  o.keys = l_keys;
+  return o;
+}
+function encS_UpdatePaintStroke(w: Writer, v: T.UpdatePaintStroke): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); w.str(v.stroke);
+  w.byte(26); w.str(v.patch);
+}
+function decS_UpdatePaintStroke(r: Reader, end: number, o: any): T.UpdatePaintStroke {
+  let h_layer = false;
+  let h_stroke = false;
+  let h_patch = false;
+  let v_layer: string | undefined;
+  let v_stroke: string | undefined;
+  let v_patch: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_stroke = r.str(); h_stroke = true; break;
+      case 26: v_patch = r.str(); h_patch = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('UpdatePaintStroke.layer: missing', 'missingField');
+  if (!h_stroke) throw new DecodeError('UpdatePaintStroke.stroke: missing', 'missingField');
+  if (!h_patch) throw new DecodeError('UpdatePaintStroke.patch: missing', 'missingField');
+  o.layer = v_layer;
+  o.stroke = v_stroke;
+  o.patch = v_patch;
+  return o;
+}
+function encS_RemovePaintStrokes(w: Writer, v: T.RemovePaintStrokes): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.strokes; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_RemovePaintStrokes(r: Reader, end: number, o: any): T.RemovePaintStrokes {
+  const l_strokes: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_strokes.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('RemovePaintStrokes.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.strokes = l_strokes;
+  return o;
+}
+function encS_SetPaintOnTransparent(w: Writer, v: T.SetPaintOnTransparent): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(16); w.bool(v.on);
+}
+function decS_SetPaintOnTransparent(r: Reader, end: number, o: any): T.SetPaintOnTransparent {
+  const l_layers: string[] = [];
+  let h_on = false;
+  let v_on: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 16: v_on = r.bool(); h_on = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_on) throw new DecodeError('SetPaintOnTransparent.on: missing', 'missingField');
+  o.layers = l_layers;
+  o.on = v_on;
+  return o;
+}
+function encS_SetPaintStrokePath(w: Writer, v: T.SetPaintStrokePath): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); w.str(v.stroke);
+  w.byte(26); w.str(v.points);
+  w.byte(32); w.i64(v.time);
+}
+function decS_SetPaintStrokePath(r: Reader, end: number, o: any): T.SetPaintStrokePath {
+  let h_layer = false;
+  let h_stroke = false;
+  let h_points = false;
+  let h_time = false;
+  let v_layer: string | undefined;
+  let v_stroke: string | undefined;
+  let v_points: string | undefined;
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_stroke = r.str(); h_stroke = true; break;
+      case 26: v_points = r.str(); h_points = true; break;
+      case 32: v_time = r.i64(); h_time = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetPaintStrokePath.layer: missing', 'missingField');
+  if (!h_stroke) throw new DecodeError('SetPaintStrokePath.stroke: missing', 'missingField');
+  if (!h_points) throw new DecodeError('SetPaintStrokePath.points: missing', 'missingField');
+  if (!h_time) throw new DecodeError('SetPaintStrokePath.time: missing', 'missingField');
+  o.layer = v_layer;
+  o.stroke = v_stroke;
+  o.points = v_points;
+  o.time = v_time;
+  return o;
+}
+function encS_SetPaintPathAnimated(w: Writer, v: T.SetPaintPathAnimated): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); w.str(v.stroke);
+  w.byte(24); w.bool(v.animated);
+  w.byte(32); w.i64(v.time);
+}
+function decS_SetPaintPathAnimated(r: Reader, end: number, o: any): T.SetPaintPathAnimated {
+  let h_layer = false;
+  let h_stroke = false;
+  let h_animated = false;
+  let h_time = false;
+  let v_layer: string | undefined;
+  let v_stroke: string | undefined;
+  let v_animated: boolean | undefined;
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_stroke = r.str(); h_stroke = true; break;
+      case 24: v_animated = r.bool(); h_animated = true; break;
+      case 32: v_time = r.i64(); h_time = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetPaintPathAnimated.layer: missing', 'missingField');
+  if (!h_stroke) throw new DecodeError('SetPaintPathAnimated.stroke: missing', 'missingField');
+  if (!h_animated) throw new DecodeError('SetPaintPathAnimated.animated: missing', 'missingField');
+  if (!h_time) throw new DecodeError('SetPaintPathAnimated.time: missing', 'missingField');
+  o.layer = v_layer;
+  o.stroke = v_stroke;
+  o.animated = v_animated;
+  o.time = v_time;
+  return o;
+}
+function encS_PaintKeyInit(w: Writer, v: T.PaintKeyInit): void {
+  w.byte(10); w.str(v.param);
+  w.byte(17); w.f64(v.time);
+  w.byte(25); w.f64(v.value);
+}
+function decS_PaintKeyInit(r: Reader, end: number, o: any): T.PaintKeyInit {
+  let h_param = false;
+  let h_time = false;
+  let h_value = false;
+  let v_param: string | undefined;
+  let v_time: number | undefined;
+  let v_value: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_param = r.str(); h_param = true; break;
+      case 17: v_time = r.f64(); h_time = true; break;
+      case 25: v_value = r.f64(); h_value = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_param) throw new DecodeError('PaintKeyInit.param: missing', 'missingField');
+  if (!h_time) throw new DecodeError('PaintKeyInit.time: missing', 'missingField');
+  if (!h_value) throw new DecodeError('PaintKeyInit.value: missing', 'missingField');
+  o.param = v_param;
+  o.time = v_time;
+  o.value = v_value;
+  return o;
+}
+function encS_PaintStrokeId(w: Writer, v: T.PaintStrokeId): void {
+  w.byte(10); w.str(v.stroke);
+}
+function decS_PaintStrokeId(r: Reader, end: number, o: any): T.PaintStrokeId {
+  let h_stroke = false;
+  let v_stroke: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_stroke = r.str(); h_stroke = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_stroke) throw new DecodeError('PaintStrokeId.stroke: missing', 'missingField');
+  o.stroke = v_stroke;
+  return o;
+}
 function encS_PropertyPaths(w: Writer, v: T.PropertyPaths): void {
   { const a = v.paths; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
 }
@@ -12569,6 +12791,12 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_RemoveProperties(w, v); w.endLd(s); } return;
     case 'pasteEffects': w.varint(4906); { const s = w.beginLd(); encS_PasteEffects(w, v); w.endLd(s); } return;
     case 'removeStroke': w.varint(4914); { const s = w.beginLd(); encS_RemoveStroke(w, v); w.endLd(s); } return;
+    case 'addPaintStroke': w.varint(4922); { const s = w.beginLd(); encS_AddPaintStroke(w, v); w.endLd(s); } return;
+    case 'updatePaintStroke': w.varint(4930); { const s = w.beginLd(); encS_UpdatePaintStroke(w, v); w.endLd(s); } return;
+    case 'removePaintStrokes': w.varint(4938); { const s = w.beginLd(); encS_RemovePaintStrokes(w, v); w.endLd(s); } return;
+    case 'setPaintOnTransparent': w.varint(4946); { const s = w.beginLd(); encS_SetPaintOnTransparent(w, v); w.endLd(s); } return;
+    case 'setPaintStrokePath': w.varint(4954); { const s = w.beginLd(); encS_SetPaintStrokePath(w, v); w.endLd(s); } return;
+    case 'setPaintPathAnimated': w.varint(4962); { const s = w.beginLd(); encS_SetPaintPathAnimated(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_AddMarkers(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_UpdateMarkers(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_DeleteMarkers(w, v); w.endLd(s); } return;
@@ -12715,6 +12943,12 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4898: out = decS_RemoveProperties(r, r.ldEnd(), { type: 'removeProperties' }) as T.Command; break;
       case 4906: out = decS_PasteEffects(r, r.ldEnd(), { type: 'pasteEffects' }) as T.Command; break;
       case 4914: out = decS_RemoveStroke(r, r.ldEnd(), { type: 'removeStroke' }) as T.Command; break;
+      case 4922: out = decS_AddPaintStroke(r, r.ldEnd(), { type: 'addPaintStroke' }) as T.Command; break;
+      case 4930: out = decS_UpdatePaintStroke(r, r.ldEnd(), { type: 'updatePaintStroke' }) as T.Command; break;
+      case 4938: out = decS_RemovePaintStrokes(r, r.ldEnd(), { type: 'removePaintStrokes' }) as T.Command; break;
+      case 4946: out = decS_SetPaintOnTransparent(r, r.ldEnd(), { type: 'setPaintOnTransparent' }) as T.Command; break;
+      case 4954: out = decS_SetPaintStrokePath(r, r.ldEnd(), { type: 'setPaintStrokePath' }) as T.Command; break;
+      case 4962: out = decS_SetPaintPathAnimated(r, r.ldEnd(), { type: 'setPaintPathAnimated' }) as T.Command; break;
       case 5602: out = decS_AddMarkers(r, r.ldEnd(), { type: 'addMarkers' }) as T.Command; break;
       case 5610: out = decS_UpdateMarkers(r, r.ldEnd(), { type: 'updateMarkers' }) as T.Command; break;
       case 5618: out = decS_DeleteMarkers(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.Command; break;
@@ -12861,6 +13095,12 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'pasteEffects': w.varint(4906); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'removeStroke': w.varint(4914); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'addPaintStroke': w.varint(4922); { const s = w.beginLd(); encS_PaintStrokeId(w, v); w.endLd(s); } return;
+    case 'updatePaintStroke': w.varint(4930); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'removePaintStrokes': w.varint(4938); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setPaintOnTransparent': w.varint(4946); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setPaintStrokePath': w.varint(4954); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setPaintPathAnimated': w.varint(4962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_MarkerIds(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -13007,6 +13247,12 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4898: out = decS_Empty(r, r.ldEnd(), { type: 'removeProperties' }) as T.CommandResult; break;
       case 4906: out = decS_GroupList(r, r.ldEnd(), { type: 'pasteEffects' }) as T.CommandResult; break;
       case 4914: out = decS_Empty(r, r.ldEnd(), { type: 'removeStroke' }) as T.CommandResult; break;
+      case 4922: out = decS_PaintStrokeId(r, r.ldEnd(), { type: 'addPaintStroke' }) as T.CommandResult; break;
+      case 4930: out = decS_Empty(r, r.ldEnd(), { type: 'updatePaintStroke' }) as T.CommandResult; break;
+      case 4938: out = decS_Empty(r, r.ldEnd(), { type: 'removePaintStrokes' }) as T.CommandResult; break;
+      case 4946: out = decS_Empty(r, r.ldEnd(), { type: 'setPaintOnTransparent' }) as T.CommandResult; break;
+      case 4954: out = decS_Empty(r, r.ldEnd(), { type: 'setPaintStrokePath' }) as T.CommandResult; break;
+      case 4962: out = decS_Empty(r, r.ldEnd(), { type: 'setPaintPathAnimated' }) as T.CommandResult; break;
       case 5602: out = decS_MarkerIds(r, r.ldEnd(), { type: 'addMarkers' }) as T.CommandResult; break;
       case 5610: out = decS_Empty(r, r.ldEnd(), { type: 'updateMarkers' }) as T.CommandResult; break;
       case 5618: out = decS_Empty(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.CommandResult; break;
@@ -13485,6 +13731,14 @@ export const codecs = {
   RemoveProperties: mk<T.RemoveProperties>(encS_RemoveProperties, (r, e) => decS_RemoveProperties(r, e, {})),
   PasteEffects: mk<T.PasteEffects>(encS_PasteEffects, (r, e) => decS_PasteEffects(r, e, {})),
   RemoveStroke: mk<T.RemoveStroke>(encS_RemoveStroke, (r, e) => decS_RemoveStroke(r, e, {})),
+  AddPaintStroke: mk<T.AddPaintStroke>(encS_AddPaintStroke, (r, e) => decS_AddPaintStroke(r, e, {})),
+  UpdatePaintStroke: mk<T.UpdatePaintStroke>(encS_UpdatePaintStroke, (r, e) => decS_UpdatePaintStroke(r, e, {})),
+  RemovePaintStrokes: mk<T.RemovePaintStrokes>(encS_RemovePaintStrokes, (r, e) => decS_RemovePaintStrokes(r, e, {})),
+  SetPaintOnTransparent: mk<T.SetPaintOnTransparent>(encS_SetPaintOnTransparent, (r, e) => decS_SetPaintOnTransparent(r, e, {})),
+  SetPaintStrokePath: mk<T.SetPaintStrokePath>(encS_SetPaintStrokePath, (r, e) => decS_SetPaintStrokePath(r, e, {})),
+  SetPaintPathAnimated: mk<T.SetPaintPathAnimated>(encS_SetPaintPathAnimated, (r, e) => decS_SetPaintPathAnimated(r, e, {})),
+  PaintKeyInit: mk<T.PaintKeyInit>(encS_PaintKeyInit, (r, e) => decS_PaintKeyInit(r, e, {})),
+  PaintStrokeId: mk<T.PaintStrokeId>(encS_PaintStrokeId, (r, e) => decS_PaintStrokeId(r, e, {})),
   PropertyPaths: mk<T.PropertyPaths>(encS_PropertyPaths, (r, e) => decS_PropertyPaths(r, e, {})),
   MarkerOwner: mk<T.MarkerOwner>(encS_MarkerOwner, (r, e) => decS_MarkerOwner(r, e, {})),
   Marker: mk<T.Marker>(encS_Marker, (r, e) => decS_Marker(r, e, {})),

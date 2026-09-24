@@ -30,17 +30,16 @@
  * (`paintProps.ts`) and the Path through a `points` data track; `paintTime.ts`
  * resolves a frame's strokes before the raster sees them.
  *
- * This module is the pure model + mutations; the drawing lives in `paintRaster`,
+ * This module is the pure model + reads; edits are engine commands
+ * (src/core/engine/paintStrokes.ts); the drawing lives in `paintRaster`,
  * the capture in the Paint tool (comp viewer, Layer panel).
  */
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { bumpScene } from '@stores/sceneStore';
 import { clamp01 } from '@utils/lang';
-import { paintPathProp } from './paintProps';
 
 export type PaintMode = 'paint' | 'erase' | 'clone';
 /** AE Paint panel ▸ Channels. */
@@ -235,18 +234,14 @@ export function strokeBounds(stroke: PaintStroke): { x: number; y: number; width
 }
 
 
-// ── Mutations (write to the layer's fx + notify) ──────────────────────
-
-let strokeSeq = 0;
-
-/** A stroke id unique in this document even across reloads (the counter alone
- *  restarts at 1 and a reopened project already holds `pstroke_1`). */
-function nextStrokeId(existing: ReadonlyArray<{ id: string }>): string {
-  const taken = new Set(existing.map((s) => s.id));
-  let id = `pstroke_${(strokeSeq += 1)}`;
-  while (taken.has(id)) id = `pstroke_${(strokeSeq += 1)}`;
-  return id;
-}
+// ── Reads + the static-value seam ─────────────────────────────────────
+//
+// Document edits go through the engine (B3): addPaintStroke /
+// updatePaintStroke / removePaintStrokes / setPaintOnTransparent /
+// setPaintStrokePath / setPaintPathAnimated — src/core/engine/paintStrokes.ts,
+// sent by @core/engine/paintEdits. `updatePaintStroke` below is only the
+// property registry's static-value write (propertyValue.ts), which the
+// engine's setProperty on `paint/<id>/<param>` runs.
 
 export function getNodePaint(nodeId: string): PaintConfig | null {
   const node = defaultSceneGraph.getNode(nodeId);
@@ -259,39 +254,6 @@ function writePaint(nodeId: string, strokes: PaintStroke[], onTransparent: boole
     : { strokes: [] });
   getEventBus().emit('AnimationChanged', { nodeId });
   bumpScene();
-}
-
-/** Append a paint stroke to a layer, creating the paint config on demand.
- *  Returns the new stroke's id. */
-export function addPaintStroke(
-  nodeId: string,
-  stroke: Partial<PaintStroke> & { points: ReadonlyArray<{ x: number; y: number }> },
-): string {
-  const cfg = getNodePaint(nodeId);
-  const existing = cfg?.strokes ?? [];
-  const next = normalizeStroke(stroke, nextStrokeId(existing));
-  writePaint(nodeId, [...existing, next], cfg?.onTransparent);
-  return next.id;
-}
-
-/** Remove the most recent stroke (undo the last brush pass). */
-export function removeLastStroke(nodeId: string): void {
-  const cfg = getNodePaint(nodeId);
-  const strokes = cfg?.strokes;
-  if (!strokes || strokes.length === 0) return;
-  writePaint(nodeId, strokes.slice(0, -1), cfg?.onTransparent);
-}
-
-/** Remove one stroke by id, with its keyframe tracks. */
-export function removePaintStroke(nodeId: string, strokeId: string): void {
-  const cfg = getNodePaint(nodeId);
-  if (!cfg || !cfg.strokes.some((s) => s.id === strokeId)) return;
-  const prefix = `paint.${strokeId}.`;
-  for (const t of defaultAnimation.tracksFor(nodeId)) {
-    if (t.prop.startsWith(prefix)) defaultAnimation.removeTrack(nodeId, t.prop);
-  }
-  defaultAnimation.setDataTrack(nodeId, paintPathProp(strokeId), null);
-  writePaint(nodeId, cfg.strokes.filter((s) => s.id !== strokeId), cfg.onTransparent);
 }
 
 /** Merge a patch into one stroke (renormalised, so a patch cannot store junk). */
@@ -308,73 +270,4 @@ export function updatePaintStroke(nodeId: string, strokeId: string, patch: Parti
     return normalizeStroke(merged, s.id);
   });
   if (hit) writePaint(nodeId, strokes, cfg.onTransparent);
-}
-
-/**
- * Shift-drag: continue a stroke with more points (AE joins the previous
- * stroke's end to the new samples). Pressure/tilt arrays extend in step; a
- * side that lacks them is padded so the arrays stay parallel.
- */
-export function extendPaintStroke(
-  nodeId: string,
-  strokeId: string,
-  more: { points: ReadonlyArray<{ x: number; y: number }>; pressure?: ReadonlyArray<number>; tiltX?: ReadonlyArray<number>; tiltY?: ReadonlyArray<number> },
-): void {
-  const cfg = getNodePaint(nodeId);
-  const s = cfg?.strokes.find((x) => x.id === strokeId);
-  if (!cfg || !s || more.points.length === 0) return;
-  const cat = (a: ReadonlyArray<number> | undefined, b: ReadonlyArray<number> | undefined, fill: number): number[] | undefined => {
-    if (!a && !b) return undefined;
-    return [...(a ?? new Array<number>(s.points.length).fill(fill)), ...(b ?? new Array<number>(more.points.length).fill(fill))];
-  };
-  updatePaintStroke(nodeId, strokeId, {
-    points: [...s.points, ...more.points],
-    pressure: cat(s.pressure, more.pressure, 1),
-    tiltX: cat(s.tiltX, more.tiltX, 0),
-    tiltY: cat(s.tiltY, more.tiltY, 0),
-  });
-}
-
-/**
- * Drawing with a stroke selected REPLACES its Path. With the Path stopwatch on
- * (a data track exists) that is a new Path keyframe at `layerTime`; otherwise
- * the static path is replaced — AE's rule for both.
- */
-export function replaceStrokePath(
-  nodeId: string,
-  strokeId: string,
-  points: ReadonlyArray<{ x: number; y: number }>,
-  layerTime: number,
-): void {
-  if (points.length === 0) return;
-  const prop = paintPathProp(strokeId);
-  if (defaultAnimation.isDataAnimated(nodeId, prop)) {
-    defaultAnimation.setDataKeyframe(nodeId, prop, 'points', layerTime, points.map((p) => ({ x: p.x, y: p.y })));
-    getEventBus().emit('AnimationChanged', { nodeId });
-    bumpScene();
-    return;
-  }
-  // A new static path invalidates per-point input recorded for the old one.
-  updatePaintStroke(nodeId, strokeId, { points, pressure: undefined, tiltX: undefined, tiltY: undefined });
-}
-
-/** Path stopwatch: start (key the current path at `layerTime`) or stop animating. */
-export function toggleStrokePathAnimation(nodeId: string, strokeId: string, layerTime: number): void {
-  const prop = paintPathProp(strokeId);
-  if (defaultAnimation.isDataAnimated(nodeId, prop)) {
-    defaultAnimation.setDataTrack(nodeId, prop, null);
-  } else {
-    const s = getNodePaint(nodeId)?.strokes.find((x) => x.id === strokeId);
-    if (!s) return;
-    defaultAnimation.setDataKeyframe(nodeId, prop, 'points', layerTime, s.points.map((p) => ({ x: p.x, y: p.y })));
-  }
-  getEventBus().emit('AnimationChanged', { nodeId });
-  bumpScene();
-}
-
-/** AE Paint On Transparent, for the layer's paint as a whole. */
-export function setPaintOnTransparent(nodeId: string, on: boolean): void {
-  const cfg = getNodePaint(nodeId);
-  if (!cfg) return;
-  writePaint(nodeId, cfg.strokes, on || undefined);
 }

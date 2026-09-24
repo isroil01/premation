@@ -925,6 +925,13 @@ struct AddProperties;
 struct RemoveProperties;
 struct PasteEffects;
 struct RemoveStroke;
+struct PaintKeyInit;
+struct AddPaintStroke;
+struct UpdatePaintStroke;
+struct RemovePaintStrokes;
+struct SetPaintOnTransparent;
+struct SetPaintStrokePath;
+struct SetPaintPathAnimated;
 struct MarkerOwner;
 struct MarkerInsert;
 struct AddMarkers;
@@ -1018,6 +1025,7 @@ struct ExpressionDiagnostic;
 struct ExpressionResult;
 struct KeyframeIds;
 struct PropertyPaths;
+struct PaintStrokeId;
 struct MarkerIds;
 struct JobRef;
 struct CommandResult;
@@ -2299,6 +2307,55 @@ struct RemoveStroke {
   bool operator==(const RemoveStroke&) const = default;
 };
 
+struct PaintKeyInit {
+  std::string param;
+  double time = 0.0;
+  double value = 0.0;
+  bool operator==(const PaintKeyInit&) const = default;
+};
+
+struct AddPaintStroke {
+  LayerId layer;
+  std::string stroke;
+  std::vector<PaintKeyInit> keys;
+  bool operator==(const AddPaintStroke&) const = default;
+};
+
+struct UpdatePaintStroke {
+  LayerId layer;
+  std::string stroke;
+  std::string patch;
+  bool operator==(const UpdatePaintStroke&) const = default;
+};
+
+struct RemovePaintStrokes {
+  LayerId layer;
+  std::vector<std::string> strokes;
+  bool operator==(const RemovePaintStrokes&) const = default;
+};
+
+struct SetPaintOnTransparent {
+  std::vector<LayerId> layers;
+  bool on = false;
+  bool operator==(const SetPaintOnTransparent&) const = default;
+};
+
+struct SetPaintStrokePath {
+  LayerId layer;
+  std::string stroke;
+  std::string points;
+  Time time = 0;
+  bool operator==(const SetPaintStrokePath&) const = default;
+};
+
+struct SetPaintPathAnimated {
+  LayerId layer;
+  std::string stroke;
+  bool animated = false;
+  Time time = 0;
+  bool operator==(const SetPaintPathAnimated&) const = default;
+};
+
 struct MarkerOwner {
   ItemId comp;
   std::optional<LayerId> layer;
@@ -2680,6 +2737,12 @@ struct Command {
     remove_properties = 612,
     paste_effects = 613,
     remove_stroke = 614,
+    add_paint_stroke = 615,
+    update_paint_stroke = 616,
+    remove_paint_strokes = 617,
+    set_paint_on_transparent = 618,
+    set_paint_stroke_path = 619,
+    set_paint_path_animated = 620,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -2703,7 +2766,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -3077,6 +3140,11 @@ struct PropertyPaths {
   bool operator==(const PropertyPaths&) const = default;
 };
 
+struct PaintStrokeId {
+  std::string stroke;
+  bool operator==(const PaintStrokeId&) const = default;
+};
+
 struct MarkerIds {
   std::vector<MarkerId> ids;
   bool operator==(const MarkerIds&) const = default;
@@ -3204,6 +3272,12 @@ struct CommandResult {
     remove_properties = 612,
     paste_effects = 613,
     remove_stroke = 614,
+    add_paint_stroke = 615,
+    update_paint_stroke = 616,
+    remove_paint_strokes = 617,
+    set_paint_on_transparent = 618,
+    set_paint_stroke_path = 619,
+    set_paint_path_animated = 620,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -3227,7 +3301,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -4897,6 +4971,20 @@ void encode(wire::Writer& w, const PasteEffects& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PasteEffects& out);
 void encode(wire::Writer& w, const RemoveStroke& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RemoveStroke& out);
+void encode(wire::Writer& w, const PaintKeyInit& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PaintKeyInit& out);
+void encode(wire::Writer& w, const AddPaintStroke& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AddPaintStroke& out);
+void encode(wire::Writer& w, const UpdatePaintStroke& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, UpdatePaintStroke& out);
+void encode(wire::Writer& w, const RemovePaintStrokes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RemovePaintStrokes& out);
+void encode(wire::Writer& w, const SetPaintOnTransparent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetPaintOnTransparent& out);
+void encode(wire::Writer& w, const SetPaintStrokePath& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetPaintStrokePath& out);
+void encode(wire::Writer& w, const SetPaintPathAnimated& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetPaintPathAnimated& out);
 void encode(wire::Writer& w, const MarkerOwner& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerOwner& out);
 void encode(wire::Writer& w, const MarkerInsert& v);
@@ -5083,6 +5171,8 @@ void encode(wire::Writer& w, const KeyframeIds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, KeyframeIds& out);
 void encode(wire::Writer& w, const PropertyPaths& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PropertyPaths& out);
+void encode(wire::Writer& w, const PaintStrokeId& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PaintStrokeId& out);
 void encode(wire::Writer& w, const MarkerIds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerIds& out);
 void encode(wire::Writer& w, const JobRef& v);

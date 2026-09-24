@@ -88,7 +88,7 @@ import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
 import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import type { PaintMode } from '@core/paint/paintStrokes';
-import { commitPaintDrag } from '@core/paint/paintCommit';
+import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
 import { paintSpaceAt, thinSamples, type PaintSpace } from '@core/paint/paintSpace';
 import { usePaintStore } from '@stores/paintStore';
@@ -2321,11 +2321,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             // it when the stroke began. Size is a comp-pixel diameter → the
             // layer's local units, measured through the same mapping as the
             // points, so parent, animated and 3D scale all count.
-            // B3-gap: a new stroke has no command (`addPropertyGroup` answers unsupported for
-            // paint strokes), continue-stroke rewrites a stroke's points AND pen arrays, and
-            // replace-selected-path needs a static Path (`setProperty paint/<id>/path` answers
-            // unsupported, "key it instead"). Same commit as the Layer panel's surface.
-            const result = commitPaintDrag({
+            // One engine edit, the same commit as the Layer panel's surface.
+            void commitPaintDrag({
               nodeId: pd.nodeId,
               mode: pd.mode,
               points,
@@ -2335,10 +2332,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
               compTime: pd.compTime,
               continueStroke: pd.shift,
               lastStrokeOnly: pd.lastStrokeOnly,
+            }).then((result) => {
+              if (!result.ok && result.reason) {
+                useUIStore.getState().notify({ level: 'info', message: result.reason, durationMs: 2600 });
+              }
             });
-            if (!result.ok && result.reason) {
-              useUIStore.getState().notify({ level: 'info', message: result.reason, durationMs: 2600 });
-            }
           }
         }
         controller.requestRender();

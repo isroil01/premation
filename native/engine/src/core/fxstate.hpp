@@ -146,6 +146,8 @@ void update_text_path(Document& d, std::string_view nodeId, const Json& patch);
 // ── paint ────────────────────────────────────────────────────────────────
 /// `readNodePaint`: the strokes that have points (nullopt when none).
 [[nodiscard]] std::optional<std::vector<Json>> read_node_paint(const Node& n);
+/// `readNodePaint(n)?.onTransparent` — `fx.paint.onTransparent === true`.
+[[nodiscard]] bool paint_on_transparent(const Node& n);
 [[nodiscard]] std::map<std::string, std::string> stroke_display_names(const std::vector<Json>& strokes);
 struct PaintPropRef {
   std::string strokeId;
@@ -160,6 +162,9 @@ struct PaintColorRef {
 [[nodiscard]] std::optional<double> read_paint_stroke_value(const Json& stroke, std::string_view key);
 [[nodiscard]] Json paint_stroke_patch(const Json& stroke, std::string_view key, double value);
 void update_paint_stroke(Document& d, std::string_view nodeId, std::string_view strokeId, const Json& patch);
+/// paintStrokes.ts `normalizeStroke(raw, id)`: a full stroke in the editor's key order; v2 keys copied only
+/// when present.
+[[nodiscard]] Json normalize_paint_stroke(const Json& raw, const std::string& id);
 
 // ── mask property paths ──────────────────────────────────────────────────
 struct MaskPropRef {

@@ -255,7 +255,7 @@ their `GroupId`, never by index.
 | Shape contents | `contents/<groupId>/…/<param>` | `pathop.<opId>.<param>`, `fx.fill(s)`, `fx.stroke(s)` |
 | 3D material / geometry | `material/<param>`, `geometry/<param>` | bare names (`metal`, `extrusionDepth`, …) |
 | Camera / light | `camera/<param>`, `light/<param>` | flat transform props |
-| Paint stroke | `paint/<strokeId>/<param>`, `paint/<strokeId>/path` | `paint.<strokeId>.*` |
+| Paint stroke | `paint/<strokeId>/<param>`, `paint/<strokeId>/path`; the stroke itself (points, pen input, switches) and the layer's Paint on Transparent through the paint-stroke commands (§4.7, ids 615–620) | `paint.<strokeId>.*`, `fx.paint` |
 | Puppet pin | `puppet/<pinId>/position` … | `puppet.<pin>.*` |
 | Audio | `audio/levels`, `audio/pan` | `audioLevelDb`, `audioPan` |
 | Time remap / retime | `timeRemap`, `layer/timeSpeed` | `timeRemap`, `timeSpeed` |
@@ -433,6 +433,12 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `removeProperties` | G1 — delete optional properties with their keyframes and expressions (a non-optional property: `invalidArgument`; an absent one: `notFound`). Inverse: the properties, keys and expressions back exactly. |
 | `pasteEffects` | B3z — Edit ▸ Paste of copied effects from a captured snapshot (the source may since have changed or gone), and applying a saved effect preset, onto several layers at a stack index. Returns the new groups. Inverse: remove them. |
 | `removeStroke` | B3z — delete Contents ▸ Stroke N of a shape's stroke stack with its tracks and expressions; the strokes above move down one index with their tracks. Inverse: the stack and tracks exactly. |
+| `addPaintStroke` | B3 — append one PAINT stroke (Effects ▸ Paint ▸ Brush N; `fx.paint`) from a JSON object without an id (the engine mints `pstroke_<n>`), renormalised (`normalizeStroke`); `points` must be a non-empty array of finite {x, y}. `keys` key the new stroke's numeric params (Write On's End, in %) at LAYER seconds, the axis of its `inPoint`/`outPoint`. Returns the id. Inverse: the paint and tracks as they were. |
+| `updatePaintStroke` [c] | B3 — merge a JSON patch into one stroke and renormalise; a member set to null clears that key; `id` cannot be patched. The video switch (`visible`), Shift-continue (joined points + pen arrays). Inverse: the stroke as it was. |
+| `removePaintStrokes` | B3 — delete strokes with every track, expression and data track under `paint.<id>.` (Paint panel ▸ delete, Tool Options ▸ Undo last stroke). Inverse: strokes and tracks exactly. |
+| `setPaintOnTransparent` | B3 — AE Paint on Transparent on layers that have strokes (else `notFound`). Inverse: the previous flag. |
+| `setPaintStrokePath` | B3 — drawing with a stroke selected: with the Path animated, a Path key at `time`; else the static points, the old per-point pen input dropped. Inverse: the stroke / track as they were. |
+| `setPaintPathAnimated` | B3 — the Path stopwatch: ON keys the current points at `time` (already animated: no change); OFF removes the Path keys, keeping the static points. Inverse: the track as it was. |
 
 `setEffectParam` and `setMaskPath` from the plan's §2 sketch are `setProperty`
 on an effect or mask path — one command, one inverse implementation.
@@ -1263,7 +1269,7 @@ rather than adding their own) and **claims these command-id ranges**:
 | Layers | 230–269 | pasteLayers parent / ref remap, subtree delete, layer-kind gaps |
 | Layer time | 330–349 | transitions, time-stretch dialog, unfreeze, track-local ripple |
 | Properties / keyframes | 420–439, 520–539 | member keys, roving retime, graph-editor gaps |
-| Groups | 650–699 | puppet pins, skeleton/bones/IK, paint strokes, mask/shape drawing |
+| Groups | 650–699 | puppet pins, skeleton/bones/IK, mask/shape drawing (paint strokes landed as commands 615–620) |
 | Markers | 710–719 | marker colour tokens |
 
 **Off-document builders** (`src/core/engine/offDocument.ts`). An insert

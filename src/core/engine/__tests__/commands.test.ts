@@ -28,6 +28,14 @@ async function opacityKeys(h: Harness, layer: string): Promise<string[]> {
   return r.sets[0]!.keyframes.map((k) => k.id);
 }
 
+/** A paint stroke with pen input (the paint cases' fixture). */
+function paintStroke(layer: string): Command {
+  return {
+    type: 'addPaintStroke', layer, keys: [],
+    stroke: JSON.stringify({ points: [{ x: 0, y: 0 }, { x: 10, y: 0 }], pressure: [0.5, 1], mode: 'paint' }),
+  };
+}
+
 export const CASES: Partial<Record<CommandType, Case>> = {
   // ── Project ──
   setProjectSettings: { cmd: () => ({ type: 'setProjectSettings', patch: { timeDisplay: 'frames', framesStartAt: 1 } }) },
@@ -168,6 +176,48 @@ export const CASES: Partial<Record<CommandType, Case>> = {
       return { type: 'removeStroke', layer: s.B, index: 0 };
     },
   },
+  // ── Paint strokes (B3) ──
+  addPaintStroke: {
+    cmd: (s) => ({
+      type: 'addPaintStroke', layer: s.B,
+      stroke: JSON.stringify({ points: [{ x: 0, y: 0 }, { x: 10, y: 5 }], color: '#ff0000', size: 8, mode: 'paint', spacing: 0.25, inPoint: 0.5 }),
+      keys: [{ param: 'end', time: 0.5, value: 0 }, { param: 'end', time: 1, value: 100 }],
+    }),
+  },
+  updatePaintStroke: {
+    cmd: async (s, h) => {
+      const { stroke } = await h.run(paintStroke(s.B)) as { stroke: string };
+      return { type: 'updatePaintStroke', layer: s.B, stroke, patch: JSON.stringify({ visible: false, points: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }], pressure: null }) };
+    },
+  },
+  removePaintStrokes: {
+    cmd: async (s, h) => {
+      const { stroke } = await h.run(paintStroke(s.B)) as { stroke: string };
+      await h.run(paintStroke(s.B));
+      await h.run({ type: 'setProperty', prop: { layer: s.B, path: `paint/${stroke}/end` }, time: sec(1), value: { kind: 'scalar', value: 40 } });
+      await h.run({ type: 'setPaintPathAnimated', layer: s.B, stroke, animated: true, time: sec(0) });
+      return { type: 'removePaintStrokes', layer: s.B, strokes: [stroke] };
+    },
+  },
+  setPaintOnTransparent: {
+    cmd: async (s, h) => {
+      await h.run(paintStroke(s.B));
+      return { type: 'setPaintOnTransparent', layers: [s.B], on: true };
+    },
+  },
+  setPaintStrokePath: {
+    cmd: async (s, h) => {
+      const { stroke } = await h.run(paintStroke(s.B)) as { stroke: string };
+      await h.run({ type: 'setPaintPathAnimated', layer: s.B, stroke, animated: true, time: sec(0) });
+      return { type: 'setPaintStrokePath', layer: s.B, stroke, points: JSON.stringify([{ x: 4, y: 4 }, { x: 8, y: 0 }]), time: sec(1) };
+    },
+  },
+  setPaintPathAnimated: {
+    cmd: async (s, h) => {
+      const { stroke } = await h.run(paintStroke(s.B)) as { stroke: string };
+      return { type: 'setPaintPathAnimated', layer: s.B, stroke, animated: true, time: sec(1) };
+    },
+  },
   // ── Layer time ──
   setLayerTiming: { cmd: (s) => ({ type: 'setLayerTiming', items: [{ layer: s.A, inPoint: sec(1), outPoint: sec(4) }, { layer: s.B, stretch: -2 }] }) },
   moveLayersInTime: { cmd: (s) => ({ type: 'moveLayersInTime', layers: [s.A], delta: sec(1), ripple: false }) },
@@ -303,7 +353,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(106);
+  expect(edits.length).toBe(112);
 });
 
 describe.each(edits)('%s', (type) => {

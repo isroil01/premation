@@ -14,8 +14,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isPaintableKind } from '@core/paint/paintCoords';
-import { removeLastStroke } from '@core/paint/paintStrokes';
-import { runDocumentEdit } from '@core/commands/documentEdit';
+import { removeLastPaintStroke } from '@core/engine/paintEdits';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
@@ -140,18 +139,15 @@ export function ToolOptionsBar(): JSX.Element | null {
             <button type="button" className={styles.action} title="Brushes panel (Ctrl+9)" onClick={() => useLayoutStore.getState().openPanel('brushes')}>
               Brushes…
             </button>
-            {/* AE's "Erase: Last Stroke Only", as a button rather than a mode.
-                `removeLastStroke` already existed with no caller — this is the
-                one place a user would look for it. */}
+            {/* AE's "Erase: Last Stroke Only", as a button rather than a mode —
+                this is the one place a user would look for it. */}
             {activeTool === 'eraser' && (
               <button
                 type="button"
                 className={styles.action}
                 title="Remove the most recent paint stroke on this layer"
-                // Its own undo step, like the stroke it removes — unwrapped, it
-                // left no history entry and Ctrl+Z skipped straight past it.
-                // B3-gap: `removePropertyGroups` does not resolve `paint/<id>` (notFound) — the TS engine has no paint-stroke group kind.
-                onClick={() => runDocumentEdit('Remove Last Stroke', () => removeLastStroke(selectedIds[0]!))}
+                // Its own undo step (`removePaintStrokes`), like the stroke it removes.
+                onClick={() => { void removeLastPaintStroke(selectedIds[0]!); }}
               >
                 Undo last stroke
               </button>

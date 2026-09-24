@@ -21,18 +21,18 @@ import { playheadSeconds } from '@core/timeline/timelineView';
 import { paintPathProp } from '@core/paint/paintProps';
 import {
   getNodePaint,
-  removePaintStroke,
-  setPaintOnTransparent,
   strokeDisplayNames,
-  toggleStrokePathAnimation,
-  updatePaintStroke,
   type EraseMode,
   type PaintBlend,
   type PaintChannels,
 } from '@core/paint/paintStrokes';
 import type { PaintDuration } from '@core/paint/paintCapture';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { getRemappedTime } from '@core/timeline/TimelineController';
+import {
+  deletePaintStroke,
+  setPaintOnTransparent,
+  setPaintPathAnimated,
+  setPaintStrokeVisible,
+} from '@core/engine/paintEdits';
 import { usePaintStore } from '@stores/paintStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -144,10 +144,6 @@ export function PaintPanel(): JSX.Element {
   const compLayers = (compId ? m.comp(compId)?.layers ?? [] : [])
     .map((id) => m.layer(id))
     .filter((l): l is NonNullable<typeof l> => !!l && !l.parent && isPaintableLayer(l));
-
-  // B4-gap: the layer time under the playhead goes through the layer's time
-  // remap (engine evaluation) — the legacy path-key write below needs it.
-  const layerTime = (): number => (layerId ? getRemappedTime(layerId, playheadSeconds()) : 0);
 
   return (
     <div className={styles.panelRoot} aria-label="Paint">
@@ -290,11 +286,7 @@ export function PaintPanel(): JSX.Element {
                       title="Video switch"
                       onClick={(e) => {
                         e.stopPropagation();
-                        // B3-gap: a paint stroke's video switch has no API address — `paint/<id>` is
-                        // not a group (`setGroupEnabled` answers notFound) and the catalog lists no
-                        // `paint/<id>/visible` property.
-                        runDocumentEdit(s.visible === false ? 'Show Paint Stroke' : 'Hide Paint Stroke', () =>
-                          updatePaintStroke(layerId, s.id, { visible: s.visible === false ? undefined : false }));
+                        void setPaintStrokeVisible(layerId, s.id, s.visible === false);
                       }}
                     >
                       <Icon name={s.visible === false ? 'eye-off' : 'eye'} size="sm" />
@@ -308,14 +300,7 @@ export function PaintPanel(): JSX.Element {
                       title={keyed ? 'Path is keyframed — click to remove its keyframes' : 'Key the Path at the current time'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        // B3-gap: the Path stopwatch. ON could be `addKeyframes` with the stroke's points, but
-                        // OFF cannot: once the Path is keyed, `catalogFor` binds `paint/<id>/path` as a scalar
-                        // member row (propertyTree's paintRows lists the keyed data track as a member), so
-                        // `setAnimated{false}` is a silent no-op, `setProperty{time}` answers typeMismatch and
-                        // `getKeyframes` returns none. Both halves stay here until the binding is fixed, so
-                        // one toggle never mixes the two histories.
-                        runDocumentEdit(keyed ? 'Disable Path Animation' : 'Enable Path Animation', () =>
-                          toggleStrokePathAnimation(layerId, s.id, layerTime()));
+                        void setPaintPathAnimated(layerId, s.id, !keyed, playheadSeconds());
                       }}
                     >
                       <Icon name={keyed ? 'keyframe' : 'stopwatch'} size="sm" />
@@ -327,9 +312,7 @@ export function PaintPanel(): JSX.Element {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (selected) paint.set({ selectedStroke: null });
-                        // B3-gap: `removePropertyGroups` does not resolve `paint/<id>` (notFound) — the
-                        // TS engine has no paint-stroke group kind (schema reserves it, ENGINE_API §15 650–699).
-                        runDocumentEdit('Delete Paint Stroke', () => removePaintStroke(layerId, s.id));
+                        void deletePaintStroke(layerId, s.id);
                       }}
                     >
                       <Icon name="trash" size="sm" />
@@ -345,9 +328,7 @@ export function PaintPanel(): JSX.Element {
               label="Paint on Transparent"
               checked={cfg.onTransparent === true}
               onChange={() => {
-                // B3-gap: Paint on Transparent is a layer paint setting with no API property
-                // (`paint/onTransparent` is not in the catalog).
-                runDocumentEdit('Paint on Transparent', () => setPaintOnTransparent(layerId, cfg.onTransparent !== true));
+                void setPaintOnTransparent(layerId, cfg.onTransparent !== true);
               }}
             />
           </>
