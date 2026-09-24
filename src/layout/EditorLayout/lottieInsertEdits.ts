@@ -10,7 +10,7 @@
  */
 
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { buildLottieFile, buildLottieItem, getLottieItem, prepareLottieFile, previewLottieItem } from '@core/library/lottieLibrary';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 
@@ -21,7 +21,7 @@ import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lott
 export async function insertLottieItemEdit(lottieId: string, x?: number, y?: number): Promise<string[] | null> {
   const item = getLottieItem(lottieId);
   if (!item) return [];
-  const ids = await insertBuiltLayers(`Insert ${item.name}`, activeCompRootId(), () => buildLottieItem(lottieId, x, y));
+  const ids = await insertBuiltLayers(`Insert ${item.name}`, (activeCompIdNow() ?? 'comp_root'), () => buildLottieItem(lottieId, x, y));
   if (ids && ids.length > 0) previewLottieItem(lottieId);
   return ids;
 }
@@ -35,7 +35,7 @@ export async function importLottieFileEdit(file: File): Promise<void> {
     reportLottieImportFailure(file.name, err);
     return;
   }
-  const ids = await insertBuiltLayers(`Import ${file.name}`, activeCompRootId(), () => buildLottieFile(prepared));
+  const ids = await insertBuiltLayers(`Import ${file.name}`, (activeCompIdNow() ?? 'comp_root'), () => buildLottieFile(prepared));
   if (ids === null) return; // refused (toasted by insertBuiltLayers)
   reportLottieImport(file.name, { nodeIds: ids, warnings: prepared.warnings });
 }

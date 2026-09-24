@@ -19,7 +19,6 @@ import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { buildCustomLayerInto, customLayerLabel, wakeCustomLayerKind } from '@core/plugins/createCustomLayerFromMenu';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { graph as docGraph, isLayer } from '@core/engine/doc';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { isPickArmed } from '@stores/trackerStore';
@@ -127,7 +126,6 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { readGeometry } from '@core/workspace/geometry';
-import { isAudioNode } from '@core/audio/audioScene';
 import { eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import {
   eligibleExpressionProps,
@@ -140,7 +138,6 @@ import {
 import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
 import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
-import { isGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -166,7 +163,8 @@ import { buildPathCommands } from '@core/workspace/pathCommands';
 import { canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
 import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
-import { activeCompSize } from '@core/scene/activeComp';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
 import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
@@ -199,6 +197,18 @@ interface ProvidersProps {
 
 function notify(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 2600 });
+}
+
+/**
+ * Pixel size of the composition the active tab edits — the FRAME a fit command
+ * fits into (the mirror twin of `activeComp.activeCompSize`); 1920×1080 when the
+ * tab names no composition the document has.
+ */
+function activeTabCompSize(): { width: number; height: number } {
+  const st = useProjectStore.getState();
+  const id = st.tabs[st.activeTabId ?? '']?.compositionId;
+  const s = id ? documentMirror().comp(id)?.settings : undefined;
+  return s ? { width: s.width, height: s.height } : { width: 1920, height: 1080 };
 }
 
 /**
@@ -648,7 +658,9 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
     // Honest disable: with fewer than N markers the key does nothing, and a
     // command that reports itself enabled while doing nothing is the dead-control
     // shape this codebase keeps finding.
-    enabled: () => (documentMirror().comp(activeCompIdNow() ?? '')?.markers.length ?? 0) >= n,
+    // B4-gap: comp markers — a marker the legacy M key adds reaches the mirror a
+    // microtask later, and a Shift+digit in the same tick must already see it.
+    enabled: () => getTimelineController().compMarkerCount() >= n,
     execute: () => {
       if (!goToMarkerIndex(n)) {
         notify(`No comp marker ${n}`, 'info');
@@ -977,7 +989,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const ids = useSelectionStore.getState().ids;
         if (ids.length === 0) return;
-        const next = !isGuideLayer(ids[0]!);
+        const next = !documentMirror().layer(ids[0]!)?.switches.guide;
         // `setLayerSwitches{guide}` through the engine (B3): the whole selection, one entry.
         void setLayersSwitch(ids, { guide: next }, next ? 'Enable Guide Layer' : 'Disable Guide Layer');
         const plural = ids.length > 1;
@@ -1278,8 +1290,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
         if (ids.length !== 1) return false;
-        const node = defaultSceneGraph.getNode(ids[0]!);
-        return !!node && isAudioNode(node);
+        return uiKindOf(documentMirror().layer(ids[0]!)) === 'audio';
       },
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
@@ -1733,7 +1744,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 't', meta: true, alt: true, shift: true },
       enabled: () => true,
       // The insert (pointer placement, comp-scaled size) runs off-document → ONE pasteLayers entry.
-      execute: () => { void insertBuiltLayers('New Text Layer', activeCompRootId(), () => insertPrimitive('text', 'Text')); },
+      execute: () => { void insertBuiltLayers('New Text Layer', (activeCompIdNow() ?? 'comp_root'), () => insertPrimitive('text', 'Text')); },
     },
     {
       id: asCommandId('layer.newSolid'),
@@ -1915,7 +1926,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       ...(shortcut ? { shortcut } : {}),
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        const frame = activeCompSize();
+        const frame = activeTabCompSize();
         const ids = useSelectionStore.getState().ids;
         // Through the engine (B3): the whole selection, one entry. Every layer kind has a
         // width / height property; a composition root (a comp's own row) is not a layer.
@@ -1961,7 +1972,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'Home', meta: true },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        const frame = activeCompSize();
+        const frame = activeTabCompSize();
         const ids = useSelectionStore.getState().ids;
         void centreInCompEdit(ids, frame, playheadSeconds()).then((done) => {
           // B3-legacy: engine gap — a node that is not a layer of a composition.
@@ -2685,8 +2696,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // did not have.
             enabled: () => true,
             execute: () => {
-              const comp = useCompositionStore.getState();
-              openExportDialog(comp.durationSeconds, comp.fps);
+              const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+              openExportDialog(settingsDurationSeconds(settings), settingsFps(settings));
             },
           });
           registry.register({
@@ -2789,7 +2800,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               execute: async () => {
                 const label = customLayerLabel(kind);
                 if (!label) return;
-                const ids = await insertBuiltLayers(label, activeCompRootId(), () => buildCustomLayerInto(kind, activeCompRootId()));
+                const ids = await insertBuiltLayers(label, (activeCompIdNow() ?? 'comp_root'), () => buildCustomLayerInto(kind, (activeCompIdNow() ?? 'comp_root')));
                 if (ids && ids.length > 0) wakeCustomLayerKind(kind);
               },
             });

@@ -100,6 +100,13 @@ const PURE_READS = new Set([
   'thinSamples', // core/paint/paintSpace: point thinning
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given
+  // B4 other/commands (checked: static catalogs — no singleton, store, controller or document on any path).
+  'layerFlagDef', // core/scene/layerFlags: a lookup in the static LAYER_FLAGS switch table (label, icon, cycles)
+  'nextQuality', // core/effects/layerQuality: the Best → Draft → Wireframe cycle of the value it is given
+  'effectDefFor', // core/effects/effects: a lookup in the static EFFECT_DEFS catalog, then the plugin-effect registry (pluginEffects.effectById, a Map of registered defs)
+  'getLottieItem', // core/library/lottieLibrary: a lookup in the static LOTTIE_ITEMS catalog
+  'mographDuration', // core/library/mographLibrary: replays a static MOGRAPH catalog item's choreography into a local max (builders.choreographyDuration)
+  'customLayerLabel', // core/plugins/createCustomLayerFromMenu: "New <label>" from the plugin layer-kind registry (layerKindRegistry.findLayerKind, a Map)
 ]);
 
 /**

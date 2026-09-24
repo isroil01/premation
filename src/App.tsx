@@ -78,6 +78,8 @@ import {
   setTimelinePixelsPerSecond,
   setTimelineScrollPixels,
 } from '@core/timeline/timelineView';
+import { documentMirror } from '@stores/documentMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
@@ -125,7 +127,6 @@ import {
   setTimelineEditMode,
   getTimelineEditMode,
 } from '@layout/Timeline/timelineEditMode';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
 import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
@@ -769,7 +770,7 @@ function EditorShellInner(): JSX.Element {
   };
 
   const handleTrackActivate = (trackId: string): void => {
-    const node = defaultSceneGraph.getNode(trackId);
+    const node = documentMirror().layer(trackId);
     if (!node) return;
     // AE: double-clicking a layer opens it — a comp instance its source comp
     // (with the navigator trail and the playhead carried across), a group its
@@ -778,7 +779,7 @@ function EditorShellInner(): JSX.Element {
     if (openLayerOnDoubleClick(trackId)) return;
     // A comp instance whose source is gone opens nothing; isolating its empty
     // card would read as a bug.
-    if (readNodeKind(node) === 'comp') return;
+    if (uiKindOf(node) === 'comp') return;
     focusIsolate(trackId);
     setSelected([trackId]);
   };
@@ -792,11 +793,15 @@ function EditorShellInner(): JSX.Element {
   // the nearest visible SIBLING row is immune to both.
   const handleTrackReorder = useCallback((fromId: string, toIndex: number): void => {
     const list = tracksRef.current;
-    const node = defaultSceneGraph.getNode(fromId);
+    const m = documentMirror();
+    const node = m.layer(fromId);
     if (!node) return;
-    const parentId = node.parent;
-    const siblingRow = (t: { id: string } | undefined): boolean =>
-      !!t && t.id !== fromId && defaultSceneGraph.getNode(t.id)?.parent === parentId;
+    // The scene parent: the group a layer sits in, else its composition.
+    const parentId = node.parent ?? node.comp;
+    const siblingRow = (t: { id: string } | undefined): boolean => {
+      const l = t && t.id !== fromId ? m.layer(t.id) : undefined;
+      return !!l && (l.parent ?? l.comp) === parentId;
+    };
 
     // Prefer the first sibling at/after the drop slot → place display-BEFORE it;
     // otherwise the last sibling before the slot → place display-AFTER it.

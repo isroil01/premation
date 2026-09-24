@@ -11,10 +11,10 @@ import type { TemplateDefinition } from '@core/template/templateTypes';
 import { getTemplate } from '@core/template/registry';
 import { readTemplateFieldValue } from '@core/template/templateFields';
 import { readAuthoredFields } from '@core/template/templateAuthoring';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import type { Command } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { liveKf } from '@core/template/templates/builders';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -71,7 +71,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     // choreography built off-document and pasted (offDocument.ts). The build
     // needs the emptied comp (its layers carry fixed `tpl_*` ids), so it runs
     // between the two steps of the gesture.
-    const comp = activeCompRootId();
+    const comp = activeCompIdNow() ?? 'comp_root';
     const label = `Apply ${t.name}`;
     const client = engine();
     const opened = await client.beginGesture(label);
@@ -137,7 +137,8 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       const current = readTemplateFieldValue(f);
       values[f.id] = (typeof current === 'string' || typeof current === 'number') ? current : f.default;
     }
-    const comp = useCompositionStore.getState();
+    const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+    const comp = { width: settings?.width ?? 1920, height: settings?.height ?? 1080 };
     set({
       active: {
         id: '__authored', name: 'This composition',

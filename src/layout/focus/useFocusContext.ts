@@ -6,7 +6,7 @@
 
 import { useMemo } from 'react';
 import { useFocusStore, focusActiveSet, isFocusActive } from '@stores/focusStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import type { SnapshotFocus } from '@core/rendering/buildSnapshot';
 
 export interface Crumb {
@@ -25,7 +25,7 @@ export interface FocusContext {
   crumbs: Crumb[];
 }
 
-const nameOf = (id: string): string => defaultSceneGraph.getNode(id)?.name ?? 'Layer';
+const nameOf = (id: string): string => documentMirror().layer(id)?.name ?? 'Layer';
 
 export function useFocusContext(): FocusContext {
   const path = useFocusStore((s) => s.path);

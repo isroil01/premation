@@ -45,8 +45,8 @@
 
 import { create } from 'zustand';
 import type { Placement } from '@hooks/positionPopover';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { documentMirror } from '@stores/documentMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { defaultAnimation } from '@motion/animation';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
@@ -145,7 +145,8 @@ const CONTENT_KINDS = new Set(['shape', 'text', 'image', 'video', 'svg', 'partic
 
 function contentLayerCount(): number {
   try {
-    return flattenScene(defaultSceneGraph).filter((n) => CONTENT_KINDS.has(readNodeKind(n))).length;
+    const m = documentMirror();
+    return m.layerIds().filter((id) => CONTENT_KINDS.has(uiKindOf(m.layer(id)) ?? '')).length;
   } catch {
     return 0;
   }
