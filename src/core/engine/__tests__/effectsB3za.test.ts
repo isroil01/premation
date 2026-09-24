@@ -28,7 +28,7 @@ const scalar = (value: number): Value => ({ kind: 'scalar', value });
 const str = (value: string): Value => ({ kind: 'string', value });
 const square = [0, 0, 100, 0, 100, 100, 0, 100];
 const bezier = (vertices: number[], featherPoints: Array<{ segment: number; t: number; radius: number; tension: number }> = []): BezierPath =>
-  ({ vertices, inTangents: [], outTangents: [], closed: true, featherPoints });
+  ({ vertices, inTangents: [], outTangents: [], closed: true, featherPoints, vertexStates: [] });
 const pathV = (vertices: number[], featherPoints: Parameters<typeof bezier>[1] = []): Value =>
   ({ kind: 'path', value: bezier(vertices, featherPoints) });
 const value = async (layer: string, path: string, time = 0): Promise<Value> =>

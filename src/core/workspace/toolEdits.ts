@@ -95,7 +95,7 @@ export function maskPointsToPath(points: ReadonlyArray<MaskPoint>, closed: boole
     inTangents.push(p.inX - p.x, p.inY - p.y);
     outTangents.push(p.outX - p.x, p.outY - p.y);
   }
-  return { kind: 'path', value: { vertices, inTangents, outTangents, closed, featherPoints: [] } };
+  return { kind: 'path', value: { vertices, inTangents, outTangents, closed, featherPoints: [], vertexStates: [] } };
 }
 
 /**

@@ -68,7 +68,7 @@ export function outlinePathValue(
   if (featherPoints.length === 0 && points.length > 0 && prev?.some((p) => typeof p.feather === 'number')) {
     featherPoints.push({ segment: 0, t: 0, radius: -1, tension: 0 });
   }
-  return { kind: 'path', value: { vertices, inTangents, outTangents, closed, featherPoints } };
+  return { kind: 'path', value: { vertices, inTangents, outTangents, closed, featherPoints, vertexStates: [] } };
 }
 
 /** A path value read back as outline points (absolute handles, per-vertex feathers). */

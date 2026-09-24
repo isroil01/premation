@@ -522,7 +522,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       await inOneEntry('New Mask', [
         () => [{
           type: 'addMask', layer: nodeId, mode: 'add', name: 'Segment (SAM-class)', inverted: false,
-          path: { vertices, inTangents: vertices.map(() => 0), outTangents: vertices.map(() => 0), closed: true, featherPoints: [] },
+          path: { vertices, inTangents: vertices.map(() => 0), outTangents: vertices.map(() => 0), closed: true, featherPoints: [], vertexStates: [] },
         }],
         (earlier) => {
           const group = (earlier[0]?.[0] as { groups?: string[] } | undefined)?.groups?.[0];

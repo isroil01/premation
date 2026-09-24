@@ -433,6 +433,8 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `removeProperties` | G1 — delete optional properties with their keyframes and expressions (a non-optional property: `invalidArgument`; an absent one: `notFound`). Inverse: the properties, keys and expressions back exactly. |
 | `pasteEffects` | B3z — Edit ▸ Paste of copied effects from a captured snapshot (the source may since have changed or gone), and applying a saved effect preset, onto several layers at a stack index. Returns the new groups. Inverse: remove them. |
 | `removeStroke` | B3z — delete Contents ▸ Stroke N of a shape's stroke stack with its tracks and expressions; the strokes above move down one index with their tracks. Inverse: the stack and tracks exactly. |
+| `editPathTopology` | B3 — a STRUCTURAL edit of an outline (`masks/<id>/path`, a shape's `layer/path.points`) in EVERY state, static + each key: split a segment, remove vertices, Set First Vertex, Reverse Path Direction, Continue Path (`op`), and/or the Closed switch (`closed`). States the op does not apply to are left alone; none at all = `invalidArgument`. Key ids/times/easing kept (§15.10). Inverse: every state exactly. |
+| `setShapeOutline` | B3 — the Knife: a shape layer's outline becomes independent runs (`Geometry.subpaths`), the single-run outline cleared, shape type `path`. Not a shape: `invalidArgument`; animated outline: `animated`. Inverse: the outline exactly. |
 
 `setEffectParam` and `setMaskPath` from the plan's §2 sketch are `setProperty`
 on an effect or mask path — one command, one inverse implementation.

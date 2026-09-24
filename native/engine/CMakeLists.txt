@@ -126,6 +126,7 @@ if(MOTION_BUILD_TESTS)
   add_executable(engine_tests
     tests/test_framing.cpp
     tests/test_session.cpp
+    tests/test_paths.cpp
     tests/test_stress.cpp
     tests/test_render_graph.cpp
   )
@@ -252,6 +253,7 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_precompose.cpp
   src/core/handlers_properties.cpp
   src/core/handlers_strokes.cpp
+  src/core/handlers_paths.cpp
   src/core/json.cpp
   src/core/layer_clone.cpp
   src/core/meta.cpp

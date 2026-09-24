@@ -33,7 +33,7 @@ async function errorCode(cmd: Command): Promise<string | null> {
   return r.ok ? null : r.error.code;
 }
 
-const PATH: BezierPath = { closed: false, vertices: [1, 1, 9, 2], inTangents: [0, 0, 0, 0], outTangents: [0, 0, 0, 0], featherPoints: [] };
+const PATH: BezierPath = { closed: false, vertices: [1, 1, 9, 2], inTangents: [0, 0, 0, 0], outTangents: [0, 0, 0, 0], featherPoints: [], vertexStates: [] };
 
 describe('paint strokes through the engine API (B3 gaps)', () => {
   it('a new stroke has no command: addPropertyGroup answers unsupported', async () => {

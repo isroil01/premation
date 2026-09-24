@@ -34,10 +34,10 @@ import {
 import { segmentStrokesToMask, ROTO_PATH_NAME } from './rotoBrushTool';
 
 const square = (s: number): BezierPath => ({
-  vertices: [-s, -s, s, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: true, featherPoints: [],
+  vertices: [-s, -s, s, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [],
 });
 const tri = (s: number): BezierPath => ({
-  vertices: [0, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: false, featherPoints: [],
+  vertices: [0, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: false, featherPoints: [], vertexStates: [],
 });
 
 let h: Harness & { engine: LocalEngine };

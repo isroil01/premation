@@ -221,6 +221,15 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     inv.maskId = id;
     inv.animatable = false;
     add(std::move(inv));
+    PropBinding roto;
+    roto.path = "masks/" + id + "/rotoBezier";
+    roto.name = "RotoBezier";
+    roto.matchName = "ADBE Mask RotoBezier";
+    roto.valueType = ValueType::bool_;
+    roto.special = Special::maskRotoBezier;
+    roto.maskId = id;
+    roto.animatable = false;
+    add(std::move(roto));
   };
 
   // Compositing Options (B3z): Effect Opacity (keyed on effect.<id>.fx.opacity,
@@ -246,6 +255,19 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       if (mask) {
         for (const Json& p : mask->at("paths").arr()) add_mask_props(p);
       }
+      continue;
+    }
+    if (row.prop == kShapePathTrack) {
+      // B3: a drawn shape's Path — a path value (static: Geometry points +
+      // Closed; keys: the whole-outline `path.points` data track).
+      PropBinding b;
+      b.path = api_path_for(row.prop, &row, animIds, selIds);
+      b.name = row.label;
+      b.matchName = "ADBE Vector Shape";
+      b.valueType = ValueType::path;
+      b.dataTrack = std::string(kShapePathTrack);
+      b.special = Special::shapePath;
+      add(std::move(b));
       continue;
     }
     const bool color = row.members.size() == 4 && row.members[0].ends_with("_r") && row.members[1].ends_with("_g") &&
@@ -467,13 +489,15 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     add(std::move(b));
   }
   // A ONE-node camera's Point of Interest (B3z): keying it aims the camera at a
-  // point — what Track Motion's camera follow writes (props.ts).
-  if (node.kind() == "camera") {
+  // point — what Track Motion's camera follow writes (props.ts). A light's
+  // likewise (B3): the viewport's POI handle aims a light that has none yet.
+  if (node.kind() == "camera" || node.kind() == "light") {
+    const std::string poiKind = node.kind();
     for (const std::string m : {"poiX", "poiY", "poiZ"}) {
       if (cat.byMember.contains(m)) continue;
       const PropertyMeta meta = resolve_property_meta(m, &node);
       PropBinding b;
-      b.path = "camera/" + m;
+      b.path = poiKind + "/" + m;
       b.name = meta.label.empty() ? m : meta.label;
       b.matchName = m;
       b.valueType = ValueType::scalar;
@@ -1229,9 +1253,27 @@ api::BezierPath mask_to_bezier(const Json& p) {
       const Json& f = pts.arr()[i].at("feather");
       if (f.is_number()) b.feather_points.push_back(api::FeatherPoint{static_cast<std::uint32_t>(i), 0.0, f.num(), 0.0});
     }
+    b.vertex_states = vertex_states_of(pts);
   }
   b.closed = p.at("closed").is_bool() && p.at("closed").b();
   return b;
+}
+
+std::vector<api::PathVertexState> vertex_states_of(const Json& points) {
+  std::vector<api::PathVertexState> out;
+  if (!points.is_array()) return out;
+  for (std::size_t i = 0; i < points.arr().size(); ++i) {
+    const Json& p = points.arr()[i];
+    const bool broken = p.at("broken").is_bool() && p.at("broken").b();
+    const Json& t = p.at("tension");
+    if (!broken && !t.is_number()) continue;
+    api::PathVertexState st;
+    st.vertex = static_cast<std::uint32_t>(i);
+    st.broken = broken;
+    if (t.is_number()) st.tension = t.num();
+    out.push_back(st);
+  }
+  return out;
 }
 
 namespace {
@@ -1258,6 +1300,24 @@ std::optional<std::map<std::size_t, std::optional<double>>> feather_by_vertex(co
   return out;
 }
 
+/// props.ts `statesByVertex`: nullopt = an EMPTY list (keep each vertex's state by index).
+std::optional<std::map<std::size_t, api::PathVertexState>> states_by_vertex(const api::BezierPath& b, std::size_t n) {
+  if (b.vertex_states.empty()) return std::nullopt;
+  std::map<std::size_t, api::PathVertexState> out;
+  for (const api::PathVertexState& st : b.vertex_states) {
+    if (st.vertex >= n) {
+      fail(ErrorCode::invalid_argument, "vertex state " + std::to_string(st.vertex) + " is not a vertex of the " +
+                                            std::to_string(n) + "-vertex path");
+    }
+    if (st.tension && !(std::isfinite(*st.tension) && *st.tension >= 0 && *st.tension <= 1)) {
+      fail(ErrorCode::out_of_range, "a vertex tension must be within 0..1");
+    }
+    if (out.contains(st.vertex)) fail(ErrorCode::invalid_argument, "two vertex states at vertex " + std::to_string(st.vertex));
+    out[st.vertex] = st;
+  }
+  return out;
+}
+
 }  // namespace
 
 Json bezier_to_points(const api::BezierPath& b, const Json* prev) {
@@ -1269,6 +1329,7 @@ Json bezier_to_points(const api::BezierPath& b, const Json* prev) {
     fail(ErrorCode::invalid_argument, "path tangents must match vertices");
   }
   const auto feathers = feather_by_vertex(b, n);
+  const auto states = states_by_vertex(b, n);
   Json out = Json::array();
   auto tan = [](const std::vector<double>& v, std::size_t i) { return i < v.size() ? v[i] : 0.0; };
   for (std::size_t i = 0; i < n; ++i) {
@@ -1281,16 +1342,91 @@ Json bezier_to_points(const api::BezierPath& b, const Json* prev) {
     pt.set("inY", Json::number(y + tan(b.in_tangents, 2 * i + 1)));
     pt.set("outX", Json::number(x + tan(b.out_tangents, 2 * i)));
     pt.set("outY", Json::number(y + tan(b.out_tangents, 2 * i + 1)));
+    const Json* old = prev != nullptr && prev->is_array() && i < prev->arr().size() ? &prev->arr()[i] : nullptr;
     if (feathers) {
       const auto it = feathers->find(i);
       if (it != feathers->end() && it->second) pt.set("feather", Json::number(*it->second));
-    } else if (prev != nullptr && prev->is_array() && i < prev->arr().size()) {
-      const Json& f = prev->arr()[i].at("feather");
+    } else if (old != nullptr) {
+      const Json& f = old->at("feather");
       if (!f.is_undefined()) pt.set("feather", f);
+    }
+    if (states) {
+      const auto it = states->find(i);
+      if (it != states->end()) {
+        if (it->second.broken) pt.set("broken", Json::boolean(true));
+        if (it->second.tension) pt.set("tension", Json::number(*it->second.tension));
+      }
+    } else if (old != nullptr) {
+      if (!old->at("broken").is_undefined()) pt.set("broken", old->at("broken"));
+      if (!old->at("tension").is_undefined()) pt.set("tension", old->at("tension"));
     }
     out.arr_mut().push_back(std::move(pt));
   }
   return out;
+}
+
+// ── a shape layer's outline (B3, props.ts shapePoints / shapePathValue) ────
+
+const Json* as_points(const Json& v) {
+  if (!v.is_array() || v.arr().empty()) return nullptr;
+  const Json& p0 = v.arr()[0];
+  return p0.is_object() && p0.at("x").is_number() ? &v : nullptr;
+}
+
+Json shape_points(const api::BezierPath& b, const Json* prev, const std::string& path) {
+  for (const api::FeatherPoint& f : b.feather_points) {
+    if (f.radius >= 0) fail(ErrorCode::unsupported, "'" + path + "' has no per-vertex feather", {.path = path});
+  }
+  api::BezierPath plain = b;
+  plain.feather_points.clear();
+  Json pts = bezier_to_points(plain, prev);
+  for (Json& p : pts.arr_mut()) p.erase("feather");
+  return pts;
+}
+
+bool shape_closed(const Node& n) {
+  const Component* g = n.comp("Geometry");
+  return !(g != nullptr && g->props.at("open").is_bool() && g->props.at("open").b());
+}
+
+namespace {
+
+const Component& shape_geometry(const Node& n, const std::string& path) {
+  const Component* g = n.comp("Geometry");
+  if (g == nullptr) fail(ErrorCode::not_found, "layer '" + n.id + "' has no outline", {.layer = n.id, .path = path});
+  return *g;
+}
+
+/// `shapePathValue(points, closed)`: handles defaulted onto their vertex, no feather points.
+api::BezierPath shape_path_value(const Json& points, bool closed) {
+  Json full = Json::array();
+  for (const Json& p : points.arr()) {
+    Json q = p;
+    for (const auto& [k, axis] : {std::pair{"inX", "x"}, std::pair{"inY", "y"}, std::pair{"outX", "x"}, std::pair{"outY", "y"}}) {
+      if (p.at(k).is_undefined() || p.at(k).is_null()) q.set(k, p.at(axis));
+    }
+    full.arr_mut().push_back(std::move(q));
+  }
+  Json mp = Json::object();
+  mp.set("points", std::move(full));
+  mp.set("closed", Json::boolean(closed));
+  api::BezierPath b = mask_to_bezier(mp);
+  b.feather_points.clear();
+  return b;
+}
+
+}  // namespace
+
+void write_shape_closed(Document& d, std::string_view layer, bool closed) {
+  const Node& n = node_of(d, layer);
+  if (shape_closed(n) == closed) return;
+  const std::string gid = shape_geometry(n, "layer/path.points").id;
+  (void)sg_write_prop(d, layer, gid, "open", closed ? Json() : Json::boolean(true));
+}
+
+api::Value shape_path_value_of(const Document& d, std::string_view layer, const Json& v) {
+  const Json* pts = as_points(v);
+  return pts != nullptr ? v_path(shape_path_value(*pts, shape_closed(node_of(d, layer)))) : v_none();
 }
 
 // ── static reads and writes ──────────────────────────────────────────────
@@ -1422,6 +1558,16 @@ api::Value read_static(const Document& d, std::string_view layer, const PropBind
       const Json* p = mask ? mask_path_by_id(*mask, *b.maskId) : nullptr;
       return v_bool(p != nullptr && p->at("inverted").is_bool() && p->at("inverted").b());
     }
+    case Special::maskRotoBezier: {
+      const auto mask = read_node_mask(n);
+      const Json* p = mask ? mask_path_by_id(*mask, *b.maskId) : nullptr;
+      return v_bool(p != nullptr && p->at("rotoBezier").is_bool() && p->at("rotoBezier").b());
+    }
+    case Special::shapePath: {
+      const Component* g = n.comp("Geometry");
+      const Json* pts = g != nullptr ? as_points(g->props.at("points")) : nullptr;
+      return pts != nullptr ? v_path(shape_path_value(*pts, shape_closed(n))) : v_none();
+    }
     case Special::effectParam: {
       const std::vector<Json> effects = read_node_effects(n);
       const Json* e = find_by_id(effects, *b.effectId);
@@ -1483,6 +1629,55 @@ void write_static(Document& d, std::string_view layer, const PropBinding& b, con
       const bool hadRuns = !comp->props.at("__runs").is_undefined();
       (void)sg_write_prop(d, layer, cid, "content", Json::string(text));
       if (!(before.is_string() && before.str() == text) && hadRuns) (void)sg_write_prop(d, layer, cid, "__runs", Json());
+      return;
+    }
+    case Special::shapePath: {
+      if (value.kind() != VK::path) mismatch("a path");
+      const Component& g = shape_geometry(n, b.path);
+      const std::string gid = g.id;
+      const Json prev = g.props.at("points");
+      const Json pts = shape_points(get<VK::path>(value), as_points(prev), b.path);
+      (void)sg_write_prop(d, layer, gid, "points", pts);
+      write_shape_closed(d, layer, get<VK::path>(value).closed);
+      return;
+    }
+    case Special::maskRotoBezier: {
+      if (value.kind() != VK::bool_) mismatch("a bool");
+      const bool on = get<VK::bool_>(value);
+      // A switch of the whole outline: the static mask and every shape keyframe.
+      auto flip = [&](const Json& paths) {
+        Json out = Json::array();
+        for (const Json& p : paths.arr()) {
+          if (p.at("id").is_string() && p.at("id").str() == *b.maskId) {
+            Json q = p;
+            if (on) q.set("rotoBezier", Json::boolean(true));
+            else q.erase("rotoBezier");
+            out.arr_mut().push_back(std::move(q));
+          } else {
+            out.arr_mut().push_back(p);
+          }
+        }
+        return out;
+      };
+      const Json m = read_node_mask(n).value_or(Json());
+      if (!m.is_object() || mask_path_by_id(m, *b.maskId) == nullptr) {
+        fail(ErrorCode::not_found, "no mask '" + *b.maskId + "'", {.layer = std::string(layer), .path = b.path});
+      }
+      Json mask = Json::object();
+      mask.set("paths", flip(m.at("paths")));
+      sg_set_fx(d, layer, "mask", mask);
+      const std::vector<Json> anim = read_node_mask_anim(*d.node(layer));
+      if (!anim.empty()) {
+        std::vector<Json> out;
+        for (const Json& k : anim) {
+          Json e = k;
+          Json km = Json::object();
+          km.set("paths", flip(k.at("mask").at("paths")));
+          e.set("mask", std::move(km));
+          out.push_back(std::move(e));
+        }
+        set_mask_anim(d, layer, std::move(out));
+      }
       return;
     }
     case Special::maskPath:
@@ -1714,6 +1909,10 @@ KeyAt base_key(double t, std::string id, api::Value value, std::optional<api::Ea
 
 api::Value data_value_to_api(const PropBinding& b, const Json& v, const Node& n) {
   if (b.special == Special::rig) return pin_key_to_api(v);
+  if (b.special == Special::shapePath) {
+    const Json* pts = as_points(v);
+    return pts != nullptr ? v_path(shape_path_value(*pts, shape_closed(n))) : v_none();
+  }
   if (b.special == Special::fillStops) return fill_stops_key_to_api(n, v);
   if (b.special == Special::sourceText) return v_text(v.is_string() ? v.str() : "");
   if (v.is_string()) return v_string(v.str());
@@ -2026,6 +2225,11 @@ Json current_data_value(const PCtx& c, std::string_view layer, const PropBinding
   }
   // The first Colors key holds the paint's own stops.
   if (b.special == Special::fillStops) return api_to_fill_stops_key(b, read_static(c.d, layer, b));
+  // A shape's first Path key holds its static outline.
+  if (b.special == Special::shapePath) {
+    const Component* g = node_of(c.d, layer).comp("Geometry");
+    if (const Json* pts = g != nullptr ? as_points(g->props.at("points")) : nullptr) return *pts;
+  }
   fail(ErrorCode::invalid_argument, "'" + b.path + "' needs a value for its first keyframe", {.path = b.path});
 }
 
@@ -2046,6 +2250,7 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
                              : b.valueType == ValueType::gradient ? "gradientStops"
                                                                   : "number";
     std::vector<DataKey> keys = track != nullptr ? track->keys : std::vector<DataKey>{};
+    std::optional<bool> closed;
     for (const KeyWrite& w : writes) {
       const DataKey* existing = nullptr;
       for (const DataKey& k : keys) {
@@ -2054,7 +2259,18 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
           break;
         }
       }
-      Json value = w.value ? api_to_data_value(b, *w.value) : existing != nullptr ? existing->value : current_data_value(c, layer, b, w.t);
+      Json value;
+      if (w.value && b.special == Special::shapePath) {
+        // A shape key keeps each vertex's editing state by index when the value
+        // lists none (BezierPath.vertexStates): the replaced key's, else the static outline's.
+        if (w.value->kind() != VK::path) fail(ErrorCode::type_mismatch, "'" + b.path + "' takes a path", {.path = b.path});
+        const Component* g = node_of(d, layer).comp("Geometry");
+        const Json prev = existing != nullptr ? existing->value : g != nullptr ? g->props.at("points") : Json();
+        value = shape_points(get<VK::path>(*w.value), as_points(prev), b.path);
+        closed = get<VK::path>(*w.value).closed;
+      } else {
+        value = w.value ? api_to_data_value(b, *w.value) : existing != nullptr ? existing->value : current_data_value(c, layer, b, w.t);
+      }
       DataKey next = existing != nullptr ? *existing : DataKey{};
       next.id = existing != nullptr && existing->id ? *existing->id : w.id;
       next.t = w.t;
@@ -2087,6 +2303,8 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
     t.kind = kind;
     t.keys = std::move(keys);
     anim_set_data_track(d, layer, *b.dataTrack, std::move(t));
+    // A shape outline's Closed switch is the whole outline's (Geometry.open), not a key's.
+    if (closed) write_shape_closed(d, layer, *closed);
     return;
   }
   if (b.members.empty()) fail(ErrorCode::not_animatable, "'" + b.path + "' cannot take keyframes", {.path = b.path});
@@ -2229,6 +2447,18 @@ void drop_keys(const PCtx& c, std::string_view layer, const PropBinding& b, cons
         }
       }
     }
+    if (keep.empty() && b.special == Special::shapePath) {
+      // AE: deleting the last Path key leaves the outline where that key held it.
+      for (const DataKey& k : track->keys) {
+        if (dropped(k.t)) {
+          if (const Json* pts = as_points(k.value)) {
+            const std::string gid = shape_geometry(node_of(d, layer), b.path).id;
+            (void)sg_write_prop(d, layer, gid, "points", *pts);
+          }
+          break;
+        }
+      }
+    }
     if (keep.empty() && b.special == Special::fillStops && has_gradient_fill(*d.node(layer))) {
       // AE: deleting the last Colors key leaves the gradient at that key's stops.
       for (const DataKey& k : track->keys) {
@@ -2313,6 +2543,11 @@ std::optional<api::Value> value_at(const PCtx& c, std::string_view layer, const 
     if (b.special == Special::sourceText) return v_text(string_of(*v));
     if (b.special == Special::rig) return pin_key_to_api(*v);
     if (b.special == Special::fillStops) return fill_stops_key_to_api(*d.node(layer), *v);
+    if (b.special == Special::shapePath) {
+      api::Value pv = shape_path_value_of(d, layer, *v);
+      if (pv.kind() == VK::none) return std::nullopt;
+      return pv;
+    }
     if (v->is_string()) return v_string(v->str());
     if (v->is_number()) return v_scalar(v->num());
     return std::nullopt;

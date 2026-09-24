@@ -7,6 +7,7 @@ import { propertyHandlers } from './properties';
 import { groupHandlers } from './groups';
 import { optionalPropHandlers } from './optionalProps';
 import { strokeHandlers } from './strokes';
+import { pathHandlers } from './paths';
 import { compHandlers } from './comps';
 import { itemHandlers } from './items';
 import { markerHandlers } from './markers';
@@ -23,6 +24,7 @@ export const EDIT_HANDLERS: HandlerTable = {
   ...groupHandlers,
   ...optionalPropHandlers,
   ...strokeHandlers,
+  ...pathHandlers,
   ...markerHandlers,
   ...transitionHandlers,
 };

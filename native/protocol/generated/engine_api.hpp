@@ -443,6 +443,16 @@ enum class MaskMode : std::uint32_t {
 [[nodiscard]] std::string_view to_string(MaskMode v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, MaskMode& out) noexcept;
 
+enum class PathTopologyKind : std::uint32_t {
+  insert = 0,
+  remove = 1,
+  first_vertex = 2,
+  reverse = 3,
+  extend = 4,
+};
+[[nodiscard]] std::string_view to_string(PathTopologyKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, PathTopologyKind& out) noexcept;
+
 enum class PlayRange : std::uint32_t {
   all = 0,
   work_area = 1,
@@ -779,6 +789,7 @@ struct Rect;
 struct Rational;
 struct TimeRange;
 struct FeatherPoint;
+struct PathVertexState;
 struct BezierPath;
 struct GradientStop;
 struct Gradient;
@@ -925,6 +936,9 @@ struct AddProperties;
 struct RemoveProperties;
 struct PasteEffects;
 struct RemoveStroke;
+struct PathTopologyOp;
+struct EditPathTopology;
+struct SetShapeOutline;
 struct MarkerOwner;
 struct MarkerInsert;
 struct AddMarkers;
@@ -1221,12 +1235,20 @@ struct FeatherPoint {
   bool operator==(const FeatherPoint&) const = default;
 };
 
+struct PathVertexState {
+  std::uint32_t vertex = 0;
+  bool broken = false;
+  std::optional<double> tension;
+  bool operator==(const PathVertexState&) const = default;
+};
+
 struct BezierPath {
   std::vector<double> vertices;
   std::vector<double> in_tangents;
   std::vector<double> out_tangents;
   bool closed = false;
   std::vector<FeatherPoint> feather_points;
+  std::vector<PathVertexState> vertex_states;
   bool operator==(const BezierPath&) const = default;
 };
 
@@ -2299,6 +2321,29 @@ struct RemoveStroke {
   bool operator==(const RemoveStroke&) const = default;
 };
 
+struct PathTopologyOp {
+  PathTopologyKind kind = PathTopologyKind::insert;
+  std::uint32_t segment = 0;
+  double u = 0.0;
+  std::vector<std::uint32_t> indices;
+  std::optional<BezierPath> points;
+  bool at_start = false;
+  bool operator==(const PathTopologyOp&) const = default;
+};
+
+struct EditPathTopology {
+  PropRef prop;
+  std::optional<PathTopologyOp> op;
+  std::optional<bool> closed;
+  bool operator==(const EditPathTopology&) const = default;
+};
+
+struct SetShapeOutline {
+  LayerId layer;
+  std::vector<BezierPath> runs;
+  bool operator==(const SetShapeOutline&) const = default;
+};
+
 struct MarkerOwner {
   ItemId comp;
   std::optional<LayerId> layer;
@@ -2680,6 +2725,8 @@ struct Command {
     remove_properties = 612,
     paste_effects = 613,
     remove_stroke = 614,
+    edit_path_topology = 630,
+    set_shape_outline = 631,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -2703,7 +2750,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -3204,6 +3251,8 @@ struct CommandResult {
     remove_properties = 612,
     paste_effects = 613,
     remove_stroke = 614,
+    edit_path_topology = 630,
+    set_shape_outline = 631,
     add_markers = 700,
     update_markers = 701,
     delete_markers = 702,
@@ -3227,7 +3276,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -4605,6 +4654,8 @@ void encode(wire::Writer& w, const TimeRange& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TimeRange& out);
 void encode(wire::Writer& w, const FeatherPoint& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FeatherPoint& out);
+void encode(wire::Writer& w, const PathVertexState& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PathVertexState& out);
 void encode(wire::Writer& w, const BezierPath& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, BezierPath& out);
 void encode(wire::Writer& w, const GradientStop& v);
@@ -4897,6 +4948,12 @@ void encode(wire::Writer& w, const PasteEffects& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PasteEffects& out);
 void encode(wire::Writer& w, const RemoveStroke& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RemoveStroke& out);
+void encode(wire::Writer& w, const PathTopologyOp& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PathTopologyOp& out);
+void encode(wire::Writer& w, const EditPathTopology& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, EditPathTopology& out);
+void encode(wire::Writer& w, const SetShapeOutline& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetShapeOutline& out);
 void encode(wire::Writer& w, const MarkerOwner& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerOwner& out);
 void encode(wire::Writer& w, const MarkerInsert& v);

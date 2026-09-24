@@ -148,6 +148,10 @@ const MaskMode_TO_NUM: Record<string, number> = { 'none': 0, 'add': 1, 'subtract
 const MaskMode_FROM_NUM: readonly (T.MaskMode | undefined)[] = ['none', 'add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'];
 function enc_MaskMode(v: T.MaskMode): number { const n = MaskMode_TO_NUM[v]; if (n === undefined) throw new RangeError('MaskMode: invalid value ' + String(v)); return n; }
 function dec_MaskMode(n: number): T.MaskMode { const v = MaskMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MaskMode: unknown value ' + n, 'badEnum'); return v; }
+const PathTopologyKind_TO_NUM: Record<string, number> = { 'insert': 0, 'remove': 1, 'firstVertex': 2, 'reverse': 3, 'extend': 4 };
+const PathTopologyKind_FROM_NUM: readonly (T.PathTopologyKind | undefined)[] = ['insert', 'remove', 'firstVertex', 'reverse', 'extend'];
+function enc_PathTopologyKind(v: T.PathTopologyKind): number { const n = PathTopologyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PathTopologyKind: invalid value ' + String(v)); return n; }
+function dec_PathTopologyKind(n: number): T.PathTopologyKind { const v = PathTopologyKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PathTopologyKind: unknown value ' + n, 'badEnum'); return v; }
 const PlayRange_TO_NUM: Record<string, number> = { 'all': 0, 'workArea': 1, 'custom': 2 };
 const PlayRange_FROM_NUM: readonly (T.PlayRange | undefined)[] = ['all', 'workArea', 'custom'];
 function enc_PlayRange(v: T.PlayRange): number { const n = PlayRange_TO_NUM[v]; if (n === undefined) throw new RangeError('PlayRange: invalid value ' + String(v)); return n; }
@@ -526,12 +530,14 @@ function encS_BezierPath(w: Writer, v: T.BezierPath): void {
   { const a = v.outTangents; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   w.byte(32); w.bool(v.closed);
   { const a = v.featherPoints; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_FeatherPoint(w, a[i]!); w.endLd(s); } } }
+  { const a = v.vertexStates; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_PathVertexState(w, a[i]!); w.endLd(s); } } }
 }
 function decS_BezierPath(r: Reader, end: number, o: any): T.BezierPath {
   const l_vertices: number[] = [];
   const l_inTangents: number[] = [];
   const l_outTangents: number[] = [];
   const l_featherPoints: T.FeatherPoint[] = [];
+  const l_vertexStates: T.PathVertexState[] = [];
   let h_closed = false;
   let v_closed: boolean | undefined;
   while (r.pos < end) {
@@ -542,6 +548,7 @@ function decS_BezierPath(r: Reader, end: number, o: any): T.BezierPath {
       case 26: { const e = r.ldEnd(); while (r.pos < e) l_outTangents.push(r.f64()); r.expectAt(e); break; }
       case 32: v_closed = r.bool(); h_closed = true; break;
       case 42: l_featherPoints.push(decS_FeatherPoint(r, r.ldEnd(), {})); break;
+      case 50: l_vertexStates.push(decS_PathVertexState(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -552,6 +559,35 @@ function decS_BezierPath(r: Reader, end: number, o: any): T.BezierPath {
   o.outTangents = l_outTangents;
   o.closed = v_closed;
   o.featherPoints = l_featherPoints;
+  o.vertexStates = l_vertexStates;
+  return o;
+}
+function encS_PathVertexState(w: Writer, v: T.PathVertexState): void {
+  w.byte(8); w.u32(v.vertex);
+  w.byte(16); w.bool(v.broken);
+  if (v.tension !== undefined) { w.byte(25); w.f64(v.tension); }
+}
+function decS_PathVertexState(r: Reader, end: number, o: any): T.PathVertexState {
+  let h_vertex = false;
+  let h_broken = false;
+  let v_vertex: number | undefined;
+  let v_broken: boolean | undefined;
+  let v_tension: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_vertex = r.u32(); h_vertex = true; break;
+      case 16: v_broken = r.bool(); h_broken = true; break;
+      case 25: v_tension = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_vertex) throw new DecodeError('PathVertexState.vertex: missing', 'missingField');
+  if (!h_broken) throw new DecodeError('PathVertexState.broken: missing', 'missingField');
+  o.vertex = v_vertex;
+  o.broken = v_broken;
+  if (v_tension !== undefined) o.tension = v_tension;
   return o;
 }
 function encS_FeatherPoint(w: Writer, v: T.FeatherPoint): void {
@@ -5787,6 +5823,98 @@ function decS_RemoveStroke(r: Reader, end: number, o: any): T.RemoveStroke {
   if (!h_index) throw new DecodeError('RemoveStroke.index: missing', 'missingField');
   o.layer = v_layer;
   o.index = v_index;
+  return o;
+}
+function encS_PathTopologyOp(w: Writer, v: T.PathTopologyOp): void {
+  w.byte(8); w.varint(enc_PathTopologyKind(v.kind));
+  w.byte(16); w.u32(v.segment);
+  w.byte(25); w.f64(v.u);
+  { const a = v.indices; if (a.length) { w.byte(34); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  if (v.points !== undefined) { w.byte(42); { const s = w.beginLd(); encS_BezierPath(w, v.points); w.endLd(s); } }
+  w.byte(48); w.bool(v.atStart);
+}
+function decS_PathTopologyOp(r: Reader, end: number, o: any): T.PathTopologyOp {
+  const l_indices: number[] = [];
+  let h_kind = false;
+  let h_segment = false;
+  let h_u = false;
+  let h_atStart = false;
+  let v_kind: T.PathTopologyKind | undefined;
+  let v_segment: number | undefined;
+  let v_u: number | undefined;
+  let v_points: T.BezierPath | undefined;
+  let v_atStart: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_kind = dec_PathTopologyKind(r.varint()); h_kind = true; break;
+      case 16: v_segment = r.u32(); h_segment = true; break;
+      case 25: v_u = r.f64(); h_u = true; break;
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_indices.push(r.u32()); r.expectAt(e); break; }
+      case 42: v_points = decS_BezierPath(r, r.ldEnd(), {}); break;
+      case 48: v_atStart = r.bool(); h_atStart = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_kind) throw new DecodeError('PathTopologyOp.kind: missing', 'missingField');
+  if (!h_segment) throw new DecodeError('PathTopologyOp.segment: missing', 'missingField');
+  if (!h_u) throw new DecodeError('PathTopologyOp.u: missing', 'missingField');
+  if (!h_atStart) throw new DecodeError('PathTopologyOp.atStart: missing', 'missingField');
+  o.kind = v_kind;
+  o.segment = v_segment;
+  o.u = v_u;
+  o.indices = l_indices;
+  if (v_points !== undefined) o.points = v_points;
+  o.atStart = v_atStart;
+  return o;
+}
+function encS_EditPathTopology(w: Writer, v: T.EditPathTopology): void {
+  w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
+  if (v.op !== undefined) { w.byte(18); { const s = w.beginLd(); encS_PathTopologyOp(w, v.op); w.endLd(s); } }
+  if (v.closed !== undefined) { w.byte(24); w.bool(v.closed); }
+}
+function decS_EditPathTopology(r: Reader, end: number, o: any): T.EditPathTopology {
+  let h_prop = false;
+  let v_prop: T.PropRef | undefined;
+  let v_op: T.PathTopologyOp | undefined;
+  let v_closed: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_prop = decS_PropRef(r, r.ldEnd(), {}); h_prop = true; break;
+      case 18: v_op = decS_PathTopologyOp(r, r.ldEnd(), {}); break;
+      case 24: v_closed = r.bool(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_prop) throw new DecodeError('EditPathTopology.prop: missing', 'missingField');
+  o.prop = v_prop;
+  if (v_op !== undefined) o.op = v_op;
+  if (v_closed !== undefined) o.closed = v_closed;
+  return o;
+}
+function encS_SetShapeOutline(w: Writer, v: T.SetShapeOutline): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.runs; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_BezierPath(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetShapeOutline(r: Reader, end: number, o: any): T.SetShapeOutline {
+  const l_runs: T.BezierPath[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_runs.push(decS_BezierPath(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetShapeOutline.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.runs = l_runs;
   return o;
 }
 function encS_PropertyPaths(w: Writer, v: T.PropertyPaths): void {
@@ -12569,6 +12697,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_RemoveProperties(w, v); w.endLd(s); } return;
     case 'pasteEffects': w.varint(4906); { const s = w.beginLd(); encS_PasteEffects(w, v); w.endLd(s); } return;
     case 'removeStroke': w.varint(4914); { const s = w.beginLd(); encS_RemoveStroke(w, v); w.endLd(s); } return;
+    case 'editPathTopology': w.varint(5042); { const s = w.beginLd(); encS_EditPathTopology(w, v); w.endLd(s); } return;
+    case 'setShapeOutline': w.varint(5050); { const s = w.beginLd(); encS_SetShapeOutline(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_AddMarkers(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_UpdateMarkers(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_DeleteMarkers(w, v); w.endLd(s); } return;
@@ -12715,6 +12845,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4898: out = decS_RemoveProperties(r, r.ldEnd(), { type: 'removeProperties' }) as T.Command; break;
       case 4906: out = decS_PasteEffects(r, r.ldEnd(), { type: 'pasteEffects' }) as T.Command; break;
       case 4914: out = decS_RemoveStroke(r, r.ldEnd(), { type: 'removeStroke' }) as T.Command; break;
+      case 5042: out = decS_EditPathTopology(r, r.ldEnd(), { type: 'editPathTopology' }) as T.Command; break;
+      case 5050: out = decS_SetShapeOutline(r, r.ldEnd(), { type: 'setShapeOutline' }) as T.Command; break;
       case 5602: out = decS_AddMarkers(r, r.ldEnd(), { type: 'addMarkers' }) as T.Command; break;
       case 5610: out = decS_UpdateMarkers(r, r.ldEnd(), { type: 'updateMarkers' }) as T.Command; break;
       case 5618: out = decS_DeleteMarkers(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.Command; break;
@@ -12861,6 +12993,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'removeProperties': w.varint(4898); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'pasteEffects': w.varint(4906); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'removeStroke': w.varint(4914); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'editPathTopology': w.varint(5042); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setShapeOutline': w.varint(5050); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_MarkerIds(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -13007,6 +13141,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4898: out = decS_Empty(r, r.ldEnd(), { type: 'removeProperties' }) as T.CommandResult; break;
       case 4906: out = decS_GroupList(r, r.ldEnd(), { type: 'pasteEffects' }) as T.CommandResult; break;
       case 4914: out = decS_Empty(r, r.ldEnd(), { type: 'removeStroke' }) as T.CommandResult; break;
+      case 5042: out = decS_Empty(r, r.ldEnd(), { type: 'editPathTopology' }) as T.CommandResult; break;
+      case 5050: out = decS_Empty(r, r.ldEnd(), { type: 'setShapeOutline' }) as T.CommandResult; break;
       case 5602: out = decS_MarkerIds(r, r.ldEnd(), { type: 'addMarkers' }) as T.CommandResult; break;
       case 5610: out = decS_Empty(r, r.ldEnd(), { type: 'updateMarkers' }) as T.CommandResult; break;
       case 5618: out = decS_Empty(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.CommandResult; break;
@@ -13304,6 +13440,7 @@ export const codecs = {
   Rational: mk<T.Rational>(encS_Rational, (r, e) => decS_Rational(r, e, {})),
   TimeRange: mk<T.TimeRange>(encS_TimeRange, (r, e) => decS_TimeRange(r, e, {})),
   BezierPath: mk<T.BezierPath>(encS_BezierPath, (r, e) => decS_BezierPath(r, e, {})),
+  PathVertexState: mk<T.PathVertexState>(encS_PathVertexState, (r, e) => decS_PathVertexState(r, e, {})),
   FeatherPoint: mk<T.FeatherPoint>(encS_FeatherPoint, (r, e) => decS_FeatherPoint(r, e, {})),
   GradientStop: mk<T.GradientStop>(encS_GradientStop, (r, e) => decS_GradientStop(r, e, {})),
   Gradient: mk<T.Gradient>(encS_Gradient, (r, e) => decS_Gradient(r, e, {})),
@@ -13485,6 +13622,9 @@ export const codecs = {
   RemoveProperties: mk<T.RemoveProperties>(encS_RemoveProperties, (r, e) => decS_RemoveProperties(r, e, {})),
   PasteEffects: mk<T.PasteEffects>(encS_PasteEffects, (r, e) => decS_PasteEffects(r, e, {})),
   RemoveStroke: mk<T.RemoveStroke>(encS_RemoveStroke, (r, e) => decS_RemoveStroke(r, e, {})),
+  PathTopologyOp: mk<T.PathTopologyOp>(encS_PathTopologyOp, (r, e) => decS_PathTopologyOp(r, e, {})),
+  EditPathTopology: mk<T.EditPathTopology>(encS_EditPathTopology, (r, e) => decS_EditPathTopology(r, e, {})),
+  SetShapeOutline: mk<T.SetShapeOutline>(encS_SetShapeOutline, (r, e) => decS_SetShapeOutline(r, e, {})),
   PropertyPaths: mk<T.PropertyPaths>(encS_PropertyPaths, (r, e) => decS_PropertyPaths(r, e, {})),
   MarkerOwner: mk<T.MarkerOwner>(encS_MarkerOwner, (r, e) => decS_MarkerOwner(r, e, {})),
   Marker: mk<T.Marker>(encS_Marker, (r, e) => decS_Marker(r, e, {})),
