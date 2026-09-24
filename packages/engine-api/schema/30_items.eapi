@@ -55,6 +55,20 @@ struct ImportFile {
 
 /// Import files as footage items. Undo removes the items (files on disk are never touched).
 command importFiles = 50 { files: ImportFile[] = 1; } -> ItemList;
+/// One footage item from BYTES rather than a path: a browser-picked or dropped file, a bundled library sound, an image the editor generated (a Cryptomatte ID matte).
+struct ImportBytesFile {
+  /// The file name shown in the Project panel; its extension and `mimeType` pick the decoder.
+  name: string = 1;
+  data: bytes = 2;
+  /// '' = from the name's extension.
+  mimeType: string = 3;
+  folder?: ItemId = 4;
+  interpretation?: InterpretationPatch = 5;
+  /// Where the bytes came from, when there is a file behind them (recorded for relink); absent = none.
+  originPath?: string = 6;
+}
+/// B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`.
+command importBytes = 70 { files: ImportBytesFile[] = 1; } -> ItemList;
 /// Point an item at a different file (relink missing footage / Replace Footage). Undo restores the old path.
 command relinkItem = 51 { item: ItemId = 1; path: string = 2; keepInterpretation: bool = 3; }
 /// Re-read items from disk (not a document change).

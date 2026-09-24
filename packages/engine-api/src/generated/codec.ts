@@ -2124,6 +2124,64 @@ function decS_ImportFiles(r: Reader, end: number, o: any): T.ImportFiles {
   o.files = l_files;
   return o;
 }
+function encS_ImportBytesFile(w: Writer, v: T.ImportBytesFile): void {
+  w.byte(10); w.str(v.name);
+  w.byte(18); w.bytes(v.data);
+  w.byte(26); w.str(v.mimeType);
+  if (v.folder !== undefined) { w.byte(34); w.str(v.folder); }
+  if (v.interpretation !== undefined) { w.byte(42); { const s = w.beginLd(); encS_InterpretationPatch(w, v.interpretation); w.endLd(s); } }
+  if (v.originPath !== undefined) { w.byte(50); w.str(v.originPath); }
+}
+function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile {
+  let h_name = false;
+  let h_data = false;
+  let h_mimeType = false;
+  let v_name: string | undefined;
+  let v_data: Uint8Array | undefined;
+  let v_mimeType: string | undefined;
+  let v_folder: string | undefined;
+  let v_interpretation: T.InterpretationPatch | undefined;
+  let v_originPath: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_name = r.str(); h_name = true; break;
+      case 18: v_data = r.bytes(); h_data = true; break;
+      case 26: v_mimeType = r.str(); h_mimeType = true; break;
+      case 34: v_folder = r.str(); break;
+      case 42: v_interpretation = decS_InterpretationPatch(r, r.ldEnd(), {}); break;
+      case 50: v_originPath = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('ImportBytesFile.name: missing', 'missingField');
+  if (!h_data) throw new DecodeError('ImportBytesFile.data: missing', 'missingField');
+  if (!h_mimeType) throw new DecodeError('ImportBytesFile.mimeType: missing', 'missingField');
+  o.name = v_name;
+  o.data = v_data;
+  o.mimeType = v_mimeType;
+  if (v_folder !== undefined) o.folder = v_folder;
+  if (v_interpretation !== undefined) o.interpretation = v_interpretation;
+  if (v_originPath !== undefined) o.originPath = v_originPath;
+  return o;
+}
+function encS_ImportBytes(w: Writer, v: T.ImportBytes): void {
+  { const a = v.files; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_ImportBytesFile(w, a[i]!); w.endLd(s); } } }
+}
+function decS_ImportBytes(r: Reader, end: number, o: any): T.ImportBytes {
+  const l_files: T.ImportBytesFile[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_files.push(decS_ImportBytesFile(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.files = l_files;
+  return o;
+}
 function encS_RelinkItem(w: Writer, v: T.RelinkItem): void {
   w.byte(10); w.str(v.item);
   w.byte(18); w.str(v.path);
@@ -12426,6 +12484,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setProxy': w.varint(482); { const s = w.beginLd(); encS_SetProxy(w, v); w.endLd(s); } return;
     case 'setItemComment': w.varint(490); { const s = w.beginLd(); encS_SetItemComment(w, v); w.endLd(s); } return;
     case 'setItemTags': w.varint(498); { const s = w.beginLd(); encS_SetItemTags(w, v); w.endLd(s); } return;
+    case 'importBytes': w.varint(562); { const s = w.beginLd(); encS_ImportBytes(w, v); w.endLd(s); } return;
     case 'createComposition': w.varint(802); { const s = w.beginLd(); encS_CreateComposition(w, v); w.endLd(s); } return;
     case 'duplicateComposition': w.varint(810); { const s = w.beginLd(); encS_DuplicateComposition(w, v); w.endLd(s); } return;
     case 'setCompositionSettings': w.varint(818); { const s = w.beginLd(); encS_SetCompositionSettings(w, v); w.endLd(s); } return;
@@ -12571,6 +12630,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 482: out = decS_SetProxy(r, r.ldEnd(), { type: 'setProxy' }) as T.Command; break;
       case 490: out = decS_SetItemComment(r, r.ldEnd(), { type: 'setItemComment' }) as T.Command; break;
       case 498: out = decS_SetItemTags(r, r.ldEnd(), { type: 'setItemTags' }) as T.Command; break;
+      case 562: out = decS_ImportBytes(r, r.ldEnd(), { type: 'importBytes' }) as T.Command; break;
       case 802: out = decS_CreateComposition(r, r.ldEnd(), { type: 'createComposition' }) as T.Command; break;
       case 810: out = decS_DuplicateComposition(r, r.ldEnd(), { type: 'duplicateComposition' }) as T.Command; break;
       case 818: out = decS_SetCompositionSettings(r, r.ldEnd(), { type: 'setCompositionSettings' }) as T.Command; break;
@@ -12716,6 +12776,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setProxy': w.varint(482); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setItemComment': w.varint(490); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setItemTags': w.varint(498); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'importBytes': w.varint(562); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'createComposition': w.varint(802); { const s = w.beginLd(); encS_ItemRef(w, v); w.endLd(s); } return;
     case 'duplicateComposition': w.varint(810); { const s = w.beginLd(); encS_ItemRef(w, v); w.endLd(s); } return;
     case 'setCompositionSettings': w.varint(818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -12861,6 +12922,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 482: out = decS_Empty(r, r.ldEnd(), { type: 'setProxy' }) as T.CommandResult; break;
       case 490: out = decS_Empty(r, r.ldEnd(), { type: 'setItemComment' }) as T.CommandResult; break;
       case 498: out = decS_Empty(r, r.ldEnd(), { type: 'setItemTags' }) as T.CommandResult; break;
+      case 562: out = decS_ItemList(r, r.ldEnd(), { type: 'importBytes' }) as T.CommandResult; break;
       case 802: out = decS_ItemRef(r, r.ldEnd(), { type: 'createComposition' }) as T.CommandResult; break;
       case 810: out = decS_ItemRef(r, r.ldEnd(), { type: 'duplicateComposition' }) as T.CommandResult; break;
       case 818: out = decS_Empty(r, r.ldEnd(), { type: 'setCompositionSettings' }) as T.CommandResult; break;
@@ -13297,6 +13359,8 @@ export const codecs = {
   InterpretationPatch: mk<T.InterpretationPatch>(encS_InterpretationPatch, (r, e) => decS_InterpretationPatch(r, e, {})),
   ImportFile: mk<T.ImportFile>(encS_ImportFile, (r, e) => decS_ImportFile(r, e, {})),
   ImportFiles: mk<T.ImportFiles>(encS_ImportFiles, (r, e) => decS_ImportFiles(r, e, {})),
+  ImportBytesFile: mk<T.ImportBytesFile>(encS_ImportBytesFile, (r, e) => decS_ImportBytesFile(r, e, {})),
+  ImportBytes: mk<T.ImportBytes>(encS_ImportBytes, (r, e) => decS_ImportBytes(r, e, {})),
   RelinkItem: mk<T.RelinkItem>(encS_RelinkItem, (r, e) => decS_RelinkItem(r, e, {})),
   ReloadItems: mk<T.ReloadItems>(encS_ReloadItems, (r, e) => decS_ReloadItems(r, e, {})),
   RemoveItems: mk<T.RemoveItems>(encS_RemoveItems, (r, e) => decS_RemoveItems(r, e, {})),

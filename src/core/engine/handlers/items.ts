@@ -137,6 +137,49 @@ export const itemHandlers: HandlerTable = {
     };
   },
 
+  importBytes: (cmd, ctx) => {
+    if (cmd.files.length === 0) fail('invalidArgument', 'no files given');
+    const port = ctx.ports.importBytes;
+    if (!port) fail('unsupported', 'no media import port is attached to this engine');
+    for (const f of cmd.files) {
+      if (f.data.byteLength === 0) fail('invalidArgument', `'${f.name}' has no bytes`);
+      if (f.name.trim() === '') fail('invalidArgument', 'a file name is required');
+      if (f.folder && !useAssetStore.getState().folders.some((x) => x.id === f.folder)) fail('notFound', `no folder '${f.folder}'`, { item: f.folder });
+      if (f.interpretation) interpretationPatch(f.interpretation);
+    }
+    const ids = cmd.files.map(() => ctx.mintId('item_'));
+    const records: ImportedAsset[] = [];
+    return {
+      scope: itemsScope(),
+      label: `Import ${plural(cmd.files.length, 'File')}`,
+      prepare: async () => {
+        for (let i = 0; i < cmd.files.length; i++) {
+          try {
+            records.push(await port(cmd.files[i]!, ids[i]!));
+          } catch (err) {
+            fail('io', `could not import '${cmd.files[i]!.name}': ${err instanceof Error ? err.message : String(err)}`, { commandIndex: undefined });
+          }
+        }
+      },
+      apply: () => {
+        const snap = assetsSnapshot();
+        const added = records.map((r, i) => {
+          const f = cmd.files[i]!;
+          let a: ImportedAsset = { ...r, id: ids[i]!, ...(f.folder ? { folderId: f.folder } : {}) };
+          if (f.interpretation) {
+            const { __clear, ...patch } = interpretationPatch(f.interpretation);
+            const interp: Record<string, unknown> = { ...(a.interpret ?? {}), ...patch };
+            for (const k of __clear ?? []) delete interp[k];
+            a = { ...a, interpret: interp as FootageInterpretation };
+          }
+          return a;
+        });
+        replaceProjectItems({ assets: [...snap.assets, ...added], folders: snap.folders });
+        return { items: ids };
+      },
+    };
+  },
+
   relinkItem: (cmd, ctx) => {
     const ref = requireItem(cmd.item);
     if (ref.kind !== 'footage') fail('invalidArgument', 'only footage can be relinked', { item: cmd.item });

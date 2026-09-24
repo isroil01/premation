@@ -1152,6 +1152,24 @@ export interface ImportFiles {
   files: ImportFile[];
 }
 
+/** One footage item from BYTES rather than a path: a browser-picked or dropped file, a bundled library sound, an image the editor generated (a Cryptomatte ID matte). */
+export interface ImportBytesFile {
+  /** The file name shown in the Project panel; its extension and `mimeType` pick the decoder. */
+  name: string;
+  data: Uint8Array;
+  /** '' = from the name's extension. */
+  mimeType: string;
+  folder?: ItemId;
+  interpretation?: InterpretationPatch;
+  /** Where the bytes came from, when there is a file behind them (recorded for relink); absent = none. */
+  originPath?: string;
+}
+
+/** B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`. */
+export interface ImportBytes {
+  files: ImportBytesFile[];
+}
+
 /** Point an item at a different file (relink missing footage / Replace Footage). Undo restores the old path. */
 export interface RelinkItem {
   item: ItemId;
@@ -3669,6 +3687,7 @@ export type Command =
   | ({ type: 'collectFiles' } & CollectFiles)
   | ({ type: 'setAutosave' } & SetAutosave)
   | ({ type: 'importFiles' } & ImportFiles)
+  | ({ type: 'importBytes' } & ImportBytes)
   | ({ type: 'relinkItem' } & RelinkItem)
   | ({ type: 'reloadItems' } & ReloadItems)
   | ({ type: 'removeItems' } & RemoveItems)
@@ -3809,6 +3828,7 @@ export type CommandResult =
   | ({ type: 'collectFiles' } & SaveProjectResult)
   | ({ type: 'setAutosave' } & Empty)
   | ({ type: 'importFiles' } & ItemList)
+  | ({ type: 'importBytes' } & ItemList)
   | ({ type: 'relinkItem' } & Empty)
   | ({ type: 'reloadItems' } & Empty)
   | ({ type: 'removeItems' } & Empty)
@@ -4057,6 +4077,7 @@ export interface CommandArgs {
   collectFiles: CollectFiles;
   setAutosave: SetAutosave;
   importFiles: ImportFiles;
+  importBytes: ImportBytes;
   relinkItem: RelinkItem;
   reloadItems: ReloadItems;
   removeItems: RemoveItems;
@@ -4197,6 +4218,7 @@ export interface CommandResults {
   collectFiles: SaveProjectResult;
   setAutosave: Empty;
   importFiles: ItemList;
+  importBytes: ItemList;
   relinkItem: Empty;
   reloadItems: Empty;
   removeItems: Empty;

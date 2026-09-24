@@ -44,6 +44,15 @@ export function fakePorts(files: Map<string, EditorDocument>): EnginePorts {
         path: file.path,
       };
     },
+    importBytes: async (file, id): Promise<ImportedAsset> => {
+      const audio = /\.(wav|mp3|aac)$/i.test(file.name) || file.mimeType.startsWith('audio/');
+      const image = /\.(png|jpg|jpeg)$/i.test(file.name) || file.mimeType.startsWith('image/');
+      return {
+        id, name: file.name, type: audio ? 'audio' : image ? 'image' : 'video', src: `blob:fake/${id}`, size: file.data.byteLength,
+        metadata: { width: 640, height: 360, duration: image ? 0 : 4, fps: 30, hasAudioTrack: !image },
+        ...(file.originPath ? { path: file.originPath } : {}),
+      };
+    },
     probeFile: async (path) => ({ name: path.replace(/^.*[\\/]/, '') }),
     readProject: async (path) => {
       const d = files.get(path);

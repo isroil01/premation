@@ -187,6 +187,9 @@ bool KeyIndex::marker_taken(const Document& d, const std::string& id) {
 Json Ports::import_file(const api::ImportFile& /*file*/, const std::string& /*id*/) {
   fail(api::ErrorCode::unsupported, "no media import port is attached to this engine");
 }
+Json Ports::import_bytes(const api::ImportBytesFile& /*file*/, const std::string& /*id*/) {
+  fail(api::ErrorCode::unsupported, "no media import port is attached to this engine");
+}
 Json Ports::probe_file(const std::string& /*path*/) { return Json::object(); }
 Json Ports::read_project(const std::string& /*path*/) {
   fail(api::ErrorCode::unsupported, "no project file port is attached to this engine");
@@ -229,6 +232,29 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
   md.set("hasAudioTrack", Json::boolean(!image));
   a.set("metadata", std::move(md));
   a.set("path", Json::string(file.path));
+  return a;
+}
+
+Json FakePorts::import_bytes(const api::ImportBytesFile& file, const std::string& id) {
+  // harness.ts fakePorts.importBytes, field for field.
+  const bool audio = ends_with_ci(file.name, ".wav") || ends_with_ci(file.name, ".mp3") || ends_with_ci(file.name, ".aac") ||
+                     file.mime_type.starts_with("audio/");
+  const bool image = ends_with_ci(file.name, ".png") || ends_with_ci(file.name, ".jpg") || ends_with_ci(file.name, ".jpeg") ||
+                     file.mime_type.starts_with("image/");
+  Json a = Json::object();
+  a.set("id", Json::string(id));
+  a.set("name", Json::string(file.name));
+  a.set("type", Json::string(audio ? "audio" : image ? "image" : "video"));
+  a.set("src", Json::string("blob:fake/" + id));
+  a.set("size", Json::number(static_cast<double>(file.data.size())));
+  Json md = Json::object();
+  md.set("width", Json::number(640));
+  md.set("height", Json::number(360));
+  md.set("duration", Json::number(image ? 0 : 4));
+  md.set("fps", Json::number(30));
+  md.set("hasAudioTrack", Json::boolean(!image));
+  a.set("metadata", std::move(md));
+  if (file.origin_path) a.set("path", Json::string(*file.origin_path));
   return a;
 }
 

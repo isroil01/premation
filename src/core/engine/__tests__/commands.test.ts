@@ -49,6 +49,7 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   },
   // ── Items ──
   importFiles: { cmd: () => ({ type: 'importFiles', files: [{ path: 'C:/media/new.png', asSequence: false, createComposition: false }] }) },
+  importBytes: { cmd: (s) => ({ type: 'importBytes', files: [{ name: 'matte.png', data: new Uint8Array([137, 80, 78, 71]), mimeType: 'image/png', folder: s.folder }] }) },
   relinkItem: { cmd: (s) => ({ type: 'relinkItem', item: s.footage2, path: 'D:/moved/clip2.mp4', keepInterpretation: true }) },
   removeItems: { cmd: (s) => ({ type: 'removeItems', items: [s.footage], removeUsingLayers: true }) },
   renameItem: { cmd: (s) => ({ type: 'renameItem', item: s.comp2, name: 'Renamed' }) },
@@ -302,7 +303,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(105);
+  expect(edits.length).toBe(106);
 });
 
 describe.each(edits)('%s', (type) => {

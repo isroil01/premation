@@ -33,6 +33,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   collectFiles: { id: 16, kind: 'io', coalesce: false, family: "Project", result: "SaveProjectResult", doc: "Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged." },
   setAutosave: { id: 17, kind: 'control', coalesce: false, family: "Project", result: "Empty", doc: "Autosave / crash-recovery cadence (a preference the engine executes; not document state)." },
   importFiles: { id: 50, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "Import files as footage items. Undo removes the items (files on disk are never touched)." },
+  importBytes: { id: 70, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`." },
   relinkItem: { id: 51, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Point an item at a different file (relink missing footage / Replace Footage). Undo restores the old path." },
   reloadItems: { id: 52, kind: 'control', coalesce: false, family: "Items", result: "Empty", doc: "Re-read items from disk (not a document change)." },
   removeItems: { id: 53, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Remove items. Layers that use them are removed too when removeUsingLayers, otherwise the command fails with `locked` if any are in use. Undo restores items and layers exactly." },
@@ -222,4 +223,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":73,"structs":376,"unions":11,"commands":136,"queries":34,"events":28} as const;
+export const SCHEMA_COUNTS = {"enums":73,"structs":378,"unions":11,"commands":137,"queries":34,"events":28} as const;

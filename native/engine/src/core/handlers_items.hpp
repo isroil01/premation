@@ -11,6 +11,7 @@
 namespace premation::doc {
 
 ResultOf<api::ImportFiles> handle(const api::ImportFiles& c, HCtx& x);
+ResultOf<api::ImportBytes> handle(const api::ImportBytes& c, HCtx& x);
 ResultOf<api::RelinkItem> handle(const api::RelinkItem& c, HCtx& x);
 ResultOf<api::RemoveItems> handle(const api::RemoveItems& c, HCtx& x);
 ResultOf<api::RenameItem> handle(const api::RenameItem& c, HCtx& x);

@@ -88,6 +88,19 @@ export function createAppEnginePorts(project: ProjectFileAccess): EnginePorts {
       return { ...asset, id, path: file.path };
     },
 
+    importBytes: async (file, id): Promise<ImportedAsset> => {
+      // The same importer as a picked file (ingest, content addressing,
+      // thumbnails, auto-proxy); the engine adds the record itself.
+      const blob = new File([file.data.slice()], file.name, file.mimeType ? { type: file.mimeType } : undefined);
+      const asset = await useAssetStore.getState().addAsset(blob, null, {
+        id,
+        ...(file.originPath ? { path: file.originPath } : {}),
+      });
+      if (!asset) throw new Error('the file could not be read or decoded');
+      detachFromSession(asset.id);
+      return { ...asset, id };
+    },
+
     probeFile: async (path) => {
       const bytes = await readBytes(path);
       const name = fileNameOf(path);

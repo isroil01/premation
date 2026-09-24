@@ -91,6 +91,8 @@ class Ports {
   [[nodiscard]] virtual bool has_import() const { return false; }
   /// Import one file as a footage record (JSON ImportedAsset) with `id`; throws EngineFail(io).
   [[nodiscard]] virtual Json import_file(const api::ImportFile& file, const std::string& id);
+  /// importBytes: one footage record from bytes; throws EngineFail(io). Present with has_import().
+  [[nodiscard]] virtual Json import_bytes(const api::ImportBytesFile& file, const std::string& id);
   [[nodiscard]] virtual bool has_probe() const { return false; }
   [[nodiscard]] virtual Json probe_file(const std::string& path);
   [[nodiscard]] virtual bool has_projects() const { return false; }
@@ -112,6 +114,7 @@ class FakePorts final : public Ports {
   explicit FakePorts(std::string dir) : dir_(std::move(dir)) {}
   [[nodiscard]] bool has_import() const override { return true; }
   [[nodiscard]] Json import_file(const api::ImportFile& file, const std::string& id) override;
+  [[nodiscard]] Json import_bytes(const api::ImportBytesFile& file, const std::string& id) override;
   [[nodiscard]] bool has_probe() const override { return true; }
   [[nodiscard]] Json probe_file(const std::string& path) override;
   [[nodiscard]] bool has_projects() const override { return true; }

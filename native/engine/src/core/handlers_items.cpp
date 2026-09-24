@@ -215,6 +215,43 @@ ResultOf<api::ImportFiles> handle(const api::ImportFiles& c, HCtx& x) {
   return api::ItemList{ids};
 }
 
+ResultOf<api::ImportBytes> handle(const api::ImportBytes& c, HCtx& x) {
+  Document& d = x.d;
+  if (c.files.empty()) fail(ErrorCode::invalid_argument, "no files given");
+  if (!x.ports.has_import()) fail(ErrorCode::unsupported, "no media import port is attached to this engine");
+  for (const api::ImportBytesFile& f : c.files) {
+    if (f.data.empty()) fail(ErrorCode::invalid_argument, "'" + f.name + "' has no bytes");
+    if (js_trim(f.name).empty()) fail(ErrorCode::invalid_argument, "a file name is required");
+    if (f.folder && !f.folder->empty() && !has_folder(d, *f.folder)) {
+      fail(ErrorCode::not_found, "no folder '" + *f.folder + "'", {.item = *f.folder});
+    }
+    if (f.interpretation) (void)interpretation_patch(*f.interpretation);
+  }
+  std::vector<std::string> ids;
+  for (std::size_t i = 0; i < c.files.size(); ++i) ids.push_back(x.mint_id("item_"));
+  x.label = "Import " + plural(c.files.size(), "File");
+  std::vector<Json> records;
+  for (std::size_t i = 0; i < c.files.size(); ++i) {
+    std::optional<std::string> failed;
+    try {
+      records.push_back(x.ports.import_bytes(c.files[i], ids[i]));
+    } catch (const EngineFail& e) {
+      failed = e.error.message;
+    }
+    if (failed) fail(ErrorCode::io, "could not import '" + c.files[i].name + "': " + *failed);
+  }
+  Items& items = d.items_mut();
+  for (std::size_t i = 0; i < records.size(); ++i) {
+    const api::ImportBytesFile& f = c.files[i];
+    Json a = records[i];
+    a.set("id", Json::string(ids[i]));
+    if (f.folder && !f.folder->empty()) a.set("folderId", Json::string(*f.folder));
+    if (f.interpretation) a = with_interpretation(a, interpretation_patch(*f.interpretation));
+    items.assets.push_back(std::move(a));
+  }
+  return api::ItemList{ids};
+}
+
 ResultOf<api::RelinkItem> handle(const api::RelinkItem& c, HCtx& x) {
   Document& d = x.d;
   const ItemRef ref = require_item(d, c.item);

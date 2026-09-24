@@ -331,6 +331,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | Command | Semantics / inverse |
 |---|---|
 | `importFiles` | Import files (sequence detection, target folder, interpretation, optional comp). Inverse: remove the items (files untouched). |
+| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. Inverse: remove the items (stored bytes untouched). |
 | `relinkItem` | Point an item at another file (relink / Replace Footage). Inverse: old path (+ old interpretation unless kept). |
 | `reloadItems` | control — re-read from disk. |
 | `removeItems` | Remove items; with `removeUsingLayers` also their layers, otherwise error `locked` if used. Inverse: items and layers restored with the same ids and positions. |

@@ -33,11 +33,9 @@ import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
 import { maskToBezier } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { engine } from '@core/engine/engineInstance';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import {
-  addEffect,
   effectDefFor,
   effectOpacityPath,
   effectPropPath,
@@ -68,6 +66,7 @@ import type { MaskPath } from '@core/effects/mask';
 import type { FrameBlend as StoredFrameBlend } from '@core/scene/layerTime';
 import { Color } from '@motion/renderer';
 import { useWorkspaceStore } from '@stores/projectStore';
+import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { getTime } from '@stores/playbackClockStore';
 import { scalarValueCommands, stopwatchCommands, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
@@ -87,9 +86,15 @@ function layersOf(ids: ReadonlyArray<string>): string[] {
 export async function addEffectEdit(nodeIds: ReadonlyArray<string>, type: EffectType): Promise<string[]> {
   const layers = layersOf(nodeIds);
   const def = effectDefFor(type);
-  const strays = [...new Set(nodeIds)].filter((id) => !isLayer(id) && defaultSceneGraph.getNode(id));
-  if (def && strays.length > 0) legacyAddEffect(strays, type);
-  if (layers.length === 0 || !def) return [];
+  if (!def) return [];
+  if (layers.length === 0) {
+    // A composition (its root) takes no effects — After Effects' rule too:
+    // an Adjustment Layer is how an effect reaches a whole composition.
+    if (nodeIds.length > 0) {
+      useUIStore.getState().notify({ level: 'info', message: 'Effects apply to layers — add an Adjustment Layer to affect the whole composition.', durationMs: 4000 });
+    }
+    return [];
+  }
   const res = await edit(`Add ${def.label}`, { type: 'addEffect', layers, effect: type, params: [] });
   if (!res.ok) return [];
   return (res.value[0] as { groups?: string[] } | undefined)?.groups ?? [];
@@ -493,11 +498,6 @@ export function setEffectMaskEdit(nodeId: string, effectId: string, maskId: stri
 /** The label colour of one applied effect (`undefined` = none). */
 export function setEffectLabelColorEdit(nodeId: string, effectId: string, color: string | undefined): Promise<unknown> {
   return edit('Set effect label', { type: 'setProperty', prop: effectField(nodeId, effectId, 'label'), value: values.string(color ?? '') });
-}
-
-function legacyAddEffect(nodeIds: string[], type: EffectType): void {
-  // B3-legacy: engine gap — a node that is not a layer of a composition (a composition root, a stray node) is not addressable by `addEffect`.
-  for (const id of nodeIds) addEffect(id, type);
 }
 
 /** Captured effects (a clipboard snapshot or a saved preset) onto `layers` — ONE `pasteEffects`. */
