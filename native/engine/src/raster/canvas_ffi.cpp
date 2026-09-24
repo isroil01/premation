@@ -258,6 +258,9 @@ class SkiaCanvas final : public Canvas2D {
   [[nodiscard]] std::uint32_t width() const noexcept override { return w_; }
   [[nodiscard]] std::uint32_t height() const noexcept override { return h_; }
   void resize(std::uint32_t w, std::uint32_t h) override { alloc(w, h); }
+  [[nodiscard]] std::unique_ptr<Canvas2D> create_canvas(std::uint32_t w, std::uint32_t h) const override {
+    return std::make_unique<SkiaCanvas>(w, h, opts_);
+  }
 
   [[nodiscard]] std::vector<std::uint8_t> pixels() const override {
     std::vector<std::uint8_t> out(static_cast<std::size_t>(w_) * h_ * 4);

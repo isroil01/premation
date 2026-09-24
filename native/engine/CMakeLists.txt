@@ -475,7 +475,9 @@ endif()
 # ── E3: text + vector rasterisation (src/raster; kept in its own block) ─────
 #   engine_raster_core  Skia-free: JSON, CSS values (colour / font / filter),
 #                       graphemes, line breaking + Intl word joins (ICU at run
-#                       time, word_break_ffi)
+#                       time, word_break_ffi), fontconfig families (Linux),
+#                       optical-kerning math, the Canvas2D interface and the
+#                       paint-stroke painter (paint_raster) that runs on it
 #   engine_raster       the Canvas2D semantics on Skia's CPU raster backend
 #                       (canvas_ffi), fonts (FreeType + woff2) + HarfBuzz shaping
 #                       + SheenBidi (fonts_ffi), the recorded-call replayer and
@@ -490,6 +492,9 @@ add_library(engine_raster_core STATIC
   src/raster/text_unicode.cpp
   src/raster/line_break.cpp
   src/raster/optical_math.cpp
+  src/raster/canvas.cpp           # the Canvas2D interface (Skia behind it: canvas_ffi)
+  src/raster/paint_common.cpp
+  src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
   src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
 )
@@ -514,13 +519,11 @@ find_library(PREMATION_WOFF2DEC woff2dec)
 find_library(PREMATION_WOFF2COMMON woff2common)
 if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenBidi::SheenBidi AND PREMATION_WOFF2DEC)
   add_library(engine_raster STATIC
-    src/raster/canvas.cpp
     src/raster/canvas_ffi.cpp
     src/raster/fonts_ffi.cpp
     src/raster/bidi_ffi.cpp
     src/raster/text_layout.cpp
     src/raster/canvas_replay.cpp
-    src/raster/paint_common.cpp
     src/raster/vector_paint.cpp
     src/raster/mask_paint.cpp
     src/raster/optical_kerning.cpp
@@ -546,7 +549,7 @@ else()
   message(STATUS "premation-engine: Skia / HarfBuzz / SheenBidi / woff2 not found — E3 builds its Skia-free core only")
 endif()
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp)
+  add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)

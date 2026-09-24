@@ -7,6 +7,7 @@
 #include <ranges>
 
 #include "paint_common.hpp"
+#include "paint_raster.hpp"
 
 namespace premation::raster {
 namespace {
@@ -864,9 +865,9 @@ void paint_path_layer(Canvas2D& ctx, const Value& layer, std::vector<std::string
       for (const Value* s : strokeStack) stroke_one(*s, nullptr, trace);
     }
   }
-  if (layer["paint"].is_object() && layer["paint"]["strokes"].is_array() && layer["paint"]["strokes"].size() > 0) {
-    unsupported.emplace_back("paint strokes (brush / eraser / clone)");
-  }
+  // The layer's paint over its content, in the centred local transform
+  // (Canvas2DVectorRasterizer.drawPaint → paintRaster.ts drawPaint).
+  if (has_paint_strokes(layer["paint"])) draw_paint(ctx, layer["paint"]);
 }
 
 }  // namespace premation::raster

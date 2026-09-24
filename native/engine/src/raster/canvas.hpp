@@ -146,6 +146,9 @@ class Canvas2D {
   virtual void resize(std::uint32_t width, std::uint32_t height) = 0;
   /// Premultiplied RGBA8, rows top-down — the bytes a canvas upload produces.
   [[nodiscard]] virtual std::vector<std::uint8_t> pixels() const = 0;
+  /// document.createElement('canvas') sized w × h, with this canvas's options
+  /// (the painters' scratch canvases: tip stamps, snapshots, buffers).
+  [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_canvas(std::uint32_t width, std::uint32_t height) const = 0;
 
   // ── state ──
   virtual void save() = 0;
