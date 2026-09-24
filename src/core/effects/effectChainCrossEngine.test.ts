@@ -46,9 +46,7 @@ const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/effect_ch
  * docs/NATIVE_CORE_PLAN.md). The chain reports them and leaves the frame; no
  * case here carries one.
  */
-const NOT_NATIVE = new Set<string>([
-  'lens-flare', 'vegas', 'numbers', 'timecode', 'audio-spectrum', 'audio-waveform', 'lightning', 'plexus',
-]);
+const NOT_NATIVE = new Set<string>([]);
 
 type Route = 'lut' | 'css' | 'color' | 'procedural' | 'canvas2d' | 'none';
 /** The branch of `applyEffectChain`'s `applyOne` an effect takes. */
@@ -185,6 +183,9 @@ const RESOLVED: Record<string, Record<string, unknown>> = {
   'beam-path': { pathPoints: SPINE },
   'apply-color-lut': { lut: { size: 3, size1d: 0, data: lut3d(3), domainMin: [0, 0, 0], domainMax: [1, 1, 1] }, intensity: 80 },
   'strobe-light': { time: 0.35 },
+  timecode: { time: 3723.4567 },
+  'audio-spectrum': { magnitudes: Array.from({ length: 24 }, (_, i) => q3(0.5 + 0.45 * Math.sin(i * 0.7))) },
+  'audio-waveform': { samples: Array.from({ length: 40 }, (_, i) => q3(Math.sin(i * 0.45) * 0.8)) },
   'particle-systems': { time: 1.25 },
 };
 
@@ -322,6 +323,20 @@ function buildCases(): Case[] {
       fx('transform', { scale: 80, rotation: 10, positionX: 3 }), fx('beam', { length: 70, thickness: 3 }),
       fx('cc-repetile', { expandLeft: 5, expandUp: 3.5, tiling: 2 }), fx('satin', { size: 2, distance: 3, invert: true }, { opacity: 70 }),
       fx('cc-repetile', { expandRight: 4, expandDown: 2, tiling: 1 }),
+    ]],
+    ['generators-on-paths', [
+      fx('lightning', { pathPoints: SPINE, branches: 3, glow: 4 }),
+      fx('plexus', { pathPoints: SPINE, pathStep: 2, maxDistance: 14, triangles: true, triangleOpacity: 40, pointSize: 2 }),
+      fx('vegas', { pathPoints: star(0, 0, 14, 7, 5).flatMap(([x, y]) => [q3(x), q3(y)]), segments: 5, length: 40, startOpacity: 20, blendMode: 1 }),
+      fx('vegas', { ...MASK_LISTS, allMasks: true, strokeSequentially: true, randomPhase: true, segments: 3, blendMode: 2 }),
+      fx('vegas', { threshold: 100, segments: 7, length: 60, hardness: 60, blendMode: 3 }),
+      fx('audio-spectrum', { usePolarPath: true, polarRadius: 12, displayMode: 0, softness: 30, hueInterpolation: 90 }),
+      fx('audio-spectrum', { pathPoints: SPINE, displayMode: 1 }),
+      fx('audio-waveform', { displayMode: 1, usePolarPath: true, polarRadius: 10 }),
+      fx('audio-waveform', { displayMode: 2, pathPoints: SPINE, side: 0 }),
+      fx('numbers', { value: -1234567.891, decimals: 2, useCommas: true, padTo: 9, showBox: true }),
+      fx('timecode', { time: 59.999, fps: 29.97, dropFrame: true }),
+      fx('lens-flare', { brightness: 80, centerX: -8, centerY: 5, scale: 0.6 }),
     ]],
     ['paths-and-brushes', [
       fx('path-stroke', { brushSize: 4, color: '#ff00aa', end: 70 }), fx('scribble', { strokeWidth: 1.5, angle: 30 }),

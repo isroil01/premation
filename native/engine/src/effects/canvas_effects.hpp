@@ -45,6 +45,12 @@ class CanvasEffectContext {
 /// Draw canvas effect `type` onto `oc`. False when `type` is not ported here.
 bool run_canvas_effect(std::string_view type, const raster::json::Value& params, raster::Canvas2D& oc, double w, double h,
                        CanvasEffectContext& ctx);
+/// The generators of canvas_effects_generate.cpp (lens flare, numbers, timecode,
+/// audio spectrum / waveform, lightning, plexus, vegas); False when `type` is not one.
+bool run_generate_canvas_effect(std::string_view type, const raster::json::Value& params, raster::Canvas2D& oc, double w, double h,
+                                CanvasEffectContext& ctx);
+[[nodiscard]] std::span<const std::string_view> generate_canvas_effects() noexcept;
+
 /// The same with a context of its own (no pool shared with other effects, no silhouette).
 bool run_canvas_effect(std::string_view type, const raster::json::Value& params, raster::Canvas2D& oc, double w, double h);
 

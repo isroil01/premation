@@ -259,8 +259,14 @@ class RecordingCanvas final : public Canvas2D {
     return true;
   }
   [[nodiscard]] std::string font() const override { return {}; }
-  void setTextAlign(TextAlign /*a*/) override { call("textAlign", {}); }
-  void setTextBaseline(TextBaseline /*b*/) override { call("textBaseline", {}); }
+  void setTextAlign(TextAlign a) override {
+    static constexpr std::array<std::string_view, 5> kNames{"start", "end", "left", "right", "center"};
+    set("textAlign", quote(kNames[static_cast<std::size_t>(a)]));
+  }
+  void setTextBaseline(TextBaseline b) override {
+    static constexpr std::array<std::string_view, 6> kNames{"alphabetic", "top", "hanging", "middle", "ideographic", "bottom"};
+    set("textBaseline", quote(kNames[static_cast<std::size_t>(b)]));
+  }
   void setDirection(Direction /*d*/) override { call("direction", {}); }
   [[nodiscard]] Direction direction() const override { return Direction::inherit; }
   void setLetterSpacing(double px) override { set("letterSpacing", num(px)); }

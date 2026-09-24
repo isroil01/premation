@@ -7,6 +7,8 @@
 
 #include "canvas_effects.hpp"
 
+#include "canvas_effects_common.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -26,136 +28,7 @@
 namespace premation::effects {
 namespace {
 
-using raster::Canvas2D;
-using raster::Gradient;
-using raster::Style;
-using raster::json::Value;
-
-constexpr double kPi = 3.141592653589793;  // Math.PI
-
-// ── the TS param helpers ─────────────────────────────────────────────────────
-
-/// effectNumber: the param when it is a number, else 0.
-double num(const Value& p, std::string_view k) {
-  const Value& v = p[k];
-  return v.is_number() ? v.num() : 0;
-}
-/// str(e, k, fallback).
-std::string str(const Value& p, std::string_view k, std::string_view fb) {
-  const Value& v = p[k];
-  return v.is_string() ? v.str() : std::string(fb);
-}
-/// bool(e, k, fallback).
-bool flag(const Value& p, std::string_view k, bool fb) {
-  const Value& v = p[k];
-  return v.is_bool() ? v.truthy() : fb;
-}
-
-/// @utils/lang clamp01: NaN → 0.
-double clamp01_lang(double v) { return v > 0 ? (v > 1 ? 1 : v) : 0; }
-/// colorSpace.ts clamp01: NaN passes through.
-double clamp01_cs(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-
-double cos_js(double x) { return motion::js::cos(x); }
-double sin_js(double x) { return motion::js::sin(x); }
-std::string js(double v) { return motion::js::number_to_string(v); }
-
-/// fillStyle / strokeStyle / shadowColor = <css string>: the canvas ignores what it cannot parse.
-void fill_css(Canvas2D& c, std::string_view css) {
-  if (const auto col = raster::css::parse_color(css)) {
-    Style s;
-    s.color = *col;
-    c.setFillStyle(s);
-  }
-}
-void stroke_css(Canvas2D& c, std::string_view css) {
-  if (const auto col = raster::css::parse_color(css)) {
-    Style s;
-    s.color = *col;
-    c.setStrokeStyle(s);
-  }
-}
-
-/// generateAdvanced.ts rgba(hex, alpha): `#rrggbb` / `#rgb` → rgba(r,g,b,alpha), else mid grey.
-std::string rgba(const std::string& hex, double alpha) {
-  std::string s = hex;
-  const auto issp = [](unsigned char ch) { return std::isspace(ch) != 0; };
-  while (!s.empty() && issp(static_cast<unsigned char>(s.back()))) s.pop_back();
-  std::size_t b = 0;
-  while (b < s.size() && issp(static_cast<unsigned char>(s[b]))) ++b;
-  s = s.substr(b);
-  const auto hexv = [](char ch) {
-    if (ch >= '0' && ch <= '9') return ch - '0';
-    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
-    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
-    return -1;
-  };
-  const auto all_hex = [&](std::string_view h) { return std::ranges::all_of(h, [&](char ch) { return hexv(ch) >= 0; }); };
-  std::string full;
-  if (s.size() == 7 && s[0] == '#' && all_hex(std::string_view(s).substr(1))) {
-    full = s.substr(1);
-  } else if (s.size() == 4 && s[0] == '#' && all_hex(std::string_view(s).substr(1))) {
-    for (std::size_t i = 1; i < 4; ++i) full += std::string(2, s[i]);
-  } else {
-    return "rgba(128,128,128," + js(alpha) + ")";
-  }
-  int n = 0;
-  for (const char ch : full) n = n * 16 + hexv(ch);
-  return "rgba(" + std::to_string((n >> 16) & 255) + "," + std::to_string((n >> 8) & 255) + "," + std::to_string(n & 255) + "," +
-         js(alpha) + ")";
-}
-
-/// A gradient under construction: CanvasGradient's addColorStop (unparseable colours ignored).
-struct Grad {
-  std::shared_ptr<Gradient> g = std::make_shared<Gradient>();
-  void stop(double offset, std::string_view css) const {
-    if (const auto col = raster::css::parse_color(css)) g->add_stop(offset, *col);
-  }
-  [[nodiscard]] Style style() const {
-    Style s;
-    s.kind = Style::Kind::gradient;
-    s.gradient = g;
-    return s;
-  }
-};
-Grad radial(double x0, double y0, double r0, double x1, double y1, double r1) {
-  Grad out;
-  out.g->kind = Gradient::Kind::radial;
-  out.g->p = {x0, y0, r0, x1, y1, r1};
-  return out;
-}
-Grad linear(double x0, double y0, double x1, double y1) {
-  Grad out;
-  out.g->kind = Gradient::Kind::linear;
-  out.g->p = {x0, y0, x1, y1, 0, 0};
-  return out;
-}
-
-/// generateAdvanced.ts compositeFor: 0 over · 1 add · 2 screen · 3 multiply · 4 inside.
-std::string_view composite_for(double mode) {
-  const double m = motion::js::round(mode);
-  if (m == 1) return "lighter";
-  if (m == 2) return "screen";
-  if (m == 3) return "multiply";
-  if (m == 4) return "source-atop";
-  return "source-over";
-}
-
-/// withComposite: run `fn` under a composite mode, restoring the previous one.
-void with_composite(Canvas2D& oc, double mode, const std::function<void()>& fn) {
-  const std::string prev = oc.globalCompositeOperation();
-  (void)oc.setGlobalCompositeOperation(composite_for(mode));
-  fn();
-  (void)oc.setGlobalCompositeOperation(prev);
-}
-
-/// generatePatterns.ts withPatternClip: source-atop, inside a save / restore.
-void with_pattern_clip(Canvas2D& oc, const std::function<void()>& fn) {
-  oc.save();
-  (void)oc.setGlobalCompositeOperation("source-atop");
-  fn();
-  oc.restore();
-}
+using namespace canvas_detail;  // NOLINT(google-build-using-namespace): this file's own helpers
 
 // ── canvas2dEffects.ts ───────────────────────────────────────────────────────
 
@@ -448,7 +321,7 @@ std::array<double, 3> parse_hex(const std::string& hex) {
 /// canvas2dEffects.ts withA(hex, a).
 std::string with_a(const std::string& hex, double a) {
   const auto [r, g, b] = parse_hex(hex);
-  return "rgba(" + js(r) + "," + js(g) + "," + js(b) + "," + js(clamp01_lang(a)) + ")";
+  return "rgba(" + jsn(r) + "," + jsn(g) + "," + jsn(b) + "," + jsn(clamp01_lang(a)) + ")";
 }
 /// drawImage(src, dx, dy): the whole source at its own size.
 void draw_at(Canvas2D& dst, const Canvas2D& src, double dx, double dy) {
@@ -458,7 +331,7 @@ void draw_at(Canvas2D& dst, const Canvas2D& src, double dx, double dy) {
 }
 void filter_css(Canvas2D& c, std::string_view css) { (void)c.setFilterString(css); }
 /// `ctx.filter = size > 0 ? 'blur(<size>px)' : 'none'`.
-void blur_or_none(Canvas2D& c, double size) { filter_css(c, size > 0 ? "blur(" + js(size) + "px)" : std::string("none")); }
+void blur_or_none(Canvas2D& c, double size) { filter_css(c, size > 0 ? "blur(" + jsn(size) + "px)" : std::string("none")); }
 /// The reset the styles apply to each working buffer before use.
 void reset(Canvas2D& c, double w, double h) {
   c.setTransform({});
@@ -730,7 +603,7 @@ void apply_bevel(CanvasEffectContext& x, Canvas2D& oc, double w, double h, const
   Canvas2D& lc = x.scratch(oc, "bevel-lo", uww, uwh);
   for (Canvas2D* c : {&sc, &rc, &hc, &lc}) reset(*c, ww, wh);
   sc.drawImage(silhouette_of(x, oc), 0, 0, w, h, 0, 0, ww, wh);
-  filter_css(rc, "blur(" + js(std::max(0.5, size * s)) + "px)");
+  filter_css(rc, "blur(" + jsn(std::max(0.5, size * s)) + "px)");
   draw_at(rc, sc, 0, 0);
   filter_css(rc, "none");
   const std::vector<std::uint8_t> src = rc.getImageData(0, 0, uww, uwh);
@@ -946,13 +819,6 @@ constexpr std::array<std::pair<std::string_view, Fn>, 9> kEffects{{
     {"light-sweep", draw_light_sweep},
 }};
 
-constexpr std::array<std::string_view, kEffects.size() + kContextEffects.size()> kNames = [] {
-  std::array<std::string_view, kEffects.size() + kContextEffects.size()> out{};
-  for (std::size_t i = 0; i < kEffects.size(); ++i) out[i] = kEffects[i].first;
-  for (std::size_t i = 0; i < kContextEffects.size(); ++i) out[kEffects.size() + i] = kContextEffects[i].first;
-  return out;
-}();
-
 }  // namespace
 
 raster::Canvas2D& CanvasEffectContext::scratch(const raster::Canvas2D& oc, std::string_view role, std::uint32_t w, std::uint32_t h) {
@@ -980,7 +846,7 @@ bool run_canvas_effect(std::string_view type, const raster::json::Value& params,
       return true;
     }
   }
-  return false;
+  return run_generate_canvas_effect(type, params, oc, w, h, ctx);
 }
 
 bool run_canvas_effect(std::string_view type, const raster::json::Value& params, raster::Canvas2D& oc, double w, double h) {
@@ -988,6 +854,16 @@ bool run_canvas_effect(std::string_view type, const raster::json::Value& params,
   return run_canvas_effect(type, params, oc, w, h, ctx);
 }
 
-std::span<const std::string_view> ported_canvas_effects() noexcept { return kNames; }
+std::span<const std::string_view> ported_canvas_effects() noexcept {
+  static const std::vector<std::string_view> names = [] {
+    std::vector<std::string_view> v;
+    for (const auto& e : kEffects) v.push_back(e.first);
+    for (const auto& e : kContextEffects) v.push_back(e.first);
+    const auto more = generate_canvas_effects();
+    v.insert(v.end(), more.begin(), more.end());
+    return v;
+  }();
+  return names;
+}
 
 }  // namespace premation::effects

@@ -205,6 +205,12 @@ export class RecordingContext {
   get globalCompositeOperation(): string { return this.gco_; }
   set filter(v: string) { this.set('filter', v); }
   set imageSmoothingEnabled(v: boolean) { this.set('imageSmoothingEnabled', v); }
+  set font(v: string) { this.set('font', v); }
+  set textAlign(v: string) { this.set('textAlign', v); }
+  set textBaseline(v: string) { this.set('textBaseline', v); }
+  fillText(t: string, x: number, y: number): void { this.call('fillText', t, x, y); }
+  /** No fonts here: every string measures 0 wide (the C++ recorder's answer too). */
+  measureText(_t: string): { width: number } { return { width: 0 }; }
   set shadowColor(v: string) { this.set('shadowColor', canonColor(v)); }
   set shadowBlur(v: number) { this.set('shadowBlur', v); }
   set shadowOffsetX(v: number) { this.set('shadowOffsetX', v); }

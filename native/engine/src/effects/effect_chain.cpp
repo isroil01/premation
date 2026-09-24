@@ -22,9 +22,7 @@ using raster::json::Value;
 
 /// Canvas-drawn effects the chain cannot draw yet (canvas2dEffects.ts cases with
 /// no port in canvas_effects.cpp). Reported, never drawn wrong.
-constexpr std::array<std::string_view, 8> kUnportedCanvas{
-    "lens-flare", "vegas", "numbers", "timecode", "audio-spectrum", "audio-waveform", "lightning", "plexus",
-};
+constexpr std::array<std::string_view, 0> kUnportedCanvas{};
 
 /// effectBake.ts DRAWN_CANVAS_EFFECTS: the batch lands before (and is dropped after) these.
 constexpr std::array<std::string_view, 24> kDrawn{

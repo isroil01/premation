@@ -638,9 +638,9 @@ target_compile_features(engine_effects PUBLIC cxx_std_20)
 target_link_libraries(engine_effects PUBLIC motion::jsmath PRIVATE motion::options)
 # The canvas-drawn effects (fill, wipes, generators) on the raster module's
 # Canvas2D interface — Skia-free here; Skia sits behind the interface.
-add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp)
+add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp src/effects/canvas_effects_generate.cpp)
 target_include_directories(engine_canvas_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE motion::options)
+target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE engine_effects motion::options)
 
 # The bake CHAIN (effectBake.ts applyEffectChain): param mapping of the apply*
 # wrappers, LUT / colour-matrix / CSS / procedural routes, fill opacity, the
