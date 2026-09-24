@@ -31,11 +31,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { defaultAnimation } from '@motion/animation';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { RenderView } from '@core/rendering/RenderBackend';
-import type { SceneNode } from '@core/types';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 
@@ -53,40 +50,8 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
   }),
 }));
 
-const NODE = 'pane-gizmo-layer';
 /** A 3D layer well off the comp centre, so every axis projects distinctly. */
 const START = { x: 200, y: 300, z: 400 };
-
-function layerNode(): SceneNode {
-  return {
-    id: NODE,
-    name: NODE,
-    parent: null,
-    children: [],
-    visible: true,
-    locked: false,
-    transform: { position: { x: START.x, y: START.y }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${NODE}_t`,
-        type: 'Transform',
-        props: {
-          [SCENE_KIND_PROP]: 'shape',
-          x: START.x,
-          y: START.y,
-          rotation: 0,
-          scaleX: 1,
-          scaleY: 1,
-          opacity: 100,
-          // The depth props are what make it a 3D layer (see threeD.ts).
-          z: START.z,
-          rotationX: 0,
-          rotationY: 0,
-        },
-      },
-    ],
-  } as unknown as SceneNode;
-}
 
 /**
  * One pane's worth of gizmo: the hook bound to a view, and the overlay drawing
@@ -128,14 +93,6 @@ function xArmTip(container: HTMLElement): { x: number; y: number } {
 
 function reset(): void {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  for (const p of ['x', 'y', 'z', 'rotation', 'rotationX', 'rotationY', 'scaleX', 'scaleY']) {
-    defaultAnimation.removeTrack(NODE, p);
-  }
-  try {
-    defaultSceneGraph.removeNode(NODE);
-  } catch {
-    /* already gone */
-  }
   useSelectionStore.getState().set([]);
   // The MAIN viewport looks front-on. Every pane below asks for something else,
   // so a value taken from the global is visible as such.
@@ -149,9 +106,25 @@ beforeEach(reset);
 afterEach(reset);
 
 describe('a pane places its handles through ITS OWN view', () => {
+  // A 3D layer of the composition, built through the engine: the gizmo's
+  // 3D gate reads the layer header from the document mirror (B4).
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  let layerId: string;
+
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    layerId = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'rectangle', name: 'Box', init: [] })).layer;
+    await h.run({ type: 'setLayerSwitches', layers: [layerId], patch: { threeD: true } });
+    await h.run({ type: 'setProperty', prop: { layer: layerId, path: 'transform/position' }, value: { kind: 'vec3', value: START } });
+    await engineIdle();
+  });
+
+  afterEach(async () => {
+    await h.dispose();
+  });
+
   it('projects through the pane’s ortho axis and framing, not the main viewport’s', () => {
-    defaultSceneGraph.addNode(layerNode());
-    act(() => useSelectionStore.getState().set([NODE]));
+    act(() => useSelectionStore.getState().set([layerId]));
 
     const paneView: RenderView = { scale: 0.5, offsetX: 12, offsetY: 34 };
     const pane = render(<GizmoHarness mode="top" view={paneView} />);
@@ -184,8 +157,7 @@ describe('a pane places its handles through ITS OWN view', () => {
   });
 
   it('two panes on different axes disagree with each other', () => {
-    defaultSceneGraph.addNode(layerNode());
-    act(() => useSelectionStore.getState().set([NODE]));
+    act(() => useSelectionStore.getState().set([layerId]));
     const view: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
 
     const top = render(<GizmoHarness mode="top" view={view} />);

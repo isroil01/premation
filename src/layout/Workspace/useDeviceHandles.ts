@@ -21,11 +21,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D } from '@motion/workspace';
 import { useGuidesStore } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { isSceneCameraView, orthoViewOf } from '@core/scene/cameraViewMode';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import { viewDragToWorldDelta } from '@core/workspace/ports';
@@ -48,8 +47,7 @@ interface DeviceDrag {
 
 export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) {
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
   const time = useCurrentTime();
   // The camera this view looks THROUGH gets no handle — the same suppression
   // the wireframe already has, resolved from the same shared hook so the two
@@ -64,7 +62,7 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
   // subscription above) and on time, so a keyframed camera's dot tracks it.
   // Deliberately the same collector the hit test calls: a dot the pointer can
   // see but not grab is worse than no dot at all.
-  const sceneRev = useSceneRevisionFrame();
+  const sceneRev = useMirrorRevisionFrame();
   const handles = useMemo(
     () => collectDeviceHandles(time, compWidth, compHeight, viewingThrough),
     [time, compWidth, compHeight, sceneRev, camera3dMode, viewingThrough],

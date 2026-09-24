@@ -36,13 +36,13 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useRotoBrushStore, type RotoStroke } from '@stores/rotoBrushStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
-import { isDescendantOf } from '@core/composition/compNavigation';
+import { isMirrorDescendantOf } from '@core/mirror/layerTree';
+import { documentMirror } from '@stores/documentMirror';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { layerScreenMapping } from './layerScreen';
 import styles from './RotoBrushOverlay.module.css';
@@ -56,8 +56,8 @@ export function RotoBrushOverlay(): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
   const ids = useSelectionStore((s) => s.ids);
   const time = useCurrentTime();
-  const comp = useCompositionStore((s) => s.comp());
-  const sceneTick = useSceneRevisionFrame();
+  const comp = useActiveCompSize();
+  const sceneTick = useMirrorRevisionFrame();
 
   const nodeId = ids.length === 1 ? ids[0]! : null;
   const strokes = useRotoBrushStore((s) => s.strokes);
@@ -168,7 +168,7 @@ export function RotoBrushOverlay(): JSX.Element | null {
     }
     const r = rootRef.current?.getBoundingClientRect();
     const hit = r ? getWorkspaceController().ws.hitTestScreen({ x: e.clientX - r.left, y: e.clientY - r.top }) : null;
-    if (!hit || !(hit.id === nodeId || isDescendantOf(hit.id, nodeId))) {
+    if (!hit || !(hit.id === nodeId || isMirrorDescendantOf(documentMirror(), hit.id, nodeId))) {
       flushPendingClick();
       return false;
     }

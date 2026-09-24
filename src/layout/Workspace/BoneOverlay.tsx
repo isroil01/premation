@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize } from '@hooks/useMirrorFrame';
 import { layerScreenMapping } from './layerScreen';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
@@ -149,7 +149,7 @@ export function BoneOverlay(): JSX.Element | null {
   const rigSelectedControllerId = useRigSelectionStore((s) => s.controllerId);
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
-  const comp = useCompositionStore((s) => s.comp());
+  const comp = useActiveCompSize();
 
   const selectedBoneId = rigSelectionNodeId === selectedNodeId ? rigSelectedBoneId : null;
   const selectedControllerId =

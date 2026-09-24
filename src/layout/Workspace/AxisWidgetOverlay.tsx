@@ -10,12 +10,11 @@
 
 import React, { useMemo } from 'react';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore } from '@stores/guidesStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
+import { useActiveCompRootId, useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { documentMirror } from '@stores/documentMirror';
+import { compHas3DContent } from '@core/mirror/compLayers';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
-import { is3DEnabled } from '@core/scene/threeD';
 import { readSceneCamera, viewCameraNode } from '@core/scene/camera3d';
 import { orthoViewOf } from '@core/scene/cameraViewMode';
 import { toWorldPointAt } from '@core/scene/liveWorld3d';
@@ -47,12 +46,11 @@ const AXIS_PX = 16;
 const LABEL_PX = 21;
 
 export const AxisWidgetOverlay: React.FC = () => {
-  const sceneRev = useSceneRevisionFrame();
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const sceneRev = useMirrorRevisionFrame();
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
   // Scoped like the renderer's, so the overlay never draws a different camera
   // than the one the frame was rendered through.
-  const compRootId = useCompositionStore((s) => s.id);
+  const compRootId = useActiveCompRootId();
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
   const customViews = useGuidesStore((s) => s.customViews);
   const time = useCurrentTime();
@@ -61,15 +59,11 @@ export const AxisWidgetOverlay: React.FC = () => {
   // Comp-scoped: another composition's 3D layers must not make THIS comp's
   // viewport claim it is 3D.
   // Memoised on the scene revision — this widget re-renders every frame.
-  const has3D = useMemo(() => {
-    for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
-      const k = readNodeKind(n);
-      if (k === 'camera') continue;
-      if (k !== 'light' && is3DEnabled(n)) return true;
-    }
-    return false;
+  const has3D = useMemo(
+    () => compHas3DContent(documentMirror(), compRootId, false),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
-  }, [compRootId, sceneRev]);
+    [compRootId, sceneRev],
+  );
   // One resolver for every camera read in the app. A local first-match search
   // here would draw the widget for a different camera than the frame was
   // rendered through — same scope and same tie-break, or neither is trustworthy.

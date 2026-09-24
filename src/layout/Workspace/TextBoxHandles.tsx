@@ -22,7 +22,7 @@ import { readGeometry } from '@core/workspace/geometry';
 import { useTextEditStore, TEXT_EDIT_KEEP_ATTR } from '@stores/textEditStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useMirrorRevision } from '@hooks/useMirror';
 import { readParagraphBox } from '@core/text/textExtras';
 import { measureTextNodeParagraphBox } from '@core/text/measureText';
 import { BOX_HANDLES, handleLocalPosition, type BoxHandle } from '@core/text/paragraphBox';
@@ -56,7 +56,7 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
   const editingId = useTextEditStore((s) => s.nodeId);
   const activeTool = useUIStore((s) => s.activeTool) as string;
   const selection = useSelectionStore((s) => s.ids);
-  useSceneRevision((s) => s.rev);
+  useMirrorRevision();
   const target = textBoxTargetId(editingId, activeTool, selection);
   const node = target ? defaultSceneGraph.getNode(target) : null;
   const overflow = liveOverflow ?? (node ? measureTextNodeParagraphBox(node)?.overflow === true : false);

@@ -5,10 +5,10 @@
  * different views).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { setNodeQuality } from '@core/effects/layerQuality';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import type { SceneNode } from '@core/types';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import { engineIdle } from '@core/engine/engineInstance';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import {
   isWireframeQualityLayer,
   viewToScreen,
@@ -52,24 +52,30 @@ describe('wireframeQuads', () => {
 });
 
 describe('isWireframeQualityLayer', () => {
-  const add = (id: string, visible: boolean): void => {
-    try { defaultSceneGraph.removeNode(id); } catch { /* fresh */ }
-    defaultSceneGraph.addNode({
-      id, name: id, parent: null, children: [], visible, locked: false,
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-      components: [{ id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'solid' } }],
-    } as unknown as SceneNode);
+  // Built through the engine: the predicate reads the document mirror (B4),
+  // which hears about a layer and its switches from the engine's events.
+  let h: Harness & { engine: LocalEngine };
+  beforeEach(async () => {
+    h = await setupAppEngine();
+  });
+  afterEach(async () => {
+    await h.dispose();
+  });
+
+  const add = async (name: string, visible: boolean, quality: 'best' | 'wireframe'): Promise<string> => {
+    const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name, init: [] });
+    await h.run({ type: 'setLayerSwitches', layers: [layer], patch: { visible, quality } });
+    return layer;
   };
 
-  it('is true for a visible wireframe layer, false for Best and for a hidden one', () => {
-    add('wf_on', true);
-    add('wf_hidden', false);
-    add('wf_best', true);
-    setNodeQuality('wf_on', 'wireframe');
-    setNodeQuality('wf_hidden', 'wireframe');
-    expect(isWireframeQualityLayer('wf_on')).toBe(true);
-    expect(isWireframeQualityLayer('wf_hidden')).toBe(false);
-    expect(isWireframeQualityLayer('wf_best')).toBe(false);
+  it('is true for a visible wireframe layer, false for Best and for a hidden one', async () => {
+    const on = await add('wf_on', true, 'wireframe');
+    const hidden = await add('wf_hidden', false, 'wireframe');
+    const best = await add('wf_best', true, 'best');
+    await engineIdle();
+    expect(isWireframeQualityLayer(on)).toBe(true);
+    expect(isWireframeQualityLayer(hidden)).toBe(false);
+    expect(isWireframeQualityLayer(best)).toBe(false);
     expect(isWireframeQualityLayer('no_such_layer')).toBe(false);
   });
 });

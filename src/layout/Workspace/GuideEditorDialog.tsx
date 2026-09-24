@@ -11,7 +11,7 @@ import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
   GUIDE_COLOR_PRESETS,
@@ -28,8 +28,9 @@ const round = (v: number): number => Math.round(v * 1000) / 1000;
 function GuideEditor({ guideId, close }: { guideId: string; close: () => void }): JSX.Element {
   const controller = getWorkspaceController();
   const guide = controller.ws.guides.get(guideId);
-  const compW = useCompositionStore((s) => s.width) || 1920;
-  const compH = useCompositionStore((s) => s.height) || 1080;
+  const compSize = useActiveCompSize();
+  const compW = compSize.width || 1920;
+  const compH = compSize.height || 1080;
   const comp = useMemo(() => ({ w: compW, h: compH }), [compW, compH]);
   const axis = guide?.axis ?? 'x';
 

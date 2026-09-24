@@ -38,7 +38,7 @@ import { Gizmo3D } from '@motion/workspace';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompRootId, useActiveCompSize } from '@hooks/useMirrorFrame';
 import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/guidesStore';
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
 import { effectiveViewMode, useCompCameraViews } from '@layout/TopNav/ViewControls';
@@ -81,6 +81,8 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
   const wireframeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const time = useActiveWorkspace()?.time ?? 0;
+  // B4: stays on the scene revision — it is this pane's RENDER trigger, and a
+  // proxy finishing bumps the revision with no document event (assetStore).
   const sceneRev = useSceneRevisionFrame();
   const storeMode = useGuidesStore((s) => s.secondaryViewMode);
   const storeSetMode = useGuidesStore((s) => s.setSecondaryViewMode);
@@ -93,7 +95,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
   // so a 4-up can hold the shot in one pane and an alternate camera in
   // another. A stale camera view shows as Active Camera, which is what the
   // pane renders for it.
-  const compRootId = useCompositionStore((s) => s.id);
+  const compRootId = useActiveCompRootId();
   const cameraViews = useCompCameraViews(compRootId);
   const viewOptions = useMemo<ReadonlyArray<{ id: Camera3dMode; label: string }>>(
     () => [VIEW_OPTIONS[0]!, ...cameraViews.map((c) => ({ id: c.mode, label: c.label })), ...VIEW_OPTIONS.slice(1)],
@@ -102,11 +104,10 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
   const shownMode = effectiveViewMode(mode, compRootId);
   const shownLabel = viewOptions.find((o) => o.id === shownMode)?.label ?? shownMode;
 
-  // The comp box. Read straight from the store rather than through the
+  // The comp box. Read straight from the mirror rather than through the
   // reference-geometry resolver, because the pane's engine needs it BEFORE the
   // gizmo hook (which is what resolves this pane's geometry now) can run.
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
   // Measured box, which sizes the pane's camera and positions its SVG chrome.
   const [paneBox, setPaneBox] = useState({ width: 0, height: 0 });
   useEffect(() => {

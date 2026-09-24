@@ -50,10 +50,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry } from '@core/workspace/geometry';
@@ -236,13 +235,13 @@ function gradientGeometryDragCommands(t: EditTarget, next: GradientPaint, grip: 
 export function GradientHandleOverlay(): JSX.Element | null {
   // Frame-coalesced: a drag bumps the scene revision per pointer event and this
   // overlay only has to track it visually.
-  const sceneTick = useSceneRevisionFrame();
+  const sceneTick = useMirrorRevisionFrame();
   const ids = useSelectionStore((s) => s.ids);
   const armedId = useGradientEditStore((s) => s.nodeId);
   const fillIndexRaw = useGradientEditStore((s) => s.fillIndex);
   const selectedStopId = useGradientEditStore((s) => s.selectedStopId);
   const time = useActiveWorkspace()?.time ?? 0;
-  const comp = useCompositionStore((s) => s.comp());
+  const comp = useActiveCompSize();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   /** The stop whose ColorPicker is open, if any. */
@@ -439,7 +438,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
      * The stop list this gesture has written but React has not re-rendered yet.
      *
      * `stateRef.current.target.stops` comes from a render, and renders are
-     * coalesced to one per frame (`useSceneRevisionFrame`). Within a single
+     * coalesced to one per frame (`useMirrorRevisionFrame`). Within a single
      * frame that is normally harmless — a move recomputes the offset from the
      * pointer, not from the previous one — but adding a stop and then dragging
      * it is the case where it is not: the next move would map over a list that

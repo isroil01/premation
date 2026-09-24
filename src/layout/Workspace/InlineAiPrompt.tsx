@@ -32,9 +32,9 @@ import { aiEnabled } from '@core/config/edition';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readGeometry } from '@core/workspace/geometry';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { documentMirror } from '@stores/documentMirror';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useInlineAiPromptStore } from './inlineAiPromptStore';
 import { layerScreenMapping } from './layerScreen';
 import { useAiChat } from './useAiChat';
@@ -55,8 +55,8 @@ export function InlineAiPrompt(): JSX.Element | null {
 function InlineAiPromptCard({ targetIds }: { targetIds: readonly string[] }): JSX.Element {
   const close = useInlineAiPromptStore((s) => s.close);
   const time = useCurrentTime();
-  const comp = useCompositionStore((s) => s.comp());
-  const sceneTick = useSceneRevisionFrame();
+  const comp = useActiveCompSize();
+  const sceneTick = useMirrorRevisionFrame();
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -87,8 +87,9 @@ function InlineAiPromptCard({ targetIds }: { targetIds: readonly string[] }): JS
     if (!text || ai.busy) return;
     // The selection IS the context — named, so the model does not have to
     // infer "these" from a screenshot it cannot see.
+    const m = documentMirror();
     const names = targetIds
-      .map((id) => defaultSceneGraph.getNode(id as never)?.name)
+      .map((id) => m.layer(id)?.name)
       .filter((n): n is string => typeof n === 'string' && n.length > 0);
     const context = names.length
       ? `Selected layers: ${names.map((n) => `“${n}”`).join(', ')}.`

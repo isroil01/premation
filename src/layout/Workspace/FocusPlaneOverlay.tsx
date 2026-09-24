@@ -51,15 +51,17 @@ import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, SceneGizmos } from '@motion/workspace';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
+import { useActiveCompRootId, useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { documentMirror } from '@stores/documentMirror';
+import { flattenCompLayers } from '@core/mirror/compLayers';
+import { isMirrorDescendantOf } from '@core/mirror/layerTree';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { toWorldPointAt } from '@core/scene/liveWorld3d';
 import {
   activeCameraNode,
@@ -185,9 +187,8 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
   const dragDistance = useFocusPlaneStore((s) => s.dragDistance);
   const mainMode = useGuidesStore((s) => s.camera3dMode);
   const camera3dMode = modeProp ?? mainMode;
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
-  const compRootId = useCompositionStore((s) => s.id);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
+  const compRootId = useActiveCompRootId();
   // Camera, ortho axis, the 3D-scene gate and the id of the camera this view
   // looks through — all from the resolver the wireframes and the inspection
   // panes share, so this overlay cannot disagree with them about the view.
@@ -196,7 +197,7 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
   const time = useCurrentTime();
   // Frame-coalesced: a focus drag bumps the revision per pointer event and this
   // overlay only has to track it visually.
-  const sceneTick = useSceneRevisionFrame();
+  const sceneTick = useMirrorRevisionFrame();
   const viewTransform = useViewTransform(getView, viewRev);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [hovered, setHovered] = useState(false);
@@ -212,16 +213,26 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
    */
   const target = useMemo(() => {
     if (visibility === 'off' || !scene3d) return null;
-    const nodes = flattenComposition(defaultSceneGraph, compRootId);
-    const picked = new Set(selectedIds);
-    let node = null as (typeof nodes)[number] | null;
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const n = nodes[i];
-      if (!n || !picked.has(n.id)) continue;
-      if (readNodeKind(n) !== 'camera' || n.visible === false) continue;
-      node = n;
-      break;
+    // The selected cameras of THIS comp (every layer when it names no
+    // composition — `flattenComposition`'s fallback), from the mirror's layer
+    // headers; among several, the topmost (last in back-to-front order).
+    const m = documentMirror();
+    const scoped = m.comp(compRootId) !== undefined;
+    let pickedId: string | null = null;
+    let order: string[] | null = null;
+    for (const id of selectedIds) {
+      const layer = m.layer(id);
+      if (uiKindOf(layer) !== 'camera' || layer?.switches.visible === false) continue;
+      if (scoped && !isMirrorDescendantOf(m, id, compRootId)) continue;
+      if (pickedId === null) {
+        pickedId = id;
+        continue;
+      }
+      order ??= flattenCompLayers(m, compRootId);
+      if (order.indexOf(id) > order.indexOf(pickedId)) pickedId = id;
     }
+    // The camera's own record for the DOF / eye evaluation below (per-frame, not in the mirror).
+    let node = pickedId ? defaultSceneGraph.getNode(pickedId) ?? null : null;
     if (!node && visibility === 'always') node = activeCameraNode(defaultSceneGraph, compRootId);
     if (!node) return null;
     // Never for the camera this view looks THROUGH — see the header note.

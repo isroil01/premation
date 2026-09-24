@@ -74,7 +74,7 @@ import {
   removeCameraBookmark,
   saveCameraBookmark,
 } from '@core/workspace/cameraBookmarks';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompRootId } from '@hooks/useMirrorFrame';
 import {
   PreviewMenu,
   usePreviewMenuItems,
@@ -275,7 +275,7 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
   // Every camera in the active comp, by layer name, right under Active Camera
   // — AE's 3D View list. Looking through a camera that is not the topmost is
   // the only way to preview it without reordering the stack.
-  const compId = useCompositionStore((s) => s.id);
+  const compId = useActiveCompRootId();
   const cameraViews = useCompCameraViews(compId);
   // A stale camera view renders as the Active Camera; tick and label it so.
   const camera3dMode = effectiveViewMode(storeCameraMode, compId);

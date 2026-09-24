@@ -154,10 +154,9 @@ describe('when the plane appears', () => {
     act(() => useFocusPlaneStore.getState().setVisibility('selected'));
     rerender(<FocusPlaneOverlay />);
     expect(planes(container)).toHaveLength(0);
-
-    act(() => useSelectionStore.getState().set(['cam1']));
-    rerender(<FocusPlaneOverlay />);
-    expect(planes(container).length).toBeGreaterThan(0);
+    // Picking the camera up shows it: see 'through the engine API' below — the
+    // selected camera is found among the comp's LAYERS (the document mirror),
+    // which a bare scene node outside any composition is not.
   });
 });
 
@@ -256,6 +255,17 @@ describe('through the engine API', () => {
       await engineIdle();
     });
   };
+
+  it('shows the plane for a SELECTED camera under the `selected` setting', async () => {
+    useFocusPlaneStore.getState().setVisibility('selected');
+    const { container, rerender } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    expect(planes(container)).toHaveLength(0);
+
+    act(() => useSelectionStore.getState().set([cam]));
+    rerender(<FocusPlaneOverlay />);
+    expect(planes(container).length).toBeGreaterThan(0);
+  });
 
   it('writes focusDistance by the inspector row’s rule', async () => {
     const { container } = render(<FocusPlaneOverlay />);

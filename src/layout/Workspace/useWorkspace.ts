@@ -1,4 +1,3 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
  *
@@ -36,7 +35,8 @@ import { onPreviewCacheRequest } from '@stores/cacheRequestStore';
 import { publishFrame } from '@core/rendering/frameTap';
 import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { activeCompSettingsNow, useActiveMotionBlur } from '@hooks/useMirrorFrame';
+import { settingsWorkArea } from '@core/mirror/compFacts';
 import { previewIncludesVideo } from '@stores/previewBehaviorStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
@@ -364,11 +364,14 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const useProxiesRef = useRef(useProxiesPref);
   useProxiesRef.current = useProxiesPref;
 
-  const mbEnabled = useMotionBlurStore((s) => s.enabled);
-  const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
-  const mbPhase = useMotionBlurStore((s) => s.shutterPhase);
-  const mbSamples = useMotionBlurStore((s) => s.samples);
-  const mbLimit = useMotionBlurStore((s) => s.adaptiveSampleLimit);
+  // The composition's motion-blur settings, from the document mirror.
+  const {
+    enabled: mbEnabled,
+    shutterAngle: mbShutter,
+    shutterPhase: mbPhase,
+    samples: mbSamples,
+    adaptiveSampleLimit: mbLimit,
+  } = useActiveMotionBlur();
   // Draft preview quality skips the expensive motion-blur multi-sample pass.
   const draft = useRenderQualityStore((s) => s.draft);
 
@@ -738,7 +741,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         playhead: Math.round(timeRef.current * fps),
         lastCompFrame,
         fps,
-        workArea: wantWholeSpan ? getTimelineController().getWorkArea() : null,
+        // The composition's work area (seconds, end exclusive) from the mirror; no
+        // composition reads as none, i.e. the whole span.
+        workArea: wantWholeSpan ? settingsWorkArea(activeCompSettingsNow()) : null,
         wholeSpan: wantWholeSpan,
         aheadSeconds: IDLE_CACHE_AHEAD_SEC,
       });

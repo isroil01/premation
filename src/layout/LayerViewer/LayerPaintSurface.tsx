@@ -24,13 +24,12 @@
  */
 
 import { useCallback, useEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { isPaintableKind } from '@core/paint/paintCoords';
+import { documentMirror } from '@stores/documentMirror';
+import { isPaintableLayer } from '@core/mirror/layerKinds';
 import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
 import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
 import { drawToolOptions } from '@motion/workspace';
-import { assetIdOf } from '@core/source/sourceInfo';
 import { useUIStore } from '@stores/uiStore';
 import { useAssetStore } from '@stores/assetStore';
 import { usePaintStore } from '@stores/paintStore';
@@ -97,12 +96,15 @@ export function LayerPaintSurface({
   }, [roto, nodeId]);
   useEffect(() => { setNotice(null); }, [nodeId, tool]);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  const paintable = !!node && isPaintableKind(node);
-  const locked = node?.locked === true;
+  // The layer header from the document mirror (the Layer viewer re-renders on
+  // every document revision): kind, lock and the footage it plays.
+  const layer = documentMirror().layer(nodeId);
+  const paintable = isPaintableLayer(layer);
+  const locked = layer?.switches.locked === true;
   // The segmenter cuts the layer's SOURCE pixels, so Roto needs footage — a
   // solid or a comp layer has nothing for it to read.
-  const assetId = node ? assetIdOf(node) : null;
+  const assetId = layer?.source ?? null;
+  // B4-gap: the footage's media TYPE (video / image) — `ItemInfo` says footage, not which.
   const assetType = useAssetStore((s) => (assetId ? s.assets.find((a) => a.id === assetId)?.type : undefined));
   const rotoable = assetType === 'video' || assetType === 'image';
 

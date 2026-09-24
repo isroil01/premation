@@ -19,8 +19,8 @@ import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useProjectStore } from '@stores/projectStore';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys } from '@hooks/useMirror';
 import { installCompNavigation, navigateToCrumb } from '@core/composition/compNavigation';
 import styles from './CompositionNavigator.module.css';
 
@@ -28,10 +28,12 @@ export function CompositionNavigator(): JSX.Element | null {
   // The bar is always mounted with the viewer, so it owns the repair that
   // steps out of a tab whose group was undone away.
   useEffect(() => installCompNavigation(), []);
-  useSceneRevision((s) => s.rev);
   const path = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.breadcrumbPath : undefined));
   const current = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
-  const comps = useProjectStore((s) => s.comps);
+  // The crumbs' names and existence: the compositions' records, and the layer
+  // header of a crumb that is a (legacy nested) group rather than a composition.
+  useMirrorKeys(['comps', ...(path ?? []).map((id) => `layer:${id}`)]);
+  const m = documentMirror();
 
   if (!path || !current) return null;
   const at = path.indexOf(current);
@@ -39,14 +41,14 @@ export function CompositionNavigator(): JSX.Element | null {
   // A comp that no longer exists drops out of the trail rather than leaving a
   // name that does nothing when clicked.
   const crumbs = path
-    .map((id, index) => ({ id, index, node: defaultSceneGraph.getNode(id) }))
-    .filter((c) => c.node);
+    .map((id, index) => ({ id, index, comp: m.comp(id), layer: m.comp(id) ? undefined : m.layer(id) }))
+    .filter((c) => c.comp || c.layer);
   if (crumbs.length < 2) return null;
 
   return (
     <nav className={styles.bar} aria-label="Composition Navigator">
       {crumbs.map((c, i) => {
-        const name = comps[c.id]?.name ?? c.node?.name ?? c.id;
+        const name = c.comp?.settings.name ?? c.layer?.name ?? c.id;
         const isCurrent = c.index === at;
         const downstream = c.index < at;
         return (

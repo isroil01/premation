@@ -23,11 +23,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
-import { is3DEnabled, canBe3D } from '@core/scene/threeD';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { documentMirror } from '@stores/documentMirror';
+import { canBe3DLayer } from '@core/mirror/layerKinds';
 import {
   sampleTransform3DAtPlayhead,
   type Gizmo3DNodeUpdate,
@@ -121,8 +121,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   const mainViewRef = useRef(true);
   mainViewRef.current = !getViewOpt;
 
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
 
   // Current playhead time of the active tab — the camera must be sampled at it
   // (an animated/orbited camera otherwise leaves the gizmo at frame 0's view).
@@ -131,8 +130,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   // Re-render on scene mutation (canvas drags, inspector edits, undo…) so the
   // gizmo tracks the object it is attached to — frame-coalesced: the raw rev
   // subscription re-rendered this hook (and the whole SVG overlay under it)
-  // once per POINTER EVENT during a drag. See useSceneRevisionFrame.
-  useSceneRevisionFrame();
+  // once per POINTER EVENT during a drag. See useMirrorRevisionFrame.
+  useMirrorRevisionFrame();
 
   const [hoverHandle, setHoverHandle] = useState<GizmoHandleType | null>(null);
   const [activeHandle, setActiveHandle] = useState<GizmoHandleType | null>(null);
@@ -160,9 +159,17 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   // `is3DEnabled` and used to get a full layer transform gizmo whose drags wrote
   // camera x/y/z; lights had the same problem. Cameras and lights are positioned
   // with the camera-navigation tools and their own inspector, not this gizmo.
+  // The gate reads the mirror's layer header (`canBe3DLayer` is `canBe3D`'s
+  // twin, the 3D switch is `is3DEnabled`); the node itself is still fetched for
+  // the per-frame transform sample below, which the mirror does not evaluate.
+  const mirror = documentMirror();
   const selected3DNodes = selectedIds
+    .filter((id) => {
+      const layer = mirror.layer(id);
+      return canBe3DLayer(layer) && layer?.switches.threeD === true;
+    })
     .map((id) => defaultSceneGraph.getNode(id))
-    .filter((node): node is SceneNode => node != null && canBe3D(node) && is3DEnabled(node));
+    .filter((node): node is SceneNode => node != null);
 
   const is3D = selected3DNodes.length > 0;
   const singleId = selectedIds.length === 1 ? selectedIds[0] : (selected3DNodes[0]?.id ?? null);
