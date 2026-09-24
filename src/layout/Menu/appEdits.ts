@@ -33,7 +33,7 @@ import { staggerOffsets, type StaggerOptions } from '@core/animation/staggerOffs
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { engine } from '@core/engine/engineInstance';
 import { computeFit, intrinsicSizeOf, type FitMode, type Size } from '@core/source/fitCommands';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { motionBlurMasterOnCommands } from '@layout/Scene/layerSwitchEdits';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -134,7 +134,9 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
     default: return false;
   }
   const label = typeof next === 'string' ? `Quality: ${next[0]!.toUpperCase()}${next.slice(1)}` : `${on ? 'Enable' : 'Disable'} ${def.label}`;
-  const res = await edit(label, { type: 'setLayerSwitches', layers: [nodeId], patch });
+  // AE's dual gate: the composition's motion-blur master comes on with the layer's, in the same entry.
+  const master = flag === 'motionBlur' && on ? motionBlurMasterOnCommands() : [];
+  const res = await edit(label, [{ type: 'setLayerSwitches', layers: [nodeId], patch } as Command, ...master]);
   if (!res.ok) return true;
   // The feedback `toggleLayerFlag` gave (layerSwitchFeedback.ts / cameraNav).
   if (flag === 'guide') {
@@ -142,12 +144,7 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
   } else if (flag === 'threeD' && on) {
     notifyCameraTipIfMissing((message, level) => notify(message, level));
   } else if (flag === 'motionBlur' && on) {
-    const mb = useMotionBlurStore.getState();
-    if (!mb.enabled) {
-      // B3-legacy: engine gap — the composition motion-blur MASTER (`enabled`) is not a field of the API's MotionBlurSettings; AE's dual gate still turns it on here (a store setting, as before).
-      mb.setEnabled(true);
-      notify('Motion Blur enabled for this layer and the composition', 'success');
-    }
+    if (master.length > 0) notify('Motion Blur enabled for this layer and the composition', 'success');
     if (useRenderQualityStore.getState().draft) {
       notify('Draft preview is on — motion blur samples are paused until draft is off', 'warning');
     }

@@ -17,8 +17,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { documentMirror } from '@stores/documentMirror';
 import { getProjectManager } from '@core/services/coreServices';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { storeThumb, thumbCacheAvailable } from '@core/localIndex/thumbCache';
@@ -64,15 +63,13 @@ export function LocalThumbnailWorker(): null {
       }, wait);
     };
 
-    const bus = getEventBus();
-    const subs = [
-      bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) onChange(); }),
-      bus.on('SceneGraphChanged', onChange),
-    ];
+    // Every document revision (B4: the mirror's `doc` key); a landed video
+    // decode is not one.
+    const unsubscribe = documentMirror().subscribe(['doc'], onChange);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      subs.forEach((s) => s.dispose());
+      unsubscribe();
       cancelCapture?.();
     };
   }, []);

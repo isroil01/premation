@@ -4,8 +4,7 @@ import { captureDocument } from '@core/api/cloudDocument';
 import { clearRecovery } from '@core/persistence/recovery';
 import { useWorkspaceStore } from '@stores/index';
 import { useEntitlementStore, canWriteCloud } from '@stores/entitlementStore';
-import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { documentMirror } from '@stores/documentMirror';
 
 /**
  * Autosave component with configurable debounce and exponential backoff.
@@ -92,20 +91,15 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
       }, delay);
     };
 
-    const bus = getEventBus();
-    const subs = [
-      // A landed video decode is not an edit; autosaving for one would
-      // re-upload the document at the source's frame rate.
-      bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) schedule(); }),
-      bus.on('NodeUpdated', schedule),
-      bus.on('SceneGraphChanged', schedule),
-      bus.on('DocumentChanged', schedule),
-    ];
+    // Every document revision (B4: the mirror's `doc` key — once per engine
+    // batch, writes made around the engine included). A landed video decode is
+    // not a revision, so it never re-uploads the document at the source's rate.
+    const unsubscribe = documentMirror().subscribe(['doc'], schedule);
 
     return () => {
       if (armTimerRef.current) clearTimeout(armTimerRef.current);
       if (timerRef.current) clearTimeout(timerRef.current);
-      subs.forEach((s) => s.dispose());
+      unsubscribe();
     };
   }, [projectId]);
 

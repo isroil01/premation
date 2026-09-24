@@ -25,7 +25,7 @@ import { notifyGuideLayerChange } from '@core/effects/layerSwitchFeedback';
 import { mirrorLayerFlagAvailable, mirrorLayerFlagOn } from '@core/mirror/layerFlagFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -116,6 +116,14 @@ function notify(message: string, level: 'info' | 'success' | 'warning' = 'info',
   useUIStore.getState().notify({ level, message, durationMs });
 }
 
+/** `setCompositionSettings{motionBlur.enabled: true}` for the active composition when its master is off; [] otherwise. */
+export function motionBlurMasterOnCommands(): Command[] {
+  const comp = activeCompIdNow();
+  const mb = comp ? documentMirror().comp(comp)?.settings.motionBlur : undefined;
+  if (!comp || !mb || mb.enabled) return [];
+  return [{ type: 'setCompositionSettings', comp, patch: { motionBlur: { ...mb, enabled: true } } } as Command];
+}
+
 /**
  * One AE switch across a selection as ONE undo step, anchored on `anchorId`
  * — `layerFlags.toggleLayerFlags`' rules through the engine: the anchor's state
@@ -140,22 +148,19 @@ export async function toggleLayerFlagsEdit(ids: ReadonlyArray<string>, flag: Lay
   const next: boolean | LayerQuality = def.cycles ? nextQuality(anchor.switches.quality) : !mirrorLayerFlagOn(anchor, flag);
   const verb = typeof next === 'string' ? QUALITY_LABEL[next] : `${next ? 'Enable' : 'Disable'} ${def.label}`;
   const patch = flagPatch(flag, next);
+  // AE's dual gate: turning a layer's motion blur on turns the composition's
+  // master on too, in the same batch (one undo entry) — `CompSettings.motionBlur`.
+  const master = flag === 'motionBlur' && next === true ? motionBlurMasterOnCommands() : [];
   const res = await edit(
     targets.length === 1 ? verb : `${verb} (${targets.length} layers)`,
-    targets.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch }) as Command),
+    [...targets.map((id) => ({ type: 'setLayerSwitches', layers: [id], patch }) as Command), ...master],
   );
   if (!res.ok || typeof next !== 'boolean') return;
   // The feedback `toggleLayerFlag` gave (layerSwitchFeedback.ts / cameraNav).
   if (flag === 'guide') notifyGuideLayerChange(next, targets.length > 1);
   else if (flag === 'threeD' && next) notifyCameraTipIfMissing((message, level) => notify(message, level));
   else if (flag === 'motionBlur' && next) {
-    const mb = useMotionBlurStore.getState();
-    if (!mb.enabled) {
-      // B3-legacy: engine gap — the composition motion-blur MASTER (`enabled`) is not a field of the
-      // API's MotionBlurSettings; AE's dual gate still turns it on here (a store setting, as before).
-      mb.setEnabled(true);
-      notify('Motion Blur enabled for this layer and the composition', 'success');
-    }
+    if (master.length > 0) notify('Motion Blur enabled for this layer and the composition', 'success');
     if (useRenderQualityStore.getState().draft) {
       notify('Draft preview is on — motion blur samples are paused until draft is off', 'warning');
     }

@@ -12,8 +12,8 @@ import { useUIStore } from '@stores/uiStore';
 import { usePaintStore } from '@stores/paintStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { isPaintableKind } from '@core/paint/paintCoords';
+import { documentMirror } from '@stores/documentMirror';
+import { isPaintableLayer } from '@core/mirror/layerKinds';
 import { removeLastPaintStroke } from '@core/engine/paintEdits';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
@@ -79,10 +79,8 @@ export function ToolOptionsBar(): JSX.Element | null {
   const paintingLayer =
     (activeTool === 'paint' || activeTool === 'eraser') &&
     selectedIds.length === 1 &&
-    (() => {
-      const n = defaultSceneGraph.getNode(selectedIds[0]!);
-      return !!n && isPaintableKind(n);
-    })();
+    // The layer's kind from the document mirror (B4).
+    isPaintableLayer(documentMirror().layer(selectedIds[0]!));
 
   let content: React.ReactNode = null;
   if (activeTool === 'brush' || activeTool === 'paint' || activeTool === 'eraser') {

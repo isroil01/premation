@@ -27,7 +27,11 @@ import { useUIStore } from '@stores/uiStore';
 import { outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompSettingsNow, useActiveTabCompSettings } from '@hooks/useMirrorFrame';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { settingsHasWorkArea, settingsSetWorkArea } from '@core/mirror/compFacts';
+import { flicksToSeconds } from '@motion/engine-api';
 import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
 import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
 import { chaptersFromMarkers, formatCarriesChapters, type ExportChapter } from '@core/export/chapters';
@@ -113,12 +117,12 @@ function fileStem(name: string): string {
  * where `getLayerMarkers()` would be a per-layer annotation that travels with a
  * trimmed layer — ten layers each carrying "start" would mint ten chapters over
  * the same second. Read at CALL time rather than cached, so what gets written
- * is what the timeline says when the button is pressed.
+ * is what the document says when the button is pressed (the mirror's
+ * `MirrorComp.markers`, B4; an unnamed marker reads "Marker", a placeholder).
  */
 function chaptersForRange(startSec: number, endSec: number, fps: number): ExportChapter[] {
-  const shifted = getTimelineController()
-    .getMarkers()
-    .map((m) => ({ time: m.time - startSec, label: m.label }));
+  const markers = documentMirror().comp(activeCompIdNow() ?? '')?.markers ?? [];
+  const shifted = markers.map((m) => ({ time: flicksToSeconds(m.time) - startSec, label: m.name || 'Marker' }));
   return chaptersFromMarkers(shifted, fps, Math.max(0, endSec - startSec));
 }
 
@@ -172,11 +176,11 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       // Seeded from the COMP's own setting: a user who set "Transparent
       // background" in Composition Settings got an opaque export (and preview)
       // unless they re-toggled it here — the dialog's `false` overrode the comp.
-      transparent: !!useCompositionStore.getState().transparent,
+      transparent: activeCompSettingsNow()?.transparent === true,
       // Default ON when the comp actually has labelled markers: someone who
       // took the trouble to name them meant them as structure.
       chapters: hasChapterMarkers(fps, duration),
-      rangeMode: getTimelineController().getWorkArea() ? 'work' : 'full',
+      rangeMode: settingsHasWorkArea(activeCompSettingsNow()) ? 'work' : 'full',
     });
   }, [seeded, seed, presets, fps, duration]);
 
@@ -188,8 +192,10 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   const chapters = useExportFormStore((s) => s.chapters);
   const rangeMode = useExportFormStore((s) => s.rangeMode);
   const progress = useExportFormStore((s) => s.progress);
+  // B4-kept: the TS renderer's input (runExport / the preview render the store's
+  // CompositionSettings record, gradient paint included) — leaves with the renderer (D5).
   const baseComp = useCompositionStore((s) => s.comp());
-  const compName = useCompositionStore((s) => s.name);
+  const compName = useActiveTabCompSettings()?.name;
 
   // Playhead time is only needed for the single-frame PNG export. Gated on
   // format: subscribing unconditionally re-rendered the whole form (and for
@@ -200,7 +206,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   );
 
   const captureRange = useCallback((): { startSec: number; endSec: number } => {
-    const wa = rangeMode === 'work' ? getTimelineController().getWorkArea() : null;
+    const wa = rangeMode === 'work' ? settingsSetWorkArea(activeCompSettingsNow()) : null;
     return wa ? { startSec: wa.start, endSec: wa.end } : { startSec: 0, endSec: duration };
   }, [rangeMode, duration]);
 
@@ -433,13 +439,14 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
   const patch = useExportFormStore((s) => s.patch);
   const { busy, progress, activePreset, cancel } = useExportModel(duration, fps);
 
+  // B4-kept: the preview renderer's input (see useExportModel).
   const baseComp = useCompositionStore((s) => s.comp());
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
   const time = usePlaybackClockStore((s) =>
     format === 'png' ? (activeTabId ? s.clocks[activeTabId]?.time ?? 0 : 0) : 0,
   );
 
-  const workArea = getTimelineController().getWorkArea();
+  const workArea = settingsSetWorkArea(useActiveTabCompSettings());
   const useWorkArea = rangeMode === 'work' && !!workArea;
 
   const scale = RES[scaleIdx]?.scale ?? 1;

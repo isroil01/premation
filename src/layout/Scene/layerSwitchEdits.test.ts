@@ -10,7 +10,11 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
-import { switchCommands, toggleLayerSwitchAnchored } from './layerSwitchEdits';
+import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { switchCommands, toggleLayerFlagsEdit, toggleLayerSwitchAnchored } from './layerSwitchEdits';
 
 jest.useFakeTimers();
 
@@ -74,4 +78,21 @@ test('a vanished row does nothing', async () => {
   const n = historyLabels().length;
   await toggleLayerSwitchAnchored('ghost', 'visible');
   expect(historyLabels().length).toBe(n);
+});
+
+test('motion blur on a layer turns the composition master on in the same entry (AE dual gate)', async () => {
+  const m = documentMirror();
+  const comp = activeCompIdNow()!;
+  const mb = m.comp(comp)!.settings.motionBlur;
+  await h.run({ type: 'setCompositionSettings', comp, patch: { motionBlur: { ...mb, enabled: false } } });
+  await engineIdle();
+  await m.whenIdle();
+  expect(useMotionBlurStore.getState().enabled).toBe(false);
+  const n = historyLabels().length;
+  await toggleLayerFlagsEdit([s.A], 'motionBlur');
+  await engineIdle();
+  expect(useMotionBlurStore.getState().enabled).toBe(true);
+  expect(historyLabels().length).toBe(n + 1);
+  await h.run({ type: 'undo' });
+  expect(useMotionBlurStore.getState().enabled).toBe(false);
 });

@@ -12,13 +12,22 @@ jest.mock('@layout/Timeline/timelineEdits', () => ({
   timeStretchEdit: (...args: unknown[]) => applyTimeStretch(...args),
 }));
 
-jest.mock('@core/timeline/TimelineController', () => ({
-  getTimelineController: () => ({
-    timeline: { getFrameRate: () => ({ fps: 30 }) },
-    // One 60-frame bar at 100 %.
-    getLayersForNode: () => [{ start: 0, duration: 60 }],
-  }),
-}));
+// The document mirror (B4): a 30 fps composition; every layer one 60-frame bar
+// at 100 %. 'solid' has no source — every other id stands in for footage.
+jest.mock('@stores/documentMirror', () => {
+  const F = 705_600_000;
+  return {
+    documentMirror: () => ({
+      layer: (id: string) => ({
+        id,
+        comp: 'c',
+        kind: id === 'solid' ? 'solid' : 'video',
+        timing: { inPoint: 0, outPoint: 2 * F, startTime: 0, stretch: 1 },
+      }),
+      comp: () => ({ settings: { frameRate: { num: 30, den: 1 } } }),
+    }),
+  };
+});
 jest.mock('@core/scene/layerTime', () => ({
   getNodeLayerTime: () => ({ stretch: 100, reverse: false, freeze: false, freezeTime: 0, frameBlend: 'none' }),
 }));
@@ -27,8 +36,6 @@ jest.mock('@core/animation/layerTimeCommands', () => {
   return {
     clampStretch: clamp,
     clampSignedStretch: (p: number) => (p < 0 ? -clamp(-p) : clamp(p)),
-    // 'solid' has no source — every other id stands in for footage.
-    isRetimableLayer: (id: string) => id !== 'solid',
     // A solid stretched earlier shows its stored value; footage its rate (100 here).
     stretchValueOf: (id: string) => (id === 'solid200' ? 200 : 100),
   };

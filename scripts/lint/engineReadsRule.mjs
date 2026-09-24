@@ -173,6 +173,7 @@ const PURE_READS = new Set([
   'countUserPresets', // core/animation/animationPresets: the user's preset library in settings — not the document
   'previewChoreography', // core/library/insertPreview: seek + play + a scheduled pause of the transport (§6 control), no document read
   'notifyNoSvgGeometry', 'notifySvgConverted', // core/svg/svgConvert: a toast about the file name / SvgLayerData given
+  'clampSignedStretch', // core/animation/timeStretch (re-exported by layerTimeCommands): clamps the percent given
 ]);
 
 /**

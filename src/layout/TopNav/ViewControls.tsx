@@ -30,7 +30,8 @@ import {
   RESOLUTION_LABELS,
   type AdaptiveFloor,
 } from '@stores/renderQualityStore';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
+import { edit } from '@core/engine/uiEdits';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { Dropdown, type DropdownItem, type DropdownProps } from '@components/Dropdown';
 import { OnionSkinSettingsPopover } from '@layout/BottomTimeline/OnionSkinSettings';
@@ -145,8 +146,15 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
   const draftQuality = useRenderQualityStore((s) => s.draft);
   const setDraftQuality = useRenderQualityStore((s) => s.setDraft);
 
-  const motionBlur = useMotionBlurStore((s) => s.enabled);
-  const setMotionBlur = useMotionBlurStore((s) => s.setEnabled);
+  // The composition's motion-blur master (`CompSettings.motionBlur.enabled`),
+  // from the document mirror and written as `setCompositionSettings` (B4).
+  const motionBlur = useActiveMotionBlur().enabled;
+  const setMotionBlur = (on: boolean): void => {
+    const comp = activeCompIdNow();
+    const mb = comp ? documentMirror().comp(comp)?.settings.motionBlur : undefined;
+    if (!comp || !mb || mb.enabled === on) return;
+    void edit(on ? 'Enable Motion Blur' : 'Disable Motion Blur', { type: 'setCompositionSettings', comp, patch: { motionBlur: { ...mb, enabled: on } } });
+  };
 
   const draft3d = useGuidesStore((s) => s.draft3d);
   const toggleDraft3d = useGuidesStore((s) => s.toggleDraft3d);

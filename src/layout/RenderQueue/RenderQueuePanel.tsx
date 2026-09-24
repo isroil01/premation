@@ -19,9 +19,11 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useActiveMirrorComp } from '@hooks/useMirror';
-import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
+import { channelsToHex } from '@core/mirror/paintFields';
 import {
   canChooseOutputDir,
   useRenderQueueStore,
@@ -31,7 +33,6 @@ import {
 } from '@stores/renderQueueStore';
 import { canEncodeLocally } from '@core/export/videoSink';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { customConfirm } from '@components/Modal/Dialogs';
 import { useExportQueueStore } from '@stores/exportQueueStore';
 import { isFinishedStatus, isLiveStatus } from '@core/export/exportSupervisorClient';
@@ -183,9 +184,15 @@ export function RenderQueuePanel(): JSX.Element {
     setShowDialog(false);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const ext = outputExtFor(settings.format);
-    // Read the active comp lazily (avoids subscribing the panel to a fresh
-    // object every store tick).
-    const comp = useCompositionStore.getState().comp();
+    // The active comp at click time, from the document mirror (B4).
+    const compId = activeCompIdNow() ?? DEFAULT_COMPOSITION.id;
+    const now = documentMirror().comp(compId)?.settings;
+    const comp = {
+      id: compId,
+      background: now ? channelsToHex(now.background) : DEFAULT_COMPOSITION.background,
+      width: now?.width ?? DEFAULT_COMPOSITION.width,
+      height: now?.height ?? DEFAULT_COMPOSITION.height,
+    };
 
     // Sanitized like the Export dialog's fileStem: a comp named "Hero / v2"
     // otherwise put a path separator into the output filename, which
@@ -193,7 +200,7 @@ export function RenderQueuePanel(): JSX.Element {
     const stem = (compName ?? 'output').trim().replace(/[<>:"/\\|?*]+/g, '-') || 'output';
     // Capture the range at queue time — same contract as the Export dialog:
     // a queued job renders what was queued, not the live global work area.
-    const wa = getTimelineController().getWorkArea();
+    const wa = settingsSetWorkArea(now);
     const range = wa ?? { start: 0, end: settings.durationSec };
     // Main's queue on desktop, this window's queue otherwise (web/hosted,
     // `exportInProcess`, HDR, a project the snapshot cannot carry) — the same

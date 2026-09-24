@@ -10,7 +10,6 @@
 import { render, cleanup } from '@testing-library/react';
 import { act } from 'react';
 import { CloudAutosave } from './CloudAutosave';
-import { getEventBus } from '@core/events/EventBus';
 import { api } from '@core/api/client';
 import { useEntitlementStore } from '@stores/entitlementStore';
 
@@ -22,6 +21,18 @@ jest.mock('@core/api/client', () => ({
 jest.mock('@core/api/cloudDocument', () => ({
   captureDocument: jest.fn().mockReturnValue({ version: '1.1.0' }),
 }));
+
+// A document revision reaches autosave as the mirror's `doc` key (B4).
+const mockDocListeners = new Set<() => void>();
+jest.mock('@stores/documentMirror', () => ({
+  documentMirror: () => ({
+    subscribe: (_keys: readonly string[], fn: () => void) => {
+      mockDocListeners.add(fn);
+      return () => mockDocListeners.delete(fn);
+    },
+  }),
+}));
+const documentRevision = (): void => { for (const fn of [...mockDocListeners]) fn(); };
 
 const autosave = api.autosave as jest.Mock;
 
@@ -59,7 +70,7 @@ describe('CloudAutosave arming', () => {
     // The footage insert: 1s after open — well inside the 3s arm window.
     act(() => {
       jest.advanceTimersByTime(1000);
-      getEventBus().emit('SceneGraphChanged', undefined);
+      documentRevision();
     });
     expect(autosave).not.toHaveBeenCalled();
 
@@ -84,7 +95,7 @@ describe('CloudAutosave arming', () => {
     expect(autosave).not.toHaveBeenCalled();
 
     act(() => {
-      getEventBus().emit('NodeUpdated', { nodeId: 'n1', componentId: 'c1', propName: 'x', value: 1 });
+      documentRevision();
       jest.advanceTimersByTime(1200);
     });
     await drainFlush();

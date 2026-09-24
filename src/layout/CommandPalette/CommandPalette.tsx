@@ -37,18 +37,18 @@ import { cn } from '@utils/cn';
 import { useCommandPaletteStore } from '@stores/commandPaletteStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow } from '@hooks/useMirror';
+import { activeCompIdNow, useMirrorRevision } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import type { LayerInfo } from '@motion/engine-api';
 import { settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode, displayFramesToDomainSeconds } from '@core/time/timecode';
 import { seekPlayhead } from '@core/timeline/timelineView';
-import { useSceneRevision } from '@stores/sceneStore';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 // The glyph table is `sceneDerive`'s, not a copy of it: this file used to keep
 // its own, which had already drifted from the timeline's (a group drew a
 // `layers` stack here and a `folder` there) for the same kind of object.
-import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
+import { KIND_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
 import { asCommandId } from '@app-types/common';
 import { formatChord } from '@core/commands/formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
@@ -212,45 +212,54 @@ function buildItems({ query, closePalette, recent, context, docs, now }: BuildIn
     for (const { c } of scored) items.push(commandItem(c, 'Commands', closePalette));
   }
 
-  // ── Layers + Compositions (from the scene graph) ──────────────────
+  // ── Layers + Compositions (from the document mirror, B4) ─────────
   if (wantLayers || wantComps) {
-    const graph = defaultSceneGraph;
-    const rootIds = new Set(graph.getRoots().map((n) => n.id));
-    const all = flattenScene(graph);
+    const m = documentMirror();
 
     if (wantComps) {
-      const comps = graph
-        .getRoots()
-        .map((n) => ({ n, s: fuzzyScore(term, n.name ?? 'Composition') }))
+      const comps = m.compIds
+        .map((id) => ({ id, name: m.comp(id)?.settings.name || 'Composition' }))
+        .map((c) => ({ c, s: fuzzyScore(term, c.name) }))
         .filter((x) => x.s >= 0)
         .sort((a, b) => b.s - a.s);
-      for (const { n } of comps) {
+      for (const { c } of comps) {
         items.push({
-          key: `comp:${n.id}`,
+          key: `comp:${c.id}`,
           section: 'Compositions',
-          label: n.name ?? 'Composition',
+          label: c.name,
           icon: 'layers',
           run: () => {
             closePalette();
-            useSelectionStore.getState().set([n.id]);
+            useSelectionStore.getState().set([c.id]);
           },
         });
       }
     }
 
     if (wantLayers) {
+      // Every layer of every composition, each once (a composition lists its
+      // whole stack, nested groups included, front-most first).
+      const seen = new Set<string>();
+      const all: LayerInfo[] = [];
+      for (const cid of m.compIds) {
+        for (const id of m.comp(cid)?.layers ?? []) {
+          const layer = m.layer(id);
+          if (!layer || seen.has(id)) continue;
+          seen.add(id);
+          all.push(layer);
+        }
+      }
       const layers = all
-        .filter((n) => !rootIds.has(n.id))
-        .map((n) => ({ n, s: fuzzyScore(term, n.name ?? '') }))
+        .map((n) => ({ n, s: fuzzyScore(term, n.name) }))
         .filter((x) => x.s >= 0)
         .sort((a, b) => b.s - a.s)
         .slice(0, mode === 'layers' ? MAX_PER_GROUP * 3 : MAX_PER_GROUP);
       for (const { n } of layers) {
-        const kind = readNodeKind(n);
+        const kind = uiKindOf(n) ?? 'shape';
         items.push({
           key: `layer:${n.id}`,
           section: 'Layers',
-          label: n.name ?? 'Layer',
+          label: n.name || 'Layer',
           hint: kind,
           icon: (KIND_ICON[kind] ?? 'shape') as IconName,
           color: KIND_COLOR[kind],
@@ -342,8 +351,8 @@ export function CommandPalette(): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Subscribe to scene changes so the layer/comp lists stay fresh.
-  useSceneRevision((s) => s.rev);
+  // Subscribe to document revisions so the layer/comp lists (names included) stay fresh.
+  useMirrorRevision();
 
   // Global Cmd/Ctrl+Shift+P — works even when a form field is focused, which is
   // why this is a listener rather than a registry command (ShortcutManager

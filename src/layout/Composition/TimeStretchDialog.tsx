@@ -14,14 +14,15 @@ import { Input } from '@components/Input';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { timeStretchEdit } from '@layout/Timeline/timelineEdits';
 import {
   clampSignedStretch,
-  isRetimableLayer,
   stretchValueOf,
   type StretchHold,
 } from '@core/animation/layerTimeCommands';
+import { documentMirror } from '@stores/documentMirror';
+import { settingsFps, timingBarFrames } from '@core/mirror/compFacts';
+import { retimableLayerIds } from '@core/mirror/motionAssist';
 import { framesToTimecode } from '@core/time/timecode';
 import { parseGoToTime } from '@layout/Timeline/goToTime';
 import styles from './PrecomposeDialog.module.css';
@@ -54,22 +55,23 @@ export function stretchForDuration(baseFrames: number, frames: number): number {
 }
 
 function TimeStretchDialog({ ids, close }: { ids: string[]; close: () => void }): JSX.Element {
-  const c = getTimelineController();
-  const fps = c.timeline.getFrameRate().fps;
+  // The first layer and its composition from the document mirror (B4), read once
+  // as the dialog opens: its frame rate and its bar (`layer.timing`).
+  const m = documentMirror();
+  const first = m.layer(ids[0]!);
+  const fps = settingsFps(first ? m.comp(first.comp)?.settings : undefined) || 30;
   // Footage stretches its playback rate — the stored factor. Every other layer
   // bakes the stretch into its bar and keyframes, so its factor starts at 100 %
   // and may go negative (AE's backwards stretch); footage may not.
-  const allowNegative = !ids.some((id) => isRetimableLayer(id));
+  const allowNegative = retimableLayerIds(m, ids).length === 0;
   // The layer's CURRENT stretch, absolute: footage's playback rate, or the
   // bookkeeping value a non-footage layer's bake left behind (e.g. 200, −100).
+  // B4-gap: the baked value (`fx.__bakedStretch` on a layer with no source) has no API datum.
   const initialStretch = stretchValueOf(ids[0]!);
   const base = useMemo(() => {
-    const layers = c.getLayersForNode(ids[0]!);
-    const frames = layers.length === 0
-      ? 0
-      : Math.max(...layers.map((l) => l.start + l.duration)) - Math.min(...layers.map((l) => l.start));
+    const frames = first ? timingBarFrames(first.timing, fps).duration : 0;
     return baseDurationFrames(frames, Math.abs(initialStretch));
-  }, [c, ids, initialStretch]);
+  }, [first, fps, initialStretch]);
 
   const [percentText, setPercentText] = useState(String(initialStretch));
   const [durationText, setDurationText] = useState(() =>

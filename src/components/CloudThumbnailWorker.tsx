@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { api } from '@core/api/client';
-import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { documentMirror } from '@stores/documentMirror';
 import { captureThumbnailWhenIdle } from './thumbnailCapture';
 
 /**
@@ -47,15 +46,13 @@ export function CloudThumbnailWorker({ projectId }: { projectId: string }): null
       }, wait);
     };
 
-    const bus = getEventBus();
-    const subs = [
-      bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) onChange(); }),
-      bus.on('SceneGraphChanged', onChange),
-    ];
+    // Every document revision (B4: the mirror's `doc` key); a landed video
+    // decode is not one.
+    const unsubscribe = documentMirror().subscribe(['doc'], onChange);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      subs.forEach((s) => s.dispose());
+      unsubscribe();
       // Capture the final thumbnail on unmount so the last edit gets one. Not
       // cancelled with the rest: it is deliberately allowed to finish after
       // the component is gone (the scene is still in memory while it renders).
