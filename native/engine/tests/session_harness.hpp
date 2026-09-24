@@ -43,8 +43,9 @@ class Harness final : public Outbox {
  public:
   using Clock = Session::Clock;
 
-  explicit Harness(std::uint32_t slots = 3)
-      : sink([this](const frames::Message& m) { frameMsgs.push_back(m); }, slots), session(*this, sink, SessionOptions{.testPorts = true, .testPortsDir = {}}) {
+  explicit Harness(std::uint32_t slots = 3, std::string portsDir = {})
+      : sink([this](const frames::Message& m) { frameMsgs.push_back(m); }, slots),
+        session(*this, sink, SessionOptions{.testPorts = true, .testPortsDir = std::move(portsDir)}) {
     log::set_min_level(log::Level::error);  // corrupted traffic logs a warning per message
   }
 

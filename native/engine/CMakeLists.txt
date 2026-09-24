@@ -117,7 +117,26 @@ if(Dawn_FOUND)
     # premation-render lands in the same directory; the copy above covers it.
   endif()
 else()
-  message(STATUS "premation-engine: Dawn not found — building engine_core, its tests and the fuzzer only")
+  message(STATUS "premation-engine: Dawn not found — building engine_core, its tests, the fuzzer and premation-engine-headless only")
+endif()
+
+# premation-engine-headless: the engine process without Dawn — the same pipes,
+# core loop and Session, frames always simulated (as --no-gpu). For the
+# cross-engine replay (crossEngine.test.ts, PREMATION_ENGINE_PATH=<it>) on
+# machines and CI jobs without the vcpkg `engine` feature. Never shipped.
+add_executable(premation-engine-headless
+  src/main.cpp
+  src/engine_process.cpp
+  src/os_ffi.cpp
+  src/io/pipe_ffi.cpp
+  src/io/framed_writer.cpp
+)
+target_include_directories(premation-engine-headless PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/io)
+target_compile_definitions(premation-engine-headless PRIVATE PREMATION_ENGINE_HEADLESS=1)
+target_link_libraries(premation-engine-headless PRIVATE engine_core engine_plugins motion::options)
+if(WIN32)
+  target_link_libraries(premation-engine-headless PRIVATE winmm)
+  target_compile_definitions(premation-engine-headless PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 endif()
 
 # ── tests ───────────────────────────────────────────────────────────────────
@@ -264,6 +283,7 @@ set(ENGINE_DOC_SOURCES
   src/core/native_effects.cpp
   src/core/parenting.cpp
   src/core/particle_props.cpp
+  src/core/plugin_props.cpp
   src/core/props.cpp
   src/core/ptree.cpp
   src/core/queries.cpp
@@ -367,6 +387,7 @@ if(WIN32)
   if(TARGET premation-engine)
     target_link_options(premation-engine PRIVATE ${_doc_stack})
   endif()
+  target_link_options(premation-engine-headless PRIVATE ${_doc_stack})
   if(TARGET engine_tests)
     target_link_options(engine_tests PRIVATE ${_doc_stack})
   endif()
@@ -374,6 +395,21 @@ endif()
 if(TARGET engine_tests)
   # The replay corpus (tests/data/replay_corpus.bin, dumped by crossEngine.test.ts).
   target_compile_definitions(engine_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()
+if(MOTION_BUILD_TESTS)
+  # D1's exit: the replay corpus's evaluated values against the TypeScript
+  # engine's, byte for byte (tests/data/d1_eval_parity.bin, written by
+  # src/core/engine/__tests__/d1EvalParity.test.ts).
+  add_executable(engine_d1_parity_tests tests/test_d1_eval_parity.cpp)
+  target_link_libraries(engine_d1_parity_tests PRIVATE engine_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_d1_parity_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  if(MSVC)
+    target_compile_options(engine_d1_parity_tests PRIVATE /bigobj)
+  endif()
+  if(WIN32)
+    target_link_options(engine_d1_parity_tests PRIVATE ${_doc_stack})
+  endif()
+  add_test(NAME engine_d1_parity_tests COMMAND engine_d1_parity_tests --reporter compact)
 endif()
 if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).

@@ -212,9 +212,10 @@ struct Q {
         std::vector<double> raw;
         for (const auto& m : b.members) raw.push_back(anim_sample(d, pc.expr, pc.cache, q.prop.layer, m, t + dt).value_or(0));
         const std::vector<double> n2 = to_api_nums(b, raw);
-        double sum = 0;
-        for (std::size_t j = 0; j < n2.size(); ++j) sum += (n2[j] - nums[j]) * (n2[j] - nums[j]);
-        s.speeds.push_back(std::sqrt(sum) / dt);
+        // Math.hypot(...d) — V8's scaled hypot, not sqrt(Σd²) (they part in the last bit).
+        std::vector<double> diff;
+        for (std::size_t j = 0; j < n2.size(); ++j) diff.push_back(n2[j] - nums[j]);
+        s.speeds.push_back(motion::js::hypot(diff) / dt);
       }
     }
     return query_result_for<api::SampleProperty>(std::move(s));

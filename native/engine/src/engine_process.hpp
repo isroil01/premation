@@ -26,7 +26,20 @@
 #include <vector>
 
 #include "core/log.hpp"
+#if defined(PREMATION_ENGINE_HEADLESS)
+namespace premation::render {
+// premation-engine-headless (tests, CI without Dawn): the options the command
+// line parses; only `slots` is read, by the simulated frame sink.
+struct RenderOptions {
+  std::uint32_t slots = 3;
+  std::uint32_t hostPid = 0;
+  std::uint32_t vendorId = 0;
+  bool highPerformance = false;
+};
+}  // namespace premation::render
+#else
 #include "render/render_thread.hpp"
+#endif
 
 namespace premation {
 

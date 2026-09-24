@@ -13,6 +13,7 @@
 #include "fields.hpp"
 #include "rig.hpp"
 #include "particle_props.hpp"
+#include "plugin_props.hpp"
 #include "fxstate.hpp"
 #include "meta.hpp"
 #include "ptree.hpp"
@@ -980,10 +981,40 @@ double legacy_percent_to_db(double percent) {
 }
 }  // namespace
 
+namespace {
+
+/// MATERIAL_SWITCHES (propertyValue.ts): hold-friendly numbers over legacy Transform flags.
+bool is_material_switch(std::string_view prop) {
+  return prop == "acceptsLights" || prop == "castsShadows" || prop == "acceptsShadows";
+}
+
+/// readMaterialSwitch: acceptsLights true → 1 (absent/false → 0); the shadow
+/// switches 'only' → 2, false/'off' → 0, anything else (absent) → 1.
+double read_material_switch(const Node& n, std::string_view prop) {
+  const Component* t = n.comp("Transform");
+  const Json& v = t != nullptr ? t->props.at(prop) : Json::null();
+  if (v.is_number()) return v.num();
+  if (prop == "acceptsLights") return v.is_bool() && v.b() ? 1 : 0;
+  if (v.is_string() && v.str() == "only") return 2;
+  return (v.is_bool() && !v.b()) || (v.is_string() && v.str() == "off") ? 0 : 1;
+}
+
+/// materialSwitchRaw: the legacy static form of a switch value (undefined = absent).
+Json material_switch_raw(std::string_view prop, double value) {
+  if (prop == "acceptsLights") return value >= 0.5 ? Json::boolean(true) : Json();
+  if (value >= 1.5) return Json::string("only");
+  return value >= 0.5 ? Json() : Json::boolean(false);
+}
+
+}  // namespace
+
 std::optional<double> read_static_property_value(const Document& d, std::string_view nodeId, std::string_view prop) {
   const Node* np = d.node(nodeId);
   if (np == nullptr) return std::nullopt;
   const Node& n = *np;
+  if (is_material_switch(prop)) return read_material_switch(n, prop);
+  // A plugin layer kind's prop / a contributed panel's param (plugin_props.cpp).
+  if (auto plugin = read_plugin_static(n, prop)) return *plugin;
   // A particle emitter's number (`particle.<key>`): the fx.particle config, else its default.
   if (prop.starts_with("particle.")) {
     if (auto pv = read_particle_static(n, prop)) return pv;
@@ -1113,6 +1144,13 @@ std::optional<double> read_static_property_value(const Document& d, std::string_
 bool write_static_property_value(Document& d, std::string_view nodeId, std::string_view prop, double value) {
   const Node* np = d.node(nodeId);
   if (np == nullptr) return false;
+  if (is_material_switch(prop)) {
+    const Component* t = np->comp("Transform");
+    if (t == nullptr) return false;
+    const std::string tid = t->id;
+    return sg_write_prop(d, nodeId, tid, prop, material_switch_raw(prop, value));
+  }
+  if (auto plugin = write_plugin_static(d, nodeId, prop, value)) return *plugin;
   // Gradient geometry is written back into its paint (a fill, a text stroke).
   if (is_gradient_geometry_prop(prop)) return write_gradient_geometry_prop(d, nodeId, prop, value);
   // A particle emitter's number: into the fx.particle config.

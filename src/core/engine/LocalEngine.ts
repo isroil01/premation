@@ -422,8 +422,13 @@ export class LocalEngine extends EngineClientBase {
       }
       restoreDocument(structuredClone(doc));
       if (opts.resetWorkspace) this.lastMissing = this.reconcileItems();
-      this.clearHistoryStacks();
       this.ensureTimelines();
+      // D1 (d1EvalParity): the load's own scene events scheduled a debounced
+      // snapshot; left pending, the next command's flush recorded the load as a
+      // phantom "Edit N" undo step under it. A load is not an edit: drop it,
+      // then clear and rebaseline (the C++ engine keeps no such entry).
+      if (this.history()) useHistoryStore.getState().reset();
+      this.clearHistoryStacks();
     } finally {
       this.applying -= 1;
     }

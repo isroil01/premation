@@ -219,6 +219,7 @@ void Document::note_anim(std::string_view id) {
   if (!journal_ || journal_->anims.contains(id)) return;
   const auto* p = anims_.find(id);
   journal_->anims.emplace(std::string(id), p != nullptr ? *p : Ptr<NodeAnim>());
+  animOrder_.emplace_back(id);
 }
 void Document::note_comp(std::string_view id) {
   if (!journal_ || journal_->comps.contains(id)) return;
@@ -338,7 +339,10 @@ void Document::reorder_nodes(const IdList& order) {
   nodes_.reorder(order);
 }
 
-void Document::begin() { journal_ = std::make_unique<Parts>(); }
+void Document::begin() {
+  journal_ = std::make_unique<Parts>();
+  animOrder_.clear();
+}
 
 Parts Document::current_of(const Parts& keys) const {
   Parts out;

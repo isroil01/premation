@@ -381,7 +381,16 @@ void Session::ensure_timelines() {
 void Session::stamp_missing_key_ids(const doc::ChangeSet& touched, doc::HCtx& x) {
   // stamp.ts: any key in the edited scope without an id gets one, tracks and
   // keys in engine order, inside the command (part of its inverse).
+  // In the order the command first touched each animation (TS: the scope's
+  // key order), not by id — two layers' new keys get their ids in that order.
+  std::vector<std::string> order;
+  for (const std::string& id : doc_.journal_anim_order()) {
+    if (touched.before.anims.contains(id)) order.push_back(id);
+  }
   for (const auto& [id, before] : touched.before.anims) {
+    if (std::find(order.begin(), order.end(), id) == order.end()) order.push_back(id);
+  }
+  for (const std::string& id : order) {
     const doc::NodeAnim* a = doc_.anim(id);
     if (a == nullptr) continue;
     bool missing = false;

@@ -463,7 +463,8 @@ std::optional<double> read_stroke_track(const Node& n, const StrokeTrackHit& h) 
   }
   if (auto f = field_of(kGradient, param)) {
     if (!gradient_paint(s)) return std::nullopt;
-    const Json& v = gradient_of(n, s).at(*f);
+    const Json g = gradient_of(n, s);  // held: gradient_of returns by value
+    const Json& v = g.at(*f);
     return v.is_number() ? v.num() : 0.0;
   }
   return std::nullopt;
@@ -488,7 +489,10 @@ std::optional<std::size_t> stroke_color_index(const Node& n, const std::string& 
 }
 
 std::string stroke_color_at(const Node& n, std::size_t index) {
-  const Json& c = node_strokes(n)[index].at("color");
+  // Held: node_strokes returns by value; a reference into the temporary dangled
+  // (every stroke colour read as the #ffffff fallback — d1EvalParity).
+  const std::vector<Json> stack = node_strokes(n);
+  const Json& c = stack[index].at("color");
   return c.is_string() ? c.str() : std::string("#ffffff");
 }
 
