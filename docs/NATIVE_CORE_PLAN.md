@@ -829,6 +829,98 @@ Open work for E4:
 | F1 | Export from the engine directly to ffmpeg, multi-frame across threads; the export supervisor launches engine jobs instead of hidden Chromium windows | ≥ 3× today's raw-pipe fps on 8 cores; md5-identical output at the same settings | 4 wk |
 | F2 | The engine owns the document and undo; the UI holds only its mirror. The TS engine is kept behind the flag for one release, then removed | No authoritative project state in the UI process; undo parity suite green | 6 wk |
 
+**F2 progress (2026-09-24): the undo parity suite is green; the document
+lifecycle runs through either engine behind a flag.** Branch `f2-ownership`.
+- **Undo parity suite** (the exit's second half):
+  `src/core/engine/__tests__/undoParity.test.ts` runs every replay-corpus
+  session (B2 + family + generated, and a new F2 lifecycle session) on the
+  TypeScript engine and probes `getHistory` (labels, origins, position,
+  can-undo/redo, gesture open, limit) and `getDocument` (property trees,
+  keyframes, items, comps, layers, dirty) after EVERY non-query request; then
+  a WALK per session: undo to 0 and one past, redo to the end and one past,
+  `jumpToHistory` 0 / middle / end / past the end, a checkpoint undone and
+  redone, a blank checkpoint, a cancelled gesture (with undo / redo / jump /
+  checkpoint / nested gesture / clearHistory / a wrong gesture id refused
+  inside it), a committed 3-message drag, undo/redo of it, a new edit
+  clearing the redo tail, an empty and a round-trip gesture, a batch, the
+  history limit (0 refused, 2 dropping the oldest), `clearHistory`.
+  `native/engine/tests/test_undo_parity.cpp` (`engine_undo_parity_tests`,
+  ctest) replays the bytes into an in-process C++ `Session` and compares
+  every response byte for byte and every revision step (fixture
+  `tests/data/undo_parity.bin`, 7.0 MB, `GEN_NATIVE_UNDO=1` regenerates; the
+  fixture format and replayer are now shared with D1:
+  `__testHelpers__/parityFixture.ts`, `tests/parity_fixture.hpp`;
+  `PARITY_DUMP=<dir>` writes both engines' bytes for a difference).
+  **62 sessions, 58 364 records (10 002 walk steps, 37 796 probes): 0
+  differences, ratchet 0.** First run: 57 (one session).
+- **C++ gap found and fixed:** redo of a command that CREATED several
+  compositions (a deep `duplicateComposition`) re-inserted them in key order
+  (`comp_3, comp_4`), the TypeScript engine in its entry's order
+  (`comp_4, comp_3`) — items and comps listed differently after any undo/redo
+  across such a command. Compositions have no order part in either engine, so
+  a `ChangeSet` now carries `compSeq` (the composition order when the edit
+  began, then the ones it created in document order) and `Document::apply`
+  re-inserts compositions and timelines in that order. D1 stays at 0.
+- **Lifecycle through the engine** (`src/core/project/engineDocumentSession.ts`):
+  New / Open / Save / Save As / Save a Copy / Revert / Close as `newProject` /
+  `openProject` / `saveProject` / `revertProject`; autosave =
+  `saveProject{recovery, copy:true}` when the MIRROR is dirty + a recovery
+  record (editor state); recovery = `openProject` of the file it belonged to
+  (or `newProject`) + `restoreDocument` as one undoable "Recover Unsaved
+  Work" entry — dirty, still bound to its file, Undo shows the saved version.
+  Path / dirty / history come from the document mirror only.
+  `ProjectManager` delegates to it when given `engineDocument`; the flag is
+  `PREMATION_ENGINE_OWNER=engine` (or `"owner": "engine"` in
+  `<userData>/engine.json`) on top of `PREMATION_ENGINE=process`, reported as
+  `ownsDocument` by `engine:status` (`processEngineOwnsDocument()`). Default
+  off: the TypeScript engine stays the owner (this release). Tested on both
+  engines (`engineDocumentSession.test.ts`, the C++ one through
+  `ProcessEngineClient` + `premation-engine-headless` writing real files
+  temp + rename): the full cycle incl. a crash between autosave and recovery,
+  a never-saved project's recovery, a stale record, refusals, and
+  ProjectManager with a page document IO that throws if touched.
+- **Remaining for F2:** wire the flag in `Providers` (the recovery prompt, the
+  autosave timer, the title-bar dirty dot, `ProjectLoaded` no longer
+  rebuilding the TS engine as owner) and route `engine()` to the process
+  client when it owns the document — that needs the engine viewport (D5),
+  otherwise UI edits vanish from the TS-drawn viewport; `.motion` BUNDLES
+  (collected footage) are written by the page today — the engine's FilePorts
+  write plain JSON; the API gaps in the inventory below (guides / swatches /
+  materials commands, a query returning the saved document for cloud upload);
+  pop-out windows as second mirrors; the command log moving to main; then
+  every row of the inventory, and deleting the TS engine after one release.
+
+
+
+**F2 inventory — authoritative project state in the UI process (2026-09-24).**
+Everything below is document state the page holds and that is *not* the
+mirror (`src/stores/documentMirror.ts`). With the TypeScript engine as owner
+it is the document; with the engine as owner it must be gone, derived from the
+mirror, or demoted to editor state. The column "how" names the route; "state"
+is where it stands on `f2-ownership`.
+
+| Holder (UI process) | What it holds | Why it is authoritative today | Must move to / how | State |
+|---|---|---|---|---|
+| `defaultSceneGraph` (`src/core/scene`) | every layer row: components, switches, nesting (= parenting), effects, masks, text, styles | `captureDocument` saves it; the TS renderer draws it; 53 UI files still import it | the engine's `doc::Document` nodes. Reads → mirror (B4 read ratchet, 681 left, mostly per-frame viewport reads); the TS renderer's input goes with D5 (engine viewport default-on) | reads ratcheted; writes 0 (B3) |
+| `defaultAnimation` | tracks, keyframes, expressions, data tracks | same; 26 UI files import it | the engine's `anim` parts; reads → `mirror.keyframes` / `valueAt` | as above |
+| `useProjectStore.comps` | composition settings per comp | `captureDocument().comps`; `replaceComps` on restore | `mirror.comps` (`CompInfo.settings`); the store keeps TABS only (editor state, `editorView.ts`) | mirror carries them; store still written by restore |
+| `useCompositionStore` | the active comp's settings incl. background gradient | render hooks read it into `buildSnapshot` | derived: `useActiveMirrorComp()`; deleted with the TS renderer (D5) | derived copy |
+| `TimelineController` (`src/core/timeline`) | bars (clip ids, in/out, stretch), comp/layer markers, work area, bar order | `capture()`/`restore()` in the document (`timelines`) | `LayerInfo.timing`, `CompInfo.markers/workArea` in the mirror; the controller keeps zoom/scroll only | mirror complete (B4 exit for the timeline) |
+| `useAssetStore` + `documentItems` + localStorage caches (`saveFolders/Assignments/Interpretations`) | footage records, folders, interpretation, proxy, tags, label, comment | `captureProjectItems` / `applyProjectItems` | engine items (`ItemInfo`, item commands exist); object URLs, thumbnails and decode caches stay UI session state keyed by item id until E1 moves decode | commands + mirror exist; store still the TS source |
+| `motionBlurStore`, `guidesStore`, `colorManagementStore`, `swatchStore`, `materialStore`, `transitionStore` | project motion blur, guides/grid/camera bookmarks, colour management, swatches, materials, transition records | captured/restored whole by `cloudDocument` | the C++ document already saves/loads all of them (D1: identical saves). Missing: COMMANDS for guides, swatches and materials (today "authored extras no command edits", ENGINE_API §4.1 `restoreDocument`) → add `setGuides` / swatch / material commands, then these stores become mirror views | API gap |
+| `documentExtras.ts` | project settings, the SAVED render queue | captured/restored by `cloudDocument` | engine (`setProjectSettings`, render-queue commands; mirror `settings` / `renderQueue`); module deleted with the TS engine | engine-owned in C++ |
+| `projectStorage` / `restoredPluginRefs` | JS plugin storage and dependency block | captured into the document | JS plugins are not ported (G2); native SDK sequence data lives in the engine (G1) | retire with G2 |
+| `HistoryService` (CommandSystem) + `EngineHistoryEntry` | the undo stack, labels, position, limit | the TS engine's entries live on the app's stack | the C++ `History`; the page reads `mirror.history`, Ctrl+Z / History-panel jumps are already engine requests (`setHistoryRoute`). **Parity: `engine_undo_parity_tests`** | parity suite green |
+| `historyStore` legacy debounce recorder (`LEGACY_DEBOUNCE_RECORDER`, `StoreSnapshotCommand`, baselines) | undo for writes made AROUND the engine (whole-store snapshots) | 133 automation sites (`lint:automation-writes`) still write around the engine | delete when the automation-write ratchet reaches 0 (UI writes are already 0); an engine-owned document has no such writes by construction | ratcheted |
+| `LocalEngine` per-document state | id counters, key index, project path, saved revision (dirty), open gesture, command log | the TS engine runs in the page | the C++ `Session` has each (ids.ts / key index / `projectPath_` / `savedRevision_` / gesture); the replay log moves from the page to main (C3 limit) | C++ equivalent exists |
+| `projectStore.tabs[].dirty` + Providers' `markDirty` on bus events | the unsaved indicator | computed from TS bus traffic | `mirror.dirty` (engine `dirtyChanged`, cleared by `saveProject`, restored by undo to the saved revision) | mirror carries it; UI still reads the tab flag |
+| `ProjectManager` + `projectDocumentIO` + `bundleProjectIO` / `localProjectIO` | New/Open/Save/Save As/Close: `io.capture()` → storage, storage → `io.restore()`; `.motion` bundles collect footage | the page serializes and parses the document | `EngineDocumentSession` (engine `newProject` / `openProject` / `saveProject` / `revertProject`) — ProjectManager delegates when given `engineDocument` (the F2 flag). **Gap:** the engine's FilePorts write plain JSON; bundle writing (footage collection, zip) must move to the engine or main | done behind the flag, jest on both engines; bundles pending |
+| `AutosaveController` + `recovery.ts` (+ worker, localStorage ring) | crash-recovery snapshots of `captureDocument()` | the page captures the document every interval | `EngineDocumentSession.autosave` (`saveProject{recovery, copy}` when `mirror.dirty`) + `recover` (`openProject` + `restoreDocument` as one undoable "Recover Unsaved Work" entry); the cadence is `setAutosave` | done behind the flag; Providers' prompt not rewired |
+| `CloudAutosave`, `ApiFileAdapter.createProject`, `VersionHistoryPanel`, `publishTemplate`, `exportMogrt`, `exportManager` | whole-document captures for upload / templates / export | `captureDocument()` in the page | a query that returns the saved document bytes (`exportDocument`, API gap) or `saveProject{copy}` to a temp file uploaded by main; version restore is already `restoreDocument` | API gap |
+| `windowSync` (pop-out windows) | the whole document over BroadcastChannel/IPC, both ways | `captureDocument` / `restoreDocument` per settle | a pop-out is a second mirror over the same engine (events relayed by main), edits are engine requests | to do |
+| `compositeEdit`, `documentSwap`, `headlessRender` | document snapshots for composite edits, swapping the live document for a render, missing-asset scans | page-side capture/restore | composite edits → batches/`restoreDocument`; render swaps → F1 engine export jobs (`saveProject{copy}` is the snapshot); missing assets → `openProject.missingItems` | to do (F1 for renders) |
+| Selection, keyframe/property selection, `renderQueueStore` running jobs, component/template libraries | ids, UI session state, user libraries | — | NOT document state: stays in the UI (the rule "editor state never enters the document") | stays |
+
 ### Phase G — Ecosystem
 
 | Step | What | Exit | Size |
