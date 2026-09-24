@@ -1,0 +1,26 @@
+{
+  "comment": "E4 kernel bench cases, read by native/engine/tools/premation_effects.cpp and native/engine/tests/bench_effects_ts.mjs. Arguments are the TS kernel's, as in effect_kernel_parity.json.",
+  "width": 1920,
+  "height": 1080,
+  "cases": [
+    { "effect": "gaussian-blur", "args": { "radius": 20 } },
+    { "effect": "fast-box-blur", "args": { "radius": 10, "iterations": 1 } },
+    { "effect": "radial-blur", "args": { "amount": 20, "centerX": 960, "centerY": 540, "quality": 16 } },
+    { "effect": "channel-blur", "args": { "red": 4, "green": 8, "blue": 12, "alpha": 2 } },
+    { "effect": "unsharp-mask", "args": { "amount": 80, "radius": 6, "threshold": 2 } },
+    { "effect": "sharpen", "args": { "amount": 0.5 } },
+    { "effect": "noise", "args": { "amount": 0.2, "evolution": 3, "mono": 0 } },
+    { "effect": "add-grain", "args": { "intensity": 40, "size": 1.5, "saturation": 30, "seed": 2.5 } },
+    { "effect": "turbulent-noise", "args": { "scale": 60, "complexity": 6, "evolution": 1.5, "contrast": 100 } },
+    { "effect": "median", "args": { "radius": 3 } },
+    { "effect": "minimax", "args": { "op": 2, "radius": 8, "channel": 1 } },
+    { "effect": "simple-choker", "args": { "chokePx": 4 } },
+    { "effect": "mosaic", "args": { "hBlocks": 64, "vBlocks": 36 } },
+    { "effect": "find-edges", "args": { "invert": 1 } },
+    { "effect": "emboss", "args": { "angleDeg": 45, "relief": 2, "contrast": 150 } },
+    { "effect": "vibrance", "args": { "vibrance": 50, "saturation": 10 } },
+    { "effect": "bilateral-blur", "args": { "radius": 6, "colorSigma": 30 } },
+    { "effect": "smart-blur", "args": { "radius": 5, "threshold": 25 } },
+    { "effect": "camera-lens-blur", "args": { "radius": 8, "blades": 6, "rotation": 10, "gain": 2, "threshold": 70 } }
+  ]
+}
