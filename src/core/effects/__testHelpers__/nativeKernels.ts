@@ -36,6 +36,8 @@ import {
 import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
 import { mosaicData, findEdgesData, embossData, roughenEdgesData, scatterData } from '../stylize';
 import { waveWarpData, turbulentDisplaceData, curlNoiseData } from '../warp';
+import { floMotionData, lensData, griddlerData, ballActionData, drizzleData } from '../aeDistortRoundFive';
+import { jawsData, pixelPollyData, twisterData, cardDanceData } from '../aeTransitionsRoundFive';
 import {
   glassData, texturizeData, threadsData, chromaticAberrationData, hexTileData, vectorBlurData,
 } from '../aeStylizeRoundFive';
@@ -437,6 +439,33 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'vector-blur':
       data.set(vectorBlurData(data, w, h, n('amount', 8), n('angleOffset', 0), n('smoothness', 2)));
+      return;
+    case 'flo-motion':
+      data.set(floMotionData(data, w, h, n('knot1X', -50), n('knot1Y', 0), n('knot1Amount', 50), n('knot2X', 50), n('knot2Y', 0), n('knot2Amount', -50), n('falloff', 30)));
+      return;
+    case 'lens':
+      data.set(lensData(data, w, h, n('centerX', 0), n('centerY', 0), n('size', 60), n('convergence', 50)));
+      return;
+    case 'griddler':
+      data.set(griddlerData(data, w, h, n('tileSize', 24), n('horizontalScale', 90), n('verticalScale', 90), n('rotation', 0)));
+      return;
+    case 'ball-action':
+      data.set(ballActionData(data, w, h, n('grid', 12), n('ballSize', 90), n('scatter', 0), n('seed', 0)));
+      return;
+    case 'drizzle':
+      data.set(drizzleData(data, w, h, n('dripRate', 30), n('rippleHeight', 4), n('spreading', 60), n('evolution', 0), n('seed', 0)));
+      return;
+    case 'jaws':
+      data.set(jawsData(data, w, h, n('completion', 0), n('direction', 0), n('teethHeight', 20), n('teethWidth', 30)));
+      return;
+    case 'pixel-polly':
+      data.set(pixelPollyData(data, w, h, n('completion', 0), n('cellSize', 12), n('gravity', 50), n('spin', 180), n('centerX', 0), n('centerY', 0), n('seed', 0)));
+      return;
+    case 'twister':
+      data.set(twisterData(data, w, h, n('completion', 0), n('centerY', 0), n('twist', 180)));
+      return;
+    case 'card-dance':
+      data.set(cardDanceData(data, w, h, n('rows', 4), n('columns', 6), n('amount', 50), n('cardRotation', 30), n('phase', 0)));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

@@ -310,6 +310,23 @@ void chromatic_aberration(RgbaView img, double amount, double aberration_mode, d
 void hex_tile(RgbaView img, double radius, double border, ThreadPool* pool);
 void vector_blur(RgbaView img, double amount, double angle_offset, double smoothness, ThreadPool* pool);
 
+// ── aeDistortRoundFive.ts / aeTransitionsRoundFive.ts ───────────────────────
+void flo_motion(RgbaView img, double k1x, double k1y, double k1a, double k2x, double k2y, double k2a, double falloff,
+                ThreadPool* pool);
+void lens(RgbaView img, double center_x, double center_y, double size, double convergence, ThreadPool* pool);
+void griddler(RgbaView img, double tile_size, double horizontal_scale, double vertical_scale, double rotation,
+              ThreadPool* pool);
+void ball_action(RgbaView img, double grid, double ball_size, double scatter_amt, double seed, ThreadPool* pool);
+void drizzle(RgbaView img, double drip_rate, double ripple_height, double spreading, double evolution, double seed,
+             ThreadPool* pool);
+void jaws(RgbaView img, double completion, double direction, double teeth_height, double teeth_width,
+          ThreadPool* pool);
+void pixel_polly(RgbaView img, double completion, double cell_size, double gravity, double spin, double center_x,
+                 double center_y, double seed, ThreadPool* pool);
+void twister(RgbaView img, double completion, double center_y, double twist, ThreadPool* pool);
+void card_dance(RgbaView img, double rows, double columns, double amount, double card_rotation, double phase,
+                ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

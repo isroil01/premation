@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 111> kPorted{
+constexpr std::array<std::string_view, 120> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -27,7 +27,8 @@ constexpr std::array<std::string_view, 111> kPorted{
     "color-difference-key", "wire-removal", "broadcast-colors", "noise-hls",   "block-load",       "kernel",
     "3d-glasses",      "fractal",         "unmult",        "cc-composite",    "cc-scatterize",    "radial-fast-blur",
     "cross-blur",      "scale-wipe",      "plastic",       "glass",           "texturize",        "threads",
-    "chromatic-aberration", "hex-tile",   "vector-blur",
+    "chromatic-aberration", "hex-tile",   "vector-blur",   "flo-motion",      "lens",             "griddler",
+    "ball-action",     "drizzle",         "jaws",          "pixel-polly",     "twister",          "card-dance",
 };
 
 }  // namespace
@@ -328,6 +329,26 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     hex_tile(img, a("radius", 12), a("border", 30), pool);
   } else if (type == "vector-blur") {
     vector_blur(img, a("amount", 8), a("angleOffset", 0), a("smoothness", 2), pool);
+  } else if (type == "flo-motion") {
+    flo_motion(img, a("knot1X", -50), a("knot1Y", 0), a("knot1Amount", 50), a("knot2X", 50), a("knot2Y", 0),
+               a("knot2Amount", -50), a("falloff", 30), pool);
+  } else if (type == "lens") {
+    lens(img, a("centerX", 0), a("centerY", 0), a("size", 60), a("convergence", 50), pool);
+  } else if (type == "griddler") {
+    griddler(img, a("tileSize", 24), a("horizontalScale", 90), a("verticalScale", 90), a("rotation", 0), pool);
+  } else if (type == "ball-action") {
+    ball_action(img, a("grid", 12), a("ballSize", 90), a("scatter", 0), a("seed", 0), pool);
+  } else if (type == "drizzle") {
+    drizzle(img, a("dripRate", 30), a("rippleHeight", 4), a("spreading", 60), a("evolution", 0), a("seed", 0), pool);
+  } else if (type == "jaws") {
+    jaws(img, a("completion", 0), a("direction", 0), a("teethHeight", 20), a("teethWidth", 30), pool);
+  } else if (type == "pixel-polly") {
+    pixel_polly(img, a("completion", 0), a("cellSize", 12), a("gravity", 50), a("spin", 180), a("centerX", 0),
+                a("centerY", 0), a("seed", 0), pool);
+  } else if (type == "twister") {
+    twister(img, a("completion", 0), a("centerY", 0), a("twist", 180), pool);
+  } else if (type == "card-dance") {
+    card_dance(img, a("rows", 4), a("columns", 6), a("amount", 50), a("cardRotation", 30), a("phase", 0), pool);
   } else {
     return false;
   }

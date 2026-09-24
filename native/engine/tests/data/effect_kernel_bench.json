@@ -113,6 +113,15 @@
     { "effect": "threads", "args": { "thickness": 6, "spacing": 2, "depth": 50 } },
     { "effect": "chromatic-aberration", "args": { "amount": 5, "falloff": 50 } },
     { "effect": "hex-tile", "args": { "radius": 12, "border": 30 } },
-    { "effect": "vector-blur", "args": { "amount": 8, "smoothness": 2 } }
+    { "effect": "vector-blur", "args": { "amount": 8, "smoothness": 2 } },
+    { "effect": "flo-motion", "args": { "knot1X": -300, "knot1Amount": 60, "knot2X": 300, "knot2Amount": -40, "falloff": 30 } },
+    { "effect": "lens", "args": { "size": 60, "convergence": 50 } },
+    { "effect": "griddler", "args": { "tileSize": 40, "horizontalScale": 90, "verticalScale": 80, "rotation": 15 } },
+    { "effect": "ball-action", "args": { "grid": 16, "ballSize": 90, "scatter": 40, "seed": 2 } },
+    { "effect": "drizzle", "args": { "dripRate": 50, "rippleHeight": 6, "spreading": 200, "evolution": 40 } },
+    { "effect": "jaws", "args": { "completion": 40, "teethHeight": 40, "teethWidth": 60 } },
+    { "effect": "pixel-polly", "args": { "completion": 30, "cellSize": 16, "spin": 180, "seed": 3 } },
+    { "effect": "twister", "args": { "completion": 40, "twist": 180 } },
+    { "effect": "card-dance", "args": { "rows": 8, "columns": 12, "amount": 50, "cardRotation": 30, "phase": 10 } }
   ]
 }
