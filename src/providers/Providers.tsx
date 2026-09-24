@@ -156,7 +156,7 @@ import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsert
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
-import { createNullsFromPathUndoable, pathVertices } from '@core/scene/nullsFromPaths';
+import { pathVertices } from '@core/scene/nullsFromPaths';
 import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreateEdits';
 import { buildPathCommands } from '@core/workspace/pathCommands';
 import { canCreateShapesFromText } from '@core/scene/shapesFromText';
@@ -1802,9 +1802,10 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        // B3-gap: the vertex → null bindings (`Geometry.pointBindings` on the shape) are not an API property (the Nulls Follow Points variant above is one `pasteLayers`).
-        const made = createNullsFromPathUndoable(id, playheadSeconds(), { pointsFollowNulls: true });
-        notify(made.length ? `${made.length} null${made.length === 1 ? '' : 's'} now drive the path — move one and the outline follows` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
+        // The nulls and the vertex → null bindings (`layer/pointBindings`): one engine gesture.
+        void nullsFromPathEdit(id, playheadSeconds(), { pointsFollowNulls: true }).then((made) => {
+          notify(made.length ? `${made.length} null${made.length === 1 ? '' : 's'} now drive the path — move one and the outline follows` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
+        });
       },
     },
     {

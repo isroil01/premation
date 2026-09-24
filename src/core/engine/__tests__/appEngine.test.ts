@@ -7,6 +7,7 @@
 
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeMask } from '@core/effects/mask';
 import { defaultAnimation } from '@motion/animation';
 import { useUIStore } from '@stores/uiStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -150,6 +151,25 @@ describe('GestureSession', () => {
     const sets = spy.mock.calls.filter(([c]) => c.type === 'setProperty');
     expect(sets.length).toBeLessThan(20);
     expect(opacity(s.A)).toBeCloseTo(1);
+    spy.mockRestore();
+  });
+
+  test('a KEPT message is never dropped for a later one: it lands once, in order', async () => {
+    const spy = jest.spyOn(h.engine, 'batch');
+    const g = new GestureSession('Edit Mask');
+    const prop = { layer: s.A, path: `masks/${s.mask}/path` };
+    const op = { kind: 'insert' as const, segment: 0, u: 0.5, indices: [], atStart: false };
+    // In flight first, so the rest queue behind it.
+    g.send({ type: 'setProperty', prop: { layer: s.A, path: 'transform/opacity' }, value: { kind: 'scalar', value: 50 } });
+    g.send({ type: 'setProperty', prop: { layer: s.A, path: 'transform/opacity' }, value: { kind: 'scalar', value: 40 } });
+    g.send({ type: 'editPathTopology', prop, op }, { keep: true });
+    for (const v of [30, 20, 10]) g.send({ type: 'setProperty', prop: { layer: s.A, path: 'transform/opacity' }, value: { kind: 'scalar', value: v } });
+    await g.end();
+    const node = defaultSceneGraph.getNode(s.A)!;
+    expect(readNodeMask(node)!.paths[0]!.points).toHaveLength(5);
+    expect(opacity(s.A)).toBeCloseTo(10);
+    const topo = spy.mock.calls.flatMap(([, cmds]) => cmds).filter((c) => c.type === 'editPathTopology');
+    expect(topo).toHaveLength(1);
     spy.mockRestore();
   });
 

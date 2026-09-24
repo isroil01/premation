@@ -109,13 +109,10 @@ export function endViewportGesture(): void {
 /**
  * B3-gap: the legacy writers' transaction (`gestureAnimEdit` below and the
  * record in `endViewportGesture`). Every viewport gizmo / tool drag already
- * runs as ONE engine gesture (`ToolTransaction` above); this path is only
- * reached by the ports' edits the engine cannot address yet (ports.ts): a
- * static shape outline (`path.points` has no static value), a vertex added /
- * removed on every key of an animated outline, split-handle / RotoBezier
- * vertices (a BezierPath drops `broken` / `tension`), and the node-prop
- * fallback `applyNodePropsKeyframed` (a light's Point of Interest before the
- * layer stores it). Deleted with them.
+ * runs as ONE engine gesture (`ToolTransaction` above), outlines included
+ * (B3 paths); this path is only reached by the node-prop writer
+ * `applyNodePropsKeyframed` (ports.ts) — `cameraCommands`' synchronous
+ * callers and a node outside a composition. Deleted with it.
  *
  * `runAnimEdit`, gesture-aware: inside a gesture the mutation applies directly
  * under the gesture's single transaction; outside it is the classic
@@ -168,8 +165,8 @@ export class ToolTransaction {
   private session: GestureSession | null = null;
   /** Waiting for the previous action's gesture to close before opening ours. */
   private opening: Promise<void> | null = null;
-  /** The latest message sent while `opening` (latest wins, as in a session). */
-  private queued: { label: string; commands: ToolCommands } | null = null;
+  /** Messages sent while `opening`: latest wins over a droppable one, a kept one stays (as in a session). */
+  private queued: Array<{ label: string; commands: ToolCommands; keep: boolean }> = [];
   private cancelled = false;
   private done = false;
   private readonly scratch = new Map<string, unknown>();
@@ -182,35 +179,43 @@ export class ToolTransaction {
    * gesture has closed — so a drag-start state it captures (`memo`) is read
    * from a document that already holds the previous action. Only the latest
    * builder runs; a builder returning null or [] sends nothing.
+   *
+   * `keep`: a STRUCTURAL step the later absolute messages build on (a vertex
+   * inserted at pointer down) — never dropped for a later message (GestureSession).
    */
-  send(label: string, commands: ToolCommands): void {
+  send(label: string, commands: ToolCommands, opts: { keep?: boolean } = {}): void {
     if (this.cancelled || this.done) return;
+    const keep = opts.keep === true;
     if (this.session) {
       const list = resolveCommands(commands);
-      if (list.length > 0) this.session.send(list);
+      if (list.length > 0) this.session.send(list, { keep });
       return;
     }
     // The engine holds ONE gesture at a time, and the previous action's end
     // is asynchronous (a nudge burst committed by this very press, a drag
     // released a frame ago): open ours only once that one has closed, or the
     // engine would see two and commit the older one into ours.
-    const open = (label: string, commands: ToolCommands): void => {
-      const list = resolveCommands(commands);
-      if (list.length === 0) return;
-      this.session = new GestureSession(label);
-      this.session.send(list);
+    const open = (msgs: ReadonlyArray<{ label: string; commands: ToolCommands; keep: boolean }>): void => {
+      for (const m of msgs) {
+        const list = resolveCommands(m.commands);
+        if (list.length === 0) continue;
+        this.session ??= new GestureSession(m.label);
+        this.session.send(list, { keep: m.keep });
+      }
     };
     if (pendingEnds === 0 && !this.opening) {
       // Nothing is closing: open now (the common case — no extra hop).
-      open(label, commands);
+      open([{ label, commands, keep }]);
       return;
     }
-    this.queued = { label, commands };
+    const last = this.queued[this.queued.length - 1];
+    if (!keep && last && !last.keep) this.queued[this.queued.length - 1] = { label, commands, keep };
+    else this.queued.push({ label, commands, keep });
     this.opening ??= settleToolEdits().then(() => {
       const q = this.queued;
-      this.queued = null;
-      if (!q || this.cancelled) return;
-      open(q.label, q.commands);
+      this.queued = [];
+      if (q.length === 0 || this.cancelled) return;
+      open(q);
     });
   }
 
@@ -252,7 +257,7 @@ export class ToolTransaction {
   /** Esc: revert everything this action wrote; ignore what it sends next. */
   cancel(): Promise<void> {
     this.cancelled = true;
-    this.queued = null;
+    this.queued = [];
     return trackEnd((async () => {
       if (this.opening) await this.opening;
       const s = this.session;
@@ -385,9 +390,14 @@ export function toolBurstOpen(): boolean {
  * Send a tool's edit: into the open pointer gesture's transaction, else into
  * `txn` when the caller has one (a burst), else as a one-shot `edit`.
  */
-export function sendToolEdit(label: string, commands: ToolCommands, txn: ToolTransaction | null = currentToolTransaction()): void {
+export function sendToolEdit(
+  label: string,
+  commands: ToolCommands,
+  txn: ToolTransaction | null = currentToolTransaction(),
+  opts: { keep?: boolean } = {},
+): void {
   if (txn) {
-    txn.send(label, commands);
+    txn.send(label, commands, opts);
     return;
   }
   void runToolEdit(label, commands);

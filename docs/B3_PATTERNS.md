@@ -171,6 +171,13 @@ Rules:
   (absolute). Relative commands are for one-shot actions (a nudge key press,
   a menu item). Found by the timeline migration; `layout/Timeline/
   timelineEdits.ts` and `keyframeEdits.ts` are the reference.
+- **The one exception: a structural step the drag builds on** (Direct
+  Selection inserts a vertex at pointer down — `editPathTopology`, relative —
+  then reshapes it): send it ONCE as a kept message,
+  `send(cmds, { keep: true })` (`GestureSession`, `ToolTransaction`,
+  `sendToolEdit(..., { keep: true })`). A kept message is never dropped and
+  lands in order; the absolute messages after it stay latest-wins
+  (`core/workspace/ports.ts` `sendOutlineEdit`, ENGINE_API.md §15.10).
 - **The gizmo moves from pointer state immediately**; the engine's refresh
   follows within a frame. Do not await sends in a pointermove handler.
 - **No React state per move** (CLAUDE.md performance rule): `useGesture` does

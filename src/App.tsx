@@ -72,7 +72,6 @@ import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
-import { PATH_ANIM_PROP, togglePathAnimation } from '@core/workspace/pathCommands';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
@@ -861,12 +860,6 @@ function EditorShellInner(): JSX.Element {
       // A row that exists only while the layer has a mask, so there is always
       // a first mask to address.
       void maskShapeStopwatchEdit(trackId, readNodeMaskAnim(node).length > 0, now);
-      return;
-    }
-    // A shape's Path row: a whole-outline data track, like the mask row above.
-    if (props[0] === PATH_ANIM_PROP) {
-      // B3-gap: a drawn shape's own outline (Geometry `points` + the `path.points` data track) has no path-valued catalog property — `layer/path.points` is typed scalar, so `setAnimated` would key a number; only paint-stroke paths are path-valued.
-      togglePathAnimation(trackId);
       return;
     }
     // The stopwatch is lit when animated, so clicking it means "turn this off" —

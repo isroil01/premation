@@ -30,7 +30,7 @@ import { bumpScene } from '@stores/sceneStore';
 import { snapshotNodeAnimation, applyNodeAnimation, type NodeAnimationSnapshot } from '@core/animation/cloneNodeAnimation';
 import { insertSvgDocument } from '@core/scene/sceneInsert';
 import type { SceneNode } from '@core/types';
-import { copyPathFromSelection, pastePathOntoSelection } from '@core/workspace/pathCommands';
+import { copyPathFromSelection, pastePathEdit } from '@core/workspace/pathCommands';
 
 /** Float times never compare exactly; match the engine's own tolerance. */
 const T_EPSILON = 1e-6;
@@ -318,7 +318,7 @@ export type PasteResult = 'keyframes' | 'layers' | 'svg' | 'path' | null;
  * (AE 26.3 paste Illustrator/SVG).
  */
 export async function pasteSelection(): Promise<PasteResult> {
-  if (pastePathOntoSelection()) return 'path';
+  if (pastePathEdit()) return 'path';
   if (clipboardState.copiedKeyframes && clipboardState.copiedKeyframes.length > 0) {
     const keyframes = clipboardState.copiedKeyframes;
     const controller = getTimelineController();

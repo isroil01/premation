@@ -71,6 +71,23 @@ describe('Create Nulls From Path Points', () => {
     expect(h.doc()).toBe(before);
   });
 
+  it('Points Follow Nulls: the nulls and the vertex bindings are ONE entry, undone together', async () => {
+    const shape = await addTriangle();
+    await engineIdle();
+    const before = h.doc();
+    const entries = historyLabels().length;
+    const made = await nullsFromPathEdit(shape, 0, { pointsFollowNulls: true });
+    await engineIdle();
+    expect(made).toHaveLength(3);
+    const geom = docGraph.getNode(shape)!.components.find((c) => c.type === 'Geometry')!;
+    expect(geom.props.pointBindings).toEqual(useSelectionStore.getState().ids.map((nullId, index) => ({ index, nullId })));
+    expect([...(geom.props.pointBindings as Array<{ nullId: string }>).map((b) => b.nullId)].sort()).toEqual([...made].sort());
+    expect(historyLabels().slice(entries)).toEqual(['Create Nulls From Path Points (Points Follow Nulls)']);
+    await h.run({ type: 'undo' });
+    await engineIdle();
+    expect(h.doc()).toBe(before);
+  });
+
   it('makes nothing, and no entry, for a layer with no path points', async () => {
     const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'Solid', init: [] });
     await engineIdle();

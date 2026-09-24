@@ -15,11 +15,14 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { commands } from '@motion/workspace';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode, ID } from '@core/types';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
 import { createCommandPort } from './ports';
+import { settleToolEdits } from './viewportGesture';
 
 const W = 160;
 const H = 120;
@@ -49,10 +52,13 @@ function shapeNode(id: string, radiusProps: Record<string, number>): SceneNode {
 
 /** Cut the layer with a vertical world line through its centre; return every
  *  written anchor in LOCAL space (how the runs are stored). */
-function cutVertically(id: string): Array<{ x: number; y: number }> {
+async function cutVertically(id: string): Promise<Array<{ x: number; y: number }>> {
   createCommandPort().execute(
     commands.cutPaths([id], { x: CX, y: CY - 400 }, { x: CX, y: CY + 400 }),
   );
+  // The cut is one engine edit (`setShapeOutline`).
+  await settleToolEdits();
+  await engineIdle();
   const node = defaultSceneGraph.getNode(id as ID)!;
   const geom = node.components.find((c) => c.type === 'Geometry');
   const subs = geom?.props.subpaths as
@@ -80,32 +86,30 @@ const minDistTo = (
   c: { x: number; y: number },
 ): number => Math.min(...pts.map((p) => Math.hypot(p.x - c.x, p.y - c.y)));
 
-beforeAll(() => {
-  // The knife records one history entry per gesture; recording needs the boot
-  // singleton. Same stub `mergePaths.test.ts` uses for its bakes.
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+let h: Harness;
+beforeEach(async () => {
+  h = await setupAppEngine();
+});
+afterEach(async () => {
+  await h.dispose();
 });
 
-const ids: string[] = [];
+/** A layer of the composition, seeded directly (the engine resyncs before the cut). */
 function addNode(node: SceneNode): void {
   defaultSceneGraph.addNode(node);
-  ids.push(node.id as string);
+  defaultSceneGraph.addChild('comp_root' as ID, node);
 }
 
-afterEach(() => {
-  for (const id of ids.splice(0)) defaultSceneGraph.removeNode(id as ID);
-});
-
 describe('Knife on a rounded-rect primitive', () => {
-  it('SHARP CONTROL: without radii the halves keep a vertex AT each corner', () => {
+  it('SHARP CONTROL: without radii the halves keep a vertex AT each corner', async () => {
     addNode(shapeNode('knife_sharp', {}));
-    const pts = cutVertically('knife_sharp');
+    const pts = await cutVertically('knife_sharp');
     for (const c of CORNERS) expect(minDistTo(pts, c)).toBeLessThan(0.75);
   });
 
-  it('a uniform radius survives the cut: every corner stood off by r(√2−1)', () => {
+  it('a uniform radius survives the cut: every corner stood off by r(√2−1)', async () => {
     addNode(shapeNode('knife_round', { cornerRadius: R }));
-    const pts = cutVertically('knife_round');
+    const pts = await cutVertically('knife_round');
     for (const c of CORNERS) {
       const d = minDistTo(pts, c);
       expect(d).toBeGreaterThan(STAND_OFF - 1.5);
@@ -113,9 +117,9 @@ describe('Knife on a rounded-rect primitive', () => {
     }
   });
 
-  it('per-corner radii survive: only the corner that asked is rounded', () => {
+  it('per-corner radii survive: only the corner that asked is rounded', async () => {
     addNode(shapeNode('knife_tl', { cornerRadiusTL: R }));
-    const pts = cutVertically('knife_tl');
+    const pts = await cutVertically('knife_tl');
     const dTL = minDistTo(pts, CORNERS[0]!);
     expect(dTL).toBeGreaterThan(STAND_OFF - 1.5);
     expect(dTL).toBeLessThan(STAND_OFF + 1.5);

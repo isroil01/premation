@@ -87,7 +87,10 @@ export async function edit(
  *   send       the command(s) for the CURRENT pointer position; LATEST WINS: while
  *              one message is in flight only the newest pending one is kept (each
  *              message carries an absolute value, so dropping intermediates loses
- *              nothing and a slow engine never builds a backlog)
+ *              nothing and a slow engine never builds a backlog). A message sent
+ *              with `{ keep: true }` is never dropped: a STRUCTURAL step inside a
+ *              drag (a vertex inserted at pointer down, `editPathTopology`) that
+ *              the later absolute messages build on — it lands once, in order.
  *   end        endGesture(commit) after the last message landed; Esc → cancel()
  *              reverts every edit of the gesture
  *
@@ -101,7 +104,8 @@ export class GestureSession {
   private readonly quiet: boolean;
   private readonly opened: Promise<number | null>;
   private inFlight: Promise<void> | null = null;
-  private pending: readonly Command[] | null = null;
+  /** Messages waiting for the one in flight: kept ones in order, at most one droppable at the end. */
+  private pending: Array<{ list: readonly Command[]; keep: boolean }> = [];
   private ended = false;
   private reported = false;
 
@@ -144,12 +148,16 @@ export class GestureSession {
   }
 
   /** The edit for the current pointer position (see the class header). */
-  send(commands: Command | readonly Command[]): void {
+  send(commands: Command | readonly Command[], opts: { keep?: boolean } = {}): void {
     if (this.ended || !this.alive()) return;
     const list = Array.isArray(commands) ? commands as readonly Command[] : [commands as Command];
     if (list.length === 0) return;
     if (this.inFlight) {
-      this.pending = list;
+      const keep = opts.keep === true;
+      const last = this.pending[this.pending.length - 1];
+      // Latest wins over the droppable message still waiting; a kept one stays.
+      if (!keep && last && !last.keep) this.pending[this.pending.length - 1] = { list, keep };
+      else this.pending.push({ list, keep });
       return;
     }
     this.dispatch(list);
@@ -165,9 +173,9 @@ export class GestureSession {
       if (!res.ok) this.report(res.error);
     })().finally(() => {
       this.inFlight = null;
-      const next = this.pending;
-      this.pending = null;
-      if (next && this.alive()) this.dispatch(next);
+      const next = this.pending.flatMap((m) => m.list);
+      this.pending = [];
+      if (next.length > 0 && this.alive()) this.dispatch(next);
     });
   }
 
@@ -180,7 +188,7 @@ export class GestureSession {
   async end(commit = true): Promise<void> {
     if (this.ended) return;
     this.ended = true;
-    if (!commit) this.pending = null;
+    if (!commit) this.pending = [];
     await this.drain();
     const id = await this.opened;
     if (id === null || !this.alive()) return;

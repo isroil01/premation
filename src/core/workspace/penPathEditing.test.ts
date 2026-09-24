@@ -48,6 +48,13 @@ function layer(id: string, extra: SceneNode['components'], transform: Record<str
   } as unknown as SceneNode;
 }
 
+/** Every tool action closed and the engine idle (the port's writes are engine edits). */
+const settle = async (): Promise<void> => {
+  await settleToolEdits();
+  await engineIdle();
+  await engineIdle();
+};
+
 const made: string[] = [];
 function add(node: SceneNode): void {
   defaultSceneGraph.addNode(node);
@@ -83,11 +90,12 @@ describe('an ANIMATED shape path', () => {
     expect(pts[0]).toMatchObject({ x: 0, y: -10 });
   });
 
-  it('a reshape keys the track at the playhead and leaves the static points alone', () => {
+  it('a reshape keys the track at the playhead and leaves the static points alone', async () => {
     setup();
     getTimelineController().seekSeconds(1);
     const t = compToKeyframeTime(ID_, 1);
     createCommandPort().execute(commands.updateNodePath(ID_ as never, tri(33)));
+    await settle();
 
     const track = defaultAnimation.getDataTrack(ID_, 'path.points')!;
     const key = track.keyframes.find((k) => Math.abs(k.t - t) < 1e-6);
@@ -97,11 +105,12 @@ describe('an ANIMATED shape path', () => {
     expect((geom.props.points as MaskPoint[])[1]).toMatchObject({ x: 90, y: 90 });
   });
 
-  it('adding a vertex replays on EVERY keyframe, so they keep one count', () => {
+  it('adding a vertex replays on EVERY keyframe, so they keep one count', async () => {
     setup();
     createCommandPort().execute(
       commands.updateNodePath(ID_ as never, tri(10), { op: 'insert', segment: 0, u: 0.5 }),
     );
+    await settle();
     const keys = defaultAnimation.getDataTrack(ID_, 'path.points')!.keyframes;
     expect(keys).toHaveLength(2); // no stray keyframe at the playhead
     for (const k of keys) expect(k.value as MaskPoint[]).toHaveLength(4);
@@ -119,12 +128,13 @@ describe('a vertex added / deleted on an ANIMATED mask', () => {
     ] as SceneNode['components']));
   };
 
-  it('insert lands in every keyframe (and the static mask), not only at the playhead', () => {
+  it('insert lands in every keyframe (and the static mask), not only at the playhead', async () => {
     setup();
     getTimelineController().seekSeconds(2);
     createCommandPort().execute(
       commands.updateMaskPath(ID_ as never, 'm1', square(30), { op: 'insert', segment: 0, u: 0.5 }),
     );
+    await settle();
     const node = defaultSceneGraph.getNode(ID_)!;
     const anim = readNodeMaskAnim(node);
     expect(anim.map((k) => k.t)).toEqual([0, 4]);
@@ -133,11 +143,12 @@ describe('a vertex added / deleted on an ANIMATED mask', () => {
     expect(readNodeMask(node)!.paths[0]!.points).toHaveLength(5);
   });
 
-  it('delete removes the same index everywhere', () => {
+  it('delete removes the same index everywhere', async () => {
     setup();
     createCommandPort().execute(
       commands.updateMaskPath(ID_ as never, 'm1', square(30).slice(1), { op: 'delete', index: 0 }),
     );
+    await settle();
     for (const k of readNodeMaskAnim(defaultSceneGraph.getNode(ID_)!)) {
       expect(k.mask.paths[0]!.points).toHaveLength(3);
       expect(k.mask.paths[0]!.points[0]!.y).toBeLessThan(0); // was vertex 1 (top-right)

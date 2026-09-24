@@ -17,7 +17,11 @@ import { outlineTextNode, type ShapesFromTextSource } from '@core/scene/shapesFr
 import { createNullsFromPath } from '@core/scene/nullsFromPaths';
 import { compOfLayer, graph as docGraph, isLayer, layerKindOf } from '@core/engine/doc';
 import { insertBuiltLayers } from '@core/engine/offDocument';
+import { engine } from '@core/engine/engineInstance';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
+import { values } from '@core/engine/propRefs';
 import type { SceneNode } from '@core/types';
+import { useSelectionStore } from '@stores/selectionStore';
 
 type Outlines = NonNullable<Awaited<ReturnType<typeof outlineTextNode>>>;
 
@@ -95,19 +99,42 @@ export async function shapesFromTextEdit(
 }
 
 /**
- * Create Nulls From Path Points (Nulls Follow Points): a null at every vertex
- * of the shape's outline at the playhead, parented to (nested in) the shape —
- * `createNullsFromPath`, built off-document and sent as ONE `pasteLayers` INTO
- * the shape. The nulls are selected. Resolves to their ids (`[]` when the
- * layer has no path points, or the engine refused — toasted).
+ * Create Nulls From Path Points: a null at every vertex of the shape's outline
+ * at the playhead, parented to (nested in) the shape — `createNullsFromPath`,
+ * built off-document and sent as ONE `pasteLayers` INTO the shape. The nulls
+ * are selected. Resolves to their ids (`[]` when the layer has no path points,
+ * or the engine refused — toasted).
  *
- * The live direction (Points Follow Nulls) also binds each vertex to its null
- * (`Geometry.pointBindings` on the shape), which no API property addresses —
- * that command stays on the legacy writer.
+ * `pointsFollowNulls` (the live direction) also binds each vertex to its null:
+ * `layer/pointBindings` on the shape, `[{index, nullId}]` with the ids the
+ * paste minted — the paste and the binding in ONE engine gesture, one entry.
  */
-export async function nullsFromPathEdit(shapeId: string, seconds: number): Promise<string[]> {
+export async function nullsFromPathEdit(shapeId: string, seconds: number, opts: { pointsFollowNulls?: boolean } = {}): Promise<string[]> {
   const comp = isLayer(shapeId) ? compOfLayer(shapeId) : null;
   if (!comp) return [];
-  const ids = await insertBuiltLayers('Create Nulls From Path Points', comp, () => createNullsFromPath(shapeId, seconds));
-  return ids ?? [];
+  if (!opts.pointsFollowNulls) {
+    const ids = await insertBuiltLayers('Create Nulls From Path Points', comp, () => createNullsFromPath(shapeId, seconds));
+    return ids ?? [];
+  }
+  const label = 'Create Nulls From Path Points (Points Follow Nulls)';
+  const client = engine();
+  const opened = await client.beginGesture(label);
+  if (!opened.ok) {
+    reportEngineError(label, opened.error);
+    return [];
+  }
+  const ids = await insertBuiltLayers(label, comp, () => createNullsFromPath(shapeId, seconds));
+  let ok = !!ids && ids.length > 0;
+  if (ok) {
+    // `createNullsFromPath` selects its nulls in VERTEX order; the insert
+    // selects the new ids in that order.
+    const bindings = useSelectionStore.getState().ids.map((nullId, index) => ({ index, nullId }));
+    const res = await edit(label, {
+      type: 'setProperty', prop: { layer: shapeId, path: 'layer/pointBindings' }, value: values.json(bindings),
+    });
+    ok = res.ok;
+  }
+  const ended = await client.endGesture(opened.value.gesture, ok);
+  if (!ended.ok) reportEngineError(label, ended.error);
+  return ok && ended.ok ? ids! : [];
 }

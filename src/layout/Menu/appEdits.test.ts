@@ -132,6 +132,17 @@ describe('property rows', () => {
     expect(defaultAnimation.isAnimated(s.A, 'opacity')).toBe(false);
   });
 
+  it("a drawn shape's Path row stopwatch keys the whole outline, then leaves it static at the playhead", async () => {
+    const { layer } = await h.run({ type: 'createLayer', comp: s.comp, kind: 'path', name: 'Drawn', init: [] });
+    const pts = [[0, -30], [30, 30], [-30, 30]].map(([x, y]) => ({ x: x!, y: y!, inX: x!, inY: y!, outX: x!, outY: y! }));
+    defaultSceneGraph.writeProp(layer, `${layer}_g`, 'points', pts);
+    await h.run({ type: 'renameLayer', layer, name: 'Drawn' });
+    await roundTrip(() => propertyStopwatchEdit(layer, ['path.points'], 0), 'Enable animation');
+    expect(defaultAnimation.isDataAnimated(layer, 'path.points')).toBe(true);
+    await roundTrip(() => propertyStopwatchEdit(layer, ['path.points'], 0), 'Disable animation');
+    expect(defaultAnimation.isDataAnimated(layer, 'path.points')).toBe(false);
+  });
+
   it('the merged Position stopwatch keys x and y together', async () => {
     await roundTrip(() => propertyStopwatchEdit(s.A, ['x', 'y'], 0.5), 'Enable animation');
     expect(defaultAnimation.isAnimated(s.A, 'x')).toBe(true);

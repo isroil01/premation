@@ -1,6 +1,7 @@
 /**
  * Layer ▸ Mask and Shape Path, the path payload switches, the Path timeline
- * row and the mask ⇄ shape path clipboard — through the real binding.
+ * row and the mask ⇄ shape path clipboard — through the real binding and the
+ * app's engine (B3: every one is an engine edit).
  *
  * The structural verbs (Closed, Set First Vertex, Reverse, RotoBezier) must
  * land in EVERY state of an animated outline: a keyframe left with the old
@@ -8,28 +9,30 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene, SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { defaultAnimation } from '@motion/animation';
 import { commands, DirectSelectionTool, type BezierPoint } from '@motion/workspace';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { readNodeMask, readNodeMaskAnim, type LayerMask, type MaskPoint } from '@core/effects/mask';
 import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { SceneNode, ID } from '@core/types';
 import { createCommandPort, createSceneGraphPort } from './ports';
 import { getWorkspaceController } from './WorkspaceController';
+import { settleToolEdits } from './viewportGesture';
 import {
   clearPathClipboard,
   copyPathFromSelection,
   keyframePathAtPlayhead,
-  pastePathOntoSelection,
+  pastePathEdit,
   reversePathCommand,
   setFirstVertexCommand,
   toggleClosed,
-  togglePathAnimation,
   toggleRotoBezier,
 } from './pathCommands';
 
@@ -52,36 +55,42 @@ function layer(id: string, extra: SceneNode['components']): SceneNode {
   } as unknown as SceneNode;
 }
 
-const made: string[] = [];
+let h: Harness & { engine: LocalEngine };
+
+/** A layer of the composition, seeded directly (the engine resyncs before the next request). */
 function add(node: SceneNode): void {
   defaultSceneGraph.addNode(node);
-  defaultSceneGraph.addChild(activeCompRootId() as ID, node);
-  made.push(node.id as string);
+  defaultSceneGraph.addChild('comp_root' as ID, node);
 }
 const geomOf = (id: string): Record<string, unknown> =>
   defaultSceneGraph.getNode(id as ID)!.components.find((c) => c.type === 'Geometry')!.props as Record<string, unknown>;
 const pathLayer = (id: string, points: MaskPoint[], open = false): void =>
   add(layer(id, [{ id: `${id}_g`, type: 'Geometry', props: { points, ...(open ? { open: true } : {}) } }] as SceneNode['components']));
 const ds = (): DirectSelectionTool => getWorkspaceController().ws.tools.get('direct-select') as DirectSelectionTool;
+const settle = async (): Promise<void> => {
+  await settleToolEdits();
+  await engineIdle();
+  await engineIdle();
+};
 
-beforeAll(() => {
-  seedDefaultScene();
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-});
-
-afterEach(() => {
-  ds().clearVertexSelection();
-  clearPathClipboard();
-  useSelectionStore.getState().set([]);
-  for (const id of made.splice(0)) defaultSceneGraph.removeNode(id as ID);
-  defaultAnimation.clear();
+beforeEach(async () => {
+  h = await setupAppEngine();
   getTimelineController().seekSeconds(0);
 });
 
+afterEach(async () => {
+  ds().clearVertexSelection();
+  clearPathClipboard();
+  useSelectionStore.getState().set([]);
+  getTimelineController().seekSeconds(0);
+  await h.dispose();
+});
+
 describe('path payload switches reach the document', () => {
-  it('closed / rotoBezier on a shape path write Geometry and show on the port', () => {
+  it('closed / rotoBezier on a shape path write Geometry and show on the port', async () => {
     pathLayer('pp_flags', tri(40));
     createCommandPort().execute(commands.updateNodePath('pp_flags' as never, tri(40), undefined, { closed: false, rotoBezier: true }));
+    await settle();
     expect(geomOf('pp_flags').open).toBe(true);
     expect(geomOf('pp_flags').rotoBezier).toBe(true);
     const wn = createSceneGraphPort().getNode('pp_flags')!;
@@ -89,13 +98,14 @@ describe('path payload switches reach the document', () => {
     expect(wn.pathRotoBezier).toBe(true);
   });
 
-  it('a Continue (extend) lands in every keyframe of an animated path', () => {
+  it('a Continue (extend) lands in every keyframe of an animated path', async () => {
     pathLayer('pp_extend', tri(10), true);
     defaultAnimation.setDataKeyframe('pp_extend', 'path.points', 'points', 0, tri(10));
     defaultAnimation.setDataKeyframe('pp_extend', 'path.points', 'points', 2, tri(50));
     createCommandPort().execute(
       commands.updateNodePath('pp_extend' as never, [...tri(10), corner(90, 90)], { op: 'extend', points: [corner(90, 90)], atStart: false }),
     );
+    await settle();
     const keys = defaultAnimation.getDataTrack('pp_extend', 'path.points')!.keyframes;
     expect(keys).toHaveLength(2);
     for (const k of keys) expect((k.value as MaskPoint[])[3]).toMatchObject({ x: 90, y: 90 });
@@ -111,11 +121,12 @@ describe('path payload switches reach the document', () => {
     expect(pts[0]!.broken).toBeUndefined();
   });
 
-  it('a mask closed switch edits the static mask AND every keyframe', () => {
+  it('a mask closed switch edits the static mask AND every keyframe', async () => {
     add(layer('pp_mask', [
       { id: 'pp_mask_fx', type: 'fx', props: { mask: maskOf(10), maskAnim: [{ t: 0, mask: maskOf(10) }, { t: 4, mask: maskOf(50) }] } },
     ] as SceneNode['components']));
     createCommandPort().execute(commands.updateMaskPath('pp_mask' as never, 'm1', square(10), { op: 'reverse' }, { closed: false }));
+    await settle();
     const node = defaultSceneGraph.getNode('pp_mask' as ID)!;
     expect(readNodeMask(node)!.paths[0]!.closed).toBe(false);
     for (const k of readNodeMaskAnim(node)) {
@@ -123,36 +134,48 @@ describe('path payload switches reach the document', () => {
       expect(k.mask.paths[0]!.points[0]!.y).toBeGreaterThan(0); // reversed: starts at the last vertex
     }
   });
+
+  it('split handles survive a reshape through the engine', async () => {
+    pathLayer('pp_split', tri(10));
+    const moved = tri(20).map((p, i) => (i === 1 ? { ...p, broken: true, tension: 0.2 } : p));
+    createCommandPort().execute(commands.updateNodePath('pp_split' as never, moved));
+    await settle();
+    expect((geomOf('pp_split').points as Array<MaskPoint & { broken?: boolean; tension?: number }>)[1]).toMatchObject({ x: 20, broken: true, tension: 0.2 });
+  });
 });
 
 describe('Layer ▸ Mask and Shape Path', () => {
-  it('Closed toggles the selected layer\'s path', () => {
+  it('Closed toggles the selected layer\'s path', async () => {
     pathLayer('pc_closed', tri(40));
     useSelectionStore.getState().set(['pc_closed']);
     expect(toggleClosed()).toBe(true);
+    await settle();
     expect(geomOf('pc_closed').open).toBe(true);
     expect(toggleClosed()).toBe(true);
+    await settle();
     expect(geomOf('pc_closed').open).toBeUndefined();
   });
 
-  it('Reverse Path Direction reverses the static path and every keyframe', () => {
+  it('Reverse Path Direction reverses the static path and every keyframe', async () => {
     pathLayer('pc_rev', tri(40));
     defaultAnimation.setDataKeyframe('pc_rev', 'path.points', 'points', 0, tri(10));
     defaultAnimation.setDataKeyframe('pc_rev', 'path.points', 'points', 1, tri(20));
     useSelectionStore.getState().set(['pc_rev']);
     reversePathCommand();
+    await settle();
     expect((geomOf('pc_rev').points as MaskPoint[])[0]).toMatchObject({ x: -40, y: 40 });
     for (const k of defaultAnimation.getDataTrack('pc_rev', 'path.points')!.keyframes) {
       expect((k.value as MaskPoint[])[0]!.x).toBeLessThan(0);
     }
   });
 
-  it('Set First Vertex rotates the outline to the ONE selected vertex, everywhere', () => {
+  it('Set First Vertex rotates the outline to the ONE selected vertex, everywhere', async () => {
     pathLayer('pc_first', square(40));
     defaultAnimation.setDataKeyframe('pc_first', 'path.points', 'points', 1, square(20));
     useSelectionStore.getState().set(['pc_first']);
     ds().selectVertices({ nodeId: 'pc_first', maskId: null }, [2]);
     expect(setFirstVertexCommand()).toBe(true);
+    await settle();
     expect((geomOf('pc_first').points as MaskPoint[])[0]).toMatchObject({ x: 40, y: 40 });
     const key = defaultAnimation.getDataTrack('pc_first', 'path.points')!.keyframes[0]!;
     expect((key.value as MaskPoint[])[0]).toMatchObject({ x: 20, y: 20 });
@@ -164,23 +187,21 @@ describe('Layer ▸ Mask and Shape Path', () => {
     expect(setFirstVertexCommand()).toBe(false);
   });
 
-  it('RotoBezier on computes handles and sets the switch', () => {
+  it('RotoBezier on computes handles and sets the switch', async () => {
     pathLayer('pc_roto', square(30));
     useSelectionStore.getState().set(['pc_roto']);
     toggleRotoBezier();
+    await settle();
     expect(geomOf('pc_roto').rotoBezier).toBe(true);
     const v = (geomOf('pc_roto').points as BezierPoint[])[0]!;
     expect(v.outX === v.x && v.outY === v.y).toBe(false);
   });
 
-  it('Alt+Shift+M keys the path at the playhead; the Path row stopwatch turns animation off again', () => {
+  it('Alt+Shift+M keys the path at the playhead', async () => {
     pathLayer('pc_key', tri(30));
     useSelectionStore.getState().set(['pc_key']);
     expect(keyframePathAtPlayhead()).toBe(true);
-    expect(defaultAnimation.isDataAnimated('pc_key', 'path.points')).toBe(true);
-    togglePathAnimation('pc_key');
-    expect(defaultAnimation.isDataAnimated('pc_key', 'path.points')).toBe(false);
-    togglePathAnimation('pc_key');
+    await settle();
     expect(defaultAnimation.isDataAnimated('pc_key', 'path.points')).toBe(true);
   });
 
@@ -193,7 +214,7 @@ describe('Layer ▸ Mask and Shape Path', () => {
 
 // Convert Mask to Shape Layer (one engine entry) is pinned in pathEdits.test.ts.
 describe('mask ⇄ shape path clipboard', () => {
-  it('copies a mask path and pastes it onto a shape layer\'s path', () => {
+  it('copies a mask path and pastes it onto a shape layer\'s path', async () => {
     add(layer('pk_src', [{ id: 'pk_src_fx', type: 'fx', props: { mask: maskOf(25) } }] as SceneNode['components']));
     pathLayer('pk_dst', tri(40), true);
     useUIStore.getState().setActiveTool('direct-select');
@@ -203,12 +224,12 @@ describe('mask ⇄ shape path clipboard', () => {
 
     ds().clearVertexSelection();
     useSelectionStore.getState().set(['pk_dst']);
-    expect(pastePathOntoSelection()).toBe(true);
+    expect(pastePathEdit()).toBe(true);
+    await settle();
     const pts = geomOf('pk_dst').points as MaskPoint[];
     expect(pts).toHaveLength(4);
     expect(pts[2]).toMatchObject({ x: 25, y: 25 });
     expect(geomOf('pk_dst').open).toBeUndefined(); // the mask was closed
     useUIStore.getState().setActiveTool('select');
   });
-
 });
