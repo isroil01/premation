@@ -400,6 +400,7 @@ class FfmpegDecoder final : public VideoDecoder {
   [[nodiscard]] DecodePath path() const noexcept override { return path_; }
   [[nodiscard]] std::int64_t position() const noexcept override { return position_; }
   [[nodiscard]] std::int64_t seeked_gop() const noexcept override { return seekGop_; }
+  [[nodiscard]] const std::string& hw_fallback() const noexcept override { return fallback_; }
   void set_index(FrameIndex index) override {
     index_ = std::move(index);
     video_->exactIndex = index_.exact();
@@ -417,7 +418,8 @@ class FfmpegDecoder final : public VideoDecoder {
  private:
   bool wrap(AvFramePtr f, FramePtr& out, std::string& error);
   bool open_codec(const AVCodec* dec, bool wantHw, std::string& error);
-  bool reopen_software(std::string& error);
+  /// Continue this clip in software after the hardware decoder refused or failed (`why`, logged via hw_fallback()).
+  bool reopen_software(const std::string& why, std::string& error);
   bool to_cpu_planes(AvDecodedFrame& d, std::string& error);
 
   MediaInfo info_;
@@ -437,6 +439,8 @@ class FfmpegDecoder final : public VideoDecoder {
   std::int64_t seekGop_ = -1;
   std::int64_t target_ = -1;
   bool retried_ = false;
+  std::int64_t hwFrames_ = 0;  // frames delivered by the hardware decoder (fault injection counts these)
+  std::string fallback_;       // why this clip left the hardware decoder ("" = it didn't)
 };
 
 AVPixelFormat FfmpegDecoder::get_format(AVCodecContext* ctx, const AVPixelFormat* fmts) {
@@ -541,17 +545,22 @@ bool FfmpegDecoder::open_codec(const AVCodec* dec, bool wantHw, std::string& err
   return true;
 }
 
-bool FfmpegDecoder::reopen_software(std::string& error) {
+bool FfmpegDecoder::reopen_software(const std::string& why, std::string& error) {
   // The hardware decoder refused this stream at its first frame (H.264 High 10,
-  // 4:2:2, an unsupported size…): libavcodec fell back to software inside a
-  // context opened with ONE thread. Reopen it properly threaded.
-  if (opt_.hw == HwPolicy::hardwareOnly) {
-    error = "hardware decoder refused the stream";
+  // 4:2:2, an unsupported size…: libavcodec then falls back to software inside
+  // a context opened with ONE thread), or failed mid-stream (a device removed
+  // or reset, a driver error, a surface that won't download). Either way this
+  // clip continues in software, properly threaded, from the frame it was on:
+  // one bad hardware decode never blanks a frame (CLAUDE.md reliability).
+  if (opt_.hw == HwPolicy::hardwareOnly || path_ == DecodePath::software) {
+    error = why;
     return false;
   }
+  fallback_ = std::string(to_string(path_)) + ": " + why;
+  const std::int64_t resume = position_ >= 0 ? position_ : (target_ >= 0 ? target_ : 0);
   const AVCodec* dec = codec_->codec;
   if (!open_codec(dec, false, error)) return false;
-  return seek(target_ >= 0 ? target_ : 0, error);
+  return seek(resume, error);
 }
 
 bool FfmpegDecoder::seek(std::int64_t frame, std::string& error) {
@@ -580,7 +589,14 @@ DecodeStatus FfmpegDecoder::next(FramePtr& out, std::string& error, const std::a
     if (rc == 0) {
       if (hwFmt_ != AV_PIX_FMT_NONE && f->format != hwFmt_) {
         av_frame_unref(f.get());
-        if (!reopen_software(error)) return DecodeStatus::error;
+        if (!reopen_software(std::string("refused ") + codec_->codec->name + " " + video_->profile + " " + video_->pixelFormat, error)) {
+          return DecodeStatus::error;
+        }
+        continue;
+      }
+      if (path_ != DecodePath::software && opt_.failHwAtFrame >= 0 && hwFrames_ >= opt_.failHwAtFrame) {
+        av_frame_unref(f.get());  // fault injection (tests): the hardware decoder "fails" here
+        if (!reopen_software("injected fault", error)) return DecodeStatus::error;
         continue;
       }
       const std::int64_t pts = f->best_effort_timestamp != AV_NOPTS_VALUE ? f->best_effort_timestamp : f->pts;
@@ -617,7 +633,15 @@ DecodeStatus FfmpegDecoder::next(FramePtr& out, std::string& error, const std::a
         continue;
       }
       f->pts = pts;
-      if (!wrap(std::move(f), out, error)) return DecodeStatus::error;
+      const bool fromHw = path_ != DecodePath::software;
+      AvFramePtr taken = std::move(f);
+      f.reset(av_frame_alloc());  // for the next receive, should this frame fail over to software
+      if (!wrap(std::move(taken), out, error)) {
+        // A hardware surface that won't copy or download: this clip goes on in software.
+        if (fromHw && reopen_software(std::string(error), error)) continue;
+        return DecodeStatus::error;
+      }
+      if (fromHw) ++hwFrames_;
       auto* d = const_cast<DecodedFrame*>(out.get());  // NOLINT(cppcoreguidelines-pro-type-const-cast): just built, sole owner
       d->index = idx;
       return DecodeStatus::frame;
@@ -627,6 +651,7 @@ DecodeStatus FfmpegDecoder::next(FramePtr& out, std::string& error, const std::a
       return DecodeStatus::eof;
     }
     if (rc != AVERROR(EAGAIN)) {
+      if (path_ != DecodePath::software && reopen_software("decode: " + av_error(rc), error)) continue;
       error = "decode: " + av_error(rc);
       return DecodeStatus::error;
     }
@@ -646,6 +671,7 @@ DecodeStatus FfmpegDecoder::next(FramePtr& out, std::string& error, const std::a
       const int sr = avcodec_send_packet(codec_.get(), pkt_.get());
       if (sr < 0 && sr != AVERROR(EAGAIN) && sr != AVERROR_INVALIDDATA) {
         av_packet_unref(pkt_.get());
+        if (path_ != DecodePath::software && reopen_software("send packet: " + av_error(sr), error)) continue;
         error = "send packet: " + av_error(sr);
         return DecodeStatus::error;
       }

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <exception>
 
+#include "core/log.hpp"
+
 namespace premation::media {
 
 using Clock = std::chrono::steady_clock;
@@ -218,6 +220,12 @@ SourceStats MediaSystem::stats(SourceId id) const {
   return s->stats;
 }
 
+void MediaSystem::note_fallback(Source& s, const std::string& why) {
+  // Under s.mu. Once per source: the clip stays in software from here.
+  s.stats.hwFallback = why;
+  PREMATION_LOG(warn, "media_hw_fallback").kv("source", s.id).kv("path", s.path).kv("reason", why);
+}
+
 void MediaSystem::signal() {
   // Take the waiters' mutex so a waiter between its predicate check and its
   // sleep cannot miss this notification.
@@ -234,11 +242,14 @@ void MediaSystem::run(Source& s) {
   opt.keepOnGpu = config_.keepOnGpu;
   opt.threads = config_.decodeThreads;
   opt.keepHighBitOnGpu = config_.keepHighBitOnGpu;
+  opt.failHwAtFrame = config_.failHwAtFrame;
   opt.scanIndex = false;  // scanned in the background below
   std::string error;
   std::unique_ptr<VideoDecoder> dec = VideoDecoder::open(s.path, opt, error);
+  std::string openFallback;
   if (!dec && opt.hw == HwPolicy::automatic && opt.hwContext) {
     // A hardware open failure is never fatal in automatic mode.
+    openFallback = std::string(to_string(hw_path(*opt.hwContext))) + ": open: " + error;
     opt.hw = HwPolicy::softwareOnly;
     dec = VideoDecoder::open(s.path, opt, error);
   }
@@ -251,6 +262,7 @@ void MediaSystem::run(Source& s) {
       s.ready = true;
       s.stats.ready = true;
       s.stats.path = dec->path();
+      if (!openFallback.empty()) note_fallback(s, openFallback);
       // The decoder's index can be exact where the probe's was constant-rate
       // (a scanned long-GOP stream). Frame numbers only move for VFR content;
       // drop anything cached under the old numbering then.
@@ -366,9 +378,14 @@ bool MediaSystem::decode_to(Source& s, VideoDecoder& dec, std::int64_t target, L
   const FrameIndex& idx = *idxRef;
   std::string error;
   // Continue the running decode when the target is ahead in the same GOP (or
-  // simply next in a sequential walk); otherwise seek to its keyframe.
+  // simply next in a sequential walk); otherwise seek to its keyframe. An
+  // intra-only stream (ProRes, DNxHR) seeks unless the target IS the next
+  // frame: a seek there is an index lookup, while decoding through a skipped
+  // frame costs a whole frame — so a scrub decodes exactly one frame.
   const std::int64_t pos = dec.position();
-  const bool reachable = pos >= 0 && pos <= target && (idx.gop_of(pos) == idx.gop_of(target) || target - pos <= 2);
+  const bool intra = dec.info().video && dec.info().video->intraOnly;
+  const bool reachable = pos >= 0 && pos <= target &&
+                         (intra ? pos == target : (idx.gop_of(pos) == idx.gop_of(target) || target - pos <= 2));
   if (!reachable) {
     if (!dec.seek(target, error)) {
       const std::scoped_lock lock(s.mu);
@@ -391,7 +408,8 @@ bool MediaSystem::decode_to(Source& s, VideoDecoder& dec, std::int64_t target, L
       cache_.put(s.id, got, std::move(f));
       {
         const std::scoped_lock lock(s.mu);
-        s.stats.path = via;  // a hardware decoder may hand a stream back to software at its first frame
+        s.stats.path = via;  // a hardware decoder may hand a stream back to software (refused, or failed mid-stream)
+        if (s.stats.hwFallback.empty() && !dec.hw_fallback().empty()) note_fallback(s, dec.hw_fallback());
         ++s.stats.framesDecoded;
         s.stats.msPerFrame = s.stats.msPerFrame == 0 ? ms : s.stats.msPerFrame * 0.8 + ms * 0.2;
         // Metadata the first frames revealed (HDR10 SEI).

@@ -50,6 +50,9 @@ struct DecoderOptions {
   bool keepHighBitOnGpu = false;
   /// libavcodec threads (0 = one per core, capped at 16).
   int threads = 0;
+  /// Fault injection for tests: the hardware decoder "fails" once it has
+  /// delivered this many frames (-1 = never), exercising the per-clip software fallback.
+  int failHwAtFrame = -1;
   /// Build the exact presentation index with a demux-only scan when the
   /// container's own index can't give presentation times (long-GOP with
   /// B-frames). False = constant-frame-rate index.
@@ -90,6 +93,9 @@ class VideoDecoder {
   [[nodiscard]] virtual std::int64_t position() const noexcept = 0;
   /// The keyframe the decoder last seeked to (presentation index; -1 = none).
   [[nodiscard]] virtual std::int64_t seeked_gop() const noexcept = 0;
+  /// Why this clip left the hardware decoder for software ("" = it did not):
+  /// "<path>: refused …" at the first frame, or the mid-stream error.
+  [[nodiscard]] virtual const std::string& hw_fallback() const noexcept = 0;
   /// Replace the presentation index (a background scan finished); used from the next seek on.
   virtual void set_index(FrameIndex index) = 0;
 };
