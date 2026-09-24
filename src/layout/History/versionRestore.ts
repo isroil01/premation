@@ -17,7 +17,10 @@ import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 export async function restoreVersionAsOneEdit(versionId: string): Promise<void> {
   // B3-legacy: engine gap — restoring a saved cloud version replaces the whole document as ONE
   // undoable entry; the engine's document-replacing commands (openProject / revertProject) clear
-  // history instead, and there is no undoable "replace document" command.
+  // history instead, and there is no undoable "replace document" command (§15.9 reserves Session
+  // ids 20–29 for it). Known flaw of this recorder path (versionRestore.engine.test.ts): the
+  // restore's own bus burst is also committed as an unnamed `Edit N`, so the named row below is a
+  // no-op and the restore takes two undo steps; the engine command makes it one.
   useHistoryStore.getState().flush();
   await useVersionHistoryStore.getState().restore(versionId);
   // A named record always produces a row (see `historyStore.record`); the

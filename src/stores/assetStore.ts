@@ -928,6 +928,11 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       // in-memory object-URL path (still upload-free) if no bundle is open.
       const originPath = originPathOf(file, opts.path);
       if (isLocalFirst()) {
+        // B3-legacy: not a UI edit — this is the importer itself: it stores the bytes in the bundle
+        // blob store (no document write). The engine's `importFiles` runs it through its importFile
+        // port (appPorts → importMediaFile → addAsset) and adds the item record undoably itself;
+        // UI callers of `addAsset` are the sites that move to `importFiles` (a path-less browser
+        // File is the known engine gap: no import from bytes, §15.9 Items 70–79).
         const imported = await importLocalAsset(file, opts.id ? { id: opts.id } : undefined);
         if (imported) {
           const type: 'image' | 'video' | 'audio' =
