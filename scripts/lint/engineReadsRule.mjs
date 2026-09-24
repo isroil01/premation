@@ -130,6 +130,8 @@ const PURE_READS = new Set([
   'describeConversion', // core/svg/svgConvert: sentences about the SvgLayerData given
   'requestExpressionEditor', 'consumeExpressionEditorRequest', 'onExpressionEditorRequest', // core/animation/expressionCommands: the editor's "open this expression field" channel — UI state, not the document
   'parentOptionsFor', // core/scene/parenting: modifier keys → reparent options
+  'audioDriverExpression', // core/audio/audioDriver: expression source for the AudioDriver given
+  'canGenerateProxy', 'proxyRefusal', // core/assets/proxyManager: a platform capability check; a check over the asset record given
 ]);
 
 /**

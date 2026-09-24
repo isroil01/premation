@@ -44,7 +44,7 @@ import {
   builtinMaterials,
   type NamedMaterial,
 } from '@stores/materialStore';
-import { captureMaterialPreset } from '@core/inspector/sectionPresets';
+import type { PresetValue, PresetValues } from '@stores/sectionPresetStore';
 import { edit } from '@core/engine/uiEdits';
 import { values } from '@core/engine/propRefs';
 import { fieldCommands, hasPath, materialCommands, shadowModeValue } from './materialEdits';
@@ -331,7 +331,16 @@ export function MaterialPresetAction({
     ? nodeIds
     : (selectedIds.includes(nodeId) ? selectedIds : [nodeId]);
 
-  const capturePreset = useCallback(() => captureMaterialPreset(nodeId), [nodeId]);
+  // The layer's material as a preset (the twin of `captureMaterialPreset`), read from the mirror at call time.
+  const capturePreset = useCallback((): PresetValues => {
+    const m = documentMirror();
+    if (!m.layer(nodeId)) return {};
+    const out: Record<string, PresetValue> = {};
+    for (const [k, v] of Object.entries(materialParamsOf(mirrorMaterial(m.tree(nodeId))))) {
+      if (typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' || typeof v === 'boolean') out[k] = v as PresetValue;
+    }
+    return out;
+  }, [nodeId]);
   // One batch over every target (materialEdits.ts): one undo entry.
   const applyPreset = useCallback(
     (bag: Readonly<Record<string, number | string | boolean>>) => {

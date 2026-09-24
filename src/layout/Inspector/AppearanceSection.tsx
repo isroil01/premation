@@ -28,9 +28,9 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { childOrderOf } from '@core/mirror/layerTree';
 import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
-import { captureAppearancePreset } from '@core/inspector/sectionPresets';
+import { mirrorFill, mirrorStrokeAt } from '@core/mirror/paintFields';
 import type { Stroke } from '@core/paint/stroke';
-import type { PresetValues } from '@stores/sectionPresetStore';
+import type { PresetValue, PresetValues } from '@stores/sectionPresetStore';
 import { fillPaintCommands, strokePatchCommands } from './appearance/paintEdits';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
@@ -52,7 +52,7 @@ export function AppearancePresetAction({
   const targetIds = useInspectorSelection(nodeId);
   const effectiveNodeIds = nodeIds && nodeIds.length > 0 ? nodeIds : targetIds;
 
-  const capturePreset = useCallback(() => captureAppearancePreset(nodeId), [nodeId]);
+  const capturePreset = useCallback(() => captureAppearance(nodeId), [nodeId]);
   const applyPreset = useCallback(
     (values: PresetValues) => { void applyAppearancePresetEdit(effectiveNodeIds, values); },
     [effectiveNodeIds],
@@ -70,6 +70,31 @@ export function AppearancePresetAction({
 
 /** The stroke fields a Fill & Stroke preset holds (`captureAppearancePreset`'s `stroke.<key>`). */
 const STROKE_PRESET_KEYS: ReadonlyArray<keyof Stroke> = ['enabled', 'color', 'width', 'opacity', 'align', 'cap', 'join'];
+
+function isPresetValue(v: unknown): v is PresetValue {
+  return typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' || typeof v === 'boolean';
+}
+
+/**
+ * The layer's Fill & Stroke as a preset (the twin of `captureAppearancePreset`,
+ * read from the document mirror at call time): the primary fill's colour when
+ * it is solid ('' for no fill), and the primary stroke's preset keys.
+ */
+function captureAppearance(nodeId: string): PresetValues {
+  const m = documentMirror();
+  const out: Record<string, PresetValue> = {};
+  const fill = mirrorFill(m, nodeId);
+  if (fill?.type === 'solid') out.fillColor = fill.color;
+  else if (fill === undefined) out.fillColor = '';
+  const stroke = mirrorStrokeAt(m, nodeId, 0);
+  if (stroke) {
+    for (const key of STROKE_PRESET_KEYS) {
+      const v = stroke[key];
+      if (isPresetValue(v)) out[`stroke.${key}`] = v;
+    }
+  }
+  return out;
+}
 
 /**
  * A Fill & Stroke preset over these layers as commands: `fillColor` is the
