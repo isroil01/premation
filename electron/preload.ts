@@ -5,7 +5,7 @@
  * here is a thin IPC forwarder; no privileged work happens in the renderer.
  */
 
-import { contextBridge, ipcRenderer, sharedTexture } from 'electron';
+import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron';
 
 // ── C++ engine frames (electron/engineHost.ts) ──────────────────────────────
 //
@@ -89,6 +89,13 @@ const bridge = {
   },
 
   file: {
+    /**
+     * The disk path of a picked / dropped `File`, or '' when it has none (made
+     * in the page, or a transcode). Replaces `File.path`, which Electron 32
+     * removed; `webUtils` is given to sandboxed preloads and runs here, in the
+     * page's process, so no IPC and no privilege is involved.
+     */
+    pathOf: (file: File): string => webUtils.getPathForFile(file),
     read: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
     write: (filePath: string, contents: string) => ipcRenderer.invoke('file:write', filePath, contents),
     readBytes: (filePath: string) => ipcRenderer.invoke('file:readBytes', filePath),

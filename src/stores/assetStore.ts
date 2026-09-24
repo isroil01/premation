@@ -5,6 +5,7 @@ import { api, isAuthenticated } from '@core/api/client';
 import { AssetDatabase } from '@core/services/AssetDatabase';
 import { isLocalFirst } from '@core/config/flags';
 import { importLocalAsset } from '@core/assets/local/importLocalAsset';
+import { diskPathOf } from '@core/assets/local/diskPathOf';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import { isPersistableProxy, type ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
@@ -516,11 +517,9 @@ function saveOrganisation(assets: ImportedAsset[]): void {
   }
 }
 
-/** `File.path` — set by older Electron builds on dropped files; absent on the web. */
+/** The caller's path, else the File's disk path (desktop only; see diskPathOf). */
 function originPathOf(file: File, explicit: string | undefined): string | undefined {
-  if (explicit) return explicit;
-  const p = (file as File & { path?: unknown }).path;
-  return typeof p === 'string' && p.length > 0 ? p : undefined;
+  return explicit || diskPathOf(file);
 }
 
 function loadFolders(): AssetFolder[] {

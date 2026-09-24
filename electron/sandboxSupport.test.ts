@@ -70,15 +70,15 @@ describe('every renderer window is sandboxed', () => {
 
 describe('the preload can run under the sandbox', () => {
   it('imports nothing but the sandbox-safe electron members', () => {
-    // A sandboxed preload has no Node require. `contextBridge`, `ipcRenderer`
-    // and (Electron ≥ 40) `sharedTexture` are provided; `node:path`, `node:fs`
+    // A sandboxed preload has no Node require. `contextBridge`, `ipcRenderer`,
+    // `webUtils` and (Electron ≥ 40) `sharedTexture` are provided; `node:path`, `node:fs`
     // and friends are not, and adding one would break the app at launch rather
     // than at build. `sharedTexture` in a sandboxed preload was proven in the
     // real window by C4's route-C spike, and is exercised by C3's real-app run
     // (the engine surface receives frames through it).
     const imports = [...preload.matchAll(/^import\s+.*?from\s+'([^']+)';/gm)].map((m) => m[1]);
     expect(imports).toEqual(['electron']);
-    expect(preload).toMatch(/import\s*\{\s*contextBridge,\s*ipcRenderer,\s*sharedTexture\s*\}/);
+    expect(preload).toMatch(/import\s*\{\s*contextBridge,\s*ipcRenderer,\s*sharedTexture,\s*webUtils\s*\}/);
   });
 
   it('uses no Node globals beyond the polyfilled process fields', () => {

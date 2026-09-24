@@ -576,6 +576,8 @@ export interface MotionEditorApi {
     onDownloadProgress?(handler: (event: unknown) => void): () => void;
   };
   file?: {
+    /** A picked / dropped `File`'s disk path ('' if none) — `webUtils.getPathForFile`. */
+    pathOf?(file: File): string;
     read?(path: string): Promise<string | null>;
     write?(path: string, contents: string): Promise<void>;
     /** Binary read for packed `.motion` zips. */
