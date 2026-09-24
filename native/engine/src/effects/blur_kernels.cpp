@@ -27,40 +27,33 @@ void box_pass_h(const std::uint16_t* src, std::uint16_t* dst, int w, int h, int 
                 ThreadPool* pool) {
   const double inv = 1.0 / (r * 2 + 1);
   const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  const auto uw = static_cast<std::size_t>(w);
+  const auto ur = static_cast<std::size_t>(r);
   for_rows(pool, h, [&](int y0, int y1) {
+    // The row padded by r + 1 samples a side with what the TS reads past the
+    // edge (the edge sample, or a zero that still counts in the divisor), so
+    // the slide is branch-free: sum += p[x + 2r + 1] - p[x].
+    std::vector<std::int32_t> pad(uw + 2 * ur + 1);
+    std::vector<std::int64_t> sums(uw);
     for (int plane = 0; plane < 4; ++plane) {
       const std::size_t base = n * static_cast<std::size_t>(plane);
       for (int y = y0; y < y1; ++y) {
-        const std::uint16_t* s = src + base + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
-        std::uint16_t* d = dst + base + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
-        // Integer sums: the TS doubles hold these exactly (≤ 65025 · (2r+1)).
+        const std::uint16_t* s = src + base + static_cast<std::size_t>(y) * uw;
+        std::uint16_t* d = dst + base + static_cast<std::size_t>(y) * uw;
+        const std::int32_t left = repeat_edge ? s[0] : 0;
+        const std::int32_t right = repeat_edge ? s[uw - 1] : 0;
+        std::int32_t* p = pad.data();
+        for (std::size_t i = 0; i < ur; ++i) p[i] = left;
+        for (std::size_t i = 0; i < uw; ++i) p[ur + i] = s[i];
+        for (std::size_t i = ur + uw; i < pad.size(); ++i) p[i] = right;
+        // Integer sums: the TS doubles hold these exactly (<= 65025 * (2r+1)).
         std::int64_t sum = 0;
-        for (int k = -r; k <= r; ++k) {
-          int i = k;
-          if (i < 0) {
-            if (!repeat_edge) continue;
-            i = 0;
-          } else if (i >= w) {
-            if (!repeat_edge) continue;
-            i = w - 1;
-          }
-          sum += s[i];
+        for (std::size_t k = 0; k <= 2 * ur; ++k) sum += p[k];
+        for (std::size_t x = 0; x < uw; ++x) {
+          sums[x] = sum;
+          sum += p[x + 2 * ur + 1] - p[x];
         }
-        for (int x = 0; x < w; ++x) {
-          d[x] = u16t(static_cast<double>(sum) * inv + 0.5);
-          int i_out = x - r;
-          int i_in = x + r + 1;
-          if (i_out < 0) {
-            if (repeat_edge) sum -= s[0];
-          } else {
-            sum -= s[i_out];
-          }
-          if (i_in >= w) {
-            if (repeat_edge) sum += s[w - 1];
-          } else {
-            sum += s[i_in];
-          }
-        }
+        for (std::size_t x = 0; x < uw; ++x) d[x] = u16t(static_cast<double>(sums[x]) * inv + 0.5);
       }
     }
   });
@@ -225,8 +218,8 @@ void radial_blur(RgbaView img, double amount, double cx, double cy, bool zoom, d
             sx = cx + dx / sc[su];
             sy = cy + dy / sc[su];
           }
-          const double xi = js::round(sx);
-          const double yi = js::round(sy);
+          const double xi = round_index(sx);
+          const double yi = round_index(sy);
           if (xi < 0 || yi < 0 || xi >= w || yi >= h) continue;
           const std::size_t o = idx4(static_cast<int>(xi), static_cast<int>(yi), w);
           const double sa = src[o + 3];
@@ -267,43 +260,76 @@ void blur_one_channel(RgbaView img, int channel, double radius, BlurDims dims, b
   if (r <= 0) return;
   const int w = img.w;
   const int h = img.h;
+  const auto uw = static_cast<std::size_t>(w);
+  const auto ur = static_cast<std::size_t>(r);
   const double count = 2.0 * r + 1.0;  // every window slot counts, in range or not
   std::uint8_t* data = img.data.data();
   const auto ch = static_cast<std::size_t>(channel);
   scratch.assign(img.pixels(), 0);
+  const std::size_t n = img.pixels();
 
-  const auto pass = [&](bool horizontal) {
-    const int len = horizontal ? w : h;
-    const int lines = horizontal ? h : w;
-    const auto read = [&](int line, int j) -> int {
-      const std::size_t idx = horizontal ? static_cast<std::size_t>(line) * static_cast<std::size_t>(w) + static_cast<std::size_t>(j)
-                                         : static_cast<std::size_t>(j) * static_cast<std::size_t>(w) + static_cast<std::size_t>(line);
-      return data[idx * 4 + ch];
-    };
-    const auto sample = [&](int line, int j) -> int {
-      if (j < 0 || j >= len) {
-        if (!repeat_edge) return 0;
-        j = j < 0 ? 0 : len - 1;
-      }
-      return read(line, j);
-    };
-    for_rows(pool, lines, [&](int l0, int l1) {
-      for (int line = l0; line < l1; ++line) {
+  if (dims != BlurDims::vertical) {
+    for_rows(pool, h, [&](int y0, int y1) {
+      std::vector<std::int32_t> pad(uw + 2 * ur + 1);
+      for (int y = y0; y < y1; ++y) {
+        const std::uint8_t* row = data + static_cast<std::size_t>(y) * uw * 4 + ch;
+        const std::int32_t left = repeat_edge ? row[0] : 0;
+        const std::int32_t right = repeat_edge ? row[(uw - 1) * 4] : 0;
+        std::int32_t* p = pad.data();
+        for (std::size_t i = 0; i < ur; ++i) p[i] = left;
+        for (std::size_t i = 0; i < uw; ++i) p[ur + i] = row[i * 4];
+        for (std::size_t i = ur + uw; i < pad.size(); ++i) p[i] = right;
         std::int64_t sum = 0;
-        for (int k = -r; k <= r; ++k) sum += sample(line, k);
-        for (int i = 0; i < len; ++i) {
-          const std::size_t idx = horizontal ? static_cast<std::size_t>(line) * static_cast<std::size_t>(w) + static_cast<std::size_t>(i)
-                                             : static_cast<std::size_t>(i) * static_cast<std::size_t>(w) + static_cast<std::size_t>(line);
-          scratch[idx] = u8c(static_cast<double>(sum) / count);
-          sum += sample(line, i + r + 1) - sample(line, i - r);
+        for (std::size_t k = 0; k <= 2 * ur; ++k) sum += p[k];
+        std::uint8_t* out = scratch.data() + static_cast<std::size_t>(y) * uw;
+        for (std::size_t x = 0; x < uw; ++x) {
+          out[x] = u8c(static_cast<double>(sum) / count);
+          sum += p[x + 2 * ur + 1] - p[x];
         }
       }
     });
-    const std::size_t n = img.pixels();
     for (std::size_t i = 0; i < n; ++i) data[i * 4 + ch] = scratch[i];
-  };
-  if (dims != BlurDims::vertical) pass(true);
-  if (dims != BlurDims::horizontal) pass(false);
+  }
+  if (dims != BlurDims::horizontal) {
+    // One running sum per column, all slid down a row at a time (rows are
+    // read in order); threads split column strips.
+    constexpr int kStrip = 256;
+    const int strips = (w + kStrip - 1) / kStrip;
+    for_rows(
+        pool, strips,
+        [&](int s0, int s1) {
+          std::vector<std::int64_t> sums(static_cast<std::size_t>(kStrip));
+          for (int strip = s0; strip < s1; ++strip) {
+            const auto x0 = static_cast<std::size_t>(strip) * kStrip;
+            const std::size_t cw = std::min<std::size_t>(kStrip, uw - x0);
+            const auto row_at = [&](int y) -> const std::uint8_t* {
+              if (y < 0 || y >= h) {
+                if (!repeat_edge) return nullptr;
+                y = y < 0 ? 0 : h - 1;
+              }
+              return data + (static_cast<std::size_t>(y) * uw + x0) * 4 + ch;
+            };
+            std::fill(sums.begin(), sums.end(), 0);
+            for (int k = -r; k <= r; ++k) {
+              if (const std::uint8_t* rp = row_at(k)) {
+                for (std::size_t x = 0; x < cw; ++x) sums[x] += rp[x * 4];
+              }
+            }
+            for (int y = 0; y < h; ++y) {
+              std::uint8_t* out = scratch.data() + static_cast<std::size_t>(y) * uw + x0;
+              for (std::size_t x = 0; x < cw; ++x) out[x] = u8c(static_cast<double>(sums[x]) / count);
+              if (const std::uint8_t* rp = row_at(y + r + 1)) {
+                for (std::size_t x = 0; x < cw; ++x) sums[x] += rp[x * 4];
+              }
+              if (const std::uint8_t* rp = row_at(y - r)) {
+                for (std::size_t x = 0; x < cw; ++x) sums[x] -= rp[x * 4];
+              }
+            }
+          }
+        },
+        1);
+    for (std::size_t i = 0; i < n; ++i) data[i * 4 + ch] = scratch[i];
+  }
 }
 
 }  // namespace

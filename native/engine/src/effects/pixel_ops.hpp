@@ -37,16 +37,31 @@ struct RgbaView {
   }
 };
 
-/// `Uint8ClampedArray[i] = v` — ECMAScript ToUint8Clamp.
+/// Round to nearest, ties to even, for |v| < 2^51: adding and removing
+/// 1.5 · 2^52 leaves no fraction bits, and IEEE addition rounds half to even.
+/// (Baseline x86-64 has no SSE4.1 `roundsd`, so std::nearbyint / std::floor
+/// are libm calls; this is two adds, and it vectorises.) Needs the default
+/// rounding mode, which the engine never changes.
+[[nodiscard]] inline double round_half_even(double v) noexcept {
+  constexpr double kMagic = 6755399441055744.0;  // 1.5 · 2^52
+  return (v + kMagic) - kMagic;
+}
+
+/// `Uint8ClampedArray[i] = v` — ECMAScript ToUint8Clamp: NaN → 0, clamp to
+/// [0, 255], round half to even. Branch-free (compare-selects).
 [[nodiscard]] inline std::uint8_t u8c(double v) noexcept {
-  if (!(v > 0.0)) return 0;  // NaN, -0, negatives
-  if (v >= 255.0) return 255;
-  const double f = std::floor(v);
-  const double half = f + 0.5;
-  if (half < v) return static_cast<std::uint8_t>(f + 1.0);
-  if (v < half) return static_cast<std::uint8_t>(f);
-  const auto fi = static_cast<std::uint32_t>(f);
-  return static_cast<std::uint8_t>((fi & 1U) != 0U ? fi + 1U : fi);
+  double c = v > 0.0 ? v : 0.0;  // NaN and negatives → 0
+  c = c < 255.0 ? c : 255.0;
+  return static_cast<std::uint8_t>(static_cast<int>(round_half_even(c)));
+}
+
+/// `Math.floor(x)` for the |x| < 2^51 lattice coordinates the noise kernels
+/// floor. Differs from std::floor only in returning +0 for -0, which no
+/// caller can observe (it is only subtracted or converted to an integer).
+[[nodiscard]] inline double floor_fast(double x) noexcept {
+  if (!(x > -2251799813685248.0 && x < 2251799813685248.0)) return std::floor(x);
+  const double r = round_half_even(x);
+  return r > x ? r - 1.0 : r;
 }
 
 /// ECMAScript ToUint32 (`x >>> 0`). The common in-range case is a truncating
@@ -59,10 +74,22 @@ struct RgbaView {
 /// ECMAScript ToInt32 (`x | 0`).
 [[nodiscard]] inline std::int32_t ji32(double x) noexcept { return static_cast<std::int32_t>(ju32(x)); }
 
-/// `Uint16Array[i] = v` for the non-negative, below-2^16 values the kernels
-/// store (ToUint16 truncates toward zero).
+/// `Uint16Array[i] = v` for the values the box blur stores: finite, in
+/// [0, 65536) (a mean of premultiplied bytes + 0.5), where ToUint16 is a
+/// truncation — a plain cast, so the store loops vectorise.
 [[nodiscard]] inline std::uint16_t u16t(double v) noexcept {
-  return static_cast<std::uint16_t>(ju32(v));
+  return static_cast<std::uint16_t>(static_cast<std::int32_t>(v));
+}
+
+/// `Math.round(x)` (V8: ceil, minus one when that overshot by more than a
+/// half) for finite |x| < 2^51, as an index: the sign of a zero result is not
+/// kept, which a sample coordinate cannot observe. No libm call.
+[[nodiscard]] inline double round_index(double x) noexcept {
+  if (!(x > -2251799813685248.0 && x < 2251799813685248.0)) return js::round(x);
+  double r = round_half_even(x);
+  if (r < x) r += 1.0;  // ceil
+  if (r - 0.5 > x) r -= 1.0;
+  return r;
 }
 
 /// `v < 0 ? 0 : v > 255 ? 255 : v` (colorSpace.ts `clamp255`; NaN passes through).

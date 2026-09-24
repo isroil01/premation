@@ -149,8 +149,8 @@ void emboss(RgbaView img, double angle_deg, double relief, double contrast, doub
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   const auto at = [&](double x, double y) {
-    const double sx = std::min(static_cast<double>(w - 1), std::max(0.0, js::round(x)));
-    const double sy = std::min(static_cast<double>(h - 1), std::max(0.0, js::round(y)));
+    const double sx = std::min(static_cast<double>(w - 1), std::max(0.0, round_index(x)));
+    const double sy = std::min(static_cast<double>(h - 1), std::max(0.0, round_index(y)));
     return lum[static_cast<std::size_t>(sy) * static_cast<std::size_t>(w) + static_cast<std::size_t>(sx)];
   };
   for_rows(pool, h, [&](int y0, int y1) {

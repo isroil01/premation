@@ -89,7 +89,7 @@ void turbulent_noise(RgbaView img, double scale, double complexity, double evolu
         double norm = 0;
         double freq = 1 / s;
         for (int o = 0; o < octaves; ++o) {
-          const double sgn = vnoise_f(px * freq, py * freq, seeds[static_cast<std::size_t>(o)]) - 0.5;
+          const double sgn = VnoisePoint(px * freq, py * freq).sample(seeds[static_cast<std::size_t>(o)]) - 0.5;
           sum += std::fabs(sgn) * 2 * amp;
           norm += amp;
           amp *= 0.5;
@@ -129,16 +129,17 @@ void add_grain(RgbaView img, double intensity, double size, double saturation, d
         if (response <= 0) continue;
         const double nx = px / pitch;
         const double ny = py / pitch;
-        const double mono = (vnoise_f(nx, ny, seed) - 0.5) * 2;
+        const VnoisePoint vp(nx, ny);
+        const double mono = (vp.sample(seed) - 0.5) * 2;
         const double kick = amount * response * 128;
         if (sat == 0) {
           p[0] = u8c(clamp255(r + mono * kick));
           p[1] = u8c(clamp255(g + mono * kick));
           p[2] = u8c(clamp255(b + mono * kick));
         } else {
-          const double nr = (vnoise_f(nx, ny, seed + 1.7) - 0.5) * 2;
-          const double ng = (vnoise_f(nx, ny, seed + 5.3) - 0.5) * 2;
-          const double nb = (vnoise_f(nx, ny, seed + 9.1) - 0.5) * 2;
+          const double nr = (vp.sample(seed + 1.7) - 0.5) * 2;
+          const double ng = (vp.sample(seed + 5.3) - 0.5) * 2;
+          const double nb = (vp.sample(seed + 9.1) - 0.5) * 2;
           p[0] = u8c(clamp255(r + (mono * (1 - sat) + nr * sat) * kick));
           p[1] = u8c(clamp255(g + (mono * (1 - sat) + ng * sat) * kick));
           p[2] = u8c(clamp255(b + (mono * (1 - sat) + nb * sat) * kick));
