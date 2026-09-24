@@ -14,6 +14,7 @@
 #include "handlers_items.hpp"
 #include "handlers_layers.hpp"
 #include "handlers_native.hpp"
+#include "plugin_props.hpp"
 #include "jsmath.hpp"
 #include "rig.hpp"
 #include "strutil.hpp"
@@ -344,7 +345,7 @@ const Node& text_node_or_fail(const Document& d, const std::string& layer) {
 // ── group addressing ──────────────────────────────────────────────────────
 
 /// rig: a puppet / skeleton group (rig.hpp). control: an expression control `effects/ctrl_<name>` (controls.hpp).
-enum class GK : std::uint8_t { effect, mask, animator, selector, style, pathop, rig, control };
+enum class GK : std::uint8_t { effect, mask, animator, selector, style, pathop, rig, control, plugin };
 
 struct GroupRef {
   GK kind = GK::effect;
@@ -355,6 +356,8 @@ struct GroupRef {
   int index = 0;         ///< animator / selector index (`'index' in r`)
   std::optional<RigGroupRef> rig;  ///< GK::rig
   std::optional<LayerControl> control;  ///< GK::control (id = `ctrl_<name>`)
+  std::string path;    ///< GK::plugin: plugin/<slug>/<panel> (id = the component TYPE)
+  std::string prefix;  ///< GK::plugin: its params' track prefix
   [[nodiscard]] bool has_index() const { return kind == GK::animator || kind == GK::selector; }
 };
 
@@ -390,6 +393,13 @@ GroupRef resolve_group(const Document& d, const api::PropRef& ref) {
   if (auto control = resolve_control(node, ref.path)) {
     GroupRef r = gref(GK::control, ref.layer, seg[1]);
     r.control = std::move(control);
+    return r;
+  }
+  if (auto panel = parse_panel_group_path(ref.path)) {
+    if (node.comp(panel->type) == nullptr) nf();
+    GroupRef r = gref(GK::plugin, ref.layer, panel->type);
+    r.path = ref.path;
+    r.prefix = std::string(kPluginPanelTrackPrefix) + panel->slug + "." + panel->panel + ".";
     return r;
   }
   if (seg[0] == "effects" && seg.size() == 2) {
@@ -441,6 +451,7 @@ std::string group_path(const GroupRef& g) {
     case GK::pathop: return "contents/" + g.id;
     case GK::rig: return rig_group_path(*g.rig);
     case GK::control: return "effects/" + g.id;
+    case GK::plugin: return g.path;
   }
   return {};
 }
@@ -457,6 +468,7 @@ std::optional<std::string> track_prefix(const GroupRef& g) {
     case GK::mask: return "mask." + g.id + ".";
     case GK::style: return style_track_prefix(g.id);
     case GK::pathop: return "pathop." + g.id + ".";
+    case GK::plugin: return g.prefix;
     default: return std::nullopt;
   }
 }
@@ -535,6 +547,11 @@ void write_inits(Document& d, const std::string& layer, const std::string& prefi
 
 void remove_group(Document& d, const GroupRef& r) {
   switch (r.kind) {
+    case GK::plugin:
+      // The panel's values and every key / expression of its params.
+      (void)sg_remove_component(d, r.layer, r.id);
+      move_group_tracks(d, r.layer, r.prefix, std::nullopt);
+      return;
     case GK::rig:
       remove_rig_group(d, *r.rig);
       return;
@@ -615,6 +632,8 @@ void set_enabled(Document& d, const GroupRef& r, bool on) {
       return;
     case GK::control:
       fail(ErrorCode::unsupported, "an expression control has no enable switch");
+    case GK::plugin:
+      fail(ErrorCode::unsupported, "a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)");
     case GK::effect: {
       std::vector<Json> list = get_node_effects(d, r.layer);
       for (Json& e : list) {
@@ -701,6 +720,7 @@ std::string mint_for(HCtx& x, const GroupRef& r, const std::string& layer) {
     case GK::style: return r.id;
     case GK::rig: fail(ErrorCode::unsupported, "rig groups cannot be copied");
     case GK::control: fail(ErrorCode::unsupported, "expression controls cannot be copied");
+    case GK::plugin: fail(ErrorCode::unsupported, "plugin panels cannot be copied");
   }
   return {};
 }
@@ -792,6 +812,7 @@ std::string copy_group(HCtx& x, const GroupRef& r, const std::string& to, const 
     case GK::selector: fail(ErrorCode::unsupported, "duplicate the animator to copy its selectors");
     case GK::rig: fail(ErrorCode::unsupported, "rig groups cannot be copied");
     case GK::control: fail(ErrorCode::unsupported, "expression controls cannot be copied");
+    case GK::plugin: fail(ErrorCode::unsupported, "plugin panels cannot be copied");
   }
   return {};
 }
@@ -1455,6 +1476,22 @@ ResultOf<api::AddPropertyGroup> handle(const api::AddPropertyGroup& c, HCtx& x) 
       (void)sg_write_prop(d, layer, tid, std::string(kControlKindPrefix) + name, Json::string(spec->kind));
       return control_group_path(name);
     };
+  } else if (parent == "plugin" && panel_group_for_match_name(c.match_name)) {
+    // B3z: a contributed plugin panel's params, seeded WHOLE from `init` (the
+    // client holds the panel's declared defaults — the engine has no schema).
+    const std::string path = *panel_group_for_match_name(c.match_name);
+    const PanelGroup panel = *parse_panel_group_path(path);
+    for (const Component& comp : node0.components) {
+      if (comp.type == panel.type || comp.id == panel.id) {
+        fail(ErrorCode::conflict, "layer '" + layer + "' already has '" + path + "'", {.layer = layer, .path = path});
+      }
+    }
+    Json props = panel_init_props(c.init);
+    x.label = "Add " + c.match_name;
+    (void)sg_add_component(d, layer, Component{panel.id, panel.type, std::move(props)});
+    api::GroupList out;
+    out.groups.push_back(path);
+    return out;
   } else if (auto rigPlan = plan_rig_add(d, layer, parent, c.match_name, c.index, c.name, c.init,
                                            [&x](std::string_view prefix, const std::function<bool(const std::string&)>& taken) {
                                              return x.mint_group_id(prefix, taken);
@@ -1558,6 +1595,7 @@ ResultOf<api::MovePropertyGroup> handle(const api::MovePropertyGroup& c, HCtx& x
     case GK::style: fail(ErrorCode::unsupported, "layer styles have a fixed order");
     case GK::rig: move_rig_group(d, *r.rig, to); break;
     case GK::control: fail(ErrorCode::unsupported, "expression controls keep the order they were added in");
+    case GK::plugin: fail(ErrorCode::unsupported, "plugin panels have no order");
   }
   return {};
 }
@@ -1572,6 +1610,9 @@ ResultOf<api::DuplicatePropertyGroups> handle(const api::DuplicatePropertyGroups
   }
   for (const auto& r : refs) {
     if (r.kind == GK::rig) fail(ErrorCode::unsupported, "rig groups are duplicated by adding a new pin / bone in this engine");
+  }
+  for (const auto& r : refs) {
+    if (r.kind == GK::plugin) fail(ErrorCode::unsupported, "a layer has at most one of each plugin panel");
   }
   for (const auto& r : refs) {
     if (r.kind == GK::control) fail(ErrorCode::unsupported, "expression controls are added by name with addPropertyGroup");
@@ -1590,6 +1631,11 @@ ResultOf<api::SetGroupEnabled> handle(const api::SetGroupEnabled& c, HCtx& x) {
   std::vector<GroupRef> refs;
   for (const auto& g : c.groups) refs.push_back(resolve_group(d, g));
   for (const auto& r : refs) {
+    if (r.kind == GK::plugin) {
+      fail(ErrorCode::unsupported, "a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)");
+    }
+  }
+  for (const auto& r : refs) {
     if (r.kind == GK::control) fail(ErrorCode::unsupported, "an expression control has no enable switch");
   }
   x.label = c.enabled ? "Enable" : "Disable";
@@ -1603,6 +1649,7 @@ ResultOf<api::RenamePropertyGroup> handle(const api::RenamePropertyGroup& c, HCt
   if (r.kind == GK::style || r.kind == GK::pathop) {
     fail(ErrorCode::unsupported, "'" + group_path(r) + "' cannot be renamed in this engine");
   }
+  if (r.kind == GK::plugin) fail(ErrorCode::unsupported, "'" + group_path(r) + "' cannot be renamed");
   if (r.kind == GK::rig && r.rig->kind != "pin" && r.rig->kind != "bone" && r.rig->kind != "controller") {
     fail(ErrorCode::unsupported, "'" + group_path(r) + "' cannot be renamed");
   }
@@ -1771,6 +1818,9 @@ ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx&
   }
   for (const auto& r : refs) {
     if (r.kind == GK::rig) fail(ErrorCode::unsupported, "a rig is copied whole through layer/puppet or layer/skeleton in this engine");
+  }
+  for (const auto& r : refs) {
+    if (r.kind == GK::plugin) fail(ErrorCode::unsupported, "plugin panels are added to a layer with addPropertyGroup");
   }
   for (const auto& r : refs) {
     if (r.kind == GK::control) fail(ErrorCode::unsupported, "expression controls are added by name with addPropertyGroup");

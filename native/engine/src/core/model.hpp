@@ -363,6 +363,9 @@ class Document {
   /// (a fresh document, or parts written back by undo/redo/rollback).
   [[nodiscard]] const std::unordered_set<std::string>& tl_touched() const noexcept { return tlTouched_; }
   [[nodiscard]] bool tl_all_dirty() const noexcept { return tlAllDirty_; }
+  /// A bar was written directly (write_geoms): the next reconcile looks at `id`
+  /// (a group member's pasted bar is dropped, as syncFromScene does).
+  void tl_touch(std::string_view id) { tlTouched_.emplace(id); }
   void tl_mark_clean() noexcept {
     tlTouched_.clear();
     tlAllDirty_ = false;

@@ -569,7 +569,7 @@ void Session::load_document(const doc::Json& file, api::ResetReason reason) {
   request_render();
 }
 
-doc::Json Session::capture_document() const { return doc::capture_document(doc_, view_); }
+doc::Json Session::capture_document() const { return doc::capture_document(doc_); }
 
 struct ControlVisitor {
   Session& s;

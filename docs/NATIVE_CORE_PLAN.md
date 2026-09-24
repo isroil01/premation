@@ -278,6 +278,72 @@ engines (9/9, 0 mismatches; the C2-subset session 41/41 compared). Real app:
 | D4 | RAM and disk frame cache in the engine, sized by the machine, not by Chromium's heap | Cached playback of a heavy comp holds full rate | 3 wk |
 | D5 | Engine viewport default-on; the TS renderer stays behind the flag for one release | HUD frame time ≤ TS path on every bench comp | 2 wk |
 
+**D1 progress (2026-09-24): the replay corpus evaluates identically in both
+engines — 0 differences in 17 491 compared records, from 520.** A new gate
+measures D1's exit directly, in process, with no engine binary and no Dawn:
+`src/core/engine/__tests__/d1EvalParity.test.ts` runs every corpus session
+(B2 + family + generated, 61 sessions) on the TypeScript engine, records every
+request and response, then PROBES the finished document — every layer's
+property tree, every numeric property evaluated at 8 composition times
+(before 0, on and between frames, past the end) and pre-expression, the world
+transforms of every stack (parenting), motion paths, 31-point samples with
+speed of every keyed or expressed property, and all keyframes.
+`native/engine/tests/test_d1_eval_parity.cpp` (`engine_d1_parity_tests`)
+replays the same bytes into a C++ `Session` and compares every response byte
+for byte (refusals by error code) and every revision step; ratchet 0.
+Fixture `tests/data/d1_eval_parity.bin` (3.9 MB: large answers stored as
+length + hash, repeated probes as deltas; `GEN_NATIVE_D1_FULL=<file>` +
+`D1_FIXTURE=<file>` explain a difference with both values). Two new corpus
+sessions: *D1: evaluation* (a three-deep parent chain through a null with
+spatial Bézier / eased / hold / roving keys, a 3D sub-chain with orientation
+and axis rotations under a camera, toComp / toWorld / valueAtTime / velocity /
+loopOut / seedRandom / posterizeTime expressions across layers, stretch, time
+remap keys, reverse, freeze, a remapped precomp) and *B3z: plugin properties*.
+- **Measured gap before → after.** First run: 520 of 17 177 records differed
+  (358 probes; 17 of 59 sessions identical). Now: 0 of 17 491 (61/61
+  sessions). The cross-engine process replay (`crossEngine.test.ts`) against
+  `premation-engine-headless` (new: the engine process without Dawn, frames
+  simulated — `PREMATION_ENGINE_PATH`): 62/62 sessions, 10 539 requests
+  compared, **0 answered `unsupported`**, 0 dependent, 0 mismatches (first run:
+  54/60 — two 120 s timeouts on a loaded machine, now 600 s, and four
+  harness faults fixed below).
+- **C++ fixes** (each was a wrong evaluated value or step): material switches
+  (Accepts Lights / Casts / Accepts Shadows) read and write as the TS
+  `readMaterialSwitch` (every 3D layer's Accepts Lights read 0); two dangling
+  references to by-value temporaries in `strokes.cpp` (every shape-stroke
+  colour read #ffffff, every stroke gradient point 0); `sampleProperty` speed
+  through V8's `Math.hypot`; new keyframe ids minted in the order the command
+  touched the layers, not by id; plugin properties wired — `plugin_props.cpp`
+  (ported, never compiled) now builds the `plugin/<name>` and
+  `plugin/<slug>/<panel>/<param>` bindings, statics, fields and panel groups
+  (add / remove / every refusal); a pasted group member's bar no longer
+  outlives the command (`write_geoms` marks it for the reconcile — was an
+  extra `compositionChanged`); saved documents no longer carry editor state
+  (`openTabs`, a timeline's `view` / `currentFrame` — B4 removed them from the
+  TS save; the C++ file was ~300 bytes larger, now equal except the TS's
+  random track id).
+- **TypeScript fixes:** `loadDocument` dropped the load's own pending debounced
+  snapshot, which became a phantom "Edit N" undo step under the next command
+  after every open / revert; test ports count saved UTF-8 bytes like the real
+  port; the WS-L1 session holds the harness engine's write detector during
+  off-document builds; `crossEngine.test.ts` clones request bytes from any
+  realm (a pasted fragment was cloned as an object), counts history pushes
+  that do not move the revision, and sends an undo/redo the model has no
+  entry for (both engines must refuse it).
+- **Remaining for D1:** the render-side evaluation — the engine producing its
+  own FrameScene from the C++ document (`scene/snapshot_build`, buildSnapshot's
+  port) — is gated by the D2 golden suite, not by this fixture, and still
+  reports shape operators, paragraph text and image-layer rig culling;
+  `getLayerTransforms` is 2D in both engines (3D world space is observable only
+  through toWorld/toComp expressions, which the fixture covers); the corpus
+  has no session for footage decode-dependent values (E1) or audio-driven
+  expressions (E2); 12 of 114 edit commands are never issued by the corpus
+  (`restoreDocument`, `importBytes`, `clearWorkArea`, `timeStretchLayers`,
+  `unfreezeLayers`, `rippleDeleteRange`, `shiftLayerKeyframes`, the three
+  transition commands, `editPathTopology`, `setShapeOutline`), so their parity
+  is unmeasured; saveProject's byte count is compared by path only (the TS
+  track id is random).
+
 **D2 progress (2026-09-23): the render graph runs in C++ on Dawn, at parity
 on the whole golden suite.** Decoupled from the C++ document (still C2's
 subset) through a **serialized FrameScene** — engine-api family `Render`,

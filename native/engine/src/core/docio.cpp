@@ -274,7 +274,6 @@ Json timeline_json(const std::string& comp, const Timeline& t) {
   fr.set("dropFrame", Json::boolean(false));
   o.set("frameRate", std::move(fr));
   o.set("duration", Json::number(t.duration));
-  o.set("currentFrame", Json::number(0));
   Json tracks = Json::array();
   tracks.arr_mut().push_back(std::move(track));
   o.set("tracks", std::move(tracks));
@@ -285,12 +284,9 @@ Json timeline_json(const std::string& comp, const Timeline& t) {
   ranges.set("preview", Json::null());
   ranges.set("workArea", range_json(t.workArea));
   o.set("ranges", std::move(ranges));
-  Json view = Json::object();
-  view.set("pixelsPerFrame", Json::number(8.0 / 3.0));
-  view.set("scrollX", Json::number(0));
-  view.set("scrollY", Json::number(0));
-  view.set("viewportWidth", Json::number(0));
-  o.set("view", std::move(view));
+  // No `view` / `currentFrame` and no `openTabs` below: editor state never
+  // enters the project document (B4, src/core/project/editorView.ts); a file
+  // that still carries them is read (view_of_tabs) and saved without them.
   return o;
 }
 
@@ -792,25 +788,6 @@ void m_1_8(Json& doc) {
 
 // ── workspace tabs ───────────────────────────────────────────────────────
 
-Json open_tabs_json(const Document& d, const EditorView& v) {
-  const std::string tabId = "tab_main";
-  Json tab = Json::object();
-  tab.set("id", Json::string(tabId));
-  tab.set("compositionId", Json::string(v.tabComp));
-  tab.set("breadcrumbPath", str_list({v.tabComp}));
-  tab.set("title", Json::string("Main Comp"));
-  tab.set("time", Json::number(v.tabTime));
-  const double fps = d.comp(v.tabComp) != nullptr ? comp_fps(d, v.tabComp) : 30;
-  tab.set("frame", Json::number(motion::js::round(v.tabTime * fps)));
-  Json tabs = Json::object();
-  tabs.set(tabId, std::move(tab));
-  Json o = Json::object();
-  o.set("tabOrder", str_list({tabId}));
-  o.set("activeTabId", Json::string(tabId));
-  o.set("tabs", std::move(tabs));
-  return o;
-}
-
 /// `hydrateWorkspaceTabs(snap)` → the active tab's composition and time.
 EditorView view_of_tabs(const Json& snap) {
   EditorView v;
@@ -1273,7 +1250,7 @@ DocExtras default_doc_extras() {
   return x;
 }
 
-Json capture_document(const Document& d, const EditorView& v) {
+Json capture_document(const Document& d) {
   Json doc = Json::object();
   doc.set("version", Json::string("1.1.0"));
   Json nodes = Json::array();
@@ -1307,7 +1284,6 @@ Json capture_document(const Document& d, const EditorView& v) {
   doc.set("swatches", d.extras().swatches);
   doc.set("materials", d.extras().materials);
   doc.set("transitions", d.transitions());
-  doc.set("openTabs", open_tabs_json(d, v));
   // Absent when empty (captureProjectStorage), so such a document reads back byte-identical.
   if (Json ps = capture_project_storage(d.extras().pluginStorage); !ps.obj().empty()) doc.set("pluginStorage", std::move(ps));
   // captureProjectItems: ALWAYS written, even empty — the key's presence marks a

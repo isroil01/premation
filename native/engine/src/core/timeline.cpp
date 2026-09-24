@@ -430,7 +430,14 @@ void write_geoms(Document& d, std::string_view comp, std::string_view layer, con
       }
     }
   }
-  if (!(next == cur)) d.timeline_mut(comp) = std::move(next);
+  if (!(next == cur)) {
+    d.timeline_mut(comp) = std::move(next);
+    // TS syncTimelines runs after every command; here only touched nodes are
+    // reconciled, so a bar written for a node that has none (a group member)
+    // must be looked at again — else it outlives the command (d1 / crossEngine:
+    // pasteLayers into a group reported compositionChanged).
+    d.tl_touch(layer);
+  }
 }
 
 // ── layerTime.ts ─────────────────────────────────────────────────────────
