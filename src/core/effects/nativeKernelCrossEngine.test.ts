@@ -31,6 +31,63 @@ const IMAGES: Image[] = [
 interface Case { effect: string; image: string; args: Args }
 const C = (effect: string, image: string, args: Args): Case => ({ effect, image, args });
 
+// ── Resolved mask paths (strokePaint.ts `packMaskPaths` layout, layer-centred px) ──
+interface MaskSpec { pts: Array<[number, number]>; closed?: boolean; mode?: number; inverted?: boolean }
+const q = (v: number): number => Math.round(v * 1000) / 1000;
+function packMasks(...ms: MaskSpec[]): { maskPathsMeta: number[]; maskPathsXY: number[] } {
+  const maskPathsMeta: number[] = [];
+  const maskPathsXY: number[] = [];
+  for (const m of ms) {
+    maskPathsMeta.push(m.pts.length, m.closed === false ? 0 : 1, m.mode ?? 1, m.inverted ? 1 : 0);
+    for (const [x, y] of m.pts) maskPathsXY.push(q(x), q(y));
+  }
+  return { maskPathsMeta, maskPathsXY };
+}
+/** A star (r1 ≠ r2) or polygon (r1 = r2), `n` points. */
+function star(cx: number, cy: number, r1: number, r2: number, n: number, rotDeg: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < n * 2; i++) {
+    const a = (rotDeg * Math.PI) / 180 + (i * Math.PI) / n;
+    const r = i % 2 === 0 ? r1 : r2;
+    out.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  return out;
+}
+function wave(x0: number, x1: number, y: number, amp: number, n: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i <= n; i++) out.push([x0 + ((x1 - x0) * i) / n, y + Math.sin(i * 0.9) * amp]);
+  return out;
+}
+const MASKS_SMALL = packMasks(
+  { pts: star(-4, 2, 17, 8, 5, -90) },
+  { pts: star(8, -3, 9, 9, 6, 10), mode: 2 },
+  { pts: wave(-26, 24, 12, 5, 14), closed: false },
+  // A self-overlapping bow tie: nonzero winding fills both lobes.
+  { pts: [[-20, -18], [20, 15], [20, -18], [-20, 15]], mode: 6 },
+);
+const MASKS_WIDE = packMasks(
+  { pts: star(-200, 0, 11, 11, 3, 0) },
+  { pts: wave(-280, 250, -2, 6, 40), closed: false, mode: 0 },
+  { pts: star(120, 1, 10, 4, 7, 33), mode: 3, inverted: true },
+);
+const MASKS_TALL = packMasks(
+  { pts: [[-7, -30], [6, -12], [-5, 5], [7, 25], [0, 38]], closed: false },
+  { pts: star(0, -8, 8.5, 8.5, 4, 45), mode: 5 },
+);
+/** A Write-on brush trail: `n` dabs along a curl, per-dab size / hardness / opacity / colour. */
+function trail(n: number, cx: number, cy: number, r: number): { brushTrailXY: number[]; brushTrailSize: number[]; brushTrailAttr: number[] } {
+  const brushTrailXY: number[] = [];
+  const brushTrailSize: number[] = [];
+  const brushTrailAttr: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / Math.max(1, n - 1);
+    brushTrailXY.push(q(cx + Math.cos(t * 7) * r * t), q(cy + Math.sin(t * 7) * r * t * 0.8));
+    brushTrailSize.push(q(2 + 6 * t));
+    brushTrailAttr.push(q(30 + 60 * t), q(100 - 50 * t), q(255 * t), q(200 - 150 * t), 90);
+  }
+  return { brushTrailXY, brushTrailSize, brushTrailAttr };
+}
+
 const CASES: Case[] = [
   C('gaussian-blur', 'small', { radius: 6 }),
   C('gaussian-blur', 'small', { radius: 2.7, dimensions: 1, repeatEdge: 0 }),
@@ -330,8 +387,23 @@ const CASES: Case[] = [
   C('twister', 'tall', { completion: 25, centerY: -10, twist: -360 }),
   C('card-dance', 'small', { rows: 4, columns: 6, amount: 50, cardRotation: 30, phase: 10 }),
   C('card-dance', 'wide', { rows: 2, columns: 20, amount: 80, cardRotation: -60, phase: 55 }),
+  // ── E4 second batch: path / paint effects ──
+  C('path-stroke', 'small', { ...MASKS_SMALL, brushSize: 6, hardness: 50, spacing: 20, start: 10, end: 85, colorR: 250, colorG: 30, colorB: 90 }),
+  C('path-stroke', 'small', { ...MASKS_SMALL, allMasks: 1, sequential: 1, brushSize: 4.5, hardness: 100, opacity: 70, start: 20, end: 90, paintStyle: 1 }),
+  C('path-stroke', 'wide', { ...MASKS_WIDE, allMasks: 1, brushSize: 3, hardness: 20, spacing: 0, start: 95, end: 5, paintStyle: 2 }),
+  C('path-stroke', 'tall', { ...MASKS_TALL, brushSize: 9, hardness: 0, start: 40, end: 40, paintStyle: 1, colorR: 10, colorG: 200, colorB: 255 }),
+  C('path-stroke', 'tall', { ...MASKS_TALL, pathMaskIndex: 1, brushSize: 2, spacing: 35, opacity: 55 }),
+  C('scribble', 'small', { ...MASKS_SMALL, mode: 0, fillType: 0, angle: 30, spacing: 3, spacingVariation: 1, curviness: 60, curvinessVariation: 30, pathOverlap: 20, pathOverlapVariation: 40, strokeWidth: 1.5, seed: 4, start: 5, end: 80 }),
+  C('scribble', 'small', { ...MASKS_SMALL, mode: 2, fillType: 1, edgeWidth: 6, endCap: 1, join: 0, miterLimit: 3, angle: -60, spacing: 2.5, composite: 1, colorR: 20, colorG: 40, colorB: 220, opacity: 80 }),
+  C('scribble', 'wide', { ...MASKS_WIDE, mode: 1, fillType: 4, edgeWidth: 5, endCap: 2, join: 2, angle: 90, spacing: 2, curviness: 0, wiggleState: 2.4, smoothWiggle: 1, sequential: 0, composite: 2, start: 10, end: 70 }),
+  C('scribble', 'tall', { ...MASKS_TALL, mode: 1, fillType: 2, edgeWidth: 4, endCap: 0, join: 1, angle: 0, spacing: 1.5, pathOverlap: -30, strokeWidth: 3, wiggleState: 3.7 }),
+  C('scribble', 'small', { ...MASKS_SMALL, mode: 1, fillType: 3, edgeWidth: 3, endCap: 1, join: 1, angle: 135, spacing: 2, strokeWidth: 1, seed: -3, pathOverlap: 50 }),
+  C('scribble', 'wide', { ...MASKS_WIDE, mode: 0, pathMaskIndex: 1, fillType: 5, edgeWidth: 8, endCap: 1, join: 0, angle: 12, spacing: 3, strokeWidth: 2.5, composite: 1 }),
+  C('write-on', 'small', { ...trail(12, 0, 0, 18), size: 5, hardness: 60, colorR: 255, colorG: 220, colorB: 40 }),
+  C('write-on', 'small', { ...trail(9, -5, 3, 20), filled: 1, paintTimeProps: 1, brushTimeProps: 3, opacity: 70 }),
+  C('write-on', 'wide', { ...trail(30, -150, 0, 200), filled: 1, paintTimeProps: 2, brushTimeProps: 2, paintStyle: 1, size: 4 }),
+  C('write-on', 'tall', { brushX: 3, brushY: -10, size: 12, hardness: 90, paintStyle: 2, opacity: 80 }),
 ];
-
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {
   // 64-bit FNV-1a in two 32-bit halves (BigInt per byte is slow at 57 kB).
   let hi = 0xcbf29ce4, lo = 0x84222325;

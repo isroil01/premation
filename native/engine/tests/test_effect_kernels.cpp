@@ -102,10 +102,17 @@ TEST_CASE("effect kernels: C++ equals the TS kernels byte for byte, 1 thread and
     const json::Value& args = row["args"];
     INFO(effect << " #" << index << " on " << row["image"].str());
     const Image& im = images.at(row["image"].str());
-    const fx::KernelArgs a = [&](std::string_view k, double def) { return args.has(k) ? args[k].num() : def; };
+    const fx::KernelArgs a = [&](std::string_view k, double def) { return args.has(k) ? args[k].num(def) : def; };
+    const fx::KernelLists kl = [&](std::string_view k) {
+      std::vector<double> v;
+      if (args.has(k) && args[k].is_array()) {
+        for (const json::Value& x : args[k].items()) v.push_back(x.num());
+      }
+      return v;
+    };
     for (fx::ThreadPool* p : {static_cast<fx::ThreadPool*>(nullptr), &pool}) {
       std::vector<std::uint8_t> buf = im.rgba;
-      REQUIRE(fx::run_kernel(effect, a, fx::RgbaView{buf, im.w, im.h}, p));
+      REQUIRE(fx::run_kernel(effect, a, kl, fx::RgbaView{buf, im.w, im.h}, p));
       const std::string got = fnv1a64(buf);
       if (got != row["fnv"].str() && dump != nullptr) {
         std::ofstream o(std::string(dump) + "/" + std::to_string(index) + "-" + effect + (p ? "-mt" : "") + ".rgba",

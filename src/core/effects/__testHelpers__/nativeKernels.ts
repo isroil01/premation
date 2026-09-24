@@ -55,13 +55,22 @@ import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from '
 import { selectiveColorData, selectiveRange, shadowHighlightData } from '../toneEffects';
 import { bilateralBlurData, smartBlurData, cameraLensBlurData } from '../aeBlurAdvanced';
 import { sharpenData, addNoiseData } from '../canvas2dEffects';
+import { pathStrokeData } from '../pathStroke';
+import { scribbleData } from '../scribble';
+import { writeOnBrushData } from '../writeOnBrush';
+import { pickMaskPaths, unpackMaskPaths } from '../strokePaint';
+import type { EffectParams } from '../effects';
 
-export type Args = Record<string, number>;
+/** Kernel arguments by name: numbers (booleans as 0/1), and numeric arrays for the resolved lists (packed mask paths, brush trails, LUT tables). */
+export type Args = Record<string, number | number[]>;
 
 /** Runs the TS kernel for `type` IN PLACE, exactly as kernel_dispatch.cpp does. */
 export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: number, h: number): void {
-  const n = (k: string, d: number): number => a[k] ?? d;
-  const b = (k: string, d: boolean): boolean => (a[k] ?? (d ? 1 : 0)) !== 0;
+  const n = (k: string, d: number): number => {
+    const v = a[k];
+    return typeof v === 'number' ? v : d;
+  };
+  const b = (k: string, d: boolean): boolean => n(k, d ? 1 : 0) !== 0;
   const key = (): [number, number, number] => [n('keyR', 0), n('keyG', 255), n('keyB', 0)];
   const rgb = (name: string, d: [number, number, number]): [number, number, number] =>
     [n(`${name}R`, d[0]), n(`${name}G`, d[1]), n(`${name}B`, d[2])];
@@ -468,6 +477,7 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       data.set(cardDanceData(data, w, h, n('rows', 4), n('columns', 6), n('amount', 50), n('cardRotation', 30), n('phase', 0)));
       return;
     default:
+      if (runGenerateKernel(type, a, n, b, rgb, data, w, h)) return;
       throw new Error(`no kernel for ${type}`);
   }
 }
@@ -507,3 +517,64 @@ export function makeImage(w: number, h: number, salt: number): Uint8ClampedArray
   return d;
 }
 
+
+type Num = (k: string, d: number) => number;
+type Bool = (k: string, d: boolean) => boolean;
+type Rgb3 = (name: string, d: [number, number, number]) => [number, number, number];
+
+/**
+ * The E4 second batch — kernel_dispatch_generate.cpp's table: the path / paint
+ * effects, the generators and the round-seven kernels. False for any other type.
+ */
+function runGenerateKernel(
+  type: string, a: Args, n: Num, b: Bool, rgb: Rgb3, data: Uint8ClampedArray, w: number, h: number,
+): boolean {
+  const arr = (k: string): number[] => {
+    const v = a[k];
+    return Array.isArray(v) ? v : [];
+  };
+  const maskParams = (): EffectParams => ({
+    maskPathsMeta: arr('maskPathsMeta'),
+    maskPathsXY: arr('maskPathsXY'),
+    // A non-empty id: the pick is `pathMaskIndex` as resolved by buildSnapshot.
+    pathMaskId: 'mask',
+    pathMaskIndex: n('pathMaskIndex', 0),
+  }) as unknown as EffectParams;
+  switch (type) {
+    case 'path-stroke':
+      data.set(pathStrokeData(data, w, h, pickMaskPaths(maskParams(), w, h, b('allMasks', false)), {
+        rgb: rgb('color', [255, 255, 255]), brushSize: n('brushSize', 10), hardness: n('hardness', 75),
+        opacity: n('opacity', 100), start: n('start', 0), end: n('end', 100), spacing: n('spacing', 15),
+        paintStyle: n('paintStyle', 0), sequential: b('sequential', false),
+      }));
+      return true;
+    case 'scribble': {
+      const p = maskParams();
+      const masks = unpackMaskPaths(p.maskPathsMeta, p.maskPathsXY, w, h);
+      data.set(scribbleData(data, w, h, masks, pickMaskPaths(p, w, h, false), {
+        mode: n('mode', 0), fillType: n('fillType', 0), edgeWidth: n('edgeWidth', 10), endCap: n('endCap', 1),
+        join: n('join', 1), miterLimit: n('miterLimit', 4), rgb: rgb('color', [255, 255, 255]),
+        opacity: n('opacity', 100), angle: n('angle', 45), strokeWidth: n('strokeWidth', 2),
+        curviness: n('curviness', 50), curvinessVariation: n('curvinessVariation', 0), spacing: n('spacing', 5),
+        spacingVariation: n('spacingVariation', 0), pathOverlap: n('pathOverlap', 0),
+        pathOverlapVariation: n('pathOverlapVariation', 0), start: n('start', 0), end: n('end', 100),
+        sequential: b('sequential', true), seed: n('seed', 0), wiggleState: n('wiggleState', 0),
+        smoothWiggle: b('smoothWiggle', false), composite: n('composite', 0),
+      }));
+      return true;
+    }
+    case 'write-on':
+      data.set(writeOnBrushData(
+        data, w, h,
+        { xy: arr('brushTrailXY'), size: arr('brushTrailSize'), attr: arr('brushTrailAttr'), filled: b('filled', false) },
+        {
+          brushX: n('brushX', 0), brushY: n('brushY', 0), rgb: rgb('color', [255, 255, 255]), size: n('size', 8),
+          hardness: n('hardness', 75), opacity: n('opacity', 100), paintTimeProps: n('paintTimeProps', 0),
+          brushTimeProps: n('brushTimeProps', 0), paintStyle: n('paintStyle', 0),
+        },
+      ));
+      return true;
+    default:
+      return false;
+  }
+}

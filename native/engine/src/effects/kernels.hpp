@@ -16,6 +16,7 @@
 #pragma once
 
 #include <array>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -362,5 +363,57 @@ void smart_blur(RgbaView img, double radius, double threshold, double mode, Thre
 /// `cameraLensBlurData(src, w, h, radius, blades, rotation, gain, threshold)`.
 void camera_lens_blur(RgbaView img, double radius, double blades, double rotation, double gain, double threshold,
                       ThreadPool* pool);
+
+// ── strokePaint.ts family: pathStroke.ts, scribble.ts, writeOnBrush.ts ─────
+/// One mask of `unpackMaskPaths(maskPathsMeta, maskPathsXY, w, h)`: raster px,
+/// mode as its MASK_MODE_CODES index (none, add, subtract, intersect, lighten,
+/// darken, difference).
+struct MaskPolyline {
+  std::vector<Pt2> points;
+  bool closed = false;
+  int mode = 1;
+  bool inverted = false;
+};
+/// `unpackMaskPaths(meta, xy, w, h)`.
+[[nodiscard]] std::vector<MaskPolyline> unpack_mask_paths(std::span<const double> meta, std::span<const double> xy,
+                                                          int w, int h);
+/// `pickMaskPaths(params, w, h, allMasks)` with the picked mask's index
+/// resolved (`pathMaskIndex`; < 0 or out of range = none).
+[[nodiscard]] std::vector<MaskPolyline> pick_mask_paths(const std::vector<MaskPolyline>& masks, bool all_masks,
+                                                        double pick_index);
+
+struct PathStrokeOptions {
+  Rgb rgb{255, 255, 255};
+  double brush_size = 0, hardness = 0, opacity = 0, start = 0, end = 0, spacing = 0, paint_style = 0;
+  bool sequential = false;
+};
+/// `pathStrokeData(src, w, h, paths, options)`.
+void path_stroke(RgbaView img, const std::vector<MaskPolyline>& paths, const PathStrokeOptions& o, ThreadPool* pool);
+
+struct ScribbleOptions {
+  double mode = 0, fill_type = 0, edge_width = 0, end_cap = 0, join = 0, miter_limit = 0;
+  Rgb rgb{255, 255, 255};
+  double opacity = 0, angle = 0, stroke_width = 0, curviness = 0, curviness_variation = 0, spacing = 0,
+         spacing_variation = 0, path_overlap = 0, path_overlap_variation = 0, start = 0, end = 0;
+  bool sequential = true;
+  double seed = 0, wiggle_state = 0;
+  bool smooth_wiggle = false;
+  double composite = 0;
+};
+/// `scribbleData(src, w, h, masks, picked, options)`.
+void scribble(RgbaView img, const std::vector<MaskPolyline>& masks, const std::vector<MaskPolyline>& picked,
+              const ScribbleOptions& o, ThreadPool* pool);
+
+struct WriteOnTrail {
+  std::vector<double> xy, size, attr;
+  bool filled = false;
+};
+struct WriteOnBrushOptions {
+  double brush_x = 0, brush_y = 0;
+  Rgb rgb{255, 255, 255};
+  double size = 0, hardness = 0, opacity = 0, paint_time_props = 0, brush_time_props = 0, paint_style = 0;
+};
+/// `writeOnBrushData(src, w, h, trail, options)`.
+void write_on_brush(RgbaView img, const WriteOnTrail& trail, const WriteOnBrushOptions& o, ThreadPool* pool);
 
 }  // namespace premation::effects
