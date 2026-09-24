@@ -275,6 +275,14 @@ struct Parts {
   std::optional<Ptr<ColorMgmt>> cm;
   /// B3z: the transition records (transitionStore.capture(): comp id → records) — the `tx` part.
   std::optional<Ptr<Json>> tx;
+  /// F2 (undo parity): the order `apply` re-inserts composition records and
+  /// timelines in — not a part, a hint. Compositions have no order part (see
+  /// `note_comp_order`): the TypeScript engine re-inserts a restored record at
+  /// the END of `projectStore.comps` in its entry's key order, which is the
+  /// document order before the change followed by the compositions it created
+  /// in document order after it (state.ts `changedKeys` over `captureScope`).
+  /// Unset: key order.
+  Ptr<const IdList> compSeq;
   [[nodiscard]] bool empty() const noexcept;
 };
 
@@ -400,6 +408,8 @@ class Document {
   Ptr<Json> tx_;
   DocExtras extras_ = default_doc_extras();
   std::unique_ptr<Parts> journal_;
+  /// The composition order when the journal began (ChangeSet::compSeq).
+  IdList journalCompOrder_;
   std::vector<std::string> animOrder_;
   std::unordered_set<std::string> tlTouched_;
   bool tlAllDirty_ = true;

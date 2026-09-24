@@ -1,5 +1,6 @@
 #include "model.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace premation::doc {
@@ -113,7 +114,23 @@ void prune_opt(O& before, O& after) {
 
 }  // namespace
 
+namespace {
+/// `a`, then the ids of `b` that `a` lacks.
+Ptr<const IdList> join_seq(const Ptr<const IdList>& a, const Ptr<const IdList>& b) {
+  if (!b) return a;
+  if (!a) return b;
+  auto out = std::make_shared<IdList>(*a);
+  for (const std::string& id : *b) {
+    if (std::find(out->begin(), out->end(), id) == out->end()) out->push_back(id);
+  }
+  return out;
+}
+}  // namespace
+
 void ChangeSet::merge(const ChangeSet& later) {
+  const Ptr<const IdList> seq = join_seq(before.compSeq, later.before.compSeq);
+  before.compSeq = seq;
+  after.compSeq = seq;
   merge_map_before(before.nodes, later.before.nodes);
   merge_map_before(before.anims, later.before.anims);
   merge_map_before(before.comps, later.before.comps);
@@ -341,6 +358,7 @@ void Document::reorder_nodes(const IdList& order) {
 
 void Document::begin() {
   journal_ = std::make_unique<Parts>();
+  journalCompOrder_ = comps_.keys();
   animOrder_.clear();
 }
 
@@ -381,6 +399,16 @@ ChangeSet Document::commit() {
   journal_.reset();
   cs.after = current_of(cs.before);
   cs.prune();
+  if (!cs.before.comps.empty() || !cs.before.timelines.empty()) {
+    // The order undo / redo re-inserts compositions in (Parts::compSeq).
+    auto seq = std::make_shared<IdList>(std::move(journalCompOrder_));
+    for (const std::string& id : comps_.keys()) {
+      if (std::find(seq->begin(), seq->end(), id) == seq->end()) seq->push_back(id);
+    }
+    cs.before.compSeq = seq;
+    cs.after.compSeq = seq;
+  }
+  journalCompOrder_.clear();
   return cs;
 }
 
@@ -409,7 +437,23 @@ void Document::apply(const Parts& p) {
     if (v) anims_.set(k, v);
     else anims_.erase(k);
   }
-  for (const auto& [k, v] : p.comps) {
+  // Compositions and timelines in `compSeq` order first (a re-inserted record
+  // lands at the end, as in the TypeScript engine), then the rest by key.
+  const auto in_seq_order = [&p](const auto& map) {
+    std::vector<std::string> keys;
+    keys.reserve(map.size());
+    if (p.compSeq) {
+      for (const std::string& id : *p.compSeq) {
+        if (map.contains(id)) keys.push_back(id);
+      }
+    }
+    for (const auto& [k, v] : map) {
+      if (!p.compSeq || std::find(p.compSeq->begin(), p.compSeq->end(), k) == p.compSeq->end()) keys.push_back(k);
+    }
+    return keys;
+  };
+  for (const std::string& k : in_seq_order(p.comps)) {
+    const Ptr<Json>& v = p.comps.find(k)->second;
     note_comp(k);
     if (v) {
       if (!comps_.contains(k)) note_comp_order();
@@ -419,7 +463,8 @@ void Document::apply(const Parts& p) {
       comps_.erase(k);
     }
   }
-  for (const auto& [k, v] : p.timelines) {
+  for (const std::string& k : in_seq_order(p.timelines)) {
+    const Ptr<Timeline>& v = p.timelines.find(k)->second;
     note_tl(k);
     if (v) {
       if (!timelines_.contains(k)) note_tl_order();

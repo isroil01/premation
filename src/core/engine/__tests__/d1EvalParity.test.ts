@@ -23,30 +23,20 @@
  * (native/engine/tests/data/d1_eval_parity.bin); without it this test fails
  * when the checked-in fixture no longer matches the TypeScript.
  *
- * Format (little-endian; a blob is u32 length + bytes): "D1EV", u32 version,
- * u32 project-file count, per file a path blob + a JSON document blob (the
- * corpus fixtures, seeded into both engines' test ports); u32 session count;
- * per session a name blob, u32 record count; per record u8 kind
- * (0 = session request, 1 = probe), u32 revision step, a label blob (the
- * command / query type), the request — u8 form 0 + the encoded
- * EngineMessage{request} blob, or form 1 (a probe getPropertyValues over the
- * same properties as an earlier record): u32 that record's index, u32 seq,
- * f64 time, u8 evaluated — and the
- * response: u8 form, then for form 0 the encoded EngineMessage{response} blob
- * (seq = 0, revision = 0), for form 1 (responses above FULL_LIMIT bytes, so
- * the fixture stays small) u32 length + u32 u32 hash (two FNV-1a 32 lanes,
- * `hash64`) of those bytes. GEN_NATIVE_D1_FULL=<file> writes every response
- * in full to <file> instead (D1_FIXTURE=<file> points the C++ test at it, which
- * then explains each difference with both values).
+ * Format: `__testHelpers__/parityFixture.ts` (shared with F2's undoParity).
+ * GEN_NATIVE_D1_FULL=<file> writes every response in full to <file> instead
+ * (D1_FIXTURE=<file> points the C++ test at it, which then explains each
+ * difference with both values).
  */
 
-import { encodeEngineMessage, type PropertyInfo, type Query, type Request, type Response } from '@motion/engine-api';
+import type { PropertyInfo, Query, Request, Response } from '@motion/engine-api';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CORPUS as B2_CORPUS, CORPUS_FIXTURES, FAMILY_CORPUS, GENERATED_CORPUS } from '../__testHelpers__/corpus';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
 import { installAppExpressionProviders } from './crossEngineProviders.test';
+import { encodeFixture, normalized, requestLabel, seededRandom, wireCopy, type RecordRow } from '../__testHelpers__/parityFixture';
 
 const OUT = path.resolve(__dirname, '../../../../native/engine/tests/data/d1_eval_parity.bin');
 const CORPUS = { ...B2_CORPUS, ...FAMILY_CORPUS, ...GENERATED_CORPUS };
@@ -58,43 +48,7 @@ const NUMERIC = new Set(['scalar', 'vec2', 'vec3', 'vec4', 'color', 'int']);
 /** The corpus's project files as the sessions saw them (JSON). */
 const FILES = new Map<string, string>();
 
-interface RecordRow {
-  kind: 0 | 1;
-  step: number;
-  label: string;
-  request: Uint8Array;
-  response: Uint8Array;
-  /** A probe getPropertyValues that repeats record `base`'s properties at another time. */
-  derive?: { base: number; seq: number; time: number; evaluated: boolean };
-}
-
 jest.useFakeTimers();
-
-function normalized(res: Response): Uint8Array {
-  // saveProject's byte count is each engine's own serializer's (and the TS one
-  // stamps the save time): the C++ side compares its path only; store 0 so the
-  // fixture is reproducible.
-  const o = res.outcome;
-  const outcome = o.kind === 'command' && o.value.type === 'saveProject' ? { ...o, value: { ...o.value, bytes: 0 } } : o;
-  return encodeEngineMessage({ kind: 'response', value: { ...res, seq: 0, revision: 0, outcome } as Response });
-}
-
-/** mulberry32 — the legacy builders' scratch ids come from Math.random; seeded, the fixture is reproducible. */
-function seededRandom(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** A deep copy through the wire (the request exactly as the C++ engine will decode it). */
-function wireCopy(req: Request): Uint8Array {
-  return encodeEngineMessage({ kind: 'request', value: req });
-}
 
 async function recordSession(name: string): Promise<RecordRow[]> {
   const random = jest.spyOn(Math, 'random').mockImplementation(seededRandom(0x5eed));
@@ -117,7 +71,7 @@ async function recordSession(name: string): Promise<RecordRow[]> {
       const bytes = wireCopy(req);
       const before = h.engine.documentRevision;
       const res = await original(req);
-      const label = req.body.kind === 'batch' ? `batch(${req.body.value.commands.map((c) => c.type).join(',')})` : req.body.value.type;
+      const label = requestLabel(req);
       const row: RecordRow = { kind: probing ? 1 : 0, step: res.revision - before, label, request: bytes, response: normalized(res) };
       if (probing && req.body.kind === 'query' && req.body.value.type === 'getPropertyValues') {
         const q = req.body.value;
@@ -169,73 +123,6 @@ async function recordSession(name: string): Promise<RecordRow[]> {
   }
 }
 
-/** Responses larger than this are stored as length + hash. */
-const FULL_LIMIT = 768;
-
-/** Two FNV-1a 32-bit lanes (offset bases 2166136261 and 0x811c9dc5 ^ 0x5bd1e995), as the C++ test computes them. */
-function hash64(b: Uint8Array): [number, number] {
-  let h1 = 0x811c9dc5;
-  let h2 = (0x811c9dc5 ^ 0x5bd1e995) >>> 0;
-  for (let i = 0; i < b.length; i++) {
-    h1 = Math.imul(h1 ^ b[i]!, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 ^ b[i]!, 0x01000193) >>> 0;
-  }
-  return [h1, h2];
-}
-
-function encodeFixture(sessions: Array<[string, RecordRow[]]>, full: boolean): Buffer {
-  const parts: Uint8Array[] = [];
-  const u32 = (n: number): void => {
-    const b = new Uint8Array(4);
-    new DataView(b.buffer).setUint32(0, n, true);
-    parts.push(b);
-  };
-  const blob = (b: Uint8Array): void => {
-    u32(b.length);
-    parts.push(b);
-  };
-  const text = (s: string): void => blob(new TextEncoder().encode(s));
-  parts.push(new TextEncoder().encode('D1EV'));
-  u32(2);
-  u32(FILES.size);
-  for (const [p, doc] of FILES) {
-    text(p);
-    text(doc);
-  }
-  u32(sessions.length);
-  for (const [name, rows] of sessions) {
-    blob(new TextEncoder().encode(name));
-    u32(rows.length);
-    for (const r of rows) {
-      parts.push(Uint8Array.of(r.kind));
-      u32(r.step >>> 0);
-      text(r.label);
-      if (r.derive) {
-        parts.push(Uint8Array.of(1));
-        u32(r.derive.base);
-        u32(r.derive.seq);
-        const t = new Uint8Array(8);
-        new DataView(t.buffer).setFloat64(0, r.derive.time, true);
-        parts.push(t, Uint8Array.of(r.derive.evaluated ? 1 : 0));
-      } else {
-        parts.push(Uint8Array.of(0));
-        blob(r.request);
-      }
-      if (full || r.response.length <= FULL_LIMIT) {
-        parts.push(Uint8Array.of(0));
-        blob(r.response);
-      } else {
-        parts.push(Uint8Array.of(1));
-        const [h1, h2] = hash64(r.response);
-        u32(r.response.length);
-        u32(h1);
-        u32(h2);
-      }
-    }
-  }
-  return Buffer.concat(parts);
-}
-
 describe('D1: evaluated values of the replay corpus (fixture for the C++ engine)', () => {
   const sessions: Array<[string, RecordRow[]]> = [];
 
@@ -249,8 +136,8 @@ describe('D1: evaluated values of the replay corpus (fixture for the C++ engine)
     // test.each runs in declaration order; sort anyway so the file never depends on it.
     sessions.sort((a, b) => Object.keys(CORPUS).indexOf(a[0]) - Object.keys(CORPUS).indexOf(b[0]));
     const fullTo = process.env.GEN_NATIVE_D1_FULL;
-    if (fullTo) writeFileSync(fullTo, encodeFixture(sessions, true));
-    const bytes = encodeFixture(sessions, false);
+    if (fullTo) writeFileSync(fullTo, encodeFixture(FILES, sessions, true));
+    const bytes = encodeFixture(FILES, sessions, false);
     const digest = createHash('sha256').update(bytes).digest('hex');
     const records = sessions.reduce((n, [, r]) => n + r.length, 0);
     const probes = sessions.reduce((n, [, r]) => n + r.filter((x) => x.kind === 1).length, 0);
