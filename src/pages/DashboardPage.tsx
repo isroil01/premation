@@ -22,7 +22,9 @@ import {
   clampDimension, clampFps, clampDuration, describeSize, describeDuration,
   aspectRatioLabel,
 } from '@core/composition/presets';
-import { useAssetStore, type AssetFolder } from '@stores/assetStore';
+import { useAssetStore, purgeStoredAssets, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { edit } from '@core/engine/uiEdits';
+import { engine } from '@core/engine/engineInstance';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import { createFolderEdit, createFolderTreeEdit, importBrowserFilesEdit, renameItemEdit } from '@layout/Assets/assetEdits';
 import type { CompositionSettings } from '@stores/compositionStore';
@@ -165,6 +167,22 @@ function formatBytes(bytes: number): string {
   return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 }
 
+/**
+ * The Dashboard's library Delete — PERMANENT ("cannot be undone"): the items
+ * leave the document through the engine (`removeItems`, with the layers that
+ * use them), then their stored bytes are purged (local DB + cloud). An undo of
+ * that entry would bring back records whose bytes are gone, so the history is
+ * cleared with it — the delete is not undoable, as the dialog says.
+ */
+async function deletePermanentlyEdit(items: readonly string[], assets: readonly ImportedAsset[]): Promise<boolean> {
+  if (items.length === 0) return false;
+  const res = await edit('Delete', { type: 'removeItems', items: [...items], removeUsingLayers: true });
+  if (!res.ok) return false;
+  purgeStoredAssets(assets);
+  await engine().execute({ type: 'clearHistory' });
+  return true;
+}
+
 export function DashboardPage(): JSX.Element {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -218,10 +236,6 @@ export function DashboardPage(): JSX.Element {
   // in it), and a project opened in the editor stays loaded behind the dashboard — so these are
   // document writes. Folders go through the engine (createFolder / renameItem; off the editor
   // route `engine()` is a portless engine, which item commands do not need).
-  // B3-gap: delete an item's stored bytes — the dashboard's Delete removes the asset from the device library and the cloud ("cannot be undone"); `removeItems` deliberately keeps storage so undo can restore it.
-  const removeAsset = useAssetStore((s) => s.removeAsset);
-  // B3-gap: delete stored bytes (as removeAsset) — removing a folder deletes the assets inside it from the library.
-  const removeFolder = useAssetStore((s) => s.removeFolder);
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
@@ -601,14 +615,21 @@ export function DashboardPage(): JSX.Element {
         : 'Delete this empty folder?',
       { confirmLabel: 'Delete', isDanger: true }
     );
-    if (ok) removeFolder(folder.id);
+    if (!ok) return;
+    // The folder tree and everything in it.
+    const doomed = new Set([folder.id]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const f of folders) if (f.parentId && doomed.has(f.parentId) && !doomed.has(f.id)) { doomed.add(f.id); grew = true; }
+    }
+    const assets = storeAssets.filter((a) => a.folderId != null && doomed.has(a.folderId));
+    await deletePermanentlyEdit([...doomed, ...assets.map((a) => a.id)], assets);
   };
 
   const handleDeleteAsset = async (id: string, name: string): Promise<void> => {
     if (!await customConfirm('Delete Asset', `Delete “${name}”? This cannot be undone.`, { isDanger: true, confirmLabel: 'Delete' })) return;
     try {
-      removeAsset(id);
-      await api.deleteAsset(id).catch(() => undefined);
+      await deletePermanentlyEdit([id], storeAssets.filter((a) => a.id === id));
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Could not delete that asset.');
     }

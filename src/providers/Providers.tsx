@@ -47,7 +47,8 @@ import {
 import { selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
-import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
+import { baselineHistoryEdit } from '@core/engine/historyBaseline';
+import { attachHistoryRecording, performUndo, performRedo } from '@stores/historyStore';
 import { attachRenderBackendEvents } from '@stores/renderBackendStore';
 import { Button } from '@components/Button';
 import { openAbout } from '@layout/Help/AboutDialog';
@@ -3060,9 +3061,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // History: initial "Open" state, then a debounced snapshot after edits.
         try {
-          useHistoryStore.getState().reset();
-          // B3-legacy: engine gap — the 700 ms recorder's baseline at boot (history infrastructure, not an edit); it goes with the recorder (ENGINE_API.md §15.3).
-          useHistoryStore.getState().record('Open', true);
+          // The history baseline at boot (a load boundary; history infrastructure, not an edit).
+          void baselineHistoryEdit('Open');
           // The debounce lives in the store so undo/redo can flush it — a
           // pending snapshot that only exists in a local closure is why Ctrl+Z
           // inside the window used to eat two actions.
@@ -3170,8 +3170,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
                       // every project not shot at 60.
                       getTimelineController().seekSeconds(t);
                       bumpScene();
-                      // B3-legacy: engine gap — the recorder's baseline after crash recovery (history infrastructure, not an edit); it goes with the recorder.
-                      useHistoryStore.getState().record('Recovered', true);
+                      // The history baseline after crash recovery (a load boundary).
+                      void baselineHistoryEdit('Recovered');
                       const s = useProjectStore.getState();
                       if (s.activeTabId) s.actions.markDirty(s.activeTabId, true);
                       // The scene is back; get the project browser out of its way.

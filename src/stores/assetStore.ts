@@ -572,6 +572,15 @@ function saveAssignments(assets: ImportedAsset[]): void {
  * Deliberately does NOT touch store state. The caller removes the records, and
  * does it in a single write — see `removeAssets`.
  */
+/**
+ * Permanently delete items' STORED BYTES (local DB, cloud copy, blob URLs) —
+ * the Dashboard's library Delete ("cannot be undone"). Storage only: the
+ * document's records are removed through the engine (`removeItems`) first.
+ */
+export function purgeStoredAssets(assets: readonly ImportedAsset[]): void {
+  for (const a of assets) releaseAsset(a);
+}
+
 function releaseAsset(asset: ImportedAsset): void {
   if (asset.src.startsWith('blob:')) URL.revokeObjectURL(asset.src);
   if (asset.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(asset.thumbSrc);

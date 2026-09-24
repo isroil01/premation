@@ -24,12 +24,11 @@ import { Progress } from '@components/Progress';
 import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useHistoryStore } from '@stores/historyStore';
-import { bumpScene } from '@stores/sceneStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
 import { api, type ProjectVersionSummary } from '@core/api/client';
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
+import type { EditorDocument } from '@core/api/cloudDocument';
+import { withDocumentSwapped } from '@core/project/documentSwap';
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import { compSizeOf } from '@core/composition/compSizes';
 import { restoreVersionAsOneEdit } from './versionRestore';
@@ -69,24 +68,7 @@ async function renderLiveFrame(): Promise<string> {
  * editor showing the version.
  */
 export async function renderVersionFrame(doc: EditorDocument): Promise<string> {
-  const h = useHistoryStore.getState();
-  h.flush();
-  const live = captureDocument();
-  // B3-legacy: not an edit — the version is swapped in only to render one frame and swapped back
-  // (invisible to undo). Needs a render query over a document other than the open one (§13), which
-  // the engine does not have; until then the engine sees the swap as an external change and resyncs.
-  h.runRestoring(() => {
-    restoreDocument(structuredClone(doc));
-    bumpScene();
-  });
-  try {
-    return await renderLiveFrame();
-  } finally {
-    useHistoryStore.getState().runRestoring(() => {
-      restoreDocument(live);
-      bumpScene();
-    });
-  }
+  return withDocumentSwapped(doc, renderLiveFrame);
 }
 
 interface CompareProps {

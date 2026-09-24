@@ -19,7 +19,7 @@ import { ReadOnlyBanner } from '../components/ReadOnlyBanner';
 import { ApiFileAdapter } from '@core/files/ApiFileAdapter';
 import { useUIStore } from '@stores/uiStore';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
-import { useHistoryStore } from '@stores/historyStore';
+import { baselineHistoryEdit } from '@core/engine/historyBaseline';
 import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
@@ -71,9 +71,8 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         // finishing the transition is strictly more correct than abandoning
         // it half-done, unmounted or not: these writes go to singleton
         // stores, not to this component.
-        // B3-legacy: engine gap — the 700 ms recorder's baseline after an open (history infrastructure, not an edit); it goes with the recorder when B3 deletes it (ENGINE_API.md §15.3).
-        useHistoryStore.getState().reset();
-        useHistoryStore.getState().record('Open', true);
+        // The history baseline at this load boundary (history infrastructure, not an edit).
+        void baselineHistoryEdit('Open');
         const ws = useWorkspaceStore.getState();
         if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
         // The Footage viewer's memory is per-project-session: without this,

@@ -10,17 +10,9 @@
  */
 
 import { create } from 'zustand';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { defaultAnimation } from '@motion/animation';
-import { bumpScene, batchScene } from './sceneStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import {
-  applySharedClips,
   captureSharedState,
-  cloneStateForRestore,
-  internState,
-  noteRestoredState,
   statesEqual,
   type DocState,
 } from '@core/commands/snapshotSharing';
@@ -37,73 +29,9 @@ function captureState(): DocState {
   return captureSharedState();
 }
 
-/**
- * Make the live document match a snapshot. The ONE restore path for every
- * snapshot entry — `StoreSnapshotCommand` and the AI transaction's rollback.
- *
- * With clip geometry in the snapshot (unified history), the restore runs as
- * one scene batch in this order: scene, animation, then the timeline —
- * membership reconciled against the restored scene for EVERY registered
- * composition (not just the active one, which is all the `SceneGraphChanged`
- * subscriber syncs), then geometry written onto the bars that differ. A
- * snapshot from before the flag (no `clips`) restores as it always did and the
- * `SceneGraphChanged` subscriber re-seeds its bars.
- */
-export function restoreSnapshotState(state: DocState): void {
-  // A private copy: the stores keep what they are given, and these objects
-  // are shared with neighbouring entries.
-  const copy = cloneStateForRestore(state);
-  // B3-legacy: not a UI edit — the legacy recorder's own undo/redo restore of its snapshot entries;
-  // ENGINE_API.md §15.3 deletes it with the recorder once every area is 0.
-  if (copy.clips) {
-    batchScene(() => {
-      sceneProjectIO.restore(copy.scene);
-      defaultAnimation.restore(copy.anim);
-      applySharedClips(copy.clips);
-    });
-  } else {
-    sceneProjectIO.restore(copy.scene);
-    // B3-legacy: see above (recorder restore).
-    defaultAnimation.restore(copy.anim);
-  }
-  noteRestoredState(state.scene, state.anim, state.clips);
-  bumpScene();
-}
-
-export class StoreSnapshotCommand implements IUndoableCommand {
-  readonly label: string;
-  /**
-   * A deliberate, user-meaningful entry (the "Open" baseline, a pinned
-   * snapshot) rather than an auto-captured edit. `record`'s flag used to be
-   * ignored while the History panel read `(e as any).named` — always undefined
-   * — so a pinned snapshot looked identical to every auto entry.
-   */
-  readonly named: boolean;
-  private readonly before: DocState;
-  private readonly after: DocState;
-
-  constructor(label: string, before: DocState, after: DocState, named = false) {
-    this.label = label;
-    // Callers outside this store (the AI transaction, the dynamics bake) still
-    // build full copies; interning re-expresses them with shared nodes so a long
-    // session of those entries does not hold a document per step. Same content.
-    this.before = internState(before);
-    this.after = before === after ? this.before : internState(after);
-    this.named = named;
-  }
-
-  execute(_ctx: CommandContext): void {
-    this.apply(this.after);
-  }
-
-  undo(_ctx: CommandContext): void {
-    this.apply(this.before);
-  }
-
-  private apply(state: DocState): void {
-    restoreSnapshotState(state);
-  }
-}
+// The snapshot entry and its restore are history infrastructure (core/commands).
+export { StoreSnapshotCommand, restoreSnapshotState } from '@core/commands/snapshotCommand';
+import { StoreSnapshotCommand } from '@core/commands/snapshotCommand';
 
 /** Debounce window for coalescing a burst of edits into one history entry. */
 const RECORD_DEBOUNCE_MS = 700;
