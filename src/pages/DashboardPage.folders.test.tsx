@@ -89,9 +89,7 @@ it('renaming the new folder is one engine entry (Enter and the blur that follows
   expect(h.doc()).toBe(before);
 });
 
-it('Import folder makes the tree as one entry and files each file into its folder', async () => {
-  const batch = jest.fn(async () => []);
-  useAssetStore.setState({ addAssetsBatch: batch as never });
+it('Import folder makes the tree as one entry, then imports each file into its folder (importBytes)', async () => {
   renderAssetsTab();
   const file = (rel: string): File => {
     const f = new File(['x'], rel.replace(/^.*\//, ''), { type: 'image/png' });
@@ -106,19 +104,17 @@ it('Import folder makes the tree as one entry and files each file into its folde
     fireEvent.change(input, { target: { files } });
     await engineIdle();
   });
-  await waitFor(() => expect(batch).toHaveBeenCalledTimes(1));
-  expect(historyLabels().length).toBe(n + 1);
-  expect(historyLabels().at(-1)).toBe('New Folders');
+  await waitFor(() => expect(historyLabels().slice(n)).toEqual(['New Folders', 'Import 3 Files']));
   const pack = folderNamed('Pack')!;
   const logos = folderNamed('logos')!;
   expect(pack.parentId).toBeNull();
   expect(logos.parentId).toBe(pack.id);
-  const items = (batch.mock.calls[0] as unknown as [Array<{ file: File; folderId: string | null }>])[0];
-  expect(items.map((i) => [i.file.name, i.folderId])).toEqual([
+  const placed = useAssetStore.getState().assets.map((a) => [a.name, a.folderId ?? null]);
+  expect(placed).toEqual(expect.arrayContaining([
     ['a.png', logos.id],
     ['b.png', pack.id],
     ['c.png', logos.id],
-  ]);
-  await act(async () => { await h.run({ type: 'undo' }); });
+  ]));
+  await act(async () => { await h.run({ type: 'undo' }); await h.run({ type: 'undo' }); });
   expect(h.doc()).toBe(before);
 });

@@ -24,7 +24,8 @@ import {
 } from '@core/composition/presets';
 import { useAssetStore, type AssetFolder } from '@stores/assetStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
-import { createFolderEdit, createFolderTreeEdit, renameItemEdit } from '@layout/Assets/assetEdits';
+import { createFolderEdit, createFolderTreeEdit, importBrowserFilesEdit, renameItemEdit } from '@layout/Assets/assetEdits';
+import type { CompositionSettings } from '@stores/compositionStore';
 import {
   api,
   type AccountRecord,
@@ -34,8 +35,6 @@ import {
 } from '@core/api/client';
 import { usePagedList } from '@hooks/usePagedList';
 import { clearRecovery } from '@core/persistence/recovery';
-import { useCompositionStore, type CompositionSettings } from '@stores/compositionStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { DashboardPluginsTab } from './DashboardPluginsTab';
@@ -219,8 +218,6 @@ export function DashboardPage(): JSX.Element {
   // in it), and a project opened in the editor stays loaded behind the dashboard — so these are
   // document writes. Folders go through the engine (createFolder / renameItem; off the editor
   // route `engine()` is a portless engine, which item commands do not need).
-  // B3-gap: import from bytes / a File's path — the dashboard's pickers hand browser `File`s (no path for `importFiles`).
-  const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   // B3-gap: delete an item's stored bytes — the dashboard's Delete removes the asset from the device library and the cloud ("cannot be undone"); `removeItems` deliberately keeps storage so undo can restore it.
   const removeAsset = useAssetStore((s) => s.removeAsset);
   // B3-gap: delete stored bytes (as removeAsset) — removing a folder deletes the assets inside it from the library.
@@ -452,11 +449,9 @@ export function DashboardPage(): JSX.Element {
       };
       const p = await create(compName, initialDoc);
       if (!p?.id) throw new Error('The server did not return a project id.');
-      // B3-gap: create a project FROM SETTINGS — project creation, not an edit: primes the live comp store and timeline for the document the editor is about to open (`openPath` then restores `initialDoc`'s comps, but not a timeline: it has none). `newProject` takes only a template, and the store written here still belongs to whatever project is loaded behind the dashboard, so an engine `setCompositionSettings` would edit (and dirty) THAT project.
-      useCompositionStore.getState().update(initialComp);
-      getTimelineController().setFrameRate(fps);
-      getTimelineController().setDurationSeconds(durationSeconds);
-      getTimelineController().seekSeconds(0);
+      // Nothing primed here: the stores still belong to whatever project is
+      // loaded behind the dashboard. Opening `initialDoc` states its comps, and
+      // its timeline is seeded from them (restoreDocument: no `timelines`).
       // Starting from a video: the File rides the handoff; the editor's
       // ProjectLoader imports it and lands it at full frame the moment the
       // project opens. The comp fields above were prefilled from its probe.
@@ -544,7 +539,8 @@ export function DashboardPage(): JSX.Element {
     setDataError('');
     try {
       const items = [...files].map((f) => ({ file: f, folderId: currentFolderId }));
-      await addAssetsBatch(items);
+      // Browser `File`s (no path): imported from their bytes, one entry.
+      await importBrowserFilesEdit(items);
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
@@ -576,7 +572,7 @@ export function DashboardPage(): JSX.Element {
       if (dirs.length > 0 && pathToId.size === 0) throw new Error('Could not create the folders.');
       const items = picked.map(({ file, dir }) => ({ file, folderId: dir ? pathToId.get(dir) ?? currentFolderId : currentFolderId }));
       if (items.length > 0) {
-        await addAssetsBatch(items);
+        await importBrowserFilesEdit(items);
       }
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Folder import failed.');

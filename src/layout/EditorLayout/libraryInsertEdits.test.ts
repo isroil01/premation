@@ -15,12 +15,16 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { importPathsEdit } from '@layout/Assets/assetEdits';
 import { insertSfxEdit } from './sfxInsertEdits';
 import { applyTransitionEdit } from './transitionInsertEdits';
+import { documentMirror } from '@stores/documentMirror';
+import { getNodeEffects } from '@core/effects/effects';
+import { readLayerFlag } from '@core/scene/layerFlags';
 
 let h: Harness & { engine: LocalEngine };
+let scene: Awaited<ReturnType<typeof buildScene>>;
 
 beforeEach(async () => {
   h = await setupAppEngine();
-  await buildScene(h);
+  scene = await buildScene(h);
 });
 afterEach(async () => {
   await h.dispose();
@@ -91,5 +95,30 @@ describe('Transitions', () => {
       ids = (await applyTransitionEdit('tr-venetian', 'Apply Venetian Bars'))?.nodeIds ?? [];
     });
     expect(ids).toHaveLength(5);
+  });
+
+  it('layer mode keys the selected layer, adds its Blur effect: one entry, undone exactly', async () => {
+    documentMirror().start();
+    await documentMirror().whenIdle();
+    useSelectionStore.getState().set([scene.T]);
+    await oneEntry('Apply Blur Through', async () => {
+      const r = await applyTransitionEdit('tr-blur-through', 'Apply Blur Through');
+      expect(r?.mode).toBe('layer');
+      expect(r?.nodeIds).toEqual([scene.T]);
+    });
+    const blur = getNodeEffects(scene.T).find((e) => e.type === 'blur');
+    expect(blur).toBeDefined();
+    const tree = await h.query({ type: 'getKeyframes', props: [{ layer: scene.T, path: `effects/${blur!.id}/amount` }] });
+    expect(tree.sets[0]?.keyframes.length).toBe(2);
+  });
+
+  it('layer mode turns motion blur on when the recipe asks', async () => {
+    documentMirror().start();
+    await documentMirror().whenIdle();
+    useSelectionStore.getState().set([scene.T]);
+    await oneEntry('Apply Whip Pan', async () => {
+      expect((await applyTransitionEdit('tr-whip-pan', 'Apply Whip Pan'))?.mode).toBe('layer');
+    });
+    expect(readLayerFlag(defaultSceneGraph.getNode(scene.T)!, 'motionBlur')).toBe(true);
   });
 });

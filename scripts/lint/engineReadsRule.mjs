@@ -81,6 +81,7 @@ const PURE_READS = new Set([
   'makeKeyframeId', 'parseKeyframeId', 'updateNodeComponentProp',
   // Libraries and clipboards the user keeps across projects — not the document.
   'listPresets', 'exportPresets', 'presetFolder', 'listEffectPresets', 'hasEffectClipboard',
+  'getTransitionItem', // core/library/transitionLibrary: a lookup in the static TRANSITION_ITEMS catalog
   // Pure string helpers living in modules that also read the scene.
   'familyKey', // core/fonts/missingFonts: normalises a family name
   'parseColorChannels', // core/effects/effects: hex → channels

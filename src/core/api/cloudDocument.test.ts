@@ -54,6 +54,23 @@ beforeEach(() => {
 });
 
 describe('captureDocument → restoreDocument', () => {
+  it('a document with comps but no timelines gets fresh timelines from its comps, not the previous project\'s', () => {
+    const ctrl = getTimelineController();
+    const original = structuredClone(captureDocument());
+    const projectState = useProjectStore.getState();
+    ctrl.setFrameRate(60);
+    ctrl.setDurationSeconds(20);
+    const doc = structuredClone(captureDocument());
+    delete doc.timelines;
+    doc.comps = { comp_root: { ...doc.comps!.comp_root!, fps: 24, durationSeconds: 5 } };
+    restoreDocument(doc);
+    expect(ctrl.fps).toBe(24);
+    expect(ctrl.durationSeconds).toBe(5);
+    useProjectStore.setState(projectState, true);
+    ctrl.reset(); // re-seed from the restored comp record, then its timelines
+    restoreDocument(original);
+  });
+
   it('preserves the work area', () => {
     const ctrl = getTimelineController();
     ctrl.setWorkArea(1, 3);

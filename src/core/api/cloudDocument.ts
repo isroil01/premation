@@ -305,7 +305,12 @@ export function restoreDocument(doc: EditorDocument): void {
     useProjectStore.getState().actions.updateComp(doc.comp.id, doc.comp);
   }
 
+  // Timelines are stated whole too: a document that carries none (a project
+  // created from settings on the dashboard, an old export) gets fresh ones
+  // seeded from its comps' own rate and duration on first access — never the
+  // previous project's.
   if (doc.timelines) getTimelineController().restore(doc.timelines);
+  else if (doc.comps || doc.comp) getTimelineController().reset();
   if (doc.openTabs) useProjectStore.getState().actions.hydrateWorkspaceTabs(doc.openTabs);
   if (doc.motionBlur) useMotionBlurStore.getState().restore(doc.motionBlur);
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);

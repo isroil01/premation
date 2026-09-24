@@ -86,13 +86,19 @@ export interface AssistantKeyOptions {
    * against whatever the previous preview left.
    */
   always?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Tolerate changes to the named layers' own nodes (a switch the helper also
+   * flips): the caller sends those as their own commands — only the keyframes
+   * are translated here.
+   */
+  allowNodeChanges?: boolean;
 }
 
 export function assistantKeyframeCommands<T>(layers: readonly string[], build: () => T, opts: AssistantKeyOptions = {}): AssistantPlan<T> {
   const ids = [...new Set(layers)];
   const before = new Map(ids.map((id) => [id, keyLists(id)]));
   return offDocument(build, ({ value, changed }) => {
-    const allowed = new Set(ids.map((id) => `anim:${id}`));
+    const allowed = new Set(ids.flatMap((id) => (opts.allowNodeChanges ? [`anim:${id}`, `node:${id}`] : [`anim:${id}`])));
     const stray = changed.filter((k) => !allowed.has(k));
     if (stray.length > 0) throw new OffDocumentError(`the assistant changed more than keyframes (${stray.slice(0, 3).join(', ')})`);
     const cmds: Command[] = [];
