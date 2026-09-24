@@ -10,6 +10,8 @@
 #include <unordered_map>
 
 #include "effects_port.hpp"
+#include "frame_build.hpp"
+#include "rig_bridge.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
 #include "misc_port.hpp"
@@ -1142,12 +1144,26 @@ void Walk::build_node(const doc::Node& n) {
     l.anchorX = a.get("anchorX").value_or(ax0);
     l.anchorY = a.get("anchorY").value_or(ay0);
   }
-  // Rigs.
-  if (fx.at("puppet").is_object() && fx.at("puppet").at("pins").is_array() && !fx.at("puppet").at("pins").arr().empty()) {
-    unported(l, n, "puppet pins");
-  }
-  if (fx.at("skeleton").is_object() && fx.at("skeleton").at("bones").is_array() && !fx.at("skeleton").at("bones").arr().empty()) {
-    unported(l, n, "skeleton rigs");
+  // Rigs: puppet pins and skeletons → layer.deformedMesh (rig_mesh.cpp).
+  if (rig_present(fx)) {
+    const bool pathSilhouette = !l.pathOpen && l.pathPoints.is_array() && l.pathPoints.arr().size() >= 3;
+    if (layerKind == LayerKind::image && l.src && !pathSilhouette) {
+      // buildSnapshot culls an image's rest mesh by the bitmap's alpha
+      // (rigCoverageMask); that needs the decoded pixels on this side.
+      unported(l, n, "rigs on image layers (alpha coverage mesh)");
+    } else {
+      RigInputs ri;
+      ri.fx = &fx;
+      ri.width = l.width;
+      ri.height = l.height;
+      ri.pad = raster_padding(l);
+      ri.pathPoints = l.pathPoints.is_array() ? &l.pathPoints : nullptr;
+      ri.pathOpen = l.pathOpen;
+      ri.rigT = l.sourceTime.value_or(t_);
+      RigResult rig = build_rig_mesh_for(d_, c_.expr, c_.cache, n.id, ri);
+      for (std::string& what : rig.unported) unported(l, n, std::move(what));
+      if (rig.unported.empty()) l.deformedMesh = std::move(rig.mesh);
+    }
   }
   // Shape geometry: stored multi-run paths; the operator chain is not ported.
   if (layerKind == LayerKind::shape) {

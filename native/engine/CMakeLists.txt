@@ -311,6 +311,31 @@ if(TARGET engine_render_graph)
   endif()
 endif()
 
+# engine_scene_core: the scene builder's GPU- and raster-free ports — rigs
+# (rig_mesh + the document bridge), extrusion geometry (extrude_mesh,
+# trace_bitmap). engine_scene builds on it; the cross-engine rig parity test
+# runs against it without Skia or Dawn.
+add_library(engine_scene_core STATIC
+  src/scene/rig_mesh.cpp
+  src/scene/rig_bridge.cpp
+  src/scene/extrude_mesh.cpp
+  src/scene/trace_bitmap.cpp
+  src/scene/primitive_mesh.cpp
+)
+target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
+target_link_libraries(engine_scene_core PUBLIC engine_core motion::jsmath PRIVATE motion::options)
+if(MSVC)
+  target_compile_options(engine_scene_core PRIVATE /bigobj)
+endif()
+if(MOTION_BUILD_TESTS)
+  # The rig block against buildSnapshot's meshes (tests/data/rig_parity.json,
+  # src/core/rig/rigCrossEngine.test.ts).
+  add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp)
+  target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
+endif()
+
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
 target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
@@ -618,18 +643,13 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/color_settings.cpp
     src/scene/glass_port.cpp
     src/scene/retime_port.cpp
-    src/scene/extrude_mesh.cpp
-    src/scene/trace_bitmap.cpp
     src/scene/extrusion_mesh.cpp
-    src/scene/rig_mesh.cpp
+    src/scene/mesh_check.cpp
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )
-  # Not built yet: src/scene/mesh_check.cpp (the premation-scene --mesh-check
-  # parity tool) needs the primitive-mesh producer (primitive_mesh.hpp), which
-  # is not written yet.
   target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
-  target_link_libraries(engine_scene PUBLIC engine_core engine_plugins engine_raster engine_render_graph PRIVATE motion::options)
+  target_link_libraries(engine_scene PUBLIC engine_core engine_scene_core engine_plugins engine_raster engine_render_graph PRIVATE motion::options)
   if(WIN32)
     target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)
   endif()

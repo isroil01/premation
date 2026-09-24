@@ -13,7 +13,7 @@
 
 #include "canvas.hpp"
 #include "extrusion_mesh.hpp"
-#include "frame_scene.hpp"
+#include "render_graph/frame_scene.hpp"
 #include "json.hpp"
 #include "primitive_mesh.hpp"
 

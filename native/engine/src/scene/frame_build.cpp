@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <numbers>
@@ -63,6 +64,32 @@ double tier_for(double scale, double boxW, double boxH) {
 }
 
 float f32(double v) { return static_cast<float>(v); }
+
+/// normalizeDeformedMesh: rig-space vertices (centred layer px) → the unit
+/// quad the renderable's model spans (width/height + padding); uv and depth
+/// as they are. Float32 like the TypeScript's Float32Array; little-endian bytes.
+api::RenderDeformedMesh deformed_mesh_wire(const DeformedMeshData& m, double width, double height, double pad) {
+  const double w = width + 2 * pad;
+  const double h = height + 2 * pad;
+  api::RenderDeformedMesh out;
+  std::vector<float> v(m.vertices.size());
+  for (std::size_t i = 0; i + 3 < m.vertices.size(); i += 4) {
+    v[i] = f32(static_cast<double>(m.vertices[i]) / w + 0.5);
+    v[i + 1] = f32(static_cast<double>(m.vertices[i + 1]) / h + 0.5);
+    v[i + 2] = m.vertices[i + 2];
+    v[i + 3] = m.vertices[i + 3];
+  }
+  out.vertices.resize(v.size() * sizeof(float));
+  std::memcpy(out.vertices.data(), v.data(), out.vertices.size());
+  out.triangles.resize(m.triangles.size() * sizeof(std::uint16_t));
+  std::memcpy(out.triangles.data(), m.triangles.data(), out.triangles.size());
+  if (m.depth) {
+    std::vector<std::uint8_t> d(m.depth->size() * sizeof(float));
+    std::memcpy(d.data(), m.depth->data(), d.size());
+    out.depth = std::move(d);
+  }
+  return out;
+}
 
 Mat3 compose(double tx, double ty, double rad, double sx, double sy) {
   const double c = motion::js::cos(rad);
@@ -494,6 +521,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     }
   }
   r.effects = extract_spatial_effects(l, baked);
+  if (l.deformedMesh) r.deformed_mesh = deformed_mesh_wire(*l.deformedMesh, l.width, l.height, pad);
   if (baked) unported_.emplace_back(l.id, "CPU-baked effect chain / fill opacity (E4)");
   return r;
 }
@@ -688,6 +716,7 @@ double raster_padding(const RLayer& l) {
 
 bool needs_shape_raster(const RLayer& l) {
   if (l.kind != LayerKind::shape) return false;
+  if (l.deformedMesh) return true;
   if (l.primitive == "path") return true;
   if (l.fillPaint.is_object() && l.fillPaint.at("type").str() != "solid") return true;
   if (l.fillPaints.is_array()) {

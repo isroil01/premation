@@ -14,6 +14,10 @@
 //
 //   premation-scene --bench <scenes> --fonts <fonts.json> [--only a,b] [--frames N]
 //       frame-build (snapshot + scene), raster and render time per scene.
+//   premation-scene --mesh-check <scenes> --fonts <fonts.json> [--only a,b]
+//       every extrudedMesh of the exported FrameScenes rebuilt by the C++ mesh
+//       producers from its key alone (extrusions, traced text, primitives) and
+//       compared exactly (src/scene/mesh_check.hpp).
 //   premation-scene --synthetic <layers> --fonts <fonts.json> [--frames N]
 //       the same on a generated document of N animated layers (shapes, text,
 //       paths) — the 2000-layer perf case.
@@ -38,6 +42,7 @@
 #include "docexpr.hpp"
 #include "docio.hpp"
 #include "fonts.hpp"
+#include "mesh_check.hpp"
 #include "native_scene.hpp"
 #include "png_write.hpp"
 #include "scene_renderer.hpp"
@@ -818,13 +823,18 @@ int run(int argc, char** argv) {
     o.batch = opt["bench"];
     return bench(o);
   }
+  if (opt.contains("mesh-check")) {
+    Fonts fonts;
+    if (!load_fonts(o.fonts, o.profile, fonts)) return 2;
+    return sc::mesh_check(opt["mesh-check"], o.only, fonts.canvas);
+  }
   if (opt.contains("batch")) {
     o.batch = opt["batch"];
     o.out = opt.contains("out") ? fs::path(opt["out"]) : fs::path("native-scene-out");
     o.report = opt.contains("report") ? fs::path(opt["report"]) : o.out / "report.json";
     return batch(o);
   }
-  std::fprintf(stderr, "usage: premation-scene --batch DIR --fonts F --out DIR --report JSON | --bench DIR | --synthetic N\n");  // NOLINT(cppcoreguidelines-pro-type-vararg)
+  std::fprintf(stderr, "usage: premation-scene --batch DIR --fonts F --out DIR --report JSON | --bench DIR | --mesh-check DIR | --synthetic N\n");  // NOLINT(cppcoreguidelines-pro-type-vararg)
   return 64;
 }
 

@@ -263,6 +263,28 @@ the graph into the render thread behind the engine flag (replacing C2's
 compositor), and a WebGPU-free software parity path for CI (the gate needs a
 real adapter today).
 
+**D2 mesh producers (2026-09-24): rigs render from the C++ document;
+primitive, extrusion and rig geometry is byte-identical to the TypeScript.**
+Puppet pins and skeletons no longer fall back. `snapshot_build` runs the rig
+block (`rig_bridge` → `rig_mesh`) over the engine's own document and animation,
+and `frame_build` emits `deformedMesh`. Image layers are the exception: they
+stay reported, because the TypeScript culls their mesh with the decoded
+bitmap's alpha. The GPU- and raster-free ports now form their own library,
+`engine_scene_core`. Three cross-engine fixtures, each generated from the
+editor's code and guarded against staleness by its jest test, pin them in
+`engine_scene_core_tests`:
+- rigs: 7 cases / 13 frames, `.motion` document in, every vertex, index and
+  depth value equal;
+- primitives: 14 specs, every type, clamped segment counts, 32-bit indices,
+  rebuilt from the key alone;
+- extrusions: 9 recipes × bevel profiles, caps, hole bevel, uv box, Bézier
+  runs, a traced bitmap.
+
+`primitive_mesh.cpp` is the new port of primitiveMesh.ts and primitiveLayer's
+key/interleave. `premation-scene --mesh-check` is wired. **Remaining:** 3D
+layers in the C++ scene builder, which is where extrusions, primitives and
+models are placed.
+
 **D2 leftovers + D3 (2026-09-23): 436/436 frames bit-identical, 32 bpc, OCIO.**
 *The 7 low-alpha frames were never a renderer difference*: the C++ surface
 bytes already equalled the TS surface bytes. The harness's PNG encode
