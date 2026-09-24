@@ -35,7 +35,14 @@ struct PCtx {
 
 /// field: a static field (fields.hpp); layerFill: the layer's own solid fill colour (layer/fill);
 /// rig: a puppet / skeleton property (rig.hpp).
-enum class Special : std::uint8_t { none, sourceText, maskPath, maskMode, maskInverted, effectParam, field, layerFill, rig, fillStops };
+/// maskRotoBezier: a mask's RotoBezier switch (static, held in every shape key); shapePath: a shape layer's drawn
+/// outline (`layer/path.points`: static Geometry points + Closed, keys on the `path.points` data track).
+enum class Special : std::uint8_t {
+  none, sourceText, maskPath, maskMode, maskInverted, maskRotoBezier, effectParam, field, layerFill, rig, fillStops, shapePath
+};
+
+/// A shape layer's whole-outline keyframe track (AE's Path property).
+inline constexpr std::string_view kShapePathTrack = "path.points";
 
 /// A rig binding's storage (rigProps.ts RigRef): owner puppet | pin | skeleton | bone | ik | controller.
 struct RigRef {
@@ -119,6 +126,18 @@ struct Catalog {
 bool write_static_property_value(Document& d, std::string_view nodeId, std::string_view prop, double value);
 
 [[nodiscard]] api::BezierPath mask_to_bezier(const Json& maskPath);
+/// `vertexStatesOf(points)`: the per-vertex editing state (broken / tension) stored points carry.
+[[nodiscard]] std::vector<api::PathVertexState> vertex_states_of(const Json& points);
+/// `shapePoints(b, prev, path)`: a shape outline's points (no per-vertex feather: a listed one is `unsupported`).
+[[nodiscard]] Json shape_points(const api::BezierPath& b, const Json* prev, const std::string& path);
+/// `asPoints(v)`: v when it is a non-empty array of point objects, else nullptr.
+[[nodiscard]] const Json* as_points(const Json& v);
+/// A shape outline's Closed switch (`Geometry.open` marks an open path).
+[[nodiscard]] bool shape_closed(const Node& n);
+/// Set it — written only when it changes (notFound without a Geometry).
+void write_shape_closed(Document& d, std::string_view layer, bool closed);
+/// `shapePathValueOf(layer, v)`: stored outline points as the shape Path's value (none when not points).
+[[nodiscard]] api::Value shape_path_value_of(const Document& d, std::string_view layer, const Json& v);
 /// `bezierToPoints(b, prev)` → the mask point objects.
 [[nodiscard]] Json bezier_to_points(const api::BezierPath& b, const Json* prev);
 

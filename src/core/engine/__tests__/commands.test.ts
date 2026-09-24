@@ -218,6 +218,19 @@ export const CASES: Partial<Record<CommandType, Case>> = {
       return { type: 'setPaintPathAnimated', layer: s.B, stroke, animated: true, time: sec(1) };
     },
   },
+  editPathTopology: {
+    cmd: async (s, h) => {
+      const prop = { layer: s.A, path: `masks/${s.mask}/path` };
+      await h.run({ type: 'setAnimated', prop, animated: true, time: 0 });
+      return { type: 'editPathTopology', prop, op: { kind: 'insert', segment: 1, u: 0.25, indices: [], atStart: false }, closed: false };
+    },
+  },
+  setShapeOutline: {
+    cmd: (s) => ({
+      type: 'setShapeOutline', layer: s.B,
+      runs: [0, 1].map((i) => ({ vertices: [i * 50, 0, i * 50 + 40, 0, i * 50 + 40, 40], inTangents: [], outTangents: [], closed: i === 0, featherPoints: [], vertexStates: [{ vertex: 1, broken: true }] })),
+    }),
+  },
   // ── Layer time ──
   setLayerTiming: { cmd: (s) => ({ type: 'setLayerTiming', items: [{ layer: s.A, inPoint: sec(1), outPoint: sec(4) }, { layer: s.B, stretch: -2 }] }) },
   moveLayersInTime: { cmd: (s) => ({ type: 'moveLayersInTime', layers: [s.A], delta: sec(1), ripple: false }) },
@@ -311,7 +324,7 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   },
   // ── Groups ──
   addEffect: { cmd: (s) => ({ type: 'addEffect', layers: [s.A, s.B], effect: 'drop-shadow', index: 0, params: [] }) },
-  addMask: { cmd: (s) => ({ type: 'addMask', layer: s.B, mode: 'subtract', inverted: true, name: 'Hole', path: { vertices: [0, 0, 10, 0, 10, 10], inTangents: [], outTangents: [], closed: true, featherPoints: [] } }) },
+  addMask: { cmd: (s) => ({ type: 'addMask', layer: s.B, mode: 'subtract', inverted: true, name: 'Hole', path: { vertices: [0, 0, 10, 0, 10, 10], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] } }) },
   addPropertyGroup: { cmd: (s) => ({ type: 'addPropertyGroup', layer: s.T, parent: 'text/animators', matchName: 'ADBE Text Animator', index: 0, init: [], name: 'First' }) },
   removePropertyGroups: { cmd: (s) => ({ type: 'removePropertyGroups', groups: [{ layer: s.A, path: `effects/${s.fx}` }, { layer: s.A, path: `masks/${s.mask}` }, { layer: s.T, path: `text/animators/${s.animator}` }] }) },
   movePropertyGroup: {
@@ -353,7 +366,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(112);
+  expect(edits.length).toBe(114);
 });
 
 describe.each(edits)('%s', (type) => {

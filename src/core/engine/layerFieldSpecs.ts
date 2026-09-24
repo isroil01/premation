@@ -243,4 +243,18 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
     path: 'layer/backdropBlur', key: 'backdropBlur', label: 'Backdrop Blur', type: 'scalar', default: 0, min: 0,
     clearAtDefault: true, store: { component: 'Style', key: 'backdropBlur' }, when: { component: 'Style' },
   },
+  // ── B3 paths: a drawn outline's switches on its Geometry component. The
+  //    outline itself is `layer/path.points` (props.ts, a path value). ──
+  {
+    // AE RotoBezier: the tools derive every handle from the vertices (the
+    // handles stay stored in the points; this changes how the next edit behaves).
+    path: 'layer/pathRotoBezier', key: 'rotoBezier', label: 'RotoBezier', type: 'bool', default: false,
+    store: { component: 'Geometry', key: 'rotoBezier' }, when: { component: 'Geometry' }, encode: [[false, null], [true, true], [false, false]],
+  },
+  {
+    // Create Nulls From Paths ▸ Points Follow Nulls: [{index, nullId}] — vertex
+    // `index` is rebuilt from layer `nullId` every frame (buildSnapshot).
+    path: 'layer/pointBindings', key: 'pointBindings', label: 'Point Bindings', type: 'json', default: null, json: 'array',
+    store: { component: 'Geometry', key: 'pointBindings' }, when: { component: 'Geometry' },
+  },
 ];

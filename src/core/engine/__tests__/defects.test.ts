@@ -156,7 +156,7 @@ describe('§2.5 #7 mask-shape keyframe edits are undoable', () => {
     const prop = { layer: s.A, path: `masks/${s.mask}/path` };
     const before = h.doc();
     await h.run({ type: 'setAnimated', prop, animated: true, time: 0 });
-    const { keyframe } = await h.run({ type: 'setProperty', prop, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 50, 0, 50, 50], inTangents: [], outTangents: [], closed: true, featherPoints: [] } } });
+    const { keyframe } = await h.run({ type: 'setProperty', prop, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 50, 0, 50, 50], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] } } });
     await h.run({ type: 'moveKeyframes', ids: [keyframe!], delta: sec(1) });
     const keys = (await h.query({ type: 'getKeyframes', props: [prop] })).sets[0]!.keyframes;
     expect(keys.map((k) => k.time)).toEqual([0, sec(2)]);

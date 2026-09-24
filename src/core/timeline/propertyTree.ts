@@ -586,7 +586,7 @@ function strokeRows(node: SceneNode, nodeId: string): StaticPropertyRow[] {
  *
  * Like the Mask Shape row: the track holds whole-outline snapshots, so the
  * stopwatch keys the entire path at once (App routes `path.points` to
- * `togglePathAnimation`). Only a layer with a DRAWN outline — a primitive
+ * `pathStopwatchEdit`). Only a layer with a DRAWN outline — a primitive
  * rectangle has no vertices to snapshot until it is converted.
  */
 function shapePathRows(node: SceneNode): StaticPropertyRow[] {

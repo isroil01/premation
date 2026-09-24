@@ -27,7 +27,7 @@ import { apiParentOf, graph as docGraph, isLayer } from '@core/engine/doc';
 import { catalogFor, isAnimated, readStatic } from '@core/engine/props';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { readOsClipboardSvg } from '@core/commands/clipboard';
-import { copyPathFromSelection, pastePathOntoSelection } from '@core/workspace/pathCommands';
+import { copyPathFromSelection, pastePathEdit } from '@core/workspace/pathCommands';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { insertSvgDocument } from '@core/scene/sceneInsert';
 import { deleteKeyframesUi, pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
@@ -180,10 +180,8 @@ async function pasteLayersEdit(h: HeldLayers): Promise<string[] | null> {
  * was pasted, or null when there was nothing to paste.
  */
 export async function pasteEdit(): Promise<PasteResult> {
-  // B3-gap: a drawn shape layer's own outline has no path-valued API property, and a BezierPath
-  // drops split handles / RotoBezier tension; the path paste sends plain mask paths through the
-  // engine itself and keeps the legacy writer for the rest.
-  if (pastePathOntoSelection()) return 'path';
+  // A path paste (Direct Selection vertices copied): one engine edit onto the target outlines.
+  if (pastePathEdit()) return 'path';
   if (held?.kind === 'keyframes') {
     const targets = useSelectionStore.getState().ids.filter((id) => isLayer(id));
     if (targets.length === 0) return null;

@@ -245,7 +245,7 @@ their `GroupId`, never by index.
 | Effect param | `effects/<effectId>/<param>`; effect opacity `effects/<effectId>/compositing/opacity` (AE's Compositing Options group: 19 effects declare their own `opacity` param, so the flat path was ambiguous) | `effect.<id>.<param>`, `effect.<id>.fx.opacity` |
 | Colour (any) | one `color` Value at its path | four tracks `<base>_r/_g/_b/_a` |
 | Layer style | `styles/<styleId>/<param>` | `effect.layerstyle:<styleKey>.<param>` |
-| Mask | `masks/<maskId>/path`, `…/feather`, `…/opacity`, `…/expansion`, `…/mode`, `…/inverted` | path: whole-mask snapshots in `fx.maskAnim` (not a track); others `mask.<pathId>.<prop>` |
+| Mask | `masks/<maskId>/path`, `…/feather`, `…/opacity`, `…/expansion`, `…/mode`, `…/inverted`, `…/rotoBezier` (§15.10) | path: whole-mask snapshots in `fx.maskAnim` (not a track); others `mask.<pathId>.<prop>` |
 | Source text | `text/sourceText` (`textDocument` Value) | data track `text.source` + `Text.content`/`__runs` |
 | Text animator | `text/animators/<animatorId>/props/<prop>`, selector `text/animators/<animatorId>/selectors/<selectorId>/<param>` | `ta.<i>.<param>`, `ta.<i>.s<j>.<param>` |
 | Font axis | `text/axes/<tag>` — every axis, `wght` / `wdth` / `slnt` included (G1: one path each; their static value is the Text component's `fontWeight` — number or CSS weight string — / `fontWidth` / `fontSlant`) | `text.axis.<tag>`; `fontWeight`, `fontWidth`, `fontSlant` |
@@ -253,6 +253,7 @@ their `GroupId`, never by index.
 | Text animator / selector fields (G1, static) | `text/animators/<a>/props/trackingType`, `…/characterRange` (choices), `…/color`, `…/strokeColor` (optional colours, see `addProperties`), `…/blurY` (always present: unset = linked to Blur X); `text/animators/<a>/selectors/<s>/kind` (switched in place, id kept), `basedOn`, `mode`, `units`, `shape`, `randomizeOrder`, `lockDimensions`, `randomSeed`, `expression` (per kind) | animator / selector objects in `Text.__animators` |
 | Layer fill (G1) | `layer/fill` (colour, keyed through `fill_r/_g/_b/_a`: AE's Solid Color / Fill Color — present while the fill is solid); `layer/fillPaint`, `layer/fills` (json paint objects: the primary paint, the stack); `layer/width` / `layer/height` on text layers (the wrap box) | `fx.fill` solid paint, else the `fill` string on Style / Text; `fx.fills` |
 | Shape contents | `contents/<groupId>/…/<param>` | `pathop.<opId>.<param>`, `fx.fill(s)`, `fx.stroke(s)` |
+| Shape outline (§15.10) | `layer/path.points` (path value), `layer/pathRotoBezier`, `layer/pointBindings` | `Geometry.points` / `open` + the `path.points` data track; `Geometry.rotoBezier`, `Geometry.pointBindings` |
 | 3D material / geometry | `material/<param>`, `geometry/<param>` | bare names (`metal`, `extrusionDepth`, …) |
 | Camera / light | `camera/<param>`, `light/<param>` | flat transform props |
 | Paint stroke | `paint/<strokeId>/<param>`, `paint/<strokeId>/path`; the stroke itself (points, pen input, switches) and the layer's Paint on Transparent through the paint-stroke commands (§4.7, ids 615–620) | `paint.<strokeId>.*`, `fx.paint` |
@@ -272,7 +273,7 @@ check paths.
 `Value` is a tagged union: `none`, `bool`, `int`, `scalar`, `vec2`, `vec3`,
 `vec4`, `color` (straight RGBA in the working space, may exceed 1), `string`,
 `choice` (an enum member by name), `path` (`BezierPath`: vertices, tangents,
-closed, per-vertex feather), `gradient`, `textDocument` (text + style runs +
+closed, per-vertex feather, per-vertex editing state), `gradient`, `textDocument` (text + style runs +
 paragraphs + box + orientation), `layer`/`item` references, `scalars` (numeric
 list), and `json` — an explicit **escape hatch** for structured values not yet
 typed (§14.2 lists every use). The engine type-checks every write against the
@@ -439,6 +440,8 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `setPaintOnTransparent` | B3 — AE Paint on Transparent on layers that have strokes (else `notFound`). Inverse: the previous flag. |
 | `setPaintStrokePath` | B3 — drawing with a stroke selected: with the Path animated, a Path key at `time`; else the static points, the old per-point pen input dropped. Inverse: the stroke / track as they were. |
 | `setPaintPathAnimated` | B3 — the Path stopwatch: ON keys the current points at `time` (already animated: no change); OFF removes the Path keys, keeping the static points. Inverse: the track as it was. |
+| `editPathTopology` | B3 — a STRUCTURAL edit of an outline (`masks/<id>/path`, a shape's `layer/path.points`) in EVERY state, static + each key: split a segment, remove vertices, Set First Vertex, Reverse Path Direction, Continue Path (`op`), and/or the Closed switch (`closed`). States the op does not apply to are left alone; none at all = `invalidArgument`. Key ids/times/easing kept (§15.10). Inverse: every state exactly. |
+| `setShapeOutline` | B3 — the Knife: a shape layer's outline becomes independent runs (`Geometry.subpaths`), the single-run outline cleared, shape type `path`. Not a shape: `invalidArgument`; animated outline: `animated`. Inverse: the outline exactly. |
 
 `setEffectParam` and `setMaskPath` from the plan's §2 sketch are `setProperty`
 on an effect or mask path — one command, one inverse implementation.
@@ -1531,6 +1534,76 @@ corpus (json fields are now among the static fields it writes).
   `[unfreezeLayers, freezeFrame{keyframeToCompTime(v)}]`), the Cryptomatte ID
   matte (import from bytes, items 70–79), rename with expression repair and
   group / ungroup across parents (WS-M).
+
+### 15.10 B3 paths — outlines on the API (both engines, 2026-09-24)
+
+The Mask and Shape Path verbs, the Pen / Direct Selection / Convert Vertex
+ports, the Knife and Create Nulls From Paths write through these (tools/core:
+`pathCommands.ts`, `pathEdits.ts`, `ports.ts`). Command ids 630–631 (the
+Groups range); the rest are values and properties.
+
+- **`BezierPath.vertexStates`** (field 6, `PathVertexState {vertex, broken,
+  tension?}`): each vertex's EDITING state — an Alt-split handle pair, a
+  RotoBezier tension (0..1, else `outOfRange`). It changes no pixel; it is what
+  the next edit of the vertex does. Reads list one entry per vertex that has
+  any. A write follows the `featherPoints` rule: an EMPTY list keeps each
+  vertex's current state by index (clients that build a path without it keep
+  working); a non-empty list is authoritative — `[{vertex: 0, broken: false}]`
+  is "none on any vertex". The tools always send it authoritatively
+  (`toolEdits.ts` `vertexStatesOfPoints`). Masks and shape outlines alike
+  (stored as `broken` / `tension` on the point objects).
+- **`layer/path.points`** on a drawn shape layer (the timeline's Path row) is
+  a PATH value — it was catalogued as a scalar: static value = the Geometry
+  component's `points` + Closed (`Geometry.open`, absent = closed); keys = the
+  whole-outline `path.points` data track. A shape's Closed is the OUTLINE's,
+  not a key's: a key write with another `closed` flips `Geometry.open`, and
+  every key reads it. `featherPoints` with a radius ≥ 0 are `unsupported` (a
+  shape vertex has no feather). The stopwatch keys the static outline; off, it
+  leaves the outline static at `time`; deleting the last key leaves it at that
+  key's shape. A primitive with only a `path.points` track keeps the plain
+  data-track binding (keys only).
+- **`masks/<id>/rotoBezier`** (bool, static): AE's RotoBezier switch, held in
+  the static mask and every shape keyframe (like mode / inverted).
+  **`layer/pathRotoBezier`** (bool) and **`layer/pointBindings`** (json array
+  `[{index, nullId}]`, Create Nulls From Paths ▸ Points Follow Nulls) are layer
+  fields on the Geometry component (`layerFieldSpecs.ts`).
+- **`light/poiX|Y|Z`**: a light's Point of Interest is latent like a one-node
+  camera's (`camera/poiX|Y|Z`) — addressable before the layer stores it (the
+  viewport's POI handle); the first write stores it on the Transform.
+- **`editPathTopology`** (630) `{prop, op?, closed?}`: a STRUCTURAL edit of an
+  outline in EVERY state — the static outline and each keyframe — because keys
+  whose vertex counts or orders differ hold instead of morphing. `op`
+  (`PathTopologyOp`): `insert {segment, u}` (de Casteljau: the drawn curve is
+  unchanged, the new vertex at `segment + 1`), `remove {indices}` (≥ 2 must
+  stay), `firstVertex {indices: [i]}` (a closed outline rotates; an open one
+  can only start at its last vertex, which reverses it), `reverse`, `extend
+  {points, atStart}` (Continue Path: the same local points in every state).
+  The op runs on each state's own closed state, then `closed` sets the switch
+  everywhere. A state the op does not apply to is left alone; an op that
+  applies to none is `invalidArgument`. Feathers and vertex states travel with
+  their vertices; keyframe ids, times and easing are kept. The replay is
+  `packages/workspace` pathTopology.ts (TS) and its port in
+  `native/engine/src/core/handlers_paths.cpp` (same arithmetic order).
+- **`setShapeOutline`** (631) `{layer, runs}`: the Knife — the layer's outline
+  becomes independent runs (`Geometry.subpaths`, `open` per run), the
+  single-run `Geometry.points` is cleared, `Transform.shapeType` becomes
+  `path`, and a layer without Geometry gets one (`<id>_g`). Not a shape:
+  `invalidArgument`; an animated outline: `animated`.
+- **Gestures: kept messages.** A drag's messages are latest-wins (§5.2). A
+  STRUCTURAL step inside a drag — Direct Selection inserts a vertex at pointer
+  down (`editPathTopology`, a RELATIVE command) and the drag then reshapes it —
+  is sent with `GestureSession.send(cmds, { keep: true })` /
+  `ToolTransaction.send(label, cmds, { keep: true })`: never dropped for a
+  later message, applied once, in order.
+
+Left (the ratchet's remaining tools/core sites): `ports.ts`
+`applyNodePropsKeyframed` and the legacy anim transaction in
+`viewportGesture.ts` (`gestureAnimEdit` / `endViewportGesture`'s record) —
+used by `cameraCommands` (Set Focus Distance to Layer, Distribute Layers in Z:
+synchronous callers beside their own expression / 3D-switch writes; that
+module's migration) and `sendNodeValues`' fallback for a node outside a
+composition. `providers/clipboardEdits.ts` calls `pastePathEdit` — an engine
+edit; the ratchet flags the write verb lexically.
 
 ## 16. Files
 

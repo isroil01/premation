@@ -44,7 +44,7 @@ import { parseColorChannels } from '@core/effects/effects';
 export type TransformProp =
   | 'anchorPoint' | 'position' | 'scale' | 'rotation' | 'xRotation' | 'yRotation' | 'orientation' | 'opacity';
 
-export type MaskProp = 'path' | 'feather' | 'opacity' | 'expansion' | 'mode' | 'inverted';
+export type MaskProp = 'path' | 'feather' | 'opacity' | 'expansion' | 'mode' | 'inverted' | 'rotoBezier';
 
 export const paths = {
   transform: (p: TransformProp): string => propPath('transform', p),

@@ -25,19 +25,18 @@ import {
   convertMasksToShapeLayers,
   copyPathFromSelection,
   keyframePathAtPlayhead,
-  pastePathOntoSelection,
+  pastePathEdit,
   reversePathCommand,
   setFirstVertexCommand,
   toggleClosed,
-  togglePathAnimation,
 } from './pathCommands';
 import { segmentStrokesToMask, ROTO_PATH_NAME } from './rotoBrushTool';
 
 const square = (s: number): BezierPath => ({
-  vertices: [-s, -s, s, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: true, featherPoints: [],
+  vertices: [-s, -s, s, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [],
 });
 const tri = (s: number): BezierPath => ({
-  vertices: [0, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: false, featherPoints: [],
+  vertices: [0, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: false, featherPoints: [], vertexStates: [],
 });
 
 let h: Harness & { engine: LocalEngine };
@@ -155,21 +154,13 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     });
   });
 
-  it('a mask with split handles keeps the legacy writer (one entry, handles stay split)', async () => {
-    const { layer, mask } = await maskedSolid(square(20));
-    const node = defaultSceneGraph.getNode(layer)!;
-    const m = readNodeMask(node)!;
-    defaultSceneGraph.setMask(layer, { paths: m.paths.map((p) => ({ ...p, points: p.points.map((q, i) => (i === 1 ? { ...q, broken: true } as MaskPoint : q)) })) });
+  it('a mask with split handles goes through the engine too: its handles stay split', async () => {
+    const { layer, mask } = await maskedSolid({ ...square(20), vertexStates: [{ vertex: 1, broken: true }] });
     useSelectionStore.getState().set([layer]);
-    const entries = historyLabels().length;
-    const legacy = jest.spyOn(documentEdit, 'runDocumentEdit');
-    expect(toggleClosed()).toBe(true);
-    await engineIdle();
-    expect(legacy).toHaveBeenCalledTimes(1);
-    legacy.mockRestore();
-    expect(historyLabels().length).toBe(entries + 1);
-    expect(staticPath(layer, mask).closed).toBe(false);
-    expect((staticPath(layer, mask).points[1] as MaskPoint & { broken?: boolean }).broken).toBe(true);
+    await oneEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
+      expect(staticPath(layer, mask).closed).toBe(false);
+      expect((staticPath(layer, mask).points[1] as MaskPoint & { broken?: boolean }).broken).toBe(true);
+    });
   });
 
   it('pastes a copied mask path onto an animated mask: a key at the playhead, closed everywhere', async () => {
@@ -183,7 +174,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     ds().clearVertexSelection();
     useSelectionStore.getState().set([dst.layer]);
     getTimelineController().seekSeconds(1);
-    await oneEntry('Paste Path', () => expect(pastePathOntoSelection()).toBe(true), () => {
+    await oneEntry('Paste Path', () => expect(pastePathEdit()).toBe(true), () => {
       const keys = keyPaths(dst.layer, dst.mask);
       expect(keys).toHaveLength(2);
       for (const k of keys) expect(k.closed).toBe(false);
@@ -256,12 +247,10 @@ describe('Roto Brush mask', () => {
   });
 });
 
-// B3-gap pins: a DRAWN shape layer's own outline has no path-valued API
-// property (the catalog types `path.points` as a scalar `layer/path.points`)
-// and Closed has no property, so these verbs keep the legacy writer. Under the
-// app engine they must still be ONE entry each that undo restores exactly and
-// redo reapplies — and must not send a command the catalog would mistype.
-describe('drawn shape paths stay on the legacy writer (B3-gap)', () => {
+// A DRAWN shape layer's own outline is `layer/path.points` (a path value):
+// its verbs are engine edits too — ONE entry each that undo restores exactly
+// and redo reapplies.
+describe('drawn shape paths go through the engine', () => {
   const pt = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
   const outline = (s: number): MaskPoint[] => [pt(0, -s), pt(s, s), pt(-s, s)];
 
@@ -270,22 +259,23 @@ describe('drawn shape paths stay on the legacy writer (B3-gap)', () => {
     const node = defaultSceneGraph.getNode(layer)!;
     const geom = node.components.find((c) => c.type === 'Geometry')!;
     defaultSceneGraph.writeProp(node.id, geom.id, 'points', outline(s));
-    await engineIdle();
+    await h.run({ type: 'renameLayer', layer, name: 'Drawn' });
     return layer;
   }
   const geomOf = (id: string): Record<string, unknown> =>
     defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Geometry')!.props as Record<string, unknown>;
 
-  /** Run a legacy verb: ONE entry named `label`; undo restores exactly; redo reapplies. */
-  async function legacyEntry(label: string, run: () => unknown, check: () => void): Promise<void> {
+  /** ONE entry named `label`, no legacy writer; undo restores exactly; redo reapplies. */
+  async function engineEntry(label: string, run: () => unknown, check: () => void): Promise<void> {
     await engineIdle();
     const before = h.doc();
     const entries = historyLabels().length;
-    const sent = jest.spyOn(h.engine, 'batch');
+    const legacy = jest.spyOn(documentEdit, 'runDocumentEdit');
     run();
     await engineIdle();
-    expect(sent).not.toHaveBeenCalled();
-    sent.mockRestore();
+    await engineIdle();
+    expect(legacy).not.toHaveBeenCalled();
+    legacy.mockRestore();
     expect(historyLabels().length).toBe(entries + 1);
     expect(historyLabels().at(-1)).toBe(label);
     check();
@@ -299,7 +289,7 @@ describe('drawn shape paths stay on the legacy writer (B3-gap)', () => {
   it('Closed on a drawn path', async () => {
     const layer = await drawnPath(30);
     useSelectionStore.getState().set([layer]);
-    await legacyEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
+    await engineEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
       expect(geomOf(layer).open).toBe(true);
     });
   });
@@ -307,23 +297,21 @@ describe('drawn shape paths stay on the legacy writer (B3-gap)', () => {
   it('Reverse Path Direction on a drawn path', async () => {
     const layer = await drawnPath(30);
     useSelectionStore.getState().set([layer]);
-    await legacyEntry('Reverse Path Direction', () => expect(reversePathCommand()).toBe(true), () => {
+    await engineEntry('Reverse Path Direction', () => expect(reversePathCommand()).toBe(true), () => {
       expect((geomOf(layer).points as MaskPoint[])[0]).toMatchObject({ x: -30, y: 30 });
     });
   });
 
-  it('the Path stopwatch on and off, and Alt+Shift+M, on a drawn path', async () => {
+  it('Alt+Shift+M on a drawn path, unanimated then animated', async () => {
+    // (The Path row's stopwatch is the generic property stopwatch: layout/Menu/appEdits.test.ts.)
     const layer = await drawnPath(30);
     useSelectionStore.getState().set([layer]);
-    await legacyEntry('Enable path animation', () => togglePathAnimation(layer), () => {
-      expect(defaultAnimation.isDataAnimated(layer, 'path.points')).toBe(true);
+    await engineEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), () => {
+      expect(defaultAnimation.getDataTrack(layer, 'path.points')!.keyframes).toHaveLength(1);
     });
     getTimelineController().seekSeconds(1);
-    await legacyEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), () => {
+    await engineEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), () => {
       expect(defaultAnimation.getDataTrack(layer, 'path.points')!.keyframes).toHaveLength(2);
-    });
-    await legacyEntry('Disable path animation', () => togglePathAnimation(layer), () => {
-      expect(defaultAnimation.isDataAnimated(layer, 'path.points')).toBe(false);
     });
   });
 });

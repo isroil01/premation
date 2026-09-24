@@ -180,4 +180,26 @@ command setPaintPathAnimated = 620 { layer: LayerId = 1; stroke: string = 2; ani
 struct PaintKeyInit { param: string = 1; time: f64 = 2; value: f64 = 3; }
 struct PaintStrokeId { stroke: string = 1; }
 
+/// Which structural edit `editPathTopology` replays (packages/workspace pathTopology.ts `PathTopologyEdit`).
+enum PathTopologyKind { insert = 0; remove = 1; firstVertex = 2; reverse = 3; extend = 4; }
+
+/// A structural path edit, replayable on every state of an outline.
+struct PathTopologyOp {
+  kind: PathTopologyKind = 1;
+  /// insert: the segment from vertex `segment` to the next one (wrapping when closed), split at curve parameter `u`, strictly inside (0, 1) — de Casteljau, the drawn curve is unchanged; the new vertex lands at `segment + 1`.
+  segment: u32 = 2;
+  u: f64 = 3;
+  /// remove: the vertices to delete (at least one; at least 2 must stay). firstVertex: exactly one index.
+  indices: u32[] = 4;
+  /// extend: the vertices a continued open outline gains in EVERY state, appended (prepended when `atStart`), in the path's own space. Its `closed` and feather points are ignored; its vertex states are kept.
+  points?: BezierPath = 5;
+  atStart: bool = 6;
+}
+
+/// B3 — a STRUCTURAL edit of a path property — a mask's `masks/<id>/path` or a shape layer's `layer/path.points` — in EVERY state: the static outline and each keyframe (an outline cannot gain a vertex, open, or start elsewhere at one key only: keys whose vertex counts differ hold instead of morphing). `op` first, on each state's current closed state: split a segment, remove vertices, Set First Vertex (a closed outline rotates; an open one can only start at its last vertex, which reverses it), Reverse Path Direction, or continue an open outline; then `closed`, the outline's Closed switch in every state. At least one of the two. A state the op does not apply to (a segment or vertex it lacks) is left as it is; an op that applies to no state is `invalidArgument` and changes nothing. Per-vertex feathers and editing state travel with their vertices; keyframe ids, times and easing are kept. Undo restores every state exactly.
+command editPathTopology = 630 { prop: PropRef = 1; op?: PathTopologyOp = 2; closed?: bool = 3; }
+
+/// B3 — replace a shape layer's drawn outline with independent RUNS (the Knife's cut, a boolean's islands): stored as the layer's subpaths, each run with its own closed state; the single-run outline is cleared, the layer's shape type becomes `path` (a cut rectangle is no longer a rectangle), and a layer without Geometry gets one. At least one run, each of at least 2 vertices. A layer that is not a shape is `invalidArgument`; an animated outline (`layer/path.points` keyed — the keys would win over the runs every frame) is `animated`. Undo restores the outline exactly.
+command setShapeOutline = 631 { layer: LayerId = 1; runs: BezierPath[] = 2; }
+
 struct PropertyPaths { paths: PropPath[] = 1; }

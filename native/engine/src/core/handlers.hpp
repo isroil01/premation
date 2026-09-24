@@ -9,5 +9,6 @@
 #include "handlers_markers.hpp"
 #include "handlers_misc.hpp"
 #include "handlers_optional.hpp"
+#include "handlers_paths.hpp"
 #include "handlers_properties.hpp"
 #include "handlers_strokes.hpp"

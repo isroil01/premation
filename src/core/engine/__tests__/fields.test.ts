@@ -131,7 +131,7 @@ test('Path Options ▸ Path attaches to a mask and detaches', async () => {
   const { t } = await textLayer();
   const { groups: [m] } = await h.run({
     type: 'addMask', layer: t, mode: 'none', inverted: false,
-    path: { vertices: [0, 0, 100, 0, 100, 100], inTangents: [], outTangents: [], closed: false, featherPoints: [] },
+    path: { vertices: [0, 0, 100, 0, 100, 100], inTangents: [], outTangents: [], closed: false, featherPoints: [], vertexStates: [] },
   });
   const maskId = m!.split('/')[1]!;
   await h.run({ type: 'setProperty', prop: P(t, 'text/pathOptions/path'), value: { kind: 'string', value: maskId } });

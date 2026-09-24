@@ -31,6 +31,7 @@ import type {
   PropertyKind,
   BezierPath,
   Color,
+  PathVertexState,
 } from '@motion/engine-api';
 import { buildStaticPropertyTree, groupForProp, MASK_ANIM_PROP, type StaticPropertyRow } from '@core/timeline/propertyTree';
 import { readStaticPropertyValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
@@ -54,6 +55,8 @@ import {
   type MaskMode,
   type LayerMask,
   type MaskKeyframe,
+  type MaskPointEditState,
+  type MaskPathEditState,
 } from '@core/effects/mask';
 import { readAnimatorData, parseAnimatorTrack } from '@core/text/textAnimators';
 import { readPathOps } from '@core/scene/pathOps';
@@ -64,8 +67,10 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 
 /** audioKeyframes.ts AUDIO_AMPLITUDE_PROP (Convert Audio to Keyframes' track; not imported: that module pulls the audio engine in). */
 const AUDIO_AMPLITUDE_TRACK = 'audioAmplitude';
-/** A camera's Point of Interest tracks (camera3d.ts). */
+/** A camera's / light's Point of Interest tracks (camera3d.ts, light.ts). */
 const CAMERA_POI_TRACKS = ['poiX', 'poiY', 'poiZ'] as const;
+/** A shape layer's whole-outline keyframe track (AE's Path property). */
+export const SHAPE_PATH_TRACK = 'path.points';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
 import { fail } from './errors';
@@ -103,6 +108,10 @@ export type Special =
   | 'maskPath'
   | 'maskMode'
   | 'maskInverted'
+  /** A mask's RotoBezier switch (`masks/<id>/rotoBezier`): static, held in every shape keyframe too. */
+  | 'maskRotoBezier'
+  /** A shape layer's drawn outline (`layer/path.points`): static Geometry points + Closed, keys on `path.points`. */
+  | 'shapePath'
   | 'effectParam'
   /** A static field (fields.ts): text / animator / selector fields, style runs, the text path's mask. */
   | 'field'
@@ -302,6 +311,15 @@ export function catalogFor(layerId: string): Catalog {
       for (const p of mask?.paths ?? []) addMaskProps(p, add);
       continue;
     }
+    if (row.prop === SHAPE_PATH_TRACK) {
+      // B3: a drawn shape's Path — a path value (static: Geometry points +
+      // Closed; keys: the whole-outline `path.points` data track).
+      add({
+        path: apiPathFor(row.prop, row, node, animIds, selIds), name: row.label, matchName: 'ADBE Vector Shape',
+        valueType: 'path', members: [], dataTrack: SHAPE_PATH_TRACK, special: 'shapePath', animatable: true, unit: '',
+      });
+      continue;
+    }
     const color = row.members.length === 4 && row.members.every((m, i) => m.endsWith(['_r', '_g', '_b', '_a'][i]!));
     if (row.members.length === 0) {
       // Data-track rows (paint path) and value-less rows.
@@ -474,11 +492,14 @@ export function catalogFor(layerId: string): Catalog {
   // A ONE-node camera's Point of Interest (B3z): keying it aims the camera at
   // a point (camera3d `hasPOI`) — what Track Motion's camera follow writes.
   // A two-node camera lists these through its stored props already.
-  if (readNodeKind(node) === 'camera') {
+  // A light's likewise (B3): the viewport's Point of Interest handle aims a
+  // light that has none yet — its first write stores it on the Transform.
+  const poiKind = readNodeKind(node);
+  if (poiKind === 'camera' || poiKind === 'light') {
     for (const m of CAMERA_POI_TRACKS) {
       if (byMember.has(m)) continue;
       const meta = resolvePropertyMeta(m, layerId);
-      add({ path: `camera/${m}`, name: meta.label || m, matchName: m, valueType: 'scalar', members: [m], animatable: true, unit: meta.unit ?? '' });
+      add({ path: `${poiKind}/${m}`, name: meta.label || m, matchName: m, valueType: 'scalar', members: [m], animatable: true, unit: meta.unit ?? '' });
     }
   }
   for (const prop of Object.keys(snap?.data ?? {})) {
@@ -582,6 +603,7 @@ export function catalogFor(layerId: string): Catalog {
     }
     addFn({ path: `masks/${p.id}/mode`, name: 'Mode', matchName: 'ADBE Mask Mode', valueType: 'choice', members: [], special: 'maskMode', maskId: p.id, animatable: false, unit: '', choices: [...MASK_MODES] as string[] });
     addFn({ path: `masks/${p.id}/inverted`, name: 'Inverted', matchName: 'ADBE Mask Inverted', valueType: 'bool', members: [], special: 'maskInverted', maskId: p.id, animatable: false, unit: '' });
+    addFn({ path: `masks/${p.id}/rotoBezier`, name: 'RotoBezier', matchName: 'ADBE Mask RotoBezier', valueType: 'bool', members: [], special: 'maskRotoBezier', maskId: p.id, animatable: false, unit: '' });
   }
 }
 
@@ -772,7 +794,42 @@ export function maskToBezier(p: MaskPath): BezierPath {
   p.points.forEach((pt, i) => {
     if (typeof pt.feather === 'number') featherPoints.push({ segment: i, t: 0, radius: pt.feather, tension: 0 });
   });
-  return { vertices, inTangents: inT, outTangents: outT, closed: p.closed, featherPoints };
+  return { vertices, inTangents: inT, outTangents: outT, closed: p.closed, featherPoints, vertexStates: vertexStatesOf(p.points) };
+}
+
+/**
+ * The per-vertex EDITING state stored points carry (B3, `BezierPath.vertexStates`):
+ * one entry per vertex with a split handle pair (`broken`) or a RotoBezier
+ * `tension`, in vertex order.
+ */
+export function vertexStatesOf(points: ReadonlyArray<object>): PathVertexState[] {
+  const out: PathVertexState[] = [];
+  points.forEach((p, i) => {
+    const v = p as MaskPointEditState;
+    const broken = v.broken === true;
+    const tension = typeof v.tension === 'number' ? v.tension : undefined;
+    if (broken || tension !== undefined) out.push({ vertex: i, broken, ...(tension !== undefined ? { tension } : {}) });
+  });
+  return out;
+}
+
+/**
+ * The vertex states a path's `vertexStates` say, or null for an EMPTY list —
+ * which keeps each vertex's current state by index (`prev`), exactly as an
+ * empty `featherPoints` keeps the feathers. A non-empty list is the whole
+ * answer: a vertex it does not list has no state.
+ */
+function statesByVertex(b: BezierPath, n: number): Map<number, PathVertexState> | null {
+  const list = b.vertexStates ?? [];
+  if (list.length === 0) return null;
+  const out = new Map<number, PathVertexState>();
+  for (const s of list) {
+    if (!Number.isInteger(s.vertex) || s.vertex < 0 || s.vertex >= n) fail('invalidArgument', `vertex state ${s.vertex} is not a vertex of the ${n}-vertex path`);
+    if (s.tension !== undefined && !(Number.isFinite(s.tension) && s.tension >= 0 && s.tension <= 1)) fail('outOfRange', 'a vertex tension must be within 0..1');
+    if (out.has(s.vertex)) fail('invalidArgument', `two vertex states at vertex ${s.vertex}`);
+    out.set(s.vertex, s);
+  }
+  return out;
 }
 
 /**
@@ -804,26 +861,73 @@ export function bezierToPoints(b: BezierPath, prev?: ReadonlyArray<MaskPoint>): 
   if (b.inTangents.length !== b.vertices.length && b.inTangents.length !== 0) fail('invalidArgument', 'path tangents must match vertices');
   if (b.outTangents.length !== b.vertices.length && b.outTangents.length !== 0) fail('invalidArgument', 'path tangents must match vertices');
   const feathers = featherByVertex(b, n);
+  const states = statesByVertex(b, n);
   const out: MaskPoint[] = [];
   for (let i = 0; i < n; i++) {
     const x = b.vertices[2 * i]!;
     const y = b.vertices[2 * i + 1]!;
-    const pt: MaskPoint = {
+    const pt: MaskPoint & MaskPointEditState = {
       x, y,
       inX: x + (b.inTangents[2 * i] ?? 0), inY: y + (b.inTangents[2 * i + 1] ?? 0),
       outX: x + (b.outTangents[2 * i] ?? 0), outY: y + (b.outTangents[2 * i + 1] ?? 0),
     };
+    const old = prev?.[i] as (MaskPoint & MaskPointEditState) | undefined;
     if (feathers) {
       const f = feathers.get(i);
       if (typeof f === 'number') pt.feather = f;
+    } else if (old?.feather !== undefined) {
+      pt.feather = old.feather;
+    }
+    if (states) {
+      const s = states.get(i);
+      if (s?.broken) pt.broken = true;
+      if (s?.tension !== undefined) pt.tension = s.tension;
     } else {
-      const old = prev?.[i];
-      if (old?.feather !== undefined) pt.feather = old.feather;
+      if (old?.broken !== undefined) pt.broken = old.broken;
+      if (old?.tension !== undefined) pt.tension = old.tension;
     }
     out.push(pt);
   }
   return out;
 }
+
+/** `bezierToPoints` for a shape outline, which has no per-vertex feather (a listed one is refused). */
+export function shapePoints(b: BezierPath, prev: ReadonlyArray<MaskPoint> | undefined, path: string): MaskPoint[] {
+  if ((b.featherPoints ?? []).some((f) => f.radius >= 0)) fail('unsupported', `'${path}' has no per-vertex feather`, { path });
+  return bezierToPoints({ ...b, featherPoints: [] }, prev).map((p) => {
+    const { feather: _f, ...rest } = p;
+    return rest;
+  });
+}
+
+/** Stored outline points (a shape's Geometry points / `path.points` key) as a path value. */
+function shapePathValue(points: ReadonlyArray<Partial<MaskPoint> & { x: number; y: number }>, closed: boolean): BezierPath {
+  const full = points.map((p) => ({ ...p, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y }));
+  return { ...maskToBezier({ points: full, closed } as unknown as MaskPath), featherPoints: [] };
+}
+
+/** A shape layer's Geometry component, or notFound. */
+function shapeGeometry(node: SceneNode, path: string): SceneNode['components'][number] {
+  const g = node.components.find((c) => c.type === 'Geometry');
+  if (!g) fail('notFound', `layer '${node.id}' has no outline`, { layer: node.id, path });
+  return g;
+}
+
+/** A shape outline's Closed switch (`Geometry.open` marks an open path; closed stores nothing). */
+export function shapeClosed(node: SceneNode): boolean {
+  return node.components.find((c) => c.type === 'Geometry')?.props.open !== true;
+}
+
+/** Set a shape outline's Closed switch — written only when it changes. */
+export function writeShapeClosed(layerId: string, node: SceneNode, closed: boolean): void {
+  if (shapeClosed(node) === closed) return;
+  const g = shapeGeometry(node, 'layer/path.points');
+  defaultSceneGraph.writeProp(layerId, g.id, 'open', closed ? undefined : true);
+}
+
+export const asPoints = (v: unknown): Array<MaskPoint> | null =>
+  Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' && v[0] !== null && typeof (v[0] as { x?: unknown }).x === 'number'
+    ? (v as MaskPoint[]) : null;
 
 /** The static (un-animated) value of a property, from the live graph. */
 export function readStatic(layerId: string, b: PropBinding): Value {
@@ -845,6 +949,14 @@ export function readStatic(layerId: string, b: PropBinding): Value {
     case 'maskInverted': {
       const p = readNodeMask(node)?.paths.find((x) => x.id === b.maskId);
       return { kind: 'bool', value: p?.inverted === true };
+    }
+    case 'maskRotoBezier': {
+      const p = readNodeMask(node)?.paths.find((x) => x.id === b.maskId) as (MaskPath & MaskPathEditState) | undefined;
+      return { kind: 'bool', value: p?.rotoBezier === true };
+    }
+    case 'shapePath': {
+      const pts = asPoints(node.components.find((c) => c.type === 'Geometry')?.props.points);
+      return pts ? { kind: 'path', value: shapePathValue(pts, shapeClosed(node)) } : { kind: 'none' };
     }
     case 'effectParam': {
       const e = getNodeEffects(layerId).find((x) => x.id === b.effectId);
@@ -909,6 +1021,32 @@ export function writeStatic(layerId: string, b: PropBinding, value: Value): void
       if (before !== text && (comp.props as Record<string, unknown>).__runs !== undefined) {
         defaultSceneGraph.writeProp(layerId, comp.id, '__runs', undefined);
       }
+      return;
+    }
+    case 'shapePath': {
+      if (value.kind !== 'path') fail('typeMismatch', `'${b.path}' takes a path`, { path: b.path });
+      const g = shapeGeometry(node, b.path);
+      const prev = asPoints(g.props.points) ?? undefined;
+      defaultSceneGraph.writeProp(layerId, g.id, 'points', shapePoints(value.value, prev, b.path));
+      writeShapeClosed(layerId, node, value.value.closed);
+      return;
+    }
+    case 'maskRotoBezier': {
+      if (value.kind !== 'bool') fail('typeMismatch', `'${b.path}' takes a bool`, { path: b.path });
+      const on = value.value;
+      // A switch of the whole outline: the static mask and every shape keyframe.
+      const flip = (p: MaskPath): MaskPath => {
+        if (p.id !== b.maskId) return p;
+        const next = { ...p } as MaskPath & MaskPathEditState;
+        if (on) next.rotoBezier = true;
+        else delete next.rotoBezier;
+        return next;
+      };
+      const m = readNodeMask(node) ?? { paths: [] };
+      if (!m.paths.some((x) => x.id === b.maskId)) fail('notFound', `no mask '${b.maskId}'`, { layer: layerId, path: b.path });
+      defaultSceneGraph.setMask(layerId, { paths: m.paths.map(flip) });
+      const anim = readNodeMaskAnim(node);
+      if (anim.length > 0) defaultSceneGraph.setMaskAnim(layerId, anim.map((k) => ({ ...k, mask: { paths: k.mask.paths.map(flip) } })));
       return;
     }
     case 'maskPath':
@@ -1161,6 +1299,7 @@ export function maskKeyId(layerId: string, k: MaskKeyframe, maskId: string): str
 
 function dataValueToApi(b: PropBinding, v: unknown, layerId?: string): Value {
   if (b.special === 'rig') return pinKeyToApi(v);
+  if (b.special === 'shapePath') return shapePathValueOf(layerId!, v);
   if (b.special === 'fillStops') return fillStopsKeyToApi(nodeOf(layerId!), v);
   if (b.special === 'sourceText') {
     return { kind: 'textDocument', value: { text: typeof v === 'string' ? v : '', runs: [], paragraphs: [], orientation: 'horizontal', kerning: 'metrics' } };
@@ -1173,10 +1312,16 @@ function dataValueToApi(b: PropBinding, v: unknown, layerId?: string): Value {
       vertices: pts.flatMap((p) => [p.x, p.y]),
       inTangents: pts.flatMap((p) => [(p.inX ?? p.x) - p.x, (p.inY ?? p.y) - p.y]),
       outTangents: pts.flatMap((p) => [(p.outX ?? p.x) - p.x, (p.outY ?? p.y) - p.y]),
-      closed: false, featherPoints: [],
+      closed: false, featherPoints: [], vertexStates: [],
     } };
   }
   return { kind: 'json', value: JSON.stringify(v ?? null) };
+}
+
+/** A sampled `path.points` value (stored outline points) as the shape Path's API value. */
+export function shapePathValueOf(layerId: string, v: unknown): Value {
+  const pts = asPoints(v);
+  return pts ? { kind: 'path', value: shapePathValue(pts, shapeClosed(nodeOf(layerId))) } : { kind: 'none' };
 }
 
 /** API value → a data keyframe value for this property's data track. */
@@ -1280,9 +1425,20 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
     const track = defaultAnimation.getDataTrack(layerId, b.dataTrack);
     const kind = track?.kind ?? (b.special === 'sourceText' ? 'text' : b.valueType === 'path' || b.special === 'rig' ? 'points' : b.valueType === 'gradient' ? 'gradientStops' : 'number');
     let keys: DataKeyframe[] = track ? track.keyframes.map((k) => ({ ...k })) : [];
+    let closed: boolean | undefined;
     for (const w of writes) {
       const existing = keys.find((k) => k.t === w.t);
-      const value = w.value ? apiToDataValue(b, w.value) : existing?.value ?? currentDataValue(layerId, b, w.t);
+      let value: unknown;
+      if (w.value && b.special === 'shapePath') {
+        // A shape key keeps each vertex's editing state by index when the value
+        // lists none (BezierPath.vertexStates): the replaced key's, else the static outline's.
+        if (w.value.kind !== 'path') fail('typeMismatch', `'${b.path}' takes a path`, { path: b.path });
+        const prev = asPoints(existing?.value ?? nodeOf(layerId).components.find((c) => c.type === 'Geometry')?.props.points) ?? undefined;
+        value = shapePoints(w.value.value, prev, b.path);
+        closed = w.value.value.closed;
+      } else {
+        value = w.value ? apiToDataValue(b, w.value) : existing?.value ?? currentDataValue(layerId, b, w.t);
+      }
       const base: DataKeyframe = existing ? { ...existing } : { t: w.t, value: value as DataKeyframe['value'] };
       const next = applyKeyFields({ ...base, id: existing?.id ?? w.id, t: w.t, value: value as DataKeyframe['value'] }, w);
       if (b.special === 'rig') {
@@ -1296,6 +1452,8 @@ export function putKeys(layerId: string, b: PropBinding, writes: KeyWrite[]): vo
     }
     keys.sort((x, y) => x.t - y.t);
     defaultAnimation.setDataTrack(layerId, b.dataTrack, { nodeId: layerId, prop: b.dataTrack, kind, keyframes: keys });
+    // A shape outline's Closed switch is the whole outline's (Geometry.open), not a key's.
+    if (closed !== undefined) writeShapeClosed(layerId, nodeOf(layerId), closed);
     return;
   }
   if (b.members.length === 0) fail('notAnimatable', `'${b.path}' cannot take keyframes`, { path: b.path });
@@ -1390,6 +1548,11 @@ function currentDataValue(layerId: string, b: PropBinding, t: number): unknown {
   }
   // The first Colors key holds the paint's own stops.
   if (b.special === 'fillStops') return apiToFillStopsKey(b, readStatic(layerId, b));
+  // A shape's first Path key holds its static outline.
+  if (b.special === 'shapePath') {
+    const pts = asPoints(nodeOf(layerId).components.find((c) => c.type === 'Geometry')?.props.points);
+    if (pts) return pts.map((p) => ({ ...p }));
+  }
   return fail('invalidArgument', `'${b.path}' needs a value for its first keyframe`, { path: b.path });
 }
 
@@ -1416,6 +1579,15 @@ export function dropKeys(layerId: string, b: PropBinding, times: number[]): void
     if (keep.length === 0 && b.special === 'sourceText') {
       const last = track.keyframes.find((k) => drop.has(k.t));
       if (last && typeof last.value === 'string') writeStatic(layerId, b, { kind: 'string', value: last.value });
+    }
+    if (keep.length === 0 && b.special === 'shapePath') {
+      // AE: deleting the last Path key leaves the outline where that key held it.
+      const last = track.keyframes.find((k) => drop.has(k.t));
+      const pts = asPoints(last?.value);
+      if (pts) {
+        const g = shapeGeometry(nodeOf(layerId), b.path);
+        defaultSceneGraph.writeProp(layerId, g.id, 'points', pts.map((p) => ({ ...p })));
+      }
     }
     if (keep.length === 0 && b.special === 'rig') {
       // AE: deleting a pin's last Position key leaves the pin where that key held it.

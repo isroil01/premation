@@ -626,48 +626,6 @@ export function keyframeMask(nodeId: string, t: number): void {
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
-/**
- * Move one mask keyframe along the time axis.
- *
- * The timeline draws mask keyframes as diamonds on the layer's Mask Shape row,
- * and a diamond you can see but not drag is a control that looks broken. The
- * shape travels with the keyframe untouched — this is a retime, not an edit.
- */
-export function moveMaskKeyframe(nodeId: string, fromT: number, toT: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const kfs = readNodeMaskAnim(node);
-  const moving = kfs.find((k) => Math.abs(k.t - fromT) < 1e-4);
-  if (!moving) return;
-  // Landing on an existing keyframe REPLACES it, matching every other track:
-  // two shapes at one time is not a state the interpolator can express.
-  const next = kfs
-    .filter((k) => k !== moving && Math.abs(k.t - toT) > 1e-4)
-    .concat({ ...moving, t: toT })
-    .sort((a, b) => a.t - b.t);
-  defaultSceneGraph.setMaskAnim(nodeId, next);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/**
- * Delete one mask keyframe. Removing the LAST one clears the animation
- * outright, so the mask goes back to reading its static shape rather than being
- * left with a one-keyframe track that pins it forever.
- */
-export function removeMaskKeyframe(nodeId: string, t: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const next = readNodeMaskAnim(node).filter((k) => Math.abs(k.t - t) > 1e-4);
-  defaultSceneGraph.setMaskAnim(nodeId, next.length > 0 ? next : undefined);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/** Remove all mask keyframes (mask reverts to its static shape). */
-export function clearMaskAnim(nodeId: string): void {
-  defaultSceneGraph.setMaskAnim(nodeId, undefined);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
 function writeNodeMask(nodeId: string, mask: LayerMask): void {
   defaultSceneGraph.setMask(nodeId, mask.paths.length > 0 ? mask : undefined);
   getEventBus().emit('AnimationChanged', { nodeId });
@@ -739,10 +697,6 @@ export function updateMaskPath(nodeId: string, pathId: string, patch: Partial<Ma
   }));
 }
 
-export function removeMaskPath(nodeId: string, pathId: string): void {
-  editEveryMaskState(nodeId, (mask) => ({ paths: mask.paths.filter((p) => p.id !== pathId) }));
-}
-
 /**
  * Move a mask's vertices (the pen/direct-select drag on canvas).
  *
@@ -754,85 +708,3 @@ export function setMaskPoints(nodeId: string, pathId: string, points: MaskPoint[
   updateMaskPath(nodeId, pathId, { points }, t);
 }
 
-/**
- * Add or remove a vertex on one mask path — in EVERY state, not at a time.
- *
- * `setMaskPoints` edits the keyframe at the playhead, which is right for a
- * reshape and wrong for a topology change: the other keyframes keep the old
- * vertex count, and `interpolateMask` can only hold between paths whose counts
- * differ, so an animated mask stopped morphing the moment a vertex was added.
- * `fn` gets each state's points (and whether the path is closed) and returns
- * the edited points, or null to leave a state it does not apply to alone.
- */
-export function editMaskPathTopology(
-  nodeId: string,
-  pathId: string,
-  fn: (points: MaskPoint[], closed: boolean) => MaskPoint[] | null,
-): void {
-  editEveryMaskState(nodeId, (mask) => ({
-    paths: mask.paths.map((p) => {
-      if (p.id !== pathId) return p;
-      const next = fn(p.points, p.closed);
-      return next ? { ...p, points: next } : p;
-    }),
-  }));
-}
-
-/**
- * Flip a path's structural switches — Closed, RotoBezier — in EVERY state.
- *
- * Neither is a value that can differ between keyframes (an outline cannot be
- * closed at one moment and open the next without the interpolator snapping),
- * so like a topology change this edits the static mask and every keyframe.
- * `points`, when given, replaces the points of every state through `fn` — the
- * RotoBezier toggle recomputes each keyframe's handles that way.
- */
-export function setMaskPathFlags(
-  nodeId: string,
-  pathId: string,
-  flags: { closed?: boolean; rotoBezier?: boolean },
-  fn?: (points: MaskPoint[], closed: boolean) => MaskPoint[],
-): void {
-  editEveryMaskState(nodeId, (mask) => ({
-    paths: mask.paths.map((p) => {
-      if (p.id !== pathId) return p;
-      const closed = flags.closed ?? p.closed;
-      const next: MaskPath & MaskPathEditState = { ...p, closed };
-      if (flags.rotoBezier !== undefined) {
-        if (flags.rotoBezier) next.rotoBezier = true;
-        else delete next.rotoBezier;
-      }
-      if (fn) next.points = fn(p.points, closed);
-      return next;
-    }),
-  }));
-}
-
-/**
- * Set (or clear, with undefined) one vertex's feather override — the write
- * behind the variable-width feather rows. Clearing removes the KEY rather than
- * writing 0: an absent override means "the path's uniform value", and a path
- * whose every override is cleared drops back to the plain blur renderer.
- */
-export function setMaskPointFeather(
-  nodeId: string,
-  pathId: string,
-  pointIndex: number,
-  feather: number | undefined,
-  t?: number,
-): void {
-  editMaskAt(nodeId, t, (mask) => ({
-    paths: mask.paths.map((p) => {
-      if (p.id !== pathId) return p;
-      const points = p.points.map((pt, i) => {
-        if (i !== pointIndex) return pt;
-        if (feather === undefined) {
-          const { feather: _drop, ...rest } = pt;
-          return rest as MaskPoint;
-        }
-        return { ...pt, feather: Math.max(0, feather) };
-      });
-      return { ...p, points };
-    }),
-  }));
-}

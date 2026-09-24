@@ -25,8 +25,6 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
 import { getRemappedTime } from '@core/timeline/TimelineController';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { useHistoryStore } from '@stores/historyStore';
 import type { SceneNode } from '@core/types';
 
 interface Pt { x: number; y: number }
@@ -48,12 +46,12 @@ let seq = 0;
 /**
  * Create the nulls. Returns their ids, in vertex order, and selects them so
  * the next gesture — parent something, add keyframes — acts on the set.
+ *
+ * An OFF-DOCUMENT builder (`nullsFromPathEdit` inserts its result with one
+ * `pasteLayers`); Points Follow Nulls binds the vertices afterwards through
+ * `layer/pointBindings`, with the ids the paste minted.
  */
-export function createNullsFromPath(
-  shapeId: string,
-  time: number,
-  opts: { pointsFollowNulls?: boolean } = {},
-): string[] {
+export function createNullsFromPath(shapeId: string, time: number): string[] {
   const node = defaultSceneGraph.getNode(shapeId);
   if (!node || readNodeKind(node) !== 'shape') return [];
   const verts = pathVertices(node, time);
@@ -85,47 +83,7 @@ export function createNullsFromPath(
     ids.push(id);
   });
 
-  if (opts.pointsFollowNulls) {
-    // Bind each vertex to its null. Written through the graph's prop writer,
-    // not onto the component view, which is a throwaway (see assetRebind).
-    const geom = node.components.find((c) => c.type === 'Geometry');
-    if (geom) {
-      const bindings = ids.map((nullId, index) => ({ index, nullId }));
-      defaultSceneGraph.writeProp(shapeId, geom.id, 'pointBindings', bindings);
-    }
-  }
-
   useSelectionStore.getState().set(ids);
   bumpScene();
   return ids;
-}
-
-/**
- * `createNullsFromPath` as ONE labelled undo step — what the menu commands run.
- *
- * The bare function only bumps the scene, so its undo was whatever the
- * debounced scene capture made of it: an unnamed "Edit N" that could absorb a
- * neighbouring edit still inside the capture window. `flush` first commits any
- * such pending edit on its own, then the nulls, their parenting and any point
- * bindings go in as a single entry (nothing is recorded when nothing was made).
- */
-export function createNullsFromPathUndoable(
-  shapeId: string,
-  time: number,
-  opts: { pointsFollowNulls?: boolean } = {},
-): string[] {
-  useHistoryStore.getState().flush();
-  const label = opts.pointsFollowNulls
-    ? 'Create Nulls From Path Points (Points Follow Nulls)'
-    : 'Create Nulls From Path Points';
-  return runDocumentEdit(label, () => createNullsFromPath(shapeId, time, opts));
-}
-
-/** Drop every point binding on a shape; the path keeps its current vertices. */
-export function clearPointBindings(shapeId: string): void {
-  const node = defaultSceneGraph.getNode(shapeId);
-  const geom = node?.components.find((c) => c.type === 'Geometry');
-  if (!node || !geom) return;
-  defaultSceneGraph.writeProp(shapeId, geom.id, 'pointBindings', undefined);
-  bumpScene();
 }

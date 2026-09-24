@@ -256,7 +256,7 @@ export const CORPUS: Record<string, Session> = {
     await h.run({ type: 'duplicatePropertyGroups', groups: [{ layer: s.A, path: `masks/${s.mask}` }] });
     await h.run({ type: 'setProperty', prop: { layer: s.A, path: `masks/${s.mask}/feather` }, value: scalar(12) });
     await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `masks/${s.mask}/path` }, animated: true, time: 0 });
-    await h.run({ type: 'setProperty', prop: { layer: s.A, path: `masks/${s.mask}/path` }, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 200, 0, 200, 200, 0, 200], inTangents: [], outTangents: [], closed: true, featherPoints: [] } } });
+    await h.run({ type: 'setProperty', prop: { layer: s.A, path: `masks/${s.mask}/path` }, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 200, 0, 200, 200, 0, 200], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] } } });
     await h.run({ type: 'renamePropertyGroup', group: { layer: s.A, path: `masks/${s.mask}` }, name: 'Window' });
     await h.run({ type: 'setGroupEnabled', groups: [{ layer: s.A, path: `effects/${s.fx}` }], enabled: false });
     await h.run({ type: 'copyPropertyGroups', groups: [{ layer: s.A, path: `effects/${s.fx}` }], toLayers: [s.B] });
@@ -982,8 +982,8 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     const comp = 'comp_root';
     const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
     const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'shape', name: 'B', init: [] });
-    const square = { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [] };
-    const curve = { vertices: [0, 0, 50, 80, 120, 10], inTangents: [0, 0, -10, 0, 0, 0], outTangents: [0, 0, 10, 0, 0, 0], closed: false, featherPoints: [] };
+    const square = { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] };
+    const curve = { vertices: [0, 0, 50, 80, 120, 10], inTangents: [0, 0, -10, 0, 0, 0], outTangents: [0, 0, 10, 0, 0, 0], closed: false, featherPoints: [], vertexStates: [] };
     const { groups: [m1] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false });
     const { groups: [m2] } = await h.run({ type: 'addMask', layer: A, path: curve, mode: 'subtract', inverted: true, name: 'Cut' });
     const { groups: [m3] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'intersect', inverted: false, index: 0, name: '' });
@@ -1014,11 +1014,11 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     const comp = 'comp_root';
     const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
     const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'B', init: [] });
-    const square = { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [] };
+    const square = { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] };
     const { groups: [m1] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false });
     const { groups: [m2] } = await h.run({ type: 'addMask', layer: A, path: square, mode: 'add', inverted: false });
     await h.run({ type: 'setAnimated', prop: { layer: A, path: `${m1}/path` }, animated: true, time: 0 });
-    await h.run({ type: 'setProperty', prop: { layer: A, path: `${m1}/path` }, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 200, 0, 200, 200, 0, 200], inTangents: [], outTangents: [], closed: true, featherPoints: [] } } });
+    await h.run({ type: 'setProperty', prop: { layer: A, path: `${m1}/path` }, time: sec(1), value: { kind: 'path', value: { vertices: [0, 0, 200, 0, 200, 200, 0, 200], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] } } });
     await h.run({ type: 'addKeyframes', keys: [
       { prop: { layer: A, path: `${m1}/feather` }, time: 0, value: scalar(0), spatialIn: [], spatialOut: [] },
       { prop: { layer: A, path: `${m1}/feather` }, time: sec(1), value: scalar(20), spatialIn: [], spatialOut: [] },
@@ -1445,7 +1445,7 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     const choice = (value: string) => ({ kind: 'choice' as const, value });
     const bool = (value: boolean) => ({ kind: 'bool' as const, value });
     const color = (r: number, g: number, b: number, a = 1) => ({ kind: 'color' as const, value: { r, g, b, a } });
-    const box = (n: number) => ({ vertices: [0, 0, n, 0, n, n, 0, n], inTangents: [], outTangents: [], closed: true, featherPoints: [] });
+    const box = (n: number) => ({ vertices: [0, 0, n, 0, n, n, 0, n], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] });
     // Text component fields: every value type, clear-at-default, the strokeOrder mirror, refusals.
     await h.run({ type: 'setProperty', prop: P(t, 'text/fontFamily'), value: str('Roboto Mono') });
     await h.run({ type: 'setProperty', prop: P(t, 'text/align'), value: choice('center') });
@@ -2045,7 +2045,7 @@ export const FAMILY_CORPUS: Record<string, Session> = {
   ...((): Record<string, Session> => {
     const P = (layer: string, path: string) => ({ layer, path });
     const doc = (text: string) => ({ kind: 'textDocument' as const, value: { text, runs: [], paragraphs: [], orientation: 'horizontal' as const, kerning: 'metrics' } });
-    const square = (s: number) => ({ kind: 'path' as const, value: { vertices: [0, 0, s, 0, s, s, 0, s], inTangents: [], outTangents: [], closed: true, featherPoints: [] } });
+    const square = (s: number) => ({ kind: 'path' as const, value: { vertices: [0, 0, s, 0, s, s, 0, s], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] } });
     const ignore = (): undefined => undefined;
     /**
      * Every property of a layer: read the tree, write a new value to each
@@ -2555,7 +2555,7 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     const bool = (value: boolean) => ({ kind: 'bool' as const, value });
     const color = (r: number, g: number, b: number) => ({ kind: 'color' as const, value: { r, g, b, a: 1 } });
     const path = (vertices: number[], featherPoints: Array<{ segment: number; t: number; radius: number; tension: number }> = []) =>
-      ({ kind: 'path' as const, value: { vertices, inTangents: [], outTangents: [], closed: true, featherPoints } });
+      ({ kind: 'path' as const, value: { vertices, inTangents: [], outTangents: [], closed: true, featherPoints, vertexStates: [] } });
     const square = [0, 0, 100, 0, 100, 100, 0, 100];
     const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
     const { layer: B } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'B', init: [] });
@@ -3097,6 +3097,7 @@ const BUILDERS: Record<string, Builder> = {
         vertices: [x, 0, x + 100, 0, x + 100, 100, x, 100], inTangents: [], outTangents: [], closed: g.coin(0.9),
         // B3z-a: per-vertex feather (a vertex past the 4th is refused).
         featherPoints: g.coin(0.3) ? [{ segment: g.int(5), t: 0, radius: g.int(20), tension: 0 }] : [],
+        vertexStates: [],
       },
     } : undefined;
   },

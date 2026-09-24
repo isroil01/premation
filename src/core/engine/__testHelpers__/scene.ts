@@ -49,7 +49,7 @@ export async function buildScene(h: Harness): Promise<Scene> {
   const { groups: [fxPath] } = await h.run({ type: 'addEffect', layers: [A], effect: 'glow', params: [] });
   const { groups: [maskPath] } = await h.run({
     type: 'addMask', layer: A, mode: 'add', inverted: false,
-    path: { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [] },
+    path: { vertices: [0, 0, 100, 0, 100, 100, 0, 100], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [] },
   });
   const { groups: [animPath] } = await h.run({ type: 'addPropertyGroup', layer: T, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] });
   const { item: comp2 } = await h.run({ type: 'createComposition', settings: { name: 'C2', width: 800, height: 600 }, fromItems: [] });

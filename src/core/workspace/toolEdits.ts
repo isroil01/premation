@@ -10,7 +10,7 @@
  * `edit`. Every value is ABSOLUTE (start state + drag), never a delta.
  */
 
-import type { Command, KeyframeInsert, PropertyWrite, PropRef, Value } from '@motion/engine-api';
+import type { Command, KeyframeInsert, PathVertexState, PropertyWrite, PropRef, Value } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { MaskPoint } from '@core/effects/mask';
@@ -85,7 +85,25 @@ export function trackValueCommands(items: ReadonlyArray<NodeTrackValues>, opts: 
   return out;
 }
 
-/** A mask outline as the API's BezierPath (tangents relative to their vertex). */
+/**
+ * The per-vertex editing state of outline points as `BezierPath.vertexStates`
+ * — AUTHORITATIVE: an outline whose vertices carry none says so with the
+ * "none" marker (`[{vertex: 0, broken: false}]`), because an empty list would
+ * keep the replaced state's split handles / tensions by index.
+ */
+export function vertexStatesOfPoints(points: ReadonlyArray<object>): PathVertexState[] {
+  const out: PathVertexState[] = [];
+  points.forEach((p, i) => {
+    const v = p as { broken?: unknown; tension?: unknown };
+    const broken = v.broken === true;
+    const tension = typeof v.tension === 'number' ? v.tension : undefined;
+    if (broken || tension !== undefined) out.push({ vertex: i, broken, ...(tension !== undefined ? { tension } : {}) });
+  });
+  if (out.length === 0 && points.length > 0) out.push({ vertex: 0, broken: false });
+  return out;
+}
+
+/** An outline (a mask's, a shape's) as the API's BezierPath: tangents relative to their vertex, each vertex's editing state. */
 export function maskPointsToPath(points: ReadonlyArray<MaskPoint>, closed: boolean): Value {
   const vertices: number[] = [];
   const inTangents: number[] = [];
@@ -95,18 +113,5 @@ export function maskPointsToPath(points: ReadonlyArray<MaskPoint>, closed: boole
     inTangents.push(p.inX - p.x, p.inY - p.y);
     outTangents.push(p.outX - p.x, p.outY - p.y);
   }
-  return { kind: 'path', value: { vertices, inTangents, outTangents, closed, featherPoints: [] } };
-}
-
-/**
- * Whether an outline carries per-vertex EDITING state the API's BezierPath
- * cannot hold: an Alt-split (`broken`) handle pair or a RotoBezier `tension`.
- * Writing such an outline through `setProperty`/`addMask` would silently
- * re-join the handles — the caller keeps its legacy writer for it.
- */
-export function hasVertexEditState(points: ReadonlyArray<object>): boolean {
-  return points.some((p) => {
-    const v = p as { broken?: unknown; tension?: unknown };
-    return v.broken === true || typeof v.tension === 'number';
-  });
+  return { kind: 'path', value: { vertices, inTangents, outTangents, closed, featherPoints: [], vertexStates: vertexStatesOfPoints(points) } };
 }

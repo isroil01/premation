@@ -32,12 +32,11 @@ import {
   Mat,
   Rect,
   OBox,
-  applyPathTopology,
+  type PathTopologyEdit,
 } from '@motion/workspace';
 import { cutPathsWithLine, runFromPolygon, type CutSubpath, type CutPoint } from '@core/geometry/pathCut';
 import { shapeOutline } from '@core/scene/pathOps';
 import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@core/scene/cornerRadii';
-import { useHistoryStore } from '@stores/historyStore';
 import { readNodeAnchor, anchorCompensation } from '@core/scene/anchor';
 import { readTransformProp } from '@core/scene/transformWrite';
 import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
@@ -58,7 +57,7 @@ import { MIN_BOX_SIZE } from '@core/text/textExtras';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
 import { subscribeTime } from '@stores/playbackClockStore';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { readGeometry, localBounds, makeHitTestLocal, isDrawableKind as drawable } from './geometry';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -76,19 +75,20 @@ import {
   type ToolTransaction,
 } from '@core/workspace/viewportGesture';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import type { Command, PropRef, Value } from '@motion/engine-api';
+import type { Command, PathTopologyOp, PropRef, Value } from '@motion/engine-api';
 import { compOfLayer, isLayer } from '@core/engine/doc';
 import { compTime, paths, propRefForTrack } from '@core/engine/propRefs';
-import { hasVertexEditState, maskPointsToPath, trackValueCommands, type NodeTrackValues } from '@core/workspace/toolEdits';
+import { maskPointsToPath, trackValueCommands, type NodeTrackValues } from '@core/workspace/toolEdits';
+import { outlineOnEngine, outlineRef } from '@core/workspace/pathEdits';
 import { useProjectStore } from '@stores/projectStore';
-import { compToKeyframeTime, getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
+import { getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { Matrix4Math, Project3D } from '@motion/scene';
 import { currentViewProjector, currentViewCamera } from '@core/workspace/viewProjection';
 import { orthoViewOf, isSceneCameraView } from '@core/scene/cameraViewMode';
 import { viewCameraNode } from '@core/scene/camera3d';
 import { composeNodeWorld3d, parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
-import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, readNodeMaskAnim, readNodeMaskAt, setMaskPoints, editMaskPathTopology, setMaskPathFlags, MaskPath, MaskPoint, type MaskPathEditState } from '@core/effects/mask';
+import { rectangleMask, ellipseMask, readNodeMask, readNodeMaskAnim, readNodeMaskAt, MaskPath, MaskPoint, type MaskPathEditState } from '@core/effects/mask';
 import { defaultPolystar, POLYSTAR_FX_PROP, type PolystarType } from '@core/scene/polystar';
 import { defaultTextSize } from '@core/scene/textDefaults';
 
@@ -915,13 +915,12 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): b
  * `mergeKey` coalesces a whole drag into one undo entry — pass something stable
  * for the gesture's duration.
  */
-// B3-gap: the fallback `sendNodeValues` takes for props the API cannot
-// address yet: a LIGHT's Point of Interest (`poiX/Y/Z`) before the layer
-// stores it (the catalog lists a one-node camera's POI and its orbit props
-// latent, not a light's — `propRefForTrack(light, 'poiX')` is null), and a
-// node that is not a composition's layer. (`cameraCommands` still calls this
-// directly for addressable props — its migration belongs to that module:
-// `sendNodeValues` is the engine route.)
+// B3-legacy: kept for `cameraCommands` (Set Focus Distance to Layer,
+// Distribute Layers in Z call it directly, synchronously, beside their own
+// legacy expression / 3D-switch writes — that module's migration moves them to
+// `sendNodeValues`, the engine route), and as `sendNodeValues`' fallback for a
+// node that is not a composition's layer. A light's Point of Interest is
+// addressable now (`light/poiX|Y|Z`, latent like a one-node camera's).
 export function applyNodePropsKeyframed(
   nodeId: string,
   values: Readonly<Record<string, number>>,
@@ -944,7 +943,7 @@ export function applyNodePropsKeyframed(
     // keyframes both — the same rule the layer gizmo applies.
     const group = GIZMO_TRACK_GROUPS[prop as keyof Transform3DValues] ?? [prop];
     if (autoKeyframe || hasAnyTrack(nodeId, group)) keyed.push({ prop, value });
-    // B3-gap: a light's poiX/Y/Z (no property until stored) — see above.
+    // B3-legacy: see above (cameraCommands' callers, non-layer nodes).
     defaultSceneGraph.writeProp(nodeId as ID, transComp.id, prop, value);
     changed = true;
   }
@@ -1129,9 +1128,9 @@ export function sendNodeValues(
   const decide = (): 'engine' | 'legacy' => (addressable() ? 'engine' : 'legacy');
   const route = txn ? txn.memo(`route:${key}`, decide) : decide();
   if (route === 'legacy') {
-    // B3-legacy: engine gap — a prop with no API property on this layer yet
-    // (a light's poiX/Y/Z before the layer stores them): the catalog lists
-    // them only once they exist.
+    // B3-legacy: a node that is not a composition's layer, or a prop with no
+    // API property on it (a light's / camera's Point of Interest is latent in
+    // the catalog, so the viewport handles route to the engine).
     applyNodePropsKeyframed(nodeId, values, key);
     return;
   }
@@ -1354,21 +1353,15 @@ function createNode(payload: CreateNodePayload): void {
     }
     
     useSelectionStore.getState().set([parentId]);
-    if (isLayer(parentId) && !hasVertexEditState(newMask.points)) {
-      sendToolEdit('New Mask', [{
-        type: 'addMask',
-        layer: parentId,
-        path: (maskPointsToPath(newMask.points, newMask.closed) as Extract<Value, { kind: 'path' }>).value,
-        mode: newMask.mode,
-        inverted: newMask.inverted === true,
-      }]);
-      return;
-    }
-    // B3-gap: the API's BezierPath has no per-vertex `broken` (Alt-split
-    // handles) / `tension` state, so a pen mask drawn with split handles would
-    // come back re-joined through `addMask`.
-    addMaskPath(parentId, newMask);
-    bumpScene();
+    // A node outside a composition has no masks the API can address.
+    if (!isLayer(parentId)) return;
+    sendToolEdit('New Mask', [{
+      type: 'addMask',
+      layer: parentId,
+      path: (maskPointsToPath(newMask.points, newMask.closed) as Extract<Value, { kind: 'path' }>).value,
+      mode: newMask.mode,
+      inverted: newMask.inverted === true,
+    }]);
     return;
   }
 
@@ -1850,178 +1843,119 @@ const TOPOLOGY_LABEL: Record<string, string> = {
   extend: 'Continue Path',
 };
 
-/**
- * Write the outline-level switches a path payload carries (Closed, RotoBezier).
- * B3-gap: `Geometry.open` / `Geometry.rotoBezier` have no API property.
- */
-function writeGeometryFlags(node: SceneNode, flags: { closed?: boolean; rotoBezier?: boolean }): void {
-  const geom = node.components.find((c) => c.type === 'Geometry');
-  if (!geom) return;
-  // `open: true` marks a stroke; a closed path stores NO key, which is how a
-  // Pen-closed path and every primitive already read.
-  if (flags.closed !== undefined) defaultSceneGraph.writeProp(node.id, geom.id, 'open', flags.closed ? undefined : true);
-  if (flags.rotoBezier !== undefined) defaultSceneGraph.writeProp(node.id, geom.id, 'rotoBezier', flags.rotoBezier ? true : undefined);
+type PathValue = Extract<Value, { kind: 'path' }>;
+
+/** A tool's replayable topology edit as the API's `editPathTopology` op. */
+function topologyOp(t: PathTopologyEdit): PathTopologyOp {
+  const base = { segment: 0, u: 0, indices: [] as number[], atStart: false };
+  switch (t.op) {
+    case 'insert': return { ...base, kind: 'insert', segment: t.segment, u: t.u };
+    case 'delete': return { ...base, kind: 'remove', indices: [t.index] };
+    case 'deleteMany': return { ...base, kind: 'remove', indices: [...t.indices] };
+    case 'firstVertex': return { ...base, kind: 'firstVertex', indices: [t.index] };
+    case 'reverse': return { ...base, kind: 'reverse' };
+    case 'extend':
+      return { ...base, kind: 'extend', atStart: t.atStart, points: (maskPointsToPath(t.points as MaskPoint[], false) as PathValue).value };
+    default: return { ...base, kind: 'reverse' };
+  }
+}
+
+/** One tool edit of an outline, as it reaches the port. */
+interface OutlinePayload {
+  points: ReadonlyArray<PathPoint>;
+  topology?: PathTopologyEdit;
+  closed?: boolean;
+  rotoBezier?: boolean;
 }
 
 /**
- * The API property of a layer's ANIMATED outline (`path.points`, a path
- * value), or null when the engine cannot take the write: not a composition's
- * layer, or a static outline (the TS engine gives `path.points` no static
- * value — "key it instead").
+ * A tool's edit of one outline — a mask's `masks/<id>/path` or a drawn
+ * shape's `layer/path.points` — through the engine, as part of the current
+ * tool action (one entry per drag / click):
+ *
+ *   - STRUCTURAL steps (a vertex added / removed / continued on an ANIMATED
+ *     outline, its Closed switch while animated, the RotoBezier switch) are
+ *     `editPathTopology` — the engine replays them on EVERY state, so the keys
+ *     keep one vertex count and morph — and `setProperty` on the switch. They
+ *     go as a KEPT gesture message: the drag's later reshapes build on them,
+ *     and latest-wins must not drop them.
+ *   - the whole outline at the playhead (absolute): `setProperty {time}` — a
+ *     key there on an animated outline (the engine maps the comp time onto the
+ *     layer's keyframe axis, where `buildSnapshot` reads it), the static shape
+ *     on an unanimated one (whose topology edit IS that shape). A topology edit
+ *     of an animated outline keys nothing at the playhead (it changed every
+ *     key already).
  */
-function animatedPathRef(id: string): PropRef | null {
-  if (!isLayer(id) || !defaultAnimation.isDataAnimated(id, 'path.points')) return null;
-  const r = propRefForTrack(id, 'path.points');
-  return r && r.valueType === 'path' ? r.ref : null;
+function sendOutlineEdit(
+  label: string,
+  prop: PropRef,
+  rotoProp: PropRef,
+  animated: boolean,
+  closedNow: boolean,
+  payload: OutlinePayload,
+): void {
+  const structural: Command[] = [];
+  if (payload.rotoBezier !== undefined) structural.push({ type: 'setProperty', prop: rotoProp, value: { kind: 'bool', value: payload.rotoBezier } });
+  const closedChange = payload.closed !== undefined && payload.closed !== closedNow ? payload.closed : undefined;
+  if (animated && (payload.topology || closedChange !== undefined)) {
+    structural.push({
+      type: 'editPathTopology', prop,
+      ...(payload.topology ? { op: topologyOp(payload.topology) } : {}),
+      ...(closedChange !== undefined ? { closed: closedChange } : {}),
+    });
+  }
+  const reshape: Command[] = animated && payload.topology ? [] : [{
+    type: 'setProperty', prop,
+    value: maskPointsToPath(payload.points as MaskPoint[], payload.closed ?? closedNow),
+    time: compTime(getTimelineController().currentSeconds),
+  }];
+  const txn = currentToolTransaction();
+  if (!txn) {
+    // A key press (Delete) or a click outside a drag: one entry.
+    void runToolEdit(label, [...structural, ...reshape]);
+    return;
+  }
+  if (structural.length > 0) txn.send(label, structural, { keep: true });
+  if (reshape.length > 0) txn.send(label, reshape);
 }
 
 /**
- * Direct Selection / Pen edits of a layer's own outline.
- *
- * A RESHAPE of an ANIMATED outline (the whole outline at the playhead,
- * absolute) goes to the engine as the Path at the playhead — a key there, one
- * gesture per drag, the comp time mapped onto the layer's keyframe axis by the
- * engine — WHEN the catalog types the layer's `path.points` as a path value
- * (a `path.points` data track on a layer with no drawn Geometry outline, e.g.
- * a primitive shape).
- * The route is decided once per drag, so one drag never mixes the two
- * histories.
- *
- * B3-gap: everything else keeps the legacy writer, one gesture transaction
- * per drag: a DRAWN shape layer's Path is catalogued as a scalar
- * `layer/path.points` (static or animated, so `animatedPathRef` is null for
- * it), the TS engine gives `path.points` no static value ("key it instead"),
- * a BezierPath drops each vertex's `broken` / `tension` editing state, and
- * Closed / RotoBezier (`Geometry.open`, `rotoBezier`) and a vertex added or
- * removed on EVERY keyframe have no command.
+ * Direct Selection / Pen edits of a layer's own outline (`layer/path.points`,
+ * see `sendOutlineEdit`). A primitive shape with an animated `path.points`
+ * track and no drawn outline keys its reshapes through the data track's path
+ * property; a structural edit needs the drawn outline.
  */
 function updateNodePath(payload: UpdateNodePathPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
   const id = node.id as string;
-  const geomComponent = node.components.find((c) => c.type === 'Geometry');
-  const topology = payload.topology;
-
-  if (!topology && payload.closed === undefined && payload.rotoBezier === undefined && !hasVertexEditState(payload.points)) {
-    const txn = currentToolTransaction();
-    const ref = txn ? txn.memo(`pathroute:${id}`, () => animatedPathRef(id)) : animatedPathRef(id);
-    if (ref) {
-      sendToolEdit('Edit Path', [{
-        type: 'setProperty',
-        prop: ref,
-        value: maskPointsToPath(payload.points as MaskPoint[], geomComponent?.props.open !== true),
-        time: compTime(getTimelineController().currentSeconds),
-      }], txn);
-      return;
-    }
-  }
-
-  // An ANIMATED outline: write the track the renderer reads, like a mask edit.
-  // A reshape keys the playhead (on the layer's keyframe axis, see
-  // `updateMaskPathCmd`); a vertex added or removed is replayed on EVERY
-  // keyframe, or the keyframes disagree on their vertex count and the path
-  // stops morphing. Through the gesture's anim transaction, so the drag is one
-  // undo step.
-  // The closed state BEFORE this edit's flags: a Continue that closes the path
-  // appended its run to the outline as it was, open.
-  const wasClosed = geomComponent?.props.open !== true;
-  // B3-gap: see the function comment (no Closed / RotoBezier / shape-path property).
-  writeGeometryFlags(node, payload);
-  if (defaultAnimation.isDataAnimated(id, 'path.points')) {
-    if (topology) {
-      const closed = wasClosed;
-      gestureAnimEdit(TOPOLOGY_LABEL[topology.op] ?? 'Edit Path', () => {
-        const track = defaultAnimation.getDataTrack(id, 'path.points');
-        if (!track) return;
-        defaultAnimation.setDataTrack(id, 'path.points', {
-          ...track,
-          keyframes: track.keyframes.map((k) => {
-            const pts = toBezierPoints(k.value);
-            const next = pts ? applyPathTopology(pts, topology, closed) : null;
-            return next ? { ...k, value: next } : k;
-          }),
-        });
-      });
-    } else {
-      const t = compToKeyframeTime(id, getTimelineController().currentSeconds);
-      gestureAnimEdit(
-        'Edit Path',
-        () => defaultAnimation.setDataKeyframe(id, 'path.points', 'points', t, payload.points),
-        `drag:path:${t}:${id}`,
-      );
-    }
-    gestureSceneBump();
+  const animated = defaultAnimation.isDataAnimated(id, 'path.points');
+  const label = payload.topology ? TOPOLOGY_LABEL[payload.topology.op] ?? 'Edit Path' : 'Edit Path';
+  const rotoProp: PropRef = { layer: id, path: 'layer/pathRotoBezier' };
+  if (outlineOnEngine({ nodeId: id, maskId: null })) {
+    sendOutlineEdit(label, outlineRef({ nodeId: id, maskId: null }), rotoProp, animated, pathIsClosed(node) !== false, payload);
     return;
   }
-
-  if (geomComponent) {
-    defaultSceneGraph.writeProp(node.id, geomComponent.id, 'points', payload.points);
-    gestureSceneBump();
+  const keyed = isLayer(id) && animated ? propRefForTrack(id, 'path.points') : null;
+  if (keyed?.valueType === 'path' && !payload.topology && payload.closed === undefined && payload.rotoBezier === undefined) {
+    sendOutlineEdit(label, keyed.ref, rotoProp, true, pathIsClosed(node) !== false, payload);
   }
 }
 
 /**
- * Reshape one of a layer's masks (the Direct Selection drag on canvas).
- *
- * The payload is the WHOLE outline at the playhead (absolute), so it goes to
- * the engine as the Mask Path at the playhead: a key there on an animated mask
- * (AE), the shape itself on a static one — one gesture per drag. The engine
- * maps the comp time onto the layer's keyframe axis, where `buildSnapshot`
- * reads the mask.
+ * Reshape / restructure one of a layer's masks (Direct Selection, Pen in mask
+ * mode, Convert Vertex) — `masks/<id>/path` through `sendOutlineEdit`.
  */
 function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
   const id = payload.id as string;
-  const topology = payload.topology;
+  const target = { nodeId: id, maskId: payload.maskId };
   const current = readNodeMask(node)?.paths.find((p) => p.id === payload.maskId);
-  const viaEngine = (): boolean =>
-    isLayer(id) && !!current &&
-    // RotoBezier is a mask-level switch the API does not have.
-    payload.rotoBezier === undefined &&
-    // A vertex added / removed on an ANIMATED mask changes every keyframe.
-    !(topology && readNodeMaskAnim(node).length > 0) &&
-    // Split handles / RotoBezier tension would be dropped by a BezierPath.
-    !hasVertexEditState(payload.points) && !hasVertexEditState(current.points);
-  // Decided once per drag, so one gesture never mixes the two histories.
-  const txn = currentToolTransaction();
-  const route = txn ? txn.memo(`maskroute:${id}:${payload.maskId}`, viaEngine) : viaEngine();
-  if (route && current) {
-    sendToolEdit(topology ? TOPOLOGY_LABEL[topology.op] ?? 'Edit Mask' : 'Edit Mask', [{
-      type: 'setProperty',
-      prop: { layer: id, path: paths.mask(payload.maskId, 'path') },
-      value: maskPointsToPath(payload.points as MaskPoint[], payload.closed ?? current.closed),
-      time: compTime(getTimelineController().currentSeconds),
-    }], txn);
-    return;
-  }
-  // B3-gap: RotoBezier (a mask-level switch with no property), per-vertex
-  // `broken` / `tension` (no BezierPath field), and a vertex added / removed on
-  // every key of an animated mask: expressible as `updateKeyframes` value
-  // patches, but those need the keys' engine ids, and this port runs inside a
-  // pointer gesture's synchronous builder (`querySync` answers null while the
-  // gesture's own sends are in flight) — no one-command "apply topology to
-  // every keyframe" exists (see the conditions above).
-  //
-  // The playhead on the layer's KEYFRAME axis — where `buildSnapshot` reads the
-  // mask (`remapOf`), and where the Effects panel, the timeline and the Layer
-  // panel write. Raw comp time is the same number only for an untrimmed bar at
-  // 0; on a moved or trimmed layer it put the keyframe where the shape is not.
-  const t = compToKeyframeTime(id, getTimelineController().currentSeconds);
-  if (payload.closed !== undefined || payload.rotoBezier !== undefined) {
-    setMaskPathFlags(id, payload.maskId, { closed: payload.closed, rotoBezier: payload.rotoBezier });
-  }
-  if (topology) {
-    // Adding or deleting a vertex changes every keyframe, not the one at the
-    // playhead — see `editMaskPathTopology`. Splitting is linear in the control
-    // points, so the shape at the playhead comes out as `payload.points`.
-    editMaskPathTopology(id, payload.maskId, (points, closed) =>
-      applyPathTopology(points, topology, closed) as MaskPoint[] | null,
-    );
-  } else {
-    setMaskPoints(id, payload.maskId, payload.points as MaskPoint[], t);
-  }
-  gestureSceneBump();
+  if (!current || !outlineOnEngine(target)) return;
+  const label = payload.topology ? TOPOLOGY_LABEL[payload.topology.op] ?? 'Edit Mask' : 'Edit Mask';
+  sendOutlineEdit(label, outlineRef(target), { layer: id, path: paths.mask(payload.maskId, 'rotoBezier') },
+    readNodeMaskAnim(node).length > 0, current.closed, payload);
 }
 
 // ── Knife ───────────────────────────────────────────────────────────
@@ -2118,25 +2052,22 @@ function readCutRuns(node: SceneNode): CutSubpath[] | null {
  * unreachable by anything holding a reference, expressions included.
  */
 /*
- * B3-gap: the knife writes a shape layer's `Geometry.subpaths` (multi-run
- * outline), clears `Geometry.points` and flips its `shapeType` to 'path'; the
- * API has no property for any of them, so the flush / record around it stay
- * on the legacy recorder too.
+ * The halves are one `setShapeOutline` per cut layer (the layer's runs as
+ * `Geometry.subpaths`, its shape type `path`), all in ONE entry.
  */
 function cutPaths(payload: CutPathsPayload): void {
   const time = getTimelineController().currentSeconds;
-  const touched: string[] = [];
-  useHistoryStore.getState().flush();
+  const cmds: Command[] = [];
 
   for (const rawId of payload.ids) {
     const id = rawId as string;
     const node = defaultSceneGraph.getNode(id as ID);
-    if (!node || node.locked) continue;
+    if (!node || node.locked || !isLayer(id)) continue;
     if (readNodeKind(node) !== 'shape') continue;
     // An animated outline wins over stored geometry every frame, so a cut
-    // written to the static props would simply not appear. Silently doing
-    // nothing is better than writing geometry that never renders.
-    if (defaultAnimation.isAnimated(id, 'path.points')) continue;
+    // written to the static props would simply not appear (the engine refuses
+    // it). Silently doing nothing is better than writing geometry that never renders.
+    if (defaultAnimation.isDataAnimated(id, 'path.points')) continue;
 
     const runs = readCutRuns(node);
     if (!runs) continue;
@@ -2153,31 +2084,15 @@ function cutPaths(payload: CutPathsPayload): void {
     // crossed nothing, so a miss costs no write and no undo entry.
     if (cut === runs) continue;
 
-    const geom = node.components.find((c) => c.type === 'Geometry');
-    const subpaths = cut.map((r) => ({ points: r.points, open: r.open }));
-    if (geom) {
-      defaultSceneGraph.writeProp(id as ID, geom.id, 'subpaths', subpaths);
-      // `points` and `subpaths` are mutually exclusive (raster/subpaths.ts);
-      // leaving the old flat run behind would let the two disagree about the
-      // layer's shape, with the fill drawn from one and the stroke the other.
-      defaultSceneGraph.writeProp(id as ID, geom.id, 'points', undefined);
-    } else {
-      defaultSceneGraph.addComponent(id as ID, {
-        id: `${id}_g`,
-        type: 'Geometry',
-        props: { subpaths },
-      });
-    }
-    // A cut rectangle is no longer a rectangle. Without this the renderer keeps
-    // drawing the primitive from width/height and the cut is invisible.
-    const transform = node.components.find((c) => c.type === 'Transform');
-    if (transform) defaultSceneGraph.writeProp(id as ID, transform.id, 'shapeType', 'path');
-    touched.push(id);
+    cmds.push({
+      type: 'setShapeOutline',
+      layer: id,
+      runs: cut.map((r) => (maskPointsToPath(r.points as MaskPoint[], !r.open) as PathValue).value),
+    });
   }
 
-  if (touched.length === 0) return;
-  bumpScene();
-  useHistoryStore.getState().record(touched.length > 1 ? `Knife (${touched.length} layers)` : 'Knife');
+  if (cmds.length === 0) return;
+  sendToolEdit(cmds.length > 1 ? `Knife (${cmds.length} layers)` : 'Knife', cmds);
 }
 
 /**

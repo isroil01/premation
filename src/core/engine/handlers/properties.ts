@@ -23,6 +23,7 @@ import {
   flicksToKeyTime,
   keyTimeToFlicks,
   normalizeKeysAt,
+  shapePathValueOf,
   type PropBinding,
   type KeyWrite,
   type Catalog,
@@ -313,7 +314,7 @@ export const propertyHandlers: HandlerTable = {
         const value = valueAt(layer, b, t);
         const times = readKeys(layer, b).map((k) => k.t);
         dropKeys(layer, b, times);
-        if (value && ((!b.dataTrack && b.special !== 'maskPath') || b.special === 'rig' || (b.special === 'fillStops' && hasGradientFill(layer)))) writeStatic(layer, b, value);
+        if (value && ((!b.dataTrack && b.special !== 'maskPath') || b.special === 'rig' || b.special === 'shapePath' || (b.special === 'fillStops' && hasGradientFill(layer)))) writeStatic(layer, b, value);
         return {};
       },
     };
@@ -728,6 +729,10 @@ export function valueAt(layer: string, b: PropBinding, t: number): Value | undef
     if (b.special === 'sourceText') return { kind: 'textDocument', value: { text: String(v), runs: [], paragraphs: [], orientation: 'horizontal', kerning: 'metrics' } };
     if (b.special === 'rig') return pinKeyToApi(v);
     if (b.special === 'fillStops') return fillStopsKeyToApi(graph.getNode(layer)!, v);
+    if (b.special === 'shapePath') {
+      const pv = shapePathValueOf(layer, v);
+      return pv.kind === 'none' ? undefined : pv;
+    }
     return typeof v === 'string' ? { kind: 'string', value: v } : typeof v === 'number' ? { kind: 'scalar', value: v } : undefined;
   }
   if (b.members.length === 0) return readStatic(layer, b);

@@ -402,9 +402,9 @@ describe('path reshape (Direct Selection on a shape layer)', () => {
   ];
 
   it('an ANIMATED outline keys the Path at the playhead: one "Edit Path" engine gesture', async () => {
-    // B: a layer whose Path the catalog types as a path value (an animated
-    // `path.points` track). A drawn layer's Path row is typed scalar by the
-    // catalog today (engine gap), so its reshapes keep the legacy writer.
+    // B: a primitive whose Path is only its animated `path.points` track (a
+    // path value); a drawn layer's Path is `layer/path.points` too
+    // (pathCommands.test.ts, penPathEditing.test.ts).
     defaultAnimation.setDataKeyframe(s.B, 'path.points', 'points', 0, tri(10));
     await engineIdle();
     const sent: unknown[] = [];

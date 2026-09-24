@@ -348,6 +348,15 @@ export type MaskMode =
   | 'difference';
 export const MaskModeValues = ['none', 'add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'] as const;
 
+/** Which structural edit `editPathTopology` replays (packages/workspace pathTopology.ts `PathTopologyEdit`). */
+export type PathTopologyKind =
+  | 'insert'
+  | 'remove'
+  | 'firstVertex'
+  | 'reverse'
+  | 'extend';
+export const PathTopologyKindValues = ['insert', 'remove', 'firstVertex', 'reverse', 'extend'] as const;
+
 export type PlayRange =
   | 'all'
   | 'workArea'
@@ -698,6 +707,22 @@ export interface BezierPath {
   closed: boolean;
   /** Per-vertex feather (AE variable-width mask feather). Masks (B3z): a vertex's own feather is a point {segment: vertex, t: 0, radius: feather, tension: 0}; reads list one per vertex that has one. On a write an EMPTY list keeps each vertex's current feather (by index); a non-empty list is authoritative — an unlisted vertex, or one listed with radius < 0, has none. t ≠ 0 / tension ≠ 0 are `unsupported` (one feather per vertex). */
   featherPoints: FeatherPoint[];
+  /**
+   * Per-vertex EDITING state (B3, both engines): split handles and RotoBezier tension — what the next edit of
+   * the vertex does; it changes no pixel. Reads list one entry per vertex that has any. A write follows the
+   * `featherPoints` rule: an EMPTY list keeps each vertex's current state by index; a non-empty list is
+   * authoritative — an unlisted vertex, or one listed with `broken` false and no `tension`, has none.
+   */
+  vertexStates: PathVertexState[];
+}
+
+/** One vertex's editing state (BezierPath.vertexStates). */
+export interface PathVertexState {
+  vertex: number;
+  /** The two handles move independently (Alt-split / Convert Vertex). False = smooth. */
+  broken: boolean;
+  /** RotoBezier tension 0..1 (absent = the default 1/3); read only while the path's RotoBezier switch is on. */
+  tension?: number;
 }
 
 export interface FeatherPoint {
@@ -2207,6 +2232,32 @@ export interface PaintKeyInit {
 
 export interface PaintStrokeId {
   stroke: string;
+}
+
+/** A structural path edit, replayable on every state of an outline. */
+export interface PathTopologyOp {
+  kind: PathTopologyKind;
+  /** insert: the segment from vertex `segment` to the next one (wrapping when closed), split at curve parameter `u`, strictly inside (0, 1) — de Casteljau, the drawn curve is unchanged; the new vertex lands at `segment + 1`. */
+  segment: number;
+  u: number;
+  /** remove: the vertices to delete (at least one; at least 2 must stay). firstVertex: exactly one index. */
+  indices: number[];
+  /** extend: the vertices a continued open outline gains in EVERY state, appended (prepended when `atStart`), in the path's own space. Its `closed` and feather points are ignored; its vertex states are kept. */
+  points?: BezierPath;
+  atStart: boolean;
+}
+
+/** B3 — a STRUCTURAL edit of a path property — a mask's `masks/<id>/path` or a shape layer's `layer/path.points` — in EVERY state: the static outline and each keyframe (an outline cannot gain a vertex, open, or start elsewhere at one key only: keys whose vertex counts differ hold instead of morphing). `op` first, on each state's current closed state: split a segment, remove vertices, Set First Vertex (a closed outline rotates; an open one can only start at its last vertex, which reverses it), Reverse Path Direction, or continue an open outline; then `closed`, the outline's Closed switch in every state. At least one of the two. A state the op does not apply to (a segment or vertex it lacks) is left as it is; an op that applies to no state is `invalidArgument` and changes nothing. Per-vertex feathers and editing state travel with their vertices; keyframe ids, times and easing are kept. Undo restores every state exactly. */
+export interface EditPathTopology {
+  prop: PropRef;
+  op?: PathTopologyOp;
+  closed?: boolean;
+}
+
+/** B3 — replace a shape layer's drawn outline with independent RUNS (the Knife's cut, a boolean's islands): stored as the layer's subpaths, each run with its own closed state; the single-run outline is cleared, the layer's shape type becomes `path` (a cut rectangle is no longer a rectangle), and a layer without Geometry gets one. At least one run, each of at least 2 vertices. A layer that is not a shape is `invalidArgument`; an animated outline (`layer/path.points` keyed — the keys would win over the runs every frame) is `animated`. Undo restores the outline exactly. */
+export interface SetShapeOutline {
+  layer: LayerId;
+  runs: BezierPath[];
 }
 
 export interface PropertyPaths {
@@ -3872,6 +3923,8 @@ export type Command =
   | ({ type: 'setPaintOnTransparent' } & SetPaintOnTransparent)
   | ({ type: 'setPaintStrokePath' } & SetPaintStrokePath)
   | ({ type: 'setPaintPathAnimated' } & SetPaintPathAnimated)
+  | ({ type: 'editPathTopology' } & EditPathTopology)
+  | ({ type: 'setShapeOutline' } & SetShapeOutline)
   | ({ type: 'addMarkers' } & AddMarkers)
   | ({ type: 'updateMarkers' } & UpdateMarkers)
   | ({ type: 'deleteMarkers' } & DeleteMarkers)
@@ -4019,6 +4072,8 @@ export type CommandResult =
   | ({ type: 'setPaintOnTransparent' } & Empty)
   | ({ type: 'setPaintStrokePath' } & Empty)
   | ({ type: 'setPaintPathAnimated' } & Empty)
+  | ({ type: 'editPathTopology' } & Empty)
+  | ({ type: 'setShapeOutline' } & Empty)
   | ({ type: 'addMarkers' } & MarkerIds)
   | ({ type: 'updateMarkers' } & Empty)
   | ({ type: 'deleteMarkers' } & Empty)
@@ -4274,6 +4329,8 @@ export interface CommandArgs {
   setPaintOnTransparent: SetPaintOnTransparent;
   setPaintStrokePath: SetPaintStrokePath;
   setPaintPathAnimated: SetPaintPathAnimated;
+  editPathTopology: EditPathTopology;
+  setShapeOutline: SetShapeOutline;
   addMarkers: AddMarkers;
   updateMarkers: UpdateMarkers;
   deleteMarkers: DeleteMarkers;
@@ -4421,6 +4478,8 @@ export interface CommandResults {
   setPaintOnTransparent: Empty;
   setPaintStrokePath: Empty;
   setPaintPathAnimated: Empty;
+  editPathTopology: Empty;
+  setShapeOutline: Empty;
   addMarkers: MarkerIds;
   updateMarkers: Empty;
   deleteMarkers: Empty;
