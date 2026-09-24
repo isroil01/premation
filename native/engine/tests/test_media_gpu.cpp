@@ -16,107 +16,19 @@
 #include "decoder.hpp"
 #include "frame_convert.hpp"
 #include "media_fixture_ffi.hpp"
+#include "media_gpu_harness.hpp"
 #include "media_system.hpp"
 #include "media_textures.hpp"
 #include "platform_ffi.hpp"
+#include "swscale_ref_ffi.hpp"
 #include "yuv.hpp"
 
 using namespace premation::media;
+using namespace premation::media::testing;
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
 
 namespace {
-
-struct Gpu {
-  wgpu::Instance instance;
-  wgpu::Adapter adapter;
-  wgpu::Device device;
-};
-
-std::optional<Gpu> make_gpu() {
-  static constexpr auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
-  wgpu::InstanceDescriptor id{};
-  id.requiredFeatureCount = 1;
-  id.requiredFeatures = &kTimedWaitAny;
-  Gpu g;
-  g.instance = wgpu::CreateInstance(&id);
-  wgpu::RequestAdapterOptions o{};
-#if defined(_WIN32)
-  o.backendType = wgpu::BackendType::D3D12;
-#endif
-  o.powerPreference = wgpu::PowerPreference::HighPerformance;
-  g.instance.WaitAny(g.instance.RequestAdapter(&o, wgpu::CallbackMode::WaitAnyOnly,
-                                               [&g](wgpu::RequestAdapterStatus s, wgpu::Adapter a, wgpu::StringView) {
-                                                 if (s == wgpu::RequestAdapterStatus::Success) g.adapter = std::move(a);
-                                               }),
-                     UINT64_MAX);
-  if (g.adapter == nullptr) return std::nullopt;
-  const auto features = wanted_device_features(g.adapter);
-  wgpu::DeviceDescriptor dd{};
-  dd.requiredFeatureCount = features.size();
-  dd.requiredFeatures = features.data();
-  dd.SetUncapturedErrorCallback([](const wgpu::Device&, wgpu::ErrorType, wgpu::StringView msg) {
-    FAIL_CHECK("Dawn error: " << std::string_view(msg.data, msg.length == wgpu::kStrlen ? std::strlen(msg.data) : msg.length));
-  });
-  g.instance.WaitAny(g.adapter.RequestDevice(&dd, wgpu::CallbackMode::WaitAnyOnly,
-                                             [&g](wgpu::RequestDeviceStatus s, wgpu::Device d, wgpu::StringView) {
-                                               if (s == wgpu::RequestDeviceStatus::Success) g.device = std::move(d);
-                                             }),
-                     UINT64_MAX);
-  if (g.device == nullptr) return std::nullopt;
-  return g;
-}
-
-float half_to_float(std::uint16_t h) {
-  const std::uint32_t s = (h >> 15U) & 1U;
-  const std::uint32_t e = (h >> 10U) & 0x1FU;
-  const std::uint32_t m = h & 0x3FFU;
-  float v = 0;
-  if (e == 0) {
-    v = std::ldexp(static_cast<float>(m), -24);
-  } else if (e == 31) {
-    v = m == 0 ? INFINITY : NAN;
-  } else {
-    v = std::ldexp(static_cast<float>(m | 0x400U), static_cast<int>(e) - 25);
-  }
-  return s != 0 ? -v : v;
-}
-
-/// RGBA16F texture → float RGBA, top-down.
-std::vector<float> read_back(const Gpu& g, const ConvertedFrame& t) {
-  const std::uint32_t rowBytes = (t.width * 8 + 255) & ~255U;
-  wgpu::BufferDescriptor bd{};
-  bd.size = std::uint64_t{rowBytes} * t.height;
-  bd.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
-  const wgpu::Buffer buf = g.device.CreateBuffer(&bd);
-  wgpu::CommandEncoder enc = g.device.CreateCommandEncoder();
-  wgpu::TexelCopyTextureInfo src{};
-  src.texture = t.texture;
-  wgpu::TexelCopyBufferInfo dst{};
-  dst.buffer = buf;
-  dst.layout.bytesPerRow = rowBytes;
-  dst.layout.rowsPerImage = t.height;
-  const wgpu::Extent3D ext{t.width, t.height, 1};
-  enc.CopyTextureToBuffer(&src, &dst, &ext);
-  const wgpu::CommandBuffer cb = enc.Finish();
-  g.device.GetQueue().Submit(1, &cb);
-  bool done = false;
-  g.instance.WaitAny(buf.MapAsync(wgpu::MapMode::Read, 0, bd.size, wgpu::CallbackMode::WaitAnyOnly,
-                                  [&done](wgpu::MapAsyncStatus s, wgpu::StringView) { done = s == wgpu::MapAsyncStatus::Success; }),
-                     UINT64_MAX);
-  REQUIRE(done);
-  const auto* bytes = static_cast<const std::uint8_t*>(buf.GetConstMappedRange(0, bd.size));
-  std::vector<float> out(std::size_t{t.width} * t.height * 4);
-  for (std::uint32_t y = 0; y < t.height; ++y) {
-    for (std::uint32_t x = 0; x < t.width * 4; ++x) {
-      std::uint16_t h = 0;
-      std::memcpy(&h, bytes + std::size_t{y} * rowBytes + std::size_t{x} * 2, 2);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-      out[std::size_t{y} * t.width * 4 + x] = half_to_float(h);
-    }
-  }
-  buf.Unmap();
-  return out;
-}
 
 std::uint32_t sample(const DecodedFrame& f, std::size_t plane, std::uint32_t x, std::uint32_t y, std::uint32_t comp = 0) {
   const Plane& p = f.planes.at(plane);
@@ -284,4 +196,101 @@ TEST_CASE("MediaTextures: media hashes resolve to textures; preview never blocks
   const auto m = tex.take_misses();
   CHECK(m.approximate + m.skipped <= 1);
   CHECK_FALSE(tex.external_texture("media:99:0"));
+}
+
+namespace {
+
+/// A synthetic CPU frame over `img`'s codes: planar 4:4:4 (8- or 16-bit words),
+/// or semi-planar 4:4:4 with the code MSB-aligned in 16 bits (P010/P012/P016's
+/// storage, as the hardware download route delivers it).
+struct SyntheticFrame {
+  std::vector<std::uint8_t> y, u, v, uv;
+  std::shared_ptr<DecodedFrame> frame = std::make_shared<DecodedFrame>();
+};
+
+SyntheticFrame synthetic(const swsref::Yuv444& img, Matrix m, Range r, bool semiPlanar) {
+  SyntheticFrame s;
+  DecodedFrame& f = *s.frame;
+  const std::uint8_t bytes = img.bitDepth > 8 ? 2 : 1;
+  const std::uint8_t shift = semiPlanar ? static_cast<std::uint8_t>(16 - img.bitDepth) : 0;
+  f.width = img.width;
+  f.height = img.height;
+  f.format.layout = semiPlanar ? Layout::semiPlanarYuv : Layout::planarYuv;
+  f.format.bitDepth = img.bitDepth;
+  f.format.bytesPerSample = bytes;
+  f.format.storageShift = shift;
+  f.format.chromaShiftX = 0;
+  f.format.chromaShiftY = 0;
+  f.format.matrix = m;
+  f.format.range = r;
+  auto put = [bytes, shift](std::vector<std::uint8_t>& dst, std::uint16_t code) {
+    const auto v = static_cast<std::uint16_t>(code << shift);
+    dst.push_back(static_cast<std::uint8_t>(v & 0xFFU));
+    if (bytes == 2) dst.push_back(static_cast<std::uint8_t>(v >> 8U));
+  };
+  for (std::size_t i = 0; i < img.y.size(); ++i) {
+    put(s.y, img.y[i]);
+    if (semiPlanar) {
+      put(s.uv, img.cb[i]);
+      put(s.uv, img.cr[i]);
+    } else {
+      put(s.u, img.cb[i]);
+      put(s.v, img.cr[i]);
+    }
+  }
+  const std::size_t row = std::size_t{img.width} * bytes;
+  f.planes[0] = {s.y.data(), row, img.width, img.height, 1};
+  if (semiPlanar) {
+    f.planes[1] = {s.uv.data(), row * 2, img.width, img.height, 2};
+    f.planeCount = 2;
+  } else {
+    f.planes[1] = {s.u.data(), row, img.width, img.height, 1};
+    f.planes[2] = {s.v.data(), row, img.width, img.height, 1};
+    f.planeCount = 3;
+  }
+  return s;
+}
+
+}  // namespace
+
+TEST_CASE("GPU conversion matches swscale: BT.601/709/2020 x limited/full x 8/10/12-bit, planar and P01x", "[media][gpu][color]") {
+  const auto g = make_gpu();
+  if (!g) SKIP("no GPU adapter");
+  FrameConverter conv(g->device);
+  // swscale (one 8-bit step short of white at worst: see test_media_color.cpp) + the RGBA16F output (half a ulp: 2.4e-4 at 1.0).
+  constexpr double kTolerance = 5e-3;
+  for (const Matrix m : {Matrix::smpte170m, Matrix::bt709, Matrix::bt2020nc}) {
+    for (const Range r : {Range::limited, Range::full}) {
+      for (const std::uint8_t depth : {std::uint8_t{8}, std::uint8_t{10}, std::uint8_t{12}}) {
+        const swsref::Yuv444 img = swsref::code_grid(depth, r);
+        std::vector<double> ref;
+        std::string error;
+        REQUIRE(swsref::to_rgb(img, m, r, ref, error));
+        for (const bool semi : {false, true}) {
+          if (semi && depth == 8) continue;  // 8-bit semi-planar is NV12: the zero-copy test covers it
+          const SyntheticFrame sf = synthetic(img, m, r, semi);
+          ConvertedFrame out;
+          REQUIRE(conv.convert(*sf.frame, AlphaMode::straight, out, error));
+          const auto px = read_back(*g, out);
+          // Against swscale, and (tighter) against the CPU twin of the same matrices.
+          const YuvToRgb twin = yuv_to_rgb(sf.frame->format);
+          double worst = 0;
+          double worstTwin = 0;
+          for (std::size_t i = 0; i < img.y.size(); ++i) {
+            const auto o = convert_codes(twin, img.y[i], img.cb[i], img.cr[i], 0, false);
+            for (std::size_t k = 0; k < 3; ++k) {
+              const double gpu = static_cast<double>(px.at(i * 4 + k));
+              worst = std::max(worst, std::abs(gpu - ref.at(i * 3 + k)));
+              worstTwin = std::max(worstTwin, std::abs(gpu - o.at(k)));
+            }
+          }
+          INFO("matrix " << static_cast<int>(m) << " range " << static_cast<int>(r) << " depth " << int{depth} << (semi ? " semi-planar" : " planar")
+                         << ": worst " << worst << " vs swscale, " << worstTwin << " vs the CPU twin");
+          CHECK(worst < kTolerance);
+          CHECK(worstTwin < 1.5e-3);  // half-float output: ~2^-11 at 1.0
+          conv.recycle(std::move(out));
+        }
+      }
+    }
+  }
 }

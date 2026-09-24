@@ -56,6 +56,9 @@ struct MediaConfig {
   std::size_t gpuCacheBytes = std::size_t{1} << 30U;  // 1 GiB of GPU-resident hardware frames
   HwPolicy hw = HwPolicy::automatic;
   std::shared_ptr<HwContext> hwContext;  // null → software decode
+  /// When set, streams deeper than 8 bits decode here instead (media_config_for:
+  /// nvdec on NVIDIA when Dawn can't import P010, so d3d11va would download anyway).
+  std::shared_ptr<HwContext> hwContextHighBit;
   bool keepOnGpu = true;
   bool keepHighBitOnGpu = false;  // see DecoderOptions
   int decodeThreads = 0;
@@ -64,6 +67,8 @@ struct MediaConfig {
   int readahead = 12;
   double keepInFlightMs = 120;
   double starvationMs = 400;
+  /// Tests: DecoderOptions::failHwAtFrame for every source (-1 = off).
+  int failHwAtFrame = -1;
   /// Build the exact presentation index for long-GOP streams whose container
   /// can't give it, with a demux-only scan on a background thread (the source
   /// is usable at once on a constant-rate index; the exact one replaces it).
@@ -82,6 +87,9 @@ struct SourceStats {
   std::uint64_t superseded = 0;  // latest requests replaced before they started
   double msPerFrame = 0;         // EMA of decode time per frame
   double indexScanMs = -1;       // background index scan time (-1: none ran / not finished)
+  /// Why this source left the hardware decoder ("" = it didn't): the open failed,
+  /// the decoder refused the stream, or it failed mid-stream. Also logged (media_hw_fallback).
+  std::string hwFallback;
 };
 
 class MediaSystem {
@@ -124,6 +132,7 @@ class MediaSystem {
   void run(Source& s);
   /// Decode until `target` is cached. Returns false when abandoned for a newer latest target.
   bool decode_to(Source& s, VideoDecoder& dec, std::int64_t target, Lane lane, bool readahead);
+  static void note_fallback(Source& s, const std::string& why);
   [[nodiscard]] std::shared_ptr<Source> find(SourceId id) const;
   void signal();
   void shutdown();

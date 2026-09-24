@@ -399,3 +399,132 @@ TEST_CASE("MediaSystem: several sources decode concurrently", "[media][system]")
     CHECK(identify(*f, 60) == 40);
   }
 }
+
+TEST_CASE("MediaSystem: a mixed timeline — six codecs open at once, interleaved requests, no cross-talk, nothing left behind", "[media][system][mixed]") {
+  MediaConfig cfg;
+  cfg.readahead = 4;
+  MediaSystem ms(cfg);
+  struct Clip {
+    fixture::Kind kind;
+    int frames;
+    SourceId id = 0;
+  };
+  std::vector<Clip> clips{{fixture::Kind::prores422, 30},  {fixture::Kind::prores4444, 30}, {fixture::Kind::dnxhr, 12},
+                          {fixture::Kind::mpeg4, 40},      {fixture::Kind::vp9alpha, 20},   {fixture::Kind::ffv1rgb, 6}};
+  std::string error;
+  for (Clip& c : clips) {
+    const auto id = ms.open(make_fixture(c.kind, c.frames), error);
+    REQUIRE(id);
+    c.id = *id;
+  }
+  for (const Clip& c : clips) REQUIRE(ms.wait_ready(c.id, 10s));
+  // Every source's index is its own (six different lengths). Matroska has no
+  // per-frame index: FFV1-in-MKV starts on a constant-rate estimate (one frame
+  // short: its duration omits the last frame's) until the background scan swaps the exact one in.
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  for (const Clip& c : clips) {
+    while (ms.index(c.id)->size() != c.frames && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(5ms);
+    CHECK(ms.index(c.id)->size() == c.frames);
+  }
+
+  // Interleave: round-robin over the sources, a seeded random frame each time,
+  // alternating lanes, with playback hints on two sources running meanwhile.
+  ms.playhead(clips[3].id, 0, +1);
+  ms.playhead(clips[0].id, 10, +1);
+  std::mt19937 rng(23);
+  for (int round = 0; round < 12; ++round) {
+    for (const Clip& c : clips) {
+      const auto f = static_cast<std::int64_t>(rng() % static_cast<unsigned>(c.frames));
+      const Lane lane = (round + static_cast<int>(c.kind)) % 2 == 0 ? Lane::exact : Lane::latest;
+      const FramePtr got = ms.wait(c.id, f, lane, 10s);
+      REQUIRE(got);
+      INFO("kind " << static_cast<int>(c.kind) << " frame " << f);
+      CHECK(got->index == f);
+      CHECK(identify(*got, c.frames) == f);  // the frame's own content: not another source's, not another frame
+    }
+  }
+  // Each source's cached frames are its own and carry its own format.
+  for (const Clip& c : clips) {
+    const FramePtr any = ms.cached(c.id, 0) ? ms.cached(c.id, 0) : ms.nearest(c.id, 0);
+    REQUIRE(any);
+    CHECK(identify(*any, c.frames) == any->index);
+    const bool rgb = c.kind == fixture::Kind::ffv1rgb;
+    CHECK((any->format.layout == Layout::planarRgb) == rgb);
+    CHECK(any->format.hasAlpha == (c.kind == fixture::Kind::prores4444 || c.kind == fixture::Kind::vp9alpha));
+  }
+  for (const Clip& c : clips) CHECK(ms.stats(c.id).error.empty());
+
+  // Close everything while two are still reading ahead: the cache must end empty.
+  for (const Clip& c : clips) ms.close(c.id);
+  const CacheStats after = ms.cache_stats();
+  CHECK(after.frames == 0);
+  CHECK(after.cpuBytes == 0);
+  CHECK(after.gpuBytes == 0);
+}
+
+#ifdef PREMATION_MEDIA_FIXTURES
+TEST_CASE("MediaSystem: a hardware decoder that fails mid-stream hands the clip to software — every frame still delivered, and it says why", "[media][system][hw]") {
+  const std::string p = std::string(PREMATION_MEDIA_FIXTURES) + "/tiny-bframes.mp4";
+  std::string error;
+  // Reference: software, sequential.
+  DecoderOptions sw;
+  sw.hw = HwPolicy::softwareOnly;
+  auto ref = VideoDecoder::open(p, sw, error);
+  REQUIRE(ref);
+  const std::int64_t n = ref->index().size();
+  auto luma = [](const DecodedFrame& f) {
+    std::uint64_t h = 1469598103934665603ULL;
+    const Plane& y = f.planes[0];
+    for (std::uint32_t r = 0; r < y.height; ++r) {
+      for (std::uint32_t x = 0; x < y.width; ++x) h = (h ^ y.data[r * y.stride + x]) * 1099511628211ULL;  // NOLINT
+    }
+    return h;
+  };
+  std::vector<std::uint64_t> sums;
+  REQUIRE(ref->seek(0, error));
+  for (std::int64_t i = 0; i < n; ++i) {
+    FramePtr f;
+    REQUIRE(ref->next(f, error) == DecodeStatus::frame);
+    sums.push_back(luma(*f));
+  }
+
+  HwContextOptions ho;
+  auto hw = create_hw_context(ho, error);
+  if (!hw) SKIP("no hardware decode device here: " << error);
+  MediaConfig cfg;
+  cfg.hwContext = hw;
+  cfg.keepOnGpu = false;  // CPU planes, so the frames can be compared with the software decode
+  cfg.failHwAtFrame = 3;
+  MediaSystem ms(cfg);
+  const auto id = ms.open(p, error);
+  REQUIRE(id);
+  REQUIRE(ms.wait_ready(*id, 10s));
+  REQUIRE(ms.stats(*id).path != DecodePath::software);  // it started on the hardware decoder
+  for (std::int64_t i = 0; i < n; ++i) {
+    const FramePtr f = ms.wait(*id, i, Lane::exact, 10s);
+    REQUIRE(f);  // never a missing (blank) frame
+    INFO("frame " << i);
+    CHECK(f->index == i);
+    CHECK(luma(*f) == sums.at(static_cast<std::size_t>(i)));
+  }
+  const SourceStats st = ms.stats(*id);
+  CHECK(st.path == DecodePath::software);
+  CHECK(st.hwFallback.find("injected fault") != std::string::npos);
+  CHECK(st.error.empty());
+}
+#endif
+TEST_CASE("MediaSystem: an intra-only scrub decodes exactly one frame per target", "[media][system]") {
+  MediaSystem ms(MediaConfig{});
+  std::string error;
+  const auto id = ms.open(make_fixture(fixture::Kind::prores422, 30), error);
+  REQUIRE(id);
+  REQUIRE(ms.wait_ready(*id, 10s));
+  // Targets one and two frames apart included: decoding through the gap would cost whole frames.
+  const std::vector<std::int64_t> targets{5, 6, 8, 11, 2, 3, 29, 27, 28, 0, 14, 16};
+  for (const std::int64_t f : targets) {
+    const FramePtr got = ms.wait(*id, f, Lane::latest, 10s);
+    REQUIRE(got);
+    CHECK(identify(*got, 30) == f);
+  }
+  CHECK(ms.stats(*id).framesDecoded == targets.size());
+}

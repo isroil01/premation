@@ -380,14 +380,37 @@ FrameScene): per footage layer, `sourceTime` (the document chain) →
 `plan_frames(*media.index(src), …)` → one `RenderTextureRef{key, hash =
 media_hash(src, frame), ready, inputSpace}` per frame (frame mix: `vfa:`/`vfb:`
 as the TS exporter) with no blob; the render thread owns one `MediaTextures`
-over the engine's `MediaSystem` (created with `create_hw_context({adapterLuid =
-platform::adapter_luid(device)})`); transport play calls `media.playhead(src,
+over the engine's `MediaSystem` (created from `media_config_for(device)`; the
+viewport drawer in `scene/engine_frames.cpp` still passes `MediaConfig{}`,
+i.e. software only, until it switches); transport play calls `media.playhead(src,
 frame, dir)`.
 
+- **Hardware decode device** (`media_config.hpp`, `media_config_for(device)`):
+  d3d11va on the render adapter (zero-copy), else **nvdec** on it — CUDA,
+  with the CUDA device matched to Dawn's adapter by LUID (`cuda_ffi.cpp`
+  loads `nvcuda.dll` from System32 at run time; CUDA ordinals are not DXGI's
+  order), frames downloaded + uploaded — else software. Streams deeper than
+  8 bits go to nvdec when it is available and Dawn can't import P010
+  (`MediaConfig::hwContextHighBit`: d3d11va would download them anyway, and
+  slower). Why d3d11va first:
+  docs/NATIVE_CORE_PLAN.md, "E1 local results". Intra codecs (ProRes, DNxHR)
+  have no hardware decoder on Windows GPUs and always decode in software.
+- **Per-clip fallback**: a hardware decoder that refuses a stream at its first
+  frame or fails mid-stream (decode error, a surface that won't copy or
+  download) hands that clip to a threaded software decoder from the frame it
+  was on — never a missing frame. `SourceStats::hwFallback` says why and the
+  engine log gets `media_hw_fallback`. Tests inject the failure with
+  `MediaConfig::failHwAtFrame`.
+
 `premation-decode-bench probe|scrub|play` measures it (header of
-`tools/premation_decode_bench.cpp`); `engine_media_tests` makes its own
+`tools/premation_decode_bench.cpp`; `--path d3d11va|nvdec|…`, `--vendor`).
+`tools/gen_media_clips.mjs` makes the E1 clip matrix with an ffmpeg on PATH
+(into `native/build/media-clips`, never git) and `tools/run_decode_bench.mjs`
+runs the bench over it per path, idle-gated. `engine_media_tests` makes its own
 fixtures with libavcodec's encoders (ProRes 422/4444, DNxHR, MPEG-4 B-frames,
-VP9 alpha, FFV1 RGB) and checks every frame's identity after random seeks.
+VP9 alpha, FFV1 RGB) and checks every frame's identity after random seeks, a
+six-codec mixed timeline, the hardware fallback, and the Y'CbCr conversion
+(CPU twin and GPU pass) against swscale per matrix / range / bit depth.
 
 ## Audio (engine/src/audio, E2)
 
