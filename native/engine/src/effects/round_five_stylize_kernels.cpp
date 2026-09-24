@@ -233,7 +233,7 @@ void hex_tile(RgbaView img, double radius, double border, ThreadPool* pool) {
         for (int dc = -1; dc <= 1; ++dc) {
           const double c = col + dc;
           const double ccx = c * hex_w;
-          const double off = std::fmod(c, 2.0) == 0 ? 0 : hex_h / 2;
+          const double off = static_cast<std::int64_t>(c) % 2 == 0 ? 0 : hex_h / 2;  // c is an integer
           const double row = round_index((y - off) / hex_h);
           for (int dr = -1; dr <= 1; ++dr) {
             const double ccy = (row + dr) * hex_h + off;

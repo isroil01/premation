@@ -16,6 +16,7 @@
 // exactly as in V8.
 #pragma once
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <span>
@@ -73,7 +74,15 @@ struct RgbaView {
   if (x > -9223372036854775808.0 && x < 9223372036854775808.0) {
     return static_cast<std::uint32_t>(static_cast<std::uint64_t>(static_cast<std::int64_t>(x)));
   }
-  return js::to_uint32(x);
+  if (!std::isfinite(x)) return 0;
+  // |x| ≥ 2^63: an integer mant · 2^e with e ≥ 11, so its low 32 bits are
+  // (mant << e) mod 2^32, and 0 once e ≥ 32 (the hashes' 1.4e18 · seed terms).
+  const auto bits = std::bit_cast<std::uint64_t>(x);
+  const int e = static_cast<int>((bits >> 52U) & 0x7FFU) - 1075;
+  if (e >= 32) return 0;
+  const std::uint64_t mant = (bits & ((std::uint64_t{1} << 52U) - 1U)) | (std::uint64_t{1} << 52U);
+  const auto low = static_cast<std::uint32_t>(mant << static_cast<unsigned>(e));
+  return (bits >> 63U) != 0U ? static_cast<std::uint32_t>(0U - low) : low;
 }
 /// ECMAScript ToInt32 (`x | 0`).
 [[nodiscard]] inline std::int32_t ji32(double x) noexcept { return static_cast<std::int32_t>(ju32(x)); }
