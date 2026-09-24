@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 90> kPorted{
+constexpr std::array<std::string_view, 98> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -24,6 +24,8 @@ constexpr std::array<std::string_view, 90> kPorted{
     "line-sweep",      "grid-wipe",       "dust-scratches", "noise-alpha",    "wave-warp",        "turbulent-displace",
     "curl-noise",      "roughen-edges",   "scatter",       "ripple",          "magnify",          "warp",
     "page-turn",       "split",           "slant",         "smear",           "rolling-shutter",  "radial-shadow",
+    "color-difference-key", "wire-removal", "broadcast-colors", "noise-hls",   "block-load",       "kernel",
+    "3d-glasses",      "fractal",
 };
 
 }  // namespace
@@ -272,6 +274,29 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
   } else if (type == "radial-shadow") {
     radial_shadow(img, a("lightX", 0), a("lightY", 0), a("projection", 20), rgb("color", {0, 0, 0}), a("opacity", 50),
                   a("softness", 0), a("renderMode", 0), pool);
+  } else if (type == "color-difference-key") {
+    color_difference_key(img, key(), a("matteInBlack", 0), a("matteInWhite", 255), a("matteGamma", 1),
+                         a("viewMode", 0), pool);
+  } else if (type == "wire-removal") {
+    wire_removal(img, a("pointAX", -100), a("pointAY", 0), a("pointBX", 100), a("pointBY", 0), a("thickness", 4),
+                 a("slope", 50), pool);
+  } else if (type == "broadcast-colors") {
+    broadcast_colors(img, a("standard", 0), a("how", 0), a("maxSignalAmplitude", 110), pool);
+  } else if (type == "noise-hls") {
+    noise_hls(img, a("noiseType", 0), a("hue", 0), a("lightness", 0), a("saturation", 0), a("grainSize", 1),
+              a("noisePhase", 0), pool);
+  } else if (type == "block-load") {
+    block_load(img, a("completion", 100), a("scans", 4), a("blockSize", 64), pool);
+  } else if (type == "kernel") {
+    const std::array<double, 9> k{a("k00", 0), a("k01", 0), a("k02", 0), a("k10", 0), a("k11", 1),
+                                  a("k12", 0), a("k20", 0), a("k21", 0), a("k22", 0)};
+    kernel_convolve(img, k, a("divisor", 1), a("offset", 0), pool);
+  } else if (type == "3d-glasses") {
+    glasses_3d(img, a("convergenceOffset", 8), a("view", 0), a("balance", 50), b("swapLeftRight", false), pool);
+  } else if (type == "fractal") {
+    fractal(img, a("setType", 0), a("centerX", -0.5), a("centerY", 0), a("magnification", 1), a("iterations", 64),
+            a("juliaX", -0.7), a("juliaY", 0.27), a("colorPhase", 0), a("colorCycles", 2), rgb("inside", {0, 0, 0}),
+            pool);
   } else {
     return false;
   }

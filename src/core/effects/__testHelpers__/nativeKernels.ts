@@ -36,6 +36,8 @@ import {
 import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
 import { mosaicData, findEdgesData, embossData, roughenEdgesData, scatterData } from '../stylize';
 import { waveWarpData, turbulentDisplaceData, curlNoiseData } from '../warp';
+import { colorDifferenceKeyData, wireRemovalData, broadcastColorsData, noiseHlsData } from '../aeRoundSevenColor';
+import { blockLoadData, kernelConvolveData, glasses3dData, fractalData } from '../aeRoundSevenStylize';
 import {
   rippleData, magnifyData, warpData, pageTurnData, splitData, slantData, smearData, rollingShutterData, radialShadowData,
 } from '../aeDistortAdvanced';
@@ -361,6 +363,34 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'radial-shadow':
       data.set(radialShadowData(data, w, h, n('lightX', 0), n('lightY', 0), n('projection', 20), rgb('color', [0, 0, 0]), n('opacity', 50), n('softness', 0), n('renderMode', 0)));
+      return;
+    case 'color-difference-key': {
+      const [kr, kg, kb] = key();
+      data.set(colorDifferenceKeyData(data, w, h, kr, kg, kb, n('matteInBlack', 0), n('matteInWhite', 255), n('matteGamma', 1), n('viewMode', 0)));
+      return;
+    }
+    case 'wire-removal':
+      data.set(wireRemovalData(data, w, h, n('pointAX', -100), n('pointAY', 0), n('pointBX', 100), n('pointBY', 0), n('thickness', 4), n('slope', 50)));
+      return;
+    case 'broadcast-colors':
+      data.set(broadcastColorsData(data, w, h, n('standard', 0), n('how', 0), n('maxSignalAmplitude', 110)));
+      return;
+    case 'noise-hls':
+      data.set(noiseHlsData(data, w, h, n('noiseType', 0), n('hue', 0), n('lightness', 0), n('saturation', 0), n('grainSize', 1), n('noisePhase', 0)));
+      return;
+    case 'block-load':
+      data.set(blockLoadData(data, w, h, n('completion', 100), n('scans', 4), n('blockSize', 64)));
+      return;
+    case 'kernel': {
+      const k = ['k00', 'k01', 'k02', 'k10', 'k11', 'k12', 'k20', 'k21', 'k22'].map((key2) => n(key2, key2 === 'k11' ? 1 : 0));
+      data.set(kernelConvolveData(data, w, h, k, n('divisor', 1), n('offset', 0)));
+      return;
+    }
+    case '3d-glasses':
+      data.set(glasses3dData(data, w, h, n('convergenceOffset', 8), n('view', 0), n('balance', 50), b('swapLeftRight', false)));
+      return;
+    case 'fractal':
+      data.set(fractalData(w, h, n('setType', 0), n('centerX', -0.5), n('centerY', 0), n('magnification', 1), n('iterations', 64), n('juliaX', -0.7), n('juliaY', 0.27), n('colorPhase', 0), n('colorCycles', 2), n('insideR', 0), n('insideG', 0), n('insideB', 0)));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

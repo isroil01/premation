@@ -264,6 +264,24 @@ void rolling_shutter(RgbaView img, double sweep, double wobble, double direction
 void radial_shadow(RgbaView img, double light_x, double light_y, double projection, const Rgb& color, double opacity,
                    double softness, double render_mode, ThreadPool* pool);
 
+// ── aeRoundSevenColor.ts / aeRoundSevenStylize.ts ───────────────────────────
+void color_difference_key(RgbaView img, const Rgb& key, double matte_in_black, double matte_in_white,
+                          double matte_gamma, double view_mode, ThreadPool* pool);
+void wire_removal(RgbaView img, double point_ax, double point_ay, double point_bx, double point_by, double thickness,
+                  double slope, ThreadPool* pool);
+void broadcast_colors(RgbaView img, double standard, double how, double max_signal_amplitude, ThreadPool* pool);
+void noise_hls(RgbaView img, double noise_type, double hue, double lightness, double saturation, double grain_size,
+               double noise_phase, ThreadPool* pool);
+void block_load(RgbaView img, double completion, double scans, double block_size, ThreadPool* pool);
+/// `kernelConvolveData(src, w, h, [k00 … k22], divisor, offset)`.
+void kernel_convolve(RgbaView img, const std::array<double, 9>& k, double divisor, double offset, ThreadPool* pool);
+void glasses_3d(RgbaView img, double convergence_offset, double view, double balance, bool swap_left_right,
+                ThreadPool* pool);
+/// `fractalData(w, h, …)` — a generator: the input pixels are replaced.
+void fractal(RgbaView img, double set_type, double center_x, double center_y, double magnification, double iterations,
+             double julia_x, double julia_y, double color_phase, double color_cycles, const Rgb& inside,
+             ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

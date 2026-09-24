@@ -92,6 +92,14 @@
     { "effect": "slant", "args": { "slant": 60 } },
     { "effect": "smear", "args": { "toX": 80, "toY": -20, "radius": 300, "elasticity": 60 } },
     { "effect": "rolling-shutter", "args": { "sweep": 40, "wobble": 10 } },
-    { "effect": "radial-shadow", "args": { "lightX": -300, "lightY": -200, "projection": 30, "opacity": 60, "softness": 4 } }
+    { "effect": "radial-shadow", "args": { "lightX": -300, "lightY": -200, "projection": 30, "opacity": 60, "softness": 4 } },
+    { "effect": "color-difference-key", "args": { "keyR": 20, "keyG": 200, "keyB": 40, "matteGamma": 1.3 } },
+    { "effect": "wire-removal", "args": { "pointAX": -600, "pointAY": -50, "pointBX": 600, "pointBY": 80, "thickness": 8 } },
+    { "effect": "broadcast-colors", "args": { "maxSignalAmplitude": 100 } },
+    { "effect": "noise-hls", "args": { "hue": 20, "lightness": 15, "saturation": 30, "grainSize": 1 } },
+    { "effect": "block-load", "args": { "completion": 40, "scans": 4, "blockSize": 64 } },
+    { "effect": "kernel", "args": { "k01": -1, "k10": -1, "k11": 5, "k12": -1, "k21": -1 } },
+    { "effect": "3d-glasses", "args": { "convergenceOffset": 8, "view": 0 } },
+    { "effect": "fractal", "args": { "iterations": 64, "colorCycles": 2 } }
   ]
 }
