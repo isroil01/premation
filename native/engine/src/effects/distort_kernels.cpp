@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "kernels.hpp"
+#include "remap.hpp"
 
 namespace premation::effects {
 
@@ -20,61 +21,6 @@ double hypot2(double a, double b) {
 }
 
 double clampd(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
-
-struct Pt {
-  double x, y;
-};
-
-/// distort.ts `remap`: for each destination pixel centre, `invert` names the
-/// source point (or nothing: transparent); straight-alpha bilinear, taps
-/// outside the layer contribute nothing (their weight is simply lost).
-template <class Invert>
-void remap(RgbaView img, ThreadPool* pool, Invert&& invert) {
-  const int w = img.w;
-  const int h = img.h;
-  const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
-  std::uint8_t* out = img.data.data();
-  for_rows(pool, h, [&](int y0, int y1) {
-    for (int dy = y0; dy < y1; ++dy) {
-      for (int dx = 0; dx < w; ++dx) {
-        std::uint8_t* o = out + idx4(dx, dy, w);
-        const std::optional<Pt> s = invert(dx + 0.5, dy + 0.5);
-        if (!s) {
-          o[0] = o[1] = o[2] = o[3] = 0;
-          continue;
-        }
-        const double sx = s->x - 0.5;
-        const double sy = s->y - 0.5;
-        const double x0 = floor_fast(sx);
-        const double yy0 = floor_fast(sy);
-        const double fx = sx - x0;
-        const double fy = sy - yy0;
-        std::array<const std::uint8_t*, 4> tap{};
-        std::array<double, 4> wt{};
-        for (int j = 0; j <= 1; ++j) {
-          for (int i = 0; i <= 1; ++i) {
-            const double px = x0 + i;
-            const double py = yy0 + j;
-            const auto k = static_cast<std::size_t>(j * 2 + i);
-            if (px < 0 || px >= w || py < 0 || py >= h) {
-              tap[k] = nullptr;
-              continue;
-            }
-            tap[k] = src.data() + idx4(static_cast<int>(px), static_cast<int>(py), w);
-            wt[k] = (i != 0 ? fx : 1 - fx) * (j != 0 ? fy : 1 - fy);
-          }
-        }
-        for (std::size_t c = 0; c < 4; ++c) {
-          double acc = 0;
-          for (std::size_t k = 0; k < 4; ++k) {
-            if (tap[k] != nullptr) acc += tap[k][c] * wt[k];
-          }
-          o[c] = u8c(acc);
-        }
-      }
-    }
-  });
-}
 
 double radial_falloff(double dist, double radius) {
   if (radius <= 0 || dist >= radius) return 0;
@@ -116,43 +62,43 @@ std::optional<Mat3> invert3(const Mat3& m) {
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool) {
   const double amount = height / 100;
   if (amount == 0 || radius <= 0) return;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double vx = dx - cx;
     const double vy = dy - cy;
     const double f = radial_falloff(hypot2(vx, vy), radius);
-    if (f == 0) return Pt{dx, dy};
+    if (f == 0) return RemapPt{dx, dy};
     const double scale = 1 - amount * f;
-    return Pt{cx + vx * scale, cy + vy * scale};
+    return RemapPt{cx + vx * scale, cy + vy * scale};
   });
 }
 
 void spherize(RgbaView img, double cx, double cy, double radius, double amount_pct, ThreadPool* pool) {
   const double amount = amount_pct / 100;
   if (amount == 0 || radius <= 0) return;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double vx = dx - cx;
     const double vy = dy - cy;
     const double dist = hypot2(vx, vy);
-    if (dist >= radius || dist == 0) return Pt{dx, dy};
+    if (dist >= radius || dist == 0) return RemapPt{dx, dy};
     const double nr = dist / radius;
     const double bent = (2 / kPi) * js::asin(nr);
     const double scale = 1 + amount * (bent / nr - 1);
-    return Pt{cx + vx * scale, cy + vy * scale};
+    return RemapPt{cx + vx * scale, cy + vy * scale};
   });
 }
 
 void twirl(RgbaView img, double cx, double cy, double radius, double angle_deg, ThreadPool* pool) {
   const double max_angle = (angle_deg * kPi) / 180;
   if (max_angle == 0 || radius <= 0) return;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double vx = dx - cx;
     const double vy = dy - cy;
     const double dist = hypot2(vx, vy);
-    if (dist >= radius) return Pt{dx, dy};
+    if (dist >= radius) return RemapPt{dx, dy};
     const double angle = max_angle * (1 - dist / radius);
     const double cs = js::cos(angle);
     const double sn = js::sin(angle);
-    return Pt{cx + vx * cs - vy * sn, cy + vx * sn + vy * cs};
+    return RemapPt{cx + vx * cs - vy * sn, cy + vx * sn + vy * cs};
   });
 }
 
@@ -166,13 +112,13 @@ void corner_pin(RgbaView img, const std::array<double, 8>& k, ThreadPool* pool) 
   const auto [a, b, c, d, e, f, g, hh, i] = *inv;
   const double w = img.w;
   const double h = img.h;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double den = g * dx + hh * dy + i;
     if (std::fabs(den) < 1e-9) return std::nullopt;
     const double u = (a * dx + b * dy + c) / den;
     const double v = (d * dx + e * dy + f) / den;
     if (u < 0 || u > 1 || v < 0 || v > 1) return std::nullopt;
-    return Pt{u * w, v * h};
+    return RemapPt{u * w, v * h};
   });
 }
 
@@ -185,7 +131,7 @@ void polar_coordinates(RgbaView img, double interpolation, bool polar_to_rect, T
   const double cy = h / 2;
   const double max_r = hypot2(cx, cy);
   const double tau = kPi * 2;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     double sx = 0;
     double sy = 0;
     if (!polar_to_rect) {
@@ -206,7 +152,7 @@ void polar_coordinates(RgbaView img, double interpolation, bool polar_to_rect, T
       sx = dx + (sx - dx) * t;
       sy = dy + (sy - dy) * t;
     }
-    return Pt{sx, sy};
+    return RemapPt{sx, sy};
   });
 }
 
@@ -214,10 +160,10 @@ void mirror(RgbaView img, double cx, double cy, double angle_deg, ThreadPool* po
   const double rad = (angle_deg * kPi) / 180;
   const double nx = js::cos(rad);
   const double ny = js::sin(rad);
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double d = (dx - cx) * nx + (dy - cy) * ny;
-    if (d <= 0) return Pt{dx, dy};
-    return Pt{dx - 2 * d * nx, dy - 2 * d * ny};
+    if (d <= 0) return RemapPt{dx, dy};
+    return RemapPt{dx - 2 * d * nx, dy - 2 * d * ny};
   });
 }
 
@@ -271,11 +217,11 @@ void optics_compensation(RgbaView img, double field_of_view, bool reverse, doubl
   double norm = hypot2(w / 2, h / 2);
   if (norm == 0 || std::isnan(norm)) norm = 1;  // `|| 1`
   const double k = js::tan((fov * kPi) / 360) * 0.5;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double vx = dx - cx;
     const double vy = dy - cy;
     const double r = hypot2(vx, vy) / norm;
-    if (r == 0) return Pt{dx, dy};
+    if (r == 0) return RemapPt{dx, dy};
     double scale = 0;
     if (reverse) {
       scale = 1 / (1 + k * r * r);
@@ -283,7 +229,7 @@ void optics_compensation(RgbaView img, double field_of_view, bool reverse, doubl
       const double disc = 1 - 4 * r * r * k;
       scale = disc <= 0 ? 1 / (2 * r * r * k) : (1 - std::sqrt(disc)) / (2 * r * r * k);
     }
-    return Pt{cx + vx * scale, cy + vy * scale};
+    return RemapPt{cx + vx * scale, cy + vy * scale};
   });
 }
 
@@ -292,7 +238,7 @@ void mesh_warp(RgbaView img, const std::array<Pt2, 16>& offsets, ThreadPool* poo
   if (std::all_of(offsets.begin(), offsets.end(), [](const Pt2& o) { return o.x == 0 && o.y == 0; })) return;
   const double step_x = img.w / static_cast<double>(n - 1);
   const double step_y = img.h / static_cast<double>(n - 1);
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const int gx = static_cast<int>(std::min(static_cast<double>(n - 2), std::max(0.0, std::floor(dx / step_x))));
     const int gy = static_cast<int>(std::min(static_cast<double>(n - 2), std::max(0.0, std::floor(dy / step_y))));
     const double tx = clampd((dx - gx * step_x) / step_x, 0, 1);
@@ -308,7 +254,7 @@ void mesh_warp(RgbaView img, const std::array<Pt2, 16>& offsets, ThreadPool* poo
     const double bot_y = o01.y + (o11.y - o01.y) * tx;
     const double ox = top_x + (bot_x - top_x) * ty;
     const double oy = top_y + (bot_y - top_y) * ty;
-    return Pt{dx - ox, dy - oy};
+    return RemapPt{dx - ox, dy - oy};
   });
 }
 
@@ -317,11 +263,11 @@ void liquify(RgbaView img, double cx, double cy, double radius, double push_x, d
   const double twirl_rad = (twirl_deg * kPi) / 180;
   const double pinch = pinch_pct / 100;
   if (radius <= 0 || (push_x == 0 && push_y == 0 && twirl_rad == 0 && pinch == 0)) return;
-  remap(img, pool, [&](double dx, double dy) -> std::optional<Pt> {
+  remap_rgba(img, pool, [&](double dx, double dy) -> std::optional<RemapPt> {
     const double vx = dx - cx;
     const double vy = dy - cy;
     const double f = radial_falloff(hypot2(vx, vy), radius);
-    if (f == 0) return Pt{dx, dy};
+    if (f == 0) return RemapPt{dx, dy};
     double sx = dx - push_x * f;
     double sy = dy - push_y * f;
     if (twirl_rad != 0 || pinch != 0) {
@@ -334,7 +280,7 @@ void liquify(RgbaView img, double cx, double cy, double radius, double push_x, d
       sx = cx + (rx * cs - ry * sn) * scale;
       sy = cy + (rx * sn + ry * cs) * scale;
     }
-    return Pt{sx, sy};
+    return RemapPt{sx, sy};
   });
 }
 

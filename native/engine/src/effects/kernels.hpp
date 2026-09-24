@@ -184,6 +184,32 @@ void channel_combiner(RgbaView img, double mode, ThreadPool* pool);
 /// `removeColorMattingData(data, bg, threshold, amount)`.
 void remove_color_matting(RgbaView img, const Rgb& bg, double threshold, double amount, ThreadPool* pool);
 
+// ── aeStylizeAdvanced.ts ────────────────────────────────────────────────────
+/// `cartoonData(src, w, h, smoothness, levels, edgeThreshold, edgeWidth, edgeOpacity)`.
+void cartoon(RgbaView img, double smoothness, double levels, double edge_threshold, double edge_width,
+             double edge_opacity, ThreadPool* pool);
+/// `brushStrokesData(src, w, h, direction, length, randomness, cellSize, density)`.
+void brush_strokes(RgbaView img, double direction, double length, double randomness, double cell_size, double density,
+                   ThreadPool* pool);
+/// `strobeLightData(data, time, period, duty, operation, color, intensity)`.
+void strobe_light(RgbaView img, double time, double period, double duty, double operation, const Rgb& color,
+                  double intensity, ThreadPool* pool);
+/// `colorEmbossData(src, w, h, direction, relief, contrast, blendWithOriginal)`.
+void color_emboss(RgbaView img, double direction, double relief, double contrast, double blend_with_original,
+                  ThreadPool* pool);
+/// `halftoneData(src, w, h, cellSize, angle, contrast, ink, paper, colorize, blendWithOriginal)`.
+void halftone(RgbaView img, double cell_size, double angle, double contrast, const Rgb& ink, const Rgb& paper,
+              bool colorize, double blend_with_original, ThreadPool* pool);
+/// `kaleidoscopeData(data, w, h, segments, centerX, centerY, rotation, sourceAngle, zoom)`.
+void kaleidoscope(RgbaView img, double segments, double center_x, double center_y, double rotation,
+                  double source_angle, double zoom, ThreadPool* pool);
+/// `vignetteData(data, w, h, amount, size, feather, roundness, centerX, centerY)`.
+void vignette(RgbaView img, double amount, double size, double feather, double roundness, double center_x,
+              double center_y, ThreadPool* pool);
+/// `burnFilmData(data, w, h, burn, centerX, centerY, burnColor, charColor, randomness, seed)`.
+void burn_film(RgbaView img, double burn, double center_x, double center_y, const Rgb& burn_color,
+               const Rgb& char_color, double randomness, double seed, ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

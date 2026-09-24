@@ -14,6 +14,10 @@ import {
 } from '../keyingEffects';
 import { applyKeyData, chokeAlpha, softenAlpha } from '../keylight';
 import {
+  cartoonData, brushStrokesData, strobeLightData, colorEmbossData, halftoneData, kaleidoscopeData, vignetteData,
+  burnFilmData,
+} from '../aeStylizeAdvanced';
+import {
   venetianBlindsData, gradientWipeData, luminanceMapFrom, cardWipeData, cardWipeDirection, radialWipeData,
   radialWipeDirection, blockDissolveData,
 } from '../transitions';
@@ -252,6 +256,30 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'remove-color-matting':
       removeColorMattingData(data, rgb('bg', [0, 0, 0]), n('threshold', 0), n('amount', 100));
+      return;
+    case 'cartoon':
+      data.set(cartoonData(data, w, h, n('smoothness', 3), n('levels', 6), n('edgeThreshold', 40), n('edgeWidth', 1), n('edgeOpacity', 100)));
+      return;
+    case 'brush-strokes':
+      data.set(brushStrokesData(data, w, h, n('direction', 45), n('length', 8), n('randomness', 30), n('cellSize', 6), n('density', 100)));
+      return;
+    case 'strobe-light':
+      strobeLightData(data, n('time', 0), n('period', 0.5), n('duty', 50), n('operation', 0), rgb('color', [255, 255, 255]), n('intensity', 100));
+      return;
+    case 'color-emboss':
+      data.set(colorEmbossData(data, w, h, n('direction', 45), n('relief', 2), n('contrast', 100), n('blendWithOriginal', 0)));
+      return;
+    case 'halftone':
+      data.set(halftoneData(data, w, h, n('cellSize', 8), n('angle', 45), n('contrast', 100), rgb('ink', [0, 0, 0]), rgb('paper', [255, 255, 255]), b('colorize', false), n('blendWithOriginal', 0)));
+      return;
+    case 'kaleidoscope':
+      data.set(kaleidoscopeData(data, w, h, n('segments', 6), n('centerX', 0), n('centerY', 0), n('rotation', 0), n('sourceAngle', 0), n('zoom', 100)));
+      return;
+    case 'vignette':
+      vignetteData(data, w, h, n('amount', 50), n('size', 50), n('feather', 50), n('roundness', 100), n('centerX', 0), n('centerY', 0));
+      return;
+    case 'burn-film':
+      burnFilmData(data, w, h, n('burn', 0), n('centerX', 0), n('centerY', 0), rgb('burnColor', [0, 0, 0]), rgb('charColor', [60, 30, 10]), n('randomness', 50), n('seed', 0));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

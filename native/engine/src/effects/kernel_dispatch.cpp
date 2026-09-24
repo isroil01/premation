@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 62> kPorted{
+constexpr std::array<std::string_view, 70> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -19,7 +19,8 @@ constexpr std::array<std::string_view, 62> kPorted{
     "optics-compensation", "mesh-warp",   "liquify",       "equalize",        "auto-levels",      "auto-contrast",
     "auto-color",      "change-color",    "change-to-color", "leave-color",   "toner",            "venetian-blinds",
     "gradient-wipe",   "card-wipe",       "radial-wipe",   "block-dissolve",  "alpha-levels",     "solid-composite",
-    "channel-combiner", "remove-color-matting",
+    "channel-combiner", "remove-color-matting", "cartoon",   "brush-strokes",   "strobe-light",     "color-emboss",
+    "halftone",        "kaleidoscope",    "vignette",      "burn-film",
 };
 
 }  // namespace
@@ -197,6 +198,29 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     channel_combiner(img, a("mode", 0), pool);
   } else if (type == "remove-color-matting") {
     remove_color_matting(img, rgb("bg", {0, 0, 0}), a("threshold", 0), a("amount", 100), pool);
+  } else if (type == "cartoon") {
+    cartoon(img, a("smoothness", 3), a("levels", 6), a("edgeThreshold", 40), a("edgeWidth", 1), a("edgeOpacity", 100),
+            pool);
+  } else if (type == "brush-strokes") {
+    brush_strokes(img, a("direction", 45), a("length", 8), a("randomness", 30), a("cellSize", 6), a("density", 100),
+                  pool);
+  } else if (type == "strobe-light") {
+    strobe_light(img, a("time", 0), a("period", 0.5), a("duty", 50), a("operation", 0), rgb("color", {255, 255, 255}),
+                 a("intensity", 100), pool);
+  } else if (type == "color-emboss") {
+    color_emboss(img, a("direction", 45), a("relief", 2), a("contrast", 100), a("blendWithOriginal", 0), pool);
+  } else if (type == "halftone") {
+    halftone(img, a("cellSize", 8), a("angle", 45), a("contrast", 100), rgb("ink", {0, 0, 0}),
+             rgb("paper", {255, 255, 255}), b("colorize", false), a("blendWithOriginal", 0), pool);
+  } else if (type == "kaleidoscope") {
+    kaleidoscope(img, a("segments", 6), a("centerX", 0), a("centerY", 0), a("rotation", 0), a("sourceAngle", 0),
+                 a("zoom", 100), pool);
+  } else if (type == "vignette") {
+    vignette(img, a("amount", 50), a("size", 50), a("feather", 50), a("roundness", 100), a("centerX", 0),
+             a("centerY", 0), pool);
+  } else if (type == "burn-film") {
+    burn_film(img, a("burn", 0), a("centerX", 0), a("centerY", 0), rgb("burnColor", {0, 0, 0}),
+              rgb("charColor", {60, 30, 10}), a("randomness", 50), a("seed", 0), pool);
   } else {
     return false;
   }
