@@ -29,7 +29,7 @@
  * claim on the canvas, which is what lets a gizmo coexist with Select.
  */
 
-import { useCompositionStore } from '@stores/compositionStore';
+import { activeCompSizeNow } from '@hooks/useMirrorFrame';
 import {
   dispatchPluginCanvasEvent,
   findHandleAt,
@@ -69,7 +69,7 @@ function mappingFor(
       screenToLocal: (x, y) => camera.screenToWorld({ x, y }),
     };
   }
-  return layerScreenMapping(list.layerId, time, useCompositionStore.getState().comp(), camera);
+  return layerScreenMapping(list.layerId, time, activeCompSizeNow(), camera);
 }
 
 /** Paint every plugin's drawing onto the overlay canvas. */

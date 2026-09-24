@@ -17,7 +17,8 @@
 import { useEffect } from 'react';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { useGuidesStore } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { activeCompSizeNow } from '@hooks/useMirrorFrame';
+import { documentMirror } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
 import {
   guidePositionFromValue,
@@ -29,7 +30,7 @@ import {
 } from '@core/workspace/guideGeometry';
 
 function compExtent(): CompExtent {
-  const s = useCompositionStore.getState();
+  const s = activeCompSizeNow();
   return { w: s.width || 1920, h: s.height || 1080 };
 }
 
@@ -88,9 +89,9 @@ export function useGuideSync(): void {
     const offStore = useGuidesStore.subscribe((s, prev) => {
       if (s.userGuides !== prev.userGuides) toEngine(s.userGuides);
     });
-    // `useCompositionStore` is a facade over the project store (no subscribe of
-    // its own), so listen there and compare the resolved active-comp size.
-    const offComp = useProjectStore.subscribe(() => {
+    // The size is the mirror's (B4): listen to its composition records, and to
+    // the project store for a tab switch, and compare the resolved size.
+    const onComp = (): void => {
       const next = compExtent();
       if (next.w === comp.w && next.h === comp.h) return;
       const from = comp;
@@ -109,12 +110,15 @@ export function useGuideSync(): void {
       // anyway so a rounding difference cannot leave the two out of step.
       toDocument();
       controller.requestRender();
-    });
+    };
+    const offTab = useProjectStore.subscribe(onComp);
+    const offComps = documentMirror().subscribe(['comps'], onComp);
 
     return () => {
       offEngine.dispose();
       offStore();
-      offComp();
+      offTab();
+      offComps();
     };
   }, []);
 }

@@ -27,11 +27,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { defaultAnimation } from '@motion/animation';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
@@ -60,12 +59,12 @@ export function EffectHandleOverlay(): JSX.Element | null {
   // Frame-coalesced: a drag bumps the revision per pointer event, and this
   // overlay only needs to track it visually. Also the memo key below — the raw
   // rev changed per event, so the memos never hit during a drag.
-  const sceneTick = useSceneRevisionFrame();
+  const sceneTick = useMirrorRevisionFrame();
   const ids = useSelectionStore((s) => s.ids);
   const activeNode = useEffectHandleStore((s) => s.nodeId);
   const activeEffect = useEffectHandleStore((s) => s.effectId);
   const time = useActiveWorkspace()?.time ?? 0;
-  const comp = useCompositionStore((s) => s.comp());
+  const comp = useActiveCompSize();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ handle: EffectHandle; nodeId: string; effectId: string; gesture: GestureSession } | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);

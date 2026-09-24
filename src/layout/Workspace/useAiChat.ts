@@ -18,7 +18,9 @@ import { type AiTransaction } from '@core/ai/aiTransaction';
 import type { PendingImage } from '@core/ai/imageAttachment';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { casterPacks } from '@core/ai/CasterRunner';
 import { api, isAuthenticated, type AiConversationSummary } from '@core/api/client';
 import { aiRunsThroughBackend } from '@core/config/edition';
@@ -841,9 +843,10 @@ export function useAiChat(): UseAiChat {
       if (result.changes.length) {
         try {
           const { renderSceneFrames } = await import('@core/ai/renderFeedback');
-          const c = useCompositionStore.getState().comp();
-          const d = c.durationSeconds;
-          const shots = await renderSceneFrames([d * 0.08, d * 0.3, d * 0.55, d * 0.8, Math.max(0, d - 1 / c.fps)]);
+          const c = activeCompSettingsNow();
+          const d = settingsDurationSeconds(c, DEFAULT_COMPOSITION.durationSeconds);
+          const fps = settingsFps(c, DEFAULT_COMPOSITION.fps);
+          const shots = await renderSceneFrames([d * 0.08, d * 0.3, d * 0.55, d * 0.8, Math.max(0, d - 1 / fps)]);
           setFilmstrip(shots.map((img) => `data:${img.mediaType};base64,${img.dataBase64}`));
         } catch {
           // A preview that could not render is not a failed run.

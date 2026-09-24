@@ -20,7 +20,7 @@ import { cn } from '@utils/cn';
 import { useDismissOnOutside } from '@hooks/useDismissOnOutside';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useMirrorRevision } from '@hooks/useMirror';
 import { compNetworkOf, type NetworkEntry, type UpstreamSort } from '@core/composition/compNetwork';
 import { openContainingComposition, openLayerComposition } from '@core/composition/compNavigation';
 import styles from './MiniFlowchart.module.css';
@@ -33,7 +33,8 @@ export function MiniFlowchart(): JSX.Element | null {
   const open = useMiniFlowchartStore((s) => s.open);
   const hide = useMiniFlowchartStore((s) => s.hide);
   const compId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
-  const rev = useSceneRevision((s) => s.rev);
+  // Any document revision can change the network (compNetworkOf walks the scene).
+  const rev = useMirrorRevision();
   const [sort, setSort] = useState<UpstreamSort>('name');
   const [sel, setSel] = useState<{ col: Column; i: number }>({ col: 'up', i: 0 });
   const rootRef = useRef<HTMLDivElement>(null);

@@ -14,11 +14,9 @@
  * map. The geometry half is pure and tested; the canvas half is two strokes.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeQuality } from '@core/effects/layerQuality';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { sceneMutationEpoch } from '@motion/scene';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { flattenCompLayers } from '@core/mirror/compLayers';
 
 export interface WirePt {
   x: number;
@@ -35,28 +33,34 @@ export interface WireframeNodeGeometry {
 }
 
 /**
- * Whether the active comp has ANY wireframe-quality layer, memoised per scene
- * mutation. The painter used to ask the workspace port for every node's
- * resolved world geometry on every frame just to find out there was nothing
- * to draw — on a 300-layer comp that resolve (with its per-node keyframe-time
- * fold) was the single largest allocation of a playback frame.
+ * Whether the active comp has ANY wireframe-quality layer, memoised per
+ * document revision (and composition). The painter used to ask the workspace
+ * port for every node's resolved world geometry on every frame just to find
+ * out there was nothing to draw — on a 300-layer comp that resolve (with its
+ * per-node keyframe-time fold) was the single largest allocation of a playback
+ * frame. Read from the mirror's layer headers (B4): during playback the
+ * revision does not move, so a frame pays two comparisons and no allocation.
  */
-let anyWireframeEpoch = -1;
+let anyWireframeRev = -1;
+let anyWireframeGen = -1;
+let anyWireframeComp: string | undefined;
 let anyWireframe = false;
 export function compHasWireframeQualityLayer(): boolean {
-  const epoch = sceneMutationEpoch();
-  if (epoch !== anyWireframeEpoch) {
-    anyWireframeEpoch = epoch;
-    anyWireframe = flattenComposition(defaultSceneGraph, activeCompRootId() as string | undefined)
-      .some((n) => n.visible !== false && readNodeQuality(n) === 'wireframe');
+  const m = documentMirror();
+  const comp = activeCompIdNow();
+  if (m.revision !== anyWireframeRev || m.generation !== anyWireframeGen || comp !== anyWireframeComp) {
+    anyWireframeRev = m.revision;
+    anyWireframeGen = m.generation;
+    anyWireframeComp = comp;
+    anyWireframe = flattenCompLayers(m, comp).some((id) => isWireframeQualityLayer(id));
   }
   return anyWireframe;
 }
 
 /** Hidden (eye off) layers draw nothing, as in AE. */
 export function isWireframeQualityLayer(nodeId: string): boolean {
-  const scene = defaultSceneGraph.getNode(nodeId);
-  return !!scene && scene.visible !== false && readNodeQuality(scene) === 'wireframe';
+  const layer = documentMirror().layer(nodeId);
+  return !!layer && layer.switches.visible && layer.switches.quality === 'wireframe';
 }
 
 /**

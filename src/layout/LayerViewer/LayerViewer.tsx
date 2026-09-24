@@ -41,8 +41,10 @@ import { trimBar } from '@layout/Timeline/timelineEdits';
 import { deleteMaskEdit, setMaskFlagsEdit } from '@layout/Workspace/viewportEdits';
 import { useLayerViewerStore, type LayerMaskTool } from '@stores/layerViewerStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { useMirrorRevision } from '@hooks/useMirror';
+import { useActiveTabCompSettings } from '@hooks/useMirrorFrame';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { useCurrentTime, setTime } from '@stores/playbackClockStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -111,7 +113,9 @@ export function LayerViewer(): JSX.Element | null {
   const close = useLayerViewerStore((s) => s.close);
   const activeTool = useUIStore((s) => s.activeTool) as string;
   const paintToolOn = activeTool === 'paint' || activeTool === 'eraser' || activeTool === 'roto';
-  useSceneRevision((s) => s.rev);
+  // Re-render on any document change: the node, its masks and anchor below
+  // are still read from the scene (per-frame values the mirror does not evaluate).
+  useMirrorRevision();
   const node = nodeId ? defaultSceneGraph.getNode(nodeId) : undefined;
 
   // The panel names a layer of the comp in view: leaving the comp, or the
@@ -142,8 +146,9 @@ export function LayerViewer(): JSX.Element | null {
   }, [activeTabId]);
 
   const compTime = useCurrentTime();
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
-  const compFps = useCompositionStore((s) => s.fps);
+  const compSettings = useActiveTabCompSettings();
+  const compDuration = settingsDurationSeconds(compSettings, DEFAULT_COMPOSITION.durationSeconds);
+  const compFps = settingsFps(compSettings, DEFAULT_COMPOSITION.fps);
 
   const clip = useMemo(() => {
     void clipRev;

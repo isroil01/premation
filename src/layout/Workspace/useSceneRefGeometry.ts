@@ -15,12 +15,12 @@
 import { useMemo } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
+import { useActiveCompRootId, useActiveTabCompSettings, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { documentMirror } from '@stores/documentMirror';
+import { compHas3DContent } from '@core/mirror/compLayers';
+import { settingsWorld } from '@core/mirror/compFacts';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
-import { is3DEnabled } from '@core/scene/threeD';
 import { readSceneCamera, viewCameraNode } from '@core/scene/camera3d';
 import { isSceneCameraView, orthoViewOf } from '@core/scene/cameraViewMode';
 import { toWorldPointAt } from '@core/scene/liveWorld3d';
@@ -67,17 +67,19 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
   const deviceWireframesAll = usePreferenceStore((s) => s.deviceWireframesAll);
   const draft3d = useGuidesStore((s) => s.draft3d);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const compSettings = useActiveTabCompSettings();
+  const compWidth = compSettings?.width ?? 1920;
+  const compHeight = compSettings?.height ?? 1080;
   // Per-COMP, not a view setting: where the floor is is a fact about the scene
   // being blocked out, so it has to follow the composition across views, panes
   // and sessions rather than resetting with the viewport chrome.
-  const groundLevelSetting = useCompositionStore((s) => s.groundLevel);
+  // (World ▸ Ground level; `settingsWorld` caches the parse per JSON string, so this per-frame read allocates nothing.)
+  const groundLevelSetting = settingsWorld(compSettings).groundLevel;
   // Scoped like the renderer's, so the overlay never draws a different camera
   // than the one the frame was rendered through.
-  const compRootId = useCompositionStore((s) => s.id);
+  const compRootId = useActiveCompRootId();
   const time = useCurrentTime();
-  const sceneRev = useSceneRevisionFrame();
+  const sceneRev = useMirrorRevisionFrame();
 
   // Draft 3D turns shadows / DOF / motion blur OFF and the spatial aids ON —
   // that pairing is the point of the mode, so the ground plane is forced rather
@@ -125,12 +127,7 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
     if (!isSceneCameraView(mode) || draft3d) return true;
     // Comp-scoped: a camera or 3D layer in a DIFFERENT composition must not
     // switch this one's reference geometry on.
-    for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
-      const k = readNodeKind(n);
-      if (k === 'camera') return true;
-      if (k !== 'light' && is3DEnabled(n)) return true;
-    }
-    return false;
+    return compHas3DContent(documentMirror(), compRootId, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
   }, [mode, draft3d, compRootId, sceneRev]);
 

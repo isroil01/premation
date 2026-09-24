@@ -34,10 +34,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry } from '@core/workspace/geometry';
 import { trackSampleToComp } from '@core/tracking/applyTrack';
@@ -77,7 +76,7 @@ function confidenceAlpha(confidence: number): number {
 export function TrackPointOverlay(): JSX.Element | null {
   // Frame-coalesced — visual tracking only; the raw rev re-rendered per
   // pointer event during drags and defeated the mapping memo below.
-  const sceneTick = useSceneRevisionFrame();
+  const sceneTick = useMirrorRevisionFrame();
   const nodeId = useTrackerStore((s) => s.nodeId);
   const armed = useTrackerStore((s) => s.armed);
   const mode = useTrackerStore((s) => s.mode);
@@ -91,7 +90,7 @@ export function TrackPointOverlay(): JSX.Element | null {
   const advancedOpen = useTrackerStore((s) => s.advancedOpen);
   const setPoint = useTrackerStore((s) => s.setPoint);
   const time = useActiveWorkspace()?.time ?? 0;
-  const comp = useCompositionStore((s) => s.comp());
+  const comp = useActiveCompSize();
   const svgRef = useRef<SVGSVGElement | null>(null);
   /** What the pointer is holding: a point, or one of the primary point's two
    *  box corners. Boxes resize about the point, so the corner grabbed does
