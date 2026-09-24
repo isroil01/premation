@@ -11,9 +11,11 @@
 import { useMemo, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { customConfirm, customPrompt } from '@components/Modal';
-import { useProjectStore, type CompositionSettings, type TabInfo } from '@stores/projectStore';
+import { useProjectStore, type TabInfo } from '@stores/projectStore';
 import { openContextMenu } from '@stores/contextMenuStore';
-import { isRealComposition } from '@core/composition/compNavigation';
+import { documentMirror, type MirrorComp } from '@stores/documentMirror';
+import { useMirrorComps } from '@hooks/useMirror';
+import { settingsFps } from '@core/mirror/compFacts';
 import {
   deleteCompositionWarning,
   deleteCompositionEdit,
@@ -23,6 +25,27 @@ import {
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import styles from '@layout/EditorLayout/panels.module.css';
+
+/** What a row of the list shows of one composition. */
+export interface ListedComposition {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  pristine?: boolean;
+}
+
+/** A mirror composition as a list row (B4: the document mirror's records). */
+function listedOf(c: MirrorComp): ListedComposition {
+  const s = c.settings;
+  return { id: c.id, name: s.name, width: s.width, height: s.height, fps: settingsFps(s), ...(s.pristine ? { pristine: true } : {}) };
+}
+
+/** Whether `compId` is a composition of the document (not a group opened in its own tab). */
+function isMirrorComposition(compId: string): boolean {
+  return documentMirror().comp(compId) !== undefined;
+}
 
 /**
  * Which compositions the list shows.
@@ -37,11 +60,11 @@ import styles from '@layout/EditorLayout/panels.module.css';
  * `isReal` excludes groups opened in their own tab — they carry a settings
  * record too, but they are not compositions. Injected so this stays pure.
  */
-export function listedCompositions(
-  comps: Readonly<Record<string, CompositionSettings>>,
+export function listedCompositions<C extends ListedComposition>(
+  comps: Readonly<Record<string, C>>,
   tabs: Readonly<Record<string, TabInfo>>,
-  isReal: (compId: string) => boolean = isRealComposition,
-): CompositionSettings[] {
+  isReal: (compId: string) => boolean = isMirrorComposition,
+): C[] {
   const onScreen = new Set(Object.values(tabs).map((t) => t.compositionId));
   return Object.values(comps).filter((c) => isReal(c.id) && (!c.pristine || onScreen.has(c.id)));
 }
@@ -52,7 +75,18 @@ export interface CompositionListProps {
 }
 
 export function CompositionList({ collapsible = false }: CompositionListProps): JSX.Element {
-  const comps = useProjectStore((s) => s.comps);
+  // B4: the compositions from the document mirror.
+  const mirrorComps = useMirrorComps();
+  const comps = useMemo(() => {
+    const out: Record<string, ListedComposition> = {};
+    // Document order (the mirror's `compIds`), then any record not listed there.
+    for (const id of documentMirror().compIds) {
+      const c = mirrorComps.get(id);
+      if (c) out[id] = listedOf(c);
+    }
+    for (const c of mirrorComps.values()) if (!out[c.id]) out[c.id] = listedOf(c);
+    return out;
+  }, [mirrorComps]);
   const projectTabs = useProjectStore((s) => s.tabs);
   const activeTabId = useProjectStore((s) => s.activeTabId);
   const openTab = useProjectStore((s) => s.actions.openTab);

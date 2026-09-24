@@ -112,6 +112,7 @@ const PURE_READS = new Set([
   'animatorPropPath', 'selectorPropPath', 'animatorAxisPropPath', // core/text/textAnimators: build a track name
   'missingFontsMessage', // core/fonts/missingFonts: pluralised message
   'solidFill', // core/paint/fill: builds a solid paint from a colour
+  'sanitizeLayerSize', // core/scene/layerSettings: clamps and rounds the number it is given
 ]);
 
 /**

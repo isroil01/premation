@@ -103,7 +103,7 @@ export interface LayerFlagDef {
 }
 
 /** The three positions of the Quality switch, as AE draws them. */
-const QUALITY_FACE: Readonly<Record<LayerQuality, LayerFlagFace>> = {
+export const QUALITY_FACE: Readonly<Record<LayerQuality, LayerFlagFace>> = {
   best: { label: 'Quality: Best', title: 'Quality: Best — click for Draft', glyph: '/' },
   draft: { label: 'Quality: Draft', title: 'Quality: Draft — click for Wireframe', glyph: '\\' },
   wireframe: {
@@ -111,6 +111,12 @@ const QUALITY_FACE: Readonly<Record<LayerQuality, LayerFlagFace>> = {
     title: 'Quality: Wireframe (viewport only — exports as Best) — click for Best',
     glyph: '□',
   },
+};
+
+/** The sunburst's two names: Collapse Transformations on a placed comp, Continuous Rasterize on a vector layer. */
+export const COLLAPSE_FACE: Readonly<Record<'collapse' | 'raster', LayerFlagFace>> = {
+  collapse: { label: 'Collapse Transformations', title: 'Collapse Transformations', icon: 'star' },
+  raster: { label: 'Continuous Rasterize', title: 'Continuous Rasterize', icon: 'star' },
 };
 
 /** What AE's single sunburst means on this layer, or null when it means nothing. */
@@ -136,9 +142,7 @@ export const LAYER_FLAGS: readonly LayerFlagDef[] = [
     // ONE switch, one meaning per layer type — see `collapseSwitchKind`. It is
     // the reason this def needs `describe`: calling it "Collapse
     // Transformations" on a text layer would name something that layer cannot do.
-    describe: (node) => collapseSwitchKind(node) === 'collapse'
-      ? { label: 'Collapse Transformations', title: 'Collapse Transformations', icon: 'star' }
-      : { label: 'Continuous Rasterize', title: 'Continuous Rasterize', icon: 'star' },
+    describe: (node) => COLLAPSE_FACE[collapseSwitchKind(node) === 'collapse' ? 'collapse' : 'raster'],
   },
   {
     id: 'quality',
