@@ -20,6 +20,8 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import {
   canChooseOutputDir,
   useRenderQueueStore,
@@ -75,11 +77,13 @@ function statusLabel(s: RenderJob['status']): string {
 }
 
 export function RenderQueuePanel(): JSX.Element {
-  const compName = useCompositionStore((s) => s.name);
-  const compW = useCompositionStore((s) => s.width);
-  const compH = useCompositionStore((s) => s.height);
-  const compFps = useCompositionStore((s) => s.fps);
-  const compDur = useCompositionStore((s) => s.durationSeconds);
+  // B4: the active composition's settings from the document mirror.
+  const compSettings = useActiveMirrorComp()?.settings;
+  const compName = compSettings?.name;
+  const compW = compSettings?.width ?? 1920;
+  const compH = compSettings?.height ?? 1080;
+  const compFps = settingsFps(compSettings);
+  const compDur = settingsDurationSeconds(compSettings);
   // Scoped selectors: subscribing to the WHOLE store (no selector) re-rendered
   // the entire panel on every per-frame progress tick. Actions are stable refs,
   // so selecting them never triggers a render; only `jobs`/`isRunning` do.

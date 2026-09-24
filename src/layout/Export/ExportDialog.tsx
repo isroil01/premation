@@ -11,7 +11,8 @@ import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { DialogFooter } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { ExportForm, useExportModel } from './ExportForm';
 import styles from './ExportDialog.module.css';
 
@@ -82,7 +83,7 @@ function ExportDialogFooter({ duration, fps, onClose }: { duration: number; fps:
 
 /** Open the export dialog as a modal. */
 export function openExportDialog(duration: number, fps: number): void {
-  const name = useCompositionStore.getState().name?.trim() || 'Composition';
+  const name = documentMirror().comp(activeCompIdNow() ?? '')?.settings.name?.trim() || 'Composition';
   openModal({
     id: 'export-dialog',
     title: 'Export composition',

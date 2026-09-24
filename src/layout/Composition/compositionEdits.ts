@@ -25,9 +25,11 @@ import { isLayer } from '@core/engine/doc';
 import { parseColorChannels } from '@core/effects/effects';
 import { pristineCompToAdopt } from '@core/composition/compositionOps';
 import { openLayerComposition } from '@core/composition/compNavigation';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { canAutoOrient, readAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
-import { canBe3D, is3DEnabled } from '@core/scene/threeD';
+import type { AutoOrientMode } from '@core/scene/autoOrient';
+import { mirrorAutoOrientMode, mirrorCanAutoOrient, mirrorCanBe3D } from '@core/mirror/layerFacts';
+import { settingsFps } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { layerSettingsKind, sanitizeLayerSize, type LayerSettingsValues } from '@core/scene/layerSettings';
 import { readNodeFill } from '@core/paint/fill';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -155,9 +157,11 @@ export async function saveCompositionSettingsEdit(
 
 /** The ACTIVE composition's frame rate (Start from a Video conforms to the clip's probe). */
 export async function setActiveCompFrameRateEdit(fps: number, label = 'Conform to Footage'): Promise<void> {
-  const comp = activeCompRootId();
-  if (!useProjectStore.getState().comps[comp] || !(fps > 0)) return;
-  if (useProjectStore.getState().comps[comp]!.fps === fps) return;
+  // B4: the active composition's record from the document mirror.
+  const comp = activeCompIdNow() ?? '';
+  const settings = documentMirror().comp(comp)?.settings;
+  if (!settings || !(fps > 0)) return;
+  if (settingsFps(settings) === fps) return;
   await edit(label, { type: 'setCompositionSettings', comp, patch: { frameRate: rateOf(fps) } });
 }
 
@@ -183,7 +187,7 @@ export async function precomposeEdit(
 ): Promise<{ comp: string; layer: string } | { error: string }> {
   const res = await edit('Pre-compose', {
     type: 'precompose',
-    comp: activeCompRootId(),
+    comp: activeCompIdNow() ?? '',
     layers: [...targets],
     name: opts.name,
     mode: opts.mode === 'leave' ? 'leaveAttributes' : 'moveAll',
@@ -206,12 +210,16 @@ const API_AUTO_ORIENT: Record<AutoOrientMode, 'off' | 'alongPath' | 'towardsCame
 
 /** Which modes `nodeId` can take — the inspector dropdown's rules. */
 export function autoOrientModesFor(nodeId: string): ReadonlySet<AutoOrientMode> {
-  const node = defaultSceneGraph.getNode(nodeId);
+  // B4: the layer's header and property tree from the document mirror.
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  const tree = layer ? m.tree(nodeId) : undefined;
   const out = new Set<AutoOrientMode>();
-  if (!node || !canAutoOrient(node)) return out;
+  if (!layer || !mirrorCanAutoOrient(layer, tree)) return out;
+  const threeD = layer.switches.threeD;
   out.add('off');
-  if (!is3DEnabled(node)) out.add('path');
-  if (canBe3D(node) && is3DEnabled(node)) out.add('camera');
+  if (!threeD) out.add('path');
+  if (mirrorCanBe3D(layer, tree) && threeD) out.add('camera');
   return out;
 }
 
@@ -219,8 +227,8 @@ export function autoOrientModesFor(nodeId: string): ReadonlySet<AutoOrientMode> 
 export async function setAutoOrientEdit(ids: readonly string[], mode: AutoOrientMode): Promise<void> {
   const cmds: Command[] = [];
   for (const id of ids) {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node || !isLayer(id) || !autoOrientModesFor(id).has(mode) || readAutoOrientMode(node) === mode) continue;
+    const layer = documentMirror().layer(id);
+    if (!layer || !isLayer(id) || !autoOrientModesFor(id).has(mode) || mirrorAutoOrientMode(layer) === mode) continue;
     cmds.push({ type: 'setLayerSwitches', layers: [id], patch: { autoOrient: API_AUTO_ORIENT[mode] } });
   }
   await edit('Auto-Orient', cmds);

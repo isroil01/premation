@@ -25,7 +25,7 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { useLayoutStore } from '@stores/layoutStore';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
 import {
   findFillerWordIds,
   parseFillerList,
@@ -45,7 +45,7 @@ export const TRANSCRIPT_PANEL_ID = 'transcript';
 
 /** Words currently cached for the composition on screen. */
 function currentWords(): readonly TranscriptWord[] {
-  return useTranscriptStore.getState().byComp[activeCompRootId()]?.words ?? [];
+  return useTranscriptStore.getState().byComp[activeCompIdNow() ?? 'comp_root']?.words ?? [];
 }
 
 export function buildTranscriptCommands(): ReadonlyArray<Command> {

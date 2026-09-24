@@ -15,8 +15,9 @@ import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorAutoOrientMode } from '@core/mirror/layerFacts';
+import type { AutoOrientMode } from '@core/scene/autoOrient';
 import { cn } from '@utils/cn';
 import { autoOrientModesFor, setAutoOrientEdit } from './compositionEdits';
 import styles from './PrecomposeDialog.module.css';
@@ -45,8 +46,9 @@ const MODES: ReadonlyArray<{ id: AutoOrientMode; title: string; hint: string; un
 ];
 
 function AutoOrientDialog({ ids, close }: { ids: string[]; close: () => void }): JSX.Element {
-  const first = defaultSceneGraph.getNode(ids[0]!);
-  const [mode, setMode] = useState<AutoOrientMode>(first ? readAutoOrientMode(first) : 'off');
+  // B4: the first layer's switches from the document mirror.
+  const first = documentMirror().layer(ids[0]!);
+  const [mode, setMode] = useState<AutoOrientMode>(first ? mirrorAutoOrientMode(first) : 'off');
   const available = (m: AutoOrientMode): boolean => ids.some((id) => autoOrientModesFor(id).has(m));
 
   const submit = (): void => {

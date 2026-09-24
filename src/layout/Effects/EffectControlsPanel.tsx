@@ -5,13 +5,11 @@
 
 import { useState, type ReactNode } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useLayoutStore } from '@stores/layoutStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getNodeEffects, getNodeFxEnabled } from '@core/effects/effects';
-import { readPathOps } from '@core/scene/pathOps';
-import { nodeHasCloner } from '@core/scene/clonerExpand';
-import { nodeHasPhysics } from '@core/simulation/physicsBodies';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { mirrorPathOps } from '@core/mirror/layerFacts';
+import { jsonField } from '@core/mirror/layerFields';
 import { PathOpControls } from '@layout/Inspector/PathOpControls';
 import { ClonerSection } from '@layout/Inspector/ClonerSection';
 import { PhysicsSection } from '@layout/Inspector/PhysicsSection';
@@ -20,6 +18,8 @@ import { setLayerEffectsEnabledEdit } from './effectEdits';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import styles from './EffectsPanel.module.css';
+
+const isObject = (v: unknown): boolean => !!v && typeof v === 'object';
 
 const QUICK_CATEGORIES = [
   { name: 'Blur & Sharpen', icon: 'blur' as const, effectId: 'gaussian-blur' },
@@ -38,16 +38,19 @@ const QUICK_CATEGORIES = [
  * nothing-here line — a panel has room for a call to action, a section does not.
  */
 export function EffectControlsBody({ nodeId, empty }: { nodeId: string; empty: ReactNode }): JSX.Element {
-  useSceneRevision((s) => s.rev);
   // `primary`: the layer Effect Controls is showing — the selection's, or the
   // locked one. Named so here too; clonerExpand.test follows it by that name.
   const primary = nodeId;
-  const node = defaultSceneGraph.getNode(primary);
-  const count = node ? getNodeEffects(primary).length : 0;
-  const hasPathOps = node ? readPathOps(node).length > 0 : false;
-  const hasCloner = node ? nodeHasCloner(node) : false;
-  const hasPhysics = node ? nodeHasPhysics(node) : false;
-  if (!node || !(count > 0 || hasPathOps || hasCloner || hasPhysics)) return <>{empty}</>;
+  // B4: the layer's header (effect count) and property tree (path operators,
+  // `layer/cloner`, `layer/physics`) from the document mirror.
+  const tree = useMirrorTree(primary);
+  const m = documentMirror();
+  const layer = m.layer(primary);
+  const count = layer?.effectCount ?? 0;
+  const hasPathOps = layer ? mirrorPathOps(tree).length > 0 : false;
+  const hasCloner = layer ? isObject(jsonField(m, primary, 'layer/cloner')) : false;
+  const hasPhysics = layer ? isObject(jsonField(m, primary, 'layer/physics')) : false;
+  if (!layer || !(count > 0 || hasPathOps || hasCloner || hasPhysics)) return <>{empty}</>;
   return (
     <>
       {count > 0 && <EffectStack nodeId={primary} />}
@@ -60,24 +63,25 @@ export function EffectControlsBody({ nodeId, empty }: { nodeId: string; empty: R
 
 export function EffectControlsPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.primary);
-  useSceneRevision((s) => s.rev);
 
   // Lock (AE's padlock): the panel stays on the layer it was locked to while
   // the selection moves on — so an effect can be tuned while picking other
   // layers as its map/matte source. A locked layer that is deleted unlocks.
   const [lockedId, setLockedId] = useState<string | null>(null);
-  const locked = lockedId !== null && !!defaultSceneGraph.getNode(lockedId);
+  // B4: layer headers from the document mirror.
+  const lockedLayer = useMirrorLayer(lockedId);
+  const locked = lockedId !== null && !!lockedLayer;
   const primary = locked ? lockedId : selected;
+  const node = useMirrorLayer(primary);
 
   // Master "fx" switch: the layer's own fxEnabled flag — the same switch the
   // timeline's fx column flips — not local state that changed nothing.
-  const masterFx = primary ? getNodeFxEnabled(primary) : true;
+  const masterFx = primary ? node?.switches.effectsEnabled ?? true : true;
   const setMasterFx = (on: boolean): void => {
     if (primary) void setLayerEffectsEnabledEdit(primary, on);
   };
   const setLocked = (on: boolean): void => setLockedId(on && selected ? selected : null);
 
-  const node = primary ? defaultSceneGraph.getNode(primary) : undefined;
   const layerName = node?.name?.trim() || (primary ? `Layer: ${primary}` : 'No Layer Selected');
 
   return (

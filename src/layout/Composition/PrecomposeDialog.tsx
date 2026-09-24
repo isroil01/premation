@@ -14,13 +14,12 @@ import { Input } from '@components/Input';
 import { Checkbox } from '@components/Checkbox';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
-import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { defaultPrecompNameIn } from '@core/mirror/compNames';
 import {
-  defaultPrecompName,
   leaveAttributesUnavailableReason,
   precomposeTargets,
   type PrecomposeMode,
@@ -37,9 +36,10 @@ const remembered: { mode: PrecomposeMode; adjustDuration: boolean; openNew: bool
 };
 
 function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }): JSX.Element {
-  const hostName = useProjectStore((s) => s.comps[activeCompRootId()]?.name) ?? 'this composition';
+  // B4: names from the document mirror.
+  const hostName = useActiveMirrorComp()?.settings.name ?? 'this composition';
   const leaveBlocked = useMemo(() => leaveAttributesUnavailableReason(ids), [ids]);
-  const [name, setName] = useState(defaultPrecompName);
+  const [name, setName] = useState(() => defaultPrecompNameIn(documentMirror()));
   const [mode, setMode] = useState<PrecomposeMode>(
     remembered.mode === 'leave' && !leaveBlocked ? 'leave' : 'move',
   );
@@ -47,7 +47,7 @@ function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }):
   const [openNew, setOpenNew] = useState(remembered.openNew);
   const [busy, setBusy] = useState(false);
 
-  const layerName = ids.length === 1 ? defaultSceneGraph.getNode(ids[0]!)?.name ?? 'the layer' : '';
+  const layerName = ids.length === 1 ? documentMirror().layer(ids[0]!)?.name ?? 'the layer' : '';
   const count = ids.length;
 
   const submit = (): void => {
@@ -58,7 +58,7 @@ function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }):
     // One engine entry (`precompose`): undo restores the layers exactly. The
     // selection and "Open New Composition" are the dialog's (editor state).
     precomposeEdit(ids, {
-      name: name.trim() || defaultPrecompName(),
+      name: name.trim() || defaultPrecompNameIn(documentMirror()),
       mode,
       adjustDuration: mode === 'move' && adjustDuration,
       openNew,

@@ -9,13 +9,16 @@
 
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { ExportForm, useExportModel } from './ExportForm';
 import styles from './ExportPanel.module.css';
 
 export function ExportPanel(): JSX.Element {
-  const duration = useCompositionStore((s) => s.comp().durationSeconds);
-  const fps = useCompositionStore((s) => s.fps);
+  // B4: the active composition's settings from the document mirror.
+  const settings = useActiveMirrorComp()?.settings;
+  const duration = settingsDurationSeconds(settings);
+  const fps = settingsFps(settings);
   const { busy, showQueue, outputName, activePreset, doExport, queueJob, serverRender } = useExportModel(duration, fps);
 
   return (

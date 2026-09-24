@@ -9,7 +9,8 @@ import { Button } from '@components/Button';
 import { DialogFooter, enterShouldConfirm } from '@components/Modal';
 import { OutputFormat } from '@stores/renderQueueStore';
 import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import {
   listOutputTemplates,
   saveOutputTemplate,
@@ -80,7 +81,7 @@ export function OutputModuleDialog({
   const [duration, setDuration] = useState(initialDuration);
   // Seeded from the comp's own transparency, like the Export dialog — a
   // comp set transparent in Composition Settings queued opaque otherwise.
-  const [transparent, setTransparent] = useState(() => !!useCompositionStore.getState().transparent);
+  const [transparent, setTransparent] = useState(() => !!documentMirror().comp(activeCompIdNow() ?? '')?.settings.transparent);
   const [quality, setQuality] = useState<ExportQuality>('high');
   const [proresProfile, setProresProfile] = useState<ProresProfile>('4444');
   // MOV alpha only exists in 4444 — the 422 family has no alpha plane.

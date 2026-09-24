@@ -8,7 +8,8 @@ import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
+import { defaultCompNameIn } from '@core/mirror/compNames';
 import { createCompositionEdit } from './compositionEdits';
 import {
   SIZE_PRESETS,
@@ -53,16 +54,8 @@ type CategoryFilter = 'popular' | 'social' | 'video' | 'cinema' | 'all';
 
 export function NewComposition({ close }: { close: () => void }): JSX.Element {
   // Generate a smart, non-colliding default name like "Comp 1", "Comp 2", etc.
-  const initialDefaultName = useMemo(() => {
-    const comps = useProjectStore.getState().comps;
-    const compList = Object.values(comps);
-    let n = Math.max(1, compList.length + 1);
-    const existingNames = new Set(compList.map((c) => c.name.toLowerCase()));
-    while (existingNames.has(`comp ${n}`.toLowerCase())) {
-      n += 1;
-    }
-    return `Comp ${n}`;
-  }, []);
+  // B4: the document mirror's compositions.
+  const initialDefaultName = useMemo(() => defaultCompNameIn(documentMirror()), []);
 
   const [name, setName] = useState(initialDefaultName);
   const [width, setWidth] = useState(1920);
