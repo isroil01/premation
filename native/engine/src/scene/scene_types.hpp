@@ -23,6 +23,7 @@
 
 #include "engine_api.hpp"
 #include "json.hpp"
+#include "transform.hpp"
 
 namespace premation::scene {
 
@@ -62,6 +63,18 @@ struct ResolvedGlass {
   std::string rimColor;
   double rimOpacity = 0, rimWidth = 0, rimAngle = 0, specularAngle = 0, specularIntensity = 0, specularFalloff = 0,
          grain = 0;
+};
+
+/// RenderLayer.light — a light layer's screen-blended glow quad.
+struct LightWash {
+  std::string color;
+  double intensity = 100;
+  double radius = 500;
+  double screenRadius = 500;
+  std::string type = "point";
+  double cone = 45;
+  double coneFeather = 50;
+  bool pool = false;
 };
 
 /// RenderLayer — the fields the port carries (see the header note).
@@ -130,6 +143,18 @@ struct RLayer {
   bool premultipliedSource = false;
   // ── rigs ──
   std::optional<DeformedMeshData> deformedMesh;
+  // ── 3D (threed_port.cpp) ──
+  /// The layer's 4×4 world matrix (column-major) for the depth-tested path.
+  std::optional<std::array<double, 16>> world3d;
+  /// Per-quad Lambert gain (Accepts Lights).
+  std::optional<std::array<double, 3>> lighting;
+  /// Per-fragment material (the snapshot's `shade3d`; quadGain is added by the frame build).
+  std::optional<api::RenderShade3D> shade3d;
+  bool castsShadow3d = false;
+  /// Only ever false (a receiver that refuses shadows).
+  std::optional<bool> acceptsShadows3d;
+  /// A light layer's glow wash (RenderLayer.light).
+  std::optional<LightWash> light;
   // ── port bookkeeping ──
   /// Features this layer uses that the C++ port does not produce yet (the
   /// explicit fallback: reported per layer, never silently dropped).
@@ -153,6 +178,10 @@ struct Snapshot {
   double fps = 30;
   std::vector<RLayer> layers;
   std::vector<LayerError> layerErrors;
+  // ── 3D (threed_port.cpp; present only when a layer has world3d) ──
+  std::optional<api::RenderCamera3D> camera3d;
+  std::vector<api::RenderLight3D> lights3d;
+  std::optional<api::RenderSsao> ssao;
 };
 
 /// SnapshotComp (buildSnapshot.ts) — comp-level inputs.
@@ -167,6 +196,12 @@ struct SnapshotComp {
   std::string rootId;
   /// Comp instance recursion (MAX_COMP_DEPTH).
   std::vector<std::string> compStack;
+  /// SnapshotComp.camera3dMode: 'active', an ortho axis view, or `camera:<id>`.
+  std::string camera3dMode = "active";
+  /// SnapshotComp.customViewCamera (a custom 3D view; replaces the scene camera).
+  std::optional<motion::xf::Camera> customViewCamera;
+  /// SnapshotComp.draft3d.
+  bool draft3d = false;
 };
 
 /// MotionBlurConfig (effects/motionBlur.ts).

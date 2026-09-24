@@ -249,6 +249,30 @@ void diff_one(const api::Renderable& a, const api::Renderable& b, Diff& d) {
     }
   }
   diff_effects(a.effects, b.effects, d, at);
+  // 3D (D2w 3D): the depth-tested placement and its material.
+  if (a.light_wash != b.light_wash) d.note(at + " lightWash");
+  if (a.three_d.has_value() != b.three_d.has_value()) {
+    d.note(at + " threeD presence");
+  } else if (a.three_d) {
+    diff_vec(a.three_d->model, b.three_d->model, kMatTol, d.maxMatrix, d, at + " threeD.model");
+    if (a.three_d->casts_shadow.value_or(false) != b.three_d->casts_shadow.value_or(false)) d.note(at + " threeD.castsShadow");
+    if (a.three_d->shade.has_value() != b.three_d->shade.has_value()) {
+      d.note(at + " threeD.shade presence");
+    } else if (a.three_d->shade) {
+      const auto& sa = *a.three_d->shade;
+      const auto& sb = *b.three_d->shade;
+      diff_vec({sa.specular, sa.shininess, sa.metal.value_or(-1), sa.roughness.value_or(-1), sa.ambient.value_or(-1), sa.diffuse.value_or(-1),
+                sa.ior.value_or(-1), sa.transparency.value_or(-1)},
+               {sb.specular, sb.shininess, sb.metal.value_or(-1), sb.roughness.value_or(-1), sb.ambient.value_or(-1), sb.diffuse.value_or(-1),
+                sb.ior.value_or(-1), sb.transparency.value_or(-1)},
+               kScalarTol, d.maxScalar, d, at + " threeD.shade");
+      diff_vec(sa.quad_gain, sb.quad_gain, kScalarTol, d.maxScalar, d, at + " threeD.shade.quadGain");
+      if (sa.accepts_shadows != sb.accepts_shadows) d.note(at + " threeD.shade.acceptsShadows");
+    }
+  }
+  if (a.extruded_mesh.has_value() != b.extruded_mesh.has_value()) d.note(at + " extrudedMesh presence");
+  else if (a.extruded_mesh && a.extruded_mesh->key != b.extruded_mesh->key) d.note(at + " extrudedMesh.key");
+  if (a.depth_exempt != b.depth_exempt) d.note(at + " depthExempt");
   if (a.precomp.has_value() != b.precomp.has_value()) d.note(at + " precomp presence");
   diff_renderables(a.precomp_children, b.precomp_children, d);
 }
@@ -265,6 +289,47 @@ void diff_renderables(const std::vector<api::Renderable>& a, const std::vector<a
     diff_one(a[i], b[i], d);
   }
   if (a.size() != b.size()) d.note("renderable count " + std::to_string(a.size()) + " vs " + std::to_string(b.size()));
+}
+
+/// The scene's 3D frame: camera matrices / eye / DOF, the shader lights, SSAO.
+void diff_scene_3d(const api::RenderFrameScene& a, const api::RenderFrameScene& b, Diff& d) {
+  if (a.camera3d.has_value() != b.camera3d.has_value()) {
+    d.note("camera3d presence");
+  } else if (a.camera3d) {
+    diff_vec(a.camera3d->view, b.camera3d->view, kMatTol, d.maxMatrix, d, "camera3d.view");
+    diff_vec(a.camera3d->projection, b.camera3d->projection, kMatTol, d.maxMatrix, d, "camera3d.projection");
+    diff_vec(a.camera3d->eye, b.camera3d->eye, kMatTol, d.maxMatrix, d, "camera3d.eye");
+    if (a.camera3d->dof.has_value() != b.camera3d->dof.has_value()) {
+      d.note("camera3d.dof presence");
+    } else if (a.camera3d->dof) {
+      const auto& x = *a.camera3d->dof;
+      const auto& y = *b.camera3d->dof;
+      diff_vec({x.strength, x.focus, x.aperture, x.focal_length.value_or(-1), x.f_stop.value_or(-1), x.iris_blades.value_or(-1)},
+               {y.strength, y.focus, y.aperture, y.focal_length.value_or(-1), y.f_stop.value_or(-1), y.iris_blades.value_or(-1)},
+               kScalarTol, d.maxScalar, d, "camera3d.dof");
+    }
+  }
+  if (a.lights3d.size() != b.lights3d.size()) {
+    d.note("lights3d count " + std::to_string(a.lights3d.size()) + " vs " + std::to_string(b.lights3d.size()));
+  } else {
+    for (std::size_t i = 0; i < a.lights3d.size(); ++i) {
+      const auto& x = a.lights3d[i];
+      const auto& y = b.lights3d[i];
+      const std::string at = "lights3d[" + std::to_string(i) + "]";
+      if (x.type != y.type) d.note(at + " type");
+      if (x.shadow_map.value_or(false) != y.shadow_map.value_or(false)) d.note(at + " shadowMap");
+      std::vector<double> va{x.gain, x.x, x.y, x.z, x.radius, x.aim_x, x.aim_y, x.aim_z, x.half_cone_rad, x.cone_feather_rad, x.falloff_mode, x.falloff_distance,
+                             x.shadow_map_size.value_or(-1), x.shadow_bias.value_or(-1), x.shadow_softness.value_or(-1), x.shadow_darkness.value_or(-1)};
+      std::vector<double> vb{y.gain, y.x, y.y, y.z, y.radius, y.aim_x, y.aim_y, y.aim_z, y.half_cone_rad, y.cone_feather_rad, y.falloff_mode, y.falloff_distance,
+                             y.shadow_map_size.value_or(-1), y.shadow_bias.value_or(-1), y.shadow_softness.value_or(-1), y.shadow_darkness.value_or(-1)};
+      va.insert(va.end(), x.color.begin(), x.color.end());
+      vb.insert(vb.end(), y.color.begin(), y.color.end());
+      diff_vec(va, vb, kScalarTol, d.maxScalar, d, at);
+    }
+  }
+  if (a.ssao.has_value() != b.ssao.has_value()) d.note("ssao presence");
+  else if (a.ssao) diff_vec({a.ssao->radius, a.ssao->intensity}, {b.ssao->radius, b.ssao->intensity}, kScalarTol, d.maxScalar, d, "ssao");
+  if (a.env_map.has_value() != b.env_map.has_value()) d.note("envMap presence");
 }
 
 /// A native raster against the TS blob of the same key: max channel Δ and % of pixels > 16/255.
@@ -470,6 +535,7 @@ int batch(const Options& o) {
           haveTs = true;
           diff_renderables(nf.file.scene.renderables, ts.scene.renderables, d);
           if (ts.scene.has_effects != nf.file.scene.has_effects) d.note("hasEffects");
+          diff_scene_3d(nf.file.scene, ts.scene, d);
           // Texture content: each native raster vs the TS blob under the same key.
           for (const auto& ref : nf.file.textures) {
             if (!ref.hash.starts_with("rs:") && !ref.hash.starts_with("img:")) continue;

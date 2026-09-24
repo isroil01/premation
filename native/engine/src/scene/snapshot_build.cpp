@@ -22,6 +22,7 @@
 #include "scene.hpp"
 #include "scene_math.hpp"
 #include "text_runs.hpp"
+#include "threed_port.hpp"
 #include "transform.hpp"
 
 namespace premation::scene {
@@ -209,12 +210,21 @@ double adaptive_samples(double base0, double travelPx, double limit0) {
 
 // ── the walk ───────────────────────────────────────────────────────────────
 
-class Walk {
+class Walk final : public Scene3DHost {
  public:
   Walk(const BuildContext& c, const SnapshotComp& comp, double t, const std::optional<MotionBlurCfg>& mb)
       : c_(c), d_(c.d), comp_(comp), t_(t), mb_(mb) {}
 
   Snapshot run();
+
+  // ── Scene3DHost (threed_port.cpp reads the walk's caches) ──
+  [[nodiscard]] const doc::Node* node3d(std::string_view id) const override { return node(id); }
+  const Values& values3d(const std::string& id) override { return values_of(id); }
+  double remap3d(const std::string& id, double tt) override { return remap(id, tt, false); }
+  double sub_remap3d(const std::string& id, double tt) override { return remap(id, tt, true); }
+  xf::Local2D world2d(const std::string& id) override { return world_of(id); }
+  [[nodiscard]] std::optional<std::string> parent3d_of(const std::string& id) const override { return parent_of(id); }
+  bool live3d(const std::string& id) override { return is_live_at(id); }
 
  private:
   // ── lookups ──
@@ -242,7 +252,9 @@ class Walk {
   void build_node(const doc::Node& n);
   void unported(RLayer& l, const doc::Node& n, std::string what);
   std::vector<Json> effects_of(const doc::Node& n, const Values& a, std::optional<double> layerTime, RLayer* note);
-  void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id);
+  /// `matrixAt` (3D layers): the projected affine per sample (threed_port `matrix_at`).
+  void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
+                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {});
   void text_fields(RLayer& l, const doc::Node& n, const Base& base, const Values& a);
   void attach_precomps(std::vector<RLayer>& list);
 
@@ -266,6 +278,8 @@ class Walk {
   std::map<std::string, std::vector<RLayer>, std::less<>> precompInner_;
   std::set<std::string, std::less<>> precompEmitted_;
   std::vector<LayerError> errors_;
+  /// The 3D block (camera, lights, placement, shadows, depth sort).
+  std::unique_ptr<Scene3D> three_;
 };
 
 const Values& Walk::values_of(const std::string& id) {
@@ -630,7 +644,8 @@ void Walk::attach_precomps(std::vector<RLayer>& list) {
   }
 }
 
-void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id) {
+void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
+                          const std::function<std::array<double, 6>(double, double)>& matrixAt) {
   if (!mb_) return;
   // Force Motion Blur (forceMotionBlur.ts readForceMotionBlur) overrides the two opt-ins.
   std::optional<MotionBlurCfg> forced;
@@ -655,12 +670,30 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
       "x", "y", "rotation", "scale", "scaleX", "scaleY", "z", "rotationX", "rotationY",
       "orientationX", "orientationY", "orientationZ"};
   const bool moves = std::ranges::any_of(kMoves, [&](std::string_view p) { return doc::anim_is_animated(d_, id, p); });
-  if (!moves) return;
+  // A 3D layer also moves on screen when the camera does.
+  if (!moves && !(matrixAt && three_ && three_->camera_animated())) return;
   const auto sample = [&](std::string_view prop, double tt) { return doc::anim_sample(d_, c_.expr, c_.cache, id, prop, tt); };
   const double limit = cfg.adaptiveSampleLimit;
   const std::vector<double> probe = motion_blur_sample_times(t_, cfg.fps, cfg.shutterAngle, 2, cfg.shutterPhase, limit);
   double travel = 0;
-  if (probe.size() >= 2) {
+  if (probe.size() >= 2 && matrixAt) {
+    // 3D: PROJECTED travel at the box corners (motionBlur.ts affineTravelPx).
+    const double ta = probe.front();
+    const double tb = probe.back();
+    const std::array<double, 6> ma = matrixAt(remap(id, ta, true), ta);
+    const std::array<double, 6> mb = matrixAt(remap(id, tb, true), tb);
+    const double hw = std::max(0.0, base.width.value_or(0)) / 2;
+    const double hh = std::max(0.0, base.height.value_or(0)) / 2;
+    const std::array<std::array<double, 2>, 5> corners = {{{0, 0}, {-hw, -hh}, {hw, -hh}, {hw, hh}, {-hw, hh}}};
+    for (const auto& [x, y] : corners) {
+      const double ax = ma[0] * x + ma[2] * y + ma[4];
+      const double ay = ma[1] * x + ma[3] * y + ma[5];
+      const double bx = mb[0] * x + mb[2] * y + mb[4];
+      const double by = mb[1] * x + mb[3] * y + mb[5];
+      const double dd = hypot2(bx - ax, by - ay);
+      if (std::isfinite(dd) && dd > travel) travel = dd;
+    }
+  } else if (probe.size() >= 2) {
     const double ta = remap(id, probe.front(), true);
     const double tb = remap(id, probe.back(), true);
     struct P {
@@ -699,6 +732,7 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     s.scaleX = sc ? *sc : sample("scaleX", ti).value_or(base.scaleX);
     s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
     s.opacity = op ? *op / 100 : base.opacity;
+    if (matrixAt) s.matrix = matrixAt(ti, tc);
     out.push_back(s);
   }
   if (out.size() > 1) l.motionSamples = std::move(out);
@@ -794,15 +828,13 @@ void Walk::build_node(const doc::Node& n) {
   const Json& fx = fx_props(n);
   if (fx.at("booleanOperand").is_bool() && fx.at("booleanOperand").b()) return;  // live-boolean operand
   if (!is_live_at(n.id)) return;
+  if (kind == "light" && comp_.draft3d) return;  // Draft 3D: lights draw nothing
   if (!fullBuild_.contains(n.id)) {
     emit_stub(n);
     return;
   }
-  if (kind == "light") {
-    RLayer l;
-    l.id = n.id;
-    unported(l, n, "light layers");
-    emit_stub(n);
+  if (kind == "light") {  // the glow wash (threed_port.cpp); lighting is the 3D block's
+    if (auto wash = three_->light_layer(n)) emit(std::move(*wash), n);
     return;
   }
   if (kind == "particle" || kind.find('.') != std::string::npos) {
@@ -875,9 +907,16 @@ void Walk::build_node(const doc::Node& n) {
   if (fx.at("booleanOp").is_string() && fx.at("booleanSources").is_array() && fx.at("booleanSources").arr().size() >= 2) {
     unported(l, n, "live merge paths");
   }
-  if (doc::is_3d_enabled(n)) unported(l, n, "3D layers");
-  if ((fx.at("autoOrient").is_string() && (fx.at("autoOrient").str() == "path" || fx.at("autoOrient").str() == "camera")) ||
-      (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b())) {
+  // 3D (threed_port.cpp): placement below; the mesh-carrying kinds are not ported yet.
+  const bool is3d = doc::is_3d_enabled(n);
+  Layer3D s3;
+  s3.mat = three_->material_of(n, a);
+  if (is3d) {
+    for (const std::string& what : three_->unported_features(n, a)) unported(l, n, what);
+  }
+  // Auto-orient along the path applies to 2D layers only; Toward Camera is part of the 3D placement.
+  if (!is3d && ((fx.at("autoOrient").is_string() && fx.at("autoOrient").str() == "path") ||
+                (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b()))) {
     unported(l, n, "auto-orient");
   }
   for (const auto& comp : n.components) {
@@ -890,6 +929,8 @@ void Walk::build_node(const doc::Node& n) {
   double sx = world.scale_x;
   double sy = world.scale_y;
   double rot = world.rotation;
+  // Behind the camera's near plane: not drawn (and neither casts nor receives).
+  if (is3d && !three_->place(n, a, base.x, base.y, base.rotation, base.scaleX, base.scaleY, world, s3, px, py, sx, sy, rot, l)) return;
 
   // Fill paint (+ its keyframed geometry and stops).
   Json fillPaint = read_node_fill(n);
@@ -1051,13 +1092,13 @@ void Walk::build_node(const doc::Node& n) {
   }
   l.skew = a.get("skew") ? a.get("skew") : read_num_prop(n, "skew");
   l.skewAxis = a.get("skewAxis") ? a.get("skewAxis") : read_num_prop(n, "skewAxis");
-  const bool pin = isSolid && solidUnseeded;
+  const bool pin = isSolid && !is3d && solidUnseeded;
   l.x = pin ? comp_.width / 2 : px;
   l.y = pin ? comp_.height / 2 : py;
   l.rotation = pin ? 0 : rot;
   l.scaleX = pin ? 1 : sx;
   l.scaleY = pin ? 1 : sy;
-  l.depth = 0;
+  l.depth = is3d ? s3.depth : 0;
   l.opacity = baseOpacity;
   l.width = layerW;
   l.height = layerH;
@@ -1138,6 +1179,7 @@ void Walk::build_node(const doc::Node& n) {
     if (rounded && (csx != 1 || csy != 1) && csx > 1e-6 && csy > 1e-6) l.cornerRadiusScale = std::array<double, 2>{csx, csy};
   }
   if (layerKind == LayerKind::text) text_fields(l, n, base, a);
+  three_->shade(s3, l);  // Accepts Lights: per-quad gain + shade3d
   // Anchor point.
   {
     const auto [ax0, ay0] = read_node_anchor(n);
@@ -1197,7 +1239,7 @@ void Walk::build_node(const doc::Node& n) {
       unported(l, n, "shape path operators (trim / repeater / zig-zag / wiggle …)");
     }
   }
-  motion_samples(l, n, base, n.id);
+  motion_samples(l, n, base, n.id, three_->matrix_at(n, a, base.x, base.y, base.rotation, s3));
   if (layerKind == LayerKind::text && l.text) {
     // Per-character styling (richText.ts readRuns + normalizeRuns): emitted only when non-empty.
     const doc::Component* tc = n.comp("Text");
@@ -1212,6 +1254,8 @@ void Walk::build_node(const doc::Node& n) {
       unported(l, n, "temporal ghosts (echo / wide time)");
     }
   }
+  three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
+  three_->before_emit(s3, l);               // planar CoC under DOF
   emit(std::move(l), n);
 }
 
@@ -1220,6 +1264,9 @@ Snapshot Walk::run() {
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
   fps_ = doc::comp_fps(d_, comp_.rootId);
+  // The camera, DOF and lights resolve before the walk (buildSnapshot order).
+  three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);
+  three_->setup(nodes_);
 
   // Which layers must be fully built (buildSnapshot `needsFullBuild`).
   {
@@ -1276,6 +1323,12 @@ Snapshot Walk::run() {
     }
   }
   attach_precomps(layers_);
+  // Landed beams, projected shadows and the 3D depth sort (before the matte pairing, as the TS).
+  three_->finish(layers_);
+  for (const auto& [id, what] : three_->unported()) {
+    const doc::Node* un = node(id);
+    errors_.push_back({id, un != nullptr ? un->name : std::string(), "unported", what});
+  }
 
   // resolveMatteSources — per stack level, as the TypeScript applies it to the top level only.
   const auto resolveMattes = [](std::vector<RLayer>& ls) {
@@ -1304,6 +1357,7 @@ Snapshot Walk::run() {
   s.fps = fps_;
   s.layers = std::move(layers_);
   s.layerErrors = std::move(errors_);
+  three_->emit(s, s.layers);  // camera3d / lights3d / ssao when a layer is 3D
   return s;
 }
 

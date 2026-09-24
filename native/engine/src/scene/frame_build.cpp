@@ -13,6 +13,8 @@
 #include "misc_port.hpp"
 #include "readers.hpp"
 #include "scene_math.hpp"
+#include "light_wash.hpp"
+#include "threed_frame.hpp"
 
 namespace premation::scene {
 namespace {
@@ -431,7 +433,14 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
       const double rad = (s.rotation * std::numbers::pi) / 180;
       const double w = (l.width + 2 * pad) * s.scaleX;
       const double h = (l.height + 2 * pad) * s.scaleY;
-      const Mat3 m = mat3_mul(parent, mat3_mul(compose(s.x, s.y, rad, w, h), translation(so.x, so.y)));
+      Mat3 m;
+      if (s.matrix) {  // 3D samples carry their own projected affine (no parent: the TS applies none)
+        const auto& sm = *s.matrix;
+        m.m = {f32(sm[0]), f32(sm[1]), 0, f32(sm[2]), f32(sm[3]), 0, f32(sm[4]), f32(sm[5]), 1};
+        m = mat3_mul(m, mat3_mul(scaling(l.width + 2 * pad, l.height + 2 * pad), translation(so.x, so.y)));
+      } else {
+        m = mat3_mul(parent, mat3_mul(compose(s.x, s.y, rad, w, h), translation(so.x, so.y)));
+      }
       api::RenderMotionSample ms;
       ms.model_matrix = mat_wire(m);
       ms.opacity = s.opacity;
@@ -523,6 +532,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   r.effects = extract_spatial_effects(l, baked);
   if (l.deformedMesh) r.deformed_mesh = deformed_mesh_wire(*l.deformedMesh, l.width, l.height, pad);
   if (baked) unported_.emplace_back(l.id, "CPU-baked effect chain / fill opacity (E4)");
+  apply_three_d(l, parent, r);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
   return r;
 }
 
@@ -636,6 +646,16 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
       }
       if (l.isAdjustment) {
         if (auto adj = adjustment_to_renderable(l)) out.push_back(std::move(*adj));
+        continue;
+      }
+      if (l.light) {  // a light's screen-blended glow quad
+        out.push_back(light_to_renderable(l, parent, parentOpacity));
+        TextureRequest tr;  // AppTextureProvider rasterizeLight (light_wash.cpp)
+        tr.key = "light:" + l.id;
+        tr.kind = TexKind::light;
+        tr.spec = light_wash_spec(*l.light);
+        tr.layerId = l.id;
+        textures_.push_back(std::move(tr));
         continue;
       }
       if (l.precompLayers && !l.precompLayers->empty()) {
@@ -764,6 +784,7 @@ FrameBuild build_frame_scene(const Snapshot& s, double rasterScale) {
   sc.has_effects = anyEffects(s.layers) || adv || backdrop;
   sc.dissolve_frame = motion::js::round(s.time * s.fps);
   sc.renderables = std::move(renderables);
+  if (finish_frame_3d(s, sc)) sc.has_effects = true;  // 3D depth groups need the scene colour target
   out.textures = f.take_textures();
   out.unported = f.take_unported();
   return out;
