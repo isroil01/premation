@@ -34,6 +34,7 @@ import { EMPTY_FILTER, useSceneViewStore } from '@stores/sceneViewStore';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
 import { engineIdle } from '@core/engine/engineInstance';
+import { resetDocumentMirror } from '@stores/documentMirror';
 
 const ROOT = 'comp_main';
 const OTHER = 'comp_other';
@@ -108,6 +109,9 @@ beforeEach(() => {
   defaultSceneGraph.addNode(compRoot(OTHER, 'Other'));
   defaultSceneGraph.addChild(OTHER, layer('solo', 'Solo', OTHER, 'shape'));
   useProjectStore.getState().actions.openTab(ROOT, [ROOT], 'Main');
+  // The fixture is rebuilt around the engine (no change events): the panel's
+  // document mirror starts over, as it would on a document reset.
+  resetDocumentMirror();
 });
 
 const renderPanel = (): ReturnType<typeof render> =>
@@ -345,9 +349,10 @@ describe('rename', () => {
     expect(screen.getByLabelText('Rename')).toHaveValue('Beta');
   });
 
-  it('refuses to rename a locked layer and says so', () => {
+  it('refuses to rename a locked layer and says so', async () => {
     renderPanel();
-    act(() => { setNodeFlag('beta', { locked: true }); });
+    // The lock is read from the document mirror, which hears the write when the engine reports it.
+    await act(async () => { setNodeFlag('beta', { locked: true }); await engineIdle(); });
     fireEvent.doubleClick(rowFor('beta'));
     expect(screen.queryByLabelText('Rename')).toBeNull();
   });

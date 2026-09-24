@@ -56,8 +56,8 @@ import { SearchField } from '@components/SearchField';
 import { EmptyState } from '@components/EmptyState';
 import { ScrollableStrip } from '@components/ScrollableStrip';
 import { cn } from '@utils/cn';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { playheadSeconds, seekPlayhead } from '@core/timeline/timelineView';
 import { useWorkspaceStore } from '@stores/projectStore';
 import {
   findFillerWordIds,
@@ -158,7 +158,7 @@ export function TranscriptPanel(): JSX.Element {
   // called once, so switching tabs swaps the transcript instead of leaving the
   // previous comp's words under a different comp's timeline.
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
-  const rootId = useMemo(() => activeCompRootId(), [activeTabId]);
+  const rootId = useMemo(() => activeCompIdNow() ?? 'comp_root', [activeTabId]);
 
   const transcript = useTranscriptStore((s) => s.byComp[rootId]);
   const phase = useTranscriptStore((s) => s.phase);
@@ -235,7 +235,7 @@ export function TranscriptPanel(): JSX.Element {
     const tick = (): void => {
       timer = null;
       if (stopped) return;
-      const seconds = getTimelineController().currentSeconds;
+      const seconds = playheadSeconds();
       // Only a CHANGE re-renders. During a pause this is a no-op ten times a
       // second, which is the cheapest thing a subscription can be.
       setPlayhead((prev) => (Math.abs(prev - seconds) < 1e-4 ? prev : seconds));
@@ -264,7 +264,7 @@ export function TranscriptPanel(): JSX.Element {
   // ── Gestures ────────────────────────────────────────────────────────
 
   const seekTo = useCallback((word: TranscriptWord) => {
-    getTimelineController().seekSeconds(word.start);
+    seekPlayhead(word.start);
   }, []);
 
   const onWordPointerDown = useCallback(
@@ -611,7 +611,7 @@ export function TranscriptPanel(): JSX.Element {
             <button
               type="button"
               className={styles.segmentTime}
-              onClick={() => getTimelineController().seekSeconds(group.start)}
+              onClick={() => seekPlayhead(group.start)}
               title="Seek to this segment"
             >
               {formatShortTime(group.start)}

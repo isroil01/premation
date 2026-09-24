@@ -20,14 +20,18 @@
  */
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { graph as docGraph } from '@core/engine/doc';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
-import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { mirrorEligibleParents, mirrorParentOf } from '@core/mirror/parenting';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorLabelColor } from '@core/mirror/layerLabels';
+import { mirrorLayersWithLabel } from '@core/mirror/layerSwitchFacts';
+import { mirrorMatte } from '@core/mirror/layerFacts';
+import { mirrorDescribeLayerFlag, mirrorLayerFlagAvailable, mirrorLayerFlagOn } from '@core/mirror/layerFlagFacts';
 import { toggleLayerFlagsEdit, toggleLayerSwitchAnchored } from './layerSwitchEdits';
 import { deleteLayersEdit, freezeLayersEdit, reverseLayersEdit } from './sceneEdits';
 import {
@@ -42,17 +46,15 @@ import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout
 import { splitSelectedAtPlayhead, unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { masksFromTextEdit } from '@layout/Text/textEdits';
+import { canOutlineText } from '@layout/Text/textMirror';
 import { nullsFromPathEdit, shapesFromTextEdit } from './layerCreateEdits';
-import { LAYER_FLAGS, describeLayerFlag, layerFlagAvailable, readLayerFlag } from '@core/scene/layerFlags';
-import { LABEL_COLORS, nodesWithLabelColor, readNodeLabelColor } from '@core/scene/labelColor';
+import { LAYER_FLAGS } from '@core/scene/layerFlags';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 import { type AlignMode } from '@core/scene/alignNodes';
-import { readNodeBlend, type LayerBlendMode } from '@core/effects/blendMode';
+import type { LayerBlendMode } from '@core/effects/blendMode';
 import { blendModeLabel, blendModeSections } from '@layout/Inspector/blendMenu';
 import { MATTE_OPTIONS, applyMatteOption, matteOptionId } from '@components/MatteControl/matteMenu';
-import { readNodeMatte } from '@core/effects/matte';
-import { isRetimableLayer } from '@core/animation/layerTimeCommands';
 import { getTime } from '@stores/playbackClockStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
@@ -78,8 +80,8 @@ function LabelSwatch({ color }: { color: string }): JSX.Element {
 export function labelColorMenuItems(targetId: string): ContextMenuItem[] {
   const sel = useSelectionStore.getState().ids;
   const ids: string[] = sel.includes(targetId) ? [...sel] : [targetId];
-  const node = defaultSceneGraph.getNode(targetId);
-  const current = node ? readNodeLabelColor(node) : undefined;
+  // B4: labels from the document mirror.
+  const current = mirrorLabelColor(documentMirror().layer(targetId));
   return [
     {
       id: 'label-none',
@@ -109,7 +111,7 @@ export function labelColorMenuItems(targetId: string): ContextMenuItem[] {
       // layers you forgot to tag.
       label: 'Select All with This Label',
       onSelect: () => {
-        const matches = nodesWithLabelColor(targetId);
+        const matches = mirrorLayersWithLabel(documentMirror(), targetId);
         if (matches.length) useSelectionStore.getState().set(matches);
       },
     },
@@ -118,14 +120,15 @@ export function labelColorMenuItems(targetId: string): ContextMenuItem[] {
 
 /** The AE switch set as a submenu, for the switches not drawn on the row. */
 function switchesMenuItems(targetId: string, ids: ReadonlyArray<string>): ContextMenuItem[] {
-  const node = defaultSceneGraph.getNode(targetId);
-  if (!node) return [];
-  return LAYER_FLAGS.filter((def) => layerFlagAvailable(node, def.id)).map((def) => ({
+  const m = documentMirror();
+  const layer = m.layer(targetId);
+  if (!layer) return [];
+  return LAYER_FLAGS.filter((def) => mirrorLayerFlagAvailable(m, targetId, def.id)).map((def) => ({
     id: `flag-${def.id}`,
     // Named for THIS layer — the sunburst and Quality each say something
     // different depending on what they are sitting on.
-    label: describeLayerFlag(node, def.id).label,
-    icon: readLayerFlag(node, def.id) ? 'check' : undefined,
+    label: mirrorDescribeLayerFlag(m, targetId, def.id).label,
+    icon: mirrorLayerFlagOn(layer, def.id) ? 'check' : undefined,
     onSelect: def.id === 'shy'
       ? () => { void toggleLayerSwitchAnchored(targetId, 'shy'); }
       : () => { void toggleLayerFlagsEdit(ids, def.id, targetId); },
@@ -133,8 +136,7 @@ function switchesMenuItems(targetId: string, ids: ReadonlyArray<string>): Contex
 }
 
 function blendMenuItems(targetId: string, ids: ReadonlyArray<string>): ContextMenuItem[] {
-  const node = defaultSceneGraph.getNode(targetId);
-  const current = node ? readNodeBlend(node) : undefined;
+  const current = documentMirror().layer(targetId)?.blendMode as LayerBlendMode | undefined;
   const out: ContextMenuItem[] = [];
   blendModeSections().forEach((section, i) => {
     if (i > 0) out.push({ id: `blend-sep-${i}`, separator: true });
@@ -156,9 +158,9 @@ function applyBlendMode(ids: ReadonlyArray<string>, mode: LayerBlendMode): void 
 }
 
 function matteMenuItems(targetId: string): ContextMenuItem[] {
-  const node = defaultSceneGraph.getNode(targetId);
-  if (!node) return [];
-  const stored = readNodeMatte(node);
+  const layer = documentMirror().layer(targetId);
+  if (!layer) return [];
+  const stored = mirrorMatte(layer);
   const currentId = matteOptionId(stored);
   return MATTE_OPTIONS.map((opt) => ({
     id: `matte-${opt.id}`,
@@ -177,8 +179,9 @@ function matteMenuItems(targetId: string): ContextMenuItem[] {
  * mean two different things depending on which control was used.
  */
 function parentMenuItems(targetId: string): ContextMenuItem[] {
-  const options = eligibleParents(targetId);
-  const current = parentOfNode(targetId);
+  const m = documentMirror();
+  const options = mirrorEligibleParents(m, targetId);
+  const current = mirrorParentOf(m, targetId);
   return [
     {
       id: 'parent-none',
@@ -226,9 +229,8 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
 }
 
 function activeCompSize(): { width: number; height: number } {
-  const p = useProjectStore.getState();
-  const compId = p.activeTabId ? p.tabs[p.activeTabId]?.compositionId : undefined;
-  const comp = compId ? p.comps[compId] : undefined;
+  const compId = activeCompIdNow();
+  const comp = compId ? documentMirror().comp(compId)?.settings : undefined;
   return { width: comp?.width ?? 1920, height: comp?.height ?? 1080 };
 }
 
@@ -248,27 +250,16 @@ export interface SceneMenuDeps {
  * even when the rest of the selection is in the other state.
  */
 export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): ContextMenuItem[] {
-  const node = defaultSceneGraph.getNode(targetId);
-  if (!node) return [];
+  // B4: the clicked row from the document mirror. A composition ROOT has no
+  // layer record (it is an item), so it is recognised by its composition record.
+  const m = documentMirror();
+  const layer = m.layer(targetId);
+  if (!layer && !m.comp(targetId)) return [];
   const sel = useSelectionStore.getState().ids;
   const ids = sel.includes(targetId) ? [...sel] : [targetId];
   const many = ids.length >= 2;
 
-  const hidden = node.visible === false;
-  const locked = node.locked === true;
-  const solo = node.solo === true;
-  const kind = readNodeKind(node);
-  const isGroup = kind === 'group';
-  const isRoot = node.parent === null;
-  const isText = kind === 'text' && canCreateShapesFromText(targetId);
-  const isShape = kind === 'shape' || kind === 'svg';
-  // Footage and precomps have a source to play backwards; nothing else does.
-  const retimable = isRetimableLayer(targetId);
-
-  /* A composition ROOT is the document, not a layer: renaming it, arranging it
-     and every switch below belong to the comp, which the Compositions list
-     above already offers. Offering them here would be a second, divergent set
-     of comp verbs. */
+  const isRoot = !layer;
   if (isRoot) {
     return [
       { id: 'rename', label: 'Rename', onSelect: () => deps.startRename(targetId) },
@@ -276,6 +267,20 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
       { id: 'settings', label: 'Composition Settings…', onSelect: () => run('comp.settings') },
     ];
   }
+  const hidden = !layer.switches.visible;
+  const locked = layer.switches.locked;
+  const solo = layer.switches.solo;
+  const kind = uiKindOf(layer);
+  const isGroup = kind === 'group';
+  const isText = kind === 'text' && canOutlineText(m, targetId);
+  const isShape = kind === 'shape' || kind === 'svg';
+  // Footage and precomps have a source to play backwards; nothing else does.
+  const retimable = kind === 'video' || kind === 'audio' || layer.kind === 'precomp';
+
+  /* A composition ROOT is the document, not a layer: renaming it, arranging it
+     and every switch below belong to the comp, which the Compositions list
+     above already offers. Offering them here would be a second, divergent set
+     of comp verbs. (Handled above, before the layer's facts are read.) */
 
   return [
     { id: 'rename', label: 'Rename', shortcut: 'F2', onSelect: () => deps.startRename(targetId) },
@@ -302,7 +307,7 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
     { id: 'sep2', separator: true },
 
     // ── Compositing: what this layer does to the ones under it ──────────
-    { id: 'blend', label: `Blending Mode — ${blendModeLabel(readNodeBlend(node))}`, children: blendMenuItems(targetId, ids) },
+    { id: 'blend', label: `Blending Mode — ${blendModeLabel(layer.blendMode as LayerBlendMode)}`, children: blendMenuItems(targetId, ids) },
     { id: 'matte', label: 'Track Matte', children: matteMenuItems(targetId) },
     { id: 'parent', label: 'Parent', children: parentMenuItems(targetId) },
     { id: 'sep3', separator: true },
@@ -443,16 +448,24 @@ function splitAtPlayhead(ids: ReadonlyArray<string>): void {
 
 /** Every layer of the active comp that is NOT currently selected. */
 export function invertSelection(): void {
+  // B4: every composition's layers from the document mirror, in the order the
+  // scene graph lists children (back to front — the mirror's stacks are top-first).
   const sel = new Set(useSelectionStore.getState().ids);
-  const roots = defaultSceneGraph.getRoots();
+  const m = documentMirror();
   const out: string[] = [];
-  const walk = (id: string): void => {
-    for (const child of defaultSceneGraph.getChildren(id)) {
-      if (!sel.has(child.id)) out.push(child.id);
-      walk(child.id);
+  const seen = new Set<string>();
+  const walk = (ids: readonly string[]): void => {
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const id = ids[i]!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const l = m.layer(id);
+      if (!l) continue;
+      if (!sel.has(id)) out.push(id);
+      walk(l.children);
     }
   };
-  for (const r of roots) walk(r.id);
+  for (const c of m.compIds) walk(m.comp(c)?.layers ?? []);
   useSelectionStore.getState().set(out);
 }
 

@@ -25,10 +25,12 @@ import {
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { useCompositionStore, sanitize as sanitizeComp } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { settingsFps } from '@core/mirror/compFacts';
 import {
   resolveSsao,
   resolvePixelAspect,
-  useProjectStore,
   DEFAULT_PIXEL_ASPECT,
   type CompositionSettings as CompRecord,
   type SsaoSettings,
@@ -313,7 +315,9 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   const handleSave = (): void => {
     close?.();
     const compId = initialComp.id;
-    if (!useProjectStore.getState().comps[compId]) return;
+    // B4: the composition (or a group opened in its own tab) must still be in the document.
+    const m = documentMirror();
+    if (!m.comp(compId) && !m.layer(compId)) return;
     void saveCompositionSettingsEdit(compId, initialComp, s);
   };
 
@@ -1211,8 +1215,9 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
  * other popup modals in the application.
  */
 export function openCompositionSettings(): void {
-  const comp = useCompositionStore.getState().comp();
-  const description = `${comp.name || 'Composition'} · ${comp.width} × ${comp.height} · ${comp.fps} fps`;
+  // B4: the active composition's settings from the document mirror.
+  const comp = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  const description = `${comp?.name || 'Composition'} · ${comp?.width ?? 1920} × ${comp?.height ?? 1080} · ${settingsFps(comp)} fps`;
 
   openModal({
     id: 'composition-settings',

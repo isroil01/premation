@@ -18,16 +18,15 @@ import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { customConfirm } from '@components/Modal';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
+import { liveComps } from '@core/mirror/compNames';
 import { TEMPLATES } from '@core/template/registry';
 import { templateThumbnail, createTemplatePlayer } from '@core/template/templatePreview';
 import { ANIM_PRESETS, insertAnimPreset, animPresetThumbnail, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { activeCompRootId } from '@core/scene/activeComp';
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
-import {
-  readAuthoredFields, exposeNodeAsField,
-} from '@core/template/templateAuthoring';
+import { exposeNodeAsField } from '@core/template/templateAuthoring';
 import { publishCurrentTemplate } from '@core/automation/publishTemplate';
 import { isPublicFieldId } from '@core/automation/fieldIds';
 import { cloudProjectsEnabled } from '@core/config/edition';
@@ -38,9 +37,8 @@ import { useTemplateStore, type TemplateFieldSend } from '@stores/templateStore'
 import { useGesture } from '@hooks/useGesture';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { DataFillSection } from './DataFillSection';
-import { removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit } from './templateAuthoringEdits';
+import { mirrorAuthoredFields, removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit } from './templateAuthoringEdits';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import styles from './TemplateFieldsPanel.module.css';
 
 export function TemplateFieldsPanel(): JSX.Element {
@@ -55,7 +53,9 @@ function TemplateGallery(): JSX.Element {
   // there's real work in the scene (more than a lone root node) so a stray click
   // can't wipe it.
   const pick = async (id: string): Promise<void> => {
-    if (defaultSceneGraph.size > 1) {
+    // B4: the document mirror — any layer, or a second composition, is real work.
+    const m = documentMirror();
+    if (m.layerIds().length + liveComps(m).length > 1) {
       const ok = await customConfirm(
         'Apply template?',
         'This replaces everything in the current composition (Edit ▸ Undo brings it back).',
@@ -120,7 +120,7 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'animPreset', presetId: preset.id })}
       // The preset's styled layer tree is built off-document → ONE pasteLayers entry.
-      onClick={() => { void insertBuiltLayers(`Insert ${preset.name}`, activeCompRootId(), () => insertAnimPreset(preset.id)); }}
+      onClick={() => { void insertBuiltLayers(`Insert ${preset.name}`, activeCompIdNow() ?? 'comp_root', () => insertAnimPreset(preset.id)); }}
     >
       <span className={styles.previewFrame} data-aspect="16:9">
         {poster && <img className={styles.poster} src={poster} alt="" aria-hidden />}
@@ -182,12 +182,14 @@ function fieldKindLabel(kind: TemplateField['kind']): string {
  * are opposite modes, and `ActiveTemplateFields` owns the latter.
  */
 export function TemplateAuthoringSection(): JSX.Element | null {
-  useSceneRevision(); // re-read the authored manifest after any scene change
+  // B4: the authored manifest is the active composition's `templateFields`
+  // (the document mirror); its record changes when the manifest does.
+  const activeComp = useActiveMirrorComp();
   const activeTemplate = useTemplateStore((s) => s.active);
   const selectedId = useSelectionStore((s) => s.ids[0]);
   const previewAuthored = useTemplateStore((s) => s.previewAuthored);
   const notify = useUIStore((s) => s.notify);
-  const fields = readAuthoredFields();
+  const fields = activeComp ? mirrorAuthoredFields(activeComp.id) : [];
 
   const exposeSelected = (): void => {
     if (!selectedId) return;

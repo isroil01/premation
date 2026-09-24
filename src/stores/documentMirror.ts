@@ -754,6 +754,15 @@ export class DocumentMirror {
             this.touch(`item:${id}`);
             this.touch('items');
           }
+          // A removed composition item takes its composition record with it.
+          for (const id of e.items) {
+            if (!compOf(id)) continue;
+            if (!comps) comps = new Map(this.compsValue);
+            comps.delete(id);
+            this.compIdsValue = this.compIdsValue.filter((c) => c !== id);
+            this.touch(`comp:${id}`);
+            this.touch('comps');
+          }
           break;
         case 'compositionChanged': {
           const prev = compOf(e.comp);

@@ -16,15 +16,14 @@
  */
 
 import type { Command, LayerSwitchesPatch } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
 import { toggleSelectedLocked, toggleSelectedSolo, toggleSelectedVisible } from '@core/scene/sceneInsert';
-import { layerFlagAvailable, layerFlagDef, readLayerFlag, type LayerFlag } from '@core/scene/layerFlags';
-import { nextQuality, readNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
+import { layerFlagDef, type LayerFlag } from '@core/scene/layerFlags';
+import { nextQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { notifyGuideLayerChange } from '@core/effects/layerSwitchFeedback';
-import { getNodeEffects } from '@core/effects/effects';
-import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
+import { mirrorLayerFlagAvailable, mirrorLayerFlagOn } from '@core/mirror/layerFlagFacts';
+import { documentMirror } from '@stores/documentMirror';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -39,12 +38,10 @@ export function anchoredLayerIds(anchorId: string): string[] {
   return sel.includes(anchorId) ? [...sel] : [anchorId];
 }
 
-/** The switch's current state on one node (a display read — direct until B4). */
+/** The switch's current state on one layer (B4: the mirror's `LayerSwitches`). */
 function readSwitch(nodeId: string, sw: LayerSwitch): boolean {
-  const n = defaultSceneGraph.getNode(nodeId);
-  if (!n) return false;
-  if (sw === 'visible') return n.visible !== false;
-  return (n as unknown as Record<LayerSwitch, unknown>)[sw] === true;
+  const s = documentMirror().layer(nodeId)?.switches;
+  return s ? s[sw] === true : false;
 }
 
 const LABELS: Record<LayerSwitch, [on: string, off: string]> = {
@@ -74,7 +71,8 @@ export function switchCommands(ids: readonly string[], sw: LayerSwitch, next: bo
 
 /** Toggle `sw` anchored on the clicked row (see the file header). */
 export async function toggleLayerSwitchAnchored(anchorId: string, sw: LayerSwitch): Promise<void> {
-  if (!defaultSceneGraph.getNode(anchorId)) return;
+  const m = documentMirror();
+  if (!m.layer(anchorId) && !m.comp(anchorId)) return;
   if (!isLayer(anchorId)) {
     // A composition root's row: no API switch yet (see the header).
     LEGACY[sw]?.(anchorId);
@@ -128,19 +126,18 @@ function notify(message: string, level: 'info' | 'success' | 'warning' = 'info',
  * batch, with the feedback the legacy toggle gave.
  */
 export async function toggleLayerFlagsEdit(ids: ReadonlyArray<string>, flag: LayerFlag, anchorId?: string): Promise<void> {
-  const targets = ids.filter((id) => {
-    const n = defaultSceneGraph.getNode(id);
-    return !!n && isLayer(id) && layerFlagAvailable(n, flag);
-  });
+  // B4: availability and state from the document mirror (`LayerSwitches` + the layer's tree).
+  const m = documentMirror();
+  const targets = ids.filter((id) => isLayer(id) && mirrorLayerFlagAvailable(m, id, flag));
   const def = layerFlagDef(flag);
   const refused = ids.length - targets.length;
   if (refused > 0) {
     notify(refused === 1 ? `${def.label} isn't available for that layer` : `${def.label} isn't available for ${refused} of the selected layers`, 'warning', 2600);
   }
   if (targets.length === 0) return;
-  const anchor = defaultSceneGraph.getNode(anchorId && targets.includes(anchorId) ? anchorId : targets[0]!);
+  const anchor = m.layer(anchorId && targets.includes(anchorId) ? anchorId : targets[0]!);
   if (!anchor) return;
-  const next: boolean | LayerQuality = def.cycles ? nextQuality(readNodeQuality(anchor)) : !readLayerFlag(anchor, flag);
+  const next: boolean | LayerQuality = def.cycles ? nextQuality(anchor.switches.quality) : !mirrorLayerFlagOn(anchor, flag);
   const verb = typeof next === 'string' ? QUALITY_LABEL[next] : `${next ? 'Enable' : 'Disable'} ${def.label}`;
   const patch = flagPatch(flag, next);
   const res = await edit(
@@ -162,7 +159,7 @@ export async function toggleLayerFlagsEdit(ids: ReadonlyArray<string>, flag: Lay
     if (useRenderQualityStore.getState().draft) {
       notify('Draft preview is on — motion blur samples are paused until draft is off', 'warning');
     }
-  } else if (flag === 'adjustment' && next && targets.some((id) => getNodeEffects(id).length === 0)) {
+  } else if (flag === 'adjustment' && next && targets.some((id) => (m.layer(id)?.effectCount ?? 0) === 0)) {
     notify('Adjustment layer is on — add effects to grade layers beneath it');
   }
 }
@@ -179,7 +176,7 @@ export async function toggleAudioAnchoredEdit(anchorId: string, audible: (id: st
   if (ids.length === 0) return;
   const anchor = ids.includes(anchorId) ? anchorId : ids[0]!;
   // Muted anchor → unmute the set (audioEnabled: true), and vice versa.
-  const audioEnabled = isLayerAudioMuted(anchor);
+  const audioEnabled = documentMirror().layer(anchor)?.switches.audioEnabled === false;
   const verb = audioEnabled ? 'Unmute layer audio' : 'Mute layer audio';
   await edit(
     ids.length === 1 ? verb : `${verb} (${ids.length} layers)`,

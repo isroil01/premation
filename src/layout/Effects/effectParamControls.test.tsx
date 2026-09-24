@@ -22,7 +22,9 @@ import { buildScene } from '@core/engine/__testHelpers__/scene';
 import { engineIdle } from '@core/engine/engineInstance';
 import { EffectStack } from './EffectStack';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { addEffect, getNodeEffects, effectDefFor } from '@core/effects/effects';
+import { getNodeEffects, effectDefFor } from '@core/effects/effects';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 
 const NODE = 'paramctl_node';
 
@@ -40,10 +42,31 @@ beforeEach(() => {
   } as never);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   try { defaultSceneGraph.removeNode(NODE); } catch { /* already gone */ }
+  if (harness) {
+    await harness.dispose();
+    harness = null;
+  }
 });
+
+/**
+ * Draw the stack of a real LAYER carrying `type` — the panel reads the
+ * document mirror (B4), which knows layers the engine built, not a bare node.
+ * The effect is the last one on the layer, so its card is the open one.
+ */
+let harness: (Harness & { engine: LocalEngine }) | null = null;
+async function renderStackWith(type: string, beforeRender?: () => void): Promise<void> {
+  harness = await setupAppEngine();
+  const s = await buildScene(harness);
+  await harness.run({ type: 'addEffect', layers: [s.A], effect: type, params: [] });
+  beforeRender?.();
+  await act(async () => {
+    render(<EffectStack nodeId={s.A} />);
+    await engineIdle();
+  });
+}
 
 describe('Echo Operator — the enum control', () => {
   test('Echo carries the operator AE shows, so the def is not four params where AE has five', () => {
@@ -51,9 +74,8 @@ describe('Echo Operator — the enum control', () => {
     expect(params).toContain('echoOperator');
   });
 
-  test('renders as a menu of the named modes, not a number field', () => {
-    addEffect(NODE, 'echo');
-    render(<EffectStack nodeId={NODE} />);
+  test('renders as a menu of the named modes, not a number field', async () => {
+    await renderStackWith('echo');
 
     const menu = screen.getByLabelText('Echo Echo Operator') as HTMLSelectElement;
     expect(menu.tagName).toBe('SELECT');
@@ -89,9 +111,8 @@ describe('Echo Operator — the enum control', () => {
     }
   });
 
-  test('an enum has no stopwatch — interpolating between named modes is meaningless', () => {
-    addEffect(NODE, 'echo');
-    render(<EffectStack nodeId={NODE} />);
+  test('an enum has no stopwatch — interpolating between named modes is meaningless', async () => {
+    await renderStackWith('echo');
 
     // Numeric neighbours keep theirs, so this is about the enum specifically
     // and not about the whole effect having lost its stopwatches. (A numeric
@@ -110,9 +131,8 @@ describe('parameter groups — Colorama’s collapsible sections', () => {
     expect(labels).not.toContain('Output Cycle');
   });
 
-  test('a grouped param is hidden until its section is opened', () => {
-    addEffect(NODE, 'colorama');
-    render(<EffectStack nodeId={NODE} />);
+  test('a grouped param is hidden until its section is opened', async () => {
+    await renderStackWith('colorama');
 
     // Collapsed by default: an effect has groups precisely because it has too
     // many controls to show at once.
@@ -122,9 +142,8 @@ describe('parameter groups — Colorama’s collapsible sections', () => {
     expect(screen.getByText('Blend With Original')).toBeInTheDocument();
   });
 
-  test('opening a section reveals exactly its own params', () => {
-    addEffect(NODE, 'colorama');
-    render(<EffectStack nodeId={NODE} />);
+  test('opening a section reveals exactly its own params', async () => {
+    await renderStackWith('colorama');
 
     fireEvent.click(screen.getByRole('button', { name: /Output Cycle/ }));
 
@@ -134,11 +153,10 @@ describe('parameter groups — Colorama’s collapsible sections', () => {
     expect(screen.queryByText('Phase Shift')).toBeNull();
   });
 
-  test('an ungrouped effect draws no section chrome at all', () => {
+  test('an ungrouped effect draws no section chrome at all', async () => {
     // Guards against every effect suddenly growing a twisty: almost every def
     // has no groups and must look exactly as it did.
-    addEffect(NODE, 'echo');
-    render(<EffectStack nodeId={NODE} />);
+    await renderStackWith('echo');
     expect(screen.queryByRole('button', { name: /Output Cycle/ })).toBeNull();
   });
 });

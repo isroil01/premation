@@ -31,9 +31,10 @@
  * which is not what anyone means by "don't cut my logo".
  */
 
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { documentMirror } from '@stores/documentMirror';
+import { settingsDurationSeconds } from '@core/mirror/compFacts';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { Command } from '@motion/engine-api';
@@ -43,7 +44,6 @@ import { downloadBlob } from '@core/export/exportManager';
 import { toSrt, toVtt, type Cue } from '@core/captions/captionFormat';
 import { captionEditCommands, DEFAULT_CAPTION_STYLE, readCaptionCues } from '@core/captions/captionLayers';
 import { edit } from '@core/engine/uiEdits';
-import { useProjectStore } from '@stores/projectStore';
 import {
   TranscribeError,
   transcribeCompositionDetailed,
@@ -59,6 +59,14 @@ import {
   type TranscriptWord,
 } from '@core/captions/transcriptEdit';
 import { useTranscriptStore, type CompTranscript } from './transcriptStore';
+
+/**
+ * The active composition's id (B4: resolved against the document mirror —
+ * `activeCompRootId`'s twin; the legacy fallback id when there is none).
+ */
+function activeCompId(): string {
+  return activeCompIdNow() ?? 'comp_root';
+}
 
 function notify(
   message: string,
@@ -119,7 +127,7 @@ export function transcribeScope(): TranscribeScope {
 
   return {
     start: 0,
-    end: useCompositionStore.getState().comp().durationSeconds,
+    end: settingsDurationSeconds(documentMirror().comp(activeCompId())?.settings),
     label: 'composition',
   };
 }
@@ -140,7 +148,7 @@ export { transcriptionAvailable };
  */
 export async function runTranscription(scope: TranscribeScope = transcribeScope()): Promise<boolean> {
   const store = useTranscriptStore.getState();
-  const rootId = activeCompRootId();
+  const rootId = activeCompId();
   store.setError(null);
   store.setPhase('mixing');
   try {
@@ -188,7 +196,7 @@ export async function runTranscription(scope: TranscribeScope = transcribeScope(
  * is why it is a fallback for a comp with no cache rather than something that
  * overwrites a live transcript.
  */
-export function transcriptFromCaptions(rootId: string = activeCompRootId()): CompTranscript | null {
+export function transcriptFromCaptions(rootId: string = activeCompId()): CompTranscript | null {
   const cues = readCaptionCues(rootId);
   if (cues.length === 0) return null;
   const words = wordsFromCues(cues);
@@ -235,7 +243,7 @@ export async function deleteTimeRanges(
   if (merged.length === 0) return empty;
 
   const controller = getTimelineController();
-  const rootId = activeCompRootId();
+  const rootId = activeCompId();
   const restrict = opts.nodeIds && opts.nodeIds.length > 0 ? new Set(opts.nodeIds) : null;
   const cuttable = (sourceId: string | null): boolean =>
     !restrict || (sourceId !== null && restrict.has(sourceId));
@@ -288,7 +296,7 @@ export async function deleteTimeRanges(
  * one that happened.
  */
 export async function deleteSelectedWords(
-  rootId: string = activeCompRootId(),
+  rootId: string = activeCompId(),
 ): Promise<DeleteRangesResult | null> {
   const state = useTranscriptStore.getState();
   const transcript = state.byComp[rootId];
@@ -327,7 +335,7 @@ export async function deleteSelectedWords(
 // ── Downstream: captions and files ────────────────────────────────────
 
 /** The transcript as cues — what both captions and export are built from. */
-export function transcriptCues(rootId: string = activeCompRootId()): Cue[] {
+export function transcriptCues(rootId: string = activeCompId()): Cue[] {
   const transcript = useTranscriptStore.getState().byComp[rootId];
   return transcript ? cuesFromWords(transcript.words) : [];
 }
@@ -340,7 +348,7 @@ export function transcriptCues(rootId: string = activeCompRootId()): Cue[] {
  * with `__caption` on it, stylable and re-timable like any other, and readable
  * back by the existing export.
  */
-export async function addTranscriptAsCaptions(rootId: string = activeCompRootId()): Promise<number> {
+export async function addTranscriptAsCaptions(rootId: string = activeCompId()): Promise<number> {
   const cues = transcriptCues(rootId);
   if (cues.length === 0) {
     notify('There is no transcript to add. Transcribe the composition first.', 'warning');
@@ -351,7 +359,7 @@ export async function addTranscriptAsCaptions(rootId: string = activeCompRootId(
   // which reads as a renderer bug rather than as the user's own second click.
   // ONE entry: `deleteLayers` of the old captions + one `pasteLayers` of the
   // styled caption layers built off-document.
-  const c = useProjectStore.getState().comps[rootId];
+  const c = documentMirror().comp(rootId)?.settings;
   const e = captionEditCommands(cues, DEFAULT_CAPTION_STYLE, c ? { rootId, width: c.width, height: c.height } : undefined);
   if (e.commands.length === 0) return 0;
   const res = await edit(`Add ${e.added} caption${e.added === 1 ? '' : 's'}`, e.commands);
@@ -366,14 +374,14 @@ export async function addTranscriptAsCaptions(rootId: string = activeCompRootId(
 }
 
 /** Write the transcript out through the existing SubRip / WebVTT writers. */
-export function exportTranscript(format: 'srt' | 'vtt', rootId: string = activeCompRootId()): boolean {
+export function exportTranscript(format: 'srt' | 'vtt', rootId: string = activeCompId()): boolean {
   const cues = transcriptCues(rootId);
   if (cues.length === 0) {
     notify('There is no transcript to export. Transcribe the composition first.', 'warning');
     return false;
   }
   const text = format === 'srt' ? toSrt(cues) : toVtt(cues);
-  const stem = useCompositionStore.getState().comp().name?.trim() || 'transcript';
+  const stem = documentMirror().comp(activeCompId())?.settings.name?.trim() || 'transcript';
   downloadBlob(
     new Blob([text], { type: format === 'srt' ? 'application/x-subrip' : 'text/vtt' }),
     `${stem}.${format}`,

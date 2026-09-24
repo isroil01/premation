@@ -29,10 +29,9 @@ import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { replaceTargetLayer } from './replaceTarget';
 import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
 import { insertMediaEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { webCodecsAvailable } from '@core/video/exactVideoSource';
 import { openSourceMonitor } from '@stores/sourceMonitorStore';
 import { factsOf, fmtSec, useExactStepper } from './footagePreviewHooks';
@@ -41,8 +40,10 @@ import styles from './FootagePreviewDialog.module.css';
 
 function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void }): JSX.Element {
   const [failed, setFailed] = useState(false);
-  const replaceTarget = replaceableSelectedLayer();
-  const targetName = replaceTarget ? defaultSceneGraph.getNode(replaceTarget)?.name : null;
+  // B4: the selected image / video layer from the document mirror.
+  const target = replaceTargetLayer();
+  const replaceTarget = target?.id ?? null;
+  const targetName = target?.name ?? null;
   const stepper = useExactStepper(asset);
   const exactOffered = asset.type === 'video' && webCodecsAvailable() && !failed;
   const inFrames = stepper.mode === 'frames';

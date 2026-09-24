@@ -49,14 +49,15 @@ import { PropertyRow } from '@components/PropertyRow';
 import { ColorPicker } from '@components/ColorPicker';
 import { CurveEditor } from './CurveEditor';
 
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useTrackNavigator } from '@layout/Inspector/AnimToggle';
-import { defaultAnimation } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch, useMirrorTree } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack, valueNumbersAt, trackRef as mirrorTrackRef } from '@core/mirror/selection';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { mirrorEffects, mirrorMaskHeaders } from '@core/mirror/effects';
 import {
   effectDefFor,
-  getNodeEffects,
   effectOpacityPath,
   effectPropPath,
   effectParam,
@@ -69,11 +70,9 @@ import {
   type CurvePoints,
 } from '@core/effects/effects';
 import { copyEffects } from '@core/effects/effectClipboard';
-import { getNodeMask } from '@core/effects/mask';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { buildPropertyMenu } from '@core/inspector/propertyMenu';
-import { layerTimeFor, readPropertyValue } from '@core/inspector/multiSelection';
+import { layerTimeFor } from '@core/inspector/multiSelection';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import {
@@ -201,10 +200,12 @@ function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }
   const time = useActiveWorkspace()?.time ?? 0;
   const e = useEngineEdit();
   const path = effectOpacityPath(effect.id);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
+  // B4: the track's info, keys and value at the playhead from the document mirror.
+  useMirrorTrackWatch([nodeId], [path]);
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, path);
   const stored = effect.opacity ?? 100;
-  // Display read (B4's mirror replaces it): the sampled key on the layer's own axis, else the field.
-  const display = readPropertyValue(nodeId, path, time, { read: () => stored }) ?? stored;
+  const display = readTrack(m, nodeId, path, time) ?? stored;
   const navigator = useTrackNavigator(nodeId, [path], 'Effect Opacity', () => [display]);
 
   // Keyframe when the property is already animated (an engine key at the
@@ -251,7 +252,7 @@ function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }
  * `Effect.maskId`; this is the missing writer so authors can set it.
  */
 function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element {
-  const paths = getNodeMask(nodeId).paths;
+  const paths = mirrorMaskHeaders(documentMirror().tree(nodeId));
   const current = effect.maskId ?? '';
   const stale = current !== '' && !paths.some((p) => p.id === current);
   return (
@@ -271,8 +272,8 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
             {stale && <option value={current}>Missing mask ({current})</option>}
             {paths.map((p, i) => (
               <option key={p.id} value={p.id}>
-                {p.name?.trim() || `Mask ${i + 1}`}
-                {p.mode !== 'none' ? ' · also clips layer' : ''}
+                {p.name.trim() || `Mask ${i + 1}`}
+                {p.cuts ? ' · also clips layer' : ''}
               </option>
             ))}
           </select>
@@ -319,7 +320,6 @@ function EffectParamRow({
   param: EffectParamDef;
 }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
-  useSceneRevision((s) => s.rev);
   // Declared with the other hooks, ABOVE the `resolved` early return below —
   // a `useState` after it would change this component's hook count the moment
   // an effect with a resolved param (Audio Spectrum) entered the stack.
@@ -342,6 +342,9 @@ function EffectParamRow({
     ? [`${navPrefix}_r`, `${navPrefix}_g`, `${navPrefix}_b`, `${navPrefix}_a`]
     : [navPrefix];
   const navigator = useTrackNavigator(nodeId, navTracks, label);
+  // B4: this parameter's info, keys and value at the playhead from the document mirror.
+  useMirrorTrackWatch([nodeId], navTracks);
+  const m = documentMirror();
 
   // A RESOLVED param is computed by the render pipeline every frame (Audio
   // Spectrum's band magnitudes). Rendering a control for it would give the user
@@ -355,13 +358,16 @@ function EffectParamRow({
     // them per frame. Before this, color params were the one param type the
     // stopwatch couldn't touch: no animated glow color, no shadow color ramp.
     const chPrefix = effectPropPath(effect.id, param.key);
-    const animated = defaultAnimation.isAnimated(nodeId, `${chPrefix}_r`);
+    const animated = isTrackAnimated(m, nodeId, `${chPrefix}_r`);
     // Same rule the RENDERER uses (resolveEffectParams calls the same helper):
     // an unanimated channel falls back to the stored colour's channel, not to a
     // constant. Two implementations of this disagreed, and the swatch was the
     // one that lied. Display read, sampled on the layer's own keyframe axis.
+    const colorRef = animated ? mirrorTrackRef(m, nodeId, `${chPrefix}_r`) : null;
+    const channels = colorRef ? valueNumbersAt(m, nodeId, colorRef.path, time) : [];
+    const CH = { _r: 0, _g: 1, _b: 2, _a: 3 } as const;
     const displayed = animated
-      ? resolveChannelColor(String(value), (s) => readPropertyValue(nodeId, `${chPrefix}${s}`, time))
+      ? resolveChannelColor(String(value), (s) => channels[CH[s]])
       : String(value);
     return (
       <ParamLine>
@@ -396,10 +402,7 @@ function EffectParamRow({
     // Layer reference (e.g. Displace's Map Layer): a dropdown of the comp's
     // OTHER layers — same sibling scope as the track-matte source picker.
     // '' = None → the effect falls back to its self-referential behavior.
-    const self = defaultSceneGraph.getNode(nodeId);
-    const siblings = self && self.parent
-      ? defaultSceneGraph.getChildren(self.parent).filter((n) => n.id !== nodeId)
-      : [];
+    const siblings = siblingLayers(nodeId);
     const current = typeof value === 'string' ? value : '';
     const stale = current !== '' && !siblings.some((s) => s.id === current);
     return (
@@ -430,7 +433,7 @@ function EffectParamRow({
     // partners (geometry without a cut — see mask.ts), but any path works:
     // the effect reads only the outline. '' = the effect's own default
     // geometry (alpha contour / Start→End line).
-    const paths = getNodeMask(nodeId).paths;
+    const paths = mirrorMaskHeaders(m.tree(nodeId));
     const current = typeof value === 'string' ? value : '';
     const stale = current !== '' && !paths.some((mp) => mp.id === current);
     return (
@@ -511,9 +514,8 @@ function EffectParamRow({
   // Numeric: keyframeable under `effect.<id>.<param>`.
   const stored = typeof value === 'number' ? value : 0;
   const path = effectPropPath(effect.id, param.key);
-  const animated = defaultAnimation.isAnimated(nodeId, path);
-  // Display read (B4's mirror replaces it): sampled on the layer's own keyframe axis.
-  const display = readPropertyValue(nodeId, path, time, { read: () => stored }) ?? stored;
+  const animated = isTrackAnimated(m, nodeId, path);
+  const display = readTrack(m, nodeId, path, time) ?? stored;
 
   // The field, slider, dial, reset and context menu share ONE writer: a key at
   // the playhead when the param is animated (AE setValueAtTime), else the static
@@ -524,7 +526,7 @@ function EffectParamRow({
   // Range, step, precision and unit all resolve through the property registry,
   // which reads them off this effect's own definition — so the timeline row and
   // this row describe the same parameter identically.
-  const meta = resolvePropertyMeta(path, nodeId);
+  const meta = mirrorPropertyMeta(path, m.layer(nodeId), m.tree(nodeId));
 
   // A slider needs BOTH ends of the range to mean anything. Distance (0–200)
   // gets one; Angle and Position X, declared without bounds, do not — a slider
@@ -623,6 +625,26 @@ function EffectParamRow({
   );
 }
 
+/**
+ * The other layers beside `nodeId` — the same parent (or the top of the same
+ * composition), back to front as the scene lists them — for a layer-reference
+ * param. From the document mirror.
+ */
+function siblingLayers(nodeId: string): Array<{ id: string; name: string }> {
+  const m = documentMirror();
+  const self = m.layer(nodeId);
+  const comp = self ? m.comp(self.comp) : undefined;
+  if (!self || !comp) return [];
+  const out: Array<{ id: string; name: string }> = [];
+  for (let i = comp.layers.length - 1; i >= 0; i--) {
+    const id = comp.layers[i]!;
+    if (id === nodeId) continue;
+    const l = m.layer(id);
+    if (l && l.parent === self.parent) out.push({ id, name: l.name });
+  }
+  return out;
+}
+
 /** AE-style label colour menu for one applied effect instance. */
 function effectLabelColorMenuItems(
   nodeId: string,
@@ -674,8 +696,9 @@ function effectHeaderMenuItems(nodeId: string, effectId: string, name: string): 
 }
 
 export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
-  useSceneRevision((s) => s.rev);
-  const effects = getNodeEffects(nodeId);
+  // B4: the stack from the layer's mirror property tree (re-renders when the tree changes).
+  const tree = useMirrorTree(nodeId);
+  const effects = mirrorEffects(tree);
   // "Gaussian Blur 2" for the second of a kind — see effectDisplayNames.
   const names = effectDisplayNames(effects);
   // Which effect owns the canvas handles. Subscribed, not read via getState():

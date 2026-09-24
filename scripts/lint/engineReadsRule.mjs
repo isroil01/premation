@@ -81,6 +81,7 @@ const PURE_READS = new Set([
   'makeKeyframeId', 'parseKeyframeId', 'updateNodeComponentProp',
   // Libraries and clipboards the user keeps across projects — not the document.
   'listPresets', 'exportPresets', 'presetFolder', 'listEffectPresets', 'hasEffectClipboard',
+  'effectClipboardSize', 'readEffectClipboard', // core/effects/effectClipboard: the clipboard's own module state
   'getTransitionItem', // core/library/transitionLibrary: a lookup in the static TRANSITION_ITEMS catalog
   // Pure string helpers living in modules that also read the scene.
   'familyKey', // core/fonts/missingFonts: normalises a family name
@@ -139,6 +140,19 @@ const PURE_READS = new Set([
   'getLottieItem', // core/library/lottieLibrary: a lookup in the static LOTTIE_ITEMS catalog
   'mographDuration', // core/library/mographLibrary: replays a static MOGRAPH catalog item's choreography into a local max (builders.choreographyDuration)
   'customLayerLabel', // core/plugins/createCustomLayerFromMenu: "New <label>" from the plugin layer-kind registry (layerKindRegistry.findLayerKind, a Map)
+  // B4 panels (checked the same way).
+  'effectDefFor', // core/effects/effects: the effect REGISTRY (built-ins + registered plugin effects), not the document
+  'defaultParams', 'newInstanceParamsOf', // core/effects/effects: an EffectDef's declared defaults
+  'paramsOf', 'effectParam', // core/effects/effects: the Effect record it is given, over its def's defaults
+  'resolveChannelColor', // core/effects/effects: stored hex + the channel samples it is handed
+  'effectDisplayNames', // core/effects/effects: labels for the Effect list it is given
+  'layerStyleEffectId', // core/effects/layerStyles: builds an id string
+  'layerFlagDef', // core/scene/layerFlags: the static switch table
+  'nextQuality', // core/effects/layerQuality: best → draft → wireframe cycle
+  'animatorPropPath', 'selectorPropPath', 'animatorAxisPropPath', // core/text/textAnimators: build a track name
+  'missingFontsMessage', // core/fonts/missingFonts: pluralised message
+  'solidFill', // core/paint/fill: builds a solid paint from a colour
+  'sanitizeLayerSize', // core/scene/layerSettings: clamps and rounds the number it is given
 ]);
 
 /**

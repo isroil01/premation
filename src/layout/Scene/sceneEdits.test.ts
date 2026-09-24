@@ -14,6 +14,7 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import {
   deleteCompositionEdit,
   deleteLayersEdit,
@@ -167,6 +168,7 @@ describe('compositions', () => {
 
   test('deleting the LAST composition leaves the pristine placeholder, one entry, undoable', async () => {
     await deleteCompositionEdit(s.comp2);
+    await engineIdle(); // the panel reads the document mirror, which settles after the edit
     const only = Object.keys(useProjectStore.getState().comps);
     expect(only).toHaveLength(1);
     await roundTrip(() => deleteCompositionEdit(only[0]!), 'Delete Composition');

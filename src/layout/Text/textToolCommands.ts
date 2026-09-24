@@ -18,9 +18,9 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { canCreateMasksFromText } from '@core/scene/masksFromText';
+import { documentMirror } from '@stores/documentMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { canOutlineText } from './textMirror';
 import { masksFromTextEdit } from './textEdits';
 import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -43,8 +43,8 @@ function notify(message: string, level: 'info' | 'success' | 'warning' = 'info')
 function selectedTextLayer(): string | null {
   const ids = useSelectionStore.getState().ids;
   if (ids.length !== 1) return null;
-  const node = defaultSceneGraph.getNode(ids[0]!);
-  return node && readNodeKind(node) === 'text' ? node.id : null;
+  const id = ids[0]!;
+  return uiKindOf(documentMirror().layer(id)) === 'text' ? id : null;
 }
 
 export function buildTextToolCommands(): ReadonlyArray<Command> {
@@ -77,7 +77,7 @@ export function buildTextToolCommands(): ReadonlyArray<Command> {
       icon: 'type',
       enabled: () => {
         const id = selectedTextLayer();
-        return id !== null && canCreateMasksFromText(id);
+        return id !== null && canOutlineText(documentMirror(), id);
       },
       execute: async () => {
         const id = selectedTextLayer();

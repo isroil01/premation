@@ -17,7 +17,10 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readRuns, type RichRun } from '@core/text/richText';
 import { plainValue } from '@core/mirror/trackIndex';
 import { uiKindOf } from '@core/mirror/layerKinds';
+import { jsonField } from '@core/mirror/layerFields';
+import type { FillPaint, LinearFill, RadialFill } from '@core/paint/fill';
 import { findMatches, type FindOptions } from '@core/textTools/findReplaceText';
+import { ANCHOR_GROUPINGS, interCharacterCompositeOp, type AnchorGrouping, type FillStrokeMode } from '@core/text/textMoreOptions';
 import type { FindScope, ScopeCount } from '@core/textTools/textFindReplace';
 import type {
   TextAnimatorData,
@@ -60,6 +63,25 @@ export function sourceTextOf(v: Value | undefined): string | undefined {
 /** Source Text at comp time `seconds` (the keyed value when animated). */
 export function sourceTextAt(m: DocumentMirror, id: string, seconds: number): string | undefined {
   return sourceTextOf(m.valueAt(id, SOURCE_TEXT_PATH, secondsToFlicks(seconds)));
+}
+
+/**
+ * Whether the layer is a text layer with something to outline (Create Shapes /
+ * Masks from Text): `canCreateShapesFromText`'s mirror twin — its Source Text
+ * is not blank.
+ */
+export function canOutlineText(m: DocumentMirror, id: string): boolean {
+  if (uiKindOf(m.layer(id)) !== 'text') return false;
+  return !!sourceTextOf(m.property(id, SOURCE_TEXT_PATH)?.value)?.trim();
+}
+
+/**
+ * A text layer's stroke GRADIENT (`text/strokePaint`; `readTextStrokePaint`'s
+ * mirror twin): a linear or radial paint with stops, else undefined.
+ */
+export function mirrorTextStrokePaint(m: DocumentMirror, id: string): LinearFill | RadialFill | undefined {
+  const p = jsonField<FillPaint>(m, id, 'text/strokePaint');
+  return p && (p.type === 'linear' || p.type === 'radial') && Array.isArray(p.stops) && p.stops.length > 0 ? p : undefined;
 }
 
 /** The ids of a layer's masks, in stack order (`masks/<id>`). */
@@ -221,6 +243,30 @@ export function storedFontAxes(m: DocumentMirror, id: string): Record<string, nu
     if (n !== undefined) out[tag] = n;
   }
   return out;
+}
+
+/**
+ * Text ▸ More Options (`readTextMoreOptions`' mirror twin): Anchor Point
+ * Grouping, Grouping Alignment (static values — rows read the track), Fill &
+ * Stroke and Inter-Character Blending, each validated the way the legacy
+ * reader validates the stored prop.
+ */
+export function mirrorTextMoreOptions(m: DocumentMirror, id: string): {
+  anchorGrouping: AnchorGrouping;
+  groupingAlignX: number;
+  groupingAlignY: number;
+  fillStrokeMode: FillStrokeMode;
+  interCharacterBlending: string;
+} {
+  const grouping = textField(m, id, 'anchorGrouping');
+  const blend = textField(m, id, 'interCharacterBlending');
+  return {
+    anchorGrouping: typeof grouping === 'string' && ANCHOR_GROUPINGS.some((g) => g.value === grouping) ? grouping as AnchorGrouping : 'character',
+    groupingAlignX: num(m.property(id, 'text/groupingAlignX')) ?? 0,
+    groupingAlignY: num(m.property(id, 'text/groupingAlignY')) ?? 0,
+    fillStrokeMode: textField(m, id, 'fillStrokeMode') === 'allAsOne' ? 'allAsOne' : 'perCharacter',
+    interCharacterBlending: typeof blend === 'string' && interCharacterCompositeOp(blend) ? blend : 'normal',
+  };
 }
 
 // ── Find and Replace Text: scope and counting (textFindReplace.ts's mirror twin) ──

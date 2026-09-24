@@ -14,9 +14,7 @@
  * draws.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
-  getNodeFill,
   convertFill,
   solidFill,
   sortedStops,
@@ -25,8 +23,10 @@ import {
   type LinearFill,
   type RadialFill,
 } from '@core/paint/fill';
-import { readTextStrokePaint } from '@core/text/textExtras';
-import { readGradientGeometryProp } from '@core/inspector/gradientGeometryProps';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTree } from '@hooks/useMirror';
+import { mirrorFill } from '@core/mirror/paintFields';
+import { hasTextLayer, mirrorTextStrokePaint } from '@layout/Text/textMirror';
 import { ColorPicker } from '@components/ColorPicker';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
 import { setFillPaintEdit, textStrokePaintCommands } from './appearance/paintEdits';
@@ -44,9 +44,9 @@ const DEFAULT_TEXT_FILL = '#ffffff';
 type TextFillType = 'solid' | 'linear' | 'radial';
 
 function gradientOf(nodeId: string): Exclude<FillPaint, { type: 'solid' }> | null {
-  const f = getNodeFill(nodeId);
-  // `getNodeFill` falls back to a solid built from the Text colour; only a
-  // stored gradient counts here.
+  // B4: the mirror's `layer/fillPaint`. A text layer's plain colour is its
+  // Character fill, not a paint; only a stored gradient counts here.
+  const f = mirrorFill(documentMirror(), nodeId);
   return f && f.type !== 'solid' ? f : null;
 }
 
@@ -76,7 +76,9 @@ export function TextFillRows({ nodeId, textColor }: { nodeId: string; textColor:
   const armedTarget = useGradientEditStore((s) => s.target);
   const arm = useGradientEditStore((s) => s.arm);
   const disarm = useGradientEditStore((s) => s.disarm);
-  if (!defaultSceneGraph.getNode(nodeId)) return null;
+  // B4: this layer's tree (its paint fields) wakes the rows.
+  useMirrorTree(nodeId);
+  if (!documentMirror().layer(nodeId)) return null;
 
   const gradient = gradientOf(nodeId);
   const type: TextFillType = gradient?.type ?? 'solid';
@@ -160,8 +162,10 @@ type StrokeGradient = LinearFill | RadialFill;
 function strokeGeometry(prop: 'strokeAngle' | 'strokeCenterX' | 'strokeCenterY' | 'strokeRadius'): PropertyAccess {
   return {
     read: (id) => {
-      const n = defaultSceneGraph.getNode(id);
-      return n ? readGradientGeometryProp(n, prop) : undefined;
+      const paint = mirrorTextStrokePaint(documentMirror(), id);
+      if (!paint) return undefined;
+      if (paint.type === 'linear') return prop === 'strokeAngle' ? paint.angle : undefined;
+      return prop === 'strokeCenterX' ? paint.cx : prop === 'strokeCenterY' ? paint.cy : prop === 'strokeRadius' ? paint.radius : undefined;
     },
   };
 }
@@ -176,10 +180,11 @@ export function TextStrokeRows({ nodeId, strokeColor }: { nodeId: string; stroke
   const arm = useGradientEditStore((s) => s.arm);
   const disarm = useGradientEditStore((s) => s.disarm);
   const engineEdit = useEngineEdit();
-  const node = defaultSceneGraph.getNode(nodeId);
-  const tc = node?.components.find((c) => c.type === 'Text');
-  if (!node || !tc) return null;
-  const paint: StrokeGradient | undefined = readTextStrokePaint(node);
+  // B4: this layer's tree (`text/strokePaint`) wakes the rows.
+  useMirrorTree(nodeId);
+  const m = documentMirror();
+  if (!m.layer(nodeId) || !hasTextLayer(m, nodeId)) return null;
+  const paint: StrokeGradient | undefined = mirrorTextStrokePaint(m, nodeId);
   const type: TextFillType = paint?.type ?? 'solid';
   const strokeArmed = armedId === nodeId && armedTarget === 'stroke';
 

@@ -23,7 +23,7 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getNodeEffects, type EffectDef } from '@core/effects/effects';
+import type { EffectDef } from '@core/effects/effects';
 import { pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { addEffectAndReveal, revealEffectsInProperties } from './revealEffectControls';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
@@ -37,7 +37,12 @@ import {
 } from '@core/effects/effectClipboard';
 import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
 import { customPrompt } from '@components/Modal/Dialogs';
-import { PATH_OP_CATALOG, readTrimOp, readRepeaterOp } from '@core/scene/pathOps';
+import { PATH_OP_CATALOG } from '@core/scene/pathOps';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPathOps } from '@core/mirror/layerFacts';
+import { jsonField } from '@core/mirror/layerFields';
 import {
   getNodeMask,
   readNodeMaskAt,
@@ -53,8 +58,6 @@ import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { readNodeCloner } from '@core/scene/clonerExpand';
-import { readNodePhysics } from '@core/simulation/physicsBodies';
 import {
   addMaskEdit,
   applyEffectPresetEdit,
@@ -195,10 +198,14 @@ interface FxPreview {
  * still drags onto a layer; a click says a layer is needed.
  */
 export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Element {
-  useSceneRevision((s) => s.rev);
+  // B4: the target layer's header and property tree (kind, effect count, path
+  // operators, Cloner / Physics) from the document mirror.
+  const tree = useMirrorTree(nodeId);
+  const m = documentMirror();
   // A stale id (the layer deleted under an open Library) browses like no
-  // selection rather than writing to a node that is gone.
-  const primary = nodeId && defaultSceneGraph.getNode(nodeId) ? nodeId : null;
+  // selection rather than writing to a node that is gone. A composition's row
+  // stays a target, so a click says why it takes no effects.
+  const primary = nodeId && (m.layer(nodeId) || m.comp(nodeId)) ? nodeId : null;
   const [effectQuery, setEffectQuery] = useState('');
   const [starredOnly, setStarredOnly] = useState(false);
   /*
@@ -251,8 +258,9 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
   // a real capability check were still running. Removed rather than kept as a
   // stub; reinstate a real predicate here if a backend ever stops supporting an
   // effect again.
-  const node = primary ? defaultSceneGraph.getNode(primary) : undefined;
-  const kind = node ? readNodeKind(node) : null;
+  const node = primary ? m.layer(primary) : undefined;
+  const kind = uiKindOf(node);
+  const pathOps = node ? mirrorPathOps(tree) : [];
   const shapeOps = kind === 'shape'
     ? PATH_OP_CATALOG.filter((op) => !q || op.label.toLowerCase().includes(q))
     : [];
@@ -266,8 +274,9 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     ] as const
   ).filter((item) => !!primary && (!q || item.label.toLowerCase().includes(q)));
 
-  const clonerOn = !!(node && readNodeCloner(node));
-  const physicsOn = !!(node && readNodePhysics(node));
+  // A stored config that is switched on (the defaults are off).
+  const clonerOn = !!(node && jsonField<{ enabled?: boolean }>(m, node.id, 'layer/cloner')?.enabled);
+  const physicsOn = !!(node && jsonField<{ enabled?: boolean }>(m, node.id, 'layer/physics')?.enabled);
 
   const effectGroups = useMemo(() => {
     const groups: Record<string, typeof browserDefs> = {};
@@ -338,7 +347,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
         id: op.type,
         opType: op.type,
         label: op.label,
-        taken: (op.type === 'trim' && !!readTrimOp(node)) || (op.type === 'repeater' && !!readRepeaterOp(node)),
+        taken: (op.type === 'trim' || op.type === 'repeater') && pathOps.some((o) => o.type === op.type),
       })),
     });
   }
@@ -472,7 +481,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
         <button
           type="button"
           className={styles.addChip}
-          disabled={!primary || getNodeEffects(primary).length === 0}
+          disabled={!primary || !node || node.effectCount === 0}
           title="Copy this layer's whole effect stack"
           onClick={() => {
             if (!primary) return;
@@ -499,7 +508,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
         <button
           type="button"
           className={styles.addChip}
-          disabled={!primary || getNodeEffects(primary).length === 0}
+          disabled={!primary || !node || node.effectCount === 0}
           title="Save this stack as a reusable preset"
           onClick={() => {
             if (!primary) return;

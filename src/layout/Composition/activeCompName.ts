@@ -12,7 +12,7 @@
  */
 
 import { useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
 
 interface ProjectNameState {
   activeTabId: string | null | undefined;
@@ -37,6 +37,7 @@ export function resolveActiveCompName(project: ProjectNameState, liveName?: stri
 
 /** The active composition's name, live across rename and tab switch. */
 export function useActiveCompName(): string | undefined {
-  const liveName = useCompositionStore((s) => s.name);
+  // B4: the active composition's own name from the document mirror.
+  const liveName = useActiveMirrorComp()?.settings.name;
   return useProjectStore((s) => resolveActiveCompName(s, liveName));
 }

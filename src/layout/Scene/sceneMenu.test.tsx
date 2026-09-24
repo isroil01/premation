@@ -16,6 +16,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { sceneNodeMenuItems, invertSelection, deleteLayersWithFeedback } from './sceneMenu';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from '@stores/selectionStore';
+import { resetDocumentMirror } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
@@ -50,6 +51,9 @@ beforeEach(() => {
   defaultSceneGraph.addChild(ROOT, node('grp', 'group', ROOT));
   defaultSceneGraph.addChild('grp', node('kid', 'shape', 'grp'));
   useProjectStore.getState().actions.openTab(ROOT, [ROOT], 'Main');
+  // The fixture is built around the engine (no change events): the menu's
+  // document mirror starts over, as it would on a document reset.
+  resetDocumentMirror();
 });
 
 const deps = { startRename: () => {} };

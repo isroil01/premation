@@ -11,7 +11,8 @@ import { Input } from '@components/Input';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
 import { useUIStore } from '@stores/uiStore';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
@@ -24,7 +25,6 @@ import {
   type LayerSettingsValues,
 } from '@core/scene/layerSettings';
 import { cn } from '@utils/cn';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { layerSettingsEdit } from './compositionEdits';
 import styles from './LayerSettingsDialog.module.css';
@@ -39,8 +39,10 @@ interface BodyProps {
 }
 
 function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Element {
-  const compW = useCompositionStore((s) => s.width) || 1920;
-  const compH = useCompositionStore((s) => s.height) || 1080;
+  // B4: the active composition's size from the document mirror.
+  const settings = useActiveMirrorComp()?.settings;
+  const compW = settings?.width || 1920;
+  const compH = settings?.height || 1080;
   const [name, setName] = useState(initial.name);
   const [width, setWidth] = useState(String(initial.width ?? compW));
   const [height, setHeight] = useState(String(initial.height ?? compH));
@@ -71,7 +73,7 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
     } else {
       // The New Solid builder (comp-sized, centred, colour, name, size) runs off-document and
       // lands as ONE pasteLayers entry, selected (offDocument.ts).
-      void insertBuiltLayers('New Solid', activeCompRootId(), () => buildSolidLayer(values));
+      void insertBuiltLayers('New Solid', activeCompIdNow() ?? 'comp_root', () => buildSolidLayer(values));
     }
     close();
   };
@@ -165,7 +167,7 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
  */
 export function openSolidSettings(opts: { mode: 'new' } | { mode: 'edit'; nodeId?: string }): void {
   if (opts.mode === 'new') {
-    const comp = useCompositionStore.getState();
+    const comp = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
     openModal({
       id: 'solid-settings',
       title: 'Solid Settings',
@@ -174,7 +176,7 @@ export function openSolidSettings(opts: { mode: 'new' } | { mode: 'edit'; nodeId
         <LayerSettingsBody
           target={{ mode: 'new' }}
           kind="solid"
-          initial={{ name: nextSolidName(), width: comp.width || 1920, height: comp.height || 1080, color: DEFAULT_SOLID_COLOR }}
+          initial={{ name: nextSolidName(), width: comp?.width || 1920, height: comp?.height || 1080, color: DEFAULT_SOLID_COLOR }}
           close={close}
         />
       ),

@@ -22,7 +22,12 @@
  * spied on `effectDefFor` would not notice.
  */
 
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, act } from '@testing-library/react';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { buildScene } from '@core/engine/__testHelpers__/scene';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { EffectStack } from './EffectStack';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { addEffect, getNodeEffects, effectDefFor } from '@core/effects/effects';
@@ -60,11 +65,32 @@ beforeEach(() => {
   registerEffects(PLUGIN_ID, 'Test Kit', [CONTRIBUTION] as never);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   unregisterEffects(PLUGIN_ID);
   try { defaultSceneGraph.removeNode(NODE); } catch { /* already gone */ }
+  if (harness) {
+    await harness.dispose();
+    harness = null;
+  }
 });
+
+/**
+ * Draw the stack of a real LAYER carrying `type` — the panel reads the
+ * document mirror (B4), which knows layers the engine built, not a bare node.
+ * The effect is the last one on the layer, so its card is the open one.
+ */
+let harness: (Harness & { engine: LocalEngine }) | null = null;
+async function renderStackWith(type: string, beforeRender?: () => void): Promise<void> {
+  harness = await setupAppEngine();
+  const s = await buildScene(harness);
+  await harness.run({ type: 'addEffect', layers: [s.A], effect: type, params: [] });
+  beforeRender?.();
+  await act(async () => {
+    render(<EffectStack nodeId={s.A} />);
+    await engineIdle();
+  });
+}
 
 /**
  * What the stack shows. Plugin effects are labelled with their plugin, so two
@@ -84,9 +110,8 @@ describe('a plugin effect on a layer', () => {
     expect(getNodeEffects(NODE).map((e) => e.type)).toEqual([EFFECT_TYPE]);
   });
 
-  test('is DRAWN in the effect stack, not silently skipped', () => {
-    addEffect(NODE, EFFECT_TYPE as never);
-    render(<EffectStack nodeId={NODE} />);
+  test('is DRAWN in the effect stack, not silently skipped', async () => {
+    await renderStackWith(EFFECT_TYPE);
 
     // The regression: the stack rendered the "no effects" hint, or an empty
     // list, while the layer genuinely carried the effect.
@@ -94,9 +119,8 @@ describe('a plugin effect on a layer', () => {
     expect(screen.getByText(LABEL)).toBeInTheDocument();
   });
 
-  test('its parameters are reachable, not just its name', () => {
-    addEffect(NODE, EFFECT_TYPE as never);
-    render(<EffectStack nodeId={NODE} />);
+  test('its parameters are reachable, not just its name', async () => {
+    await renderStackWith(EFFECT_TYPE);
 
     // A card that renders its title and none of its controls is the same defect
     // one layer down: the effect looks added and cannot be adjusted.
@@ -104,11 +128,8 @@ describe('a plugin effect on a layer', () => {
     expect(screen.getByText('Strength')).toBeInTheDocument();
   });
 
-  test('disappears from the stack when its plugin is disabled', () => {
-    addEffect(NODE, EFFECT_TYPE as never);
-    unregisterEffects(PLUGIN_ID);
-
-    render(<EffectStack nodeId={NODE} />);
+  test('disappears from the stack when its plugin is disabled', async () => {
+    await renderStackWith(EFFECT_TYPE, () => unregisterEffects(PLUGIN_ID));
     // Skipping an UNRESOLVABLE effect is correct — that is a disabled or
     // uninstalled plugin, and there is nothing to draw. The bug was doing it to
     // effects that resolve perfectly well.

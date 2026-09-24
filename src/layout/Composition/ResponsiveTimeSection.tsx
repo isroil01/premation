@@ -19,10 +19,10 @@
 
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { readResponsiveTime, type ResponsiveTimeConfig } from '@core/template/responsiveTimeStore';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
+import type { ResponsiveTimeConfig } from '@core/template/responsiveTimeStore';
+import { settingsDurationSeconds } from '@core/mirror/compFacts';
+import { settingsResponsiveTime } from '@core/mirror/responsiveTime';
 import { edit } from '@core/engine/uiEdits';
 import {
   clampRegionEdge,
@@ -35,10 +35,11 @@ import {
 import styles from './CompositionSettingsDialog.module.css';
 
 export function ResponsiveTimeSection(): JSX.Element {
-  useSceneRevision((r) => r.rev);
-  const comp = useCompositionStore();
-  const rootId = activeCompRootId();
-  const cfg = readResponsiveTime(rootId);
+  // B4: the active composition's settings (duration, `responsiveTime`) from the document mirror.
+  const settings = useActiveMirrorComp()?.settings;
+  const comp = { durationSeconds: settingsDurationSeconds(settings) };
+  const rootId = activeCompIdNow() ?? '';
+  const cfg = settingsResponsiveTime(settings);
 
   const regions = cfg?.protectedRegions ?? [];
   const authored = cfg?.authoredDurationSec ?? comp.durationSeconds;
