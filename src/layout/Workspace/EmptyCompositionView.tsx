@@ -9,9 +9,10 @@
 import { useState, useRef, useEffect, type DragEvent } from 'react';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { useAssetStore } from '@stores/assetStore';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { useUIStore } from '@stores/uiStore';
 import { setViewerEmpty } from '@stores/onboardingStore';
+import { importPathsEdit } from '@layout/Assets/assetEdits';
+import { newCompFromFootageEdit } from './footageEdits';
 import styles from './EmptyCompositionView.module.css';
 
 /** After Effects Composition icon: comp screen frame with circle and triangle shapes */
@@ -134,8 +135,31 @@ export function EmptyCompositionView(): JSX.Element {
   }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Desktop: the native picker hands a PATH, so the file is imported through the
+  // engine (`importFiles`, "Import File") and the comp made from the item ("New
+  // Comp from Footage"). The web build has no path: its <input> File goes
+  // through the store's importer.
   const handlePickFootage = (): void => {
-    fileInputRef.current?.click();
+    const pick = typeof window !== 'undefined' ? window.motionEditor?.shell?.pickFiles : undefined;
+    if (typeof pick !== 'function') {
+      fileInputRef.current?.click();
+      return;
+    }
+    void (async () => {
+      const chosen = await pick();
+      const path = chosen?.[0];
+      if (!path) return;
+      const { imported } = await importPathsEdit([path]);
+      const asset = imported[0];
+      if (asset) await newCompFromFootageEdit(asset);
+      else {
+        useUIStore.getState().notify({
+          level: 'error',
+          message: `Could not create composition from footage: “${path.replace(/^.*[\\/]/, '')}” could not be imported.`,
+          durationMs: 4000,
+        });
+      }
+    })();
   };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -145,9 +169,7 @@ export function EmptyCompositionView(): JSX.Element {
       // B3-legacy: engine gap — `importFiles` takes filesystem paths; a picked/dropped browser
       // `File` has none (no path bridge in preload), so the asset store ingests it.
       const asset = await useAssetStore.getState().addAsset(file);
-      // B3-legacy: engine gap — `createComposition{fromItems}` does not conform the comp to the
-      // footage as `createCompositionFromFootage` does (probed fps, open tab, selection).
-      await createCompositionFromFootage(asset);
+      await newCompFromFootageEdit(asset);
     } catch (err) {
       useUIStore.getState().notify({
         level: 'error',
@@ -194,8 +216,7 @@ export function EmptyCompositionView(): JSX.Element {
       try {
         // B3-legacy: engine gap — browser `File` import (see `handleFileSelected`).
         const asset = await useAssetStore.getState().addAsset(file);
-        // B3-legacy: engine gap — comp-from-footage conform (see `handleFileSelected`).
-        await createCompositionFromFootage(asset);
+        await newCompFromFootageEdit(asset);
       } catch (err) {
         useUIStore.getState().notify({
           level: 'error',

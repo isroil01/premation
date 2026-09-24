@@ -42,13 +42,12 @@ import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
 import {
   insertShape,
   insertText,
-  insertMedia,
   setNodeWorldPosition,
 } from '@core/scene/sceneInsert';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind, flattenComposition } from '@core/scene/sceneDerive';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { EmptyCompositionView } from './EmptyCompositionView';
+import { insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
 import { buildMographItem, previewMographItem } from '@core/library/mographLibrary';
@@ -509,14 +508,12 @@ export function WorkspaceViewport({
       defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
       const first = imported[0];
       if (!hasContent && imported.length === 1 && first && first.type === 'video') {
-        // B3-legacy: engine gap — `createComposition{fromItems}` does not conform the comp to the
-        // footage the way `createCompositionFromFootage` does (probed fps, tab + selection, fit).
-        await createCompositionFromFootage(first);
+        // New Comp from Footage (conformed to the clip, tab + selection): one entry.
+        await newCompFromFootageEdit(first);
         return;
       }
-      // B3-legacy: engine gap — `createLayer` builds the factory's minimal footage node; the
-      // insert router (`insertMedia`: contain-fit, PAR, SVG parse, audio layers, sequences) has no API form.
-      for (const asset of imported) await insertMedia(asset);
+      // The media insert router, off-document: every dropped file in ONE pasteLayers entry.
+      await insertMediaEdit(imported);
       return;
     }
     const payload = readCanvasDrag(e);
@@ -528,21 +525,10 @@ export function WorkspaceViewport({
     const local = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const controller = getWorkspaceController();
     const world = controller.ws.screenToWorld(local);
-
-    // The insert helpers select the new node; land it under the cursor. Only the
-    // footage drop below still uses this (the media insert router, WS-L2); the library
-    // inserts build their placement inside the same off-document builder.
-    const placeSelection = (): void => {
-      const id = useSelectionStore.getState().ids[0];
-      // B3-legacy: engine gap — the placement belongs to the legacy footage insert just before
-      // it (`insertMedia` has no API form yet); an engine write here would split the drop into
-      // two undo entries.
-      if (id) setNodeWorldPosition(id, world.x, world.y);
-    };
     const comp = activeCompRootId();
 
-    // Library inserts: the builder + its placement run OFF-document and land as ONE
-    // pasteLayers entry (offDocument.ts `insertBuiltLayers`), selected.
+    // Library and footage inserts: the builder + its placement under the cursor run
+    // OFF-document and land as ONE pasteLayers entry (offDocument.ts), selected.
     switch (payload.kind) {
       case 'shape':
         void insertBuiltLayers(`Insert ${payload.label}`, comp, () => {
@@ -567,11 +553,7 @@ export function WorkspaceViewport({
           break;
         }
         const asset = useAssetStore.getState().assets.find((a) => a.id === payload.assetId);
-        if (asset) {
-          // B3-legacy: engine gap — the footage insert router (see the file drop above).
-          await insertMedia(asset);
-          placeSelection();
-        }
+        if (asset) await insertMediaEdit([asset], { at: world });
         break;
       }
       case 'component': {

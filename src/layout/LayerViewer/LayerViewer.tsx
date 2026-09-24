@@ -34,7 +34,8 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { readCompRef } from '@core/scene/compInstance';
 import { readNodeMask, readNodeMaskAt, type MaskMode } from '@core/effects/mask';
 import { compSizeOf } from '@core/composition/compSizes';
-import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { defaultAnimation } from '@motion/animation';
 import { trimBar } from '@layout/Timeline/timelineEdits';
 import { deleteMaskEdit, setMaskFlagsEdit } from '@layout/Workspace/viewportEdits';
@@ -177,9 +178,9 @@ export function LayerViewer(): JSX.Element | null {
   useEffect(() => { setHeldLayerTime(null); }, [nodeId]);
   const layerT = heldLayerTime ?? layerTimeAt(compTime);
   /** Where the renderer reads the layer's mask (its keyframe axis) — drawing only. */
-  // B3-legacy: display read — the keyframe-axis time the mask is SAMPLED at (B4's mirror
+  // Display only: the keyframe-axis time the mask is SAMPLED at (B4's mirror
   // replaces it); mask writes go through the engine in comp time (`maskCompTime`).
-  const maskTime = heldLayerTime ?? (nodeId && node ? compToKeyframeTime(nodeId, compTime) : 0);
+  const maskTime = heldLayerTime ?? (nodeId && node ? keyAxisTimeForDisplay(nodeId, compTime) : 0);
   /** The same moment in comp seconds — where mask edits land (the engine maps it to the key axis). */
   const maskCompTime = heldLayerTime !== null ? compTimeAt(heldLayerTime) : compTime;
 

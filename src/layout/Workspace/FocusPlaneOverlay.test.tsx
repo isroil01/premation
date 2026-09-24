@@ -11,10 +11,10 @@
  *  • the GATES — no plane in a comp with no camera, none with Depth of Field
  *    switched off, and none for the camera the view is looking THROUGH, where
  *    the rectangle would trace the comp edges and the drag axis is a point;
- *  • the WRITE — a drag on the handle lands on `focusDistance` through
- *    `applyNodePropsKeyframed`, the same path the inspector's row uses, and it
- *    keyframes rather than only writing the base value once the property is
- *    animated.
+ *  • the WRITE — a drag on the handle lands on `focusDistance` through the
+ *    engine API by the inspector row's rule, and it keyframes rather than only
+ *    writing the base value once the property is animated; the whole drag is
+ *    ONE undo entry.
  */
 
 import { render, act, fireEvent } from '@testing-library/react';
@@ -29,6 +29,8 @@ import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { propRefForTrack, values } from '@core/engine/propRefs';
+import { usePreferenceStore } from '@stores/preferenceStore';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
@@ -159,88 +161,6 @@ describe('when the plane appears', () => {
   });
 });
 
-describe('dragging the handle pulls focus', () => {
-  /** Press the handle, move by `d`, release. Returns the handle's start point. */
-  function drag(container: HTMLElement, d: { x: number; y: number }): { x: number; y: number } {
-    const hit = handle(container)!;
-    const at = { x: Number(hit.getAttribute('cx')), y: Number(hit.getAttribute('cy')) };
-    fireEvent.pointerDown(hit, { clientX: at.x, clientY: at.y, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(hit, { clientX: at.x + d.x, clientY: at.y + d.y, pointerId: 1 });
-    fireEvent.pointerUp(hit, { clientX: at.x + d.x, clientY: at.y + d.y, pointerId: 1 });
-    return at;
-  }
-
-  it('writes focusDistance through the inspector’s own path', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
-    const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
-    // Top view's screen-down is world −z (`ORTHO_BASIS`), so the camera's +z
-    // view axis runs UP the screen at 1:1 — dragging the handle 300px up pushes
-    // focus 300 comp px further away, and 300px down pulls it 300 nearer.
-    act(() => {
-      drag(container, { x: 0, y: -300 });
-    });
-    expect(focusProp('cam1')).toBeCloseTo(2300, 3);
-  });
-
-  it('a drag ACROSS the axis changes nothing', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
-    const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
-    act(() => {
-      drag(container, { x: 400, y: 0 });
-    });
-    expect(focusProp('cam1')).toBeCloseTo(2000, 3);
-  });
-
-  it('keyframes at the playhead when focusDistance is animated', () => {
-    // The rack-focus case, and the reason the write goes through
-    // `applyNodePropsKeyframed`: on an animated property the renderer samples
-    // the track, so a base-only write is invisible and the handle looks broken.
-    defaultSceneGraph.addNode(cameraNode('cam1'));
-    defaultAnimation.setKeyframe('cam1', 'focusDistance', 0, 2000);
-    const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
-    act(() => {
-      drag(container, { x: 0, y: -250 });
-    });
-    expect(defaultAnimation.sample('cam1', 'focusDistance', 0)).toBeCloseTo(2250, 3);
-  });
-
-  it('works on a plane that appeared AFTER the overlay mounted', () => {
-    // The overlay renders no SVG at all while there is nothing to draw, so the
-    // pointer listeners live on an element that does not exist yet on first
-    // mount. Selecting a camera later has to re-attach them — otherwise the
-    // handle draws and is completely inert, which is the exact failure
-    // `deviceHandles` was written to close.
-    useFocusPlaneStore.getState().setVisibility('off');
-    const { container, rerender } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
-    expect(handle(container)).toBeNull();
-
-    defaultSceneGraph.addNode(cameraNode('cam1'));
-    act(() => useFocusPlaneStore.getState().setVisibility('always'));
-    rerender(<FocusPlaneOverlay />);
-    act(() => {
-      drag(container, { x: 0, y: -300 });
-    });
-    expect(focusProp('cam1')).toBeCloseTo(2300, 3);
-  });
-
-  it('a press away from the handle is not a drag', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
-    const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
-    const hit = handle(container)!;
-    act(() => {
-      fireEvent.pointerDown(hit, { clientX: 4000, clientY: 4000, button: 0, pointerId: 1 });
-      fireEvent.pointerMove(hit, { clientX: 4000, clientY: 4300, pointerId: 1 });
-      fireEvent.pointerUp(hit, { clientX: 4000, clientY: 4300, pointerId: 1 });
-    });
-    expect(focusProp('cam1')).toBeCloseTo(2000, 3);
-  });
-});
-
 /**
  * The same overlay mounted in a 2-up / 4-up secondary pane.
  *
@@ -329,6 +249,92 @@ describe('through the engine API', () => {
     for (let i = 1; i <= 3; i++) fireEvent.pointerMove(hit, { clientX: at.x + (d.x * i) / 3, clientY: at.y + (d.y * i) / 3, pointerId: 1 });
     fireEvent.pointerUp(hit, { clientX: at.x + d.x, clientY: at.y + d.y, pointerId: 1 });
   }
+
+  const idleDrag = async (container: HTMLElement, d: { x: number; y: number }): Promise<void> => {
+    await act(async () => {
+      dragBy(container, d);
+      await engineIdle();
+    });
+  };
+
+  it('writes focusDistance by the inspector row’s rule', async () => {
+    const { container } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    // Top view's screen-down is world −z (`ORTHO_BASIS`), so the camera's +z
+    // view axis runs UP the screen at 1:1 — dragging the handle 300px up pushes
+    // focus 300 comp px further away.
+    await idleDrag(container, { x: 0, y: -300 });
+    expect(focusProp(cam)).toBeCloseTo(2300, 3);
+    expect(defaultAnimation.isAnimated(cam, 'focusDistance')).toBe(false);
+  });
+
+  it('keyframes at the playhead when focusDistance is animated', async () => {
+    // The rack-focus case: on an animated property the renderer samples the
+    // track, so a base-only write is invisible and the handle looks broken.
+    await h.run({
+      type: 'addKeyframes',
+      keys: [{ prop: propRefForTrack(cam, 'focusDistance')!.ref, time: 0, value: values.scalar(2000), spatialIn: [], spatialOut: [] }],
+    });
+    const { container } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    await idleDrag(container, { x: 0, y: -250 });
+    expect(defaultAnimation.sample(cam, 'focusDistance', 0)).toBeCloseTo(2250, 3);
+  });
+
+  it('keys an unanimated focusDistance under Auto-Keyframe', async () => {
+    usePreferenceStore.setState({ timelineAutoKeyframe: true });
+    try {
+      const { container } = render(<FocusPlaneOverlay />);
+      act(() => undefined);
+      await idleDrag(container, { x: 0, y: -300 });
+      expect(defaultAnimation.isAnimated(cam, 'focusDistance')).toBe(true);
+      expect(defaultAnimation.sample(cam, 'focusDistance', 0)).toBeCloseTo(2300, 3);
+      expect(historyLabels().at(-1)).toBe('Focus Distance');
+    } finally {
+      usePreferenceStore.setState({ timelineAutoKeyframe: false });
+    }
+  });
+
+  it('works on a plane that appeared AFTER the overlay mounted', async () => {
+    // The overlay renders no SVG at all while there is nothing to draw, so the
+    // pointer listeners live on an element that does not exist yet on first
+    // mount. Showing the plane later has to re-attach them — otherwise the
+    // handle draws and is completely inert, which is the exact failure
+    // `deviceHandles` was written to close.
+    useFocusPlaneStore.getState().setVisibility('off');
+    const { container, rerender } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    expect(handle(container)).toBeNull();
+
+    act(() => useFocusPlaneStore.getState().setVisibility('always'));
+    rerender(<FocusPlaneOverlay />);
+    await idleDrag(container, { x: 0, y: -300 });
+    expect(focusProp(cam)).toBeCloseTo(2300, 3);
+  });
+
+  it('a drag ACROSS the axis changes nothing', async () => {
+    const { container } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    const before = h.doc();
+    await idleDrag(container, { x: 400, y: 0 });
+    expect(focusProp(cam)).toBeCloseTo(2000, 3);
+    expect(h.doc()).toEqual(before);
+  });
+
+  it('a press away from the handle is not a drag', async () => {
+    const { container } = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    const hit = handle(container)!;
+    const entries = historyLabels().length;
+    await act(async () => {
+      fireEvent.pointerDown(hit, { clientX: 4000, clientY: 4000, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(hit, { clientX: 4000, clientY: 4300, pointerId: 1 });
+      fireEvent.pointerUp(hit, { clientX: 4000, clientY: 4300, pointerId: 1 });
+      await engineIdle();
+    });
+    expect(focusProp(cam)).toBeCloseTo(2000, 3);
+    expect(historyLabels().length).toBe(entries);
+  });
 
   it('a drag is ONE "Focus Distance" entry; undo restores it', async () => {
     const { container } = render(<FocusPlaneOverlay />);

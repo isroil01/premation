@@ -288,9 +288,11 @@ export function PaintPanel(): JSX.Element {
                       title={keyed ? 'Path is keyframed — click to remove its keyframes' : 'Key the Path at the current time'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        // B3-legacy: engine gap — `setAnimated` on `paint/<id>/path` cannot turn it ON:
-                        // the path is a data track with no readable static value (readStatic → none), so the
-                        // first key has no value; the legacy toggle keys the stroke's stored points.
+                        // B3-legacy: engine gap — ON could be `addKeyframes` with the stroke's points, but
+                        // OFF cannot: once the Path is keyed, `catalogFor` binds `paint/<id>/path` as a scalar
+                        // member row (propertyTree's paintRows lists the keyed data track as a member), so
+                        // `setAnimated{false}` is a silent no-op, `setProperty{time}` answers typeMismatch and
+                        // `getKeyframes` returns none. Both halves stay here until the binding is fixed.
                         runDocumentEdit(keyed ? 'Disable Path Animation' : 'Enable Path Animation', () =>
                           toggleStrokePathAnimation(layerId, s.id, layerTime()));
                       }}

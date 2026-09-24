@@ -63,7 +63,7 @@ import {
   positionSamplerFor,
   motionPathTimeWindow,
 } from '@core/motion/motionPath';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { motionPathKeyframeMenuItems, guideContextMenuItems, convertMotionPathVertex } from './viewportPrecisionMenus';
 import { openGuideEditor } from './GuideEditorDialog';
 import { beginViewportGesture, cancelToolGesture, endViewportGesture } from '@core/workspace/viewportGesture';
@@ -3275,9 +3275,9 @@ let mpHover: { nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null 
 function motionPathWindowFor(nodeId: string, compTime: number): { min: number; max: number } | null {
   const g = useGuidesStore.getState();
   if (g.motionPathShow === 'all') return { min: -Infinity, max: Infinity };
-  // B3-legacy: display read — the drawn window is on the keyframe axis the path is sampled on
-  // (B4's mirror replaces it); nothing is written.
-  return motionPathTimeWindow(g.motionPathShow, g.motionPathWindowSeconds, compToKeyframeTime(nodeId, compTime, 'x'));
+  // Display read: the drawn window is on the keyframe axis the path is sampled
+  // on (B4's mirror replaces it); nothing is written.
+  return motionPathTimeWindow(g.motionPathShow, g.motionPathWindowSeconds, keyAxisTimeForDisplay(nodeId, compTime, 'x'));
 }
 
 const inMotionPathWindow = (t: number, w: { min: number; max: number }): boolean =>

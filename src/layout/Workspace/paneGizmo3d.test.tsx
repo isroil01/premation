@@ -17,9 +17,9 @@
  *    orthographic projection and the pane's own transform, while a sibling
  *    reading the main viewport (on `front`, at a different zoom) places the
  *    same layer's handles somewhere else entirely;
- *  • the WRITE — a drag in the pane goes through `applyGizmo3DTransforms`, the
- *    same path the main viewport uses, and moves the layer along the handle's
- *    own world axis.
+ *  • the WRITE — a drag in the pane goes through the engine API by the same
+ *    rule the main viewport uses, and moves the layer along the handle's own
+ *    world axis — ONE undo entry per drag.
  */
 
 import { useRef } from 'react';
@@ -126,11 +126,6 @@ function xArmTip(container: HTMLElement): { x: number; y: number } {
   return { x: Number(line.getAttribute('x2')), y: Number(line.getAttribute('y2')) };
 }
 
-function transformProps(): Record<string, unknown> {
-  const node = defaultSceneGraph.getNode(NODE)!;
-  return node.components.find((c) => c.type === 'Transform')!.props as Record<string, unknown>;
-}
-
 function reset(): void {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   for (const p of ['x', 'y', 'z', 'rotation', 'rotationX', 'rotationY', 'scaleX', 'scaleY']) {
@@ -200,66 +195,6 @@ describe('a pane places its handles through ITS OWN view', () => {
   });
 });
 
-describe('dragging a handle in a pane writes the transform', () => {
-  /** Press the pane's X arm, drag `dx` screen px, release. Returns the tip. */
-  function dragXArm(container: HTMLElement, stage: HTMLElement, dx: number): { x: number; y: number } {
-    // The pane view below is 1:1 and unpanned, so comp px ARE screen px.
-    const tip = xArmTip(container);
-    act(() => {
-      fireEvent.pointerDown(stage, { clientX: tip.x, clientY: tip.y, button: 0, pointerId: 7 });
-      fireEvent.pointerMove(window, { clientX: tip.x + dx, clientY: tip.y, pointerId: 7 });
-      fireEvent.pointerUp(window, { clientX: tip.x + dx, clientY: tip.y, pointerId: 7 });
-    });
-    return tip;
-  }
-
-  it('moves the layer along the handle’s world axis, through the shared write path', () => {
-    defaultSceneGraph.addNode(layerNode());
-    act(() => useSelectionStore.getState().set([NODE]));
-    // Position-only handles: no rotation rings to sit near the arm's tip and
-    // win the hit test, which would make this a test of something else.
-    act(() => useGuidesStore.getState().setGizmo3dState('position'));
-
-    const { container, getByTestId } = render(
-      <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
-    );
-    act(() => undefined);
-    const tip = dragXArm(container, getByTestId('stage'), 60);
-
-    const props = transformProps();
-    // World-X handle: y and z are untouched by construction, x carries the drag.
-    expect(props.y).toBeCloseTo(START.y, 6);
-    expect(props.z).toBeCloseTo(START.z, 6);
-    // A position arm follows the pointer's own ray/axis intersection — it does
-    // NOT preserve the grab offset, which is the arithmetic the main viewport
-    // has always used (`closestPointRayAxis`). In a top view world X *is* comp
-    // X, so the layer lands on the world X the pointer ended over: the arm tip
-    // plus the drag. The tip is read back out of the PANE's own drawing, so
-    // this number can only come out right if the pane's projection is what
-    // drove the drag.
-    expect(props.x).toBeCloseTo(tip.x + 60, 3);
-    expect(Number(props.x)).not.toBeCloseTo(START.x, 3);
-  });
-
-  it('leaves the scene alone when the press misses every handle', () => {
-    defaultSceneGraph.addNode(layerNode());
-    act(() => useSelectionStore.getState().set([NODE]));
-    act(() => useGuidesStore.getState().setGizmo3dState('position'));
-
-    const { getByTestId } = render(
-      <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
-    );
-    act(() => undefined);
-    const stage = getByTestId('stage');
-    act(() => {
-      fireEvent.pointerDown(stage, { clientX: 5000, clientY: 5000, button: 0, pointerId: 8 });
-      fireEvent.pointerMove(window, { clientX: 5060, clientY: 5000, pointerId: 8 });
-      fireEvent.pointerUp(window, { clientX: 5060, clientY: 5000, pointerId: 8 });
-    });
-    expect(transformProps().x).toBeCloseTo(START.x, 6);
-  });
-});
-
 /**
  * B3: on a composition's LAYER (the editor's case) the drag goes through the
  * engine API — every move an absolute Position, the whole drag ONE undo entry.
@@ -278,6 +213,63 @@ describe('through the engine API', () => {
 
   afterEach(async () => {
     await h.dispose();
+  });
+
+  const transformOf = (): Record<string, number> =>
+    defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Transform')!.props as Record<string, number>;
+
+  it('moves the layer along the handle’s world axis, through the shared write path', async () => {
+    act(() => useSelectionStore.getState().set([id]));
+    // Position-only handles (beforeEach): no rotation rings to sit near the
+    // arm's tip and win the hit test, which would make this a test of
+    // something else.
+    const { container, getByTestId } = render(
+      <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
+    );
+    act(() => undefined);
+    // The pane view is 1:1 and unpanned, so comp px ARE screen px.
+    const tip = xArmTip(container);
+    const stage = getByTestId('stage');
+    await act(async () => {
+      fireEvent.pointerDown(stage, { clientX: tip.x, clientY: tip.y, button: 0, pointerId: 7 });
+      fireEvent.pointerMove(window, { clientX: tip.x + 60, clientY: tip.y, pointerId: 7 });
+      fireEvent.pointerUp(window, { clientX: tip.x + 60, clientY: tip.y, pointerId: 7 });
+      await engineIdle();
+    });
+
+    const props = transformOf();
+    // World-X handle: y and z are untouched by construction, x carries the drag.
+    expect(props.y).toBeCloseTo(START.y, 6);
+    expect(props.z).toBeCloseTo(START.z, 6);
+    // A position arm follows the pointer's own ray/axis intersection — it does
+    // NOT preserve the grab offset, which is the arithmetic the main viewport
+    // has always used (`closestPointRayAxis`). In a top view world X *is* comp
+    // X, so the layer lands on the world X the pointer ended over: the arm tip
+    // plus the drag. The tip is read back out of the PANE's own drawing, so
+    // this number can only come out right if the pane's projection is what
+    // drove the drag.
+    expect(props.x).toBeCloseTo(tip.x + 60, 3);
+    expect(Number(props.x)).not.toBeCloseTo(START.x, 3);
+  });
+
+  it('leaves the scene alone when the press misses every handle', async () => {
+    act(() => useSelectionStore.getState().set([id]));
+    const { getByTestId } = render(
+      <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
+    );
+    act(() => undefined);
+    const stage = getByTestId('stage');
+    const before = h.doc();
+    const entries = historyLabels().length;
+    await act(async () => {
+      fireEvent.pointerDown(stage, { clientX: 5000, clientY: 5000, button: 0, pointerId: 8 });
+      fireEvent.pointerMove(window, { clientX: 5060, clientY: 5000, pointerId: 8 });
+      fireEvent.pointerUp(window, { clientX: 5060, clientY: 5000, pointerId: 8 });
+      await engineIdle();
+    });
+    expect(transformOf().x).toBeCloseTo(START.x, 6);
+    expect(h.doc()).toEqual(before);
+    expect(historyLabels().length).toBe(entries);
   });
 
   it('a pane drag moves the layer — ONE "Move" entry, undo restores it', async () => {

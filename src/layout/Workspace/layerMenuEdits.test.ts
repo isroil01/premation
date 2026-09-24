@@ -9,6 +9,8 @@ import { reorderSiblings, type StackAction } from '@core/scene/parenting';
 import { is3DEnabled } from '@core/scene/threeD';
 import { getNodeLayerTime } from '@core/scene/layerTime';
 import { LABEL_COLORS } from '@core/scene/labelColor';
+import { world2DAt } from '@core/scene/layerSpace';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
@@ -18,6 +20,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import {
   addKeyframesAtPlayheadEdit,
   arrangeLayersEdit,
+  bakeMergePathsEdit,
   deleteSelectedLayersEdit,
   duplicateSelectedLayersEdit,
   freezeFrameEdit,
@@ -130,6 +133,64 @@ describe('group / ungroup', () => {
   it('a selection across parents is left to the legacy grouping (false)', async () => {
     useSelectionStore.getState().set([s.A, s.c2layer]);
     expect(await groupSelectedLayersEdit()).toBe(false);
+  });
+
+  it('a selection across parents of ONE comp: gathered under the first layer’s parent, world pose kept — one entry', async () => {
+    await h.run({ type: 'setProperty', prop: { layer: s.P, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 500, y: 400 } } });
+    await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
+    const worldT = world2DAt(s.T, 0);
+    const worldA = world2DAt(s.A, 0);
+    useSelectionStore.getState().set([s.A, s.T]);
+    await roundTrip(async () => { expect(await groupSelectedLayersEdit()).toBe(true); }, 'Group Layers');
+    const group = useSelectionStore.getState().ids[0]!;
+    expect(readNodeKind(node(group))).toBe('group');
+    expect(node(group).parent).toBe(s.P);
+    expect(node(s.A).parent).toBe(group);
+    expect(node(s.T).parent).toBe(group);
+    expect(world2DAt(s.T, 0).e).toBeCloseTo(worldT.e, 6);
+    expect(world2DAt(s.T, 0).f).toBeCloseTo(worldT.f, 6);
+    expect(world2DAt(s.A, 0).e).toBeCloseTo(worldA.e, 6);
+    expect(world2DAt(s.A, 0).f).toBeCloseTo(worldA.f, 6);
+  });
+
+  it('a layer and its own parent: the group goes where the parent was, not inside it', async () => {
+    await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
+    useSelectionStore.getState().set([s.A, s.P]);
+    await roundTrip(async () => { expect(await groupSelectedLayersEdit()).toBe(true); }, 'Group Layers');
+    const group = useSelectionStore.getState().ids[0]!;
+    expect(node(group).parent).toBe(COMP);
+    expect(node(s.P).parent).toBe(group);
+    expect(node(s.A).parent).toBe(group);
+  });
+});
+
+describe('merge paths (bake)', () => {
+  it('the boolean as a new path layer, the operands removed, the result selected — ONE entry', async () => {
+    const rect = async (name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp: COMP, kind: 'rectangle', name, init: [] })).layer;
+    const r1 = await rect('R1');
+    const r2 = await rect('R2');
+    await h.run({ type: 'setProperty', prop: { layer: r2, path: 'transform/position' }, value: { kind: 'vec2', value: { x: x(r1) + 100, y: 540 } } });
+    useSelectionStore.getState().set([r1, r2]);
+    let made: string[] = [];
+    await roundTrip(async () => { made = await bakeMergePathsEdit('union'); }, 'Merge Paths (union)');
+    expect(made).toHaveLength(1);
+    const merged = node(made[0]!);
+    expect(merged.name).toBe('Merged (union)');
+    expect(merged.parent).toBe(COMP);
+    expect(merged.components.some((c) => c.type === 'Geometry')).toBe(true);
+    expect(defaultSceneGraph.getNode(r1)).toBeUndefined();
+    expect(defaultSceneGraph.getNode(r2)).toBeUndefined();
+    expect(useSelectionStore.getState().ids).toEqual(made);
+  });
+
+  it('fewer than two mergeable paths: nothing happens, no entry', async () => {
+    useSelectionStore.getState().set([s.A]);
+    const before = h.doc();
+    const entries = historyLabels().length;
+    expect(await bakeMergePathsEdit('union')).toEqual([]);
+    expect(h.doc()).toBe(before);
+    expect(historyLabels()).toHaveLength(entries);
   });
 });
 

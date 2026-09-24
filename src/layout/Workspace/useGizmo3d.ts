@@ -30,7 +30,6 @@ import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import {
   sampleTransform3DAtPlayhead,
-  applyGizmo3DTransforms,
   type Gizmo3DNodeUpdate,
 } from '@core/workspace/ports';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
@@ -462,11 +461,11 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         const scaleFactorY = newScale.scaleY / Math.max(0.001, dragState.startScale3D.scaleY);
         const scaleFactorZ = newScale.scaleZ / Math.max(0.001, dragState.startScale3D.scaleZ);
 
-        // Apply to all selected 3D nodes through ports' dual write path: props
-        // with a lit stopwatch (or Auto-Keyframe on) keyframe at the playhead —
+        // Apply to all selected 3D nodes by the viewport's dual write rule:
+        // props with a lit stopwatch (or Auto-Keyframe on) key at the playhead —
         // a base-only write is invisible on keyframed layers because the
         // renderer samples the track first — and static props write the base.
-        // One undo entry per drag (stable merge key inside).
+        // One undo entry per drag (the engine gesture opened on press).
         // Only the handle's own props: a position drag must not touch (and
         // possibly keyframe) rotation or scale tracks, and vice versa.
         const isPosHandle = handle.startsWith('pos_') || handle.startsWith('plane_');
@@ -500,10 +499,9 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
           updates.map((u) => ({ nodeId: u.id, values: u.values as Record<string, number> })),
           { seconds: s.tabs[s.activeTabId ?? '']?.time ?? 0, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe },
         );
+        // null: a node the engine does not address (not a composition's layer,
+        // or a member with no API property) — nothing the API can record.
         if (cmds) gestureRef.current?.send(cmds);
-        // B3-legacy: engine gap — a node that is not a composition's layer, or a transform member
-        // without an API property on it (the catalog returned none), keeps the ports' legacy dual write.
-        else applyGizmo3DTransforms(updates);
 
         // Live truth into the ref; the React mirror (which the measurement
         // HUD renders from) syncs at most once per frame.
@@ -597,9 +595,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         const startRot = { ...first.rot };
         const startScale = { scaleX: first.scale.scaleX, scaleY: first.scale.scaleY, scaleZ: first.scale.scaleZ };
 
-        // One anim/scene transaction for the whole gizmo drag (viewportGesture)
-        // — applyGizmo3DTransforms is called per pointermove and would
-        // otherwise pay a full engine snapshot + structural scene walk each.
+        // The drag flag for the whole gizmo drag (viewportGesture) — the RAM
+        // preview must not serve the pre-drag frame while the layer moves.
         beginViewportGesture();
         void gestureRef.current?.end();
         gestureRef.current = new GestureSession(

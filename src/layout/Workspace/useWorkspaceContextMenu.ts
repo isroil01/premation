@@ -26,7 +26,7 @@
  * playback.
  */
 
-import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
+import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -46,7 +46,6 @@ import { assetIdOf } from '@core/source/sourceInfo';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useAssetStore } from '@stores/assetStore';
-import { groupSelectedLayers } from '@core/scene/sceneInsert';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { LABEL_COLORS, readNodeLabelColor } from '@core/scene/labelColor';
@@ -55,6 +54,7 @@ import { toggleLayerSwitchAnchored } from '@layout/Scene/layerSwitchEdits';
 import {
   addKeyframesAtPlayheadEdit,
   arrangeLayersEdit,
+  bakeMergePathsEdit,
   deleteSelectedLayersEdit,
   duplicateSelectedLayersEdit,
   freezeFrameEdit,
@@ -306,9 +306,11 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
       label: 'Group Selection',
       onSelect: () => {
         void groupSelectedLayersEdit().then((handled) => {
-          // B3-legacy: engine gap — `groupLayers` needs every layer under ONE parent; the legacy
-          // grouping reparents a mixed selection (world transform kept) under a new group.
-          if (!handled) groupSelectedLayers();
+          // Layers of different compositions (a selection made in the Scene panel): a layer
+          // cannot move between compositions, so there is no one group to put them in.
+          if (!handled) {
+            useUIStore.getState().notify({ level: 'info', message: 'Group Selection needs layers of one composition.', durationMs: 3000 });
+          }
         });
       },
     },
@@ -328,15 +330,11 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
               { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
               { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
               { id: 'merge-sep', label: '—', disabled: true },
-              // B3-legacy: engine gap — no command bakes a boolean path merge (the result is a new
-              // path layer computed from the operands' outlines; `convertLayer` does not cover it).
-              { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
-              // B3-legacy: engine gap — boolean path merge (see Bake Union).
-              { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
-              // B3-legacy: engine gap — boolean path merge (see Bake Union).
-              { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
-              // B3-legacy: engine gap — boolean path merge (see Bake Union).
-              { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
+              // The boolean runs off-document; its result lands as deleteLayers + pasteLayers (one entry).
+              { id: 'merge-union', label: 'Bake Union', onSelect: () => { void bakeMergePathsEdit('union'); } },
+              { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => { void bakeMergePathsEdit('subtract'); } },
+              { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => { void bakeMergePathsEdit('intersect'); } },
+              { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => { void bakeMergePathsEdit('exclude'); } },
             ],
           },
         ]

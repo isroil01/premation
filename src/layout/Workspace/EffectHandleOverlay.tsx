@@ -5,8 +5,9 @@
  * ## What is NOT here
  *
  * No hit-testing maths, no drag arithmetic, no autokey rule: those are
- * `core/effects/effectHandles.ts` and `core/effects/writeEffectParams.ts`, so
- * they are pure and tested. This file is pointer plumbing and SVG, which is the
+ * `core/effects/effectHandles.ts` and the engine-API builder
+ * `trackValueCommands` (an animated param keys at the playhead, a static one
+ * takes the value — per param, absolute), so they are pure and tested. This file is pointer plumbing and SVG, which is the
  * part that cannot be unit-tested and therefore should be the smallest part.
  *
  * ## Projection — the existing one, not a new one
@@ -33,7 +34,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { defaultAnimation } from '@motion/animation';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { getNodeEffects, effectPropPath } from '@core/effects/effects';
 import { readGeometry } from '@core/workspace/geometry';
 import { layerScreenMapping } from './layerScreen';
@@ -48,7 +49,6 @@ import {
   type EffectHandle,
   type HandlePoint,
 } from '@core/effects/effectHandles';
-import { writeEffectParams } from '@core/effects/writeEffectParams';
 import { GestureSession } from '@core/engine/uiEdits';
 import { trackValueCommands } from './viewportEdits';
 
@@ -77,9 +77,9 @@ export function EffectHandleOverlay(): JSX.Element | null {
     : null;
   const geom = node ? readGeometry(node) : null;
 
-  // B3-legacy: display read — the keyframe-axis time the handles are SAMPLED at (B4's mirror
+  // Display only: the keyframe-axis time the handles are SAMPLED at (B4's mirror
   // replaces it); the drag's writes go through the engine in comp time.
-  const layerT = nodeId ? compToKeyframeTime(nodeId, time) : 0;
+  const layerT = nodeId ? keyAxisTimeForDisplay(nodeId, time) : 0;
 
   /**
    * Handles at their LIVE positions — animated values folded in, so a handle on
@@ -166,18 +166,11 @@ export function EffectHandleOverlay(): JSX.Element | null {
       // the playhead, a static one takes the value — per param, absolute.
       const tracks: Record<string, number> = {};
       for (const [key, v] of Object.entries(values)) tracks[effectPropPath(drag.effectId, key)] = v;
+      // null: the engine does not address the write (a node that is not a
+      // composition's layer, or a param its catalog does not list) — there is
+      // nothing the API can record, so the handle does not move.
       const cmds = trackValueCommands([{ nodeId: drag.nodeId, values: tracks }], { seconds: time });
-      if (cmds) {
-        drag.gesture.send(cmds);
-        return;
-      }
-      // B3-legacy: engine gap — a node that is not a composition's layer, or an effect param the
-      // catalog does not list (`effects/<id>/<param>` missing), keeps the legacy writer.
-      writeEffectParams(drag.nodeId, drag.effectId, values, {
-        time,
-        mergeKey: `fxhandle:${drag.nodeId}:${drag.effectId}:${drag.handle.spec.id}`,
-        label: `Move ${drag.handle.spec.label}`,
-      });
+      if (cmds) drag.gesture.send(cmds);
     };
     const onUp = (e: PointerEvent): void => {
       const drag = dragRef.current;

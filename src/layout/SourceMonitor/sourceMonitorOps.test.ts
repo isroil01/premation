@@ -10,13 +10,18 @@
  * (`sourceIn`, `duration`, `start`, in FRAMES) rather than on the fact that an
  * insert happened.
  *
- * B3: the range, the overwrite trims and the splits go through the engine
- * API — ONE undo entry after the insert's, and undo restores the document.
+ * B3: the insert (the router run off-document → `pasteLayers`), the range,
+ * the overwrite trims and the splits go through the engine API — ONE undo
+ * entry, and undo restores the document.
  */
 
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { insertFromSource, sourceRangeEdit, overwriteUnder, compEndSeconds } from './sourceMonitorOps';
+import { insertFromSource, sourceRangeEdit, overwriteUnder, compEndSeconds, newCompFromRange } from './sourceMonitorOps';
+import { useProjectStore } from '@stores/projectStore';
+import { layerIdsOfComp } from '@core/engine/doc';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
@@ -74,22 +79,30 @@ describe('insertFromSource', () => {
   it('lands the MARKED part of the file, at the playhead — one entry, undoable', async () => {
     const c = getTimelineController();
     c.seekSeconds(1);
+    const before = h.doc();
+    const entries = historyLabels().length;
 
     const nodeId = await insertFromSource(ASSET, { inSec: 2, outSec: 5 }, { at: 'playhead' });
     await engineIdle();
     expect(nodeId).not.toBeNull();
+    expect(useSelectionStore.getState().ids).toEqual([nodeId]);
 
     const clip = c.getLayersForNode(nodeId!)[0]!.clip;
     // 30fps: two seconds in, three seconds long, parked one second along.
     expect(clip.sourceIn).toBe(60);
     expect(clip.duration).toBe(90);
     expect(clip.start).toBe(30);
-    expect(historyLabels().at(-1)).toBe('Insert from Source');
+    // The layer AND its range are one entry: undo takes both back.
+    expect(historyLabels().slice(entries)).toEqual(['Insert from Source']);
+    const after = h.doc();
 
     await h.run({ type: 'undo' });
-    const back = c.getLayersForNode(nodeId!)[0]!.clip;
-    expect(back.sourceIn).toBe(0);
-    expect(back.start).toBe(0);
+    expect(defaultSceneGraph.getNode(nodeId!)).toBeUndefined();
+    expect(c.getLayersForNode(nodeId!)).toHaveLength(0);
+    expect(h.doc()).toBe(before);
+    await h.run({ type: 'redo' });
+    expect(h.doc()).toBe(after);
+    expect(c.getLayersForNode(nodeId!)[0]!.clip).toMatchObject({ sourceIn: 60, duration: 90, start: 30 });
   });
 
   it('an unmarked clip inserts whole — the range falls back to the file', async () => {
@@ -142,8 +155,8 @@ describe('overwrite', () => {
     const newClip = c.getLayersForNode(second!)[0]!.clip;
     expect(newClip.start).toBe(120);
     expect(newClip.duration).toBe(90);
-    // The insert's own entry (legacy router) + ONE for the range and the trims.
-    expect(historyLabels().slice(entries).filter((l) => l === 'Overwrite from Source')).toHaveLength(1);
+    // The insert, the range and the trims: ONE entry.
+    expect(historyLabels().slice(entries)).toEqual(['Overwrite from Source']);
   });
 
   it('splits a clip that spans the whole insert, leaving a hole', async () => {
@@ -179,5 +192,30 @@ describe('overwrite', () => {
     await insertFromSource(ASSET, { inSec: 0, outSec: 3 }, { at: 'time', seconds: 4 });
     await engineIdle();
     expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(180);
+  });
+});
+
+describe('newCompFromRange', () => {
+  it('a comp that IS the marked shot: conformed, trimmed, shortened — one entry, undoable', async () => {
+    const c = getTimelineController();
+    const before = h.doc();
+    const entries = historyLabels().length;
+
+    const comp = await newCompFromRange(ASSET, { inSec: 2, outSec: 5 });
+    await engineIdle();
+    expect(comp).not.toBeNull();
+    expect(useProjectStore.getState().comps[comp!]).toMatchObject({ name: 'clip', width: 64, height: 48, fps: 30, durationSeconds: 3 });
+    const [layer] = layerIdsOfComp(comp!);
+    expect(useSelectionStore.getState().ids).toEqual([layer]);
+    // The marked part of the file, from the comp's first frame.
+    expect(c.getLayersForNode(layer!)[0]!.clip).toMatchObject({ sourceIn: 60, duration: 90, start: 0 });
+    expect(historyLabels().slice(entries)).toEqual(['New Comp from Range']);
+
+    const after = h.doc();
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toBe(before);
+    expect(useProjectStore.getState().comps[comp!]).toBeUndefined();
+    await h.run({ type: 'redo' });
+    expect(h.doc()).toBe(after);
   });
 });

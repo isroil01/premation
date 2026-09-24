@@ -32,6 +32,13 @@
  * `fillRadius` when that track is live or Auto-Keyframe is on, the static paint
  * otherwise.
  *
+ * B3: those writes are the engine API's (the builders are `viewportEdits.ts`
+ * ▸ gradient*Commands, over the paint writers the Fill & Stroke rows use): the
+ * paint is a json field sent whole, a keyed stop list is `layer/fillStops`,
+ * the geometry scalars are catalog properties keyed in comp time. A press-drag
+ * on the gizmo is ONE gesture (one undo entry, absolute values per move); a
+ * Delete is one edit.
+ *
  * ## Armed, not automatic
  *
  * Gradient layers are usually backgrounds, and an axis that appeared across the
@@ -48,13 +55,14 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { batchHistory } from '@stores/historyStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry } from '@core/workspace/geometry';
 import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
+import type { Command } from '@motion/engine-api';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { edit } from '@core/engine/uiEdits';
+import { useGesture } from '@hooks/useGesture';
+import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { readTextStrokePaint } from '@core/text/textExtras';
 import {
   applyGradientTracks,
@@ -65,15 +73,15 @@ import {
 import { ColorPicker } from '@components/ColorPicker';
 import {
   getNodeFills,
-  setNodeFill,
-  setNodeFills,
   sortedStops,
   type ColorStop,
   type FillPaint,
 } from '@core/paint/fill';
-import { getNodeStrokeAt, updateNodeStrokeAt, type StrokeGradientGeometry } from '@core/paint/stroke';
+import { getNodeStrokeAt, type Stroke, type StrokeGradientGeometry } from '@core/paint/stroke';
 import { strokeGradientGeometryFor, strokeTrackPath } from '@core/rendering/strokeTracks';
 import { useGradientEditStore, type GradientEditTarget } from './gradientEditStore';
+import { strokePatchCommands } from '@layout/Inspector/appearance/paintEdits';
+import { gradientGeometryCommands, gradientPaintCommands, gradientStopsCommands } from './viewportEdits';
 import { layerScreenMapping } from './layerScreen';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import {
@@ -122,11 +130,11 @@ function isGradient(p: FillPaint | undefined): p is GradientPaint {
 interface EditTarget {
   nodeId: string;
   channel: PaintChannel;
-  /** The Text component a stroke write lands on (stroke channel only). */
-  textComponentId: string | null;
   fillIndex: number;
   /** The shape stroke's index in its stack (shapeStroke channel only). */
   strokeIndex: number;
+  /** The shape stroke as STORED (shapeStroke channel only) — what a static point write spreads over. */
+  storedStroke: Stroke | null;
   /** The shape stroke's Start/End points as the frame shows them (shapeStroke only). */
   strokePoints: StrokeGradientGeometry | null;
   fills: FillPaint[];
@@ -138,94 +146,44 @@ interface EditTarget {
   stops: ColorStop[];
   /** True when the primary fill's stop list is a live `fill.stops` track. */
   stopsAnimated: boolean;
-  layerT: number;
+  /** The playhead, comp seconds — where keys land (the engine maps it to the layer's key axis). */
   time: number;
   width: number;
   height: number;
 }
 
-/** One gesture, one undo entry: the debounce key the whole drag shares. */
-const historyKey = (t: EditTarget): string =>
-  t.channel === 'stroke'
-    ? `gradient:${t.nodeId}:stroke`
-    : t.channel === 'shapeStroke'
-      ? `gradient:${t.nodeId}:shapeStroke:${t.strokeIndex}`
-      : `gradient:${t.nodeId}`;
+const autoKeyframe = (): boolean => usePreferenceStore.getState().timelineAutoKeyframe;
 
 /**
  * A shape stroke's Start/End points from a grip drag — `AnimatablePaintRow`'s
- * rule per coordinate: a live track (or Auto-Keyframe) takes a keyframe on the
- * stroke's own `gradientStartX…` path, everything else lands in ONE static write
- * of the whole geometry. One `batchHistory`, so a drag that moves X and Y is one
- * undo step.
+ * rule per coordinate: a live track (or Auto-Keyframe) takes a key on the
+ * stroke's own `gradientStartX…` property, everything else lands in ONE static
+ * write of the stack with the dragged end moved. Commands for the current
+ * pointer position (absolute).
  */
-function writeStrokeGradientPoints(t: EditTarget, next: StrokeGradientGeometry, grip: GradientGripKind): void {
-  const props: Array<{ prop: string; value: number }> = grip === 'start'
+function strokeGradientPointCommands(t: EditTarget, next: StrokeGradientGeometry, grip: GradientGripKind): Command[] {
+  const writes = grip === 'start'
     ? [
-        { prop: strokeTrackPath(t.strokeIndex, 'gradientStartX'), value: next.startX },
-        { prop: strokeTrackPath(t.strokeIndex, 'gradientStartY'), value: next.startY },
+        { track: strokeTrackPath(t.strokeIndex, 'gradientStartX'), value: next.startX },
+        { track: strokeTrackPath(t.strokeIndex, 'gradientStartY'), value: next.startY },
       ]
     : [
-        { prop: strokeTrackPath(t.strokeIndex, 'gradientEndX'), value: next.endX },
-        { prop: strokeTrackPath(t.strokeIndex, 'gradientEndY'), value: next.endY },
+        { track: strokeTrackPath(t.strokeIndex, 'gradientEndX'), value: next.endX },
+        { track: strokeTrackPath(t.strokeIndex, 'gradientEndY'), value: next.endY },
       ];
-  const autoKey = usePreferenceStore.getState().timelineAutoKeyframe;
-  // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-  batchHistory(historyKey(t), () => {
-    let anyStatic = false;
-    for (const { prop, value } of props) {
-      if (defaultAnimation.isAnimated(t.nodeId, prop) || autoKey) {
-        // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
-        const at = compToKeyframeTime(t.nodeId, t.time, prop);
-        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-        runAnimEdit(`Set ${prop}`, () => defaultAnimation.setKeyframe(t.nodeId, prop, at, value), `gradGeom:${t.nodeId}:${prop}`);
-      } else {
-        anyStatic = true;
-      }
-    }
-    if (!anyStatic) return;
-    // Only the dragged end goes onto the STORED points — the other end and the
-    // highlight keep their stored values, not the keyframed ones on screen.
-    const stored = getNodeStrokeAt(t.nodeId, t.strokeIndex);
-    const base = stored?.gradient ?? strokeGradientGeometryFor(stored?.paint, t.width, t.height);
-    // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-    updateNodeStrokeAt(t.nodeId, t.strokeIndex, {
+  // Only the dragged end goes onto the STORED points — the other end and the
+  // highlight keep their stored values, not the keyframed ones on screen.
+  const statics = (): Command[] => {
+    const stored = t.storedStroke;
+    if (!stored) return [];
+    const base = stored.gradient ?? strokeGradientGeometryFor(stored.paint, t.width, t.height);
+    return strokePatchCommands(t.nodeId, t.strokeIndex, {
       gradient: grip === 'start'
         ? { ...base, startX: next.startX, startY: next.startY }
         : { ...base, endX: next.endX, endY: next.endY },
     });
-  });
-}
-
-/** The paint itself — the text stroke, the fill stack's slot, or the primary-fill shortcut. */
-function writePaintStatic(t: EditTarget, paint: GradientPaint): void {
-  // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-  batchHistory(historyKey(t), () => {
-    if (t.channel === 'shapeStroke') {
-      // A shape stroke's gradient (colour stops) lives on its stack entry.
-      // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-      updateNodeStrokeAt(t.nodeId, t.strokeIndex, { paint });
-      return;
-    }
-    if (t.channel === 'stroke') {
-      // A text stroke gradient lives on the Text component, where the stroke
-      // rows write it (`TextStrokeRows`).
-      if (t.textComponentId) {
-        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-        updateNodeComponentProp(defaultSceneGraph, t.nodeId, t.textComponentId, 'strokePaint', paint);
-      }
-      return;
-    }
-    if (t.fillIndex === 0) {
-      // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-      setNodeFill(t.nodeId, paint);
-      return;
-    }
-    const next = [...t.fills];
-    next[t.fillIndex] = paint;
-    // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-    setNodeFills(t.nodeId, next);
-  });
+  };
+  return gradientGeometryCommands(t, writes, statics, { seconds: t.time, autoKeyframe: autoKeyframe() });
 }
 
 /**
@@ -235,54 +193,36 @@ function writePaintStatic(t: EditTarget, paint: GradientPaint): void {
  * `fill.stops` track when one exists, so a write to the static paint would be
  * an edit that changes nothing on screen — the same trap `StopList` documents.
  */
-function writeGradientStops(t: EditTarget, next: ColorStop[]): void {
-  if (t.stopsAnimated) {
-    // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-    runAnimEdit(
-      'Edit gradient stops keyframe',
-      () => {
-        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-        defaultAnimation.setDataKeyframe(
-          t.nodeId,
-          'fill.stops',
-          'gradientStops',
-          t.layerT,
-          next.map((s) => ({ pos: s.offset, color: s.color })),
-        );
-      },
-      // Stable across the whole gesture, so one drag is one undo entry.
-      `gradStops:${t.nodeId}`,
-    );
-    return;
-  }
-  writePaintStatic(t, { ...t.paint, stops: next });
+function gradientStopListCommands(t: EditTarget, next: ColorStop[]): Command[] {
+  return gradientStopsCommands(t, t.paint, next, { keyed: t.stopsAnimated, seconds: t.time });
 }
 
 /**
  * A geometry change, scalar track by scalar track.
  *
  * `AnimatablePaintRow`'s rule, applied per property rather than per row: a live
- * track (or Auto-Keyframe) takes a keyframe at the playhead, everything else
- * falls through to one static paint write. A radial centre drag moves two props
- * at once, which is why the whole thing sits inside one `batchHistory` — the
- * undo debounce keys on the target, and two targets would be two undo steps for
- * one drag (the exact bug the linked corner radius had).
+ * track (or Auto-Keyframe) takes a key at the playhead, everything else falls
+ * through to one static paint write. A radial centre drag moves two props at
+ * once; both ride the same gesture message, so one drag is one undo step.
  */
-function writeGradientGeometry(t: EditTarget, next: GradientPaint, grip: GradientGripKind): void {
+function gradientGeometryDragCommands(t: EditTarget, next: GradientPaint, grip: GradientGripKind): Command[] {
   // The channel's own track names: `fillAngle`… for a fill, `strokeAngle`… for
   // a text stroke gradient — the names the renderer samples.
   const names = GEOMETRY_TRACKS[t.channel === 'stroke' ? 'stroke' : 'fill'];
-  const props: Array<{ prop: string; value: number }> =
+  const writes: Array<{ track: string; value: number }> =
     next.type === 'linear'
-      ? [{ prop: names.angle, value: next.angle }]
+      ? [{ track: names.angle, value: next.angle }]
       : grip === 'start'
         ? [
-            { prop: names.centerX, value: next.cx },
-            { prop: names.centerY, value: next.cy },
+            { track: names.centerX, value: next.cx },
+            { track: names.centerY, value: next.cy },
           ]
-        : [{ prop: names.radius, value: next.radius }];
+        : [{ track: names.radius, value: next.radius }];
   // Only the dragged fields go onto the STORED paint: `next` was derived from
   // the shown (keyframed) geometry, whose other values must not bake in.
+  // Written even when a sibling prop keyed: the static value is what a later
+  // "remove animation" falls back to, and leaving it stale is how a handle
+  // drag appears to undo itself when the track is deleted.
   const staticNext = (
     next.type === 'linear'
       ? { ...t.paint, angle: next.angle }
@@ -290,31 +230,7 @@ function writeGradientGeometry(t: EditTarget, next: GradientPaint, grip: Gradien
         ? { ...t.paint, cx: next.cx, cy: next.cy }
         : { ...t.paint, radius: next.radius }
   ) as GradientPaint;
-
-  const autoKey = usePreferenceStore.getState().timelineAutoKeyframe;
-  // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-  batchHistory(historyKey(t), () => {
-    let anyStatic = false;
-    for (const { prop, value } of props) {
-      if (defaultAnimation.isAnimated(t.nodeId, prop) || autoKey) {
-        // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
-        const at = compToKeyframeTime(t.nodeId, t.time, prop);
-        // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-        runAnimEdit(
-          `Set ${prop}`,
-          // B3-legacy: engine gap — fill/stroke PAINT objects (fx.fill / fx.fills, the shape stroke stack, a text layer's strokePaint) and the fill.stops gradient data track have no API property; the grip/stop drag keeps the legacy dual write in one batchHistory (as the Inspector's paint rows do).
-          () => defaultAnimation.setKeyframe(t.nodeId, prop, at, value),
-          `gradGeom:${t.nodeId}:${prop}`,
-        );
-      } else {
-        anyStatic = true;
-      }
-    }
-    // Written even when some sibling prop keyframed: the static value is what a
-    // later "remove animation" falls back to, and leaving it stale is how a
-    // handle drag appears to undo itself when the track is deleted.
-    if (anyStatic) writePaintStatic(t, staticNext);
-  });
+  return gradientGeometryCommands(t, writes, () => gradientPaintCommands(t, staticNext), { seconds: t.time, autoKeyframe: autoKeyframe() });
 }
 
 export function GradientHandleOverlay(): JSX.Element | null {
@@ -357,8 +273,9 @@ export function GradientHandleOverlay(): JSX.Element | null {
     : strokePaint && textComponentId && ((armed && armedTarget === 'stroke') || !fillPaint) ? 'stroke' : 'fill';
   const storedPaint = channel === 'shapeStroke' ? shapeStrokePaint : channel === 'stroke' ? strokePaint : fillPaint;
 
-  // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
-  const layerT = nodeId ? compToKeyframeTime(nodeId, time) : 0;
+  // Display only: where the `fill.stops` track is SAMPLED for drawing (its key
+  // axis). Writes send comp time and the engine maps it.
+  const layerT = nodeId ? keyAxisTimeForDisplay(nodeId, time, 'fill.stops') : 0;
   // Stop KEYFRAMES bind to the primary FILL only — the same gating the panel
   // applies, because `fill.stops` is one track per node, not per stack slot.
   const stopsAnimated =
@@ -377,8 +294,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
     const sampled = new Map<string, number>();
     for (const prop of [names.angle, names.centerX, names.centerY, names.radius]) {
       if (!defaultAnimation.isAnimated(nodeId, prop)) continue;
-      // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
-      const v = defaultAnimation.sample(nodeId, prop, compToKeyframeTime(nodeId, time, prop));
+      const v = defaultAnimation.sample(nodeId, prop, keyAxisTimeForDisplay(nodeId, time, prop));
       if (v !== undefined) sampled.set(prop, v);
     }
     return applyGradientTracks(storedPaint, sampled, names) ?? storedPaint;
@@ -425,8 +341,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
     const read = (param: 'gradientStartX' | 'gradientStartY' | 'gradientEndX' | 'gradientEndY', fallback: number): number => {
       const prop = strokeTrackPath(fillIndexRaw, param);
       if (!defaultAnimation.isAnimated(nodeId, prop)) return fallback;
-      // B3-legacy: display read + the legacy paint writers' key axis (paint has no API property yet, see below).
-      const v = defaultAnimation.sample(nodeId, prop, compToKeyframeTime(nodeId, time, prop));
+      const v = defaultAnimation.sample(nodeId, prop, keyAxisTimeForDisplay(nodeId, time, prop));
       return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
     };
     return {
@@ -469,16 +384,15 @@ export function GradientHandleOverlay(): JSX.Element | null {
       ? {
           nodeId,
           channel,
-          textComponentId,
           fillIndex,
           strokeIndex: fillIndexRaw,
+          storedStroke: shapeStroke ?? null,
           strokePoints,
           fills,
           paint: storedPaint,
           shown: paint,
           stops,
           stopsAnimated,
-          layerT,
           time,
           width,
           height,
@@ -494,6 +408,10 @@ export function GradientHandleOverlay(): JSX.Element | null {
 
   const disarm = useGradientEditStore((s) => s.disarm);
   const selectStop = useGradientEditStore((s) => s.selectStop);
+  /** A handle drag (grip, stop, add-and-drag, Alt-duplicate) is ONE engine gesture. */
+  const gesture = useGesture();
+  /** The ColorPicker's writes: a picker drag is one gesture (`press`), a typed hex one edit. */
+  const pickerEdit = useEngineEdit();
 
   /**
    * Pointer plumbing. Attached once while ARMED — keyed on the boolean and the
@@ -529,10 +447,15 @@ export function GradientHandleOverlay(): JSX.Element | null {
      * of existence. So a gesture that CHANGES the list keeps its own copy.
      */
     let liveStops: ColorStop[] | null = null;
+    /** Whether the gesture writes the keyed stop list (fixed at the press). */
+    let keyedStops = false;
     const currentStops = (t: EditTarget): ColorStop[] => liveStops ?? t.stops;
+    // Every message is the WHOLE list for the current pointer (latest wins); do
+    // not await in the pointer handlers — the gizmo follows the pointer and the
+    // engine's refresh lands within a frame.
     const commitStops = (t: EditTarget, next: ColorStop[]): void => {
       liveStops = next;
-      writeGradientStops(t, next);
+      gesture.send(gradientStopListCommands(t, next));
     };
 
     const onDown = (e: PointerEvent): void => {
@@ -543,14 +466,19 @@ export function GradientHandleOverlay(): JSX.Element | null {
       if (!hit) return;
       e.stopPropagation();
       e.preventDefault();
-      try {
-        svg.setPointerCapture(e.pointerId);
-      } catch {
-        /* best-effort — jsdom and synthetic events have no capture */
-      }
       // The drag flag, so the RAM preview is not blitted over the live
       // gradient while a stop is being dragged (see beginViewportGesture).
       beginViewportGesture();
+      keyedStops = s.target.stopsAnimated;
+      const dup = hit.kind === 'stop' && e.altKey ? duplicateStop(currentStops(s.target), hit.id, offsetOf(p)) : null;
+      // One gesture for the whole press (it captures the pointer and ends on
+      // capture loss / cancel / blur; Escape reverts it).
+      gesture.begin(
+        hit.kind === 'grip' ? 'Move Gradient Handle'
+          : hit.kind === 'axis' ? 'Add Gradient Stop'
+            : dup ? 'Duplicate Gradient Stop' : 'Move Gradient Stop',
+        e,
+      );
 
       if (hit.kind === 'grip') {
         drag = { kind: 'grip', grip: hit.grip };
@@ -567,14 +495,11 @@ export function GradientHandleOverlay(): JSX.Element | null {
         return;
       }
       // Alt-drag duplicates: the copy is what moves, the original stays put.
-      if (e.altKey) {
-        const dup = duplicateStop(currentStops(s.target), hit.id, offsetOf(p));
-        if (dup) {
-          commitStops(s.target, dup.stops);
-          selectStop(dup.id);
-          drag = { kind: 'stop', id: dup.id };
-          return;
-        }
+      if (dup) {
+        commitStops(s.target, dup.stops);
+        selectStop(dup.id);
+        drag = { kind: 'stop', id: dup.id };
+        return;
       }
       selectStop(hit.id);
       drag = { kind: 'stop', id: hit.id };
@@ -591,17 +516,18 @@ export function GradientHandleOverlay(): JSX.Element | null {
         );
         return;
       }
-      if (!s.target) return;
+      // Escape cancelled the gesture: the drag is over for the document.
+      if (!s.target || !gesture.isActive()) return;
       if (drag.kind === 'grip') {
         if (!s.mapping) return;
         const l = s.mapping.screenToLocal(p.x, p.y);
         // A shape stroke's gradient: the grip IS a point, moved where it is put.
         if (s.target.channel === 'shapeStroke' && s.target.strokePoints) {
-          writeStrokeGradientPoints(
+          gesture.send(strokeGradientPointCommands(
             s.target,
             strokeGradientFromGripDrag(s.target.strokePoints, drag.grip, { x: l.x, y: l.y }, s.target.width, s.target.height),
             drag.grip,
-          );
+          ));
           return;
         }
         // From the geometry as SHOWN (keyframes applied): a radius grip measures
@@ -613,7 +539,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
           s.target.width,
           s.target.height,
         );
-        writeGradientGeometry(s.target, next, drag.grip);
+        gesture.send(gradientGeometryDragCommands(s.target, next, drag.grip));
         return;
       }
       commitStops(s.target, moveStopTo(currentStops(s.target), drag.id, offsetOf(p)));
@@ -621,8 +547,20 @@ export function GradientHandleOverlay(): JSX.Element | null {
 
     const onUp = (e: PointerEvent): void => {
       if (!drag) return;
+      // A keyed stop list is stored in OFFSET order (the engine sorts a Colors
+      // key), and its stops are named by index (`anim_<i>`): follow the dragged
+      // stop to the index it lands on, so the selection — and a Delete after
+      // it — still names the stop that was dragged.
+      if (drag.kind === 'stop' && keyedStops && liveStops) {
+        const id = drag.id;
+        const at = liveStops.map((st, i) => ({ st, i }))
+          .sort((a, b) => (a.st.offset - b.st.offset) || (a.i - b.i))
+          .findIndex((x) => x.st.id === id);
+        if (at >= 0) selectStop(`anim_${at}`);
+      }
       drag = null;
       liveStops = null;
+      void gesture.end();
       endViewportGesture();
       if (svg.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
     };
@@ -650,9 +588,9 @@ export function GradientHandleOverlay(): JSX.Element | null {
       svg.removeEventListener('pointerup', onUp);
       svg.removeEventListener('pointercancel', onUp);
       svg.removeEventListener('dblclick', onDblClick);
-      if (drag) { drag = null; endViewportGesture(); }
+      if (drag) { drag = null; void gesture.end(); endViewportGesture(); }
     };
-  }, [armed, nodeId, selectStop]);
+  }, [armed, nodeId, selectStop, gesture]);
 
   /**
    * Escape puts the gizmo away; Delete removes the selected stop.
@@ -684,7 +622,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
       if (!next) return;
       e.preventDefault();
       e.stopPropagation();
-      writeGradientStops(s.target, next);
+      void edit('Delete Gradient Stop', gradientStopListCommands(s.target, next));
       selectStop(null);
     };
     window.addEventListener('keydown', onKey);
@@ -899,6 +837,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
           className={styles.picker}
           style={{ left: Math.round(editingStop.at.x), top: Math.round(editingStop.at.y + STOP_R) }}
           onPointerDown={(e) => e.stopPropagation()}
+          {...pickerEdit.press('Gradient Stop Color')}
         >
           <ColorPicker
             compact
@@ -907,9 +846,9 @@ export function GradientHandleOverlay(): JSX.Element | null {
             onChange={(color) => {
               const t = stateRef.current.target;
               if (!t) return;
-              writeGradientStops(
-                t,
-                t.stops.map((s) => (s.id === editingStop.id ? { ...s, color } : s)),
+              pickerEdit.send(
+                'Gradient Stop Color',
+                gradientStopListCommands(t, t.stops.map((s) => (s.id === editingStop.id ? { ...s, color } : s))),
               );
             }}
           />

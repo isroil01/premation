@@ -32,6 +32,10 @@ import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import { compTime, paths, propRefForTrack, valueOfNumbers, values } from '@core/engine/propRefs';
 import { maskPointsToPath } from '@core/workspace/toolEdits';
+import type { ColorStop, FillPaint } from '@core/paint/fill';
+import { fillPaintCommands, fillStopsCommands, strokePatchCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
+import { trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
+import { fieldCommands } from '@layout/Text/textEdits';
 
 // ── Numeric props through the viewport's "dual path" ─────────────────
 //
@@ -260,4 +264,82 @@ export async function commitSourceTextEdit(
   if (opts.runs) cmds.push({ type: 'setProperty', prop: { layer: nodeId, path: paths.textProp('styleRuns') }, value: values.json(opts.runs) });
   const res = await edit(opts.label, cmds);
   return res.ok;
+}
+
+// ── Gradient gizmo (GradientHandleOverlay) ───────────────────────────
+//
+// The on-canvas gradient editor writes exactly where the Fill & Stroke rows
+// write (Inspector/appearance/paintEdits.ts, AnimatablePaintRow): the paint is
+// a json field sent whole, the primary fill's keyed stop list is
+// `layer/fillStops`, and the geometry scalars (`fillAngle`…, `strokeAngle`…,
+// a shape stroke's `gradientStartX`…) are catalog properties — a key at the
+// playhead where live or under Auto-Keyframe, the static paint otherwise.
+
+/** Which paint a gradient gizmo write lands on. */
+export interface GradientPaintTarget {
+  nodeId: string;
+  /**
+   * `fill`: slot `fillIndex` of the fill stack (0 = the primary fill);
+   * `stroke`: a text layer's `strokePaint`; `shapeStroke`: stroke
+   * `strokeIndex` of the stroke stack.
+   */
+  channel: 'fill' | 'stroke' | 'shapeStroke';
+  fillIndex: number;
+  strokeIndex: number;
+  /** The fill stack as stored — a slot above 0 is written as the whole stack. */
+  fills: ReadonlyArray<FillPaint>;
+}
+
+/** The target's paint := `paint`, whole (a static write — no keyframes). */
+export function gradientPaintCommands(t: GradientPaintTarget, paint: FillPaint): Command[] {
+  if (t.channel === 'shapeStroke') return strokePatchCommands(t.nodeId, t.strokeIndex, { paint });
+  if (t.channel === 'stroke') return textStrokePaintCommands(t.nodeId, paint);
+  if (t.fillIndex === 0) return fillPaintCommands(t.nodeId, paint);
+  const next = [...t.fills];
+  next[t.fillIndex] = paint;
+  return fieldCommands(t.nodeId, 'layer/fills', next);
+}
+
+/**
+ * A new colour-stop list. `keyed` (the primary fill's `fill.stops` is
+ * animated): a Colors key at the playhead — the renderer reads the track, so a
+ * static write would change nothing on screen. Otherwise the paint with its
+ * stops replaced, in the order given (storage order keeps stop ids stable).
+ */
+export function gradientStopsCommands(
+  t: GradientPaintTarget,
+  paint: Exclude<FillPaint, { type: 'solid' }>,
+  stops: ReadonlyArray<ColorStop>,
+  opts: { keyed: boolean; seconds: number },
+): Command[] {
+  if (opts.keyed && t.channel === 'fill' && t.fillIndex === 0) return fillStopsCommands(t.nodeId, stops, opts.seconds);
+  return gradientPaintCommands(t, { ...paint, stops: [...stops] });
+}
+
+/**
+ * A gradient geometry drag (`AnimatablePaintRow`'s rule, per property): each
+ * `{ track, value }` whose track is live — or every one while Auto-Keyframe is
+ * on — keys at the playhead; if any is left over, `staticCommands()` (the
+ * caller's whole-paint / whole-stack write of the dragged fields) goes too.
+ * The geometry tracks bind to the PRIMARY fill, so a stack slot above 0 is
+ * always static. A track the engine does not address is written statically.
+ * Absolute values: safe to send per move inside a gesture.
+ */
+export function gradientGeometryCommands(
+  t: GradientPaintTarget,
+  writes: ReadonlyArray<{ track: string; value: number }>,
+  staticCommands: () => Command[],
+  opts: { seconds: number; autoKeyframe: boolean },
+): Command[] {
+  const tracked = t.channel !== 'fill' || t.fillIndex === 0;
+  const keyed: Record<string, number> = {};
+  let anyStatic = false;
+  for (const w of writes) {
+    const live = tracked && (opts.autoKeyframe || defaultAnimation.isAnimated(t.nodeId, w.track));
+    if (live && trackRef(t.nodeId, w.track)) keyed[w.track] = w.value;
+    else anyStatic = true;
+  }
+  const out: Command[] = anyStatic ? [...staticCommands()] : [];
+  if (Object.keys(keyed).length > 0) out.push(...valueCommands([{ nodeId: t.nodeId, values: keyed }], opts));
+  return out;
 }

@@ -1,7 +1,8 @@
 /**
  * The viewport's right-click layer actions through the engine API (B3,
  * docs/B3_PATTERNS.md §1/§2/§6): duplicate, delete, arrange, group / ungroup,
- * label colour, the 3D switch, "Add Keyframe" and the footage time verbs.
+ * Merge Paths (bake), label colour, the 3D switch, "Add Keyframe" and the
+ * footage time verbs.
  * Each function is ONE user action = ONE undo entry.
  *
  * Same rules as the legacy helpers they replace (`sceneInsert`,
@@ -19,7 +20,10 @@ import { isPrecomp } from '@core/scene/precomp';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { canBe3D, is3DEnabled } from '@core/scene/threeD';
 import type { FrameBlend } from '@core/scene/layerTime';
-import { compOfLayer, isLayer } from '@core/engine/doc';
+import { apiParentOf, compOfLayer, graph as docGraph, isLayer, layerIdsOfComp } from '@core/engine/doc';
+import { offDocument } from '@core/engine/offDocument';
+import { encodeFragment } from '@core/engine/handlers/layers';
+import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 import { labelIndexOf } from '@core/engine/model';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -259,22 +263,88 @@ export async function arrangeLayersEdit(ids: readonly string[], action: StackAct
 // ── Group / ungroup ───────────────────────────────────────────────────
 
 /**
- * Group the selected layers when they share one parent (`groupLayers`: the
- * group takes the front-most member's slot) and select the group. Returns
- * false when the API cannot express the grouping (the caller keeps the legacy
- * one).
+ * Group the selected layers (`groupLayers`: the group takes the front-most
+ * member's slot) and select the group. A selection spanning parents is first
+ * gathered under the FIRST layer's parent keeping each layer's world pose
+ * (`setParent`, same batch) — where the legacy grouping put the new group
+ * ("group in place": a selection inside a group stays inside it). Composition
+ * roots are not layers and are left out. Returns false when the layers belong
+ * to different compositions (a layer cannot move between compositions).
  */
 export async function groupSelectedLayersEdit(): Promise<boolean> {
-  const ids = useSelectionStore.getState().ids;
-  if (ids.length === 0) return true;
-  const parents = new Set(ids.map((id) => defaultSceneGraph.getNode(id)?.parent ?? null));
-  if (parents.size !== 1 || parents.has(null) || !ids.every((id) => isLayer(id))) return false;
-  const res = await edit('Group Layers', { type: 'groupLayers', layers: [...ids], name: 'Group' });
+  const layers = useSelectionStore.getState().ids.filter((id) => isLayer(id));
+  if (layers.length === 0) return true;
+  if (new Set(layers.map((id) => compOfLayer(id))).size !== 1) return false;
+  const comp = compOfLayer(layers[0]!)!;
+  const selected = new Set(layers);
+  // A layer's parent in the API's terms: a layer of the comp, or the comp itself.
+  const parentOf = (id: string): string => apiParentOf(id) ?? comp;
+  // The first layer's parent — or, when that is itself being grouped, its
+  // nearest ancestor that is not (a group cannot go inside one of its members).
+  let target = parentOf(layers[0]!);
+  while (selected.has(target)) target = parentOf(target);
+  const cmds: Command[] = [];
+  const moved = layers.filter((id) => parentOf(id) !== target);
+  if (moved.length > 0) {
+    cmds.push({ type: 'setParent', layers: moved, ...(target !== comp ? { parent: target } : {}), keepWorldTransform: true });
+  }
+  cmds.push({ type: 'groupLayers', layers, name: 'Group' });
+  const res = await edit('Group Layers', cmds);
   if (res.ok) {
-    const group = (res.value[0] as { layer?: string } | undefined)?.layer;
+    const group = (res.value[res.value.length - 1] as { layer?: string } | undefined)?.layer;
     if (group) useSelectionStore.getState().set([group]);
   }
   return true;
+}
+
+// ── Merge Paths (bake) ────────────────────────────────────────────────
+
+/**
+ * Merge Paths ▸ Bake <op>: the selected paths' boolean as new path layers
+ * (one per island, holes on the same layer), the operands removed, the
+ * results selected — `mergeSelectedPaths`, run OFF-document (ENGINE_API.md
+ * §15.9) and sent as ONE batch: `deleteLayers` of what it removed, then
+ * `pasteLayers` of what it built, at its stack slot among the remaining
+ * layers and under the same parent. One undo entry. Resolves to the new ids
+ * (`[]` when fewer than two paths could be merged or the engine refused).
+ */
+export async function bakeMergePathsEdit(op: MergeOp): Promise<string[]> {
+  const label = `Merge Paths (${op})`;
+  let plan: { removed: string[]; paste: Command } | null;
+  try {
+    plan = offDocument(() => mergeSelectedPaths(op), ({ value: made, changed, before }) => {
+      const comp = made[0] ? compOfLayer(made[0]) : null;
+      if (!comp) return null;
+      const created = new Set(made);
+      const stack = layerIdsOfComp(comp);
+      const tops = stack.filter((id) => created.has(id));
+      const first = stack.indexOf(tops[0]!);
+      const index = stack.slice(0, first).filter((id) => !created.has(id)).length;
+      const parent = docGraph.getNode(tops[0]!)?.parent;
+      const removed = changed
+        .filter((k) => k.startsWith('node:') && before.get(k) !== undefined && !docGraph.getNode(k.slice(5)))
+        .map((k) => k.slice(5));
+      const paste = {
+        type: 'pasteLayers',
+        comp,
+        fragment: encodeFragment(tops),
+        index,
+        ...(parent && parent !== comp ? { parent } : {}),
+      } as Command;
+      return { removed, paste };
+    });
+  } catch (err) {
+    reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
+  if (!plan) return [];
+  const removed = plan.removed.filter((id) => isLayer(id));
+  const cmds: Command[] = removed.length > 0 ? [{ type: 'deleteLayers', layers: removed }, plan.paste] : [plan.paste];
+  const res = await edit(label, cmds);
+  if (!res.ok) return [];
+  const ids = (res.value[res.value.length - 1] as { layers?: string[] } | undefined)?.layers ?? [];
+  if (ids.length > 0) useSelectionStore.getState().set(ids);
+  return ids;
 }
 
 /** Dissolve every selected group layer; its members end up selected. One entry. */

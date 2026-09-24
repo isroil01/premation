@@ -57,7 +57,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
 import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { applyNodePropsKeyframed } from '@core/workspace/ports';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
@@ -362,10 +361,9 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
         seconds: s.tabs[s.activeTabId ?? '']?.time ?? 0,
         autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe,
       });
+      // null: a camera the engine does not address (not a composition's layer)
+      // — nothing the API can record, so only the HUD follows the pointer.
       if (cmds) drag.gesture.send(cmds);
-      // B3-legacy: engine gap — a camera that is not a composition's layer, or whose Focus
-      // Distance the catalog does not list, has no API address.
-      else applyNodePropsKeyframed(drag.nodeId, { focusDistance: next }, `focusplane:${drag.nodeId}`);
       useFocusPlaneStore.getState().setDragDistance(next);
     };
 

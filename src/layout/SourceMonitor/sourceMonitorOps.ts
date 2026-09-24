@@ -33,20 +33,20 @@
  * only way to "overwrite" it would be to delete the user's layer, and a button
  * that silently deletes layers is not a trim.
  *
- * The range, the overwrite trims and splits are ONE undo entry after the
- * insert's own (the insert router has no API form yet — see `insertFromSource`).
+ * The insert (the router, run off-document and sent as `pasteLayers` —
+ * `insertMediaEdit`), the range, the overwrite trims and splits are ONE undo
+ * entry: the commands that need the new layer's id follow the paste inside one
+ * engine gesture.
  */
 
 import type { Command, LayerTimingPatch } from '@motion/engine-api';
 import { Clip, type ClipData } from '@motion/timeline';
-import { insertMedia } from '@core/scene/sceneInsert';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { framesToFlicks } from '@core/engine/time';
 import { compTime } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
-import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
+import { insertMediaEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import type { ImportedAsset } from '@stores/assetStore';
 
 /** A span of the SOURCE file, in seconds. End-exclusive, like a clip. */
@@ -178,11 +178,12 @@ function reportCovered(covered: number): void {
 }
 
 /**
- * Insert the marked range into the active composition.
+ * Insert the marked range into the active composition — the layer, its range
+ * and (with `overwrite`) the trims under it as ONE undo entry.
  *
  * Returns the new node's id, or null when the insert produced nothing to trim
- * (an unreadable SVG, an asset the router declined) — the caller surfaces
- * that rather than reporting a success it did not get.
+ * (an unreadable SVG, an asset the router declined, an engine refusal) — the
+ * caller surfaces that rather than reporting a success it did not get.
  */
 export async function insertFromSource(
   asset: ImportedAsset,
@@ -198,60 +199,53 @@ export async function insertFromSource(
     : placement.at === 'end' ? compEndSeconds()
       : Math.max(0, placement.seconds);
 
-  // B3-legacy: engine gap — `createLayer` builds the factory's minimal footage node; the insert
-  // router (`insertMedia`: contain-fit, PAR, SVG parse, audio layers, sequences) has no API form.
-  await insertMedia(asset);
-  // `insertMedia` selects what it created — the contract every insert path in
-  // sceneInsert keeps, and the only reliable way to find the node.
-  const nodeId = [...useSelectionStore.getState().ids][0] ?? null;
-  if (!nodeId) return null;
-  // Sync EXPLICITLY rather than trusting the App's SceneGraphChanged
-  // subscription to have run: this verb edits the bar it just created, so its
-  // existence cannot depend on who else is mounted.
-  controller.syncFromScene();
-
-  const placed = sourceRangeEdit(nodeId, range, at);
-  if (!placed) return nodeId;
-  const commands: Command[] = [placed.command];
+  let nodeId: string | null = null;
   let covered = 0;
-  if (opts.overwrite) {
-    const o = overwriteCommands(nodeId, placed.bar.start, placed.bar.start + placed.bar.duration);
-    commands.push(...o.commands);
-    covered = o.covered;
-  }
-  const res = await edit(opts.overwrite ? 'Overwrite from Source' : 'Insert from Source', commands);
-  if (res.ok) reportCovered(covered);
+  const inserted = await insertMediaEdit([asset], {
+    label: opts.overwrite ? 'Overwrite from Source' : 'Insert from Source',
+    // The router selects what it created — the one layer the range applies to. The paste
+    // seeded its bar (`syncFromScene`), so the range is computed on the real clip.
+    follow: (selected) => {
+      nodeId = selected[0] ?? null;
+      if (!nodeId) return [];
+      const placed = sourceRangeEdit(nodeId, range, at);
+      if (!placed) return [];
+      const commands: Command[] = [placed.command];
+      if (opts.overwrite) {
+        const o = overwriteCommands(nodeId, placed.bar.start, placed.bar.start + placed.bar.duration);
+        commands.push(...o.commands);
+        covered = o.covered;
+      }
+      return commands;
+    },
+  });
+  if (!inserted || !nodeId) return null;
+  reportCovered(covered);
   return nodeId;
 }
 
 /**
  * A new composition holding ONLY the marked range.
  *
- * `createCompositionFromFootage` already sizes and paces a comp to the clip;
- * this shortens it to the range and trims the layer to match, so "new comp
- * from range" produces a comp whose duration IS the shot rather than the whole
- * rush with the shot somewhere inside it.
+ * New Comp from Footage already sizes and paces a comp to the clip; this trims
+ * the layer to the range and shortens the comp to it, so "new comp from range"
+ * produces a comp whose duration IS the shot rather than the whole rush with
+ * the shot somewhere inside it. One undo entry. Resolves to the comp id, or
+ * null when the engine refused (toasted).
  */
-export async function newCompFromRange(asset: ImportedAsset, range: SourceRange): Promise<string> {
-  // B3-legacy: engine gap — `createComposition{fromItems}` does not conform the comp to the
-  // footage as `createCompositionFromFootage` does (probed fps, open tab, selection).
-  const compId = await createCompositionFromFootage(asset);
-  const nodeId = [...useSelectionStore.getState().ids][0] ?? null;
-  const controller = getTimelineController();
+export async function newCompFromRange(asset: ImportedAsset, range: SourceRange): Promise<string | null> {
   const length = Math.max(0, range.outSec - range.inSec);
-  const commands: Command[] = [];
-  if (nodeId) {
-    controller.syncFromScene(compId);
-    const placed = sourceRangeEdit(nodeId, range, 0);
-    if (placed) commands.push(placed.command);
-  }
-  if (length > 0) {
-    // The composition's duration through the engine: it writes the comp
-    // record (what the UI reads and serializes) AND the controller (what the
-    // ruler, work area and loop range are built from) — the two halves
-    // `createOrAdoptComposition` documents at its own tail.
-    commands.push({ type: 'setCompositionSettings', comp: compId, patch: { duration: compTime(length) } });
-  }
-  await edit('New Comp from Range', commands);
-  return compId;
+  const made = await newCompFromFootageEdit(asset, {
+    label: 'New Comp from Range',
+    follow: (layer, comp) => {
+      const commands: Command[] = [];
+      // The range is trimmed on the full-length bar FIRST, then the comp shortened —
+      // the legacy order (trimming against an already-shortened comp would clamp).
+      const placed = sourceRangeEdit(layer, range, 0);
+      if (placed) commands.push(placed.command);
+      if (length > 0) commands.push({ type: 'setCompositionSettings', comp, patch: { duration: compTime(length) } });
+      return commands;
+    },
+  });
+  return made?.comp ?? null;
 }
