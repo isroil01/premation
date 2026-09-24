@@ -14,6 +14,7 @@
 #include "canvas.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
+#include "optical_kerning.hpp"
 #include "scene_math.hpp"
 #include "text_runs.hpp"
 #include "text_unicode.hpp"
@@ -69,7 +70,7 @@ class CanvasMeasurer final : public TextMeasurer {
   explicit CanvasMeasurer(raster::CanvasOptions opts) : opts_(opts) {}
 
   std::optional<std::pair<double, double>> measure_text_size(const MeasuredStyle& s) override {
-    if (s.vertical || s.boxWidth || s.opticalKerning || s.hasFontAxes || s.fontWidth || s.fontSlant) return std::nullopt;
+    if (s.vertical || s.boxWidth || s.hasFontAxes || s.fontWidth || s.fontSlant) return std::nullopt;
     if (s.textTransform == "capitalize") return std::nullopt;
     const std::scoped_lock lock(m_);
     // A pure function of the style: memoised (the TS caches measureTextBoxes the
@@ -114,6 +115,7 @@ class CanvasMeasurer final : public TextMeasurer {
     str(s.verticalAlign);
     k += s.fauxBold ? '1' : '0';
     k += s.fauxItalic ? '1' : '0';
+    k += s.opticalKerning ? 'o' : '-';
     k += s.fontFamily;
     k += '\x02';
     k += s.fontWeight;
@@ -138,7 +140,8 @@ class CanvasMeasurer final : public TextMeasurer {
       if (std::isfinite(w)) variation = "'wght' " + css_number(w);
     }
     g.setFontVariationSettings(variation);
-    g.setFontKerning(true);
+    // applyFontVariations: optical kerning measures with the font's kerning off.
+    g.setFontKerning(!s.opticalKerning);
     g.setTextBaseline(raster::TextBaseline::middle);
     std::string content = s.content;
     if (s.textTransform == "uppercase") content = ascii_case(content, true);
@@ -166,7 +169,8 @@ class CanvasMeasurer final : public TextMeasurer {
       const std::string& line = lines[i];
       const raster::TextMetrics m = g.measureText(line);
       const double chars = static_cast<double>(raster::split_graphemes(line).size());
-      const double spacing = chars > 0 ? (chars - 1) * s.letterSpacing : 0;
+      // Optical kerning's pair adjustments count as spacing (opticalLineDelta).
+      const double spacing = (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + optical_line_delta(s, style, line);
       const double dy = (static_cast<double>(i) - (n - 1) / 2) * gap;
       inkTop = std::min(inkTop, dy - m.actualBoundingBoxAscent);
       inkBottom = std::max(inkBottom, dy + m.actualBoundingBoxDescent);
@@ -196,9 +200,22 @@ class CanvasMeasurer final : public TextMeasurer {
     return std::pair<double, double>{std::max(16.0, std::ceil(width) + kPadX * 2), std::max(16.0, std::ceil(height) + kPadY * 2)};
   }
 
+  /// measureText.ts opticalLineDelta: the sum of the pair kerns the painter adds.
+  double optical_line_delta(const MeasuredStyle& s, const std::string& style, const std::string& line) {
+    if (!s.opticalKerning || raster::utf16_length(line) < 2) return 0;
+    if (!kerner_) kerner_ = std::make_unique<raster::OpticalKerner>(opts_);
+    const std::string css = style + s.fontWeight + " " + css_number(raster::OpticalKerner::kRefEmPx) + "px \"" + s.fontFamily +
+                            "\", Inter, system-ui, sans-serif";
+    const std::vector<std::string> clusters = raster::split_graphemes(line);
+    double d = 0;
+    for (std::size_t i = 0; i + 1 < clusters.size(); ++i) d += kerner_->kern_px(css, clusters[i], s.fontSize, css, clusters[i + 1], s.fontSize);
+    return d;
+  }
+
   raster::CanvasOptions opts_;
   std::mutex m_;
   std::unique_ptr<raster::Canvas2D> ctx_;
+  std::unique_ptr<raster::OpticalKerner> kerner_;
   std::unordered_map<std::string, std::optional<std::pair<double, double>>> memo_;
 };
 
