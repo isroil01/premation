@@ -7,12 +7,13 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 26> kPorted{
+constexpr std::array<std::string_view, 35> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
     "camera-lens-blur", "photo-filter",   "black-and-white", "tritone",       "threshold",        "selective-color",
-    "shadow-highlight", "colorama",
+    "shadow-highlight", "colorama",        "keylight",        "linear-color-key", "luma-key",     "shift-channels",
+    "color-key",       "color-range",     "extract",       "spill-suppressor", "matte-choker",
 };
 
 }  // namespace
@@ -21,6 +22,7 @@ std::span<const std::string_view> ported_kernels() noexcept { return kPorted; }
 
 bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, ThreadPool* pool) {
   const auto b = [&](std::string_view k, bool def) { return a(k, def ? 1 : 0) != 0; };
+  const auto key = [&] { return Rgb{a("keyR", 0), a("keyG", 255), a("keyB", 0)}; };
   if (type == "gaussian-blur" || type == "fast-box-blur") {
     // applyGaussianBlur fixes iterations at 3; Fast Box Blur exposes it.
     blur_rgba(img, a("radius", 0), blur_dims(a("dimensions", 0)),
@@ -86,6 +88,28 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     // applyColorama: Math.max(0, Math.min(len - 1, Math.round(palette))).
     const int idx = static_cast<int>(std::max(0.0, std::min(4.0, js::round(a("palette", 0)))));
     colorama(img, idx, a("phaseShift", 0), a("cycleRepetitions", 1), a("blendWithOriginal", 0), pool);
+  } else if (type == "keylight") {
+    keylight(img,
+             KeylightParams{{a("keyR", 0), a("keyG", 255), a("keyB", 0)}, a("balance", 0.5), a("gain", 1),
+                            a("clipBlack", 0), a("clipWhite", 1), a("despill", 0.5), a("choke", 0), a("matteSoftness", 0)},
+             pool);
+  } else if (type == "linear-color-key") {
+    linear_color_key(img, key(), a("matchOn", 0), a("tolerance", 10), a("softness", 0), b("keepMatched", false), pool);
+  } else if (type == "luma-key") {
+    luma_key(img, a("keyType", 0), a("threshold", 128), a("tolerance", 0), a("softness", 0), pool);
+  } else if (type == "shift-channels") {
+    shift_channels(img, a("alphaFrom", 0), a("redFrom", 1), a("greenFrom", 2), a("blueFrom", 3), pool);
+  } else if (type == "color-key") {
+    color_key(img, key(), a("tolerance", 10), a("edgeSoftness", 0), pool);
+  } else if (type == "color-range") {
+    color_range(img, key(), a("space", 0), a("minTol", 0), a("maxTol", 20), a("lumaWeight", 50), pool);
+  } else if (type == "extract") {
+    extract_matte(img, a("channel", 0), a("black", 0), a("white", 255), a("blackSoft", 0), a("whiteSoft", 0),
+                  b("invert", false), pool);
+  } else if (type == "spill-suppressor") {
+    spill_suppressor(img, key(), a("amount", 50), b("preserveLuma", true), pool);
+  } else if (type == "matte-choker") {
+    matte_choker(img, a("spread", 0), a("choke", 0), a("softness", 0), a("iterations", 1), pool);
   } else {
     return false;
   }

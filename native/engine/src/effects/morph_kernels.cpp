@@ -36,8 +36,8 @@ namespace {
 
 enum class Pad : std::uint8_t { clamp, zero };
 
-template <bool kMax>
-inline std::uint8_t pick(std::uint8_t a, std::uint8_t b) noexcept {
+template <bool kMax, class T>
+inline T pick(T a, T b) noexcept {
   if constexpr (kMax) {
     return a > b ? a : b;
   } else {
@@ -46,32 +46,32 @@ inline std::uint8_t pick(std::uint8_t a, std::uint8_t b) noexcept {
 }
 
 /// One horizontal pass over every row of a w×h byte plane, in → out.
-template <bool kMax>
-void pass_h(const std::uint8_t* in, std::uint8_t* out, int w, int h, int r, Pad pad, ThreadPool* pool) {
+template <bool kMax, class T>
+void pass_h(const T* in, T* out, int w, int h, int r, Pad pad, ThreadPool* pool) {
   const int k = 2 * r + 1;
   const int plen = w + 2 * r;
   for_rows(pool, h, [&](int y0, int y1) {
-    std::vector<std::uint8_t> line(static_cast<std::size_t>(plen));
-    std::vector<std::uint8_t> g(static_cast<std::size_t>(plen));
-    std::vector<std::uint8_t> s(static_cast<std::size_t>(plen));
+    std::vector<T> line(static_cast<std::size_t>(plen));
+    std::vector<T> g(static_cast<std::size_t>(plen));
+    std::vector<T> s(static_cast<std::size_t>(plen));
     for (int y = y0; y < y1; ++y) {
-      const std::uint8_t* row = in + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
+      const T* row = in + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
       for (int i = 0; i < plen; ++i) {
         const int x = i - r;
         line[static_cast<std::size_t>(i)] =
-            (x >= 0 && x < w) ? row[x] : pad == Pad::zero ? std::uint8_t{0} : row[clampi(x, 0, w - 1)];
+            (x >= 0 && x < w) ? row[x] : pad == Pad::zero ? T{0} : row[clampi(x, 0, w - 1)];
       }
       for (int i = 0; i < plen; ++i) {
         const auto u = static_cast<std::size_t>(i);
-        g[u] = (i % k == 0) ? line[u] : pick<kMax>(g[u - 1], line[u]);
+        g[u] = (i % k == 0) ? line[u] : pick<kMax, T>(g[u - 1], line[u]);
       }
       for (int i = plen - 1; i >= 0; --i) {
         const auto u = static_cast<std::size_t>(i);
-        s[u] = (i % k == k - 1 || i == plen - 1) ? line[u] : pick<kMax>(s[u + 1], line[u]);
+        s[u] = (i % k == k - 1 || i == plen - 1) ? line[u] : pick<kMax, T>(s[u + 1], line[u]);
       }
-      std::uint8_t* orow = out + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
+      T* orow = out + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
       for (int x = 0; x < w; ++x) {
-        orow[x] = pick<kMax>(s[static_cast<std::size_t>(x)], g[static_cast<std::size_t>(x + k - 1)]);
+        orow[x] = pick<kMax, T>(s[static_cast<std::size_t>(x)], g[static_cast<std::size_t>(x + k - 1)]);
       }
     }
   });
@@ -79,22 +79,22 @@ void pass_h(const std::uint8_t* in, std::uint8_t* out, int w, int h, int r, Pad 
 
 /// One vertical pass: the same scheme with whole row segments as the elements,
 /// so the inner loops run along contiguous memory. Threads split column strips.
-template <bool kMax>
-void pass_v(const std::uint8_t* in, std::uint8_t* out, int w, int h, int r, Pad pad, ThreadPool* pool) {
+template <bool kMax, class T>
+void pass_v(const T* in, T* out, int w, int h, int r, Pad pad, ThreadPool* pool) {
   const int k = 2 * r + 1;
   const int plen = h + 2 * r;
   constexpr int kStrip = 256;
   const int strips = (w + kStrip - 1) / kStrip;
-  const std::vector<std::uint8_t> zeros(static_cast<std::size_t>(kStrip), 0);
+  const std::vector<T> zeros(static_cast<std::size_t>(kStrip), 0);
   for_rows(
       pool, strips,
       [&](int s0, int s1) {
-        std::vector<std::uint8_t> g(static_cast<std::size_t>(plen) * kStrip);
-        std::vector<std::uint8_t> s(static_cast<std::size_t>(plen) * kStrip);
+        std::vector<T> g(static_cast<std::size_t>(plen) * kStrip);
+        std::vector<T> s(static_cast<std::size_t>(plen) * kStrip);
         for (int strip = s0; strip < s1; ++strip) {
           const int x0 = strip * kStrip;
           const int cw = std::min(kStrip, w - x0);
-          const auto src_row = [&](int i) -> const std::uint8_t* {
+          const auto src_row = [&](int i) -> const T* {
             const int y = i - r;
             if (y < 0 || y >= h) {
               if (pad == Pad::zero) return zeros.data();
@@ -104,30 +104,30 @@ void pass_v(const std::uint8_t* in, std::uint8_t* out, int w, int h, int r, Pad 
             return in + static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x0);
           };
           for (int i = 0; i < plen; ++i) {
-            const std::uint8_t* sr = src_row(i);
-            std::uint8_t* gr = g.data() + static_cast<std::size_t>(i) * kStrip;
+            const T* sr = src_row(i);
+            T* gr = g.data() + static_cast<std::size_t>(i) * kStrip;
             if (i % k == 0) {
               std::copy(sr, sr + cw, gr);
             } else {
-              const std::uint8_t* gp = gr - kStrip;
-              for (int x = 0; x < cw; ++x) gr[x] = pick<kMax>(gp[x], sr[x]);
+              const T* gp = gr - kStrip;
+              for (int x = 0; x < cw; ++x) gr[x] = pick<kMax, T>(gp[x], sr[x]);
             }
           }
           for (int i = plen - 1; i >= 0; --i) {
-            const std::uint8_t* sr = src_row(i);
-            std::uint8_t* sw = s.data() + static_cast<std::size_t>(i) * kStrip;
+            const T* sr = src_row(i);
+            T* sw = s.data() + static_cast<std::size_t>(i) * kStrip;
             if (i % k == k - 1 || i == plen - 1) {
               std::copy(sr, sr + cw, sw);
             } else {
-              const std::uint8_t* sn = sw + kStrip;
-              for (int x = 0; x < cw; ++x) sw[x] = pick<kMax>(sn[x], sr[x]);
+              const T* sn = sw + kStrip;
+              for (int x = 0; x < cw; ++x) sw[x] = pick<kMax, T>(sn[x], sr[x]);
             }
           }
           for (int y = 0; y < h; ++y) {
-            const std::uint8_t* sa = s.data() + static_cast<std::size_t>(y) * kStrip;
-            const std::uint8_t* gb = g.data() + static_cast<std::size_t>(y + k - 1) * kStrip;
-            std::uint8_t* orow = out + static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x0);
-            for (int x = 0; x < cw; ++x) orow[x] = pick<kMax>(sa[x], gb[x]);
+            const T* sa = s.data() + static_cast<std::size_t>(y) * kStrip;
+            const T* gb = g.data() + static_cast<std::size_t>(y + k - 1) * kStrip;
+            T* orow = out + static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x0);
+            for (int x = 0; x < cw; ++x) orow[x] = pick<kMax, T>(sa[x], gb[x]);
           }
         }
       },
@@ -138,14 +138,14 @@ void pass(bool take_max, bool horizontal, std::vector<std::uint8_t>& cur, std::v
           int r, Pad pad, ThreadPool* pool) {
   if (horizontal) {
     if (take_max) {
-      pass_h<true>(cur.data(), tmp.data(), w, h, r, pad, pool);
+      pass_h<true, std::uint8_t>(cur.data(), tmp.data(), w, h, r, pad, pool);
     } else {
-      pass_h<false>(cur.data(), tmp.data(), w, h, r, pad, pool);
+      pass_h<false, std::uint8_t>(cur.data(), tmp.data(), w, h, r, pad, pool);
     }
   } else if (take_max) {
-    pass_v<true>(cur.data(), tmp.data(), w, h, r, pad, pool);
+    pass_v<true, std::uint8_t>(cur.data(), tmp.data(), w, h, r, pad, pool);
   } else {
-    pass_v<false>(cur.data(), tmp.data(), w, h, r, pad, pool);
+    pass_v<false, std::uint8_t>(cur.data(), tmp.data(), w, h, r, pad, pool);
   }
   cur.swap(tmp);
 }
@@ -202,6 +202,28 @@ void simple_choker(RgbaView img, double choke_px, ThreadPool* pool) {
   pass(!erode, true, cur, tmp, img.w, img.h, r, Pad::zero, pool);
   pass(!erode, false, cur, tmp, img.w, img.h, r, Pad::zero, pool);
   insert(img, 3, cur);
+}
+
+void alpha_min_max(RgbaView img, int r, bool take_max, ThreadPool* pool) {
+  if (r <= 0 || img.w <= 0 || img.h <= 0) return;
+  std::vector<std::uint8_t> cur;
+  std::vector<std::uint8_t> tmp(img.pixels());
+  extract(img, 3, cur);
+  pass(take_max, true, cur, tmp, img.w, img.h, r, Pad::clamp, pool);
+  pass(take_max, false, cur, tmp, img.w, img.h, r, Pad::clamp, pool);
+  insert(img, 3, cur);
+}
+
+void plane_min_max(std::vector<float>& plane, int w, int h, int r, bool take_max, ThreadPool* pool) {
+  if (r <= 0 || w <= 0 || h <= 0) return;
+  std::vector<float> tmp(plane.size());
+  if (take_max) {
+    pass_h<true, float>(plane.data(), tmp.data(), w, h, r, Pad::clamp, pool);
+    pass_v<true, float>(tmp.data(), plane.data(), w, h, r, Pad::clamp, pool);
+  } else {
+    pass_h<false, float>(plane.data(), tmp.data(), w, h, r, Pad::clamp, pool);
+    pass_v<false, float>(tmp.data(), plane.data(), w, h, r, Pad::clamp, pool);
+  }
 }
 
 }  // namespace premation::effects

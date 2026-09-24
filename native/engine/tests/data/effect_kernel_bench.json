@@ -28,6 +28,15 @@
     { "effect": "threshold", "args": { "level": 128 } },
     { "effect": "selective-color", "args": { "range": 0, "cyan": -40, "magenta": 20, "yellow": 10, "black": 5 } },
     { "effect": "shadow-highlight", "args": { "shadowAmount": 50, "highlightAmount": 20, "radius": 30, "tonalWidth": 50 } },
-    { "effect": "colorama", "args": { "palette": 1, "phaseShift": 45, "cycleRepetitions": 1 } }
+    { "effect": "colorama", "args": { "palette": 1, "phaseShift": 45, "cycleRepetitions": 1 } },
+    { "effect": "keylight", "args": { "keyR": 20, "keyG": 200, "keyB": 40, "gain": 1.1, "despill": 0.6, "choke": 2, "matteSoftness": 3 } },
+    { "effect": "linear-color-key", "args": { "keyR": 250, "keyG": 40, "keyB": 20, "tolerance": 20, "softness": 15 } },
+    { "effect": "luma-key", "args": { "keyType": 2, "threshold": 128, "tolerance": 40, "softness": 25 } },
+    { "effect": "shift-channels", "args": { "alphaFrom": 4, "redFrom": 2, "greenFrom": 3, "blueFrom": 1 } },
+    { "effect": "color-key", "args": { "keyR": 250, "keyG": 40, "keyB": 20, "tolerance": 12, "edgeSoftness": 10 } },
+    { "effect": "color-range", "args": { "keyR": 250, "keyG": 40, "keyB": 20, "minTol": 5, "maxTol": 30 } },
+    { "effect": "extract", "args": { "channel": 0, "black": 40, "white": 220, "blackSoft": 20, "whiteSoft": 10 } },
+    { "effect": "spill-suppressor", "args": { "keyR": 20, "keyG": 200, "keyB": 40, "amount": 80 } },
+    { "effect": "matte-choker", "args": { "spread": 2, "choke": 1, "softness": 2, "iterations": 2 } }
   ]
 }

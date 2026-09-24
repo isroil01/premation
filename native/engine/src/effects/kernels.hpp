@@ -17,6 +17,7 @@
 
 #include <array>
 #include <string_view>
+#include <vector>
 
 #include "pixel_ops.hpp"
 #include "thread_pool.hpp"
@@ -60,6 +61,45 @@ enum class MinimaxChannel : std::uint8_t { alpha, color, red, green, blue };
 void minimax(RgbaView img, MinimaxOp op, double radius, MinimaxChannel channel, BlurDims direction, ThreadPool* pool);
 /// `simpleChokerData(data, w, h, chokePx)`.
 void simple_choker(RgbaView img, double choke_px, ThreadPool* pool);
+
+/// Alpha-only min / max over a (2r+1)² square, edge samples clamped
+/// (keylight.ts `chokeAlpha`'s window, which skips out-of-range taps).
+void alpha_min_max(RgbaView img, int r, bool take_max, ThreadPool* pool);
+/// The same on a float plane (aeKeyingAdvanced.ts `morph`).
+void plane_min_max(std::vector<float>& plane, int w, int h, int r, bool take_max, ThreadPool* pool);
+
+// ── keying: keylight.ts, keyingEffects.ts, aeKeyingAdvanced.ts ──────────────
+struct Rgb {
+  double r, g, b;
+};
+/// The `keylight` effect: `applyKeyData(data, {screenColor, balance, gain,
+/// clipBlack, clipWhite, despill})` then `chokeAlpha(choke)` then
+/// `softenAlpha(matteSoftness)` — the applyKeylight wrapper's sequence.
+struct KeylightParams {
+  Rgb screen;
+  double balance, gain, clip_black, clip_white, despill, choke, matte_softness;
+};
+void keylight(RgbaView img, const KeylightParams& p, ThreadPool* pool);
+/// `linearColorKeyData(data, key, colorMatchMode(matchOn), tolerance, softness, keepMatched)`.
+void linear_color_key(RgbaView img, const Rgb& key, double match_on, double tolerance, double softness,
+                      bool keep_matched, ThreadPool* pool);
+/// `lumaKeyData(data, lumaKeyType(keyType), threshold, tolerance, softness)`.
+void luma_key(RgbaView img, double key_type, double threshold, double tolerance, double softness, ThreadPool* pool);
+/// `shiftChannelsData(data, channelSource(a), channelSource(r), …(g), …(b))`.
+void shift_channels(RgbaView img, double alpha_from, double red_from, double green_from, double blue_from,
+                    ThreadPool* pool);
+/// `colorKeyData(data, key, tolerance, edgeSoftness)`.
+void color_key(RgbaView img, const Rgb& key, double tolerance, double edge_softness, ThreadPool* pool);
+/// `colorRangeData(data, key, space, minTol, maxTol, lumaWeight)`.
+void color_range(RgbaView img, const Rgb& key, double space, double min_tol, double max_tol, double luma_weight,
+                 ThreadPool* pool);
+/// `extractData(data, channel, black, white, blackSoft, whiteSoft, invert)`.
+void extract_matte(RgbaView img, double channel, double black, double white, double black_soft, double white_soft,
+             bool invert, ThreadPool* pool);
+/// `spillSuppressorData(data, key, amount, preserveLuma)`.
+void spill_suppressor(RgbaView img, const Rgb& key, double amount, bool preserve_luma, ThreadPool* pool);
+/// `matteChokerData(src, w, h, spread, choke, softness, iterations)`.
+void matte_choker(RgbaView img, double spread, double choke, double softness, double iterations, ThreadPool* pool);
 
 // ── stylize.ts / colorEffects.ts ────────────────────────────────────────────
 /// `mosaicData(src, w, h, hBlocks, vBlocks, sharpColors)`.

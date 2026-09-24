@@ -8,7 +8,12 @@
 
 import { blurRgba, blurDimensions, radialBlurData, channelBlurData, unsharpMaskData } from '../blurs';
 import { turbulentNoiseData, addGrainData, medianData } from '../noiseEffects';
-import { minimaxData, minimaxOp, minimaxChannel, simpleChokerData } from '../keyingEffects';
+import {
+  minimaxData, minimaxOp, minimaxChannel, simpleChokerData, linearColorKeyData, colorMatchMode, lumaKeyData, lumaKeyType,
+  shiftChannelsData, channelSource,
+} from '../keyingEffects';
+import { applyKeyData, chokeAlpha, softenAlpha } from '../keylight';
+import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
 import { mosaicData, findEdgesData, embossData } from '../stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from '../colorEffects';
 import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from '../aeColor';
@@ -22,6 +27,7 @@ export type Args = Record<string, number>;
 export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: number, h: number): void {
   const n = (k: string, d: number): number => a[k] ?? d;
   const b = (k: string, d: boolean): boolean => (a[k] ?? (d ? 1 : 0)) !== 0;
+  const key = (): [number, number, number] => [n('keyR', 0), n('keyG', 255), n('keyB', 0)];
   switch (type) {
     case 'gaussian-blur':
     case 'fast-box-blur':
@@ -115,6 +121,40 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       coloramaData(data, COLORAMA_PALETTES[idx]!.stops, n('phaseShift', 0), n('cycleRepetitions', 1), n('blendWithOriginal', 0));
       return;
     }
+    case 'keylight': {
+      const hex = `#${key().map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+      applyKeyData(data, {
+        screenColor: hex, balance: n('balance', 0.5), gain: n('gain', 1),
+        clipBlack: n('clipBlack', 0), clipWhite: n('clipWhite', 1), despill: n('despill', 0.5),
+      });
+      chokeAlpha(data, w, h, n('choke', 0));
+      softenAlpha(data, w, h, n('matteSoftness', 0));
+      return;
+    }
+    case 'linear-color-key':
+      linearColorKeyData(data, key(), colorMatchMode(n('matchOn', 0)), n('tolerance', 10), n('softness', 0), b('keepMatched', false));
+      return;
+    case 'luma-key':
+      lumaKeyData(data, lumaKeyType(n('keyType', 0)), n('threshold', 128), n('tolerance', 0), n('softness', 0));
+      return;
+    case 'shift-channels':
+      shiftChannelsData(data, channelSource(n('alphaFrom', 0)), channelSource(n('redFrom', 1)), channelSource(n('greenFrom', 2)), channelSource(n('blueFrom', 3)));
+      return;
+    case 'color-key':
+      colorKeyData(data, key(), n('tolerance', 10), n('edgeSoftness', 0));
+      return;
+    case 'color-range':
+      colorRangeData(data, key(), n('space', 0), n('minTol', 0), n('maxTol', 20), n('lumaWeight', 50));
+      return;
+    case 'extract':
+      extractData(data, n('channel', 0), n('black', 0), n('white', 255), n('blackSoft', 0), n('whiteSoft', 0), b('invert', false));
+      return;
+    case 'spill-suppressor':
+      spillSuppressorData(data, key(), n('amount', 50), b('preserveLuma', true));
+      return;
+    case 'matte-choker':
+      data.set(matteChokerData(data, w, h, n('spread', 0), n('choke', 0), n('softness', 0), n('iterations', 1)));
+      return;
     default:
       throw new Error(`no kernel for ${type}`);
   }
