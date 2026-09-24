@@ -15,17 +15,16 @@ import { ColorPicker } from '@components/ColorPicker';
 import { ValueField } from '@components/ValueField';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNode3D } from '@core/scene/threeD';
-import { readNodeMaterial } from '@core/scene/material';
-import { readNodeFill, sortedStops } from '@core/paint/fill';
-import { readNodeLayerStyles, styledSurfaceFill } from '@core/effects/layerStyles';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree, type MirrorTree } from '@hooks/useMirror';
+import { mirrorFaceMaterials, mirrorMaterial, mirrorOverlayStyles } from '@core/mirror/layerFacts';
+import { mirrorFill } from '@core/mirror/paintFields';
+import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
+import { sortedStops } from '@core/paint/fill';
+import { styledSurfaceFill } from '@core/effects/layerStyles';
 import { EXTRUSION_WALL_FALLBACK_FILL } from '@core/scene/extrusion';
-import type { SceneNode } from '@core/types';
 import type { Command } from '@motion/engine-api';
 import {
-  getNodeFaceMaterials,
   nextFaceMaterials,
   DEFAULT_FACE_GAIN,
   type FaceKind,
@@ -61,43 +60,45 @@ const KINDS: ReadonlyArray<{ kind: EditableKind; label: string; hint: string }> 
  * styles are applied the way the renderer applies them: a Colour or Gradient
  * Overlay repaints the front face and every derived face with it.
  */
-function derivedLayerFill(node: SceneNode): string {
-  const paint = readNodeFill(node);
+function derivedLayerFill(nodeId: string, tree: MirrorTree | undefined): string {
+  const paint = mirrorFill(documentMirror(), nodeId);
   const base = paint?.type === 'solid' ? paint.color : paint ? sortedStops(paint.stops)[0]?.color : undefined;
   const hex = typeof base === 'string' && base.startsWith('#') ? base : EXTRUSION_WALL_FALLBACK_FILL;
   // `#rrggbb` only: the picker's swatch carries no alpha, and the front face's
   // opacity is the layer's, not a face's.
-  return styledSurfaceFill(readNodeLayerStyles(node), hex).slice(0, 7);
+  return styledSurfaceFill(mirrorOverlayStyles(tree), hex).slice(0, 7);
 }
 
 /** The layer's overrides after one patch, as the `material/faceMaterials` json write. */
 function faceCommands(nodeId: string, kind: EditableKind, patch: FaceMaterial | null): Command[] {
-  return fieldCommands([nodeId], 'material/faceMaterials', values.json(nextFaceMaterials(getNodeFaceMaterials(nodeId), kind, patch)));
+  return fieldCommands([nodeId], 'material/faceMaterials', values.json(nextFaceMaterials(mirrorFaceMaterials(documentMirror(), nodeId), kind, patch)));
 }
 
 export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // The header and the property tree (`transform/…` extrusion, `material/*`, fill, styles).
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
   // B3z: every write is `material/faceMaterials` (a json layer field, the whole
   // overrides object); a colour drag or a brightness scrub is ONE gesture.
   const e = useEngineEdit();
   const faceSel = useFaceSelectionStore();
   const pickMode = faceSel.enabled;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
+  if (!layer) return null;
 
-  const d3 = readNode3D(node);
-  // No extrusion → no faces to address.
-  if (!(d3.extrusionDepth > 0)) return null;
+  // The STATIC Extrusion Depth (as `readNode3D` reads it). No extrusion → no faces to address.
+  const depthRef = trackRefIn(tree, 'extrusionDepth');
+  const extrusionDepth = depthRef ? Math.max(0, storedNumber(depthRef, depthRef.info.value) ?? 0) : 0;
+  if (!(extrusionDepth > 0)) return null;
 
-  const mats = getNodeFaceMaterials(nodeId);
+  const mats = mirrorFaceMaterials(documentMirror(), nodeId);
   // The canvas picker and these rows are two views of one selection: picking a
   // side on canvas highlights its row, and hovering a row previews nothing else.
   const pickedKind = faceSel.nodeId === nodeId ? faceSel.kind : null;
-  const layerFill = derivedLayerFill(node);
+  const layerFill = derivedLayerFill(nodeId, tree);
   const anyOverride = Object.keys(mats).length > 0;
   // With Accepts Lights on, real per-fragment shading replaces the flat gain, so
   // say so rather than showing a knob that does nothing.
-  const lit = readNodeMaterial(node).acceptsLights;
+  const lit = mirrorMaterial(tree).acceptsLights;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

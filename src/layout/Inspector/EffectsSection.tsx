@@ -14,13 +14,11 @@
  */
 
 import { memo } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { getNodeEffects } from '@core/effects/effects';
-import { readPathOps } from '@core/scene/pathOps';
-import { nodeHasCloner } from '@core/scene/clonerExpand';
-import { nodeHasPhysics } from '@core/simulation/physicsBodies';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPathOps } from '@core/mirror/layerFacts';
+import { jsonField } from '@core/mirror/layerFields';
 import { EffectControlsBody } from '@layout/Effects/EffectControlsPanel';
 import { AddEffectMenu } from '@layout/Effects/AddEffectMenu';
 import { useInspectorSelection } from './inspectorSelection';
@@ -41,19 +39,21 @@ const NO_PIXEL_KINDS: ReadonlySet<string> = new Set(['camera', 'light', 'audio',
  */
 export function hasEffectsSection(nodeId: string): boolean {
   try {
-    const node = defaultSceneGraph.getNode(nodeId);
-    if (!node) return false;
-    if (getNodeEffects(nodeId).length > 0) return true;
-    if (readPathOps(node).length > 0 || nodeHasCloner(node) || nodeHasPhysics(node)) return true;
-    return !NO_PIXEL_KINDS.has(readNodeKind(node));
+    const m = documentMirror();
+    const layer = m.layer(nodeId);
+    if (!layer) return false;
+    if (layer.effectCount > 0) return true;
+    const isObject = (v: unknown): boolean => !!v && typeof v === 'object';
+    if (mirrorPathOps(m.tree(nodeId)).length > 0) return true;
+    if (isObject(jsonField(m, nodeId, 'layer/cloner')) || isObject(jsonField(m, nodeId, 'layer/physics'))) return true;
+    return !NO_PIXEL_KINDS.has(uiKindOf(layer) ?? '');
   } catch {
     return false;
   }
 }
 
 function EffectsSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  if (!defaultSceneGraph.getNode(nodeId)) return null;
+  if (!useMirrorLayer(nodeId)) return null;
   return (
     <div className={styles.root}>
       <EffectControlsBody

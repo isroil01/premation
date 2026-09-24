@@ -28,16 +28,17 @@ import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { PickWhip } from '@components/PickWhip';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { edit } from '@core/engine/uiEdits';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { eligibleParents } from '@core/scene/parenting';
-import { is3DEnabled } from '@core/scene/threeD';
-import { ikChainFromTip, IK_DEFAULTS, type IkOptions } from '@core/scene/boneIK3d';
+import { mirrorEligibleParents } from '@core/mirror/parenting';
+import { mirrorIkChainFromTip } from '@core/mirror/layerFacts';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { IK_DEFAULTS, type IkOptions } from '@core/scene/boneIK3d';
 import { poseIk3DAtTarget } from '@core/scene/ikCommands';
 import { ik3DBakeCommands } from './ikEdits';
+import { useCompLayersWatch } from './inspectorMirror';
 import s from './Ik3DSection.module.css';
 
 const DEG = 180 / Math.PI;
@@ -47,9 +48,10 @@ async function bakeChain(chain: string[], target: string, opts: IkOptions): Prom
   const notify = (level: 'success' | 'warning', message: string): void => {
     useUIStore.getState().notify({ level, message, durationMs: level === 'warning' ? 6000 : 4500 });
   };
-  const comp = useCompositionStore.getState();
-  const fps = comp.fps > 0 ? comp.fps : 30;
-  const plan = await ik3DBakeCommands(chain, target, 0, Math.max(0, comp.durationSeconds), fps, opts);
+  // The active composition's rate and length, read at call time.
+  const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  const fps = settingsFps(settings);
+  const plan = await ik3DBakeCommands(chain, target, 0, Math.max(0, settingsDurationSeconds(settings)), fps, opts);
   if (!plan) {
     notify('warning', 'Could not bake — chain or target failed to resolve.');
     return;
@@ -62,26 +64,27 @@ async function bakeChain(chain: string[], target: string, opts: IkOptions): Prom
 
 /** True when this layer can be the tip of a solvable 3D chain. */
 export function isIk3DTip(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !is3DEnabled(node)) return false;
-  return ikChainFromTip(nodeId).length >= 2;
+  const m = documentMirror();
+  if (!m.layer(nodeId)?.switches.threeD) return false;
+  return mirrorIkChainFromTip(m, nodeId).length >= 2;
 }
 
 export function Ik3DSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // Hooks first, unconditionally — this section vanishes for most layers, and
   // a hook under that guard changes the hook count between renders
   // (conditionalHooks.test.tsx).
-  useSceneRevision((st) => st.rev);
+  // The chain walks parent headers; the target list is every layer of the comp.
+  const layer = useCompLayersWatch(nodeId);
   const [targetId, setTargetId] = useState<string | null>(null);
   const [iterations, setIterations] = useState(IK_DEFAULTS.iterations);
   const [dampingDeg, setDampingDeg] = useState(Math.round(IK_DEFAULTS.maxStepRad * DEG));
   const [tolerance, setTolerance] = useState(IK_DEFAULTS.tolerance);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !is3DEnabled(node)) return null;
+  if (!layer || !layer.switches.threeD) return null;
 
   // root→tip; the tip is this layer, so everything before it is a 3D ancestor.
-  const chain = ikChainFromTip(nodeId);
+  const m = documentMirror();
+  const chain = mirrorIkChainFromTip(m, nodeId);
   if (chain.length < 2) return null;
   const ancestors = chain.length - 1;
 
@@ -89,8 +92,8 @@ export function Ik3DSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   // a fixed point, not a pose); `eligibleParents` has already dropped this
   // layer and its descendants.
   const inChain = new Set(chain);
-  const options = eligibleParents(nodeId).filter((o) => !inChain.has(o.id));
-  const target = targetId && defaultSceneGraph.getNode(targetId) ? targetId : null;
+  const options = mirrorEligibleParents(m, nodeId).filter((o) => !inChain.has(o.id));
+  const target = targetId && m.layer(targetId) ? targetId : null;
   const targetName = target ? options.find((o) => o.id === target)?.name ?? 'Target' : 'None';
 
   const opts: IkOptions = {

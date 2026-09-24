@@ -14,16 +14,15 @@ import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { edit } from '@core/engine/uiEdits';
 import { values } from '@core/engine/propRefs';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPolystar } from '@core/mirror/layerFacts';
 import {
-  getNodePolystar,
   polystarParamSpecs,
   polystarPropPath,
-  readNodePolystar,
   type PolystarParam,
   type PolystarType,
 } from '@core/scene/polystar';
@@ -55,7 +54,6 @@ function PolystarRow({
   step?: number;
   unit?: string;
 }): JSX.Element {
-  useSceneRevision((s) => s.rev);
   const path = polystarPropPath(param);
   // B3: `contents/polystar/<param>` through the engine API (one gesture per drag).
   const { animated, display, onChange, toggle, scrub } = useKeyedParam(nodeId, path, label, value);
@@ -72,10 +70,10 @@ function PolystarRow({
 }
 
 export function PolystarSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || readNodeKind(node) !== 'shape') return null;
-  const ps = getNodePolystar(nodeId);
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
+  if (!layer || uiKindOf(layer) !== 'shape') return null;
+  const ps = mirrorPolystar(tree);
   if (!ps) return null;
 
   const typeLabel = TYPES.find((t) => t.id === ps.starType)?.label ?? 'Star';
@@ -127,8 +125,8 @@ export function PolystarSection({ nodeId }: { nodeId: string }): JSX.Element | n
  *  design — the registry predicate must not throw on a node mid-update. */
 export function hasPolystarSection(nodeId: string): boolean {
   try {
-    const node = defaultSceneGraph.getNode(nodeId);
-    return !!node && readNodeKind(node) === 'shape' && readNodePolystar(node) !== null;
+    const m = documentMirror();
+    return uiKindOf(m.layer(nodeId)) === 'shape' && mirrorPolystar(m.tree(nodeId)) !== null;
   } catch {
     return false;
   }

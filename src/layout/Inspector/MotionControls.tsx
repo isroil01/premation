@@ -7,15 +7,12 @@
  * toggle is always available on transformable layers so it can be armed first.
  */
 
-import { useEffect, useReducer } from 'react';
 import { Switch } from '@components/Switch';
-import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { canAutoOrient, readAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
-import { canBe3D, is3DEnabled } from '@core/scene/threeD';
-import { hasPositionAnimation, hasPathTangents } from '@core/motion/motionPath';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorLayerKeyframes, useMirrorTree } from '@hooks/useMirror';
+import type { AutoOrientMode } from '@core/scene/autoOrient';
+import { mirrorAutoOrientMode, mirrorCanAutoOrient, mirrorCanBe3D, mirrorHasPathTangents, mirrorHasTransform } from '@core/mirror/layerFacts';
+import { hasPositionKeys } from '@core/mirror/motionFacts';
 import { edit } from '@core/engine/uiEdits';
 import { motionPathCommands, setLayersSwitch } from './inspectorEdits';
 
@@ -28,35 +25,32 @@ function reshapePath(nodeId: string, mode: 'smooth' | 'straighten'): void {
 import styles from './ParentControl.module.css';
 
 export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
   // Keyframe edits (smooth/straighten, tangent drags, capture) change what the
-  // path buttons can do — re-render on animation changes too.
-  const [, bumpAnim] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    const sub = getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) bumpAnim(); });
-    return () => sub.dispose();
-  }, []);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || nodeId === 'comp_root') return null;
-  if (!node.components.some((c) => c.type === 'Transform')) return null;
+  // path buttons can do — re-render on the layer's keyframes too.
+  useMirrorLayerKeyframes(nodeId);
+  if (!layer || nodeId === 'comp_root') return null;
+  if (!mirrorHasTransform(tree)) return null;
 
-  const autoOrient = readAutoOrientMode(node);
-  const animated = hasPositionAnimation(nodeId);
+  const m = documentMirror();
+  const is3D = layer.switches.threeD;
+  const autoOrient = mirrorAutoOrientMode(layer);
+  const animated = hasPositionKeys(m, nodeId);
   // "Towards Camera" only means anything for a layer that lives in 3D space.
-  const canFaceCamera = canBe3D(node) && is3DEnabled(node);
+  const canFaceCamera = mirrorCanBe3D(layer, tree) && is3D;
   // Along Path is applied only for 2D layers today (buildSnapshot gates on
   // !is3D). Offering it on 3D looked live and changed nothing — same class of
   // bug as cameras/nulls. Keep the option visible if already set so the user
   // can switch Off / Towards Camera.
-  const showAlongPath = !is3DEnabled(node) || autoOrient === 'path';
+  const showAlongPath = !is3D || autoOrient === 'path';
   // ...and Auto-Orient as a whole only means anything for a kind the drawn-layer
   // loop actually reaches. On a camera, light, null, group or audio layer both
   // readers are skipped before they run, so the dropdown wrote a value nothing
   // consumed. Motion Path below is NOT gated on this: smoothing a camera's
   // position keys is real, it is only the derived ROTATION that is dead.
-  const showAutoOrient = canAutoOrient(node);
-  const transformComp = node.components.find((c) => c.type === 'Transform');
-  const separated = transformComp?.props.separateDimensions === true;
+  const showAutoOrient = mirrorCanAutoOrient(layer, tree);
+  const separated = tree?.nodes.get('transform/position')?.separated === true;
 
   return (
     <>
@@ -77,8 +71,8 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           >
             <option value="off">Off</option>
             {showAlongPath && (
-              <option value="path" title={is3DEnabled(node) ? 'Along Path currently affects 2D layers only' : undefined}>
-                Along Path{is3DEnabled(node) ? ' (2D only)' : ''}
+              <option value="path" title={is3D ? 'Along Path currently affects 2D layers only' : undefined}>
+                Along Path{is3D ? ' (2D only)' : ''}
               </option>
             )}
             {/* AE's per-layer, opt-in billboard. Hidden for 2D layers because
@@ -105,7 +99,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           <button
             type="button"
             className={styles.trigger}
-            disabled={!animated || !hasPathTangents(nodeId)}
+            disabled={!animated || !mirrorHasPathTangents(m, nodeId)}
             onClick={() => reshapePath(nodeId, 'straighten')}
             title="Remove spatial tangents — straight lines between keyframes"
           >

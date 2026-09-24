@@ -1,16 +1,17 @@
 import { InspectorRow } from './Inspector';
 import { propertyRegistry } from './PropertyRegistry';
+import { useMemo } from 'react';
+import { secondsToFlicks } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack, trackRef as mirrorTrackRef } from '@core/mirror/selection';
+import { colorValueHex } from '@core/mirror/paintFields';
 import { useComponentProp } from '@layout/Inspector/useComponentProp';
 import { stopwatchCommands, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
-import { useSceneRevision } from '@stores/sceneStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { resolveChannelColor } from '@core/effects/effects';
 import { Color } from '@motion/renderer';
 
 
@@ -49,11 +50,10 @@ function PropertyRow({
   const [baseVal, setBaseVal] = useComponentProp(nodeId, componentId, propName);
   const e = useEngineEdit();
   const rawTime = useActiveWorkspace()?.time ?? 0;
-  // Display only: the playhead on this track's keyframe axis (writes take comp time).
-  const time = keyAxisTimeForDisplay(nodeId, rawTime, propName);
-  // Subscribe to the revision so the row re-renders on keyframe/scene changes.
-  useSceneRevision((s) => s.rev);
-  useAnimationRevision();
+  // B4: re-render when this prop's property (info, keys, value) changes in the document mirror.
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  const watchTracks = useMemo(() => [propName, `${propName}_r`], [propName]);
+  useMirrorTrackWatch(watchIds, watchTracks);
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
 
   const Editor = propertyRegistry.get(componentType, propName);
@@ -63,15 +63,16 @@ function PropertyRow({
   let animated = false;
   let displayVal = baseVal;
 
+  // Display only: the value at the playhead (comp time) when animated.
+  const m = documentMirror();
   if (numeric) {
-    animated = defaultAnimation.isAnimated(nodeId, propName);
-    displayVal = animated ? defaultAnimation.sample(nodeId, propName, time) ?? baseVal : baseVal;
+    animated = isTrackAnimated(m, nodeId, propName);
+    displayVal = animated ? readTrack(m, nodeId, propName, rawTime) ?? baseVal : baseVal;
   } else if (isColor) {
-    animated = defaultAnimation.isAnimated(nodeId, `${propName}_r`);
+    animated = isTrackAnimated(m, nodeId, `${propName}_r`);
     if (animated) {
-      displayVal = resolveChannelColor(String(baseVal), (suffix) =>
-        defaultAnimation.sample(nodeId, `${propName}${suffix}`, time),
-      );
+      const colorRef = mirrorTrackRef(m, nodeId, `${propName}_r`);
+      displayVal = (colorRef ? colorValueHex(m.valueAt(nodeId, colorRef.path, secondsToFlicks(rawTime))) : undefined) ?? baseVal;
     }
   }
 
@@ -130,6 +131,8 @@ function PropertyRow({
 }
 
 export function NodeInspector({ nodeId }: { nodeId: string }): JSX.Element {
+  // B4-gap: the raw component list (every component's stored props) — the API addresses properties, not
+  // components; this generic list has no mirror form.
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return <div className={styles.empty}>No node data</div>;
 

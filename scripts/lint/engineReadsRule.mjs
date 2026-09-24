@@ -100,6 +100,19 @@ const PURE_READS = new Set([
   'thinSamples', // core/paint/paintSpace: point thinning
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given
+  // B4 Inspector (checked: arguments only — no singleton, store, controller or engine default on any path).
+  'polystarPropPath', 'polystarParamSpecs', // core/scene/polystar: a track name; the static row table per star type
+  'pathOpPropPath', 'pathOpParamSpecs', // core/scene/pathOps: a track name; the static row table per operator type
+  'overrideKey', 'parseOverrideKey', 'isOverridableProp', 'isValidOverrideValue', // core/scene/compInstanceOverrides: key strings, the static kind table
+  'describeModifier', 'patchModifier', 'defaultModifier', 'instantiateRecipe', // core/animation/modifierStack: over the Modifier(s) given; ids from a counter
+  'defaultStroke', 'normalizeStroke', // core/paint/stroke (and paint/paintStrokes): a default record; normalises the value given
+  'normalizePaintOpOptions', // core/rendering/raster/paintBlend: normalises the value given
+  'solidFill', 'sortedOpacityStops', 'defaultOpacityStops', 'makeOpacityStop', // core/paint/fill: paint / stop-list constructors and sorting
+  'readMatte', // core/effects/matte: parses the stored matte value it is given (every legacy shape)
+  'rampStyleOf', 'fittedSpeed', // core/animation/retimeCommands: easing → ramp style; speed rounding
+  'hasFlag', // core/audio/audioEffects: a flag test on the AudioEffect given
+  'thinLevels', // core/audio/ducking: keyframe thinning over the levels given
+  'gateLevels', 'planGate', // core/audio/audioGate: gate curve and keys over the envelope given (time mapping is the caller's)
 ]);
 
 /**

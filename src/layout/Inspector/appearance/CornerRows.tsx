@@ -40,7 +40,7 @@ const RADIUS_TRACKS: ReadonlyArray<string> = ['cornerRadius', ...CORNERS.map(tra
 /** What the rows show: the five radii and the link switch (a path — the track index answers paths too). */
 const WATCHED: ReadonlyArray<string> = [...RADIUS_TRACKS, 'layer/cornersLinked'];
 
-export function CornerRows({ nodeId, styleCompId }: { nodeId: string; styleCompId: string }): JSX.Element | null {
+export function CornerRows({ nodeId }: { nodeId: string }): JSX.Element | null {
   const time = useThrottledTime();
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const e = useEngineEdit();
@@ -53,7 +53,7 @@ export function CornerRows({ nodeId, styleCompId }: { nodeId: string; styleCompI
   // `cornersLinked` reads `true` where a legacy doc derives it from equal
   // corners; the mirror cannot tell absent from default, so read the Style.
   const node = defaultSceneGraph.getNode(nodeId);
-  const props = (node?.components.find((c) => c.id === styleCompId)?.props ?? {}) as Record<string, unknown>;
+  const props = (node?.components.find((c) => c.type === 'Style')?.props ?? {}) as Record<string, unknown>;
   const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
   const cornerRadius = num(props.cornerRadius, 0);
   const radii: Record<Corner, number> = {

@@ -11,19 +11,24 @@
  *     caps, seed…) is the json field `layer/particle`: the whole next config.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ValueField } from '@components/ValueField';
 import { AnimToggle } from './AnimToggle';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeParticle, DEFAULT_PARTICLE_CONFIG, particlePropPath, type ParticleConfig, type ParticleNumericKey } from '@core/particles/particleSim';
-import { defaultAnimation } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import {
+  DEFAULT_PARTICLE_CONFIG,
+  PARTICLE_NUMERIC_KEYS,
+  particlePropPath,
+  type ParticleConfig,
+  type ParticleNumericKey,
+} from '@core/particles/particleSim';
 import { edit } from '@core/engine/uiEdits';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useAssetStore } from '@stores/assetStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { ColorKfRow } from './ColorKfRow';
 import { useEngineEdit } from './useEngineEdit';
 import { useGesture } from '@hooks/useGesture';
@@ -35,22 +40,29 @@ import { runParticleBake } from '@core/simulation/bakeCommands';
 import { BakeDialog } from './BakeDialog';
 import styles from './TransformSection.module.css';
 
+/** The keyframeable numbers the rows draw (mirror watch: info, keys, value). */
+const NUMERIC_TRACKS: readonly string[] = PARTICLE_NUMERIC_KEYS.map(particlePropPath);
+const PARTICLE_PATH = 'layer/particle';
+
 export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  useAnimationRevision();
+  // B4: the layer header, the `layer/particle` json config and the numeric
+  // `layer/particle.<key>` properties, from the document mirror.
+  const layer = useMirrorLayer(nodeId);
+  const stored = useMirrorJson<Partial<ParticleConfig>>(nodeId, PARTICLE_PATH);
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  useMirrorTrackWatch(watchIds, NUMERIC_TRACKS);
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const eng = useEngineEdit();
   const picking = useGesture();
   const [bakeOpen, setBakeOpen] = useState(false);
   // Image assets for the sprite picker — a hook, so it sits above the early return.
+  // B4-gap: an item's media type (a still image vs other footage) — `ItemInfo` has none yet.
   const imageAssets = useAssetStore((s) => s.assets).filter((a) => a.type === 'image');
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const cfg = readNodeParticle(node) ?? DEFAULT_PARTICLE_CONFIG;
-  // DISPLAY only: where to sample an animated param for the playhead (the
-  // layer's keyframe axis). Writes send comp time; the engine converts.
-  const layerT = keyAxisTimeForDisplay(nodeId, time);
+  if (!layer) return null;
+  // The stored config over the defaults (`readNodeParticle`'s rule).
+  const cfg: ParticleConfig = stored && typeof stored === 'object' ? { ...DEFAULT_PARTICLE_CONFIG, ...stored } : DEFAULT_PARTICLE_CONFIG;
+  const m = documentMirror();
 
   /**
    * A non-keyframeable setting: the json field `layer/particle` with that key
@@ -64,9 +76,10 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   const Num = (key: ParticleNumericKey, label: string, unit = '', min?: number, max?: number): JSX.Element => {
     const prop = particlePropPath(key);
-    const animated = defaultAnimation.isAnimated(nodeId, prop);
+    const animated = isTrackAnimated(m, nodeId, prop);
+    // DISPLAY only: an animated param's value at the playhead (comp time).
     const shown = animated
-      ? defaultAnimation.sample(nodeId, prop, layerT) ?? (cfg[key] as number)
+      ? readTrack(m, nodeId, prop, time) ?? (cfg[key] as number)
       : (cfg[key] as number);
     const toggle = (): void => {
       void edit(animated ? `Remove ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], [prop], time));

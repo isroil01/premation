@@ -28,7 +28,9 @@
 import type { Command, PropertyWrite } from '@motion/engine-api';
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTree } from '@hooks/useMirror';
+import { mirrorPrimitive } from '@core/mirror/layerFacts';
 import { getTime } from '@stores/playbackClockStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { values } from '@core/engine/propRefs';
@@ -77,8 +79,7 @@ export function primitiveCommands(nodeId: string, patch: Partial<PrimitiveSpec>,
 /** Does this layer have shape parameters at all? Drives whether the inspector
  *  mounts the section (a mesh primitive; not an extruded cube or a plane). */
 export function hasPrimitiveSection(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return !!node && readNodePrimitive(node) !== null;
+  return mirrorPrimitive(documentMirror().tree(nodeId)) !== null;
 }
 
 type SizeField = 'radius' | 'radiusTop' | 'height' | 'width' | 'depth' | 'tube';
@@ -114,10 +115,8 @@ const HINTS: Record<PrimitiveMeshType, string> = {
 };
 
 export function PrimitiveSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((r) => r.rev);
   const e = useEngineEdit();
-  const node = defaultSceneGraph.getNode(nodeId);
-  const spec = node ? readNodePrimitive(node) : null;
+  const spec = mirrorPrimitive(useMirrorTree(nodeId));
   if (!spec) return null;
 
   const fields = PRIMITIVE_FIELDS[spec.type];

@@ -24,19 +24,21 @@
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { PickWhip } from '@components/PickWhip';
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorEligibleParents, mirrorParentOf } from '@core/mirror/parenting';
 import { parentLayer } from './inspectorEdits';
+import { useCompLayersWatch } from './inspectorMirror';
 import styles from './ParentControl.module.css';
 
 export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || nodeId === 'comp_root') return null;
+  // The options are every layer of this layer's composition (names, parent
+  // chains): wake on the comp's stack, membership and each listed header.
+  const layer = useCompLayersWatch(nodeId);
+  if (!layer || nodeId === 'comp_root') return null;
 
-  const currentParent = parentOfNode(nodeId);
-  const options = eligibleParents(nodeId);
+  const m = documentMirror();
+  const currentParent = mirrorParentOf(m, nodeId);
+  const options = mirrorEligibleParents(m, nodeId);
   const currentName = currentParent
     ? options.find((o) => o.id === currentParent)?.name ?? 'Parent'
     : 'None';

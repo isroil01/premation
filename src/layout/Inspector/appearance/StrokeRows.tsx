@@ -26,11 +26,15 @@
  * the strokes above it; a shortened dash pattern drops its slots' tracks).
  */
 
+import { useMemo } from 'react';
 import type { Command } from '@motion/engine-api';
 import { Icon } from '@components/Icon';
 import { Checkbox } from '@components/Checkbox';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayersWatch } from '@hooks/useMirror';
+import { mirrorStrokeAt, mirrorStrokes } from '@core/mirror/paintFields';
+import { isTrackAnimated } from '@core/mirror/selection';
 import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
 import { convertFill, type FillType } from '@core/paint/fill';
@@ -44,8 +48,6 @@ import {
   type StrokeWave,
 } from '@core/scene/strokeProfile';
 import {
-  getNodeStrokeAt,
-  getNodeStrokes,
   defaultStroke,
   normalizeStroke,
   type Stroke,
@@ -90,7 +92,7 @@ import effStyles from '../../Effects/EffectsPanel.module.css';
 const DEFAULT_RAMP = 0.5;
 const DEFAULT_RAMP_PX = 50;
 function taperPatch(nodeId: string, index: number, patch: Partial<StrokeTaper>): Partial<Stroke> {
-  const stroke = getNodeStrokeAt(nodeId, index);
+  const stroke = mirrorStrokeAt(documentMirror(), nodeId, index);
   const next: StrokeTaper = { ...TAPER_DEFAULTS, ...stroke?.taper, ...patch };
   const ramp = next.lengthUnits === 'pixels' ? DEFAULT_RAMP_PX : DEFAULT_RAMP;
   if (next.startWidth < 1 && next.startLength <= 0 && patch.startLength === undefined) next.startLength = ramp;
@@ -102,7 +104,7 @@ function taperPatch(nodeId: string, index: number, patch: Partial<StrokeTaper>):
 const DEFAULT_WAVELENGTH = 60;
 const DEFAULT_CYCLES = 4;
 function wavePatch(nodeId: string, index: number, patch: Partial<StrokeWave>): Partial<Stroke> {
-  const stroke = getNodeStrokeAt(nodeId, index);
+  const stroke = mirrorStrokeAt(documentMirror(), nodeId, index);
   const next: StrokeWave = { ...WAVE_DEFAULTS, ...stroke?.wave, ...patch };
   if (next.amount !== 0 && next.wavelength <= 0 && patch.wavelength === undefined) {
     next.wavelength = next.units === 'cycles' ? DEFAULT_CYCLES : DEFAULT_WAVELENGTH;
@@ -120,13 +122,15 @@ function waveCommands(index: number, patch: (v: number) => Partial<StrokeWave>) 
 
 /** The enabled stroke at `index`, or nothing — a disabled stroke has no scalar to edit. */
 function enabledStrokeAt(nodeId: string, index: number): Stroke | undefined {
-  const s = getNodeStrokeAt(nodeId, index);
+  const s = mirrorStrokeAt(documentMirror(), nodeId, index);
   return s?.enabled ? s : undefined;
 }
 
 /** The gradient points the stroke SHOWS: stored, or implied by its angle/centre model. */
 function gradientOf(nodeId: string, s: Stroke): StrokeGradientGeometry {
   if (s.gradient) return s.gradient;
+  // B4-gap: the layer's drawn box (a text layer's measured extent) — `readGeometry` sizes every kind; the mirror
+  // carries only a shape's `layer/width|height` fields.
   const node = defaultSceneGraph.getNode(nodeId);
   const geom = node ? readGeometry(node) : null;
   return strokeGradientGeometryFor(s.paint, geom?.width ?? 0, geom?.height ?? 0);
@@ -172,13 +176,13 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
   /** The gradient point / highlight rows: a static write sends the whole point set the stroke shows. */
   const gradientPoint = (field: keyof StrokeGradientGeometry, radialOnly: boolean) =>
     (id: string, v: number): Command[] | null => {
-      const s = getNodeStrokeAt(id, index);
+      const s = mirrorStrokeAt(documentMirror(), id, index);
       const ok = radialOnly ? s?.paint?.type === 'radial' : !!s?.paint && s.paint.type !== 'solid';
       return ok ? strokePatchCommands(id, index, { gradient: { ...gradientOf(id, s!), [field]: v } }) : null;
     };
 
   const addDash = (): void => {
-    const s = getNodeStrokeAt(nodeId, index);
+    const s = mirrorStrokeAt(documentMirror(), nodeId, index);
     if (!s || s.dash.length >= MAX_STROKE_DASH_ENTRIES) return;
     // A new Dash copies the previous dash, a new Gap the dash it follows, so the
     // pattern changes shape only when the new value is edited.
@@ -187,7 +191,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
     update({ dash: [...s.dash, seed] }, 'Add Dash');
   };
   const removeDash = (): void => {
-    const s = getNodeStrokeAt(nodeId, index);
+    const s = mirrorStrokeAt(documentMirror(), nodeId, index);
     if (!s || s.dash.length === 0) return;
     // The slot's keyframes go with it (the engine drops the tracks of the dash
     // slots a pattern loses) — left behind they would bind to the next dash.
@@ -505,11 +509,15 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
 }
 
 export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
-  if (!defaultSceneGraph.getNode(nodeId)) return null;
+  // B4: the stack (`layer/strokes`) and every stroke track's keys — a whole-layer watch.
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  useMirrorLayersWatch(watchIds);
+  const m = documentMirror();
+  if (!m.layer(nodeId)) return null;
 
-  const strokes = getNodeStrokes(nodeId);
-  const primary = getNodeStrokeAt(nodeId, 0);
-  const animatedAt = (i: number): boolean => strokeTrackPathsFor(i).some((p) => defaultAnimation.isAnimated(nodeId, p));
+  const strokes = mirrorStrokes(m, nodeId);
+  const primary = mirrorStrokeAt(m, nodeId, 0);
+  const animatedAt = (i: number): boolean => strokeTrackPathsFor(i).some((p) => isTrackAnimated(m, nodeId, p));
 
   return (
     <>

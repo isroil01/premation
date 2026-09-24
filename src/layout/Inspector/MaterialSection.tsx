@@ -29,12 +29,12 @@ import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { canBe3D, is3DEnabled } from '@core/scene/threeD';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { mirrorCanBe3D, mirrorMaterial } from '@core/mirror/layerFacts';
+import { colorValueHex } from '@core/mirror/paintFields';
 import {
-  readNodeMaterial,
   materialParamsOf,
   type MaterialParams,
 } from '@core/scene/material';
@@ -58,8 +58,9 @@ import s from './MaterialSection.module.css';
 /** Whether this layer has a material at all — the registry's `appliesTo`. */
 export function hasMaterialSection(nodeId: string): boolean {
   if (!nodeId || nodeId === 'comp_root') return false;
-  const node = defaultSceneGraph.getNode(nodeId);
-  return !!node && canBe3D(node) && is3DEnabled(node);
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  return !!layer && layer.switches.threeD && mirrorCanBe3D(layer, m.tree(nodeId));
 }
 
 /* ── The CSS sphere ───────────────────────────────────────────────────────── */
@@ -152,10 +153,9 @@ export function materialSphereCss(p: MaterialParams, baseColor: string): string 
 
 /** The layer's own fill — the colour the preview and the shader both start from. */
 function layerFill(nodeId: string): string {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const c = node?.components.find((x) => x.type === 'Style' || x.type === 'Text');
-  const f = c?.props.fill;
-  return typeof f === 'string' && f.startsWith('#') ? f.slice(0, 7) : '#8a99a8';
+  // `layer/fill`: a shape's fill colour, a text layer's Character colour.
+  const f = colorValueHex(documentMirror().property(nodeId, 'layer/fill')?.value);
+  return f ? f.slice(0, 7) : '#8a99a8';
 }
 
 /* ── Rows ─────────────────────────────────────────────────────────────────── */
@@ -352,7 +352,9 @@ export function MaterialPresetAction({
 }
 
 export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((x) => x.rev);
+  // The header (the 3D switch) and the property tree (`material/*`, `layer/fill`).
+  useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
   const selectedIds = useSelectionStore((x) => x.ids);
   const materials = useMaterialStore((x) => x.materials);
   const addMaterial = useMaterialStore((x) => x.addMaterial);
@@ -361,10 +363,9 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
   const [saving, setSaving] = useState(false);
   const [draftName, setDraftName] = useState('');
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasMaterialSection(nodeId)) return null;
+  if (!hasMaterialSection(nodeId)) return null;
 
-  const material = readNodeMaterial(node);
+  const material = mirrorMaterial(tree);
   const params = materialParamsOf(material);
   const fill = layerFill(nodeId);
   // Built-ins first, then the project's own — subscribed through `materials`
@@ -647,6 +648,7 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           aria-label="Height map asset"
         >
           <option value="">None</option>
+          {/* B4-gap: an item's media type (a still image vs other footage) — `ItemInfo` has none yet. */}
           {useAssetStore.getState().assets.filter((a) => a.type === 'image').map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
