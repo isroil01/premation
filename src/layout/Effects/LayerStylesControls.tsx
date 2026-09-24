@@ -35,13 +35,12 @@ import { useTrackNavigator } from '@layout/Inspector/AnimToggle';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import type { Command } from '@motion/engine-api';
 import { stopwatchCommands, scalarValueCommands, valueCommands } from '@layout/Inspector/inspectorEdits';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useActiveWorkspace, resolveGlobalLight } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import { defaultAnimation } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveMirrorComp, useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack, trackRef, valueNumbersAt } from '@core/mirror/selection';
 import { Color } from '@motion/renderer';
 import { effectPropPath, resolveChannelColor } from '@core/effects/effects';
-import { readPropertyValue } from '@core/inspector/multiSelection';
 import { glassPropPath, type GlassParam } from '@core/effects/glassResolve';
 import {
   getNodeLayerStyles,
@@ -110,12 +109,13 @@ function StyleNum({
   min?: number; max?: number; step?: number; precision?: number; unit?: string;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
-  useSceneRevision((s) => s.rev);
+  // B4: the track's info, keys and value at the playhead from the document mirror.
+  useMirrorTrackWatch([nodeId], path ? [path] : []);
+  const m = documentMirror();
   const e = useEngineEdit();
-  const animated = !!path && defaultAnimation.isAnimated(nodeId, path);
-  // Display read (B4's mirror replaces it), sampled on the layer's keyframe axis.
+  const animated = !!path && isTrackAnimated(m, nodeId, path);
   const display = animated
-    ? (readPropertyValue(nodeId, path!, time) ?? value * trackFactor) / trackFactor
+    ? (readTrack(m, nodeId, path!, time) ?? value * trackFactor) / trackFactor
     : value;
   // `styles/<key>/<param>` (Glass `styles/glass/<param>`) through the engine.
   const onEngine = styleTrackOnEngine(nodeId, path);
@@ -182,15 +182,20 @@ function StyleColor({
   onChange: (hex: string) => void;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
-  useSceneRevision((s) => s.rev);
+  // B4: the colour's info, keys and value at the playhead from the document mirror.
+  useMirrorTrackWatch([nodeId], path ? [`${path}_r`] : []);
+  const m = documentMirror();
   const e = useEngineEdit();
-  const animated = !!path && defaultAnimation.isAnimated(nodeId, `${path}_r`);
+  const animated = !!path && isTrackAnimated(m, nodeId, `${path}_r`);
 
   // Same rule the RENDERER uses — see `resolveChannelColor`. An unanimated
   // channel falls back to the STORED colour's channel; defaulting it to 255 made
-  // the swatch show a colour the render never used. Display read (B4).
+  // the swatch show a colour the render never used.
+  const colorRef = animated ? trackRef(m, nodeId, `${path}_r`) : null;
+  const sampled = colorRef ? valueNumbersAt(m, nodeId, colorRef.path, time) : [];
+  const CH = { _r: 0, _g: 1, _b: 2, _a: 3 } as const;
   const displayed = animated
-    ? resolveChannelColor(value, (s) => readPropertyValue(nodeId, `${path}${s}`, time))
+    ? resolveChannelColor(value, (s) => sampled[CH[s]])
     : value;
   // One colour property `styles/<key>/<param>` (Glass `styles/glass/<param>`) through the engine.
   const onEngine = styleTrackOnEngine(nodeId, path ? `${path}_r` : null);
@@ -238,7 +243,9 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
   const co = ls.colorOverlay;
   const go = ls.gradientOverlay;
   const stk = ls.stroke;
-  const comp = useCompositionStore((s) => ({ a: s.globalLightAngle, alt: s.globalLightAltitude }));
+  // B4: the composition's Global Light from the document mirror.
+  const settings = useActiveMirrorComp()?.settings;
+  const comp = { a: settings?.globalLightAngle, alt: settings?.globalLightAltitude };
   const e = useEngineEdit();
   const setLight = (patch: { globalLightAngle?: number; globalLightAltitude?: number }): void =>
     e.send('Global Light', globalLightCommands(patch));

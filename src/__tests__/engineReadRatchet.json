@@ -1,12 +1,12 @@
 {
   "comment": "B4 ratchet (docs/B4_MIRROR.md). Counts may only go DOWN; lower them with `node scripts/lint/engineReadsReport.mjs --update` after moving reads onto the document mirror.",
-  "total": 1352,
+  "total": 1333,
   "areas": {
     "text": 25,
     "inspector": 338,
     "timeline": 94,
     "viewport/tools": 328,
-    "effects": 36,
+    "effects": 17,
     "layers": 41,
     "comps/assets/dialogs": 82,
     "AI/plugins/commands": 183,
