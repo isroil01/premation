@@ -863,7 +863,15 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
           }
           data->ranges.push_back(std::move(o));
         }
-        if (wallPaint) report("gradient-filled extrusion walls (paint plate)");
+        if (wallPaint) {
+          ExtrudedMeshData::Paint p;
+          p.key = "paint:" + layer.id;
+          p.fillPaint = layer.fillPaint;
+          p.fill = wallBase;
+          p.width = layerW;
+          p.height = layerH;
+          data->paint = std::move(p);
+        }
         if (std::abs(extMat.displacement) > 1e-6 && (extMat.heightMapAssetId || extMat.heightMapSrc)) report("height-map displacement");
         const bool carriesContent = isMedia || hasFrontCap;
         RLayer carrier;

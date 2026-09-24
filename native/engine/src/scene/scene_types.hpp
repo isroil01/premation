@@ -94,6 +94,15 @@ struct ExtrudedMeshData {
   /// Key + vertex / index bytes + index format (ranges left empty; see `ranges`).
   api::RenderExtrudedMesh geometry;
   std::vector<MeshRange3D> ranges;
+  /// The gradient plate the paint-textured wall ranges sample (paint:<id>): the
+  /// layer box filled edge to edge with its fillPaint (absent = none).
+  struct Paint {
+    std::string key;
+    Json fillPaint;
+    std::string fill;
+    double width = 0, height = 0;
+  };
+  std::optional<Paint> paint;
 };
 
 /// RenderLayer — the fields the port carries (see the header note).

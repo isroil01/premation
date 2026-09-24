@@ -166,9 +166,27 @@ void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r) {
       o.color.a = c.a;
       o.gain = src.gain;
       if (src.textured) o.textured = true;
+      if (src.paintTextured && l.extrudedMesh->paint) {  // a gradient wall samples the paint plate
+        o.textured = true;
+        o.texture_key = l.extrudedMesh->paint->key;
+      }
       em.ranges.push_back(std::move(o));
     }
     r.extruded_mesh = std::move(em);
+    // Gradient walls sample UNGRADED plate texels: the colour effects reach them
+    // through the carrier's colour matrix (solid, unbaked carriers only).
+    const bool textured = r.kind == api::RenderableKind::image || r.kind == api::RenderableKind::video ||
+                          r.kind == api::RenderableKind::text;
+    if (!textured && !layer_is_baked(l) && l.extrudedMesh->paint &&
+        std::ranges::any_of(l.extrudedMesh->ranges, [](const MeshRange3D& x) { return x.paintTextured; })) {
+      if (!cm.identity) {
+        api::RenderColorMatrix wm;
+        wm.m.assign(cm.m.begin(), cm.m.end());
+        wm.offset.assign(cm.offset.begin(), cm.offset.end());
+        r.color_matrix = wm;
+      }
+      if (has_lut_effect(l)) r.lut_texture_key = "lut:" + l.id;
+    }
   }
   if (l.castsShadow3d && r.three_d) r.three_d->casts_shadow = true;
   if (l.lighting) {

@@ -363,6 +363,25 @@ void Flattener::feed(const RLayer& l) {
   const double layerScale = std::max({1.0, std::abs(l.scaleX != 0 ? l.scaleX : 1), std::abs(l.scaleY != 0 ? l.scaleY : 1)});
   const double effective = rasterScale_ * layerScale;
   const double tier = tier_for(effective, l.width, l.height);
+  if (l.extrudedMesh && l.extrudedMesh->paint) {
+    // An extrusion's gradient plate: the layer box filled edge to edge with the
+    // fill paint, a plain rect through the path rasteriser (MotionRendererBackend 0a).
+    const ExtrudedMeshData::Paint& p = *l.extrudedMesh->paint;
+    RLayer plate;
+    plate.id = p.key;
+    plate.width = p.width;
+    plate.height = p.height;
+    plate.fill = p.fill;
+    plate.fillPaint = p.fillPaint;
+    TextureRequest r;
+    r.key = p.key;
+    r.kind = TexKind::path;
+    r.spec = layer_json(plate, "path");
+    r.resolutionScale = tier_for(rasterScale_, p.width, p.height);
+    r.padding = raster_padding(plate);
+    r.layerId = l.id;
+    textures_.push_back(std::move(r));
+  }
   if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
     TextureRequest r;
     r.key = "asset:" + l.id;
