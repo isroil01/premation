@@ -16,6 +16,7 @@ import { openModal } from '@stores/modalStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 import type { VersionKind } from '@core/api/client';
 import { openVersionCompare } from './VersionCompareDialog';
+import { restoreVersionAsOneEdit } from './versionRestore';
 import styles from './VersionHistoryPanel.module.css';
 
 const KIND_LABEL: Record<VersionKind, string> = {
@@ -36,7 +37,7 @@ function formatWhen(iso: string): string {
 }
 
 function VersionHistory(): JSX.Element {
-  const { versions, total, limit, offset, status, error, restoringId, load, saveCheckpoint, restore } =
+  const { versions, total, limit, offset, status, error, restoringId, load, saveCheckpoint } =
     useVersionHistoryStore();
   const [label, setLabel] = useState('');
 
@@ -111,7 +112,7 @@ function VersionHistory(): JSX.Element {
                 type="button"
                 className={styles.restore}
                 disabled={isRestoring}
-                onClick={() => void restore(v.id)}
+                onClick={() => void restoreVersionAsOneEdit(v.id)}
               >
                 {isRestoring ? 'Restoring…' : 'Restore'}
               </button>

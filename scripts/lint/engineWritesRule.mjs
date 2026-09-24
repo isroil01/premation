@@ -101,6 +101,7 @@ const NOT_DOCUMENT_MODULES = [
   '@core/cli/', '@core/application/',
   '@core/commands/shortcutOverrides', // keyboard preferences
   '@core/timeline/transportController', // transport (§6), not the document
+  '@core/timeline/timelineView', // transport (§6) + ruler zoom/scroll (editor view state), not the document
   '@core/audio/audioHardware', // device selection
   '@core/tracking/samModelInstall', // model download cache
   '@core/workspace/cameraBookmarks', // viewport view state

@@ -21,7 +21,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { TooltipProvider } from '@components/Tooltip/Tooltip';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useHistoryStore } from '@stores/historyStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
@@ -242,16 +241,22 @@ describe('with nothing selected', () => {
     expect(screen.queryByRole('button', { name: 'Composition settings…' })).not.toBeInTheDocument();
   });
 
-  it('summarises the composition and offers its settings', () => {
+  it('summarises the composition and offers its settings', async () => {
+    // The active comp is made the user's (not pristine), then its settings
+    // are edited through the engine — the summary reads the document mirror.
+    const s = useProjectStore.getState();
+    const compId = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+    expect(compId).toBeDefined();
     act(() => {
-      // The composition store is a view of the ACTIVE comp in the project
-      // store, so the active comp is made the user's (not pristine) and then
-      // edited through that view.
-      const s = useProjectStore.getState();
-      const compId = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
-      expect(compId).toBeDefined();
       useProjectStore.setState({ comps: { ...s.comps, [compId!]: { ...s.comps[compId!]!, pristine: false } } } as never);
-      useCompositionStore.setState({ name: 'Hero comp', width: 1280, height: 720, fps: 24 } as never);
+    });
+    await act(async () => {
+      await h.run({
+        type: 'setCompositionSettings',
+        comp: compId!,
+        patch: { name: 'Hero comp', width: 1280, height: 720, frameRate: { num: 24, den: 1 } },
+      });
+      await engineIdle();
     });
     renderPanel();
     expect(screen.getByText('Hero comp')).toBeInTheDocument();

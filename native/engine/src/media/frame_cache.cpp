@@ -1,6 +1,7 @@
 #include "frame_cache.hpp"
 
 #include <utility>
+#include <vector>
 
 namespace premation::media {
 

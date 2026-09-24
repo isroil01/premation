@@ -247,6 +247,7 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_layertime.cpp
   src/core/handlers_markers.cpp
   src/core/handlers_misc.cpp
+  src/core/handlers_native.cpp
   src/core/handlers_optional.cpp
   src/core/handlers_precompose.cpp
   src/core/handlers_properties.cpp
@@ -255,6 +256,7 @@ set(ENGINE_DOC_SOURCES
   src/core/layer_clone.cpp
   src/core/meta.cpp
   src/core/model.cpp
+  src/core/native_effects.cpp
   src/core/parenting.cpp
   src/core/particle_props.cpp
   src/core/props.cpp
@@ -269,6 +271,31 @@ set(ENGINE_DOC_SOURCES
 )
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
+# ── G1: the native plugin SDK host (src/plugins, GPU-free half) ────────────
+#   engine_plugins   manifest scan, module load (module_ffi), per-call crash
+#                    guard (guard_ffi), the quarantine journal (journal_ffi), the
+#                    worker pool for iterate callbacks, pixel-world conversion,
+#                    and the effect-param wire — registered into the document
+#                    through native_effects (engine_core). The public C ABI is
+#                    ../sdk/include/premation_sdk; the samples are ../sdk/samples.
+#                    Not yet called by premation-engine (G1 in progress).
+find_package(Threads REQUIRED)
+add_library(engine_plugins STATIC
+  src/plugins/host.cpp
+  src/plugins/manifest.cpp
+  src/plugins/workers.cpp
+  src/plugins/world_convert.cpp
+  src/plugins/fx_wire.cpp
+  src/plugins/module_ffi.cpp
+  src/plugins/guard_ffi.cpp
+  src/plugins/journal_ffi.cpp
+)
+target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
+target_link_libraries(engine_plugins PUBLIC engine_core Threads::Threads PRIVATE ${CMAKE_DL_LIBS} motion::options)
+if(MSVC)
+  target_compile_options(engine_plugins PRIVATE /bigobj)
+endif()
+
 # anim.cpp samples keyframes through motion_eval's C++ entry points (eval.hpp,
 # the same code its C ABI wraps) — in-process, so the ABI's copies are skipped.
 target_include_directories(engine_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)
@@ -559,9 +586,19 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/native_scene.cpp
     src/scene/color_settings.cpp
     src/scene/glass_port.cpp
+    src/scene/retime_port.cpp
+    src/scene/extrude_mesh.cpp
+    src/scene/trace_bitmap.cpp
+    src/scene/extrusion_mesh.cpp
+    src/scene/rig_mesh.cpp
+    src/plugins/scene_native_fx.cpp
+    src/plugins/scene_finish.cpp
   )
+  # Not built yet: src/scene/mesh_check.cpp (the premation-scene --mesh-check
+  # parity tool) needs the primitive-mesh producer (primitive_mesh.hpp), which
+  # is not written yet.
   target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
-  target_link_libraries(engine_scene PUBLIC engine_core engine_raster engine_render_graph PRIVATE motion::options)
+  target_link_libraries(engine_scene PUBLIC engine_core engine_plugins engine_raster engine_render_graph PRIVATE motion::options)
   if(WIN32)
     target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)
   endif()

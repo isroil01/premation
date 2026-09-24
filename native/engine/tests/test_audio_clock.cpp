@@ -10,6 +10,7 @@
 // Session) is checked to FAIL — proof the test can see drift.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -100,8 +101,8 @@ DriftResult simulate(double ppm, double fps, double minutes, std::uint32_t seed)
         // Today's Session: frames paced by the wall clock since play.
         const double wall = nextVideo - wallPlayT;
         const auto kw = static_cast<std::int64_t>(std::floor(wall * fps + 1e-9));
-        res.maxFrameDiffAudio = std::max(res.maxFrameDiffAudio, std::llabs(k - heardFrame));
-        res.maxFrameDiffWall = std::max(res.maxFrameDiffWall, std::llabs(kw - heardFrame));
+        res.maxFrameDiffAudio = std::max(res.maxFrameDiffAudio, std::abs(k - heardFrame));
+        res.maxFrameDiffWall = std::max(res.maxFrameDiffWall, std::abs(kw - heardFrame));
         const double e = r.mediaElapsedSec - heardMedia;
         res.minClockErr = std::min(res.minClockErr, e);
         res.maxClockErr = std::max(res.maxClockErr, e);

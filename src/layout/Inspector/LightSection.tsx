@@ -294,8 +294,14 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               // preset was in force.
               sendLook('Set Light Type', {
                 lightType: next,
-                ...(next === 'environment' && !isEnvironmentSky(envPresetRaw) ? { envPreset: DEFAULT_ENVIRONMENT_PRESET } : {}),
-                ...(next === 'environment' && typeof envRotationRaw !== 'number' ? { envRotation: 0 } : {}),
+                // The mirror reads an unset sky / rotation as its default, so
+                // the shown values are written, not only a missing one.
+                ...(next === 'environment'
+                  ? {
+                      envPreset: isEnvironmentSky(envPresetRaw) ? envPresetRaw : DEFAULT_ENVIRONMENT_PRESET,
+                      envRotation: typeof envRotationRaw === 'number' ? envRotationRaw : 0,
+                    }
+                  : {}),
               });
             }}
             aria-label="Light type"

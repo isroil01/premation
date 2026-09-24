@@ -1,7 +1,12 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { PreviewPanel } from '../PreviewPanel';
 import { TooltipProvider } from '@components/Tooltip';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useProjectStore } from '@stores/projectStore';
+import { secondsToFlicks } from '@motion/engine-api';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { audioEngine } from '@core/audio/AudioEngine';
 
@@ -13,14 +18,21 @@ function renderPanel() {
   );
 }
 
+let h: Harness & { engine: LocalEngine };
+
 describe('PreviewPanel', () => {
-  beforeEach(() => {
-    // Setup default composition state
-    useCompositionStore.setState({
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      durationSeconds: 10,
+  beforeEach(async () => {
+    // The active composition, through the engine — the panel reads the mirror.
+    h = await setupAppEngine();
+    const s = useProjectStore.getState();
+    const compId = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+    await act(async () => {
+      await h.run({
+        type: 'setCompositionSettings',
+        comp: compId ?? 'comp_root',
+        patch: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 }, duration: secondsToFlicks(10) },
+      });
+      await engineIdle();
     });
     // Reset quality store
     useRenderQualityStore.setState({
@@ -30,6 +42,11 @@ describe('PreviewPanel', () => {
     });
     // Reset mute state
     audioEngine.setMasterMuted(false);
+  });
+
+  afterEach(async () => {
+    cleanup();
+    await h.dispose();
   });
 
   it('renders timecode HUD, status pill, and composition specs', () => {

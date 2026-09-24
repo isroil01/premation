@@ -36,7 +36,7 @@ import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, propRefForTrack, values } from '@core/engine/propRefs';
 import { compOfLayer, isLayer } from '@core/engine/doc';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { AUDIO_LEVEL_DB_PROP } from '@core/audio/audioParams';
 import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
 import { planDucking, type ApplyDuckingResult, type DuckingParams } from '@core/audio/ducking';
@@ -92,7 +92,7 @@ export async function fadeEdit(nodeIds: readonly string[], side: FadeSide, durat
   for (const id of nodeIds) {
     const ref = levelRef(id);
     if (!ref) continue;
-    const keys = planFadeKeysIn(m, id, side, durationSec, (t) => compToKeyframeTime(id, t, AUDIO_LEVEL_DB_PROP));
+    const keys = planFadeKeysIn(m, id, side, durationSec, (t) => keyAxisTimeForDisplay(id, t, AUDIO_LEVEL_DB_PROP));
     if (keys.length === 0) continue;
     splices.push({ prop: ref, keys: scalarKeys(keys), replace: 'span', axisTrack: AUDIO_LEVEL_DB_PROP });
     before.push(...clearExpressionCommands(ref, [AUDIO_LEVEL_DB_PROP]));

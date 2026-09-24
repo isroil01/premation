@@ -317,6 +317,8 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `jumpToHistory` | control | Undo/redo repeatedly to `position` (History panel). |
 | `beginGesture` / `endGesture` | control | §5. `endGesture{commit:false}` reverts every edit of the gesture (Esc during a drag). |
 | `clearHistory`, `setHistoryLimit` | control | Document unchanged. |
+| `addHistoryCheckpoint` | control | B3z — History ▸ Snapshot: a NAMED entry that changes nothing, a point to jump back to. Clears redo like any entry; `gestureOpen` while a gesture is open. |
+| `restoreDocument` | edit | B3z — replace the whole document with a saved / cloud version (`.motion` JSON) as ONE undoable entry; history is kept, undo brings the document back exactly. Unreadable input is `decode` / `unsupported` and changes nothing. |
 | `newProject`, `openProject`, `revertProject` | io | Replace the document; clear history; the UI receives `documentReset`. |
 | `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). |
 | `collectFiles` | io | Copy project + used files to a folder; document unchanged. |
@@ -380,6 +382,9 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `slipLayers` [c], `slideLayer` [c], `rollEdit` [c] | Slip source under fixed in/out; slide with neighbour trims; roll the cut between two layers. Inverse: previous timing of all touched layers. |
 | `splitLayers` | Original keeps the left part and its id; right parts get new ids (keyframes/markers split). Inverse: delete right parts, restore original out point. |
 | `rippleDeleteLayers` | Delete and close gaps. Inverse: restore layers and shifted timings. |
+| `rippleDeleteRange` | B3z — delete a comp TIME RANGE and close the gap (transcript editing): layers crossing an edge are split there, the parts inside deleted, later unlocked layers move left by the range's length. Inverse: every split, deleted and shifted layer. |
+| `shiftLayerKeyframes` | B3z — move every keyframe a layer owns by a layer-time delta (Stagger / Sequence animation), data tracks included, time remap / speed excluded. Inverse: shift back. |
+| `addTransition`, `setTransition` [c], `removeTransitions` | B3z — a transition on the cut between two layers (kind, whole-frame duration, alignment); refused with the frames the handles lack when a source cannot pay for the overlap. Remove puts each cut back exactly as it was before the transition. Inverse: the previous records and everything they materialised. Event: `transitionsChanged`. |
 | `editWorkArea` | Lift or extract the work area. Inverse: restore every trimmed/split/shifted layer. |
 | `insertGap` | Inverse: shift back. |
 | `timeReverseLayers` | Inverse: reverse again (exact: stretch sign + mirrored keys). |
@@ -425,6 +430,8 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `invokeEffectAction` | A plugin effect's button (param supervision). The plugin's resulting writes are one history entry; inverse is that entry. |
 | `addProperties` | G1 — AE's Add ▸ Property: OPTIONAL properties that exist only once added, under `parent` (`text/animators/<id>/props`): Anchor Point X/Y/Z (Z only on a 3D layer), Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color / Stroke Color (`color`, `strokeColor`) and Font Axis properties (`axis<TAG>`, at most 8 distinct tags per layer — `outOfRange`). A property already present keeps its value. Returns the property paths in input order. Inverse: the animator as it was. |
 | `removeProperties` | G1 — delete optional properties with their keyframes and expressions (a non-optional property: `invalidArgument`; an absent one: `notFound`). Inverse: the properties, keys and expressions back exactly. |
+| `pasteEffects` | B3z — Edit ▸ Paste of copied effects from a captured snapshot (the source may since have changed or gone), and applying a saved effect preset, onto several layers at a stack index. Returns the new groups. Inverse: remove them. |
+| `removeStroke` | B3z — delete Contents ▸ Stroke N of a shape's stroke stack with its tracks and expressions; the strokes above move down one index with their tracks. Inverse: the stack and tracks exactly. |
 
 `setEffectParam` and `setMaskPath` from the plan's §2 sketch are `setProperty`
 on an effect or mask path — one command, one inverse implementation.
@@ -616,6 +623,7 @@ compute.
 | `keyframesChanged` | Full replacement key lists per changed property (empty = no longer animated). |
 | `propertyGroupsChanged` | The new ordered child list under a parent path (group added/removed/moved/renamed/enabled). |
 | `markersChanged` | All markers of one owner. |
+| `transitionsChanged` | Every transition of one composition (full replacement), after a transition command or its undo. |
 | `renderQueueChanged` | All render items. |
 
 Ephemeral (no revision, `fromRevision == toRevision`): `historyChanged`,

@@ -589,29 +589,62 @@ export function GraphEditor({
     const visT0 = Math.max(0, (scrollLeft - 50) / pps);
     const visT1 = Math.min(duration, (scrollLeft + viewportW + 50) / pps);
 
-    for (const { nodeId, prop, color } of tracks) {
-      const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-      if (!kfs || kfs.length === 0) continue;
+    // One dense `sampleProperty` answer per plotted property over the visible
+    // window, about one sample per 2 px (B4: the curve between keys is the
+    // engine's, never re-derived in the UI).
+    const winT1 = Math.max(visT0 + 1e-3, visT1);
+    const winSamples = clamp(Math.ceil(((winT1 - visT0) * pps) / 2) + 1, 2, 4000);
+    const plotted = new Set<string>();
 
-      const toAbs = (layerT: number): number => keyframeToCompTime(nodeId, layerT, prop);
-      // A display READ (B4 keeps these direct) — the sampling axis.
-      const toLayer = (absT: number): number => getRemappedTime(nodeId, absT);
-      const valueAt = (layerT: number): number => defaultAnimation.sample(nodeId, prop, layerT) ?? 0;
+    for (const { nodeId, prop, color } of tracks) {
+      const storedT = storedTimeOf(nodeId);
+      const hit = memberKeysOf(documentMirror(), nodeId, prop, storedT);
+      const kfs = hit?.keys;
+      if (!hit || !kfs || kfs.length === 0) continue;
+      const { ref } = hit;
+
+      const toAbs = (kf: MemberKey): number => kf.tAbs;
+      plotted.add(samplerPropKey(nodeId, ref.path));
+      const answer = sampler.get(
+        {
+          type: 'sampleProperty',
+          prop: { layer: nodeId, path: ref.path },
+          range: { start: secondsToFlicks(visT0), duration: secondsToFlicks(winT1) - secondsToFlicks(visT0) },
+          samples: winSamples,
+          speed: false,
+        },
+        rev,
+      );
+      /** The window's samples of this member, [comp seconds, stored value]. */
+      const dense: Array<[number, number]> = [];
+      if (answer && answer.dimensions > ref.member) {
+        for (let i = 0; i < answer.times.length; i++) {
+          const v = answer.values[i * answer.dimensions + ref.member];
+          if (typeof v === 'number' && Number.isFinite(v)) dense.push([flicksToSeconds(answer.times[i]!), v / ref.factor]);
+        }
+      }
+      /** The dense samples strictly inside (a, b), comp seconds. */
+      const denseIn = (a: number, b: number): Array<[number, number]> => dense.filter(([t]) => t > a + 1e-9 && t < b - 1e-9);
 
       /**
-       * Speed INSIDE segment [a,b] at layer time t — a finite difference that
-       * never straddles a keyframe, so the curve meets each keyframe at the
-       * analytic in/out speed instead of averaging the two segments.
+       * Speed INSIDE segment [a,b] — a finite difference over the segment's own
+       * samples that never straddles a keyframe; the ends take the analytic
+       * out / in speed of the handles, so the curve meets each keyframe there.
        */
-      const speedIn = (a: { t: number; easing?: string }, b: { t: number }, t: number): number => {
-        if (isHoldEasing(a.easing)) return 0;
-        const span = b.t - a.t;
-        if (span <= 0) return 0;
-        const h = Math.min(0.002, span / 8);
-        const t0 = Math.max(a.t, t - h);
-        const t1 = Math.min(b.t, t + h);
-        if (t1 - t0 <= 0) return 0;
-        return Math.abs((valueAt(t1) - valueAt(t0)) / (t1 - t0));
+      const speedSegment = (a: MemberKey, b: MemberKey, aAbs: number, bAbs: number): Array<[number, number]> => {
+        if (isHoldEasing(a.easing)) return [[aAbs, 0], [bAbs, 0]];
+        const dt = b.t - a.t;
+        const bz = effectiveBezier(a);
+        const out: Array<[number, number]> = [[aAbs, dt > 0 ? outgoingSpeed(bz, b.value - a.value, dt) : 0]];
+        const inner = denseIn(aAbs, bAbs);
+        for (let i = 0; i < inner.length; i++) {
+          const p0 = inner[Math.max(0, i - 1)]!;
+          const p1 = inner[Math.min(inner.length - 1, i + 1)]!;
+          const span = p1[0] - p0[0];
+          out.push([inner[i]![0], span > 0 ? Math.abs((p1[1] - p0[1]) / span) : out[out.length - 1]![1]]);
+        }
+        out.push([bAbs, dt > 0 ? incomingSpeed(bz, b.value - a.value, dt) : 0]);
+        return out;
       };
 
       // ── Sample per segment: [comp seconds, plotted value] ──
@@ -619,8 +652,8 @@ export function GraphEditor({
       // freezes, and a frozen ghost measured in pixels would drift the moment
       // the graph was zoomed.
       const samples: [number, number][] = [];
-      const firstAbs = toAbs(kfs[0]!.t);
-      const lastAbs = toAbs(kfs[kfs.length - 1]!.t);
+      const firstAbs = toAbs(kfs[0]!);
+      const lastAbs = toAbs(kfs[kfs.length - 1]!);
 
       // Before the first keyframe: flat (value) / zero (speed).
       if (firstAbs > 0) {
@@ -631,22 +664,18 @@ export function GraphEditor({
       for (let s = 0; s < kfs.length - 1; s++) {
         const a = kfs[s]!;
         const b = kfs[s + 1]!;
-        const aAbs = toAbs(a.t);
-        const bAbs = toAbs(b.t);
+        const aAbs = toAbs(a);
+        const bAbs = toAbs(b);
         if (mode === 'value' && isHoldEasing(a.easing)) {
           samples.push([aAbs, a.value], [bAbs, a.value], [bAbs, b.value]);
           continue;
         }
-        const widthPx = Math.max(1, (bAbs - aAbs) * pps);
-        const visible = bAbs >= visT0 && aAbs <= visT1;
-        const n = visible ? clamp(Math.ceil(widthPx / 2), 2, 600) : 1;
-        for (let i = 0; i <= n; i++) {
-          const f = i / n;
-          const tAbs = aAbs + (bAbs - aAbs) * f;
-          const tl = toLayer(tAbs);
-          const v = mode === 'speed' ? speedIn(a, b, tl) : valueAt(tl);
-          samples.push([tAbs, v]);
+        if (mode === 'speed') {
+          samples.push(...speedSegment(a, b, aAbs, bAbs));
+          continue;
         }
+        // Offscreen segments (and a window not sampled yet) get their ends only.
+        samples.push([aAbs, a.value], ...denseIn(aAbs, bAbs), [bAbs, b.value]);
       }
 
       if (lastAbs < duration) {
@@ -725,7 +754,7 @@ export function GraphEditor({
           prop,
           index: i,
           t: kf.t,
-          tAbs: toAbs(kf.t),
+          tAbs: toAbs(kf),
           value: kf.value,
           plotted,
           y: valueToY(plotted, minV, maxV, INNER_H),
@@ -745,9 +774,10 @@ export function GraphEditor({
 
       paths.push({ color, d, samples, keyframes, prop, nodeId, minV, maxV });
     }
+    sampler.retain(plotted);
     return paths;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tracks, duration, pps, INNER_H, rev, mode, scrollLeft, viewportW, refitTick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `rev` (mirror watch) and `samplesTick` (a curve answer landed) drive the re-sample
+  }, [tracks, duration, pps, INNER_H, rev, samplesTick, mode, scrollLeft, viewportW, refitTick]);
 
   /**
    * Every keyframe a Shift-drag box has caught — diamonds, plus the focused
@@ -1008,13 +1038,13 @@ export function GraphEditor({
       // not moving with it, in comp time (the API moves keys in comp time).
       const moving = new Set(group.map((m) => `${m.nodeId}|${m.prop}|${m.startT}`));
       const neighbours = group.map((m) => {
-        const kfs = defaultAnimation.getTrackKeyframes(m.nodeId, m.prop) ?? [];
+        const kfs = trackKeys(m.nodeId, m.prop) ?? [];
         const fixed = kfs.filter((k) => !moving.has(`${m.nodeId}|${m.prop}|${k.t}`));
         const prev = [...fixed].reverse().find((k) => k.t < m.startT);
         const next = fixed.find((k) => k.t > m.startT);
         return {
-          ...(prev ? { prev: keyframeToCompTime(m.nodeId, prev.t, m.prop) } : {}),
-          ...(next ? { next: keyframeToCompTime(m.nodeId, next.t, m.prop) } : {}),
+          ...(prev ? { prev: prev.tAbs } : {}),
+          ...(next ? { next: next.tAbs } : {}),
         };
       });
       const gesture = new GestureSession('Move Keyframe');
@@ -1088,7 +1118,7 @@ export function GraphEditor({
       // dimension's ease (`KeyframePatch.dim`).
       const gesture = new GestureSession('Edit Curve');
       // The keys a handle drag can touch: this one and its two neighbours.
-      const kfs = defaultAnimation.getTrackKeyframes(kf.nodeId, kf.prop) ?? [];
+      const kfs = trackKeys(kf.nodeId, kf.prop) ?? [];
       const i = findKfIndex(kfs, kf.t);
       const near = [kfs[i - 1], kfs[i], kfs[i + 1]].filter((k): k is NonNullable<typeof k> => !!k);
       void memberKeyPatches(kf.nodeId, kf.prop, near.map((k) => ({ t: k.t }))).then((patches) => {
@@ -1324,9 +1354,9 @@ export function GraphEditor({
         const g = group[d.grabIndex]!;
         const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
         const liveT = d.groupCurrentT[d.grabIndex]!;
-        const kfs = defaultAnimation.getTrackKeyframes(g.nodeId, g.prop) ?? [];
+        const kfs = trackKeys(g.nodeId, g.prop) ?? [];
         for (const w of speedWrites(g.nodeId, g.prop, liveT, speed, 'linked')) {
-          const id = kfs.find((k) => k.t === w.t)?.id;
+          const id = kfs.find((k) => k.t === w.t)?.key.id;
           if (id) patches.push({ id, ...memberPatchFields(g.nodeId, g.prop, toMemberKeyWrite(w)), spatialIn: [], spatialOut: [] });
         }
       }
@@ -1340,7 +1370,7 @@ export function GraphEditor({
   // ── Drag: Bézier handle ───────────────────────────────────────
   const moveHandle = useCallback(
     (d: DragState, ex: number, ey: number, e: React.PointerEvent) => {
-      const kfs = defaultAnimation.getTrackKeyframes(d.nodeId, d.prop);
+      const kfs = trackKeys(d.nodeId, d.prop);
       if (!kfs) return;
       const selfIdx = findKfIndex(kfs, d.kfT);
       if (selfIdx < 0) return;
@@ -1355,7 +1385,7 @@ export function GraphEditor({
 
       const hx = d.ox + ex;
       const hy = d.oy + ey;
-      const selfTComp = keyframeToCompTime(d.nodeId, selfKf.t, d.prop);
+      const selfTComp = selfKf.tAbs;
 
       if (d.kind === 'handle-out') {
         const nextKf = kfs[selfIdx + 1];
@@ -1366,7 +1396,7 @@ export function GraphEditor({
 
         // Influence is a FRACTION of the segment — measured in comp pixels so it
         // stays continuous (compToKeyframeTime snaps to the frame grid).
-        const segPx = (keyframeToCompTime(d.nodeId, nextKf.t, d.prop) - selfTComp) * pps;
+        const segPx = (nextKf.tAbs - selfTComp) * pps;
         const influence = segPx <= 0 ? 1 / 3 : clamp((hx - selfTComp * pps) / segPx, MIN_INFLUENCE, MAX_INFLUENCE);
         const curBz = effectiveBezier(selfKf);
 
@@ -1396,7 +1426,7 @@ export function GraphEditor({
         const dtPrev = selfKf.t - prevKf.t;
         const dvPrev = selfKf.value - prevKf.value;
 
-        const segPx = (selfTComp - keyframeToCompTime(d.nodeId, prevKf.t, d.prop)) * pps;
+        const segPx = (selfTComp - prevKf.tAbs) * pps;
         const influence = segPx <= 0 ? 1 / 3 : clamp((selfTComp * pps - hx) / segPx, MIN_INFLUENCE, MAX_INFLUENCE);
         const prevBz = effectiveBezier(prevKf);
 
@@ -1586,7 +1616,7 @@ export function GraphEditor({
     // selection can be roved in one click.
     const inner = targetKfIds.filter((id) => {
       const ref = parseUiKey(id);
-      const kfs = ref ? defaultAnimation.getTrackKeyframes(ref.nodeId, expandKeyframeProp(ref.prop)[0]!) : null;
+      const kfs = ref ? trackKeys(ref.nodeId, expandKeyframeProp(ref.prop)[0]!) : null;
       const i = kfs ? kfs.findIndex((k) => Math.abs(k.t - ref!.t) < 1e-6) : -1;
       return !!kfs && i > 0 && i < kfs.length - 1;
     });
@@ -1918,7 +1948,7 @@ export function GraphEditor({
             <div style={{ width: 62 }}>
               <span className={styles.fieldLabel}>t=</span>
               <ValueField
-                value={keyframeToCompTime(selectedKfData.nodeId, selectedKfData.t, selectedKfData.prop)}
+                value={selectedKfData.tAbs}
                 unit="s"
                 precision={2}
                 min={0}
@@ -1986,7 +2016,7 @@ export function GraphEditor({
                       min={1}
                       max={99}
                       onChange={(newPct: number) => {
-                        const trackKfs = defaultAnimation.getTrackKeyframes(selectedKfData.nodeId, selectedKfData.prop);
+                        const trackKfs = trackKeys(selectedKfData.nodeId, selectedKfData.prop);
                         const idx = trackKfs ? findKfIndex(trackKfs, selectedKfData.t) : -1;
                         if (idx > 0 && trackKfs) {
                           const prevKf = trackKfs[idx - 1]!;
@@ -2028,7 +2058,7 @@ export function GraphEditor({
                       min={1}
                       max={99}
                       onChange={(newPct: number) => {
-                        const trackKfs = defaultAnimation.getTrackKeyframes(selectedKfData.nodeId, selectedKfData.prop);
+                        const trackKfs = trackKeys(selectedKfData.nodeId, selectedKfData.prop);
                         const idx = trackKfs ? findKfIndex(trackKfs, selectedKfData.t) : -1;
                         if (idx >= 0 && trackKfs && idx < trackKfs.length - 1) {
                           const self = trackKfs[idx]!;
@@ -2381,8 +2411,8 @@ function KeyframeNumericStrip({
   const { velocity, hasIncoming, hasOutgoing } = reading;
 
   const write = (patch: Partial<typeof velocity>): void => {
+    // Through the engine: the mirror's change events redraw the graph.
     applyKeyframeVelocity(kf.nodeId, kf.prop, kf.t, { ...velocity, ...patch });
-    bumpScene();
   };
 
   return (

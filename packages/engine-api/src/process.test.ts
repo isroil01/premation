@@ -51,7 +51,7 @@ class FakeHost {
     const from = this.revision;
     this.revision += 1;
     this.emit({ fromRevision: from, toRevision: this.revision, events: [{ type: 'layersRemoved', comp: 'C1', layers: [] }], causedBy: req.seq, origin: 'ui' });
-    return { seq: req.seq, revision: this.revision, outcome: { kind: 'command', value: { type: 'renameLayer' } } };
+    return { seq: req.seq, revision: this.revision, outcome: { kind: 'command', value: { type: 'renameLayer', repaired: 0, captured: 0, nameAlreadyInUse: false } } };
   }
 
   emit(b: EventBatch): void {
@@ -157,7 +157,7 @@ describe('ProcessEngineClient', () => {
       async request(req: Request): Promise<Response> {
         this.noteRevision(this.revision + 1);
         for (const f of this.l) f({ fromRevision: this.revision - 1, toRevision: this.revision, events: [], causedBy: req.seq, origin: 'ui' });
-        return { seq: req.seq, revision: this.revision, outcome: { kind: 'command', value: { type: 'renameLayer' } } };
+        return { seq: req.seq, revision: this.revision, outcome: { kind: 'command', value: { type: 'renameLayer', repaired: 0, captured: 0, nameAlreadyInUse: false } } };
       }
       subscribe(f: EventListener): () => void {
         this.l.add(f);

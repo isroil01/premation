@@ -17,11 +17,14 @@
  *     read as a pile of graphs and buttons.
  */
 
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { MotionEditorPanel } from './MotionEditorPanel';
 import { useSelectionStore } from '@stores/selectionStore';
 import { defaultAnimation } from '@motion/animation';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { secondsToFlicks } from '@motion/engine-api';
 
 const NODE = 'graph-layer';
 
@@ -70,12 +73,33 @@ describe('the panel hosts the shared graph editor', () => {
     expect(screen.queryByLabelText('ease out influence')).toBeNull();
   });
 
-  it('plots the selected layer’s tracks — the panel’s selection reaches it', () => {
-    animate();
-    render(<MotionEditorPanel />);
-    // The legend chip is per plotted curve, so its presence says the layer's
-    // keyframes actually arrived at the shared editor.
-    expect(screen.getByRole('button', { name: 'y' })).toBeTruthy();
+  it('plots the selected layer’s tracks — the panel’s selection reaches it', async () => {
+    // The graph plots the document MIRROR's keys (B4), so the layer and its
+    // keys are made through the app's engine, not written into the store.
+    const h = await setupAppEngine();
+    try {
+      let layer = '';
+      await act(async () => {
+        ({ layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'Graph layer', init: [] }));
+        const prop = { layer, path: 'transform/position' };
+        await h.run({
+          type: 'addKeyframes',
+          keys: [
+            { prop, time: 0, value: { kind: 'vec2', value: { x: 0, y: 0 } }, spatialIn: [], spatialOut: [] },
+            { prop, time: secondsToFlicks(1), value: { kind: 'vec2', value: { x: 0, y: 80 } }, spatialIn: [], spatialOut: [] },
+          ],
+        });
+      });
+      useSelectionStore.getState().set([layer]);
+      render(<MotionEditorPanel />);
+      await act(async () => { await engineIdle(); });
+      // The legend chip is per plotted curve, so its presence says the layer's
+      // keyframes actually arrived at the shared editor.
+      expect(screen.getByRole('button', { name: 'y' })).toBeTruthy();
+    } finally {
+      cleanup();
+      await h.dispose();
+    }
   });
 
   it('still offers the expression editor, on a property you pick', () => {

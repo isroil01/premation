@@ -1,6 +1,7 @@
 #include "host.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -111,10 +112,6 @@ std::uint64_t fnv1a(const std::vector<std::uint8_t>& bytes) {
     h *= 1099511628211ULL;
   }
   return h ^ bytes.size();
-}
-
-std::string version_string(std::uint32_t v) {
-  return std::to_string((v >> 24U) & 0xFFU) + "." + std::to_string((v >> 16U) & 0xFFU) + "." + std::to_string(v & 0xFFFFU);
 }
 
 }  // namespace
@@ -597,7 +594,7 @@ void iterate_item(void* ctx, int thread, int index) {
 PrErr PR_CALL cb_iterate(PrHost* h, std::int32_t count, void* refcon, PrIterateFn fn) {
   if (h == nullptr || fn == nullptr) return PR_ERR_INVALID_CALLBACK;
   if (count <= 0) return PR_ERR_NONE;
-  IterateJob job{h, fn, refcon, count};
+  IterateJob job{.host = h, .fn = fn, .refcon = refcon, .count = count, .err = {}, .faultMutex = {}};
   h->iterateStop.store(false, std::memory_order_relaxed);
   impl_of(h).pool->run(count, &iterate_item, &job, &h->iterateStop);
   if (h->iterateFault) return PR_ERR_INTERNAL;
@@ -640,7 +637,9 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   if (!m.options.journal.empty()) {
     std::string err;
     m.journal = CrashJournal::open(m.options.journal, err);
-    if (!m.journal) PREMATION_LOG(warn, "plugin_journal").kv("error", err);
+    if (!m.journal) {
+      PREMATION_LOG(warn, "plugin_journal").kv("error", err);
+    }
   }
   if (!m.options.onHang) {
     m.options.onHang = [](const std::string& plugin, std::string_view cmd) {
@@ -795,7 +794,7 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
         } call{info_fn, nullptr};
         const Fault f = guarded_call([](void* c) { auto* x = static_cast<InfoCall*>(c); x->out = x->fn(); }, &call);
         info = call.out;
-        std::string why;
+        std::string binaryWhy;
         if (f) {
           p->status = PluginStatus::failed;
           p->error = std::string(to_string(f.kind)) + " in " + PR_PLUGIN_INFO_SYMBOL;
@@ -806,9 +805,9 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
         } else if (std::string(info->plugin_id) != id) {
           p->status = PluginStatus::failed;
           p->error = "the binary says it is '" + std::string(info->plugin_id) + "', the manifest '" + id + "'";
-        } else if (!sdk_compatible(PR_SDK_VERSION_MAJOR_OF(info->sdk_version), PR_SDK_VERSION_MINOR_OF(info->sdk_version), why)) {
+        } else if (!sdk_compatible(PR_SDK_VERSION_MAJOR_OF(info->sdk_version), PR_SDK_VERSION_MINOR_OF(info->sdk_version), binaryWhy)) {
           p->status = PluginStatus::failed;
-          p->error = "binary " + why;
+          p->error = "binary " + binaryWhy;
         } else {
           p->status = PluginStatus::loaded;
           for (const ManifestEffect& me : p->manifest.effects) {

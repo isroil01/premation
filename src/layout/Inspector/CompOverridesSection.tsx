@@ -215,7 +215,7 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
               const overridden = overrides.has(key);
               const value = overridden
                 ? overrides.get(key)!
-                : inheritedValue(source, prop, time);
+                : inheritedValue(m, source, prop, time);
               const kind = OVERRIDE_PROP_KINDS[prop];
               return (
                 <div className={ta.paramRow} key={prop}>
