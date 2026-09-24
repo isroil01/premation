@@ -159,6 +159,8 @@ struct TextLayout {
 using MeasureGlyph = std::function<double(const std::string&, const TextStyle&)>;
 using MeasureRun = std::function<double(const std::string&, const TextStyle&)>;
 using OpticalKern = std::function<double(const std::string&, const TextStyle&, const std::string&, const TextStyle&)>;
+using OpticalKernVertical =
+    std::function<double(const std::string&, const TextStyle&, const std::string&, const TextStyle&, bool upperAlt, bool lowerAlt)>;
 struct Bearings {
   double left = 0, right = 0;
 };
@@ -236,6 +238,9 @@ struct VerticalLayoutOptions {
   bool romanUpright = false;
   std::optional<int> tateChuYokoDigits;
   OpticalKern opticalKern;
+  /// verticalLayout.ts opticalKernVertical: two UPRIGHT units, px added to the
+  /// upper one's advance; `upperAlt` / `lowerAlt` = drawn with the vertical alternates face.
+  OpticalKernVertical opticalKernVertical;
 };
 /// verticalLayout.ts layoutVerticalText (vertical alternates always off — see resolve_vertical_form).
 [[nodiscard]] TextLayout layout_vertical_text(const std::string& text, const TextStyle& base, const MeasureGlyph& measure,

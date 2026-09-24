@@ -489,6 +489,7 @@ add_library(engine_raster_core STATIC
   src/raster/css.cpp
   src/raster/text_unicode.cpp
   src/raster/line_break.cpp
+  src/raster/optical_math.cpp
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
   src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
 )

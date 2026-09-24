@@ -2,9 +2,12 @@
 // adjustments from the glyphs' ink profiles, which the TS measures by drawing
 // each glyph into a 512×256 canvas at 128 px and scanning its alpha. Here the
 // glyphs are drawn with the C++ Canvas2D, so with the Chromium glyph profile the
-// profiles (and so the pair kerns) come out as the TS's.
+// profiles (and so the pair kerns) come out as the TS's. The pure math (and
+// the vertical pair cache) is optical_math.cpp.
 //
-// Horizontal pairs only; the vertical (CJK column) variant is not ported yet.
+// Horizontal pairs, and the vertical variant for upright CJK pairs in a column
+// (opticalKernVerticalPx: a 256×256 canvas, the glyph centred on a 'middle'
+// baseline, profiled top to bottom).
 #pragma once
 
 #include <cstdint>
@@ -15,6 +18,7 @@
 #include <vector>
 
 #include "canvas.hpp"
+#include "optical_math.hpp"
 
 namespace premation::raster {
 
@@ -36,14 +40,13 @@ class OpticalKerner {
   /// faces' font strings at the reference size (REF_EM_PX = 128).
   double kern_px(const std::string& cssA, const std::string& a, double sizeA, const std::string& cssB, const std::string& b,
                  double sizeB);
+  /// opticalKernVerticalPx: px added to the UPPER upright glyph's advance (≤ 0).
+  double kern_vertical_px(const std::string& cssA, const std::string& a, double sizeA, const std::string& cssB,
+                          const std::string& b, double sizeB);
 
-  static constexpr double kRefEmPx = 128;
+  static constexpr double kRefEmPx = optical::kRefEmPx;
 
-  struct InkProfile {
-    double advance = 0;
-    std::vector<double> left, right;
-    double top = 0;
-  };
+  using InkProfile = optical::InkProfile;
 
  private:
   struct Metrics {
@@ -51,12 +54,16 @@ class OpticalKerner {
   };
   const InkProfile* profile(const std::string& css, const std::string& cluster);
   const Metrics& metrics(const std::string& css);
+  std::optional<InkProfile> vertical_raster(const std::string& css, const std::string& cluster);
 
+  CanvasOptions opts_;
   std::unique_ptr<Canvas2D> canvas_;
+  std::unique_ptr<Canvas2D> verticalCanvas_;  // made on the first vertical pair
   Source source_ = Source::raster;
   std::map<std::string, std::optional<InkProfile>> profiles_;
   std::map<std::string, double> pairs_;
   std::map<std::string, Metrics> metrics_;
+  optical::VerticalKerner vertical_;
 };
 
 }  // namespace premation::raster

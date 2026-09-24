@@ -947,6 +947,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
   // the faces at the reference size, exactly as textPaint.ts opticalFaceOf.
   std::optional<OpticalKerner> kerner;
   OpticalKern opticalKern;
+  OpticalKernVertical opticalKernVertical;
   if (optical) {
     kerner.emplace(ctx.options());
     opticalKern = [&](const std::string& a, const TextStyle& sa, const std::string& b, const TextStyle& sb) {
@@ -956,7 +957,17 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
       rb.fontSize = OpticalKerner::kRefEmPx;
       return kerner->kern_px(font_for(ra), a, sa.fontSize, font_for(rb), b, sb.fontSize);
     };
-    if (vertical) unsupported.emplace_back("vertical optical kerning of upright CJK pairs (opticalKernVerticalPx)");
+    // verticalOpticalFaceOf: the vertical alternates face when the glyph draws
+    // with one — never here (no 'vert' alias faces, see resolve_vertical_form),
+    // so the plain face at the reference size, as opticalFaceOf.
+    opticalKernVertical = [&](const std::string& a, const TextStyle& sa, const std::string& b, const TextStyle& sb,
+                              bool /*upperAlt*/, bool /*lowerAlt*/) {
+      TextStyle ra = sa;
+      TextStyle rb = sb;
+      ra.fontSize = OpticalKerner::kRefEmPx;
+      rb.fontSize = OpticalKerner::kRefEmPx;
+      return kerner->kern_vertical_px(font_for(ra), a, sa.fontSize, font_for(rb), b, sb.fontSize);
+    };
   }
 
   ctx.setLetterSpacing(0);
@@ -1015,6 +1026,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
     vo.romanUpright = ex.verticalRomanAlignment;
     vo.tateChuYokoDigits = ex.tateChuYokoDigits;
     vo.opticalKern = opticalKern;
+    vo.opticalKernVertical = opticalKernVertical;
     laid = layout_vertical_text(text, base, measure, vo);
   } else {
     laid = layout_text(text, base, measure, lo);

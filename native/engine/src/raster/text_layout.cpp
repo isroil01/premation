@@ -951,7 +951,9 @@ TextLayout layout_vertical_text(const std::string& text, const TextStyle& base, 
     softEnd.push_back(false);
   }
 
-  if (opts.opticalKern) {
+  // Optical kerning sits between two units of the same column too: sideways
+  // pairs as horizontal pairs, upright pairs from their top / bottom ink.
+  if (opts.opticalKern || opts.opticalKernVertical) {
     for (auto& col : columns) {
       for (std::size_t j = 0; j + 1 < col.size(); ++j) {
         Unit& u = col[j];
@@ -960,7 +962,12 @@ TextLayout layout_vertical_text(const std::string& text, const TextStyle& base, 
         const Member& a = u.members[0];
         const Member& b = v.members[0];
         if (is_js_blank(a.drawn) || is_js_blank(b.drawn)) continue;
-        if (!a.form.upright && !b.form.upright) u.advance += opts.opticalKern(a.drawn, a.style, b.drawn, b.style) * glyph_style_scale(a.style).sx;
+        if (!a.form.upright && !b.form.upright) {
+          if (opts.opticalKern) u.advance += opts.opticalKern(a.drawn, a.style, b.drawn, b.style) * glyph_style_scale(a.style).sx;
+        } else if (a.form.upright && b.form.upright && opts.opticalKernVertical) {
+          u.advance += opts.opticalKernVertical(a.drawn, a.style, b.drawn, b.style, a.form.alternate, b.form.alternate) *
+                       glyph_style_scale(a.style).sy;
+        }
       }
     }
   }
