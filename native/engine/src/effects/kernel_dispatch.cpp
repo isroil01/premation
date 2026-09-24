@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 98> kPorted{
+constexpr std::array<std::string_view, 105> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -25,7 +25,8 @@ constexpr std::array<std::string_view, 98> kPorted{
     "curl-noise",      "roughen-edges",   "scatter",       "ripple",          "magnify",          "warp",
     "page-turn",       "split",           "slant",         "smear",           "rolling-shutter",  "radial-shadow",
     "color-difference-key", "wire-removal", "broadcast-colors", "noise-hls",   "block-load",       "kernel",
-    "3d-glasses",      "fractal",
+    "3d-glasses",      "fractal",         "unmult",        "cc-composite",    "cc-scatterize",    "radial-fast-blur",
+    "cross-blur",      "scale-wipe",      "plastic",
 };
 
 }  // namespace
@@ -297,6 +298,21 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     fractal(img, a("setType", 0), a("centerX", -0.5), a("centerY", 0), a("magnification", 1), a("iterations", 64),
             a("juliaX", -0.7), a("juliaY", 0.27), a("colorPhase", 0), a("colorCycles", 2), rgb("inside", {0, 0, 0}),
             pool);
+  } else if (type == "unmult") {
+    unmult(img, a("threshold", 0), a("boost", 100), pool);
+  } else if (type == "cc-composite") {
+    cc_composite(img, a("opacity", 100), a("blendMode", 0), b("rgbOnly", false), pool);
+  } else if (type == "cc-scatterize") {
+    cc_scatterize(img, a("amount", 0), a("windX", 0), a("windY", 0), a("twist", 0), a("seed", 1), pool);
+  } else if (type == "radial-fast-blur") {
+    radial_fast_blur(img, a("amount", 20), a("centerX", 0), a("centerY", 0), a("mode", 0), pool);
+  } else if (type == "cross-blur") {
+    cross_blur(img, a("radiusX", 15), a("radiusY", 15), b("repeatEdges", true), pool);
+  } else if (type == "scale-wipe") {
+    scale_wipe(img, a("completion", 0), a("stretch", 10), a("direction", 0), a("centerX", 0), a("centerY", 0), pool);
+  } else if (type == "plastic") {
+    plastic(img, a("surfaceBump", 25), a("softness", 5), a("lightAngle", 45), a("lightIntensity", 100),
+            a("specular", 50), pool);
   } else {
     return false;
   }

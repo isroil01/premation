@@ -562,6 +562,7 @@ add_library(engine_effects STATIC
   src/effects/warp_kernels.cpp
   src/effects/ae_distort_kernels.cpp
   src/effects/round_seven_kernels.cpp
+  src/effects/round_six_kernels.cpp
   src/effects/kernel_dispatch.cpp
 )
 target_include_directories(engine_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)

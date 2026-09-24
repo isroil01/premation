@@ -36,6 +36,10 @@ import {
 import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
 import { mosaicData, findEdgesData, embossData, roughenEdgesData, scatterData } from '../stylize';
 import { waveWarpData, turbulentDisplaceData, curlNoiseData } from '../warp';
+import {
+  unmultData, ccCompositeData, compositeBlendMode, ccScatterizeData, radialFastBlurData, radialFastBlurModeOf, crossBlurData,
+  scaleWipeData, plasticData,
+} from '../aeRoundSix';
 import { colorDifferenceKeyData, wireRemovalData, broadcastColorsData, noiseHlsData } from '../aeRoundSevenColor';
 import { blockLoadData, kernelConvolveData, glasses3dData, fractalData } from '../aeRoundSevenStylize';
 import {
@@ -391,6 +395,27 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'fractal':
       data.set(fractalData(w, h, n('setType', 0), n('centerX', -0.5), n('centerY', 0), n('magnification', 1), n('iterations', 64), n('juliaX', -0.7), n('juliaY', 0.27), n('colorPhase', 0), n('colorCycles', 2), n('insideR', 0), n('insideG', 0), n('insideB', 0)));
+      return;
+    case 'unmult':
+      data.set(unmultData(data, w, h, n('threshold', 0), n('boost', 100)));
+      return;
+    case 'cc-composite':
+      data.set(ccCompositeData(data, data, w, h, n('opacity', 100), compositeBlendMode(n('blendMode', 0)), b('rgbOnly', false)));
+      return;
+    case 'cc-scatterize':
+      data.set(ccScatterizeData(data, w, h, n('amount', 0), n('windX', 0), n('windY', 0), n('twist', 0), n('seed', 1)));
+      return;
+    case 'radial-fast-blur':
+      data.set(radialFastBlurData(data, w, h, n('amount', 20), n('centerX', 0), n('centerY', 0), radialFastBlurModeOf(n('mode', 0))));
+      return;
+    case 'cross-blur':
+      data.set(crossBlurData(data, w, h, n('radiusX', 15), n('radiusY', 15), b('repeatEdges', true)));
+      return;
+    case 'scale-wipe':
+      data.set(scaleWipeData(data, w, h, n('completion', 0), n('stretch', 10), n('direction', 0), n('centerX', 0), n('centerY', 0)));
+      return;
+    case 'plastic':
+      data.set(plasticData(data, w, h, n('surfaceBump', 25), n('softness', 5), n('lightAngle', 45), n('lightIntensity', 100), n('specular', 50)));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

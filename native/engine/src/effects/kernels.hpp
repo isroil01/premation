@@ -282,6 +282,20 @@ void fractal(RgbaView img, double set_type, double center_x, double center_y, do
              double julia_x, double julia_y, double color_phase, double color_cycles, const Rgb& inside,
              ThreadPool* pool);
 
+// ── aeRoundSix.ts ───────────────────────────────────────────────────────────
+void unmult(RgbaView img, double threshold, double boost, ThreadPool* pool);
+/// `ccCompositeData(d, d, w, h, opacity, compositeBlendMode(mode), rgbOnly)` — the layer over itself.
+void cc_composite(RgbaView img, double opacity, double blend_mode, bool rgb_only, ThreadPool* pool);
+/// `ccScatterizeData(src, w, h, amount, windX, windY, twist, seed)` — serial (a forward scatter).
+void cc_scatterize(RgbaView img, double amount, double wind_x, double wind_y, double twist, double seed,
+                   ThreadPool* pool);
+void radial_fast_blur(RgbaView img, double amount, double center_x, double center_y, double mode, ThreadPool* pool);
+void cross_blur(RgbaView img, double radius_x, double radius_y, bool repeat_edges, ThreadPool* pool);
+void scale_wipe(RgbaView img, double completion, double stretch, double direction, double center_x, double center_y,
+                ThreadPool* pool);
+void plastic(RgbaView img, double surface_bump, double softness, double light_angle, double light_intensity,
+             double specular, ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

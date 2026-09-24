@@ -100,6 +100,13 @@
     { "effect": "block-load", "args": { "completion": 40, "scans": 4, "blockSize": 64 } },
     { "effect": "kernel", "args": { "k01": -1, "k10": -1, "k11": 5, "k12": -1, "k21": -1 } },
     { "effect": "3d-glasses", "args": { "convergenceOffset": 8, "view": 0 } },
-    { "effect": "fractal", "args": { "iterations": 64, "colorCycles": 2 } }
+    { "effect": "fractal", "args": { "iterations": 64, "colorCycles": 2 } },
+    { "effect": "unmult", "args": { "threshold": 5, "boost": 120 } },
+    { "effect": "cc-composite", "args": { "opacity": 70, "blendMode": 5 } },
+    { "effect": "cc-scatterize", "args": { "amount": 30, "twist": 45, "seed": 3 } },
+    { "effect": "radial-fast-blur", "args": { "amount": 30, "mode": 1 } },
+    { "effect": "cross-blur", "args": { "radiusX": 15, "radiusY": 15 } },
+    { "effect": "scale-wipe", "args": { "completion": 40, "stretch": 10 } },
+    { "effect": "plastic", "args": { "surfaceBump": 25, "softness": 5 } }
   ]
 }
