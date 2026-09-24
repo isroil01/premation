@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "anim.hpp"
+#include "env_light.hpp"
 #include "extrusion_mesh.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
@@ -374,8 +375,48 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
       const Values& av = h_.values3d(n->id);
       const xf::Vec3 wp = node_world_position(*n);
       if (lt.type == "environment") {
-        // environmentLight.ts environmentRigFor / environmentSpecularMap: not ported yet.
-        unported_.emplace_back(n->id, "environment light (image-based rig)");
+        // The SH probe expanded into its derived rig (env_light.cpp): one ambient
+        // floor + up to six axis parallels, riding the ordinary light array.
+        const double envRot = av.get("envRotation").value_or(lt.envRotation);
+        const double envIntensity = av.get("intensity").value_or(lt.intensity);
+        const double cx = comp_.width / 2;
+        const double cy = comp_.height / 2;
+        const double envRefl = av.get("envReflections").value_or(lt.envReflections) / 100;
+        EnvReflect er;
+        er.sky = lt.envPreset;
+        er.intensity = std::max(0.0, (envIntensity / 100) * envRefl);
+        er.rotationDeg = envRot;
+        er.nodeId = n->id;
+        envReflect_ = std::move(er);
+        const std::string sky = lt.envPreset.is_string() ? lt.envPreset.str() : "studio";
+        const auto rig = environment_rig_for(sky, envIntensity, envRot);
+        if (!rig) {
+          unported_.emplace_back(n->id, "environment light from an image (asset:) sky");
+          continue;
+        }
+        for (const EnvRigLight& rl : *rig) {
+          SceneLight s = scene_light_of(lt);
+          s.color = rl.color;
+          s.intensity = rl.intensity;
+          s.shadows = false;
+          s.shadowMap = false;
+          s.falloff = "none";
+          if (rl.ambient) {
+            s.type = "ambient";
+            s.poi = std::nullopt;
+            s.x = cx;
+            s.y = cy;
+            s.z = 0;
+          } else {
+            constexpr double kFar = 100000;
+            s.type = "parallel";
+            s.x = cx - rl.from[0] * kFar;
+            s.y = cy - rl.from[1] * kFar;
+            s.z = 0 - rl.from[2] * kFar;
+            s.poi = std::array<double, 3>{cx, cy, 0};
+          }
+          sceneLights_.push_back(std::move(s));
+        }
         continue;
       }
       SceneLight r = scene_light_of(lt);
@@ -1019,6 +1060,11 @@ std::optional<RLayer> Scene3D::light_layer(const doc::Node& n) {
 }
 
 void Scene3D::finish(std::vector<RLayer>& layers) {
+  // environmentSpecularMap (the prefiltered reflection atlas) is not ported: a frame
+  // that would carry envMap falls back.
+  if (envReflect_ && envReflect_->intensity > 0 && has_world3d(layers)) {
+    unported_.emplace_back(envReflect_->nodeId, "environment reflection map (prefiltered atlas)");
+  }
   const auto findTop = [&layers](const std::string& id) -> std::ptrdiff_t {
     for (std::size_t i = 0; i < layers.size(); ++i) {
       if (layers[i].id == id) return static_cast<std::ptrdiff_t>(i);

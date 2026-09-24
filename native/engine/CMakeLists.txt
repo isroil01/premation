@@ -328,6 +328,7 @@ add_library(engine_scene_core STATIC
   src/scene/primitive_mesh.cpp
   src/scene/camera3d_port.cpp
   src/scene/lights3d.cpp
+  src/scene/env_light.cpp
   src/scene/readers.cpp  # the node readers (Color.fromHex for the light shading)
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)

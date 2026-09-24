@@ -22,6 +22,7 @@ import { dofBlurPx, dofIrisParams, readNodeDof, type DofConfig } from './camera3
 import { planDofCocCorners } from '@core/rendering/dofStrips';
 import { readNodeMaterial } from './material';
 import { readNodeLight, lightFalloffAt, lightAttenuationAt, lightReach } from './light';
+import { presetSh, environmentRigFor } from './environmentLight';
 import { shadeLayer, toShaderLights, lightAim3D, aimToCompAngleDeg, planeNormalOf, type SceneLight } from './lightShading';
 
 const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/threed_parity.json');
@@ -135,7 +136,9 @@ function generate() {
       return { aim: a, compDeg: a ? aimToCompAngleDeg(a) : null };
     }),
   }));
-  return { depths: DEPTHS, distances: DISTANCES, planarInputs: PLANAR, dof, dofNodes, materials, lights, falloff, shading, surfaces: SURFACES, responses: MATERIAL_RESPONSES.map((m) => m ?? null) };
+  const env = (['studio', 'sky', 'sunset', 'bogus'] as const).flatMap((sky) => [[100, 0], [85, 35], [240, -90], [0, 10]].map(([i, r]) => ({ sky, intensity: i, rotation: r, rig: environmentRigFor(sky, i!, r!) })));
+  const sh = (['studio', 'sky', 'sunset'] as const).map((id) => ({ id, sh: Array.from(presetSh(id)) }));
+  return { env, sh, depths: DEPTHS, distances: DISTANCES, planarInputs: PLANAR, dof, dofNodes, materials, lights, falloff, shading, surfaces: SURFACES, responses: MATERIAL_RESPONSES.map((m) => m ?? null) };
 }
 
 test('the C++ 3D parity fixture matches the editor readers and shading', () => {

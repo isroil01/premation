@@ -177,6 +177,7 @@ class Scene3D {
     Json sky;
     double intensity = 0;
     double rotationDeg = 0;
+    std::string nodeId;
   };
   std::optional<EnvReflect> envReflect_;
 

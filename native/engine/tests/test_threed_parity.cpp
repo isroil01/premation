@@ -12,6 +12,7 @@
 #include <string>
 
 #include "camera3d_port.hpp"
+#include "env_light.hpp"
 #include "json.hpp"
 #include "lights3d.hpp"
 
@@ -282,6 +283,33 @@ TEST_CASE("3D parity: per-quad shading and shader lights", "[scene][threed][pari
       const auto deg = sc::aim_to_comp_angle_deg(*a);
       REQUIRE(deg.has_value() == aims[i].at("compDeg").is_number());
       if (deg) CHECK(same(*deg, aims[i].at("compDeg").num()));
+    }
+  }
+}
+
+TEST_CASE("3D parity: environment light rig", "[scene][threed][parity]") {
+  const Json fx = load();
+  for (const Json& row : fx.at("sh").arr()) {
+    const auto sh = sc::preset_sh(row.at("id").str());
+    INFO(row.at("id").str());
+    for (std::size_t k = 0; k < 27; ++k) CHECK(same(static_cast<double>(sh[k]), row.at("sh").arr()[k].num()));
+  }
+  REQUIRE(fx.at("env").arr().size() >= 16);
+  for (const Json& row : fx.at("env").arr()) {
+    INFO(row.at("sky").str() << " " << row.at("intensity").num() << " " << row.at("rotation").num());
+    const auto rig = sc::environment_rig_for(row.at("sky").str(), row.at("intensity").num(), row.at("rotation").num());
+    REQUIRE(rig.has_value());
+    const Json::Array& want = row.at("rig").arr();
+    REQUIRE(rig->size() == want.size());
+    for (std::size_t i = 0; i < want.size(); ++i) {
+      CHECK((*rig)[i].ambient == (want[i].at("kind").str() == "ambient"));
+      CHECK((*rig)[i].color == want[i].at("color").str());
+      CHECK(same((*rig)[i].intensity, want[i].at("intensity").num()));
+      if (!(*rig)[i].ambient) {
+        CHECK(same((*rig)[i].from[0], want[i].at("from").at("x").num()));
+        CHECK(same((*rig)[i].from[1], want[i].at("from").at("y").num()));
+        CHECK(same((*rig)[i].from[2], want[i].at("from").at("z").num()));
+      }
     }
   }
 }
