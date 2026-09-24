@@ -17,7 +17,8 @@
 
 import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { GraphEditor } from './GraphEditor';
-import { defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { defaultAnimation } from '@motion/animation';
+import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { easePresetById } from '@core/animation/easePresets';
@@ -236,7 +237,7 @@ describe('the ease library popover', () => {
     renderGraph();
     pick(2);
     expect([...useKeyframeSelectionStore.getState().ids]).toEqual([
-      makeKeyframeId(NODE, PROP, 2),
+      rowSelectionId(NODE, PROP, 2),
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Ease library' }));
     fireEvent.click(screen.getByRole('button', { name: 'Quint In' }));

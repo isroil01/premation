@@ -12,7 +12,9 @@
  */
 
 import type { EasingKind, BezierHandles, SpatialInterp } from '@motion/animation';
-import { defaultAnimation, parseKeyframeId, expandKeyframeProp, sampleTrack } from '@motion/animation';
+import { defaultAnimation, expandKeyframeProp, sampleTrack } from '@motion/animation';
+import { selectionStoredRefs } from '@core/mirror/keySelection';
+import { documentMirror } from '@stores/documentMirror';
 import { propRefForTrack } from '@core/engine/propRefs';
 import { readStaticPropertyValue } from '@core/inspector/propertyValue';
 import { runAnimEdit } from '@core/animation/animationCommands';
@@ -52,20 +54,13 @@ export function clearClipboard(): void {
 }
 
 /**
- * Copy the specified keyframe IDs into the clipboard.
- *
- * Ids are decoded with `parseKeyframeId` — the codec that made them. This once
- * hand-parsed `nodeId::prop@time`, a format that has never existed
- * (`makeKeyframeId` joins on `::`), so the `@` lookup failed on every id and
- * copy silently collected nothing.
+ * Copy the selected keyframes (keyframe SELECTION ids — engine key ids, see
+ * core/mirror/keySelection.ts) into the clipboard. Each id is decoded by the
+ * selection adapter into the stored positions of the tracks the diamond stands
+ * for, which is what this clipboard reads.
  */
 export function copyKeyframes(ids: ReadonlySet<string>): void {
-  const refs: Array<{ nodeId: string; prop: string; t: number }> = [];
-  for (const id of ids) {
-    const ref = parseKeyframeId(id);
-    if (ref) refs.push(ref);
-  }
-  copyKeyframeRefs(refs);
+  copyKeyframeRefs(selectionStoredRefs(documentMirror(), ids));
 }
 
 /**
@@ -77,7 +72,11 @@ export function copyKeyframeAt(nodeId: string, prop: string, t: number): void {
   copyKeyframeRefs([{ nodeId, prop, t }]);
 }
 
-function copyKeyframeRefs(refs: ReadonlyArray<{ nodeId: string; prop: string; t: number }>): void {
+/**
+ * Copy keys by STORED position (`nodeId`, track, stored `t`) — what a keyframe
+ * selection decodes to (`selectionStoredRefs`).
+ */
+export function copyKeyframeRefs(refs: ReadonlyArray<{ nodeId: string; prop: string; t: number }>): void {
   const entries: ClipboardEntry[] = [];
   const seen = new Set<string>();
   for (const ref of refs) {

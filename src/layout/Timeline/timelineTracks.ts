@@ -30,8 +30,8 @@ import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import type { MirrorTreeLike } from '@core/mirror/trackIndex';
 import type { MirrorComp } from '@stores/documentMirror';
-import { buildPropertyRows, timelineTracksOf } from './buildPropertyRows';
-import { storedKeyIndex, storedKeyOf, uiKeyId } from './keyframeSelectionIds';
+import { buildPropertyRows } from './buildPropertyRows';
+import { selectionKeyId } from '@core/mirror/keySelection';
 import type { TimelineKeyframeRef, TimelineMarker, TimelineModel, TimelineTrack } from './TimelineModel';
 
 /** What the builder reads: a `DocumentMirror` is one. */
@@ -75,16 +75,13 @@ function markerView(m: Marker, offset: number): TimelineMarker {
 function summaryKeys(layerId: string, keys: ReadonlyMap<string, readonly Keyframe[]>, tree: MirrorTreeLike | undefined): TimelineKeyframeRef[] {
   const out: TimelineKeyframeRef[] = [];
   if (keys.size === 0) return out;
-  const stored = storedKeyIndex(layerId);
   for (const [path, list] of keys) {
     const info = tree?.nodes.get(path);
-    // The row name when the key is not the TS engine's: the property's lead track (tree loaded) or its path.
-    const track = info ? timelineTracksOf(info)[0]! : path;
     const text = path === 'text/sourceText' || info?.valueType === 'textDocument' || info?.valueType === 'string';
     for (const kf of list) {
-      const at = storedKeyOf(stored, kf, track);
       out.push({
-        id: uiKeyId(layerId, at.track, at.t) as KeyId,
+        // The whole key, by its engine id (core/mirror/keySelection.ts).
+        id: selectionKeyId(layerId, kf.id) as KeyId,
         nodeId: layerId as NodeId,
         time: flicks(kf.time),
         roving: kf.roving || undefined,

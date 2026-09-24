@@ -32,7 +32,7 @@ import { edit } from '@core/engine/uiEdits';
 import { memberKeysOf, type MemberKey } from '@core/mirror/memberKeys';
 import { documentMirror } from '@stores/documentMirror';
 import { memberKeyPatches, toCubic } from './keyframeEdits';
-import { storedTimeOf } from './keyframeSelectionIds';
+import { storedTimeOf } from '@core/mirror/keySelection';
 import {
   effectiveBezier,
   incomingSpeed,

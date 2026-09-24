@@ -8,7 +8,7 @@
  * linear, which is the exact defect the data-track branch was added to fix.
  */
 
-import { AnimationEngine, makeKeyframeId } from '@motion/animation';
+import { AnimationEngine } from '@motion/animation';
 import { applyEasingToKeyframes } from './keyframeAssistants';
 import { EASE_PRESETS, easePresetById } from './easePresets';
 
@@ -38,7 +38,7 @@ function dataEngine(): AnimationEngine {
 describe('applying a library curve to a SCALAR keyframe', () => {
   it.each(EASE_PRESETS.map((p) => [p.id] as const))('%s writes its handles', (id) => {
     const anim = scalarEngine();
-    applyEasingToKeyframes([makeKeyframeId('n', 'transform.x', 0)], id, anim);
+    applyEasingToKeyframes([{ nodeId: 'n', prop: 'transform.x', t: 0 }], id, anim);
     const kf = anim.getTrackKeyframes('n', 'transform.x')!.find((k) => k.t === 0)!;
     expect(kf.easing).toBe('bezier');
     expect(kf.bezier).toEqual(easePresetById(id)!.bezier);
@@ -52,10 +52,10 @@ describe('applying a library curve to a SCALAR keyframe', () => {
     const x = (t: number) => anim.sample('n', 'transform.x', t)!;
     expect(x(0.5)).toBeCloseTo(50, 5);
 
-    applyEasingToKeyframes([makeKeyframeId('n', 'transform.x', 0)], 'expo-in', anim);
+    applyEasingToKeyframes([{ nodeId: 'n', prop: 'transform.x', t: 0 }], 'expo-in', anim);
     expect(x(0.5)).toBeLessThan(20);
 
-    applyEasingToKeyframes([makeKeyframeId('n', 'transform.x', 0)], 'expo-out', anim);
+    applyEasingToKeyframes([{ nodeId: 'n', prop: 'transform.x', t: 0 }], 'expo-out', anim);
     expect(x(0.5)).toBeGreaterThan(80);
   });
 
@@ -63,7 +63,7 @@ describe('applying a library curve to a SCALAR keyframe', () => {
     // The property that makes Back worth having, asserted end to end: the
     // sampled value must exceed the arriving keyframe's 100 before settling.
     const anim = scalarEngine();
-    applyEasingToKeyframes([makeKeyframeId('n', 'transform.x', 0)], 'back-out', anim);
+    applyEasingToKeyframes([{ nodeId: 'n', prop: 'transform.x', t: 0 }], 'back-out', anim);
     const x = (t: number) => anim.sample('n', 'transform.x', t)!;
     const peak = Math.max(...Array.from({ length: 101 }, (_, i) => x(i / 100)));
     expect(peak).toBeGreaterThan(100);
@@ -73,7 +73,7 @@ describe('applying a library curve to a SCALAR keyframe', () => {
 
   it('a later preset replaces an earlier one rather than compounding', () => {
     const anim = scalarEngine();
-    const id = makeKeyframeId('n', 'transform.x', 0);
+    const id = { nodeId: 'n', prop: 'transform.x', t: 0 };
     applyEasingToKeyframes([id], 'back-out', anim);
     applyEasingToKeyframes([id], 'sine-in', anim);
     const kf = anim.getTrackKeyframes('n', 'transform.x')!.find((k) => k.t === 0)!;
@@ -83,7 +83,7 @@ describe('applying a library curve to a SCALAR keyframe', () => {
   it('the legacy interpolation types still resolve as before', () => {
     // The union grew; the five AE names must not have moved.
     const anim = scalarEngine();
-    const id = makeKeyframeId('n', 'transform.x', 0);
+    const id = { nodeId: 'n', prop: 'transform.x', t: 0 };
     applyEasingToKeyframes([id], 'Linear', anim);
     expect(anim.getTrackKeyframes('n', 'transform.x')!.find((k) => k.t === 0)!.easing).toBe('linear');
     applyEasingToKeyframes([id], 'Hold', anim);
@@ -94,7 +94,7 @@ describe('applying a library curve to a SCALAR keyframe', () => {
 describe('applying a library curve to a DATA keyframe', () => {
   it('writes the handles onto the data track too', () => {
     const anim = dataEngine();
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'quint-out', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'quint-out', anim);
     const kf = anim.getDataTrack('m', PIN)!.keyframes.find((k) => k.t === 0)!;
     expect(kf.easing).toBe('bezier');
     expect(kf.bezier).toEqual(easePresetById('quint-out')!.bezier);
@@ -104,7 +104,7 @@ describe('applying a library curve to a DATA keyframe', () => {
     const anim = dataEngine();
     const x = (t: number) => (anim.sampleData('m', PIN, t) as Array<{ x: number }>)[0]!.x;
     expect(x(0.5)).toBeCloseTo(50, 5);
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'quint-out', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'quint-out', anim);
     expect(x(0.5)).toBeGreaterThan(80);
   });
 });

@@ -1,14 +1,14 @@
 /**
- * Keyframe selection — the set of currently-selected keyframe ids
- * (`nodeId::prop::t`, from `makeKeyframeId`; decode with `parseKeyframeId`
- * rather than splitting by hand). Lifted out of Timeline's local
+ * Keyframe selection — the set of currently-selected keyframe ids: the
+ * ENGINE's keyframe id of each selected diamond, with its layer and (for a
+ * member row) its member index. The codec is `core/mirror/keySelection.ts`;
+ * decode with it rather than splitting by hand. Lifted out of Timeline's local
  * state so other surfaces (the timeline's easing pills, the graph editor) can
  * act on the same selection.
  */
 
 import { create } from 'zustand';
-// The positional selection-id codec lives in ONE place (layout/Timeline/keyframeSelectionIds).
-import { parseUiKey } from '@layout/Timeline/keyframeSelectionIds';
+import { selectionLayerOf } from '@core/mirror/keySelection';
 
 interface KeyframeSelectionStore {
   ids: Set<string>;
@@ -44,8 +44,8 @@ export function pruneKeyframeSelectionToNodes(nodeIds: ReadonlySet<string>): voi
   useKeyframeSelectionStore.setState((s) => {
     const ids = new Set(
       [...s.ids].filter((id) => {
-        const ref = parseUiKey(id);
-        return ref !== null && nodeIds.has(ref.nodeId);
+        const layer = selectionLayerOf(id);
+        return layer !== null && nodeIds.has(layer);
       }),
     );
     return ids.size === s.ids.size ? s : { ids };

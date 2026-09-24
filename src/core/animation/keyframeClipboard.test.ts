@@ -4,11 +4,11 @@
  * came back as polylines.
  */
 
-import { defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { defaultAnimation } from '@motion/animation';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
   clearClipboard,
-  copyKeyframes,
+  copyKeyframeRefs,
   pasteKeyframes,
   hasClipboard,
 } from './keyframeClipboard';
@@ -35,13 +35,13 @@ describe('keyframeClipboard spatial fidelity', () => {
     defaultAnimation.updateKeyframe('src', 'x', 1, { continuous: false });
     defaultAnimation.updateKeyframe('src', 'y', 1, { continuous: false });
 
-    const ids = new Set([
-      makeKeyframeId('src', 'x', 0),
-      makeKeyframeId('src', 'y', 0),
-      makeKeyframeId('src', 'x', 1),
-      makeKeyframeId('src', 'y', 1),
-    ]);
-    copyKeyframes(ids);
+    const ids = [
+      { nodeId: 'src', prop: 'x', t: 0 },
+      { nodeId: 'src', prop: 'y', t: 0 },
+      { nodeId: 'src', prop: 'x', t: 1 },
+      { nodeId: 'src', prop: 'y', t: 1 },
+    ];
+    copyKeyframeRefs(ids);
     expect(hasClipboard()).toBe(true);
 
     pasteKeyframes(['dst'], 2);
@@ -67,7 +67,7 @@ describe('keyframeClipboard spatial fidelity', () => {
     defaultAnimation.setSpatialInterp('src', 'x', 0, 'linear');
     defaultAnimation.setSpatialInterp('src', 'x', 1, 'auto');
 
-    copyKeyframes(new Set([makeKeyframeId('src', 'x', 0), makeKeyframeId('src', 'x', 1)]));
+    copyKeyframeRefs([{ nodeId: 'src', prop: 'x', t: 0 }, { nodeId: 'src', prop: 'x', t: 1 }]);
     pasteKeyframes(['dst'], 2);
 
     const kfs = defaultAnimation.getTrackKeyframes('dst', 'x')!;

@@ -31,7 +31,9 @@ import { getTime as playheadNow } from '@stores/playbackClockStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { clipRippleMenuItems } from '@layout/Timeline/clipEditCommands';
-import { deleteKeyframesUi, easePresetOnKeys, moveKeyframesTo, parseUiKey, pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
+import { deleteKeyframesUi, easePresetOnKeys, moveKeyframesTo, pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
+import { resolveSelectionKey, storedTimeOf } from '@core/mirror/keySelection';
+import { documentMirror } from '@stores/documentMirror';
 import {
   moveBar,
   moveBars,
@@ -67,9 +69,9 @@ import {
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { useGesture } from '@hooks/useGesture';
-import type { Command } from '@motion/engine-api';
+import { flicksToSeconds, type Command } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
-import { getTimelineController, getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
@@ -95,7 +97,6 @@ import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
   defaultAnimation,
-  expandKeyframeProp,
   POSITION_PSEUDO_PROP,
   type EasingKind,
 } from '@motion/animation';
@@ -811,12 +812,12 @@ function EditorShellInner(): JSX.Element {
 
   // ── Keyframe editing (timeline reports intents; the engine does the work) ──
   const handleKeyframeSeek = (kfId: string): void => {
-    const ref = parseUiKey(kfId);
-    if (!ref) return;
-    // `ref.t` is the STORED keyframe time — seek to the comp time where the
-    // renderer applies it (identical only for an untrimmed clip at 0).
-    handleScrub(keyframeToCompTime(ref.nodeId, ref.t, ref.prop));
-    setSelected([ref.nodeId]);
+    // The key from the document mirror (B4): its comp time is where the
+    // renderer applies it.
+    const hit = resolveSelectionKey(documentMirror(), kfId);
+    if (!hit) return;
+    handleScrub(flicksToSeconds(hit.key.time));
+    setSelected([hit.sel.layer]);
   };
   // Through the engine API (B3): one undo entry per release / delete. A key on
   // a member row (Scale X) is its property's whole key (ENGINE_API.md §3.3).
@@ -963,17 +964,13 @@ function EditorShellInner(): JSX.Element {
   };
 
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
-    const ref = parseUiKey(kfId);
-    if (!ref) return;
-
-    // Check if current keyframe has hold or roving
-    // If it's a grouped 'Position' property, we check 'x' as the representative.
-    const checkProp = expandKeyframeProp(ref.prop)[0]!;
-    const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, checkProp);
-    const currentKf = kfs?.find((k) => Math.abs(k.t - ref.t) < 0.001);
+    // The key from the document mirror (B4).
+    const hit = resolveSelectionKey(documentMirror(), kfId);
+    if (!hit) return;
+    const currentKf = hit.key;
     // Scalar tracks spell hold 'step' when the engine writes it; both sample as a hold.
-    const isHold = currentKf?.easing === 'hold' || currentKf?.easing === 'step';
-    const isRoving = currentKf?.roving === true;
+    const isHold = currentKf.easing === 'hold' || currentKf.easing === 'step';
+    const isRoving = currentKf.roving;
 
     // Easing entries act on the whole keyframe selection when the clicked
     // keyframe is part of it (AE behavior), else on just this keyframe.
@@ -1053,7 +1050,9 @@ function EditorShellInner(): JSX.Element {
         id: 'velocity',
         label: 'Keyframe Velocity…',
         onSelect: () => {
-          if (!openKeyframeVelocityDialog(ref.nodeId, ref.prop, ref.t)) {
+          // The dialog shapes the row's member curve(s) on the stored axis (keyframeVelocity).
+          const layer = hit.sel.layer;
+          if (!openKeyframeVelocityDialog(layer, hit.rowProp, storedTimeOf(layer)(hit.key))) {
             useUIStore.getState().notify({
               level: 'info',
               message: 'A lone keyframe has no segment to shape.',

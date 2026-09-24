@@ -13,7 +13,9 @@ import { TIMELINE_PPS_MAX, TIMELINE_PPS_MIN } from '@layout/Timeline/zoomAnchor'
 import { Icon } from '@components/Icon';
 import { SearchField } from '@components/SearchField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { useCompositionStore } from '@stores/compositionStore';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
+import { documentMirror } from '@stores/documentMirror';
+import { settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { Timeline, type TimelineProps } from '@layout/Timeline';
 import { CacheActions } from '@layout/Timeline/CacheActions';
@@ -60,7 +62,6 @@ import { navigatorColumnFor } from './toolbarGeometry';
 import { TimelineToolbarOverflow } from './TimelineToolbarOverflow';
 import { fitTimelineToComposition } from '@layout/Timeline/timelineFit';
 import { useTranscriptStore } from '@layout/Transcript';
-import { activeCompRootId } from '@core/scene/activeComp';
 import styles from './BottomTimeline.module.css';
 
 export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
@@ -198,13 +199,14 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const setTimelineHeatSource = useUIStore((s) => s.setTimelineHeatSource);
   const transcriptLaneOn = useUIStore((s) => s.timelineTranscriptLane);
   const setTimelineTranscriptLane = useUIStore((s) => s.setTimelineTranscriptLane);
-  const hasTranscript = useTranscriptStore((s) => activeCompRootId() in s.byComp);
+  const hasTranscript = useTranscriptStore((s) => (activeCompIdNow() ?? 'comp_root') in s.byComp);
   
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
 
   const fps = props.model.frameRate;
-  const startFrame = useCompositionStore((s) => s.startFrame);
+  // The displayed timecode of frame 0, from the active comp's mirror record (B4).
+  const startFrame = settingsStartFrame(useActiveMirrorComp()?.settings);
   const pps = props.model.pixelsPerSecond;
   const onZoom = props.onZoom;
   const clampZoom = (v: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
@@ -507,9 +509,14 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 tabOrder.map((tid) => {
                   const tab = projectTabs[tid];
                   if (!tab) return null;
-                  const node = defaultSceneGraph.getNode(tab.compositionId);
+                  // The name from the mirror (B4): the composition's, or — a group opened as a tab — the layer's.
+                  const mirror = documentMirror();
                   const label =
-                    comps[tab.compositionId]?.name ?? node?.name ?? tab.title ?? tab.compositionId;
+                    comps[tab.compositionId]?.name
+                    ?? mirror.comp(tab.compositionId)?.settings.name
+                    ?? mirror.layer(tab.compositionId)?.name
+                    ?? tab.title
+                    ?? tab.compositionId;
                   const isActive = tid === activeTabId && focusPath.length === 0;
                   const openCompTabMenu = (e: React.MouseEvent): void => {
                     e.preventDefault();
@@ -591,8 +598,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 })
               )}
               {focusPath.map((id, idx) => {
-                const node = defaultSceneGraph.getNode(id);
-                const name = node?.name || id;
+                const name = documentMirror().layer(id)?.name || id;
                 return (
                   <div key={id} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
                     <span className={styles.tabChevron}>&gt;</span>

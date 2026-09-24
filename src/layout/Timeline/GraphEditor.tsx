@@ -41,7 +41,7 @@
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { clampPps, TIMELINE_PPS_MAX } from './zoomAnchor';
 import { Icon } from '@components/Icon';
-import { expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
+import { EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
 import { easeKindOnKeys, easePresetOnKeys } from './keyframeEdits';
@@ -69,7 +69,7 @@ import {
   type MemberKeyStart,
   type MemberKeyWrite,
 } from './keyframeEdits';
-import { parseUiKey, storedTimeOf, uiKeyId } from './keyframeSelectionIds';
+import { resolveSelectionKey, storedTimeOf, trackSelectionId } from '@core/mirror/keySelection';
 import { isDataProperty } from './buildPropertyRows';
 import { CurveSampler, samplerPropKey } from './graphSamples';
 import { clamp } from '@utils/lang';
@@ -151,6 +151,10 @@ interface KfPoint {
   nodeId: string;
   prop: string;
   index: number;
+  /** The engine's keyframe id. */
+  keyId: string;
+  /** The keyframe SELECTION's id for this diamond (core/mirror/keySelection.ts). */
+  selId: string;
   t: number;
   value: number;
   /** What is plotted on the y axis: the value, or (speed mode) the outgoing speed. */
@@ -177,7 +181,12 @@ interface SelectedKf {
   t: number;
 }
 
-/** Keep keyframeSelectionStore ids valid when a diamond’s time (embedded in the id) changes. */
+/**
+ * Keep a selected diamond selected when its ENGINE id changed under an edit —
+ * a key a pre-API writer left with a positional fallback id is stamped with a
+ * stable one by its first API edit (keyframeEdits `resolveKeysForGesture`).
+ * A key with a stable id keeps it when it moves, and this is a no-op.
+ */
 function rewriteSelectedKeyframeId(oldId: string, newId: string): void {
   if (oldId === newId) return;
   const store = useKeyframeSelectionStore.getState();
@@ -235,6 +244,8 @@ interface DragState {
   keyIds?: Map<number, string>;
   /** Diamond drag: each group member's engine key id (parallel to `group`). */
   groupEids?: Array<string | undefined>;
+  /** Diamond drag: each group member's selection id at pointer-down (parallel to `group`). */
+  groupSelIds?: string[];
   /** Diamond drag: each member's whole key at pointer-down (absolute value writes). */
   startKeys?: Array<MemberKeyStart | null>;
   /** Diamond drag: each member's nearest keys that do NOT move with it (comp seconds). */
@@ -271,6 +282,20 @@ const MAX_INFLUENCE = 0.999;
 
 function trackKey(nodeId: string, prop: string): string {
   return `${nodeId}:${prop}`;
+}
+
+/** A plotted key's position (layer, member track, stored time) — the drag's own bookkeeping, not a selection id. */
+function posKey(nodeId: string, prop: string, t: number): string {
+  return `${nodeId}|${prop}|${t}`;
+}
+
+/** The selection id of the plotted key at (layer, member track, stored time), if it is plotted. */
+function selIdAt(paths: ReadonlyArray<{ nodeId: string; prop: string; keyframes: ReadonlyArray<KfPoint> }>, nodeId: string, prop: string, t: number): string | undefined {
+  for (const p of paths) {
+    if (p.nodeId !== nodeId || p.prop !== prop) continue;
+    return p.keyframes.find((k) => Math.abs(k.t - t) < 1e-9)?.selId;
+  }
+  return undefined;
 }
 
 /**
@@ -596,9 +621,10 @@ export function GraphEditor({
     const winSamples = clamp(Math.ceil(((winT1 - visT0) * pps) / 2) + 1, 2, 4000);
     const plotted = new Set<string>();
 
+    const mirror = documentMirror();
     for (const { nodeId, prop, color } of tracks) {
       const storedT = storedTimeOf(nodeId);
-      const hit = memberKeysOf(documentMirror(), nodeId, prop, storedT);
+      const hit = memberKeysOf(mirror, nodeId, prop, storedT);
       const kfs = hit?.keys;
       if (!hit || !kfs || kfs.length === 0) continue;
       const { ref } = hit;
@@ -753,6 +779,8 @@ export function GraphEditor({
           nodeId,
           prop,
           index: i,
+          keyId: kf.key.id,
+          selId: trackSelectionId(mirror, nodeId, prop, kf.key.id),
           t: kf.t,
           tAbs: toAbs(kf),
           value: kf.value,
@@ -786,7 +814,7 @@ export function GraphEditor({
    */
   const boxSelectIds = useCallback(
     (rect: { x0: number; y0: number; x1: number; y1: number }): Set<string> =>
-      keyframesInBox(sampledPaths, rect, handleGeomRef.current, pps, uiKeyId),
+      keyframesInBox(sampledPaths, rect, handleGeomRef.current, pps, (n, p, t) => selIdAt(sampledPaths, n, p, t) ?? ''),
     [sampledPaths, pps],
   );
 
@@ -992,7 +1020,7 @@ export function GraphEditor({
   const onKfPointerDown = useCallback(
     (e: React.PointerEvent<SVGElement>, kf: KfPoint) => {
       if (e.button !== 0) return;
-      const id = uiKeyId(kf.nodeId, kf.prop, kf.t);
+      const id = kf.selId;
       const next = new Set(selectedKfIds);
       if (e.shiftKey) {
         if (next.has(id)) next.delete(id);
@@ -1008,16 +1036,15 @@ export function GraphEditor({
       // multi-selection when the grab is already in it; otherwise just the grab.
       const idsForGroup = next.has(id) && next.size > 1 ? next : new Set([id]);
       const group: GraphGroupMemberStart[] = [];
+      const groupSelIds: string[] = [];
       for (const sid of idsForGroup) {
-        const ref = parseUiKey(sid);
-        if (!ref) continue;
         let point: KfPoint | undefined;
         for (const p of sampledPaths) {
-          if (p.nodeId !== ref.nodeId || p.prop !== ref.prop) continue;
-          point = p.keyframes.find((k) => Math.abs(k.t - ref.t) < 1e-9);
+          point = p.keyframes.find((k) => k.selId === sid);
           if (point) break;
         }
         if (!point) continue;
+        groupSelIds.push(point.selId);
         group.push({
           nodeId: point.nodeId,
           prop: point.prop,
@@ -1030,6 +1057,7 @@ export function GraphEditor({
       }
       if (group.length === 0) {
         group.push({ nodeId: kf.nodeId, prop: kf.prop, startT: kf.t, startCompT: kf.tAbs, startValue: kf.value, minV: kf.minV, maxV: kf.maxV });
+        groupSelIds.push(kf.selId);
       }
       const grabIndex = Math.max(0, group.findIndex(
         (m) => m.nodeId === kf.nodeId && m.prop === kf.prop && Math.abs(m.startT - kf.t) < 1e-9,
@@ -1067,6 +1095,7 @@ export function GraphEditor({
         group,
         grabIndex,
         groupCurrentT: group.map((m) => m.startT),
+        groupSelIds,
         startKeys: group.map((m) => memberKeyStart(m.nodeId, m.prop, m.startT)),
         neighbours,
       });
@@ -1094,7 +1123,7 @@ export function GraphEditor({
       if (!near) return;
       const kf = path.keyframes.find((k) => Math.abs(k.t - near.t) < 1e-9);
       if (!kf) return;
-      const id = uiKeyId(kf.nodeId, kf.prop, kf.t);
+      const id = kf.selId;
       const next = new Set(selectedKfIds);
       if (e.shiftKey) {
         if (next.has(id)) next.delete(id);
@@ -1219,18 +1248,24 @@ export function GraphEditor({
   // moving key's ABSOLUTE comp time and whole value; a key stops a frame short
   // of the keys that do not move with it (`clampToNeighbours` — the API moves
   // keys in comp time, quantized to frames inside a clip, so a sub-frame gap
-  // could land it ON its neighbour, which would replace it). The selection's
-  // positional ids follow the keys by their engine ids once the move landed.
+  // could land it ON its neighbour, which would replace it). The focused key
+  // follows the keys by their engine ids once the move landed; the selection
+  // names engine keys, so it follows by itself (a stamped key excepted).
   const relocateKeys = useCallback((d: DragState) => {
     if (!d.group || !d.groupEids || !d.groupCurrentT) return;
     for (let i = 0; i < d.group.length; i++) {
       const m = d.group[i]!;
       const eid = d.groupEids[i];
+      const sel = d.groupSelIds?.[i];
+      if (eid && sel) {
+        const now = trackSelectionId(documentMirror(), m.nodeId, m.prop, eid);
+        rewriteSelectedKeyframeId(sel, now);
+        d.groupSelIds![i] = now;
+      }
       const t = eid ? keyTimeById(m.nodeId, m.prop, eid) : null;
       const from = d.groupCurrentT[i]!;
       if (t === null || t === from) continue;
       d.groupCurrentT[i] = t;
-      rewriteSelectedKeyframeId(uiKeyId(m.nodeId, m.prop, from), uiKeyId(m.nodeId, m.prop, t));
       if (i === d.grabIndex) {
         d.kfT = t;
         setSelectedKf({ nodeId: m.nodeId, prop: m.prop, t });
@@ -1246,13 +1281,13 @@ export function GraphEditor({
       const range = Math.max(1e-9, d.maxV - d.minV);
       const pixelsPerUnit = INNER_H / range;
       const group = d.group;
-      const moving = new Set(group.map((m, i) => uiKeyId(m.nodeId, m.prop, d.groupCurrentT![i]!)));
+      const moving = new Set(group.map((m, i) => posKey(m.nodeId, m.prop, d.groupCurrentT![i]!)));
 
       const collectOtherValues = (): number[] => {
         const vals: number[] = [];
         for (const p of sampledPaths) {
           for (const k of p.keyframes) {
-            if (!moving.has(uiKeyId(p.nodeId, p.prop, k.t))) vals.push(k.value);
+            if (!moving.has(posKey(p.nodeId, p.prop, k.t))) vals.push(k.value);
           }
         }
         return vals;
@@ -1268,7 +1303,7 @@ export function GraphEditor({
         const otherTimes: number[] = [];
         for (const p of sampledPaths) {
           for (const k of p.keyframes) {
-            if (!moving.has(uiKeyId(p.nodeId, p.prop, k.t))) otherTimes.push(k.tAbs);
+            if (!moving.has(posKey(p.nodeId, p.prop, k.t))) otherTimes.push(k.tAbs);
           }
         }
         const plan = planGraphGroupTimes({
@@ -1581,11 +1616,12 @@ export function GraphEditor({
    * in the panel (where they only ever touched one keyframe, no matter how
    * many you had selected).
    */
+  const focusedSelId = selectedKfData?.selId;
   const targetKfIds = useMemo(() => {
     const ids = [...selectedKfIds];
     if (ids.length > 0) return ids;
-    return selectedKf ? [uiKeyId(selectedKf.nodeId, selectedKf.prop, selectedKf.t)] : [];
-  }, [selectedKfIds, selectedKf]);
+    return focusedSelId ? [focusedSelId] : [];
+  }, [selectedKfIds, focusedSelId]);
 
   const copyEase = useEaseClipboardStore((s) => s.copyEase);
   const pasteEase = useEaseClipboardStore((s) => s.pasteEase);
@@ -1604,21 +1640,19 @@ export function GraphEditor({
    * Rove across time: the keyframe keeps its VALUE and gives up its TIME, which
    * the engine re-solves for constant speed between the anchors either side.
    *
-   * Because roving MOVES the keyframe, and a keyframe id embeds its time, the
-   * ids in the selection go stale the instant this runs — the diamond would
-   * stay put on screen and lose its selection ring. So the new times are read
-   * back and the selection is rewritten, exactly as a drag does.
+   * Roving MOVES the keyframe. The selection names engine keys, so it follows
+   * them; the focused key (a stored time) is moved to the key's new time, read
+   * back by its engine id, exactly as a drag does.
    */
   const toggleRoving = useCallback(() => {
     if (targetKfIds.length === 0) return;
     const next = !selectedKfData?.roving;
     // Ends have nothing to rove between; skipping them is why a whole-track
     // selection can be roved in one click.
+    const m = documentMirror();
     const inner = targetKfIds.filter((id) => {
-      const ref = parseUiKey(id);
-      const kfs = ref ? trackKeys(ref.nodeId, expandKeyframeProp(ref.prop)[0]!) : null;
-      const i = kfs ? kfs.findIndex((k) => Math.abs(k.t - ref!.t) < 1e-6) : -1;
-      return !!kfs && i > 0 && i < kfs.length - 1;
+      const hit = resolveSelectionKey(m, id);
+      return !!hit && hit.index > 0 && hit.index < hit.keys.length - 1;
     });
     if (inner.length === 0) return;
     void (async () => {
@@ -1626,17 +1660,13 @@ export function GraphEditor({
       if (!ids) return;
       // The engine re-times the roving run (updateKeyframes{roving}); the
       // selection follows each key by its engine id.
+      const focused = selectedKfData ? { selId: selectedKfData.selId, nodeId: selectedKfData.nodeId, prop: selectedKfData.prop } : null;
       await setRovingOnKeys(inner, next);
-      for (const id of inner) {
-        const ref = parseUiKey(id);
-        const eid = ids.get(id);
-        if (!ref || !eid) continue;
-        const t = keyTimeById(ref.nodeId, expandKeyframeProp(ref.prop)[0]!, eid);
-        if (t === null || Math.abs(t - ref.t) < 1e-9) continue;
-        const newId = uiKeyId(ref.nodeId, ref.prop, t);
-        rewriteSelectedKeyframeId(id, newId);
-        setSelectedKf((cur) => (cur && cur.nodeId === ref.nodeId && cur.prop === ref.prop && Math.abs(cur.t - ref.t) < 1e-9 ? { ...cur, t } : cur));
-      }
+      const eid = focused ? ids.get(focused.selId) : undefined;
+      if (!focused || !eid) return;
+      const t = keyTimeById(focused.nodeId, focused.prop, eid);
+      if (t === null) return;
+      setSelectedKf((cur) => (cur && cur.nodeId === focused.nodeId && cur.prop === focused.prop ? { ...cur, t } : cur));
     })();
   }, [targetKfIds, selectedKfData]);
 
@@ -1900,7 +1930,7 @@ export function GraphEditor({
               type="button"
               className={styles.iconBtn}
               aria-label="Copy ease"
-              onClick={() => copyEase(uiKeyId(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t))}
+              onClick={() => copyEase(selectedKfData.selId)}
               title="Copy this keyframe's easing"
             >
               <Icon name="copy" size="sm" />
@@ -1956,18 +1986,17 @@ export function GraphEditor({
                 onChange={(newCompT: number) => {
                   // COMP time, as the diamond is drawn (the API moves keys in
                   // comp time; the engine maps it onto the layer's key axis).
-                  const { nodeId, prop, t: oldT } = selectedKfData;
-                  const uiId = uiKeyId(nodeId, prop, oldT);
+                  const { nodeId, prop, t: oldT, selId: uiId } = selectedKfData;
                   void (async () => {
                     const ids = await resolveKeyIds([uiId]);
                     const eid = ids?.get(uiId);
                     if (!eid) return;
                     const res = await edit('Move Keyframe', { type: 'updateKeyframes', patches: [{ id: eid, time: compTime(Math.max(0, newCompT)), spatialIn: [], spatialOut: [] }] });
                     if (!res.ok) return;
+                    rewriteSelectedKeyframeId(uiId, trackSelectionId(documentMirror(), nodeId, prop, eid));
                     const t = keyTimeById(nodeId, prop, eid);
                     if (t === null || t === oldT) return;
                     setSelectedKf((cur) => (cur ? { ...cur, t } : null));
-                    rewriteSelectedKeyframeId(uiId, uiKeyId(nodeId, prop, t));
                   })();
                 }}
               />
@@ -2240,7 +2269,7 @@ export function GraphEditor({
               {keyframes.map((kf) => {
                 const kx = kf.tAbs * pps;
                 const ky = kf.y;
-                const isSelected = selectedKfIds.has(uiKeyId(kf.nodeId, kf.prop, kf.t));
+                const isSelected = selectedKfIds.has(kf.selId);
                 const inView = kf.tAbs >= visT0 && kf.tAbs <= visT1;
                 const showLabel = inView && (isSelected || showDenseLabels);
                 const hasInJump = mode === 'speed' && kf.inSpeed !== undefined && kf.outSpeed !== undefined
@@ -2424,24 +2453,9 @@ function KeyframeNumericStrip({
           value={kf.value}
           aria-label="Keyframe value"
           onChange={(v) => {
-            const members = expandKeyframeProp(kf.prop);
-            if (members.length === 1) {
-              void commitMemberWrites('Set Keyframe Value', kf.nodeId, members[0]!, [{ t: kf.t, value: v }]);
-              return;
-            }
-            // The merged Position row sets ONE number on every axis (the strip
-            // shows one field) — the whole key's value, every member replaced.
-            const start = memberKeyStart(kf.nodeId, members[0]!, kf.t);
-            if (!start) return;
-            const uiId = uiKeyId(kf.nodeId, kf.prop, kf.t);
-            void resolveKeyIds([uiId]).then((ids) => {
-              const eid = ids?.get(uiId);
-              if (!eid) return;
-              void edit('Set Keyframe Value', {
-                type: 'updateKeyframes',
-                patches: [{ id: eid, value: memberKeyValue(start, new Map(start.members.map((_m, i) => [i, v]))), spatialIn: [], spatialOut: [] }],
-              });
-            });
+            // The graph plots MEMBER tracks (`graphTracksOf`), so the strip's
+            // key is one member's: the value writes that member of the key.
+            void commitMemberWrites('Set Keyframe Value', kf.nodeId, kf.prop, [{ t: kf.t, value: v }]);
           }}
         />
       </label>

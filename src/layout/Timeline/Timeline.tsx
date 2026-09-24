@@ -84,7 +84,7 @@ import { HeatLane } from './HeatLane';
 import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead, installTimelineMarkerCommands } from './markerCommands';
 import { deleteSelectionFromTimeline, installTimelineClipEditCommands, rippleDeleteSelection } from './clipEditCommands';
 import { stickyCategoryFor } from './stickyCategory';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
 import {
   RULER_HEIGHT_DEFAULT,
   TRACK_HEIGHT_DEFAULT,
@@ -106,9 +106,8 @@ import { DragHud, type DragHudState } from './DragHudOverlay';
 import { Minimap, Ruler, generateRulerTicks, rulerProgressWidth } from './RulerStack';
 import { TrackHeader, PropertyHeader, TrackCategoryHeader } from './TrackHeaderColumn';
 import { canResetProperties } from '@core/scene/layerTransformOps';
-import { resetPropertiesEdit, resetTransformEdit } from './resetEdits';
+import { activeCompSize, resetPropertiesEdit, resetTransformEdit } from './resetEdits';
 import { expressionMenuItems } from '@core/animation/expressionCommands';
-import { useCompositionStore } from '@stores/compositionStore';
 import { TrackContent, LaneRow } from './Lanes';
 import { Keyframes } from './KeyframeLayer';
 import { useClipDrag } from './useClipDrag';
@@ -2269,7 +2268,7 @@ function Timeline({
                     // AE's Transform group "Reset": keyframes off, defaults back.
                     onReset={
                       row.categoryKey === 'transform'
-                        ? () => { void resetTransformEdit([row.track.id], useCompositionStore.getState()); }
+                        ? () => { void resetTransformEdit([row.track.id], activeCompSize()); }
                         : undefined
                     }
                   />
@@ -2345,7 +2344,7 @@ function Timeline({
                         label: 'Reset',
                         disabled: !canResetProperties(row.track.id, props),
                         onSelect: () => {
-                          void resetPropertiesEdit(row.track.id, props, useCompositionStore.getState(), `Reset ${row.prop.label}`);
+                          void resetPropertiesEdit(row.track.id, props, activeCompSize(), `Reset ${row.prop.label}`);
                         },
                       },
                       { id: 'expr-sep', separator: true },
@@ -2386,7 +2385,7 @@ function Timeline({
                 }
                 onReset={
                   stickyCategory.row.categoryKey === 'transform'
-                    ? () => { void resetTransformEdit([stickyCategory.row.track.id], useCompositionStore.getState()); }
+                    ? () => { void resetTransformEdit([stickyCategory.row.track.id], activeCompSize()); }
                     : undefined
                 }
               />
@@ -2571,7 +2570,7 @@ function Timeline({
                 the tracks their height. */}
             {transcriptLaneOn ? (
               <TranscriptLane
-                rootId={activeCompRootId()}
+                rootId={activeCompIdNow() ?? 'comp_root'}
                 pps={pps}
                 leftOffset={TIMELINE_LEFT_OFFSET}
                 width={laneWidth}

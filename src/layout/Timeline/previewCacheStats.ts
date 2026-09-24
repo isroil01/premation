@@ -18,7 +18,9 @@ import { viewportFrameCache } from '@core/rendering/frameCache';
 import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { idleCacheSpan, type IdleCacheSpan } from '@core/rendering/idleCacheSpan';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { useCompositionStore } from '@stores/compositionStore';
+import { settingsDurationSeconds, settingsFps, settingsWorkArea } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 
 const MB = 1024 * 1024;
 
@@ -44,14 +46,17 @@ export interface PreviewCacheStats {
  * pump to stay quiet) must not shrink it to a five-second look-ahead.
  */
 export function previewCacheSpan(): IdleCacheSpan | null {
-  const comp = useCompositionStore.getState();
-  const fps = comp.fps || 0;
-  const lastCompFrame = Math.max(0, Math.round((comp.durationSeconds || 0) * fps) - 1);
+  // The active composition's settings from the document mirror (B4). Its work
+  // area is the whole composition when none is set, which spans the same frames.
+  const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  if (!settings) return null;
+  const fps = settingsFps(settings, 0);
+  const lastCompFrame = Math.max(0, Math.round(settingsDurationSeconds(settings, 0) * fps) - 1);
   return idleCacheSpan({
     playhead: 0,
     lastCompFrame,
     fps,
-    workArea: getTimelineController().getWorkArea(),
+    workArea: settingsWorkArea(settings),
     wholeSpan: true,
     aheadSeconds: 0,
   });
@@ -75,6 +80,7 @@ export function previewCacheStats(): PreviewCacheStats {
   return {
     cached,
     total: span ? span.length : 0,
+    // B4-gap: whether a work area is SET — the API's `CompSettings.workArea` is the whole composition when none is.
     workArea: getTimelineController().getWorkArea() !== null,
     ramMb: viewportFrameCache.totalBytesHeld / MB,
     diskMb: disk ? disk.totalBytes / MB : null,

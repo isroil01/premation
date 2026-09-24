@@ -1,4 +1,4 @@
-import { makeKeyframeId } from '@motion/animation';
+import { selectionKeyId } from '@core/mirror/keySelection';
 import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from './keyframeSelectionStore';
 import { prunePropertySelectionToNodes, usePropertySelectionStore } from './propertySelectionStore';
 import { useSelectionStore } from './selectionStore';
@@ -18,8 +18,8 @@ it('keeps independent timeline selections when layer selection changes', () => {
     ],
   });
   useKeyframeSelectionStore.getState().set(new Set([
-    makeKeyframeId('a', 'x', 0),
-    makeKeyframeId('b', 'opacity', 1),
+    selectionKeyId('a', 'k1', 0),
+    selectionKeyId('b', 'k2'),
   ]));
 
   useSelectionStore.getState().set(['b']);
@@ -31,12 +31,12 @@ it('keeps independent timeline selections when layer selection changes', () => {
 it('prunes sub-selections only when their nodes leave the scene', () => {
   useSelectionStore.getState().set(['a']);
   usePropertySelectionStore.getState().select({ nodeId: 'a', prop: 'x' });
-  useKeyframeSelectionStore.getState().set(new Set([makeKeyframeId('a', 'x', 0)]));
+  useKeyframeSelectionStore.getState().set(new Set([selectionKeyId('a', 'k1', 0)]));
 
   usePropertySelectionStore.getState().toggle({ nodeId: 'b', prop: 'opacity' });
   useKeyframeSelectionStore.getState().set(new Set([
-    makeKeyframeId('a', 'x', 0),
-    makeKeyframeId('b', 'opacity', 1),
+    selectionKeyId('a', 'k1', 0),
+    selectionKeyId('b', 'k2'),
   ]));
 
   const remaining = new Set(['b']);
@@ -44,5 +44,5 @@ it('prunes sub-selections only when their nodes leave the scene', () => {
   pruneKeyframeSelectionToNodes(remaining);
 
   expect(usePropertySelectionStore.getState().entries).toEqual([{ nodeId: 'b', prop: 'opacity' }]);
-  expect([...useKeyframeSelectionStore.getState().ids]).toEqual([makeKeyframeId('b', 'opacity', 1)]);
+  expect([...useKeyframeSelectionStore.getState().ids]).toEqual([selectionKeyId('b', 'k2')]);
 });

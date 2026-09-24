@@ -26,8 +26,7 @@
  * (`updateKeyframes`), so a dropped intermediate message loses nothing.
  */
 
-import type { KeyframePatch, ValueType } from '@motion/engine-api';
-import { expandKeyframeProp } from '@motion/animation';
+import { flicksToSeconds, type KeyframePatch, type ValueType } from '@motion/engine-api';
 import { GestureSession } from '@core/engine/uiEdits';
 import { engineIdle } from '@core/engine/engineInstance';
 import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
@@ -36,8 +35,8 @@ import { memberTrackRef } from '@core/mirror/memberKeys';
 import { numbersOfValue, storedNumber } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
-import { keyTimeById, parseUiKey, resolveKeys, uiKeyId, type UiKey } from './keyframeEdits';
-import { mirrorKeyOf, storedTimeOf } from './keyframeSelectionIds';
+import { resolveSelectionKey, selectionIdAt } from '@core/mirror/keySelection';
+import { resolveKeyIds } from './keyframeEdits';
 
 export const NUDGE_BATCH_MS = 300;
 
@@ -134,7 +133,13 @@ export function createNudgeBatcher(
 
 /** One selected key, snapshotted when a burst opens. */
 interface NudgeKey {
-  ui: UiKey;
+  /** The selection id (layer + engine key id + member row). */
+  sel: string;
+  layer: string;
+  /** The member row the selection names, if any (kept when the selection follows the key). */
+  member?: number;
+  /** The API property the key is on. */
+  path: string;
   /** Engine keyframe id. */
   id: string;
   /** Comp time of the key at burst start (seconds). */
@@ -151,30 +156,34 @@ interface NudgeKey {
 }
 
 /** The key a selection id names, as the document MIRROR has it (B4), when the burst opens. */
-function snapshotKey(ui: UiKey): Omit<NudgeKey, 'id'> | null {
+function snapshotKey(sel: string): Omit<NudgeKey, 'id'> | null {
   const m = documentMirror();
-  const hit = mirrorKeyOf(m, ui, storedTimeOf(ui.nodeId));
+  const hit = resolveSelectionKey(m, sel);
   if (!hit) return null;
-  const r = propRefForTrack(ui.nodeId, hit.track);
+  const layer = hit.sel.layer;
+  const r = propRefForTrack(layer, hit.lookup);
   if (!r) return null;
   // The row's own tracks on this property (a merged Position row: x and y; a
   // Scale X row: X alone) move by the value step.
-  const tree = m.tree(ui.nodeId);
+  const tree = m.tree(layer);
   const members: Array<{ prop: string; value: number }> = [];
-  for (const prop of expandKeyframeProp(ui.prop)) {
+  for (const prop of hit.tracks) {
     const ref = memberTrackRef(tree, prop);
-    const value = ref && ref.path === hit.ref.path ? storedNumber(ref, hit.key.key.value) : undefined;
+    const value = ref && ref.path === hit.path ? storedNumber(ref, hit.key.value) : undefined;
     if (value !== undefined) members.push({ prop, value });
   }
   if (members.length === 0) return null;
   return {
-    ui,
-    startCompT: hit.key.tAbs,
+    sel,
+    layer,
+    ...(hit.sel.member !== undefined ? { member: hit.sel.member } : {}),
+    path: hit.path,
+    startCompT: flicksToSeconds(hit.key.time),
     members,
     allMembers: r.members,
     valueType: r.valueType,
-    apiNums: numbersOfValue(hit.key.key.value),
-    otherCompTimes: hit.keys.filter((_k, i) => i !== hit.index).map((k) => k.tAbs),
+    apiNums: numbersOfValue(hit.key.value),
+    otherCompTimes: hit.keys.filter((_k, i) => i !== hit.index).map((k) => flicksToSeconds(k.time)),
   };
 }
 
@@ -205,16 +214,21 @@ function patchFor(k: NudgeKey, total: NudgeDelta): KeyframePatch | null {
 }
 
 /**
- * The selection ids after the engine moved the keys: each key is found by
- * its ENGINE id on its tracks, and renamed to its new position (the selection
- * store's positional format — see keyframeEdits).
+ * The selection after the engine moved the keys. A selection id names the
+ * ENGINE key, so a moved key keeps its id; only a key the engine still named
+ * by a positional fallback id (a pre-API writer's key) is renamed by its
+ * first API edit — it is found again on its property at the time it moved to.
  */
-function reselect(keys: ReadonlyArray<NudgeKey>, untouched: ReadonlySet<string>): void {
+function reselect(keys: ReadonlyArray<NudgeKey>, untouched: ReadonlySet<string>, total: NudgeDelta): void {
+  const m = documentMirror();
   const next = new Set<string>(untouched);
   for (const k of keys) {
-    // The key's stored time now, by its engine id, from the document mirror.
-    const t = keyTimeById(k.ui.nodeId, k.members[0]?.prop ?? k.ui.prop, k.id);
-    next.add(t === null ? k.ui.id : uiKeyId(k.ui.nodeId, k.ui.prop, t));
+    if (resolveSelectionKey(m, k.sel)) {
+      next.add(k.sel);
+      continue;
+    }
+    const to = total.dt !== 0 ? Math.max(0, k.startCompT + total.dt) : k.startCompT;
+    next.add(selectionIdAt(m, k.layer, k.path, compTime(to), k.member) ?? k.sel);
   }
   useKeyframeSelectionStore.getState().set(next);
 }
@@ -247,7 +261,8 @@ export function createSelectionNudger(): NudgeBatcher {
     session.send({ type: 'updateKeyframes', patches });
     const sent = keys;
     const keep = untouched;
-    void engineIdle().then(() => reselect(sent, keep));
+    const moved = total;
+    void engineIdle().then(() => reselect(sent, keep, moved));
   };
 
   return createNudgeBatcher({
@@ -256,18 +271,17 @@ export function createSelectionNudger(): NudgeBatcher {
       const snaps: Array<Omit<NudgeKey, 'id'>> = [];
       untouched = new Set<string>();
       for (const id of useKeyframeSelectionStore.getState().ids) {
-        const ui = parseUiKey(id);
-        const snap = ui ? snapshotKey(ui) : null;
+        const snap = snapshotKey(id);
         if (snap) snaps.push(snap);
         else untouched.add(id);
       }
       ready = (async () => {
-        const resolved = await resolveKeys(snaps.map((x) => x.ui));
+        const resolved = await resolveKeyIds(snaps.map((x) => x.sel));
         // Null: the API cannot address one of the keys (keyframeEdits header);
         // nothing moves, as for a selection the writer could not find.
         if (!resolved) return;
         keys = snaps.flatMap((x) => {
-          const id = resolved.get(x.ui.id);
+          const id = resolved.get(x.sel);
           return id ? [{ ...x, id }] : [];
         });
         session = new GestureSession(nudgeLabel(total));

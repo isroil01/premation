@@ -17,7 +17,7 @@
  *   tAbs        comp seconds (where the diamond is drawn)
  *   t           the STORED time the selection names the key by — given by the
  *               caller (`StoredTimeOf`), because only the TS engine's storage
- *               knows it (keyframeSelectionIds.ts `storedKeyIndex`); without
+ *               knows it (keySelection.ts `storedKeyIndex`); without
  *               one it is the comp time (the C++ engine's layer axis)
  */
 

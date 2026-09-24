@@ -7,7 +7,7 @@
  * along; nothing could author them.
  */
 
-import { AnimationEngine, makeKeyframeId, setDataKeyframeEasing } from '@motion/animation';
+import { AnimationEngine, setDataKeyframeEasing } from '@motion/animation';
 import { applyEasingToKeyframes } from './keyframeAssistants';
 
 const PIN = 'puppet.mover.position';
@@ -66,7 +66,7 @@ describe('setDataKeyframeEasing (pure)', () => {
 describe('Easy Ease reaches a puppet pin keyframe', () => {
   it('F9 (Ease) writes a bezier curve onto the data keyframe', () => {
     const anim = engineWithPinTrack();
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'Ease', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Ease', anim);
     const kf = kfAt(anim, 0);
     expect(kf.easing).toBe('bezier');
     expect(kf.bezier).toBeDefined();
@@ -75,7 +75,7 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
   it('…and the eased curve actually changes the sampled pin position', () => {
     const linear = engineWithPinTrack();
     const eased = engineWithPinTrack();
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'EaseIn', eased);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'EaseIn', eased);
 
     expect(pinXAt(eased, 1)).toBeLessThan(pinXAt(linear, 1) - 1);
     // Endpoints unchanged.
@@ -85,7 +85,7 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
 
   it('Hold freezes the pin until the next keyframe', () => {
     const anim = engineWithPinTrack();
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'Hold', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Hold', anim);
     expect(kfAt(anim, 0).easing).toBe('hold');
     expect(pinXAt(anim, 1.9)).toBeCloseTo(0, 5);
     expect(pinXAt(anim, 2)).toBeCloseTo(60, 5);
@@ -93,8 +93,8 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
 
   it('Linear clears an earlier ease back to a straight segment', () => {
     const anim = engineWithPinTrack();
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'Ease', anim);
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'Linear', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Ease', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Linear', anim);
     expect(kfAt(anim, 0).easing).toBe('linear');
     expect(kfAt(anim, 0).bezier).toBeUndefined();
     expect(pinXAt(anim, 1)).toBeCloseTo(30, 5);
@@ -102,7 +102,7 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
 
   it('leaves the keyframe VALUE untouched', () => {
     const anim = engineWithPinTrack();
-    applyEasingToKeyframes([makeKeyframeId('m', PIN, 0)], 'EaseOut', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'EaseOut', anim);
     expect(kfAt(anim, 0).value).toEqual([{ x: 0, y: 0 }]);
     expect(kfAt(anim, 2).value).toEqual([{ x: 60, y: 0 }]);
   });
@@ -111,7 +111,7 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
     const anim = new AnimationEngine();
     anim.setKeyframe('m', 'opacity', 0, 0);
     anim.setKeyframe('m', 'opacity', 2, 100);
-    applyEasingToKeyframes([makeKeyframeId('m', 'opacity', 0)], 'Ease', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: 'opacity', t: 0 }], 'Ease', anim);
     const kf = anim.getTrackKeyframes('m', 'opacity')!.find((k) => k.t === 0)!;
     expect(kf.easing).toBe('bezier');
   });
@@ -120,7 +120,7 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
     const anim = new AnimationEngine();
     anim.setKeyframe('m', 'opacity', 0, 0);
     anim.setKeyframe('m', 'opacity', 2, 100);
-    applyEasingToKeyframes([makeKeyframeId('m', 'opacity', 0)], 'Hold', anim);
+    applyEasingToKeyframes([{ nodeId: 'm', prop: 'opacity', t: 0 }], 'Hold', anim);
     const kf = anim.getTrackKeyframes('m', 'opacity')!.find((k) => k.t === 0)!;
     expect(kf.easing).toBe('step');
   });
@@ -130,7 +130,7 @@ describe('Easy Ease reaches a puppet pin keyframe', () => {
     anim.setKeyframe('m', 'opacity', 0, 0);
     anim.setKeyframe('m', 'opacity', 2, 100);
     applyEasingToKeyframes(
-      [makeKeyframeId('m', PIN, 0), makeKeyframeId('m', 'opacity', 0)],
+      [{ nodeId: 'm', prop: PIN, t: 0 }, { nodeId: 'm', prop: 'opacity', t: 0 }],
       'Ease',
       anim,
     );

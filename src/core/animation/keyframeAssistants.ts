@@ -19,10 +19,11 @@
  */
 
 import { defaultAnimation, EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER, type AnimationEngine } from '@motion/animation';
-import { parseKeyframeId, expandKeyframeProp, setDataKeyframeEasing } from '@motion/animation';
+import { expandKeyframeProp, setDataKeyframeEasing } from '@motion/animation';
 import type { BezierHandles, EasingKind, Keyframe, PropPath, PropertyTrack } from '@motion/animation';
 import { sampleTrack, smoothTrackTangents } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import type { StoredKeyRef } from '@core/mirror/keySelection';
 import { staggerOffsets, type StaggerOptions } from './staggerOffsets';
 import type { PresetTrack } from '@core/animation/animationPresets';
 import { easePresetById, type EasePresetId } from '@core/animation/easePresets';
@@ -417,9 +418,9 @@ export function applyWiggler(
 }
 
 /**
- * Apply a named easing preset to a set of keyframes (identified by their
- * compound ID `nodeId::prop::t` from `makeKeyframeId` — decode with
- * `parseKeyframeId`, never by hand).
+ * Apply a named easing preset to a set of keyframes, each named by its STORED
+ * position (`nodeId`, track, stored `t` — a keyframe selection decodes to these
+ * through `selectionStoredRefs`, core/mirror/keySelection.ts).
  *
  *   Linear  → easing: 'linear'
  *   Ease    → easing: 'bezier', EASY_EASE_BEZIER     (33%/33% in+out)
@@ -483,15 +484,13 @@ function easeDataKeyframe(
 }
 
 export function applyEasingToKeyframes(
-  kfIds: ReadonlyArray<string>,
+  refs: ReadonlyArray<StoredKeyRef>,
   preset: EasingPreset,
   engine: AnimationEngine = defaultAnimation,
 ): void {
-  if (!kfIds.length) return;
+  if (!refs.length) return;
   runAnimEdit(`Set keyframe easing: ${preset}`, () => {
-    for (const kfId of kfIds) {
-      const ref = parseKeyframeId(kfId);
-      if (!ref) continue;
+    for (const ref of refs) {
       const { nodeId, t } = ref;
       // A selected Position keyframe is the merged x/y/z row — ease all three.
       for (const prop of expandKeyframeProp(ref.prop)) {
@@ -511,4 +510,4 @@ export function applyEasingToKeyframes(
     }
   });
 }
-
+

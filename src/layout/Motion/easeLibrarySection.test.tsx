@@ -12,7 +12,8 @@
  */
 
 import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { cubicBezierEase, defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { cubicBezierEase, defaultAnimation } from '@motion/animation';
+import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import { EaseLibrarySection } from './EaseLibrarySection';
 import { easeCurvePath, easeCurveGuides, EASE_THUMB } from './easeCurvePath';
 import { EASE_PRESETS, easePresetById } from '@core/animation/easePresets';
@@ -91,7 +92,7 @@ describe('EaseLibrarySection', () => {
   };
   const keyAt = (t: number) => defaultAnimation.getTrackKeyframes(L, OP)!.find((k) => Math.abs(k.t - t) < 1e-9)!;
   const renderSection = (bezier?: [number, number, number, number]) =>
-    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(L, OP, 0)]} bezier={bezier} />);
+    render(<EaseLibrarySection keyframeIds={[rowSelectionId(L, OP, 0)]} bezier={bezier} />);
 
   it('offers every curve in the library', () => {
     renderSection();
@@ -136,7 +137,7 @@ describe('EaseLibrarySection', () => {
     // point of having a library.
     render(
       <EaseLibrarySection
-        keyframeIds={[makeKeyframeId(L, OP, 0), makeKeyframeId(L, OP, 1)]}
+        keyframeIds={[rowSelectionId(L, OP, 0), rowSelectionId(L, OP, 1)]}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Quart In' }));
@@ -157,7 +158,7 @@ describe('EaseLibrarySection', () => {
     // A saved curve is a chip like any other, and applies to the selection.
     // (Custom curves go through the ease clipboard store's raw-handles write.)
     const before = historyLabels().length;
-    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(L, OP, 0)]} />);
+    render(<EaseLibrarySection keyframeIds={[rowSelectionId(L, OP, 0)]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Snap' }));
     await idle();
     expect(keyAt(0).bezier).toEqual(custom);

@@ -24,6 +24,13 @@ import { trackRefIn } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
 import { valueCommands } from '@layout/Inspector/inspectorEdits';
 import { getTime } from '@stores/playbackClockStore';
+import { activeCompIdNow } from '@hooks/useMirror';
+
+/** The active composition's frame size (what Reset centres Position in), from the document mirror (B4). */
+export function activeCompSize(): { width: number; height: number } {
+  const s = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  return { width: s?.width ?? 1920, height: s?.height ?? 1080 };
+}
 
 function playheadSeconds(): number {
   return getTime();
