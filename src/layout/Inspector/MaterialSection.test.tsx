@@ -6,64 +6,104 @@
  * is on this one surface, the rows the chosen shading model does not read are
  * not shown at all, and saving/applying a material moves Material Options
  * without touching anything else about the layer.
+ *
+ * The fixture is the app's engine (B3): layers are created and switched to 3D
+ * through the engine API, every control's write is an engine command (one
+ * undo entry per action) and undo puts the document back exactly.
  */
 
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
+import type { Command } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { values } from '@core/engine/propRefs';
 import { readNodeMaterialParams, DEFAULT_MATERIAL_PARAMS } from '@core/scene/material';
 import { useMaterialStore } from '@stores/materialStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { MaterialSection, hasMaterialSection, materialSphereCss } from './MaterialSection';
 import { ThreeDControl } from './ThreeDControl';
-import type { SceneNode } from '@core/types';
-import { addLayer, idle } from './__testHelpers__/engineLayers';
 
-const layer = (id: string, props: Record<string, unknown> = {}): SceneNode => ({
-  id, name: id, parent: null, children: [], visible: true, locked: false,
-  transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-  components: [
-    {
-      id: `${id}_t`, type: 'Transform',
-      props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, width: 100, height: 100, ...props },
-    },
-    { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#3355ff' } },
-  ],
-} as unknown as SceneNode);
+jest.useFakeTimers();
 
-/** A 3D layer — `z` / `rotationX` / `rotationY` are what `is3DEnabled` reads. */
-const threeD = (id: string, props: Record<string, unknown> = {}): SceneNode =>
-  layer(id, { z: 0, rotationX: 0, rotationY: 0, ...props });
+let h: Harness & { engine: LocalEngine };
 
-const mount = (id = 'box'): ReturnType<typeof render> => render(<MaterialSection nodeId={id} />);
+beforeEach(async () => {
+  h = await setupAppEngine();
+  useMaterialStore.setState({ materials: [] });
+  useSelectionStore.setState({ ids: [], primary: null });
+});
+
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+
+interface LayerOpts {
+  /** Extrusion Depth (Geometry Options). */
+  extrusionDepth?: number;
+  /** A shading model other than Phong. */
+  shading?: 'pbr' | 'toon';
+}
+
+/** A flat shape layer filled #3355ff, created through the engine. */
+async function flatLayer(name: string): Promise<string> {
+  let id = '';
+  await act(async () => {
+    ({ layer: id } = await h.run({
+      type: 'createLayer', comp: 'comp_root', kind: 'shape', name,
+      init: [{ path: 'layer/fill', value: values.color(0x33 / 255, 0x55 / 255, 1) }],
+    }));
+  });
+  getCommandSystem().getHistory().clear();
+  return id;
+}
+
+/**
+ * A 3D shape layer: the 3D switch on, Accepts Lights off (the layer every
+ * material test starts from — a plain 3D layer with no Material Options
+ * stored), plus any geometry / shading the test asks for.
+ */
+async function threeD(name: string, opts: LayerOpts = {}): Promise<string> {
+  const layer = await flatLayer(name);
+  const cmds: Command[] = [
+    { type: 'setLayerSwitches', layers: [layer], patch: { threeD: true } },
+    { type: 'setProperty', prop: { layer, path: 'material/acceptsLights' }, value: values.scalar(0) },
+  ];
+  if (opts.extrusionDepth !== undefined) cmds.push({ type: 'setProperty', prop: { layer, path: 'geometry/extrusionDepth' }, value: values.scalar(opts.extrusionDepth) });
+  if (opts.shading !== undefined) cmds.push({ type: 'setProperty', prop: { layer, path: 'material/shading' }, value: values.choice(opts.shading) });
+  await act(async () => { await h.batch('fixture', cmds); });
+  getCommandSystem().getHistory().clear();
+  return layer;
+}
+
+const mount = (id: string): ReturnType<typeof render> => render(<MaterialSection nodeId={id} />);
 
 /** ValueField labels its wrapper AND its inner span; the wrapper is the control. */
 const field = (name: string): HTMLElement => screen.getByRole('spinbutton', { name });
 const noField = (name: string): HTMLElement | null => screen.queryByRole('spinbutton', { name });
 
-beforeEach(() => {
-  useMaterialStore.setState({ materials: [] });
-  useSelectionStore.setState({ ids: [], primary: null });
-});
-
-afterEach(() => {
-  cleanup();
-  defaultSceneGraph.clear();
-});
-
 describe('where the section appears', () => {
-  it('is present for a 3D layer and absent for a flat one', () => {
-    addLayer(threeD('box'));
-    addLayer(layer('flat'));
-    expect(hasMaterialSection('box')).toBe(true);
-    expect(hasMaterialSection('flat')).toBe(false);
-    expect(render(<MaterialSection nodeId="flat" />).container).toBeEmptyDOMElement();
+  it('is present for a 3D layer and absent for a flat one', async () => {
+    const box = await threeD('box');
+    const flat = await flatLayer('flat');
+    expect(hasMaterialSection(box)).toBe(true);
+    expect(hasMaterialSection(flat)).toBe(false);
+    expect(render(<MaterialSection nodeId={flat} />).container).toBeEmptyDOMElement();
   });
 
   /** The move: ThreeDControl keeps the switch and the geometry, and nothing else. */
-  it('ThreeDControl no longer carries any material control', () => {
-    addLayer(threeD('box', { extrusionDepth: 40 }));
-    render(<ThreeDControl nodeId="box" />);
+  it('ThreeDControl no longer carries any material control', async () => {
+    const box = await threeD('box', { extrusionDepth: 40 });
+    render(<ThreeDControl nodeId={box} />);
     expect(screen.getByLabelText('3D layer')).toBeInTheDocument();
     expect(field('Extrusion depth')).toBeInTheDocument();
     for (const label of ['Shading model', 'Casts shadows', 'Accepts shadows', 'Accepts lights']) {
@@ -75,127 +115,145 @@ describe('where the section appears', () => {
     expect(screen.queryByText('Face Materials')).toBeNull();
   });
 
-  it('carries the per-face overrides once the layer is extruded', () => {
-    addLayer(threeD('box'));
+  it('carries the per-face overrides once the layer is extruded', async () => {
+    const box = await threeD('box');
+    mount(box);
     expect(screen.queryByText('Face Materials')).toBeNull();
     cleanup();
-    defaultSceneGraph.clear();
-    addLayer(threeD('box', { extrusionDepth: 40 }));
-    mount();
+    await act(async () => {
+      await h.run({ type: 'setProperty', prop: { layer: box, path: 'geometry/extrusionDepth' }, value: values.scalar(40) });
+    });
+    mount(box);
     expect(screen.getByText('Face Materials')).toBeInTheDocument();
   });
 });
 
 describe('rows follow the shading model', () => {
-  const shadeTo = (model: string): void => {
+  const shadeTo = async (model: string): Promise<void> => {
     fireEvent.change(screen.getByLabelText('Shading model'), { target: { value: model } });
+    await idle();
   };
 
-  it('Phong shows Shininess and Metal (Phong tints its highlight by metal) and hides Roughness', () => {
-    addLayer(threeD('box'));
-    mount();
+  it('Phong shows Shininess and Metal (Phong tints its highlight by metal) and hides Roughness', async () => {
+    mount(await threeD('box'));
     expect(field('Shininess')).toBeInTheDocument();
     expect(noField('Roughness')).toBeNull();
     expect(field('Metal')).toBeInTheDocument();
     expect(noField('Bands')).toBeNull();
   });
 
-  it('Physical swaps Shininess for Roughness and brings Metal back', () => {
-    addLayer(threeD('box'));
-    const view = mount();
-    shadeTo('pbr');
-    view.rerender(<MaterialSection nodeId="box" />);
+  it('Physical swaps Shininess for Roughness and brings Metal back — one undo entry', async () => {
+    const box = await threeD('box');
+    mount(box);
+    const before = h.doc();
+    await shadeTo('pbr');
     expect(noField('Shininess')).toBeNull();
     expect(field('Roughness')).toBeInTheDocument();
     expect(field('Metal')).toBeInTheDocument();
-    expect(readNodeMaterialParams('box')!.shading).toBe('pbr');
+    expect(readNodeMaterialParams(box)!.shading).toBe('pbr');
+    settle();
+    expect(historyLabels()).toEqual(['Set Shading']);
+    await undo();
+    expect(readNodeMaterialParams(box)!.shading).toBe('phong');
+    expect(h.doc()).toBe(before);
   });
 
-  it('Toon adds Bands', () => {
-    addLayer(threeD('box'));
-    const view = mount();
-    shadeTo('toon');
-    view.rerender(<MaterialSection nodeId="box" />);
+  it('Toon adds Bands', async () => {
+    const box = await threeD('box');
+    mount(box);
+    await shadeTo('toon');
     const bands = screen.getByLabelText('Bands slider') as HTMLInputElement;
     expect(bands.value).toBe('3');
     fireEvent.change(bands, { target: { value: '5' } });
-    expect(readNodeMaterialParams('box')!.toonBands).toBe(5);
+    await idle();
+    expect(readNodeMaterialParams(box)!.toonBands).toBe(5);
   });
 });
 
 describe('the controls that moved keep writing what they wrote', () => {
   it('shadow tri-states and transmission', async () => {
-    addLayer(threeD('box'));
-    mount();
+    const box = await threeD('box');
+    mount(box);
     fireEvent.change(screen.getByLabelText('Casts shadows'), { target: { value: 'only' } });
     fireEvent.change(screen.getByLabelText('Accepts shadows'), { target: { value: 'off' } });
     fireEvent.change(screen.getByLabelText('Light Transmission slider'), { target: { value: '60' } });
     await idle();
-    const m = readNodeMaterialParams('box')!;
+    const m = readNodeMaterialParams(box)!;
     expect(m.castsShadows).toBe('only');
     expect(m.acceptsShadows).toBe('off');
     expect(m.lightTransmission).toBe(60);
   });
 
   it('the slider and the number field are one control', async () => {
-    addLayer(threeD('box'));
-    mount();
+    const box = await threeD('box');
+    mount(box);
     fireEvent.change(screen.getByLabelText('Diffuse slider'), { target: { value: '75' } });
     await idle();
-    expect(readNodeMaterialParams('box')!.diffuse).toBe(75);
+    expect(readNodeMaterialParams(box)!.diffuse).toBe(75);
     expect(screen.getByRole('spinbutton', { name: 'Diffuse' })).toHaveAttribute('aria-valuenow', '75');
   });
 });
 
 describe('the library', () => {
-  it('ships the built-ins and offers no way to delete one', () => {
-    addLayer(threeD('box'));
-    mount();
+  it('ships the built-ins and offers no way to delete one', async () => {
+    mount(await threeD('box'));
     expect(screen.getByLabelText('Apply material Gold')).toBeInTheDocument();
     expect(screen.queryByLabelText('Delete material Gold')).toBeNull();
   });
 
-  it('applying one writes the material and leaves the fill alone', () => {
-    addLayer(threeD('box'));
-    mount();
+  it('applying one writes the material and leaves the fill alone — one undo entry', async () => {
+    const box = await threeD('box');
+    mount(box);
+    const before = h.doc();
     fireEvent.click(screen.getByLabelText('Apply material Steel'));
-    const m = readNodeMaterialParams('box')!;
+    await idle();
+    const m = readNodeMaterialParams(box)!;
     expect(m.acceptsLights).toBe(true);
     expect(m.shading).toBe('pbr');
     expect(m.specular).toBe(85);
-    const style = defaultSceneGraph.getNode('box')!.components.find((c) => c.type === 'Style')!;
+    const style = defaultSceneGraph.getNode(box)!.components.find((c) => c.type === 'Style')!;
     expect(style.props.fill).toBe('#3355ff');
+    settle();
+    expect(historyLabels()).toEqual(['Apply material Steel']);
+    await undo();
+    expect(readNodeMaterialParams(box)).toEqual(DEFAULT_MATERIAL_PARAMS);
+    expect(h.doc()).toBe(before);
   });
 
-  it('applies to every selected layer, not just the inspected one', () => {
-    addLayer(threeD('box'));
-    addLayer(threeD('other'));
-    useSelectionStore.setState({ ids: ['box', 'other'], primary: 'box' });
-    mount();
+  it('applies to every selected layer, not just the inspected one — as one entry', async () => {
+    const box = await threeD('box');
+    const other = await threeD('other');
+    useSelectionStore.setState({ ids: [box, other], primary: box });
+    mount(box);
     fireEvent.click(screen.getByLabelText('Apply material Gold'));
-    expect(readNodeMaterialParams('other')!.metal).toBe(100);
+    await idle();
+    expect(readNodeMaterialParams(other)!.metal).toBe(100);
+    expect(readNodeMaterialParams(box)!.metal).toBe(100);
+    settle();
+    expect(historyLabels()).toEqual(['Apply material Gold']);
   });
 
-  it('leaves layers outside the selection alone', () => {
-    addLayer(threeD('box'));
-    addLayer(threeD('other'));
-    useSelectionStore.setState({ ids: ['box'], primary: 'box' });
-    mount();
+  it('leaves layers outside the selection alone', async () => {
+    const box = await threeD('box');
+    const other = await threeD('other');
+    useSelectionStore.setState({ ids: [box], primary: box });
+    mount(box);
     fireEvent.click(screen.getByLabelText('Apply material Gold'));
-    expect(readNodeMaterialParams('other')).toEqual(DEFAULT_MATERIAL_PARAMS);
+    await idle();
+    expect(readNodeMaterialParams(box)!.metal).toBe(100);
+    expect(readNodeMaterialParams(other)).toEqual(DEFAULT_MATERIAL_PARAMS);
   });
 
   it('saves the layer’s current surface as a named material, then applies it back', async () => {
-    addLayer(threeD('box'));
-    const view = mount();
+    const box = await threeD('box');
+    const view = mount(box);
     fireEvent.change(screen.getByLabelText('Specular slider'), { target: { value: '70' } });
     await idle();
-    view.rerender(<MaterialSection nodeId="box" />);
 
     fireEvent.click(screen.getByText('Save as material…'));
     fireEvent.change(screen.getByLabelText('New material name'), { target: { value: 'Hero' } });
     fireEvent.click(screen.getByText('Save'));
-    view.rerender(<MaterialSection nodeId="box" />);
+    view.rerender(<MaterialSection nodeId={box} />);
 
     const saved = useMaterialStore.getState().materials;
     expect(saved.map((m) => m.name)).toEqual(['Hero']);
@@ -205,22 +263,23 @@ describe('the library', () => {
 
     fireEvent.change(screen.getByLabelText('Specular slider'), { target: { value: '0' } });
     await idle();
-    view.rerender(<MaterialSection nodeId="box" />);
+    expect(readNodeMaterialParams(box)!.specular).toBe(0);
     fireEvent.click(screen.getByLabelText('Apply material Hero'));
-    expect(readNodeMaterialParams('box')!.specular).toBe(70);
+    await idle();
+    expect(readNodeMaterialParams(box)!.specular).toBe(70);
   });
 
-  it('renames and deletes a saved material', () => {
-    addLayer(threeD('box'));
+  it('renames and deletes a saved material', async () => {
+    const box = await threeD('box');
     const added = useMaterialStore.getState().addMaterial('Draft', DEFAULT_MATERIAL_PARAMS);
-    const view = mount();
+    const view = mount(box);
 
     fireEvent.click(screen.getByLabelText('Rename material Draft'));
-    view.rerender(<MaterialSection nodeId="box" />);
+    view.rerender(<MaterialSection nodeId={box} />);
     const input = screen.getByLabelText('Rename material Draft');
     fireEvent.change(input, { target: { value: 'Final' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    view.rerender(<MaterialSection nodeId="box" />);
+    view.rerender(<MaterialSection nodeId={box} />);
     expect(useMaterialStore.getState().find(added.id)?.name).toBe('Final');
 
     fireEvent.click(screen.getByLabelText('Delete material Final'));
@@ -262,15 +321,15 @@ describe('the preview swatch', () => {
 
 describe('Advanced-3D axes (Reflections / Transparency)', () => {
   it('the rows write the material (through the engine API)', async () => {
-    addLayer(threeD('box'));
-    mount();
+    const box = await threeD('box');
+    mount(box);
     fireEvent.change(screen.getByLabelText('Reflection Intensity slider'), { target: { value: '40' } });
     fireEvent.change(screen.getByLabelText('Reflection Rolloff slider'), { target: { value: '25' } });
     fireEvent.change(screen.getByLabelText('Transparency slider'), { target: { value: '60' } });
     fireEvent.change(screen.getByLabelText('Transparency Rolloff slider'), { target: { value: '50' } });
     fireEvent.change(screen.getByLabelText('Index of Refraction slider'), { target: { value: '1.33' } });
     await idle();
-    const m = readNodeMaterialParams('box')!;
+    const m = readNodeMaterialParams(box)!;
     expect(m.reflectionIntensity).toBe(40);
     expect(m.reflectionRolloff).toBe(25);
     expect(m.transparency).toBe(60);
@@ -281,12 +340,11 @@ describe('Advanced-3D axes (Reflections / Transparency)', () => {
     // stores it explicitly: an engine gap listed in the B3 report, pixels equal.)
     fireEvent.change(screen.getByLabelText('Reflection Intensity slider'), { target: { value: '100' } });
     await idle();
-    expect(readNodeMaterialParams('box')!.reflectionIntensity).toBe(100);
+    expect(readNodeMaterialParams(box)!.reflectionIntensity).toBe(100);
   });
 
-  it('Toon replaces the reflection rows with an explanation', () => {
-    addLayer(threeD('box', { shadingModel: 'toon' }));
-    mount();
+  it('Toon replaces the reflection rows with an explanation', async () => {
+    mount(await threeD('box', { shading: 'toon' }));
     expect(noField('Reflection Intensity')).toBeNull();
     expect(screen.getByText(/Toon shading never reflects/)).toBeInTheDocument();
     // Transparency is model-independent and stays.

@@ -14,37 +14,35 @@
  * leave this passing.
  */
 
-import { render, cleanup, fireEvent, screen } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { defaultAnimation } from '@motion/animation';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
-import { readNodeStroke } from '@core/paint/stroke';
-import type { SceneNode } from '@core/types';
+import { readNodeStroke, defaultStroke } from '@core/paint/stroke';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { strokesCommands } from './appearance/paintEdits';
 
-const ID = 'dash_probe';
+jest.useFakeTimers();
+
 const PROP = 'strokeDashOffset';
 const DASH = [24, 12];
 
-function shapeNode(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 200, height: 160, opacity: 100 } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#1f4f8f' } },
-    ],
-  } as unknown as SceneNode;
-}
+let h: Harness & { engine: LocalEngine };
+let ID: string;
 
-function setStroke(dash: number[]): void {
-  defaultSceneGraph.setStroke(ID, {
-    enabled: true, color: '#33e0a0', width: 14, opacity: 1,
+/** The stroke, written through the engine as the panel writes it. */
+async function setStroke(dash: number[]): Promise<void> {
+  await h.batch('seed', strokesCommands(ID, [{
+    ...defaultStroke('#33e0a0'), enabled: true, width: 14, opacity: 1,
     align: 'center', dash, cap: 'butt', join: 'miter',
-  });
+  }]));
+  getCommandSystem().getHistory().clear();
 }
 
 /** The panel keeps stroke controls behind a popover; open it by its trigger. */
@@ -53,17 +51,21 @@ function openStrokePopover(): void {
   if (trigger) fireEvent.click(trigger);
 }
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  defaultSceneGraph.addNode(shapeNode(ID));
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
+
+beforeEach(async () => {
+  h = await setupAppEngine();
+  ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'dash_probe', init: [] }));
+  getCommandSystem().getHistory().clear();
   useSelectionStore.setState({ ids: [ID] } as never);
-  defaultAnimation.removeTrack(ID, PROP);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
+  await h.dispose();
 });
 
 describe('the Dash Offset row', () => {
@@ -75,22 +77,22 @@ describe('the Dash Offset row', () => {
     expect(meta.unit).toBe('px');
   });
 
-  it('appears once the stroke has a dash pattern', () => {
-    setStroke(DASH);
+  it('appears once the stroke has a dash pattern', async () => {
+    await setStroke(DASH);
     render(<AppearanceSection nodeId={ID} />);
     openStrokePopover();
     expect(screen.queryAllByLabelText('Dash Offset').length).toBeGreaterThan(0);
   });
 
-  it('is ABSENT on a solid stroke — offset with no pattern would do nothing', () => {
-    setStroke([]);
+  it('is ABSENT on a solid stroke — offset with no pattern would do nothing', async () => {
+    await setStroke([]);
     render(<AppearanceSection nodeId={ID} />);
     openStrokePopover();
     expect(screen.queryAllByLabelText('Dash Offset')).toHaveLength(0);
   });
 
-  it('its keyframe toggle writes the track the renderer reads', () => {
-    setStroke(DASH);
+  it('its keyframe toggle writes the track the renderer reads — one undo entry', async () => {
+    await setStroke(DASH);
     render(<AppearanceSection nodeId={ID} />);
     openStrokePopover();
     // The toggle is the row's stopwatch (AnimToggle) — the same control every
@@ -98,11 +100,16 @@ describe('the Dash Offset row', () => {
     const stopwatch = screen.getAllByLabelText('Enable Dash Offset animation')[0]!;
     expect(stopwatch).toBeTruthy();
     fireEvent.click(stopwatch);
+    await idle();
     expect(defaultAnimation.isAnimated(ID, PROP)).toBe(true);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(defaultAnimation.isAnimated(ID, PROP)).toBe(false);
   });
 
-  it('editing with no animation writes the STATIC value onto the stroke', () => {
-    setStroke(DASH);
+  it('editing with no animation writes the STATIC value onto the stroke — one undo entry', async () => {
+    await setStroke(DASH);
     render(<AppearanceSection nodeId={ID} />);
     openStrokePopover();
     const field = screen.getAllByLabelText('Dash Offset')[0]!;
@@ -111,6 +118,12 @@ describe('the Dash Offset row', () => {
     expect(input).toBeTruthy();
     fireEvent.change(input as Element, { target: { value: '9' } });
     fireEvent.keyDown(input as Element, { key: 'Enter' });
+    await idle();
     expect(readNodeStroke(defaultSceneGraph.getNode(ID)!)?.dashOffset).toBe(9);
+    expect(defaultAnimation.isAnimated(ID, PROP)).toBe(false);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(readNodeStroke(defaultSceneGraph.getNode(ID)!)?.dashOffset ?? 0).toBe(0);
   });
 });

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { CharacterPanel } from '../CharacterPanel';
 import { ParagraphPanel } from '../ParagraphPanel';
 import { TooltipProvider } from '@components/Tooltip';
@@ -6,23 +6,19 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { PANEL_DEFS, availablePanelDefs, panelDef } from '@layout/EditorLayout/panelDefs';
 import { PANEL_COMPONENTS } from '@layout/EditorLayout/panelRenderers';
-import type { SceneNode } from '@core/types';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { sourceTextCommand } from '@layout/Text/textEdits';
+import { componentPropsCommands } from '../useComponentProp';
 
-function buildTextNode(id: string, name: string, textProps: Record<string, unknown> = {}): SceneNode {
-  return {
-    id,
-    name,
-    parent: null,
-    children: [],
-    visible: true,
-    locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { x: 0, y: 0, width: 200, height: 60, opacity: 100 } },
-      { id: `${id}_txt`, type: 'Text', props: textProps },
-    ],
-  } as unknown as SceneNode;
-}
+// The panel reads the document mirror and writes through the engine API
+// (B3/B4): the fixture is the app's engine, the text layers are created through
+// it and seeded with the same command builders the panel writes with, and each
+// action is pinned as ONE undo entry that undo reverses.
+jest.useFakeTimers();
 
 function renderPanel() {
   return render(
@@ -32,23 +28,38 @@ function renderPanel() {
   );
 }
 
-describe('Unified Text Panel (Character + Paragraph)', () => {
-  const createdNodeIds: string[] = [];
+const textComp = (id: string) => defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Text');
 
-  const addTextNode = (id: string, name: string, textProps: Record<string, unknown> = {}) => {
-    const node = buildTextNode(id, name, textProps);
-    defaultSceneGraph.addNode(node);
-    createdNodeIds.push(id);
-    return node;
+describe('Unified Text Panel (Character + Paragraph)', () => {
+  let h: Harness & { engine: LocalEngine };
+
+  beforeEach(async () => {
+    h = await setupAppEngine();
+  });
+
+  afterEach(async () => {
+    cleanup();
+    act(() => { useSelectionStore.setState({ ids: [] }); });
+    await h.dispose();
+  });
+
+  /** A text layer created through the engine, seeded through it, history cleared. */
+  const addTextNode = async (name: string, { content, ...textProps }: Record<string, unknown> = {}): Promise<string> => {
+    const id = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
+    // Source Text is its own property; the rest are the Text component's props.
+    const { cmds, rest } = componentPropsCommands(id, textComp(id)!.id, textProps, 0);
+    expect(rest).toEqual({});
+    const source = typeof content === 'string' ? sourceTextCommand(id, content, 0) : [];
+    expect(source).not.toBeNull();
+    await h.batch('seed', [...(source ?? []), ...cmds]);
+    getCommandSystem().getHistory().clear();
+    return id;
   };
 
-  afterEach(() => {
-    for (const id of createdNodeIds) {
-      if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode(id);
-    }
-    createdNodeIds.length = 0;
-    useSelectionStore.setState({ ids: [] });
-  });
+  const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+  /** No second entry from the 700 ms recorder on top of the engine's. */
+  const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+  const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 
   it('renders default text panel when no text node is selected', () => {
     renderPanel();
@@ -58,8 +69,8 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     expect(screen.getByText(/Paragraph/)).toBeInTheDocument();
   });
 
-  it('renders both character and paragraph controls for selected text layer', () => {
-    const textNode = addTextNode('test_headline', 'Headline Layer', {
+  it('renders both character and paragraph controls for selected text layer', async () => {
+    const textNode = await addTextNode('Headline Layer', {
       content: 'Hello World',
       fontSize: 48,
       fontFamily: 'Inter',
@@ -72,7 +83,7 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
       strokeWidth: 0,
     });
 
-    useSelectionStore.setState({ ids: [textNode.id] });
+    act(() => { useSelectionStore.setState({ ids: [textNode] }); });
     renderPanel();
 
     // Verify layer name in header badge
@@ -113,52 +124,64 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     expect(screen.getByLabelText('Space Before')).toBeInTheDocument();
   });
 
-  it('updates alignment when paragraph alignment buttons are clicked', () => {
-    const textNode = addTextNode('test_body', 'Body Copy', {
+  it('updates alignment when paragraph alignment buttons are clicked — one undo entry per click', async () => {
+    const textNode = await addTextNode('Body Copy', {
       content: 'Paragraph content',
       fontSize: 24,
       align: 'left',
     });
 
     act(() => {
-      useSelectionStore.setState({ ids: [textNode.id] });
+      useSelectionStore.setState({ ids: [textNode] });
     });
     renderPanel();
+    const before = h.doc();
 
-    const centerBtn = screen.getByRole('button', { name: 'Center Align' });
-    act(() => {
-      fireEvent.click(centerBtn);
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'Center Align' }));
+    await idle();
+    expect(textComp(textNode)?.props.align).toBe('center');
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    const afterCenter = h.doc();
 
-    const comp1 = defaultSceneGraph.getNode(textNode.id)?.components.find((c) => c.type === 'Text');
-    expect(comp1?.props.align).toBe('center');
+    fireEvent.click(screen.getByRole('button', { name: 'Right Align' }));
+    await idle();
+    expect(textComp(textNode)?.props.align).toBe('right');
+    settle();
+    expect(historyLabels()).toHaveLength(2);
 
-    const rightBtn = screen.getByRole('button', { name: 'Right Align' });
-    act(() => {
-      fireEvent.click(rightBtn);
-    });
-    const comp2 = defaultSceneGraph.getNode(textNode.id)?.components.find((c) => c.type === 'Text');
-    expect(comp2?.props.align).toBe('right');
+    await undo();
+    expect(textComp(textNode)?.props.align).toBe('center');
+    expect(h.doc()).toBe(afterCenter);
+    await undo();
+    expect(textComp(textNode)?.props.align).toBe('left');
+    expect(h.doc()).toBe(before);
   });
 
-  it('updates paragraph spacing when input changes', () => {
-    const textNode = addTextNode('test_spaced', 'Spaced Copy', {
+  it('updates paragraph spacing when input changes — one undo entry', async () => {
+    const textNode = await addTextNode('Spaced Copy', {
       content: 'Spaced paragraph',
       paragraphSpacing: 10,
     });
 
     act(() => {
-      useSelectionStore.setState({ ids: [textNode.id] });
+      useSelectionStore.setState({ ids: [textNode] });
     });
     renderPanel();
+    const before = h.doc();
 
     const spacingInput = screen.getByLabelText('Paragraph Spacing');
-    act(() => {
-      fireEvent.change(spacingInput, { target: { value: '25' } });
-    });
+    fireEvent.change(spacingInput, { target: { value: '25' } });
+    fireEvent.blur(spacingInput);
+    await idle();
 
-    const comp = defaultSceneGraph.getNode(textNode.id)?.components.find((c) => c.type === 'Text');
-    expect(comp?.props.paragraphSpacing).toBe(25);
+    expect(textComp(textNode)?.props.paragraphSpacing).toBe(25);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+
+    await undo();
+    expect(textComp(textNode)?.props.paragraphSpacing).toBe(10);
+    expect(h.doc()).toBe(before);
   });
 
   it('ParagraphPanel exports the unified component for backward compatibility', () => {

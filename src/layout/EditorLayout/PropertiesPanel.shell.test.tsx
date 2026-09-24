@@ -23,43 +23,24 @@ import { TooltipProvider } from '@components/Tooltip/Tooltip';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useHistoryStore, attachHistoryRecording, baselineHistory } from '@stores/historyStore';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
-import { EventBus, setEventBus } from '@core/events/EventBus';
+import { useHistoryStore } from '@stores/historyStore';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import type { SceneNode } from '@core/types';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { inspectorSectionsForSelection } from '@layout/Inspector/inspectorSections';
 import { LAYER_SWITCHES, applyLayerSwitch, kindBreakdown } from '@layout/Inspector/SelectionHeader';
-import { engine, engineIdle } from '@core/engine/engineInstance';
+import { engineIdle } from '@core/engine/engineInstance';
 import { PropertiesPanel } from './PropertiesPanel';
 
-const A = 'shell_shape_a';
-const B = 'shell_shape_b';
-const T = 'shell_text_t';
+/** Two shape layers and a text layer in the root composition, made through the app's engine. */
+let A: string;
+let B: string;
+let T: string;
+const NAME = { A: 'shell_shape_a name', B: 'shell_shape_b name', T: 'shell_text_t name' };
 
-function shapeNode(id: string): SceneNode {
-  return {
-    id, name: `${id} name`, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 100, height: 100, rotation: 0, scaleX: 1, scaleY: 1, opacity: 100 } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#ff0000' } },
-    ],
-  } as unknown as SceneNode;
-}
-
-function textNode(id: string): SceneNode {
-  return {
-    id, name: `${id} name`, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x: 0, y: 0, width: 200, height: 60, opacity: 100 } },
-      { id: `${id}_txt`, type: 'Text', props: { content: 'Hi', fontSize: 48, fontFamily: 'Inter' } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#ffffff' } },
-    ],
-  } as unknown as SceneNode;
-}
+let h: Harness & { engine: LocalEngine };
 
 function select(ids: string[]): void {
   act(() => {
@@ -76,32 +57,23 @@ function renderPanel(): ReturnType<typeof render> {
 }
 
 const SOLO = LAYER_SWITCHES.find((t) => t.id === 'solo')!;
-/** The composition the layers live in: layer switches go through the engine API (B3), which addresses LAYERS. */
-const ROOT = 'shell_root';
 const entries = (): number => getCommandSystem().getHistory().getEntries().length;
 
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-});
-
-beforeEach(() => {
-  for (const id of [A, B, T]) if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode(id);
-  if (!defaultSceneGraph.getNode(ROOT)) {
-    defaultSceneGraph.addNode({
-      id: ROOT, name: 'Comp', parent: null, children: [], visible: true, locked: false,
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } }, components: [],
-    } as unknown as SceneNode);
-  }
-  defaultSceneGraph.addChild(ROOT, shapeNode(A));
-  defaultSceneGraph.addChild(ROOT, shapeNode(B));
-  defaultSceneGraph.addChild(ROOT, textNode(T));
+beforeEach(async () => {
+  h = await setupAppEngine();
+  const mk = async (kind: 'shape' | 'text', name: string): Promise<string> =>
+    (await h.run({ type: 'createLayer', comp: 'comp_root', kind, name, init: [] })).layer;
+  A = await mk('shape', NAME.A);
+  B = await mk('shape', NAME.B);
+  T = await mk('text', NAME.T);
+  getCommandSystem().getHistory().clear();
   useSelectionStore.setState({ ids: [] } as never);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   useSelectionStore.setState({ ids: [] } as never);
-  for (const id of [A, B, T]) if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode(id);
+  await h.dispose();
 });
 
 describe('one list, no sub-tabs', () => {
@@ -109,7 +81,7 @@ describe('one list, no sub-tabs', () => {
     select([A]);
     renderPanel();
     // Positive control: the panel really is showing the layer.
-    expect(screen.getByText(`${A} name`)).toBeInTheDocument();
+    expect(screen.getByText(NAME.A)).toBeInTheDocument();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
@@ -164,7 +136,7 @@ describe('the identity row', () => {
   it('names one layer and its kind, with no switch buttons', () => {
     select([A]);
     renderPanel();
-    expect(screen.getByText(`${A} name`)).toBeInTheDocument();
+    expect(screen.getByText(NAME.A)).toBeInTheDocument();
     expect(screen.getByText('Shape layer')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Visible' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Layer switches' })).not.toBeInTheDocument();
@@ -185,15 +157,16 @@ describe('the identity row', () => {
     expect(screen.queryByRole('toolbar', { name: 'Align selected layers' })).not.toBeInTheDocument();
   });
 
-  it('renames on double-click + Enter, and Escape leaves the name alone', () => {
+  it('renames on double-click + Enter, and Escape leaves the name alone', async () => {
     select([A]);
     renderPanel();
-    fireEvent.doubleClick(screen.getByText(`${A} name`));
+    fireEvent.doubleClick(screen.getByText(NAME.A));
     const input = screen.getByRole('textbox', { name: 'Layer name' });
     fireEvent.change(input, { target: { value: 'Hero' } });
     act(() => {
       fireEvent.keyDown(input, { key: 'Enter' });
     });
+    await act(async () => { await engineIdle(); });
     expect(defaultSceneGraph.getNode(A)?.name).toBe('Hero');
 
     fireEvent.doubleClick(screen.getByText('Hero'));
@@ -202,6 +175,7 @@ describe('the identity row', () => {
     act(() => {
       fireEvent.keyDown(again, { key: 'Escape' });
     });
+    await act(async () => { await engineIdle(); });
     expect(defaultSceneGraph.getNode(A)?.name).toBe('Hero');
     expect(screen.queryByRole('textbox', { name: 'Layer name' })).not.toBeInTheDocument();
   });
@@ -231,24 +205,21 @@ describe('the switches live in the ⋯ menu', () => {
   });
 
   it('a mixed switch turns everything on, as ONE undo entry', async () => {
-    // History wired the way boot wires it, and the debounce flushed before
-    // counting — the same measurement modifierStack.test.ts makes.
-    setEventBus(new EventBus());
-    const recording = attachHistoryRecording();
-    try {
-      defaultSceneGraph.getNode(A)!.solo = true;
-      baselineHistory();
-      const before = entries();
-      // B3: the switch is an engine batch — one entry on the one history.
-      await applyLayerSwitch([A, B], SOLO);
-      useHistoryStore.getState().flush();
-      expect([defaultSceneGraph.getNode(A)?.solo, defaultSceneGraph.getNode(B)?.solo]).toEqual([true, true]);
-      expect(entries() - before).toBe(1);
-      await engine().execute({ type: 'undo' });
-      expect(defaultSceneGraph.getNode(B)?.solo).not.toBe(true);
-    } finally {
-      recording.dispose();
-    }
+    // History wired the way boot wires it (`setupAppEngine` attaches the
+    // recorder), and the debounce flushed before counting — the same
+    // measurement modifierStack.test.ts makes.
+    await h.run({ type: 'setLayerSwitches', layers: [A], patch: SOLO.patch(true) });
+    getCommandSystem().getHistory().clear();
+    const before = entries();
+    // B3: the switch is an engine batch — one entry on the one history.
+    await applyLayerSwitch([A, B], SOLO);
+    useHistoryStore.getState().flush();
+    expect([defaultSceneGraph.getNode(A)?.solo, defaultSceneGraph.getNode(B)?.solo]).toEqual([true, true]);
+    expect(entries() - before).toBe(1);
+    expect(historyLabels()).toEqual(['Enable Solo']);
+    await h.run({ type: 'undo' });
+    expect(defaultSceneGraph.getNode(A)?.solo).toBe(true);
+    expect(defaultSceneGraph.getNode(B)?.solo).not.toBe(true);
   });
 });
 
@@ -260,9 +231,12 @@ describe('with nothing selected', () => {
     });
   });
 
-  it('keeps the short hint for the auto-minted pristine comp', () => {
+  it('keeps the short hint for the auto-minted pristine comp', async () => {
     // A fresh store's active comp IS the pristine one, which the tab strip
     // calls "(none)" — describing it would describe a comp nobody made.
+    // Pristine means layerless too: back to the fresh project, without the
+    // fixture's layers (they live in that comp).
+    await act(async () => { await h.run({ type: 'deleteLayers', layers: [A, B, T] }); });
     renderPanel();
     expect(screen.getByText('Select a layer to edit its properties.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Composition settings…' })).not.toBeInTheDocument();

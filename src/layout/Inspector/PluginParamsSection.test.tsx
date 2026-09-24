@@ -16,10 +16,13 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { getEventBus } from '@core/events/EventBus';
 import { defaultAnimation } from '@motion/animation';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { usePluginStore } from '@stores/pluginStore';
 import { parseManifest } from '@core/plugins/manifest';
 import { pluginParamComponentType } from '@core/plugins/uiParams';
@@ -27,7 +30,6 @@ import { setPluginStatus, resetPluginStatusForTests } from '@core/plugins/uiStat
 import { INSPECTOR_SECTIONS } from './inspectorSections';
 import { InspectorSelectionProvider } from './inspectorSelection';
 import { PluginParamsSection, hasPluginParamsSection, pluginParamsTitle } from './PluginParamsSection';
-import type { SceneNode } from '@core/types';
 
 const PLUGIN = 'studio.acme.lab';
 const COMPONENT = pluginParamComponentType(PLUGIN, 'lift');
@@ -62,20 +64,17 @@ const MANIFEST = {
   },
 };
 
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
-});
+jest.useFakeTimers();
 
-function addNode(id: string, kind: string): void {
-  defaultSceneGraph.addNode({
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: 0, y: 0, scaleX: 1, scaleY: 1 } },
-    ],
-  } as unknown as SceneNode);
-}
+let h: Harness & { engine: LocalEngine };
+/** A shape layer (the panel applies) and a text layer (`appliesTo: ["shape"]` — it does not), made through the engine. */
+let shape1: string;
+let text1: string;
+
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 
 function install(enabled = true): void {
   const { manifest, errors } = parseManifest(MANIFEST);
@@ -102,12 +101,17 @@ beforeEach(async () => {
   await usePluginStore.getState().hydrate();
   for (const p of [...usePluginStore.getState().plugins]) usePluginStore.getState().remove(p.manifest.id);
   resetPluginStatusForTests();
-  defaultSceneGraph.clear();
-  addNode('shape1', 'shape');
-  addNode('text1', 'text');
+  h = await setupAppEngine();
+  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
+  ({ layer: shape1 } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: shape1, init: [] }));
+  ({ layer: text1 } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: text1, init: [] }));
+  getCommandSystem().getHistory().clear();
 });
 
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
 
 describe('the registry entry', () => {
   it('is registered under a stable id, with a selection-wide predicate', () => {
@@ -120,20 +124,20 @@ describe('the registry entry', () => {
   });
 
   it('applies only where a plugin actually contributes', () => {
-    expect(hasPluginParamsSection('shape1')).toBe(false);
+    expect(hasPluginParamsSection(shape1)).toBe(false);
     install();
-    expect(hasPluginParamsSection('shape1')).toBe(true);
+    expect(hasPluginParamsSection(shape1)).toBe(true);
     // `appliesTo: ["shape"]` — a text layer is not this panel's business.
-    expect(hasPluginParamsSection('text1')).toBe(false);
+    expect(hasPluginParamsSection(text1)).toBe(false);
 
     const def = INSPECTOR_SECTIONS.find((s) => s.id === 'pluginParams')!;
-    expect(def.appliesToSelection!(['shape1', 'text1'])).toBe(false);
-    expect(def.appliesToSelection!(['shape1'])).toBe(true);
+    expect(def.appliesToSelection!([shape1, text1])).toBe(false);
+    expect(def.appliesToSelection!([shape1])).toBe(true);
   });
 
   it('titles itself with the panel when there is exactly one', () => {
     install();
-    expect(pluginParamsTitle('shape1')).toBe('3D Lift');
+    expect(pluginParamsTitle(shape1)).toBe('3D Lift');
   });
 });
 
@@ -141,7 +145,7 @@ describe('rendered from the schema', () => {
   beforeEach(() => install());
 
   it('names every parameter, and attributes the panel to its plugin', () => {
-    draw('shape1');
+    draw(shape1);
     expect(screen.getByText('3D Lift')).toBeInTheDocument();
     expect(screen.getByText('Acme Lab')).toBeInTheDocument();
     // `getAllBy`: a `ValueField` labels both its wrapper and its input, so one
@@ -155,38 +159,47 @@ describe('rendered from the schema', () => {
   });
 
   it('shows the enum s LABELS, not its stored values', () => {
-    draw('shape1');
+    draw(shape1);
     expect(screen.getByRole('option', { name: 'Soft Light' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'soft' })).not.toBeInTheDocument();
   });
 
   it('never shows the track key, which is internal plumbing', () => {
-    draw('shape1');
+    draw(shape1);
     expect(document.body.textContent).not.toContain('pluginUi.');
   });
 
-  it('writes an enum choice onto the layer under the declared name', () => {
-    draw('shape1');
+  it('writes an enum choice onto the layer under the declared name — one undo entry', async () => {
+    draw(shape1);
+    const before = h.doc();
     fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'hard' } });
-    expect(stored('shape1')!.mode).toBe('hard');
+    await idle();
+    expect(stored(shape1)!.mode).toBe('hard');
     // Seeded whole, so a plugin reading back never meets `undefined` for a
     // parameter its own manifest says has a value.
-    expect(stored('shape1')!.amount).toBe(50);
-    expect(stored('shape1')!['centre.x']).toBe(0);
+    expect(stored(shape1)!.amount).toBe(50);
+    expect(stored(shape1)!['centre.x']).toBe(0);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    // Undo takes the seeded group with the choice: the layer is as it was.
+    await undo();
+    expect(stored(shape1)).toBeUndefined();
+    expect(h.doc()).toBe(before);
   });
 
-  it('honours showIf against a sibling that is written after the first render', () => {
-    draw('shape1');
+  it('honours showIf against a sibling that is written after the first render', async () => {
+    draw(shape1);
     expect(screen.queryByLabelText('Feather')).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Soft'));
-    expect(stored('shape1')!.soft).toBe(true);
+    await idle();
+    expect(stored(shape1)!.soft).toBe(true);
     expect(screen.getAllByLabelText('Feather').length).toBeGreaterThan(0);
     // Its group heading comes with it.
     expect(screen.getByText('Edges')).toBeInTheDocument();
   });
 
   it('shows the declared status line until the plugin writes one', () => {
-    draw('shape1');
+    draw(shape1);
     expect(screen.getByText('Idle')).toBeInTheDocument();
     act(() => { setPluginStatus(PLUGIN, 'lift', 'state', '12 pins placed'); });
     expect(screen.getByText('12 pins placed')).toBeInTheDocument();
@@ -194,16 +207,17 @@ describe('rendered from the schema', () => {
 });
 
 describe('when the plugin goes away', () => {
-  it('takes its section but leaves the values in the document', () => {
+  it('takes its section but leaves the values in the document', async () => {
     install();
-    draw('shape1');
+    draw(shape1);
     fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'hard' } });
+    await idle();
     cleanup();
 
     usePluginStore.getState().remove(PLUGIN);
-    expect(hasPluginParamsSection('shape1')).toBe(false);
+    expect(hasPluginParamsSection(shape1)).toBe(false);
     // The values are the USER's, not the plugin's: reinstalling has to find
     // the work where it was left.
-    expect(stored('shape1')!.mode).toBe('hard');
+    expect(stored(shape1)!.mode).toBe('hard');
   });
 });

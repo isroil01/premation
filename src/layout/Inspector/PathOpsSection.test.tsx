@@ -10,46 +10,42 @@
  * overrides, so a "tidy-up" rename here would orphan every remap.
  */
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { PathOpsSection } from './PathOpsSection';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 
+// The seam under test: the ids the panel hands the command system. Spied on the
+// app's command system (installed by `setupAppEngine`), so the panel still
+// reads its selection from the document mirror of a real engine.
 const executed: string[] = [];
-jest.mock('@core/commands/CommandSystem', () => ({
-  getCommandSystem: () => ({
-    execute: (id: string) => {
-      executed.push(id);
-      return Promise.resolve();
-    },
-  }),
-}));
 
-function addShape(id: string): void {
-  defaultSceneGraph.addNode({
-    id,
-    name: id,
-    parent: null,
-    children: [],
-    visible: true,
-    locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`,
-        type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 100, height: 100, shapeType: 'rect' },
-      },
-    ],
-  } as never);
+let h: Harness & { engine: LocalEngine };
+
+/** A shape layer, created through the engine (the panel reads layers from the mirror). */
+async function addShape(name: string): Promise<string> {
+  return (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name, init: [] })).layer;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   executed.length = 0;
-  defaultSceneGraph.clear();
+  h = await setupAppEngine();
+  jest.spyOn(getCommandSystem(), 'execute').mockImplementation(((id: string) => {
+    executed.push(id);
+    return Promise.resolve();
+  }) as never);
   useUIStore.getState().setActiveTool('select');
+});
+
+afterEach(async () => {
+  cleanup();
+  jest.restoreAllMocks();
+  useSelectionStore.getState().set([]);
+  await h.dispose();
 });
 
 describe('PathOpsSection', () => {
@@ -59,11 +55,11 @@ describe('PathOpsSection', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('shows for ONE shape layer, with the four ops disabled', () => {
+  it('shows for ONE shape layer, with the four ops disabled', async () => {
     // Disabled rather than absent: a pathfinder that disappears at one
     // selected shape never explains that it wants two.
-    addShape('a');
-    useSelectionStore.getState().set(['a']);
+    const a = await addShape('a');
+    useSelectionStore.getState().set([a]);
     render(<PathOpsSection />);
     expect(screen.getByLabelText('Union (Add)')).toBeDisabled();
     expect(screen.getByText('Select two or more shape layers to combine.')).toBeInTheDocument();
@@ -71,10 +67,10 @@ describe('PathOpsSection', () => {
     expect(screen.getByTitle(/^Knife —/)).toBeEnabled();
   });
 
-  it('dispatches the LIVE boolean command ids by default', () => {
-    addShape('a');
-    addShape('b');
-    useSelectionStore.getState().set(['a', 'b']);
+  it('dispatches the LIVE boolean command ids by default', async () => {
+    const a = await addShape('a');
+    const b = await addShape('b');
+    useSelectionStore.getState().set([a, b]);
     render(<PathOpsSection />);
     fireEvent.click(screen.getByLabelText('Union (Add)'));
     fireEvent.click(screen.getByLabelText('Subtract (top minus below)'));
@@ -88,10 +84,10 @@ describe('PathOpsSection', () => {
     ]);
   });
 
-  it('dispatches the BAKE ids after switching the result mode', () => {
-    addShape('a');
-    addShape('b');
-    useSelectionStore.getState().set(['a', 'b']);
+  it('dispatches the BAKE ids after switching the result mode', async () => {
+    const a = await addShape('a');
+    const b = await addShape('b');
+    useSelectionStore.getState().set([a, b]);
     render(<PathOpsSection />);
     fireEvent.click(screen.getByText('Bake now'));
     fireEvent.click(screen.getByLabelText('Union (Add) (bake)'));
@@ -101,18 +97,18 @@ describe('PathOpsSection', () => {
     expect(executed).toEqual(['shape.mergeUnion', 'shape.mergeExclude']);
   });
 
-  it('Merge Paths always bakes, whatever the mode toggle says', () => {
-    addShape('a');
-    addShape('b');
-    useSelectionStore.getState().set(['a', 'b']);
+  it('Merge Paths always bakes, whatever the mode toggle says', async () => {
+    const a = await addShape('a');
+    const b = await addShape('b');
+    useSelectionStore.getState().set([a, b]);
     render(<PathOpsSection />);
     fireEvent.click(screen.getByText('Merge Paths (bake)'));
     expect(executed).toEqual(['shape.mergeUnion']);
   });
 
-  it('the Knife button arms the tool rather than running a command', () => {
-    addShape('a');
-    useSelectionStore.getState().set(['a']);
+  it('the Knife button arms the tool rather than running a command', async () => {
+    const a = await addShape('a');
+    useSelectionStore.getState().set([a]);
     render(<PathOpsSection />);
     fireEvent.click(screen.getByText('Knife'));
     expect(useUIStore.getState().activeTool).toBe('knife');

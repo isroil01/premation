@@ -15,11 +15,16 @@
  * label, every author's property is suddenly named after our plumbing.
  */
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { CustomLayerSection } from './CustomLayerSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { buildCustomLayerNode, customLayerComponent } from '@core/plugins/customLayers';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { insertBuiltLayers } from '@core/engine/offDocument';
 import {
   registerLayerKinds,
   resetLayerKindsForTests,
@@ -62,23 +67,45 @@ function install(enabled = true): void {
   registerLayerKinds(PLUGIN, 'Acme Lab', [KIND]);
 }
 
+jest.useFakeTimers();
+
+let h: Harness & { engine: LocalEngine };
+/** The custom layer under test (its id is the one the engine's paste assigned). */
+let n1: string;
+
 beforeEach(async () => {
   await usePluginStore.getState().hydrate();
   for (const p of [...usePluginStore.getState().plugins]) usePluginStore.getState().remove(p.manifest.id);
   resetLayerKindsForTests();
-  // `seedDefaultScene` seeds; it does not clear.
-  defaultSceneGraph.clear();
-  seedDefaultScene();
-  defaultSceneGraph.addNode(buildCustomLayerNode('n1', PLUGIN, KIND, {
-    props: { focal: 72, mode: 'displace', invert: true, tint: '#00aaff' },
-  }));
+  h = await setupAppEngine();
+  // Inserted the way the app inserts a built layer: the builder runs off the
+  // document and the layer lands as ONE `pasteLayers` through the engine.
+  const ids = await insertBuiltLayers('New Depth Image', 'comp_root', () => {
+    defaultSceneGraph.addChild('comp_root', buildCustomLayerNode('n1', PLUGIN, KIND, {
+      props: { focal: 72, mode: 'displace', invert: true, tint: '#00aaff' },
+    }));
+  }, { select: false });
+  expect(ids).toHaveLength(1);
+  n1 = ids![0]!;
+  getCommandSystem().getHistory().clear();
 });
+
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
+const props = (): Record<string, unknown> => customLayerComponent(defaultSceneGraph.getNode(n1)!)!.props as Record<string, unknown>;
 
 describe('rendered from the schema', () => {
   beforeEach(() => install());
 
   it('shows every declared property under its declared label', () => {
-    const { container } = render(<CustomLayerSection nodeId="n1" />);
+    const { container } = render(<CustomLayerSection nodeId={n1} />);
     for (const label of ['Focal', 'Samples', 'Mode', 'Invert', 'Tint']) {
       // `getAll`: a keyframable row is a scrubber AND an input, both labelled.
       expect(screen.getAllByLabelText(new RegExp(`^${label}$`, 'i')).length).toBeGreaterThan(0);
@@ -106,7 +133,7 @@ describe('rendered from the schema', () => {
     });
 
     it('offers the images in the project', () => {
-      render(<CustomLayerSection nodeId="n1" />);
+      render(<CustomLayerSection nodeId={n1} />);
       const select = screen.getByLabelText('Source') as HTMLSelectElement;
       const options = [...select.options].map((o) => o.textContent);
       expect(options).toContain('Backdrop.png');
@@ -116,7 +143,7 @@ describe('rendered from the schema', () => {
     it('★ offers ONLY images, because that is the only kind the schema allows', () => {
       // `assetKind` can only be 'image'. Listing a video here would be a slot
       // the user can fill with something the plugin can never be handed.
-      render(<CustomLayerSection nodeId="n1" />);
+      render(<CustomLayerSection nodeId={n1} />);
       const select = screen.getByLabelText('Source') as HTMLSelectElement;
       const options = [...select.options].map((o) => o.textContent);
       expect(options).not.toContain('Clip.mp4');
@@ -124,27 +151,34 @@ describe('rendered from the schema', () => {
     });
 
     it('starts on None, since an asset prop has no default by rule', () => {
-      render(<CustomLayerSection nodeId="n1" />);
+      render(<CustomLayerSection nodeId={n1} />);
       expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('');
     });
 
-    it('writes the chosen asset id to the layer', () => {
-      render(<CustomLayerSection nodeId="n1" />);
+    it('writes the chosen asset id to the layer — one undo entry', async () => {
+      render(<CustomLayerSection nodeId={n1} />);
+      const before = h.doc();
       const select = screen.getByLabelText('Source') as HTMLSelectElement;
       fireEvent.change(select, { target: { value: 'a_img2' } });
+      await idle();
 
-      const comp = customLayerComponent(defaultSceneGraph.getNode('n1')!);
-      expect((comp!.props as Record<string, unknown>).source).toBe('a_img2');
+      expect(props().source).toBe('a_img2');
+      settle();
+      expect(historyLabels()).toHaveLength(1);
+      await undo();
+      expect(props().source).toBeNull();
+      expect(h.doc()).toBe(before);
     });
 
-    it('★ keeps an asset that has gone missing, marked, rather than silently clearing it', () => {
+    it('★ keeps an asset that has gone missing, marked, rather than silently clearing it', async () => {
       // A reference that quietly becomes empty is a property the user has to
       // notice was lost. One that says "missing" is a property they can fix.
-      render(<CustomLayerSection nodeId="n1" />);
+      render(<CustomLayerSection nodeId={n1} />);
       fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'a_img2' } });
+      await idle();
 
       useAssetStore.setState({ assets: [] } as never);
-      render(<CustomLayerSection nodeId="n1" />);
+      render(<CustomLayerSection nodeId={n1} />);
 
       const selects = screen.getAllByLabelText('Source') as HTMLSelectElement[];
       const live = selects[selects.length - 1]!;
@@ -154,7 +188,7 @@ describe('rendered from the schema', () => {
   });
 
   it('humanises a prop name when the schema declares no label', () => {
-    render(<CustomLayerSection nodeId="n1" />);
+    render(<CustomLayerSection nodeId={n1} />);
     // `edgeFeather` → "Edge feather", not `edgeFeather` and not `plugin.edgeFeather`.
     expect(screen.getByLabelText('Edge feather')).toBeTruthy();
   });
@@ -162,7 +196,7 @@ describe('rendered from the schema', () => {
   it('never leaks the plugin. track prefix into the UI', () => {
     // It is an internal key. If it reaches a label, every author's property is
     // named after our plumbing.
-    const { container } = render(<CustomLayerSection nodeId="n1" />);
+    const { container } = render(<CustomLayerSection nodeId={n1} />);
     expect(container.textContent).not.toMatch(/plugin\./);
     for (const el of container.querySelectorAll('[aria-label]')) {
       expect(el.getAttribute('aria-label')).not.toMatch(/plugin\./);
@@ -170,7 +204,7 @@ describe('rendered from the schema', () => {
   });
 
   it('drives the widget from the declared type and constraints', () => {
-    render(<CustomLayerSection nodeId="n1" />);
+    render(<CustomLayerSection nodeId={n1} />);
 
     // A non-animatable number carries its own min/max/step.
     const samples = screen.getByLabelText('Samples') as HTMLInputElement;
@@ -188,22 +222,27 @@ describe('rendered from the schema', () => {
     expect((screen.getByLabelText('Invert') as HTMLInputElement).checked).toBe(true);
   });
 
-  it('★ writes a boolean from the checkbox, not the change event', () => {
+  it('★ writes a boolean from the checkbox, not the change event', async () => {
     // The shared Checkbox is a plain <input type="checkbox">, so its onChange
     // hands back an event. Passing that straight through stored a React
     // SyntheticEvent as the property value: the box then read back unchecked,
     // and the document carried an unserialisable object.
-    render(<CustomLayerSection nodeId="n1" />);
+    render(<CustomLayerSection nodeId={n1} />);
     fireEvent.click(screen.getByLabelText('Invert'));
+    await idle();
 
-    const comp = customLayerComponent(defaultSceneGraph.getNode('n1')!);
-    expect((comp!.props as Record<string, unknown>).invert).toBe(false);
+    expect(props().invert).toBe(false);
+    expect((screen.getByLabelText('Invert') as HTMLInputElement).checked).toBe(false);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(props().invert).toBe(true);
   });
 
   it('renders an animatable number through the shared keyframe row', () => {
     // Same component a native property uses. Nothing here reimplements
     // keyframing, easing or auto-keyframe — if it did, they would drift.
-    const { container } = render(<CustomLayerSection nodeId="n1" />);
+    const { container } = render(<CustomLayerSection nodeId={n1} />);
     // The scrubber the native rows use, carrying this property's own range …
     const scrubber = container.querySelector('[data-numeric="true"][aria-label="Focal"]')!;
     expect(scrubber.getAttribute('aria-valuemin')).toBe('0');
@@ -215,7 +254,7 @@ describe('rendered from the schema', () => {
 
 describe('an inert layer', () => {
   it('is read-only with a banner when the plugin is not installed', () => {
-    render(<CustomLayerSection nodeId="n1" />);
+    render(<CustomLayerSection nodeId={n1} />);
 
     expect(screen.getByRole('status').textContent).toMatch(/not installed/i);
     // Read-only means NO editable control, not a missing panel.
@@ -227,7 +266,7 @@ describe('an inert layer', () => {
   it('still shows every authored value, so nothing looks lost', () => {
     // The failure this prevents: an empty panel, from which a user reasonably
     // concludes their layer's settings are gone.
-    const { container } = render(<CustomLayerSection nodeId="n1" />);
+    const { container } = render(<CustomLayerSection nodeId={n1} />);
     expect(container.textContent).toContain('72');
     expect(container.textContent).toContain('displace');
     expect(container.textContent).toContain('#00aaff');
@@ -236,20 +275,20 @@ describe('an inert layer', () => {
   it('says DISABLED rather than missing when the user turned the plugin off', () => {
     // Different sentence, different fix: enable versus install.
     install(false);
-    render(<CustomLayerSection nodeId="n1" />);
+    render(<CustomLayerSection nodeId={n1} />);
     expect(screen.getByRole('status').textContent).toMatch(/is disabled/i);
   });
 
   it('goes read-only the moment the plugin is unregistered under it', () => {
     install();
-    const { rerender } = render(<CustomLayerSection nodeId="n1" />);
+    const { rerender } = render(<CustomLayerSection nodeId={n1} />);
     expect(screen.getByLabelText('Mode')).toBeTruthy();
 
     // Uninstalling while the layer is selected must flip the panel, not leave
     // live controls behind that write into nothing.
     unregisterLayerKinds(PLUGIN);
     usePluginStore.getState().remove(PLUGIN);
-    rerender(<CustomLayerSection nodeId="n1" />);
+    rerender(<CustomLayerSection nodeId={n1} />);
 
     expect(screen.queryByLabelText('Mode')).toBeNull();
     expect(screen.getByRole('status')).toBeTruthy();

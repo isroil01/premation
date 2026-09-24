@@ -10,37 +10,43 @@
  * values, so a write landing on the wrong index is visible.
  */
 
-import { render, cleanup, fireEvent } from '@testing-library/react';
+import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { getNodeStrokes, setNodeStrokes, defaultStroke } from '@core/paint/stroke';
+import { getNodeStrokes, defaultStroke } from '@core/paint/stroke';
 import { defaultAnimation } from '@motion/animation';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import type { SceneNode } from '@core/types';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { strokesCommands } from './appearance/paintEdits';
 
-const ID = 'stroke_stack_rows';
+jest.useFakeTimers();
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  defaultAnimation.clear();
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  defaultSceneGraph.addNode({
-    id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${ID}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 200, height: 120 } },
-      { id: `${ID}_s`, type: 'Style', props: { opacity: 100, fill: '#ffffff' } },
-    ],
-  } as unknown as SceneNode);
-  setNodeStrokes(ID, [
+let h: Harness & { engine: LocalEngine };
+let ID: string;
+
+beforeEach(async () => {
+  h = await setupAppEngine();
+  ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'stroke_stack_rows', init: [] }));
+  // Two strokes with different values, seeded through the engine as the panel writes them.
+  await h.batch('seed', strokesCommands(ID, [
     { ...defaultStroke('#ff0000'), width: 8 },
     { ...defaultStroke('#00ff00'), width: 3 },
-  ]);
+  ]));
+  getCommandSystem().getHistory().clear();
   useSelectionStore.setState({ ids: [ID] } as never);
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 
 const labels = (c: HTMLElement): string[] =>
   [...c.querySelectorAll('[aria-label]')].map((e) => e.getAttribute('aria-label') ?? '');
@@ -57,41 +63,64 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
     }
   });
 
-  it('its blend mode writes stroke 2 and leaves stroke 1 alone', () => {
+  it('its blend mode writes stroke 2 and leaves stroke 1 alone — one undo entry', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    const before = h.doc();
     const select = container.querySelector('[aria-label="Stroke 2 blend mode"]') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'screen' } });
+    await idle();
     expect(getNodeStrokes(ID).map((s) => s.blendMode)).toEqual([undefined, 'screen']);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(h.doc()).toBe(before);
   });
 
-  it('"+" adds a Dash, then a Gap; "−" removes the last', () => {
+  it('"+" adds a Dash, then a Gap; "−" removes the last — one undo entry per click', async () => {
     const { container, rerender } = render(<AppearanceSection nodeId={ID} />);
-    const click = (label: string): void => {
+    const click = async (label: string): Promise<void> => {
       fireEvent.click(container.querySelector(`[aria-label="${label}"]`) as HTMLElement);
+      await idle();
       rerender(<AppearanceSection nodeId={ID} />);
     };
-    click('Add dash or gap to stroke 2');
+    await click('Add dash or gap to stroke 2');
     expect(getNodeStrokes(ID)[1]!.dash).toEqual([10]);
-    click('Add dash or gap to stroke 2');
+    await click('Add dash or gap to stroke 2');
     expect(getNodeStrokes(ID)[1]!.dash).toEqual([10, 10]);
-    click('Remove last dash or gap from stroke 2');
+    await click('Remove last dash or gap from stroke 2');
     expect(getNodeStrokes(ID)[1]!.dash).toEqual([10]);
     // Stroke 1's pattern never moved.
     expect(getNodeStrokes(ID)[0]!.dash).toEqual([]);
+    settle();
+    expect(historyLabels()).toHaveLength(3);
+    await undo();
+    expect(getNodeStrokes(ID)[1]!.dash).toEqual([10, 10]);
   });
 
-  it('its Width stopwatch keys stroke 2’s own track, not the primary’s', () => {
+  it('its Width stopwatch keys stroke 2’s own track, not the primary’s — one undo entry', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
     const toggles = [...container.querySelectorAll('[aria-label="Enable Width animation"]')] as HTMLElement[];
     expect(toggles.length).toBeGreaterThanOrEqual(2);
     fireEvent.click(toggles[1]!);
+    await idle();
     expect(defaultAnimation.isAnimated(ID, 'stroke.1.width')).toBe(true);
     expect(defaultAnimation.isAnimated(ID, 'strokeWidth')).toBe(false);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(defaultAnimation.isAnimated(ID, 'stroke.1.width')).toBe(false);
   });
 
-  it('Remove stroke 2 removes it', () => {
+  it('Remove stroke 2 removes it — one undo entry; undo restores it', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    const before = h.doc();
     fireEvent.click(container.querySelector('[aria-label="Remove stroke 2"]') as HTMLElement);
+    await idle();
     expect(getNodeStrokes(ID)).toHaveLength(1);
+    settle();
+    expect(historyLabels()).toEqual(['Remove Stroke 2']);
+    await undo();
+    expect(getNodeStrokes(ID)).toHaveLength(2);
+    expect(h.doc()).toBe(before);
   });
 });

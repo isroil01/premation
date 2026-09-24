@@ -45,36 +45,40 @@
 
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
-import { render, cleanup, fireEvent } from '@testing-library/react';
+import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { EventBus, setEventBus } from '@core/events/EventBus';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { useHistoryStore, attachHistoryRecording, baselineHistory } from '@stores/historyStore';
-import type { SceneNode } from '@core/types';
+import { useHistoryStore, baselineHistory } from '@stores/historyStore';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 
-const ID = 'hist_probe_layer';
+/** The probe layer — created through the app's engine per section (its id is the engine's). */
+let ID = '';
+let h: (Harness & { engine: LocalEngine }) | null = null;
+
+/** The two-bone skeleton the rig panels edit. */
+const SKELETON = {
+  bones: [
+    { id: 'upper', name: 'Upper', parentId: null, length: 50, x: -60, y: 0, rotation: 0 },
+    { id: 'fore', name: 'Fore', parentId: 'upper', length: 50, x: 50, y: 0, rotation: 0 },
+  ],
+  ikTargets: [{ boneId: 'fore', x: 40, y: 0, chainLength: 2 }],
+  controllers: [{ id: 'c1', name: 'Hand', shape: 'circle', side: 'left', size: 14, link: { kind: 'ikTarget', boneId: 'fore' } }],
+  meshDensity: 6, meshExpansion: 0,
+};
 
 /**
- * A layer carrying enough components that many sections have something to edit:
- * a transform, text, a style, and a two-bone skeleton for the rig panels.
+ * UI edits go through the engine API as async `edit(...)` requests: a probe
+ * reads the document only after the engine has applied what the control sent.
  */
-function richNode(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`, type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'text', x: 0, y: 0, rotation: 0, width: 200, height: 160, opacity: 100 },
-      },
-      { id: `${id}_txt`, type: 'Text', props: { content: 'Hi', fontSize: 48, fontFamily: 'Inter' } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#ffffff' } },
-    ],
-  } as unknown as SceneNode;
+async function idle(): Promise<void> {
+  await act(async () => { await engineIdle(); });
 }
 
 function discoverSections(): Array<[string, React.ComponentType<{ nodeId: string }>]> {
@@ -120,12 +124,15 @@ interface Probe {
 /**
  * Fire one realistic edit at `el` and measure what history did.
  *
- * `flush()` stands in for the 700 ms debounce elapsing — it is the same call
+ * The engine is awaited (`idle`) after every fire, so the measurement sees the
+ * edit the control sent rather than the document before it landed. `flush()`
+ * stands in for the 700 ms debounce elapsing — it is the same call
  * `performUndo` makes, so this is the real commit path rather than a shortcut
  * around it.
  */
-function probeControl(section: string, el: Element): Probe {
+async function probeControl(section: string, el: Element): Promise<Probe> {
   const control = el.getAttribute('aria-label') ?? el.tagName.toLowerCase();
+  await idle();
   const before = captured();
   const entriesBefore = entryCount();
 
@@ -134,17 +141,28 @@ function probeControl(section: string, el: Element): Probe {
     // ArrowDown is the fallback for a field already sitting at its max, where
     // ArrowUp clamps to a no-op and would look like a control that does nothing.
     fireEvent.keyDown(el, { key: 'ArrowUp' });
-    if (captured() === before) fireEvent.keyDown(el, { key: 'ArrowDown' });
+    await idle();
+    if (captured() === before) {
+      fireEvent.keyDown(el, { key: 'ArrowDown' });
+      await idle();
+    }
   } else if (el.tagName === 'SELECT') {
     const sel = el as HTMLSelectElement;
     const other = [...sel.options].find((o) => o.value !== sel.value && o.value !== '');
     if (!other) return { section, control, added: 0, changed: false };
     fireEvent.change(sel, { target: { value: other.value } });
+    await idle();
   } else {
+    // A typed field is one edit per focus: its gesture (and so its one undo
+    // entry) closes when the user leaves the field — the blur is part of the
+    // edit, exactly as Tab / clicking away is for a person.
     fireEvent.change(el, { target: { value: 'probe-edit' } });
+    fireEvent.blur(el);
+    await idle();
   }
 
   useHistoryStore.getState().flush();
+  await idle();
   return {
     section, control,
     added: entryCount() - entriesBefore,
@@ -165,10 +183,10 @@ function drivableControls(container: HTMLElement): Element[] {
  * Run every section once and collect the probes. Done ONCE, at suite level, so
  * the positive controls and the assertion look at the same measurement.
  */
-function collectProbes(): Probe[] {
+async function collectProbes(): Promise<Probe[]> {
   const probes: Probe[] = [];
   for (const [name, Section] of SECTIONS) {
-    resetWorld();
+    await resetWorld();
     let container: HTMLElement;
     try {
       container = render(<Section nodeId={ID} />).container;
@@ -182,7 +200,7 @@ function collectProbes(): Probe[] {
       // Still attached? An edit can re-render the section and drop the node.
       if (!container.contains(el)) continue;
       try {
-        probes.push(probeControl(name, el));
+        probes.push(await probeControl(name, el));
       } catch {
         /* a control that throws is conditionalHooks' subject, not this one */
       }
@@ -192,35 +210,38 @@ function collectProbes(): Probe[] {
   return probes;
 }
 
-function resetWorld(): void {
-  // A fresh bus per section, then the SAME wiring boot installs. Order matters:
-  // this mirrors `Application.boot()` swapping the bus before Providers
-  // subscribes, which is the exact sequence the bug lived in.
+/**
+ * A fresh app engine per section with a layer carrying enough that many
+ * sections have something to edit: a transform, text (font, size), a fill,
+ * and a two-bone skeleton for the rig panels — all written through the engine.
+ */
+async function resetWorld(): Promise<void> {
+  // A fresh bus per section, then the SAME wiring boot installs
+  // (`setupAppEngine`: the unified history, the recorder, the engine). Order
+  // matters: this mirrors `Application.boot()` swapping the bus before
+  // Providers subscribes, which is the exact sequence the bug lived in.
   setEventBus(new EventBus());
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  defaultAnimation.clear();
-  try { defaultSceneGraph.removeNode(ID); } catch { /* fresh */ }
-  defaultSceneGraph.addNode(richNode(ID));
-  defaultSceneGraph.setSkeleton(ID, {
-    bones: [
-      { id: 'upper', name: 'Upper', parentId: null, length: 50, x: -60, y: 0, rotation: 0 },
-      { id: 'fore', name: 'Fore', parentId: 'upper', length: 50, x: 50, y: 0, rotation: 0 },
-    ],
-    ikTargets: [{ boneId: 'fore', x: 40, y: 0, chainLength: 2 }],
-    controllers: [{ id: 'c1', name: 'Hand', shape: 'circle', side: 'left', size: 14, link: { kind: 'ikTarget', boneId: 'fore' } }],
-    meshDensity: 6, meshExpansion: 0,
-  } as never);
+  h = await setupAppEngine();
+  ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: 'hist_probe_layer', init: [] }));
+  await h.batch('fixture', [
+    { type: 'setProperty', prop: { layer: ID, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
+    { type: 'setProperty', prop: { layer: ID, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify(SKELETON) } },
+  ]);
   useSelectionStore.setState({ ids: [ID] } as never);
-  attachHistoryRecording();
   baselineHistory();
 }
 
-const PROBES = collectProbes();
-const LANDED = PROBES.filter((p) => p.changed);
+let PROBES: Probe[] = [];
+let LANDED: Probe[] = [];
 
-afterAll(() => {
+beforeAll(async () => {
+  PROBES = await collectProbes();
+  LANDED = PROBES.filter((p) => p.changed);
+}, 240_000);
+
+afterAll(async () => {
   cleanup();
-  try { defaultSceneGraph.removeNode(ID); } catch { /* already gone */ }
+  await h?.dispose();
 });
 
 describe('the probe set is real', () => {
@@ -259,12 +280,12 @@ describe('the probe set is real', () => {
     }
   });
 
-  it('POSITIVE CONTROL: the recording mechanism is live in this harness', () => {
+  it('POSITIVE CONTROL: the recording mechanism is live in this harness', async () => {
     // If `attachHistoryRecording` were wired to nothing here, the snapshot path
     // would be absent and the suite would measure the command layer alone —
     // which is exactly the blind spot that hid this bug for so long. An
     // UNCOMMANDED edit is the tell: only the snapshot path can record it.
-    resetWorld();
+    await resetWorld();
     const before = entryCount();
     defaultSceneGraph.setSkeleton(ID, {
       bones: [{ id: 'solo', name: 'Solo', parentId: null, length: 20, x: 1, y: 2, rotation: 0 }],

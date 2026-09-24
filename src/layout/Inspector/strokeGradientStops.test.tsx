@@ -23,16 +23,18 @@
  * UI could not reach.
  */
 
-import { render, cleanup, fireEvent } from '@testing-library/react';
+import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { getNodeStroke } from '@core/paint/stroke';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import type { SceneNode } from '@core/types';
+import { getNodeStroke, defaultStroke } from '@core/paint/stroke';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { strokesCommands } from './appearance/paintEdits';
 
-const ID = 'grad_stroke';
+jest.useFakeTimers();
 
 /** THREE stops — see the header; two could not distinguish old from new. */
 const STOPS = [
@@ -41,29 +43,34 @@ const STOPS = [
   { id: 's2', offset: 1, color: '#0000ff' },
 ];
 
-function seed(): void {
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  defaultSceneGraph.addNode({
-    id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${ID}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 200, height: 120 } },
-      { id: `${ID}_s`, type: 'Style', props: { opacity: 100, fill: '#ffffff' } },
-    ],
-  } as unknown as SceneNode);
-  defaultSceneGraph.setStroke(ID, {
-    enabled: true, color: '#ffffff', width: 8, opacity: 1,
+let h: Harness & { engine: LocalEngine };
+let ID: string;
+
+/** A shape layer made through the app's engine, its stroke a three-stop gradient written as the panel writes it. */
+async function seed(): Promise<void> {
+  ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'grad_stroke', init: [] }));
+  await h.batch('seed', strokesCommands(ID, [{
+    ...defaultStroke('#ffffff'), enabled: true, width: 8, opacity: 1,
     align: 'center', dash: [], cap: 'butt', join: 'miter',
     paint: { type: 'linear', angle: 90, stops: STOPS.map((s) => ({ ...s })) },
-  } as never);
+  } as never]));
+  getCommandSystem().getHistory().clear();
   useSelectionStore.setState({ ids: [ID] } as never);
 }
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  seed();
+beforeEach(async () => {
+  h = await setupAppEngine();
+  await seed();
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 
 /** Stop rows the panel offers, read back off the DOM. */
 const stopLabels = (c: HTMLElement): string[] =>
@@ -105,10 +112,12 @@ describe('the panel offers every stop', () => {
 });
 
 describe('editing the MIDDLE stop — the one the old UI could not reach', () => {
-  it('moving stop 2 writes stop 2, and leaves the ends alone', () => {
+  it('moving stop 2 writes stop 2, and leaves the ends alone — one undo entry', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    const before = h.doc();
     const field = [...container.querySelectorAll('[role="spinbutton"][aria-label="Stop 2 position"]')][0]!;
     fireEvent.keyDown(field, { key: 'ArrowUp' });
+    await idle();
 
     const stops = (getNodeStroke(ID)?.paint as { stops: Array<{ offset: number }> }).stops;
     const offsets = stops.map((s) => s.offset).sort((a, b) => a - b);
@@ -117,15 +126,25 @@ describe('editing the MIDDLE stop — the one the old UI could not reach', () =>
     expect(offsets[0]).toBeCloseTo(0, 6);
     expect(offsets[2]).toBeCloseTo(1, 6);
     expect(offsets[1]).not.toBeCloseTo(0.5, 6);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(h.doc()).toBe(before);
   });
 
-  it('removing stop 2 leaves the two ends', () => {
+  it('removing stop 2 leaves the two ends — one undo entry', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    const before = h.doc();
     const remove = [...container.querySelectorAll('[aria-label="Remove stop 2"]')][0] as HTMLElement;
     fireEvent.click(remove);
+    await idle();
     const stops = (getNodeStroke(ID)?.paint as { stops: Array<{ color: string }> }).stops;
     expect(stops).toHaveLength(2);
     expect(stops.map((s) => s.color).sort()).toEqual(['#0000ff', '#ff0000']);
+    settle();
+    expect(historyLabels()).toHaveLength(1);
+    await undo();
+    expect(h.doc()).toBe(before);
   });
 });
 

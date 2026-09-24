@@ -12,42 +12,67 @@
  * The round trip is asserted through `readNodeLight` rather than against the
  * option strings, so a dropdown that offers a value the engine does not
  * understand — or a coercion that quietly rewrites one — fails here.
+ *
+ * The fixture is the app's engine (B3): the light is a layer created through
+ * the engine API with its starting fields as `init`, every control's write is
+ * an engine command (one undo entry per pick) and the section reads the
+ * document mirror.
  */
 
-import { render, cleanup, fireEvent, screen } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
+import type { PropertyInit } from '@motion/engine-api';
 import { LightSection } from './LightSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { values } from '@core/engine/propRefs';
 import { readNodeLight, type LightType } from '@core/scene/light';
 import { ENVIRONMENT_PRESETS } from '@core/scene/environmentLight';
 import { useAssetStore } from '@stores/assetStore';
 import { kelvinToHex, nearestKelvin } from '@core/scene/colorTemperature';
-import type { SceneNode } from '@core/types';
 
-const ID = 'light_probe';
+jest.useFakeTimers();
 
 const ALL_TYPES: LightType[] = ['point', 'ambient', 'spot', 'parallel', 'environment'];
 
-function lightNode(id: string, props: Record<string, unknown> = {}): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`, type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'light', x: 100, y: 100, intensity: 100, radius: 500, ...props },
-      },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#fff3c0' } },
-    ],
-  } as unknown as SceneNode;
+let h: Harness & { engine: LocalEngine };
+/** The light the current test mounted. */
+let ID = '';
+
+beforeEach(async () => {
+  h = await setupAppEngine();
+});
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
+/** No second entry from the 700 ms recorder on top of the engine's. */
+const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
+
+/** The light's starting fields, as the engine's layer fields (§15.9). */
+interface LightInit { lightType?: LightType; envPreset?: string; envRotation?: number }
+
+function initOf(props: LightInit): PropertyInit[] {
+  const init: PropertyInit[] = [];
+  if (props.lightType !== undefined) init.push({ path: 'light/lightType', value: values.choice(props.lightType) });
+  if (props.envPreset !== undefined) init.push({ path: 'light/environment', value: values.string(props.envPreset) });
+  if (props.envRotation !== undefined) init.push({ path: 'light/envRotation', value: values.scalar(props.envRotation) });
+  return init;
 }
 
-function mount(props: Record<string, unknown> = {}): void {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  defaultSceneGraph.addNode(lightNode(ID, props));
+/** Create a light layer through the engine, select it and mount its section on an empty history. */
+async function mount(props: LightInit = {}): Promise<void> {
+  await act(async () => {
+    ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'light', name: 'Probe light', init: initOf(props) }));
+  });
+  getCommandSystem().getHistory().clear();
   useSelectionStore.setState({ ids: [ID] } as never);
   render(<LightSection nodeId={ID} />);
 }
@@ -70,18 +95,14 @@ function currentLight(): ReturnType<typeof readNodeLight> {
   return readNodeLight(node);
 }
 
-afterEach(() => {
-  cleanup();
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-});
-
 describe('the light Type menu', () => {
-  it('offers every type the engine understands, and each round-trips', () => {
+  it('offers every type the engine understands, and each round-trips', async () => {
     for (const want of ALL_TYPES) {
-      mount();
+      await mount();
       const select = screen.getByLabelText('Light type') as HTMLSelectElement;
       expect([...select.options].map((o) => o.value)).toContain(want);
       fireEvent.change(select, { target: { value: want } });
+      await idle();
       // The engine's own reader, not the DOM: this is the coercion that used to
       // silently turn 'environment' into 'point'.
       expect(currentLight().type).toBe(want);
@@ -91,9 +112,11 @@ describe('the light Type menu', () => {
     }
   });
 
-  it('lands on a real sky when switching TO environment', () => {
-    mount();
+  it('lands on a real sky when switching TO environment — one undo entry', async () => {
+    await mount();
+    const before = h.doc();
     fireEvent.change(screen.getByLabelText('Light type'), { target: { value: 'environment' } });
+    await idle();
     const preset = currentLight().envPreset;
     expect(ENVIRONMENT_PRESETS.map((p) => p.id)).toContain(preset);
     // Written, not merely defaulted by the reader — the menu has to be able to
@@ -101,12 +124,18 @@ describe('the light Type menu', () => {
     const node = defaultSceneGraph.getNode(ID);
     const t = node?.components.find((c) => c.type === 'Transform');
     expect(t?.props.envPreset).toBe(preset);
+    // Type + sky + rotation are one menu pick: one entry, undone whole.
+    settle();
+    expect(historyLabels()).toEqual(['Set Light Type']);
+    await undo();
+    expect(currentLight().type).toBe('point');
+    expect(h.doc()).toBe(before);
   });
 });
 
 describe('an environment light', () => {
-  it('exposes exactly the props buildSnapshot reads: sky, rotation, intensity', () => {
-    mount({ lightType: 'environment', envPreset: 'sky', envRotation: 30 });
+  it('exposes exactly the props buildSnapshot reads: sky, rotation, intensity', async () => {
+    await mount({ lightType: 'environment', envPreset: 'sky', envRotation: 30 });
 
     const sky = screen.getByLabelText('Environment preset') as HTMLSelectElement;
     expect(sky.value).toBe('sky');
@@ -120,22 +149,25 @@ describe('an environment light', () => {
     expect(numRow('Intensity')).toBeTruthy();
   });
 
-  it('hides the rows the environment path never reads', () => {
-    mount({ lightType: 'environment' });
+  it('hides the rows the environment path never reads', async () => {
+    await mount({ lightType: 'environment' });
     for (const gone of ['Radius', 'Falloff', 'Cone angle', 'Direction', 'Target X', 'Light color', 'Color temperature']) {
       expect({ row: gone, found: screen.queryAllByLabelText(gone).length }).toEqual({ row: gone, found: 0 });
     }
   });
 
-  it('writes envRotation, which is what the renderer samples per frame', () => {
-    mount({ lightType: 'environment', envRotation: 30 });
+  it('writes envRotation, which is what the renderer samples per frame', async () => {
+    await mount({ lightType: 'environment', envRotation: 30 });
+    expect(currentLight().envRotation).toBe(30);
     fireEvent.keyDown(numRow('Sky rotation'), { key: 'ArrowUp' });
+    await idle();
     expect(currentLight().envRotation).not.toBe(30);
   });
 
-  it('changes the sky through the menu', () => {
-    mount({ lightType: 'environment', envPreset: 'studio' });
+  it('changes the sky through the menu', async () => {
+    await mount({ lightType: 'environment', envPreset: 'studio' });
     fireEvent.change(screen.getByLabelText('Environment preset'), { target: { value: 'sunset' } });
+    await idle();
     expect(currentLight().envPreset).toBe('sunset');
   });
 });
@@ -153,17 +185,19 @@ describe('an environment light lit by an image', () => {
     useAssetStore.setState({ assets: [IMG] } as never);
   });
   afterEach(() => {
+    cleanup(); // unmount before the library changes under the section
     useAssetStore.setState({ assets: [] } as never);
   });
 
-  it('picking "Image…" points the sky at a library image', () => {
-    mount({ lightType: 'environment', envPreset: 'studio' });
+  it('picking "Image…" points the sky at a library image', async () => {
+    await mount({ lightType: 'environment', envPreset: 'studio' });
     fireEvent.change(screen.getByLabelText('Environment preset'), { target: { value: 'image' } });
+    await idle();
     expect(currentLight().envPreset).toBe(`asset:${IMG.id}`);
   });
 
-  it('shows the picker, on the chosen asset, by NAME', () => {
-    mount({ lightType: 'environment', envPreset: `asset:${IMG.id}` });
+  it('shows the picker, on the chosen asset, by NAME', async () => {
+    await mount({ lightType: 'environment', envPreset: `asset:${IMG.id}` });
     // The Sky menu reports "image" rather than falling back to a preset…
     expect((screen.getByLabelText('Environment preset') as HTMLSelectElement).value).toBe('image');
     // …and the picker names the file, not the opaque id.
@@ -172,29 +206,33 @@ describe('an environment light lit by an image', () => {
     expect([...picker.options].find((o) => o.value === IMG.id)?.textContent).toBe(IMG.name);
   });
 
-  it('an asset that is no longer in the library says so instead of vanishing', () => {
-    mount({ lightType: 'environment', envPreset: 'asset:img_gone' });
+  it('an asset that is no longer in the library says so instead of vanishing', async () => {
+    await mount({ lightType: 'environment', envPreset: 'asset:img_gone' });
     const picker = screen.getByLabelText('Environment image') as HTMLSelectElement;
     expect(picker.value).toBe('img_gone');
     expect([...picker.options].some((o) => o.textContent?.includes('missing'))).toBe(true);
     // The prop is left alone — a missing sky is repairable, a silently reset
     // one is not.
+    await idle();
     expect(currentLight().envPreset).toBe('asset:img_gone');
   });
 
-  it('switching back to a preset drops the image reference entirely', () => {
-    mount({ lightType: 'environment', envPreset: `asset:${IMG.id}` });
+  it('switching back to a preset drops the image reference entirely', async () => {
+    await mount({ lightType: 'environment', envPreset: `asset:${IMG.id}` });
     fireEvent.change(screen.getByLabelText('Environment preset'), { target: { value: 'sunset' } });
+    await idle();
     expect(currentLight().envPreset).toBe('sunset');
     expect(screen.queryAllByLabelText('Environment image')).toHaveLength(0);
   });
 });
 
 describe('colour temperature', () => {
-  it('writes the light colour through the blackbody fit', () => {
-    mount({ lightType: 'point' });
+  it('writes the light colour through the blackbody fit', async () => {
+    await mount({ lightType: 'point' });
+    expect(currentLight().color).toBe('#fff3c0');
     const field = numRow('Color temperature');
     fireEvent.keyDown(field, { key: 'ArrowDown' });
+    await idle();
     const after = currentLight().color;
     expect(after).not.toBe('#fff3c0');
     // The written colour sits ON the blackbody locus — it came from the Kelvin
@@ -204,12 +242,14 @@ describe('colour temperature', () => {
 });
 
 describe('light presets', () => {
-  it('apply type, energy, colour and shaping in one pick', () => {
-    mount({ lightType: 'point' });
+  it('apply type, energy, colour and shaping in one pick — one undo entry', async () => {
+    await mount({ lightType: 'point' });
+    const before = h.doc();
     const presets = screen.getByLabelText('Light preset') as HTMLSelectElement;
     const key = [...presets.options].find((o) => o.value === 'Key');
     expect(key).toBeTruthy();
     fireEvent.change(presets, { target: { value: 'Key' } });
+    await idle();
     const lit = currentLight();
     expect(lit.type).toBe('spot');
     expect(lit.intensity).toBe(100);
@@ -218,5 +258,10 @@ describe('light presets', () => {
     // ...and the menu now reports the preset it just applied, rather than
     // falling back to Custom.
     expect((screen.getByLabelText('Light preset') as HTMLSelectElement).value).toBe('Key');
+    settle();
+    expect(historyLabels()).toEqual(['Light Preset: Key']);
+    await undo();
+    expect(currentLight().type).toBe('point');
+    expect(h.doc()).toBe(before);
   });
 });
