@@ -119,7 +119,8 @@ describe('the clip lands inside', () => {
 describe('the control is reachable', () => {
   it('the Assets panel offers it from the asset context menu', () => {
     const ui = readSource('layout/Assets/AssetsPanel.tsx');
-    expect(ui).toMatch(/createCompositionFromFootage/);
+    // Through the engine (`newCompFromFootageEdit`, one undo entry).
+    expect(ui).toMatch(/newCompFromFootageEdit/);
     expect(ui).toMatch(/New Comp from Footage/);
   });
 

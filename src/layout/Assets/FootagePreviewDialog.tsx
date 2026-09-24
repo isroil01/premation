@@ -29,10 +29,9 @@ import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { insertMedia } from '@core/scene/sceneInsert';
-import { insertMediaAtPlayhead, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import { insertMediaEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { webCodecsAvailable } from '@core/video/exactVideoSource';
 import { openSourceMonitor } from '@stores/sourceMonitorStore';
@@ -128,15 +127,13 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
             <Icon name="tv" size="sm" /> Open in Source Monitor
           </Button>
         )}
-        {/* B3-legacy: engine gap — `createLayer` has no media fitting (contain-fit, PAR, SVG paths, sequences, audio routing, playhead placement) that `insertMedia` applies. */}
-        <Button size="sm" variant="secondary" onClick={() => { void insertMedia(asset); close(); }}>
+        <Button size="sm" variant="secondary" onClick={() => { void insertMediaEdit([asset]); close(); }}>
           <Icon name="plus" size="sm" /> Add to Comp
         </Button>
         <Button
           size="sm"
           variant="secondary"
-          // B3-legacy: engine gap — no media fitting in `createLayer` (as above).
-          onClick={() => { void insertMediaAtPlayhead(asset); close(); }}
+          onClick={() => { void insertMediaEdit([asset], { atPlayhead: true }); close(); }}
           title="Insert with the clip starting at the playhead instead of frame 0"
         >
           <Icon name="play" size="sm" /> Add at Playhead
@@ -145,8 +142,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
           <Button
             size="sm"
             variant="secondary"
-            // B3-legacy: engine gap — `createComposition{fromItems}` does not conform like `createCompositionFromFootage` (pristine-comp adoption, name sans extension, full-frame placement).
-            onClick={() => { void createCompositionFromFootage(asset); close(); }}
+            onClick={() => { void newCompFromFootageEdit(asset); close(); }}
             title="New composition sized, timed and paced to this clip"
           >
             <Icon name="component" size="sm" /> New Comp

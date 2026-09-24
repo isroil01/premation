@@ -29,8 +29,7 @@ import { useAssetsViewStore } from '@stores/assetsViewStore';
 import { useUIStore } from '@stores/uiStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { insertMedia } from '@core/scene/sceneInsert';
-import { insertMediaAtPlayhead } from '@core/scene/footageWorkflow';
+import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { mintAssetId } from '@core/assets/local/importFromDisk';
 import { importPathsEdit } from './assetEdits';
 import { getAssetVisualInfo } from './assetVisuals';
@@ -58,15 +57,14 @@ export function canBrowseMedia(): boolean {
  * the payload's pre-minted id.
  */
 async function importAndInsert(path: string, at: 'default' | 'playhead'): Promise<void> {
+  // Two entries, as before: Import File (the item stays in the project if the insert is undone), then the insert.
   const { imported } = await importPathsEdit([path]);
   const asset = imported[0];
   if (!asset) {
     useUIStore.getState().notify({ level: 'error', message: `Could not import “${baseName(path)}”.`, durationMs: 4000 });
     return;
   }
-  // B3-legacy: engine gap — `createLayer` has no media fitting (contain-fit, PAR, SVG paths, sequences, audio routing, playhead placement) that `insertMedia` applies.
-  if (at === 'playhead') await insertMediaAtPlayhead(asset);
-  else await insertMedia(asset);
+  await insertMediaEdit([asset], { atPlayhead: at === 'playhead' });
 }
 
 export function MediaBrowser(): JSX.Element {
@@ -169,12 +167,7 @@ export function MediaBrowser(): JSX.Element {
       durationMs: 6000,
       action: {
         label: 'Add to composition',
-        onSelect: () => {
-          void (async () => {
-            // B3-legacy: engine gap — no media fitting in `createLayer` (see importAndInsert).
-            for (const a of imported) await insertMedia(a);
-          })();
-        },
+        onSelect: () => { void insertMediaEdit(imported); },
       },
     });
   };

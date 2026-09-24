@@ -10,8 +10,9 @@
  * user.
  *
  * Layout rather than core because both flows are conversations: they open
- * modals, report progress and notify. The parts that only mutate the document
- * are in `@core/composition` and are callable without any of this.
+ * modals, report progress and notify. The parts that edit the document are
+ * engine edits in `@layout/Workspace/footageEdits` (`newCompFromClipsEdit`,
+ * `assembleShotsEdit`), each ONE undo entry, callable without any of this.
  */
 
 import { useUIStore } from '@stores/uiStore';
@@ -22,10 +23,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
-import { runAsOneHistoryEntry } from '@core/composition/compositeEdit';
-import { createCompositionFromClips } from '@core/composition/compFromClips';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
-import { applyAssembly, detectForAssembly } from '@core/composition/assembleFromFootage';
+import { detectForAssembly } from '@core/composition/assembleFromFootage';
+import { assembleShotsEdit, newCompFromClipsEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import { openAssembleDialog } from './AssembleDialog';
 
 type Level = 'info' | 'success' | 'warning' | 'error';
@@ -68,11 +67,11 @@ export async function runNewCompFromClips(assets: ReadonlyArray<ImportedAsset>):
   }
 
   try {
-    // B3-legacy: engine gap — built on `createCompositionFromFootage` + `insertMedia` (comp-from-footage conform, media fitting) and sequenced with opacity cross-dissolves; `assembleComposition` has neither the fitting nor the dissolves.
-    const result = await runAsOneHistoryEntry('New Composition from Clips', () =>
-      createCompositionFromClips(assets, overlapFrames),
-    );
-    const n = result.nodeIds.length;
+    // Not `assembleComposition`: it has neither the router's fitting nor the dissolves, nor
+    // the pristine-comp adoption. The engine refusing is toasted by the edit.
+    const result = await newCompFromClipsEdit(assets, overlapFrames);
+    if (!result) return;
+    const n = result.layers.length;
     notify(
       result.sequenced && result.overlapFrames > 0
         ? `Composition built from ${n} clips with a ${result.overlapFrames}-frame cross-dissolve`
@@ -116,7 +115,7 @@ export function selectedVideoLayerId(): string | null {
  * ## The two history entries an ASSET target produces, on purpose
  *
  * Starting from an asset needs a comp to assemble in, and building that comp is
- * `createCompositionFromFootage` — the same act as the panel's own "New Comp
+ * `newCompFromFootageEdit` — the same act as the panel's own "New Comp
  * from Footage", which has always been its own undo step. Folding it into the
  * assembly would mean one Ctrl+Z threw away the composition as well as the cut,
  * which is not what "undo the assembly" means to anyone.
@@ -151,14 +150,12 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
     if (target.kind === 'layer') {
       nodeId = target.nodeId;
     } else {
-      // B3-legacy: engine gap — comp-from-footage conform (`createComposition{fromItems}` has no pristine adoption / full-frame fitting).
-      await createCompositionFromFootage(target.asset);
-      const placed = useSelectionStore.getState().ids[0];
-      if (!placed) {
+      const made = await newCompFromFootageEdit(target.asset);
+      if (!made) {
         notify('Assemble from Footage: the clip could not be placed in a composition.', 'error', 6000);
         return;
       }
-      nodeId = placed;
+      nodeId = made.layer;
     }
 
     const { cutsCompSec, status } = await detectForAssembly(nodeId, opts);
@@ -171,10 +168,8 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
       return;
     }
 
-    // B3-legacy: not converted yet — split at every cut → drop the runts → re-anchor → sequence with dissolves needs each split's new id in turn (an engine gesture of `splitLayers`/`deleteLayers`/`setLayerTiming`/`sequenceLayers`), and `sequenceLayers{crossfade}`'s parity with `sequenceLayerBars`' opacity dissolve is unverified.
-    const report = await runAsOneHistoryEntry('Assemble from Footage', () =>
-      applyAssembly(nodeId, cutsCompSec, opts),
-    );
+    const report = await assembleShotsEdit(nodeId, { cutsCompSec, fps, dissolveFrames: opts.dissolveFrames, minShotFrames: opts.minShotFrames });
+    if (!report) return;
 
     const parts = [`${cutsCompSec.length} cut${cutsCompSec.length === 1 ? '' : 's'}`];
     parts.push(`${report.shots.length} shot${report.shots.length === 1 ? '' : 's'}`);

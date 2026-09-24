@@ -25,7 +25,7 @@ import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { useAssetStore } from '@stores/assetStore';
-import { insertMedia } from '@core/scene/sceneInsert';
+import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { setActiveCompFrameRateEdit } from '@layout/Composition/compositionEdits';
 
 /**
@@ -91,9 +91,9 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         const footage = takePendingFootage();
         if (footage) {
           try {
-            // B3-legacy: engine gap — the parked footage is a browser `File` with no path (`importFiles` imports by path), and `createLayer` has no media fitting (`insertMedia`).
+            // B3-legacy: engine gap — the parked footage is a browser `File` with no path (`importFiles` imports by path only; no import from bytes).
             const asset = await useAssetStore.getState().addAsset(footage);
-            await insertMedia(asset);
+            await insertMediaEdit([asset]);
             const probedFps = asset.metadata?.fps;
             if (probedFps && probedFps > 0) await setActiveCompFrameRateEdit(probedFps);
           } catch (err) {

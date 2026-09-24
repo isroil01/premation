@@ -29,6 +29,8 @@ import { resetAssetsViewForTest, useAssetsViewStore } from '@stores/assetsViewSt
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { engineIdle } from '@core/engine/engineInstance';
+import { historyLabels, setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 
 jest.mock('@core/services/AssetDatabase', () => ({
   AssetDatabase: {
@@ -145,20 +147,31 @@ describe('import never inserts', () => {
   });
 
   it('offers ONE toast, "Imported N files", whose action places them', async () => {
-    renderPanel();
-    const before = contentLayerCount();
-    await importViaPicker([png('shot.png'), png('logo.png')]);
+    // The action inserts through the engine (`insertMediaEdit`).
+    const h = await setupAppEngine();
+    try {
+      useAssetStore.setState({ assets: [], folders: [] });
+      renderPanel();
+      const before = contentLayerCount();
+      await importViaPicker([png('shot.png'), png('logo.png')]);
 
-    const toasts = useUIStore.getState().notifications;
-    expect(toasts).toHaveLength(1);
-    expect(toasts[0]?.message).toBe('Imported 2 files');
-    expect(toasts[0]?.action?.label).toBe('Add to composition');
+      const toasts = useUIStore.getState().notifications;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]?.message).toBe('Imported 2 files');
+      expect(toasts[0]?.action?.label).toBe('Add to composition');
 
-    await act(async () => {
-      toasts[0]?.action?.onSelect();
-      await new Promise((r) => setTimeout(r, 20));
-    });
-    expect(contentLayerCount()).toBe(before + 2);
+      const entries = historyLabels().length;
+      await act(async () => {
+        toasts[0]?.action?.onSelect();
+        await new Promise((r) => setTimeout(r, 20));
+        await engineIdle();
+      });
+      expect(contentLayerCount()).toBe(before + 2);
+      // Both files in ONE undo entry.
+      expect(historyLabels().slice(entries)).toEqual(['Insert 2 Layers']);
+    } finally {
+      await h.dispose();
+    }
   });
 
   it('an import under a persisted Unused filter still shows — and, being unused, the filter stays', async () => {

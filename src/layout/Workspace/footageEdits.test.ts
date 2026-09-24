@@ -17,7 +17,14 @@ import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { footageCompSettings, insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
+import { defaultAnimation } from '@motion/animation';
+import {
+  assembleShotsEdit,
+  footageCompSettings,
+  insertMediaEdit,
+  newCompFromClipsEdit,
+  newCompFromFootageEdit,
+} from './footageEdits';
 
 let h: Harness & { engine: LocalEngine };
 
@@ -123,6 +130,22 @@ describe('insertMediaEdit', () => {
     expect(defaultSceneGraph.getNode(ids[0]!)).toBeUndefined();
   });
 
+  it('`atPlayhead` starts every inserted clip at the playhead — same entry, undoable', async () => {
+    const assets = await importAssets('C:/media/clip.mp4', 'C:/media/tone.wav');
+    const fps = useProjectStore.getState().comps[activeComp()]!.fps;
+    useProjectStore.getState().actions.setTime(1.5, Math.round(1.5 * fps));
+    const before = h.doc();
+    const entries = historyLabels().length;
+    const ids = (await insertMediaEdit(assets, { atPlayhead: true, label: 'Add at Playhead' }))!;
+    expect(ids).toHaveLength(2);
+    for (const id of ids) {
+      const bars = getTimelineController().getLayersForNode(id);
+      expect(bars).toHaveLength(1);
+      expect(bars[0]!.start).toBe(Math.round(1.5 * fps));
+    }
+    await expectOneUndoableEntry('Add at Playhead', entries, before);
+  });
+
   it('an SVG whose markup cannot be read is skipped with a notice — nothing written', async () => {
     const notify = jest.spyOn(useUIStore.getState(), 'notify');
     const svg: ImportedAsset = { id: 'svg1', name: 'logo.svg', type: 'image', src: 'blob:nowhere/logo', size: 1 };
@@ -204,5 +227,117 @@ describe('newCompFromFootageEdit', () => {
     expect(defaultSceneGraph.getNode(made.layer)!.name).toBe('Hero');
     expect(useProjectStore.getState().comps[made.comp]!.durationSeconds).toBe(2);
     expect(historyLabels().slice(entries)).toEqual(['Custom']);
+  });
+});
+
+/** The node's first bar, in frames. */
+const bar = (id: string) => getTimelineController().getLayersForNode(id)[0]!;
+
+describe('newCompFromClipsEdit', () => {
+  beforeEach(async () => {
+    // A project the user has worked in: the clips get a NEW comp (and tab).
+    await h.run({ type: 'setCompositionSettings', comp: 'comp_root', patch: { name: 'Main' } });
+  });
+
+  it('the first clip’s comp, the others fitted into it and laid end-to-end — ONE entry', async () => {
+    const assets = await importAssets('C:/media/a.mp4', 'C:/media/b.mp4', 'C:/media/c.mp4');
+    const before = h.doc();
+    const entries = historyLabels().length;
+
+    const made = (await newCompFromClipsEdit(assets))!;
+    expect(made).toMatchObject({ sequenced: true, overlapFrames: 0 });
+    expect(made.layers).toHaveLength(3);
+    expect(made.comp).not.toBe('comp_root');
+    expect(activeComp()).toBe(made.comp);
+    // Sized, paced and named after the FIRST clip; as long as the assembly (3 × 4 s).
+    expect(useProjectStore.getState().comps[made.comp]).toMatchObject({ name: 'a', width: 640, height: 360, fps: 30, durationSeconds: 12 });
+    expect(made.layers.map((id) => transform(id).assetId)).toEqual(assets.map((a) => a.id));
+    // The router fitted the later clips against the NEW comp (full frame), not the old one.
+    for (const id of made.layers) expect(transform(id)).toMatchObject({ width: 640, height: 360 });
+    expect(made.layers.map((id) => bar(id).start)).toEqual([0, 120, 240]);
+    expect(useSelectionStore.getState().ids).toEqual(made.layers);
+
+    await expectOneUndoableEntry('New Composition from Clips', entries, before);
+  });
+
+  it('an overlap overlaps each pair and cross-dissolves opacity; the comp ends where the last clip does', async () => {
+    const assets = await importAssets('C:/media/a.mp4', 'C:/media/b.mp4');
+    const made = (await newCompFromClipsEdit(assets, 12))!;
+    expect(made).toMatchObject({ sequenced: true, overlapFrames: 12 });
+    const [a, b] = made.layers;
+    expect(bar(b!).start).toBe(108);
+    expect(useProjectStore.getState().comps[made.comp]!.durationSeconds).toBeCloseTo(228 / 30, 6);
+    expect(defaultAnimation.getTrackKeyframes(a!, 'opacity')).toHaveLength(2);
+    expect(defaultAnimation.getTrackKeyframes(b!, 'opacity')).toHaveLength(2);
+  });
+
+  it('one clip is New Comp from Footage under this entry’s name (nothing to sequence)', async () => {
+    const [clip] = await importAssets('C:/media/a.mp4');
+    const entries = historyLabels().length;
+    const made = (await newCompFromClipsEdit([clip!]))!;
+    expect(made).toMatchObject({ sequenced: false });
+    expect(layerIdsOfComp(made.comp)).toEqual(made.layers);
+    await engineIdle();
+    expect(historyLabels().slice(entries)).toEqual(['New Composition from Clips']);
+  });
+});
+
+describe('newCompFromClipsEdit in a fresh project', () => {
+  it('adopts the pristine comp for the clips (no second comp)', async () => {
+    const assets = await importAssets('C:/media/a.mp4', 'C:/media/b.mp4');
+    const adopt = pristineCompToAdopt();
+    expect(adopt).not.toBeNull();
+    const comps = Object.keys(useProjectStore.getState().comps).length;
+    const before = h.doc();
+    const entries = historyLabels().length;
+    const made = (await newCompFromClipsEdit(assets))!;
+    expect(made.comp).toBe(adopt);
+    expect(Object.keys(useProjectStore.getState().comps)).toHaveLength(comps);
+    expect(layerIdsOfComp(adopt!)).toHaveLength(2);
+    expect(useProjectStore.getState().comps[adopt!]).toMatchObject({ name: 'a', width: 640, height: 360, durationSeconds: 8 });
+    await expectOneUndoableEntry('New Composition from Clips', entries, before);
+  });
+});
+
+describe('assembleShotsEdit', () => {
+  async function master(): Promise<string> {
+    await h.run({ type: 'setCompositionSettings', comp: 'comp_root', patch: { name: 'Main' } });
+    const [clip] = await importAssets('C:/media/rush.mp4');
+    return (await newCompFromFootageEdit(clip!))!.layer;
+  }
+
+  it('split at the cuts, runts dropped, the rest re-laid — ONE entry, undoable', async () => {
+    const layer = await master();
+    const before = h.doc();
+    const entries = historyLabels().length;
+
+    // 120 frames cut at 30, 60 and 63: shots of 30, 30, 3 and 57 frames.
+    const report = (await assembleShotsEdit(layer, { cutsCompSec: [2.1, 1, 2], fps: 30, dissolveFrames: 0, minShotFrames: 5 }))!;
+    expect(report).toMatchObject({ dropped: 1, sequenced: true });
+    expect(report.shots).toHaveLength(3);
+    expect(report.shots[0]).toBe(layer);
+    expect(report.shots.map((id) => [bar(id).start, bar(id).duration])).toEqual([[0, 30], [30, 30], [60, 57]]);
+    expect(useSelectionStore.getState().ids).toEqual(report.shots);
+
+    await expectOneUndoableEntry('Assemble from Footage', entries, before);
+  });
+
+  it('dropping the opening shot puts the first survivor back on the master’s start', async () => {
+    const layer = await master();
+    const report = (await assembleShotsEdit(layer, { cutsCompSec: [0.1], fps: 30, dissolveFrames: 0, minShotFrames: 5 }))!;
+    expect(report).toMatchObject({ dropped: 1, sequenced: false });
+    expect(report.shots).toHaveLength(1);
+    expect(report.shots[0]).not.toBe(layer);
+    expect(bar(report.shots[0]!).start).toBe(0);
+    expect(defaultSceneGraph.getNode(layer)).toBeUndefined();
+  });
+
+  it('a dissolve overlaps the shots and writes the opacity ramps', async () => {
+    const layer = await master();
+    const report = (await assembleShotsEdit(layer, { cutsCompSec: [2], fps: 30, dissolveFrames: 6, minShotFrames: 0 }))!;
+    const [a, b] = report.shots;
+    expect(bar(b!).start).toBe(54);
+    expect(defaultAnimation.getTrackKeyframes(a!, 'opacity')).toHaveLength(2);
+    expect(defaultAnimation.getTrackKeyframes(b!, 'opacity')).toHaveLength(2);
   });
 });

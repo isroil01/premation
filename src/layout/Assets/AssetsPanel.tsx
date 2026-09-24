@@ -84,10 +84,9 @@ import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore'
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { insertMedia } from '@core/scene/sceneInsert';
-import { insertMediaAtPlayhead, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import { insertMediaEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import { setPanelAssetSelection } from '@core/composition/assetSelection';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -338,9 +337,8 @@ export function AssetsPanel(): JSX.Element {
   /*
     The one toast an import produces. Import fills the project; this is the
     offer for the people who meant "and put it in the comp" — the old
-    always-on insert loop, now behind a verb. Sequential and awaited:
-    insertMedia ends by selecting what it created and bumping the scene, so N
-    un-awaited inserts raced and the final selection depended on decode order.
+    always-on insert loop, now behind a verb. One insert of every file (one
+    undo entry, the last file's layer selected), not N racing ones.
   */
   const announceImport = (created: ImportedAsset[]): void => {
     if (created.length === 0) return;
@@ -350,12 +348,7 @@ export function AssetsPanel(): JSX.Element {
       durationMs: 6000,
       action: {
         label: 'Add to composition',
-        onSelect: () => {
-          void (async () => {
-            // B3-legacy: engine gap — `createLayer` has no media fitting (contain-fit, PAR, SVG paths, sequences, audio routing, placement at the active comp's playhead) that `insertMedia` applies.
-            for (const a of created) await insertMedia(a);
-          })();
-        },
+        onSelect: () => { void insertMediaEdit(created); },
       },
     });
   };
@@ -643,17 +636,10 @@ export function AssetsPanel(): JSX.Element {
       {
         id: 'add',
         label: many ? `Add ${count} to Composition` : 'Add to Composition',
-        onSelect: () => {
-          // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
-          if (!many) { void insertMedia(asset); return; }
-          // In the panel's own row order, so what lands in the comp matches
-          // what the user sees rather than the order they happened to click.
-          // Awaited sequentially inside one async task: concurrent inserts
-          // raced the selection and scrambled stacking order.
-          void (async () => {
-            for (const a of targets) await insertMedia(a);
-          })();
-        },
+        // In the panel's own row order, so what lands in the comp matches what
+        // the user sees rather than the order they happened to click. One
+        // entry for the whole selection.
+        onSelect: () => { void insertMediaEdit(many ? targets : [asset]); },
       },
       {
         // The clip starts where the playhead is parked — assembling order, AE's
@@ -662,11 +648,7 @@ export function AssetsPanel(): JSX.Element {
         // what "Add" means is how a clip lands 40s away from where you looked.
         id: 'add-at-playhead',
         label: many ? `Add ${count} at Playhead` : 'Add at Playhead',
-        onSelect: () => {
-          // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
-          if (!many) { void insertMediaAtPlayhead(asset); return; }
-          for (const a of targets) void insertMediaAtPlayhead(a);
-        },
+        onSelect: () => { void insertMediaEdit(many ? targets : [asset], { atPlayhead: true }); },
       },
       {
         // AE's canonical first move: the comp takes the clip's size (PAR-
@@ -676,8 +658,7 @@ export function AssetsPanel(): JSX.Element {
         id: 'comp-from-footage',
         label: 'New Comp from Footage',
         disabled: many,
-        // B3-legacy: engine gap — `createComposition{fromItems}` does not conform like this does (adopting the fresh project's pristine comp, the clip name sans extension, the app-default fallbacks, `insertMedia`'s full-frame placement).
-        onSelect: () => { void createCompositionFromFootage(asset); },
+        onSelect: () => { void newCompFromFootageEdit(asset); },
       },
       {
         // The multi-clip counterpart of the row above: the comp still takes the
@@ -1595,8 +1576,7 @@ export function AssetsPanel(): JSX.Element {
                 disabled={!singleSelectedAsset || singleSelectedAsset.type === 'audio'}
                 title="Create New Composition from Footage (or drag & drop footage here)"
                 onClick={() => {
-                  // B3-legacy: engine gap — comp-from-footage conform (see the row menu's New Comp from Footage).
-                  if (singleSelectedAsset) void createCompositionFromFootage(singleSelectedAsset);
+                  if (singleSelectedAsset) void newCompFromFootageEdit(singleSelectedAsset);
                 }}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -1608,10 +1588,7 @@ export function AssetsPanel(): JSX.Element {
                   setDockCompDropActive(false);
                   const assetId = e.dataTransfer.getData('text/asset-id');
                   const dropped = assets.find((a) => a.id === assetId);
-                  if (dropped && dropped.type !== 'audio') {
-                    // B3-legacy: engine gap — comp-from-footage conform.
-                    void createCompositionFromFootage(dropped);
-                  }
+                  if (dropped && dropped.type !== 'audio') void newCompFromFootageEdit(dropped);
                 }}
               >
                 <Icon name="component" size="sm" className={singleSelectedAsset && singleSelectedAsset.type !== 'audio' ? styles.assetGlyphComp : undefined} />
@@ -1638,11 +1615,7 @@ export function AssetsPanel(): JSX.Element {
                 title={selectedAssetIds.size > 1 ? `Add ${selectedAssetIds.size} selected to composition` : 'Add selected asset to composition'}
                 aria-label="Add to composition"
                 onClick={() => {
-                  const picked = assets.filter((a) => selectedAssetIds.has(a.id));
-                  void (async () => {
-                    // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
-                    for (const a of picked) await insertMedia(a);
-                  })();
+                  void insertMediaEdit(assets.filter((a) => selectedAssetIds.has(a.id)));
                 }}
               >
                 <Icon name="plus" size="sm" />
@@ -1654,9 +1627,7 @@ export function AssetsPanel(): JSX.Element {
                 title={selectedAssetIds.size > 1 ? `Add ${selectedAssetIds.size} selected at playhead` : 'Add selected asset at the playhead'}
                 aria-label="Add at playhead"
                 onClick={() => {
-                  const picked = assets.filter((a) => selectedAssetIds.has(a.id));
-                  // B3-legacy: engine gap — `createLayer` has no media fitting (see announceImport).
-                  for (const a of picked) void insertMediaAtPlayhead(a);
+                  void insertMediaEdit(assets.filter((a) => selectedAssetIds.has(a.id)), { atPlayhead: true });
                 }}
               >
                 <Icon name="stopwatch" size="sm" />

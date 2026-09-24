@@ -151,7 +151,9 @@ describe('the controls are reachable', () => {
     const dlg = readSource('layout/Assets/FootagePreviewDialog.tsx');
     expect(dlg).toMatch(/Add to Comp/);
     expect(dlg).toMatch(/Add at Playhead/);
-    expect(dlg).toMatch(/createCompositionFromFootage/);
+    expect(dlg).toMatch(/insertMediaEdit\(\[asset\], \{ atPlayhead: true \}\)/);
+    // New Comp goes through the engine (`newCompFromFootageEdit`), one undo entry.
+    expect(dlg).toMatch(/newCompFromFootageEdit/);
     // Replace goes through the engine (`replaceLayerSource`), one undo entry.
     expect(dlg).toMatch(/replaceSourceWithAsset/);
   });

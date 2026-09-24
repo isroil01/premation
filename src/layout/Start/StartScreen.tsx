@@ -54,7 +54,8 @@ import { ProjectCommands } from '@layout/Menu';
 import { useAssetStore } from '@stores/assetStore';
 import { useTemplateStore } from '@stores/templateStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import { importPathsEdit } from '@layout/Assets/assetEdits';
+import { newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import { asCommandId } from '@app-types/common';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
@@ -288,11 +289,29 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
           <Button variant="primary" onClick={() => void run(ProjectCommands.New)}>New Project</Button>
           {/* AE's second way in, visible at the start: new project, then the
               picked clip imports and the comp conforms to it (size, duration,
-              probed fps) via the same createCompositionFromFootage the Assets
-              panel uses. */}
+              probed fps) via the same New Comp from Footage the Assets panel
+              uses. On the desktop the OS dialog gives a PATH, which the
+              engine's `importFiles` takes; the browser keeps the <input>. */}
           <Button
             variant="secondary"
             onClick={() => {
+              const pickPaths = window.motionEditor?.shell?.pickFiles;
+              if (typeof pickPaths === 'function') {
+                void (async () => {
+                  const path = (await pickPaths())?.[0];
+                  if (!path) return;
+                  await run(ProjectCommands.New);
+                  // New can be declined (the unsaved-changes confirmation).
+                  if (!getProjectManager().getState().current) return;
+                  const asset = (await importPathsEdit([path])).imported[0];
+                  if (!asset) {
+                    useUIStore.getState().notify({ level: 'error', message: `Could not import “${path.replace(/^.*[\\/]/, '')}”.`, durationMs: 5000 });
+                    return;
+                  }
+                  await newCompFromFootageEdit(asset);
+                })();
+                return;
+              }
               const input = document.createElement('input');
               input.type = 'file';
               input.accept = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
@@ -303,11 +322,9 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
                 // New can be declined (the unsaved-changes confirmation) —
                 // importing into no project would drop the clip on the floor.
                 if (!getProjectManager().getState().current) return;
-                // B3-legacy: engine gap — an <input type=file> File has no path for `importFiles`, and
-                // `createComposition{fromItems}` does not conform the comp to the clip (pristine-comp
-                // adoption, PAR-corrected size, probed rate, full-frame placement) as this does.
+                // B3-legacy: engine gap — an <input type=file> File has no path for `importFiles` (no import from bytes).
                 const asset = await useAssetStore.getState().addAsset(f);
-                await createCompositionFromFootage(asset);
+                await newCompFromFootageEdit(asset);
               };
               input.click();
             }}
