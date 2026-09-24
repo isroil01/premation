@@ -22,12 +22,15 @@
  * Layer is one `pasteLayers` of the Pen's drawn-layer payloads built
  * off-document (`insertDrawnLayers`).
  *
- * B3-legacy: engine gap — what the API cannot address yet stays on
- * `runDocumentEdit`, decided per verb so one action is one undo entry:
- *   - a shape layer's own outline: the catalog has no path-valued property for
- *     it (`path.points` is bound as a SCALAR `layer/path.points`, with no
- *     static value), and Closed / RotoBezier (`Geometry.open`, `rotoBezier`)
- *     have no property at all;
+ * B3-gap: what the API cannot address yet stays on `runDocumentEdit`,
+ * decided per verb so one action is one undo entry (re-checked 2026-09-24
+ * against the catalog: `propRefForTrack(drawnPath, 'path.points')` is a SCALAR
+ * `layer/path.points` — static or animated — and `addKeyframes` with a path
+ * value answers `typeMismatch`):
+ *   - a drawn shape layer's own outline: the catalog has no path-valued
+ *     property for it (`path.points` is bound as a SCALAR `layer/path.points`,
+ *     with no static value), and Closed / RotoBezier (`Geometry.open`,
+ *     `rotoBezier`) have no property at all;
  *   - a mask's RotoBezier switch (a mask-level flag no property carries);
  *   - per-vertex `broken` / `tension` editing state (BezierPath drops it, so
  *     a write through the API would re-join split handles).
@@ -130,7 +133,7 @@ const toBezier = (v: unknown): BezierPoint[] | null =>
     : null;
 
 /**
- * B3-legacy: engine gap (see the file comment) — apply `fn` to an outline in
+ * B3-gap (see the file comment) — apply `fn` to an outline in
  * EVERY state (static + each keyframe) and set its switches, on the scene
  * graph and animation directly. The caller wraps it in ONE `runDocumentEdit`.
  * `fn` gets each state's points and the outline's closed state AFTER the
@@ -143,12 +146,17 @@ function editOutlineEverywhere(
 ): void {
   const nodeId = id.nodeId as string;
   if (id.maskId !== null) {
+    // B3-gap: a mask's RotoBezier switch has no property (`masks/<id>/*` is
+    // path, feather, opacity, expansion, mode, inverted), and a BezierPath
+    // value drops per-vertex `broken` / `tension`.
     setMaskPathFlags(nodeId, id.maskId, flags, fn ? (pts, closed) => (fn(pts, closed) as MaskPoint[] | null) ?? pts : undefined);
     return;
   }
   const node = defaultSceneGraph.getNode(nodeId as ID);
   const geom = node?.components.find((c) => c.type === 'Geometry');
   if (!node || !geom) return;
+  // B3-gap: a drawn shape's outline (`Geometry.points` / `open` / `rotoBezier`
+  // and its `path.points` data track) has no path-valued or switch property.
   const closed = flags.closed ?? geom.props.open !== true;
   if (flags.closed !== undefined) defaultSceneGraph.writeProp(node.id, geom.id, 'open', flags.closed ? undefined : true);
   if (flags.rotoBezier !== undefined) defaultSceneGraph.writeProp(node.id, geom.id, 'rotoBezier', flags.rotoBezier ? true : undefined);
@@ -203,7 +211,7 @@ function noTargetsHint(): void {
   notify('Select a path or mask first (Direct Selection, or a layer with a path)', 'warning');
 }
 
-/** B3-legacy: engine gap — run the legacy `edit` over the targets as one undo step. */
+/** B3-gap: a shape outline / RotoBezier / split-handle target (file comment) — the legacy `edit` over the targets as one undo step. */
 function legacyOnTargets(label: string, targets: PathTarget[], edit: (targets: PathTarget[]) => void): void {
   runDocumentEdit(label, () => edit(targets));
   getWorkspaceController().requestRender();
@@ -353,8 +361,9 @@ export function keyframePathAtPlayhead(): boolean {
     void sendPathEdit('Set Path Keyframe', [...byLayer].flatMap(([nodeId, masks]) => maskKeyAtCommands(nodeId, masks, now)));
     return true;
   }
-  // B3-legacy: engine gap — a shape layer's `path.points` has no path-valued
-  // property, and a mask key through the API drops `broken` / `tension`.
+  // B3-gap: a drawn shape layer's `path.points` has no path-valued property
+  // (catalog: scalar `layer/path.points`), and a mask key through the API
+  // drops per-vertex `broken` / `tension` (BezierPath has no field for them).
   runDocumentEdit('Set Path Keyframe', () => {
     const maskedLayers = new Set<string>();
     for (const t of targets) {
@@ -377,9 +386,11 @@ export function keyframePathAtPlayhead(): boolean {
  * static outline, or — lit — end it, keeping the shape at the playhead as the
  * static path (AE leaves the value where the playhead is).
  *
- * B3-legacy: engine gap — a shape layer's Path has no path-valued property in
- * the catalog (`path.points` is bound as a scalar `layer/path.points`, whose
- * `setAnimated` would key a number), so its stopwatch stays on the legacy writer.
+ * B3-gap: a drawn shape layer's Path has no path-valued property in the
+ * catalog (`path.points` is bound as a scalar `layer/path.points`, whose
+ * `setAnimated` keys a NUMBER on a scalar track — verified), and the static
+ * `Geometry.points` it restores has no property, so its stopwatch stays on the
+ * legacy writer.
  */
 export function togglePathAnimation(nodeId: string): void {
   const node = defaultSceneGraph.getNode(nodeId as ID);
@@ -448,8 +459,9 @@ export function pastePathOntoSelection(): boolean {
     directSelection()?.clearVertexSelection();
     return true;
   }
-  // B3-legacy: engine gap — a shape layer's own outline, and split handles /
-  // RotoBezier tension on the pasted or the target outline (see the file comment).
+  // B3-gap: a drawn shape layer's own outline (no path-valued property), and
+  // split handles / RotoBezier tension on the pasted or the target outline
+  // (BezierPath has no `broken` / `tension`) — see the file comment.
   runDocumentEdit('Paste Path', () => {
     for (const t of targets) {
       const nodeId = t.outline.nodeId as string;

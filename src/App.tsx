@@ -865,7 +865,7 @@ function EditorShellInner(): JSX.Element {
     }
     // A shape's Path row: a whole-outline data track, like the mask row above.
     if (props[0] === PATH_ANIM_PROP) {
-      // B3-legacy: engine gap — a drawn shape's own outline (Geometry `points` + the `path.points` data track) is not a catalog property; only paint-stroke paths are.
+      // B3-gap: a drawn shape's own outline (Geometry `points` + the `path.points` data track) has no path-valued catalog property — `layer/path.points` is typed scalar, so `setAnimated` would key a number; only paint-stroke paths are path-valued.
       togglePathAnimation(trackId);
       return;
     }

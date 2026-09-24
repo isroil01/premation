@@ -6,6 +6,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { defaultAnimation } from '@motion/animation';
 import { DirectSelectionTool } from '@motion/workspace';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { readNodeMask, readNodeMaskAnim, type MaskPath, type MaskPoint } from '@core/effects/mask';
@@ -28,6 +29,7 @@ import {
   reversePathCommand,
   setFirstVertexCommand,
   toggleClosed,
+  togglePathAnimation,
 } from './pathCommands';
 import { segmentStrokesToMask, ROTO_PATH_NAME } from './rotoBrushTool';
 
@@ -251,5 +253,77 @@ describe('Roto Brush mask', () => {
     await h.run({ type: 'undo' });
     await h.run({ type: 'undo' });
     expect(h.doc()).toEqual(before);
+  });
+});
+
+// B3-gap pins: a DRAWN shape layer's own outline has no path-valued API
+// property (the catalog types `path.points` as a scalar `layer/path.points`)
+// and Closed has no property, so these verbs keep the legacy writer. Under the
+// app engine they must still be ONE entry each that undo restores exactly and
+// redo reapplies — and must not send a command the catalog would mistype.
+describe('drawn shape paths stay on the legacy writer (B3-gap)', () => {
+  const pt = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
+  const outline = (s: number): MaskPoint[] => [pt(0, -s), pt(s, s), pt(-s, s)];
+
+  async function drawnPath(s: number): Promise<string> {
+    const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'path', name: 'Drawn', init: [] });
+    const node = defaultSceneGraph.getNode(layer)!;
+    const geom = node.components.find((c) => c.type === 'Geometry')!;
+    defaultSceneGraph.writeProp(node.id, geom.id, 'points', outline(s));
+    await engineIdle();
+    return layer;
+  }
+  const geomOf = (id: string): Record<string, unknown> =>
+    defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Geometry')!.props as Record<string, unknown>;
+
+  /** Run a legacy verb: ONE entry named `label`; undo restores exactly; redo reapplies. */
+  async function legacyEntry(label: string, run: () => unknown, check: () => void): Promise<void> {
+    await engineIdle();
+    const before = h.doc();
+    const entries = historyLabels().length;
+    const sent = jest.spyOn(h.engine, 'batch');
+    run();
+    await engineIdle();
+    expect(sent).not.toHaveBeenCalled();
+    sent.mockRestore();
+    expect(historyLabels().length).toBe(entries + 1);
+    expect(historyLabels().at(-1)).toBe(label);
+    check();
+    const after = h.doc();
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toEqual(before);
+    await h.run({ type: 'redo' });
+    expect(h.doc()).toEqual(after);
+  }
+
+  it('Closed on a drawn path', async () => {
+    const layer = await drawnPath(30);
+    useSelectionStore.getState().set([layer]);
+    await legacyEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
+      expect(geomOf(layer).open).toBe(true);
+    });
+  });
+
+  it('Reverse Path Direction on a drawn path', async () => {
+    const layer = await drawnPath(30);
+    useSelectionStore.getState().set([layer]);
+    await legacyEntry('Reverse Path Direction', () => expect(reversePathCommand()).toBe(true), () => {
+      expect((geomOf(layer).points as MaskPoint[])[0]).toMatchObject({ x: -30, y: 30 });
+    });
+  });
+
+  it('the Path stopwatch on and off, and Alt+Shift+M, on a drawn path', async () => {
+    const layer = await drawnPath(30);
+    useSelectionStore.getState().set([layer]);
+    await legacyEntry('Enable path animation', () => togglePathAnimation(layer), () => {
+      expect(defaultAnimation.isDataAnimated(layer, 'path.points')).toBe(true);
+    });
+    getTimelineController().seekSeconds(1);
+    await legacyEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), () => {
+      expect(defaultAnimation.getDataTrack(layer, 'path.points')!.keyframes).toHaveLength(2);
+    });
+    await legacyEntry('Disable path animation', () => togglePathAnimation(layer), () => {
+      expect(defaultAnimation.isDataAnimated(layer, 'path.points')).toBe(false);
+    });
   });
 });

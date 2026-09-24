@@ -180,8 +180,9 @@ async function pasteLayersEdit(h: HeldLayers): Promise<string[] | null> {
  * was pasted, or null when there was nothing to paste.
  */
 export async function pasteEdit(): Promise<PasteResult> {
-  // B3-legacy: engine gap — a shape layer's own outline has no path-valued API property; the
-  // path paste sends mask paths through the engine itself and keeps the legacy writer for shapes.
+  // B3-gap: a drawn shape layer's own outline has no path-valued API property, and a BezierPath
+  // drops split handles / RotoBezier tension; the path paste sends plain mask paths through the
+  // engine itself and keeps the legacy writer for the rest.
   if (pastePathOntoSelection()) return 'path';
   if (held?.kind === 'keyframes') {
     const targets = useSelectionStore.getState().ids.filter((id) => isLayer(id));

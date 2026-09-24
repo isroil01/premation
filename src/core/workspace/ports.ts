@@ -915,12 +915,13 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): b
  * `mergeKey` coalesces a whole drag into one undo entry — pass something stable
  * for the gesture's duration.
  */
-// B3-legacy: engine gap — the fallback `sendNodeValues` takes for props the
-// API cannot address yet: a LIGHT's Point of Interest (`poiX/Y/Z`) before the
-// layer stores it (the catalog lists a one-node camera's POI and its orbit
-// props latent, not a light's), and a node that is not a composition's layer.
-// (`cameraCommands` still calls this directly for addressable props — its
-// migration belongs to that module: `sendNodeValues` is the engine route.)
+// B3-gap: the fallback `sendNodeValues` takes for props the API cannot
+// address yet: a LIGHT's Point of Interest (`poiX/Y/Z`) before the layer
+// stores it (the catalog lists a one-node camera's POI and its orbit props
+// latent, not a light's — `propRefForTrack(light, 'poiX')` is null), and a
+// node that is not a composition's layer. (`cameraCommands` still calls this
+// directly for addressable props — its migration belongs to that module:
+// `sendNodeValues` is the engine route.)
 export function applyNodePropsKeyframed(
   nodeId: string,
   values: Readonly<Record<string, number>>,
@@ -943,6 +944,7 @@ export function applyNodePropsKeyframed(
     // keyframes both — the same rule the layer gizmo applies.
     const group = GIZMO_TRACK_GROUPS[prop as keyof Transform3DValues] ?? [prop];
     if (autoKeyframe || hasAnyTrack(nodeId, group)) keyed.push({ prop, value });
+    // B3-gap: a light's poiX/Y/Z (no property until stored) — see above.
     defaultSceneGraph.writeProp(nodeId as ID, transComp.id, prop, value);
     changed = true;
   }
@@ -1362,9 +1364,9 @@ function createNode(payload: CreateNodePayload): void {
       }]);
       return;
     }
-    // B3-legacy: engine gap — the API's BezierPath has no per-vertex `broken`
-    // (Alt-split handles) / `tension` state, so a pen mask drawn with split
-    // handles would come back re-joined.
+    // B3-gap: the API's BezierPath has no per-vertex `broken` (Alt-split
+    // handles) / `tension` state, so a pen mask drawn with split handles would
+    // come back re-joined through `addMask`.
     addMaskPath(parentId, newMask);
     bumpScene();
     return;
@@ -1848,7 +1850,10 @@ const TOPOLOGY_LABEL: Record<string, string> = {
   extend: 'Continue Path',
 };
 
-/** Write the outline-level switches a path payload carries (Closed, RotoBezier). */
+/**
+ * Write the outline-level switches a path payload carries (Closed, RotoBezier).
+ * B3-gap: `Geometry.open` / `Geometry.rotoBezier` have no API property.
+ */
 function writeGeometryFlags(node: SceneNode, flags: { closed?: boolean; rotoBezier?: boolean }): void {
   const geom = node.components.find((c) => c.type === 'Geometry');
   if (!geom) return;
@@ -1876,15 +1881,19 @@ function animatedPathRef(id: string): PropRef | null {
  * A RESHAPE of an ANIMATED outline (the whole outline at the playhead,
  * absolute) goes to the engine as the Path at the playhead — a key there, one
  * gesture per drag, the comp time mapped onto the layer's keyframe axis by the
- * engine. The route is decided once per drag, so one drag never mixes the two
+ * engine — WHEN the catalog types the layer's `path.points` as a path value
+ * (a `path.points` data track on a layer with no drawn Geometry outline, e.g.
+ * a primitive shape).
+ * The route is decided once per drag, so one drag never mixes the two
  * histories.
  *
- * B3-legacy: engine gap — everything else keeps the legacy writer, one
- * gesture transaction per drag: the TS engine gives `path.points` no static
- * value ("key it instead"), a BezierPath drops each vertex's `broken` /
- * `tension` editing state, and Closed / RotoBezier (`Geometry.open`,
- * `rotoBezier`) and a vertex added or removed on EVERY keyframe have no
- * command.
+ * B3-gap: everything else keeps the legacy writer, one gesture transaction
+ * per drag: a DRAWN shape layer's Path is catalogued as a scalar
+ * `layer/path.points` (static or animated, so `animatedPathRef` is null for
+ * it), the TS engine gives `path.points` no static value ("key it instead"),
+ * a BezierPath drops each vertex's `broken` / `tension` editing state, and
+ * Closed / RotoBezier (`Geometry.open`, `rotoBezier`) and a vertex added or
+ * removed on EVERY keyframe have no command.
  */
 function updateNodePath(payload: UpdateNodePathPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
@@ -1916,6 +1925,7 @@ function updateNodePath(payload: UpdateNodePathPayload): void {
   // The closed state BEFORE this edit's flags: a Continue that closes the path
   // appended its run to the outline as it was, open.
   const wasClosed = geomComponent?.props.open !== true;
+  // B3-gap: see the function comment (no Closed / RotoBezier / shape-path property).
   writeGeometryFlags(node, payload);
   if (defaultAnimation.isDataAnimated(id, 'path.points')) {
     if (topology) {
@@ -1985,9 +1995,13 @@ function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
     }], txn);
     return;
   }
-  // B3-legacy: engine gap — RotoBezier (a mask-level switch), a vertex added /
-  // removed on every key of an animated mask, and per-vertex `broken` /
-  // `tension` state have no API form (see the conditions above).
+  // B3-gap: RotoBezier (a mask-level switch with no property), per-vertex
+  // `broken` / `tension` (no BezierPath field), and a vertex added / removed on
+  // every key of an animated mask: expressible as `updateKeyframes` value
+  // patches, but those need the keys' engine ids, and this port runs inside a
+  // pointer gesture's synchronous builder (`querySync` answers null while the
+  // gesture's own sends are in flight) — no one-command "apply topology to
+  // every keyframe" exists (see the conditions above).
   //
   // The playhead on the layer's KEYFRAME axis — where `buildSnapshot` reads the
   // mask (`remapOf`), and where the Effects panel, the timeline and the Layer
@@ -2104,9 +2118,10 @@ function readCutRuns(node: SceneNode): CutSubpath[] | null {
  * unreachable by anything holding a reference, expressions included.
  */
 /*
- * B3-legacy: engine gap — the knife writes a shape layer's `Geometry.subpaths`
- * (multi-run outline) and flips its `shapeType` to 'path'; the API has no
- * property for either.
+ * B3-gap: the knife writes a shape layer's `Geometry.subpaths` (multi-run
+ * outline), clears `Geometry.points` and flips its `shapeType` to 'path'; the
+ * API has no property for any of them, so the flush / record around it stay
+ * on the legacy recorder too.
  */
 function cutPaths(payload: CutPathsPayload): void {
   const time = getTimelineController().currentSeconds;

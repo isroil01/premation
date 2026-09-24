@@ -1802,7 +1802,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        // B3-legacy: engine gap — the vertex → null bindings (`Geometry.pointBindings` on the shape) are not an API property.
+        // B3-gap: the vertex → null bindings (`Geometry.pointBindings` on the shape) are not an API property (the Nulls Follow Points variant above is one `pasteLayers`).
         const made = createNullsFromPathUndoable(id, playheadSeconds(), { pointsFollowNulls: true });
         notify(made.length ? `${made.length} null${made.length === 1 ? '' : 's'} now drive the path — move one and the outline follows` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
       },
