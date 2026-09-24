@@ -218,27 +218,52 @@ void hex_tile(RgbaView img, double radius, double border, ThreadPool* pool) {
   const double hex_w = R * 1.5;
   const double hex_h = R * std::sqrt(3.0);
   const double bd = clamp01(border / 100);
+  // The candidate columns (and their parity, which picks the row offset)
+  // depend only on x, the candidate rows only on y and that parity, so both
+  // halves of each squared distance are tabulated once; the per-pixel search
+  // adds them and compares in the TS's order.
+  struct ColCand {
+    std::array<double, 3> ccx, dx2;
+    std::array<std::uint8_t, 3> odd;
+  };
+  std::vector<ColCand> cols(static_cast<std::size_t>(w));
+  for (int x = 0; x < w; ++x) {
+    ColCand& cc = cols[static_cast<std::size_t>(x)];
+    const double col = round_index(x / hex_w);
+    for (std::size_t k = 0; k < 3; ++k) {
+      const double c = col + (static_cast<double>(k) - 1);
+      cc.ccx[k] = c * hex_w;
+      cc.odd[k] = static_cast<std::int64_t>(c) % 2 == 0 ? 0 : 1;  // c is an integer
+      cc.dx2[k] = (x - cc.ccx[k]) * (x - cc.ccx[k]);
+    }
+  }
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
     for (int y = y0; y < y1; ++y) {
+      std::array<std::array<double, 3>, 2> ccy{};
+      std::array<std::array<double, 3>, 2> dy2{};
+      for (std::size_t p = 0; p < 2; ++p) {
+        const double off = p == 0 ? 0 : hex_h / 2;
+        const double row = round_index((y - off) / hex_h);
+        for (std::size_t k = 0; k < 3; ++k) {
+          ccy[p][k] = (row + (static_cast<double>(k) - 1)) * hex_h + off;
+          dy2[p][k] = (y - ccy[p][k]) * (y - ccy[p][k]);
+        }
+      }
       for (int x = 0; x < w; ++x) {
-        const double col = round_index(x / hex_w);
+        const ColCand& cc = cols[static_cast<std::size_t>(x)];
         double best = std::numeric_limits<double>::infinity();
         double bcx = 0;
         double bcy = 0;
-        for (int dc = -1; dc <= 1; ++dc) {
-          const double c = col + dc;
-          const double ccx = c * hex_w;
-          const double off = static_cast<std::int64_t>(c) % 2 == 0 ? 0 : hex_h / 2;  // c is an integer
-          const double row = round_index((y - off) / hex_h);
-          for (int dr = -1; dr <= 1; ++dr) {
-            const double ccy = (row + dr) * hex_h + off;
-            const double d = (x - ccx) * (x - ccx) + (y - ccy) * (y - ccy);
+        for (std::size_t dc = 0; dc < 3; ++dc) {
+          const std::size_t p = cc.odd[dc];
+          for (std::size_t dr = 0; dr < 3; ++dr) {
+            const double d = cc.dx2[dc] + dy2[p][dr];
             if (d < best) {
               best = d;
-              bcx = ccx;
-              bcy = ccy;
+              bcx = cc.ccx[dc];
+              bcy = ccy[p][dr];
             }
           }
         }
