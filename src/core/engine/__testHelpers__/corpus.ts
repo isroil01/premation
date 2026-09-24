@@ -1991,7 +1991,7 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     await h.run({ type: 'setAnimated', prop: P(s, 'layer/stroke.1.gap1'), animated: true, time: 0 });
     await h.run({ type: 'setAnimated', prop: P(s, 'layer/stroke.2.width'), animated: true, time: 0 });
     await h.run({ type: 'setProperty', prop: P(s, 'layer/stroke.2.width'), value: scalar(9), time: sec(1) });
-    await h.run({ type: 'setExpression', prop: P(s, 'layer/stroke.2.opacity'), source: 'value' }).catch(ignore);
+    await h.run({ type: 'setExpression', prop: P(s, 'layer/stroke.2.opacity'), source: 'value', enabled: true }).catch(ignore);
     await h.run({ type: 'setAnimated', prop: P(s, 'layer/stroke.2.taperStartWidth'), animated: true, time: 0 });
     await h.run({ type: 'setProperty', prop: P(s, 'layer/strokes'), value: json([stroke(4), stroke(2, { dash: [10] }), stroke(3)]) });
     await h.run({ type: 'undo' });

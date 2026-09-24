@@ -16,7 +16,6 @@
  */
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import type { EasingPreset } from '@core/animation/keyframeAssistants';
 import { copyKeyframeAt, hasClipboard } from '@core/animation/keyframeClipboard';
 import { formatChord } from '@core/commands/formatChord';
 import type { KeyChord } from '@app-types/common';
@@ -25,10 +24,10 @@ import { isTrackAnimated, navigatorFor, trackExpression } from '@core/mirror/sel
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { edit } from '@core/engine/uiEdits';
 import { essentialPropMenuItems, expressionPropMenuItems, pinPropMenuItems } from '@core/inspector/propertyMenu';
-import { easeKeysAtCommands, keyToggleCommands, stopwatchCommands, trackRef } from './inspectorEdits';
+import { easeKeysAtCommands, keyToggleCommands, stopwatchCommands, trackRef, type EasePreset } from './inspectorEdits';
 import { pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
 
-const EASING_PRESETS: ReadonlyArray<{ id: EasingPreset; label: string; chord?: KeyChord }> = [
+const EASING_PRESETS: ReadonlyArray<{ id: EasePreset; label: string; chord?: KeyChord }> = [
   { id: 'Linear', label: 'Linear' },
   { id: 'Ease', label: 'Easy Ease', chord: { key: 'F9' } },
   { id: 'EaseIn', label: 'Easy Ease In', chord: { key: 'F9', shift: true } },

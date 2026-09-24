@@ -10,13 +10,16 @@
 import type { TransitionAlignment as ApiAlignment, TransitionKind as ApiKind } from '@motion/engine-api';
 import { edit, GestureSession } from '@core/engine/uiEdits';
 import { framesToFlicks } from '@core/engine/time';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { compFps } from '@hooks/useMirror';
 import { DEFAULT_TRANSITION_FRAMES, type TransitionAlignment, type TransitionKind } from '@core/timeline/transitionModel';
 
 export type TransitionEditResult = { ok: true; id: string } | { ok: false; reason: string };
 
+/** The frame rate of the composition that holds the layer. */
 function rateFor(nodeId: string): number {
-  return getTimelineController().fpsForNode(nodeId) || 30;
+  const m = documentMirror();
+  return compFps(m.comp(m.layer(nodeId)?.comp ?? ''));
 }
 
 /** Add (or replace) the transition on the cut between two layers. Refusals come back as a reason to show. */

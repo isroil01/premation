@@ -17,10 +17,10 @@ import { resetInputFor, resetTransformWrites, propertyResetValue } from '@core/s
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { edit } from '@core/engine/uiEdits';
 import { valueCommands } from '@layout/Inspector/inspectorEdits';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { getTime } from '@stores/playbackClockStore';
 
 function playheadSeconds(): number {
-  return getTimelineController().currentSeconds;
+  return getTime();
 }
 
 /** Reset the Transform group of each layer — one entry. */

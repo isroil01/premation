@@ -493,8 +493,6 @@ export const groupHandlers: HandlerTable = {
           }
           case 'style':
             return fail('unsupported', 'layer styles have a fixed order');
-          case 'plugin':
-            return fail('unsupported', 'plugin panels have no order');
           case 'rig':
             moveRigGroup(r.rig, cmd.toIndex);
             break;
@@ -778,8 +776,7 @@ function removeGroup(r: GroupRef): void {
 function setEnabled(r: GroupRef, on: boolean): void {
   switch (r.kind) {
     case 'plugin':
-      fail('unsupported', 'a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)');
-      return;
+      return fail('unsupported', 'a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)');
     case 'rig':
       setRigGroupEnabled(r.rig, on);
       return;

@@ -730,9 +730,9 @@ function writeColorBase(node: SceneNode, base: string, c: Color): boolean {
   }
   const gl = /^glass\.(tintColor|rimColor)$/.exec(base);
   if (gl) {
-    const styles = getNodeLayerStyles(node.id) as Record<string, Record<string, unknown> | undefined>;
+    const styles = getNodeLayerStyles(node.id);
     if (!styles.glass) return false;
-    setLayerStyles(node.id, { ...(styles as LayerStyles), glass: { ...styles.glass, [gl[1]!]: hex } } as LayerStyles);
+    setLayerStyles(node.id, { ...styles, glass: { ...styles.glass, [gl[1]!]: hex } });
     return true;
   }
   const eff = /^effect\.([^.]+)\.(.+)$/.exec(base);

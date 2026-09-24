@@ -1,8 +1,8 @@
 /**
  * The timeline's keyframe edits through the engine API (B3): the selection's
  * positional ids are resolved to ENGINE keyframe ids (`getKeyframes`), every
- * user action is one undo entry, and a key the API cannot address alone (one
- * member of a grouped property keyed with its sibling) keeps the legacy writer.
+ * user action is one undo entry, and a diamond on a member row (Scale X) is the
+ * whole property's key at that time, as in After Effects.
  */
 
 import { defaultAnimation, POSITION_PSEUDO_PROP } from '@motion/animation';
@@ -64,22 +64,22 @@ describe('ids', () => {
     expect(ids?.get(uiKeyId(L, 'opacity', 1))).toBe(res.sets[0]!.keyframes[1]!.id);
   });
 
-  it('refuses a lone Scale X key whose Scale Y sibling is keyed at the same time', async () => {
+  it('resolves a Scale X diamond to the Scale property key at that time', async () => {
     await keys('transform/scale', [[0, { x: 100, y: 100 }], [1, { x: 50, y: 50 }]]);
-    expect(await resolveKeyIds([uiKeyId(L, 'scaleX', 1)])).toBeNull();
+    const ids = await resolveKeyIds([uiKeyId(L, 'scaleX', 1), uiKeyId(L, 'scaleY', 1)]);
+    expect(ids).not.toBeNull();
+    expect(new Set(ids!.values()).size).toBe(1);
   });
 });
 
 describe('move / delete', () => {
   it('a multi-key drag release is ONE entry; undo and redo round-trip', async () => {
     const before = h.doc();
-    const legacy = jest.fn();
     await moveKeyframesTo([
       { id: uiKeyId(L, 'opacity', 1), time: 1.5 },
       { id: uiKeyId(L, 'opacity', 2), time: 2.5 },
-    ], legacy);
+    ]);
     await engineIdle();
-    expect(legacy).not.toHaveBeenCalled();
     expect(times('opacity')).toEqual([0, 1.5, 2.5]);
     expect(historyLabels().at(-1)).toBe('Move keyframes');
     const after = h.doc();
@@ -100,20 +100,20 @@ describe('move / delete', () => {
 
   it('a merged Position diamond moves x and y together', async () => {
     await keys('transform/position', [[0, { x: 0, y: 0 }], [1, { x: 10, y: 20 }]]);
-    await moveKeyframesTo([{ id: uiKeyId(L, POSITION_PSEUDO_PROP, 1), time: 2 }], () => { throw new Error('legacy'); });
+    await moveKeyframesTo([{ id: uiKeyId(L, POSITION_PSEUDO_PROP, 1), time: 2 }]);
     expect(times('x')).toEqual([0, 2]);
     expect(times('y')).toEqual([0, 2]);
   });
 
-  it('the lone-member case runs the legacy writer instead', async () => {
+  it('a diamond on a member row moves the whole key (one key per time, as in AE)', async () => {
     await keys('transform/scale', [[0, { x: 100, y: 100 }], [1, { x: 50, y: 50 }]]);
-    const legacy = jest.fn();
-    await moveKeyframesTo([{ id: uiKeyId(L, 'scaleX', 1), time: 2 }], legacy);
-    expect(legacy).toHaveBeenCalledTimes(1);
+    await moveKeyframesTo([{ id: uiKeyId(L, 'scaleX', 1), time: 2 }]);
+    expect(times('scaleX')).toEqual([0, 2]);
+    expect(times('scaleY')).toEqual([0, 2]);
   });
 
   it('delete', async () => {
-    await deleteKeyframesUi([uiKeyId(L, 'opacity', 1), uiKeyId(L, 'opacity', 2)], () => { throw new Error('legacy'); });
+    await deleteKeyframesUi([uiKeyId(L, 'opacity', 1), uiKeyId(L, 'opacity', 2)]);
     expect(times('opacity')).toEqual([0]);
     expect(historyLabels().at(-1)).toBe('Delete keyframes');
   });

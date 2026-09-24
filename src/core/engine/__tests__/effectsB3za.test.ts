@@ -9,7 +9,7 @@
  */
 
 import { defaultAnimation } from '@motion/animation';
-import type { Value } from '@motion/engine-api';
+import type { BezierPath, Value } from '@motion/engine-api';
 import { getNodeEffects } from '@core/effects/effects';
 import { getNodeLayerStyles } from '@core/effects/layerStyles';
 import { readNodeMask, readNodeMaskAnim } from '@core/effects/mask';
@@ -27,8 +27,10 @@ const P = (layer: string, path: string) => ({ layer, path });
 const scalar = (value: number): Value => ({ kind: 'scalar', value });
 const str = (value: string): Value => ({ kind: 'string', value });
 const square = [0, 0, 100, 0, 100, 100, 0, 100];
-const pathV = (vertices: number[], featherPoints: Array<{ segment: number; t: number; radius: number; tension: number }> = []): Value =>
-  ({ kind: 'path', value: { vertices, inTangents: [], outTangents: [], closed: true, featherPoints } });
+const bezier = (vertices: number[], featherPoints: Array<{ segment: number; t: number; radius: number; tension: number }> = []): BezierPath =>
+  ({ vertices, inTangents: [], outTangents: [], closed: true, featherPoints });
+const pathV = (vertices: number[], featherPoints: Parameters<typeof bezier>[1] = []): Value =>
+  ({ kind: 'path', value: bezier(vertices, featherPoints) });
 const value = async (layer: string, path: string, time = 0): Promise<Value> =>
   (await h.query({ type: 'getPropertyValues', props: [P(layer, path)], time, evaluated: false })).values[0]!.value;
 const code = async (cmd: Parameters<Harness['engine']['execute']>[0]): Promise<string | undefined> => {
@@ -74,7 +76,7 @@ test('Effect Opacity stopwatch keys effect.<id>.fx.opacity; off leaves the value
 
 test('Effect Mask names one of the layer masks or none; the label colour is a #rrggbb or none', async () => {
   const { A, fx, id } = await layerWithEffect();
-  const { groups: [m] } = await h.run({ type: 'addMask', layer: A, path: (pathV(square) as { value: never }).value, mode: 'none', inverted: false });
+  const { groups: [m] } = await h.run({ type: 'addMask', layer: A, path: bezier(square), mode: 'none', inverted: false });
   const mid = m!.split('/')[1]!;
   await h.run({ type: 'setProperty', prop: P(A, `${fx}/compositing/mask`), value: str(mid) });
   expect(getNodeEffects(A).find((x) => x.id === id)!.maskId).toBe(mid);
@@ -115,7 +117,7 @@ test('pasteEffects: a captured snapshot onto several layers at an index — fres
 
 test('Feather / Opacity / Expansion on a keyed-shape mask hold across every shape keyframe', async () => {
   const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
-  const { groups: [m] } = await h.run({ type: 'addMask', layer: A, path: (pathV(square) as { value: never }).value, mode: 'add', inverted: false });
+  const { groups: [m] } = await h.run({ type: 'addMask', layer: A, path: bezier(square), mode: 'add', inverted: false });
   const mid = m!.split('/')[1]!;
   await h.run({ type: 'setAnimated', prop: P(A, `${m}/path`), animated: true, time: 0 });
   await h.run({ type: 'setProperty', prop: P(A, `${m}/path`), value: pathV([0, 0, 200, 0, 200, 200, 0, 200]), time: sec(1) });
@@ -131,7 +133,7 @@ test('Feather / Opacity / Expansion on a keyed-shape mask hold across every shap
 
 test('per-vertex feather: feather points read per vertex; empty keeps, non-empty is authoritative, negative clears', async () => {
   const { layer: A } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] });
-  const { groups: [m] } = await h.run({ type: 'addMask', layer: A, path: (pathV(square, [{ segment: 2, t: 0, radius: 6, tension: 0 }]) as { value: never }).value, mode: 'add', inverted: false });
+  const { groups: [m] } = await h.run({ type: 'addMask', layer: A, path: bezier(square, [{ segment: 2, t: 0, radius: 6, tension: 0 }]), mode: 'add', inverted: false });
   const points = () => readNodeMask(defaultSceneGraph.getNode(A)!)!.paths[0]!.points.map((p) => p.feather);
   expect(points()).toEqual([undefined, undefined, 6, undefined]);
   const read = await value(A, `${m}/path`);

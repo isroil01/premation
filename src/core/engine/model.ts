@@ -108,6 +108,7 @@ function indexedBars(comp: string): Map<string, TimelineBar[]> | null {
     const reg = getTimelineController().peekTimeline(comp);
     const track = reg?.timeline.getTrack(reg.trackId);
     for (const l of track?.layers ?? []) {
+      if (l.sourceId === null) continue;
       const list = m.get(l.sourceId);
       if (list) list.push(l);
       else m.set(l.sourceId, [l]);

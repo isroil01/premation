@@ -29,13 +29,14 @@
  * in the panel's search box does not re-run it.
  */
 
-import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { memo, useCallback, useState, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
 import { AngleDial } from '@components/AngleDial';
 import { Popover } from '@components/Popover';
 import { PropertyRowLayoutContext } from '@components/PropertyRow';
 import { estimateNodeBounds } from '@core/scene/anchor';
-import { TRANSFORM_PRESET_PROPS, type PresetValues } from '@core/inspector/sectionPresets';
+import { TRANSFORM_PRESET_PROPS } from '@core/inspector/sectionPresets';
+import type { PresetValues } from '@stores/sectionPresetStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
