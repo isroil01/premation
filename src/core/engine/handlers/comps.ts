@@ -60,6 +60,19 @@ function patchToStore(p: CompSettingsPatch): Partial<ExtraComp> {
   if (p.background !== undefined) out.background = colorHex(p.background);
   if (p.backgroundGradient !== undefined) fail('unsupported', 'gradient backgrounds are set through the Composition Settings dialog until B3 types FillPaint');
   if (p.clearBackgroundGradient) out.backgroundPaint = undefined;
+  // B3z: the background PAINT as the editor stores it (FillPaint JSON); '' clears it.
+  if (p.backgroundPaint !== undefined) {
+    if (p.backgroundPaint === '') {
+      out.backgroundPaint = undefined;
+    } else {
+      const paint = parseJsonField(p.backgroundPaint, 'backgroundPaint') as { type?: unknown; stops?: unknown };
+      if (!paint || typeof paint !== 'object' || !['linear', 'radial', 'solid'].includes(String(paint.type))) {
+        fail('invalidArgument', 'backgroundPaint must be a FillPaint (type linear / radial / solid)');
+      }
+      if (paint.type !== 'solid' && !Array.isArray(paint.stops)) fail('invalidArgument', 'a gradient backgroundPaint needs stops');
+      out.backgroundPaint = paint as ExtraComp['backgroundPaint'];
+    }
+  }
   if (p.transparent !== undefined) out.transparent = p.transparent;
   if (p.renderer3d !== undefined) out.renderer3d = p.renderer3d;
   if (p.globalLightAngle !== undefined) out.globalLightAngle = p.globalLightAngle;
@@ -75,6 +88,43 @@ function patchToStore(p: CompSettingsPatch): Partial<ExtraComp> {
     try { w = JSON.parse(p.world) as Record<string, unknown>; } catch { return fail('invalidArgument', 'world must be JSON'); }
     for (const k of ['defaultEnvPreset', 'groundLevel', 'showSkyBackdrop', 'ssao'] as const) {
       if (k in w) (out as Record<string, unknown>)[k] = w[k];
+    }
+  }
+  return out;
+}
+
+function parseJsonField(text: string, field: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return fail('invalidArgument', `${field} must be JSON`);
+  }
+}
+
+/** Composition-root props the patch writes (Responsive Time, template fields — stored on the root's meta component). */
+const ROOT_PROPS = { responsiveTime: '__responsiveTime', templateFields: '__templateFields' } as const;
+
+/** The validated root-prop writes of a patch: prop → value (undefined = clear). */
+function rootPropWrites(p: CompSettingsPatch): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  if (p.responsiveTime !== undefined) {
+    if (p.responsiveTime === '') {
+      out.push([ROOT_PROPS.responsiveTime, undefined]);
+    } else {
+      const v = parseJsonField(p.responsiveTime, 'responsiveTime') as { authoredDurationSec?: unknown; protectedRegions?: unknown };
+      if (!v || typeof v !== 'object' || typeof v.authoredDurationSec !== 'number' || !Array.isArray(v.protectedRegions)) {
+        fail('invalidArgument', 'responsiveTime needs a number authoredDurationSec and an array protectedRegions');
+      }
+      out.push([ROOT_PROPS.responsiveTime, v]);
+    }
+  }
+  if (p.templateFields !== undefined) {
+    if (p.templateFields === '') {
+      out.push([ROOT_PROPS.templateFields, undefined]);
+    } else {
+      const v = parseJsonField(p.templateFields, 'templateFields');
+      if (!Array.isArray(v)) fail('invalidArgument', 'templateFields must be an array');
+      out.push([ROOT_PROPS.templateFields, v]);
     }
   }
   return out;
@@ -256,6 +306,8 @@ export const compHandlers: HandlerTable = {
   setCompositionSettings: (cmd) => {
     requireComp(cmd.comp);
     const fields = patchToStore(cmd.patch);
+    const rootWrites = rootPropWrites(cmd.patch);
+    if (rootWrites.length > 0 && !graph.getNode(cmd.comp)?.components[0]) fail('invalidArgument', 'the composition has no root to store this on', { item: cmd.comp });
     if (cmd.patch.workArea) {
       checkTime(cmd.patch.workArea.start, 'workArea.start');
       checkTime(cmd.patch.workArea.duration, 'workArea.duration');
@@ -270,6 +322,13 @@ export const compHandlers: HandlerTable = {
         const clean: Partial<ExtraComp> = { ...fields };
         if (fields.pristine === undefined && useProjectStore.getState().comps[cmd.comp]?.pristine) clean.pristine = undefined;
         applyCompFields(cmd.comp, clean, cmd.patch.startTimecode);
+        // Responsive Time and template fields live on the root's meta component
+        // (responsiveTimeStore.ts / templateAuthoring.ts read them there); the
+        // comp scope captures the root node, so undo restores them exactly.
+        for (const [prop, value] of rootWrites) {
+          const meta = graph.getNode(cmd.comp)!.components[0]!.id;
+          graph.writeProp(cmd.comp, meta, prop, value);
+        }
         if (cmd.patch.workArea) setWorkArea(cmd.comp, cmd.patch.workArea.start, cmd.patch.workArea.duration);
         if (cmd.patch.motionBlur) {
           const mb = cmd.patch.motionBlur;

@@ -75,6 +75,20 @@ Json patch_to_store(const api::CompSettingsPatch& p) {
     fail(ErrorCode::unsupported, "gradient backgrounds are set through the Composition Settings dialog until B3 types FillPaint");
   }
   if (p.clear_background_gradient && *p.clear_background_gradient) out.set("backgroundPaint", Json());
+  // B3z: the background PAINT as the editor stores it (FillPaint JSON); '' clears it (comps.ts).
+  if (p.background_paint) {
+    if (p.background_paint->empty()) {
+      out.set("backgroundPaint", Json());
+    } else {
+      auto paint = js::parse(*p.background_paint);
+      if (!paint) fail(ErrorCode::invalid_argument, "backgroundPaint must be JSON");
+      const Json& type = paint->at("type");
+      const bool known = type.is_string() && (type.str() == "linear" || type.str() == "radial" || type.str() == "solid");
+      if (!paint->is_object() || !known) fail(ErrorCode::invalid_argument, "backgroundPaint must be a FillPaint (type linear / radial / solid)");
+      if (type.str() != "solid" && !paint->at("stops").is_array()) fail(ErrorCode::invalid_argument, "a gradient backgroundPaint needs stops");
+      out.set("backgroundPaint", std::move(*paint));
+    }
+  }
   if (p.transparent) out.set("transparent", Json::boolean(*p.transparent));
   if (p.renderer3d) out.set("renderer3d", Json::string(std::string(api::to_string(*p.renderer3d))));
   if (p.global_light_angle) out.set("globalLightAngle", Json::number(*p.global_light_angle));
@@ -92,6 +106,35 @@ Json patch_to_store(const api::CompSettingsPatch& p) {
     if (!w) fail(ErrorCode::invalid_argument, "world must be JSON");
     for (const char* k : {"defaultEnvPreset", "groundLevel", "showSkyBackdrop", "ssao"}) {
       if (w->is_object() && w->has(k)) out.set(k, w->at(k));
+    }
+  }
+  return out;
+}
+
+/// comps.ts `rootPropWrites(p)`: Responsive Time and template fields, stored on
+/// the composition root's meta component (`undefined` = clear).
+std::vector<std::pair<std::string, Json>> root_prop_writes(const api::CompSettingsPatch& p) {
+  std::vector<std::pair<std::string, Json>> out;
+  if (p.responsive_time) {
+    if (p.responsive_time->empty()) {
+      out.emplace_back("__responsiveTime", Json());
+    } else {
+      auto v = js::parse(*p.responsive_time);
+      if (!v) fail(ErrorCode::invalid_argument, "responsiveTime must be JSON");
+      if (!v->is_object() || !v->at("authoredDurationSec").is_number() || !v->at("protectedRegions").is_array()) {
+        fail(ErrorCode::invalid_argument, "responsiveTime needs a number authoredDurationSec and an array protectedRegions");
+      }
+      out.emplace_back("__responsiveTime", std::move(*v));
+    }
+  }
+  if (p.template_fields) {
+    if (p.template_fields->empty()) {
+      out.emplace_back("__templateFields", Json());
+    } else {
+      auto v = js::parse(*p.template_fields);
+      if (!v) fail(ErrorCode::invalid_argument, "templateFields must be JSON");
+      if (!v->is_array()) fail(ErrorCode::invalid_argument, "templateFields must be an array");
+      out.emplace_back("__templateFields", std::move(*v));
     }
   }
   return out;
@@ -312,6 +355,11 @@ ResultOf<api::SetCompositionSettings> handle(const api::SetCompositionSettings& 
   Document& d = x.d;
   require_comp(d, c.comp);
   const Json fields = patch_to_store(c.patch);
+  const auto rootWrites = root_prop_writes(c.patch);
+  const Node* root = d.node(c.comp);
+  if (!rootWrites.empty() && (root == nullptr || root->components.empty())) {
+    fail(ErrorCode::invalid_argument, "the composition has no root to store this on", {.item = c.comp});
+  }
   ensure_timeline(d, c.comp);
   x.label = "Composition Settings";
   Json clean = fields;
@@ -320,6 +368,10 @@ ResultOf<api::SetCompositionSettings> handle(const api::SetCompositionSettings& 
     clean.set("pristine", Json());
   }
   apply_comp_fields(d, c.comp, clean, c.patch.start_timecode);
+  if (!rootWrites.empty()) {
+    const std::string meta = d.node(c.comp)->components.front().id;
+    for (const auto& [prop, value] : rootWrites) (void)sg_write_prop(d, c.comp, meta, prop, value);
+  }
   if (c.patch.work_area) set_work_area(d, c.comp, c.patch.work_area->start, c.patch.work_area->duration);
   if (c.patch.motion_blur) {
     const api::MotionBlurSettings& mb = *c.patch.motion_blur;

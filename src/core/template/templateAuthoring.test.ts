@@ -9,6 +9,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { buildTitleCard } from './templates/titleCard';
 import {
   readAuthoredFields, exposeNodeAsField, removeAuthoredField, renameAuthoredField, inferFieldForNode,
+  withoutField, withFieldLabel, withFieldId,
 } from './templateAuthoring';
 import { readTemplateFieldValue, writeTemplateField } from './templateFields';
 
@@ -59,5 +60,16 @@ describe('template authoring', () => {
     const node = defaultSceneGraph.getNode('tpl_headline')!;
     const text = node.components.find((c) => c.type === 'Text')!;
     expect((text.props as Record<string, unknown>).content).toBe('Launch Day');
+  });
+
+  it('the pure list transforms the engine edits send', () => {
+    const a = exposeNodeAsField('tpl_headline')!;
+    const fields = readAuthoredFields();
+    expect(withFieldLabel(fields, a.id, 'Title').find((f) => f.id === a.id)?.label).toBe('Title');
+    expect(withoutField(fields, a.id).some((f) => f.id === a.id)).toBe(false);
+    expect(withFieldId(fields, a.id, 'headlineText')?.some((f) => f.id === 'headlineText')).toBe(true);
+    expect(withFieldId(fields, a.id, 'Not A Slug')).toBeNull();
+    // Inputs are never mutated.
+    expect(readAuthoredFields()).toEqual(fields);
   });
 });

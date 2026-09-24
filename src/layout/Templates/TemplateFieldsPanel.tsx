@@ -26,8 +26,7 @@ import { insertBuiltLayers } from '@core/engine/offDocument';
 import { activeCompRootId } from '@core/scene/activeComp';
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
 import {
-  readAuthoredFields, exposeNodeAsField, removeAuthoredField, renameAuthoredField,
-  renameAuthoredFieldId,
+  readAuthoredFields, exposeNodeAsField,
 } from '@core/template/templateAuthoring';
 import { publishCurrentTemplate } from '@core/automation/publishTemplate';
 import { isPublicFieldId } from '@core/automation/fieldIds';
@@ -39,6 +38,7 @@ import { useTemplateStore, type TemplateFieldSend } from '@stores/templateStore'
 import { useGesture } from '@hooks/useGesture';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { DataFillSection } from './DataFillSection';
+import { removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit } from './templateAuthoringEdits';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import styles from './TemplateFieldsPanel.module.css';
@@ -241,14 +241,17 @@ export function TemplateAuthoringSection(): JSX.Element | null {
 
       {fields.length > 0 && (
         <>
-          {/* B3-gap: comp-root template fields — authored fields (label, id, removal) live on the composition ROOT node's props; the schema has `CompSettingsPatch.templateFields` (JSON), but neither engine applies it (the TS `setCompositionSettings` answers ok and stores nothing), so these stay direct writes. */}
+          {/* Label / id / removal go through `setCompositionSettings.templateFields` (templateAuthoringEdits.ts); each commits once, on blur. */}
           <div className={styles.authoredList}>
             {fields.map((f) => (
               <div key={f.id} className={styles.authoredCard}>
                 <div className={styles.authoredHead}>
                   <Input
-                    value={f.label}
-                    onChange={(e) => renameAuthoredField(f.id, e.target.value)}
+                    defaultValue={f.label}
+                    key={`${f.id}-label-${f.label}`}
+                    onBlur={(e) => {
+                      if (e.target.value !== f.label) void renameAuthoredFieldEdit(f.id, e.target.value);
+                    }}
                     aria-label="Field label"
                     className={styles.authoredLabel}
                   />
@@ -256,7 +259,7 @@ export function TemplateAuthoringSection(): JSX.Element | null {
                     type="button"
                     className={styles.iconBtn}
                     title="Remove field"
-                    onClick={() => removeAuthoredField(f.id)}
+                    onClick={() => void removeAuthoredFieldEdit(f.id)}
                   >
                     <Icon name="trash" size="sm" />
                   </button>
@@ -270,7 +273,7 @@ export function TemplateAuthoringSection(): JSX.Element | null {
                       key={`${f.id}-id`}
                       onBlur={(e) => {
                         const v = e.target.value.trim();
-                        if (v && v !== f.id) renameAuthoredFieldId(f.id, v);
+                        if (v && v !== f.id) void renameAuthoredFieldIdEdit(f.id, v);
                       }}
                       aria-label="Input id"
                       title={isPublicFieldId(f.id) ? 'Public input id for n8n' : 'Must be a camelCase slug like character'}

@@ -354,7 +354,19 @@ export function compSettings(compId: string): CompSettings {
     preserveFrameRate: c.preserveFrameRate === true,
     preserveResolution: c.preserveResolution === true,
     ...(Object.keys(world).length > 0 ? { world: JSON.stringify(world) } : {}),
+    ...rootJson(compId, '__responsiveTime', 'responsiveTime'),
+    ...rootJson(compId, '__templateFields', 'templateFields'),
+    ...(c.backgroundPaint ? { backgroundPaint: JSON.stringify(c.backgroundPaint) } : {}),
   };
+}
+
+/** A composition-root prop as a CompSettings JSON field (absent when unset). */
+function rootJson<K extends 'responsiveTime' | 'templateFields'>(compId: string, prop: string, key: K): Partial<Record<K, string>> {
+  for (const c of graph.getNode(compId)?.components ?? []) {
+    const v = (c.props as Record<string, unknown>)[prop];
+    if (v !== undefined && v !== null) return { [key]: JSON.stringify(v) } as Partial<Record<K, string>>;
+  }
+  return {};
 }
 
 export function compInfo(compId: string): CompInfo {

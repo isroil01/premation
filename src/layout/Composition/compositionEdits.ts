@@ -114,16 +114,10 @@ const WORLD_KEYS = ['defaultEnvPreset', 'groundLevel', 'showSkyBackdrop', 'ssao'
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
-/** True when the draft changes the background to or between GRADIENT paints (no API form yet). */
-export function gradientBackgroundChanged(from: CompositionSettings, to: CompositionSettings): boolean {
-  const gradient = to.backgroundPaint && to.backgroundPaint.type !== 'solid';
-  return !!gradient && !same(from.backgroundPaint, to.backgroundPaint);
-}
-
 /**
  * The dialog's draft against the comp as it was opened → the API patch of
  * exactly the fields that changed (undo restores exactly those). Null when
- * nothing changed. Callers check `gradientBackgroundChanged` first.
+ * nothing changed.
  */
 export function compSettingsPatch(from: CompositionSettings, to: CompositionSettings): CompSettingsPatch | null {
   const p: CompSettingsPatch = {};
@@ -138,7 +132,8 @@ export function compSettingsPatch(from: CompositionSettings, to: CompositionSett
     p.startTimecode = framesToFlicks(to.startFrame ?? 0, to.fps);
   }
   if (to.background.toLowerCase() !== from.background.toLowerCase()) p.background = colorOf(to.background);
-  if (from.backgroundPaint && !to.backgroundPaint) p.clearBackgroundGradient = true;
+  // The background PAINT (a gradient, or its removal) as the FillPaint JSON the editor stores.
+  if (!same(from.backgroundPaint, to.backgroundPaint)) p.backgroundPaint = to.backgroundPaint ? JSON.stringify(to.backgroundPaint) : '';
   if (to.transparent !== from.transparent) p.transparent = to.transparent;
   const world: Record<string, unknown> = {};
   for (const k of WORLD_KEYS) if (!same(from[k], to[k])) world[k] = to[k];

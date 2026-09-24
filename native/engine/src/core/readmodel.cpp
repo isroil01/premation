@@ -426,6 +426,19 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
     if (!c.at(k).is_undefined()) world.set(k, c.at(k));
   }
   if (!world.obj().empty()) s.world = stringify(world);
+  // model.ts: Responsive Time / template fields from the root's props, the background paint from the record.
+  if (const Node* root = d.node(comp)) {
+    for (const auto& [prop, field] : {std::pair{"__responsiveTime", &s.responsive_time}, std::pair{"__templateFields", &s.template_fields}}) {
+      for (const Component& cc : root->components) {
+        const Json& v = cc.props.at(prop);
+        if (!v.is_undefined() && !v.is_null()) {
+          *field = stringify(v);
+          break;
+        }
+      }
+    }
+  }
+  if (c.at("backgroundPaint").is_object()) s.background_paint = stringify(c.at("backgroundPaint"));
   return s;
 }
 

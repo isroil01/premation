@@ -33,12 +33,10 @@ import {
   type CompositionSettings as CompRecord,
   type SsaoSettings,
 } from '@stores/projectStore';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { gradientBackgroundChanged, saveCompositionSettingsEdit } from './compositionEdits';
+import { saveCompositionSettingsEdit } from './compositionEdits';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
 import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import {
   SIZE_PRESETS,
   SIZE_GROUPS,
@@ -316,19 +314,6 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
     close?.();
     const compId = initialComp.id;
     if (!useProjectStore.getState().comps[compId]) return;
-    if (gradientBackgroundChanged(initialComp, s)) {
-      // B3-gap: the comp background PAINT — `setCompositionSettings` refuses the typed `backgroundGradient`, and the TS engine accepts the JSON `backgroundPaint` field but does not store it (answers ok, records an entry, changes nothing), so a save that sets or changes a gradient background writes the whole draft through the store, as one snapshot entry.
-      const draft = s;
-      runDocumentEdit('Composition Settings', () => {
-        const store = useCompositionStore.getState();
-        const { id: _id, backgroundPaint, ...fields } = draft;
-        store.update(fields);
-        if (backgroundPaint) store.setBackgroundPaint(backgroundPaint);
-        getTimelineController().setFrameRate(draft.fps);
-        getTimelineController().setDurationSeconds(draft.durationSeconds);
-      });
-      return;
-    }
     void saveCompositionSettingsEdit(compId, initialComp, s);
   };
 

@@ -22,10 +22,8 @@ import { ValueField } from '@components/ValueField';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { activeCompRootId } from '@core/scene/activeComp';
-import {
-  readResponsiveTime,
-  setResponsiveTime,
-} from '@core/template/responsiveTimeStore';
+import { readResponsiveTime, type ResponsiveTimeConfig } from '@core/template/responsiveTimeStore';
+import { edit } from '@core/engine/uiEdits';
 import {
   clampRegionEdge,
   proposeRegion,
@@ -50,11 +48,16 @@ export function ResponsiveTimeSection(): JSX.Element {
   const flexCurrent = Math.max(0, current - protectedSec);
   const stretch = flexAuthored > 1e-9 ? flexCurrent / flexAuthored : 1;
 
+  const save = (config: ResponsiveTimeConfig | undefined): void => {
+    void edit('Responsive Time', {
+      type: 'setCompositionSettings',
+      comp: rootId,
+      patch: { responsiveTime: config ? JSON.stringify(config) : '' },
+    });
+  };
+
   const write = (next: ProtectedRegion[]): void => {
-    // B3-gap: comp-root Responsive Time — the schema has `CompSettingsPatch.responsiveTime` (JSON), but neither engine applies it: the TS `setCompositionSettings` answers ok, records an entry and stores nothing (handlers/comps.ts `patchToStore`). Sending it would lose the edit, so the comp root's props are written directly.
-    setResponsiveTime(rootId, next.length > 0
-      ? { authoredDurationSec: authored, protectedRegions: next }
-      : undefined);
+    save(next.length > 0 ? { authoredDurationSec: authored, protectedRegions: next } : undefined);
   };
 
   const enable = (): void => {
@@ -63,8 +66,7 @@ export function ResponsiveTimeSection(): JSX.Element {
       // Capture the authored duration HERE — at the moment of marking — not on
       // every write. Re-deriving it later would make the map an identity
       // forever, because authored and current would always be equal.
-      // B3-gap: comp-root Responsive Time (see `write`).
-      setResponsiveTime(rootId, {
+      save({
         authoredDurationSec: comp.durationSeconds,
         protectedRegions: [first],
       });

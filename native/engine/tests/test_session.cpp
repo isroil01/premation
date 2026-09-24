@@ -724,3 +724,45 @@ TEST_CASE("bench: getPropertyValues over 2,000 layers", "[.bench][query-bench]")
   WARN("is_animated x10000 " << anim << " ms; read_static x10000 " << stat << " ms");
   WARN("query " << query << " ms (again at the same revision " << again << " ms); 2000 catalogs " << catalogs << " ms; 2000 static trees " << trees << " ms (" << n << ")");
 }
+
+TEST_CASE("session: composition JSON fields are stored, read back, cleared and undone", "[session][comp]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const DocState before = state_of(h.session.document());
+  api::SetCompositionSettings s;
+  s.comp = comp;
+  s.patch.responsive_time = R"({"authoredDurationSec":6,"protectedRegions":[{"start":0,"end":1.5}]})";
+  s.patch.template_fields = R"([{"id":"title","label":"Title"}])";
+  s.patch.background_paint = R"({"type":"linear","angle":90,"stops":[{"id":"s0","offset":0,"color":"#ff0000"}]})";
+  REQUIRE(is_ok(h.run(cmd(s))));
+  api::GetComposition q;
+  q.comp = comp;
+  const auto info = query<api::CompositionDetails>(h, qry(q)).comp.settings;
+  REQUIRE(info.responsive_time.has_value());
+  CHECK(info.responsive_time->find("authoredDurationSec") != std::string::npos);
+  REQUIRE(info.template_fields.has_value());
+  CHECK(info.template_fields->find("\"title\"") != std::string::npos);
+  REQUIRE(info.background_paint.has_value());
+  CHECK(info.background_paint->find("linear") != std::string::npos);
+
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(state_of(h.session.document()) == before);
+  REQUIRE(is_ok(h.run(cmd(api::Redo{}))));
+
+  api::SetCompositionSettings clear;
+  clear.comp = comp;
+  clear.patch.responsive_time = "";
+  clear.patch.template_fields = "";
+  clear.patch.background_paint = "";
+  REQUIRE(is_ok(h.run(cmd(clear))));
+  const auto cleared = query<api::CompositionDetails>(h, qry(q)).comp.settings;
+  CHECK_FALSE(cleared.responsive_time.has_value());
+  CHECK_FALSE(cleared.template_fields.has_value());
+  CHECK_FALSE(cleared.background_paint.has_value());
+
+  api::SetCompositionSettings bad;
+  bad.comp = comp;
+  bad.patch.template_fields = R"({"not":"an array"})";
+  CHECK(is_error(h.run(cmd(bad)), api::ErrorCode::invalid_argument));
+}
