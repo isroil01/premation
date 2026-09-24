@@ -549,8 +549,14 @@ export function paintTextInBox(ctx: CanvasRenderingContext2D, spec: TextPaintSpe
     // would resample as bands), at most the larger request (never over-blur
     // both axes). The sharp axis of a one-sided blur so picks up ≤ 1 px.
     const base = Math.min(Math.max(Math.min(dbx, dby), 1), Math.max(dbx, dby, 1));
-    const sx = Math.min(1, base / Math.max(dbx, 1e-6));
-    const sy = Math.min(1, base / Math.max(dby, 1e-6));
+    // An axis squashed by k and stretched back gains resampling blur of its
+    // own — the box downsample and the bilinear stretch add about k²/4 of
+    // variance in device px — so a heavily squashed axis spread ~3 px per
+    // side farther than the same radius applied uniformly. Pick k so the
+    // total matches the request: (base·k)² + k²/4 = d²  ⇒  k = d / √(base² + ¼).
+    const squash = (d: number): number => (d > base ? Math.min(1, Math.sqrt(base * base + 0.25) / d) : 1);
+    const sx = squash(dbx);
+    const sy = squash(dby);
     const sw = Math.max(1, Math.round(W * sx));
     const sh = Math.max(1, Math.round(H * sy));
     // Squash and blur are SEPARATE draws: the blur must land on the squashed

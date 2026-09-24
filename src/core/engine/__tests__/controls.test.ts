@@ -11,6 +11,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { performUndo, performRedo } from '@stores/historyStore';
 import { setupEngine, sec, docDiff, type Harness } from '../__testHelpers__/harness';
 import { buildScene } from '../__testHelpers__/scene';
+import { isWriteAroundEngine } from '../externalWrites';
+import { useProjectStore } from '@stores/projectStore';
 
 jest.useFakeTimers();
 
@@ -28,12 +30,14 @@ export const CONTROLS_COVERED: CommandType[] = [
   'play', 'pause', 'seek', 'step', 'setLoop', 'setPreviewQuality', 'setAudioPreview', 'setActiveComposition',
   'setViewport', 'closeViewport', 'setCacheBudget', 'purgeCache', 'setInteracting',
   'startJob', 'cancelJob', 'setPluginEnabled',
+  // B3z History ▸ Snapshot — exercised in b3zLastWrites.test.ts.
+  'addHistoryCheckpoint',
 ];
 
 test('the list above covers every non-edit command', () => {
   const nonEdit = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t].kind !== 'edit');
   expect(nonEdit.filter((t) => !CONTROLS_COVERED.includes(t))).toEqual([]);
-  expect(nonEdit.length).toBe(30);
+  expect(nonEdit.length).toBe(31);
 });
 
 test('undo / redo / jumpToHistory walk one linear history; empty stacks are typed errors', async () => {
@@ -268,13 +272,27 @@ describe('coexistence with the pre-API recorders', () => {
     expect(getCommandSystem().getHistory().getEntries().length).toBe(n + 2);
   });
 
-  test('a document change outside the engine sends documentReset{resync} before the next request', async () => {
+  test('a change outside the engine that names its layer arrives as an engine-origin batch of its own, before the next request', async () => {
     const s = await buildScene(h);
     const t = defaultSceneGraph.getNode(s.A)!.components.find((c) => c.type === 'Transform')!;
-    updateNodeComponentProp(defaultSceneGraph, s.A, t.id, 'x', 1);
     h.batches.length = 0;
+    updateNodeComponentProp(defaultSceneGraph, s.A, t.id, 'x', 1);
     await h.run({ type: 'renameLayer', layer: s.B, name: 'Bee' });
     const first = h.batches[0]!;
-    expect(first.events[0]!.type).toBe('documentReset');
+    expect(isWriteAroundEngine(first)).toBe(true);
+    expect(first.causedBy).toBeUndefined();
+    expect(first.events.some((e) => e.type === 'layersChanged' && e.layers.some((l) => l.id === s.A))).toBe(true);
+    // The request's own batch follows.
+    expect(h.batches.at(-1)!.events.some((e) => e.type === 'layersChanged' && e.layers.some((l) => l.id === s.B))).toBe(true);
+  });
+
+  test('a change outside the engine that names no layer arrives as documentReset{resync}, before the next request', async () => {
+    const s = await buildScene(h);
+    h.batches.length = 0;
+    useProjectStore.getState().actions.updateComp(s.comp, { background: '#123456' });
+    await h.run({ type: 'renameLayer', layer: s.B, name: 'Bee' });
+    const first = h.batches[0]!;
+    expect(first.events[0]).toMatchObject({ type: 'documentReset', reason: 'resync' });
+    expect(isWriteAroundEngine(first)).toBe(true);
   });
 });
