@@ -20,7 +20,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { resolveViewCameraInput } from '@core/workspace/cameraNav';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useProjectStore } from '@stores/projectStore';
@@ -181,11 +181,14 @@ export function useViewportRenderer(
 
 
 
-  const mbEnabled = useMotionBlurStore((s) => s.enabled);
-  const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
-  const mbPhase = useMotionBlurStore((s) => s.shutterPhase);
-  const mbSamples = useMotionBlurStore((s) => s.samples);
-  const mbLimit = useMotionBlurStore((s) => s.adaptiveSampleLimit);
+  // The composition's motion-blur settings, from the document mirror.
+  const {
+    enabled: mbEnabled,
+    shutterAngle: mbShutter,
+    shutterPhase: mbPhase,
+    samples: mbSamples,
+    adaptiveSampleLimit: mbLimit,
+  } = useActiveMotionBlur();
   const activeFps = compRef.current.fps || 60;
   const motionBlurRef = useRef({ enabled: mbEnabled, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps });
   motionBlurRef.current = { enabled: mbEnabled, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps };

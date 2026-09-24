@@ -13,6 +13,7 @@
  *   useMirrorRevisionFrame()   a counter that moves at most once per frame after any document change
  *   useActiveCompSize()        the active composition's { width, height } (the old store's 1920×1080 default)
  *   useActiveTabCompSettings() the active TAB's composition settings (never a fallback composition's)
+ *   useActiveMotionBlur()      the composition's motion-blur settings in the editor's shape
  *   useActiveCompRootId()      the active composition's id, the old store's placeholder id when no tab is open
  *   activeCompSettingsNow()    (callbacks) the active tab's composition settings, undefined with none
  *   activeCompSizeNow()        (callbacks) its { width, height }, 1920×1080 with none
@@ -22,6 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { documentMirror } from '@stores/documentMirror';
 import type { CompSettings } from '@motion/engine-api';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { DEFAULT_MOTION_BLUR_SETTINGS, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useActiveCompId, useMirrorComp } from './useMirror';
 
@@ -89,4 +91,23 @@ export function activeCompSizeNow(): { width: number; height: number } {
  */
 export function useActiveTabCompSettings(): CompSettings | undefined {
   return useMirrorComp(useActiveCompId())?.settings;
+}
+
+/**
+ * The active composition's motion-blur settings (`CompSettings.motionBlur`) in
+ * the editor's shape (`samples`, not `samplesPerFrame`); the store's defaults
+ * with no composition. Same object until a value changes.
+ */
+export function useActiveMotionBlur(): Readonly<MotionBlurSettings> {
+  const mb = useActiveTabCompSettings()?.motionBlur;
+  const d = DEFAULT_MOTION_BLUR_SETTINGS;
+  const enabled = mb ? mb.enabled !== false : d.enabled;
+  const shutterAngle = mb?.shutterAngle ?? d.shutterAngle;
+  const shutterPhase = mb?.shutterPhase ?? d.shutterPhase;
+  const samples = mb?.samplesPerFrame ?? d.samples;
+  const adaptiveSampleLimit = mb?.adaptiveSampleLimit ?? d.adaptiveSampleLimit;
+  return useMemo(
+    () => ({ enabled, shutterAngle, shutterPhase, samples, adaptiveSampleLimit }),
+    [enabled, shutterAngle, shutterPhase, samples, adaptiveSampleLimit],
+  );
 }

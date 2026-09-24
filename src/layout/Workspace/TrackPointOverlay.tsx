@@ -42,7 +42,8 @@ import { readGeometry } from '@core/workspace/geometry';
 import { trackSampleToComp } from '@core/tracking/applyTrack';
 import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { runObjectMaskPick } from '@core/tracking/objectMask';
-import { sourceDisplaySize } from '@core/tracking/trackerSource';
+import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
+import { documentMirror } from '@stores/documentMirror';
 import { layerScreenMapping } from './layerScreen';
 
 const POINT_R = 5;
@@ -114,7 +115,8 @@ export function TrackPointOverlay(): JSX.Element | null {
   const active = armed && nodeId ? nodeId : null;
   const node = active ? defaultSceneGraph.getNode(active) : null;
   const geom = node ? readGeometry(node) : null;
-  const src = active ? sourceDisplaySize(active) : null;
+  // The footage's display size from the mirror (`sourceDisplaySize`'s twin).
+  const src = active ? mirrorSourceDisplaySize(documentMirror(), active) : null;
 
   const camera = getWorkspaceController().ws.camera;
   const mapping = useMemo(
