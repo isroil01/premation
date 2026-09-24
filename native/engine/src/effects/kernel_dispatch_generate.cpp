@@ -13,8 +13,8 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 3> kGenerate{
-    "path-stroke", "scribble", "write-on",
+constexpr std::array<std::string_view, 7> kGenerate{
+    "path-stroke", "scribble", "write-on", "star-burst", "snowfall", "rainfall", "light-burst",
 };
 
 }  // namespace
@@ -71,6 +71,16 @@ bool run_generate_kernel(std::string_view type, const KernelArgs& a, const Kerne
     o.composite = a("composite", 0);
     const std::vector<MaskPolyline> all = masks();
     scribble(img, all, pick_mask_paths(all, false, a("pathMaskIndex", 0)), o, pool);
+  } else if (type == "write-on" && js::round(a("mode", 0)) != 0) {
+    // Classic Line / Path: a resolved mask polyline switches the geometry.
+    const std::vector<double> flat = lists("pathPoints");
+    if (flat.size() >= 4) {
+      write_on_path(img, flat, a("completion", 100), a("brushSize", 8), rgb("color", {255, 255, 255}), a("taper", 0),
+                    pool);
+    } else {
+      write_on_line(img, a("startX", -100), a("startY", 0), a("endX", 100), a("endY", 0), a("completion", 100),
+                    a("brushSize", 8), rgb("color", {255, 255, 255}), a("wobble", 0), a("taper", 0), pool);
+    }
   } else if (type == "write-on") {
     WriteOnTrail trail{lists("brushTrailXY"), lists("brushTrailSize"), lists("brushTrailAttr"), b("filled", false)};
     WriteOnBrushOptions o;
@@ -84,6 +94,17 @@ bool run_generate_kernel(std::string_view type, const KernelArgs& a, const Kerne
     o.brush_time_props = a("brushTimeProps", 0);
     o.paint_style = a("paintStyle", 0);
     write_on_brush(img, trail, o, pool);
+  } else if (type == "star-burst") {
+    star_burst(img, a("phase", 0), a("amount", 50), a("size", 2), rgb("color", {255, 255, 255}), a("blend", 0),
+               a("seed", 0), pool);
+  } else if (type == "snowfall") {
+    snowfall(img, a("amount", 50), a("size", 2), a("evolution", 0), a("wind", 0), a("opacity", 100),
+             rgb("color", {255, 255, 255}), a("seed", 0), pool);
+  } else if (type == "rainfall") {
+    rainfall(img, a("amount", 50), a("length", 20), a("angle", 10), a("evolution", 0), a("opacity", 60),
+             rgb("color", {207, 230, 255}), a("seed", 0), pool);
+  } else if (type == "light-burst") {
+    light_burst(img, a("centerX", 0), a("centerY", 0), a("intensity", 100), a("rayLength", 50), pool);
   } else {
     return false;
   }

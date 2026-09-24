@@ -58,6 +58,7 @@ import { sharpenData, addNoiseData } from '../canvas2dEffects';
 import { pathStrokeData } from '../pathStroke';
 import { scribbleData } from '../scribble';
 import { writeOnBrushData } from '../writeOnBrush';
+import { starBurstData, snowfallData, rainfallData, writeOnData, writeOnPathData, lightBurstData } from '../generateRoundFive';
 import { pickMaskPaths, unpackMaskPaths } from '../strokePaint';
 import type { EffectParams } from '../effects';
 
@@ -564,6 +565,16 @@ function runGenerateKernel(
       return true;
     }
     case 'write-on':
+      if (Math.round(n('mode', 0)) !== 0) {
+        const flat = arr('pathPoints');
+        data.set(flat.length >= 4
+          ? writeOnPathData(data, w, h, flat, n('completion', 100), n('brushSize', 8), rgb('color', [255, 255, 255]), n('taper', 0))
+          : writeOnData(
+            data, w, h, n('startX', -100), n('startY', 0), n('endX', 100), n('endY', 0), n('completion', 100),
+            n('brushSize', 8), rgb('color', [255, 255, 255]), n('wobble', 0), n('taper', 0),
+          ));
+        return true;
+      }
       data.set(writeOnBrushData(
         data, w, h,
         { xy: arr('brushTrailXY'), size: arr('brushTrailSize'), attr: arr('brushTrailAttr'), filled: b('filled', false) },
@@ -573,6 +584,18 @@ function runGenerateKernel(
           brushTimeProps: n('brushTimeProps', 0), paintStyle: n('paintStyle', 0),
         },
       ));
+      return true;
+    case 'star-burst':
+      data.set(starBurstData(data, w, h, n('phase', 0), n('amount', 50), n('size', 2), rgb('color', [255, 255, 255]), n('blend', 0), n('seed', 0)));
+      return true;
+    case 'snowfall':
+      data.set(snowfallData(data, w, h, n('amount', 50), n('size', 2), n('evolution', 0), n('wind', 0), n('opacity', 100), rgb('color', [255, 255, 255]), n('seed', 0)));
+      return true;
+    case 'rainfall':
+      data.set(rainfallData(data, w, h, n('amount', 50), n('length', 20), n('angle', 10), n('evolution', 0), n('opacity', 60), rgb('color', [207, 230, 255]), n('seed', 0)));
+      return true;
+    case 'light-burst':
+      data.set(lightBurstData(data, w, h, n('centerX', 0), n('centerY', 0), n('intensity', 100), n('rayLength', 50)));
       return true;
     default:
       return false;

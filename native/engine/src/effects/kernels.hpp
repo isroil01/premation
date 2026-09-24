@@ -416,4 +416,20 @@ struct WriteOnBrushOptions {
 /// `writeOnBrushData(src, w, h, trail, options)`.
 void write_on_brush(RgbaView img, const WriteOnTrail& trail, const WriteOnBrushOptions& o, ThreadPool* pool);
 
+// ── generateRoundFive.ts ────────────────────────────────────────────────────
+void star_burst(RgbaView img, double phase, double amount, double size, Rgb star, double blend, double seed,
+                ThreadPool* pool);
+void snowfall(RgbaView img, double amount, double size, double evolution, double wind, double opacity, Rgb flake,
+              double seed, ThreadPool* pool);
+void rainfall(RgbaView img, double amount, double length, double angle, double evolution, double opacity, Rgb rain,
+              double seed, ThreadPool* pool);
+/// `writeOnData` — Write-on's classic Start → End line.
+void write_on_line(RgbaView img, double start_x, double start_y, double end_x, double end_y, double completion,
+                   double brush_size, Rgb brush, double wobble, double taper, ThreadPool* pool);
+/// `writeOnPathData` — Write-on along a resolved mask polyline (layer-centred, flat x, y).
+void write_on_path(RgbaView img, std::span<const double> flat, double completion, double brush_size, Rgb brush,
+                   double taper, ThreadPool* pool);
+void light_burst(RgbaView img, double center_x, double center_y, double intensity, double ray_length,
+                 ThreadPool* pool);
+
 }  // namespace premation::effects

@@ -403,8 +403,20 @@ const CASES: Case[] = [
   C('write-on', 'small', { ...trail(9, -5, 3, 20), filled: 1, paintTimeProps: 1, brushTimeProps: 3, opacity: 70 }),
   C('write-on', 'wide', { ...trail(30, -150, 0, 200), filled: 1, paintTimeProps: 2, brushTimeProps: 2, paintStyle: 1, size: 4 }),
   C('write-on', 'tall', { brushX: 3, brushY: -10, size: 12, hardness: 90, paintStyle: 2, opacity: 80 }),
-];
-function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {
+  C('write-on', 'small', { mode: 1, startX: -22, startY: 10, endX: 20, endY: -12, completion: 70, brushSize: 5, wobble: 40, taper: 30, colorR: 30, colorG: 250, colorB: 120 }),
+  C('write-on', 'wide', { mode: 1, startX: -280, startY: -3, endX: 260, endY: 4, completion: 100, brushSize: 3.5, wobble: 0, taper: 0 }),
+  C('write-on', 'tall', { mode: 1, pathPoints: MASKS_TALL.maskPathsXY.slice(0, 10), completion: 85, brushSize: 4, taper: 50, colorR: 255, colorG: 0, colorB: 0 }),
+  C('write-on', 'small', { mode: 1, pathPoints: MASKS_SMALL.maskPathsXY.slice(0, 20), completion: 60, brushSize: 2 }),
+  // ── generateRoundFive.ts ──
+  C('star-burst', 'small', { phase: 120, amount: 60, size: 2, blend: 0, seed: 3 }),
+  C('star-burst', 'wide', { phase: -340, amount: 100, size: 1.2, colorR: 255, colorG: 200, colorB: 120, blend: 40, seed: 11 }),
+  C('snowfall', 'small', { amount: 100, size: 2.5, evolution: 35, wind: 30, opacity: 90, seed: 2 }),
+  C('snowfall', 'wide', { amount: 100, size: 1.5, evolution: 210, wind: -80, opacity: 60, colorR: 200, colorG: 220, colorB: 255, seed: 5 }),
+  C('rainfall', 'small', { amount: 100, length: 12, angle: 20, evolution: 17, opacity: 80, seed: 1 }),
+  C('rainfall', 'tall', { amount: 90, length: 30.5, angle: -35, evolution: 260, opacity: 100, seed: 9 }),
+  C('light-burst', 'small', { centerX: 3, centerY: -4, intensity: 150, rayLength: 60 }),
+  C('light-burst', 'wide', { centerX: -120, centerY: 5, intensity: 80, rayLength: 100 }),
+];function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {
   // 64-bit FNV-1a in two 32-bit halves (BigInt per byte is slow at 57 kB).
   let hi = 0xcbf29ce4, lo = 0x84222325;
   for (let i = 0; i < bytes.length; i++) {

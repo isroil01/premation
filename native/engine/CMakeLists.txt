@@ -567,6 +567,7 @@ add_library(engine_effects STATIC
   src/effects/round_five_distort_kernels.cpp
   src/effects/round_five_transition_kernels.cpp
   src/effects/paint_kernels.cpp
+  src/effects/generate_round_five_kernels.cpp
   src/effects/kernel_dispatch.cpp
   src/effects/kernel_dispatch_generate.cpp
 )
