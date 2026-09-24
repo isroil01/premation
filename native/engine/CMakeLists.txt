@@ -126,6 +126,7 @@ if(MOTION_BUILD_TESTS)
   add_executable(engine_tests
     tests/test_framing.cpp
     tests/test_session.cpp
+    tests/test_paint_strokes.cpp
     tests/test_stress.cpp
     tests/test_render_graph.cpp
   )

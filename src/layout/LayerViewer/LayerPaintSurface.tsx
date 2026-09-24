@@ -26,7 +26,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isPaintableKind } from '@core/paint/paintCoords';
-import { commitPaintDrag } from '@core/paint/paintCommit';
+import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
 import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
 import { drawToolOptions } from '@motion/workspace';
@@ -202,8 +202,8 @@ export function LayerPaintSurface({
     }
     if (painting && live) {
       setLive(null);
-      // B3-gap: a new stroke has no command (`addPropertyGroup` answers unsupported for paint strokes), continue-stroke rewrites a stroke's points AND pen arrays, and replace-selected-path needs a static Path (`setProperty paint/<id>/path` answers unsupported, "key it instead"). Shared with the comp viewer through `commitPaintDrag`.
-      const result = commitPaintDrag({
+      // One engine edit (one undo step), shared with the comp viewer.
+      void commitPaintDrag({
         nodeId,
         mode: tool === 'eraser' ? 'erase' : paintMode === 'clone' ? 'clone' : 'paint',
         points: live.points,
@@ -213,9 +213,9 @@ export function LayerPaintSurface({
         compTime,
         continueStroke: live.shift,
         lastStrokeOnly: live.lastStrokeOnly,
+      }).then((result) => {
+        if (!result.ok && result.reason) setNotice(result.reason);
       });
-      if (!result.ok && result.reason) setNotice(result.reason);
-      bumpScene();
       return;
     }
     if (roto) finishRoto();

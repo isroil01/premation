@@ -1,20 +1,12 @@
 import {
-  addPaintStroke,
-  extendPaintStroke,
   getNodePaint,
   normalizeStroke,
   readNodePaint,
-  removeLastStroke,
-  removePaintStroke,
-  replaceStrokePath,
-  setPaintOnTransparent,
   strokeBounds,
   strokeDisplayNames,
-  toggleStrokePathAnimation,
   updatePaintStroke,
   type PaintStroke,
 } from './paintStrokes';
-import { paintPathProp, paintPropPath } from './paintProps';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import type { SceneNode } from '@core/types';
@@ -129,7 +121,9 @@ describe('model v2', () => {
   });
 });
 
-describe('mutations', () => {
+// Add / remove / Path / Paint on Transparent are engine commands now:
+// src/core/engine/__tests__/paintStrokes.test.ts.
+describe('the static-value seam', () => {
   const ID = 'paint_mut_layer';
   const makeNode = (): SceneNode => ({
     id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
@@ -143,49 +137,12 @@ describe('mutations', () => {
     defaultSceneGraph.addNode(makeNode());
   });
 
-  test('add returns ids; update merges and an undefined patch key clears', () => {
-    const id = addPaintStroke(ID, { points: [{ x: 0, y: 0 }], spacing: 0.25, pressure: [1] });
-    updatePaintStroke(ID, id, { opacity: 0.5, pressure: undefined });
+  test('update merges and an undefined patch key clears', () => {
+    defaultSceneGraph.setPaint(ID, { strokes: [normalizeStroke({ points: [{ x: 0, y: 0 }], spacing: 0.25, pressure: [1] }, 'pstroke_1')] });
+    updatePaintStroke(ID, 'pstroke_1', { opacity: 0.5, pressure: undefined });
     const s = getNodePaint(ID)!.strokes[0]!;
     expect(s.opacity).toBe(0.5);
     expect(s.spacing).toBe(0.25);
     expect('pressure' in s).toBe(false);
-  });
-
-  test('ids stay unique against a reopened document', () => {
-    defaultSceneGraph.setPaint(ID, { strokes: [{ id: 'pstroke_1', points: [{ x: 0, y: 0 }], color: '#fff', size: 4, opacity: 1, hardness: 1, mode: 'paint' }] });
-    const ids = [addPaintStroke(ID, { points: [{ x: 1, y: 1 }] }), addPaintStroke(ID, { points: [{ x: 2, y: 2 }] })];
-    expect(new Set([...ids, 'pstroke_1']).size).toBe(3);
-  });
-
-  test('Shift-drag extends a stroke, padding pen input to stay parallel', () => {
-    const id = addPaintStroke(ID, { points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] });
-    extendPaintStroke(ID, id, { points: [{ x: 2, y: 0 }], pressure: [0.5] });
-    const s = getNodePaint(ID)!.strokes[0]!;
-    expect(s.points).toHaveLength(3);
-    expect(s.pressure).toEqual([1, 1, 0.5]);
-  });
-
-  test('replacing a Path: static when not animated, a keyframe when it is', () => {
-    const id = addPaintStroke(ID, { points: [{ x: 0, y: 0 }] });
-    replaceStrokePath(ID, id, [{ x: 9, y: 9 }], 0);
-    expect(getNodePaint(ID)!.strokes[0]!.points).toEqual([{ x: 9, y: 9 }]);
-    toggleStrokePathAnimation(ID, id, 0);
-    replaceStrokePath(ID, id, [{ x: 1, y: 2 }, { x: 3, y: 4 }], 1);
-    expect(defaultAnimation.getDataTrack(ID, paintPathProp(id))!.keyframes.map((k) => k.t)).toEqual([0, 1]);
-    expect(getNodePaint(ID)!.strokes[0]!.points).toEqual([{ x: 9, y: 9 }]);
-  });
-
-  test('removing a stroke removes its tracks; Paint On Transparent toggles', () => {
-    const id = addPaintStroke(ID, { points: [{ x: 0, y: 0 }] });
-    addPaintStroke(ID, { points: [{ x: 1, y: 1 }] });
-    defaultAnimation.setKeyframe(ID, paintPropPath(id, 'opacity'), 0, 50);
-    removePaintStroke(ID, id);
-    expect(getNodePaint(ID)!.strokes).toHaveLength(1);
-    expect(defaultAnimation.isAnimated(ID, paintPropPath(id, 'opacity'))).toBe(false);
-    setPaintOnTransparent(ID, true);
-    expect(getNodePaint(ID)!.onTransparent).toBe(true);
-    removeLastStroke(ID);
-    expect(getNodePaint(ID)).toBeNull();
   });
 });

@@ -2506,6 +2506,46 @@ export const FAMILY_CORPUS: Record<string, Session> = {
       },
     };
   })(),
+  'B3: paint strokes — add (Write On keys), patch, Shift-continue, Path stopwatch + keyed replace, remove, Paint on Transparent — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const { layer: v } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'Plate', init: [] });
+    const pts = (...xy: number[]) => Array.from({ length: xy.length / 2 }, (_, i) => ({ x: xy[2 * i]!, y: xy[2 * i + 1]! }));
+    const add = async (stroke: object, keys: Array<{ param: string; time: number; value: number }> = []) =>
+      (await h.run({ type: 'addPaintStroke', layer: v, stroke: JSON.stringify(stroke), keys })).stroke;
+    const a = await add({ points: pts(0, 0, 10, 0, 20, 5), color: '#ff8000', size: 14, opacity: 0.8, hardness: 0.5, spacing: 0.25, pressure: [0.2, 0.6, 1], inPoint: 0 },
+      [{ param: 'end', time: 0, value: 0 }, { param: 'end', time: 1 / 30, value: 55.5 }, { param: 'end', time: 2 / 30, value: 100 }]);
+    const e = await add({ points: pts(5, 5, 6, 6), mode: 'erase', eraseMode: 'lastStroke', eraseTargetId: a, inPoint: 0.5, outPoint: 0.5 + 1 / 30 });
+    await add({ points: pts(1, 1), mode: 'clone', cloneOffsetX: 40, cloneOffsetY: -3, cloneAligned: true, cloneTimeShift: -0.5, cloneLockTime: true });
+    await h.query({ type: 'getPropertyTree', layer: v, path: '', depth: 0 });
+    await h.run({ type: 'addPaintStroke', layer: v, stroke: JSON.stringify({ id: 'x', points: pts(0, 0) }), keys: [] }).catch(ignore);
+    await h.run({ type: 'addPaintStroke', layer: v, stroke: JSON.stringify({ points: [] }), keys: [] }).catch(ignore);
+    // The video switch, a renormalising patch, Shift-continue with padded pen input.
+    await h.run({ type: 'updatePaintStroke', layer: v, stroke: a, patch: JSON.stringify({ visible: false, hardness: 7, name: 'Swoosh' }) });
+    await h.run({ type: 'updatePaintStroke', layer: v, stroke: a, patch: JSON.stringify({ visible: null }) });
+    await h.run({ type: 'updatePaintStroke', layer: v, stroke: e, patch: JSON.stringify({ points: pts(5, 5, 6, 6, 9, 9), pressure: [1, 1, 0.4] }) });
+    await h.run({ type: 'updatePaintStroke', layer: v, stroke: 'nope', patch: '{}' }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: { layer: v, path: `paint/${a}/opacity` }, value: scalar(40), time: sec(1) }).catch(ignore);
+    // Path: static replace, the stopwatch, a keyed replace, stopwatch off (undone).
+    await h.run({ type: 'setPaintStrokePath', layer: v, stroke: a, points: JSON.stringify(pts(0, 0, 30, 30)), time: 0 });
+    await h.run({ type: 'setPaintPathAnimated', layer: v, stroke: a, animated: true, time: 0 });
+    await h.run({ type: 'setPaintStrokePath', layer: v, stroke: a, points: JSON.stringify(pts(3, 3, 33, 33, 60, 0)), time: sec(1) });
+    await h.run({ type: 'setPaintStrokePath', layer: v, stroke: a, points: JSON.stringify(pts(4, 4)), time: sec(1) });
+    await h.run({ type: 'setPaintPathAnimated', layer: v, stroke: a, animated: false, time: 0 });
+    await h.run({ type: 'undo' });
+    await h.query({ type: 'getPropertyTree', layer: v, path: '', depth: 0 });
+    // Paint on Transparent, then remove (with the tracks), undo, redo.
+    await h.run({ type: 'setPaintOnTransparent', layers: [v], on: true });
+    await h.run({ type: 'removePaintStrokes', layer: v, strokes: [a, e] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'removePaintStrokes', layer: v, strokes: [] }).catch(ignore);
+    await h.run({ type: 'saveProject', path: 'C:/p/b3paint.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/b3paint.motion' });
+    await h.query({ type: 'getPropertyTree', layer: v, path: '', depth: 0 });
+  },
+
   'B3z-a: effects — compositing options, pasteEffects, keyed-shape mask settings, per-vertex feather, Glass, style switches — save → open': async (h) => {
     const comp = 'comp_root';
     const ignore = (): undefined => undefined;

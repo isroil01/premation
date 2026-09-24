@@ -13,11 +13,24 @@ import {
   writeStaticPropertyValue,
 } from '@core/inspector/propertyValue';
 import type { SceneNode } from '@core/types';
-import { addPaintStroke, getNodePaint, toggleStrokePathAnimation } from './paintStrokes';
+import { getNodePaint, normalizeStroke, type PaintStroke } from './paintStrokes';
 import { paintColorPath, paintPathProp, paintPropPath, parsePaintPropPath } from './paintProps';
 import { paintStrokePatch, readPaintStrokeValue } from './paintValues';
 
 const ID = 'paint_tl_layer';
+
+// Fixtures written straight into the document (the edits themselves are engine
+// commands — src/core/engine/__tests__/paintStrokes.test.ts).
+let seq = 0;
+function addPaintStroke(nodeId: string, raw: Partial<PaintStroke> & { points: ReadonlyArray<{ x: number; y: number }> }): string {
+  const id = `pstroke_${(seq += 1)}`;
+  defaultSceneGraph.setPaint(nodeId, { strokes: [...(getNodePaint(nodeId)?.strokes ?? []), normalizeStroke(raw, id)] });
+  return id;
+}
+function keyPath(nodeId: string, id: string, t: number): void {
+  const s = getNodePaint(nodeId)!.strokes.find((x) => x.id === id)!;
+  defaultAnimation.setDataKeyframe(nodeId, paintPathProp(id), 'points', t, s.points.map((p) => ({ x: p.x, y: p.y })));
+}
 
 beforeEach(() => {
   defaultSceneGraph.clear();
@@ -61,7 +74,7 @@ describe('rows', () => {
     const pathRow = (): { members: ReadonlyArray<string> } =>
       buildStaticPropertyTree(ID).find((r) => r.prop === paintPathProp(id))!;
     expect(pathRow().members).toEqual([]);
-    toggleStrokePathAnimation(ID, id, 0);
+    keyPath(ID, id, 0);
     expect(pathRow().members).toEqual([paintPathProp(id)]);
   });
 

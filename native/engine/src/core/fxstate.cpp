@@ -797,6 +797,11 @@ std::optional<std::vector<Json>> read_node_paint(const Node& n) {
   return out;
 }
 
+bool paint_on_transparent(const Node& n) {
+  const Json* raw = fx_member(n, "paint");
+  return raw != nullptr && raw->at("onTransparent").is_bool() && raw->at("onTransparent").b();
+}
+
 std::map<std::string, std::string> stroke_display_names(const std::vector<Json>& strokes) {
   int paint = 0;
   int erase = 0;
@@ -953,8 +958,8 @@ namespace {
 double clamp01(double v) { return v > 0 ? (v > 1 ? 1 : v) : 0; }
 bool finite_num(const Json& v) { return v.is_number() && std::isfinite(v.num()); }
 
-/// paintStrokes.ts `normalizeStroke(raw, id)`: a full stroke in the editor's
-/// key order; v2 keys copied only when present.
+}  // namespace
+
 Json normalize_paint_stroke(const Json& raw, const std::string& id) {
   Json out = Json::object();
   const Json& rid = raw.at("id");
@@ -1009,8 +1014,6 @@ Json normalize_paint_stroke(const Json& raw, const std::string& id) {
   }
   return out;
 }
-
-}  // namespace
 
 void update_paint_stroke(Document& d, std::string_view nodeId, std::string_view strokeId, const Json& patch) {
   const Node* n = d.node(nodeId);

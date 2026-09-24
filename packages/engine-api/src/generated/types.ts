@@ -2131,6 +2131,84 @@ export interface RemoveStroke {
   index: number;
 }
 
+/**
+ * B3 — PAINT STROKES (AE Effects ▸ Paint ▸ Brush N; the layer's `fx.paint`, src/core/paint/paintStrokes.ts).
+ * A stroke is document DATA: `{points: [{x, y}], color, size, opacity, hardness, mode, …}` in layer-local px,
+ * renormalised on every write (`normalizeStroke`: defaults filled, fractions clamped, v2 keys only when present).
+ * Its numeric params keep their `paint/<id>/<param>` properties (setProperty / keyframes); these commands cover
+ * what those cannot: creating, restyling and removing a stroke, its Path and the layer's Paint on Transparent.
+ *
+ * Add one stroke at the end of the layer's paint (the Paint / Clone Stamp / Eraser tool's drag). `stroke` is a JSON
+ * object without an `id` (the engine mints `pstroke_<n>`); its `points` must be a non-empty array of finite
+ * {x, y}. `keys` are keyframes on the new stroke's numeric params in AE units (Write On: End in %) at LAYER seconds
+ * — the axis the stroke's own `inPoint`/`outPoint` use. Returns the id. Inverse: the paint and tracks as they were.
+ */
+export interface AddPaintStroke {
+  layer: LayerId;
+  stroke: string;
+  keys: PaintKeyInit[];
+}
+
+/**
+ * Merge `patch` (a JSON object) into one stroke and renormalise: a member set to null CLEARS that key (visible,
+ * pressure…); `id` cannot be patched; `points`, when given, follows addPaintStroke's rule. Shift-continue sends the
+ * joined points + pen arrays, the video switch `{visible: false}` / `{visible: null}`. Inverse: the stroke as it was.
+ */
+export interface UpdatePaintStroke {
+  layer: LayerId;
+  stroke: string;
+  patch: string;
+}
+
+/**
+ * Delete strokes with every track, expression and data track under `paint.<id>.`. Unknown id: `notFound`.
+ * Inverse: the strokes at their index and their tracks exactly.
+ */
+export interface RemovePaintStrokes {
+  layer: LayerId;
+  strokes: string[];
+}
+
+/** AE Paint on Transparent — the layers show ONLY their paint. A layer without strokes: `notFound`. */
+export interface SetPaintOnTransparent {
+  layers: LayerId[];
+  on: boolean;
+}
+
+/**
+ * Drawing with a stroke selected REPLACES its Path (AE): with the Path animated (a `paint.<id>.path` data track),
+ * a Path key at `time` (comp time → the layer's keyframe axis); else the static points, dropping the per-point
+ * pen input recorded for the old path. `points` is a JSON array of finite {x, y}, non-empty.
+ */
+export interface SetPaintStrokePath {
+  layer: LayerId;
+  stroke: string;
+  points: string;
+  time: Time;
+}
+
+/**
+ * The Path stopwatch: ON keys the current points at `time` (already animated: no change); OFF removes the Path
+ * keyframes (the static points stay). Inverse: the track as it was.
+ */
+export interface SetPaintPathAnimated {
+  layer: LayerId;
+  stroke: string;
+  animated: boolean;
+  time: Time;
+}
+
+/** A keyframe on a new paint stroke's numeric param (`start`, `end`, `diameter`, … — paintProps.ts), AE units. */
+export interface PaintKeyInit {
+  param: string;
+  time: number;
+  value: number;
+}
+
+export interface PaintStrokeId {
+  stroke: string;
+}
+
 export interface PropertyPaths {
   paths: PropPath[];
 }
@@ -3788,6 +3866,12 @@ export type Command =
   | ({ type: 'removeProperties' } & RemoveProperties)
   | ({ type: 'pasteEffects' } & PasteEffects)
   | ({ type: 'removeStroke' } & RemoveStroke)
+  | ({ type: 'addPaintStroke' } & AddPaintStroke)
+  | ({ type: 'updatePaintStroke' } & UpdatePaintStroke)
+  | ({ type: 'removePaintStrokes' } & RemovePaintStrokes)
+  | ({ type: 'setPaintOnTransparent' } & SetPaintOnTransparent)
+  | ({ type: 'setPaintStrokePath' } & SetPaintStrokePath)
+  | ({ type: 'setPaintPathAnimated' } & SetPaintPathAnimated)
   | ({ type: 'addMarkers' } & AddMarkers)
   | ({ type: 'updateMarkers' } & UpdateMarkers)
   | ({ type: 'deleteMarkers' } & DeleteMarkers)
@@ -3929,6 +4013,12 @@ export type CommandResult =
   | ({ type: 'removeProperties' } & Empty)
   | ({ type: 'pasteEffects' } & GroupList)
   | ({ type: 'removeStroke' } & Empty)
+  | ({ type: 'addPaintStroke' } & PaintStrokeId)
+  | ({ type: 'updatePaintStroke' } & Empty)
+  | ({ type: 'removePaintStrokes' } & Empty)
+  | ({ type: 'setPaintOnTransparent' } & Empty)
+  | ({ type: 'setPaintStrokePath' } & Empty)
+  | ({ type: 'setPaintPathAnimated' } & Empty)
   | ({ type: 'addMarkers' } & MarkerIds)
   | ({ type: 'updateMarkers' } & Empty)
   | ({ type: 'deleteMarkers' } & Empty)
@@ -4178,6 +4268,12 @@ export interface CommandArgs {
   removeProperties: RemoveProperties;
   pasteEffects: PasteEffects;
   removeStroke: RemoveStroke;
+  addPaintStroke: AddPaintStroke;
+  updatePaintStroke: UpdatePaintStroke;
+  removePaintStrokes: RemovePaintStrokes;
+  setPaintOnTransparent: SetPaintOnTransparent;
+  setPaintStrokePath: SetPaintStrokePath;
+  setPaintPathAnimated: SetPaintPathAnimated;
   addMarkers: AddMarkers;
   updateMarkers: UpdateMarkers;
   deleteMarkers: DeleteMarkers;
@@ -4319,6 +4415,12 @@ export interface CommandResults {
   removeProperties: Empty;
   pasteEffects: GroupList;
   removeStroke: Empty;
+  addPaintStroke: PaintStrokeId;
+  updatePaintStroke: Empty;
+  removePaintStrokes: Empty;
+  setPaintOnTransparent: Empty;
+  setPaintStrokePath: Empty;
+  setPaintPathAnimated: Empty;
   addMarkers: MarkerIds;
   updateMarkers: Empty;
   deleteMarkers: Empty;
