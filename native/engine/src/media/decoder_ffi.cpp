@@ -10,6 +10,7 @@
 #if defined(_WIN32)
 #include <d3d11.h>  // before libav's hwcontext_d3d11va.h, which must not pull it in under extern "C"
 
+#include "cuda_ffi.hpp"
 #include "d3d11_ffi.hpp"
 #endif
 
@@ -359,8 +360,16 @@ std::shared_ptr<HwContext> create_hw_context(const HwContextOptions& options, st
 #endif
   AVBufferRef* raw = nullptr;
   std::string deviceName;
+  std::string adapterName = to_string(p);
 #if defined(_WIN32)
-  // Other Windows paths pick the adapter by index; the LUID route is d3d11va's.
+  if (p == DecodePath::nvdec) {
+    // CUDA ordinals are not DXGI's order: decode on the CUDA device that IS the
+    // render adapter, or not at all (a frame must never cross GPUs silently).
+    const cuda::DeviceMatch m = cuda::device_for_luid(options.adapterLuid, error);
+    if (m.ordinal < 0) return nullptr;
+    deviceName = std::to_string(m.ordinal);
+    adapterName = m.name + " (CUDA " + deviceName + ")";
+  }
 #endif
   const int rc = av_hwdevice_ctx_create(&raw, type, deviceName.empty() ? nullptr : deviceName.c_str(), nullptr, 0);
   if (rc < 0) {
@@ -368,7 +377,7 @@ std::shared_ptr<HwContext> create_hw_context(const HwContextOptions& options, st
     return nullptr;
   }
   hw->device.reset(raw);
-  hw->adapter = to_string(p);
+  hw->adapter = adapterName;
   return hw;
 }
 
