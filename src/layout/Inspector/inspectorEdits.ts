@@ -40,7 +40,7 @@ import type {
   PropRef,
   PropertyWrite,
 } from '@motion/engine-api';
-import { parentOptionsFor, reparentNode } from '@core/scene/parenting';
+import { parentOptionsFor } from '@core/scene/parenting';
 import type { TrackMatte } from '@core/effects/matte';
 import { isDistributeMode, planAlign, type AlignMode } from '@core/scene/alignNodes';
 import { getTime } from '@stores/playbackClockStore';
@@ -306,22 +306,20 @@ export async function easeKeysAtCommands(
 
 /**
  * Parent a layer (the Parent dropdown / pick-whip). PLAIN = AE's default, the
- * layer keeps its world pose; ALT = keep values (no compensation). SHIFT's
- * Parent & Link JUMP (the child lands on the parent's anchor) is not a mode
- * of the API's `setParent`, so it keeps the legacy writer.
+ * layer keeps its world pose; ALT = keep values (no compensation); SHIFT =
+ * Parent & Link JUMP (`setParent{jump, time}`, B3z): the child lands on the
+ * parent's anchor at the active tab's playhead, an animated position re-based
+ * rigidly.
  */
 export function parentLayer(nodeId: string, parentId: string | null, modifiers?: { altKey?: boolean; shiftKey?: boolean }): void {
   const opts = parentOptionsFor(modifiers);
-  if (opts?.jump && parentId !== null) {
-    // B3-legacy: engine gap — `setParent` has no Parent & Link JUMP mode (Shift): relink + land on the parent's anchor, rebasing animated position.
-    reparentNode(nodeId, parentId, opts);
-    return;
-  }
+  const jump = opts?.jump === true && parentId !== null;
   void edit(parentId ? 'Parent' : 'Unparent', {
     type: 'setParent',
     layers: [nodeId],
     ...(parentId ? { parent: parentId } : {}),
     keepWorldTransform: opts?.preserveWorld ?? true,
+    ...(jump ? { jump: true, time: compTime(getTime()) } : {}),
   });
 }
 

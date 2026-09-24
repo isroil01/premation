@@ -21,6 +21,8 @@
  *   audio → keyframes   the `audioAmplitude` track replaced
  *   silence removal     split both edges, delete inside, shift ONLY the paired
  *                       later bars (a local ripple, not the comp-wide one)
+ *   audio waveform      the shape generator's config, `layer/audioWaveform`
+ *                       (json field, written whole; null removes it)
  */
 
 import type { Command, PropRef } from '@motion/engine-api';
@@ -52,6 +54,8 @@ import { readPropertyValue } from '@core/inspector/multiSelection';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import type { AudioWaveformConfig } from '@core/audio/audioWaveformGen';
+import { jsonFieldCommands } from './layerFieldEdits';
 import { clearExpressionCommands, inOneEntry, removeAnimationCommands, spliceKeysEdit, type EntryStep, type KeySplice, type SpliceKey } from './keySpliceEdits';
 
 /** The layer's Audio Levels property, or null when the engine does not address it. */
@@ -390,4 +394,16 @@ export async function removeSilencesEdit(nodeIds: readonly string[], ranges: rea
     secondsRemoved: intervals.reduce((sum, iv) => sum + (iv.end - iv.start), 0),
     clipsDeleted,
   };
+}
+
+// ── Audio Waveform generator (shape layers) ─────────────────────────────
+
+/**
+ * `layer/audioWaveform` := `cfg` (the whole generator config; `null` removes
+ * the generator). [] when the layer has no such field. Add, every field of the
+ * section and Remove are this one command, sent as one entry per click / typed
+ * value, or inside a scrub gesture.
+ */
+export function audioWaveformCommands(nodeId: string, cfg: AudioWaveformConfig | null): Command[] {
+  return jsonFieldCommands(nodeId, 'layer/audioWaveform', cfg);
 }

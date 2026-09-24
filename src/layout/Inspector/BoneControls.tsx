@@ -1,3 +1,15 @@
+/**
+ * BoneControls — the Rigging panel's skeleton editor (bones, IK goals, the
+ * skinning mesh, per-vertex weights, controllers, Auto-Rig).
+ *
+ * Every write goes through the engine API on the rig paths (B3z,
+ * docs/ENGINE_API.md §15.9 "Rigging"; builders in rigEdits.ts): one `edit` per
+ * click / pick / typed value, one gesture per scrub (useEngineEdit). Times sent
+ * are composition time; the engine converts to the layer's keyframe axis. The
+ * rig is read from the document mirror (`layer/skeleton`).
+ */
+
+import { useRef, useState } from 'react';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
@@ -5,11 +17,13 @@ import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer, useMirrorLayersWatch } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
-import { rigPaths } from '@core/engine/rigPaths';
+import { applyRigPresetEdit, rigPaths } from '@core/engine/rigPaths';
+import { edit } from '@core/engine/uiEdits';
+import { compTime } from '@core/engine/propRefs';
+import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode, bindPoseBones, type SkeletonRig } from '@core/rig/skeletonCommands';
+import { bindPoseBones, type IKTarget, type SkeletonRig } from '@core/rig/skeletonCommands';
 import { chainModeOf, resolveActiveIkTargets } from '@core/rig/liveIkTargets';
-import { applyRigPreset } from '@core/rig/skeletonCommands';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { readGeometry } from '@core/workspace/geometry';
 import { MESH_DENSITY_DEFAULT, MESH_EXPANSION_DEFAULT } from '@core/rig/rigMeshInputs';
@@ -17,8 +31,6 @@ import type { ChainMode } from '@core/rig/ikfk';
 import { defaultAnimation } from '@motion/animation';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { addController, deleteController, updateController } from '@core/rig/skeletonCommands';
 import {
   defaultControllerFor, CONTROLLER_SHAPES, CONTROLLER_SIDES,
   type ControllerShape, type ControllerSide,
@@ -29,10 +41,16 @@ import { getSkeletonBinding } from '@core/rig/rigDeform';
 import { applyIk, ikChainIds } from '@core/rig/rigDeform';
 import { resolveLiveBones } from '@core/rig/liveBones';
 import { boneRoot, boneTip, computeWorldTransforms } from '@core/rig/skeleton';
-import { setWeightPaint } from '@core/rig/skeletonCommands';
 import {
   setVertexWeight, emptyWeightPaint, weightPaintMatches, isWeightPaintEmpty,
 } from '@core/rig/weightPaint';
+import { useEngineEdit } from './useEngineEdit';
+import {
+  addControllerCommands, addPoleCommands, boneFieldCommands, boneRestCommands, chainSwitchCommands,
+  controllerFieldCommands, deleteBoneCommands, deleteControllerCommands, ikChainLengthCommands,
+  ikTargetCommands, ikToggleCommands, removePoleCommands, renameBoneCommands, skeletonMeshCommands,
+  weightPaintCommands,
+} from './rigEdits';
 import { useRigVertexSelection, clearRigVertex } from '@stores/rigVertexStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import { useAssetStore } from '@stores/assetStore';
@@ -67,6 +85,11 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
   const selectedBoneId = useRigSelectionStore((s) => s.boneId);
   const selectedControllerId = useRigSelectionStore((s) => s.controllerId);
+  const eng = useEngineEdit();
+  // The bone-name field edits a local draft and commits ONE rename on blur /
+  // Enter (Escape abandons it) — not a document write per keystroke.
+  const [nameDraft, setNameDraft] = useState<{ boneId: string; value: string } | null>(null);
+  const cancelRename = useRef(false);
   // B4-gap: the scene node for readGeometry / nodeRestMesh (the skinning mesh and the auto-rig size are computed over the scene graph's drawn geometry) — no mirror twin.
   const node = defaultSceneGraph.getNode(nodeId);
   if (!layer || !node) return null;
@@ -80,14 +103,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       : bones[0] ?? null;
   const selectBone = (boneId: string | null): void =>
     useRigSelectionStore.getState().selectBone(nodeId, boneId);
-  // The canonical keyframe axis for this layer — the same forward map the
-  // renderer samples, so a mode keyframe lands where the pose does.
-  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-  const layerT = compToKeyframeTime(nodeId, workspaceTime);
+  // The layer's keyframe axis at the playhead, for SAMPLING the live pose the
+  // panel draws (the renderer's forward map). Never sent: commands take comp time.
+  const layerT = keyAxisTimeForDisplay(nodeId, workspaceTime);
   // B4-gap: the live bone pose — bone.<id>.* tracks sampled on the layer's keyframe axis by the animation engine (resolveLiveBones' sampler); the mirror has no rig-track sampler.
   const liveBones = resolveLiveBones(bones, nodeId, layerT, defaultAnimation);
   // B4-gap: active IK goals (ikTarget/ikPole/ikMode tracks sampled by the animation engine) — same sampler gap.
-  const posedBones = applyIk(liveBones, resolveActiveIkTargets(skel, nodeId, layerT));
+  const liveTargets = resolveActiveIkTargets(skel, nodeId, layerT);
+  const posedBones = applyIk(liveBones, liveTargets);
   const posedWorld = computeWorldTransforms({ bones: posedBones });
   const hasPuppet = (puppet?.pins ?? []).length > 0;
 
@@ -123,6 +146,23 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
     }
     const offset = Math.max(40, distance * 0.5);
     return { x: midpoint.x + nx * offset, y: midpoint.y + ny * offset };
+  };
+
+  /** The IK goal at the playhead (its keys when animated, else the static value). */
+  const goalAt = (ik: IKTarget): { x: number; y: number } => {
+    const v = documentMirror().valueAt(nodeId, rigPaths.ikProp(ik.boneId, 'target'), compTime(workspaceTime));
+    return v?.kind === 'vec2' ? v.value : { x: ik.x, y: ik.y };
+  };
+
+  const commitRename = (boneId: string, current: string | undefined): void => {
+    const draft = nameDraft;
+    setNameDraft(null);
+    if (cancelRename.current) {
+      cancelRename.current = false;
+      return;
+    }
+    if (!draft || draft.boneId !== boneId || draft.value === (current ?? '')) return;
+    void edit('Rename Bone', renameBoneCommands(nodeId, boneId, draft.value));
   };
 
   const orderedBones: Array<{ bone: (typeof bones)[number]; depth: number }> = [];
@@ -191,11 +231,12 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       const base = weightPaintMatches(skel?.weightPaint, numVerts)
         ? skel!.weightPaint!
         : emptyWeightPaint(numVerts);
-      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
+      // Pure: returns the new map (weightPaint.ts); the write is the one `skeleton/weightPaint` set below.
       const next = setVertexWeight(base, selectedVertex, boneId, percent / 100, influences);
-      // Through the command, so a numeric edit is one undo step exactly like a
-      // brush stroke — and an emptied map is dropped rather than serialised.
-      setWeightPaint(nodeId, isWeightPaintEmpty(next) ? undefined : next);
+      // One write, so a typed value is one undo step exactly like a brush
+      // stroke (a scrub is one gesture) — and an emptied map is dropped rather
+      // than serialised.
+      eng.send('Set Vertex Weight', weightPaintCommands(nodeId, isWeightPaintEmpty(next) ? null : next));
     };
 
     return (
@@ -244,6 +285,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               unit="%"
               precision={1}
               aria-label={`${nameOf(w.boneId)} weight at vertex ${selectedVertex}`}
+              {...eng.scrub('Set Vertex Weight')}
               onChange={(v) => commit(w.boneId, v)}
             />
           </div>
@@ -295,17 +337,18 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             if (!id) return;
             // B4-gap: the layer's drawn size (readGeometry: text/group/shape bounds over the scene node) sizes the preset.
             const geom = readGeometry(node);
-            // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-            const problems = applyRigPreset(
+            // One `layer/skeleton` write (REPLACES the rig); an invalid rig is refused before anything is sent.
+            void applyRigPresetEdit(
               nodeId,
               RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
               `Auto-Rig ${RIG_PRESET_LABELS[id]}`,
-            );
-            if (problems.length > 0) {
-              // Never silently: a refused rig with no message reads as a dead
-              // control, which is worse than the error.
-              console.error("Auto-rig refused:", problems);
-            }
+            ).then((problems) => {
+              if (problems.length > 0) {
+                // Never silently: a refused rig with no message reads as a dead
+                // control, which is worse than the error.
+                console.error("Auto-rig refused:", problems);
+              }
+            });
             e.currentTarget.value = "";
           }}
           style={selectStyle}
@@ -359,8 +402,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               value={skel?.meshDensity ?? MESH_DENSITY_DEFAULT}
               min={2}
               max={50}
-              // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-              onChange={(v) => updateSkeletonSettings(nodeId, { meshDensity: Math.round(v) })}
+              {...eng.scrub('Edit Skeleton Mesh')}
+              onChange={(v) => eng.send('Edit Skeleton Mesh', skeletonMeshCommands(nodeId, { density: Math.round(v) }))}
               aria-label="Skinning mesh density"
             />
           </div>
@@ -375,12 +418,11 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             <select
               value={skel?.meshMode ?? 'grid'}
               aria-label="Skinning mesh mode"
-              onChange={(e) =>
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                updateSkeletonSettings(nodeId, {
-                  meshMode: e.target.value as 'grid' | 'silhouette',
-                })
-              }
+              onChange={(e) => {
+                void edit('Edit Skeleton Mesh', skeletonMeshCommands(nodeId, {
+                  mode: e.target.value as 'grid' | 'silhouette',
+                }));
+              }}
               style={{ fontSize: 'var(--font-size-xs)' }}
             >
               <option value="grid">Grid</option>
@@ -394,8 +436,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               min={0}
               max={100}
               unit="px"
-              // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-              onChange={(v) => updateSkeletonSettings(nodeId, { meshExpansion: Math.round(v) })}
+              {...eng.scrub('Edit Skeleton Mesh')}
+              onChange={(v) => eng.send('Edit Skeleton Mesh', skeletonMeshCommands(nodeId, { expansion: Math.round(v) }))}
               aria-label="Skinning mesh expansion"
             />
           </div>
@@ -463,13 +505,17 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 {/* Editable label. The card used to print the raw generated id
                     (`bone_x8f2a1`), which is unreadable on a real character. */}
                 <input
-                  value={bone.name ?? ''}
+                  value={nameDraft?.boneId === bone.id ? nameDraft.value : bone.name ?? ''}
                   placeholder={bone.id}
                   aria-label={`${bone.name || bone.id} name`}
-                  onChange={(e) =>
-                    // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                    updateBone(nodeId, bone.id, { name: e.target.value || undefined })
-                  }
+                  onChange={(e) => setNameDraft({ boneId: bone.id, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                    else if (e.key === 'Escape') {
+                      cancelRename.current = true;
+                      e.currentTarget.blur();
+                    }
+                  }}
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -481,7 +527,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     border: '1px solid transparent',
                   }}
                   onFocus={(e) => (e.currentTarget.style.border = '1px solid var(--color-border, #333)')}
-                  onBlur={(e) => (e.currentTarget.style.border = '1px solid transparent')}
+                  onBlur={(e) => {
+                    e.currentTarget.style.border = '1px solid transparent';
+                    commitRename(bone.id, bone.name);
+                  }}
                 />
                 <span className={styles.subText}>
                   {bone.parentId
@@ -493,8 +542,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                  deleteBone(nodeId, bone.id);
+                  void edit('Delete Bone', deleteBoneCommands(nodeId, bone.id));
                   selectBone(null);
                 }}
                 aria-label={`Delete bone ${bone.name || bone.id}`}
@@ -522,8 +570,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 value={bone.length}
                 min={1}
                 unit="px"
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                onChange={(v) => updateBone(nodeId, bone.id, { length: Math.max(1, v) })}
+                {...eng.scrub('Set Bone Length')}
+                onChange={(v) => eng.send('Set Bone Length', boneFieldCommands(nodeId, bone.id, 'length', Math.max(1, v)))}
                 aria-label={`${bone.name || bone.id} length`}
               />
             </div>
@@ -539,11 +587,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 value={bone.influenceRadius ?? 0}
                 min={0}
                 unit="px"
+                {...eng.scrub('Set Bone Falloff')}
                 onChange={(v) =>
-                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                  updateBone(nodeId, bone.id, {
-                    influenceRadius: v > 0 ? v : undefined,
-                  })
+                  // 0 = unlimited: the engine clears the stored field at its default.
+                  eng.send('Set Bone Falloff', boneFieldCommands(nodeId, bone.id, 'influenceRadius', v > 0 ? v : 0))
                 }
                 aria-label={`${bone.name || bone.id} influence radius`}
               />
@@ -554,12 +601,15 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               {/* `Bone.rotation` is stored in RADIANS (skeleton.ts). This field
                   displayed the raw radian value under a ° label and wrote whatever
                   you typed straight back — so typing "45" set 45 radians ≈ 2578°
-                  and folded the limb into itself. Convert at the display boundary. */}
+                  and folded the limb into itself. Convert at the display boundary.
+                  The API speaks degrees (ENGINE_API.md §15.9), so the typed
+                  value is sent as is: the rest pose, plus the static pose while
+                  the rotation is not keyframed. */}
               <ValueField
                 value={(bone.rotation * 180) / Math.PI}
                 unit="°"
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                onChange={(v) => updateBone(nodeId, bone.id, { rotation: (v * Math.PI) / 180 })}
+                {...eng.scrub('Set Bone Rest Angle')}
+                onChange={(v) => eng.send('Set Bone Rest Angle', boneRestCommands(nodeId, bone.id, 'rotation', v))}
                 aria-label={`${bone.name || bone.id} rotation`}
               />
             </div>
@@ -569,14 +619,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <div style={{ display: 'flex', gap: 4 }}>
                 <ValueField
                   value={bone.scaleX ?? 1}
-                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                  onChange={(v) => updateBone(nodeId, bone.id, { scaleX: v })}
+                  {...eng.scrub('Set Bone Scale')}
+                  onChange={(v) => eng.send('Set Bone Scale', boneRestCommands(nodeId, bone.id, 'scale', { x: v, y: bone.scaleY ?? 1 }))}
                   aria-label={`${bone.name || bone.id} scale x`}
                 />
                 <ValueField
                   value={bone.scaleY ?? 1}
-                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                  onChange={(v) => updateBone(nodeId, bone.id, { scaleY: v })}
+                  {...eng.scrub('Set Bone Scale')}
+                  onChange={(v) => eng.send('Set Bone Scale', boneRestCommands(nodeId, bone.id, 'scale', { x: bone.scaleX ?? 1, y: v }))}
                   aria-label={`${bone.name || bone.id} scale y`}
                 />
               </div>
@@ -588,16 +638,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 size="sm"
                 variant={hasIK ? 'primary' : 'secondary'}
                 onClick={() => {
-                  const effector = effectorFor(bone.id);
-                  // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                  setIKTarget(nodeId, {
-                    boneId: bone.id,
-                    x: ik?.x ?? effector.x,
-                    y: ik?.y ?? effector.y,
-                    enabled: !hasIK,
-                    ...(ik?.pole ? { pole: ik.pole } : {}),
-                    ...(ik?.chainLength ? { chainLength: ik.chainLength } : {}),
-                  });
+                  // Off = the goal removed with its keys; a disabled goal switches back on; none = a new goal at the effector.
+                  void edit(hasIK ? 'Remove IK Target' : 'Enable IK Target', ikToggleCommands(nodeId, bone.id, ik, effectorFor(bone.id)));
                 }}
               >
                 <Icon name="crosshair" size="sm" style={{ color: hasIK ? '#22c55e' : 'inherit' }} />
@@ -620,16 +662,20 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   // B4-gap: the chain mode at the playhead samples the ikMode.<bone> track through the animation engine (rig-track sampler gap).
                   value={chainModeOf({ boneId: bone.id, ikMode: ik?.ikMode }, nodeId, layerT)}
                   aria-label={`${bone.name || bone.id} chain mode`}
-                  onChange={(e) =>
-                    // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                    setChainMode(nodeId, bone.id, e.target.value as ChainMode, {
-                      layerT,
-                      keyframe:
-                        usePreferenceStore.getState().timelineAutoKeyframe ||
-                        // The mode property (track ikMode.<bone>) is keyframed — read at call time from the mirror.
-                        documentMirror().keyframes(nodeId, rigPaths.ikProp(bone.id, 'mode')).length > 0,
-                    })
-                  }
+                  onChange={(e) => {
+                    const to = e.target.value as ChainMode;
+                    const keyframe =
+                      usePreferenceStore.getState().timelineAutoKeyframe ||
+                      // The mode property (track ikMode.<bone>) is keyframed — read at call time from the mirror.
+                      documentMirror().keyframes(nodeId, rigPaths.ikProp(bone.id, 'mode')).length > 0;
+                    // A client macro (planChainSwitch): mode + the pose that keeps the limb still, ONE entry.
+                    void edit(
+                      `Switch ${bone.name || bone.id} to ${to.toUpperCase()}`,
+                      chainSwitchCommands(nodeId, bone.id, to, workspaceTime, keyframe, {
+                        bones: liveBones, targets: liveTargets, chainLength: ik?.chainLength,
+                      }),
+                    );
+                  }}
                   style={selectStyle}
                 >
                   <option value="ik">IK (pose from the goal)</option>
@@ -645,32 +691,29 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     value={ik?.chainLength ?? 2}
                     min={1}
                     max={8}
-                    onChange={(v) =>
-                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                      setIKTarget(nodeId, {
-                        ...ik!,
-                        chainLength: Math.max(1, Math.min(8, Math.round(v))),
-                        enabled: true,
-                      })
-                    }
+                    {...eng.scrub('Set IK Chain Length')}
+                    onChange={(v) => eng.send('Set IK Chain Length', ikChainLengthCommands(nodeId, bone.id, v))}
                     aria-label={`${bone.name || bone.id} IK chain length`}
                   />
                 </div>
                 <div className={styles.paramRow}>
                   <span className={styles.paramLabel}>Goal X / Y</span>
                   <div style={{ display: 'flex', gap: 4 }}>
+                    {/* The goal at the playhead: a typed value keys it there
+                        when the target is keyframed (setValueAtTime), else
+                        sets the static goal. */}
                     <ValueField
-                      value={ik!.x}
+                      value={goalAt(ik!).x}
                       unit="px"
-                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                      onChange={(x) => setIKTarget(nodeId, { ...ik!, x, enabled: true })}
+                      {...eng.scrub('Set IK Goal')}
+                      onChange={(x) => eng.send('Set IK Goal', ikTargetCommands(nodeId, bone.id, { x, y: goalAt(ik!).y }, workspaceTime))}
                       aria-label={`${bone.name || bone.id} IK goal x`}
                     />
                     <ValueField
-                      value={ik!.y}
+                      value={goalAt(ik!).y}
                       unit="px"
-                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                      onChange={(y) => setIKTarget(nodeId, { ...ik!, y, enabled: true })}
+                      {...eng.scrub('Set IK Goal')}
+                      onChange={(y) => eng.send('Set IK Goal', ikTargetCommands(nodeId, bone.id, { x: goalAt(ik!).x, y }, workspaceTime))}
                       aria-label={`${bone.name || bone.id} IK goal y`}
                     />
                   </div>
@@ -689,16 +732,9 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   size="sm"
                   variant={ik?.pole ? 'primary' : 'secondary'}
                   onClick={() => {
-                    const pole = poleFor(bone.id, ik!.chainLength);
-                    // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                    setIKTarget(nodeId, {
-                      boneId: bone.id,
-                      x: ik!.x,
-                      y: ik!.y,
-                      enabled: true,
-                      chainLength: ik!.chainLength,
-                      ...(ik?.pole ? {} : { pole }),
-                    });
+                    // A toggle, as it always was: "Pole Set" takes the pole off again.
+                    if (ik?.pole) void edit('Remove Pole', removePoleCommands(nodeId, bone.id));
+                    else void edit('Add Pole', addPoleCommands(nodeId, bone.id, poleFor(bone.id, ik!.chainLength)));
                   }}
                 >
                   {ik?.pole ? 'Pole Set' : 'Add Pole'}
@@ -707,11 +743,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => {
-                      const { pole: _pole, ...withoutPole } = ik;
-                      // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                      setIKTarget(nodeId, { ...withoutPole, enabled: true });
-                    }}
+                    onClick={() => { void edit('Remove Pole', removePoleCommands(nodeId, bone.id)); }}
                   >
                     Remove
                   </Button>
@@ -765,8 +797,9 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <select
                 value={c.shape}
                 aria-label={`${c.name ?? c.id} shape`}
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                onChange={(e) => updateController(nodeId, c.id, { shape: e.target.value as ControllerShape })}
+                onChange={(e) => {
+                  void edit('Set Controller Shape', controllerFieldCommands(nodeId, c.id, 'shape', e.target.value as ControllerShape));
+                }}
                 style={selectStyle}
               >
                 {CONTROLLER_SHAPES.map((sh) => (<option key={sh} value={sh}>{sh}</option>))}
@@ -774,8 +807,9 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <select
                 value={c.side}
                 aria-label={`${c.name ?? c.id} side`}
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                onChange={(e) => updateController(nodeId, c.id, { side: e.target.value as ControllerSide })}
+                onChange={(e) => {
+                  void edit('Set Controller Side', controllerFieldCommands(nodeId, c.id, 'side', e.target.value as ControllerSide));
+                }}
                 style={selectStyle}
               >
                 {CONTROLLER_SIDES.map((sd) => (<option key={sd} value={sd}>{sd}</option>))}
@@ -785,15 +819,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 min={4}
                 unit="px"
                 aria-label={`${c.name ?? c.id} size`}
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                onChange={(v) => updateController(nodeId, c.id, { size: Math.max(4, v) })}
+                {...eng.scrub('Set Controller Size')}
+                onChange={(v) => eng.send('Set Controller Size', controllerFieldCommands(nodeId, c.id, 'size', Math.max(4, v)))}
               />
               <Button
                 size="sm"
                 variant="ghost"
                 aria-label={`Delete controller ${c.name ?? c.id}`}
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                onClick={() => deleteController(nodeId, c.id)}
+                onClick={() => { void edit('Delete Controller', deleteControllerCommands(nodeId, c.id)); }}
               >
                 <Icon name="trash" size="sm" />
               </Button>
@@ -811,8 +844,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 const v = e.target.value;
                 if (!v) return;
                 const [kind, boneId] = v.split(":") as ["bone" | "ikTarget", string];
-                // B3-legacy: engine gap — skeleton / bones / IK / weight paint have no API groups or commands.
-                addController(nodeId, defaultControllerFor({ kind, boneId }, controllers, bones));
+                // The engine mints the id; the defaults (shape by link kind, the bone's name) are the model's.
+                void edit('Add Controller', addControllerCommands(nodeId, defaultControllerFor({ kind, boneId }, controllers, bones)));
                 e.currentTarget.value = "";
               }}
               style={selectStyle}

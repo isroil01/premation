@@ -13,12 +13,14 @@ import { getNodeMatte } from '@core/effects/matte';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
 import { getNodeAdjustment } from '@core/effects/adjustment';
 import { getNodeMotionBlur } from '@core/effects/motionBlur';
-import { getNodeLayerTime, updateNodeLayerTime, FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
-import { applyTimeStretch, isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
+import { getNodeLayerTime, FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
+import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
 import { getNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { Segmented } from '@components/Segmented';
 import { createIdMatteLayer, cryptomatteForNode } from '@core/media/cryptomatteCommands';
 import { edit } from '@core/engine/uiEdits';
+import { getTime } from '@stores/playbackClockStore';
+import { layerStretchCommands, setFreezeFrameEdit, setFreezeTimeEdit } from '@layout/Effects/effectEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { LAYER_SWITCHES, applyLayerSwitch } from './SelectionHeader';
 import { parentLayer, setLayerMatte, setLayersBlend, setLayersSwitch } from './inspectorEdits';
@@ -48,7 +50,7 @@ function idMatteItems(nodeId: string): DropdownItem[] {
         type: 'item',
         id: `crypto:${layer.name}:${obj.name}`,
         label: `ID matte: ${obj.name}${found.set.layers.length > 1 ? ` (${layer.name})` : ''}`,
-        // B3-legacy: engine gap — the Cryptomatte ID matte bakes a PNG item + creates a layer + sets the matte (needs importFiles from bytes, createLayer, setTrackMatte as one entry).
+        // B3-legacy: engine gap — the Cryptomatte ID matte bakes a PNG item + creates a layer + sets the matte. The API can say the layer and the matte (createLayer, setTrackMatte) but not the item: `importFiles` takes paths only, and import-from-bytes (items ids 70–79, ENGINE_API.md §15) is not in packages/engine-api/schema/30_items.eapi yet.
         onSelect: () => { void createIdMatteLayer(nodeId, layer.name, [obj.name]); },
       });
     }
@@ -311,7 +313,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 precision={0}
                 unit="%"
                 // `setLayerTiming` stretch is signed (negative = reversed): keep the Reverse switch as it is.
-                onChange={(v) => e.send('Time Stretch', { type: 'setLayerTiming', items: [{ layer: nodeId, stretch: (time.reverse ? -v : v) / 100 }] })}
+                onChange={(v) => e.send('Time Stretch', layerStretchCommands(nodeId, v, time.reverse))}
                 {...e.scrub('Time Stretch')}
                 aria-label="Time stretch"
               />
@@ -328,8 +330,8 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 onScrub={() => undefined}
                 onChange={(v) => {
                   const pct = Math.round(v);
-                  // B3-legacy: engine gap — `setLayerTiming{stretch}` writes the stretch field only; this bakes bar + keyframes + markers about the in-point.
-                  if (pct !== 100 && pct !== 0) void applyTimeStretch([nodeId], pct, 'in');
+                  // `timeStretchLayers` bakes bar + keyframes + layer markers about the in-point (AE Hold in Place: Layer In-point); one entry.
+                  if (pct !== 100 && pct !== 0) void edit('Time Stretch', { type: 'timeStretchLayers', layers: [nodeId], stretch: pct / 100, hold: 'inPoint' });
                 }}
                 aria-label="Time stretch"
               />
@@ -351,8 +353,8 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
           <span className={styles.label}>Freeze Frame</span>
           <Switch
             checked={time.freeze}
-            // B3-legacy: engine gap — `freezeFrame` always sets a new freeze time and nothing un-freezes; this switch toggles the flag keeping freezeTime.
-            onChange={(e) => updateNodeLayerTime(nodeId, { freeze: e.currentTarget.checked })}
+            // On holds the frame at the playhead (`freezeFrame`, AE), off is `unfreezeLayers` — as the Effects panel's switch.
+            onChange={(ev) => { if (ev.currentTarget.checked !== time.freeze) void setFreezeFrameEdit(nodeId, ev.currentTarget.checked, getTime()); }}
             aria-label="Freeze frame"
           />
         </div>
@@ -366,8 +368,8 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
                 min={0}
                 precision={2}
                 unit="s"
-                // B3-legacy: engine gap — waits for B3z-b's `unfreezeLayers` (schema only): on a FROZEN layer `freezeFrame{time}` re-holds the frame it already shows (AE), so a typed source time is `[unfreezeLayers, freezeFrame{keyframeToCompTime(v)}]` in one batch.
-                onChange={(v) => updateNodeLayerTime(nodeId, { freezeTime: v })}
+                // A typed SOURCE time: `[unfreezeLayers, freezeFrame{comp time of v}]` in one entry (on a frozen layer `freezeFrame` alone re-holds the frame it already shows).
+                onChange={(v) => { void setFreezeTimeEdit(nodeId, v); }}
                 aria-label="Freeze time"
               />
             </div>

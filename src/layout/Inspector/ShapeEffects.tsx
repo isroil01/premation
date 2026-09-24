@@ -11,7 +11,9 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useMirrorLayer } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
+import { defaultAudioWaveform } from '@core/audio/audioWaveformGen';
+import { edit } from '@core/engine/uiEdits';
+import { audioWaveformCommands } from './audioEdits';
 import { AudioWaveformSection } from './AudioWaveformSection';
 import { InspectorSection } from './InspectorSection';
 import styles from './TextAnimatorControls.module.css';
@@ -31,8 +33,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       label: 'Audio Waveform',
       icon: 'audio',
       disabled: hasAudioWave,
-      // B3-legacy: engine gap — audio-waveform generator config has no API property.
-      onSelect: () => setAudioWaveform(nodeId, defaultAudioWaveform()),
+      onSelect: () => { void edit('Add Audio Waveform', audioWaveformCommands(nodeId, defaultAudioWaveform())); },
     },
   ];
 

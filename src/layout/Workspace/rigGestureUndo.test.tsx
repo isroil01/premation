@@ -9,27 +9,43 @@
  *
  * These three gestures had no coverage: weight-paint strokes, Puppet Sketch
  * recordings, and spatial-tangent drags.
+ *
+ * The rig layer is a real layer on the APP's engine (B3z): the overlays send
+ * engine commands, so every gesture is awaited (`idle`) before the document or
+ * the history is read back; undo / redo are the user's (`performUndo`).
  */
 
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, act, cleanup } from '@testing-library/react';
 import { PuppetOverlay } from './PuppetOverlay';
 import { BoneOverlay } from './BoneOverlay';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { isWeightPaintEmpty } from '@core/rig/weightPaint';
 import { performUndo, performRedo } from '@stores/historyStore';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
-import type { SceneNode } from '@core/types';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { sec } from '@core/engine/__testHelpers__/harness';
+import { engineIdle } from '@core/engine/engineInstance';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { rigTestLayer } from './__testHelpers__/rigLayer';
 
+/**
+ * The overlays redraw on the viewport's render ticks (`onRender`), which the
+ * real controller fires after every document change. The mock collects the
+ * listeners and `idle()` ticks them once the engine has settled.
+ */
+const mockRenderListeners = new Set<() => void>();
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
-    onRender: () => () => undefined,
+    onRender: (fn: () => void) => {
+      mockRenderListeners.add(fn);
+      return () => { mockRenderListeners.delete(fn); };
+    },
     requestRender: () => undefined,
     ws: {
       camera: {
@@ -41,60 +57,61 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
   }),
 }));
 
-function shapeNode(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`,
-        type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, rotation: 0, width: 200, height: 160 },
-      },
-    ],
-  } as unknown as SceneNode;
-}
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+/** The rig layer (engine-created, 200 × 160 at the comp origin). */
+let L = '';
 
-/** Current undo-stack depth, probed non-destructively (drain, then restore). */
-function undoDepth(): number {
-  const hist = getCommandSystem().getHistory();
-  let n = 0;
-  while (hist.canUndo()) { hist.undo(); n++; }
-  for (let i = 0; i < n; i++) hist.redo();
-  return n;
+/** Let the engine apply what the overlay sent, then tick the viewport (the overlays redraw). */
+async function idle(): Promise<void> {
+  await act(async () => { await engineIdle(); });
+  act(() => { for (const fn of [...mockRenderListeners]) fn(); });
 }
+const undo = async (): Promise<void> => { await act(async () => { await performUndo(); }); await idle(); };
+const redo = async (): Promise<void> => { await act(async () => { await performRedo(); }); await idle(); };
+const skelOf = () => readNodeSkeleton(defaultSceneGraph.getNode(L)!)!;
+
+/** Current undo-stack depth. */
+const undoDepth = (): number => getCommandSystem().getHistory().getEntries().length;
 
 /**
- * Steps the stack GREW by while `fn` ran.
+ * Steps the stack GREW by while `fn` ran (and the engine settled).
  *
  * Measured as a delta, not an absolute depth: mounting an overlay and selecting
- * a layer legitimately pushes unrelated entries (the timeline adds an
- * "Add Track" for the node), so counting from zero would attribute the harness's
- * own bookkeeping to the gesture under test.
+ * a layer may legitimately push unrelated entries, so counting from zero would
+ * attribute the harness's own bookkeeping to the gesture under test.
  */
-function stepsAdded(fn: () => void): number {
+async function stepsAdded(fn: () => void | Promise<void>): Promise<number> {
+  await idle();
   const before = undoDepth();
-  fn();
+  await fn();
+  await idle();
   return undoDepth() - before;
 }
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  // `defaultAnimation` is a module singleton — without this a track authored by
-  // an earlier test survives into the next one, and an undo then "fails" by
-  // reverting to that leftover rather than to nothing.
-  defaultAnimation.clear();
+/** Write a whole rig through the engine (setup, then a clean history). */
+async function setRig(path: 'layer/puppet' | 'layer/skeleton', rig: unknown): Promise<void> {
+  await h.run({ type: 'setProperty', prop: { layer: L, path }, value: { kind: 'json', value: JSON.stringify(rig) } });
+  await idle();
+  getCommandSystem().getHistory().clear();
+}
+
+beforeEach(async () => {
+  h = await setupAppEngine();
   clearRestMeshCache();
-  try { defaultSceneGraph.removeNode('u1'); } catch { /* fresh */ }
-  defaultSceneGraph.addNode(shapeNode('u1'));
-  useSelectionStore.getState().set(['u1']);
+  L = await rigTestLayer(h);
+  useSelectionStore.getState().set([L]);
+  usePreferenceStore.setState({ timelineAutoKeyframe: false });
+});
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
 });
 
 // ── Weight-paint stroke ─────────────────────────────────────────────
 
 describe('weight-paint stroke undo', () => {
-  function setup() {
-    defaultSceneGraph.setSkeleton('u1', {
+  async function setup() {
+    await setRig('layer/skeleton', {
       bones: [
         { id: 'upper', name: 'Upper', parentId: null, length: 50, x: -60, y: 0, rotation: 0 },
         { id: 'fore', name: 'Fore', parentId: 'upper', length: 50, x: 50, y: 0, rotation: 0 },
@@ -111,6 +128,7 @@ describe('weight-paint stroke undo', () => {
     const boneG = container.querySelector('polygon[stroke="var(--color-overlay-rig-bone)"]')!.parentElement!;
     fireEvent.pointerDown(boneG, { clientX: -60, clientY: 0, pointerId: 1 });
     fireEvent.pointerUp(container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 1 });
+    await idle();
     return utils;
   }
 
@@ -124,41 +142,44 @@ describe('weight-paint stroke undo', () => {
     fireEvent.pointerUp(svg, { clientX: 22, clientY: 0, pointerId: 2 });
   }
 
-  it('a 12-move stroke is exactly ONE undo step', () => {
-    const { container } = setup();
-    expect(stepsAdded(() => stroke(container))).toBe(1);
-    expect(isWeightPaintEmpty(readNodeSkeleton(defaultSceneGraph.getNode('u1')!)!.weightPaint)).toBe(false);
+  it('a 12-move stroke is exactly ONE undo step', async () => {
+    const { container } = await setup();
+    expect(await stepsAdded(() => stroke(container))).toBe(1);
+    expect(isWeightPaintEmpty(skelOf().weightPaint)).toBe(false);
   });
 
-  it('undo restores the unpainted binding, redo brings it back', () => {
-    const { container } = setup();
+  it('undo restores the unpainted binding, redo brings it back', async () => {
+    const { container } = await setup();
     stroke(container);
-    const painted = readNodeSkeleton(defaultSceneGraph.getNode('u1')!)!.weightPaint;
+    await idle();
+    const painted = skelOf().weightPaint;
     expect(isWeightPaintEmpty(painted)).toBe(false);
 
-    performUndo();
-    expect(isWeightPaintEmpty(readNodeSkeleton(defaultSceneGraph.getNode('u1')!)!.weightPaint)).toBe(true);
+    await undo();
+    expect(isWeightPaintEmpty(skelOf().weightPaint)).toBe(true);
 
-    performRedo();
-    expect(readNodeSkeleton(defaultSceneGraph.getNode('u1')!)!.weightPaint).toEqual(painted);
+    await redo();
+    expect(skelOf().weightPaint).toEqual(painted);
   });
 
-  it('two strokes are two steps, undone independently', () => {
-    const { container } = setup();
+  it('two strokes are two steps, undone independently', async () => {
+    const { container } = await setup();
     stroke(container);
-    const afterFirst = readNodeSkeleton(defaultSceneGraph.getNode('u1')!)!.weightPaint;
+    await idle();
+    const afterFirst = skelOf().weightPaint;
     stroke(container);
+    await idle();
 
-    performUndo();
-    expect(readNodeSkeleton(defaultSceneGraph.getNode('u1')!)!.weightPaint).toEqual(afterFirst);
+    await undo();
+    expect(skelOf().weightPaint).toEqual(afterFirst);
   });
 });
 
 // ── Puppet Sketch recording ─────────────────────────────────────────
 
 describe('Puppet Sketch undo', () => {
-  function setup() {
-    defaultSceneGraph.setPuppet('u1', {
+  async function setup() {
+    await setRig('layer/puppet', {
       meshDensity: 6, meshExpansion: 0,
       pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0 }],
     });
@@ -177,69 +198,76 @@ describe('Puppet Sketch undo', () => {
     fireEvent.pointerUp(svg, { clientX: 60, clientY: -30, pointerId: 3 });
   }
 
-  it('a 15-sample recording is exactly ONE undo step', () => {
-    const { container } = setup();
-    expect(stepsAdded(() => recordStroke(container))).toBe(1);
-    expect(defaultAnimation.getDataTrack('u1', 'puppet.pin_1.position')).toBeTruthy();
+  it('a 15-sample recording is exactly ONE undo step', async () => {
+    const { container } = await setup();
+    expect(await stepsAdded(() => recordStroke(container))).toBe(1);
+    expect(defaultAnimation.getDataTrack(L, 'puppet.pin_1.position')).toBeTruthy();
   });
 
-  it('undo removes the whole recording, not one keyframe of it', () => {
-    const { container } = setup();
+  it('undo removes the whole recording, not one keyframe of it', async () => {
+    const { container } = await setup();
     recordStroke(container);
-    const before = defaultAnimation.getDataTrack('u1', 'puppet.pin_1.position');
+    await idle();
+    const before = defaultAnimation.getDataTrack(L, 'puppet.pin_1.position');
     expect(before!.keyframes.length).toBeGreaterThan(0);
+    const count = before!.keyframes.length;
 
-    performUndo();
-    const after = defaultAnimation.getDataTrack('u1', 'puppet.pin_1.position');
+    await undo();
+    const after = defaultAnimation.getDataTrack(L, 'puppet.pin_1.position');
     expect(after?.keyframes.length ?? 0).toBe(0);
 
-    performRedo();
-    expect(defaultAnimation.getDataTrack('u1', 'puppet.pin_1.position')!.keyframes.length)
-      .toBe(before!.keyframes.length);
+    await redo();
+    expect(defaultAnimation.getDataTrack(L, 'puppet.pin_1.position')!.keyframes.length).toBe(count);
   });
 });
 
 // ── Spatial tangent drag ────────────────────────────────────────────
 
 describe('spatial tangent drag undo', () => {
-  function setup() {
-    defaultSceneGraph.setPuppet('u1', {
+  async function setup() {
+    await setRig('layer/puppet', {
       meshDensity: 6, meshExpansion: 0,
       pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0 }],
     });
     // A two-keyframe path so the motion path (and its handles) render.
-    defaultAnimation.setDataTrack('u1', 'puppet.pin_1.position', {
-      nodeId: 'u1', prop: 'puppet.pin_1.position', kind: 'points',
-      keyframes: [
-        { t: 0, value: [{ x: -60, y: 0 }] },
-        { t: 2, value: [{ x: 60, y: 0 }] },
+    const path = 'puppet/pins/pin_1/position';
+    await h.run({
+      type: 'addKeyframes',
+      keys: [
+        { prop: { layer: L, path }, time: 0, value: { kind: 'vec2', value: { x: -60, y: 0 } }, spatialIn: [], spatialOut: [] },
+        { prop: { layer: L, path }, time: sec(2), value: { kind: 'vec2', value: { x: 60, y: 0 } }, spatialIn: [], spatialOut: [] },
       ],
-    } as never);
+    });
+    await idle();
+    getCommandSystem().getHistory().clear();
     useUIStore.getState().setActiveTool('puppet-pin');
     const utils = render(<PuppetOverlay />);
     // Select the pin so its motion path is drawn.
     const dot = utils.container.querySelector('circle[r="5"]')!;
     fireEvent.pointerDown(dot.parentElement!, { clientX: -60, clientY: 0, pointerId: 4 });
     fireEvent.pointerUp(utils.container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 4 });
+    await idle();
     return utils;
   }
 
   const tangentOf = () =>
-    defaultAnimation.getDataTrack('u1', 'puppet.pin_1.position')!.keyframes[0]!.so;
+    defaultAnimation.getDataTrack(L, 'puppet.pin_1.position')!.keyframes[0]!.so;
 
-  it('renders draggable tangent handles for the selected pin', () => {
-    const { container } = setup();
+  it('renders draggable tangent handles for the selected pin', async () => {
+    const { container } = await setup();
     expect(container.querySelector('path[stroke-dasharray]')).not.toBeNull();
     expect(container.querySelectorAll('circle[r="3.5"]').length).toBeGreaterThan(0);
   });
 
-  it('a multi-move handle drag is exactly ONE undo step', () => {
-    const { container } = setup();
+  it('a multi-move handle drag is exactly ONE undo step', async () => {
+    const { container } = await setup();
     const svg = container.querySelector('svg')!;
     const handle = container.querySelector('circle[r="3.5"]')!;
 
-    const steps = stepsAdded(() => {
+    const steps = await stepsAdded(async () => {
       fireEvent.pointerDown(handle.parentElement!, { clientX: -20, clientY: 0, pointerId: 5 });
+      // The handle resolves its key's engine id on press; a hand's first move comes after.
+      await idle();
       for (let i = 0; i < 8; i++) {
         fireEvent.pointerMove(svg, { clientX: -20 + i * 3, clientY: -10 - i * 4, pointerId: 5 });
       }
@@ -250,19 +278,21 @@ describe('spatial tangent drag undo', () => {
     expect(steps).toBe(1);
   });
 
-  it('undo removes the tangent and restores the straight path', () => {
-    const { container } = setup();
+  it('undo removes the tangent and restores the straight path', async () => {
+    const { container } = await setup();
     const svg = container.querySelector('svg')!;
     const handle = container.querySelector('circle[r="3.5"]')!;
     fireEvent.pointerDown(handle.parentElement!, { clientX: -20, clientY: 0, pointerId: 6 });
+    await idle();
     fireEvent.pointerMove(svg, { clientX: 0, clientY: -50, pointerId: 6 });
     fireEvent.pointerUp(svg, { clientX: 0, clientY: -50, pointerId: 6 });
+    await idle();
     expect(tangentOf()).toBeTruthy();
 
-    performUndo();
+    await undo();
     expect(tangentOf() ?? null).toBeNull();
     // Keyframe VALUES are untouched either way — a tangent is not a position.
-    const kfs = defaultAnimation.getDataTrack('u1', 'puppet.pin_1.position')!.keyframes;
+    const kfs = defaultAnimation.getDataTrack(L, 'puppet.pin_1.position')!.keyframes;
     expect(kfs[0]!.value).toEqual([{ x: -60, y: 0 }]);
     expect(kfs[1]!.value).toEqual([{ x: 60, y: 0 }]);
   });

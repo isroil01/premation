@@ -1,7 +1,8 @@
 /**
  * rigEdits — the Puppet / Bones panels' writes as engine-API commands (B3z),
  * on the rig paths B3z WS-R designed (docs/ENGINE_API.md §15.9 "Rigging";
- * bindings src/core/engine/rigProps.ts ⇄ native rig.cpp):
+ * bindings src/core/engine/rigProps.ts ⇄ native rig.cpp; path spelling
+ * src/core/engine/rigPaths.ts):
  *
  *   puppet/mesh/<field>                     mesh density / expansion / mode / solver / rotation refinement
  *   puppet/pins/<pin>/<prop>                a pin's rotation, scale (%), stiffness, overlap, extent, kind
@@ -10,7 +11,7 @@
  *                                           restRotation / restScale (the bind pose)
  *   skeleton/bones/<bone>/ik[/<prop>]       the IK goal (group), target, pole (optional), mode, chainLength
  *   skeleton/controllers/<ctrl>/<prop>      shape, side, size, offset, drives, bone
- *   layer/skeleton                          the whole rig (Auto-Rig presets)
+ *   layer/skeleton                          the whole rig (Auto-Rig presets: `applyRigPresetEdit`, rigPaths.ts)
  *
  * Group operations are the generic ones (addPropertyGroup, removePropertyGroups,
  * renamePropertyGroup, setGroupEnabled, addProperties / removeProperties). Every
@@ -18,49 +19,33 @@
  * `edit` (or into a scrub gesture). Times are composition time (flicks): the
  * engine converts to the layer's keyframe axis.
  *
- * Reads the live document only to decide what to send.
+ * The skeleton builders take the rig state they decide from as arguments (the
+ * panel reads it from the document mirror); "is it keyframed" is the mirror's
+ * keyframe index. Only the puppet mesh builder still reads the scene graph.
  */
 
 import type { Command, PropertyInit, Value } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { catalogFor } from '@core/engine/props';
 import { isLayer } from '@core/engine/doc';
 import { compTime, values } from '@core/engine/propRefs';
+import { rigMatch, rigPaths } from '@core/engine/rigPaths';
 import { readNodePuppet } from '@core/rig/puppet';
-import { readNodeSkeleton, type SkeletonRig } from '@core/rig/skeletonCommands';
+import type { IKTarget } from '@core/rig/skeletonCommands';
+import type { Bone } from '@core/rig/skeleton';
 import { planChainSwitch, type ChainMode } from '@core/rig/ikfk';
-import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
+import type { IkTargetResolved } from '@core/rig/rigDeform';
 import type { RigController } from '@core/rig/controllers';
+import { documentMirror } from '@stores/documentMirror';
 
 const DEG = 180 / Math.PI;
-
-export const rigPaths = {
-  puppetMesh: (field: 'density' | 'expansion' | 'mode' | 'solver' | 'rotationRefinement'): string => `puppet/mesh/${field}`,
-  pin: (pinId: string): string => `puppet/pins/${pinId}`,
-  pinProp: (pinId: string, p: string): string => `puppet/pins/${pinId}/${p}`,
-  skeletonMesh: (field: 'density' | 'expansion' | 'mode'): string => `skeleton/mesh/${field}`,
-  weightPaint: (): string => 'skeleton/weightPaint',
-  bone: (boneId: string): string => `skeleton/bones/${boneId}`,
-  boneProp: (boneId: string, p: string): string => `skeleton/bones/${boneId}/${p}`,
-  ik: (boneId: string): string => `skeleton/bones/${boneId}/ik`,
-  ikProp: (boneId: string, p: string): string => `skeleton/bones/${boneId}/ik/${p}`,
-  controller: (ctrlId: string): string => `skeleton/controllers/${ctrlId}`,
-  controllerProp: (ctrlId: string, p: string): string => `skeleton/controllers/${ctrlId}/${p}`,
-} as const;
 
 function set(layer: string, path: string, value: Value, seconds?: number): Command {
   return { type: 'setProperty', prop: { layer, path }, value, ...(seconds !== undefined ? { time: compTime(seconds) } : {}) };
 }
 
-/** Is the rig property at `path` keyframed (any of its tracks)? */
+/** Is the rig property at `path` keyframed? (The mirror holds every animated property's keys.) */
 export function isRigAnimated(nodeId: string, path: string): boolean {
-  if (!isLayer(nodeId)) return false;
-  const b = catalogFor(nodeId).byPath.get(path);
-  if (!b) return false;
-  if (b.dataTrack && defaultAnimation.isDataAnimated(nodeId, b.dataTrack)) return true;
-  return b.members.some((m) => defaultAnimation.isAnimated(nodeId, m));
+  return documentMirror().keyframes(nodeId, path).length > 0;
 }
 
 /**
@@ -91,7 +76,7 @@ export function puppetMeshCommands(nodeId: string, patch: PuppetMeshPatch): Comm
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !isLayer(nodeId)) return [];
   const out: Command[] = [];
-  if (!readNodePuppet(node)) out.push({ type: 'addPropertyGroup', layer: nodeId, parent: '', matchName: 'ADBE FreePin3', init: [] });
+  if (!readNodePuppet(node)) out.push({ type: 'addPropertyGroup', layer: nodeId, parent: '', matchName: rigMatch.puppet, init: [] });
   if (patch.density !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('density'), values.scalar(patch.density)));
   if (patch.expansion !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('expansion'), values.scalar(patch.expansion)));
   if (patch.mode !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('mode'), values.choice(patch.mode)));
@@ -131,26 +116,28 @@ export function skeletonMeshCommands(nodeId: string, patch: { density?: number; 
   return out;
 }
 
-/** The painted weight map (null = none): ONE write, as a brush stroke on release is. */
+/** The painted weight map (null / undefined = none): ONE write, as a brush stroke on release is. */
 export function weightPaintCommands(nodeId: string, map: unknown): Command[] {
-  return [set(nodeId, rigPaths.weightPaint(), values.json(map ?? null))];
+  return [set(nodeId, rigPaths.weightPaint, values.json(map ?? null))];
 }
 
+/** Rename a bone; an empty (or blank) name removes it, so the bone reads as its id again. */
 export function renameBoneCommands(nodeId: string, boneId: string, name: string): Command[] {
   return [{ type: 'renamePropertyGroup', group: { layer: nodeId, path: rigPaths.bone(boneId) }, name }];
 }
 
+/** Delete a bone: the engine removes its subtree, their IK goals, controllers, weights and keys. */
 export function deleteBoneCommands(nodeId: string, boneId: string): Command[] {
   return [{ type: 'removePropertyGroups', groups: [{ layer: nodeId, path: rigPaths.bone(boneId) }] }];
 }
 
-/** Rest Length / Falloff: the bone's structure (read live, never from the bind pose). */
+/** Rest Length / Falloff: the bone's structure (read live, never from the bind pose). Falloff 0 = unlimited (cleared). */
 export function boneFieldCommands(nodeId: string, boneId: string, prop: 'length' | 'influenceRadius', value: number): Command[] {
   return [set(nodeId, rigPaths.boneProp(boneId, prop), values.scalar(value))];
 }
 
 /**
- * A RIG-mode edit of a bone's rotation (degrees) or scale (multipliers): the
+ * A RIG-mode edit of a bone's rotation (DEGREES) or scale (multipliers): the
  * bind pose (`restRotation` / `restScale`) and — while the pose property is not
  * keyframed — its static value too, so the skin and the bone agree (what the
  * legacy `updateBone` did to `bones` and `bindPose` together). The static pose
@@ -158,9 +145,9 @@ export function boneFieldCommands(nodeId: string, boneId: string, prop: 'length'
  * none, and the rest write then moves this bone's entry.
  */
 export function boneRestCommands(nodeId: string, boneId: string, prop: 'rotation' | 'scale', value: number | { x: number; y: number }): Command[] {
-  const v: Value = prop === 'rotation'
-    ? values.scalar(value as number)
-    : values.vec2((value as { x: number }).x * 100, (value as { y: number }).y * 100);
+  const v: Value = typeof value === 'number'
+    ? values.scalar(value)
+    : values.vec2(value.x * 100, value.y * 100);
   const out: Command[] = [];
   if (!isRigAnimated(nodeId, rigPaths.boneProp(boneId, prop))) out.push(set(nodeId, rigPaths.boneProp(boneId, prop), v));
   out.push(set(nodeId, rigPaths.boneProp(boneId, prop === 'rotation' ? 'restRotation' : 'restScale'), v));
@@ -168,17 +155,17 @@ export function boneRestCommands(nodeId: string, boneId: string, prop: 'rotation
 }
 
 /**
- * The bone's IK button: on = a new IK goal at `target` (or the existing one's
- * switch back on); off = the goal removed with its keys — the legacy
- * `setIKTarget(enabled: false)` dropped it from the rig.
+ * The bone's IK button, given the bone's current goal (`current`, from the
+ * rig): a disabled goal is switched back on; an active one is removed with its
+ * keys (the legacy `setIKTarget(enabled: false)` dropped it from the rig); no
+ * goal = a new one at `at` (the chain's effector).
  */
-export function ikToggleCommands(nodeId: string, boneId: string, target: { x: number; y: number }): Command[] {
-  const skel = skelOf(nodeId);
-  const ik = skel?.ikTargets?.find((t) => t.boneId === boneId);
-  if (ik && ik.enabled === false) return [{ type: 'setGroupEnabled', groups: [{ layer: nodeId, path: rigPaths.ik(boneId) }], enabled: true }];
-  if (ik) return [{ type: 'removePropertyGroups', groups: [{ layer: nodeId, path: rigPaths.ik(boneId) }] }];
-  const init: PropertyInit[] = [{ path: 'target', value: values.vec2(target.x, target.y) }];
-  return [{ type: 'addPropertyGroup', layer: nodeId, parent: rigPaths.bone(boneId), matchName: 'Premation IK Goal', init }];
+export function ikToggleCommands(nodeId: string, boneId: string, current: IKTarget | undefined, at: { x: number; y: number }): Command[] {
+  const group = { layer: nodeId, path: rigPaths.ik(boneId) };
+  if (current && current.enabled === false) return [{ type: 'setGroupEnabled', groups: [group], enabled: true }];
+  if (current) return [{ type: 'removePropertyGroups', groups: [group] }];
+  const init: PropertyInit[] = [{ path: 'target', value: values.vec2(at.x, at.y) }];
+  return [{ type: 'addPropertyGroup', layer: nodeId, parent: rigPaths.bone(boneId), matchName: rigMatch.ik, init }];
 }
 
 export function ikChainLengthCommands(nodeId: string, boneId: string, n: number): Command[] {
@@ -198,8 +185,16 @@ export function addPoleCommands(nodeId: string, boneId: string, pole: { x: numbe
   ];
 }
 
+/** Remove the pole with its keys. */
 export function removePoleCommands(nodeId: string, boneId: string): Command[] {
   return [{ type: 'removeProperties', props: [{ layer: nodeId, path: rigPaths.ikProp(boneId, 'pole') }] }];
+}
+
+/** The live pose a chain switch preserves: the bones and active IK goals as the solver sees them this frame. */
+export interface LiveChainPose {
+  bones: readonly Bone[];
+  targets: readonly IkTargetResolved[];
+  chainLength?: number;
 }
 
 /**
@@ -208,30 +203,24 @@ export function removePoleCommands(nodeId: string, boneId: string): Command[] {
  * the solved rotations, FK → IK the goal at the effector. Keyed at the playhead
  * when `keyframe` (auto-keyframe on, or the mode already keyframed), else
  * static; a property that is already keyframed always takes a key there.
- * `layerT` is the DISPLAY sampling time of the live pose (keyAxisTimeForDisplay).
+ * `seconds` is composition time; `live` is the pose sampled at the playhead.
  */
 export function chainSwitchCommands(
   nodeId: string,
   boneId: string,
   to: ChainMode,
   seconds: number,
-  layerT: number,
   keyframe: boolean,
+  live: LiveChainPose,
 ): Command[] {
-  const skel = skelOf(nodeId);
-  const target = skel?.ikTargets?.find((t) => t.boneId === boneId);
-  if (!skel || !target) return [];
-  const liveBones = (skel.bones ?? []).map((b) => {
-    const r = defaultAnimation.sample(nodeId, `bone.${b.id}.rotation`, layerT);
-    return typeof r === 'number' ? { ...b, rotation: r } : { ...b };
-  });
-  const plan = planChainSwitch(liveBones, resolveActiveIkTargets(skel, nodeId, layerT), boneId, to, target.chainLength);
+  const plan = planChainSwitch(live.bones, live.targets, boneId, to, live.chainLength);
   const out: Command[] = [];
   const modePath = rigPaths.ikProp(boneId, 'mode');
   const modeValue = values.scalar(to === 'fk' ? 0 : 1);
+  const modeAnimated = isRigAnimated(nodeId, modePath);
   // The static mode always follows (the chain's value with no track); a key too when keyframing.
-  if (!isRigAnimated(nodeId, modePath)) out.push(set(nodeId, modePath, modeValue));
-  if (keyframe || isRigAnimated(nodeId, modePath)) out.push(...rigValueCommands(nodeId, modePath, modeValue, seconds, true));
+  if (!modeAnimated) out.push(set(nodeId, modePath, modeValue));
+  if (keyframe || modeAnimated) out.push(...rigValueCommands(nodeId, modePath, modeValue, seconds, true));
   for (const [id, rad] of plan.rotations) {
     out.push(...rigValueCommands(nodeId, rigPaths.boneProp(id, 'rotation'), values.scalar(rad * DEG), seconds, keyframe));
   }
@@ -241,6 +230,7 @@ export function chainSwitchCommands(
 
 // ── Controllers ──────────────────────────────────────────────────────
 
+/** A new controller (the engine mints its id); `c.id` is ignored. */
 export function addControllerCommands(nodeId: string, c: RigController): Command[] {
   const init: PropertyInit[] = [
     { path: 'drives', value: values.choice(c.link.kind) },
@@ -251,7 +241,7 @@ export function addControllerCommands(nodeId: string, c: RigController): Command
   ];
   if (c.offsetX !== undefined || c.offsetY !== undefined) init.push({ path: 'offset', value: values.vec2(c.offsetX ?? 0, c.offsetY ?? 0) });
   return [{
-    type: 'addPropertyGroup', layer: nodeId, parent: 'skeleton/controllers', matchName: 'Premation Rig Controller', init,
+    type: 'addPropertyGroup', layer: nodeId, parent: rigPaths.controllers, matchName: rigMatch.controller, init,
     ...(c.name ? { name: c.name } : {}),
   }];
 }
@@ -262,25 +252,4 @@ export function controllerFieldCommands(nodeId: string, ctrlId: string, prop: 's
 
 export function deleteControllerCommands(nodeId: string, ctrlId: string): Command[] {
   return [{ type: 'removePropertyGroups', groups: [{ layer: nodeId, path: rigPaths.controller(ctrlId) }] }];
-}
-
-// ── Whole rig (Auto-Rig) ─────────────────────────────────────────────
-
-/**
- * A rig preset REPLACES the skeleton (`layer/skeleton`, one write): the bones
- * the old rig had lose their keys. A brand-new rig on an image / SVG layer is
- * skinned to the outline mesh, as drawing the first bone does.
- */
-export function rigPresetCommands(nodeId: string, preset: SkeletonRig): Command[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return [];
-  let rig = preset;
-  const kind = readNodeKind(node);
-  if (rig.meshMode === undefined && (kind === 'image' || kind === 'svg')) rig = { ...rig, meshMode: 'silhouette' };
-  return [set(nodeId, 'layer/skeleton', values.json(rig))];
-}
-
-function skelOf(nodeId: string): SkeletonRig | undefined {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeSkeleton(node) : undefined;
 }

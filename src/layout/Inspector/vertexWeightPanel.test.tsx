@@ -25,44 +25,36 @@ import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { BoneControls } from './BoneControls';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
-import { defaultAnimation } from '@motion/animation';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding } from '@core/rig/rigDeform';
 import { readGeometry } from '@core/workspace/geometry';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
 import { selectRigVertex, clearRigVertex } from '@stores/rigVertexStore';
 import { useUIStore } from '@stores/uiStore';
 import type { VertexWeight } from '@core/rig/skinning';
-import type { SceneNode } from '@core/types';
-
-const ID = 'vw_node';
 
 const TWO_BONES = [
   { id: 'upper', name: 'Upper', parentId: null, length: 60, x: -70, y: 0, rotation: 0 },
   { id: 'fore', name: 'Fore', parentId: 'upper', length: 60, x: 60, y: 0, rotation: 0 },
 ];
 
-function addNode(): void {
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  defaultSceneGraph.addNode({
-    id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${ID}_t`, type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, rotation: 0, width: 240, height: 160 },
-      },
-    ],
-  } as unknown as SceneNode);
-}
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+/** The rig layer (engine-created, 240 × 160 at the comp origin). */
+let ID = '';
 
-function setBones(bones: typeof TWO_BONES): void {
-  defaultSceneGraph.setSkeleton(ID, {
-    bones, ikTargets: [], meshDensity: 8, meshExpansion: 0,
-  } as never);
+const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+
+/** The starting rig, written through the engine (setup: the history is cleared after). */
+async function setBones(bones: typeof TWO_BONES): Promise<void> {
+  const rig = { bones, ikTargets: [], meshDensity: 8, meshExpansion: 0 };
+  await h.run({ type: 'setProperty', prop: { layer: ID, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify(rig) } });
+  await idle();
+  getCommandSystem().getHistory().clear();
 }
 
 /** The binding the panel itself will build — same mesh assembly, by construction. */
@@ -95,20 +87,26 @@ const weightFields = (c: HTMLElement): HTMLElement[] =>
 
 const entryCount = (): number => getCommandSystem().getHistory().getEntries().length;
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  defaultAnimation.clear();
+/** ArrowUp on the resting spinbutton is a real user gesture that commits. */
+async function nudgeUp(field: HTMLElement): Promise<void> {
+  fireEvent.keyDown(field, { key: 'ArrowUp' });
+  await idle();
+}
+
+beforeEach(async () => {
+  h = await setupAppEngine();
   clearRestMeshCache();
   clearRigVertex();
   useUIStore.setState({ boneRigMode: 'weights' });
-  addNode();
-  setBones(TWO_BONES);
+  ID = await rigTestLayer(h, { width: 240, height: 160 });
+  await setBones(TWO_BONES);
   useSelectionStore.getState().set([ID]);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   clearRigVertex();
+  await h.dispose();
 });
 
 describe('the fixture is a real rig', () => {
@@ -154,7 +152,7 @@ describe('with a multi-influence vertex picked', () => {
     }
   });
 
-  it('DRIVING a field changes the weights the renderer will skin with', () => {
+  it('DRIVING a field changes the weights the renderer will skin with', async () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
@@ -163,59 +161,59 @@ describe('with a multi-influence vertex picked', () => {
     const boneId = boneName === 'Upper' ? 'upper' : 'fore';
     const before = influencesAt(v).find((w) => w.boneId === boneId)!.weight;
 
-    // ArrowUp on the resting spinbutton is a real user gesture that commits.
-    fireEvent.keyDown(field, { key: 'ArrowUp' });
+    await nudgeUp(field);
 
     const after = influencesAt(v).find((w) => w.boneId === boneId)!.weight;
     expect(after).toBeGreaterThan(before);
   });
 
-  it('and the edit is stored as an override, not lost on re-read', () => {
+  it('and the edit is stored as an override, not lost on re-read', async () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
-    fireEvent.keyDown(weightFields(container)[0]!, { key: 'ArrowUp' });
+    await nudgeUp(weightFields(container)[0]!);
     expect(readNodeSkeleton(defaultSceneGraph.getNode(ID)!)!.weightPaint).toBeDefined();
   });
 
-  it('normalisation still holds after an edit made through the UI', () => {
+  it('normalisation still holds after an edit made through the UI', async () => {
     // The model guarantees this; asserted again HERE because the panel could
     // reasonably have written a partial vertex and broken it at the seam.
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
-    fireEvent.keyDown(weightFields(container)[0]!, { key: 'ArrowUp' });
+    await nudgeUp(weightFields(container)[0]!);
     const total = influencesAt(v).reduce((a, w) => a + w.weight, 0);
     expect(total).toBeCloseTo(1, 5);
   });
 
-  it('is ONE history entry per edit', () => {
+  it('is ONE history entry per edit', async () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
     const before = entryCount();
-    fireEvent.keyDown(weightFields(container)[0]!, { key: 'ArrowUp' });
+    await nudgeUp(weightFields(container)[0]!);
     expect(entryCount() - before).toBe(1);
+    expect(historyLabels().at(-1)).toBe('Set Vertex Weight');
   });
 
-  it('undo restores the auto binding', () => {
+  it('undo restores the auto binding', async () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
     const before = influencesAt(v).map((w) => w.weight);
-    fireEvent.keyDown(weightFields(container)[0]!, { key: 'ArrowUp' });
-    // `undo` bumps the scene store, which re-renders subscribers — wrapped so
-    // React flushes it here rather than warning about an update outside act().
-    act(() => { getCommandSystem().getHistory().undo(); });
+    await nudgeUp(weightFields(container)[0]!);
+    expect(influencesAt(v).map((w) => w.weight)).not.toEqual(before);
+    await act(async () => { await h.run({ type: 'undo' }); });
     expect(influencesAt(v).map((w) => w.weight)).toEqual(before);
+    expect(readNodeSkeleton(defaultSceneGraph.getNode(ID)!)!.weightPaint).toBeUndefined();
   });
 });
 
 describe('the single-influence boundary, through the UI', () => {
-  it('offers NO editable field — the state is unrepresentable, not corrected', () => {
+  it('offers NO editable field — the state is unrepresentable, not corrected', async () => {
     // One bone reaches every vertex, so each is at weight 1 by definition. An
     // editable field here would renormalise whatever was typed straight back.
-    setBones([TWO_BONES[0]!]);
+    await setBones([TWO_BONES[0]!]);
     clearRestMeshCache();
     const v = 5;
     expect(influencesAt(v)).toHaveLength(1);

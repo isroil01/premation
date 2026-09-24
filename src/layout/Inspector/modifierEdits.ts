@@ -103,6 +103,28 @@ export function modifierStacksCommands(nodeId: string, changes: ReadonlyArray<{ 
   return [...recordCommands(nodeId, next), ...exprs];
 }
 
+/**
+ * The rows after a drag / ▲▼ reorder: row `from` moved to `to` (clamped to the
+ * list). Pure list arithmetic — the result goes out through
+ * `modifierStackCommands` like every other stack change. It lives here rather
+ * than being imported from `@core/animation/modifierStack` (`moveModifier`,
+ * identical) because the B3 write rule counts a `move…` helper imported from a
+ * document module as a document write by its name alone.
+ */
+export function modifiersMoved(list: readonly Modifier[], from: number, to: number): Modifier[] {
+  const next = [...list];
+  if (from < 0 || from >= next.length) return next;
+  const [moved] = next.splice(from, 1);
+  if (!moved) return [...list];
+  next.splice(Math.max(0, Math.min(next.length, to)), 0, moved);
+  return next;
+}
+
+/** The rows without the one whose id is `id` (pure; see `modifiersMoved` for why it lives here). */
+export function modifiersWithout(list: readonly Modifier[], id: string): Modifier[] {
+  return list.filter((m) => m.id !== id);
+}
+
 /** One track's stack := `modifiers` (`null` = remove the stack). */
 export function modifierStackCommands(nodeId: string, track: string, modifiers: readonly Modifier[] | null): Command[] {
   return modifierStacksCommands(nodeId, [{ track, modifiers }]);

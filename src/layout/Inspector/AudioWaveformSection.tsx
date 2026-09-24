@@ -4,9 +4,10 @@
  * it draws the amplitude outline of a referenced audio layer, NOT an FFT /
  * frequency spectrum. Labelled as such so it isn't mistaken for a spectrum.
  *
- * The whole config is one object on `fx` (setAudioWaveform), so each edit merges
- * a field and re-renders. Only rendered when the layer carries the block (see
- * ShapeEffects, which also owns the "+ Add" entry point).
+ * The whole config is one json field, `layer/audioWaveform`: each edit sends
+ * the current config with one key changed (audioEdits.ts) — one undo entry per
+ * pick / typed value, one per scrub. Only rendered when the layer carries the
+ * block (see ShapeEffects, which also owns the "+ Add" entry point).
  */
 
 import { ValueField } from '@components/ValueField';
@@ -19,11 +20,12 @@ import { compLayersDeep } from '@core/mirror/layerFields';
 import {
   AUDIO_WAVEFORM_FX_KEY,
   readNodeAudioWaveform,
-  setAudioWaveform,
-  updateAudioWaveform,
   defaultAudioWaveform,
   type AudioWaveformConfig,
 } from '@core/audio/audioWaveformGen';
+import { edit } from '@core/engine/uiEdits';
+import { useEngineEdit } from './useEngineEdit';
+import { audioWaveformCommands } from './audioEdits';
 import styles from './TransformSection.module.css';
 
 /**
@@ -43,6 +45,7 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
   const raw = useMirrorJson<unknown>(nodeId, 'layer/audioWaveform');
   // Honest source list: only real audio-kind layers.
   const audioLayers = useAudioLayers();
+  const eng = useEngineEdit();
   // Normalised exactly as the generator normalises it — a pure use of
   // `readNodeAudioWaveform` over the mirror's value (it reads only `components`).
   const cfg = raw === undefined
@@ -50,10 +53,12 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
     : readNodeAudioWaveform({ components: [{ type: 'fx', props: { [AUDIO_WAVEFORM_FX_KEY]: raw } }] } as unknown as SceneNode);
   if (!cfg) return null;
 
+  // The whole config with one key changed (absolute: a scrub's every message
+  // carries the full value). One entry per pick / typed value, or the scrub's.
   const set = <K extends keyof AudioWaveformConfig>(key: K, value: AudioWaveformConfig[K]): void => {
-    // B3-legacy: engine gap — the audio-waveform generator config is a structured value with no API property.
-    updateAudioWaveform(nodeId, { [key]: value } as Partial<AudioWaveformConfig>);
+    eng.send('Edit Audio Waveform', audioWaveformCommands(nodeId, { ...cfg, [key]: value }));
   };
+  const scrub = eng.scrub('Edit Audio Waveform');
 
   const sourceMissing = cfg.sourceLayerId !== '' && !audioLayers.some((n) => n.id === cfg.sourceLayerId);
 
@@ -110,30 +115,29 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
           <div className={styles.popoverRow}>
             <div style={{ width: 13 }} />
             <span className={styles.popoverLabel}>Window</span>
-            <ValueField value={cfg.windowSec} unit="s" min={0} precision={2} onChange={(v) => set('windowSec', Number(v))} aria-label="Window seconds" />
+            <ValueField {...scrub} value={cfg.windowSec} unit="s" min={0} precision={2} onChange={(v) => set('windowSec', Number(v))} aria-label="Window seconds" />
           </div>
         )}
 
         <div className={styles.popoverRow}>
           <div style={{ width: 13 }} />
           <span className={styles.popoverLabel}>Height</span>
-          <ValueField value={cfg.heightScale} min={0} precision={2} onChange={(v) => set('heightScale', Number(v))} aria-label="Height scale" />
+          <ValueField {...scrub} value={cfg.heightScale} min={0} precision={2} onChange={(v) => set('heightScale', Number(v))} aria-label="Height scale" />
         </div>
         <div className={styles.popoverRow}>
           <div style={{ width: 13 }} />
           <span className={styles.popoverLabel}>Thickness</span>
-          <ValueField value={cfg.thickness} unit="px" min={0} onChange={(v) => set('thickness', Number(v))} aria-label="Thickness" />
+          <ValueField {...scrub} value={cfg.thickness} unit="px" min={0} onChange={(v) => set('thickness', Number(v))} aria-label="Thickness" />
         </div>
         <div className={styles.popoverRow}>
           <div style={{ width: 13 }} />
           <span className={styles.popoverLabel}>Samples</span>
-          <ValueField value={cfg.samples} min={2} onChange={(v) => set('samples', Math.max(2, Math.floor(Number(v))))} aria-label="Samples" />
+          <ValueField {...scrub} value={cfg.samples} min={2} onChange={(v) => set('samples', Math.max(2, Math.floor(Number(v))))} aria-label="Samples" />
         </div>
 
         <button
           type="button"
-          // B3-legacy: engine gap — the audio-waveform generator config is a structured value with no API property.
-          onClick={() => setAudioWaveform(nodeId, null)}
+          onClick={() => { void edit('Remove Audio Waveform', audioWaveformCommands(nodeId, null)); }}
           style={{
             marginTop: 6, height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600,
             background: 'var(--color-surface-3)', color: 'var(--color-text-secondary)',

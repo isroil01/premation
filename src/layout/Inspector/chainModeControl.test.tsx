@@ -1,5 +1,7 @@
 /**
- * The per-chain IK/FK control must be reachable and must drive `setChainMode`.
+ * The per-chain IK/FK control must be reachable and must drive the chain
+ * switch (a client macro over `planChainSwitch`, rigEdits `chainSwitchCommands`:
+ * mode + the pose that keeps the limb still, sent as ONE engine edit).
  *
  * ## Verified at runtime — and the earlier diagnosis here was wrong
  *
@@ -22,36 +24,31 @@
  * 0.000000 both ways and one undo entry per switch.
  */
 
-import { render, cleanup, fireEvent, screen } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
 import { BoneControls } from './BoneControls';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { getCommandSystem } from '@core/commands/CommandSystem';
 import { readNodeSkeleton, type SkeletonRig } from '@core/rig/skeletonCommands';
 import { defaultAnimation } from '@motion/animation';
 import { chainModePropPath } from '@core/rig/ikfk';
 import { computeWorldTransforms, boneTip } from '@core/rig/skeleton';
 import { applyIk } from '@core/rig/rigDeform';
 import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
 import { useUIStore } from '@stores/uiStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
-import type { SceneNode } from '@core/types';
+import { usePreferenceStore } from '@stores/preferenceStore';
 
 const DEG = Math.PI / 180;
-const ID = 'chain_ui';
 
-function shapeNode(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: 200, height: 160, opacity: 100 } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
-    ],
-  } as unknown as SceneNode;
-}
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+/** The rig layer (engine-created). */
+let ID = '';
 
 const rigOf = () => readNodeSkeleton(defaultSceneGraph.getNode(ID)!)!;
+const idle = (): Promise<void> => act(async () => { await engineIdle(); });
 
 /** The hand position as the renderer computes it — the thing that must not move. */
 function handNow(): { x: number; y: number } {
@@ -64,25 +61,32 @@ function handNow(): { x: number; y: number } {
   return boneTip(w.get('fore')!, live.find((b) => b.id === 'fore')!.length);
 }
 
-beforeEach(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-  useUIStore.setState({ boneRigMode: 'pose' });
-  useRigSelectionStore.getState().selectBone(ID, 'fore');
-  defaultSceneGraph.addNode(shapeNode(ID));
-  defaultAnimation.removeTrack(ID, chainModePropPath('fore'));
-  defaultSceneGraph.setSkeleton(ID, {
+async function switchTo(mode: 'ik' | 'fk'): Promise<void> {
+  fireEvent.change(screen.getByLabelText('Fore chain mode'), { target: { value: mode } });
+  await idle();
+}
+
+beforeEach(async () => {
+  h = await setupAppEngine();
+  ID = await rigTestLayer(h);
+  const rig: SkeletonRig = {
     bones: [
       { id: 'upper', name: 'Upper', parentId: null, length: 70, x: -55, y: 18, rotation: -22 * DEG },
       { id: 'fore', name: 'Fore', parentId: 'upper', length: 45, x: 70, y: 0, rotation: 48 * DEG },
     ],
     ikTargets: [{ boneId: 'fore', x: 15, y: 62, chainLength: 2 }],
-  } as SkeletonRig);
+  };
+  await h.run({ type: 'setProperty', prop: { layer: ID, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify(rig) } });
+  await idle();
+  getCommandSystem().getHistory().clear();
+  useUIStore.setState({ boneRigMode: 'pose' });
+  usePreferenceStore.setState({ timelineAutoKeyframe: false });
+  useRigSelectionStore.getState().selectBone(ID, 'fore');
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
+  await h.dispose();
 });
 
 describe('the Chain Mode control', () => {
@@ -96,18 +100,23 @@ describe('the Chain Mode control', () => {
     expect(screen.queryByLabelText('Upper chain mode')).toBeNull();
   });
 
-  it('switching to FK writes the mode', () => {
+  it('switching to FK writes the mode — ONE undo entry, and undo restores the rig', async () => {
     render(<BoneControls nodeId={ID} />);
-    fireEvent.change(screen.getByLabelText('Fore chain mode'), { target: { value: 'fk' } });
+    const before = h.doc();
+    await switchTo('fk');
     expect(rigOf().ikTargets![0]!.ikMode).toBe('fk');
+    expect(historyLabels()).toEqual(['Switch Fore to FK']);
+    expect((screen.getByLabelText('Fore chain mode') as HTMLSelectElement).value).toBe('fk');
+    await act(async () => { await h.run({ type: 'undo' }); });
+    expect(h.doc()).toEqual(before);
   });
 
-  it('switching through the CONTROL preserves the pose — not just through the command', () => {
+  it('switching through the CONTROL preserves the pose — not just through the command', async () => {
     // The reason this control exists. Measured the same way the runtime check
     // measures it: the hand must not move.
     render(<BoneControls nodeId={ID} />);
     const before = handNow();
-    fireEvent.change(screen.getByLabelText('Fore chain mode'), { target: { value: 'fk' } });
+    await switchTo('fk');
     const after = handNow();
     expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeCloseTo(0, 6);
   });
@@ -122,13 +131,24 @@ describe('the Chain Mode control', () => {
     expect(Math.hypot(rawHand.x - goal.x, rawHand.y - goal.y)).toBeGreaterThan(10);
   });
 
-  it('switching back to IK also preserves it', () => {
+  it('switching back to IK also preserves it', async () => {
     render(<BoneControls nodeId={ID} />);
-    fireEvent.change(screen.getByLabelText('Fore chain mode'), { target: { value: 'fk' } });
-    cleanup();
+    await switchTo('fk');
+    const before = handNow();
+    await switchTo('ik');
+    expect(rigOf().ikTargets![0]!.ikMode ?? 'ik').toBe('ik');
+    expect(Math.hypot(handNow().x - before.x, handNow().y - before.y)).toBeCloseTo(0, 4);
+    expect(historyLabels()).toEqual(['Switch Fore to FK', 'Switch Fore to IK']);
+  });
+
+  it('with auto-keyframe on, the switch keys the mode and the pose at the playhead', async () => {
+    usePreferenceStore.setState({ timelineAutoKeyframe: true });
     render(<BoneControls nodeId={ID} />);
     const before = handNow();
-    fireEvent.change(screen.getByLabelText('Fore chain mode'), { target: { value: 'ik' } });
-    expect(Math.hypot(handNow().x - before.x, handNow().y - before.y)).toBeCloseTo(0, 4);
+    await switchTo('fk');
+    expect(defaultAnimation.isAnimated(ID, chainModePropPath('fore'))).toBe(true);
+    expect(defaultAnimation.isAnimated(ID, 'bone.upper.rotation')).toBe(true);
+    expect(Math.hypot(handNow().x - before.x, handNow().y - before.y)).toBeCloseTo(0, 6);
+    expect(historyLabels()).toEqual(['Switch Fore to FK']);
   });
 });

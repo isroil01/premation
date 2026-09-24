@@ -17,22 +17,23 @@ import { Popover } from '@components/Popover';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import type { SceneNode } from '@core/types';
+import { useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
 import {
   MODIFIER_KINDS,
   MODIFIER_LABELS,
   defaultModifier,
   describeModifier,
-  moveModifier,
+  MODIFIERS_PROP,
   readModifierStack,
-  removeModifier,
   type Modifier,
   type ModifierKind,
 } from '@core/animation/modifierStack';
 import { modifierCompileError } from '@core/animation/modifierCompile';
 import { ModifierParams } from './ModifierStackSection';
 import { useEngineEdit } from './useEngineEdit';
-import { modifierStackCommands } from './modifierEdits';
+import { modifierStackCommands, modifiersMoved, modifiersWithout } from './modifierEdits';
 import styles from './ModifierChips.module.css';
 
 export interface ModifierChipsProps {
@@ -68,11 +69,18 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
   const [open, setOpen] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const eng = useEngineEdit();
-  const node = defaultSceneGraph.getNode(nodeId);
-  const stack = node ? readModifierStack(node, prop) : null;
+  // From the mirror (`layer/modifiers`, the raw record), so the chips redraw on
+  // every change of the stack — the next reorder / × computes from what is
+  // stored, never from a stale list. Normalised exactly as the document reader
+  // normalises it (`readModifierStack` reads only the Transform's props).
+  const layer = useMirrorLayer(nodeId);
+  const raw = useMirrorJson<unknown>(nodeId, 'layer/modifiers');
+  const stack = raw === undefined
+    ? null
+    : readModifierStack({ components: [{ type: 'Transform', props: { [MODIFIERS_PROP]: raw } }] } as unknown as SceneNode, prop);
   const modifiers: readonly Modifier[] = stack?.modifiers ?? [];
 
-  if (!node) return null;
+  if (!layer) return null;
   if (modifiers.length === 0 && !showAdd) return null;
 
   // The last chip removed removes the stack (its previous expression comes back).
@@ -102,7 +110,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                 onDragStart={() => setDragFrom(i)}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => {
-                  if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i), 'Reorder Modifier');
+                  if (dragFrom !== null && dragFrom !== i) commit(modifiersMoved(modifiers, dragFrom, i), 'Reorder Modifier');
                   setDragFrom(null);
                 }}
                 onDragEnd={() => setDragFrom(null)}
@@ -123,7 +131,7 @@ export function ModifierChips({ nodeId, prop, showAdd = false, className }: Modi
                   aria-label={`Remove ${label} modifier`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    commit(removeModifier(modifiers, m.id), 'Remove Modifier');
+                    commit(modifiersWithout(modifiers, m.id), 'Remove Modifier');
                   }}
                 >
                   <Icon name="close" size="sm" />

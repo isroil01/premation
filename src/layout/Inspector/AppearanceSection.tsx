@@ -19,16 +19,19 @@
  */
 
 import { memo, useMemo, useCallback } from 'react';
+import type { Command } from '@motion/engine-api';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { Icon } from '@components/Icon';
-import { groupSelectedNodes, ungroupSelectedNode } from '@core/scene/sceneInsert';
 import { useSelectionStore } from '@stores/selectionStore';
+import { documentMirror } from '@stores/documentMirror';
 import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { applyAppearancePreset, captureAppearancePreset } from '@core/inspector/sectionPresets';
+import { captureAppearancePreset } from '@core/inspector/sectionPresets';
+import type { Stroke } from '@core/paint/stroke';
+import type { PresetValues } from '@stores/sectionPresetStore';
+import { fillPaintCommands, strokePatchCommands } from './appearance/paintEdits';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
 import { FillRows } from './appearance/FillRows';
@@ -52,9 +55,7 @@ export function AppearancePresetAction({
 
   const capturePreset = useCallback(() => captureAppearancePreset(nodeId), [nodeId]);
   const applyPreset = useCallback(
-    (values: Readonly<Record<string, number | string | boolean>>) =>
-      // B3-legacy: engine gap — a Fill & Stroke preset writes fill/stroke PAINT objects (solid / gradient / stroke stack), which have no API property yet.
-      applyAppearancePreset(effectiveNodeIds, values),
+    (values: PresetValues) => { void applyAppearancePresetEdit(effectiveNodeIds, values); },
     [effectiveNodeIds],
   );
 
@@ -68,34 +69,87 @@ export function AppearancePresetAction({
   );
 }
 
+/** The stroke fields a Fill & Stroke preset holds (`captureAppearancePreset`'s `stroke.<key>`). */
+const STROKE_PRESET_KEYS: ReadonlyArray<keyof Stroke> = ['enabled', 'color', 'width', 'opacity', 'align', 'cap', 'join'];
+
 /**
- * Group the selection (`groupLayers`, one entry) and select the group. The
- * API groups layers that share a parent; a selection spanning parents keeps
- * the legacy grouping (engine gap).
+ * A Fill & Stroke preset over these layers as commands: `fillColor` is the
+ * primary fill (`layer/fillPaint` — a solid, or none for `''`), the stroke keys
+ * patch the primary stroke of the stack (`layer/strokes`, created from the
+ * default when the layer has none) — `applyAppearancePreset`'s writes.
  */
-async function groupSelection(ids: ReadonlyArray<string>): Promise<void> {
-  const layers = ids.filter((id) => isLayer(id));
-  const parent = layers.length > 0 ? defaultSceneGraph.getNode(layers[0]!)?.parent : undefined;
-  if (layers.length !== ids.length || layers.some((id) => defaultSceneGraph.getNode(id)?.parent !== parent)) {
-    // B3-legacy: engine gap — `groupLayers` needs one parent; the legacy grouping reparents a mixed selection under a new group in the active comp.
-    groupSelectedNodes();
-    return;
+export function appearancePresetCommands(nodeIds: ReadonlyArray<string>, values: PresetValues): Command[] {
+  const strokePatch: Partial<Record<keyof Stroke, unknown>> = {};
+  for (const key of STROKE_PRESET_KEYS) {
+    const v = values[`stroke.${key}`];
+    if (v !== undefined) strokePatch[key] = v;
   }
-  const res = await edit('Group Layers', { type: 'groupLayers', layers, name: 'Group Assembly' });
-  const group = res.ok ? (res.value[0] as { layer?: string } | undefined)?.layer : undefined;
+  const fillColor = values.fillColor;
+  const cmds: Command[] = [];
+  for (const id of nodeIds) {
+    if (!isLayer(id)) continue;
+    if (typeof fillColor === 'string') cmds.push(...fillPaintCommands(id, fillColor ? { type: 'solid', color: fillColor } : undefined));
+    if (Object.keys(strokePatch).length > 0) cmds.push(...strokePatchCommands(id, 0, strokePatch as Partial<Stroke>));
+  }
+  return cmds;
+}
+
+/** Apply a Fill & Stroke preset to the selection — one undo entry. */
+export function applyAppearancePresetEdit(nodeIds: ReadonlyArray<string>, values: PresetValues): Promise<unknown> {
+  return edit('Apply Fill & Stroke preset', appearancePresetCommands(nodeIds, values));
+}
+
+/**
+ * Group the selection (`groupLayers`, one entry) and select the group.
+ * `groupLayers` groups siblings of one parent, so a selection spanning parents
+ * is first moved to the composition's root keeping each layer's world pose
+ * (`setParent`, same batch) — where the pre-API grouping put the new group.
+ */
+export async function groupSelection(ids: ReadonlyArray<string>): Promise<void> {
+  const m = documentMirror();
+  const layers = ids.filter((id) => isLayer(id));
+  if (layers.length === 0) return;
+  const parentOf = (id: string): string | null => m.layer(id)?.parent ?? null;
+  const first = parentOf(layers[0]!);
+  const cmds: Command[] = [];
+  if (layers.some((id) => parentOf(id) !== first)) {
+    const nested = layers.filter((id) => parentOf(id) !== null);
+    cmds.push({ type: 'setParent', layers: nested, keepWorldTransform: true });
+  }
+  cmds.push({ type: 'groupLayers', layers, name: 'Group Assembly' });
+  const res = await edit('Group Layers', cmds);
+  const group = res.ok ? (res.value[res.value.length - 1] as { layer?: string } | undefined)?.layer : undefined;
   if (group) useSelectionStore.getState().set([group]);
 }
 
-/** Detach a group's parts (`ungroupLayer`, one entry) and select them. */
-async function ungroupNode(nodeId: string): Promise<void> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !isLayer(nodeId) || readNodeKind(node) !== 'group') {
-    // B3-legacy: engine gap — `ungroupLayer` takes group LAYERS only; detaching the children of any other parent node has no API form.
-    ungroupSelectedNode(nodeId);
-    return;
+/**
+ * Detach a node's parts and select them, one entry. A group layer is
+ * `ungroupLayer` (its members take its place). Any other layer with children
+ * (parenting is nesting) is dissolved the way the pre-API "Detach Parts" did:
+ * its children move to the composition's root keeping their world pose, and
+ * the emptied layer is deleted (`setParent` + `deleteLayers`). Children behind
+ * a precomp barrier belong to another composition and are not detached.
+ */
+export async function ungroupNode(nodeId: string, children: ReadonlyArray<string>): Promise<void> {
+  const m = documentMirror();
+  const info = isLayer(nodeId) ? m.layer(nodeId) : undefined;
+  if (!info) return;
+  let cmds: Command[];
+  if (info.kind === 'group') {
+    cmds = [{ type: 'ungroupLayer', group: nodeId }];
+  } else {
+    const parts = children.filter((id) => m.layer(id)?.comp === info.comp);
+    if (parts.length === 0 || parts.length !== children.length) return;
+    cmds = [
+      { type: 'setParent', layers: [...parts], keepWorldTransform: true },
+      { type: 'deleteLayers', layers: [nodeId] },
+    ];
   }
-  const res = await edit('Ungroup', { type: 'ungroupLayer', group: nodeId });
-  const parts = res.ok ? (res.value[0] as { layers?: string[] } | undefined)?.layers : undefined;
+  const res = await edit('Ungroup', cmds);
+  if (!res.ok) return;
+  const parts = info.kind === 'group'
+    ? (res.value[0] as { layers?: string[] } | undefined)?.layers
+    : [...children];
   if (parts && parts.length > 0) useSelectionStore.getState().set(parts);
 }
 
@@ -118,7 +172,8 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
 
   if (!node || !sComp) return null;
 
-  const isGroupNode = defaultSceneGraph.getChildren(node.id).length > 0 || node.components.some((c) => c.type === 'group');
+  const childIds = defaultSceneGraph.getChildren(node.id).map((c) => c.id);
+  const isGroupNode = childIds.length > 0 || node.components.some((c) => c.type === 'group');
 
   return (
     <div className={styles.section}>
@@ -141,7 +196,7 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
             type="button"
             className={effStyles.addChip}
             style={{ flex: 1, justifyContent: 'center', borderColor: 'var(--color-border-glass)', gap: 5 }}
-            onClick={() => { void ungroupNode(nodeId); }}
+            onClick={() => { void ungroupNode(nodeId, childIds); }}
           >
             <Icon name="layout" size="sm" />
             <span>Detach Parts (Ungroup)</span>

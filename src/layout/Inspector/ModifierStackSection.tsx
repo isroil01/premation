@@ -51,10 +51,8 @@ import {
   MODIFIER_LABELS,
   defaultModifier,
   describeModifier,
-  moveModifier,
   patchModifier,
   readModifierStacks,
-  removeModifier,
   type AudioBandName,
   type LoopModeName,
   type Modifier,
@@ -63,7 +61,7 @@ import {
 import { compileModifierStack, modifierCompileError, modifierWarning } from '@core/animation/modifierCompile';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from './useEngineEdit';
-import { behaviorRecipeCommands, bakeModifierStackCommands, modifierStackCommands } from './modifierEdits';
+import { behaviorRecipeCommands, bakeModifierStackCommands, modifierStackCommands, modifiersMoved, modifiersWithout } from './modifierEdits';
 import styles from './ModifierStackSection.module.css';
 
 /** Property value types a numeric modifier chain can sensibly drive. */
@@ -380,7 +378,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
               onDragStart={() => setDragFrom(i)}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => {
-                if (dragFrom !== null && dragFrom !== i) commit(moveModifier(modifiers, dragFrom, i), 'Reorder Modifier');
+                if (dragFrom !== null && dragFrom !== i) commit(modifiersMoved(modifiers, dragFrom, i), 'Reorder Modifier');
                 setDragFrom(null);
               }}
             >
@@ -400,20 +398,20 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   className={styles.iconBtn}
                   aria-label={`Move ${label} up`}
                   disabled={i === 0}
-                  onClick={() => commit(moveModifier(modifiers, i, i - 1), 'Reorder Modifier')}
+                  onClick={() => commit(modifiersMoved(modifiers, i, i - 1), 'Reorder Modifier')}
                 >▲</button>
                 <button
                   type="button"
                   className={styles.iconBtn}
                   aria-label={`Move ${label} down`}
                   disabled={i === modifiers.length - 1}
-                  onClick={() => commit(moveModifier(modifiers, i, i + 1), 'Reorder Modifier')}
+                  onClick={() => commit(modifiersMoved(modifiers, i, i + 1), 'Reorder Modifier')}
                 >▼</button>
                 <button
                   type="button"
                   className={styles.iconBtn}
                   aria-label={`Remove ${label}`}
-                  onClick={() => commit(removeModifier(modifiers, m.id), 'Remove Modifier')}
+                  onClick={() => commit(modifiersWithout(modifiers, m.id), 'Remove Modifier')}
                 >✕</button>
               </div>
               <ModifierParams modifier={m} list={modifiers} onPatch={commit} scrub={scrub} />
