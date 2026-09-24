@@ -68,7 +68,11 @@ struct RgbaView {
 /// cast; everything else (NaN, ±Inf, |x| ≥ 2^32) takes motion::js's exact
 /// fmod path. Same result either way.
 [[nodiscard]] inline std::uint32_t ju32(double x) noexcept {
-  if (x > -2147483648.0 && x < 4294967296.0) return static_cast<std::uint32_t>(static_cast<std::int64_t>(x));
+  // Any finite |x| < 2^63 truncates exactly into an int64, whose low 32 bits
+  // are trunc(x) mod 2^32 — the JS hashes' 2^40…2^62 sums included.
+  if (x > -9223372036854775808.0 && x < 9223372036854775808.0) {
+    return static_cast<std::uint32_t>(static_cast<std::uint64_t>(static_cast<std::int64_t>(x)));
+  }
   return js::to_uint32(x);
 }
 /// ECMAScript ToInt32 (`x | 0`).

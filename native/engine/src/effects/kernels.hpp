@@ -229,6 +229,21 @@ void dust_and_scratches(RgbaView img, double radius, double threshold, ThreadPoo
 void noise_alpha(RgbaView img, double amount, bool uniform, double seed, double phase, bool clip_result,
                  ThreadPool* pool);
 
+// ── warp.ts / stylize.ts displacement + noise bites ─────────────────────────
+/// `waveWarpData(src, w, h, waveHeight, waveWidth, directionDeg, phaseDeg)`.
+void wave_warp(RgbaView img, double wave_height, double wave_width, double direction_deg, double phase_deg,
+               ThreadPool* pool);
+/// `turbulentDisplaceData(src, w, h, amount, size, complexity, evolution)`.
+void turbulent_displace(RgbaView img, double amount, double size, double complexity, double evolution,
+                        ThreadPool* pool);
+/// `curlNoiseData(src, w, h, amount, size, complexity, evolution)`.
+void curl_noise(RgbaView img, double amount, double size, double complexity, double evolution, ThreadPool* pool);
+/// `roughenEdgesData(src, w, h, border, scale, complexity, evolution, seed)` + applyRoughenEdges' Edge Sharpness.
+void roughen_edges(RgbaView img, double border, double scale, double complexity, double evolution, double seed,
+                   double edge_sharpness, ThreadPool* pool);
+/// `scatterData(src, w, h, amount, grain (0 both / 1 horizontal / 2 vertical), seed, evolution)`.
+void scatter(RgbaView img, double amount, double grain, double seed, double evolution, ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

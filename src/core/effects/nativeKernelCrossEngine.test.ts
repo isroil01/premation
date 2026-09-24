@@ -229,6 +229,17 @@ const CASES: Case[] = [
   C('dust-scratches', 'wide', { radius: 8, threshold: 60 }),
   C('noise-alpha', 'small', { amount: 50, uniform: 1, seed: 3, phase: 0, clipResult: 1 }),
   C('noise-alpha', 'wide', { amount: 90, uniform: 0, seed: -8, phase: 5, clipResult: 0 }),
+  C('wave-warp', 'small', { waveHeight: 6, waveWidth: 20, direction: 90, phase: 30 }),
+  C('wave-warp', 'wide', { waveHeight: -9.5, waveWidth: 33, direction: 200, phase: 0 }),
+  C('turbulent-displace', 'small', { amount: 8, size: 12, complexity: 3, evolution: 40 }),
+  C('turbulent-displace', 'wide', { amount: 25, size: 60, complexity: 6, evolution: -130 }),
+  C('curl-noise', 'small', { amount: 5, size: 10, complexity: 2, evolution: 15 }),
+  C('curl-noise', 'tall', { amount: 12, size: 30, complexity: 4.7, evolution: 250 }),
+  C('roughen-edges', 'small', { border: 8, scale: 60, complexity: 3, evolution: 20, seed: 3 }),
+  C('roughen-edges', 'wide', { border: 20, scale: 150, complexity: 5, evolution: -90, seed: 11, edgeSharpness: 2 }),
+  C('scatter', 'small', { amount: 4, grain: 0, seed: 1, evolution: 0 }),
+  C('scatter', 'tall', { amount: 9.5, grain: 1, seed: 7, evolution: 3 }),
+  C('scatter', 'wide', { amount: 12, grain: 2, seed: -2, evolution: 0.5 }),
 ];
 
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {

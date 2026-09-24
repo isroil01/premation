@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 76> kPorted{
+constexpr std::array<std::string_view, 81> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -21,7 +21,8 @@ constexpr std::array<std::string_view, 76> kPorted{
     "gradient-wipe",   "card-wipe",       "radial-wipe",   "block-dissolve",  "alpha-levels",     "solid-composite",
     "channel-combiner", "remove-color-matting", "cartoon",   "brush-strokes",   "strobe-light",     "color-emboss",
     "halftone",        "kaleidoscope",    "vignette",      "burn-film",       "iris-wipe",        "light-wipe",
-    "line-sweep",      "grid-wipe",       "dust-scratches", "noise-alpha",
+    "line-sweep",      "grid-wipe",       "dust-scratches", "noise-alpha",    "wave-warp",        "turbulent-displace",
+    "curl-noise",      "roughen-edges",   "scatter",
 };
 
 }  // namespace
@@ -238,6 +239,17 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     dust_and_scratches(img, a("radius", 2), a("threshold", 20), pool);
   } else if (type == "noise-alpha") {
     noise_alpha(img, a("amount", 50), b("uniform", true), a("seed", 0), a("phase", 0), b("clipResult", true), pool);
+  } else if (type == "wave-warp") {
+    wave_warp(img, a("waveHeight", 10), a("waveWidth", 40), a("direction", 90), a("phase", 0), pool);
+  } else if (type == "turbulent-displace") {
+    turbulent_displace(img, a("amount", 20), a("size", 40), a("complexity", 3), a("evolution", 0), pool);
+  } else if (type == "curl-noise") {
+    curl_noise(img, a("amount", 20), a("size", 40), a("complexity", 3), a("evolution", 0), pool);
+  } else if (type == "roughen-edges") {
+    roughen_edges(img, a("border", 8), a("scale", 100), a("complexity", 3), a("evolution", 0), a("seed", 0),
+                  a("edgeSharpness", 0), pool);
+  } else if (type == "scatter") {
+    scatter(img, a("amount", 5), a("grain", 0), a("seed", 0), a("evolution", 0), pool);
   } else {
     return false;
   }

@@ -34,7 +34,8 @@ import {
   opticsCompensationData, meshWarpData, liquifyData,
 } from '../distort';
 import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
-import { mosaicData, findEdgesData, embossData } from '../stylize';
+import { mosaicData, findEdgesData, embossData, roughenEdgesData, scatterData } from '../stylize';
+import { waveWarpData, turbulentDisplaceData, curlNoiseData } from '../warp';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from '../colorEffects';
 import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from '../aeColor';
 import { selectiveColorData, selectiveRange, shadowHighlightData } from '../toneEffects';
@@ -302,6 +303,35 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
     case 'noise-alpha':
       noiseAlphaData(data, w, n('amount', 50), b('uniform', true), n('seed', 0), n('phase', 0), b('clipResult', true));
       return;
+    case 'wave-warp':
+      data.set(waveWarpData(data, w, h, n('waveHeight', 10), n('waveWidth', 40), n('direction', 90), n('phase', 0)));
+      return;
+    case 'turbulent-displace':
+      data.set(turbulentDisplaceData(data, w, h, n('amount', 20), n('size', 40), n('complexity', 3), n('evolution', 0)));
+      return;
+    case 'curl-noise':
+      data.set(curlNoiseData(data, w, h, n('amount', 20), n('size', 40), n('complexity', 3), n('evolution', 0)));
+      return;
+    case 'roughen-edges': {
+      // roughenEdgesData + applyRoughenEdges' Edge Sharpness pass.
+      const border = n('border', 8);
+      if (border <= 0) return;
+      const out = roughenEdgesData(data, w, h, border, n('scale', 100), n('complexity', 3), n('evolution', 0), n('seed', 0));
+      const sharp = Math.max(0, n('edgeSharpness', 0));
+      if (sharp > 0) {
+        for (let i = 3; i < out.length; i += 4) {
+          const al = out[i]! / 255;
+          out[i] = Math.round(255 * Math.min(1, Math.max(0, (al - 0.5) * (1 + sharp * 2) + 0.5)));
+        }
+      }
+      data.set(out);
+      return;
+    }
+    case 'scatter': {
+      const grain = n('grain', 0);
+      data.set(scatterData(data, w, h, n('amount', 5), grain >= 2 ? 'vertical' : grain >= 1 ? 'horizontal' : 'both', n('seed', 0), n('evolution', 0)));
+      return;
+    }
     default:
       throw new Error(`no kernel for ${type}`);
   }
