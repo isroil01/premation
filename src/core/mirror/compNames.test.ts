@@ -1,8 +1,8 @@
-import { defaultCompNameIn, defaultPrecompNameIn } from './compNames';
+import { defaultCompNameIn, defaultPrecompNameIn, liveComps } from './compNames';
 import { settingsResponsiveTime } from './responsiveTime';
 
 const mirror = (...names: string[]) => ({
-  comps: new Map(names.map((name, i) => [`c${i}`, { settings: { name } }])),
+  comps: new Map(names.map((name, i) => [`c${i}`, { id: `c${i}`, settings: { name } }])),
 });
 
 describe('composition default names (mirror)', () => {
@@ -15,6 +15,18 @@ describe('composition default names (mirror)', () => {
     expect(defaultCompNameIn(mirror())).toBe('Comp 1');
     expect(defaultCompNameIn(mirror('Main'))).toBe('Comp 2');
     expect(defaultCompNameIn(mirror('Main', 'COMP 3'))).toBe('Comp 4');
+  });
+});
+
+describe('liveComps', () => {
+  test('document order, and a record whose item is gone is not a composition any more', () => {
+    const m = {
+      comps: new Map([['b', { id: 'b', settings: { name: 'B' } }], ['a', { id: 'a', settings: { name: 'A' } }], ['gone', { id: 'gone', settings: { name: 'Gone' } }]]),
+      compIds: ['a', 'b', 'gone'],
+      item: (id: string) => (id === 'gone' ? undefined : { id }),
+    };
+    expect(liveComps(m).map((c) => c.id)).toEqual(['a', 'b']);
+    expect(defaultPrecompNameIn({ ...m, comps: new Map([['gone', { id: 'gone', settings: { name: 'Pre-comp 1' } }]]) })).toBe('Pre-comp 1');
   });
 });
 

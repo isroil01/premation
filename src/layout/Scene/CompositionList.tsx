@@ -14,8 +14,9 @@ import { customConfirm, customPrompt } from '@components/Modal';
 import { useProjectStore, type TabInfo } from '@stores/projectStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { documentMirror, type MirrorComp } from '@stores/documentMirror';
-import { useMirrorComps } from '@hooks/useMirror';
+import { useMirrorKeys } from '@hooks/useMirror';
 import { settingsFps } from '@core/mirror/compFacts';
+import { liveComps } from '@core/mirror/compNames';
 import {
   deleteCompositionWarning,
   deleteCompositionEdit,
@@ -44,7 +45,8 @@ function listedOf(c: MirrorComp): ListedComposition {
 
 /** Whether `compId` is a composition of the document (not a group opened in its own tab). */
 function isMirrorComposition(compId: string): boolean {
-  return documentMirror().comp(compId) !== undefined;
+  const m = documentMirror();
+  return m.comp(compId) !== undefined && m.item(compId) !== undefined;
 }
 
 /**
@@ -76,17 +78,13 @@ export interface CompositionListProps {
 
 export function CompositionList({ collapsible = false }: CompositionListProps): JSX.Element {
   // B4: the compositions from the document mirror.
-  const mirrorComps = useMirrorComps();
+  const compsVersion = useMirrorKeys(['comps', 'items']);
   const comps = useMemo(() => {
+    void compsVersion; // recomputed when the compositions or items change
     const out: Record<string, ListedComposition> = {};
-    // Document order (the mirror's `compIds`), then any record not listed there.
-    for (const id of documentMirror().compIds) {
-      const c = mirrorComps.get(id);
-      if (c) out[id] = listedOf(c);
-    }
-    for (const c of mirrorComps.values()) if (!out[c.id]) out[c.id] = listedOf(c);
+    for (const c of liveComps(documentMirror())) out[c.id] = listedOf(c);
     return out;
-  }, [mirrorComps]);
+  }, [compsVersion]);
   const projectTabs = useProjectStore((s) => s.tabs);
   const activeTabId = useProjectStore((s) => s.activeTabId);
   const openTab = useProjectStore((s) => s.actions.openTab);

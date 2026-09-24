@@ -18,8 +18,6 @@
 
 import type { Command, EngineClient, RenameLayerResult as EngineRenameResult } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { canReparent, enclosingCompRootOf } from '@core/scene/parenting';
 import type { RenameLayerResult, RepairedRef } from '@core/scene/renameLayer';
 import { getNodeLayerTime } from '@core/scene/layerTime';
@@ -29,6 +27,10 @@ import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { compLayersDeep } from '@core/mirror/layerFields';
+import { liveComps } from '@core/mirror/compNames';
 import { reorderCommands, withGroupMembers } from '@layout/Workspace/layerMenuEdits';
 
 // ── A sequence as one entry ───────────────────────────────────────────
@@ -129,7 +131,7 @@ export async function moveLayersInTreeEdit(ids: ReadonlyArray<string>, targetId:
     }
     if (targetId === null) {
       steps.push(() => {
-        const root = activeCompRootId();
+        const root = activeCompIdNow();
         if (!root || enclosingCompRootOf(id) !== root || parentIs(id, null)) return [];
         return [setParentCmd(id, null)];
       });
@@ -155,11 +157,12 @@ export async function moveLayersInTreeEdit(ids: ReadonlyArray<string>, targetId:
 
 // ── Rename ────────────────────────────────────────────────────────────
 
+/** How many layers and compositions carry `name` (B4: the document mirror). */
 function countNamed(name: string): number {
+  const m = documentMirror();
   let n = 0;
-  defaultSceneGraph.traverse((node) => {
-    if (node.name === name) n += 1;
-  });
+  for (const id of m.layerIds()) if (m.layer(id)?.name === name) n += 1;
+  for (const c of m.comps.values()) if (c.settings.name === name) n += 1;
   return n;
 }
 
@@ -171,9 +174,12 @@ function countNamed(name: string): number {
  */
 export async function renameLayerEdit(nodeId: string, name: string): Promise<RenameLayerResult> {
   const none: RenameLayerResult = { ok: false, repaired: [], captured: [], nameAlreadyInUse: false };
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return none;
-  const oldName = node.name ?? '';
+  // B4: the row's current name from the document mirror (a layer, or a composition's record).
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  const comp = layer ? undefined : m.comp(nodeId);
+  if (!layer && !comp) return none;
+  const oldName = layer ? layer.name : comp!.settings.name;
   const trimmed = name.trim();
   if (trimmed === '' || trimmed === oldName) return { ...none, ok: trimmed !== '' };
   if (!isLayer(nodeId) && !isCompItem(nodeId)) return none;
@@ -200,9 +206,10 @@ export async function renameLayerEdit(nodeId: string, name: string): Promise<Ren
  * `deleteLayers` per composition. Resolves to how many were deleted.
  */
 export async function deleteLayersEdit(ids: ReadonlyArray<string>): Promise<number> {
+  const m = documentMirror();
   const picked = [...new Set(ids)].filter((id) => {
-    const n = defaultSceneGraph.getNode(id);
-    return !!n && !n.locked && !!compOfLayer(id);
+    const l = m.layer(id);
+    return !!l && !l.switches.locked && !!compOfLayer(id);
   });
   const count = picked.length;
   if (count === 0) return 0;
@@ -233,8 +240,11 @@ export async function deleteLayersEdit(ids: ReadonlyArray<string>): Promise<numb
 export async function reverseLayersEdit(ids: ReadonlyArray<string>): Promise<void> {
   const layers = ids.filter((id) => isLayer(id));
   if (layers.length === 0) return;
-  const target = layers.some((id) => !getNodeLayerTime(id).reverse);
-  const flip = layers.filter((id) => getNodeLayerTime(id).reverse !== target);
+  // B4: a reversed layer plays at a negative stretch (`LayerTiming.stretch`).
+  const m = documentMirror();
+  const reversed = (id: string): boolean => (m.layer(id)?.timing.stretch ?? 1) < 0;
+  const target = layers.some((id) => !reversed(id));
+  const flip = layers.filter((id) => reversed(id) !== target);
   if (flip.length === 0) return;
   await edit('Time-Reverse Layer', flip.map((id) => ({ type: 'timeReverseLayers', layers: [id] }) as Command));
 }
@@ -248,6 +258,7 @@ export async function reverseLayersEdit(ids: ReadonlyArray<string>): Promise<voi
 export async function freezeLayersEdit(ids: ReadonlyArray<string>, seconds: number): Promise<boolean> {
   const layers = ids.filter((id) => isLayer(id));
   if (layers.length === 0) return true;
+  // B4-gap: a layer's Freeze Frame hold (`layerTime.freeze`) has no `LayerTiming` field.
   if (!layers.some((id) => !getNodeLayerTime(id).freeze)) return false;
   const time = compTime(seconds);
   await edit('Freeze Frame', layers.map((layer) => ({ type: 'freezeFrame', layer, time, lastFrame: false }) as Command));
@@ -269,7 +280,7 @@ export async function renameCompositionEdit(compId: string, name: string): Promi
  * entry) — and open the copy. Resolves to the new comp id.
  */
 export async function duplicateCompositionEdit(compId: string): Promise<string | null> {
-  const src = useProjectStore.getState().comps[compId];
+  const src = documentMirror().comp(compId)?.settings;
   if (!src || !isCompItem(compId)) return null;
   const client = engine();
   const label = 'Duplicate Composition';
@@ -295,7 +306,7 @@ export async function duplicateCompositionEdit(compId: string): Promise<string |
   if (!closed.ok) reportEngineError(label, closed.error);
   if (!newId) return null;
   // Editor state: open the copy (as `duplicateComposition` did).
-  const name = useProjectStore.getState().comps[newId]?.name ?? `${src.name} copy`;
+  const name = documentMirror().comp(newId)?.settings.name ?? `${src.name} copy`;
   useProjectStore.getState().actions.openTab(newId, [newId], name);
   useSelectionStore.getState().clear();
   return newId;
@@ -304,7 +315,7 @@ export async function duplicateCompositionEdit(compId: string): Promise<string |
 /** What "Delete Composition" will take with it, for the confirmation. */
 export function compositionDeleteSummary(compId: string): { layers: number; usedBy: number } {
   return {
-    layers: Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1),
+    layers: compLayersDeep(documentMirror(), compId).length,
     usedBy: isCompItem(compId) ? layersUsingItem(compId).length : 0,
   };
 }
@@ -327,13 +338,15 @@ export function deleteCompositionWarning(name: string, compId: string): string {
  * composition, and is refused, as before. Resolves to whether it went.
  */
 export async function deleteCompositionEdit(compId: string): Promise<boolean> {
-  const state = useProjectStore.getState();
-  if (!state.comps[compId] || defaultSceneGraph.getNode(compId)?.parent) return false;
+  // B4: the compositions from the document mirror (a group opened in its own
+  // tab is a layer, not a composition record there).
+  const m = documentMirror();
+  if (!m.comp(compId)) return false;
   if (!isCompItem(compId)) return false;
   // Deleting the LAST composition leaves the empty project's placeholder in its
   // place (AE's "no compositions" state: pristine, adopted by New Composition,
   // no tab opened) — created first, in the same entry.
-  const last = Object.keys(state.comps).length <= 1;
+  const last = liveComps(m).length <= 1;
   const cmds: Command[] = [
     ...(last ? [{ type: 'createComposition', settings: { name: 'Composition 1', pristine: true }, fromItems: [] } as Command] : []),
     { type: 'removeItems', items: [compId], removeUsingLayers: true },

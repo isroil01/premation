@@ -34,6 +34,7 @@ import { EMPTY_FILTER, useSceneViewStore } from '@stores/sceneViewStore';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
 import { engineIdle } from '@core/engine/engineInstance';
+import { resetDocumentMirror } from '@stores/documentMirror';
 
 const ROOT = 'comp_main';
 const OTHER = 'comp_other';
@@ -108,6 +109,9 @@ beforeEach(() => {
   defaultSceneGraph.addNode(compRoot(OTHER, 'Other'));
   defaultSceneGraph.addChild(OTHER, layer('solo', 'Solo', OTHER, 'shape'));
   useProjectStore.getState().actions.openTab(ROOT, [ROOT], 'Main');
+  // The fixture is rebuilt around the engine (no change events): the panel's
+  // document mirror starts over, as it would on a document reset.
+  resetDocumentMirror();
 });
 
 const renderPanel = (): ReturnType<typeof render> =>
