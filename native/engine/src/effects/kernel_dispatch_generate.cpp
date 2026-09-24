@@ -13,9 +13,11 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 14> kGenerate{
-    "path-stroke", "scribble",   "write-on",          "star-burst", "snowfall",   "rainfall",         "light-burst",
-    "cc-tiler",    "ripple-pulse", "radial-scale-wipe", "glass-wipe", "image-wipe", "particle-systems", "cc-bubbles",
+constexpr std::array<std::string_view, 19> kGenerate{
+    "path-stroke", "scribble",     "write-on",          "star-burst",  "snowfall",        "rainfall",
+    "light-burst", "cc-tiler",     "ripple-pulse",      "radial-scale-wipe", "glass-wipe", "image-wipe",
+    "particle-systems", "cc-bubbles", "bezier-warp",    "cell-pattern", "apply-color-lut", "deep-glow",
+    "beam-path",
 };
 
 }  // namespace
@@ -156,6 +158,64 @@ bool run_generate_kernel(std::string_view type, const KernelArgs& a, const Kerne
     o.evolution = a("evolution", 0);
     o.seed = a("seed", 1);
     bubbles(img, o, pool);
+  } else if (type == "bezier-warp") {
+    // The rest configuration plus the effect's twelve offsets (applyBezierWarp).
+    static constexpr std::array<std::string_view, 12> kNames{
+        "topLeft", "top1",    "top2",       "topRight", "right1", "right2",
+        "bottomRight", "bottom1", "bottom2", "bottomLeft", "left1", "left2"};
+    std::array<Pt2, 12> pts = bezier_warp_rest(img.w, img.h);
+    for (std::size_t i = 0; i < 12; ++i) {
+      const std::string k(kNames[i]);
+      pts[i].x = pts[i].x + a(k + "X", 0);
+      pts[i].y = pts[i].y + a(k + "Y", 0);
+    }
+    bezier_warp(img, pts, pool);
+  } else if (type == "cell-pattern") {
+    cell_pattern(img, a("size", 40), a("evolution", 0), a("contrast", 100), b("invert", false), b("membrane", false),
+                 pool);
+  } else if (type == "apply-color-lut") {
+    const std::vector<double> data = lists("lut");
+    const std::vector<double> dmin = lists("domainMin");
+    const std::vector<double> dmax = lists("domainMax");
+    apply_color_lut(img, a("size", 0), a("size1d", 0), data, dmin, dmax, a("intensity", 1), pool);
+  } else if (type == "deep-glow") {
+    DeepGlowSettings s;
+    s.radius = a("radius", 20);
+    s.gain = a("gain", 1);
+    s.threshold = a("threshold", 0);
+    s.aspect_x = a("aspectX", 1);
+    s.aspect_y = a("aspectY", 1);
+    s.chroma = rgb("chroma", {1, 1, 1});
+    s.tint = rgb("tint", {1, 1, 1});
+    s.tint_amount = a("tintAmount", 0);
+    s.glow_only = b("glowOnly", false);
+    s.dither = b("dither", true);
+    s.octaves = a("octaves", 6);
+    deep_glow(img, s, pool);
+  } else if (type == "beam-path") {
+    BeamPathOptions o;
+    o.start_x = a("startX", -100);
+    o.start_y = a("startY", 0);
+    o.end_x = a("endX", 100);
+    o.end_y = a("endY", 0);
+    o.core_width = a("coreWidth", 6);
+    o.core_softness = a("coreSoftness", 0.3);
+    o.core_color = rgb("coreColor", {1, 1, 1});
+    o.glow_color = rgb("glowColor", {0.05, 0.4, 1});
+    o.glow_spread = a("glowSpread", 8);
+    o.glow_intensity = a("glowIntensity", 1);
+    o.glow_exponent = a("glowExponent", 2);
+    o.start = a("start", 0);
+    o.end = a("end", 1);
+    o.start_size = a("startSize", 1);
+    o.end_size = a("endSize", 1);
+    o.distortion = a("distortion", 0);
+    o.distortion_scale = a("distortionScale", 40);
+    o.evolution = a("evolution", 0);
+    o.composite = a("composite", 0);
+    o.flicker = a("flicker", 1);
+    const std::vector<double> flat = lists("pathPoints");
+    beam_path(img, flat, o, pool);
   } else {
     return false;
   }

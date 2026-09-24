@@ -74,6 +74,24 @@ const MASKS_TALL = packMasks(
   { pts: [[-7, -30], [6, -12], [-5, 5], [7, 25], [0, 38]], closed: false },
   { pts: star(0, -8, 8.5, 8.5, 4, 45), mode: 5 },
 );
+/** Test LUTs: a 3D table (red fastest) with a hue-twisting look, a 1D curve. */
+function lut3d(size: number): number[] {
+  const out: number[] = [];
+  for (let b = 0; b < size; b++) {
+    for (let g = 0; g < size; g++) {
+      for (let r = 0; r < size; r++) {
+        const R = r / (size - 1); const G = g / (size - 1); const B = b / (size - 1);
+        out.push(q(R * 0.8 + G * 0.25), q(G * G * 0.9 + B * 0.1), q(Math.sqrt(B) * 0.7 + R * 0.2 + 0.05));
+      }
+    }
+  }
+  return out;
+}
+const LUT_3D_5 = lut3d(5);
+const LUT_3D_3 = lut3d(3);
+const LUT_1D_8 = Array.from({ length: 8 * 3 }, (_, i) => q(Math.pow(Math.floor(i / 3) / 7, 0.6 + (i % 3) * 0.4)));
+/** A long spine (> BEAM_MAX_POINTS) for Beam Path's resampler. */
+const WAVE_TALL = wave(-8, 8, 0, 6, 90).flatMap(([x, y]) => [q(y), q(x * 4.5)]);
 /** A Write-on brush trail: `n` dabs along a curl, per-dab size / hardness / opacity / colour. */
 function trail(n: number, cx: number, cy: number, r: number): { brushTrailXY: number[]; brushTrailSize: number[]; brushTrailAttr: number[] } {
   const brushTrailXY: number[] = [];
@@ -437,6 +455,23 @@ const CASES: Case[] = [
   C('cc-bubbles', 'small', { bubbleAmount: 30, bubbleSpeed: 200, wobbleAmplitude: 4, bubbleSize: 8, sizeVariation: 50, shading: 0, opacity: 90, evolution: 33, seed: 2 }),
   C('cc-bubbles', 'small', { bubbleAmount: 12, bubbleSize: 14, shading: 2, colorR: 120, colorG: 200, colorB: 255, evolution: -71, seed: 5 }),
   C('cc-bubbles', 'wide', { bubbleAmount: 80, bubbleSpeed: 500, wobbleAmplitude: 12, wobbleFrequency: 5, bubbleSize: 6, shading: 1, opacity: 60, evolution: 250, seed: 1 }),
+  // ── bezierWarp.ts, generatePatterns.ts, cubeLut.ts ──
+  C('bezier-warp', 'small', { topLeftX: 4, topLeftY: 3, top1Y: -6, top2Y: 5, right1X: 7, right2X: -4, bottomRightX: -5, bottomRightY: -2, bottom1Y: 4, left2X: 6 }),
+  C('bezier-warp', 'wide', { topLeftX: 40, top1Y: 10, top2Y: -8, topRightX: -60, topRightY: 4, bottomRightX: -20, bottom1Y: -9, bottom2Y: 7, bottomLeftX: 70, left1X: 12.5 }),
+  C('bezier-warp', 'tall', { top1X: 30, top2X: -30, bottom1X: -25, bottom2X: 25, left1X: 15, right2X: -15 }),
+  C('cell-pattern', 'small', { size: 8, evolution: 1.3, contrast: 150 }),
+  C('cell-pattern', 'tall', { size: 5.5, evolution: -2.7, contrast: 90, invert: 1, membrane: 1 }),
+  C('cell-pattern', 'wide', { size: 20, evolution: 7, contrast: 80, membrane: 1 }),
+  C('apply-color-lut', 'small', { size: 5, lut: LUT_3D_5, intensity: 1 }),
+  C('apply-color-lut', 'tall', { size1d: 8, lut: LUT_1D_8, domainMin: [-0.1, 0, 0.05], domainMax: [1.2, 1, 0.9], intensity: 0.6 }),
+  C('apply-color-lut', 'wide', { size: 3, lut: LUT_3D_3, domainMin: [0.1, 0, 0], domainMax: [0.9, 1, 1], intensity: 2 }),
+  // ── deepGlow.ts, beamPath.ts ──
+  C('deep-glow', 'small', { radius: 6, gain: 1.5, threshold: 0.2, octaves: 4, dither: 1 }),
+  C('deep-glow', 'wide', { radius: 40, gain: 2.2, aspectX: 1, aspectY: 0.3, chromaR: 1.3, chromaG: 1, chromaB: 0.7, tintR: 1, tintG: 0.5, tintB: 0.2, tintAmount: 0.5, glowOnly: 1, dither: 0, octaves: 6 }),
+  C('deep-glow', 'tall', { radius: 12, gain: 0.8, aspectX: 0.4, aspectY: 1, octaves: 8, dither: 1 }),
+  C('beam-path', 'small', { pathPoints: [-25, -10, -5, 12, 10, -6, 1e9, 0, 5, 15, 25, 18], coreWidth: 4, coreSoftness: 0.5, distortion: 3, distortionScale: 12, evolution: 40, start: 0.1, end: 0.9, startSize: 0.5, endSize: 1.5, glowSpread: 5, glowIntensity: 1.2 }),
+  C('beam-path', 'wide', { startX: -270, startY: -4, endX: 250, endY: 5, coreWidth: 3, glowSpread: 6, glowExponent: 1.5, composite: 1, coreColorR: 1, coreColorG: 0.9, coreColorB: 0.6 }),
+  C('beam-path', 'tall', { pathPoints: WAVE_TALL, coreWidth: 5, glowExponent: 3.5, flicker: 0.7, start: 0, end: 0.75, glowColorR: 1, glowColorG: 0.1, glowColorB: 0.3 }),
 ];
 
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {

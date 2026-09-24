@@ -58,6 +58,11 @@ import { sharpenData, addNoiseData } from '../canvas2dEffects';
 import { pathStrokeData } from '../pathStroke';
 import { scribbleData } from '../scribble';
 import { writeOnBrushData } from '../writeOnBrush';
+import { defaultWarpPoints, bezierWarpData, type WarpPoints } from '../bezierWarp';
+import { cellPatternData } from '../generatePatterns';
+import { applyLutToImageData, fromStoredLut } from '../cubeLut';
+import { deepGlowData } from '../deepGlow';
+import { beamPathData, beamSpine, BEAM_PEN_UP } from '../beamPath';
 import {
   ccTilerData, ripplePulseData, radialScaleWipeData, glassWipeData, imageWipeData, type ImageWipeChannel,
 } from '../aeRoundSevenDistort';
@@ -637,6 +642,45 @@ function runGenerateKernel(
         n('bubbleSize', 12), n('sizeVariation', 40), n('shading', 0), cr, cg, cb, n('opacity', 80), n('evolution', 0),
         n('seed', 1),
       ));
+      return true;
+    }
+    case 'bezier-warp': {
+      const keys = ['topLeft', 'top1', 'top2', 'topRight', 'right1', 'right2', 'bottomRight', 'bottom1', 'bottom2', 'bottomLeft', 'left1', 'left2'];
+      const pts = defaultWarpPoints(w, h).map((p, i) => ({ x: p.x + n(`${keys[i]!}X`, 0), y: p.y + n(`${keys[i]!}Y`, 0) }));
+      data.set(bezierWarpData(data, w, h, pts as unknown as WarpPoints));
+      return true;
+    }
+    case 'cell-pattern':
+      cellPatternData(data, w, h, n('size', 40), n('evolution', 0), n('contrast', 100), b('invert', false), b('membrane', false));
+      return true;
+    case 'apply-color-lut': {
+      const three = (k: string): number[] | undefined => (arr(k).length === 3 ? arr(k) : undefined);
+      const lut = fromStoredLut({ size: n('size', 0), size1d: n('size1d', 0), data: arr('lut'), domainMin: three('domainMin'), domainMax: three('domainMax') });
+      if (lut) applyLutToImageData(data, lut, n('intensity', 1));
+      return true;
+    }
+    case 'deep-glow':
+      data.set(deepGlowData(data, w, h, {
+        radius: n('radius', 20), gain: n('gain', 1), threshold: n('threshold', 0), aspect: [n('aspectX', 1), n('aspectY', 1)],
+        chroma: rgb('chroma', [1, 1, 1]), tint: rgb('tint', [1, 1, 1]), tintAmount: n('tintAmount', 0),
+        glowOnly: b('glowOnly', false), dither: b('dither', true), octaves: n('octaves', 6),
+      }));
+      return true;
+    case 'beam-path': {
+      const flat = arr('pathPoints');
+      const { points, totalLen } = beamSpine(flat.length >= 4 ? flat : [n('startX', -100), n('startY', 0), n('endX', 100), n('endY', 0)]);
+      for (let i = 0; i + 1 < points.length; i += 2) {
+        if (points[i]! >= BEAM_PEN_UP) continue;
+        points[i] = points[i]! + w / 2; points[i + 1] = points[i + 1]! + h / 2;
+      }
+      data.set(beamPathData(data, w, h, {
+        points, totalLen, coreWidth: n('coreWidth', 6), coreSoftness: n('coreSoftness', 0.3),
+        coreColor: rgb('coreColor', [1, 1, 1]), glowColor: rgb('glowColor', [0.05, 0.4, 1]),
+        glowSpread: n('glowSpread', 8), glowIntensity: n('glowIntensity', 1), glowExponent: n('glowExponent', 2),
+        start: n('start', 0), end: n('end', 1), startSize: n('startSize', 1), endSize: n('endSize', 1),
+        distortion: n('distortion', 0), distortionScale: n('distortionScale', 40), evolution: n('evolution', 0),
+        composite: n('composite', 0), flicker: n('flicker', 1),
+      }));
       return true;
     }
     default:

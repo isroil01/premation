@@ -570,6 +570,8 @@ add_library(engine_effects STATIC
   src/effects/generate_round_five_kernels.cpp
   src/effects/round_seven_distort_kernels.cpp
   src/effects/simulation_kernels.cpp
+  src/effects/pattern_warp_lut_kernels.cpp
+  src/effects/glow_beam_kernels.cpp
   src/effects/kernel_dispatch.cpp
   src/effects/kernel_dispatch_generate.cpp
 )

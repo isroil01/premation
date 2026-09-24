@@ -464,4 +464,44 @@ struct BubbleOptions {
 };
 void bubbles(RgbaView img, const BubbleOptions& o, ThreadPool* pool);
 
+// ── bezierWarp.ts, generatePatterns.ts (Cell Pattern), cubeLut.ts ───────────
+/// `bezierWarpData(data, w, h, points)`; the twelve points clockwise from the
+/// top-left vertex, in layer px.
+void bezier_warp(RgbaView img, const std::array<Pt2, 12>& points, ThreadPool* pool);
+/// `defaultWarpPoints(w, h)`.
+[[nodiscard]] std::array<Pt2, 12> bezier_warp_rest(double w, double h);
+/// `cellPatternData(data, w, h, size, evolution, contrast, invert, membrane)`.
+void cell_pattern(RgbaView img, double size, double evolution, double contrast, bool invert, bool membrane,
+                  ThreadPool* pool);
+/// `applyLutToImageData(data, fromStoredLut({size, size1d, data, domainMin, domainMax}), intensity)`;
+/// a table `fromStoredLut` rejects leaves the layer unchanged.
+void apply_color_lut(RgbaView img, double size, double size1d, std::span<const double> data,
+                     std::span<const double> domain_min, std::span<const double> domain_max, double intensity,
+                     ThreadPool* pool);
+
+// ── deepGlow.ts, beamPath.ts ────────────────────────────────────────────────
+/// `DeepGlowSettings` (tint in linear light).
+struct DeepGlowSettings {
+  double radius = 0, gain = 1, threshold = 0, aspect_x = 1, aspect_y = 1;
+  Rgb chroma{1, 1, 1};
+  Rgb tint{1, 1, 1};
+  double tint_amount = 0;
+  bool glow_only = false, dither = true;
+  double octaves = 6;
+};
+/// `deepGlowData(src, w, h, settings)`.
+void deep_glow(RgbaView img, const DeepGlowSettings& s, ThreadPool* pool);
+/// `BeamPathSettings` less the spine, which `beam_path` builds (`beamSpine`)
+/// from the centred `pathPoints` polyline or, absent that, Start → End.
+struct BeamPathOptions {
+  double start_x = -100, start_y = 0, end_x = 100, end_y = 0;
+  double core_width = 6, core_softness = 0.3;
+  Rgb core_color{1, 1, 1};
+  Rgb glow_color{0.05, 0.4, 1};
+  double glow_spread = 8, glow_intensity = 1, glow_exponent = 2, start = 0, end = 1, start_size = 1, end_size = 1,
+         distortion = 0, distortion_scale = 40, evolution = 0, composite = 0, flicker = 1;
+};
+/// `beamPathData(src, w, h, settings)`.
+void beam_path(RgbaView img, std::span<const double> path_points, const BeamPathOptions& o, ThreadPool* pool);
+
 }  // namespace premation::effects
