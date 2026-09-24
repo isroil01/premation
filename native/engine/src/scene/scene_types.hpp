@@ -32,6 +32,14 @@ using js::Json;
 /// RenderLayer.kind.
 enum class LayerKind : std::uint8_t { shape, text, image, video };
 
+/// RenderLayer.deformedMesh — the puppet / skeleton mesh (rig_mesh.cpp), in
+/// CENTRED local pixels; snapshotToFrameScene normalises it to the unit quad.
+struct DeformedMeshData {
+  std::vector<float> vertices;               ///< x, y, u, v per vertex
+  std::vector<std::uint16_t> triangles;
+  std::optional<std::vector<float>> depth;   ///< overlap depth per vertex (absent = flat)
+};
+
 /// MotionSample (RenderBackend.ts).
 struct MotionSample {
   double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1, opacity = 1;
@@ -43,6 +51,17 @@ struct Matte {
   bool luma = false;
   bool inverted = false;
   std::optional<std::string> sourceId;
+};
+
+/// ResolvedGlass (effects/glassResolve.ts): the Glass layer style at one frame
+/// (colours as the stored hex, angles in degrees — the renderable converts).
+struct ResolvedGlass {
+  double blur = 0, saturation = 0;
+  std::string tintColor;
+  double tintOpacity = 0, refraction = 0, edgeWidth = 0, chromaticAberration = 0;
+  std::string rimColor;
+  double rimOpacity = 0, rimWidth = 0, rimAngle = 0, specularAngle = 0, specularIntensity = 0, specularFalloff = 0,
+         grain = 0;
 };
 
 /// RenderLayer — the fields the port carries (see the header note).
@@ -103,11 +122,14 @@ struct RLayer {
   std::optional<double> fillOpacity;
   std::optional<double> skew, skewAxis;
   std::optional<double> backdropBlur;
+  std::optional<ResolvedGlass> glass;
   // ── media ──
   std::optional<std::string> src;
   std::optional<std::string> assetId;
   std::optional<std::array<double, 4>> uvRect;
   bool premultipliedSource = false;
+  // ── rigs ──
+  std::optional<DeformedMeshData> deformedMesh;
   // ── port bookkeeping ──
   /// Features this layer uses that the C++ port does not produce yet (the
   /// explicit fallback: reported per layer, never silently dropped).

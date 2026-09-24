@@ -15,7 +15,7 @@
  *  5. Presets apply at the PLAYHEAD, not at time zero.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Panel } from '@components/Panel';
 import { BrowserTree, BrowserFolder, BrowserRow } from '@components/BrowserTree';
 import { Input } from '@components/Input';
@@ -38,16 +38,15 @@ import {
   type PresetImportResult,
 } from '@core/animation/animationPresets';
 import { downloadBlob } from '@core/export/exportManager';
-import { hasTextComponent } from '@core/text/textAnimators';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { ChoreographySection } from './ChoreographySection';
 import { api, isAuthenticated } from '@core/api/client';
 import { cloudProjectsEnabled } from '@core/config/edition';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCurrentTime } from '@stores/playbackClockStore';
+import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { bumpScene } from '@stores/sceneStore';
+import { useMirrorLayer } from '@hooks/useMirror';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { getEventBus } from '@core/events/EventBus';
 import { PresetPreview } from './PresetPreview';
@@ -93,6 +92,28 @@ function folderIcon(folder: string): IconName {
   return PRESET_FOLDER_ICON[folder] ?? 'folder';
 }
 
+// ── The user's preset LIBRARY changed ─────────────────────────────────
+// The library lives in the user's settings, not in the document, so no
+// document event says it moved: a save, delete or import here bumps this, and
+// every mounted body (the Library section and the Presets panel) re-reads it.
+// `bumpScene()` is still sent beside it for the top bar's preset menu.
+
+let libraryVersion = 0;
+const libraryListeners = new Set<() => void>();
+
+function libraryChanged(): void {
+  libraryVersion += 1;
+  for (const l of [...libraryListeners]) l();
+  bumpScene();
+}
+
+function subscribeLibrary(listener: () => void): () => void {
+  libraryListeners.add(listener);
+  return () => libraryListeners.delete(listener);
+}
+
+const readLibraryVersion = (): number => libraryVersion;
+
 /**
  * The presets library itself — search, save, share, choreography and the
  * folder tree — without dock chrome, so the Library's Presets section and the
@@ -101,10 +122,11 @@ function folderIcon(folder: string): IconName {
 export function MotionPresetsBody(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
   const notify = useUIStore((s) => s.notify);
-  const playhead = useCurrentTime();
 
-  // Re-render when the scene is modified (e.g. the user saves or deletes one).
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // Re-read the library when a preset is saved, deleted or imported.
+  const libraryRev = useSyncExternalStore(subscribeLibrary, readLibraryVersion, readLibraryVersion);
+  // The selected layer's header (its kind), from the document mirror (B4).
+  const selectedLayer = useMirrorLayer(selectedIds[0]);
 
   const [search, setSearch] = useState('');
   const [sortOrder, setSortOrder] = useState<SortOrder>('default');
@@ -112,24 +134,15 @@ export function MotionPresetsBody(): JSX.Element {
   const [saveName, setSaveName] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const presets = useMemo(() => listPresets(), [sceneRev]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- libraryRev: the library moved
+  const presets = useMemo(() => listPresets(), [libraryRev]);
 
   /** Does the selected layer support text animators? Used to say so rather
    *  than let a text preset apply to a rectangle and silently do nothing. */
-  const selectionIsText = useMemo(() => {
-    const id = selectedIds[0];
-    if (!id) return false;
-    const node = defaultSceneGraph.getNode(id);
-    return !!node && hasTextComponent(node);
-  }, [selectedIds, sceneRev]);
+  const selectionIsText = uiKindOf(selectedLayer) === 'text';
 
   /** Same question for camera presets — a camera move needs a camera layer. */
-  const selectionIsCamera = useMemo(() => {
-    const id = selectedIds[0];
-    if (!id) return false;
-    const node = defaultSceneGraph.getNode(id);
-    return !!node && readNodeKind(node) === 'camera';
-  }, [selectedIds, sceneRev]);
+  const selectionIsCamera = uiKindOf(selectedLayer) === 'camera';
 
   const processedPresets = useMemo(() => {
     let result = [...presets];
@@ -192,7 +205,7 @@ export function MotionPresetsBody(): JSX.Element {
     // flip are one undo entry. The preset is addressed by name (the library the
     // engine reads is this panel's `listPresets`).
     void edit('Apply animation preset', {
-      type: 'applyPreset', layers: [id], preset: preset.name, time: compTime(playhead),
+      type: 'applyPreset', layers: [id], preset: preset.name, time: compTime(getTime()),
     }, { quiet: true }).then((res) => {
       notify(
         res.ok
@@ -212,6 +225,11 @@ export function MotionPresetsBody(): JSX.Element {
     const id = selectedIds[0];
     const name = saveName.trim();
     if (!id || !name) return;
+    // B4-gap: capturing the layer's animation, text animators, effects and
+    // expressions as a preset reads the engine (captureAnimation over the
+    // animation engine and scene node, in the preset's own units) — the API has
+    // no query that returns a layer as a preset (a `capturePreset {layer}` query
+    // beside `applyPreset` would close it).
     const ok = saveCurrentAsPreset(id, name);
     notify(
       ok
@@ -223,7 +241,7 @@ export function MotionPresetsBody(): JSX.Element {
       setSaving(false);
       void syncPresetToCloud(name);
     }
-    bumpScene();
+    libraryChanged();
   };
 
   const syncPresetToCloud = async (name: string): Promise<void> => {
@@ -252,7 +270,8 @@ export function MotionPresetsBody(): JSX.Element {
   /** How many presets a bundle would actually carry. Asked of the exporter's
    *  own reader rather than filtering `presets`, so this stays right if a
    *  shipped preset array is ever added without the `builtin` flag. */
-  const userPresetCount = useMemo(() => countUserPresets(), [sceneRev]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- libraryRev: the library moved
+  const userPresetCount = useMemo(() => countUserPresets(), [libraryRev]);
 
   const doExport = (): void => {
     const json = exportPresets();
@@ -302,7 +321,7 @@ export function MotionPresetsBody(): JSX.Element {
       message: `Presets: ${parts.join(', ')}`,
       durationMs: r.rejected ? 4000 : 2500,
     });
-    bumpScene();
+    libraryChanged();
   };
 
   const doImport = async (file: File): Promise<void> => {
@@ -550,8 +569,7 @@ export function MotionPresetsBody(): JSX.Element {
                           onClick={() => {
                             deletePreset(preset.name);
                             notify({ level: 'success', message: `Deleted preset "${preset.name}"`, durationMs: 2000 });
-                            // The panel refreshes off the scene revision.
-                            bumpScene();
+                            libraryChanged();
                           }}
                         >
                           <Icon name="trash" size="sm" />

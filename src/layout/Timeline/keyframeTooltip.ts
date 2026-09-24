@@ -6,15 +6,17 @@
  *           320.5, 12              — the value it holds
  *
  * The formatting is pure (`formatKeyframeLabel`, `keyframeDragLines`) so it is
- * testable; the one engine lookup (`keyframeValues`) is the only impure part
- * and is kept as small as a lookup can be. Values are read from the engine
- * rather than threaded through the model — a `TimelineKeyframeRef` is a
+ * testable; the one document lookup (`keyframeValues`, over the mirror) is the
+ * only impure part and is kept as small as a lookup can be. Values are read
+ * from the document rather than threaded through the model — a `TimelineKeyframeRef` is a
  * position, and adding the value to it would rebuild every row whenever a
  * value changed.
  */
 
-import { defaultAnimation, expandKeyframeProp } from '@motion/animation';
-import { parseUiKey } from './keyframeSelectionIds';
+import { expandKeyframeProp } from '@motion/animation';
+import { numbersOfValue } from '@core/mirror/trackIndex';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorKeyOf, parseUiKey, storedTimeOf } from './keyframeSelectionIds';
 import { framesToTimecode } from '@core/time/timecode';
 
 export interface KeyframeLabelInput {
@@ -67,14 +69,20 @@ export function keyframeDragLines(input: {
   return lines;
 }
 
-/** The engine's values for a keyframe id, in the prop's display order. */
+/**
+ * The document's values for a keyframe id, in the prop's display order —
+ * read from the MIRROR (B4): each member's number of the key, stored units.
+ */
 export function keyframeValues(kfId: string): number[] {
   const ref = parseUiKey(kfId);
   if (!ref) return [];
+  const m = documentMirror();
+  const storedT = storedTimeOf(ref.nodeId);
   const out: number[] = [];
   for (const prop of expandKeyframeProp(ref.prop)) {
-    const kf = defaultAnimation.getTrackKeyframes(ref.nodeId, prop)?.find((k) => Math.abs(k.t - ref.t) < 1e-9);
-    if (kf) out.push(kf.value);
+    const hit = mirrorKeyOf(m, { nodeId: ref.nodeId, prop, t: ref.t }, storedT);
+    // A numeric key only: a data key (Source Text, a mask shape) has no number to show.
+    if (hit && numbersOfValue(hit.key.key.value).length > 0) out.push(hit.key.value);
   }
   return out;
 }

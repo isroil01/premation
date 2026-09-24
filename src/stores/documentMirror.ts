@@ -41,7 +41,8 @@
  * ## Subscriptions
  *
  * Keyed, so a component wakes only for what it reads: `layer:<id>`,
- * `layers` (membership), `comp:<id>`, `comps`, `items`, `tree:<id>`,
+ * `layers` (membership), `comp:<id>`, `comps`, `order:<comp>`,
+ * `transitions:<comp>`, `items`, `item:<id>`, `tree:<id>`,
  * `prop:<id>|<path>`, `keys:<id>`, `key:<id>|<path>`, `value:<id>|<path>`,
  * `history`, `status`, `settings`, `renderQueue`, `errors:<comp>`, `doc`
  * (anything revisioned). Listeners are called ONCE per batch however many
@@ -82,6 +83,7 @@ import type {
   QueryType,
   RenderItemInfo,
   Revision,
+  Transition,
   Value,
 } from '@motion/engine-api';
 
@@ -110,6 +112,8 @@ export interface MirrorComp {
   /** Layer ids, top of the stack first. */
   readonly layers: readonly string[];
   readonly markers: readonly Marker[];
+  /** The composition's cut transitions, in the order they were added (`CompInfo.transitions`). */
+  readonly transitions: readonly Transition[];
 }
 
 export interface MirrorTree {
@@ -129,6 +133,7 @@ export interface MirrorHistory {
 const EMPTY_KEYS: readonly Keyframe[] = Object.freeze([]) as readonly Keyframe[];
 const EMPTY_LAYER_KEYS: ReadonlyMap<string, readonly Keyframe[]> = new Map();
 const EMPTY_ERRORS: readonly LayerError[] = Object.freeze([]) as readonly LayerError[];
+const NO_TRANSITIONS: readonly Transition[] = Object.freeze([]) as readonly Transition[];
 
 // ── Structural equality (keeps identity for restated records) ────────────
 
@@ -228,8 +233,8 @@ export class DocumentMirror {
   private historyValue: MirrorHistory | null = null;
   private readonly errors = new Map<string, readonly LayerError[]>();
 
-  /** Stack order / markers of a composition whose settings have not arrived yet. */
-  private readonly early = new Map<string, { layers?: readonly string[]; markers?: readonly Marker[] }>();
+  /** Stack order / markers / transitions of a composition whose settings have not arrived yet. */
+  private readonly early = new Map<string, { layers?: readonly string[]; markers?: readonly Marker[]; transitions?: readonly Transition[] }>();
   /** Batches that arrived while a refetch was in flight (null: not loading). */
   private buffer: EventBatch[] | null = null;
   private loadSeq = 0;
@@ -553,7 +558,13 @@ export class DocumentMirror {
     const comps = new Map<string, MirrorComp>();
     for (const c of doc.comps) {
       const prev = this.compsValue.get(c.id);
-      comps.set(c.id, keep(prev, { id: c.id, settings: c.settings, layers: c.layers, markers: c.markers }));
+      comps.set(c.id, keep(prev, {
+        id: c.id,
+        settings: c.settings,
+        layers: c.layers,
+        markers: c.markers,
+        transitions: c.transitions.length > 0 ? c.transitions : NO_TRANSITIONS,
+      }));
     }
     this.compsValue = comps;
     this.compIdsValue = keep(this.compIdsValue as string[], doc.comps.map((c) => c.id));
@@ -750,7 +761,26 @@ export class DocumentMirror {
           if (prev && settings === prev.settings) break;
           const early = this.early.get(e.comp);
           this.early.delete(e.comp);
-          setComp({ id: e.comp, settings, layers: prev?.layers ?? early?.layers ?? [], markers: prev?.markers ?? early?.markers ?? [] });
+          setComp({
+            id: e.comp,
+            settings,
+            layers: prev?.layers ?? early?.layers ?? [],
+            markers: prev?.markers ?? early?.markers ?? [],
+            transitions: prev?.transitions ?? early?.transitions ?? NO_TRANSITIONS,
+          });
+          break;
+        }
+        case 'transitionsChanged': {
+          const prev = compOf(e.comp);
+          const next = e.transitions.length > 0 ? e.transitions : NO_TRANSITIONS;
+          if (!prev) {
+            this.early.set(e.comp, { ...this.early.get(e.comp), transitions: next });
+            break;
+          }
+          const transitions = keep(prev.transitions as Transition[], next);
+          if (transitions === prev.transitions) break;
+          setComp({ ...prev, transitions });
+          this.touch(`transitions:${e.comp}`);
           break;
         }
         case 'layersChanged':

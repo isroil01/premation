@@ -23,8 +23,22 @@ import { Modal } from '@components/Modal';
 import { Button } from '@components/Button';
 import { PropertyRow } from '@components/PropertyRow';
 import { ValueField } from '@components/ValueField';
-import { defaultBakeRange } from '@core/simulation/bakeCommands';
+import { flicksToSeconds } from '@motion/engine-api';
+import { compFps, useActiveMirrorComp, type MirrorComp } from '@hooks/useMirror';
 import { DEFAULT_PARTICLE_BAKE_CAP, type BakeRangeOptions } from '@core/simulation/bakeDynamics';
+
+/**
+ * The range a bake opens with (the twin of bakeCommands' `defaultBakeRange`,
+ * read from the document mirror): the active composition's WORK AREA — which
+ * the document states as the whole composition when none is set — every frame.
+ */
+function mirrorBakeRange(comp: MirrorComp | undefined): BakeRangeOptions {
+  const s = comp?.settings;
+  const fps = compFps(comp);
+  const from = s ? flicksToSeconds(s.workArea.start) : 0;
+  const to = s ? flicksToSeconds(s.workArea.start + s.workArea.duration) : 0;
+  return { from, to, fps, everyNFrames: 1 };
+}
 
 export interface BakeDialogProps {
   open: boolean;
@@ -45,7 +59,7 @@ export function BakeDialog({
   // Read the defaults when the dialog MOUNTS, which — because the sections
   // render it only while open — means every opening re-reads the work area.
   // Holding them in state across closes would offer last week's range.
-  const initial = defaultBakeRange();
+  const initial = mirrorBakeRange(useActiveMirrorComp());
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [everyN, setEveryN] = useState(1);

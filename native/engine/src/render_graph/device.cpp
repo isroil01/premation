@@ -107,6 +107,18 @@ std::size_t Device::end_frame() {
          bindGroups_.collect(frame_, kMaxIdle);
 }
 
+void Device::flush() {
+  for (std::uint32_t i = 0; i < chunks_.size() && i <= chunk_; ++i) {
+    UniformChunk& c = chunks_[i];
+    if (c.used > 0) queue_.WriteBuffer(c.buffer, 0, c.cpu.data(), c.used);
+  }
+  if (encoder_ != nullptr) {
+    wgpu::CommandBuffer cb = encoder_.Finish();
+    queue_.Submit(1, &cb);
+  }
+  encoder_ = device_.CreateCommandEncoder();
+}
+
 RenderTarget& Device::target(std::string_view name, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format,
                              std::uint32_t samples, bool depth, bool* created) {
   const std::uint32_t sampleCount = samples >= 4 ? 4 : 1;

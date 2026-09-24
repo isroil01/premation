@@ -24,17 +24,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@components/Button';
 import { Slider } from '@components/Slider';
 import { ValueField } from '@components/ValueField';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { useSceneRevision } from '@stores/sceneStore';
-import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
-import { resolvePropertyMeta, propertyLabel, GROUP_PLACEHOLDER_PREFIX } from '@core/inspector/propertyMeta';
+import type { LayerInfo } from '@motion/engine-api';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
+import { useActiveMirrorComp, useMirrorLayers, useMirrorProperty, useMirrorSelect, useMirrorTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { membersOf } from '@core/mirror/trackIndex';
+import { audioDriversOf, driverRangeOf } from '@core/mirror/audio';
 import {
   computeDriverEnvelope,
   defaultAudioDriver,
-  driverRange,
   expressionBlocker,
-  readAudioDrivers,
   BAND_LABELS,
   CURVES,
   CURVE_LABELS,
@@ -56,38 +56,55 @@ interface PropOption {
 }
 
 /**
- * Every numeric property of this layer that can hold a keyframe.
+ * Every numeric property of this layer that can hold a keyframe, from the
+ * layer's property tree in the document mirror (B4) — depth first, in the
+ * tree's order; each option is a member TRACK (`x`, `opacity`,
+ * `effect.fx_1.radius`), the name a driver is remembered and applied by.
  *
- * Derived from `buildStaticPropertyTree` rather than from a hand-written list,
- * which is what makes effect parameters, expression-control sliders and plugin
- * layer-kind properties appear here without this file knowing they exist. A
- * local list would have covered transform and then quietly gone stale — the
- * exact failure `propertyMeta` was built to end.
+ * Derived from the layer's own properties rather than from a hand-written
+ * list, which is what makes effect parameters, expression-control sliders and
+ * plugin layer-kind properties appear here without this file knowing they
+ * exist. A local list would have covered transform and then quietly gone stale
+ * — the exact failure `propertyMeta` was built to end.
  */
-function numericProps(nodeId: string): PropOption[] {
+function numericProps(m: Pick<DocumentMirror, 'layer' | 'tree'>, nodeId: string): PropOption[] {
+  const layer = m.layer(nodeId);
+  const tree = layer ? m.tree(nodeId) : undefined;
+  if (!layer || !tree) return [];
   const out: PropOption[] = [];
   const seen = new Set<string>();
-  for (const row of buildStaticPropertyTree(nodeId)) {
-    for (const path of row.members) {
-      if (seen.has(path)) continue;
-      // Placeholders stand for a group of real paths; the real ones are in
-      // `members` of their own rows, so keying one would key nothing.
-      if (path.startsWith(GROUP_PLACEHOLDER_PREFIX)) continue;
-      const meta = resolvePropertyMeta(path, nodeId);
-      if (!NUMERIC_TYPES.has(meta.type)) continue;
-      seen.add(path);
-      const own = propertyLabel(path, nodeId);
-      out.push({
-        path,
-        label: row.members.length > 1 && own !== row.label ? `${row.label} · ${own}` : row.label,
-      });
+  const walk = (paths: readonly string[]): void => {
+    for (const p of paths) {
+      const info = tree.nodes.get(p);
+      if (!info) continue;
+      if (info.kind !== 'property') {
+        walk(info.children);
+        continue;
+      }
+      if (!info.animatable || info.hidden) continue;
+      const members = membersOf(info);
+      for (const track of members) {
+        if (seen.has(track)) continue;
+        const meta = mirrorPropertyMeta(track, layer, tree);
+        if (!NUMERIC_TYPES.has(meta.type)) continue;
+        seen.add(track);
+        const own = meta.label || track;
+        out.push({
+          path: track,
+          label: members.length > 1 && own !== info.name ? `${info.name} · ${own}` : info.name,
+        });
+      }
+      // A separated vector's dimensions are properties of their own.
+      if (info.children.length > 0) walk(info.children);
     }
-  }
+  };
+  walk(tree.roots);
   return out;
 }
 
 /**
- * Whether this layer has anything an envelope could drive.
+ * Whether this layer has anything an envelope could drive (read from the
+ * mirror at call time).
  *
  * Exported so the Inspector can decide whether to emit the accordion HEADER at
  * all: a section that renders null still leaves its twirl-down title behind,
@@ -95,16 +112,19 @@ function numericProps(nodeId: string): PropOption[] {
  * heading — it reads as a broken panel rather than as an inapplicable one.
  */
 export function hasAudioDriverSection(nodeId: string): boolean {
-  return numericProps(nodeId).length > 0;
+  return numericProps(documentMirror(), nodeId).length > 0;
 }
 
-/** Audio-kind layers, via `traverse` — `flattenScene` is empty on a fresh project. */
-function audioLayers(): Array<{ id: string; name: string }> {
-  const out: Array<{ id: string; name: string }> = [];
-  defaultSceneGraph.traverse((n) => {
-    if (readNodeKind(n) === 'audio') out.push({ id: n.id, name: n.name ?? n.id });
-  });
-  return out;
+/** Audio-kind layers of every composition, from the mirror (re-renders on membership / header changes). */
+function useAudioLayers(): Array<{ id: string; name: string }> {
+  const ids = useMirrorSelect(['layers'], (m) => m.layerIds());
+  const infos = useMirrorLayers(ids);
+  return useMemo(
+    () => infos
+      .filter((l): l is LayerInfo => !!l && uiKindOf(l) === 'audio')
+      .map((l) => ({ id: l.id, name: l.name || l.id })),
+    [infos],
+  );
 }
 
 /** The band <select> value for a driver's band (custom ranges show as "custom"). */
@@ -113,14 +133,23 @@ function bandValue(band: AudioBand): string {
 }
 
 export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  const rev = useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
+  // The document mirror (B4): the layer's property tree (the options), its
+  // remembered drivers (`audio/drivers`), every audio layer (the sources) and
+  // the active composition's work area (the bake range).
+  const tree = useMirrorTree(nodeId);
+  const layer = documentMirror().layer(nodeId);
+  const driversInfo = useMirrorProperty(nodeId, 'audio/drivers');
+  const comp = useActiveMirrorComp();
 
   // No early return above this line: every hook below runs on every render,
   // including for a node that has just been deleted.
-  const options = useMemo(() => (node ? numericProps(nodeId) : []), [nodeId, rev, node]);
-  const sources = useMemo(() => audioLayers(), [rev]);
-  const stored = useMemo(() => (node ? readAudioDrivers(node) : {}), [node, rev]);
+  const options = useMemo(() => (layer && tree ? numericProps(documentMirror(), nodeId) : []), [nodeId, layer, tree]);
+  const sources = useAudioLayers();
+  const stored = useMemo(
+    () => (driversInfo ? audioDriversOf(documentMirror(), nodeId) : {}),
+    [driversInfo, nodeId],
+  );
+  const range = driverRangeOf(comp?.settings);
 
   const [prop, setProp] = useState<string>('');
   const [draft, setDraft] = useState<AudioDriver>(() => defaultAudioDriver(''));
@@ -144,7 +173,7 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
 
   // Preview. Debounced, because every slider drag would otherwise start an FFT
   // pass over the whole work area on each pointer move.
-  const key = JSON.stringify(draft);
+  const key = `${JSON.stringify(draft)}|${range.start}|${range.end}|${range.fps}`;
   useEffect(() => {
     if (!activePath) {
       setEnv(null);
@@ -152,7 +181,8 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
     }
     let alive = true;
     const timer = setTimeout(() => {
-      void computeDriverEnvelope(draft)
+      // Engine-side until E2: the source decode (or the comp mixdown) and its envelope.
+      void computeDriverEnvelope(draft, range)
         .then((e) => { if (alive) setEnv(e); })
         .catch(() => { if (alive) setEnv(null); });
     }, 180);
@@ -212,11 +242,10 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
     }
   }, [nodeId, draft, activePath]);
 
-  if (!node || options.length === 0 || !activePath) return null;
+  if (!layer || options.length === 0 || !activePath) return null;
 
   const existing = stored[activePath];
   const blocker = draft.mode === 'expression' ? expressionBlocker({ ...draft, prop: activePath }) : null;
-  const range = driverRange();
 
   return (
     <div className={styles.root}>

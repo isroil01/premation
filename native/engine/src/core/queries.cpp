@@ -11,6 +11,7 @@
 #include "fxstate.hpp"
 #include "handlers_common.hpp"
 #include "handlers_layers.hpp"
+#include "native_effects.hpp"
 #include "readmodel.hpp"
 #include "rig.hpp"
 #include "scene.hpp"
@@ -293,6 +294,15 @@ struct Q {
       api::EffectInfo e = effect_info(def);
       if (q.category.empty() || e.category == q.category) out.effects.push_back(std::move(e));
     }
+    // G1: native SDK plugin effects, provider = the plugin id.
+    for (const NativeEffect* ne : NativeEffects::list()) {
+      api::EffectInfo e = effect_info(ne->def);
+      e.category = ne->category;
+      e.provider = ne->provider;
+      e.gpu = ne->gpu;
+      e.supports_float = ne->supportsFloat;
+      if (q.category.empty() || e.category == q.category) out.effects.push_back(std::move(e));
+    }
     return query_result_for<api::ListEffects>(std::move(out));
   }
   api::QueryResult operator()(const api::ListGroupTypes& q) const {
@@ -306,6 +316,7 @@ struct Q {
     }
     if (q.parent == "effects") {
       for (const EffectDef& def : registry().effects) out.types.push_back(api::GroupTypeInfo{def.type, def.label, "effects"});
+      for (const NativeEffect* ne : NativeEffects::list()) out.types.push_back(api::GroupTypeInfo{ne->def.type, ne->def.label, "effects"});
     }
     return query_result_for<api::ListGroupTypes>(std::move(out));
   }

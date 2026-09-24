@@ -23,7 +23,17 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from '@stores/renderQualityStore';
 import { useViewportRenderer } from '@layout/Workspace/useViewportRenderer';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import {
+  goToEnd,
+  goToStart,
+  isTransportLooping,
+  seekPlayhead,
+  setTransportLooping,
+  stepBackward,
+  stepForward,
+} from '@core/timeline/timelineView';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { renderStillFrame } from '@core/export/offlineRenderer';
@@ -41,12 +51,14 @@ export function PresentationMode(): JSX.Element | null {
   const setPlaying = useWorkspaceStore((s) => s.actions.setPlaying);
   const sceneRev = useSceneRevision((s) => s.rev);
 
-  const name = useCompositionStore((s) => s.name);
-  const width = useCompositionStore((s) => s.width);
-  const height = useCompositionStore((s) => s.height);
-  const fps = useCompositionStore((s) => s.fps) || 30;
-  const startFrame = useCompositionStore((s) => s.startFrame) || 0;
-  const duration = useCompositionStore((s) => s.durationSeconds) || 1;
+  // The active composition's settings, from the document mirror.
+  const settings = useActiveMirrorComp()?.settings;
+  const name = settings?.name ?? '';
+  const width = settings?.width ?? 1920;
+  const height = settings?.height ?? 1080;
+  const fps = settingsFps(settings) || 30;
+  const startFrame = settingsStartFrame(settings) || 0;
+  const duration = settingsDurationSeconds(settings) || 1;
 
   const previewResolution = useRenderQualityStore((s) => s.resolution);
   const setResolution = useRenderQualityStore((s) => s.setResolution);
@@ -81,7 +93,7 @@ export function PresentationMode(): JSX.Element | null {
   // NOTE: no usePlaybackClock here — App.tsx runs the single shared clock; a
   // second instance would double-tick the controller (2× playback speed).
 
-  const [looping, setLoopingState] = useState(() => getTimelineController().isLooping());
+  const [looping, setLoopingState] = useState(() => isTransportLooping());
   const [uiVisible, setUiVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -107,7 +119,7 @@ export function PresentationMode(): JSX.Element | null {
       setBackendReady(false);
       return;
     }
-    getTimelineController().goToStart();
+    goToStart();
 
     // One rAF delay lets the portal DOM commit and the resize observer fire
     // before we start the clock.
@@ -142,7 +154,7 @@ export function PresentationMode(): JSX.Element | null {
   const togglePlay = useCallback(() => setPlaying(!playing), [playing, setPlaying]);
   const toggleLoop = useCallback(() => {
     const on = !looping;
-    getTimelineController().setLooping(on);
+    setTransportLooping(on);
     setLoopingState(on);
   }, [looping]);
   const toggleFullscreen = useCallback(() => {
@@ -163,6 +175,7 @@ export function PresentationMode(): JSX.Element | null {
   // Canvas2D. The offline renderer produces a correct frame on any backend.
   const downloadFrame = useCallback(() => {
     void (async () => {
+      // Engine-side until D5: the offline renderer takes the legacy comp record.
       const comp = useCompositionStore.getState().comp();
       const blob = await renderStillFrame(
         {
@@ -192,7 +205,7 @@ export function PresentationMode(): JSX.Element | null {
     if (!el) return;
     const r = el.getBoundingClientRect();
     const frac = r.width > 0 ? Math.min(1, Math.max(0, (clientX - r.left) / r.width)) : 0;
-    getTimelineController().seekSeconds(frac * duration);
+    seekPlayhead(frac * duration);
   }, [duration]);
 
   const onScrubDown = (e: React.PointerEvent): void => {
@@ -220,15 +233,14 @@ export function PresentationMode(): JSX.Element | null {
   // ── Keyboard shortcuts ─────────────────────────────────────────────
   useEffect(() => {
     if (!active) return;
-    const c = getTimelineController();
     const onKey = (e: KeyboardEvent): void => {
       switch (e.key) {
         case 'Escape': e.preventDefault(); handleExit(e); break;
         case ' ': e.preventDefault(); setPlaying(!playing); break;
-        case 'ArrowLeft': e.preventDefault(); c.previousFrame(); break;
-        case 'ArrowRight': e.preventDefault(); c.nextFrame(); break;
-        case 'Home': e.preventDefault(); c.goToStart(); break;
-        case 'End': e.preventDefault(); c.goToEnd(); break;
+        case 'ArrowLeft': e.preventDefault(); stepBackward(); break;
+        case 'ArrowRight': e.preventDefault(); stepForward(); break;
+        case 'Home': e.preventDefault(); goToStart(); break;
+        case 'End': e.preventDefault(); goToEnd(); break;
         case 'l': case 'L': toggleLoop(); break;
         case 'f': case 'F': toggleFullscreen(); break;
         default: break;
@@ -339,19 +351,19 @@ export function PresentationMode(): JSX.Element | null {
         </div>
 
         <div className={styles.transport}>
-          <button type="button" className={styles.tBtn} onClick={() => getTimelineController().goToStart()} title="Go to start (Home)" aria-label="Go to start">
+          <button type="button" className={styles.tBtn} onClick={() => goToStart()} title="Go to start (Home)" aria-label="Go to start">
             <Icon name="skip-back" size="sm" />
           </button>
-          <button type="button" className={styles.tBtn} onClick={() => getTimelineController().previousFrame()} title="Previous frame (←)" aria-label="Previous frame">
+          <button type="button" className={styles.tBtn} onClick={() => stepBackward()} title="Previous frame (←)" aria-label="Previous frame">
             <Icon name="chevron-left" size="sm" />
           </button>
           <button type="button" className={styles.play} onClick={togglePlay} title={playing ? 'Pause (Space)' : 'Play (Space)'} aria-label={playing ? 'Pause' : 'Play'}>
             <Icon name={playing ? 'pause' : 'play'} size="sm" />
           </button>
-          <button type="button" className={styles.tBtn} onClick={() => getTimelineController().nextFrame()} title="Next frame (→)" aria-label="Next frame">
+          <button type="button" className={styles.tBtn} onClick={() => stepForward()} title="Next frame (→)" aria-label="Next frame">
             <Icon name="chevron-right" size="sm" />
           </button>
-          <button type="button" className={styles.tBtn} onClick={() => getTimelineController().goToEnd()} title="Go to end (End)" aria-label="Go to end">
+          <button type="button" className={styles.tBtn} onClick={() => goToEnd()} title="Go to end (End)" aria-label="Go to end">
             <Icon name="skip-forward" size="sm" />
           </button>
           <button

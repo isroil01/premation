@@ -24,9 +24,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyValueExpression } from '@utils/evalMath';
 import { whipExpression } from '@core/whip/whipTarget';
 import type { PropertyMeta } from '@core/inspector/propertyMeta';
-import { isPinnedProp } from '@core/inspector/pinnedProps';
-import { readModifierStack } from '@core/animation/modifierStack';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { mirrorModifierStack } from '@core/mirror/modifierStacks';
+import { memberExpressionOf } from '@core/mirror/memberExpressions';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
 import {
   aggregateTrack,
@@ -34,8 +33,9 @@ import {
   isTrackAnimated,
   navigatorFor,
   readTrack,
-  trackExpression,
   trackKeyTimes,
+  trackRef as mirrorTrackRef,
+  type MirrorRead,
   type MultiValue,
   type NavState as MirrorNavState,
 } from '@core/mirror/selection';
@@ -83,6 +83,15 @@ export interface MultiPropertyFieldOptions {
 
 type NavState = MirrorNavState;
 type AggState = MultiValue;
+
+/**
+ * The expression THIS member track carries (the mirror's per-dimension
+ * `memberExpressions`: the X field of an unseparated Position has its own).
+ */
+function trackExpressionOf(m: MirrorRead, nodeId: string, prop: string): { source: string; enabled: boolean; error: string } | null {
+  const r = mirrorTrackRef(m, nodeId, prop);
+  return r ? memberExpressionOf(r.info, r.member) : null;
+}
 
 /**
  * One layer's value of `prop` at comp time `time`, in stored units — read from
@@ -339,16 +348,13 @@ export function useMultiPropertyField(
   const seek = (t: number): void => {
     useProjectStore.getState().actions.setTime(t, Math.round(t * fps));
   };
-  const expr = exists ? trackExpression(mirror, nodeId, prop) : null;
+  const expr = exists ? trackExpressionOf(mirror, nodeId, prop) : null;
   const hasExpr = expr !== null;
   const exprEnabled = expr?.enabled === true;
   const exprError = exprEnabled && expr!.error !== '' ? expr!.error : null;
-  // B4-gap: modifier stacks and pinned properties are stored on the layer but
-  // not in the API's catalog yet (no path to mirror); read directly until B3z
-  // gives them fields.
-  const legacyNode = exists ? defaultSceneGraph.getNode(nodeId) : undefined;
-  const hasStack = legacyNode !== undefined && readModifierStack(legacyNode, prop) !== null;
-  const pinned = exists && isPinnedProp(nodeId, prop);
+  // The modifier stack record (`layer/modifiers`) and the pins (`LayerInfo.pinned`), from the mirror.
+  const hasStack = exists && mirrorModifierStack(mirror, nodeId, prop) !== null;
+  const pinned = exists && layer!.pinned.includes(prop);
   const resetValue = meta.resettable && typeof meta.defaultValue === 'number' ? meta.defaultValue : undefined;
   const hint = nodeIds.length > 1 && agg.present < nodeIds.length
     ? `${agg.present} of ${nodeIds.length}`
@@ -393,7 +399,7 @@ export function useMultiPropertyField(
   const toggleExpression = (): void => {
     // No expression yet: ADD one — AE's default `value`, one undo step — and open it.
     if (!hasExpr) {
-      const fresh = nodeIds.filter((id) => trackExpression(mirror, id, prop) === null);
+      const fresh = nodeIds.filter((id) => trackExpressionOf(mirror, id, prop) === null);
       // A member of an unseparated vector (X of Position) is its own per-dimension
       // expression (`setExpression` with `member`).
       linkExpressions(fresh.length === 1 ? 'Add Expression' : 'Add Expressions', fresh.map((id) => ({ nodeId: id, prop, src: DEFAULT_EXPRESSION })));

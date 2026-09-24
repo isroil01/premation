@@ -56,8 +56,10 @@ std::uint32_t label_index_of(const Json& color) {
   if (!truthy(color) || !color.is_string()) return 0;
   const std::string want = lower(color.str());
   const auto& colors = registry().labelColors;
+  const auto& ids = registry().labelIds;
   for (std::size_t i = 0; i < colors.size(); ++i) {
-    if (lower(colors[i]) == want) return static_cast<std::uint32_t>(i + 1);
+    // model.ts labelIndexOf (B3z): a palette colour, or a palette id.
+    if (lower(colors[i]) == want || (i < ids.size() && ids[i] == color.str())) return static_cast<std::uint32_t>(i + 1);
   }
   return 0;
 }
@@ -66,6 +68,24 @@ std::optional<std::string> label_color_of(std::uint32_t index) {
   const auto& colors = registry().labelColors;
   if (index == 0 || index > colors.size()) return std::nullopt;
   return colors[index - 1];
+}
+
+std::optional<std::string> label_id_of(std::uint32_t index) {
+  const auto& ids = registry().labelIds;
+  if (index == 0 || index > ids.size()) return std::nullopt;
+  return ids[index - 1];
+}
+
+bool is_label_color(std::string_view s) {
+  // model.ts LABEL_COLOR_RE: #rgb, #rrggbb or #rrggbbaa.
+  if (s.empty() || s[0] != '#') return false;
+  const std::size_t n = s.size() - 1;
+  if (n != 3 && n != 6 && n != 8) return false;
+  for (std::size_t i = 1; i < s.size(); ++i) {
+    const char c = s[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
+  }
+  return true;
 }
 
 double comp_fps(const Document& d, std::string_view comp) {
@@ -111,6 +131,10 @@ api::LayerTiming layer_timing(const Document& d, std::string_view layer) {
   t.in_point = frames_to_flicks(first.clip.start, fps);
   t.out_point = frames_to_flicks(last.clip.start + last.clip.duration, fps);
   t.start_time = frames_to_flicks(first.clip.start - first.clip.sourceIn, fps);
+  // B4: the bar's source bound (Clip.sourceDuration, comp frames) - absent = unbounded (model.ts layerTiming).
+  if (first.clip.sourceDuration && std::isfinite(*first.clip.sourceDuration)) {
+    t.source_duration = frames_to_flicks(*first.clip.sourceDuration, fps);
+  }
   return t;
 }
 
@@ -203,6 +227,8 @@ api::LayerSwitches layer_switches(const Document& d, const Node& n) {
   s.auto_orient = ao == "path" ? api::AutoOrient::along_path : ao == "camera" ? api::AutoOrient::towards_camera : api::AutoOrient::off;
   s.preserve_transparency = read_layer_flag(d, n, "preserveTransparency");
   s.label = n.color ? label_index_of(Json::string(*n.color)) : 0;
+  // B3z: a colour outside the palette is reported as itself.
+  if (n.color && !n.color->empty() && s.label == 0) s.label_color = *n.color;
   return s;
 }
 
@@ -290,6 +316,25 @@ std::vector<api::Marker> comp_markers(const Document& d, std::string_view comp) 
   return out;
 }
 
+namespace {
+
+/// B4 — a plugin layer kind's id (`<pluginId>.<kindId>`, layerKindSchema.ts `splitKind`: the kind id after the
+/// last '.' matches /^[a-z][a-zA-Z0-9]{0,31}$/), '' for any other stored kind.
+std::string plugin_kind_of(const Node& n) {
+  std::string k = n.kind();
+  const std::size_t at = k.rfind('.');
+  if (at == std::string::npos || at == 0 || at + 1 >= k.size()) return {};
+  const std::string_view id = std::string_view(k).substr(at + 1);
+  if (id.size() > 32 || id[0] < 'a' || id[0] > 'z') return {};
+  for (const char c : id) {
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    if (!ok) return {};
+  }
+  return k;
+}
+
+}  // namespace
+
 api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   const Node& n = *d.node(layer);
   api::LayerInfo info;
@@ -320,6 +365,18 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   info.markers = layer_markers(d, layer);
   const Json& comment = fx_at(n, "comment");
   info.comment = comment.is_string() ? comment.str() : "";
+  if (k == api::LayerKind::generator) info.generator = plugin_kind_of(n);
+  // B4: pinned properties — `__pinnedProps` on the first component carrying the list (model.ts pinnedOf).
+  for (const Component& c : n.components) {
+    const Json& bag = c.props.at("__pinnedProps");
+    if (!bag.is_array()) continue;
+    for (const Json& p : bag.arr()) {
+      if (p.is_string()) info.pinned.push_back(p.str());
+    }
+    break;
+  }
+  // B4: the effect stack's size (model.ts readNodeEffects(node).length).
+  info.effect_count = static_cast<std::uint32_t>(read_node_effects(n).size());
   return info;
 }
 
@@ -430,6 +487,11 @@ api::Interpretation interpretation_of(const Json& a) {
   out.loops = u32_of(i.at("loopCount").is_undefined() || i.at("loopCount").is_null() ? 1.0 : i.at("loopCount").num());
   out.color_profile = "auto";
   out.invert_alpha = false;
+  // B3z: Remove Pulldown — an integer phase 0..4 (sourceInfo.ts interpretationOf).
+  const Json& pd = i.at("pulldownPhase");
+  if (pd.is_number() && std::isfinite(pd.num()) && pd.num() == std::floor(pd.num()) && pd.num() >= 0 && pd.num() <= 4) {
+    out.remove_pulldown = static_cast<std::uint32_t>(pd.num());
+  }
   return out;
 }
 
@@ -542,6 +604,30 @@ api::PropertyInfo property_info(const PCtx& c, std::string_view layer, const Cat
     if (const ExprState* e = anim_expr(d, layer, lead)) info.expression = e->src;
     info.expression_enabled = anim_expr_enabled(d, layer, lead);
     info.expression_error = anim_expr_error(d, c.cache, layer, lead).value_or("");
+  }
+  // B4: per-dimension expressions of an unseparated multi-member property (model.ts memberExpressionsOf).
+  if (!b.separated && b.members.size() >= 2) {
+    struct Per {
+      std::string src;
+      bool enabled = false;
+    };
+    std::vector<Per> per;
+    per.reserve(b.members.size());
+    for (const auto& m : b.members) {
+      const ExprState* e = anim_expr(d, layer, m);
+      per.push_back(Per{e != nullptr ? e->src : std::string(), anim_expr_enabled(d, layer, m)});
+    }
+    const Per& first = per.front();
+    const bool shared = std::all_of(per.begin(), per.end(), [&](const Per& p) {
+      return p.src == first.src && (p.src.empty() || p.enabled == first.enabled);
+    });
+    if (!shared) {
+      for (std::size_t i = 0; i < per.size(); ++i) {
+        if (per[i].src.empty()) continue;
+        info.member_expressions.push_back(api::MemberExpression{static_cast<std::uint32_t>(i), per[i].src, per[i].enabled,
+                                                                anim_expr_error(d, c.cache, layer, b.members[i]).value_or("")});
+      }
+    }
   }
   info.keyframe_count = animated ? static_cast<std::uint32_t>(read_keys(d, layer, b).size()) : 0U;
   if (b.separated) {

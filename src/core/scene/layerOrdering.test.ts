@@ -24,7 +24,10 @@ import defaultSceneGraph from './DefaultSceneGraph';
 import { arrangeNodes, moveNodeInStack, reorderSiblings } from './parenting';
 import { stackOrderedChildren } from './sceneDerive';
 import { sceneGraphToTree } from '@layout/Scene/ScenePanel';
-import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
+import { buildTimelineTracks } from '@layout/Timeline/timelineTracks';
+import { documentMirror } from '@stores/documentMirror';
+import { engineIdle } from '@core/engine/engineInstance';
+import { getEventBus } from '@core/events/EventBus';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { buildSnapshot, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import { sceneContentHash, resetSceneContentHashMemo } from '@core/rendering/sceneContentHash';
@@ -89,6 +92,9 @@ function reset(ids: string[]): void {
     components: [{ id: 'comp_root_meta', type: 'group', props: { __kind: 'group' } }],
   } as unknown as SceneNode);
   for (const id of ids) defaultSceneGraph.addChild(ROOT, shape(id, ROOT));
+  // Announce the rebuild as a legacy writer does, so the engine reports it and
+  // the document mirror (the timeline's source) refetches.
+  getEventBus().emit('SceneGraphChanged', undefined);
   resetSceneContentHashMemo();
 }
 
@@ -111,9 +117,16 @@ const panelRows = (): string[] => {
   return (comp?.children ?? []).map((n) => n.id);
 };
 
-/** Timeline track rows, top row first. */
-const timelineRows = (): string[] =>
-  deriveTimelineTracks({ activeCompId: ROOT, compFps: 60, expandedIds: [] }).map((t) => t.id as string);
+/**
+ * Timeline track rows, top row first — the document MIRROR's view of the comp
+ * (B4): the scene writes above reach it as engine events, so let them land.
+ */
+const timelineRows = async (): Promise<string[]> => {
+  await Promise.resolve();
+  await engineIdle();
+  await documentMirror().whenIdle();
+  return buildTimelineTracks(documentMirror(), ROOT, []).map((t) => t.id as string);
+};
 
 /** What a click at the overlap selects. */
 const hitAtOverlap = (): string | null =>
@@ -128,29 +141,29 @@ const contentHash = (): string => {
  * Assert every consumer agrees with the graph. `expected` is back → front, the
  * child array's own direction; the two panels list it reversed.
  */
-function expectStack(expected: string[]): void {
+async function expectStack(expected: string[]): Promise<void> {
   expect(stack()).toEqual(expected);
   expect(paintOrder()).toEqual(expected);
   expect(panelRows()).toEqual([...expected].reverse());
-  expect(timelineRows()).toEqual([...expected].reverse());
+  expect(await timelineRows()).toEqual([...expected].reverse());
   expect(hitAtOverlap()).toBe(expected[expected.length - 1]);
 }
 
 describe('the reported bug: Bring Forward on the layer underneath', () => {
   beforeEach(() => reset(['A', 'B']));
 
-  it('starts with B (added second) on top, in every consumer', () => {
-    expectStack(['A', 'B']);
+  it('starts with B (added second) on top, in every consumer', async () => {
+    await expectStack(['A', 'B']);
   });
 
-  it('brings A above B — graph, paint order, both panels and the click', () => {
+  it('brings A above B — graph, paint order, both panels and the click', async () => {
     // The exact call `layer.bringForward`, its Ctrl/Cmd+] chord and both
     // context menus all make.
     expect(arrangeNodes(['A'], 'forward')).toBe(true);
-    expectStack(['B', 'A']);
+    await expectStack(['B', 'A']);
   });
 
-  it('moves the viewport frame cache off the pre-reorder frame', () => {
+  it('moves the viewport frame cache off the pre-reorder frame', async () => {
     /*
       THE root cause. The cache key is a content hash of the scene, and the
       hash walked each node's own fields only — parent, flags, transform,
@@ -164,7 +177,7 @@ describe('the reported bug: Bring Forward on the layer underneath', () => {
     expect(contentHash()).not.toBe(before);
   });
 
-  it('returns to the same hash when the move is undone — the cache is not thrown away for nothing', () => {
+  it('returns to the same hash when the move is undone — the cache is not thrown away for nothing', async () => {
     const before = contentHash();
     arrangeNodes(['A'], 'forward');
     arrangeNodes(['A'], 'backward');
@@ -176,103 +189,103 @@ describe('the reported bug: Bring Forward on the layer underneath', () => {
 describe('the four arrange verbs on a single layer', () => {
   beforeEach(() => reset(['A', 'B', 'C']));
 
-  it('Bring Forward moves one step toward the front', () => {
+  it('Bring Forward moves one step toward the front', async () => {
     arrangeNodes(['A'], 'forward');
-    expectStack(['B', 'A', 'C']);
+    await expectStack(['B', 'A', 'C']);
   });
 
-  it('Send Backward moves one step toward the back', () => {
+  it('Send Backward moves one step toward the back', async () => {
     arrangeNodes(['C'], 'backward');
-    expectStack(['A', 'C', 'B']);
+    await expectStack(['A', 'C', 'B']);
   });
 
-  it('Bring to Front jumps the whole stack', () => {
+  it('Bring to Front jumps the whole stack', async () => {
     arrangeNodes(['A'], 'front');
-    expectStack(['B', 'C', 'A']);
+    await expectStack(['B', 'C', 'A']);
   });
 
-  it('Send to Back jumps the whole stack the other way', () => {
+  it('Send to Back jumps the whole stack the other way', async () => {
     arrangeNodes(['C'], 'back');
-    expectStack(['C', 'A', 'B']);
+    await expectStack(['C', 'A', 'B']);
   });
 });
 
 describe('no-ops stay no-ops — and say so', () => {
   beforeEach(() => reset(['A', 'B', 'C']));
 
-  it('Bring Forward on the front-most layer changes nothing', () => {
+  it('Bring Forward on the front-most layer changes nothing', async () => {
     expect(arrangeNodes(['C'], 'forward')).toBe(false);
-    expectStack(['A', 'B', 'C']);
+    await expectStack(['A', 'B', 'C']);
   });
 
-  it('Send Backward on the back-most layer changes nothing', () => {
+  it('Send Backward on the back-most layer changes nothing', async () => {
     expect(arrangeNodes(['A'], 'backward')).toBe(false);
-    expectStack(['A', 'B', 'C']);
+    await expectStack(['A', 'B', 'C']);
   });
 
-  it('Bring to Front on the front-most layer changes nothing', () => {
+  it('Bring to Front on the front-most layer changes nothing', async () => {
     expect(arrangeNodes(['C'], 'front')).toBe(false);
-    expectStack(['A', 'B', 'C']);
+    await expectStack(['A', 'B', 'C']);
   });
 
-  it('an unknown id is refused rather than corrupting the stack', () => {
+  it('an unknown id is refused rather than corrupting the stack', async () => {
     expect(arrangeNodes(['nope'], 'front')).toBe(false);
-    expectStack(['A', 'B', 'C']);
+    await expectStack(['A', 'B', 'C']);
   });
 
-  it('an empty selection is refused', () => {
+  it('an empty selection is refused', async () => {
     expect(arrangeNodes([], 'forward')).toBe(false);
-    expectStack(['A', 'B', 'C']);
+    await expectStack(['A', 'B', 'C']);
   });
 });
 
 describe('a multi-selection moves as a block and keeps its internal order', () => {
   beforeEach(() => reset(['A', 'B', 'C', 'D']));
 
-  it('Bring Forward over two adjacent layers actually moves them', () => {
+  it('Bring Forward over two adjacent layers actually moves them', async () => {
     // The loop-per-layer version moved A up past B and then B back down past
     // A: a net no-op, and the shape of the original report.
     expect(arrangeNodes(['A', 'B'], 'forward')).toBe(true);
-    expectStack(['C', 'A', 'B', 'D']);
+    await expectStack(['C', 'A', 'B', 'D']);
   });
 
-  it('Send Backward over two adjacent layers moves them one step', () => {
+  it('Send Backward over two adjacent layers moves them one step', async () => {
     expect(arrangeNodes(['C', 'D'], 'backward')).toBe(true);
-    expectStack(['A', 'C', 'D', 'B']);
+    await expectStack(['A', 'C', 'D', 'B']);
   });
 
-  it('Send to Back does not REVERSE the selection', () => {
+  it('Send to Back does not REVERSE the selection', async () => {
     // Loop-per-layer sent C to index 0, then D to index 0 — C and D swapped.
     arrangeNodes(['C', 'D'], 'back');
-    expectStack(['C', 'D', 'A', 'B']);
+    await expectStack(['C', 'D', 'A', 'B']);
   });
 
-  it('Bring to Front keeps stack order, not click order', () => {
+  it('Bring to Front keeps stack order, not click order', async () => {
     // Selected bottom-last on purpose: Bring to Front must not re-stack the
     // selection among itself.
     arrangeNodes(['C', 'A'], 'front');
-    expectStack(['B', 'D', 'A', 'C']);
+    await expectStack(['B', 'D', 'A', 'C']);
   });
 
-  it('a block already at the front is a no-op', () => {
+  it('a block already at the front is a no-op', async () => {
     expect(arrangeNodes(['C', 'D'], 'forward')).toBe(false);
-    expectStack(['A', 'B', 'C', 'D']);
+    await expectStack(['A', 'B', 'C', 'D']);
   });
 
-  it('a non-contiguous selection closes up rather than leapfrogging', () => {
+  it('a non-contiguous selection closes up rather than leapfrogging', async () => {
     expect(arrangeNodes(['A', 'C'], 'forward')).toBe(true);
-    expectStack(['B', 'A', 'D', 'C']);
+    await expectStack(['B', 'A', 'D', 'C']);
   });
 });
 
 describe('reorderSiblings — the pure rule the block moves obey', () => {
   const kids = ['A', 'B', 'C', 'D'];
 
-  it('ignores ids that are not siblings', () => {
+  it('ignores ids that are not siblings', async () => {
     expect(reorderSiblings(kids, ['A', 'elsewhere'], 'front')).toEqual(['B', 'C', 'D', 'A']);
   });
 
-  it('never drops or duplicates a sibling', () => {
+  it('never drops or duplicates a sibling', async () => {
     for (const action of ['front', 'back', 'forward', 'backward'] as const) {
       for (const sel of [['A'], ['D'], ['A', 'D'], ['B', 'C'], kids]) {
         const out = reorderSiblings(kids, sel, action);
@@ -281,7 +294,7 @@ describe('reorderSiblings — the pure rule the block moves obey', () => {
     }
   });
 
-  it('selecting everything can never change anything', () => {
+  it('selecting everything can never change anything', async () => {
     for (const action of ['forward', 'backward'] as const) {
       expect(reorderSiblings(kids, kids, action)).toEqual(kids);
     }
@@ -296,26 +309,26 @@ describe('arrange is scoped to the siblings of ONE parent', () => {
     defaultSceneGraph.addChild('G', shape('g2', 'G'));
   });
 
-  it('a layer inside a group reorders within the group and never leaves it', () => {
+  it('a layer inside a group reorders within the group and never leaves it', async () => {
     expect(arrangeNodes(['g1'], 'front')).toBe(true);
     expect(stack('G')).toEqual(['g2', 'g1']);
     expect(stack()).toEqual(['A', 'B', 'G']);
     expect(defaultSceneGraph.getNode('g1')!.parent).toBe('G');
   });
 
-  it('the front-most member of a group cannot be pushed out to the comp', () => {
+  it('the front-most member of a group cannot be pushed out to the comp', async () => {
     expect(arrangeNodes(['g2'], 'forward')).toBe(false);
     expect(stack('G')).toEqual(['g1', 'g2']);
     expect(stack()).toEqual(['A', 'B', 'G']);
   });
 
-  it('a mixed selection reorders each parent within its own list', () => {
+  it('a mixed selection reorders each parent within its own list', async () => {
     expect(arrangeNodes(['A', 'g1'], 'front')).toBe(true);
     expect(stack()).toEqual(['B', 'G', 'A']);
     expect(stack('G')).toEqual(['g2', 'g1']);
   });
 
-  it('the Scene tree nests the group members the same way it stacks layers', () => {
+  it('the Scene tree nests the group members the same way it stacks layers', async () => {
     arrangeNodes(['g1'], 'front');
     const comp = sceneGraphToTree().find((n) => n.id === ROOT);
     const g = (comp?.children ?? []).find((n) => n.id === 'G');
@@ -330,7 +343,7 @@ describe('the timeline keeps its clip bars across a reorder', () => {
     getTimelineController().syncFromScene(ROOT);
   });
 
-  it('every layer still has its bar, and the rows re-stack', () => {
+  it('every layer still has its bar, and the rows re-stack', async () => {
     const controller = getTimelineController();
     const barsBefore = new Map(
       ['A', 'B', 'C'].map((id) => [id, controller.getLayersForNode(id).map((l) => l.id)] as const),
@@ -348,7 +361,7 @@ describe('the timeline keeps its clip bars across a reorder', () => {
     for (const id of ['A', 'B', 'C']) {
       expect(controller.getLayersForNode(id).length).toBeGreaterThan(0);
     }
-    expect(timelineRows()).toEqual(['A', 'C', 'B']);
+    expect(await timelineRows()).toEqual(['A', 'C', 'B']);
     // The bars themselves survived: same clip ids, not fresh ones.
     for (const [id, before] of barsBefore) {
       expect(controller.getLayersForNode(id).map((l) => l.id)).toEqual(before);
@@ -359,16 +372,16 @@ describe('the timeline keeps its clip bars across a reorder', () => {
 describe('the derivation helpers stay in step', () => {
   beforeEach(() => reset(['A', 'B', 'C']));
 
-  it('stackOrderedChildren is the child array, front first', () => {
+  it('stackOrderedChildren is the child array, front first', async () => {
     expect(stackOrderedChildren(defaultSceneGraph, ROOT).map((n) => n.id)).toEqual(['C', 'B', 'A']);
   });
 
-  it('moveNodeInStack is arrangeNodes for one layer', () => {
+  it('moveNodeInStack is arrangeNodes for one layer', async () => {
     expect(moveNodeInStack('A', 'forward')).toBe(true);
-    expectStack(['B', 'A', 'C']);
+    await expectStack(['B', 'A', 'C']);
   });
 
-  it('setChildOrder refuses anything that is not a permutation', () => {
+  it('setChildOrder refuses anything that is not a permutation', async () => {
     expect(defaultSceneGraph.setChildOrder(ROOT, ['A', 'B'])).toBe(false);
     expect(defaultSceneGraph.setChildOrder(ROOT, ['A', 'B', 'ghost'])).toBe(false);
     expect(stack()).toEqual(['A', 'B', 'C']);

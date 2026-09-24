@@ -12,7 +12,7 @@
  * single-file + cloud-autosave path is untouched.
  */
 
-import { captureDocument, restoreDocument } from '@core/api/cloudDocument';
+import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { baselineHistory } from '@stores/historyStore';
 import { recordProjectOpened, recordProjectSaved } from '@core/localIndex/indexWriter';
 import { BundleRepository } from './BundleRepository';
@@ -92,17 +92,16 @@ export function listProjectVersions(root: string, svc = getProjectBundleService(
   return svc.listVersions(root);
 }
 
-/** Restore a specific version of a bundle into the live engines. Returns false if unknown. */
-export async function restoreProjectVersion(
+/**
+ * A saved bundle version's document (null when the version is gone). The caller
+ * lands it through the engine (`restoreDocument`: one undoable entry, B3z).
+ */
+export async function readProjectVersion(
   root: string,
   rev: number,
   svc = getProjectBundleService(),
-): Promise<boolean> {
-  const doc = await svc.restoreVersion(root, rev);
-  if (!doc) return false;
-  restoreDocument(doc);
-  baselineHistory(`Restored v${rev}`);
-  return true;
+): Promise<EditorDocument | null> {
+  return (await svc.restoreVersion(root, rev)) ?? null;
 }
 
 /**

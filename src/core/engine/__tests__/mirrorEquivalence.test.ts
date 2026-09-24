@@ -80,6 +80,7 @@ async function mirrorDiff(m: DocumentMirror, c: Client): Promise<string[]> {
     if (!eq(mc.settings, comp.settings)) out.push(`comp ${comp.id} settings differ`);
     if (!eq(mc.layers, comp.layers)) out.push(`comp ${comp.id} order [${mc.layers}] ≠ [${comp.layers}]`);
     if (!eq(mc.markers, comp.markers)) out.push(`comp ${comp.id} markers differ`);
+    if (!eq(mc.transitions, comp.transitions)) out.push(`comp ${comp.id} transitions ${JSON.stringify(mc.transitions).slice(0, 200)} ≠ ${JSON.stringify(comp.transitions).slice(0, 200)}`);
   }
   const items = new Map(d.items.map((i) => [i.id, i]));
   if (!eq([...m.items.keys()].sort(), [...items.keys()].sort())) out.push('item ids differ');
@@ -190,8 +191,18 @@ async function runSession(d: Driver, m: DocumentMirror, label: string, extra?: (
   await step('jump forward', () => ok(c.execute({ type: 'jumpToHistory', position: hist.position })));
   await step('delete a layer', () => ok(c.execute({ type: 'deleteLayers', layers: [ids.T!] })));
   await step('undo delete', () => ok(c.undo()));
+  // B4 read additions: effectCount, per-member expressions, transitions, a bounded source (sourceDuration).
+  await step('effect (effectCount)', () => ok(c.execute({ type: 'addEffect', layers: [ids.B!], effect: 'gaussian-blur', params: [] })));
+  await step('member expression (memberExpressions)', () => ok(c.execute({ type: 'setExpression', prop: { layer: ids.B!, path: 'transform/position' }, source: 'value', enabled: true, member: 1 })));
+  await step('bars meet at a cut', () => ok(c.execute({
+    type: 'setLayerTiming',
+    items: [{ layer: ids.T!, inPoint: 0, outPoint: sec(1) }, { layer: ids.N!, inPoint: sec(1), outPoint: sec(2) }],
+  })));
+  await step('transition (transitions)', async () => { ids.TX = (await ok(c.execute({ type: 'addTransition', left: ids.T!, right: ids.N!, kind: 'dipToBlack', duration: sec(0.5), alignment: 'centred' }))).transition; });
+  await step('undo transition', () => ok(c.undo()));
   await step('second comp', async () => { ids.C2 = (await ok(c.execute({ type: 'createComposition', settings: { name: 'C2', width: 640, height: 360 }, fromItems: [] }))).item; });
   await step('layer in C2', async () => { ids.C2L = (await ok(c.execute({ type: 'createLayer', comp: ids.C2!, kind: 'solid', name: 'in C2', init: [] }))).layer; });
+  await step('precomp layer (sourceDuration)', async () => { ids.P = (await ok(c.execute({ type: 'createLayer', comp, kind: 'precomp', source: ids.C2!, name: 'P', init: [] }))).layer; });
   if (extra) await extra(step, ids);
   await step('new project (documentReset)', () => ok(c.execute({ type: 'newProject' })));
   for (const r of releases) r();
@@ -294,7 +305,7 @@ test('engine edits keep exact undo with the legacy debounce recorder switched of
     const g = unwrap(await h.engine.beginGesture('Drag'));
     for (let i = 0; i < 5; i++) unwrap(await h.engine.execute({ type: 'setProperty', prop: { layer: A, path: 'transform/rotation' }, value: { kind: 'scalar', value: i * 10 } }));
     unwrap(await h.engine.endGesture(g.gesture, true));
-    expect(m.history?.state.entries.map((e) => e.label)).toEqual(['Create Layer', 'Drag']);
+    expect(m.history?.state.entries.map((e) => e.label)).toEqual(['New Solid Layer', 'Drag']);
     unwrap(await h.engine.undo());
     expect(m.property(A, 'transform/rotation')?.value).toEqual({ kind: 'scalar', value: 0 });
     jest.advanceTimersByTime(2000); // nothing debounced is pending: no extra entry appears
@@ -303,6 +314,42 @@ test('engine edits keep exact undo with the legacy debounce recorder switched of
   } finally {
     LEGACY_DEBOUNCE_RECORDER.enabled = true;
   }
+});
+
+test('B4 read additions reach the mirror: effectCount, memberExpressions, transitions, sourceDuration, pinned', async () => {
+  h = await setupEngine();
+  const m = new DocumentMirror(tsSource(h, true)).start();
+  const comp = m.compIds[0]!;
+  const A = unwrap(await h.engine.execute({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] })).layer;
+  const B = unwrap(await h.engine.execute({ type: 'createLayer', comp, kind: 'solid', name: 'B', init: [] })).layer;
+  m.retainTree(A);
+  expect(m.layer(A)?.effectCount).toBe(0);
+  unwrap(await h.engine.execute({ type: 'addEffect', layers: [A], effect: 'gaussian-blur', params: [] }));
+  expect(m.layer(A)?.effectCount).toBe(1);
+  // One dimension's own expression: the property lists it; a shared one lists nothing.
+  unwrap(await h.engine.execute({ type: 'setExpression', prop: { layer: A, path: 'transform/position' }, source: 'value + [0, 5]', enabled: true, member: 1 }));
+  expect(m.property(A, 'transform/position')?.memberExpressions).toEqual([{ member: 1, source: 'value + [0, 5]', enabled: true, error: expect.any(String) }]);
+  unwrap(await h.engine.execute({ type: 'setExpression', prop: { layer: A, path: 'transform/position' }, source: 'value', enabled: true }));
+  expect(m.property(A, 'transform/position')?.memberExpressions).toEqual([]);
+  expect(m.property(A, 'transform/position')?.expression).toBe('value');
+  // Transitions ride the comp record.
+  unwrap(await h.engine.execute({ type: 'setLayerTiming', items: [{ layer: A, inPoint: 0, outPoint: sec(1) }, { layer: B, inPoint: sec(1), outPoint: sec(2) }] }));
+  const tx = unwrap(await h.engine.execute({ type: 'addTransition', left: A, right: B, kind: 'dipToBlack', duration: sec(0.5), alignment: 'centred' })).transition;
+  expect(m.comp(comp)?.transitions.map((t) => [t.id, t.left, t.right, t.kind])).toEqual([[tx, A, B, 'dipToBlack']]);
+  unwrap(await h.engine.undo());
+  expect(m.comp(comp)?.transitions).toEqual([]);
+  // A solid is unbounded; a precomp's source is its composition's length.
+  expect(m.layer(A)?.timing.sourceDuration).toBeUndefined();
+  const C2 = unwrap(await h.engine.execute({ type: 'createComposition', settings: { name: 'C2', width: 640, height: 360 }, fromItems: [] })).item;
+  const P = unwrap(await h.engine.execute({ type: 'createLayer', comp, kind: 'precomp', source: C2, name: 'P', init: [] })).layer;
+  expect(m.layer(P)?.timing.sourceDuration).toBe(m.comp(C2)?.settings.duration);
+  // Pinned properties (still written around the engine by pinnedProps.ts): an attributed legacy write.
+  const { setPinnedProp } = await import('@core/inspector/pinnedProps');
+  setPinnedProp(B, 'opacity', true);
+  await h.engine.whenIdle();
+  await Promise.resolve();
+  expect(m.layer(B)?.pinned).toEqual(['opacity']);
+  m.stop();
 });
 
 // ── C++ engine process ───────────────────────────────────────────────────

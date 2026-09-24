@@ -967,7 +967,10 @@ std::optional<double> read_static_property_value(const Document& d, std::string_
   }
   if (auto eff = parse_prefixed_id_rest(prop, "effect.")) return read_effect_value(n, eff->id, eff->rest);
   if (auto g = glass_prop(prop)) {
-    const Json& v = get_node_layer_styles(n).at("glass").at(g->param);
+    // Held: `get_node_layer_styles` returns by value, so a reference into it
+    // must not outlive the full expression (ASan: heap-use-after-free).
+    const Json styles = get_node_layer_styles(n);
+    const Json& v = styles.at("glass").at(g->param);
     if (!g->channel.empty()) return v.is_string() ? channel_of(v.str(), g->channel) : std::nullopt;
     return v.is_number() ? std::optional<double>(v.num()) : std::nullopt;
   }

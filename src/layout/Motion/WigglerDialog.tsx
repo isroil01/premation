@@ -41,6 +41,10 @@ const DIMENSIONS: ReadonlyArray<{ id: WiggleDimension; label: string }> = [
 
 /** The position axes The Wiggler can act on. */
 export function wigglerTracks(nodeId: string): PropPath[] {
+  // B4-gap: the per-MEMBER keyframe lists (x keyed apart from y on an
+  // unseparated Position) — the API keys a whole property (ENGINE_API.md §3.3),
+  // and the preview writes these lists back verbatim (assistantPreview.ts,
+  // B3-legacy); per-member key lists in the API would close both.
   return (['x', 'y'] as const).filter(
     (p) => (defaultAnimation.getTrackKeyframes(nodeId, p)?.length ?? 0) >= MIN_KEYFRAMES,
   );

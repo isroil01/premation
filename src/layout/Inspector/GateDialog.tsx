@@ -18,18 +18,17 @@ import { Button } from '@components/Button';
 import { Slider } from '@components/Slider';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorProperty } from '@hooks/useMirror';
+import { gateOf, staticLevelDb } from '@core/mirror/audio';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
 import {
   computeGateEnvelope,
   gateLevels,
   planGate,
-  readGate,
   DEFAULT_GATE,
   type GateParams,
 } from '@core/audio/audioGate';
-import { staticLevelDbOf } from '@core/audio/audioFades';
 import { gateEdit, removeGateEdit } from './audioEdits';
 import styles from './AudioToolDialog.module.css';
 
@@ -45,9 +44,9 @@ interface Preview {
 }
 
 export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
-  const rev = useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const stored = useMemo(() => (node ? readGate(node) : null), [node, rev]);
+  // The remembered gate (`audio/gate`), from the document mirror (B4).
+  const gateInfo = useMirrorProperty(nodeId, 'audio/gate');
+  const stored = useMemo(() => (gateInfo ? gateOf(documentMirror(), nodeId) : null), [gateInfo, nodeId]);
 
   const [params, setParams] = useState<GateParams>(() => (stored ? { ...stored } : { ...DEFAULT_GATE }));
   const [busy, setBusy] = useState(false);
@@ -69,6 +68,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
     let alive = true;
     setAnalysing(true);
     const timer = setTimeout(() => {
+      // Engine-side until E2: the layer's decode and its envelope.
       void computeGateEnvelope(nodeId)
         .then((res) => {
           if (!alive) return;
@@ -84,7 +84,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
               ...params,
               fps: res.fps,
               startCompSec: res.start,
-              baseLevelDb: staticLevelDbOf(nodeId),
+              baseLevelDb: staticLevelDb(documentMirror(), nodeId),
               toKeyframeTime: (t) => t,
             }).length,
             closedFraction: curve.length > 0 ? closed / curve.length : 0,
@@ -106,6 +106,7 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
   const run = async (): Promise<void> => {
     setBusy(true);
     try {
+      // Engine-side until E2 (as the preview).
       const res = await computeGateEnvelope(nodeId);
       if (!res) {
         notify('That layer has no decodable audio to gate.', 'warning');

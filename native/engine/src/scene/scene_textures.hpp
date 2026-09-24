@@ -22,6 +22,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -85,6 +86,11 @@ class SceneTextures final : public rg::ExternalTextureSource {
   void set_media_base(std::filesystem::path base) { opts_.mediaBase = std::move(base); }
   /// Transport playing: footage sources read ahead of the frames they are asked for.
   void set_playing(bool playing) noexcept { playing_ = playing; }
+  /// D3: the frame is colour-managed (RenderView.colorManagement present) — every
+  /// COLOUR ref gets its interpretation (RenderTextureRef.inputSpace): footage by
+  /// what the file says, stills and authored text / shape rasters as sRGB; masks
+  /// stay data. Off = no ref is tagged (the TS pipeline, byte for byte).
+  void set_color_managed(bool managed) noexcept { colorManaged_ = managed; }
 
   /// Resolve a frame's requests into refs (key → hash), rasterising misses.
   void prepare(const std::vector<TextureRequest>& reqs, std::vector<api::RenderTextureRef>& refs, PrepareStats& stats);
@@ -101,7 +107,7 @@ class SceneTextures final : public rg::ExternalTextureSource {
     std::string hash;
     std::shared_ptr<const RasterEntry> entry;  // shared: a frame in flight keeps its pixels while the LRU evicts
   };
-  std::string media_ref(const TextureRequest& r, PrepareStats& stats);
+  std::string media_ref(const TextureRequest& r, PrepareStats& stats, std::optional<api::RenderColorSpace>& space);
   std::string image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
   void insert(std::string hash, std::shared_ptr<const RasterEntry> e);
   [[nodiscard]] std::shared_ptr<const RasterEntry> find(std::string_view hash);
@@ -111,6 +117,7 @@ class SceneTextures final : public rg::ExternalTextureSource {
   media::MediaSystem* media_ = nullptr;
   media::MediaTextures* mediaFrames_ = nullptr;
   bool playing_ = false;
+  bool colorManaged_ = false;
   mutable std::mutex m_;
   std::list<Slot> lru_;
   std::unordered_map<std::string, std::list<Slot>::iterator, rg::KeyHash, std::equal_to<>> byHash_;

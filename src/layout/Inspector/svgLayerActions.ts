@@ -20,15 +20,16 @@ import {
   notifySvgConverted,
   type BuiltSvgShapes,
 } from '@core/svg/svgConvert';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { documentMirror } from '@stores/documentMirror';
 import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
-import { layerIdsOfComp, compOfLayer } from '@core/engine/doc';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { useSelectionStore } from '@stores/selectionStore';
 import { customConfirm } from '@components/Modal';
 
 /** Ask what conversion costs, then do it. Resolves to the new group id or null. */
 export async function confirmAndConvertSvg(nodeId: string): Promise<string | null> {
+  // B4-gap: the SVG layer's stored document (`svg` component: capability scan for the dialog) — no API field (see SvgSection).
   const node = defaultSceneGraph.getNode(nodeId);
   const data = node ? readSvgLayer(node) : null;
   if (!data) return null;
@@ -48,10 +49,13 @@ export async function confirmAndConvertSvg(nodeId: string): Promise<string | nul
  * `deleteLayers` of the SVG layer. One undo entry, replayable in both engines.
  */
 export async function convertSvgToShapes(nodeId: string): Promise<string | null> {
+  const layer = documentMirror().layer(nodeId);
+  if (!layer) return null;
+  // B4-gap: the SVG layer's stored document (`svg` component) — no API field (see SvgSection).
   const node = defaultSceneGraph.getNode(nodeId);
   const data = node ? readSvgLayer(node) : null;
   if (!data) return null;
-  const comp = activeCompRootId();
+  const comp = activeCompIdNow() ?? 'comp_root';
   let result: BuiltSvgShapes | null = null;
   let built: BuiltLayers | null;
   try {
@@ -67,9 +71,10 @@ export async function convertSvgToShapes(nodeId: string): Promise<string | null>
   }
   // Replace in place (AE's conversions put the result where the source was):
   // the SVG layer's stack slot, inside the same parent layer when it is nested.
-  const inComp = compOfLayer(nodeId) === comp;
-  const slot = inComp ? layerIdsOfComp(comp).indexOf(nodeId) : -1;
-  const parent = inComp ? (node?.parent !== comp ? node?.parent : undefined) : built.parent;
+  const inComp = layer.comp === comp;
+  const slot = inComp ? (documentMirror().comp(comp)?.layers.indexOf(nodeId) ?? -1) : -1;
+  // The mirror names no comp root as a parent: `parent` is absent at the top.
+  const parent = inComp ? layer.parent : built.parent;
   const paste = {
     type: 'pasteLayers',
     comp,
@@ -91,6 +96,9 @@ export async function convertSvgToShapes(nodeId: string): Promise<string | null>
  * neither an SVG nor converted from one, so call sites can splat unconditionally.
  */
 export function svgContextMenuItems(nodeId: string): ContextMenuItem[] {
+  const layer = documentMirror().layer(nodeId);
+  if (!layer) return [];
+  // B4-gap: whether the layer stores an SVG document (an svg layer's `svg` component; a converted group's retained source) — no API field (see SvgSection).
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return [];
 

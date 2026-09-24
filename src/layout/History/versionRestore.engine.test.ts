@@ -1,14 +1,10 @@
 /**
  * The History panel's document writes with the document engine running.
  *
- * None of these is an engine command yet: the engine has no undoable
- * whole-document restore and no named checkpoint entry (ENGINE_API.md §15.9
- * reserves Session ids 20–29 for both). They are writes around the engine,
- * recorded by the legacy snapshot recorder, and undone through the app's
- * engine-routed undo (`performUndo` → the engine's `undo`, which walks the
- * shared stack's foreign entries). These tests pin what must keep holding on
- * that path until the commands exist — above all that undo never loses the
- * document the user had before a restore.
+ * A version restore is the engine's undoable `restoreDocument` and a pinned
+ * snapshot its `addHistoryCheckpoint` (B3z, ENGINE_API.md §15.9): each ONE
+ * entry, undone through the app's engine-routed undo. Above all, undo never
+ * loses the document the user had before a restore.
  */
 
 jest.mock('@core/api/client', () => {
@@ -82,13 +78,8 @@ describe('restore a cloud version (restoreVersionAsOneEdit)', () => {
 
     expect(h.doc()).toBe(version);
     const added = historyLabels().slice(entries);
-    expect(added).toContain('Restore version');
-    // KNOWN GAP (reported, not fixed here): the recorder also commits the
-    // restore's own bus burst as an unnamed `Edit N` (the burst's animation →
-    // scene key change, or the 700 ms timer during the version-list reload),
-    // so the named row is a no-op and the restore takes TWO undo steps. The
-    // fix is the engine's undoable whole-document restore (§15.9, ids 20–29).
-    expect(added.length).toBeLessThanOrEqual(2);
+    // ONE entry: the engine's undoable whole-document restore (B3z).
+    expect(added).toEqual(['Restore version']);
 
     // Undoing across the restore's entries returns the exact pre-restore
     // document — the engine edit is still there, nothing else leaked in.
@@ -143,7 +134,7 @@ describe('pin a snapshot (History panel)', () => {
     const edited = h.doc();
     const entries = historyLabels().length;
 
-    useHistoryStore.getState().record('Snapshot', true);
+    await h.run({ type: 'addHistoryCheckpoint', label: 'Snapshot' });
 
     expect(historyLabels().slice(entries)).toEqual(['Snapshot']);
     expect(h.doc()).toBe(edited);

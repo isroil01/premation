@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.rings",
+  "name": "Rings (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 0 },
+  "binary": { "windows": "rings.dll", "macos": "librings.dylib", "linux": "librings.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.rings", "name": "Rings", "category": "Premation Samples" }
+  ]
+}

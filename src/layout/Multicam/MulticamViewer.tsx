@@ -16,15 +16,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
-import { useCurrentTime } from '@stores/playbackClockStore';
+import { useCurrentTime, useThrottledTime } from '@stores/playbackClockStore';
 import { useAssetStore } from '@stores/assetStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { framesToSeconds } from '@motion/timeline';
-import { assetIdOf } from '@core/source/sourceInfo';
-import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys, useRetainTrees } from '@hooks/useMirror';
+import { flicksToSeconds } from '@motion/engine-api';
+import { readTrack } from '@core/mirror/selection';
+import { trackRefIn } from '@core/mirror/trackIndex';
 import {
   planMulticamAudioSync,
   multicamLayersInActiveComp,
@@ -46,39 +45,47 @@ interface AngleView {
   sourceInSec: number;
 }
 
+/** Any document revision (see MulticamViewerBody), plus membership and items. */
+const DOC_KEYS: readonly string[] = ['doc', 'layers', 'items'];
+
 function collectAngleViews(): AngleView[] {
-  const controller = getTimelineController();
-  const fr = controller.timeline.getFrameRate();
+  const m = documentMirror();
+  // B4-gap: the playable media URL of the footage (`asset.src`: the blob: /
+  // file URL the decoder opens) — ItemInfo carries the on-disk `path` only
+  // ('' for a browser import); an ItemInfo media URL field would close it.
   const assets = useAssetStore.getState().assets;
+  // B4-gap: which layers are multicam angles, and their numbers — the
+  // `__multicamAngle` tag on the Transform component has no catalog path (a
+  // `layer/multicamAngle` int field would close it).
   return multicamLayersInActiveComp().map((l) => {
-    const node = defaultSceneGraph.getNode(l.id);
-    const assetId = node ? assetIdOf(node) : null;
+    const layer = m.layer(l.id);
+    const assetId = layer?.source;
     const asset = assetId ? assets.find((a) => a.id === assetId) : null;
-    const bar = controller.getLayersForNode(l.id)[0];
+    // One bar per layer (`timing`, comp flicks): its head plays source time
+    // `inPoint − startTime` (what the bar's `sourceIn` was).
+    const timing = layer?.timing;
     return {
       id: l.id,
       angle: l.angle,
-      name: l.name,
+      name: layer?.name || l.name,
       src: asset?.src ?? null,
-      barStartSec: bar ? framesToSeconds(bar.start, fr) : 0,
-      sourceInSec: bar ? framesToSeconds(bar.clip.sourceIn, fr) : 0,
+      barStartSec: timing ? flicksToSeconds(timing.inPoint) : 0,
+      sourceInSec: timing ? flicksToSeconds(timing.inPoint - timing.startTime) : 0,
     };
   });
 }
 
-/** The angle whose sampled opacity wins at `t` — the one the comp shows. */
+/**
+ * The angle whose opacity wins at `t` (comp seconds) — the one the comp
+ * shows. From the document mirror at the THROTTLED display time: never a
+ * value query per played frame.
+ */
 function liveAngleAt(views: ReadonlyArray<AngleView>, t: number): number | null {
+  const m = documentMirror();
   let best: number | null = null;
   let bestOpacity = -1;
   for (const v of views) {
-    // A display READ (B4 keeps these direct): the keyframe axis for sampling.
-    const sampled = defaultAnimation.sample(v.id, 'opacity', getRemappedTime(v.id, t));
-    const node = defaultSceneGraph.getNode(v.id);
-    const styleProps = node?.components.find((c) => c.type === 'Style')?.props as
-      | Record<string, unknown>
-      | undefined;
-    const base = typeof styleProps?.opacity === 'number' ? styleProps.opacity : 100;
-    const opacity = typeof sampled === 'number' ? sampled : base;
+    const opacity = readTrack(m, v.id, 'opacity', t) ?? 100;
     if (opacity > bestOpacity) {
       bestOpacity = opacity;
       best = v.angle;
@@ -89,16 +96,28 @@ function liveAngleAt(views: ReadonlyArray<AngleView>, t: number): number | null 
 
 /** Exported so the empty state can be asserted without opening a modal. */
 export function MulticamViewerBody(): JSX.Element {
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // Which layers are angles is a legacy read over the whole document (the
+  // B4-gap in collectAngleViews), so this wakes on any document revision —
+  // bars moving on sync / undo, a relink, a cut — like the scene revision did.
+  const docRev = useMirrorKeys(DOC_KEYS);
   const time = useCurrentTime();
+  const displayTime = useThrottledTime();
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const videoRefs = useRef(new Map<string, HTMLVideoElement>());
 
-  // Bars move on sync/undo (scene revision covers relink; time drives seeks).
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev invalidates bar geometry
-  const views = useMemo(collectAngleViews, [sceneRev]);
-  const live = liveAngleAt(views, time);
+  // `docRev` invalidates the angles and their bars.
+  const views = useMemo(collectAngleViews, [docRev]);
+  const angleIds = useMemo(() => views.map((v) => v.id), [views]);
+  // The angles' opacity (their trees answer `readTrack`; a value fetched over
+  // the pipe lands on `value:`).
+  useRetainTrees(angleIds);
+  const m = documentMirror();
+  useMirrorKeys(angleIds.flatMap((id) => {
+    const r = trackRefIn(m.tree(id), 'opacity');
+    return [`tree:${id}`, ...(r ? [`value:${id}|${r.path}`] : [])];
+  }));
+  const live = liveAngleAt(views, displayTime);
 
   // Follow the playhead: seek each cell to its clip-local time, coalesced to
   // one seek per rAF — per-keystroke seeks on H.264 sources stall the tab.

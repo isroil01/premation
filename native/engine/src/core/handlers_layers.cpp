@@ -397,15 +397,161 @@ ResultOf<api::ReorderLayers> handle(const api::ReorderLayers& c, HCtx& x) {
   return {};
 }
 
+namespace {
+
+/// JS `\s` at `s[i]` (UTF-8): the byte length of the whitespace code point, 0 if none.
+std::size_t js_space_at(std::string_view s, std::size_t i) {
+  const auto b = [&](std::size_t k) { return k < s.size() ? static_cast<unsigned char>(s[k]) : 0U; };
+  const unsigned c0 = b(i);
+  if (c0 == ' ' || c0 == '\t' || c0 == '\n' || c0 == '\v' || c0 == '\f' || c0 == '\r') return 1;
+  if (c0 == 0xC2 && b(i + 1) == 0xA0) return 2;                      // U+00A0
+  if (c0 == 0xE1 && b(i + 1) == 0x9A && b(i + 2) == 0x80) return 3;  // U+1680
+  if (c0 == 0xE2 && b(i + 1) == 0x80) {
+    const unsigned c2 = b(i + 2);
+    if ((c2 >= 0x80 && c2 <= 0x8A) || c2 == 0xA8 || c2 == 0xA9 || c2 == 0xAF) return 3;  // U+2000–200A, 2028, 2029, 202F
+  }
+  if (c0 == 0xE2 && b(i + 1) == 0x81 && b(i + 2) == 0x9F) return 3;  // U+205F
+  if (c0 == 0xE3 && b(i + 1) == 0x80 && b(i + 2) == 0x80) return 3;  // U+3000
+  if (c0 == 0xEF && b(i + 1) == 0xBB && b(i + 2) == 0xBF) return 3;  // U+FEFF
+  return 0;
+}
+
+/// A JS line terminator (what `.` does not match) at `s[i]`.
+bool js_line_end_at(std::string_view s, std::size_t i) {
+  const auto c = static_cast<unsigned char>(s[i]);
+  if (c == '\n' || c == '\r') return true;
+  return c == 0xE2 && i + 2 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0x80 &&
+         (static_cast<unsigned char>(s[i + 2]) == 0xA8 || static_cast<unsigned char>(s[i + 2]) == 0xA9);
+}
+
+bool js_word(unsigned char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
+
+struct NameRefs {
+  std::string src;
+  bool changed = false;
+};
+
+/**
+ * packages/animation/src/layerNameRefs.ts `mapLayerNameRefs`: every
+ * `/\b(layer|layerAt)\(\s*(['"])((?:(?!\2).)*)\2/g` match whose name is not a
+ * `#<id>` reference goes through `map` (nullopt / the same name = kept).
+ */
+template <typename F>
+NameRefs map_layer_name_refs(std::string_view src, F&& map) {
+  NameRefs out;
+  std::size_t i = 0;
+  std::size_t copied = 0;
+  while (i < src.size()) {
+    const bool boundary = i == 0 || !js_word(static_cast<unsigned char>(src[i - 1]));
+    std::size_t fnEnd = 0;
+    if (boundary && src.substr(i, 5) == "layer") {
+      if (src.substr(i + 5, 1) == "(") fnEnd = i + 5;
+      else if (src.substr(i + 5, 3) == "At(") fnEnd = i + 7;
+    }
+    if (fnEnd == 0) {
+      ++i;
+      continue;
+    }
+    std::size_t j = fnEnd + 1;  // past '('
+    while (j < src.size()) {
+      const std::size_t w = js_space_at(src, j);
+      if (w == 0) break;
+      j += w;
+    }
+    if (j >= src.size() || (src[j] != '\'' && src[j] != '"')) {
+      ++i;
+      continue;
+    }
+    const char quote = src[j];
+    const std::size_t nameStart = j + 1;
+    std::size_t k = nameStart;
+    while (k < src.size() && src[k] != quote && !js_line_end_at(src, k)) ++k;
+    if (k >= src.size() || src[k] != quote) {
+      ++i;
+      continue;
+    }
+    const std::string name(src.substr(nameStart, k - nameStart));
+    const std::size_t end = k + 1;
+    if (!name.starts_with('#')) {
+      const std::optional<std::string> rep = map(name);
+      if (rep && *rep != name) {
+        out.src.append(src.substr(copied, i - copied));
+        out.src.append(src.substr(i, fnEnd - i));
+        out.src.push_back('(');
+        out.src.push_back(quote);
+        out.src.append(*rep);
+        out.src.push_back(quote);
+        copied = end;
+        out.changed = true;
+      }
+    }
+    i = end;
+  }
+  out.src.append(src.substr(copied));
+  return out;
+}
+
+/// The first node named `name` in document order (docexpr.cpp `node_by_name`, the resolver's rule).
+std::optional<std::string> first_named(const Document& d, std::string_view name) {
+  for (const auto& [id, n] : d.nodes()) {
+    if (n->name == name) return id;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 ResultOf<api::RenameLayer> handle(const api::RenameLayer& c, HCtx& x) {
-  (void)require_layer(x.d, c.layer);
+  Document& d = x.d;
+  const std::string oldName = require_layer(d, c.layer).name;
   const bool blank = std::all_of(c.name.begin(), c.name.end(), [](char ch) {
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v';
   });
   if (blank) fail(ErrorCode::invalid_argument, "a layer name cannot be empty");
   x.label = "Rename Layer";
-  x.d.node_mut(c.layer).name = c.name;
-  return {};
+  // B3z (layers.ts renameLayer): the rename follows the expressions that name
+  // the layer — decided before the name changes; a reference is rewritten only
+  // where the old name resolved to THIS layer.
+  const std::string& newName = c.name;
+  const bool oldResolvedToThis = first_named(d, oldName) == c.layer;
+  const std::optional<std::string> previousOwner = first_named(d, newName);
+  struct Rewrite {
+    std::string node;
+    std::string prop;
+    std::string src;
+  };
+  std::vector<Rewrite> rewrites;
+  std::uint32_t naming = 0;
+  for (const auto& [id, n] : d.nodes()) {
+    const NodeAnim* a = d.anim(id);
+    if (a == nullptr) continue;
+    for (const auto& [prop, st] : a->exprs) {
+      NameRefs r = map_layer_name_refs(st.src, [&](const std::string& name) -> std::optional<std::string> {
+        if (name == oldName && oldResolvedToThis) return newName;
+        return std::nullopt;
+      });
+      if (r.changed) {
+        rewrites.push_back(Rewrite{id, prop, std::move(r.src)});
+        continue;
+      }
+      bool names = false;
+      (void)map_layer_name_refs(st.src, [&](const std::string& name) -> std::optional<std::string> {
+        if (name == newName) names = true;
+        return std::nullopt;
+      });
+      if (names) ++naming;
+    }
+  }
+  d.node_mut(c.layer).name = newName;
+  for (const Rewrite& r : rewrites) {
+    const ExprState* cur = anim_expr(d, r.node, r.prop);
+    anim_set_expr_state(d, r.node, r.prop, ExprState{r.src, cur != nullptr ? cur->enabled : true});
+  }
+  api::RenameLayerResult out;
+  out.repaired = static_cast<std::uint32_t>(rewrites.size());
+  out.captured = previousOwner && *previousOwner != c.layer && first_named(d, newName) == c.layer ? naming : 0U;
+  out.name_already_in_use = previousOwner.has_value();
+  return out;
 }
 
 ResultOf<api::SetLayerComment> handle(const api::SetLayerComment& c, HCtx& x) {

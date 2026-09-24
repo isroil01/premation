@@ -35,6 +35,7 @@ import { apiUnitFactor, catalogFor, readStatic, vectorValue, type PropBinding } 
 import { LAYER_FIELDS } from './layerFieldSpecs';
 import { PLUGIN_LAYER_COMPONENT_PREFIX } from './pluginProps';
 import { readPropertyValue } from '@core/inspector/multiSelection';
+import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { parseColorChannels } from '@core/effects/effects';
 
 // ── Pure path builders ─────────────────────────────────────────────────
@@ -315,4 +316,42 @@ export function scalarWrites(nodeIds: readonly string[], track: string, value: n
     if (w) out.push(w);
   }
   return out;
+}
+
+// ── Component placement (the write seam's view of today's components) ─────
+//
+// The API has no components; an Inspector row that still names one (a
+// `useNodeComponentProp`-style row) needs these two answers to compose its
+// write. Moved here from layout/Inspector/useComponentProp.ts (B4): they read
+// the TS engine's component structure, which is the write seam's business.
+
+/** Whether `componentId` is a plugin layer kind's component (its props are `plugin/<key>`, never bare keys). */
+export function isPluginLayerComponent(nodeId: string, componentId: string): boolean {
+  const comp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.id === componentId);
+  return comp?.type.startsWith(PLUGIN_LAYER_COMPONENT_PREFIX) === true;
+}
+
+/** The component the engine's static writer would put `key` on (the first carrying it with that type). */
+export function componentPropHome(nodeId: string, key: string, kind: 'number' | 'string'): string | undefined {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const found = node?.components.find((c) => typeof (c.props as Record<string, unknown>)[key] === kind)?.id;
+  if (found || kind !== 'number' || !node) return found;
+  // A text prop the layer has not stored as a number yet (a string weight,
+  // Grouping Alignment): the engine homes it on the Text component (G1).
+  if (resolvePropertyMeta(key, nodeId).group === 'text') return node.components.find((c) => c.type === 'Text')?.id;
+  // Any other number no component stores yet (a LATENT binding — a light's
+  // Falloff Distance, a camera's Iris Rotation, a morph weight): its HOME
+  // (props.ts writeStatic), else the Transform.
+  let homes: readonly string[] = ['Transform'];
+  try {
+    homes = catalogFor(nodeId).byMember.get(key)?.home ?? homes;
+  } catch {
+    return undefined;
+  }
+  return homes.map((t) => node.components.find((c) => c.type === t)).find((c) => c !== undefined)?.id;
+}
+
+/** The id of the layer's first component of `type` (a row's write target named by type, resolved at write time). */
+export function componentOfType(nodeId: string, type: string): string | undefined {
+  return defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === type)?.id;
 }

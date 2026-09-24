@@ -18,13 +18,13 @@ import { Button } from '@components/Button';
 import { Slider } from '@components/Slider';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayers, useMirrorSelect } from '@hooks/useMirror';
+import { pairedSoundLayersIn, soundLayers } from '@core/mirror/audio';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
 import {
-  audioVoiceFor,
   detectSilences,
   loadNodeMono,
-  pairedAudioNodeIds,
   totalSilenceSec,
   DEFAULT_SILENCE_OPTIONS,
   type SilenceRange,
@@ -53,11 +53,13 @@ function useSource(nodeId: string): {
     // Asked synchronously first: a layer with no sound is knowable without a
     // decode, and starting one only to throw it away is both a wasted round
     // trip and a "Decoding audio…" flash that resolves into "no audio".
-    if (!audioVoiceFor(nodeId)) {
+    // (The mirror: an audio or video layer with a source file.)
+    if (!soundLayers(documentMirror()).some((s) => s.id === nodeId)) {
       setState({ samples: null, sampleRate: 0, loading: false });
       return;
     }
     setState({ samples: null, sampleRate: 0, loading: true });
+    // Engine-side until E2: the decode (the editor's audio engine).
     void loadNodeMono(nodeId).then((src) => {
       if (!alive) return;
       setState({ samples: src?.samples ?? null, sampleRate: src?.sampleRate ?? 0, loading: false });
@@ -79,10 +81,13 @@ export function SilenceRemovalDialog({ nodeId, onDone }: Props): JSX.Element {
 
   // Every layer the cut will touch — named, because "this also cuts your video
   // bar" is not something to discover after pressing Apply.
-  const paired = useMemo(() => pairedAudioNodeIds(nodeId), [nodeId]);
+  // From the document mirror (B4): the same file in the same composition.
+  const layerIds = useMirrorSelect(['layers'], (m) => m.layerIds());
+  const headers = useMirrorLayers(layerIds);
+  const paired = useMemo(() => pairedSoundLayersIn(headers, nodeId), [nodeId, headers]);
   const pairedNames = useMemo(
-    () => paired.map((id) => defaultSceneGraph.getNode(id)?.name ?? id),
-    [paired],
+    () => paired.map((id) => headers.find((l) => l?.id === id)?.name || id),
+    [paired, headers],
   );
 
   const ranges: SilenceRange[] = useMemo(

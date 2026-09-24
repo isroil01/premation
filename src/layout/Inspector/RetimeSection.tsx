@@ -22,35 +22,32 @@
  * rest; a field scrub or a graph drag is ONE gesture.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { flicksToSeconds, type FrameBlend as ApiFrameBlend, type Keyframe } from '@motion/engine-api';
+import type { EasingKind } from '@motion/animation';
 import { Segmented } from '@components/Segmented';
 import { ValueField } from '@components/ValueField';
-import { defaultAnimation } from '@motion/animation';
-import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useProjectStore } from '@stores/projectStore';
+import { useThrottledTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { getNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { documentMirror } from '@stores/documentMirror';
+import { compFps, useActiveMirrorComp, useMirrorComp, useMirrorItem, useMirrorKeyframes, useMirrorLayer } from '@hooks/useMirror';
+import type { FrameBlend } from '@core/scene/layerTime';
 import { edit } from '@core/engine/uiEdits';
+import { REMAP_PROP, SPEED_PROP, type RetimeMode } from '@core/animation/retime';
+import { SPEED_PRESETS, rampStyleOf, type RampStyle, type RetimeBarInfo } from '@core/animation/retimeCommands';
 import {
-  REMAP_PROP,
-  SPEED_PROP,
-  readRetimeMode,
-  type RetimeMode,
-} from '@core/animation/retime';
-import {
-  SPEED_PRESETS,
-  rampStyleOf,
-  retimeBarInfo,
-  retimeSummary,
-  retimedSourceSeconds,
-  retimedSpeedAt,
-  sourceFrameAt,
-  type RampStyle,
-} from '@core/animation/retimeCommands';
+  REMAP_PATH,
+  SPEED_PATH,
+  mirrorRetimeBar,
+  mirrorRetimeSummary,
+  mirrorRetimedSourceSeconds,
+  mirrorRetimedSpeedAt,
+  mirrorSourceFrameAt,
+  mirrorSpeedPercentAt,
+  type RetimeMirrorRead,
+} from '@core/mirror/retime';
+import { numbersOfValue } from '@core/mirror/trackIndex';
 import { AnimToggle } from './AnimToggle';
 import { useEngineEdit } from './useEngineEdit';
 import {
@@ -59,7 +56,6 @@ import {
   fitToFootageCommands,
   moveRetimeKeyCommands,
   rampStyleCommands,
-  retimeKeyIds,
   setSourceFrameCommands,
   setSpeedCommands,
   speedPresetCommands,
@@ -95,18 +91,43 @@ function formatSec(s: number): string {
   return `${s.toFixed(2)}s`;
 }
 
+/** The API's frame-blend switch as the section's options name it. */
+const BLEND_OF: Record<ApiFrameBlend, FrameBlend> = { off: 'none', frameMix: 'mix', pixelMotion: 'pixelMotion' };
+
+const NO_KEYS: readonly Keyframe[] = [];
+
+/** A retime key's number (percent, or chain seconds). */
+const keyNumber = (v: Parameters<typeof numbersOfValue>[0], fallback: number): number => numbersOfValue(v)[0] ?? fallback;
+
 export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  useAnimationRevision();
-  const time = useActiveWorkspace()?.time ?? 0;
-  const fps = useCompositionStore((c) => c.fps) || 30;
+  // Display time: exact while paused, throttled while playing (no render per played frame).
+  const time = useThrottledTime();
+  const activeComp = useActiveMirrorComp();
+  // The rate as the settings dialog states it (NTSC 30000/1001 → 29.97).
+  const fps = Number(compFps(activeComp).toFixed(3)) || 30;
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const mode = readRetimeMode(defaultAnimation, nodeId);
-  const bar = retimeBarInfo(nodeId);
-  const blend = getNodeLayerTime(nodeId).frameBlend;
+  // What the bar and the curves are built from — re-render when any changes.
+  const layer = useMirrorLayer(nodeId);
+  const ownerComp = useMirrorComp(layer?.comp);
+  const sourceItem = useMirrorItem(layer?.source);
+  const speedKeys = useMirrorKeyframes(nodeId, SPEED_PATH);
+  const remapKeys = useMirrorKeyframes(nodeId, REMAP_PATH);
+  // The mirror records above as a reader, so the bar and the footage budget
+  // recompute exactly when one of them changes (identity = change test).
+  const records = useMemo<RetimeMirrorRead>(() => ({
+    layer: (id) => (id === nodeId ? layer : undefined),
+    keyframes: (id, path) => (id !== nodeId ? NO_KEYS : path === SPEED_PATH ? speedKeys : path === REMAP_PATH ? remapKeys : NO_KEYS),
+    comp: (id) => (id === ownerComp?.id ? ownerComp : undefined),
+    item: (id) => (id === sourceItem?.id ? sourceItem : undefined),
+  }), [nodeId, layer, speedKeys, remapKeys, ownerComp, sourceItem]);
+  const bar = useMemo(() => mirrorRetimeBar(records, nodeId), [records, nodeId]);
+
+  const mode: RetimeMode = layer?.timing.retime ?? 'normal';
+  const blend = BLEND_OF[layer?.switches.frameBlend ?? 'off'];
   const inSec = bar?.inSec ?? 0;
-  const outSec = bar?.outSec ?? Math.max(inSec + 1, useCompositionStore.getState().durationSeconds || 1);
+  const activeDuration = activeComp ? flicksToSeconds(activeComp.settings.duration) : 0;
+  const outSec = bar?.outSec ?? Math.max(inSec + 1, activeDuration || 1);
 
   const seek = (t: number): void => useProjectStore.getState().actions.setTime(t, Math.round(t * fps));
 
@@ -122,8 +143,11 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
     });
   };
 
-  const speedNow = Math.round(retimedSpeedAt(nodeId, time, bar) * 100);
-  const summary = mode === 'normal' ? null : retimeSummary(nodeId);
+  const speedNow = Math.round(mirrorRetimedSpeedAt(records, nodeId, time, bar) * 100);
+  const summary = useMemo(
+    () => (mode === 'normal' ? null : mirrorRetimeSummary(records, nodeId, bar)),
+    [mode, records, nodeId, bar],
+  );
 
   return (
     <div className={styles.section}>
@@ -155,6 +179,7 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
       {mode === 'speed' && (
         <SpeedControls
           nodeId={nodeId}
+          bar={bar}
           time={time}
           fps={fps}
           inSec={inSec}
@@ -169,6 +194,7 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
       {mode === 'frames' && (
         <FrameControls
           nodeId={nodeId}
+          bar={bar}
           time={time}
           fps={fps}
           inSec={inSec}
@@ -231,6 +257,8 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
 interface ModeControlsProps {
   nodeId: string;
+  /** The clip bar the curves are measured on (`mirrorRetimeBar`). */
+  bar: RetimeBarInfo | null;
   time: number;
   fps: number;
   inSec: number;
@@ -241,25 +269,25 @@ interface ModeControlsProps {
   seek: (t: number) => void;
 }
 
-function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selectedId, onSelect, seek }: ModeControlsProps): JSX.Element {
+function SpeedControls({ nodeId, bar, time, fps, inSec, outSec, runsOutAtSec, selectedId, onSelect, seek }: ModeControlsProps): JSX.Element {
   const speedEdit = useEngineEdit();
-  const tracks = defaultAnimation.getTrackKeyframes(nodeId, SPEED_PROP) ?? [];
-  const ids = retimeKeyIds(nodeId, SPEED_PROP);
-  const u = keyAxisTimeForDisplay(nodeId, time);
-  const valueNow = defaultAnimation.sample(nodeId, SPEED_PROP, u) ?? 100;
+  // The speed keys (engine ids, comp flicks); the parent re-renders on `key:` for them.
+  const tracks = useMirrorKeyframes(nodeId, SPEED_PATH);
+  const m = documentMirror();
+  const valueNow = mirrorSpeedPercentAt(m, nodeId, time, bar) ?? 100;
   const curve = tracks.length > 1;
+  const offset = bar?.clip.offsetSec ?? 0;
 
-  const keys: RetimeGraphKey[] = tracks.flatMap((k) => {
-    const id = ids.get(k.t);
-    return id ? [{ id, t: k.t, compT: keyframeToCompTime(nodeId, k.t), value: k.value }] : [];
+  const keys: RetimeGraphKey[] = tracks.map((k) => {
+    const compT = flicksToSeconds(k.time);
+    return { id: k.id, t: compT + offset, compT, value: keyNumber(k.value, 100) };
   });
   // The point a Ramp style edits: the selected one, else the one the playhead is in.
-  const selectedT = keys.find((k) => k.id === selectedId)?.t;
-  const focusKey = tracks.find((k) => k.t === selectedT)
-    ?? [...tracks].reverse().find((k) => k.t <= u + 1e-9)
+  const focusKey = tracks.find((k) => k.id === selectedId)
+    ?? [...tracks].reverse().find((k) => flicksToSeconds(k.time) <= time + 1e-9)
     ?? tracks[0];
-  const ramp: RampStyle = rampStyleOf(focusKey?.easing);
-  const focusId = focusKey ? ids.get(focusKey.t) ?? null : null;
+  const ramp: RampStyle = rampStyleOf(focusKey?.easing as EasingKind | undefined);
+  const focusId = focusKey?.id ?? null;
 
   return (
     <>
@@ -302,7 +330,7 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
         fps={fps}
         time={time}
         keys={keys}
-        sample={(t) => defaultAnimation.sample(nodeId, SPEED_PROP, keyAxisTimeForDisplay(nodeId, t)) ?? 100}
+        sample={(t) => mirrorSpeedPercentAt(m, nodeId, t, bar) ?? 100}
         runsOutAtSec={runsOutAtSec}
         selectedId={selectedId}
         onSelect={onSelect}
@@ -366,18 +394,18 @@ function SpeedControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
   );
 }
 
-function FrameControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selectedId, onSelect, seek }: ModeControlsProps): JSX.Element {
+function FrameControls({ nodeId, bar, time, fps, inSec, outSec, runsOutAtSec, selectedId, onSelect, seek }: ModeControlsProps): JSX.Element {
   const frameEdit = useEngineEdit();
-  const bar = retimeBarInfo(nodeId);
+  const m = documentMirror();
   const srcFps = bar?.sourceFps ?? fps;
   const offset = bar?.clip.offsetSec ?? 0;
-  const frameNow = sourceFrameAt(nodeId, time, bar);
+  const frameNow = mirrorSourceFrameAt(m, nodeId, time, bar);
   const totalFrames = bar?.sourceDurationSec ? Math.round(bar.sourceDurationSec * srcFps) : null;
-  const remap = defaultAnimation.getTrackKeyframes(nodeId, REMAP_PROP) ?? [];
-  const ids = retimeKeyIds(nodeId, REMAP_PROP);
-  const keys: RetimeGraphKey[] = remap.flatMap((k) => {
-    const id = ids.get(k.t);
-    return id ? [{ id, t: k.t, compT: keyframeToCompTime(nodeId, k.t, REMAP_PROP), value: Math.round((k.value + offset) * srcFps) }] : [];
+  // Remap keys live on the chain axis = comp time; their values are chain seconds.
+  const remap = useMirrorKeyframes(nodeId, REMAP_PATH);
+  const keys: RetimeGraphKey[] = remap.map((k) => {
+    const compT = flicksToSeconds(k.time);
+    return { id: k.id, t: compT, compT, value: Math.round((keyNumber(k.value, 0) + offset) * srcFps) };
   });
   const chainOfFrame = (frame: number): number => Math.max(0, frame) / srcFps - offset;
 
@@ -415,7 +443,7 @@ function FrameControls({ nodeId, time, fps, inSec, outSec, runsOutAtSec, selecte
         time={time}
         keys={keys}
         maxValue={totalFrames ?? undefined}
-        sample={(t) => retimedSourceSeconds(nodeId, t, bar) * srcFps}
+        sample={(t) => mirrorRetimedSourceSeconds(m, nodeId, t, bar) * srcFps}
         runsOutAtSec={runsOutAtSec}
         selectedId={selectedId}
         onSelect={onSelect}

@@ -15,27 +15,30 @@ import type { TimelineTrack, TimelineKeyframeRef } from './TimelineModel';
 import { Dropdown } from '@components/Dropdown';
 import { type LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
-import { canBeParentOf, eligibleParents, parentOfNode, parentOptionsFor } from '@core/scene/parenting';
+import { parentOptionsFor } from '@core/scene/parenting';
+import { mirrorCanBeParentOf, mirrorEligibleParents } from '@core/mirror/parenting';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { frameBlendOn as layerFrameBlendOn } from '@core/mirror/layerSwitchFacts';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
 import type { MenuSelectModifiers } from '@components/Menu';
 import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
 import styles from './Timeline.module.css';
 import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 import { areRowPropsEqual } from './rowMemo';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeQuality } from '@core/effects/layerQuality';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import {
   collapseSwitchKind,
-  readCollapseSwitch,
   toggleCollapseSwitch,
   qualitySwitchAvailable,
   toggleQualitySwitch,
   frameBlendSwitchAvailable,
-  readFrameBlendSwitch,
   toggleFrameBlendSwitch,
   selectLabelGroup,
 } from './layerSwitches';
+
+const NO_KEYS: readonly string[] = [];
 
 /** The Quality switch's three positions, as AE draws them (/, \, and a box). */
 const QUALITY_SWITCH = {
@@ -71,7 +74,7 @@ export const PARENT_WHIP_LABEL =
 
 /*
   `data-whip-layer` on the row makes it a pick-whip drop target. `track.id` IS
-  the scene node id — `deriveTimelineTracks` builds one track per node — so no
+  the scene node id — `buildTimelineTracks` builds one track per layer — so no
   lookup is needed on the drop side. See `@core/whip/whipTarget`.
 */
 export const TrackHeader = memo(function TrackHeader({
@@ -186,20 +189,23 @@ export const TrackHeader = memo(function TrackHeader({
     if (trimmed && trimmed !== track.name) onRename?.(trimmed);
   };
 
-  // The three switches below read the scene directly: the row re-renders on
-  // every scene revision (the derived `track` is a fresh object), and these
-  // props have no field on the timeline model.
-  const node = defaultSceneGraph.getNode(track.id);
-  const collapseKind = collapseSwitchKind(node);
-  const collapseOn = node && collapseKind ? readCollapseSwitch(node) : false;
-  const hasQuality = qualitySwitchAvailable(node);
-  const quality = node ? readNodeQuality(node) : 'best';
-  const hasFrameBlend = frameBlendSwitchAvailable(node);
-  const frameBlendOn = hasFrameBlend ? readFrameBlendSwitch(track.id) : false;
+  // The three switches below and the parent's name read the document mirror,
+  // and the row subscribes to exactly those records: its layer's header (the
+  // switches, the parent link), the parent's header (its name) and — on a
+  // shape, whose sunburst depends on its stroke / corners — its property tree.
+  const layer = useMirrorLayer(track.id);
+  const currentParent = layer?.parent ?? null;
+  const parentLayer = useMirrorLayer(currentParent);
+  useMirrorKeys(uiKindOf(layer) === 'shape' ? [`tree:${track.id}`] : NO_KEYS);
+  const collapseKind = layer ? collapseSwitchKind(track.id) : null;
+  const collapseOn = collapseKind ? layer?.switches.collapse === true : false;
+  const hasQuality = !!layer && qualitySwitchAvailable(track.id);
+  const quality = layer?.switches.quality ?? 'best';
+  const hasFrameBlend = !!layer && frameBlendSwitchAvailable(track.id);
+  const frameBlendOn = hasFrameBlend && layerFrameBlendOn(layer);
 
-  const currentParent = parentOfNode(track.id);
   const currentParentName = currentParent
-    ? defaultSceneGraph.getNode(currentParent)?.name ?? 'Parent'
+    ? parentLayer?.name || 'Parent'
     : 'None';
 
   // Option id + label come from the SHARED menu, not a second hardcoded copy of
@@ -211,7 +217,7 @@ export const TrackHeader = memo(function TrackHeader({
   // the comp, and the walk that collects it ran for every visible row on
   // every timeline render (see `Dropdown.items`).
   const parentItems = () => {
-    const parentOptions = eligibleParents(track.id);
+    const parentOptions = mirrorEligibleParents(documentMirror(), track.id);
     return [
       {
         type: 'item' as const,
@@ -651,7 +657,7 @@ export const TrackHeader = memo(function TrackHeader({
         <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
           <PickWhip
             label={PARENT_WHIP_LABEL}
-            accept={(target) => canBeParentOf(track.id, target.nodeId)}
+            accept={(target) => mirrorCanBeParentOf(documentMirror(), track.id, target.nodeId)}
             onPick={(target, m) => onParentChange?.(target.nodeId, parentOptionsFor(m))}
           />
           <Dropdown
@@ -670,7 +676,7 @@ export const TrackHeader = memo(function TrackHeader({
         <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
           <PickWhip
             label={PARENT_WHIP_LABEL}
-            accept={(target) => canBeParentOf(track.id, target.nodeId)}
+            accept={(target) => mirrorCanBeParentOf(documentMirror(), track.id, target.nodeId)}
             onPick={(target, m) => onParentChange?.(target.nodeId, parentOptionsFor(m))}
           />
           <Dropdown

@@ -11,12 +11,13 @@
  * Brushes panel stay one source.
  */
 
-import { useReducer } from 'react';
+import { useMemo, useReducer } from 'react';
 import { drawToolOptions } from '@motion/workspace';
 import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { isPaintableKind } from '@core/paint/paintCoords';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompId, useMirrorKeys } from '@hooks/useMirror';
+import { isPaintableLayer } from '@core/mirror/layerKinds';
+import { playheadSeconds } from '@core/timeline/timelineView';
 import { paintPathProp } from '@core/paint/paintProps';
 import {
   getNodePaint,
@@ -31,7 +32,7 @@ import {
 } from '@core/paint/paintStrokes';
 import type { PaintDuration } from '@core/paint/paintCapture';
 import { runDocumentEdit } from '@core/commands/documentEdit';
-import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
+import { getRemappedTime } from '@core/timeline/TimelineController';
 import { usePaintStore } from '@stores/paintStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -117,18 +118,36 @@ export function PaintPanel(): JSX.Element {
   const paint = usePaintStore();
   const activeTool = useUIStore((s) => s.activeTool);
   const selectedIds = useSelectionStore((s) => s.ids);
+  // B4-gap: paint strokes — the stroke list, each stroke's video switch and
+  // whether its Path is keyed are layer data the API does not carry yet (a
+  // stroke is not an API group; its Path is a data track), so the list reads
+  // the legacy paint record and re-renders on the scene revision.
   useSceneRevision((s) => s.rev);
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
   const tool = currentPaintTool();
   const layerId = selectedIds.length === 1 ? selectedIds[0]! : null;
-  const layer = layerId ? defaultSceneGraph.getNode(layerId) : undefined;
-  const paintable = !!layer && isPaintableKind(layer);
+  // The layer header and the comp's top layers (the clone Source list) come
+  // from the document mirror.
+  const activeComp = useActiveCompId();
+  const m = documentMirror();
+  const compId = activeComp ?? m.compIds[0];
+  const watch = useMemo(
+    () => ['layers', ...(layerId ? [`layer:${layerId}`] : []), ...(compId ? [`order:${compId}`, `comp:${compId}`] : [])],
+    [layerId, compId],
+  );
+  useMirrorKeys(watch);
+  const layer = layerId ? m.layer(layerId) : undefined;
+  const paintable = isPaintableLayer(layer);
   const cfg = layerId ? getNodePaint(layerId) : null;
   const names = cfg ? strokeDisplayNames(cfg.strokes) : new Map<string, string>();
-  const compLayers = defaultSceneGraph.getChildren(activeCompRootId()).filter((n) => isPaintableKind(n));
+  const compLayers = (compId ? m.comp(compId)?.layers ?? [] : [])
+    .map((id) => m.layer(id))
+    .filter((l): l is NonNullable<typeof l> => !!l && !l.parent && isPaintableLayer(l));
 
-  const layerTime = (): number => (layerId ? getRemappedTime(layerId, getTimelineController().currentSeconds) : 0);
+  // B4-gap: the layer time under the playhead goes through the layer's time
+  // remap (engine evaluation) — the legacy path-key write below needs it.
+  const layerTime = (): number => (layerId ? getRemappedTime(layerId, playheadSeconds()) : 0);
 
   return (
     <div className={styles.panelRoot} aria-label="Paint">

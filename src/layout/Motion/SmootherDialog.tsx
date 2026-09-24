@@ -19,7 +19,8 @@ import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { defaultAnimation, type Keyframe, type PropPath } from '@motion/animation';
 import { smoothTrackKeyframes } from '@core/animation/keyframeAssistants';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { documentMirror } from '@stores/documentMirror';
 import { beginTrackPreview } from './assistantPreview';
 import styles from './AssistantDialog.module.css';
 
@@ -35,10 +36,18 @@ export interface SmootherTrack {
 /** The tracks The Smoother can act on, in the engine's own property order. */
 export function smootherTracks(nodeId: string): SmootherTrack[] {
   const out: SmootherTrack[] = [];
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  const tree = m.tree(nodeId);
+  // B4-gap: the per-MEMBER keyframe lists (x and y of an unseparated Position
+  // keyed — and smoothed — independently). The API keys a whole property (one
+  // keyframe per time for every dimension, ENGINE_API.md §3.3), and the
+  // Smoother's preview writes these lists back verbatim (assistantPreview.ts,
+  // B3-legacy); per-member key lists in the API would close both.
   for (const prop of defaultAnimation.animatedProps(nodeId)) {
     const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
     if (!kfs || kfs.length < MIN_KEYFRAMES) continue;
-    out.push({ prop, label: resolvePropertyMeta(prop, nodeId).label, count: kfs.length });
+    out.push({ prop, label: mirrorPropertyMeta(prop, layer, tree).label, count: kfs.length });
   }
   return out;
 }

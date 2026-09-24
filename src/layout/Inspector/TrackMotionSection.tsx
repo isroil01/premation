@@ -31,18 +31,25 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { flicksToSeconds, type LayerInfo } from '@motion/engine-api';
 import { Button } from '@components/Button';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { canReparent } from '@core/scene/parenting';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { getNodeMask } from '@core/effects/mask';
-import { sourceDisplaySize } from '@core/tracking/trackerSource';
+import {
+  compFps,
+  useActiveMirrorComp,
+  useMirrorComp,
+  useMirrorItem,
+  useMirrorKeys,
+  useMirrorLayer,
+  useMirrorLayers,
+  useMirrorTree,
+} from '@hooks/useMirror';
+import { canParentTo, footageDisplaySize, maskVertexCount, siblingSourceIds } from '@core/mirror/tracking';
 import { webCodecsAvailable } from '@core/video/exactVideoSource';
 import { qualityOf } from './trackMotion/trackMotionCopy';
-import { trackMotionActions, type StabVariant, type TrackMotionContext } from './trackMotion/trackMotionActions';
+import { trackMotionActions, type StabVariant, type TrackComp, type TrackMotionContext } from './trackMotion/trackMotionActions';
 import { AdvancedTracking } from './trackMotion/AdvancedTracking';
 import styles from './TrackMotionSection.module.css';
 
@@ -55,7 +62,6 @@ import styles from './TrackMotionSection.module.css';
  */
 
 export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
   const mode = useTrackerStore((s) => s.mode);
   const points = useTrackerStore((s) => s.points);
   const featureHalf = useTrackerStore((s) => s.featureHalf);
@@ -70,9 +76,18 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
   const autoPlan = useTrackerStore((s) => s.autoPlan);
   const store = useTrackerStore;
   const time = useActiveWorkspace()?.time ?? 0;
-  const fps = useCompositionStore((c) => c.fps) || 30;
-  const durationSeconds = useCompositionStore((c) => c.durationSeconds);
-  const comp = useCompositionStore((c) => c.comp());
+  const m = documentMirror();
+  const layer = useMirrorLayer(nodeId);
+  // The active composition's settings (the mirror, B4) — the layer's own
+  // composition when the tab shows something the document does not list as one.
+  const activeComp = useActiveMirrorComp();
+  const ownComp = useMirrorComp(layer?.comp);
+  const settings = (activeComp ?? ownComp)?.settings;
+  const fps = compFps(activeComp ?? ownComp);
+  const durationSeconds = settings ? flicksToSeconds(settings.duration) : 0;
+  const compWidth = settings?.width ?? 0;
+  const compHeight = settings?.height ?? 0;
+  const comp = useMemo<TrackComp>(() => ({ width: compWidth, height: compHeight }), [compWidth, compHeight]);
   const [targetId, setTargetId] = useState(nodeId);
   const [stabVariant, setStabVariant] = useState<StabVariant>('similarity');
   // The null the LAST "Create null & apply" made — while it exists, the card
@@ -86,9 +101,12 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
     setAttachId(null);
   }, [result, nodeId]);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  const src = sourceDisplaySize(nodeId);
-  const maskPoints = node ? getNodeMask(nodeId).paths.reduce((n, p) => n + p.points.length, 0) : 0;
+  // The footage item (its size and pixel aspect) and the layer's property
+  // tree (its masks) — each hook re-renders on its own record's change.
+  useMirrorItem(layer?.source);
+  const tree = useMirrorTree(nodeId);
+  const src = footageDisplaySize(m, nodeId);
+  const maskPoints = tree ? maskVertexCount(m, nodeId) : 0;
 
   // Opening the section for a layer arms the overlay for it and seeds the
   // mode's points so there are handles to grab at all. The section is mounted
@@ -119,21 +137,18 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
     return () => window.removeEventListener('keydown', onKey, true);
   }, [autoPhase, store]);
 
-  const targets = useMemo(() => {
-    if (!node) return [];
-    // NOT getChildren(node.parent): on a fresh unsaved project layers hang
-    // off the VIRTUAL 'comp_root' — a fallback id with no engine node — and
-    // getChildren of a non-node is []. traverse sees every registered node,
-    // so same-parent comparison works for real and virtual parents alike.
-    const sameParent: typeof node[] = [];
-    defaultSceneGraph.traverse((n) => {
-      if ((n.parent ?? null) === (node.parent ?? null)) sameParent.push(n);
-    });
-    return sameParent.length > 0 ? sameParent : [node];
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
-  }, [node, useSceneRevision((s) => s.rev)]);
+  // The layers under the same parent (the composition's top layers when it
+  // has none), this one among them, top of the stack first. The parent's
+  // header carries its children; a comp's top layers are its stack order.
+  useMirrorKeys(layer?.parent ? [`layer:${layer.parent}`] : layer ? [`order:${layer.comp}`, `comp:${layer.comp}`] : []);
+  const siblingInfos = useMirrorLayers(siblingSourceIds(m, nodeId));
+  const targets = useMemo<readonly LayerInfo[]>(() => {
+    if (!layer) return [];
+    const sameParent = siblingInfos.filter((l): l is LayerInfo => !!l && l.parent === layer.parent);
+    return sameParent.length > 0 ? sameParent : [layer];
+  }, [siblingInfos, layer]);
 
-  if (!node || !src) return null;
+  if (!layer || !src) return null;
 
   if (!webCodecsAvailable()) {
     return <p className={styles.cardHint}>Tracking needs WebCodecs, which this runtime does not have.</p>;
@@ -153,7 +168,7 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
   // deliberately absent: its content is where the motion CAME from, so
   // parenting it to the null plays that motion twice.
   const attachCandidates = createdNullId
-    ? targets.filter((t) => t.id !== createdNullId && t.id !== nodeId && canReparent(t.id, createdNullId))
+    ? targets.filter((t) => t.id !== createdNullId && t.id !== nodeId && canParentTo(m, t.id, createdNullId))
     : [];
   const attachValue = attachId ?? attachCandidates[0]?.id ?? '';
 

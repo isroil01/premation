@@ -15,6 +15,10 @@ command endGesture = 5 [control] { gesture: u32 = 1; commit: bool = 2; }
 /// Drop all history (the document is unchanged).
 command clearHistory = 6 [control] {}
 command setHistoryLimit = 7 [control] { entries: u32 = 1; }
+/// B3z — History panel ▸ Snapshot: push a NAMED entry that changes nothing, a point the panel can jump back to (Photoshop's snapshot; After Effects has none). Undoing / redoing it changes nothing and moves the revision like any step. Clears the redo stack like any new entry. Refused while a gesture is open (`gestureOpen`); an empty label is `invalidArgument`.
+command addHistoryCheckpoint = 21 [control] { label: string = 1; }
+/// B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches, materials and plugin storage are applied too but — like every authored extra no command edits — are not part of the entry. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default "Restore Version").
+command restoreDocument = 20 { document: bytes = 1; label?: string = 2; }
 
 struct HistoryStep {
   /// Label of the entry that was undone / redone.

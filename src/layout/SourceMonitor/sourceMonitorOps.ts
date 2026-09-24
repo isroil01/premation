@@ -41,7 +41,11 @@
 
 import type { Command, LayerTimingPatch } from '@motion/engine-api';
 import { Clip, type ClipData } from '@motion/timeline';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { settingsFps, timingBarFrames } from '@core/mirror/compFacts';
+import { isInsideGroup } from '@core/mirror/layerTree';
 import { framesToFlicks } from '@core/engine/time';
 import { compTime } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
@@ -70,11 +74,29 @@ export type Placement =
  * as "the end" it is supposed to follow.
  */
 export function compEndSeconds(): number {
-  const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps || 30;
+  const { fps, bars } = activeCompBars();
   let end = 0;
-  for (const l of controller.layersOfComp()) end = Math.max(end, l.start + l.duration);
+  for (const { bar } of bars) end = Math.max(end, bar.start + bar.duration);
   return end / fps;
+}
+
+/**
+ * The active composition's clip bars (frames), from the document mirror: every
+ * layer of its stack that is a clip of its own — a group's members are not
+ * (the timeline gives them no bar).
+ */
+function activeCompBars(): { fps: number; bars: Array<{ layer: string; bar: ClipData }> } {
+  const m = documentMirror();
+  const id = activeCompIdNow();
+  const comp = id ? m.comp(id) : undefined;
+  const fps = settingsFps(comp?.settings) || 30;
+  const bars: Array<{ layer: string; bar: ClipData }> = [];
+  for (const layerId of comp?.layers ?? []) {
+    const l = m.layer(layerId);
+    if (!l || isInsideGroup(m, layerId)) continue;
+    bars.push({ layer: layerId, bar: timingBarFrames(l.timing, fps) });
+  }
+  return { fps, bars };
 }
 
 /** The absolute `setLayerTiming` patch that gives a layer the bar `to` (frames of its comp). */
@@ -100,19 +122,20 @@ export interface SourceRangeEdit {
  * `atSeconds` — computed with the timeline's clip math on a clone (end trim,
  * then start trim, then the placement: the legacy order and clamps).
  *
- * Null when the node has no bar (nothing was seeded, or the caller ran before
- * `syncFromScene`).
+ * The bar is the layer's mirror timing (in/out/start, source bound). Null when
+ * the node is not a layer the mirror knows.
  */
 export function sourceRangeEdit(nodeId: string, range: SourceRange, atSeconds: number): SourceRangeEdit | null {
-  const controller = getTimelineController();
-  const clip = controller.getLayersForNode(nodeId)[0];
-  if (!clip) return null;
-  const fps = controller.fpsForNode(nodeId) || 30;
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  if (!layer) return null;
+  const fps = settingsFps(m.comp(layer.comp)?.settings) || 30;
+  const clip = timingBarFrames(layer.timing, fps);
   // The bar's own origin, not zero: `syncFromScene` seeds `start: 0`, but a
   // caller that placed the layer first would otherwise have its offset read as
   // part of the source window.
   const barStart = clip.start / fps;
-  const trial = Clip.fromJSON(clip.clip.toJSON());
+  const trial = Clip.fromJSON(clip);
   // End BEFORE start — see the header.
   trial.trimEnd(Math.round((barStart + range.outSec) * fps));
   trial.trimStart(Math.round((barStart + range.inSec) * fps));
@@ -127,17 +150,15 @@ export function sourceRangeEdit(nodeId: string, range: SourceRange, atSeconds: n
  * the range.
  */
 export function overwriteCommands(keepNodeId: string, startF: number, endF: number): { commands: Command[]; covered: number } {
-  const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps || 30;
+  const { fps, bars } = activeCompBars();
   const f = (frame: number): number => framesToFlicks(frame, fps);
   const commands: Command[] = [];
   const touched = new Set<string>();
   let covered = 0;
-  for (const l of controller.layersOfComp()) {
-    const nodeId = l.sourceId;
-    if (!nodeId || nodeId === keepNodeId || touched.has(nodeId)) continue;
-    const s = l.start;
-    const e = l.start + l.duration;
+  for (const { layer: nodeId, bar } of bars) {
+    if (nodeId === keepNodeId || touched.has(nodeId)) continue;
+    const s = bar.start;
+    const e = bar.start + bar.duration;
     if (e <= startF || s >= endF) continue; // no overlap
     touched.add(nodeId);
     if (s < startF && e > endF) {
@@ -162,7 +183,7 @@ export function overwriteCommands(keepNodeId: string, startF: number, endF: numb
  * `keepNodeId`) as one undo entry. Returns how many clips were left alone.
  */
 export async function overwriteUnder(keepNodeId: string, startSeconds: number, endSeconds: number): Promise<number> {
-  const fps = getTimelineController().timeline.getFrameRate().fps || 30;
+  const { fps } = activeCompBars();
   const { commands, covered } = overwriteCommands(keepNodeId, Math.round(startSeconds * fps), Math.round(endSeconds * fps));
   if (commands.length > 0) await edit('Overwrite', commands);
   return covered;
@@ -191,11 +212,10 @@ export async function insertFromSource(
   placement: Placement,
   opts: { overwrite?: boolean } = {},
 ): Promise<string | null> {
-  const controller = getTimelineController();
   // Captured BEFORE the (async) insert: the transport may be running, and the
   // clip must land where the playhead was when the user pressed the button —
   // the same rule, and the same reason, as `insertMediaAtPlayhead`.
-  const at = placement.at === 'playhead' ? controller.currentSeconds
+  const at = placement.at === 'playhead' ? playheadSeconds()
     : placement.at === 'end' ? compEndSeconds()
       : Math.max(0, placement.seconds);
 

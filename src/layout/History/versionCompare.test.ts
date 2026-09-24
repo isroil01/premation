@@ -49,7 +49,8 @@ describe('version compare wiring', () => {
     const dialog = read('VersionCompareDialog.tsx');
     const restore = read('versionRestore.ts');
     expect(dialog).toContain('restoreVersionAsOneEdit(version.id)');
-    expect(restore).toContain('.flush()');
-    expect(restore).toContain("record('Restore version', true)");
+    // The engine's undoable whole-document restore (B3z), labelled for Edit ▸ Undo.
+    expect(restore).toContain("type: 'restoreDocument'");
+    expect(restore).toContain("'Restore version'");
   });
 });

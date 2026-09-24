@@ -29,12 +29,14 @@
  * `@motion/workspace` engine via {@link useWorkspace}.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useActiveMirrorComp, useMirrorSelect } from '@hooks/useMirror';
+import { isReplaceableSourceLayer, uiKindOf } from '@core/mirror/layerKinds';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { compScreenRect } from './compScreenRect';
@@ -44,8 +46,6 @@ import {
   insertText,
   setNodeWorldPosition,
 } from '@core/scene/sceneInsert';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind, flattenComposition } from '@core/scene/sceneDerive';
 import { EmptyCompositionView } from './EmptyCompositionView';
 import { insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
 import { insertCursorItem } from '@core/library/cursorLibrary';
@@ -55,7 +55,6 @@ import { applyTransitionItem } from '@core/library/transitionLibrary';
 import { insertSfxItem } from '@core/library/sfxLibrary';
 import { insertLottieItemEdit } from '@layout/EditorLayout/lottieInsertEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { useAssetStore } from '@stores/assetStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -94,7 +93,6 @@ import { InlineAiPrompt } from './InlineAiPrompt';
 import { installViewportCommands } from './viewportCommands';
 import { installLayerSettingsCommands } from '@layout/Composition/layerSettingsCommands';
 import { useGuideSync } from './useGuideSync';
-import { resolveReplaceTarget } from '@core/scene/replaceSourceDrop';
 import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
@@ -123,6 +121,14 @@ export interface WorkspaceViewportProps {
  * outline" — the viewport itself does nothing with them, but every key not in
  * this set returns before the active tool is ever offered it.
  */
+/** Whether a composition (by id) holds any layer that is not a bare group — the mirror's own records. */
+function compHasContent(m: ReturnType<typeof documentMirror>, comp: string): boolean {
+  return (m.comp(comp)?.layers ?? []).some((id) => {
+    const l = m.layer(id);
+    return !!l && uiKindOf(l) !== 'group';
+  });
+}
+
 const VIEWPORT_KEYS = new Set([
   'Space', 'Delete', 'Backspace', 'Escape', 'Enter', 'NumpadEnter',
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
@@ -146,8 +152,9 @@ const VIEWPORT_KEYS = new Set([
  */
 function TransparencyGrid(): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const settings = useActiveMirrorComp()?.settings;
+  const compWidth = settings?.width ?? 1920;
+  const compHeight = settings?.height ?? 1080;
 
   useEffect(() => {
     const ws = getWorkspaceController().ws;
@@ -243,23 +250,19 @@ export function WorkspaceViewport({
   // clicking "New Composition" and creating one left the cards covering the
   // brand-new comp — the create looked like it did nothing.
   const allCompsPristine = useProjectStore((s) => Object.values(s.comps).every((c) => c.pristine === true));
-  const sceneIsEmpty = useMemo(() => {
-    if (activeCompId && defaultSceneGraph.getNode(activeCompId)) {
-      return !flattenComposition(defaultSceneGraph, activeCompId)
-        .some((n) => readNodeKind(n) !== 'group');
-    }
-    let hasContent = false;
-    defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
-    return !hasContent;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
-  }, [sceneRev, activeCompId]);
+  // Read from the document mirror: re-evaluated when a composition's stack or
+  // the layer set changes ('comps' fires on every stack order change).
+  const sceneIsEmpty = useMirrorSelect(['comps', 'layers'], (m) => {
+    if (activeCompId && m.comp(activeCompId)) return !compHasContent(m, activeCompId);
+    return !m.compIds.some((c) => compHasContent(m, c));
+  });
   // Tools that CREATE content dismiss the empty-comp surface: reaching for
   // the pen or a shape is the third way to start, and the surface must not
   // stand between the tool and the canvas. Navigation/selection tools keep it
   // up — there is nothing to select or pan over yet.
   const activeTool = useUIStore((s) => s.activeTool);
   const creationToolActive = !['select', 'direct-select', 'rotate', 'pan-behind', 'hand', 'zoom', 'move'].includes(activeTool);
-  const transparent = useCompositionStore((s) => s.transparent);
+  const transparent = useActiveMirrorComp()?.settings.transparent === true;
   const workspaceMode = useWorkspaceViewStore((s) => s.mode);
   // Multi-view (AE-style): '2' shrinks the interactive stage to the left half
   // (one view-only pane on the right); '4' shrinks it to the top-left quadrant
@@ -279,15 +282,11 @@ export function WorkspaceViewport({
    * `sourceInfo.displaySize` multiplies the stored width by `interpret.par`,
    * so an anamorphic plate is a square-pixel layer of the right shape from
    * import onward. What is left for a viewport correction is the
-   * COMPOSITION's own pixel aspect — and the composition model has no such
-   * field yet (the Composition Settings row that would add it is not this
-   * directory's to write). So this reads it defensively and resolves to 1
-   * until that lands, at which point the toggle starts working with no change
-   * here. On a square-pixel comp it is a no-op, which is also true in AE.
+   * COMPOSITION's own pixel aspect — the mirror's `CompSettings.pixelAspect`
+   * (1 until a comp says otherwise). On a square-pixel comp it is a no-op,
+   * which is also true in AE.
    */
-  const compPixelAspect = useCompositionStore(
-    (s) => (s as { pixelAspect?: number }).pixelAspect ?? 1,
-  );
+  const compPixelAspect = useActiveMirrorComp()?.settings.pixelAspect ?? 1;
   const parCorrection = useViewportDisplayStore((s) => s.pixelAspectCorrection);
   const viewportPar = parCorrection && compPixelAspect > 0 ? compPixelAspect : 1;
 
@@ -504,8 +503,8 @@ export function WorkspaceViewport({
       // "Empty" = no content layers anywhere in the scene. Counting the comp
       // root's children breaks on fresh unsaved projects (layers hang off the
       // virtual comp_root), so ask the nodes themselves.
-      let hasContent = false;
-      defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
+      const m = documentMirror();
+      const hasContent = m.compIds.some((c) => compHasContent(m, c));
       const first = imported[0];
       if (!hasContent && imported.length === 1 && first && first.type === 'video') {
         // New Comp from Footage (conformed to the clip, tab + selection): one entry.
@@ -525,7 +524,7 @@ export function WorkspaceViewport({
     const local = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const controller = getWorkspaceController();
     const world = controller.ws.screenToWorld(local);
-    const comp = activeCompRootId();
+    const comp = activeCompIdNow() ?? 'comp_root';
 
     // Library and footage inserts: the builder + its placement under the cursor run
     // OFF-document and land as ONE pasteLayers entry (offDocument.ts), selected.
@@ -549,7 +548,14 @@ export function WorkspaceViewport({
         // the selected one), keeping its transform, keyframes and effects.
         if (e.altKey) {
           const hit = controller.ws.hitTestScreen(local);
-          void replaceSourceWithAsset(resolveReplaceTarget(hit?.id), payload.assetId);
+          // The layer under the pointer when it can take a new source, else the
+          // single selected one that can (replaceSourceDrop.resolveReplaceTarget).
+          const m = documentMirror();
+          const sel = useSelectionStore.getState().ids;
+          const target = hit && isReplaceableSourceLayer(m.layer(hit.id))
+            ? hit.id
+            : sel.length === 1 && isReplaceableSourceLayer(m.layer(sel[0]!)) ? sel[0]! : null;
+          void replaceSourceWithAsset(target, payload.assetId);
           break;
         }
         const asset = useAssetStore.getState().assets.find((a) => a.id === payload.assetId);

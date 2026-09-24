@@ -12,10 +12,9 @@
 
 import { create } from 'zustand';
 import { api, type ProjectVersionSummary } from '@core/api/client';
-import { restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
+import type { EditorDocument } from '@core/api/cloudDocument';
 import { getCloudProjectId } from './cloudProjectStore';
 import { useProjectStore } from './projectStore';
-import { bumpScene } from './sceneStore';
 import { useUIStore } from './uiStore';
 
 /**
@@ -42,7 +41,12 @@ interface VersionHistoryState {
   /** Load a page. Omit `page` to reload the one on screen. */
   load: (page?: { limit: number; offset: number }) => Promise<void>;
   saveCheckpoint: (label?: string) => Promise<void>;
-  restore: (versionId: string) => Promise<void>;
+  /**
+   * Restore a version: the server makes it the project's head, then `apply`
+   * lands its document in the editor (the engine's undoable `restoreDocument`,
+   * versionRestore.ts) and reports whether it did.
+   */
+  restore: (versionId: string, apply: (doc: EditorDocument) => Promise<boolean>) => Promise<void>;
 }
 
 export const useVersionHistoryStore = create<VersionHistoryState>((set, get) => ({
@@ -111,14 +115,13 @@ export const useVersionHistoryStore = create<VersionHistoryState>((set, get) => 
     }
   },
 
-  restore: async (versionId) => {
+  restore: async (versionId, apply) => {
     const projectId = getCloudProjectId();
     if (!projectId) return;
     set({ restoringId: versionId });
     try {
       const project = await api.restoreVersion(projectId, versionId);
-      restoreDocument(project.document as EditorDocument);
-      bumpScene();
+      if (!(await apply(project.document as EditorDocument))) throw new Error('the editor could not load that version');
       useUIStore.getState().notify({
         level: 'success',
         message: 'Restored the selected version into the editor.',

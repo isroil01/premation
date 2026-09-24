@@ -18,14 +18,37 @@
 import { useCallback } from 'react';
 import { StopwatchButton, KeyframeNavigator, type KeyframeNavigatorProps } from '@components/PropertyRow';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { trackNavigatorState } from '@core/inspector/keyframeNavigator';
-import { defaultAnimation } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompFps, useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, navigatorFor, type MirrorRead, type NavState } from '@core/mirror/selection';
 import { edit } from '@core/engine/uiEdits';
 import { allAddressable, keyToggleCommands } from './inspectorEdits';
 
 export type TrackNavigator = Omit<KeyframeNavigatorProps, 'label'>;
+
+/**
+ * The navigator over ONE layer's `tracks` at comp time `seconds`, from the
+ * mirror (the twin of `trackNavigatorState`): prev / next are the nearest keys
+ * across every animated track, the diamond is lit when EVERY animated track
+ * has a key at the playhead.
+ */
+function trackNavigatorOf(m: MirrorRead, nodeId: string, tracks: ReadonlyArray<string>, seconds: number): NavState {
+  const out: NavState = { hasPrev: false, hasNext: false, atKeyframe: false, prevT: null, nextT: null };
+  let animated = 0;
+  let at = 0;
+  for (const p of tracks) {
+    if (!isTrackAnimated(m, nodeId, p)) continue;
+    animated += 1;
+    const n = navigatorFor(m, [nodeId], p, seconds);
+    if (n.atKeyframe) at += 1;
+    if (n.hasPrev) out.hasPrev = true;
+    if (n.hasNext) out.hasNext = true;
+    if (n.prevT !== null && (out.prevT === null || n.prevT > out.prevT)) out.prevT = n.prevT;
+    if (n.nextT !== null && (out.nextT === null || n.nextT < out.nextT)) out.nextT = n.nextT;
+  }
+  out.atKeyframe = animated > 0 && at === animated;
+  return out;
+}
 
 /**
  * Navigator wiring for `tracks` on `nodeId` at the playhead. `values` supplies
@@ -40,9 +63,10 @@ export function useTrackNavigator(
   _values?: () => ReadonlyArray<number | undefined>,
 ): TrackNavigator {
   const time = useActiveWorkspace()?.time ?? 0;
-  const fps = useCompositionStore((c) => c.fps) || 30;
-  useAnimationRevision();
-  const nav = trackNavigatorState(nodeId, tracks, time);
+  const fps = useActiveCompFps();
+  // B4: wake on these tracks' keys / info on this layer only.
+  useMirrorTrackWatch([nodeId], tracks);
+  const nav = trackNavigatorOf(documentMirror(), nodeId, tracks, time);
   const seek = useCallback((t: number): void => {
     useProjectStore.getState().actions.setTime(t, Math.round(t * fps));
   }, [fps]);
@@ -56,7 +80,8 @@ export function useTrackNavigator(
       // The diamond acts on the ANIMATED tracks only; an animated track is
       // always in the engine's catalog. A node that is not a layer of a
       // composition has no API address and no keyframes to toggle here (B3z).
-      const live = tracks.filter((p) => defaultAnimation.isAnimated(nodeId, p));
+      const m = documentMirror();
+      const live = tracks.filter((p) => isTrackAnimated(m, nodeId, p));
       if (live.length === 0 || !allAddressable([nodeId], live)) return;
       const label2 = nav.atKeyframe ? `Remove ${label} keyframe` : `Add ${label} keyframe`;
       void keyToggleCommands([nodeId], live, time).then((cmds) => edit(label2, cmds));

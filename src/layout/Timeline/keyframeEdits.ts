@@ -22,103 +22,87 @@
  * the graph editor) — goes through `KeyframePatch.dim` (`memberKeyPatches`).
  * A legacy document whose member tracks disagree (a lone Scale X key) reads as
  * whole keys; the engine fills the missing members on the first edit.
+ *
+ * ── Reads (B4) ───────────────────────────────────────────────────────
+ * What these builders compose a command from — which key a selection id
+ * names, its comp time, the other members' numbers of a whole-key value — is
+ * read from the document MIRROR at call time (`documentMirror()`,
+ * `mirrorKeyOf`), never from the TS engine's tracks. The stored time a
+ * selection id carries is matched through `storedKeyIndex`
+ * (keyframeSelectionIds.ts: the one B4-gap, until the selection moves to
+ * engine ids).
  */
 
-import type { Command, CubicBezier, Easing, Keyframe, KeyframePatch, PropRef, SpatialInterp, Value } from '@motion/engine-api';
-import {
-  defaultAnimation,
-  expandKeyframeProp,
-  sampleTrack,
-  type BezierHandles,
-  type EasingKind,
-} from '@motion/animation';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
+import { secondsToFlicks, type Command, type CubicBezier, type Easing, type Keyframe, type KeyframePatch, type PropRef, type SpatialInterp, type Value } from '@motion/engine-api';
+import type { BezierHandles, EasingKind } from '@motion/animation';
 import { presetCurve, type EasingPreset } from '@core/animation/keyframeAssistants';
 import { EASING_KIND_LABEL } from '@core/animation/easingVocabulary';
 import { clipboardEntries } from '@core/animation/keyframeClipboard';
 import { apiUnitFactor } from '@core/engine/props';
-import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
-import { readNodeMask, readNodeMaskAnim } from '@core/effects/mask';
-import { fallbackKeyId, maskKeyId } from '@core/engine/props';
-import { readStaticPropertyValue } from '@core/inspector/propertyValue';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { engine, engineIdle } from '@core/engine/engineInstance';
 import { edit, type GestureSession } from '@core/engine/uiEdits';
-import { compTime, paths, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
-import { parseUiKey, uiKeyId, type UiKey } from './keyframeSelectionIds';
+import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
+import { memberKeysOf, type MemberKey, type StoredTimeOf } from '@core/mirror/memberKeys';
+import { numbersOfValue, type TrackRef as MirrorTrackRef } from '@core/mirror/trackIndex';
+import { documentMirror } from '@stores/documentMirror';
+import { isDataProperty } from './buildPropertyRows';
+import { mirrorKeyOf, parseUiKey, storedTimeOf, uiKeyId, type UiKey } from './keyframeSelectionIds';
 
 export { parseUiKey, uiKeyId, type UiKey };
 
 interface Target {
   ref: PropRef;
-  /** The member track the stored time is on (comp-time conversion). */
+  /** The member track the key was found on. */
   member: string;
+  /** The property, as the document mirror describes it. */
+  prop: MirrorTrackRef;
+  /** The key, seen from `member` (B4: read from the document mirror). */
+  key: MemberKey;
   /**
-   * The id the engine gives this key: the stored key's own id, else the
-   * engine's positional fallback for its LEAD member (props.readKeys' rule).
-   * Matched on STORED time, never on comp time — two keys a trimmed clip
-   * clamps onto the same comp instant must not resolve to one id.
+   * The id the engine gives this key (the mirror's keyframe id). Matched on
+   * STORED time, never on comp time — two keys a trimmed clip clamps onto the
+   * same comp instant must not resolve to one id.
    */
   expected: string;
 }
 
-function hasKeyAt(nodeId: string, member: string, t: number): boolean {
-  if (defaultAnimation.getTrackKeyframes(nodeId, member)?.some((k) => Math.abs(k.t - t) < 1e-9)) return true;
-  return defaultAnimation.getDataTrack(nodeId, member)?.keyframes.some((k) => Math.abs(k.t - t) < 1e-9) ?? false;
-}
-
-/** The API property a selection key lives on, or null when there is no such key any more. */
-function targetOf(k: UiKey): Target | null {
-  if (!defaultSceneGraph.getNode(k.nodeId)) return null;
-  if (k.prop === MASK_ANIM_PROP) {
-    // Whole-mask snapshots: any mask's Path addresses the snapshot entry.
-    const node = defaultSceneGraph.getNode(k.nodeId)!;
-    const first = readNodeMask(node)?.paths[0];
-    const mk = readNodeMaskAnim(node).find((x) => Math.abs(x.t - k.t) < 1e-9);
-    if (!first || !mk) return null;
-    return { ref: { layer: k.nodeId, path: paths.mask(first.id, 'path') }, member: MASK_ANIM_PROP, expected: maskKeyId(k.nodeId, mk, first.id) };
-  }
-  const members = expandKeyframeProp(k.prop);
-  const member = members.find((m) => hasKeyAt(k.nodeId, m, k.t)) ?? members[0]!;
-  const r = propRefForTrack(k.nodeId, member);
-  if (!r) return null;
-  let expected: string | null = null;
-  if (r.members.length === 0) {
-    const dk = defaultAnimation.getDataTrack(k.nodeId, member)?.keyframes.find((x) => Math.abs(x.t - k.t) < 1e-9);
-    if (dk) expected = dk.id ?? fallbackKeyId(k.nodeId, member, dk.t);
-  } else {
-    // The property's key at this time is its LEAD member's (the first keyed).
-    for (const m of r.members) {
-      const sk = defaultAnimation.getTrackKeyframes(k.nodeId, m)?.find((x) => Math.abs(x.t - k.t) < 1e-9);
-      if (sk) { expected = sk.id ?? fallbackKeyId(k.nodeId, m, sk.t); break; }
+/** Per-layer stored-time readers for one batch of lookups (one `storedKeyIndex` per layer, not per key). */
+function storedTimes(): (layer: string) => StoredTimeOf {
+  const cache = new Map<string, StoredTimeOf>();
+  return (layer) => {
+    let f = cache.get(layer);
+    if (!f) {
+      f = storedTimeOf(layer);
+      cache.set(layer, f);
     }
-  }
-  return expected ? { ref: r.ref, member, expected } : null;
+    return f;
+  };
 }
 
 /**
- * Selection ids → engine keyframe ids, in input order. Null when ANY of them no
- * longer names a key (a stale selection: the caller does nothing).
- * Unparseable ids are dropped.
+ * The API property a selection key lives on, or null when there is no such
+ * key any more — read from the document MIRROR (B4): the member tracks the row
+ * stands for, the first holding a key at the stored time (whole-mask rows: the
+ * first mask's Path, whose snapshot keys every mask shares).
  */
-export async function resolveKeyIds(uiIds: Iterable<string>): Promise<Map<string, string> | null> {
-  const keys: UiKey[] = [];
-  for (const id of uiIds) {
-    const k = parseUiKey(id);
-    if (k) keys.push(k);
-  }
-  return resolveKeys(keys);
+function targetOf(k: UiKey, storedT: StoredTimeOf = storedTimeOf(k.nodeId)): Target | null {
+  const m = documentMirror();
+  if (!m.layer(k.nodeId)) return null;
+  const hit = mirrorKeyOf(m, k, storedT);
+  if (!hit) return null;
+  return { ref: { layer: k.nodeId, path: hit.ref.path }, member: hit.track, prop: hit.ref, key: hit.key, expected: hit.key.key.id };
 }
 
-/** `resolveKeyIds` over already-decoded keys (keyed by their `id`). */
-export async function resolveKeys(uiKeys: ReadonlyArray<UiKey>): Promise<Map<string, string> | null> {
+/** Selection keys → their targets (null when any is gone), verified against the engine's own keys. */
+async function resolveTargets(uiKeys: ReadonlyArray<UiKey>): Promise<Map<string, Target> | null> {
+  const stored = storedTimes();
   const keys: Array<{ k: UiKey; tgt: Target }> = [];
   for (const k of uiKeys) {
-    const tgt = targetOf(k);
+    const tgt = targetOf(k, stored(k.nodeId));
     if (!tgt) return null;
     keys.push({ k, tgt });
   }
-  const out = new Map<string, string>();
+  const out = new Map<string, Target>();
   if (keys.length === 0) return out;
   const byPath = new Map<string, PropRef>();
   for (const x of keys) byPath.set(`${x.tgt.ref.layer}|${x.tgt.ref.path}`, x.tgt.ref);
@@ -130,8 +114,36 @@ export async function resolveKeys(uiKeys: ReadonlyArray<UiKey>): Promise<Map<str
   for (const set of res.value.sets) for (const kf of set.keyframes) known.add(`${set.prop.layer}|${set.prop.path}|${kf.id}`);
   for (const x of keys) {
     if (!known.has(`${x.tgt.ref.layer}|${x.tgt.ref.path}|${x.tgt.expected}`)) return null;
-    out.set(x.k.id, x.tgt.expected);
+    out.set(x.k.id, x.tgt);
   }
+  return out;
+}
+
+/**
+ * Selection ids → engine keyframe ids, in input order. Null when ANY of them no
+ * longer names a key (a stale selection: the caller does nothing).
+ * Unparseable ids are dropped.
+ */
+export async function resolveKeyIds(uiIds: Iterable<string>): Promise<Map<string, string> | null> {
+  return resolveKeys(decodeKeys(uiIds));
+}
+
+/** Decode selection ids (unparseable ones dropped). */
+function decodeKeys(uiIds: Iterable<string>): UiKey[] {
+  const keys: UiKey[] = [];
+  for (const id of uiIds) {
+    const k = parseUiKey(id);
+    if (k) keys.push(k);
+  }
+  return keys;
+}
+
+/** `resolveKeyIds` over already-decoded keys (keyed by their `id`). */
+export async function resolveKeys(uiKeys: ReadonlyArray<UiKey>): Promise<Map<string, string> | null> {
+  const targets = await resolveTargets(uiKeys);
+  if (!targets) return null;
+  const out = new Map<string, string>();
+  for (const [id, t] of targets) out.set(id, t.expected);
   return out;
 }
 
@@ -145,15 +157,15 @@ export async function resolveKeys(uiKeys: ReadonlyArray<UiKey>): Promise<Map<str
  */
 export async function moveKeyframesTo(moves: ReadonlyArray<{ id: string; time: number }>): Promise<void> {
   if (moves.length === 0) return;
-  const ids = await resolveKeyIds(moves.map((m) => m.id));
-  if (!ids) return;
+  const targets = await resolveTargets(decodeKeys(moves.map((m) => m.id)));
+  if (!targets) return;
   const byDelta = new Map<number, string[]>();
   for (const m of moves) {
-    const k = parseUiKey(m.id);
-    const eid = ids.get(m.id);
-    if (!k || !eid) continue;
-    const member = expandKeyframeProp(k.prop).find((p) => hasKeyAt(k.nodeId, p, k.t)) ?? k.prop;
-    const from = compTime(keyframeToCompTime(k.nodeId, k.t, member));
+    const tgt = targets.get(m.id);
+    if (!tgt) continue;
+    const eid = tgt.expected;
+    // The key's comp time as the engine reports it (the mirror's keyframe).
+    const from = tgt.key.key.time;
     const delta = compTime(Math.max(0, m.time)) - from;
     if (delta === 0) continue;
     const list = byDelta.get(delta) ?? [];
@@ -177,9 +189,17 @@ export async function deleteKeyframesUi(uiIds: ReadonlyArray<string>, label?: st
 
 // ── Easing ───────────────────────────────────────────────────────────
 
-/** Scalar tracks spell hold as 'step'; data tracks as 'hold' (the legacy writers' split). */
-function holdFor(k: UiKey): Easing {
-  return expandKeyframeProp(k.prop).some((p) => defaultAnimation.getDataTrack(k.nodeId, p)) ? 'hold' : 'step';
+const MASK_PATH = /^masks\/[^/]+\/path$/;
+
+/**
+ * Scalar tracks spell hold as 'step'; data tracks as 'hold' (the legacy
+ * writers' split). A data track is a property with no member tracks (Source
+ * Text, a paint path, gradient stops, a puppet pin); the whole-mask snapshot
+ * row is not one (its keys live beside the mask, not on a data track).
+ */
+function holdFor(tgt: Target): Easing {
+  if (MASK_PATH.test(tgt.ref.path)) return 'step';
+  return isDataProperty(tgt.prop.info) || tgt.prop.members.length === 0 ? 'hold' : 'step';
 }
 
 function toCubic(b: BezierHandles | readonly number[]): CubicBezier {
@@ -197,16 +217,16 @@ export async function easeKeyframes(
   label: string,
 ): Promise<void> {
   if (uiIds.length === 0) return;
-  const ids = await resolveKeyIds(uiIds);
-  if (!ids) return;
+  const targets = await resolveTargets(decodeKeys(uiIds));
+  if (!targets) return;
   const patches: KeyframePatch[] = [];
   const seen = new Set<string>();
   for (const id of uiIds) {
-    const k = parseUiKey(id);
-    const eid = ids.get(id);
-    if (!k || !eid || seen.has(eid)) continue;
+    const tgt = targets.get(id);
+    const eid = tgt?.expected;
+    if (!tgt || !eid || seen.has(eid)) continue;
     seen.add(eid);
-    const easing: Easing = curve.easing === 'hold' ? holdFor(k) : curve.easing as Easing;
+    const easing: Easing = curve.easing === 'hold' ? holdFor(tgt) : curve.easing as Easing;
     patches.push({
       id: eid,
       easing,
@@ -232,24 +252,26 @@ export function easePresetOnKeys(uiIds: ReadonlyArray<string>, preset: EasingPre
 export async function easeKindOnKeys(uiIds: ReadonlyArray<string>, kind: EasingKind): Promise<void> {
   if (uiIds.length === 0) return;
   const label = `Set keyframe easing: ${EASING_KIND_LABEL[kind]}`;
-  const ids = await resolveKeyIds(uiIds);
-  if (!ids) return;
+  const targets = await resolveTargets(decodeKeys(uiIds));
+  if (!targets) return;
   const patches: KeyframePatch[] = [];
   const seen = new Set<string>();
   for (const id of uiIds) {
-    const k = parseUiKey(id);
-    const eid = ids.get(id);
-    if (!k || !eid || seen.has(eid)) continue;
+    const tgt = targets.get(id);
+    const eid = tgt?.expected;
+    if (!tgt || !eid || seen.has(eid)) continue;
     seen.add(eid);
-    const lead = expandKeyframeProp(k.prop)
-      .map((p) => defaultAnimation.getTrackKeyframes(k.nodeId, p)?.find((x) => Math.abs(x.t - k.t) < 1e-6))
-      .find((x) => x !== undefined);
+    // The key as its row's member sees it — numeric keys only (a data key has
+    // no curve handles to seed), as the legacy `setEasing` read it.
+    const lead = numbersOfValue(tgt.key.key.value).length > 0 ? tgt.key : undefined;
     const patch: KeyframePatch = { id: eid, easing: kind as Easing, spatialIn: [], spatialOut: [] };
     if (lead && !lead.bezier) {
       if (kind === 'bezier') patch.bezier = { x1: 0.25, y1: 0.1, x2: 0.25, y2: 1 };
       else if (kind === 'autoBezier' || kind === 'continuousBezier') patch.bezier = { x1: 0.333, y1: 0, x2: 0.667, y2: 1 };
     }
-    if (lead && kind === 'bezier' && lead.continuous === undefined) patch.continuous = true;
+    // A fresh bezier key is continuous. The API states continuity as a boolean
+    // (no "never set"), so "fresh" is a key that is not continuous yet.
+    if (lead && kind === 'bezier' && !lead.continuous) patch.continuous = true;
     patches.push(patch);
   }
   if (patches.length === 0) return;
@@ -280,15 +302,21 @@ export interface MemberKeyWrite {
   value?: number;
 }
 
-/** Every member's number at stored time `t` (its key, else its curve, else its static value), stored units. */
-function memberNumbersAt(nodeId: string, members: readonly string[], t: number): number[] {
-  return members.map((m) => {
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, m);
-    const k = kfs?.find((x) => x.t === t);
-    if (k) return k.value;
-    if (kfs && kfs.length > 0) return sampleTrack({ nodeId, prop: m, keyframes: kfs }, t) ?? 0;
-    return readStaticPropertyValue(nodeId, m) ?? 0;
-  });
+/**
+ * The whole property's numbers at stored time `t`, API units — read from the
+ * document MIRROR (B4): its key there, else its value (static, or the curve at
+ * `t` read as comp time: the one caller without a key at `t` is a paste onto
+ * another layer, whose keys land on the comp axis).
+ */
+function apiNumbersAt(nodeId: string, path: string, t: number, storedT: StoredTimeOf = storedTimeOf(nodeId)): number[] {
+  const m = documentMirror();
+  const k = m.keyframes(nodeId, path).find((x) => storedT(x) === t);
+  return numbersOfValue(k ? k.value : m.valueAt(nodeId, path, secondsToFlicks(t)));
+}
+
+/** One member's API number from its stored number (colours are not scaled). */
+function toApi(valueType: Parameters<typeof valueOfNumbers>[0], member: string, n: number): number {
+  return valueType === 'color' ? n : n * apiUnitFactor(member);
 }
 
 /**
@@ -332,50 +360,52 @@ export function memberPatchFields(nodeId: string, member: string, w: MemberKeyWr
   };
   if (w.value !== undefined && r) {
     const members = r.members.length > 0 ? r.members : [member];
-    const nums = memberNumbersAt(nodeId, members, w.t);
-    nums[Math.max(0, members.indexOf(member))] = w.value;
-    patch.value = valueOfNumbers(r.valueType, nums.map((n, i) => (r.valueType === 'color' ? n : n * apiUnitFactor(members[i]))));
+    const idx = Math.max(0, members.indexOf(member));
+    const api = apiNumbersAt(nodeId, r.ref.path, w.t);
+    const nums = members.map((_m, i) => api[i] ?? 0);
+    nums[idx] = toApi(r.valueType, members[idx]!, w.value);
+    patch.value = valueOfNumbers(r.valueType, nums);
   }
   return patch;
 }
 
-/** A member's whole key at drag start: every member's number (stored units), for absolute value writes. */
+/** A member's whole key at drag start: every member's number, for absolute value writes. */
 export interface MemberKeyStart {
   members: readonly string[];
   /** This member's index in `members`. */
   index: number;
   valueType: Parameters<typeof valueOfNumbers>[0];
-  nums: number[];
+  /** Every member's number, API units (the mirror's key). */
+  api: number[];
 }
 
-/** Snapshot the whole key a member row's key belongs to (stored time `t`). Null when not a property. */
+/** Snapshot the whole key a member row's key belongs to (stored time `t`), from the document mirror. Null when not a property. */
 export function memberKeyStart(nodeId: string, member: string, t: number): MemberKeyStart | null {
   const r = propRefForTrack(nodeId, member);
   if (!r) return null;
   const members = r.members.length > 0 ? r.members : [member];
-  return { members, index: Math.max(0, members.indexOf(member)), valueType: r.valueType, nums: memberNumbersAt(nodeId, members, t) };
+  const api = apiNumbersAt(nodeId, r.ref.path, t);
+  return { members, index: Math.max(0, members.indexOf(member)), valueType: r.valueType, api: members.map((_m, i) => api[i] ?? 0) };
 }
 
-/** `start` with some members replaced (stored units) → the API Value of the whole key. */
+/** `start` with some members replaced (STORED units) → the API Value of the whole key. */
 export function memberKeyValue(start: MemberKeyStart, replace: ReadonlyMap<number, number>): Value {
-  const nums = start.nums.map((n, i) => replace.get(i) ?? n);
-  return valueOfNumbers(start.valueType, nums.map((n, i) => (start.valueType === 'color' ? n : n * apiUnitFactor(start.members[i]))));
+  const nums = start.api.map((n, i) => {
+    const r = replace.get(i);
+    return r === undefined ? n : toApi(start.valueType, start.members[i]!, r);
+  });
+  return valueOfNumbers(start.valueType, nums);
 }
 
 /**
  * Where the key with engine id `eid` sits now on `member`'s property (stored
  * time), or null — the selection's positional ids are rewritten from this
- * after a gesture moved keys (the diamond drag, roving).
+ * after a gesture moved keys (the diamond drag, roving). Read from the
+ * document mirror (B4).
  */
 export function keyTimeById(nodeId: string, member: string, eid: string): number | null {
-  const members = propRefForTrack(nodeId, member)?.members ?? [member];
-  for (const m of members.length > 0 ? members : [member]) {
-    const k = defaultAnimation.getTrackKeyframes(nodeId, m)?.find((x) => x.id === eid);
-    if (k) return k.t;
-    const dk = defaultAnimation.getDataTrack(nodeId, m)?.keyframes.find((x) => x.id === eid);
-    if (dk) return dk.t;
-  }
-  return null;
+  const hit = memberKeysOf(documentMirror(), nodeId, member, storedTimeOf(nodeId));
+  return hit?.keys.find((k) => k.key.id === eid)?.t ?? null;
 }
 
 /**
@@ -428,12 +458,17 @@ export async function pasteKeyframesAt(targetNodeIds: readonly string[], atCompT
       g.byT.set(e.t, at);
       groups.set(r.ref.path, g);
     }
+    const storedT = storedTimeOf(nodeId);
     for (const g of groups.values()) {
       const keys: Keyframe[] = [];
       for (const [t, byMember] of [...g.byT].sort((a, b) => a[0] - b[0])) {
         const lead = g.members.map((m) => byMember.get(m)).find((e) => e !== undefined)!;
-        const own = memberNumbersAt(nodeId, g.members, t);
-        const nums = g.members.map((m, i) => (byMember.get(m)?.value ?? own[i]!) * (g.vt === 'color' ? 1 : apiUnitFactor(m)));
+        // A member the clipboard lacks takes the target's own number (API units, from the mirror).
+        const own = byMember.size < g.members.length ? apiNumbersAt(nodeId, g.ref.path, t, storedT) : [];
+        const nums = g.members.map((m, i) => {
+          const e = byMember.get(m);
+          return e ? toApi(g.vt, m, e.value) : own[i] ?? 0;
+        });
         const anySpatial = g.members.some((m) => byMember.get(m)?.si !== undefined || byMember.get(m)?.so !== undefined);
         const dims = g.members.map((m) => {
           const e = byMember.get(m) ?? lead;

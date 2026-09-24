@@ -75,6 +75,7 @@ struct Registry {
   std::vector<std::string> maskKeys;
   std::vector<std::string> textPathParams;
   std::vector<std::string> labelColors;  ///< LABEL_COLORS[i].color
+  std::vector<std::string> labelIds;     ///< LABEL_COLORS[i].id (B3z: footage items store labels by id)
   Json presets;        ///< listPresets() minus applyFn (hasApplyFn marks those)
   Json factory;        ///< {particle, primitive, textSize, camera1920}
   /// Command wire id → 'edit' | 'control' | 'io' (the schema's attributes).

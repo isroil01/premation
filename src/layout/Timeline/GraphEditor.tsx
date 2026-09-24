@@ -41,7 +41,7 @@
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { clampPps, TIMELINE_PPS_MAX } from './zoomAnchor';
 import { Icon } from '@components/Icon';
-import { defaultAnimation, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
+import { expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
 import { easeKindOnKeys, easePresetOnKeys } from './keyframeEdits';
@@ -51,10 +51,8 @@ import {
 } from '@core/animation/easingVocabulary';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
-import { bumpScene } from '@stores/sceneStore';
 import { EaseLibrarySection } from '@layout/Motion/EaseLibrarySection';
-import { getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
-import type { KeyframePatch } from '@motion/engine-api';
+import { flicksToSeconds, secondsToFlicks, type KeyframePatch } from '@motion/engine-api';
 import { GestureSession, edit } from '@core/engine/uiEdits';
 import { engineIdle } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
@@ -71,10 +69,16 @@ import {
   type MemberKeyStart,
   type MemberKeyWrite,
 } from './keyframeEdits';
-import { parseUiKey, uiKeyId } from './keyframeSelectionIds';
+import { parseUiKey, storedTimeOf, uiKeyId } from './keyframeSelectionIds';
+import { isDataProperty } from './buildPropertyRows';
+import { CurveSampler, samplerPropKey } from './graphSamples';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayersWatch } from '@hooks/useMirror';
+import { memberKeysOf, type MemberKey, type StoredTimeOf } from '@core/mirror/memberKeys';
+import { membersOf } from '@core/mirror/trackIndex';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import {
   withOutgoingSpeed,
   withIncomingSpeed,
@@ -114,8 +118,6 @@ import {
   type ReferenceCurve,
 } from './graphReferenceCurve';
 import { usePropertySelectionStore } from '@stores/propertySelectionStore';
-import { propertyLabel } from '@core/inspector/propertyMeta';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import styles from './GraphEditor.module.css';
 
@@ -271,6 +273,33 @@ function trackKey(nodeId: string, prop: string): string {
   return `${nodeId}:${prop}`;
 }
 
+/**
+ * A member track's keys, from the document MIRROR (B4): the property's keys
+ * seen from this member — stored units, stored times (the selection's axis),
+ * comp seconds in `tAbs`. Undefined when the layer has no such track.
+ */
+function trackKeys(nodeId: string, prop: string, storedT: StoredTimeOf = storedTimeOf(nodeId)): MemberKey[] | undefined {
+  return memberKeysOf(documentMirror(), nodeId, prop, storedT)?.keys;
+}
+
+/**
+ * The member tracks the graph plots for a layer: every member of every
+ * animated NUMERIC property (a data property — Source Text, a path — has no
+ * curve), in the mirror's order.
+ */
+function graphTracksOf(nodeId: string): string[] {
+  const m = documentMirror();
+  const tree = m.tree(nodeId);
+  const out: string[] = [];
+  for (const [path, keys] of m.layerKeyframes(nodeId)) {
+    if (keys.length === 0) continue;
+    const info = tree?.nodes.get(path);
+    if (!info || isDataProperty(info)) continue;
+    for (const t of membersOf(info)) if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
 function findKfIndex(kfs: ReadonlyArray<{ t: number }>, t: number): number {
   return kfs.findIndex((k) => Math.abs(k.t - t) < 1e-9);
 }
@@ -350,7 +379,7 @@ function clampToNeighbours(t: number, nb: { prev?: number; next?: number } | und
  * meaning of "link": collinear tangents. Returns the write (none at the ends).
  */
 function alignTangentsWrites(nodeId: string, prop: string, t: number): MemberWrite[] {
-  const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
+  const kfs = trackKeys(nodeId, prop);
   if (!kfs) return [];
   const idx = findKfIndex(kfs, t);
   if (idx <= 0 || idx >= kfs.length - 1) return [];
@@ -374,7 +403,7 @@ function speedWrites(
   speed: number,
   side: 'in' | 'out' | 'linked',
 ): MemberWrite[] {
-  const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
+  const kfs = trackKeys(nodeId, prop);
   if (!kfs) return [];
   const i = findKfIndex(kfs, t);
   if (i < 0) return [];
@@ -411,7 +440,19 @@ export function GraphEditor({
   onScrub,
   propertyFilter,
 }: GraphEditorProps): JSX.Element {
-  const rev = useSceneRevision((s) => s.rev);
+  // B4: the curves are the document MIRROR's keys (and the engine's
+  // `sampleProperty` between them); redraw when a selected layer's header,
+  // property tree or keyframes change — keeps their trees loaded.
+  const rev = useMirrorLayersWatch(selectedNodeIds);
+  /** Bumped when an asynchronous curve sample lands (`CurveSampler`). */
+  const [samplesTick, setSamplesTick] = useState(0);
+  const samplerRef = useRef<CurveSampler | null>(null);
+  samplerRef.current ??= new CurveSampler(() => setSamplesTick((n) => n + 1));
+  const sampler = samplerRef.current;
+  useEffect(() => () => {
+    samplerRef.current?.dispose();
+    samplerRef.current = null;
+  }, []);
   const [mode, setMode] = useState<'value' | 'speed'>('value');
   /**
    * AE's two graph visibility modes. Component state, not a preference: there
@@ -472,22 +513,25 @@ export function GraphEditor({
    * curve as far as the eye is concerned.
    */
   const allTracks = useMemo(() => {
+    const m = documentMirror();
     const out: GraphTrack[] = [];
     let colorIdx = 0;
     for (const nodeId of selectedNodeIds) {
-      const layerName = defaultSceneGraph.getNode(nodeId)?.name ?? nodeId;
-      for (const track of defaultAnimation.tracksFor(nodeId)) {
+      const layer = m.layer(nodeId);
+      const layerName = layer?.name ?? nodeId;
+      const tree = m.tree(nodeId);
+      for (const prop of graphTracksOf(nodeId)) {
         out.push({
           nodeId,
-          prop: track.prop,
+          prop,
           layerName,
-          label: propertyLabel(track.prop, nodeId),
+          label: mirrorPropertyMeta(prop, layer, tree).label,
           color: COLORS[colorIdx++ % COLORS.length] ?? '#2988ff',
         });
       }
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mirror-watch driven (`rev`)
   }, [selectedNodeIds, rev]);
 
   /** Property ROW selection, expanded to the engine tracks it stands for. */

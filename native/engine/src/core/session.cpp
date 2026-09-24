@@ -13,6 +13,7 @@
 #include "fxstate.hpp"
 #include "handlers.hpp"
 #include "log.hpp"
+#include "native_effects.hpp"
 #include "queries.hpp"
 #include "readmodel.hpp"
 #include "scene_build.hpp"
@@ -662,6 +663,17 @@ struct ControlVisitor {
     s.emit_status();
     return result_for<api::EndGesture>();
   }
+  R operator()(const api::AddHistoryCheckpoint& c) const {
+    // B3z (LocalEngine addHistoryCheckpoint): a NAMED entry that changes nothing.
+    no_gesture_for(s, "close the gesture first");
+    const bool blank = std::all_of(c.label.begin(), c.label.end(), [](char ch) {
+      return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v';
+    });
+    if (blank) fail(ErrorCode::invalid_argument, "a checkpoint needs a name");
+    s.history_.push(doc::Entry{c.label, origin, {}});
+    s.emit_status();
+    return result_for<api::AddHistoryCheckpoint>();
+  }
   R operator()(const api::ClearHistory&) const {
     no_gesture_for(s, "close the gesture first");
     s.history_.clear();
@@ -730,8 +742,10 @@ struct ControlVisitor {
   }
   R operator()(const api::CancelJob& c) const { fail(ErrorCode::not_found, "no job '" + c.job + "'"); }
   R operator()(const api::SetPluginEnabled& c) const {
-    // No plugin is installed in the engine process (plugins host in the editor).
-    fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
+    // G1: native SDK plugins live in this process (src/plugins); JavaScript
+    // plugins are the editor's and are not ported (plan §5 G2).
+    if (!doc::NativeEffects::set_enabled(c.plugin, c.enabled)) fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
+    return result_for<api::SetPluginEnabled>();
   }
 
   // ── transport (transport.ts semantics, the C2 clock underneath) ──

@@ -11,6 +11,7 @@
 #include "catalog_data.hpp"
 #include "fxstate.hpp"
 #include "handlers_layers.hpp"
+#include "handlers_native.hpp"
 #include "jsmath.hpp"
 #include "rig.hpp"
 #include "strutil.hpp"
@@ -1190,6 +1191,7 @@ ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
     detail.set("effect", str(c.effect));
     fail(ErrorCode::not_found, "no effect '" + c.effect + "'", {.detail = js::stringify(detail)});
   }
+  native_check_addable(c.effect);  // G1: a disabled / failed plugin's effect
   std::vector<std::string> ids;
   for (const auto& layer : c.layers) {
     (void)require_layer(d, layer);
@@ -1213,6 +1215,7 @@ ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
     insert_at(effects, at, std::move(e));
     write_node_effects(d, layer, std::move(effects));
     write_inits(d, layer, "effects/" + ids[i] + "/", c.params);
+    native_effect_added(d, layer, ids[i], c.effect);  // G1: a plugin instance's initial sequence data
   }
   api::GroupList out;
   for (const auto& id : ids) out.groups.push_back("effects/" + id);
@@ -1727,8 +1730,9 @@ ResultOf<api::ApplyPreset> handle(const api::ApplyPreset& c, HCtx& x) {
 
 ResultOf<api::InvokeEffectAction> handle(const api::InvokeEffectAction& c, HCtx& x) {
   (void)resolve_group(x.d, c.group);
-  fail(ErrorCode::unsupported,
-       "effect action buttons belong to native SDK plugins (G1); the JavaScript plugin system is not ported (plan §5 G2)");
+  // G1: native SDK plugin effects (buttons, supervised params) — handlers_native.cpp.
+  native_invoke_action(x, c.group, c.action);
+  return {};
 }
 
 }  // namespace premation::doc

@@ -15,10 +15,12 @@ import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { openModal } from '@stores/modalStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsWorld } from '@core/mirror/compFacts';
+import { nextDeviceNameIn } from '@core/mirror/deviceNames';
 import { Project3D } from '@motion/scene';
-import { insertCamera, insertLight, insert3DPrimitive, nextDeviceName, type Primitive3DKind } from '@core/scene/sceneInsert';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { insertCamera, insertLight, insert3DPrimitive, type Primitive3DKind } from '@core/scene/sceneInsert';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import {
   defaultPrimitiveSpec,
@@ -34,12 +36,22 @@ import styles from './SceneInsertDialogs.module.css';
  *  Project3D maps that field of view onto the comp width. */
 const LENS_PRESETS_MM = [15, 20, 24, 28, 35, 50, 80, 135, 200] as const;
 
+/** The next free "Camera N" / "Light N" of the active composition (the dialogs' prefill). */
+function nextDeviceName(kind: 'camera' | 'light'): string {
+  return nextDeviceNameIn(documentMirror(), activeCompIdNow(), kind);
+}
+
+/** The composition the dialogs insert into (`activeCompRootId`'s rule). */
+function targetComp(): string {
+  return activeCompIdNow() ?? 'comp_root';
+}
+
 function fovForMm(mm: number): number {
   return (2 * Math.atan(18 / mm) * 180) / Math.PI;
 }
 
 function CameraDialog({ close }: { close: () => void }): JSX.Element {
-  const compWidth = useCompositionStore((s) => s.width);
+  const compWidth = useActiveMirrorComp()?.settings.width ?? 1920;
   const [name, setName] = useState(() => nextDeviceName('camera'));
   const [lensMm, setLensMm] = useState<number>(50);
   const [twoNode, setTwoNode] = useState(false);
@@ -50,7 +62,7 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
   const create = (): void => {
     // The camera builder (two-node POI, lens → focal length, placement) runs off-document and
     // lands as ONE pasteLayers entry (offDocument.ts).
-    void insertBuiltLayers('New Camera', activeCompRootId(), () => insertCamera({ name, focalLength: focalPx, twoNode }));
+    void insertBuiltLayers('New Camera', targetComp(), () => insertCamera({ name, focalLength: focalPx, twoNode }));
     close();
   };
 
@@ -123,7 +135,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
   // Seeded from the composition's World ▸ default sky, so the dialog opens on
   // the look the project is working in rather than always on Studio. It is a
   // starting point, not a lock — the menu below still changes it for this light.
-  const compDefaultSky = useCompositionStore((s) => s.defaultEnvPreset);
+  const compDefaultSky = settingsWorld(useActiveMirrorComp()?.settings).defaultEnvPreset;
   const [envPreset, setEnvPreset] = useState<'studio' | 'sky' | 'sunset'>(
     compDefaultSky === 'sky' || compDefaultSky === 'sunset' ? compDefaultSky : 'studio',
   );
@@ -132,7 +144,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
     // The light builder (type, colour, intensity, cone, shadows, environment sky) runs
     // off-document and lands as ONE pasteLayers entry. AE's New Light makes exactly the one
     // light asked for — no Ambient Fill beside it (the silent insert keeps adding one).
-    void insertBuiltLayers('New Light', activeCompRootId(), () => insertLight({
+    void insertBuiltLayers('New Light', targetComp(), () => insertLight({
       name,
       type,
       intensity,

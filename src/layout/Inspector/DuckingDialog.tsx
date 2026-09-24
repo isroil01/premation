@@ -19,13 +19,12 @@ import { Button } from '@components/Button';
 import { Slider } from '@components/Slider';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayers, useMirrorProperty, useMirrorSelect } from '@hooks/useMirror';
+import { duckingOf, soundLayersIn } from '@core/mirror/audio';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
 import {
   computeDuckEnvelope,
-  duckableLayers,
-  readDucking,
   thinLevels,
   DEFAULT_DUCKING,
   type ApplyDuckingResult,
@@ -40,13 +39,16 @@ interface Props {
 }
 
 export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
-  const rev = useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const stored = useMemo(() => (node ? readDucking(node) : null), [node, rev]);
+  // The remembered ducking (`audio/ducking`) and the layers with sound, from
+  // the document mirror (B4).
+  const duckInfo = useMirrorProperty(nodeId, 'audio/ducking');
+  const stored = useMemo(() => (duckInfo ? duckingOf(documentMirror(), nodeId) : null), [duckInfo, nodeId]);
 
   // Anything with sound except this layer. A video layer's own track is a
   // legitimate sidechain, which is why the list is not filtered by layer kind.
-  const sources = useMemo(() => duckableLayers().filter((l) => l.id !== nodeId), [nodeId, rev]);
+  const layerIds = useMirrorSelect(['layers'], (m) => m.layerIds());
+  const headers = useMirrorLayers(layerIds);
+  const sources = useMemo(() => soundLayersIn(headers).filter((l) => l.id !== nodeId), [nodeId, headers]);
 
   const [voiceNodeId, setVoiceNodeId] = useState<string>(
     () => stored?.voiceNodeId ?? sources[0]?.id ?? '',
@@ -73,6 +75,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
     let alive = true;
     setAnalysing(true);
     const timer = setTimeout(() => {
+      // Engine-side until E2: the voice's decode and its sidechain envelope.
       void computeDuckEnvelope(voiceNodeId, params)
         .then((env) => {
           if (!alive) return;

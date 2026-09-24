@@ -84,6 +84,15 @@ InterpPatch interpretation_patch(const api::InterpretationPatch& p) {
     else out.patch.set("fields", Json::string(*p.field_order == api::FieldOrder::upper_first ? "upper" : "lower"));
   }
   if (p.loops) out.patch.set("loopCount", Json::number(*p.loops));
+  // B3z: Remove Pulldown (sourceInfo.ts pulldownPhase, 0..4).
+  if (p.remove_pulldown) {
+    if (p.clear_remove_pulldown && *p.clear_remove_pulldown) {
+      fail(ErrorCode::invalid_argument, "send removePulldown or clearRemovePulldown, not both");
+    }
+    if (*p.remove_pulldown > 4) fail(ErrorCode::out_of_range, "the pulldown phase is 0..4");
+    out.patch.set("pulldownPhase", Json::number(*p.remove_pulldown));
+  }
+  if (p.clear_remove_pulldown && *p.clear_remove_pulldown) out.clear.emplace_back("pulldownPhase");
   if (p.invert_alpha && *p.invert_alpha) fail(ErrorCode::unsupported, "Invert Alpha is not implemented by the TypeScript renderer");
   if (p.premultiplied_matte || p.start_timecode || (p.color_profile && *p.color_profile != "auto")) {
     fail(ErrorCode::unsupported,
@@ -392,7 +401,8 @@ ResultOf<api::SetItemLabel> handle(const api::SetItemLabel& c, HCtx& x) {
     } else {
       patch_asset(d, r.id, [&](const Json& a) {
         Json next = a;
-        if (const auto col = label_color_of(c.label)) next.set("label", Json::string(*col));
+        // B3z: the palette id — the Project panel's (and the bundle's) form.
+        if (const auto col = label_id_of(c.label)) next.set("label", Json::string(*col));
         else next.erase("label");
         return next;
       });

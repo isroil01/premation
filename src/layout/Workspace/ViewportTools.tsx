@@ -27,24 +27,22 @@
  * that size difference is what says which things in the row you can click.
  */
 
-import { useEffect, useReducer } from 'react';
+import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
-import { hasPositionAnimation, smoothMotionPath, straightenMotionPath, hasPathTangents } from '@core/motion/motionPath';
-import { defaultAnimation } from '@motion/animation';
+import { smoothMotionPath, straightenMotionPath } from '@core/motion/motionPath';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useMirrorKeys } from '@hooks/useMirror';
+import { canBe3DLayer } from '@core/mirror/layerKinds';
+import { hasAnyKeys, hasPositionKeys, hasPositionTangents } from '@core/mirror/motionFacts';
+import { compHasKind } from '@core/mirror/deviceNames';
 import { editPositionKeys } from './viewportEdits';
 import { set3DEdit } from './layerMenuEdits';
 import { useRenderBackendStore } from '@stores/renderBackendStore';
 import styles from './ViewportTools.module.css';
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { is3DEnabled, canBe3D } from '@core/scene/threeD';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useUIStore } from '@stores/uiStore';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { cameraViewLabel, effectiveViewMode } from '@layout/TopNav/ViewControls';
 
 /**
@@ -117,38 +115,36 @@ export function ViewportTools(): JSX.Element | null {
   const motionPathVisible = useGuidesStore((s) => s.motionPathVisible);
   const toggleMotionPath = useGuidesStore((s) => s.toggleMotionPath);
 
-  // Scene mutations (3D switches, camera/light inserts) must refresh the
-  // availability checks below.
-  useSceneRevisionFrame();
-
-  // Re-render when selection or animation changes so the contextual motion
-  // buttons appear/disappear correctly.
+  // Re-render when the selection, or a selected layer's header (3D switch)
+  // or keyframes change, so the contextual buttons appear/disappear correctly;
+  // 'layers' too — a camera added or removed changes the view badge.
   const selectedIds = useSelectionStore((s) => s.ids);
-  const [, bumpAnim] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    const sub = getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) bumpAnim(); });
-    return () => sub.dispose();
-  }, []);
+  const watchKeys = useMemo(
+    () => ['layers', ...selectedIds.flatMap((id) => [`layer:${id}`, `keys:${id}`])],
+    [selectedIds],
+  );
+  useMirrorKeys(watchKeys);
+  const m = documentMirror();
 
   const singleId = selectedIds.length === 1 ? selectedIds[0] : null;
-  const hasPositionAnim = singleId ? hasPositionAnimation(singleId) : false;
-  const hasTangents = singleId ? hasPathTangents(singleId) : false;
-  const hasAnyAnim = singleId ? (defaultAnimation.animatedProps(singleId).length > 0) : false;
+  const hasPositionAnim = singleId ? hasPositionKeys(m, singleId) : false;
+  const hasTangents = singleId ? hasPositionTangents(m, singleId) : false;
+  const hasAnyAnim = singleId ? hasAnyKeys(m, singleId) : false;
 
   // ── Selection 3D switch (AE cube, multi-select aware) ──────────────
-  // Every selected node the renderer can project in 3D (canBe3D is the one
-  // shared predicate; groups/cameras/lights/solids etc. never light this up).
+  // Every selected layer the renderer can project in 3D (canBe3DLayer is the
+  // mirror twin of the one shared predicate; groups/cameras/lights/solids etc.
+  // never light this up).
   const eligible3D = selectedIds
-    .map((id) => defaultSceneGraph.getNode(id as any))
-    .filter((n): n is NonNullable<typeof n> => !!n && canBe3D(n));
-  const all3DOn = eligible3D.length > 0 && eligible3D.every((n) => is3DEnabled(n));
+    .map((id) => m.layer(id))
+    .filter((l): l is NonNullable<typeof l> => !!l && canBe3DLayer(l));
+  const all3DOn = eligible3D.length > 0 && eligible3D.every((l) => l.switches.threeD);
   const toggleSelection3D = (): void => {
     const on = !all3DOn;
-    void set3DEdit(eligible3D.map((n) => n.id), on);
-    if (on) {
-      notifyCameraTipIfMissing((message, level) =>
-        useUIStore.getState().notify({ level, message, durationMs: 3200 }),
-      );
+    void set3DEdit(eligible3D.map((l) => l.id), on);
+    // Without a camera, 3D depth doesn't move — surface the one-step fix.
+    if (on && !compHasKind(documentMirror(), activeCompIdNow(), 'camera')) {
+      useUIStore.getState().notify({ level: 'info', message: 'Tip: add a Camera (+ camera button in the viewport bar) to move in 3D', durationMs: 3200 });
     }
   };
 

@@ -513,7 +513,9 @@ const STATIC: Record<string, MetaSpec> = {
   // transform property. `lightShading.ts` / the 3D shaders read the resolved
   // MaterialOptions, never the props, so the sample lands everywhere at once.
   ambient: PCT('Ambient', 'material', ORDER.material),
-  diffuse: PCT('Diffuse', 'material', ORDER.material),
+  // Unstored Diffuse renders at 50 % (material.ts MATERIAL_PCT_DEFAULTS); the registry default must agree, or the
+  // API reports (and Reset writes) 100 for a layer that renders at 50 (B4: the Inspector now shows the API's value).
+  diffuse: { ...PCT('Diffuse', 'material', ORDER.material), defaultValue: 50 },
   specular: { ...PCT('Specular Intensity', 'material', ORDER.material), defaultValue: 0 },
   shininess: { ...PCT('Shininess', 'material', ORDER.material, 200), defaultValue: 32, min: 1 },
   metal: { ...PCT('Metal', 'material', ORDER.material), defaultValue: 0 },

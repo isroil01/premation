@@ -15,12 +15,13 @@
  *
  * The timeline model is built the way the editor builds it (`TimelineHost`
  * below mirrors App.tsx: before B4 the revision counters + `deriveTimelineTracks`
- * over the scene graph; after it, the document mirror).
+ * over the scene graph; since B4, `useTimelineTracks` / `useTimelineRuler` over
+ * the document mirror).
  *
  * jsdom + ts-jest inflate everything; compare runs on one machine only.
  */
 
-import { Profiler, useEffect, useMemo, useState } from 'react';
+import { Profiler, useMemo, useState } from 'react';
 import { act, cleanup, render } from '@testing-library/react';
 import { unwrap, type Command } from '@motion/engine-api';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
@@ -34,14 +35,12 @@ import { GestureSession } from '@core/engine/uiEdits';
 import { fakePorts } from '@core/engine/__testHelpers__/harness';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { setTime } from '@stores/playbackClockStore';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { BottomTimeline } from '@layout/BottomTimeline/BottomTimeline';
 import { PropertiesPanel } from '@layout/EditorLayout/PropertiesPanel';
-import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
-import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
+import { useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
+import type { TimelineModel } from '@layout/Timeline';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { gitCommit, recordBench, type BenchMetricInput } from '@core/perf/bench/benchRecord';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -58,28 +57,16 @@ class NoopResizeObserver {
 
 /** App.tsx's timeline model, as it is built today (see the header). */
 function TimelineHost({ onRender }: { onRender: () => void }): JSX.Element {
-  // App re-renders on every scene revision (App.tsx `useSceneRevision`).
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // App still re-renders on every scene revision (App.tsx `useSceneRevision`).
+  useSceneRevision((s) => s.rev);
   const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
-  const compFps = useCompositionStore((s) => s.fps);
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
-  const [graphRev, setGraphRev] = useState(0);
-  const [animRev, setAnimRev] = useState(0);
   const [expandedIds] = useState<ReadonlyArray<string>>([]);
-  useEffect(() => {
-    const bus = getEventBus();
-    const a = bus.on('SceneGraphChanged', () => { getTimelineController().syncFromScene(); setGraphRev((v) => v + 1); });
-    const b = bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) setAnimRev((v) => v + 1); });
-    return () => { a.dispose(); b.dispose(); };
-  }, []);
-  const valueRev = expandedIds.length > 0 ? sceneRev : 0;
-  const tracks = useMemo<TimelineTrack[]>(() => {
-    void graphRev; void animRev; void valueRev;
-    return deriveTimelineTracks({ activeCompId, compFps, expandedIds, revs: { anim: animRev, clip: 0, marker: 0 } });
-  }, [graphRev, animRev, valueRev, compFps, expandedIds, activeCompId]);
+  // The rows, the ruler and the zoom from the document mirror (App.tsx, Timeline/useTimelineModel).
+  const tracks = useTimelineTracks(activeCompId, expandedIds);
+  const ruler = useTimelineRuler(activeCompId);
   const model = useMemo<TimelineModel>(() => ({
-    duration: compDuration, frameRate: compFps, currentTime: 0, pixelsPerSecond: 100, markers: [], tracks,
-  }), [tracks, compDuration, compFps]);
+    duration: ruler.duration, frameRate: ruler.frameRate, currentTime: 0, pixelsPerSecond: 100, markers: [], tracks,
+  }), [tracks, ruler]);
   return <Profiler id="timeline" onRender={onRender}><BottomTimeline model={model} /></Profiler>;
 }
 

@@ -11,9 +11,8 @@
 import { Button } from '@components/Button';
 import { InspectorRow } from '@components/Inspector';
 import { useTrackerStore, type TrackerMode, type TrackerResult } from '@stores/trackerStore';
-import type { SceneNode } from '@core/types';
 import { FEATURE_SIZES, SEARCH_SIZES, MODE_HINTS, MODE_LABELS, sizeOptions } from './trackMotionCopy';
-import type { StabVariant, TrackMotionActions } from './trackMotionActions';
+import type { StabVariant, TrackMotionActions, TrackTarget } from './trackMotionActions';
 import styles from '../TrackMotionSection.module.css';
 
 export interface AdvancedTrackingProps {
@@ -28,7 +27,7 @@ export interface AdvancedTrackingProps {
   setStabVariant: (v: StabVariant) => void;
   targetId: string;
   setTargetId: (id: string) => void;
-  targets: ReadonlyArray<SceneNode>;
+  targets: ReadonlyArray<TrackTarget>;
   result: TrackerResult | null;
   tracking: boolean;
   progress: number;

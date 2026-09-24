@@ -13,9 +13,6 @@
  * What stays legacy (each call site says so with `B3-legacy`):
  *   • importing a browser `File` (the picker's <input>, an OS drop): the API
  *     imports by PATH, and Electron 44 exposes none for a `File`;
- *   • the colour label: the store keeps a LABEL_COLORS id, the engine's
- *     `setItemLabel` writes the hex;
- *   • Remove Pulldown in Interpret Footage: no field in InterpretationPatch.
  *
  * Display reads stay direct until B4's mirror.
  */
@@ -27,6 +24,7 @@ import { layersUsingItem } from '@core/engine/doc';
 import { rateOf } from '@layout/Composition/compositionEdits';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
@@ -198,12 +196,19 @@ export async function setItemTagsEdit(changes: ReadonlyArray<{ id: string; tags:
   await edit('Edit Tags', cmds);
 }
 
-// ── Interpret Footage ─────────────────────────────────────────────────
+// ── Label ─────────────────────────────────────────────────────────────
 
-/** True when the dialog's values change something the API cannot say (Remove Pulldown). */
-export function interpretationNeedsLegacy(asset: ImportedAsset, next: FootageInterpretation): boolean {
-  return (asset.interpret?.pulldownPhase ?? undefined) !== (next.pulldownPhase ?? undefined);
+/**
+ * The Project panel's label menu: a LABEL_COLORS id (null = none) on several
+ * items, ONE entry. The engine stores the id — the panel's own form (B3z).
+ */
+export async function setItemLabelEdit(ids: readonly string[], labelId: string | null): Promise<void> {
+  const label = labelId === null ? 0 : LABEL_COLORS.findIndex((c) => c.id === labelId) + 1;
+  if (ids.length === 0 || label < 0) return;
+  await edit('Item Label', { type: 'setItemLabel', items: [...ids], label });
 }
+
+// ── Interpret Footage ─────────────────────────────────────────────────
 
 /**
  * The API patch for the dialog's values against the item's current
@@ -222,6 +227,11 @@ export function interpretationPatchFor(asset: ImportedAsset, next: FootageInterp
   if (next.loopCount !== undefined && next.loopCount !== (cur.loopCount ?? 1)) p.loops = next.loopCount;
   if ((next.fields ?? 'off') !== (cur.fields ?? 'off')) {
     p.fieldOrder = next.fields === 'upper' ? 'upperFirst' : next.fields === 'lower' ? 'lowerFirst' : 'progressive';
+  }
+  // Remove Pulldown (B3z): arm at a phase, or switch off.
+  if ((next.pulldownPhase ?? undefined) !== (cur.pulldownPhase ?? undefined)) {
+    if (next.pulldownPhase === undefined) p.clearRemovePulldown = true;
+    else p.removePulldown = next.pulldownPhase;
   }
   return Object.keys(p).length > 0 ? p : null;
 }

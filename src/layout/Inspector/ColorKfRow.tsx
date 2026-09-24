@@ -1,14 +1,14 @@
 import { useMemo } from 'react';
 import { Color } from '@motion/renderer';
+import { secondsToFlicks } from '@motion/engine-api';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { defaultAnimation } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
-import { useSceneRevision } from '@stores/sceneStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { openContextMenu } from '@stores/contextMenuStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
 import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
-import { resolveChannelColor } from '@core/effects/effects';
+import { isTrackAnimated, trackRef as mirrorTrackRef } from '@core/mirror/selection';
+import { colorValueHex } from '@core/mirror/paintFields';
 
 
 import { PropertyRow } from '@components/PropertyRow';
@@ -40,8 +40,6 @@ export function ColorKfRow({
   setValue,
 }: ColorKfRowProps): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
-  useSceneRevision((s) => s.rev);
-  useAnimationRevision();
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
 
   const rProp = `${propPrefix}_r`;
@@ -49,20 +47,14 @@ export function ColorKfRow({
   const bProp = `${propPrefix}_b`;
   const aProp = `${propPrefix}_a`;
 
-  const animated = defaultAnimation.isAnimated(nodeId, rProp);
-  // Display only: sample on the track's keyframe axis (writes take comp time).
-  const layerT = keyAxisTimeForDisplay(nodeId, time, rProp);
-
-  // An unanimated channel falls back to the STORED colour's channel — the same
-  // rule the renderer uses. The old `?? 255` invented white for any channel
-  // without a track (and was in 0..255 besides, a scale these tracks never
-  // used), so a partially-keyframed colour showed as something nothing drew.
-  const displayColor = useMemo(
-    () => (animated
-      ? resolveChannelColor(value, (s) => defaultAnimation.sample(nodeId, `${propPrefix}${s}`, layerT))
-      : value),
-    [animated, nodeId, propPrefix, layerT, value],
-  );
+  // B4: the colour from the mirror — ONE colour property in the API (its four
+  // channels keyed together), its value at the playhead (comp time) when keyed;
+  // the row wakes on this property only.
+  useMirrorTrackWatch([nodeId], [rProp]);
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, rProp);
+  const ref = animated ? mirrorTrackRef(m, nodeId, rProp) : null;
+  const displayColor = (ref ? colorValueHex(m.valueAt(nodeId, ref.path, secondsToFlicks(time))) : undefined) ?? value;
 
   // The stopwatch + navigator `AnimToggle` used to draw beside the swatch, now
   // placed by `PropertyRow` — in the Properties panel that is the compact
@@ -109,6 +101,7 @@ export function ColorKfRow({
   const onContextMenu = (e: React.MouseEvent): void => {
     // The shared builder leads with a separator, which only makes sense when it
     // follows other entries.
+    // B4-gap: a composition's Essential Properties list (`__essentialProps` on the comp root) — no API datum (CompInfo has none); read at click time.
     const items = essentialPropMenuItems(nodeId, propPrefix).filter((i) => !i.separator);
     if (items.length === 0) return; // not promotable — leave the native menu
     e.preventDefault();

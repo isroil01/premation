@@ -199,7 +199,11 @@ describe('switches and keys', () => {
     const c = LABEL_COLORS[2]!.color;
     await roundTrip(async () => { expect(await setLabelColorEdit([s.A, s.B], c)).toBe(true); }, 'Label Color');
     expect(node(s.A).color).toBe(c);
-    expect(await setLabelColorEdit([s.A], '#123456')).toBe(false);
+  });
+
+  it('a custom (off-palette) label colour is one engine entry too (B3z labelColor)', async () => {
+    await roundTrip(async () => { expect(await setLabelColorEdit([s.A], '#123456')).toBe(true); }, 'Label Color');
+    expect(node(s.A).color).toBe('#123456');
   });
 
   it('3D: flips each layer that can be 3D', async () => {

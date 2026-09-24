@@ -61,6 +61,20 @@ struct LayerInfo {
   /// Layer markers.
   markers: Marker[] = 14;
   comment: string = 15;
+  /// B4 — for a `generator` layer provided by a plugin layer kind: the kind id `<pluginId>.<kindId>` (what the Inspector keys its sections on). '' otherwise.
+  generator: string = 16;
+  /// B4 — the layer's Pinned properties (the Inspector's Pinned tab), in the order they were pinned: the editor's track names (`x`, `opacity`, `effect.<id>.<param>`) as stored in the document (`__pinnedProps`).
+  pinned: string[] = 17;
+  /// B4 — how many effects the layer's effect stack holds (the `effects` group's children, disabled ones included): what a collapsed timeline row needs to draw the fx switch without loading the property tree.
+  effectCount: u32 = 18;
+}
+
+/// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).
+struct MemberExpression {
+  member: u32 = 1;
+  source: string = 2;
+  enabled: bool = 3;
+  error: string = 4;
 }
 
 enum PropertyKind { property = 0; group = 1; indexedGroup = 2; }
@@ -95,6 +109,8 @@ struct PropertyInfo {
   children: PropPath[] = 23;
   /// Hidden in the default UI (AE's hidden/advanced params).
   hidden: bool = 24;
+  /// B4 — per-dimension expressions: when the dimensions of a multi-dimensional property do NOT all carry the same expression (source and enabled), every dimension that has one, in member order; `expression` / `expressionEnabled` / `expressionError` then describe dimension 0 only. Empty when the property has one expression for every dimension, or none.
+  memberExpressions: MemberExpression[] = 25;
 }
 
 struct KeyframeSet {

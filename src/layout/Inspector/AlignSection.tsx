@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize } from './inspectorMirror';
 import type { AlignMode } from '@core/scene/alignNodes';
 import { alignLayers } from './inspectorEdits';
 import { Icon, type IconName } from '@components/Icon';
@@ -21,8 +21,7 @@ export function AlignSection(): JSX.Element | null {
   const selectedIds = useSelectionStore((s) => s.ids);
   const [alignTo, setAlignTo] = useState<'selection' | 'composition'>('selection');
 
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
 
   if (selectedIds.length === 0) return null;
 

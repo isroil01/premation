@@ -14,10 +14,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useProjectStore } from '@stores/projectStore';
 import { useCurrentTime, setTime as setPlayheadTime } from '@stores/playbackClockStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, compFps, useActiveMirrorComp } from '@hooks/useMirror';
+import { flicksToSeconds, type CompSettings } from '@motion/engine-api';
+import { isTransportLooping, pauseTransport, playTransport, setTransportLooping } from '@core/timeline/timelineView';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { audioEngine } from '@core/audio/AudioEngine';
@@ -41,31 +42,35 @@ export function PreviewPanel(): JSX.Element {
     if (activeTabId) setPlayheadTime(activeTabId, t, frame);
   };
 
-  const fps = useCompositionStore((s) => s.fps) || 30;
-  const duration = useCompositionStore((s) => s.durationSeconds);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const comp = useActiveMirrorComp();
+  // The rate as the settings dialog states it (NTSC 30000/1001 → 29.97), so
+  // the frame maths and the readout match what the user typed.
+  const fps = Number(compFps(comp).toFixed(3)) || 30;
+  const duration = comp ? flicksToSeconds(comp.settings.duration) : 0;
+  const compWidth = comp?.settings.width ?? 0;
+  const compHeight = comp?.settings.height ?? 0;
 
-  // Loop playback state
-  const [looping, setLoopingState] = useState(() => getTimelineController().isLooping());
+  // Loop playback state (transport, not the document)
+  const [looping, setLoopingState] = useState(() => isTransportLooping());
   useEffect(() => {
-    setLoopingState(getTimelineController().isLooping());
+    setLoopingState(isTransportLooping());
   }, [activeTabId]);
 
   const setLooping = (on: boolean): void => {
-    getTimelineController().setLooping(on);
+    setTransportLooping(on);
     setLoopingState(on);
   };
 
   // Work area range
   const [range, setRangeState] = useState<PlayRange>(() =>
-    getTimelineController().getWorkArea() ? 'work-area' : 'entire-comp',
+    hasWorkArea(activeSettingsNow()) ? 'work-area' : 'entire-comp',
   );
   const setRange = (next: PlayRange): void => {
+    const compId = activeCompIdNow();
     if (next === 'entire-comp') {
-      if (getTimelineController().getWorkArea()) void edit('Clear Work Area', { type: 'clearWorkArea', comp: activeCompRootId() });
-    } else if (next === 'current-forward' && duration > time) {
-      void edit('Work Area', { type: 'setWorkArea', comp: activeCompRootId(), range: { start: compTime(time), duration: compTime(duration - time) } });
+      if (compId && hasWorkArea(activeSettingsNow())) void edit('Clear Work Area', { type: 'clearWorkArea', comp: compId });
+    } else if (next === 'current-forward' && duration > time && compId) {
+      void edit('Work Area', { type: 'setWorkArea', comp: compId, range: { start: compTime(time), duration: compTime(duration - time) } });
     }
     setRangeState(next);
   };
@@ -134,9 +139,8 @@ export function PreviewPanel(): JSX.Element {
   const handleTogglePlay = (): void => {
     const next = !playing;
     setPlaying(next);
-    const controller = getTimelineController();
-    if (next) controller.play();
-    else controller.pause();
+    if (next) playTransport();
+    else pauseTransport();
   };
 
   const handleNextFrame = (): void => {
@@ -481,6 +485,17 @@ export function PreviewPanel(): JSX.Element {
       </div>
     </div>
   );
+}
+
+/** The active composition's settings, read at call time. */
+function activeSettingsNow(): CompSettings | undefined {
+  const id = activeCompIdNow();
+  return id ? documentMirror().comp(id)?.settings : undefined;
+}
+
+/** Whether a work area is set: the API states "none" as the whole composition. */
+function hasWorkArea(s: CompSettings | undefined): boolean {
+  return !!s && !(s.workArea.start === 0 && s.workArea.duration === s.duration);
 }
 
 function formatTimecode(t: number, fps: number): string {

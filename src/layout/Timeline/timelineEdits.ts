@@ -14,22 +14,25 @@
  * §1 rule 7): the engine's own trim/slide/roll refuse what the legacy clamped,
  * so sending the clamped RESULT is what keeps the gesture identical.
  *
- * Display reads (the bars, the playhead, the marker list) stay direct until
- * B4's mirror.
+ * The reads a write composes from — the bars, the work area, the markers, the
+ * frame rate — are the document MIRROR's (B4: `LayerInfo.timing` as frames,
+ * `MirrorComp.settings`, `comp.markers` / `layer.markers`), read at call time;
+ * the playhead is the transport's (`timelineView`).
  */
 
-import type { Command, LayerTimingPatch, MarkerPatch } from '@motion/engine-api';
+import { flicksToSeconds, type Command, type LayerTimingPatch, type MarkerPatch } from '@motion/engine-api';
 import { Clip, type ClipData, rollClips } from '@motion/timeline';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { playheadSeconds } from '@core/timeline/timelineView';
 import { framesToFlicks } from '@core/engine/time';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
+import { framesOfTime, settingsFps, timingBarFrames } from '@core/mirror/compFacts';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorMarkerById } from '@core/mirror/markers';
+import { documentMirror } from '@stores/documentMirror';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { useAssetStore } from '@stores/assetStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { isReplaceableLayer } from '@core/scene/replaceSourceDrop';
 import { isLayer } from '@core/engine/doc';
 
 // ── Reads (display facts a write needs) ──────────────────────────────
@@ -41,8 +44,25 @@ export function activeCompId(): string {
   return tab?.compositionId || 'comp_default';
 }
 
+/** The active composition's settings (its mirror record). */
+function activeSettings() {
+  return documentMirror().comp(activeCompId())?.settings;
+}
+
+/** The active composition's frame rate, as stored (29.97, not 30000/1001 — the rate bars are framed in). */
 function fps(): number {
-  return getTimelineController().timeline.getFrameRate().fps || 30;
+  return settingsFps(activeSettings()) || 30;
+}
+
+/** The active composition's length, whole frames. */
+function compFrames(): number {
+  const s = activeSettings();
+  return s ? Math.round(framesOfTime(s.duration, fps())) : 0;
+}
+
+/** The playhead, whole frames of the active composition. */
+function playheadFrame(): number {
+  return Math.round(playheadSeconds() * fps());
 }
 
 interface Bar {
@@ -52,18 +72,46 @@ interface Bar {
   locked: boolean;
 }
 
-/** A bar of the active comp by its timeline id (`clip:<nodeId>`). */
-export function barOf(clipId: string): Bar | null {
-  const layer = getTimelineController().timeline.getLayer(clipId);
-  if (!layer || !layer.sourceId) return null;
-  return { nodeId: layer.sourceId, clip: layer.clip.toJSON(), locked: layer.locked };
+/** The layer a bar id names: `clip:<nodeId>` (a pre-T1 document's extra bars carry `:<n>`). */
+function nodeOfClip(clipId: string): string | null {
+  if (!clipId.startsWith('clip:')) return null;
+  const rest = clipId.slice(5);
+  const m = documentMirror();
+  if (m.layer(rest)) return rest;
+  const base = rest.replace(/:\d+$/, '');
+  return base !== rest && m.layer(base) ? base : null;
 }
 
-/** Every bar of a node, in start order. */
+/** A layer's bar (its timing, in frames of the active comp), or null when it is no layer. */
+function barOfNode(nodeId: string): Bar | null {
+  const layer = documentMirror().layer(nodeId);
+  if (!layer) return null;
+  return { nodeId, clip: timingBarFrames(layer.timing, fps()), locked: layer.switches.locked };
+}
+
+/** A bar of the active comp by its timeline id (`clip:<nodeId>`). */
+export function barOf(clipId: string): Bar | null {
+  const nodeId = nodeOfClip(clipId);
+  return nodeId ? barOfNode(nodeId) : null;
+}
+
+/** Every bar of a node, in start order (a layer is one bar). */
 function barsOfNode(nodeId: string): Bar[] {
-  return getTimelineController().getLayersForNode(nodeId).map((l) => ({
-    nodeId, clip: l.clip.toJSON(), locked: l.locked,
-  }));
+  const bar = barOfNode(nodeId);
+  return bar ? [bar] : [];
+}
+
+/** Every bar of the layer's composition, start order (the composition's one track). */
+function compBars(nodeId: string): Bar[] {
+  const m = documentMirror();
+  const comp = m.layer(nodeId)?.comp;
+  const ids = comp ? m.comp(comp)?.layers ?? [] : [];
+  const out: Bar[] = [];
+  for (const id of ids) {
+    const bar = barOfNode(id);
+    if (bar) out.push(bar);
+  }
+  return out.sort((a, b) => a.clip.start - b.clip.start);
 }
 
 // ── Geometry → setLayerTiming ─────────────────────────────────────────
@@ -205,19 +253,15 @@ export async function slipBar(clipId: string, sourceInSec: number): Promise<void
 export async function slideBar(clipId: string, startSec: number): Promise<void> {
   const bar = barOf(clipId);
   if (!bar || bar.locked) return;
-  const c = getTimelineController();
-  const layer = c.timeline.getLayer(clipId);
-  const track = layer ? c.timeline.getTrack(layer.trackId) : undefined;
-  if (!layer || !track) return;
   const rate = fps();
   const deltaFrames = Math.round(startSec * rate) - bar.clip.start;
   if (deltaFrames === 0) return;
   const minDuration = 1;
-  const ordered = [...track.layers].sort((a, b) => a.clip.start - b.clip.start);
-  const idx = ordered.findIndex((l) => l.id === clipId);
+  const ordered = compBars(bar.nodeId).map((b) => ({ sourceId: b.nodeId, clip: Clip.fromJSON(b.clip) }));
+  const idx = ordered.findIndex((l) => l.sourceId === bar.nodeId);
   const prev = ordered[idx - 1];
   const next = ordered[idx + 1];
-  const clip = layer.clip;
+  const clip = Clip.fromJSON(bar.clip);
   const abuts = (aEnd: number, bStart: number): boolean => Math.abs(aEnd - bStart) <= 1;
   const abutsPrev = !!prev && abuts(prev.clip.end, clip.start);
   const abutsNext = !!next && abuts(clip.end, next.clip.start);
@@ -303,8 +347,7 @@ export async function splitLayersAt(nodeIds: readonly string[], seconds: number,
 
 /** Split the selected layers at the playhead, leaving the right halves selected. */
 export function splitSelectedAtPlayhead(nodeIds: readonly string[]): Promise<string[]> {
-  const c = getTimelineController();
-  return splitLayersAt(nodeIds, Math.round(c.timeline.currentFrame) / fps(), { selectRight: true });
+  return splitLayersAt(nodeIds, playheadFrame() / fps(), { selectRight: true });
 }
 
 /**
@@ -314,7 +357,7 @@ export function splitSelectedAtPlayhead(nodeIds: readonly string[]): Promise<str
  * walk through the timeline controller).
  */
 export function rippleTrimToPlayhead(clipId: string, edge: 'start' | 'end'): Promise<boolean> {
-  return trimBar(clipId, edge, Math.round(getTimelineController().timeline.currentFrame) / fps(), { ripple: true });
+  return trimBar(clipId, edge, playheadFrame() / fps(), { ripple: true });
 }
 
 /** Ripple Insert Gap at the playhead: every layer starting at/after it moves right (`insertGap`). */
@@ -322,12 +365,10 @@ export async function rippleInsertGapAtPlayhead(clipId: string, seconds = 1): Pr
   const bar = barOf(clipId);
   if (!bar) return;
   const rate = fps();
-  const at = Math.round(getTimelineController().timeline.currentFrame);
+  const at = playheadFrame();
   const d = Math.max(1, Math.round(seconds * rate));
-  const c = getTimelineController();
-  const layer = c.timeline.getLayer(clipId);
   // Nothing later on the track: nothing to push (the legacy edit recorded nothing either).
-  if (!layer || !c.timeline.getTrack(layer.trackId)?.layers.some((l) => l.start >= at)) return;
+  if (!compBars(bar.nodeId).some((b) => b.clip.start >= at)) return;
   await edit('Ripple Insert Gap', { type: 'insertGap', comp: activeCompId(), time: framesToFlicks(at, rate), duration: framesToFlicks(d, rate) });
 }
 
@@ -339,10 +380,6 @@ export async function rippleDeleteLayers(nodeIds: readonly string[]): Promise<vo
 }
 
 // ── Keyboard bar edits (AE's [ ] Alt+[ Alt+] Alt+PageUp/Down) ─────────
-
-function playheadFrame(): number {
-  return Math.round(getTimelineController().timeline.currentFrame);
-}
 
 /** Every unlocked bar of the given nodes (the legacy commands walked bars). */
 function barsOf(nodeIds: readonly string[]): Bar[] {
@@ -434,7 +471,7 @@ export async function timeStretchEdit(
   ids: readonly string[],
   percent: number,
   hold: 'in' | 'current' | 'out',
-  seconds: number = getTimelineController().currentSeconds,
+  seconds: number = playheadSeconds(),
 ): Promise<boolean> {
   const layers = [...new Set(ids)].filter((id) => isLayer(id));
   if (layers.length === 0 || !Number.isFinite(percent) || percent === 0) return false;
@@ -457,6 +494,23 @@ export async function unfreezeEdit(ids: readonly string[]): Promise<void> {
 
 // ── Replace source (Alt-drop an asset on a lane) ──────────────────────
 
+/** An image or video layer: one whose footage an asset drop can replace. */
+function isReplaceableLayerNow(nodeId: string | null | undefined): boolean {
+  const kind = nodeId ? uiKindOf(documentMirror().layer(nodeId)) : null;
+  return kind === 'image' || kind === 'video';
+}
+
+/**
+ * The layer an Alt-drop means: the one under the pointer when it can take a
+ * new source, otherwise the single selected replaceable layer (the twin of
+ * `replaceSourceDrop.resolveReplaceTarget`).
+ */
+export function replaceTargetAt(hitNodeId: string | null | undefined): string | null {
+  if (hitNodeId && isReplaceableLayerNow(hitNodeId)) return hitNodeId;
+  const ids = useSelectionStore.getState().ids;
+  return ids.length === 1 && isReplaceableLayerNow(ids[0]) ? ids[0]! : null;
+}
+
 /**
  * Point an image/video layer at another footage item, size kept (transforms,
  * keyframes and effects stay) — the same rules and messages as
@@ -464,16 +518,18 @@ export async function unfreezeEdit(ids: readonly string[]): Promise<void> {
  */
 export async function replaceSourceWithAsset(nodeId: string | null, assetId: string): Promise<boolean> {
   const notify = useUIStore.getState().notify;
-  const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
-  if (!nodeId || !isReplaceableLayer(nodeId)) {
+  const m = documentMirror();
+  const asset = m.item(assetId);
+  if (!nodeId || !isReplaceableLayerNow(nodeId)) {
     notify({ level: 'info', message: 'Alt-drop onto an image or video layer (or select one) to replace its source.', durationMs: 3200 });
     return false;
   }
-  if (!asset || (asset.type !== 'image' && asset.type !== 'video')) {
+  // Image and video footage (audio footage has no picture).
+  if (!asset || asset.kind !== 'footage' || !asset.hasVideo) {
     notify({ level: 'info', message: 'Only image and video footage can replace a layer’s source.', durationMs: 3200 });
     return false;
   }
-  const name = defaultSceneGraph.getNode(nodeId)?.name ?? 'layer';
+  const name = m.layer(nodeId)?.name || 'layer';
   const res = await edit(`Replace Source of “${name}”`, { type: 'replaceLayerSource', layer: nodeId, source: asset.id, keepSize: true });
   if (res.ok) notify({ level: 'info', message: `Replaced the source of “${name}” with “${asset.name}”.`, durationMs: 2600 });
   return res.ok;
@@ -483,10 +539,9 @@ export async function replaceSourceWithAsset(nodeId: string | null, assetId: str
 
 /** Set the work area in comp seconds (whole frames, inside the comp). */
 export async function setWorkArea(startSeconds: number, endSeconds: number): Promise<void> {
-  const c = getTimelineController();
   const rate = fps();
   const startF = Math.max(0, Math.round(startSeconds * rate));
-  const endF = Math.min(c.timeline.duration, Math.round(endSeconds * rate));
+  const endF = Math.min(compFrames(), Math.round(endSeconds * rate));
   if (endF <= startF) return;
   await sendWorkArea(startF, endF);
 }
@@ -496,13 +551,24 @@ export async function setWorkArea(startSeconds: number, endSeconds: number): Pro
  * follows its duration (`clearWorkArea`, B3z).
  */
 export async function clearWorkArea(): Promise<void> {
-  if (!getTimelineController().timeline.getRanges().workArea) return;
+  // Nothing to clear when the work area already covers the whole composition
+  // (the API always states one; "none" is the full range).
+  const wa = workAreaFrames();
+  if (!wa || (wa.start === 0 && wa.duration >= compFrames())) return;
   await edit('Clear Work Area', { type: 'clearWorkArea', comp: activeCompId() });
+}
+
+/** The active composition's work area, whole frames. */
+function workAreaFrames(): { start: number; duration: number } | null {
+  const s = activeSettings();
+  if (!s) return null;
+  const rate = fps();
+  return { start: Math.round(framesOfTime(s.workArea.start, rate)), duration: Math.round(framesOfTime(s.workArea.duration, rate)) };
 }
 
 async function sendWorkArea(startF: number, endF: number): Promise<void> {
   const rate = fps();
-  const wa = getTimelineController().timeline.getRanges().workArea;
+  const wa = workAreaFrames();
   if (wa && wa.start === startF && wa.duration === endF - startF) return;
   await edit('Work Area', {
     type: 'setWorkArea',
@@ -513,10 +579,9 @@ async function sendWorkArea(startF: number, endF: number): Promise<void> {
 
 /** B — the work-area in point at the playhead (at/past the out point MOVES the area). */
 export async function setWorkAreaIn(): Promise<void> {
-  const t = getTimelineController().timeline;
-  const f = Math.round(t.currentFrame);
-  const wa = t.getRanges().workArea;
-  const last = t.duration;
+  const f = playheadFrame();
+  const wa = workAreaFrames();
+  const last = compFrames();
   const outFrame = wa && f < wa.start + wa.duration ? wa.start + wa.duration : last;
   const start = Math.max(0, Math.min(f, last - 1));
   if (outFrame <= start) return;
@@ -525,11 +590,10 @@ export async function setWorkAreaIn(): Promise<void> {
 
 /** N — the work-area out point at the playhead (at/before the in point pulls it back to 0). */
 export async function setWorkAreaOut(): Promise<void> {
-  const t = getTimelineController().timeline;
-  const f = Math.round(t.currentFrame);
-  const wa = t.getRanges().workArea;
+  const f = playheadFrame();
+  const wa = workAreaFrames();
   const inFrame = wa && f > wa.start ? wa.start : 0;
-  const end = Math.min(t.duration, Math.max(f, inFrame + 1));
+  const end = Math.min(compFrames(), Math.max(f, inFrame + 1));
   if (end <= inFrame) return;
   await sendWorkArea(inFrame, end);
 }
@@ -559,25 +623,25 @@ export interface MarkerEditPatch {
  * The colour is the stored swatch token (Marker/patch `color`, B3z).
  */
 export function markerPatch(id: string, patch: MarkerEditPatch): MarkerPatch | null {
-  const c = getTimelineController();
-  const m = c.timeline.getMarker(id);
-  if (!m) return null;
-  const rate = c.timeline.getFrameRate().fps || 30;
+  const found = mirrorMarkerById(documentMirror(), activeCompId(), id);
+  if (!found) return null;
+  const m = found.marker;
+  const rate = fps();
   const out: MarkerPatch = { id };
   let changed = false;
   if (patch.label !== undefined && patch.label !== m.name) { out.name = patch.label; changed = true; }
   if (patch.comment !== undefined && patch.comment !== m.comment) { out.comment = patch.comment; changed = true; }
   // B3z: the colour is stored as given (a swatch token), '' = none.
-  if (patch.color !== undefined && (m.color ?? null) !== patch.color) { out.color = patch.color ?? ''; changed = true; }
+  if (patch.color !== undefined && (m.color || null) !== patch.color) { out.color = patch.color ?? ''; changed = true; }
   if (patch.duration !== undefined) {
     const d = Math.max(0, Math.round(patch.duration * rate));
-    if (d !== m.duration) { out.duration = framesToFlicks(d, rate); changed = true; }
+    if (d !== Math.round(framesOfTime(m.duration, rate))) { out.duration = framesToFlicks(d, rate); changed = true; }
   }
   if (patch.time !== undefined) {
-    const owner = m.scope === 'layer' && m.ownerId ? c.timeline.getLayer(m.ownerId)?.sourceId : undefined;
-    const seconds = owner ? c.toLayerTime(owner, patch.time) : patch.time;
+    // A layer marker is stored in LAYER time, anchored at the layer's in point.
+    const seconds = found.layer ? patch.time - flicksToSeconds(found.layer.timing.inPoint) : patch.time;
     const f = Math.max(0, Math.round(seconds * rate));
-    if (f !== m.frame) { out.time = framesToFlicks(f, rate); changed = true; }
+    if (f !== Math.round(framesOfTime(m.time, rate))) { out.time = framesToFlicks(f, rate); changed = true; }
   }
   return changed ? out : null;
 }
@@ -591,8 +655,9 @@ export async function editMarker(id: string, patch: MarkerEditPatch): Promise<vo
 }
 
 export async function deleteMarkers(ids: readonly string[]): Promise<void> {
-  const c = getTimelineController();
-  const live = ids.filter((id) => !!c.timeline.getMarker(id));
+  const m = documentMirror();
+  const comp = activeCompId();
+  const live = ids.filter((id) => !!mirrorMarkerById(m, comp, id));
   if (live.length === 0) return;
   await edit(live.length === 1 ? 'Remove Marker' : 'Remove Markers', { type: 'deleteMarkers', ids: [...live] });
 }

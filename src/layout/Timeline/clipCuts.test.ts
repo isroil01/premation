@@ -10,7 +10,7 @@
 import type { TimelineTrack } from './TimelineModel';
 import { collectClipCuts, findClipCutNear } from './clipCuts';
 
-/** One row holding one bar — the shape `deriveTimelineTracks` produces. */
+/** One row holding one bar — the shape `buildTimelineTracks` produces. */
 function row(id: string, clips: Array<{ id: string; start: number; duration: number }>): TimelineTrack {
   return {
     id: id as TimelineTrack['id'],

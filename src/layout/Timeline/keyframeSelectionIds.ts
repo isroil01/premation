@@ -25,10 +25,12 @@
  * keyframe back into the position; they go when the selection moves to engine ids.
  */
 
-import { makeKeyframeId, parseKeyframeId, defaultAnimation } from '@motion/animation';
+import { makeKeyframeId, parseKeyframeId, defaultAnimation, expandKeyframeProp } from '@motion/animation';
 import { flicksToSeconds, type Keyframe } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeMaskAnim } from '@core/effects/mask';
+import { memberKeyIndexAt, memberKeysOf, memberTrackRef, type MemberKey, type MemberKeyRead, type StoredTimeOf } from '@core/mirror/memberKeys';
+import type { TrackRef } from '@core/mirror/trackIndex';
 
 /** A keyframe as the selection names it (stored time `t`). */
 export interface UiKey {
@@ -104,4 +106,63 @@ export function storedKeyOf(index: ReadonlyMap<string, StoredKey>, key: Keyframe
     if (Number.isFinite(t)) return { track: fb[2]!.startsWith('mask:') ? MASK_ANIM_TRACK : fb[2]!, t };
   }
   return { track, t: flicksToSeconds(key.time) };
+}
+
+/** The stored time of any mirror keyframe of one layer (`storedKeyOf` over one `storedKeyIndex`). */
+export function storedTimeOf(layer: string, index: ReadonlyMap<string, StoredKey> = storedKeyIndex(layer)): StoredTimeOf {
+  return (key) => storedKeyOf(index, key, '').t;
+}
+
+/** A selection key found in the mirror: the property it is on and the key, seen from its member track. */
+export interface MirrorUiKey {
+  /** The member track the key was found on (a merged Position row's first keyed axis). */
+  track: string;
+  ref: TrackRef;
+  key: MemberKey;
+  /** Every key of that property, seen from `track` (time order), and the key's index in it. */
+  keys: MemberKey[];
+  index: number;
+}
+
+/** The mask-path properties of a layer (whole-mask snapshot rows key every one of them). */
+function maskPathTracks(m: MemberKeyRead, layer: string): string[] {
+  const tree = m.tree(layer);
+  return (tree?.nodes.get('masks')?.children ?? []).map((p) => `${p}/path`).filter((p) => tree?.nodes.has(p));
+}
+
+/** The tracks a selection row names: its member tracks (`expandKeyframeProp`), or every mask's Path for the whole-mask row. */
+function uiKeyTracks(m: MemberKeyRead, nodeId: string, prop: string): string[] {
+  return prop === MASK_ANIM_TRACK ? maskPathTracks(m, nodeId) : expandKeyframeProp(prop);
+}
+
+/**
+ * The API property paths a selection row stands for on a layer (a merged
+ * Position row: `transform/position`; the whole-mask row: every mask's Path).
+ * A row named by a path already (a key the TS engine does not store) is its
+ * own path.
+ */
+export function uiKeyPaths(m: MemberKeyRead, nodeId: string, prop: string): string[] {
+  const tree = m.tree(nodeId);
+  const out: string[] = [];
+  for (const track of uiKeyTracks(m, nodeId, prop)) {
+    const path = memberTrackRef(tree, track)?.path ?? track;
+    if (!out.includes(path)) out.push(path);
+  }
+  return out;
+}
+
+/**
+ * The mirror keyframe a selection key names (B4): the member tracks the row
+ * stands for (`expandKeyframeProp`; every mask's Path for the whole-mask row),
+ * the first one holding a key at the stored time. Null when there is none (a
+ * stale selection, or a layer whose tree is not loaded).
+ */
+export function mirrorKeyOf(m: MemberKeyRead, ui: Pick<UiKey, 'nodeId' | 'prop' | 't'>, storedT: StoredTimeOf = storedTimeOf(ui.nodeId)): MirrorUiKey | null {
+  for (const track of uiKeyTracks(m, ui.nodeId, ui.prop)) {
+    const hit = memberKeysOf(m, ui.nodeId, track, storedT);
+    if (!hit) continue;
+    const index = memberKeyIndexAt(hit.keys, ui.t);
+    if (index >= 0) return { track, ref: hit.ref, key: hit.keys[index]!, keys: hit.keys, index };
+  }
+  return null;
 }

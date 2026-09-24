@@ -16,7 +16,6 @@ import { useUIStore } from '@stores/uiStore';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
   DEFAULT_SOLID_COLOR,
-  applyLayerSettings,
   buildSolidLayer,
   nextSolidName,
   readLayerSettings,
@@ -67,9 +66,6 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
       void layerSettingsEdit(nodeId, values).then((r) => {
         if (r === 'gone') {
           useUIStore.getState().notify({ level: 'warning', message: 'That layer no longer exists.', durationMs: 3000 });
-        } else if (r === 'legacy') {
-          // B3-legacy: engine gap — an off-palette label colour has no API label index; such an apply keeps the snapshot writer for the whole dialog (one step).
-          applyLayerSettings(nodeId, values);
         }
       });
     } else {

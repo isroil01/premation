@@ -20,14 +20,22 @@
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Input } from '@components/Input';
+import type { LayerInfo } from '@motion/engine-api';
 import { useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/projectStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { readCompRef } from '@core/scene/compInstance';
+import { useThrottledTime } from '@stores/playbackClockStore';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
+import { useMirrorKeys, useMirrorLayer, useMirrorProperty, useMirrorTrackWatch } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { childOrderOf } from '@core/mirror/layerTree';
+import {
+  COMP_OVERRIDES_PATH,
+  inheritedOverrideValue,
+  layerToCompSeconds,
+  mirrorCompOverrides,
+  overrideSourceLayers,
+} from '@core/mirror/compOverrides';
 import {
   OVERRIDABLE_PROPS,
-  readCompOverrides,
   readEssentialProps,
   overrideKey,
   parseOverrideKey,
@@ -37,7 +45,6 @@ import {
   type OverridableProp,
   type OverrideValue,
 } from '@core/scene/compInstanceOverrides';
-import type { SceneNode } from '@core/types';
 import { edit } from '@core/engine/uiEdits';
 import { useGesture } from '@hooks/useGesture';
 import { useEngineEdit } from './useEngineEdit';
@@ -58,90 +65,55 @@ const FALLBACK: Record<OverridableProp, OverrideValue> = {
 
 const UNIT: Partial<Record<OverridableProp, string>> = { rotation: '°', opacity: '%' };
 
-/** 0..1 channel → two hex digits. Colour tracks are normalised, not 0..255. */
-function hex2(v: number): string {
-  return Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0');
-}
+/** The tracks an inherited value is read from (numbers; the colour properties by their red channel; Source Text). */
+const WATCHED_TRACKS = ['x', 'y', 'rotation', 'scaleX', 'scaleY', 'opacity', 'fill_r', 'color_r', 'text/sourceText'];
 
 /**
- * What this property would be WITHOUT an override: the animated value when the
- * source layer is keyframed, else its stored value.
+ * What this property would be WITHOUT an override: the source layer's value
+ * (animated or static) from the document mirror, else the identity.
  *
- * The component scan is last-write-wins, matching `readBase` in buildSnapshot —
- * the same rule `applyOverridesToComponents` targets when it decides which
- * component to patch. Three places agreeing on one rule is the point; if this
- * one drifts the field displays a value the renderer never uses.
+ * `t` is the host's playhead, read as a time on the source layer's own
+ * keyframe axis (as the section always has) and converted to the source
+ * composition's time, which is the axis the mirror's values are on.
  *
- * Colour is the awkward one, and it is awkward in the same way everywhere: it
- * is STORED as a hex string but ANIMATED as three 0..1 channels, so reading the
- * inherited value of a keyframed colour means rebuilding the hex from
- * `<prop>_r/_g/_b`. Reading the component alone would show the un-animated
- * colour and the field would disagree with the canvas.
+ * Colour is stored as a hex string but animated as three channels; the mirror
+ * has one colour property for them, so a keyframed colour reads its animated
+ * value and the field agrees with the canvas.
  */
-function inheritedValue(source: SceneNode, prop: OverridableProp, t: number): OverrideValue {
-  const kind = OVERRIDE_PROP_KINDS[prop];
-
-  if (kind === 'color') {
-    const ch = (c: 'r' | 'g' | 'b'): number | undefined => {
-      const path = `${prop}_${c}`;
-      if (!defaultAnimation.isAnimated(source.id, path)) return undefined;
-      const v = defaultAnimation.sample(source.id, path, t);
-      return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-    };
-    const r = ch('r'); const g = ch('g'); const b = ch('b');
-    if (r !== undefined && g !== undefined && b !== undefined) {
-      return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
-    }
-  }
-
-  if (kind === 'number' && defaultAnimation.isAnimated(source.id, prop)) {
-    const v = defaultAnimation.sample(source.id, prop, t);
-    if (typeof v === 'number' && Number.isFinite(v)) return v;
-  }
-
-  let found: OverrideValue | undefined;
-  for (const c of source.components) {
-    const v = (c.props as Record<string, unknown>)[prop];
-    if (kind === 'number') {
-      if (typeof v === 'number' && Number.isFinite(v)) found = v;
-    } else if (typeof v === 'string') {
-      found = v;
-    }
-  }
-  return found ?? FALLBACK[prop];
+function inheritedValue(m: DocumentMirror, source: LayerInfo, prop: OverridableProp, t: number): OverrideValue {
+  return inheritedOverrideValue(m, source.id, prop, layerToCompSeconds(source, t)) ?? FALLBACK[prop];
 }
 
-type LayerRow = { source: SceneNode; props: OverridableProp[] };
-
-const OVERRIDES_PATH = 'layer/compOverrides';
+type LayerRow = { source: LayerInfo; props: OverridableProp[] };
 
 /**
  * `layer/compOverrides` (json, fx.__compOverrides) with the instance's current
- * overrides changed by `change` — the whole next record; empty clears it.
+ * overrides (read from the mirror now) changed by `change` — the whole next
+ * record; empty clears it.
  */
 function overridesCommands(
-  instance: SceneNode,
+  instanceId: string,
   change: (next: Record<string, OverrideValue>) => void,
 ): ReturnType<typeof jsonFieldCommands> {
   const next: Record<string, OverrideValue> = {};
-  for (const [k, v] of readCompOverrides(instance)) next[k] = v;
+  for (const [k, v] of mirrorCompOverrides(documentMirror(), instanceId)) next[k] = v;
   change(next);
-  return jsonFieldCommands(instance.id, OVERRIDES_PATH, Object.keys(next).length > 0 ? next : null);
+  return jsonFieldCommands(instanceId, COMP_OVERRIDES_PATH, Object.keys(next).length > 0 ? next : null);
 }
 
 /** One override set (a value that fails the property's validation is dropped) or cleared (`undefined`). */
-function overrideCommands(instance: SceneNode, origId: string, prop: OverridableProp, value: OverrideValue | undefined): ReturnType<typeof jsonFieldCommands> {
-  return overridesCommands(instance, (next) => {
+function overrideCommands(instanceId: string, origId: string, prop: OverridableProp, value: OverrideValue | undefined): ReturnType<typeof jsonFieldCommands> {
+  return overridesCommands(instanceId, (next) => {
     const key = overrideKey(origId, prop);
     if (value === undefined || !isValidOverrideValue(prop, value)) delete next[key];
     else next[key] = value;
   });
 }
 
-function rowsForInstance(ref: string, promoted: ReadonlySet<string>): LayerRow[] {
+function rowsForInstance(m: DocumentMirror, ref: string, promoted: ReadonlySet<string>): LayerRow[] {
   if (promoted.size > 0) {
-    // Curated list — group promoted keys by source node, keep document order
-    // by walking the referenced tree so nested layers appear under their
+    // Curated list — group promoted keys by source layer, keep document order
+    // by walking the referenced comp so nested layers appear under their
     // natural parents rather than in bag-iteration order.
     const byId = new Map<string, OverridableProp[]>();
     for (const key of promoted) {
@@ -152,40 +124,44 @@ function rowsForInstance(ref: string, promoted: ReadonlySet<string>): LayerRow[]
       byId.set(parsed.origNodeId, list);
     }
     const rows: LayerRow[] = [];
-    const visit = (id: string): void => {
-      const source = defaultSceneGraph.getNode(id);
-      if (!source) return;
-      const props = byId.get(id);
+    for (const source of overrideSourceLayers(m, ref)) {
+      const props = byId.get(source.id);
       if (props && props.length > 0) rows.push({ source, props });
-      for (const child of defaultSceneGraph.getChildren(id)) visit(child.id);
-    };
-    visit(ref);
+    }
     return rows;
   }
 
   // Pre-promotion fallback: every overridable prop on each direct child.
-  return defaultSceneGraph.getChildren(ref).map((source) => ({
-    source,
-    props: [...OVERRIDABLE_PROPS],
-  }));
+  return childOrderOf(m, ref)
+    .map((id) => m.layer(id))
+    .filter((source): source is LayerInfo => !!source)
+    .map((source) => ({ source, props: [...OVERRIDABLE_PROPS] }));
 }
 
 export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Element | null {
+  // B4-gap: which properties the source comp PUBLISHES (`__essentialProps` on its root) has no API datum — the scene revision re-reads it (a `CompInfo.essentialProps` would close it).
   useSceneRevision((s) => s.rev);
   const eng = useEngineEdit();
   // A text override's typing session (first keystroke → blur) is one entry.
   const typing = useGesture();
-  const time = useActiveWorkspace()?.time ?? 0;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const ref = readCompRef(node);
-  if (ref === null) return null;
+  const time = useThrottledTime();
+  const layer = useMirrorLayer(nodeId);
+  // The instance's override record (re-render when it changes).
+  useMirrorProperty(nodeId, COMP_OVERRIDES_PATH);
+  const m = documentMirror();
+  // A placed composition's source item is the comp it references.
+  const ref = uiKindOf(layer) === 'comp' ? layer?.source : undefined;
 
+  // B4-gap: the published Essential Properties (`__essentialProps`) — see above.
   const promoted = readEssentialProps(ref);
-  const rows = rowsForInstance(ref, promoted);
+  const rows = ref ? rowsForInstance(m, ref, promoted) : [];
+  // The referenced comp's stack, and every listed source layer's values.
+  useMirrorKeys(ref ? [`comp:${ref}`, `order:${ref}`, 'layers'] : []);
+  useMirrorTrackWatch(rows.map((r) => r.source.id), WATCHED_TRACKS);
+  if (!layer || !ref) return null;
   if (rows.length === 0) return null;
 
-  const overrides = readCompOverrides(node);
+  const overrides = mirrorCompOverrides(m, nodeId);
 
   return (
     <>
@@ -214,9 +190,9 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
               <span
                 className={styles.label}
                 style={{ color: 'var(--color-text-secondary)' }}
-                title={source.name ?? source.id}
+                title={source.name || source.id}
               >
-                {source.name ?? source.id}
+                {source.name || source.id}
               </span>
               {layerOverrides.length > 0 && (
                 <button
@@ -224,11 +200,11 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   className={styles.select}
                   style={{ width: 'auto', padding: '0 8px', fontSize: 'var(--font-size-micro)' }}
                   onClick={() => {
-                    void edit('Reset Overrides', overridesCommands(node, (next) => {
+                    void edit('Reset Overrides', overridesCommands(nodeId, (next) => {
                       for (const k of Object.keys(next)) if (parseOverrideKey(k)?.origNodeId === source.id) delete next[k];
                     }));
                   }}
-                  aria-label={`Reset all overrides on ${source.name ?? source.id}`}
+                  aria-label={`Reset all overrides on ${source.name || source.id}`}
                 >
                   Reset
                 </button>
@@ -246,10 +222,10 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   <button
                     type="button"
                     onClick={() => {
-                      void edit(overridden ? 'Clear Override' : 'Override Property', overrideCommands(node, source.id, prop, overridden ? undefined : value));
+                      void edit(overridden ? 'Clear Override' : 'Override Property', overrideCommands(nodeId, source.id, prop, overridden ? undefined : value));
                     }}
                     title={overridden ? 'Clear override (inherit from the source comp)' : 'Override for this instance only'}
-                    aria-label={`${overridden ? 'Clear' : 'Set'} ${LABEL[prop]} override on ${source.name ?? source.id}`}
+                    aria-label={`${overridden ? 'Clear' : 'Set'} ${LABEL[prop]} override on ${source.name || source.id}`}
                     style={{
                       width: 14, height: 14, padding: 0, borderRadius: '50%', cursor: 'pointer',
                       border: '1px solid var(--color-border)',
@@ -261,23 +237,23 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                     <ValueField
                       value={value as number}
                       {...eng.scrub(`Override ${LABEL[prop]}`)}
-                      onChange={(v) => eng.send(`Override ${LABEL[prop]}`, overrideCommands(node, source.id, prop, v))}
+                      onChange={(v) => eng.send(`Override ${LABEL[prop]}`, overrideCommands(nodeId, source.id, prop, v))}
                       unit={UNIT[prop]}
                       precision={2}
-                      aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
+                      aria-label={`${LABEL[prop]} on ${source.name || source.id}`}
                     />
                   ) : kind === 'color' ? (
                     <div {...eng.press(`Override ${LABEL[prop]}`)} style={{ display: 'contents' }}>
                     <ColorPicker
                       value={String(value)}
-                      onChange={(hex) => eng.send(`Override ${LABEL[prop]}`, overrideCommands(node, source.id, prop, hex))}
+                      onChange={(hex) => eng.send(`Override ${LABEL[prop]}`, overrideCommands(nodeId, source.id, prop, hex))}
                       compact
                       // No alpha: the override is written back as the layer's
                       // colour string, and the renderer's colour channels carry
                       // no alpha of their own — an 8-digit hex would set an
                       // opacity that nothing reads.
                       alpha={false}
-                      aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
+                      aria-label={`${LABEL[prop]} on ${source.name || source.id}`}
                     />
                     </div>
                   ) : (
@@ -286,11 +262,11 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                       value={String(value)}
                       onChange={(e) => {
                         if (!typing.isActive()) typing.begin(`Override ${LABEL[prop]}`);
-                        typing.send(overrideCommands(node, source.id, prop, e.target.value));
+                        typing.send(overrideCommands(nodeId, source.id, prop, e.target.value));
                       }}
                       onBlur={() => { void typing.end(); }}
                       fullWidth
-                      aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
+                      aria-label={`${LABEL[prop]} on ${source.name || source.id}`}
                     />
                   )}
                 </div>

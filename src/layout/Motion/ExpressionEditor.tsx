@@ -21,9 +21,11 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import { useActiveWorkspace } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
+import { useThrottledTime } from '@stores/playbackClockStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { trackRefIn } from '@core/mirror/trackIndex';
+import { memberExpressionOf, type MemberExpressionFacts } from '@core/mirror/memberExpressions';
 import {
   defaultAnimation,
   suggestExpression,
@@ -41,7 +43,6 @@ import type { PropRef } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { propRefForTrack } from '@core/engine/propRefs';
 import { PickWhip } from '@components/PickWhip';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { insertAtCaret, whipExpression } from '@core/whip/whipTarget';
 import { applyCompletion, completionsAt, wordAtCaret, type CompletionItem } from './expressionCompletion';
 import { ExpressionCompletionPopup, completionOptionId } from './ExpressionCompletionPopup';
@@ -78,16 +79,27 @@ const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
   ws: '',
 };
 
-export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: string }): JSX.Element {
-  useSceneRevision((s) => s.rev);
-  // Expressions live in the AnimationEngine, not a store. Every state this
-  // panel showed until now happened to change local `draft` too, so a scene
-  // bump was enough by accident; the enable/disable toggle changes ONLY engine
-  // state, and without this the switch stays visually on after turning it off.
-  useAnimationRevision();
-  const time = useActiveWorkspace()?.time ?? 0;
+/**
+ * The expression the row's track carries, from the document mirror (B4): per
+ * PROPERTY in the API, per DIMENSION when an unseparated vector's members
+ * differ (`memberExpressions`). Source Text is the `text/sourceText` property.
+ */
+function trackExpressionFacts(nodeId: string, prop: string): MemberExpressionFacts | null {
+  const tree = documentMirror().tree(nodeId);
+  if (prop === SOURCE_TEXT_PROP) return memberExpressionOf(tree?.nodes.get('text/sourceText'), 0);
+  const r = trackRefIn(tree, prop);
+  return r ? memberExpressionOf(r.info, r.member) : null;
+}
 
-  const stored = defaultAnimation.getExpressionSrc(nodeId, prop) ?? '';
+export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: string }): JSX.Element {
+  // The property's record in the document mirror: the enable/disable toggle
+  // changes ONLY the expression state, and without this subscription the
+  // switch would stay visually on after turning it off.
+  useMirrorTrackWatch([nodeId], [prop === SOURCE_TEXT_PROP ? 'text/sourceText' : prop]);
+  const time = useThrottledTime();
+
+  const expr = trackExpressionFacts(nodeId, prop);
+  const stored = expr?.source ?? '';
   const [draft, setDraft] = useState(stored);
   // Re-seed when switching property/layer.
   const key = `${nodeId}:${prop}`;
@@ -113,8 +125,8 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
   // exist at all; `enabled` decides whether the formula is driving the property
   // right now. This variable used to be called `enabled` and held
   // `hasExpression` — the exact conflation the model change exists to end.
-  const attached = defaultAnimation.hasExpression(nodeId, prop);
-  const enabled = defaultAnimation.isExpressionEnabled(nodeId, prop);
+  const attached = expr !== null;
+  const enabled = expr?.enabled ?? false;
 
   // Source Text is a STRING property: its expression evaluates to text plus
   // style overrides, previewed through its own engine entry point.
@@ -122,6 +134,10 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 
   // Live evaluation of the current draft at the playhead — through the engine
   // so valueAtTime / layer / loopOut preview exactly as playback resolves.
+  // B4-gap: the API's `evaluateExpression` query evaluates a whole PROPERTY as
+  // its first member (no `member`: `value` in a Y-of-Position draft would be X)
+  // and refuses Source Text (no text + style result) — an `evaluateExpression`
+  // `member?` argument and a textDocument result would move this preview onto it.
   const preview = useMemo(() => {
     if (!isSourceText) {
       const p = defaultAnimation.previewExpression(nodeId, prop, draft, time);
@@ -250,7 +266,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
    * would otherwise insert at a stale position.
    */
   const insertWhipReference = (target: { nodeId: string; prop?: string }): void => {
-    const name = defaultSceneGraph.getNode(target.nodeId)?.name;
+    const name = documentMirror().layer(target.nodeId)?.name;
     if (!name) return;
     const el = taRef.current;
     const at = el?.selectionStart ?? draft.length;

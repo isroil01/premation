@@ -21,14 +21,20 @@ import { Slider } from '@components/Slider';
 import { Popover } from '@components/Popover';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/projectStore';
-import { useClipRevision } from '@hooks/useClipRevision';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { getTime, useThrottledTime } from '@stores/playbackClockStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useMirrorKeys, useRetainTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import {
+  audioClipTimings,
+  settingsFps,
+  sourceSeconds,
+  staticLevelDb,
+  staticPan,
+  unbarredTiming,
+} from '@core/mirror/audio';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { audioComponent, isAudioNode, readAudioClipTimings } from '@core/audio/audioScene';
 import { AudioEffectsSection } from './AudioEffectsSection';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import {
   ensureAudioBuffer,
   amplitudeEnvelope,
@@ -42,7 +48,7 @@ import { waveformPath } from '@core/audio/waveform';
 import { InspectorRow } from '@components/Inspector';
 import { KeyframeRow } from './KeyframeRow';
 import {
-  AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB, percentToDb,
+  AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB,
   AUDIO_PAN_PROP, MIN_PAN, MAX_PAN,
 } from '@core/audio/audioParams';
 import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
@@ -63,7 +69,6 @@ import toolStyles from './AudioToolDialog.module.css';
 const WAVE_W = 264;
 const WAVE_H = 52;
 
-const num = (v: unknown, fallback: number): number => (typeof v === 'number' ? v : fallback);
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /** Where the layer's audible span sits and which slice of the file it plays. */
@@ -76,63 +81,66 @@ interface Timing {
 }
 
 export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  useClipRevision();
-  const time = useActiveWorkspace()?.time ?? 0;
+  // The document mirror (B4): the layer's header (bar, switches, source), its
+  // property tree (level, pan, the bar-less clip fields), its parent's header
+  // (a group's members have no bar) and the source item (the file's length).
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  useRetainTree(nodeId);
+  useMirrorKeys([
+    `layer:${nodeId}`,
+    `tree:${nodeId}`,
+    ...(layer?.parent ? [`layer:${layer.parent}`] : []),
+    ...(layer?.source ? [`item:${layer.source}`] : []),
+  ]);
+  // Display time (throttled) — never the raw clock in render.
+  const time = useThrottledTime();
   // A scrubbed timing / level field is ONE gesture; a typed value one entry.
   const timingEdit = useEngineEdit();
   // Re-render when the engine finishes decoding a waveform.
   const [, setLoaded] = useState(0);
   useEffect(() => audioEngine.onChange(() => setLoaded((n) => n + 1)), []);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  const comp = node ? audioComponent(node) : undefined;
+  const isAudio = uiKindOf(layer) === 'audio';
+  // The footage item the layer plays is the decoder's asset id.
+  const assetId = isAudio ? layer?.source ?? '' : '';
 
   // Kick off decoding for this asset (idempotent) so the waveform appears.
-  const src = comp && typeof comp.props.__src === 'string' ? comp.props.__src : '';
-  const assetId = comp && typeof comp.props.__assetId === 'string' ? comp.props.__assetId : '';
+  // Engine-side until E2: the decode is the editor's audio engine's (it
+  // resolves the playable media URL, which the API does not carry).
   useEffect(() => {
-    if (assetId && src) void audioEngine.load(assetId, src);
-  }, [assetId, src]);
+    if (assetId) void ensureAudioBuffer(nodeId);
+  }, [assetId, nodeId]);
 
   const wave = assetId ? audioEngine.getWaveform(assetId) : undefined;
   const path = useMemo(() => (wave ? waveformPath(wave.peaks, WAVE_W, WAVE_H) : ''), [wave]);
 
-  // A split layer has several bars. Edit the one under the playhead so the
-  // fields describe what you are hearing; fall back to the first.
-  const clipTimings = readAudioClipTimings(nodeId);
+  // The layer's bar (a split makes a new layer: one bar each); a group's
+  // member has none and plays from its own Start / In / Out.
+  const clipTimings = audioClipTimings(m, nodeId);
   const activeIndex = Math.max(
     0,
     clipTimings.findIndex((t) => time >= t.startSec && time < t.startSec + (t.outSec - t.inSec)),
   );
 
-  if (!node || !comp || !isAudioNode(node)) return null;
+  if (!layer || !isAudio) return null;
 
-  const p = comp.props;
-  const duration = num(p.__duration, 0);
-  // dB is the stored form; the percent is the legacy fallback (see the
-  // KeyframeRow below and `staticLevelDb` in audioScene).
-  const levelDb =
-    typeof p[AUDIO_LEVEL_DB_PROP] === 'number'
-      ? (p[AUDIO_LEVEL_DB_PROP] as number)
-      : percentToDb(num(p.__level, 100));
+  const duration = sourceSeconds(m, nodeId);
+  // `audio/levels` — dB; an older project's percent is migrated by the engine
+  // (see the KeyframeRow below and `staticLevelDb` in audioScene).
+  const levelDb = staticLevelDb(m, nodeId);
   // Centred is the absence of the prop, not a stored 0 — see `panOf`.
-  const pan = typeof p[AUDIO_PAN_PROP] === 'number' ? (p[AUDIO_PAN_PROP] as number) : 0;
-  const muted = p.__muted === true;
+  const pan = staticPan(m, nodeId);
+  const muted = !layer.switches.audioEnabled;
 
   const active = clipTimings[activeIndex];
   const timing: Timing = active
     ? { clipId: active.id, startSec: active.startSec, inSec: active.inSec, outSec: active.outSec }
-    : {
-        clipId: null,
-        startSec: num(p.__start, 0),
-        inSec: num(p.__in, 0),
-        outSec: num(p.__out, duration),
-      };
+    : { clipId: null, ...unbarredTiming(m, nodeId) };
 
   /** Level / Pan typed or scrubbed with the stopwatch off (KeyframeRow's static route). */
   const writeStatic = (track: string, label: string, v: number): void => {
-    timingEdit.send(`Set ${label}`, scalarValueCommands(track, [{ nodeId, value: v }], { seconds: time }));
+    timingEdit.send(`Set ${label}`, scalarValueCommands(track, [{ nodeId, value: v }], { seconds: getTime() }));
   };
 
   const fadeHere = (side: FadeSide): void => {
@@ -382,9 +390,11 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
     let cancelled = false;
     setDecoding(true);
     void (async () => {
+      // Engine-side until E2: the decode (the envelope is pure maths over it).
       const buffer = await ensureAudioBuffer(nodeId);
       if (cancelled) return;
-      const fps = getTimelineController().fps || 30;
+      // The active composition's rate (the conversion writes on its frame grid).
+      const fps = settingsFps(documentMirror().comp(activeCompIdNow() ?? '')?.settings);
       setEnv(buffer ? amplitudeEnvelope(buffer, fps) : []);
       setDecoding(false);
     })();

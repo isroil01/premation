@@ -10,8 +10,8 @@
 
 import { useInfoStore } from '@stores/infoStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { useActiveCompFps, useMirrorLayer } from '@hooks/useMirror';
+import { useActiveCompSize } from './inspectorMirror';
 import { cn } from '@utils/cn';
 import styles from './InfoAudioPanel.module.css';
 
@@ -23,9 +23,9 @@ export interface InfoReadoutProps {
 export function InfoReadout({ compact = false }: InfoReadoutProps): JSX.Element {
   const { x, y, rgba, present } = useInfoStore();
   const selectedIds = useSelectionStore((s) => s.ids);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
-  const compFps = useCompositionStore((s) => s.fps);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
+  // The rate as the settings dialog shows it: NTSC 30000/1001 reads 29.97.
+  const compFps = Number(useActiveCompFps().toFixed(3));
 
   const swatch =
     rgba && rgba.a > 0
@@ -34,7 +34,7 @@ export function InfoReadout({ compact = false }: InfoReadoutProps): JSX.Element 
   const hexColor = rgba
     ? `#${rgba.r.toString(16).padStart(2, '0')}${rgba.g.toString(16).padStart(2, '0')}${rgba.b.toString(16).padStart(2, '0')}`.toUpperCase()
     : '—';
-  const primaryNode = selectedIds[0] ? defaultSceneGraph.getNode(selectedIds[0]) : null;
+  const primaryNode = useMirrorLayer(selectedIds[0]);
   const selectedLabel = primaryNode
     ? `${primaryNode.name}${selectedIds.length > 1 ? ` +${selectedIds.length - 1}` : ''}`
     : 'None';

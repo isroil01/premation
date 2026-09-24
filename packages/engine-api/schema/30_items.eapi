@@ -21,6 +21,8 @@ struct Interpretation {
   /// Image-sequence start frame / timecode override.
   startTimecode?: Time = 8;
   invertAlpha: bool = 9;
+  /// B3z — Remove Pulldown: the 3:2 pulldown phase (0..4, the Interpret Footage menu's order) the footage's film frames are rebuilt from; absent = off.
+  removePulldown?: u32 = 10;
 }
 
 struct InterpretationPatch {
@@ -35,6 +37,10 @@ struct InterpretationPatch {
   invertAlpha?: bool = 9;
   /// true clears conformFrameRate back to the file's rate.
   clearConform?: bool = 10;
+  /// B3z — arm Remove Pulldown at this phase, 0..4 (`outOfRange` otherwise).
+  removePulldown?: u32 = 11;
+  /// B3z — true turns Remove Pulldown off (not together with `removePulldown`: `invalidArgument`).
+  clearRemovePulldown?: bool = 12;
 }
 
 struct ImportFile {
@@ -60,6 +66,7 @@ command createFolder = 55 { name: string = 1; parent?: ItemId = 2; } -> ItemRef;
 /// Move items into a folder (absent = project root).
 command moveItems = 56 { items: ItemId[] = 1; folder?: ItemId = 2; }
 command setInterpretation = 57 { items: ItemId[] = 1; patch: InterpretationPatch = 2; }
+/// Colour label (0 = none). B3z — a footage item stores the palette entry's id (`slate`, `teal`, …: the Project panel's form); a stored id or a stored colour both read back as its index.
 command setItemLabel = 58 { items: ItemId[] = 1; label: u32 = 2; }
 /// Remove every footage item no composition uses (File ▸ Dependencies ▸ Remove Unused Footage).
 command removeUnusedItems = 59 {} -> ItemList;
@@ -108,6 +115,12 @@ struct CompSettings {
   preserveResolution: bool = 18;
   /// Environment preset / ground level / sky / SSAO live under this JSON until typed (§11).
   world?: string = 19;
+  /// B3z — Responsive Time (JSON `{authoredDurationSec, protectedRegions: [{start, end}]}` — spans of authored time that keep their length when the composition is stretched), stored on the composition root; absent = none.
+  responsiveTime?: string = 21;
+  /// B3z — the template's authored fields (JSON array of the editor's TemplateField: `{id, label, kind, group, default, target, …}`), stored on the composition root; absent = none.
+  templateFields?: string = 22;
+  /// B3z — the background PAINT when it is not a flat colour (JSON FillPaint as the editor stores it: `{type: 'linear', angle, stops: [{id, offset, color}], opacityStops?}` / `{type: 'radial', cx, cy, radius, stops, …}`); absent = `background` alone.
+  backgroundPaint?: string = 23;
 }
 
 struct CompSettingsPatch {
@@ -131,6 +144,12 @@ struct CompSettingsPatch {
   preserveFrameRate?: bool = 17;
   preserveResolution?: bool = 18;
   world?: string = 19;
+  /// B3z — Responsive Time as JSON (see CompSettings); '' clears it. Must be an object with a number `authoredDurationSec` and an array `protectedRegions` (`invalidArgument`).
+  responsiveTime?: string = 21;
+  /// B3z — the template's authored fields as a JSON array; '' clears them (`invalidArgument` unless an array).
+  templateFields?: string = 22;
+  /// B3z — the background paint as JSON FillPaint (`type` linear / radial / solid); '' clears it (as clearBackgroundGradient). The typed `backgroundGradient` stays `unsupported` (FillPaint carries stop ids, an angle / centre and opacity stops a Gradient does not).
+  backgroundPaint?: string = 23;
 }
 
 /// Create a composition. `fromItems` makes it from footage (size/duration/rate from the first item, one layer per item).

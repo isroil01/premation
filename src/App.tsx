@@ -26,7 +26,6 @@ import { viewportFrameCache } from '@core/rendering/frameCache';
 import { createViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as playheadNow } from '@stores/playbackClockStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
@@ -75,7 +74,7 @@ import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { PATH_ANIM_PROP, togglePathAnimation } from '@core/workspace/pathCommands';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
-import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
+import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
 import { installModelHydration } from '@core/scene/modelHydrate';
@@ -91,7 +90,6 @@ import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
 import { PluginConsentHost } from '@layout/Plugins/PluginConsentHost';
 import { PluginDeepLink } from '@layout/Plugins/PluginDeepLink';
-import { setNodeLabelColor } from '@core/scene/labelColor';
 import { usePluginPanelRegistration } from '@layout/Plugins/usePluginPanels';
 import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
@@ -120,7 +118,6 @@ import {
   setTimelineEditMode,
   getTimelineEditMode,
 } from '@layout/Timeline/timelineEditMode';
-import { useCompositionStore } from '@stores/compositionStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
 import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
@@ -159,12 +156,9 @@ function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
 }
 
 function setNodeColor(nodeId: string, color: string): void {
-  // The label switch through the engine (B3); the API's label is an index
-  // into the layer label palette.
-  void setLabelColorEdit([nodeId], color).then((done) => {
-    // B3-legacy: engine gap — a colour outside the layer label palette has no API label index.
-    if (!done) setNodeLabelColor(nodeId, color);
-  });
+  // The label switch through the engine (B3): a palette colour as its index,
+  // any other colour as a custom `labelColor`.
+  void setLabelColorEdit([nodeId], color);
 }
 
 /** The editor UI wrapped in the AI chat provider — chat state must sit above
@@ -202,7 +196,10 @@ function EditorShellInner(): JSX.Element {
     else store.toggle({ nodeId: trackId, prop });
   };
   const addSelected = useSelectionStore((s) => s.add);
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // The shell still re-renders on every scene revision (legacy plumbing, the
+  // App area's to retire). The timeline model no longer needs it: its rows
+  // subscribe to the document mirror themselves (Timeline/useTimelineModel).
+  useSceneRevision((s) => s.rev);
   // Scalar selectors, NOT `useActiveWorkspace`.
   //
   // `useActiveWorkspace` returns the whole tab OBJECT, which immer replaces on
@@ -222,10 +219,6 @@ function EditorShellInner(): JSX.Element {
   // (now the self-subscribing <StatusBarTimecode/>); everything else that
   // needs the playhead is an EVENT HANDLER, which reads `playheadNow()` at
   // event time — non-reactive and always current.
-
-  const compFps = useCompositionStore((s) => s.fps);
-  const compStartFrame = useCompositionStore((s) => s.startFrame);
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
 
   const focusIsolate = useFocusStore((s) => s.isolate);
   const { activeSet } = useFocusContext();
@@ -292,107 +285,29 @@ function EditorShellInner(): JSX.Element {
   usePluginPanelRegistration();
 
 
-  // Bumped when the engine's layers/clips change (add/remove/move/trim/split),
-  // so the derived clip bars stay in sync.
-  const [clipRev, setClipRev] = useState(0);
-
   const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
 
-  // Re-read engine markers + work area when they change (add/remove, in/out).
-  // Declared here rather than beside its effect because the track model reads
-  // layer markers, so it has to re-derive when one is added or removed.
-  const [markerRev, setMarkerRev] = useState(0);
+  // Timeline rows from the document MIRROR (B4): one row per layer of the
+  // active comp, in stack order, subscribed to exactly the records they draw
+  // (the comp's stack, each layer's header and keyframes, expanded rows'
+  // property trees + the throttled playhead). See Timeline/useTimelineModel.
+  const tracks = useTimelineTracks(activeCompId, expandedIds);
 
-  // Structural vs value-only: `sceneRev` ticks on inspector slider drags
-  // (`bumpSceneRevision`), which used to rebuild every timeline row 30–60×/s.
-  // Structure (add/remove/reparent) is `SceneGraphChanged`; keyframe diamonds
-  // are `AnimationChanged`. Expanded property *values* still need sceneRev.
-  const [graphRev, setGraphRev] = useState(0);
-  const [animRev, setAnimRev] = useState(0);
-
-  // Timeline tracks derived from the scene graph — one track per node, in
-  // layer order. Clip bars come from the Timeline Engine's layers for that node.
-  const valueRev = expandedIds.length > 0 ? sceneRev : 0;
-  const tracks = useMemo<TimelineTrack[]>(() => {
-    void graphRev;
-    void animRev;
-    void clipRev;
-    void markerRev;
-    void valueRev;
-    return deriveTimelineTracks({ activeCompId, compFps, expandedIds, revs: { anim: animRev, clip: clipRev, marker: markerRev } });
-  // `sceneRev` is deliberately NOT a dependency — `valueRev` is, and it IS
-  // `sceneRev` gated on there being an expanded row to show a value on. Listing
-  // the raw counter here as well defeated that gate completely: the memo ran on
-  // every drag tick again, which is the cost the gate exists to avoid, and the
-  // comment above went on describing a fix the deps array had cancelled.
-  }, [graphRev, animRev, clipRev, markerRev, valueRev, compFps, expandedIds, activeCompId]);
-
-  // Mirror the scene graph into the Timeline Engine's layers on STRUCTURAL
-  // changes only (add/remove/reparent). Pure keyframe or property edits do not
-  // change layer geometry, so there is no need to walk the whole scene for them.
-  // Previously this was keyed on sceneRev, which fired on every drag tick and
-  // caused a full syncFromScene walk 30-60 times/second during a slider drag.
+  // Keep the Timeline Engine's bars seeded for layers a legacy writer adds
+  // around the engine API (the engine's own handlers sync themselves). This is
+  // WRITE-side upkeep — the bars are where layer timing lives until the
+  // controller moves into the engine — and never drives a render: the rows
+  // above re-render from the mirror's events alone.
   useEffect(() => {
-    const bus = getEventBus();
-    const graphSub = bus.on('SceneGraphChanged', () => {
+    const graphSub = getEventBus().on('SceneGraphChanged', () => {
       getTimelineController().syncFromScene();
-      setGraphRev((v) => v + 1);
     });
-    const animSub = bus.on('AnimationChanged', (payload) => {
-      if (!isMediaDecodeRepaint(payload)) setAnimRev((v) => v + 1);
-    });
-    /*
-      A RENAME that arrives as a value write. `node.name = …` beside a prop edit
-      (the text tool naming a layer after what it says) announces `NodeUpdated`
-      and nothing structural, so the tracks above — derived on `graphRev` — kept
-      the old name: the Layers panel and the inspector read "PREMIUM" while the
-      timeline row and its bar still read "Text". Names are compared per event,
-      for the one node it names, so a slider drag costs a Map lookup and no more.
-    */
-    const names = new Map<string, string | undefined>();
-    const nameSub = bus.on('NodeUpdated', ({ nodeId }) => {
-      const name = defaultSceneGraph.getNode(nodeId)?.name;
-      const known = names.has(nodeId);
-      const before = names.get(nodeId);
-      names.set(nodeId, name);
-      // First sight of a node: compare against what the timeline is showing.
-      const shown = known ? before : tracksRef.current.find((t) => t.id === nodeId)?.name;
-      if (shown === undefined || shown === name) return;
-      getTimelineController().syncFromScene();
-      setGraphRev((v) => v + 1);
-    });
-    return () => {
-      graphSub.dispose();
-      animSub.dispose();
-      nameSub.dispose();
-    };
+    return () => graphSub.dispose();
   }, []);
 
   // Session hydration is owned by AppRouter (before any route renders), so the
   // editor must NOT re-hydrate here — doing so flips auth status to 'loading'
   // mid-session and bounces RequireAuth back to /login.
-
-  // Bumped on timeline zoom changes (engine owns pixels-per-frame).
-  const [viewRev, setViewRev] = useState(0);
-  useEffect(() => {
-    const c = getTimelineController();
-    const bumpMarker = (): void => setMarkerRev((v) => v + 1);
-    const bumpClip = (): void => setClipRev((v) => v + 1);
-    const subs = [
-      c.timeline.events.on('MarkerAdded', bumpMarker),
-      c.timeline.events.on('MarkerRemoved', bumpMarker),
-      c.timeline.events.on('RangeChanged', bumpMarker),
-      c.timeline.events.on('LayerAdded', bumpClip),
-      c.timeline.events.on('LayerRemoved', bumpClip),
-      c.timeline.events.on('LayerUpdated', bumpClip),
-      c.timeline.events.on('LayerTrimmed', bumpClip),
-      c.timeline.events.on('LayerSplit', bumpClip),
-      c.timeline.events.on('TimelineZoomChanged', () => setViewRev((v) => v + 1)),
-    ];
-    return () => {
-      for (const s of subs) s.dispose();
-    };
-  }, [activeCompId]);
 
   // Track visibility / lock toggles → `setLayerSwitches` (B3). Every timeline
   // row is a layer of the active composition, so the engine addresses them all.
@@ -423,10 +338,7 @@ function EditorShellInner(): JSX.Element {
 
   // Horizontal zoom — the Timeline Engine's view is the authority (pixels/frame);
   // pps = ppf × fps. Driven by the transport zoom buttons and Ctrl+Wheel.
-  const pps = useMemo(() => {
-    void viewRev;
-    return getTimelineController().getPixelsPerSecond();
-  }, [viewRev]);
+  const pps = useTimelinePixelsPerSecond(activeCompId);
   const handleZoom = useCallback((next: number, anchorSeconds?: number): void => {
     const c = getTimelineController();
     // Anchor on the point the gesture was aimed at, falling back to the
@@ -712,17 +624,9 @@ function EditorShellInner(): JSX.Element {
     return tracks.map((t) => ({ ...t, ghosted: !activeSet.has(t.id) }));
   }, [tracks, activeSet]);
 
-  // User markers from the Timeline Engine (in seconds).
-  const markers = useMemo(() => {
-    void markerRev;
-    return getTimelineController().getMarkers().map((m) => ({ id: m.id, time: m.time, label: m.label }));
-  }, [markerRev]);
-
-  // Work area (in/out) from the engine, in seconds — re-read on RangeChanged.
-  const workArea = useMemo(() => {
-    void markerRev;
-    return getTimelineController().getWorkArea() ?? undefined;
-  }, [markerRev]);
+  // Comp markers, work area, duration, rate and start frame: the active comp's
+  // mirror record (seconds).
+  const ruler = useTimelineRuler(activeCompId);
 
   // The disk tier under the RAM cache, so a looped work area longer than ~2s
   // stops re-rendering from scratch on every pass.
@@ -766,9 +670,9 @@ function EditorShellInner(): JSX.Element {
   // timelineModel was a new object 60×/s and forced the entire row tree to
   // re-evaluate on every frame tick.
   const timelineModel = useMemo<TimelineModel>(() => ({
-    duration: compDuration,
-    frameRate: compFps,
-    startFrame: compStartFrame,
+    duration: ruler.duration,
+    frameRate: ruler.frameRate,
+    startFrame: ruler.startFrame,
     // A SNAPSHOT, deliberately not reactive: every live consumer reads the
     // separate playheadTime path (BottomTimeline/Timeline/GraphEditor), so
     // this field only serves the no-active-tab fallback. Making it reactive
@@ -776,10 +680,10 @@ function EditorShellInner(): JSX.Element {
     // header comment above forbids.
     currentTime: playheadNow(),
     pixelsPerSecond: pps,
-    markers,
+    markers: ruler.markers,
     tracks: focusTracks,
-    ...(workArea ? { workArea } : {}),
-  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame]);
+    ...(ruler.workArea ? { workArea: ruler.workArea } : {}),
+  }), [focusTracks, pps, ruler]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();

@@ -30,8 +30,8 @@
  * one, then the bar's own groups — into the bar's single `⋯` menu. Play does
  * not move.
  *
- * Everything here reads the timeline controller and the workspace store
- * directly, so the bar takes no props and can be dropped anywhere in the
+ * Everything here reads the transport (`timelineView`), the document mirror
+ * (the comp's rate, start and length) and the workspace store directly, so the bar takes no props and can be dropped anywhere in the
  * viewport region (the popout timeline mounts a second copy).
  */
 
@@ -39,7 +39,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import {
+  goToEnd,
+  goToStart,
+  isTransportLooping,
+  setTransportLooping,
+  stepBackward,
+  stepForward,
+  togglePlayTransport,
+} from '@core/timeline/timelineView';
 import { splitSelectedAtPlayhead, trimSelectedEndToPlayhead, trimSelectedStartToPlayhead } from '@layout/Timeline/timelineEdits';
 import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead } from '@layout/Timeline/markerCommands';
 import { ViewportTools } from './ViewportTools';
@@ -48,7 +56,8 @@ import { ZoomField, useZoomPercent, zoomMenuItems } from './ZoomField';
 import { framesToTimecode } from '@core/time/timecode';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { LiveTimecode } from '@layout/Timeline/LiveTimecode';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { useSelectionStore } from '@stores/selectionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { displayLevelFor, isDemoted, type TransportGroup } from './transportOverflow';
@@ -63,15 +72,16 @@ export function TransportBar(): JSX.Element {
   const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
   const selectedIds = useSelectionStore((s) => s.ids);
-  const fps = useCompositionStore((s) => s.fps);
-  const startFrame = useCompositionStore((s) => s.startFrame);
-  const duration = useCompositionStore((s) => s.durationSeconds);
+  const settings = useActiveMirrorComp()?.settings;
+  const fps = settingsFps(settings);
+  const startFrame = settingsStartFrame(settings);
+  const duration = settingsDurationSeconds(settings);
 
   // Looping is PER COMP; a state seeded once showed the previous tab's value
   // after switching comps.
-  const [looping, setLooping] = useState(() => getTimelineController().isLooping());
+  const [looping, setLooping] = useState(() => isTransportLooping());
   useEffect(() => {
-    setLooping(getTimelineController().isLooping());
+    setLooping(isTransportLooping());
   }, [activeTabId]);
 
   // No live clock subscription here: the timecode is a `LiveTimecode` leaf that
@@ -90,7 +100,7 @@ export function TransportBar(): JSX.Element {
   const trimInToPlayhead = (): void => { void trimSelectedStartToPlayhead(selectedIds); };
   const trimOutToPlayhead = (): void => { void trimSelectedEndToPlayhead(selectedIds); };
   const toggleLoop = (): void => {
-    getTimelineController().setLooping(!looping);
+    setTransportLooping(!looping);
     setLooping(!looping);
   };
   // One layer selected → a layer marker on it; otherwise a comp marker. The
@@ -271,7 +281,7 @@ export function TransportBar(): JSX.Element {
           className={styles.btn}
           title="Go to Start (Home)"
           aria-label="Go to Start"
-          onClick={() => getTimelineController().goToStart()}
+          onClick={() => goToStart()}
         >
           <Icon name="skip-back" size="sm" />
         </button>
@@ -280,7 +290,7 @@ export function TransportBar(): JSX.Element {
           className={styles.btn}
           title="Previous Frame (Page Up)"
           aria-label="Previous Frame"
-          onClick={() => getTimelineController().previousFrame()}
+          onClick={() => stepBackward()}
         >
           <Icon name="chevron-left" size="sm" />
         </button>
@@ -289,7 +299,7 @@ export function TransportBar(): JSX.Element {
           className={cn(styles.btn, styles.playBtn, ws?.playing && styles.playBtnActive)}
           title={ws?.playing ? 'Pause Playback (Space)' : 'Start Playback (Space)'}
           aria-label={ws?.playing ? 'Pause' : 'Play'}
-          onClick={() => getTimelineController().togglePlay()}
+          onClick={() => togglePlayTransport()}
         >
           <Icon name={ws?.playing ? 'pause' : 'play'} size="md" />
         </button>
@@ -299,7 +309,7 @@ export function TransportBar(): JSX.Element {
           className={styles.btn}
           title="Next Frame (Page Down)"
           aria-label="Next Frame"
-          onClick={() => getTimelineController().nextFrame()}
+          onClick={() => stepForward()}
         >
           <Icon name="chevron-right" size="sm" />
         </button>
@@ -308,7 +318,7 @@ export function TransportBar(): JSX.Element {
           className={styles.btn}
           title="Go to End (End)"
           aria-label="Go to End"
-          onClick={() => getTimelineController().goToEnd()}
+          onClick={() => goToEnd()}
         >
           <Icon name="skip-forward" size="sm" />
         </button>

@@ -29,7 +29,6 @@ import { KIND_COLOR, KIND_FILL, KIND_ICON } from '@core/scene/sceneDerive';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import type { MirrorTreeLike } from '@core/mirror/trackIndex';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { MirrorComp } from '@stores/documentMirror';
 import { buildPropertyRows, timelineTracksOf } from './buildPropertyRows';
 import { storedKeyIndex, storedKeyOf, uiKeyId } from './keyframeSelectionIds';
@@ -51,13 +50,10 @@ function labelHex(layer: LayerInfo): string | undefined {
   return i > 0 ? LABEL_COLORS[i - 1]?.color : undefined;
 }
 
-/**
- * A label colour OUTSIDE the palette (the Label menu's custom swatch).
- * B4-gap: custom layer label colour — the API's `switches.label` is an index into the palette (0 = none/custom); a custom hex has no field yet.
- */
+/** A label colour OUTSIDE the palette (the Label menu's custom swatch): `switches.labelColor`, as stored. */
 function customLabelHex(layer: LayerInfo): string | undefined {
   if (layer.switches.label !== 0) return undefined;
-  const c = defaultSceneGraph.getNode(layer.id)?.color;
+  const c = layer.switches.labelColor;
   return typeof c === 'string' && HEX.test(c) ? c : undefined;
 }
 
@@ -161,6 +157,8 @@ function buildTrack(
     threeD: s.threeD,
     motionBlur: s.motionBlur,
     fxEnabled: s.effectsEnabled,
+    // The fx switch is drawn only on a layer that carries an effect (AE).
+    hasEffects: layer.effectCount > 0,
     adjustment: s.adjustment,
     guide: s.guide,
     preserveTransparency: s.preserveTransparency,

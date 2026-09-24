@@ -11,11 +11,13 @@ import { useMemo } from 'react';
 import type { Command, PropertyInit } from '@motion/engine-api';
 import { STYLE_PRESETS, applyStylePreset, type StylePreset, type StylePresetCategory } from '@core/style/stylePresets';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorProperty } from '@hooks/useMirror';
+import { colorValueHex } from '@core/mirror/paintFields';
 import { useUIStore } from '@stores/uiStore';
 import { getTime } from '@stores/playbackClockStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
-import { getNodeLayerStyles, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS } from '@core/effects/layerStyles';
+import { LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS } from '@core/effects/layerStyles';
 import { parseColorChannels } from '@core/effects/effects';
 import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
 import { isLayer } from '@core/engine/doc';
@@ -71,16 +73,17 @@ const GROUPS: Array<{ id: StylePresetCategory; label: string }> = (
   .map((id) => ({ id, label: GROUP_LABELS[id] }));
 
 export function StylePresetsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
+  // B4: the layer's header and its fill colour from the document mirror (the
+  // tree stays loaded, so a preset's `styles/<key>` groups are current too).
+  const layer = useMirrorLayer(nodeId);
+  const fill = useMirrorProperty(nodeId, 'layer/fill');
 
   const accent = useMemo(() => {
-    const c = node?.components.find((x) => x.type === 'Style' || x.type === 'Text');
-    const fill = c?.props.fill;
-    return typeof fill === 'string' && fill.startsWith('#') ? fill.slice(0, 7) : '#2b7eff';
-  }, [node]);
+    const hex = colorValueHex(fill?.value);
+    return hex ? hex.slice(0, 7) : '#2b7eff';
+  }, [fill]);
 
-  if (!node) return null;
+  if (!layer) return null;
 
   const applied = (label: string): void => {
     useUIStore.getState().notify({ level: 'success', message: `Applied “${label}”`, durationMs: 2000 });
@@ -88,7 +91,8 @@ export function StylePresetsSection({ nodeId }: { nodeId: string }): JSX.Element
   const apply = (id: string, label: string): void => {
     const preset = STYLE_PRESETS.find((p) => p.id === id);
     if (!preset) return;
-    const styleComp = node.components.find((c) => c.type === 'Style' || c.type === 'Text');
+    // B4-gap: the layer's Style / Text COMPONENT (its id, which `componentPropsCommands` writes opacity through, and its `backdropBlur`, not an API property) — no API field; closes when opacity is addressed by path here and backdropBlur gets a `layer/backdropBlur` field.
+    const styleComp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'Style' || c.type === 'Text');
     const plan = stylePresetCommands(nodeId, styleComp, preset, accent, getTime());
     if (plan.unaddressed.length > 0) {
       // B3-legacy: engine gap — Style `backdropBlur` (Glass / Soft UI, and clearing it) and the Transform's `specular` / `shininess` (the 3D material presets) are not API properties; such a preset keeps the legacy writer whole rather than half-applying.
@@ -212,7 +216,8 @@ export function stylePresetCommands(
   if (strokes.length === 0) unaddressed.push('layer/strokes');
   cmds.push(...strokes);
 
-  const current = Object.entries(getNodeLayerStyles(nodeId)).filter(([, v]) => v !== undefined).map(([k]) => k);
+  // The layer's current styles: its `styles/<key>` groups in the document mirror.
+  const current = (documentMirror().property(nodeId, 'styles')?.children ?? []).map((p) => p.slice('styles/'.length));
   if (current.length > 0) cmds.push({ type: 'removePropertyGroups', groups: current.map((k) => ref(nodeId, paths.styleGroup(k))) });
   for (const [key, style] of Object.entries(preset.styles ? preset.styles(accent) : {})) {
     if (!style) continue;

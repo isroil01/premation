@@ -210,6 +210,7 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
   }
   ctx.color.bitDepth = file.view.bit_depth;
   ctx.external = external_;
+  ctx.nativeFx = nativeFx_;
   if (file.view.frame_clip) {
     // WebGPUBackend.beginRenderPass: round + clamp the clip to the surface.
     const auto& c = *file.view.frame_clip;

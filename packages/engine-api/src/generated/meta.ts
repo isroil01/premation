@@ -22,6 +22,8 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   endGesture: { id: 5, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "Close the open gesture. commit=false rolls every edit of the gesture back (Esc during a drag)." },
   clearHistory: { id: 6, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "Drop all history (the document is unchanged)." },
   setHistoryLimit: { id: 7, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "" },
+  addHistoryCheckpoint: { id: 21, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "B3z — History panel ▸ Snapshot: push a NAMED entry that changes nothing, a point the panel can jump back to (Photoshop's snapshot; After Effects has none). Undoing / redoing it changes nothing and moves the revision like any step. Clears the redo stack like any new entry. Refused while a gesture is open (`gestureOpen`); an empty label is `invalidArgument`." },
+  restoreDocument: { id: 20, kind: 'edit', coalesce: false, family: "History", result: "Empty", doc: "B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches, materials and plugin storage are applied too but — like every authored extra no command edits — are not part of the entry. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default \"Restore Version\")." },
   newProject: { id: 10, kind: 'io', coalesce: false, family: "Project", result: "Empty", doc: "Replace the document with an empty project. Clears history." },
   openProject: { id: 11, kind: 'io', coalesce: false, family: "Project", result: "OpenProjectResult", doc: "Open a .motion project (or a recovery file). Clears history; the UI receives documentReset." },
   saveProject: { id: 12, kind: 'io', coalesce: false, family: "Project", result: "SaveProjectResult", doc: "Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged." },
@@ -38,7 +40,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   createFolder: { id: 55, kind: 'edit', coalesce: false, family: "Items", result: "ItemRef", doc: "" },
   moveItems: { id: 56, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Move items into a folder (absent = project root)." },
   setInterpretation: { id: 57, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "" },
-  setItemLabel: { id: 58, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "" },
+  setItemLabel: { id: 58, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Colour label (0 = none). B3z — a footage item stores the palette entry's id (`slate`, `teal`, …: the Project panel's form); a stored id or a stored colour both read back as its index." },
   removeUnusedItems: { id: 59, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "Remove every footage item no composition uses (File ▸ Dependencies ▸ Remove Unused Footage)." },
   setProxy: { id: 60, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Assign / enable a proxy for footage or a composition. Absent path with enabled=false clears it." },
   setItemComment: { id: 61, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "" },
@@ -61,7 +63,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   duplicateLayers: { id: 202, kind: 'edit', coalesce: false, family: "Layers", result: "LayerList", doc: "Duplicate layers directly above each original. Returns the new ids in input order." },
   reorderLayers: { id: 203, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "Move layers (keeping their relative order) so the first lands at `toIndex` in the stack." },
   setParent: { id: 204, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "Parent layers (absent parent = unparent). keepWorldTransform = AE's default (no jump)." },
-  renameLayer: { id: 205, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "" },
+  renameLayer: { id: 205, kind: 'edit', coalesce: false, family: "Layers", result: "RenameLayerResult", doc: "Rename a layer. B3z — the rename follows the expressions that name the layer (After Effects updates expression references when a layer is renamed): every quoted `layer('<old>')` / `layerAt('<old>')` reference, in any expression of the document, whose old name RESOLVED to this layer (the first node of that name in document order — the expression resolver's rule) is rewritten to the new name in the same undo entry; an expression's enabled state is kept. References by id (`#<id>`), non-literal references and references that resolved to another layer of the same name are left alone. The result counts the repaired expressions and the CAPTURED ones — expressions naming the new name that resolved to another layer before and resolve to this one now (reported, never rewritten)." },
   setLayerSwitches: { id: 206, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "Change switches on several layers at once. Undo restores each layer's previous value of each patched switch." },
   setBlendMode: { id: 207, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "" },
   setTrackMatte: { id: 208, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "" },
@@ -218,4 +220,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":72,"structs":366,"unions":11,"commands":134,"queries":32,"events":28} as const;
+export const SCHEMA_COUNTS = {"enums":72,"structs":370,"unions":11,"commands":136,"queries":32,"events":28} as const;

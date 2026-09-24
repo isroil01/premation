@@ -38,6 +38,8 @@ struct LayerSwitches {
   preserveTransparency: bool = 15;
   /// Colour label index (0 = none).
   label: u32 = 16;
+  /// B3z — a CUSTOM label colour (`#rgb`, `#rrggbb` or `#rrggbbaa`, as stored) when the layer's label is not one of the palette's; absent otherwise (then `label` says it).
+  labelColor?: string = 17;
 }
 
 struct LayerSwitchesPatch {
@@ -57,6 +59,8 @@ struct LayerSwitchesPatch {
   autoOrient?: AutoOrient = 14;
   preserveTransparency?: bool = 15;
   label?: u32 = 16;
+  /// B3z — set the label to any colour (`#rgb`, `#rrggbb`, `#rrggbbaa`; stored verbatim — a palette colour reads back as its `label` index); '' clears it (as label 0). Not together with `label` (`invalidArgument`); a malformed colour is `invalidArgument`.
+  labelColor?: string = 17;
 }
 
 /// A layer's place in time. All comp time except sourceOffset.
@@ -69,6 +73,8 @@ struct LayerTiming {
   stretch: f64 = 4;
   timeRemapEnabled: bool = 5;
   retime: RetimeMode = 6;
+  /// B4 — the length of a BOUNDED source (footage, a precomp) on the comp axis at the layer's stretch: what a bar can be trimmed / slipped within (the timeline's source-handle clamps). Absent = unbounded (shapes, text, solids, nulls, a still image, a time-remapped or frozen layer).
+  sourceDuration?: Time = 7;
 }
 
 struct LayerTimingPatch {
@@ -118,7 +124,17 @@ command setParent = 204 {
   /// The composition time the jump measures an animated Position at (AE: the current time). Absent = 0.
   time?: Time = 5;
 }
-command renameLayer = 205 { layer: LayerId = 1; name: string = 2; }
+/// Rename a layer. B3z — the rename follows the expressions that name the layer (After Effects updates expression references when a layer is renamed): every quoted `layer('<old>')` / `layerAt('<old>')` reference, in any expression of the document, whose old name RESOLVED to this layer (the first node of that name in document order — the expression resolver's rule) is rewritten to the new name in the same undo entry; an expression's enabled state is kept. References by id (`#<id>`), non-literal references and references that resolved to another layer of the same name are left alone. The result counts the repaired expressions and the CAPTURED ones — expressions naming the new name that resolved to another layer before and resolve to this one now (reported, never rewritten).
+command renameLayer = 205 { layer: LayerId = 1; name: string = 2; } -> RenameLayerResult;
+
+struct RenameLayerResult {
+  /// Expressions rewritten to follow the new name.
+  repaired: u32 = 1;
+  /// Expressions naming the new name that now resolve to this layer instead of the layer they read before.
+  captured: u32 = 2;
+  /// Another node already had the new name.
+  nameAlreadyInUse: bool = 3;
+}
 /// Change switches on several layers at once. Undo restores each layer's previous value of each patched switch.
 command setLayerSwitches = 206 { layers: LayerId[] = 1; patch: LayerSwitchesPatch = 2; }
 command setBlendMode = 207 { layers: LayerId[] = 1; mode: BlendMode = 2; }

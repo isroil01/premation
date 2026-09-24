@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { pauseTransport, playTransport } from '@core/timeline/timelineView';
 import { Icon } from '@components/Icon';
 import styles from './PresentationModeWindow.module.css';
 
@@ -19,12 +19,11 @@ export function PresentationModeWindow(): JSX.Element {
   }, []);
 
   const togglePlay = () => {
-    const tc = getTimelineController();
     if (isPlaying) {
-      tc.pause();
+      pauseTransport();
       setIsPlaying(false);
     } else {
-      tc.play();
+      playTransport();
       setIsPlaying(true);
     }
   };

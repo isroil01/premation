@@ -1533,6 +1533,46 @@ function decS_SetHistoryLimit(r: Reader, end: number, o: any): T.SetHistoryLimit
   o.entries = v_entries;
   return o;
 }
+function encS_AddHistoryCheckpoint(w: Writer, v: T.AddHistoryCheckpoint): void {
+  w.byte(10); w.str(v.label);
+}
+function decS_AddHistoryCheckpoint(r: Reader, end: number, o: any): T.AddHistoryCheckpoint {
+  let h_label = false;
+  let v_label: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_label = r.str(); h_label = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_label) throw new DecodeError('AddHistoryCheckpoint.label: missing', 'missingField');
+  o.label = v_label;
+  return o;
+}
+function encS_RestoreDocument(w: Writer, v: T.RestoreDocument): void {
+  w.byte(10); w.bytes(v.document);
+  if (v.label !== undefined) { w.byte(18); w.str(v.label); }
+}
+function decS_RestoreDocument(r: Reader, end: number, o: any): T.RestoreDocument {
+  let h_document = false;
+  let v_document: Uint8Array | undefined;
+  let v_label: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_document = r.bytes(); h_document = true; break;
+      case 18: v_label = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_document) throw new DecodeError('RestoreDocument.document: missing', 'missingField');
+  o.document = v_document;
+  if (v_label !== undefined) o.label = v_label;
+  return o;
+}
 function encS_HistoryStep(w: Writer, v: T.HistoryStep): void {
   w.byte(10); w.str(v.label);
   w.byte(16); w.u32(v.position);
@@ -1912,6 +1952,7 @@ function encS_Interpretation(w: Writer, v: T.Interpretation): void {
   w.byte(58); w.str(v.colorProfile);
   if (v.startTimecode !== undefined) { w.byte(64); w.i64(v.startTimecode); }
   w.byte(72); w.bool(v.invertAlpha);
+  if (v.removePulldown !== undefined) { w.byte(80); w.u32(v.removePulldown); }
 }
 function decS_Interpretation(r: Reader, end: number, o: any): T.Interpretation {
   let h_alpha = false;
@@ -1929,6 +1970,7 @@ function decS_Interpretation(r: Reader, end: number, o: any): T.Interpretation {
   let v_colorProfile: string | undefined;
   let v_startTimecode: number | undefined;
   let v_invertAlpha: boolean | undefined;
+  let v_removePulldown: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -1941,6 +1983,7 @@ function decS_Interpretation(r: Reader, end: number, o: any): T.Interpretation {
       case 58: v_colorProfile = r.str(); h_colorProfile = true; break;
       case 64: v_startTimecode = r.i64(); break;
       case 72: v_invertAlpha = r.bool(); h_invertAlpha = true; break;
+      case 80: v_removePulldown = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -1960,6 +2003,7 @@ function decS_Interpretation(r: Reader, end: number, o: any): T.Interpretation {
   o.colorProfile = v_colorProfile;
   if (v_startTimecode !== undefined) o.startTimecode = v_startTimecode;
   o.invertAlpha = v_invertAlpha;
+  if (v_removePulldown !== undefined) o.removePulldown = v_removePulldown;
   return o;
 }
 function encS_InterpretationPatch(w: Writer, v: T.InterpretationPatch): void {
@@ -1973,6 +2017,8 @@ function encS_InterpretationPatch(w: Writer, v: T.InterpretationPatch): void {
   if (v.startTimecode !== undefined) { w.byte(64); w.i64(v.startTimecode); }
   if (v.invertAlpha !== undefined) { w.byte(72); w.bool(v.invertAlpha); }
   if (v.clearConform !== undefined) { w.byte(80); w.bool(v.clearConform); }
+  if (v.removePulldown !== undefined) { w.byte(88); w.u32(v.removePulldown); }
+  if (v.clearRemovePulldown !== undefined) { w.byte(96); w.bool(v.clearRemovePulldown); }
 }
 function decS_InterpretationPatch(r: Reader, end: number, o: any): T.InterpretationPatch {
   let v_alpha: T.AlphaMode | undefined;
@@ -1985,6 +2031,8 @@ function decS_InterpretationPatch(r: Reader, end: number, o: any): T.Interpretat
   let v_startTimecode: number | undefined;
   let v_invertAlpha: boolean | undefined;
   let v_clearConform: boolean | undefined;
+  let v_removePulldown: number | undefined;
+  let v_clearRemovePulldown: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -1998,6 +2046,8 @@ function decS_InterpretationPatch(r: Reader, end: number, o: any): T.Interpretat
       case 64: v_startTimecode = r.i64(); break;
       case 72: v_invertAlpha = r.bool(); break;
       case 80: v_clearConform = r.bool(); break;
+      case 88: v_removePulldown = r.u32(); break;
+      case 96: v_clearRemovePulldown = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -2012,6 +2062,8 @@ function decS_InterpretationPatch(r: Reader, end: number, o: any): T.Interpretat
   if (v_startTimecode !== undefined) o.startTimecode = v_startTimecode;
   if (v_invertAlpha !== undefined) o.invertAlpha = v_invertAlpha;
   if (v_clearConform !== undefined) o.clearConform = v_clearConform;
+  if (v_removePulldown !== undefined) o.removePulldown = v_removePulldown;
+  if (v_clearRemovePulldown !== undefined) o.clearRemovePulldown = v_clearRemovePulldown;
   return o;
 }
 function encS_ImportFile(w: Writer, v: T.ImportFile): void {
@@ -2411,6 +2463,9 @@ function encS_CompSettings(w: Writer, v: T.CompSettings): void {
   w.varint(136); w.bool(v.preserveFrameRate);
   w.varint(144); w.bool(v.preserveResolution);
   if (v.world !== undefined) { w.varint(154); w.str(v.world); }
+  if (v.responsiveTime !== undefined) { w.varint(170); w.str(v.responsiveTime); }
+  if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
+  if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
 }
 function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let h_name = false;
@@ -2449,6 +2504,9 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let v_preserveFrameRate: boolean | undefined;
   let v_preserveResolution: boolean | undefined;
   let v_world: string | undefined;
+  let v_responsiveTime: string | undefined;
+  let v_templateFields: string | undefined;
+  let v_backgroundPaint: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2471,6 +2529,9 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
       case 136: v_preserveFrameRate = r.bool(); h_preserveFrameRate = true; break;
       case 144: v_preserveResolution = r.bool(); h_preserveResolution = true; break;
       case 154: v_world = r.str(); break;
+      case 170: v_responsiveTime = r.str(); break;
+      case 178: v_templateFields = r.str(); break;
+      case 186: v_backgroundPaint = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -2511,6 +2572,9 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   o.preserveFrameRate = v_preserveFrameRate;
   o.preserveResolution = v_preserveResolution;
   if (v_world !== undefined) o.world = v_world;
+  if (v_responsiveTime !== undefined) o.responsiveTime = v_responsiveTime;
+  if (v_templateFields !== undefined) o.templateFields = v_templateFields;
+  if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   return o;
 }
 function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
@@ -2534,6 +2598,9 @@ function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
   if (v.preserveResolution !== undefined) { w.varint(144); w.bool(v.preserveResolution); }
   if (v.world !== undefined) { w.varint(154); w.str(v.world); }
   if (v.clearBackgroundGradient !== undefined) { w.varint(160); w.bool(v.clearBackgroundGradient); }
+  if (v.responsiveTime !== undefined) { w.varint(170); w.str(v.responsiveTime); }
+  if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
+  if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
 }
 function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsPatch {
   let v_name: string | undefined;
@@ -2556,6 +2623,9 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   let v_preserveResolution: boolean | undefined;
   let v_world: string | undefined;
   let v_clearBackgroundGradient: boolean | undefined;
+  let v_responsiveTime: string | undefined;
+  let v_templateFields: string | undefined;
+  let v_backgroundPaint: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2579,6 +2649,9 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
       case 144: v_preserveResolution = r.bool(); break;
       case 154: v_world = r.str(); break;
       case 160: v_clearBackgroundGradient = r.bool(); break;
+      case 170: v_responsiveTime = r.str(); break;
+      case 178: v_templateFields = r.str(); break;
+      case 186: v_backgroundPaint = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -2603,6 +2676,9 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   if (v_preserveResolution !== undefined) o.preserveResolution = v_preserveResolution;
   if (v_world !== undefined) o.world = v_world;
   if (v_clearBackgroundGradient !== undefined) o.clearBackgroundGradient = v_clearBackgroundGradient;
+  if (v_responsiveTime !== undefined) o.responsiveTime = v_responsiveTime;
+  if (v_templateFields !== undefined) o.templateFields = v_templateFields;
+  if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   return o;
 }
 function encS_CreateComposition(w: Writer, v: T.CreateComposition): void {
@@ -3132,6 +3208,7 @@ function encS_LayerSwitches(w: Writer, v: T.LayerSwitches): void {
   w.byte(112); w.varint(enc_AutoOrient(v.autoOrient));
   w.byte(120); w.bool(v.preserveTransparency);
   w.varint(128); w.u32(v.label);
+  if (v.labelColor !== undefined) { w.varint(138); w.str(v.labelColor); }
 }
 function decS_LayerSwitches(r: Reader, end: number, o: any): T.LayerSwitches {
   let h_visible = false;
@@ -3166,6 +3243,7 @@ function decS_LayerSwitches(r: Reader, end: number, o: any): T.LayerSwitches {
   let v_autoOrient: T.AutoOrient | undefined;
   let v_preserveTransparency: boolean | undefined;
   let v_label: number | undefined;
+  let v_labelColor: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3185,6 +3263,7 @@ function decS_LayerSwitches(r: Reader, end: number, o: any): T.LayerSwitches {
       case 112: v_autoOrient = dec_AutoOrient(r.varint()); h_autoOrient = true; break;
       case 120: v_preserveTransparency = r.bool(); h_preserveTransparency = true; break;
       case 128: v_label = r.u32(); h_label = true; break;
+      case 138: v_labelColor = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -3221,6 +3300,7 @@ function decS_LayerSwitches(r: Reader, end: number, o: any): T.LayerSwitches {
   o.autoOrient = v_autoOrient;
   o.preserveTransparency = v_preserveTransparency;
   o.label = v_label;
+  if (v_labelColor !== undefined) o.labelColor = v_labelColor;
   return o;
 }
 function encS_LayerSwitchesPatch(w: Writer, v: T.LayerSwitchesPatch): void {
@@ -3240,6 +3320,7 @@ function encS_LayerSwitchesPatch(w: Writer, v: T.LayerSwitchesPatch): void {
   if (v.autoOrient !== undefined) { w.byte(112); w.varint(enc_AutoOrient(v.autoOrient)); }
   if (v.preserveTransparency !== undefined) { w.byte(120); w.bool(v.preserveTransparency); }
   if (v.label !== undefined) { w.varint(128); w.u32(v.label); }
+  if (v.labelColor !== undefined) { w.varint(138); w.str(v.labelColor); }
 }
 function decS_LayerSwitchesPatch(r: Reader, end: number, o: any): T.LayerSwitchesPatch {
   let v_visible: boolean | undefined;
@@ -3258,6 +3339,7 @@ function decS_LayerSwitchesPatch(r: Reader, end: number, o: any): T.LayerSwitche
   let v_autoOrient: T.AutoOrient | undefined;
   let v_preserveTransparency: boolean | undefined;
   let v_label: number | undefined;
+  let v_labelColor: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3277,6 +3359,7 @@ function decS_LayerSwitchesPatch(r: Reader, end: number, o: any): T.LayerSwitche
       case 112: v_autoOrient = dec_AutoOrient(r.varint()); break;
       case 120: v_preserveTransparency = r.bool(); break;
       case 128: v_label = r.u32(); break;
+      case 138: v_labelColor = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -3297,6 +3380,7 @@ function decS_LayerSwitchesPatch(r: Reader, end: number, o: any): T.LayerSwitche
   if (v_autoOrient !== undefined) o.autoOrient = v_autoOrient;
   if (v_preserveTransparency !== undefined) o.preserveTransparency = v_preserveTransparency;
   if (v_label !== undefined) o.label = v_label;
+  if (v_labelColor !== undefined) o.labelColor = v_labelColor;
   return o;
 }
 function encS_LayerTiming(w: Writer, v: T.LayerTiming): void {
@@ -3306,6 +3390,7 @@ function encS_LayerTiming(w: Writer, v: T.LayerTiming): void {
   w.byte(33); w.f64(v.stretch);
   w.byte(40); w.bool(v.timeRemapEnabled);
   w.byte(48); w.varint(enc_RetimeMode(v.retime));
+  if (v.sourceDuration !== undefined) { w.byte(56); w.i64(v.sourceDuration); }
 }
 function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
   let h_inPoint = false;
@@ -3320,6 +3405,7 @@ function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
   let v_stretch: number | undefined;
   let v_timeRemapEnabled: boolean | undefined;
   let v_retime: T.RetimeMode | undefined;
+  let v_sourceDuration: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3329,6 +3415,7 @@ function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
       case 33: v_stretch = r.f64(); h_stretch = true; break;
       case 40: v_timeRemapEnabled = r.bool(); h_timeRemapEnabled = true; break;
       case 48: v_retime = dec_RetimeMode(r.varint()); h_retime = true; break;
+      case 56: v_sourceDuration = r.i64(); break;
       default: r.skip(key);
     }
   }
@@ -3345,6 +3432,7 @@ function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
   o.stretch = v_stretch;
   o.timeRemapEnabled = v_timeRemapEnabled;
   o.retime = v_retime;
+  if (v_sourceDuration !== undefined) o.sourceDuration = v_sourceDuration;
   return o;
 }
 function encS_LayerTimingPatch(w: Writer, v: T.LayerTimingPatch): void {
@@ -3579,6 +3667,36 @@ function decS_RenameLayer(r: Reader, end: number, o: any): T.RenameLayer {
   if (!h_name) throw new DecodeError('RenameLayer.name: missing', 'missingField');
   o.layer = v_layer;
   o.name = v_name;
+  return o;
+}
+function encS_RenameLayerResult(w: Writer, v: T.RenameLayerResult): void {
+  w.byte(8); w.u32(v.repaired);
+  w.byte(16); w.u32(v.captured);
+  w.byte(24); w.bool(v.nameAlreadyInUse);
+}
+function decS_RenameLayerResult(r: Reader, end: number, o: any): T.RenameLayerResult {
+  let h_repaired = false;
+  let h_captured = false;
+  let h_nameAlreadyInUse = false;
+  let v_repaired: number | undefined;
+  let v_captured: number | undefined;
+  let v_nameAlreadyInUse: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_repaired = r.u32(); h_repaired = true; break;
+      case 16: v_captured = r.u32(); h_captured = true; break;
+      case 24: v_nameAlreadyInUse = r.bool(); h_nameAlreadyInUse = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_repaired) throw new DecodeError('RenameLayerResult.repaired: missing', 'missingField');
+  if (!h_captured) throw new DecodeError('RenameLayerResult.captured: missing', 'missingField');
+  if (!h_nameAlreadyInUse) throw new DecodeError('RenameLayerResult.nameAlreadyInUse: missing', 'missingField');
+  o.repaired = v_repaired;
+  o.captured = v_captured;
+  o.nameAlreadyInUse = v_nameAlreadyInUse;
   return o;
 }
 function encS_SetLayerSwitches(w: Writer, v: T.SetLayerSwitches): void {
@@ -6955,10 +7073,14 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   w.byte(104); w.bool(v.hasAudio);
   { const a = v.markers; for (let i = 0; i < a.length; i++) { w.byte(114); { const s = w.beginLd(); encS_Marker(w, a[i]!); w.endLd(s); } } }
   w.byte(122); w.str(v.comment);
+  w.varint(130); w.str(v.generator);
+  { const a = v.pinned; for (let i = 0; i < a.length; i++) { w.varint(138); w.str(a[i]!); } }
+  w.varint(144); w.u32(v.effectCount);
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
   const l_markers: T.Marker[] = [];
+  const l_pinned: string[] = [];
   let h_id = false;
   let h_comp = false;
   let h_kind = false;
@@ -6970,6 +7092,8 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let h_hasVideo = false;
   let h_hasAudio = false;
   let h_comment = false;
+  let h_generator = false;
+  let h_effectCount = false;
   let v_id: string | undefined;
   let v_comp: string | undefined;
   let v_kind: T.LayerKind | undefined;
@@ -6983,6 +7107,8 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_hasVideo: boolean | undefined;
   let v_hasAudio: boolean | undefined;
   let v_comment: string | undefined;
+  let v_generator: string | undefined;
+  let v_effectCount: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7001,6 +7127,9 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 104: v_hasAudio = r.bool(); h_hasAudio = true; break;
       case 114: l_markers.push(decS_Marker(r, r.ldEnd(), {})); break;
       case 122: v_comment = r.str(); h_comment = true; break;
+      case 130: v_generator = r.str(); h_generator = true; break;
+      case 138: l_pinned.push(r.str()); break;
+      case 144: v_effectCount = r.u32(); h_effectCount = true; break;
       default: r.skip(key);
     }
   }
@@ -7016,6 +7145,8 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   if (!h_hasVideo) throw new DecodeError('LayerInfo.hasVideo: missing', 'missingField');
   if (!h_hasAudio) throw new DecodeError('LayerInfo.hasAudio: missing', 'missingField');
   if (!h_comment) throw new DecodeError('LayerInfo.comment: missing', 'missingField');
+  if (!h_generator) throw new DecodeError('LayerInfo.generator: missing', 'missingField');
+  if (!h_effectCount) throw new DecodeError('LayerInfo.effectCount: missing', 'missingField');
   o.id = v_id;
   o.comp = v_comp;
   o.kind = v_kind;
@@ -7031,6 +7162,45 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   o.hasAudio = v_hasAudio;
   o.markers = l_markers;
   o.comment = v_comment;
+  o.generator = v_generator;
+  o.pinned = l_pinned;
+  o.effectCount = v_effectCount;
+  return o;
+}
+function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
+  w.byte(8); w.u32(v.member);
+  w.byte(18); w.str(v.source);
+  w.byte(24); w.bool(v.enabled);
+  w.byte(34); w.str(v.error);
+}
+function decS_MemberExpression(r: Reader, end: number, o: any): T.MemberExpression {
+  let h_member = false;
+  let h_source = false;
+  let h_enabled = false;
+  let h_error = false;
+  let v_member: number | undefined;
+  let v_source: string | undefined;
+  let v_enabled: boolean | undefined;
+  let v_error: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_member = r.u32(); h_member = true; break;
+      case 18: v_source = r.str(); h_source = true; break;
+      case 24: v_enabled = r.bool(); h_enabled = true; break;
+      case 34: v_error = r.str(); h_error = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_member) throw new DecodeError('MemberExpression.member: missing', 'missingField');
+  if (!h_source) throw new DecodeError('MemberExpression.source: missing', 'missingField');
+  if (!h_enabled) throw new DecodeError('MemberExpression.enabled: missing', 'missingField');
+  if (!h_error) throw new DecodeError('MemberExpression.error: missing', 'missingField');
+  o.member = v_member;
+  o.source = v_source;
+  o.enabled = v_enabled;
+  o.error = v_error;
   return o;
 }
 function encS_PropertyInfo(w: Writer, v: T.PropertyInfo): void {
@@ -7058,10 +7228,12 @@ function encS_PropertyInfo(w: Writer, v: T.PropertyInfo): void {
   w.varint(176); w.u32(v.keyframeCount);
   { const a = v.children; for (let i = 0; i < a.length; i++) { w.varint(186); w.str(a[i]!); } }
   w.varint(192); w.bool(v.hidden);
+  { const a = v.memberExpressions; for (let i = 0; i < a.length; i++) { w.varint(202); { const s = w.beginLd(); encS_MemberExpression(w, a[i]!); w.endLd(s); } } }
 }
 function decS_PropertyInfo(r: Reader, end: number, o: any): T.PropertyInfo {
   const l_choices: string[] = [];
   const l_children: string[] = [];
+  const l_memberExpressions: T.MemberExpression[] = [];
   let h_path = false;
   let h_name = false;
   let h_matchName = false;
@@ -7127,6 +7299,7 @@ function decS_PropertyInfo(r: Reader, end: number, o: any): T.PropertyInfo {
       case 176: v_keyframeCount = r.u32(); h_keyframeCount = true; break;
       case 186: l_children.push(r.str()); break;
       case 192: v_hidden = r.bool(); h_hidden = true; break;
+      case 202: l_memberExpressions.push(decS_MemberExpression(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -7171,6 +7344,7 @@ function decS_PropertyInfo(r: Reader, end: number, o: any): T.PropertyInfo {
   o.keyframeCount = v_keyframeCount;
   o.children = l_children;
   o.hidden = v_hidden;
+  o.memberExpressions = l_memberExpressions;
   return o;
 }
 function encS_KeyframeSet(w: Writer, v: T.KeyframeSet): void {
@@ -12060,6 +12234,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'revertProject': w.byte(122); { const s = w.beginLd(); encS_RevertProject(w, v); w.endLd(s); } return;
     case 'collectFiles': w.varint(130); { const s = w.beginLd(); encS_CollectFiles(w, v); w.endLd(s); } return;
     case 'setAutosave': w.varint(138); { const s = w.beginLd(); encS_SetAutosave(w, v); w.endLd(s); } return;
+    case 'restoreDocument': w.varint(162); { const s = w.beginLd(); encS_RestoreDocument(w, v); w.endLd(s); } return;
+    case 'addHistoryCheckpoint': w.varint(170); { const s = w.beginLd(); encS_AddHistoryCheckpoint(w, v); w.endLd(s); } return;
     case 'importFiles': w.varint(402); { const s = w.beginLd(); encS_ImportFiles(w, v); w.endLd(s); } return;
     case 'relinkItem': w.varint(410); { const s = w.beginLd(); encS_RelinkItem(w, v); w.endLd(s); } return;
     case 'reloadItems': w.varint(418); { const s = w.beginLd(); encS_ReloadItems(w, v); w.endLd(s); } return;
@@ -12203,6 +12379,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 122: out = decS_RevertProject(r, r.ldEnd(), { type: 'revertProject' }) as T.Command; break;
       case 130: out = decS_CollectFiles(r, r.ldEnd(), { type: 'collectFiles' }) as T.Command; break;
       case 138: out = decS_SetAutosave(r, r.ldEnd(), { type: 'setAutosave' }) as T.Command; break;
+      case 162: out = decS_RestoreDocument(r, r.ldEnd(), { type: 'restoreDocument' }) as T.Command; break;
+      case 170: out = decS_AddHistoryCheckpoint(r, r.ldEnd(), { type: 'addHistoryCheckpoint' }) as T.Command; break;
       case 402: out = decS_ImportFiles(r, r.ldEnd(), { type: 'importFiles' }) as T.Command; break;
       case 410: out = decS_RelinkItem(r, r.ldEnd(), { type: 'relinkItem' }) as T.Command; break;
       case 418: out = decS_ReloadItems(r, r.ldEnd(), { type: 'reloadItems' }) as T.Command; break;
@@ -12346,6 +12524,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'revertProject': w.byte(122); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'collectFiles': w.varint(130); { const s = w.beginLd(); encS_SaveProjectResult(w, v); w.endLd(s); } return;
     case 'setAutosave': w.varint(138); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'restoreDocument': w.varint(162); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'addHistoryCheckpoint': w.varint(170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'importFiles': w.varint(402); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'relinkItem': w.varint(410); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'reloadItems': w.varint(418); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -12377,7 +12557,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'duplicateLayers': w.varint(1618); { const s = w.beginLd(); encS_LayerList(w, v); w.endLd(s); } return;
     case 'reorderLayers': w.varint(1626); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setParent': w.varint(1634); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
-    case 'renameLayer': w.varint(1642); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'renameLayer': w.varint(1642); { const s = w.beginLd(); encS_RenameLayerResult(w, v); w.endLd(s); } return;
     case 'setLayerSwitches': w.varint(1650); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setBlendMode': w.varint(1658); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setTrackMatte': w.varint(1666); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -12489,6 +12669,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 122: out = decS_Empty(r, r.ldEnd(), { type: 'revertProject' }) as T.CommandResult; break;
       case 130: out = decS_SaveProjectResult(r, r.ldEnd(), { type: 'collectFiles' }) as T.CommandResult; break;
       case 138: out = decS_Empty(r, r.ldEnd(), { type: 'setAutosave' }) as T.CommandResult; break;
+      case 162: out = decS_Empty(r, r.ldEnd(), { type: 'restoreDocument' }) as T.CommandResult; break;
+      case 170: out = decS_Empty(r, r.ldEnd(), { type: 'addHistoryCheckpoint' }) as T.CommandResult; break;
       case 402: out = decS_ItemList(r, r.ldEnd(), { type: 'importFiles' }) as T.CommandResult; break;
       case 410: out = decS_Empty(r, r.ldEnd(), { type: 'relinkItem' }) as T.CommandResult; break;
       case 418: out = decS_Empty(r, r.ldEnd(), { type: 'reloadItems' }) as T.CommandResult; break;
@@ -12520,7 +12702,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 1618: out = decS_LayerList(r, r.ldEnd(), { type: 'duplicateLayers' }) as T.CommandResult; break;
       case 1626: out = decS_Empty(r, r.ldEnd(), { type: 'reorderLayers' }) as T.CommandResult; break;
       case 1634: out = decS_Empty(r, r.ldEnd(), { type: 'setParent' }) as T.CommandResult; break;
-      case 1642: out = decS_Empty(r, r.ldEnd(), { type: 'renameLayer' }) as T.CommandResult; break;
+      case 1642: out = decS_RenameLayerResult(r, r.ldEnd(), { type: 'renameLayer' }) as T.CommandResult; break;
       case 1650: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerSwitches' }) as T.CommandResult; break;
       case 1658: out = decS_Empty(r, r.ldEnd(), { type: 'setBlendMode' }) as T.CommandResult; break;
       case 1666: out = decS_Empty(r, r.ldEnd(), { type: 'setTrackMatte' }) as T.CommandResult; break;
@@ -12909,6 +13091,8 @@ export const codecs = {
   EndGesture: mk<T.EndGesture>(encS_EndGesture, (r, e) => decS_EndGesture(r, e, {})),
   ClearHistory: mk<T.ClearHistory>(encS_ClearHistory, (r, e) => decS_ClearHistory(r, e, {})),
   SetHistoryLimit: mk<T.SetHistoryLimit>(encS_SetHistoryLimit, (r, e) => decS_SetHistoryLimit(r, e, {})),
+  AddHistoryCheckpoint: mk<T.AddHistoryCheckpoint>(encS_AddHistoryCheckpoint, (r, e) => decS_AddHistoryCheckpoint(r, e, {})),
+  RestoreDocument: mk<T.RestoreDocument>(encS_RestoreDocument, (r, e) => decS_RestoreDocument(r, e, {})),
   HistoryStep: mk<T.HistoryStep>(encS_HistoryStep, (r, e) => decS_HistoryStep(r, e, {})),
   GestureRef: mk<T.GestureRef>(encS_GestureRef, (r, e) => decS_GestureRef(r, e, {})),
   ProjectSettings: mk<T.ProjectSettings>(encS_ProjectSettings, (r, e) => decS_ProjectSettings(r, e, {})),
@@ -12972,6 +13156,7 @@ export const codecs = {
   ReorderLayers: mk<T.ReorderLayers>(encS_ReorderLayers, (r, e) => decS_ReorderLayers(r, e, {})),
   SetParent: mk<T.SetParent>(encS_SetParent, (r, e) => decS_SetParent(r, e, {})),
   RenameLayer: mk<T.RenameLayer>(encS_RenameLayer, (r, e) => decS_RenameLayer(r, e, {})),
+  RenameLayerResult: mk<T.RenameLayerResult>(encS_RenameLayerResult, (r, e) => decS_RenameLayerResult(r, e, {})),
   SetLayerSwitches: mk<T.SetLayerSwitches>(encS_SetLayerSwitches, (r, e) => decS_SetLayerSwitches(r, e, {})),
   SetBlendMode: mk<T.SetBlendMode>(encS_SetBlendMode, (r, e) => decS_SetBlendMode(r, e, {})),
   SetTrackMatte: mk<T.SetTrackMatte>(encS_SetTrackMatte, (r, e) => decS_SetTrackMatte(r, e, {})),
@@ -13094,6 +13279,7 @@ export const codecs = {
   ItemInfo: mk<T.ItemInfo>(encS_ItemInfo, (r, e) => decS_ItemInfo(r, e, {})),
   CompInfo: mk<T.CompInfo>(encS_CompInfo, (r, e) => decS_CompInfo(r, e, {})),
   LayerInfo: mk<T.LayerInfo>(encS_LayerInfo, (r, e) => decS_LayerInfo(r, e, {})),
+  MemberExpression: mk<T.MemberExpression>(encS_MemberExpression, (r, e) => decS_MemberExpression(r, e, {})),
   PropertyInfo: mk<T.PropertyInfo>(encS_PropertyInfo, (r, e) => decS_PropertyInfo(r, e, {})),
   KeyframeSet: mk<T.KeyframeSet>(encS_KeyframeSet, (r, e) => decS_KeyframeSet(r, e, {})),
   PropertyValue: mk<T.PropertyValue>(encS_PropertyValue, (r, e) => decS_PropertyValue(r, e, {})),

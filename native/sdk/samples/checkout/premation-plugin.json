@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.checkout",
+  "name": "Layer Checkout (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 0 },
+  "binary": { "windows": "checkout.dll", "macos": "libcheckout.dylib", "linux": "libcheckout.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.checkout.displace", "name": "Layer Displace", "category": "Premation Samples" },
+    { "matchName": "com.premation.samples.checkout.echo", "name": "Time Echo", "category": "Premation Samples" }
+  ]
+}

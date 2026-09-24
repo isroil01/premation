@@ -27,28 +27,27 @@
  */
 
 import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
-import { useProjectStore } from '@stores/projectStore';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { is3DEnabled } from '@core/scene/threeD';
 import { type WorkspaceController } from '@core/workspace/WorkspaceController';
 import { type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { renameLayer } from '@core/scene/renameLayer';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorLabelColor } from '@core/mirror/layerLabels';
+import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
+import { renameLayerEdit } from '@layout/Scene/sceneEdits';
 import { getNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
 import { unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
-import { assetIdOf } from '@core/source/sourceInfo';
-import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useAssetStore } from '@stores/assetStore';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { LABEL_COLORS, readNodeLabelColor } from '@core/scene/labelColor';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 import { customPrompt } from '@components/Modal/Dialogs';
 import { toggleLayerSwitchAnchored } from '@layout/Scene/layerSwitchEdits';
 import {
@@ -86,8 +85,8 @@ export function playheadTime(): number {
 /** The active composition's pixel size — the space projections resolve in.
  *  Exported for the same reason as `playheadTime` above. */
 export function compSize(): { w: number; h: number } {
-  const s = useProjectStore.getState();
-  const comp = s.comps[s.tabs[s.activeTabId ?? '']?.compositionId ?? 'comp_root'];
+  const id = activeCompIdNow();
+  const comp = id ? documentMirror().comp(id)?.settings : undefined;
   return { w: comp?.width ?? 1920, h: comp?.height ?? 1080 };
 }
 
@@ -102,8 +101,7 @@ function addKeyframesAtPlayhead(id: string, label: string, props: readonly strin
 function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
   const sel = useSelectionStore.getState().ids;
   const ids: string[] = sel.includes(targetId) ? [...sel] : [targetId];
-  const node = defaultSceneGraph.getNode(targetId);
-  const current = node ? readNodeLabelColor(node) : undefined;
+  const current = mirrorLabelColor(documentMirror().layer(targetId));
   // Every swatch here is a layer-label colour, so the API's label index covers it.
   const pick = (color: string | undefined) => (): void => { void setLabelColorEdit(ids, color); };
   return [
@@ -123,6 +121,9 @@ function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
   ];
 }
 
+/** The API's frame-blend switch → the editor's `FrameBlend`. */
+const FRAME_BLEND_OF: Readonly<Record<string, FrameBlend>> = { off: 'none', frameMix: 'mix', pixelMotion: 'pixelMotion' };
+
 /**
  * The Video submenu — the footage verbs, gathered where the footage IS.
  *
@@ -134,7 +135,17 @@ function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
  * second copy of a behaviour.
  */
 export function videoContextMenuItems(id: string): ContextMenuItem {
-  const time = getNodeLayerTime(id);
+  const layer = documentMirror().layer(id);
+  // The API's stretch is signed (negative = reversed), 1 = 100 %.
+  const signed = layer?.timing.stretch ?? 1;
+  const time = {
+    stretch: Math.round(Math.abs(signed) * 100 * 1e6) / 1e6,
+    reverse: signed < 0,
+    frameBlend: FRAME_BLEND_OF[layer?.switches.frameBlend ?? 'off'] ?? 'none',
+    // B4-gap: freeze frame — `LayerTiming` carries no freeze flag (freezeFrame /
+    // unfreezeLayers have no read twin); a `LayerTiming.frozen` would close it.
+    freeze: getNodeLayerTime(id).freeze,
+  };
   const playhead = getPlayheadTime();
   const speed = (label: string, stretch: number): ContextMenuItem => ({
     id: `spd-${stretch}`,
@@ -186,7 +197,7 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         id: 'stab',
         label: 'Stabilize (smooth)…',
         onSelect: () => {
-          const src = sourceDisplaySize(id);
+          const src = mirrorSourceDisplaySize(documentMirror(), id);
           useTrackerStore.getState().setMode('smooth', src?.width ?? 0, src?.height ?? 0);
           useUIStore.getState().notify({
             level: 'info',
@@ -199,7 +210,7 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         id: 'track',
         label: 'Track Motion…',
         onSelect: () => {
-          const src = sourceDisplaySize(id);
+          const src = mirrorSourceDisplaySize(documentMirror(), id);
           useTrackerStore.getState().setMode('follow', src?.width ?? 0, src?.height ?? 0);
           useUIStore.getState().notify({
             level: 'info',
@@ -213,7 +224,9 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         id: 'interpret',
         label: 'Interpret Footage…',
         onSelect: () => {
-          const assetId = assetIdOf(defaultSceneGraph.getNode(id)!);
+          const assetId = documentMirror().layer(id)?.source;
+          // B4-gap: the Interpret Footage dialog (layout/Assets) edits the legacy asset record, so it
+          // still takes one; it goes when the dialog takes an item id (the mirror's ItemInfo).
           const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
           if (asset) openInterpretFootage(asset);
           else useUIStore.getState().notify({ level: 'info', message: 'This layer has no importable source to interpret.', durationMs: 2600 });
@@ -224,14 +237,14 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
 }
 
 export function nodeContextMenuItems(id: string): ContextMenuItem[] {
-  const node = defaultSceneGraph.getNode(id);
-  const hidden = node?.visible === false;
-  const locked = (node as { locked?: boolean } | undefined)?.locked === true;
-  const solo = (node as { solo?: boolean } | undefined)?.solo === true;
-  const isGroup = node ? readNodeKind(node) === 'group' : false;
-  const isVideo = node ? readNodeKind(node) === 'video' : false;
+  const layer = documentMirror().layer(id);
+  const hidden = layer?.switches.visible === false;
+  const locked = layer?.switches.locked === true;
+  const solo = layer?.switches.solo === true;
+  const isGroup = uiKindOf(layer) === 'group';
+  const isVideo = uiKindOf(layer) === 'video';
   const renameNode = (): void => {
-    const n = defaultSceneGraph.getNode(id);
+    const n = documentMirror().layer(id);
     if (!n) return;
     void (async () => {
       const newName = await customPrompt('Rename Layer', 'Give this layer a new name.', n.name, {
@@ -240,11 +253,9 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
       if (!newName?.trim()) return;
       // Re-read: the dialog is async now, so the node could have been deleted
       // while it was open. The old synchronous prompt could not have this gap.
-      if (!defaultSceneGraph.getNode(id)) return;
-      // B3-legacy: engine gap — `renameLayer` renames only; the legacy rename also rewrites every
-      // expression whose `layer('<old name>')` RESOLVED to this layer (keeping each expression's
-      // enabled flag and plugin `authoredBy`) and reports captured references, in one entry.
-      const result = renameLayer(id, newName);
+      if (!documentMirror().layer(id)) return;
+      // The engine's `renameLayer` follows the rename through the expressions that name the layer (B3z).
+      const result = await renameLayerEdit(id, newName);
       if (!result.ok) return;
       if (result.repaired.length > 0) {
         const count = result.repaired.length;
@@ -293,7 +304,7 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
     { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => { void toggleLayerSwitchAnchored(id, 'solo'); } },
     {
       id: 'toggle-3d',
-      label: node && is3DEnabled(node) ? 'Disable 3D Layer' : 'Enable 3D Layer',
+      label: layer?.switches.threeD ? 'Disable 3D Layer' : 'Enable 3D Layer',
       onSelect: () => {
         const ids = useSelectionStore.getState().ids;
         void set3DEdit(ids.includes(id) ? ids : [id]);

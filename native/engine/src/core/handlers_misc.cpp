@@ -77,6 +77,50 @@ const Json& nullish_or(const Json& v, const Json& fb) { return v.is_undefined() 
 
 }  // namespace
 
+ResultOf<api::RestoreDocument> handle(const api::RestoreDocument& c, HCtx& x) {
+  // misc.ts restoreDocument (B3z): a saved / cloud version restored as ONE
+  // undoable entry — parsed and migrated before anything changes, loaded as
+  // openProject loads (docio.cpp restore_document) into a scratch document
+  // seeded with this one, then written back as parts inside the transaction.
+  Document& d = x.d;
+  const std::string text(c.document.begin(), c.document.end());
+  std::optional<Json> parsed = js::parse(text);
+  if (!parsed) fail(ErrorCode::decode, "the document is not a .motion project (malformed JSON)");
+  if (!parsed->is_object()) fail(ErrorCode::decode, "the document is not a .motion project");
+  Json doc;
+  std::optional<api::EngineError> failed;
+  try {
+    doc = migrate_document(std::move(*parsed));
+  } catch (const EngineFail& e) {
+    failed = e.error;
+  }
+  if (failed) fail(ErrorCode::unsupported, "this engine cannot read that document: " + failed->message);
+  x.label = c.label && !c.label->empty() ? *c.label : std::string("Restore Version");
+  Document scratch;
+  scratch.apply(d.capture_all());
+  scratch.extras_mut() = d.extras();
+  EditorView view;
+  (void)restore_document(scratch, view, doc, d.items().assets);
+  Parts target = scratch.capture_all();
+  // What the version does not have is gone ("present key, empty pointer").
+  for (const auto& [id, n] : d.nodes()) {
+    if (!target.nodes.contains(id)) target.nodes.emplace(id, nullptr);
+  }
+  for (const auto& [id, a] : d.anims()) {
+    if (!target.anims.contains(id)) target.anims.emplace(id, nullptr);
+  }
+  for (const auto& [id, cr] : d.comps()) {
+    if (!target.comps.contains(id)) target.comps.emplace(id, nullptr);
+  }
+  for (const auto& [id, t] : d.timelines()) {
+    if (!target.timelines.contains(id)) target.timelines.emplace(id, nullptr);
+  }
+  d.apply(target);
+  // Authored extras follow the version; not journaled (no command edits them).
+  d.extras_mut() = scratch.extras();
+  return {};
+}
+
 ResultOf<api::SetProjectSettings> handle(const api::SetProjectSettings& c, HCtx& x) {
   Document& d = x.d;
   const api::ProjectSettingsPatch& p = c.patch;

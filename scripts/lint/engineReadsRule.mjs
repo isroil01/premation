@@ -17,8 +17,12 @@
 //                  not a mutator call (those are counted by the WRITE ratchet)
 //   B. timeline    any `getTimelineController()` call that is not directly a
 //                  mutator call — bars, clips, markers, work area, zoom, the
-//                  playhead's engine copy all live there
-//   C. helper      a call of (or reference to) a value imported from a @core
+//                  playhead's engine copy all live there. Transport and the
+//                  ruler view go through `@core/timeline/timelineView` (a seam)
+//   B'. viewport   `getWorkspaceController()` chained straight into one of its
+//                  DOCUMENT reads (WORKSPACE_READS); its camera / render / tool
+//                  members are view state (a seam)
+//   C. helper     a call of (or reference to) a value imported from a @core
 //                  module that reads the engine itself (it references a
 //                  singleton, the timeline controller or a document store —
 //                  decided by scanning the module's source once, ENGINE_MARKER)
@@ -60,6 +64,11 @@ const SEAM_MODULES = [
   '@core/settings/', '@core/config/', '@core/theme/', '@core/logging/', '@core/perf/', '@core/analytics/',
   '@core/dnd/', '@core/layout/', '@core/auth/', '@core/api/client', '@core/services/',
   '@core/timeline/transportController', // transport (§6), not the document
+  '@core/timeline/timelineView', // playhead / play state / loop (§6 control) and the ruler's zoom + scroll (editor view state)
+  // The viewport host: camera (zoom / pan / fit / screen↔world), render requests, the content canvas and the
+  // tool dispatch into the engine-side 2D tools (tools/core, the write ratchet's). Its DOCUMENT reads are
+  // counted by name where the UI chains them — WORKSPACE_READS below.
+  '@core/workspace/WorkspaceController',
   '@core/export/', // export jobs and file downloads, not the document
   '@core/mirror/', // the B4 read layer over the document mirror (pure)
 ];
@@ -78,7 +87,27 @@ const PURE_READS = new Set([
   'effectPropPath', 'effectOpacityPath', // core/effects/effects: build a track name from ids
   'textPathPropPath', // core/text/textPath: build a track name
   'percentToDb', // core/audio/audioParams: unit conversion
+  // B4 (checked: arguments only — no singleton, store, controller or engine default on any path).
+  'maskPointsToPath', // core/workspace/toolEdits: mask points → a path Value
+  'rectangleMask', 'ellipseMask', // core/effects/mask: geometry builders
+  'sortedStops', 'makeStop', 'sampleGradientHex', // core/paint/fill: stop-list arithmetic, colour sampling
+  'reindexRuns', // core/text/richText: grapheme run remap between two strings
+  'bindPoseBones', // core/rig/skeletonCommands: maps the SkeletonRig it is given
+  'isPrimitiveMeshType', 'defaultPrimitiveSpec', // core/scene/primitiveLayer: type guard, default spec table
+  'motionPathTimeWindow', // core/motion/motionPath: window arithmetic
+  'pickFace', 'faceHighlightGroups', // core/scene/facePicking: geometry over the faces it is given
+  'thinSamples', // core/paint/paintSpace: point thinning
+  'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
+  'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given
 ]);
+
+/**
+ * `getWorkspaceController()` members that read the DOCUMENT (evaluated world matrices, the scene nodes, hit
+ * tests through the tool port) — flagged when chained directly (`getWorkspaceController().getNodeScreenPlacement(…)`,
+ * `getWorkspaceController().ws.hitTestScreen(…)`); the rest of the controller is view state (see SEAM_MODULES).
+ * Gizmos get these from the engine's getLayerTransforms / hitTest queries once the viewport leaves the page (C/D5).
+ */
+const WORKSPACE_READS = new Set(['getNodeScreenPlacement', 'sceneNodes', 'hitTestScreen', 'scene']);
 
 /** Document stores. `useProjectStore` only counts where the read mentions `comps`. */
 const DOC_STORES = new Set(['useCompositionStore', 'useAssetStore', 'useSceneStore', 'useMotionBlurStore']);
@@ -269,6 +298,19 @@ const rule = {
             return;
           }
           report(node, 'timeline', 'getTimelineController()');
+          return;
+        }
+
+        // B'. the viewport host's document reads (WORKSPACE_READS), chained directly
+        if (imp.imported === 'getWorkspaceController') {
+          if (parent.type === 'CallExpression' && parent.callee === node) {
+            const gp = parent.parent;
+            if (gp && gp.type === 'MemberExpression' && gp.object === parent) {
+              let m = propName(gp);
+              if (m === 'ws' && gp.parent && gp.parent.type === 'MemberExpression' && gp.parent.object === gp) m = propName(gp.parent);
+              if (m && WORKSPACE_READS.has(m)) report(node, 'viewport', `getWorkspaceController().${m}`);
+            }
+          }
           return;
         }
 

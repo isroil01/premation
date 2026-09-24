@@ -15,22 +15,28 @@
 import { useEffect, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
-import { assetIdOf, interpretationOf, type AlphaInterpretation } from '@core/source/sourceInfo';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useComponentProp } from './useComponentProp';
+import type { AlphaInterpretation } from '@core/source/sourceInfo';
+import { getTime } from '@stores/playbackClockStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorItem, useMirrorKeys, useMirrorLayer, useRetainTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { plainValue } from '@core/mirror/trackIndex';
+import { staticLevelDb, staticPan } from '@core/mirror/audio';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
-import { getNodeHasSequence, getNodeSequenceLoop } from '@core/scene/imageSequence';
+import { getNodeLayerTime } from '@core/scene/layerTime';
 import { values } from '@core/engine/propRefs';
 import { engine } from '@core/engine/engineInstance';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { readVideoAudioVoices, videoHasAudioTrack, speedAltersAudio, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
+import { audioVoiceFor } from '@core/audio/silenceRemoval';
 import {
-  AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB, percentToDb,
+  AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB,
   AUDIO_PAN_PROP, MIN_PAN, MAX_PAN,
 } from '@core/audio/audioParams';
+import { scalarValueCommands } from './inspectorEdits';
+import { useEngineEdit } from './useEngineEdit';
 import { KeyframeRow } from './KeyframeRow';
 import { RetimeSection } from './RetimeSection';
 import { ProxyRow } from './ProxyRow';
@@ -46,7 +52,8 @@ import styles from './TransformSection.module.css';
  */
 export async function replaceFootageFromPath(nodeId: string, path: string): Promise<boolean> {
   const label = 'Replace Footage';
-  const match = useAssetStore.getState().assets.find((a) => a.src === path);
+  // The library item at that file (the document mirror's items: a footage item's `path`).
+  const match = [...documentMirror().items.values()].find((i) => i.kind === 'footage' && i.path !== '' && i.path === path);
   if (match) {
     const res = await edit(label, { type: 'replaceLayerSource', layer: nodeId, source: match.id, keepSize: true });
     return res.ok;
@@ -72,49 +79,57 @@ export async function replaceFootageFromPath(nodeId: string, path: string): Prom
 }
 
 export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  // Alpha interpretation is per-FILE, so it keys off the asset, not the layer.
-  const assetsRev = useAssetStore((st) => st.assets);
-  const alphaNode = defaultSceneGraph.getNode(nodeId);
-  const alphaAssetId = alphaNode ? assetIdOf(alphaNode) : null;
-  const alphaMode: AlphaInterpretation = alphaAssetId
-    ? interpretationOf(alphaAssetId).alpha
-    : 'straight';
+  // The document mirror (B4): the layer's header (kind, source, audio switch),
+  // its footage item (file, interpretation) and its property tree (the audio
+  // level / pan, the sequence loop field).
+  const layer = useMirrorLayer(nodeId);
+  const sourceId = layer?.source;
+  const item = useMirrorItem(sourceId);
+  useRetainTree(nodeId);
+  useMirrorKeys([`tree:${nodeId}`]);
+  const m = documentMirror();
+  const tree = m.tree(nodeId);
+  const eng = useEngineEdit();
+
+  // Alpha interpretation is per-FILE, so it keys off the footage item, not the layer.
+  const alphaAssetId = sourceId && m.item(sourceId)?.kind !== 'composition' ? sourceId : null;
+  const alphaMode: AlphaInterpretation = item?.interpretation?.alpha === 'premultiplied' ? 'premultiplied' : 'straight';
+  // B4-gap: the import probe's UNKNOWN state — `ItemInfo.hasAlpha` / `hasAudio`
+  // are two-valued (false = "no" or "never probed"), and these controls must
+  // not hide on an unprobed file. An optional `hasAlpha` / `hasAudioTrack` (or
+  // a `probed` flag) on ItemInfo closes it.
+  const probe = alphaAssetId ? useAssetStore.getState().assets.find((a) => a.id === alphaAssetId)?.metadata : undefined;
   // Only offered for footage that actually HAS an alpha channel. On opaque
   // footage the setting changes nothing, and a control that does nothing on
   // most of a project's media is the same noise as one nothing reads.
   // Undefined (browser build, or a still whose probe never ran) is treated as
   // "unknown" and the control is shown, because refusing to offer it would
   // leave a user with fringing and no recourse.
-  const alphaAsset = alphaAssetId
-    ? useAssetStore.getState().assets.find((a) => a.id === alphaAssetId)
-    : undefined;
-  const showAlpha = !!alphaAssetId && alphaAsset?.metadata?.hasAlpha !== false;
-  void assetsRev; // subscription only — the value is read through interpretationOf
-  const node = defaultSceneGraph.getNode(nodeId);
+  const showAlpha = !!alphaAssetId && probe?.hasAlpha !== false;
 
-  // No early return above this line: every hook below has to run on every
-  // render, including the ones for a node that has just been deleted.
-  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
-  const isVideo = !!node?.components.some(
-    (c) => c.type === 'video' || c.id.startsWith('video') || (tComp && tComp.props.__kind === 'video'),
-  );
+  const isVideo = uiKindOf(layer) === 'video';
+  // The file the layer plays (the item's path; its name when the path is unknown).
+  const src = item?.path || item?.name || '';
 
-  const [src] = useComponentProp(nodeId, tComp?.id, 'src');
-
-  // A video layer's own audio track. Level/mute live on the same component; the
-  // sound itself is scheduled by the AudioEngine off the layer's clip bar (see
-  // audioScene.readVideoAudioVoices).
-  const [audioLevelDb, setAudioLevelDb] = useComponentProp(nodeId, tComp?.id, AUDIO_LEVEL_DB_PROP);
-  const [legacyPercent] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_LEVEL_PROP);
-  const [audioMuted] = useComponentProp(nodeId, tComp?.id, VIDEO_AUDIO_MUTED_PROP);
-  const [audioPan, setAudioPan] = useComponentProp(nodeId, tComp?.id, AUDIO_PAN_PROP);
+  // A video layer's own audio track (`audio/levels`, `audio/pan`, the layer's
+  // audio switch); the sound itself is scheduled by the AudioEngine off the
+  // layer's bar (see audioScene.readVideoAudioVoices).
+  const audioLevelDb = staticLevelDb(m, nodeId);
+  const audioPan = staticPan(m, nodeId);
+  const audioMuted = layer ? !layer.switches.audioEnabled : false;
+  /** Level / Pan typed or scrubbed with the stopwatch off (KeyframeRow's static route). */
+  const writeStatic = (track: string, v: number): void => {
+    const label = `Set ${mirrorPropertyMeta(track, layer, tree).label || track}`;
+    eng.send(label, scalarValueCommands(track, [{ nodeId, value: v }], { seconds: getTime() }));
+  };
 
   // Kick the decode so the section can report whether this file has sound at
   // all, and re-render when the engine settles.
   const [, setDecodeTick] = useState(0);
   useEffect(() => audioEngine.onChange(() => setDecodeTick((n) => n + 1)), []);
-  const audioVoice = isVideo && node ? readVideoAudioVoices(node)[0] : undefined;
+  // Engine-side until E2: the editor's audio decoder needs the playable media
+  // URL, which the API does not carry (it has the item's file path).
+  const audioVoice = useMemo(() => (isVideo && sourceId ? audioVoiceFor(nodeId) : undefined), [isVideo, nodeId, sourceId]);
   const audioAssetId = audioVoice?.assetId;
   const audioSrc = audioVoice?.src;
   useEffect(() => {
@@ -124,15 +139,21 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // decode outcome, which is all a web import can offer. `probedAudio === false`
   // is the only case that justifies hiding the section outright — an unprobed
   // file that has simply not finished decoding must not look like a silent one.
-  const probedAudio = isVideo && node ? videoHasAudioTrack(node) : null;
+  const probedAudio = isVideo && typeof probe?.hasAudioTrack === 'boolean' ? probe.hasAudioTrack : null;
   const decodeState = audioAssetId ? audioEngine.decodeState(audioAssetId) : 'pending';
   const silent = probedAudio === false || (probedAudio === null && decodeState === 'silent');
 
   // Freeze mutes audio (held frame). Time remap expands into varispeed
   // segments — see audioRetimeSegments. Stretch/reverse use playbackRate.
-  const speedAltered = node ? speedAltersAudio(node) : false;
+  // B4-gap: the freeze-frame state — `LayerTiming` carries stretch / retime /
+  // time remap but not a freeze (`freezeFrame` / `unfreezeLayers` write it); a
+  // `LayerTiming.freeze?: Time` (the held layer time) closes it.
+  const speedAltered = layer ? getNodeLayerTime(nodeId).freeze === true : false;
 
-  if (!node || !tComp) return null;
+  // Image sequences carry the per-LAYER loop field (`layer/sequenceLoop`).
+  const sequenceLoop = tree?.nodes.get('layer/sequenceLoop');
+
+  if (!layer) return null;
 
   /** Point the layer at `path`, keeping its keyframes, effects and masks. */
   const applyReplace = (path: string) => {
@@ -216,10 +237,10 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
         </InspectorRow>
       )}
 
-      {getNodeHasSequence(nodeId) && (
+      {sequenceLoop && (
         <InspectorRow label="Loop Sequence" align="center">
           <Switch
-            checked={getNodeSequenceLoop(nodeId)}
+            checked={plainValue(sequenceLoop.value) === true}
             // The per-LAYER loop flag (`layer/sequenceLoop`, a B3z layer field).
             onChange={(e) => {
               void edit('Loop Sequence', {
@@ -261,29 +282,27 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
                     nodeId={nodeId}
                     prop={AUDIO_LEVEL_DB_PROP}
                     label="Level"
-                    value={Number(
-                      audioLevelDb ?? (typeof legacyPercent === 'number' ? percentToDb(legacyPercent) : 0),
-                    )}
+                    value={audioLevelDb}
                     unit="dB"
                     min={MIN_LEVEL_DB}
                     max={MAX_LEVEL_DB}
                     precision={1}
-                    onStatic={(v) => setAudioLevelDb(v)}
+                    onStatic={(v) => writeStatic(AUDIO_LEVEL_DB_PROP, v)}
                   />
                   <KeyframeRow
                     nodeId={nodeId}
                     prop={AUDIO_PAN_PROP}
                     label="Pan"
-                    value={typeof audioPan === 'number' ? audioPan : 0}
+                    value={audioPan}
                     unit="%"
                     min={MIN_PAN}
                     max={MAX_PAN}
                     // A centred pan is stored as ABSENT by the engine's audio seam.
-                    onStatic={(v) => setAudioPan(v)}
+                    onStatic={(v) => writeStatic(AUDIO_PAN_PROP, v)}
                   />
                   <InspectorRow label="Mute" align="center">
                     <Switch
-                      checked={audioMuted === true}
+                      checked={audioMuted}
                       // AE's Audio switch (`setLayerSwitches` audioEnabled — stored as this mute flag).
                       onChange={(e) => {
                         if (!isLayer(nodeId)) return;

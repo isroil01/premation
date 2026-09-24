@@ -7,6 +7,7 @@
 
 #include "catalog_data.hpp"
 #include "effects_spatial.hpp"
+#include "scene_native_fx.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
 #include "scene_math.hpp"
@@ -54,7 +55,7 @@ bool gpu_blends_effect_opacity(std::string_view t) {
       "gradient-ramp", "fractal-noise", "checkerboard", "grid", "fill", "four-color-gradient", "stroke",
       "beam", "beam-path", "lens-flare", "circle", "ellipse", "radio-waves", "light-rays", "light-sweep",
       "star-burst", "snowfall", "rainfall", "write-on", "light-burst", "particle-systems", "cc-bubbles"};
-  return k.contains(t);
+  return k.contains(t) || is_native_effect(t);  // G1: the chain blends a native effect's opacity back
 }
 
 /// The chain entries this port writes (extract_spatial_effects below).
@@ -206,6 +207,7 @@ const char* effect_unported_reason(const Json& e) {
   const std::string t = type_of(e);
   if (is_temporal(t)) return nullptr;  // handled by the snapshot's time plumbing (or reported there)
   if (is_color_effect(t)) return nullptr;
+  if (is_native_effect(t)) return nullptr;  // G1: native SDK plugins render in the chain (scene_native_fx.cpp)
   if (doc::registry().effect(t) == nullptr) return "plugin effects";
   if (is_canvas2d_only(t)) return "CPU-baked effect (E4)";
   if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return "effect scoped to a mask (CPU bake, E4)";
@@ -430,6 +432,10 @@ std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onl
     owner = &e;
     ownerAt = spatial.size();
     const Json params = doc::params_of(e);
+    if (auto native = native_effect_entry(e, params, l)) {  // G1: a native SDK plugin effect
+      spatial.push_back(std::move(*native));
+      continue;
+    }
     const auto n = [&](std::string_view k) {
       const Json& v = param_of(params, k);
       return v.is_number() ? v.num() : 0.0;

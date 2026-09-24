@@ -2,7 +2,7 @@
  * useProjectVersions — the React seam for a version-history panel (local-first).
  *
  * Wraps the tested bundle version helpers (`listProjectVersions` /
- * `saveProjectBundleVersion` / `restoreProjectVersion`) and binds them to the
+ * `saveProjectBundleVersion` / `readProjectVersion`) and binds them to the
  * current project's bundle path. Only active under LOCAL_FIRST with a `.motion`
  * bundle open; otherwise it reports `available: false` and the panel can hide.
  *
@@ -14,13 +14,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getProjectManager } from '@core/services/coreServices';
 import { getEventBus } from '@core/events/EventBus';
-import { bumpScene } from '@stores/sceneStore';
+import { edit } from '@core/engine/uiEdits';
 import { isLocalFirst } from '@core/config/flags';
 import {
   isBundlePath,
   listProjectVersions,
   saveProjectBundleVersion,
-  restoreProjectVersion,
+  readProjectVersion,
 } from '@core/project/bundle/bundleProjectIO';
 import { markProjectDirty } from '@core/project/projectSession';
 import type { VersionEntry } from '@core/project/bundle/VersionStore';
@@ -88,18 +88,20 @@ export function useProjectVersions(): UseProjectVersions {
   const restore = useCallback(
     async (rev: number) => {
       if (!root) return false;
-      const ok = await restoreProjectVersion(root, rev);
+      const doc = await readProjectVersion(root, rev);
+      if (!doc) return false;
+      // The version lands through the engine as ONE undoable entry (B3z
+      // `restoreDocument`): the History panel shows it, undo brings back the
+      // document the user had, and the engine's dirty state follows the edit.
+      const res = await edit(`Restore v${rev}`, {
+        type: 'restoreDocument',
+        document: new TextEncoder().encode(JSON.stringify(doc)),
+        label: `Restore v${rev}`,
+      });
+      const ok = res.ok;
       if (ok) {
-        // restoreProjectVersion restores the document into the live engines,
-        // but the scene graph is not reactive — bump it so canvas/layers/
-        // timeline UI re-read the restored state (same as the ProjectLoaded
-        // pipeline does), then re-read the version list.
-        bumpScene();
         // Mark the WORKSPACE tab, which is the flag `hasUnsavedChanges` (and
-        // therefore the discard prompt and the unsaved indicator) actually
-        // reads. This used to set a second dirty flag on the ProjectManager
-        // that nothing anywhere read, so restoring an old version left the
-        // document silently looking saved.
+        // therefore the discard prompt and the unsaved indicator) reads.
         markProjectDirty();
         await refresh();
       }

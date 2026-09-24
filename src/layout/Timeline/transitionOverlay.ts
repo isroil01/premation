@@ -27,12 +27,11 @@
 
 import type { TimelineTrack, TimelineClip } from './TimelineModel';
 import type {
-  TransitionRecord,
   TransitionKind,
   TransitionAlignment,
 } from '@core/timeline/transitionModel';
 import { TRANSITION_SHORT } from '@core/timeline/transitionModel';
-import { transitionOverlaps, transitionRegion } from '@core/timeline/transitions';
+import { mirrorTransitionOverlaps, mirrorTransitionRegion, type TransitionView } from '@core/mirror/transitions';
 
 /**
  * Where a transition sits relative to the cut it spans, in cycle order.
@@ -149,7 +148,7 @@ export function pickCutBars(
  * rather than pinned to row 0.
  */
 export function layoutTransitions(
-  transitions: ReadonlyArray<TransitionRecord>,
+  transitions: ReadonlyArray<TransitionView>,
   tracks: ReadonlyArray<TimelineTrack>,
   rowOf: (trackId: string) => number | undefined,
   fps: number,
@@ -161,7 +160,7 @@ export function layoutTransitions(
     const lefts = bars.get(rec.leftNodeId);
     const rights = bars.get(rec.rightNodeId);
     if (!lefts || !rights) continue;
-    const overlapping = transitionOverlaps(rec.kind);
+    const overlapping = mirrorTransitionOverlaps(rec.kind);
     const pair = pickCutBars(lefts, rights, overlapping);
     if (!pair) continue;
     const topRow = rowOf(pair.left.trackId);
@@ -177,7 +176,7 @@ export function layoutTransitions(
       if (end <= start) continue; // the overlap is gone — so is the transition's box
       cut = rec.alignment === 'startAtCut' ? start : rec.alignment === 'endAtCut' ? end : (start + end) / 2;
     } else {
-      const region = transitionRegion(rec.durationFrames, rec.alignment);
+      const region = mirrorTransitionRegion(rec.durationFrames, rec.alignment);
       cut = (pair.left.start + pair.left.duration + pair.right.start) / 2;
       start = cut - region.before / rate;
       end = cut + region.after / rate;

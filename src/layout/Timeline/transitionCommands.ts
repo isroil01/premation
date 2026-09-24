@@ -27,16 +27,18 @@
 
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { flicksToSeconds } from '@motion/engine-api';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { mirrorCompIdForTransition, mirrorTransitionAtCut } from '@core/mirror/transitions';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, compFps } from '@hooks/useMirror';
 import { addTransitionEdit, removeTransitionsEdit } from './transitionEdits';
 import {
-  transitionAtCut,
-  compIdForTransition,
   DEFAULT_TRANSITION_FRAMES,
   TRANSITION_KINDS,
   TRANSITION_LABEL,
-} from '@core/timeline/transitions';
-import type { TransitionKind } from '@core/timeline/transitions';
+} from '@core/timeline/transitionModel';
+import type { TransitionKind } from '@core/timeline/transitionModel';
 
 export const TRANSITION_COMMAND_PREFIX = 'timeline.transition.';
 
@@ -50,25 +52,33 @@ export interface PlayheadCut {
 /**
  * The cut nearest the playhead in the active composition, or null.
  *
- * Read off the ENGINE's bars rather than the timeline view model: a command may
- * fire from the palette with no timeline mounted, and the view model is a prop
- * of a component that may not exist. Pairs from the same scene node are skipped
- * for the reason `collectClipCuts` documents — there is no cut between a thing
- * and itself.
+ * Read off the DOCUMENT (the mirror's layer timing, in frames of the active
+ * composition) rather than the timeline view model: a command may fire from the
+ * palette with no timeline mounted, and the view model is a prop of a component
+ * that may not exist. A layer is one bar, so there is no cut between a layer
+ * and itself (see `collectClipCuts`).
  */
 export function cutNearestPlayhead(): PlayheadCut | null {
-  const controller = getTimelineController();
-  const bars = controller.layersOfComp();
-  const playhead = controller.timeline.currentFrame;
+  const m = documentMirror();
+  const compId = activeCompIdNow();
+  const comp = compId ? m.comp(compId) : undefined;
+  if (!comp) return null;
+  const fps = compFps(comp);
+  const frame = (flicks: number): number => Math.round(flicksToSeconds(flicks) * fps);
+  const bars: Array<{ id: string; start: number; end: number }> = [];
+  for (const id of comp.layers) {
+    const t = m.layer(id)?.timing;
+    if (t) bars.push({ id, start: frame(t.inPoint), end: frame(t.outPoint) });
+  }
+  const playhead = Math.round(playheadSeconds() * fps);
   let best: PlayheadCut | null = null;
   for (const left of bars) {
     for (const right of bars) {
       if (left.id === right.id) continue;
-      if (!left.sourceId || !right.sourceId || left.sourceId === right.sourceId) continue;
       if (Math.abs(left.end - right.start) > 1) continue;
       const distance = Math.abs(left.end - playhead);
       if (best === null || distance < best.distance) {
-        best = { leftNodeId: left.sourceId, rightNodeId: right.sourceId, distance };
+        best = { leftNodeId: left.id, rightNodeId: right.id, distance };
       }
     }
   }
@@ -101,13 +111,14 @@ export function buildTransitionCommands(): ReadonlyArray<Command> {
       enabled: () => {
         const cut = cutNearestPlayhead();
         if (!cut) return false;
-        return !!transitionAtCut(compIdForTransition(cut), cut.leftNodeId, cut.rightNodeId);
+        const m = documentMirror();
+        return !!mirrorTransitionAtCut(m, mirrorCompIdForTransition(m, cut), cut.leftNodeId, cut.rightNodeId);
       },
       execute: () => {
         const cut = cutNearestPlayhead();
         if (!cut) return;
-        const compId = compIdForTransition(cut);
-        const existing = transitionAtCut(compId, cut.leftNodeId, cut.rightNodeId);
+        const m = documentMirror();
+        const existing = mirrorTransitionAtCut(m, mirrorCompIdForTransition(m, cut), cut.leftNodeId, cut.rightNodeId);
         if (existing) void removeTransitionsEdit([existing.id]);
       },
     },

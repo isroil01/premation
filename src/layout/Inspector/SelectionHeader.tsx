@@ -30,7 +30,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { documentMirror } from '@stores/documentMirror';
 import { KIND_ICON } from '@core/scene/sceneDerive';
-import { renameLayer } from '@core/scene/renameLayer';
+import { renameLayerEdit } from '@layout/Scene/sceneEdits';
 import { findLayerKind } from '@core/plugins/layerKindRegistry';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { edit } from '@core/engine/uiEdits';
@@ -281,9 +281,9 @@ function notify(level: 'info' | 'warning', message: string, durationMs: number):
  * `renameLayer` repairs them in the same undo entry. The notices mirror that
  * panel's, so a rename reports the same thing wherever it was made.
  */
-function commitLayerRename(id: string, name: string): void {
-  // B3-legacy: engine gap — the API's `renameLayer` does not follow the expressions that name the layer (repair + capture report).
-  const result = renameLayer(id, name);
+async function commitLayerRename(id: string, name: string): Promise<void> {
+  // The engine's `renameLayer` follows the rename through the expressions (B3z).
+  const result = await renameLayerEdit(id, name);
   if (!result.ok) return;
   if (result.repaired.length > 0) {
     const n = result.repaired.length;
@@ -330,7 +330,7 @@ function LayerName({ nodeId, name, locked }: { nodeId: string; name: string; loc
     if (settled.current) return;
     settled.current = true;
     setEditing(false);
-    if (save) commitLayerRename(nodeId, draft);
+    if (save) void commitLayerRename(nodeId, draft);
   };
 
   if (editing) {

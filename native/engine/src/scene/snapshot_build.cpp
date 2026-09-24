@@ -12,6 +12,7 @@
 #include "effects_port.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
+#include "misc_port.hpp"
 #include "path_ops.hpp"
 #include "jsmath.hpp"
 #include "readers.hpp"
@@ -220,7 +221,10 @@ class Walk {
     return it == byId_.end() ? nullptr : it->second;
   }
   const Values& values_of(const std::string& id);
-  double remap(const std::string& id, double tt, bool subFrame);
+  double remap(const std::string& id, double tt, bool subFrame, bool extrapolate = false);
+  /// buildSnapshot `retimedAt` / `retimedSourceAt` (retime_port.cpp).
+  std::optional<double> retimed_at(const std::string& id, double tt);
+  double retimed_source_at(const std::string& id, double tt);
   std::vector<const Bar*> governing_clips(const std::string& id);
   bool is_live_at(const std::string& id);
   xf::Mat2D world_matrix(const std::string& id);
@@ -290,20 +294,50 @@ std::vector<const Bar*> Walk::governing_clips(const std::string& id) {
   return clips_.emplace(id, std::move(own)).first->second;
 }
 
-double Walk::remap(const std::string& id, double tt, bool subFrame) {
+std::optional<double> Walk::retimed_at(const std::string& id, double tt) {
+  if (!has_retime(d_, id)) return std::nullopt;
+  const std::optional<RetimeClip> clip = retime_clip_of(pick_retime_bar(governing_clips(id), motion::js::round(tt * fps_)), fps_);
+  return retimed_chain_time(RetimeReader{d_, c_.expr, c_.cache}, id, tt, clip);
+}
+
+double Walk::retimed_source_at(const std::string& id, double tt) {
+  const std::optional<double> retimed = retimed_at(id, tt);
+  return retimed ? remap(id, *retimed, true, true) : remap(id, tt, false);
+}
+
+double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrapolate) {
   const doc::Node* n = node(id);
+  // Precomp time remap (buildRemap): the precomp ANCESTORS' retimes fold first,
+  // outermost → innermost; the node's own retime is its container sourceTime.
+  double tt = tt0;
+  if (n != nullptr) {
+    std::vector<const doc::Node*> chain;  // precompAncestorChain
+    std::optional<std::string> pid = n->parent;
+    for (int guard = 0; pid && guard < 256; ++guard) {
+      const doc::Node* p = node(*pid);
+      if (p == nullptr) break;
+      if (is_precomp_node(*p)) chain.push_back(p);
+      pid = p->parent;
+    }
+    if (std::ranges::any_of(chain, [&](const doc::Node* pc) { return has_retime(d_, pc->id); })) {
+      for (auto it = chain.rbegin(); it != chain.rend(); ++it) tt = retimed_at((*it)->id, tt).value_or(tt);
+    }
+  }
   // Governing clips (buildRemap baseMap).
   double time = tt;
   const std::vector<const Bar*> clips = governing_clips(id);
   if (!clips.empty()) {
     const double exact = tt * fps_;
     const double frame = motion::js::round(exact);
+    const Bar* active = nullptr;
     for (const Bar* b : clips) {
       if (b->active_at(frame)) {
-        time = b->clip.source_frame_at(subFrame ? exact : frame) / fps_;
+        active = b;
         break;
       }
     }
+    if (active == nullptr && extrapolate) active = pick_retime_bar(clips, frame);
+    if (active != nullptr) time = active->clip.source_frame_at(subFrame ? exact : frame) / fps_;
   }
   if (n != nullptr) {
     // Loop the source (Interpret Footage ▸ Loop).
@@ -989,7 +1023,7 @@ void Walk::build_node(const doc::Node& n) {
     finalColor = color_to_hex({a.get("color_r").value_or(0), a.get("color_g").value_or(0), a.get("color_b").value_or(0),
                                a.get("color_a").value_or(1)});
   }
-  if (doc::get_node_layer_styles(n).at("glass").is_object()) unported(l, n, "glass layer style");
+  l.glass = resolve_glass(doc::get_node_layer_styles(n).at("glass"), a, comp_.globalLightAngle);
 
   // The literal.
   l.blend = read_node_blend(n);
@@ -1041,8 +1075,9 @@ void Walk::build_node(const doc::Node& n) {
                 : (shapeType == "ellipse" || (!shapeType && nameEllipse)) ? "ellipse"
                                                                             : "rect";
   l.cornerRadius = resolvedCornerRadius;
-  l.backdropBlur = a.get("backdropBlur") ? a.get("backdropBlur") : base.backdropBlur;
-  if (l.backdropBlur && *l.backdropBlur > 0) unported(l, n, "backdrop blur");
+  // Glass owns the backdrop blur when it is on (buildSnapshot).
+  l.backdropBlur = l.glass ? std::optional<double>(l.glass->blur) : a.get("backdropBlur") ? a.get("backdropBlur") : base.backdropBlur;
+  if (!l.glass && l.backdropBlur && *l.backdropBlur > 0) unported(l, n, "backdrop blur");
   l.pathPoints = pathPoints.is_null() ? Json() : pathPoints;
   l.pathOpen = pathOpen;
   // Text (`wrappedLayerText`: point text is the raw string; paragraph text is reported above).

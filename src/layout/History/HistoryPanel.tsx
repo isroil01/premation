@@ -11,7 +11,8 @@ import { useState, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
-import { useHistoryStore, performJumpTo } from '@stores/historyStore';
+import { performJumpTo } from '@stores/historyStore';
+import { engine } from '@core/engine/engineInstance';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
 import styles from './HistoryPanel.module.css';
@@ -38,9 +39,8 @@ export function HistoryPanel(): JSX.Element {
   const rename = (i: number, label: string) => {
     getCommandSystem().getHistory().setLabel(i, label);
   };
-  // B3-legacy: engine gap — "Snapshot current state" pins a named history entry holding the current
-  // document; the engine's history has no named-snapshot entry (it records only edits).
-  const record = useHistoryStore((s) => s.record);
+  // "Snapshot current state": a named entry that changes nothing (B3z `addHistoryCheckpoint`).
+  const snapshot = (): void => { void engine().execute({ type: 'addHistoryCheckpoint', label: 'Snapshot' }); };
 
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
@@ -60,7 +60,7 @@ export function HistoryPanel(): JSX.Element {
           className={styles.snapshot}
           title="Snapshot current state"
           aria-label="Snapshot current state"
-          onClick={() => record('Snapshot', true)}
+          onClick={snapshot}
         >
           <Icon name="marker" size="sm" />
         </button>
@@ -72,7 +72,7 @@ export function HistoryPanel(): JSX.Element {
             icon="undo"
             title="Nothing to undo yet"
             message="Every edit lands here as a state you can click back to — including the ones you have already undone."
-            action={{ label: 'Snapshot current state', onClick: () => record('Snapshot', true) }}
+            action={{ label: 'Snapshot current state', onClick: snapshot }}
           />
         ) : (
           entries.map((e, i) => {

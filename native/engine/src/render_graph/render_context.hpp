@@ -16,6 +16,7 @@
 namespace premation::rg {
 
 class ColorSystem;
+class NativeEffectHost;  // effect_chain.hpp (G1)
 
 /// E1: textures another engine system owns (the media system's decoded video
 /// frames), named by the RenderTextureRef.hash a frame carries with no blob.
@@ -85,6 +86,8 @@ struct PassContext {
   ColorSystem* colorSystem = nullptr;
   /// E1: engine-produced textures (nullptr = only the frame file's blobs).
   ExternalTextureSource* external = nullptr;
+  /// G1: the native plugin host's render glue (nullptr = `native-plugin` entries pass through).
+  NativeEffectHost* nativeFx = nullptr;
 
   /// ctx.target(name): nullptr = the surface (or an undeclared name).
   [[nodiscard]] RenderTarget* target(std::string_view name) const {

@@ -15,9 +15,10 @@
 
 import { Button } from '@components/Button';
 import { EmptyState } from '@components/EmptyState';
-import { useCompositionStore } from '@stores/compositionStore';
+import { flicksToSeconds } from '@motion/engine-api';
 import { useProjectStore } from '@stores/projectStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { compFps, useActiveMirrorComp } from '@hooks/useMirror';
+import { channelsToHex } from '@core/mirror/paintFields';
 import { framesToTimecode } from '@core/time/timecode';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import styles from './CompositionSummary.module.css';
@@ -30,19 +31,21 @@ function formatFps(fps: number): string {
 }
 
 export function CompositionSummary(): JSX.Element {
-  const name = useCompositionStore((s) => s.name);
-  const width = useCompositionStore((s) => s.width);
-  const height = useCompositionStore((s) => s.height);
-  const fps = useCompositionStore((s) => s.fps);
-  const duration = useCompositionStore((s) => s.durationSeconds);
-  const background = useCompositionStore((s) => s.background);
-  const transparent = useCompositionStore((s) => s.transparent);
-  const pristine = useProjectStore((s) => {
+  const comp = useActiveMirrorComp();
+  const settings = comp?.settings;
+  const name = settings?.name ?? '';
+  const width = settings?.width ?? 0;
+  const height = settings?.height ?? 0;
+  const fps = compFps(comp);
+  const duration = settings ? flicksToSeconds(settings.duration) : 0;
+  const background = settings ? channelsToHex(settings.background) : '';
+  const transparent = settings?.transparent === true;
+  // B4-gap: the auto-minted comp's `pristine` flag (CompositionSettings.pristine) — CompSettings does not carry it (a `CompSettings.pristine` would close it).
+  const pristineFlag = useProjectStore((s) => {
     const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
-    if (!id || s.comps[id]?.pristine !== true) return false;
-    const node = defaultSceneGraph.getNode(id);
-    return !node || node.children.length === 0;
+    return !!id && s.comps[id]?.pristine === true;
   });
+  const pristine = pristineFlag && (comp?.layers.length ?? 0) === 0;
 
   if (pristine) {
     return <EmptyState icon="mouse-pointer" title="No selection" message={`${HINT}.`} />;

@@ -9,6 +9,7 @@
 
 #include "effects_port.hpp"
 #include "jsmath.hpp"
+#include "misc_port.hpp"
 #include "readers.hpp"
 #include "scene_math.hpp"
 
@@ -27,6 +28,38 @@ double resolution_tier(double scale) {
     if (scale <= t) return t;
   }
   return kTiers.back();
+}
+
+/// CONTINUOUS_RESOLUTION_TIERS / DEFAULT_MAX_RASTER_PIXELS (VectorRasterizer.ts).
+constexpr std::array<double, 8> kContinuousTiers = {0.5, 1, 2, 4, 8, 16, 32, 64};
+constexpr double kMaxRasterPixels = 16.0 * 1024 * 1024;
+
+/// VectorRasterizer.ts `continuousResolutionTier(scale, boxW, boxH, 64, deviceMax)`
+/// (with `maxContinuousTier` inlined).
+double continuous_resolution_tier(double scale, double boxW, double boxH) {
+  if (!(scale > 0) || std::isnan(scale)) return 1;
+  const double w = std::max(1.0, boxW != 0 && !std::isnan(boxW) ? boxW : 1);
+  const double h = std::max(1.0, boxH != 0 && !std::isnan(boxH) ? boxH : 1);
+  double best = kContinuousTiers.front();
+  for (const double t : kContinuousTiers) {
+    if (w * t > kDeviceMax || h * t > kDeviceMax) break;
+    if (w * t * h * t > kMaxRasterPixels) break;
+    best = t;
+  }
+  const double limit = std::min(best, kContinuousTiers.back());
+  double chosen = kContinuousTiers.front();
+  for (const double t : kContinuousTiers) {
+    chosen = t;
+    if (scale <= t) break;
+  }
+  return std::min(chosen, std::max(kContinuousTiers.front(), limit));
+}
+
+/// AppTextureProvider.tierFor (Continuous Rasterization off: the clamped ladder up
+/// to 4x, the bounded extended ladder past it).
+double tier_for(double scale, double boxW, double boxH) {
+  if (scale <= kTiers.back()) return resolution_tier(scale);
+  return continuous_resolution_tier(scale, boxW, boxH);
 }
 
 float f32(double v) { return static_cast<float>(v); }
@@ -300,8 +333,7 @@ void Flattener::feed(const RLayer& l) {
   // MotionRendererBackend's per-layer texture feed (the keys layerToRenderable names).
   const double layerScale = std::max({1.0, std::abs(l.scaleX != 0 ? l.scaleX : 1), std::abs(l.scaleY != 0 ? l.scaleY : 1)});
   const double effective = rasterScale_ * layerScale;
-  if (effective > kTiers.back()) unported_.emplace_back(l.id, "raster tier above 4x (continuous ladder)");
-  const double tier = resolution_tier(effective);
+  const double tier = tier_for(effective, l.width, l.height);
   if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
     TextureRequest r;
     r.key = "asset:" + l.id;
@@ -386,6 +418,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   if (adv > 0) r.advanced_blend = adv;
   r.preserve_transparency = l.preserveTransparency;
   if (l.backdropBlur && *l.backdropBlur > 0) r.backdrop_blur = *l.backdropBlur;
+  if (l.glass) r.glass = to_renderable_glass(*l.glass);
   if (l.draft) r.sampling = api::RenderSampling::nearest;
   const bool textured = kind == api::RenderableKind::image || kind == api::RenderableKind::video || kind == api::RenderableKind::text;
   const bool baked = layer_is_baked(l);
@@ -484,6 +517,7 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
   if (adv > 0) r.advanced_blend = adv;
   r.preserve_transparency = l.preserveTransparency;
   if (l.backdropBlur && *l.backdropBlur > 0) r.backdrop_blur = *l.backdropBlur;
+  if (l.glass) r.glass = to_renderable_glass(*l.glass);
   r.color = to_color({1, 1, 1, 1});
   r.texture_key = "precomp:" + l.id;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) {

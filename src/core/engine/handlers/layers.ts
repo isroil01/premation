@@ -1,6 +1,6 @@
 /** Layers family (ENGINE_API.md §4.4). */
 
-import { defaultAnimation, type NodeAnimSnapshot } from '@motion/animation';
+import { defaultAnimation, mapLayerNameRefs, layerNameRefsIn, type NodeAnimSnapshot } from '@motion/animation';
 import type { LayerSwitchesPatch, DocumentFragment } from '@motion/engine-api';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useAssetStore } from '@stores/assetStore';
@@ -33,7 +33,7 @@ import { canonicalStringify } from '../canonical';
 import { graph, compOfLayer, requireLayer, requireComp, layerIdsOfComp, isCompItem, apiParentOf } from '../doc';
 import { K, documentScope, newScope, scopeLayer, scopeTimeline } from '../state';
 import { catalogFor, requireBinding, writeStatic } from '../props';
-import { labelColorOf, barsOf } from '../model';
+import { labelColorOf, barsOf, LABEL_COLOR_RE } from '../model';
 import { flicksToFrames, compFps, checkTime, flicksToSeconds } from '../time';
 import type { HandlerTable, HandlerCtx } from '../handler';
 import { ensureTimeline, geomsOf, writeGeoms, layersScope, requireLayersInOneComp, moveInStack, plural, remintKeyIds } from './common';
@@ -60,6 +60,18 @@ function applyInitialTiming(comp: string, id: string, inPoint?: number, outPoint
 function validateTiming(inPoint?: number, outPoint?: number, startTime?: number): void {
   for (const [v, n] of [[inPoint, 'inPoint'], [outPoint, 'outPoint'], [startTime, 'startTime']] as const) if (v !== undefined) checkTime(v, n);
   if (inPoint !== undefined && outPoint !== undefined && outPoint <= inPoint) fail('invalidArgument', 'outPoint must be after inPoint');
+}
+
+/**
+ * The first node named `name` in document order — the expression resolver's
+ * `layer('<name>')` rule (native docexpr.cpp `node_by_name`).
+ */
+function nodeByName(name: string): string | null {
+  let found: string | null = null;
+  graph.traverse((n) => {
+    if (found === null && n.name === name) found = n.id;
+  });
+  return found;
 }
 
 /** Children of `id` that are not themselves being removed: un-parent them keeping their world transform. */
@@ -219,15 +231,38 @@ export const layerHandlers: HandlerTable = {
   },
 
   renameLayer: (cmd) => {
-    requireLayer(cmd.layer);
+    const node = requireLayer(cmd.layer);
     if (cmd.name.trim() === '') fail('invalidArgument', 'a layer name cannot be empty');
+    // B3z: the rename follows the expressions that name the layer (AE) —
+    // core/scene/renameLayer.ts's rule, decided BEFORE the name changes:
+    // references are rewritten only where the old name resolved to THIS layer.
+    const oldName = node.name ?? '';
+    const newName = cmd.name;
+    const oldResolvedToThis = nodeByName(oldName) === cmd.layer;
+    const previousOwner = nodeByName(newName);
+    const nameAlreadyInUse = previousOwner !== null;
+    const rewrites: Array<{ nodeId: string; prop: string; src: string }> = [];
+    const naming: Array<{ nodeId: string; prop: string }> = [];
+    for (const expr of defaultAnimation.allExpressions()) {
+      const { src, changed } = mapLayerNameRefs(expr.src, (name) => (name === oldName && oldResolvedToThis ? newName : null));
+      if (changed) rewrites.push({ nodeId: expr.nodeId, prop: expr.prop, src });
+      else if (layerNameRefsIn(expr.src).includes(newName)) naming.push({ nodeId: expr.nodeId, prop: expr.prop });
+    }
     const scope = scopeLayer(newScope(), cmd.layer);
+    for (const r of rewrites) scope.keys.add(K.anim(r.nodeId));
     return {
       scope,
       label: 'Rename Layer',
       apply: () => {
-        graph.getNode(cmd.layer)!.name = cmd.name;
-        return {};
+        graph.getNode(cmd.layer)!.name = newName;
+        for (const r of rewrites) {
+          const enabled = defaultAnimation.isExpressionEnabled(r.nodeId, r.prop);
+          const authoredBy = defaultAnimation.allExpressions().find((e) => e.nodeId === r.nodeId && e.prop === r.prop)?.authoredBy;
+          defaultAnimation.setExpressionState(r.nodeId, r.prop, { src: r.src, enabled, ...(authoredBy ? { authoredBy } : {}) });
+        }
+        // Captured: the new name now resolves here instead of to its previous owner.
+        const captured = previousOwner !== null && previousOwner !== cmd.layer && nodeByName(newName) === cmd.layer ? naming.length : 0;
+        return { repaired: rewrites.length, captured, nameAlreadyInUse };
       },
     };
   },
@@ -493,6 +528,10 @@ function validateSwitches(node: SceneNode, p: LayerSwitchesPatch): void {
   if (p.quality !== undefined && !layerFlagAvailable(node, 'quality') && p.quality !== 'best') fail('invalidArgument', `layer '${node.id}' has no quality switch`, { layer: node.id });
   if (p.autoOrient === 'towardsPointOfInterest') fail('unsupported', 'Orient Towards Point of Interest is a camera/light option the TypeScript engine does not have');
   if (p.label !== undefined && p.label > 0 && !labelColorOf(p.label)) fail('outOfRange', `label ${p.label} does not exist`);
+  if (p.labelColor !== undefined) {
+    if (p.label !== undefined) fail('invalidArgument', 'send either label or labelColor, not both');
+    if (p.labelColor !== '' && !LABEL_COLOR_RE.test(p.labelColor)) fail('invalidArgument', `'${p.labelColor}' is not a #rgb, #rrggbb or #rrggbbaa colour`);
+  }
 }
 
 function applySwitches(id: string, p: LayerSwitchesPatch): void {
@@ -502,6 +541,7 @@ function applySwitches(id: string, p: LayerSwitchesPatch): void {
   if (p.locked !== undefined) n.locked = p.locked;
   if (p.shy !== undefined) n.shy = p.shy;
   if (p.label !== undefined) n.color = labelColorOf(p.label);
+  if (p.labelColor !== undefined) n.color = p.labelColor === '' ? undefined : p.labelColor;
   if (p.audioEnabled !== undefined) {
     const kind = readNodeKind(n);
     const comp = kind === 'audio' ? n.components.find((c) => c.type === 'Audio') : kind === 'video' ? n.components.find((c) => c.type === 'Transform') : undefined;

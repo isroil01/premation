@@ -46,11 +46,12 @@ import { PropertyRow } from '@components/PropertyRow';
 import { ValueField } from '@components/ValueField';
 import { asCommandId } from '@app-types/common';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPluginParam, pluginParamApiPath } from '@core/mirror/pluginParams';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys, useMirrorLayer, useMirrorProperty, useRetainTree } from '@hooks/useMirror';
 import { usePluginStore } from '@stores/pluginStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import {
   humaniseParamName,
   paramAxes,
@@ -59,7 +60,6 @@ import {
   type PluginInspectorPanelContribution,
   type PluginParamSchema,
 } from '@core/plugins/uiParams';
-import { readPluginParam } from '@core/plugins/uiParamValues';
 import { onPluginStatusChanged, pluginStatus } from '@core/plugins/uiStatus';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
 import { useInspectorSelection } from './inspectorSelection';
@@ -82,11 +82,14 @@ export interface AppliedPluginPanel {
  * ENABLED plugins only. A disabled plugin's section disappearing is what makes
  * the Plugins panel's toggle mean something — and its VALUES stay in the
  * document, so turning it back on restores the section with everything in it.
+ *
+ * B4: the layer's kind comes from the document mirror — a plugin layer kind's
+ * id (`<pluginId>.<kindId>`, `LayerInfo.generator`), else the editor kind.
  */
 export function pluginPanelsFor(nodeId: string): AppliedPluginPanel[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return [];
-  const kind = readNodeKind(node);
+  const layer = documentMirror().layer(nodeId);
+  if (!layer) return [];
+  const kind: string = layer.generator || (uiKindOf(layer) ?? 'shape');
   const out: AppliedPluginPanel[] = [];
   for (const entry of usePluginStore.getState().plugins) {
     if (!entry.enabled) continue;
@@ -124,7 +127,9 @@ export function PluginParamsSection({ nodeId }: { nodeId: string }): JSX.Element
   // is on screen: live-looking controls that write into nothing are the failure
   // `CustomLayerSection` calls out, and this section has the same one.
   const installed = usePluginStore((s) => s.plugins);
-  const panels = useMemo(() => pluginPanelsFor(nodeId), [nodeId, installed]);
+  // The layer's header (its kind) decides which panels apply.
+  const layer = useMirrorLayer(nodeId);
+  const panels = useMemo(() => pluginPanelsFor(nodeId), [nodeId, installed, layer]);
   const nodeIds = useInspectorSelection(nodeId);
 
   if (panels.length === 0) return null;
@@ -157,10 +162,16 @@ function PanelRows({
   nodeId: string;
   nodeIds: ReadonlyArray<string>;
 }): JSX.Element {
-  // The `showIf` conditions read sibling values, and a sibling changing is a
-  // scene write — so the whole panel follows the scene revision rather than
-  // each row subscribing to the one prop it draws.
-  useSceneRevision((s) => s.rev);
+  // The `showIf` conditions read sibling values, so the panel follows exactly
+  // the siblings they name (their mirror properties; B4) — each row subscribes
+  // to the one prop it draws itself.
+  useRetainTree(nodeId);
+  const showIfKeys = useMemo(() => {
+    const names = new Set<string>();
+    for (const p of panel.params) if (p.showIf) names.add(p.showIf.param);
+    return [...names].map((n) => `prop:${nodeId}|${pluginParamApiPath(pluginId, panel.id, n)}`);
+  }, [nodeId, pluginId, panel]);
+  useMirrorKeys(showIfKeys);
 
   const groups = useMemo(() => {
     const order: Array<string | null> = [];
@@ -217,7 +228,7 @@ function isVisible(
   if (!cond) return true;
   const sibling = panel.params.find((p) => p.name === cond.param);
   if (!sibling) return true;
-  return String(readPluginParam(nodeId, pluginId, panel.id, sibling)) === String(cond.equals);
+  return String(mirrorPluginParam(documentMirror(), nodeId, pluginId, panel.id, sibling)) === String(cond.equals);
 }
 
 interface RowProps {
@@ -268,7 +279,7 @@ function useParamAccess(
 ): PropertyAccess {
   return useMemo(() => ({
     read: (id: string) => {
-      const v = readPluginParam(id, pluginId, panel.id, schema, axis);
+      const v = mirrorPluginParam(documentMirror(), id, pluginId, panel.id, schema, axis);
       return typeof v === 'number' ? v : undefined;
     },
     // The row's writes and stopwatch, path-addressed and self-seeding (the
@@ -315,7 +326,10 @@ function StaticNumberRow(props: RowProps): JSX.Element {
   const { pluginId, panel, schema, nodeId, nodeIds } = props;
   const value = usePrimaryValue(pluginId, panel, schema, nodeId);
   const label = schema.label ?? humaniseParamName(schema.name);
-  const meta = resolvePropertyMeta(pluginParamPath(pluginId, panel.id, schema.name), nodeId);
+  // Labels / range / step from the registry, fed the mirror's facts (B4).
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  const meta = mirrorPropertyMeta(pluginParamPath(pluginId, panel.id, schema.name), layer, layer ? m.tree(nodeId) : undefined);
   // A drag of the field is ONE gesture (one undo entry).
   const e = useEngineEdit();
   return (
@@ -381,15 +395,19 @@ function useWriteAll(
   return useMemo(() => ({ write, press: e.press(`Set ${label}`) }), [write, e, label]);
 }
 
-/** The value shown: the primary layer's, which is what every row here shows. */
+/**
+ * The value shown: the primary layer's, which is what every row here shows —
+ * from the document mirror, re-rendering when THIS param's property changes.
+ */
 function usePrimaryValue(
   pluginId: string,
   panel: PluginInspectorPanelContribution,
   schema: PluginParamSchema,
   nodeId: string,
 ): unknown {
-  useSceneRevision((s) => s.rev);
-  return readPluginParam(nodeId, pluginId, panel.id, schema);
+  // Subscribes (and keeps the tree loaded); the value is read from the same record.
+  useMirrorProperty(nodeId, pluginParamApiPath(pluginId, panel.id, schema.name));
+  return mirrorPluginParam(documentMirror(), nodeId, pluginId, panel.id, schema);
 }
 
 function CheckboxRow(props: RowProps): JSX.Element {

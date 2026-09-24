@@ -1,5 +1,7 @@
 #include "catalog_data.hpp"
 
+#include "native_effects.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -71,7 +73,10 @@ Registry build() {
   c.latent = d.at("latent");
   for (const Json& k : d.at("maskKeys").arr()) c.maskKeys.push_back(k.str());
   for (const Json& k : d.at("textPathParams").arr()) c.textPathParams.push_back(k.str());
-  for (const Json& l : d.at("labels").arr()) c.labelColors.push_back(l.at("color").str());
+  for (const Json& l : d.at("labels").arr()) {
+    c.labelColors.push_back(l.at("color").str());
+    c.labelIds.push_back(l.at("id").str());
+  }
   c.presets = d.at("presets");
   c.factory = d.at("factory");
   for (const Json& b : d.at("blendModes").arr()) c.blendModes.push_back(b.str());
@@ -100,7 +105,10 @@ const EffectParamDef* EffectDef::primary() const noexcept {
 
 const EffectDef* Registry::effect(std::string_view type) const noexcept {
   const auto it = effectIndex.find(type);
-  return it != effectIndex.end() ? &effects[it->second] : nullptr;
+  if (it != effectIndex.end()) return &effects[it->second];
+  // G1: a native SDK plugin effect the plugin host registered (native_effects.hpp).
+  const NativeEffect* native = NativeEffects::find(type);
+  return native != nullptr ? &native->def : nullptr;
 }
 
 const StaticMeta* Registry::meta(std::string_view path) const noexcept {

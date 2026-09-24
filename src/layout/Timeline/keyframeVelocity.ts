@@ -26,10 +26,13 @@
  * asked for. Influence, being a ratio, is genuinely shared.
  */
 
-import { defaultAnimation, expandKeyframeProp, type Keyframe } from '@motion/animation';
+import { expandKeyframeProp } from '@motion/animation';
 import type { KeyframePatch } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
+import { memberKeysOf, type MemberKey } from '@core/mirror/memberKeys';
+import { documentMirror } from '@stores/documentMirror';
 import { memberKeyPatches, toCubic } from './keyframeEdits';
+import { storedTimeOf } from './keyframeSelectionIds';
 import {
   effectiveBezier,
   incomingSpeed,
@@ -66,7 +69,8 @@ export interface VelocityReading {
 interface Neighbourhood {
   prop: string;
   index: number;
-  keyframes: Keyframe[];
+  /** The property's keys seen from this member track (stored units and times). */
+  keyframes: MemberKey[];
 }
 
 interface Segment {
@@ -75,12 +79,18 @@ interface Segment {
   dt: number;
 }
 
-/** The expanded tracks that carry a keyframe at `t`, with its index in each. */
+/**
+ * The expanded tracks that carry a keyframe at `t` (stored time), with its
+ * index in each — read from the document MIRROR (B4): each track's view of its
+ * property's keys (`memberKeysOf`).
+ */
 function neighbourhoods(nodeId: string, prop: string, t: number): Neighbourhood[] {
+  const m = documentMirror();
+  const storedT = storedTimeOf(nodeId);
   const out: Neighbourhood[] = [];
   for (const p of expandKeyframeProp(prop)) {
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, p);
-    if (!kfs) continue;
+    const kfs = memberKeysOf(m, nodeId, p, storedT)?.keys;
+    if (!kfs || kfs.length === 0) continue;
     const index = kfs.findIndex((k) => Math.abs(k.t - t) < EPS);
     if (index === -1) continue;
     out.push({ prop: p, index, keyframes: kfs });
@@ -89,7 +99,7 @@ function neighbourhoods(nodeId: string, prop: string, t: number): Neighbourhood[
 }
 
 /** The segment leaving keyframe `i`, or null at the last keyframe. */
-function outgoingSegment(kfs: ReadonlyArray<Keyframe>, i: number): Segment | null {
+function outgoingSegment(kfs: ReadonlyArray<MemberKey>, i: number): Segment | null {
   const cur = kfs[i];
   const next = kfs[i + 1];
   if (!cur || !next) return null;
@@ -97,7 +107,7 @@ function outgoingSegment(kfs: ReadonlyArray<Keyframe>, i: number): Segment | nul
 }
 
 /** The segment arriving at keyframe `i`, or null at the first keyframe. */
-function incomingSegment(kfs: ReadonlyArray<Keyframe>, i: number): Segment | null {
+function incomingSegment(kfs: ReadonlyArray<MemberKey>, i: number): Segment | null {
   const prev = kfs[i - 1];
   const cur = kfs[i];
   if (!prev || !cur) return null;

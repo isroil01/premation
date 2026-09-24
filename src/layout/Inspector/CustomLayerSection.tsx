@@ -29,7 +29,7 @@ import { Checkbox } from '@components/Checkbox';
 import { ColorPicker } from '@components/ColorPicker';
 import { AngleDial } from '@components/AngleDial';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useMirrorTree } from '@hooks/useMirror';
 import { useComponentProp } from './useComponentProp';
 import {
   customLayerComponent,
@@ -56,12 +56,18 @@ function humanise(name: string): string {
 }
 
 export function CustomLayerSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // B4: wake when the layer's header or any of its properties (the kind's
+  // `plugin/<name>` values) changes in the document mirror.
+  useMirrorTree(nodeId);
   // Re-resolve when the installed set changes: uninstalling a plugin while its
   // layer is selected must flip this panel to read-only, not leave live
   // controls behind that write into nothing.
   const installed = usePluginStore((s) => s.plugins);
 
+  // B4-gap: the plugin layer's record — its `__schemaVersion` (what decides needs-migration / downgrade) and the
+  // component id `useComponentProp` writes through have no API field (the values themselves are `plugin/<name>`), and
+  // `LayerInfo.generator` is '' for these layers (`pluginLayer:<kind>` components: doc.ts `layerKindOf` never answers
+  // 'generator' for them). Closes with a working `generator` plus a schema-version field (e.g. `layer/pluginSchemaVersion`).
   const node = defaultSceneGraph.getNode(nodeId);
   const record = useMemo(() => (node ? readCustomLayer(node) : null), [node]);
   const component = useMemo(() => (node ? customLayerComponent(node) : null), [node]);
@@ -379,6 +385,8 @@ function AssetPropRow({
   value: unknown;
   onPick: (v: string | null) => void;
 }): JSX.Element {
+  // B4-gap: an item's media type (a still image vs video / audio / svg footage) — `ItemInfo` is `footage` with no media
+  // type; closes with an `ItemInfo.mediaType` field (then `useMirrorItems()` filtered on it).
   const assets = useAssetStore((s) => s.assets);
   const images = useMemo(() => assets.filter((a) => a.type === 'image'), [assets]);
   const current = typeof value === 'string' && value ? value : '';

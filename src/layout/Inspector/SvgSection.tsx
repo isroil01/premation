@@ -7,7 +7,7 @@
  */
 
 import { useMemo } from 'react';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useMirrorLayer } from '@hooks/useMirror';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readSvgLayer } from '@core/svg/svgLayer';
 import { svgCapabilityWarnings } from '@core/svg/svgCapabilities';
@@ -60,9 +60,15 @@ function Row({ label, value }: { label: string; value: string }): JSX.Element {
 }
 
 export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const data = useMemo(() => (node ? readSvgLayer(node) : null), [node]);
+  // B4: the layer's mirror header decides whether it is (still) an SVG layer
+  // and wakes the section when it changes.
+  const layer = useMirrorLayer(nodeId);
+  const data = useMemo(() => {
+    if (layer?.kind !== 'svg') return null;
+    // B4-gap: an SVG layer's stored document (the `svg` component: file name, intrinsic size, capability scan, live playback) — no API field; closes with a `layer/svg` json field (or `svg/*` fields) on svg layers.
+    const node = defaultSceneGraph.getNode(nodeId);
+    return node ? readSvgLayer(node) : null;
+  }, [layer, nodeId]);
   if (!data) return null;
 
   const warnings = svgCapabilityWarnings(data.capabilities);

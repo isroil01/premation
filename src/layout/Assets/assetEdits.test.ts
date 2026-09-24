@@ -15,11 +15,11 @@ import {
   createFolderTreeEdit,
   importPathsEdit,
   interpretFootageEdit,
-  interpretationNeedsLegacy,
   layersUsingItems,
   moveItemsEdit,
   removeItemsEdit,
   renameItemEdit,
+  setItemLabelEdit,
   setItemTagsEdit,
 } from './assetEdits';
 
@@ -150,12 +150,21 @@ describe('tags and interpretation', () => {
     expect(historyLabels().length).toBe(n);
   });
 
-  it('Interpret Footage sends only what changed; Remove Pulldown needs the legacy path', async () => {
+  it('Interpret Footage sends only what changed, Remove Pulldown included (B3z)', async () => {
     const a = asset(s.footage)!;
     await oneEntry('Interpret Footage', () => interpretFootageEdit(a, { conformFps: 23.976, par: 1, alpha: 'straight', loopCount: 3 }));
     expect(asset(s.footage)?.interpret).toMatchObject({ conformFps: 23.976, loopCount: 3 });
     expect(asset(s.footage)?.interpret?.par).toBeUndefined();
-    expect(interpretationNeedsLegacy(asset(s.footage)!, { pulldownPhase: 2 })).toBe(true);
-    expect(interpretationNeedsLegacy(asset(s.footage)!, { conformFps: 24 })).toBe(false);
+    await oneEntry('Interpret Footage', () => interpretFootageEdit(asset(s.footage)!, { ...asset(s.footage)!.interpret, pulldownPhase: 2 }));
+    expect(asset(s.footage)?.interpret?.pulldownPhase).toBe(2);
+    await oneEntry('Interpret Footage', () => interpretFootageEdit(asset(s.footage)!, { ...asset(s.footage)!.interpret, pulldownPhase: undefined }));
+    expect(asset(s.footage)?.interpret?.pulldownPhase).toBeUndefined();
+  });
+
+  it('the label menu stores the palette id, one entry (B3z)', async () => {
+    await oneEntry('Item Label', () => setItemLabelEdit([s.footage], 'coral'));
+    expect(asset(s.footage)?.label).toBe('coral');
+    await oneEntry('Item Label', () => setItemLabelEdit([s.footage], null));
+    expect(asset(s.footage)?.label).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize } from './inspectorMirror';
 import { distributeMinimum, type AlignMode } from '@core/scene/alignNodes';
 import { alignLayers } from './inspectorEdits';
 import { Icon, type IconName } from '@components/Icon';
@@ -45,8 +45,7 @@ export function AlignPanel(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
   const [alignTo, setAlignTo] = useState<'selection' | 'composition'>('selection');
 
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
 
   const alignMin = alignTo === 'composition' ? 1 : 2;
   // B3-legacy: not a write — the ratchet's `distribute…` verb match on a pure count (rule false positive; belongs in NOT_WRITES).

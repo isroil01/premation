@@ -991,6 +991,17 @@ export interface SetHistoryLimit {
   entries: number;
 }
 
+/** B3z — History panel ▸ Snapshot: push a NAMED entry that changes nothing, a point the panel can jump back to (Photoshop's snapshot; After Effects has none). Undoing / redoing it changes nothing and moves the revision like any step. Clears the redo stack like any new entry. Refused while a gesture is open (`gestureOpen`); an empty label is `invalidArgument`. */
+export interface AddHistoryCheckpoint {
+  label: string;
+}
+
+/** B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches, materials and plugin storage are applied too but — like every authored extra no command edits — are not part of the entry. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default "Restore Version"). */
+export interface RestoreDocument {
+  document: Uint8Array;
+  label?: string;
+}
+
 export interface HistoryStep {
   /** Label of the entry that was undone / redone. */
   label: string;
@@ -1097,6 +1108,8 @@ export interface Interpretation {
   /** Image-sequence start frame / timecode override. */
   startTimecode?: Time;
   invertAlpha: boolean;
+  /** B3z — Remove Pulldown: the 3:2 pulldown phase (0..4, the Interpret Footage menu's order) the footage's film frames are rebuilt from; absent = off. */
+  removePulldown?: number;
 }
 
 export interface InterpretationPatch {
@@ -1111,6 +1124,10 @@ export interface InterpretationPatch {
   invertAlpha?: boolean;
   /** true clears conformFrameRate back to the file's rate. */
   clearConform?: boolean;
+  /** B3z — arm Remove Pulldown at this phase, 0..4 (`outOfRange` otherwise). */
+  removePulldown?: number;
+  /** B3z — true turns Remove Pulldown off (not together with `removePulldown`: `invalidArgument`). */
+  clearRemovePulldown?: boolean;
 }
 
 export interface ImportFile {
@@ -1167,6 +1184,7 @@ export interface SetInterpretation {
   patch: InterpretationPatch;
 }
 
+/** Colour label (0 = none). B3z — a footage item stores the palette entry's id (`slate`, `teal`, …: the Project panel's form); a stored id or a stored colour both read back as its index. */
 export interface SetItemLabel {
   items: ItemId[];
   label: number;
@@ -1230,6 +1248,12 @@ export interface CompSettings {
   preserveResolution: boolean;
   /** Environment preset / ground level / sky / SSAO live under this JSON until typed (§11). */
   world?: string;
+  /** B3z — Responsive Time (JSON `{authoredDurationSec, protectedRegions: [{start, end}]}` — spans of authored time that keep their length when the composition is stretched), stored on the composition root; absent = none. */
+  responsiveTime?: string;
+  /** B3z — the template's authored fields (JSON array of the editor's TemplateField: `{id, label, kind, group, default, target, …}`), stored on the composition root; absent = none. */
+  templateFields?: string;
+  /** B3z — the background PAINT when it is not a flat colour (JSON FillPaint as the editor stores it: `{type: 'linear', angle, stops: [{id, offset, color}], opacityStops?}` / `{type: 'radial', cx, cy, radius, stops, …}`); absent = `background` alone. */
+  backgroundPaint?: string;
 }
 
 export interface CompSettingsPatch {
@@ -1253,6 +1277,12 @@ export interface CompSettingsPatch {
   preserveFrameRate?: boolean;
   preserveResolution?: boolean;
   world?: string;
+  /** B3z — Responsive Time as JSON (see CompSettings); '' clears it. Must be an object with a number `authoredDurationSec` and an array `protectedRegions` (`invalidArgument`). */
+  responsiveTime?: string;
+  /** B3z — the template's authored fields as a JSON array; '' clears them (`invalidArgument` unless an array). */
+  templateFields?: string;
+  /** B3z — the background paint as JSON FillPaint (`type` linear / radial / solid); '' clears it (as clearBackgroundGradient). The typed `backgroundGradient` stays `unsupported` (FillPaint carries stop ids, an angle / centre and opacity stops a Gradient does not). */
+  backgroundPaint?: string;
 }
 
 /** Create a composition. `fromItems` makes it from footage (size/duration/rate from the first item, one layer per item). */
@@ -1399,6 +1429,8 @@ export interface LayerSwitches {
   preserveTransparency: boolean;
   /** Colour label index (0 = none). */
   label: number;
+  /** B3z — a CUSTOM label colour (`#rgb`, `#rrggbb` or `#rrggbbaa`, as stored) when the layer's label is not one of the palette's; absent otherwise (then `label` says it). */
+  labelColor?: string;
 }
 
 export interface LayerSwitchesPatch {
@@ -1418,6 +1450,8 @@ export interface LayerSwitchesPatch {
   autoOrient?: AutoOrient;
   preserveTransparency?: boolean;
   label?: number;
+  /** B3z — set the label to any colour (`#rgb`, `#rrggbb`, `#rrggbbaa`; stored verbatim — a palette colour reads back as its `label` index); '' clears it (as label 0). Not together with `label` (`invalidArgument`); a malformed colour is `invalidArgument`. */
+  labelColor?: string;
 }
 
 /** A layer's place in time. All comp time except sourceOffset. */
@@ -1430,6 +1464,8 @@ export interface LayerTiming {
   stretch: number;
   timeRemapEnabled: boolean;
   retime: RetimeMode;
+  /** B4 — the length of a BOUNDED source (footage, a precomp) on the comp axis at the layer's stretch: what a bar can be trimmed / slipped within (the timeline's source-handle clamps). Absent = unbounded (shapes, text, solids, nulls, a still image, a time-remapped or frozen layer). */
+  sourceDuration?: Time;
 }
 
 export interface LayerTimingPatch {
@@ -1492,9 +1528,19 @@ export interface SetParent {
   time?: Time;
 }
 
+/** Rename a layer. B3z — the rename follows the expressions that name the layer (After Effects updates expression references when a layer is renamed): every quoted `layer('<old>')` / `layerAt('<old>')` reference, in any expression of the document, whose old name RESOLVED to this layer (the first node of that name in document order — the expression resolver's rule) is rewritten to the new name in the same undo entry; an expression's enabled state is kept. References by id (`#<id>`), non-literal references and references that resolved to another layer of the same name are left alone. The result counts the repaired expressions and the CAPTURED ones — expressions naming the new name that resolved to another layer before and resolve to this one now (reported, never rewritten). */
 export interface RenameLayer {
   layer: LayerId;
   name: string;
+}
+
+export interface RenameLayerResult {
+  /** Expressions rewritten to follow the new name. */
+  repaired: number;
+  /** Expressions naming the new name that now resolve to this layer instead of the layer they read before. */
+  captured: number;
+  /** Another node already had the new name. */
+  nameAlreadyInUse: boolean;
 }
 
 /** Change switches on several layers at once. Undo restores each layer's previous value of each patched switch. */
@@ -2387,6 +2433,20 @@ export interface LayerInfo {
   /** Layer markers. */
   markers: Marker[];
   comment: string;
+  /** B4 — for a `generator` layer provided by a plugin layer kind: the kind id `<pluginId>.<kindId>` (what the Inspector keys its sections on). '' otherwise. */
+  generator: string;
+  /** B4 — the layer's Pinned properties (the Inspector's Pinned tab), in the order they were pinned: the editor's track names (`x`, `opacity`, `effect.<id>.<param>`) as stored in the document (`__pinnedProps`). */
+  pinned: string[];
+  /** B4 — how many effects the layer's effect stack holds (the `effects` group's children, disabled ones included): what a collapsed timeline row needs to draw the fx switch without loading the property tree. */
+  effectCount: number;
+}
+
+/** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
+export interface MemberExpression {
+  member: number;
+  source: string;
+  enabled: boolean;
+  error: string;
 }
 
 /** One node of a layer's property tree (AE's Property / PropertyGroup). */
@@ -2419,6 +2479,8 @@ export interface PropertyInfo {
   children: PropPath[];
   /** Hidden in the default UI (AE's hidden/advanced params). */
   hidden: boolean;
+  /** B4 — per-dimension expressions: when the dimensions of a multi-dimensional property do NOT all carry the same expression (source and enabled), every dimension that has one, in member order; `expression` / `expressionEnabled` / `expressionError` then describe dimension 0 only. Empty when the property has one expression for every dimension, or none. */
+  memberExpressions: MemberExpression[];
 }
 
 export interface KeyframeSet {
@@ -3547,6 +3609,8 @@ export type Command =
   | ({ type: 'endGesture' } & EndGesture)
   | ({ type: 'clearHistory' } & ClearHistory)
   | ({ type: 'setHistoryLimit' } & SetHistoryLimit)
+  | ({ type: 'addHistoryCheckpoint' } & AddHistoryCheckpoint)
+  | ({ type: 'restoreDocument' } & RestoreDocument)
   | ({ type: 'newProject' } & NewProject)
   | ({ type: 'openProject' } & OpenProject)
   | ({ type: 'saveProject' } & SaveProject)
@@ -3685,6 +3749,8 @@ export type CommandResult =
   | ({ type: 'endGesture' } & Empty)
   | ({ type: 'clearHistory' } & Empty)
   | ({ type: 'setHistoryLimit' } & Empty)
+  | ({ type: 'addHistoryCheckpoint' } & Empty)
+  | ({ type: 'restoreDocument' } & Empty)
   | ({ type: 'newProject' } & Empty)
   | ({ type: 'openProject' } & OpenProjectResult)
   | ({ type: 'saveProject' } & SaveProjectResult)
@@ -3724,7 +3790,7 @@ export type CommandResult =
   | ({ type: 'duplicateLayers' } & LayerList)
   | ({ type: 'reorderLayers' } & Empty)
   | ({ type: 'setParent' } & Empty)
-  | ({ type: 'renameLayer' } & Empty)
+  | ({ type: 'renameLayer' } & RenameLayerResult)
   | ({ type: 'setLayerSwitches' } & Empty)
   | ({ type: 'setBlendMode' } & Empty)
   | ({ type: 'setTrackMatte' } & Empty)
@@ -3927,6 +3993,8 @@ export interface CommandArgs {
   endGesture: EndGesture;
   clearHistory: ClearHistory;
   setHistoryLimit: SetHistoryLimit;
+  addHistoryCheckpoint: AddHistoryCheckpoint;
+  restoreDocument: RestoreDocument;
   newProject: NewProject;
   openProject: OpenProject;
   saveProject: SaveProject;
@@ -4065,6 +4133,8 @@ export interface CommandResults {
   endGesture: Empty;
   clearHistory: Empty;
   setHistoryLimit: Empty;
+  addHistoryCheckpoint: Empty;
+  restoreDocument: Empty;
   newProject: Empty;
   openProject: OpenProjectResult;
   saveProject: SaveProjectResult;
@@ -4104,7 +4174,7 @@ export interface CommandResults {
   duplicateLayers: LayerList;
   reorderLayers: Empty;
   setParent: Empty;
-  renameLayer: Empty;
+  renameLayer: RenameLayerResult;
   setLayerSwitches: Empty;
   setBlendMode: Empty;
   setTrackMatte: Empty;

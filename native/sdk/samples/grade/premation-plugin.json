@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.grade",
+  "name": "Color Grade (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 0 },
+  "binary": { "windows": "grade.dll", "macos": "libgrade.dylib", "linux": "libgrade.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.grade", "name": "Color Grade (GPU)", "category": "Premation Samples" }
+  ]
+}

@@ -10,6 +10,7 @@
 
 namespace premation::doc {
 
+ResultOf<api::RestoreDocument> handle(const api::RestoreDocument& c, HCtx& x);
 ResultOf<api::SetProjectSettings> handle(const api::SetProjectSettings& c, HCtx& x);
 ResultOf<api::ImportProject> handle(const api::ImportProject& c, HCtx& x);
 ResultOf<api::ApplyJobResult> handle(const api::ApplyJobResult& c, HCtx& x);

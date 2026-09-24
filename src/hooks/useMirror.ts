@@ -151,6 +151,20 @@ export function useActiveCompId(): string | undefined {
   return useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined)) ?? undefined;
 }
 
+/**
+ * The active tab's composition id for a CALLBACK (the hook form is
+ * `useActiveCompId`): the tab's composition when the document has it (a
+ * composition, or a legacy nested precomp group), else the document's first
+ * composition. The mirror twin of `activeCompRootId`.
+ */
+export function activeCompIdNow(): string | undefined {
+  const s = useProjectStore.getState();
+  const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+  const m = documentMirror();
+  if (id && (m.comp(id) || m.layer(id))) return id;
+  return m.compIds[0];
+}
+
 /** The active composition's mirror record. */
 export function useActiveMirrorComp(): MirrorComp | undefined {
   const id = useActiveCompId();

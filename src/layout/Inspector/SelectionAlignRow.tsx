@@ -14,7 +14,7 @@
  */
 
 import { useState } from 'react';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompSize } from './inspectorMirror';
 import { distributeMinimum, type AlignMode } from '@core/scene/alignNodes';
 import { alignLayers } from './inspectorEdits';
 import { Icon, type IconName } from '@components/Icon';
@@ -37,8 +37,7 @@ const DISTRIBUTE: ReadonlyArray<{ id: AlignMode; icon: IconName; label: string }
 
 export function SelectionAlignRow({ nodeIds = [] }: { nodeIds?: ReadonlyArray<string> }): JSX.Element | null {
   const [alignTo, setAlignTo] = useState<'selection' | 'composition'>('selection');
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  const { width: compWidth, height: compHeight } = useActiveCompSize();
   if (nodeIds.length < 2) return null;
 
   const count = nodeIds.length;

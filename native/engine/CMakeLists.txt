@@ -557,6 +557,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/scene_textures.cpp
     src/scene/image_decode_ffi.cpp
     src/scene/native_scene.cpp
+    src/scene/color_settings.cpp
+    src/scene/glass_port.cpp
   )
   target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
   target_link_libraries(engine_scene PUBLIC engine_core engine_raster engine_render_graph PRIVATE motion::options)
@@ -577,6 +579,17 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   target_link_libraries(premation-scene PRIVATE engine_scene motion::options)
   if(MSVC)
     target_compile_definitions(premation-scene PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+
+  # engine_scene_tests: the scene builder's GPU-free units (colour settings,
+  # the D4 frame cache) — the pixel parity is premation-scene's (render-tests).
+  if(MOTION_BUILD_TESTS)
+    add_executable(engine_scene_tests tests/test_scene_color.cpp)
+    target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
+    if(MSVC)
+      target_compile_options(engine_scene_tests PRIVATE /bigobj)
+    endif()
+    add_test(NAME engine_scene_tests COMMAND engine_scene_tests --reporter compact)
   endif()
 
   # engine_frames: the scene builder + render graph + audio wired into the

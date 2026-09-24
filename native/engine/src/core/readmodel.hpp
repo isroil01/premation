@@ -16,6 +16,10 @@ namespace premation::doc {
 /// Label colour hex → AE label index (1-based into LABEL_COLORS, 0 = none/custom).
 [[nodiscard]] std::uint32_t label_index_of(const Json& color);
 [[nodiscard]] std::optional<std::string> label_color_of(std::uint32_t index);
+/// The palette entry's id for a label index (B3z: setItemLabel stores footage labels by id).
+[[nodiscard]] std::optional<std::string> label_id_of(std::uint32_t index);
+/// A custom label colour: #rgb, #rrggbb or #rrggbbaa (setLayerSwitches labelColor).
+[[nodiscard]] bool is_label_color(std::string_view s);
 
 [[nodiscard]] double comp_fps(const Document& d, std::string_view comp);
 [[nodiscard]] double comp_duration_frames(const Document& d, std::string_view comp);

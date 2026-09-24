@@ -6,14 +6,15 @@
  * per drag). For rows whose track is always in the engine's property catalog
  * (path-operator and polystar params: `contents/<id>/<param>`).
  *
- * The display read stays direct (B4's mirror replaces it): `readPropertyValue`
- * samples an animated track on the layer's own keyframe axis, else reads the
- * static value the row passes in.
+ * The display read is the document MIRROR's (B4): an animated track's value at
+ * the playhead (comp time), else the static value the row passes in; the row
+ * wakes on this track only.
  */
 
 import { useActiveWorkspace } from '@stores/projectStore';
-import { defaultAnimation } from '@motion/animation';
-import { readPropertyValue } from '@core/inspector/multiSelection';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { scalarValueCommands, stopwatchCommands } from './inspectorEdits';
 import { useEngineEdit } from './useEngineEdit';
 
@@ -32,8 +33,10 @@ export interface KeyedParam {
 export function useKeyedParam(nodeId: string, track: string, label: string, staticValue: number, autoKeyframe = false): KeyedParam {
   const time = useActiveWorkspace()?.time ?? 0;
   const e = useEngineEdit();
-  const animated = defaultAnimation.isAnimated(nodeId, track);
-  const display = readPropertyValue(nodeId, track, time, { read: () => staticValue }) ?? staticValue;
+  useMirrorTrackWatch([nodeId], [track]);
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, track);
+  const display = animated ? readTrack(m, nodeId, track, time) ?? staticValue : staticValue;
   return {
     animated,
     display,

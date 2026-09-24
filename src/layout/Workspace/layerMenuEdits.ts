@@ -13,12 +13,7 @@
  */
 
 import type { Command, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { reorderSiblings, type StackAction } from '@core/scene/parenting';
-import { isPrecomp } from '@core/scene/precomp';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { canBe3D, is3DEnabled } from '@core/scene/threeD';
 import type { FrameBlend } from '@core/scene/layerTime';
 import { apiParentOf, compOfLayer, graph as docGraph, isLayer, layerIdsOfComp } from '@core/engine/doc';
 import { offDocument } from '@core/engine/offDocument';
@@ -29,6 +24,10 @@ import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { compTime, propRefForTrack } from '@core/engine/propRefs';
 import { useSelectionStore } from '@stores/selectionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { canBe3DLayer } from '@core/mirror/layerKinds';
+import { childOrderOf } from '@core/mirror/layerTree';
+import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
 import { trackValueCommands } from './viewportEdits';
 
 /** Ids grouped by the composition they are layers of (non-layers dropped). */
@@ -54,19 +53,20 @@ function byComp(ids: Iterable<string>): Map<string, string[]> {
  * always taken what is inside it (`deleteLayerNode` removes the subtree).
  */
 export function withGroupMembers(ids: Iterable<string>): string[] {
+  const m = documentMirror();
   const out = new Set<string>();
+  // The API's 'group' kind is exactly a group that is not a precomp.
   const walk = (id: string): void => {
-    for (const kid of defaultSceneGraph.getChildOrder(id)) {
-      const k = defaultSceneGraph.getNode(kid);
-      if (!k || k.locked || out.has(kid)) continue;
+    for (const kid of childOrderOf(m, id)) {
+      const k = m.layer(kid);
+      if (!k || k.switches.locked || out.has(kid)) continue;
       out.add(kid);
-      if (readNodeKind(k) === 'group' && !isPrecomp(k)) walk(kid);
+      if (k.kind === 'group') walk(kid);
     }
   };
   for (const id of ids) {
     out.add(id);
-    const n = defaultSceneGraph.getNode(id);
-    if (n && n.parent && readNodeKind(n) === 'group' && !isPrecomp(n)) walk(id);
+    if (m.layer(id)?.kind === 'group') walk(id);
   }
   return [...out];
 }
@@ -77,9 +77,11 @@ export function withGroupMembers(ids: Iterable<string>): string[] {
  * "Delete layer(s)"; one `deleteLayers` per composition inside it.
  */
 export async function deleteSelectedLayersEdit(): Promise<void> {
+  const m = documentMirror();
+  // A composition root is not a layer, so the mirror has no layer record for it.
   const ids = useSelectionStore.getState().ids.filter((id) => {
-    const n = defaultSceneGraph.getNode(id);
-    return !!n && !n.locked && n.parent !== null;
+    const l = m.layer(id);
+    return !!l && !l.switches.locked;
   });
   const count = ids.filter((id) => compOfLayer(id)).length;
   const groups = byComp(withGroupMembers(ids));
@@ -102,7 +104,8 @@ const DUPLICATE_OFFSET = 20;
  * inside one engine gesture.
  */
 export async function duplicateSelectedLayersEdit(): Promise<string[]> {
-  const ids = useSelectionStore.getState().ids.filter((id) => defaultSceneGraph.getNode(id)?.parent);
+  const m = documentMirror();
+  const ids = useSelectionStore.getState().ids.filter((id) => !!m.layer(id));
   const groups = byComp(ids);
   if (groups.size === 0) return [];
   const label = ids.length === 1 ? 'Duplicate Layer' : 'Duplicate Layers';
@@ -124,17 +127,21 @@ export async function duplicateSelectedLayersEdit(): Promise<string[]> {
     }
     const copies = (res.value as { layers?: string[] }).layers ?? [];
     copies.forEach((copy, i) => {
-      const src = defaultSceneGraph.getNode(layers[i]!);
+      const src = m.layer(layers[i]!);
       if (!src) return;
-      follow.push({ type: 'renameLayer', layer: copy, name: `${src.name ?? 'Layer'} copy` });
-      const t = src.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
-      // Display read (B4 mirror): the copy carries the original's keys, and a
-      // static nudge on an animated Position would be a key the user never set.
-      const r = propRefForTrack(copy, 'x');
-      const animated = r ? r.members.some((m) => defaultAnimation.isAnimated(copy, m)) : true;
-      if (t && typeof t.x === 'number' && typeof t.y === 'number' && !animated) {
+      follow.push({ type: 'renameLayer', layer: copy, name: `${src.name || 'Layer'} copy` });
+      // The copy carries the ORIGINAL's values and keys, so the original's
+      // Position says both; a static nudge on an animated Position would be a
+      // key the user never set.
+      const tree = m.tree(src.id);
+      const rx = trackRefIn(tree, 'x');
+      const ry = trackRefIn(tree, 'y');
+      const animated = !rx || !ry || [rx, ry].some((r) => r.info.animated || m.keyframes(src.id, r.path).length > 0);
+      const x = rx ? storedNumber(rx, rx.info.value) : undefined;
+      const y = ry ? storedNumber(ry, ry.info.value) : undefined;
+      if (x !== undefined && y !== undefined && !animated) {
         const move = trackValueCommands(
-          [{ nodeId: copy, values: { x: t.x + DUPLICATE_OFFSET, y: t.y + DUPLICATE_OFFSET } }],
+          [{ nodeId: copy, values: { x: x + DUPLICATE_OFFSET, y: y + DUPLICATE_OFFSET } }],
           { seconds: 0 },
         );
         if (move) follow.push(...move);
@@ -172,15 +179,17 @@ const ARRANGE_LABELS: Record<StackAction, string> = {
  * `reorderLayers` commands will have reached.
  */
 function stackWith(comp: string, orders: ReadonlyMap<string, readonly string[]>): string[] {
+  const m = documentMirror();
   const out: string[] = [];
   const walk = (parentId: string): void => {
-    const kids = orders.get(parentId) ?? defaultSceneGraph.getChildOrder(parentId);
+    const kids = orders.get(parentId) ?? childOrderOf(m, parentId);
     for (let i = kids.length - 1; i >= 0; i--) {
       const id = kids[i]!;
-      const node = defaultSceneGraph.getNode(id);
-      if (!node) continue;
+      const layer = m.layer(id);
+      if (!layer) continue;
       out.push(id);
-      if (!isPrecomp(node)) walk(id);
+      // Never through a precomp barrier (the API's 'precomp' kind).
+      if (layer.kind !== 'precomp') walk(id);
     }
   };
   walk(comp);
@@ -235,20 +244,23 @@ export function reorderCommands(
  * anything moved.
  */
 export async function arrangeLayersEdit(ids: readonly string[], action: StackAction): Promise<boolean> {
+  const m = documentMirror();
   const byParent = new Map<string, string[]>();
   for (const id of ids) {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node?.parent || !isLayer(id)) continue;
-    const list = byParent.get(node.parent);
+    const layer = m.layer(id);
+    if (!layer || !isLayer(id)) continue;
+    // The tree parent: the parent layer, or the composition at the top.
+    const parent = layer.parent ?? layer.comp;
+    const list = byParent.get(parent);
     if (list) list.push(id);
-    else byParent.set(node.parent, [id]);
+    else byParent.set(parent, [id]);
   }
   const cmds: Command[] = [];
   const orders = new Map<string, readonly string[]>();
   for (const [parent, group] of byParent) {
     const comp = compOfLayer(group[0]!);
     if (!comp) continue;
-    const kids = orders.get(parent) ?? defaultSceneGraph.getChildOrder(parent);
+    const kids = orders.get(parent) ?? childOrderOf(m, parent);
     // B3-legacy: not a write — `reorderSiblings` is pure arithmetic over an id list (the
     // ratchet's `reorder…` verb match; belongs in the rule's NOT_WRITES).
     const next = reorderSiblings(kids, group, action);
@@ -349,10 +361,8 @@ export async function bakeMergePathsEdit(op: MergeOp): Promise<string[]> {
 
 /** Dissolve every selected group layer; its members end up selected. One entry. */
 export async function ungroupSelectedEdit(): Promise<void> {
-  const groups = useSelectionStore.getState().ids.filter((id) => {
-    const n = defaultSceneGraph.getNode(id);
-    return !!n && isLayer(id) && readNodeKind(n) === 'group' && !isPrecomp(n);
-  });
+  const m = documentMirror();
+  const groups = useSelectionStore.getState().ids.filter((id) => isLayer(id) && m.layer(id)?.kind === 'group');
   if (groups.length === 0) return;
   const res = await edit('Ungroup', groups.map((group) => ({ type: 'ungroupLayer', group }) as Command));
   if (!res.ok) return;
@@ -378,9 +388,10 @@ function switchCmds(ids: readonly string[], patch: (id: string) => LayerSwitches
  */
 export async function setLabelColorEdit(ids: readonly string[], color: string | undefined): Promise<boolean> {
   const label = labelIndexOf(color);
-  if (color && label === 0) return false;
-  await edit('Label Color', switchCmds(ids, () => ({ label })));
-  return true;
+  // A colour outside the palette is a custom label (B3z `labelColor`).
+  const patch: LayerSwitchesPatch = color && label === 0 ? { labelColor: color } : { label };
+  const res = await edit('Label Color', switchCmds(ids, () => patch));
+  return res.ok;
 }
 
 /**
@@ -388,11 +399,12 @@ export async function setLabelColorEdit(ids: readonly string[], color: string | 
  * rule), or set to `on` for all (the toolbar cube). One entry.
  */
 export async function set3DEdit(ids: readonly string[], on?: boolean): Promise<void> {
+  const m = documentMirror();
   const cmds = switchCmds(ids, (id) => {
-    const n = defaultSceneGraph.getNode(id);
-    if (!n || !canBe3D(n)) return null;
-    const next = on ?? !is3DEnabled(n);
-    return next === is3DEnabled(n) ? null : { threeD: next };
+    const layer = m.layer(id);
+    if (!layer || !canBe3DLayer(layer)) return null;
+    const next = on ?? !layer.switches.threeD;
+    return next === layer.switches.threeD ? null : { threeD: next };
   });
   if (cmds.length === 0) return;
   const anyOn = cmds.some((c) => (c as { patch: LayerSwitchesPatch }).patch.threeD);

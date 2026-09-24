@@ -48,6 +48,12 @@ export interface TrackPreview {
  * B3-legacy: engine gap — the preview writes whole PER-MEMBER keyframe lists
  * (the Smoother drops keys from x and y independently); the API has no
  * "replace a property's keyframes" command and does not address member keys.
+ *
+ * B4-gap: the capture below is the exact "before" of that legacy write, in
+ * the engine's own per-member form (stored units, keyframe axis) — the mirror
+ * holds one key list per PROPERTY in API units, which cannot restore a
+ * per-member list verbatim. `defaultAnimation.batch` only groups the writes
+ * (one engine batch per keystroke); it reads nothing.
  */
 export function beginTrackPreview(
   nodeId: string,

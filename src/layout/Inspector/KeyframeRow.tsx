@@ -23,8 +23,9 @@ import { ValueField } from '@components/ValueField';
 import { AnimToggle } from './AnimToggle';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { defaultAnimation } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { allAddressable, scalarValueCommands, stopwatchCommands } from './inspectorEdits';
@@ -58,10 +59,11 @@ export function KeyframeRow({
 }: KeyframeRowProps): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
-  const animated = defaultAnimation.isAnimated(nodeId, prop);
-  // Display read (the value at the playhead); B4's mirror replaces it.
-  const layerT = keyAxisTimeForDisplay(nodeId, time, prop);
-  const display = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
+  // B4: the value at the playhead from the mirror (comp time); wake on this track only.
+  useMirrorTrackWatch([nodeId], [prop]);
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, prop);
+  const display = animated ? readTrack(m, nodeId, prop, time) ?? value : value;
   // B3: through the engine API when it addresses this property on this layer.
   const onEngine = (): boolean => allAddressable([nodeId], [prop]);
   const e = useEngineEdit();

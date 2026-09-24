@@ -27,15 +27,17 @@
  */
 
 import type { KeyframePatch, ValueType } from '@motion/engine-api';
-import { defaultAnimation, expandKeyframeProp } from '@motion/animation';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
+import { expandKeyframeProp } from '@motion/animation';
 import { GestureSession } from '@core/engine/uiEdits';
 import { engineIdle } from '@core/engine/engineInstance';
 import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
 import { apiUnitFactor } from '@core/engine/props';
-import { readPropertyValue } from '@core/inspector/multiSelection';
+import { memberTrackRef } from '@core/mirror/memberKeys';
+import { numbersOfValue, storedNumber } from '@core/mirror/trackIndex';
+import { documentMirror } from '@stores/documentMirror';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
-import { parseUiKey, resolveKeys, uiKeyId, type UiKey } from './keyframeEdits';
+import { keyTimeById, parseUiKey, resolveKeys, uiKeyId, type UiKey } from './keyframeEdits';
+import { mirrorKeyOf, storedTimeOf } from './keyframeSelectionIds';
 
 export const NUDGE_BATCH_MS = 300;
 
@@ -137,37 +139,42 @@ interface NudgeKey {
   id: string;
   /** Comp time of the key at burst start (seconds). */
   startCompT: number;
-  /** Member tracks keyed at the start time, with their stored values. */
+  /** The row's member tracks keyed at the start time, with their stored values. */
   members: Array<{ prop: string; value: number }>;
   /** Every member of the API property, in order (for a whole-value write). */
   allMembers: readonly string[];
   valueType: ValueType;
+  /** The whole key's numbers at burst start, API units (members the row does not stand for keep them). */
+  apiNums: number[];
   /** Comp times of the property's OTHER keys — a move onto one is refused, as before. */
   otherCompTimes: number[];
 }
 
+/** The key a selection id names, as the document MIRROR has it (B4), when the burst opens. */
 function snapshotKey(ui: UiKey): Omit<NudgeKey, 'id'> | null {
-  const members: Array<{ prop: string; value: number }> = [];
-  const otherTimes = new Set<number>();
-  let lead: string | null = null;
-  for (const prop of expandKeyframeProp(ui.prop)) {
-    const kfs = defaultAnimation.getTrackKeyframes(ui.nodeId, prop);
-    const kf = kfs?.find((k) => Math.abs(k.t - ui.t) < 1e-9);
-    for (const k of kfs ?? []) if (Math.abs(k.t - ui.t) >= 1e-9) otherTimes.add(keyframeToCompTime(ui.nodeId, k.t, prop));
-    if (!kf) continue;
-    lead ??= prop;
-    members.push({ prop, value: kf.value });
-  }
-  if (!lead) return null;
-  const r = propRefForTrack(ui.nodeId, lead);
+  const m = documentMirror();
+  const hit = mirrorKeyOf(m, ui, storedTimeOf(ui.nodeId));
+  if (!hit) return null;
+  const r = propRefForTrack(ui.nodeId, hit.track);
   if (!r) return null;
+  // The row's own tracks on this property (a merged Position row: x and y; a
+  // Scale X row: X alone) move by the value step.
+  const tree = m.tree(ui.nodeId);
+  const members: Array<{ prop: string; value: number }> = [];
+  for (const prop of expandKeyframeProp(ui.prop)) {
+    const ref = memberTrackRef(tree, prop);
+    const value = ref && ref.path === hit.ref.path ? storedNumber(ref, hit.key.key.value) : undefined;
+    if (value !== undefined) members.push({ prop, value });
+  }
+  if (members.length === 0) return null;
   return {
     ui,
-    startCompT: keyframeToCompTime(ui.nodeId, ui.t, lead),
+    startCompT: hit.key.tAbs,
     members,
     allMembers: r.members,
     valueType: r.valueType,
-    otherCompTimes: [...otherTimes],
+    apiNums: numbersOfValue(hit.key.key.value),
+    otherCompTimes: hit.keys.filter((_k, i) => i !== hit.index).map((k) => k.tAbs),
   };
 }
 
@@ -186,10 +193,10 @@ function patchFor(k: NudgeKey, total: NudgeDelta): KeyframePatch | null {
   if (total.dv !== 0) {
     // Every keyed member moves by dv in STORED units (Scale's multiplier
     // included), as the per-track writer did; the API takes the whole value.
-    const nums = k.allMembers.map((m) => {
+    const nums = k.allMembers.map((m, i) => {
       const mv = k.members.find((x) => x.prop === m);
-      const base = mv ? mv.value + total.dv : readPropertyValue(k.ui.nodeId, m, k.startCompT) ?? 0;
-      return base * apiUnitFactor(m);
+      // The other members keep the key's own numbers (already API units).
+      return mv ? (mv.value + total.dv) * apiUnitFactor(m) : k.apiNums[i] ?? 0;
     });
     patch.value = valueOfNumbers(k.valueType, nums);
     any = true;
@@ -205,11 +212,8 @@ function patchFor(k: NudgeKey, total: NudgeDelta): KeyframePatch | null {
 function reselect(keys: ReadonlyArray<NudgeKey>, untouched: ReadonlySet<string>): void {
   const next = new Set<string>(untouched);
   for (const k of keys) {
-    let t: number | null = null;
-    for (const m of k.members) {
-      const kf = defaultAnimation.getTrackKeyframes(k.ui.nodeId, m.prop)?.find((x) => x.id === k.id);
-      if (kf) { t = kf.t; break; }
-    }
+    // The key's stored time now, by its engine id, from the document mirror.
+    const t = keyTimeById(k.ui.nodeId, k.members[0]?.prop ?? k.ui.prop, k.id);
     next.add(t === null ? k.ui.id : uiKeyId(k.ui.nodeId, k.ui.prop, t));
   }
   useKeyframeSelectionStore.getState().set(next);

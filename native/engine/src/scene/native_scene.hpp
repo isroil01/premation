@@ -23,6 +23,8 @@ struct ViewSpec {
   bool clipToComp = true;
   api::Color clear{};  // transparent void
   api::RenderTextureFormat surfaceFormat = api::RenderTextureFormat::bgra8unorm;
+  /// An export frame's output module colour space (RenderSettings.outputColorSpace); '' = the viewer.
+  std::string outputColorSpace;
 };
 
 /// offlineRenderer.ts `exportView(outW, outH, comp)` as a camera: the comp fitted

@@ -19,7 +19,7 @@ import { fail } from '../errors';
 import { graph, requireItem, isCompItem, layersUsingItem, compItemIds, layerIdsOfComp } from '../doc';
 import { K, documentScope, newScope, type Scope } from '../state';
 import { rationalToFps, framesToFlicks } from '../time';
-import { labelColorOf, compSettings } from '../model';
+import { labelColorOf, labelIdOf, compSettings } from '../model';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import type { HandlerTable } from '../handler';
 import { plural } from './common';
@@ -68,6 +68,13 @@ function interpretationPatch(p: InterpretationPatch): Partial<FootageInterpretat
     else out.fields = p.fieldOrder === 'upperFirst' ? 'upper' : 'lower';
   }
   if (p.loops !== undefined) out.loopCount = p.loops;
+  // B3z: Remove Pulldown (sourceInfo.ts pulldownPhase, 0..4).
+  if (p.removePulldown !== undefined) {
+    if (p.clearRemovePulldown) fail('invalidArgument', 'send removePulldown or clearRemovePulldown, not both');
+    if (!Number.isInteger(p.removePulldown) || p.removePulldown > 4) fail('outOfRange', 'the pulldown phase is 0..4');
+    out.pulldownPhase = p.removePulldown;
+  }
+  if (p.clearRemovePulldown) clear.push('pulldownPhase');
   if (p.invertAlpha) fail('unsupported', 'Invert Alpha is not implemented by the TypeScript renderer');
   if (p.premultipliedMatte !== undefined || p.startTimecode !== undefined || (p.colorProfile !== undefined && p.colorProfile !== 'auto')) {
     fail('unsupported', 'premultiplied matte colour, start timecode and colour profiles are not stored by the TypeScript engine');
@@ -297,7 +304,8 @@ export const itemHandlers: HandlerTable = {
           if (r.kind === 'composition') patchComp(r.id, { label: cmd.label || undefined });
           else patchAsset(r.id, (a) => {
             const next = { ...a };
-            const c = labelColorOf(cmd.label);
+            // B3z: the palette id — the Project panel's (and the bundle's) form.
+            const c = labelIdOf(cmd.label);
             if (c) next.label = c;
             else delete next.label;
             return next;

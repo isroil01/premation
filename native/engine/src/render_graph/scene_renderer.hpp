@@ -20,6 +20,7 @@ namespace premation::rg {
 
 class ColorSystem;
 class ExternalTextureSource;
+class NativeEffectHost;
 
 struct RendererOptions {
   /// PCI vendor id to render on (0 = power preference decides).
@@ -91,6 +92,8 @@ class SceneRenderer {
   [[nodiscard]] ColorSystem& color_system() noexcept { return *colorSystem_; }
   /// E1: where hashes with no blob resolve (the media system); nullptr = none.
   void set_external_textures(ExternalTextureSource* source) noexcept { external_ = source; }
+  /// G1: who runs `native-plugin` effect entries (the plugin host's render glue); nullptr = none.
+  void set_native_effects(NativeEffectHost* host) noexcept { nativeFx_ = host; }
 
  private:
   SceneRenderer() = default;
@@ -100,6 +103,7 @@ class SceneRenderer {
   std::unique_ptr<RenderGraph> graph_;
   std::unique_ptr<ColorSystem> colorSystem_;
   ExternalTextureSource* external_ = nullptr;
+  NativeEffectHost* nativeFx_ = nullptr;
   wgpu::Texture surface_;
   wgpu::TextureView surfaceView_;
   std::uint32_t surfaceW_ = 0;

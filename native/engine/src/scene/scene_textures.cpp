@@ -15,6 +15,7 @@
 #include "media_system.hpp"
 #include "media_textures.hpp"
 #include "time_map.hpp"
+#include "yuv.hpp"
 #endif
 
 namespace premation::scene {
@@ -143,8 +144,10 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     api::RenderTextureRef ref;
     ref.key = r.key;
     if (r.kind == TexKind::media) {
-      ref.hash = media_ref(r, stats);
+      std::optional<api::RenderColorSpace> space;
+      ref.hash = media_ref(r, stats, space);
       ref.ready = !ref.hash.empty();
+      if (colorManaged_ && ref.ready) ref.input_space = space;
       refs.push_back(std::move(ref));
       continue;
     }
@@ -173,6 +176,8 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     }
     ref.hash = "rs:" + hex64(h);
     ref.ready = true;
+    // Authored text / shape colours are sRGB; a mask raster is coverage (data).
+    if (colorManaged_ && r.kind != TexKind::mask) ref.input_space = api::RenderColorSpace::srgb;
     if (find(ref.hash)) {
       ++stats.rasterHits;
     } else if (std::ranges::find(seen, ref.hash) == seen.end()) {
@@ -279,7 +284,10 @@ std::string SceneTextures::image_ref(const TextureRequest& r, const std::filesys
   return hash;
 }
 
-std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stats) {
+std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stats,
+                                     std::optional<api::RenderColorSpace>& space) {
+  // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
+  space = api::RenderColorSpace::srgb;
   if (r.src.empty()) return {};
   // SVG footage is rasterised by the browser in the TS engine; the engine has no SVG renderer yet.
   const auto lower = [](std::string s) {
@@ -330,6 +338,14 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
     return {};
   }
   const double probeFps = info.video ? info.video->fps.value() : 0;
+  // Interpret Footage ▸ Color = what the file states (H.273 primaries / transfer).
+  if (haveInfo && info.video) {
+    const media::InputSpaceGuess g = media::input_space_of(info.video->color);
+    space = static_cast<api::RenderColorSpace>(g.renderColorSpace);
+    if (g.hdrUnmodelled && colorManaged_) {
+      stats.unsupported.emplace_back(r.key, "HDR (PQ / HLG) footage under colour management: no RenderColorSpace for the curve");
+    }
+  }
   media::FootageInterpretation interp;
   const media::FramePlan plan =
       media::plan_frames(*index, r.sourceTime, interp, media::FrameBlend::none, probeFps, r.compFps);

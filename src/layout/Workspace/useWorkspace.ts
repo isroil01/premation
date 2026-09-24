@@ -1,4 +1,3 @@
-import { getNodeLabelColor } from '@core/scene/labelColor';
 import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
@@ -46,14 +45,19 @@ import { useModalStore } from '@stores/modalStore';
 import { useCompositionStore, compKeyFor } from '@stores/compositionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { is3DEnabled, readNode3D } from '@core/scene/threeD';
+import { readNode3D } from '@core/scene/threeD';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, compFps, useActiveMirrorComp } from '@hooks/useMirror';
+import { isPaintableLayer } from '@core/mirror/layerKinds';
+import { mirrorLabelColor } from '@core/mirror/layerLabels';
+import { isMirrorDescendantOf } from '@core/mirror/layerTree';
+import { hasPositionKeys } from '@core/mirror/motionFacts';
 import { currentViewProjector } from '@core/workspace/viewProjection';
 import { isLookedThrough } from '@core/workspace/ports';
 
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
 import {
-  hasPositionAnimation,
   motionPathSamples,
   motionPathKeyframes,
   motionPathFrameSamples,
@@ -86,7 +90,6 @@ import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import type { PaintMode } from '@core/paint/paintStrokes';
 import { commitPaintDrag } from '@core/paint/paintCommit';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
-import { isPaintableKind } from '@core/paint/paintCoords';
 import { paintSpaceAt, thinSamples, type PaintSpace } from '@core/paint/paintSpace';
 import { usePaintStore } from '@stores/paintStore';
 import { publishProbe, clearProbe } from './useWorkspaceProbe';
@@ -120,7 +123,6 @@ import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace, faceHighlightGroups } from '@core/scene/facePicking';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { compSizeOf } from '@core/composition/compSizes';
-import { isDescendantOf } from '@core/composition/compNavigation';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
 import {
@@ -371,8 +373,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const draft = useRenderQualityStore((s) => s.draft);
 
   const compKey = useCompositionStore((s) => s.key());
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
+  // The auto-fit below reacts to the active composition's size (a document fact).
+  const activeCompSettings = useActiveMirrorComp()?.settings;
+  const compWidth = activeCompSettings?.width;
+  const compHeight = activeCompSettings?.height;
   const compRef = useRef(useCompositionStore.getState().comp());
   compRef.current = useCompositionStore.getState().comp();
 
@@ -1878,8 +1882,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (paintTool === 'paint' || paintTool === 'eraser') {
         const erasing = paintTool === 'eraser';
         const ids = useSelectionStore.getState().ids;
-        const node = ids.length === 1 ? defaultSceneGraph.getNode(ids[0]!) : null;
-        if (!node || !isPaintableKind(node)) {
+        const node = ids.length === 1 ? documentMirror().layer(ids[0]!) : undefined;
+        if (!node || !isPaintableLayer(node)) {
           // Say why nothing happened. Silently falling through to the engine
           // here is what a marquee-select on a paint stroke would look like.
           useUIStore.getState().notify({
@@ -2054,9 +2058,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // mousedown cannot blur the editor it would open.
       if ((activeTool === 'text' || activeTool === 'vertical-text') && !e.shiftKey) {
         const hit = controller.ws.hitTestScreen(local(e));
-        const hitNode = hit ? defaultSceneGraph.getNode(hit.id) : null;
-        if (hitNode && !hitNode.locked && hitNode.components.some((c) => c.type === 'Text')) {
-          typeEditRef.current = hitNode.id as string;
+        const hitNode = hit ? documentMirror().layer(hit.id) : undefined;
+        if (hitNode && !hitNode.switches.locked && hitNode.kind === 'text') {
+          typeEditRef.current = hitNode.id;
           return;
         }
       }
@@ -2101,9 +2105,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           const roi = useGuidesStore.getState().roi;
           if (roi) {
             const cp = controller.ws.screenToWorld(local(e));
-            const comp = useCompositionStore.getState();
+            const comp = compSize();
             useGuidesStore.getState().setRoi(
-              clampRoi(resizeRoi(roi, rd.handle, cp), comp.width, comp.height),
+              clampRoi(resizeRoi(roi, rd.handle, cp), comp.w, comp.h),
             );
           }
           return;
@@ -2291,8 +2295,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (pd) {
         paintDragRef.current = null;
         useUIStore.getState().setDragging(false);
-        const node = defaultSceneGraph.getNode(pd.nodeId);
-        if (node) {
+        if (documentMirror().layer(pd.nodeId)) {
           // Thin the drag first. Every pointer sample used to be stored, so a
           // slow stroke carried thousands of sub-pixel-apart points into the
           // document, every undo snapshot and every raster's cache key. Same
@@ -2391,10 +2394,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
       const sel = useSelectionStore.getState().ids;
       if (sel.length === 1) {
-        const node = defaultSceneGraph.getNode(sel[0]!);
+        const m = documentMirror();
+        const node = m.layer(sel[0]!);
         if (node) {
-          const textComp = node.components.find((c) => c.type === 'Text');
-          if (textComp) {
+          if (node.kind === 'text') {
             e.preventDefault();
             e.stopPropagation();
             // On-canvas editor (TextEditOverlay, mounted by Workspace) — NOT
@@ -2414,7 +2417,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           const tool = useUIStore.getState().activeTool as string;
           if (tool === 'select' || tool === 'brush' || tool === 'paint' || tool === 'eraser' || tool === 'roto') {
             const hit = controller.ws.hitTestScreen(local(e as unknown as PointerEvent));
-            if (hit && (hit.id === node.id || isDescendantOf(hit.id, node.id)) && openLayerOnDoubleClick(node.id, { alt: e.altKey })) {
+            if (hit && (hit.id === node.id || isMirrorDescendantOf(m, hit.id, node.id)) && openLayerOnDoubleClick(node.id, { alt: e.altKey })) {
               e.preventDefault();
               e.stopPropagation();
               return;
@@ -2904,8 +2907,7 @@ function paintOverlay(
   const sel3D = (() => {
     const ids = useSelectionStore.getState().ids;
     if (ids.length !== 1) return false;
-    const n = defaultSceneGraph.getNode(ids[0]!);
-    return !!n && is3DEnabled(n);
+    return documentMirror().layer(ids[0]!)?.switches.threeD === true;
   })();
 
   const isActivelyDrawing = isFreehandTool || !!paintStroke;
@@ -2924,7 +2926,7 @@ function paintOverlay(
       // selected you can tell which box belongs to which timeline row. That
       // linkage is the point of label colours. No label set ⇒ the accent,
       // exactly as before.
-      const label = getNodeLabelColor(box.id);
+      const label = mirrorLabelColor(documentMirror().layer(box.id));
 
       // A pale label over a pale composition is nearly invisible, and AE has
       // this weakness. A dark halo UNDER the hairline is the fix, rather than
@@ -2954,7 +2956,7 @@ function paintOverlay(
     // selected there is no non-arbitrary answer, and picking the first would
     // assert a linkage that is not there.
     const only = overlay.selectionBoxes.length === 1 ? overlay.selectionBoxes[0] : null;
-    const handleAccent = (only ? getNodeLabelColor(only.id) : undefined) ?? ACCENT;
+    const handleAccent = (only ? mirrorLabelColor(documentMirror().layer(only.id)) : undefined) ?? ACCENT;
     for (const h of overlay.handles) {
       if (h.kind === 'anchor') {
         // The pivot, as a crosshair/target — deliberately unlike every square
@@ -3290,13 +3292,16 @@ function hitMotionPathKeyframe(
   const ids = useSelectionStore.getState().ids;
   if (ids.length !== 1) return null;
   const nodeId = ids[0]!;
+  const m = documentMirror();
+  // C-phase: the path samplers below take the scene node — the engine's
+  // `getMotionPath` query (ENGINE_API §7) replaces them.
   const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasPositionAnimation(nodeId)) return null;
+  if (!node || !hasPositionKeys(m, nodeId)) return null;
   const R = 8; // grab radius, screen px
   // Must use the SAME projection the painter does, or a 3D layer's dots are
   // drawn in one place and grabbable in another.
   const comp = compSize();
-  const is3D = is3DEnabled(node);
+  const is3D = m.layer(nodeId)?.switches.threeD === true;
   const project = is3D ? currentViewProjector(comp.w, comp.h, playheadTime()) : null;
   const baseZ = is3D ? readNode3D(node).z : 0;
   const time = playheadTime();
@@ -3544,8 +3549,11 @@ function paintMotionPath(
   const ids = useSelectionStore.getState().ids;
   if (ids.length !== 1) return;
   const nodeId = ids[0]!;
+  const m = documentMirror();
+  // C-phase: the path samplers below take the scene node — the engine's
+  // `getMotionPath` query (ENGINE_API §7) replaces them.
   const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasPositionAnimation(nodeId)) return;
+  if (!node || !hasPositionKeys(m, nodeId)) return;
   // A camera's own path, seen through that camera, is a line across the frame.
   if (isLookedThrough(nodeId)) return;
   const win = motionPathWindowFor(nodeId, time);
@@ -3567,7 +3575,7 @@ function paintMotionPath(
   // draws. `z` is still sampled per point, so a layer animating in depth curves
   // correctly.
   const comp = compSize();
-  const is3D = is3DEnabled(node);
+  const is3D = m.layer(nodeId)?.switches.threeD === true;
   const project = is3D ? currentViewProjector(comp.w, comp.h, time) : null;
   const baseZ = is3D ? readNode3D(node).z : 0;
   const toS = (p: { x: number; y: number; t?: number }): { x: number; y: number } => {
@@ -3619,7 +3627,8 @@ function paintMotionPath(
 
   // Per-frame velocity tick dots (AE-style speed spacing) and keyframe markers.
   if (guides.motionPathDots !== 'off') {
-    const fps = useCompositionStore.getState().fps || 30;
+    const active = activeCompIdNow();
+    const fps = compFps(active ? m.comp(active) : undefined, 30) || 30;
     const frameDotRadius =
       guides.motionPathDots === 'small' ? 1.25
       : guides.motionPathDots === 'large' ? 2.25
@@ -3832,10 +3841,10 @@ function paintDisplayMode(
 
 function paintSafeArea(ctx: CanvasRenderingContext2D, controller: WorkspaceController): void {
   try {
-    const comp = useCompositionStore.getState();
-    if (!comp || comp.width <= 0 || comp.height <= 0) return;
+    const comp = compSize();
+    if (comp.w <= 0 || comp.h <= 0) return;
     const p0 = controller.ws.worldToScreen({ x: 0, y: 0 });
-    const p1 = controller.ws.worldToScreen({ x: comp.width, y: comp.height });
+    const p1 = controller.ws.worldToScreen({ x: comp.w, y: comp.h });
     if (!Number.isFinite(p0.x) || !Number.isFinite(p0.y) || !Number.isFinite(p1.x) || !Number.isFinite(p1.y)) return;
     const w = p1.x - p0.x;
     const h = p1.y - p0.y;

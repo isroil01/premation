@@ -166,6 +166,12 @@ class Device {
   [[nodiscard]] wgpu::CommandEncoder& encoder() noexcept { return encoder_; }
   /// Flush the uniform arena, submit, run GC. Returns resources collected.
   std::size_t end_frame();
+  /// G1: submit everything encoded so far (with the uniform arena it reads) and
+  /// continue the frame in a fresh encoder — for work that must run on the
+  /// queue after the frame so far and before the rest of it: a native plugin's
+  /// own command buffer, a mid-frame readback. One submit; the arena keeps its
+  /// offsets (end_frame re-uploads the same bytes, queue-ordered).
+  void flush();
 
   // ── resources ──
   /// Transient target by name + size (graph targets), created on a miss.

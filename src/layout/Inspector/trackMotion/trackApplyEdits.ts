@@ -21,13 +21,11 @@ import type { Command, CommandResult, PropRef } from '@motion/engine-api';
 import { compOfLayer, apiParentOf, isLayer } from '@core/engine/doc';
 import { propRefForTrack, values, valueOfNumbers } from '@core/engine/propRefs';
 import { apiUnitFactor } from '@core/engine/props';
-import { readPropertyValue } from '@core/inspector/multiSelection';
-import { staticOrDefaultValue } from '@core/inspector/propertyValue';
-import { effectPropPath, getNodeEffects } from '@core/effects/effects';
+import { documentMirror } from '@stores/documentMirror';
+import { findSolveCameraIn, firstEffectOfType, memberStoredAt, nextTrackedNullNameIn } from '@core/mirror/tracking';
+import { effectPropPath } from '@core/effects/effects';
 import {
   canSolveCamera,
-  findSolveCamera,
-  nextTrackedNullName,
   planOntoNull,
   planPlanarCameraSolve,
   planSfmCameraSolve,
@@ -65,6 +63,9 @@ export function planSplices(plan: TrackPlan, effectId?: string): KeySplice[] {
     g.byMember.set(track, m);
   }
   const out: KeySplice[] = [];
+  // Members the plan does not key keep what they hold at that time — read
+  // from the mirror (current once the entry's earlier steps have answered).
+  const m = documentMirror();
   for (const g of groups.values()) {
     const times = [...new Set([...g.byMember.values()].flatMap((m) => [...m.keys()]))].sort((a, b) => a - b);
     out.push({
@@ -73,10 +74,10 @@ export function planSplices(plan: TrackPlan, effectId?: string): KeySplice[] {
       axisTrack: g.members[0],
       keys: times.map((seconds) => ({
         seconds,
-        value: valueOfNumbers(g.valueType, g.members.map((m) => {
-          const given = g.byMember.get(m)?.get(seconds);
-          const stored = given ?? readPropertyValue(plan.layer, m, seconds) ?? staticOrDefaultValue(plan.layer, m);
-          return stored * apiUnitFactor(m);
+        value: valueOfNumbers(g.valueType, g.members.map((member) => {
+          const given = g.byMember.get(member)?.get(seconds);
+          const stored = given ?? memberStoredAt(m, plan.layer, member, seconds);
+          return stored * apiUnitFactor(member);
         })),
       })),
     });
@@ -93,7 +94,7 @@ function planSteps(plan: TrackPlan | ((earlier: ReadonlyArray<CommandResult[]>) 
       const p = typeof plan === 'function' ? plan(earlier) : plan;
       current = p;
       effectStep = earlier.length;
-      if (!p?.effectType || getNodeEffects(p.layer).some((e) => e.type === p.effectType)) return [];
+      if (!p?.effectType || firstEffectOfType(documentMirror(), p.layer, p.effectType) !== undefined) return [];
       return [{ type: 'addEffect', layers: [p.layer], effect: p.effectType, params: [] }];
     },
     ...spliceSteps((earlier) => {
@@ -102,7 +103,7 @@ function planSteps(plan: TrackPlan | ((earlier: ReadonlyArray<CommandResult[]>) 
       if (!p.effectType) return planSplices(p);
       const added = earlier[effectStep]?.find((r) => r.type === 'addEffect') as { groups?: string[] } | undefined;
       const fromAdd = added?.groups?.[0]?.split('/')[1];
-      const id = fromAdd ?? getNodeEffects(p.layer).find((e) => e.type === p.effectType)?.id;
+      const id = fromAdd ?? firstEffectOfType(documentMirror(), p.layer, p.effectType);
       if (!id) throw new Error(`No ${p.effectType} effect to key.`);
       return planSplices(p, id);
     }),
@@ -129,11 +130,13 @@ export interface NullTrackInput {
 /** The `createLayer` of a tracked null beside the video, seeded on the first sample. */
 function createNullCommand(input: NullTrackInput): Command | null {
   const comp = compOfLayer(input.videoNodeId);
+  // Engine-side until C-phase: the seed is the first sample mapped through the
+  // video's and its parent's WORLD transforms (layerSpaceAt).
   const seed = trackedNullSeed(input);
   if (!comp || !seed) return null;
   const parent = apiParentOf(input.videoNodeId);
   return {
-    type: 'createLayer', comp, kind: 'null', name: nextTrackedNullName(),
+    type: 'createLayer', comp, kind: 'null', name: nextTrackedNullNameIn(documentMirror()),
     ...(parent ? { parent } : {}),
     init: [{ path: 'transform/position', value: values.vec2(seed.x, seed.y) }],
   };
@@ -201,7 +204,7 @@ export async function solveCameraEdit(opts: PlanarCameraSolveOptions): Promise<P
   if (!canSolveCamera(opts)) return null;
   const comp = compOfLayer(opts.videoNodeId);
   if (!comp) return null;
-  const existing = findSolveCamera(opts.comp);
+  const existing = findSolveCameraIn(documentMirror(), opts.comp.rootId);
   let solved: CameraSolvePlan | null = null;
   const steps: EntryStep[] = [
     () => (existing ? [] : [{
@@ -211,6 +214,7 @@ export async function solveCameraEdit(opts: PlanarCameraSolveOptions): Promise<P
     ...planSteps((earlier) => {
       const camId = existing ?? createdLayer(earlier, 0);
       if (!camId) return null;
+      // Engine-side until C-phase: the SfM / planar solves (they read the solve camera's lens themselves).
       solved = planSfmCameraSolve(opts, camId) ?? planPlanarCameraSolve(opts, camId);
       return solved?.plan ?? null;
     }),

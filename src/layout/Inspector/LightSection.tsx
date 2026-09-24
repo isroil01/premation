@@ -33,9 +33,8 @@ import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
 import { getTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
-import { values } from '@core/engine/propRefs';
+import { componentOfType, values } from '@core/engine/propRefs';
 import { POI_PATH } from '@core/engine/pointOfInterest';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { LIGHT_DEFAULTS, type LightType, type LightFalloff } from '@core/scene/light';
 import {
   ENVIRONMENT_PRESETS,
@@ -94,37 +93,37 @@ function coerceLightType(v: unknown): LightType {
   return v === 'ambient' || v === 'spot' || v === 'parallel' || v === 'environment' ? v : 'point';
 }
 
+/** The rows' components (Transform, the Style fill), resolved by the write seam when a row writes (the reads are the mirror's). */
+const TRANSFORM = { type: 'Transform' } as const;
+const STYLE = { type: 'Style' } as const;
+
 export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // The layer's header and the active comp from the document mirror (B4).
   const layer = useMirrorLayer(nodeId);
   const compLayers = useActiveCompLayers();
-  // B4-gap: component ids for the write path (useComponentProp/componentPropsCommands address a component) — B3z
-  const node = defaultSceneGraph.getNode(nodeId);
-  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
-  const sComp = useMemo(() => node?.components.find((c) => c.type === 'Style'), [node]);
-  const [intensityRaw, setIntensity] = useComponentProp(nodeId, tComp?.id, 'intensity');
-  const [radiusRaw, setRadius] = useComponentProp(nodeId, tComp?.id, 'radius');
-  const [typeRaw] = useComponentProp(nodeId, tComp?.id, 'lightType');
-  const [angleRaw, setAngle] = useComponentProp(nodeId, tComp?.id, 'lightAngle');
-  const [coneRaw, setCone] = useComponentProp(nodeId, tComp?.id, 'lightCone');
-  const [fillRaw, setFill] = useComponentProp(nodeId, sComp?.id, 'fill');
-  const [shadowsRaw, setShadows] = useComponentProp(nodeId, tComp?.id, 'castShadows');
-  const [glowRaw, setGlow] = useComponentProp(nodeId, tComp?.id, 'lightGlow');
-  const [featherRaw, setFeather] = useComponentProp(nodeId, tComp?.id, 'lightConeFeather');
-  const [falloffRaw, setFalloff] = useComponentProp(nodeId, tComp?.id, 'falloff');
-  const [falloffDistRaw, setFalloffDist] = useComponentProp(nodeId, tComp?.id, 'falloffDistance');
-  const [darknessRaw, setDarkness] = useComponentProp(nodeId, tComp?.id, 'shadowDarkness');
-  const [diffusionRaw, setDiffusion] = useComponentProp(nodeId, tComp?.id, 'shadowDiffusion');
-  const [shadowMapRaw, setShadowMap] = useComponentProp(nodeId, tComp?.id, 'shadowMap');
-  const [mapSizeRaw, setMapSize] = useComponentProp(nodeId, tComp?.id, 'shadowMapSize');
-  const [shadowBiasRaw, setShadowBias] = useComponentProp(nodeId, tComp?.id, 'shadowBias');
-  const [shadowSoftRaw, setShadowSoft] = useComponentProp(nodeId, tComp?.id, 'shadowSoftness');
-  const [poiXRaw, setPoiX] = useComponentProp(nodeId, tComp?.id, 'poiX');
-  const [poiYRaw, setPoiY] = useComponentProp(nodeId, tComp?.id, 'poiY');
-  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, tComp?.id, 'poiZ');
-  const [envPresetRaw, setEnvPreset] = useComponentProp(nodeId, tComp?.id, 'envPreset');
-  const [envRotationRaw, setEnvRotation] = useComponentProp(nodeId, tComp?.id, 'envRotation');
-  const [envReflRaw, setEnvRefl] = useComponentProp(nodeId, tComp?.id, 'envReflections');
+  const [intensityRaw, setIntensity] = useComponentProp(nodeId, TRANSFORM, 'intensity');
+  const [radiusRaw, setRadius] = useComponentProp(nodeId, TRANSFORM, 'radius');
+  const [typeRaw] = useComponentProp(nodeId, TRANSFORM, 'lightType');
+  const [angleRaw, setAngle] = useComponentProp(nodeId, TRANSFORM, 'lightAngle');
+  const [coneRaw, setCone] = useComponentProp(nodeId, TRANSFORM, 'lightCone');
+  const [fillRaw, setFill] = useComponentProp(nodeId, STYLE, 'fill');
+  const [shadowsRaw, setShadows] = useComponentProp(nodeId, TRANSFORM, 'castShadows');
+  const [glowRaw, setGlow] = useComponentProp(nodeId, TRANSFORM, 'lightGlow');
+  const [featherRaw, setFeather] = useComponentProp(nodeId, TRANSFORM, 'lightConeFeather');
+  const [falloffRaw, setFalloff] = useComponentProp(nodeId, TRANSFORM, 'falloff');
+  const [falloffDistRaw, setFalloffDist] = useComponentProp(nodeId, TRANSFORM, 'falloffDistance');
+  const [darknessRaw, setDarkness] = useComponentProp(nodeId, TRANSFORM, 'shadowDarkness');
+  const [diffusionRaw, setDiffusion] = useComponentProp(nodeId, TRANSFORM, 'shadowDiffusion');
+  const [shadowMapRaw, setShadowMap] = useComponentProp(nodeId, TRANSFORM, 'shadowMap');
+  const [mapSizeRaw, setMapSize] = useComponentProp(nodeId, TRANSFORM, 'shadowMapSize');
+  const [shadowBiasRaw, setShadowBias] = useComponentProp(nodeId, TRANSFORM, 'shadowBias');
+  const [shadowSoftRaw, setShadowSoft] = useComponentProp(nodeId, TRANSFORM, 'shadowSoftness');
+  const [poiXRaw, setPoiX] = useComponentProp(nodeId, TRANSFORM, 'poiX');
+  const [poiYRaw, setPoiY] = useComponentProp(nodeId, TRANSFORM, 'poiY');
+  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, TRANSFORM, 'poiZ');
+  const [envPresetRaw, setEnvPreset] = useComponentProp(nodeId, TRANSFORM, 'envPreset');
+  const [envRotationRaw, setEnvRotation] = useComponentProp(nodeId, TRANSFORM, 'envRotation');
+  const [envReflRaw, setEnvRefl] = useComponentProp(nodeId, TRANSFORM, 'envReflections');
   const { width: compWidth, height: compHeight } = useActiveCompSize();
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
   // one would be a fresh reference on every store read, which re-renders
@@ -141,9 +140,10 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
    */
   const envAssetId = environmentSkyAssetId(envPresetRaw);
   useEffect(() => {
+    // Engine-side until D5: the renderer's environment-SH cache (a decode of the asset's pixels), not the document.
     if (envAssetId) void ensureEnvironmentSh(envAssetId);
   }, [envAssetId]);
-  if (!layer || !node || !tComp) return null;
+  if (!layer) return null;
 
   const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
   const intensity = num(intensityRaw, LIGHT_DEFAULTS.intensity);
@@ -202,8 +202,11 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
    */
   const sendLook = (label: string, t: Record<string, unknown>, fill?: string): void => {
     const seconds = getTime();
-    const { cmds, rest } = componentPropsCommands(nodeId, tComp.id, t, seconds);
-    const fillCmds = fill !== undefined && sComp ? componentPropCommands(nodeId, sComp.id, 'fill', fill, seconds) : [];
+    // The components the batch lands on, from the write seam at write time.
+    const tId = componentOfType(nodeId, 'Transform') ?? '';
+    const sId = componentOfType(nodeId, 'Style');
+    const { cmds, rest } = componentPropsCommands(nodeId, tId, t, seconds);
+    const fillCmds = fill !== undefined && sId ? componentPropCommands(nodeId, sId, 'fill', fill, seconds) : [];
     const missing = [...Object.keys(rest), ...(fillCmds === null ? ['fill'] : [])];
     if (missing.length > 0) {
       reportUnaddressed(nodeId, missing, label);

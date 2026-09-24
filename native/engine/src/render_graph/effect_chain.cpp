@@ -314,6 +314,7 @@ bool effect_ported(const api::RenderEffect& e, std::string& why) {
     return true;
   }
   if (t == "glow" || t == "drop-shadow" || t == "deep-glow" || t == "gaussian-blur" || t == "fast-box-blur") return true;
+  if (t == "native-plugin") return true;  // G1: run by the plugin host (NativeEffectHost)
   if (fx_table().count(t) != 0 || p_table().count(t) != 0 || field_table().count(t) != 0 || known_single(t)) return true;
   why = "effect " + t;
   return false;
@@ -396,6 +397,32 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     const std::string_view f2 = free.size() > 2 ? free[2] : std::string_view{};
     if (fx.has("effectOpacity") && fx.num("effectOpacity") < 1 && type != "plugin") {
       blendBack = BlendBack{curTex, curName, std::max(0.0, fx.num("effectOpacity"))};
+    }
+
+    if (type == "native-plugin") {
+      // G1: a native SDK plugin. The host draws its result into a free pool
+      // target, or declines (the chain continues from its input; the host has
+      // recorded why — a crashed / disabled plugin never takes the frame down).
+      if (ctx.nativeFx == nullptr) {
+        ctx.diagnostics.push_back({"native-plugin-unavailable", "no plugin host attached for \"" + std::string(fx.text("matchName")) + "\""});
+        continue;
+      }
+      NativeEffectHost::Call call;
+      call.effect = &e;
+      call.source = ctx.target(curName);
+      call.sourceName = curName;
+      call.dest = f0;
+      call.self = self == byId.end() ? nullptr : self->second;
+      call.selfId = selfId;
+      call.byId = &byId;
+      call.maps = &maps;
+      call.space = space;
+      call.poolHasMatte = poolHasMatte;
+      if (call.source != nullptr && ctx.nativeFx->apply(ctx, call)) {
+        curTex = texOf(f0);
+        curName = f0;
+      }
+      continue;
     }
 
     if (type == "blur" || type == "glow" || type == "drop-shadow") {

@@ -11,7 +11,7 @@
  * What the API cannot say yet keeps its legacy writer at the call site,
  * marked `B3-legacy` with the gap: a gradient comp background
  * (`setCompositionSettings` refuses `backgroundGradient` until FillPaint is
- * typed) and a custom (off-palette) label colour.
+ * typed).
  *
  * Display reads stay direct until B4's mirror.
  */
@@ -236,23 +236,24 @@ export async function setAutoOrientEdit(ids: readonly string[], mode: AutoOrient
 /**
  * Layer / Solid Settings ▸ Apply: name, label and (solids, sized nulls and
  * adjustment layers) width/height and a solid's colour (`layer/fill`, G1), one
- * entry. `legacy` when the values change what the API cannot say — an
- * off-palette label colour — so the caller keeps the whole apply on the legacy
- * writer (still one step).
+ * entry; an off-palette label colour is a custom `labelColor` (B3z).
  */
-export async function layerSettingsEdit(nodeId: string, values: LayerSettingsValues): Promise<'ok' | 'gone' | 'legacy'> {
+export async function layerSettingsEdit(nodeId: string, values: LayerSettingsValues): Promise<'ok' | 'gone'> {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !isLayer(nodeId)) return 'gone';
   const kind = layerSettingsKind(node);
   const fill = kind === 'solid' && values.color ? readNodeFill(node) : undefined;
   const colorChanged = !!values.color && kind === 'solid' && !(fill?.type === 'solid' && fill.color.toLowerCase() === values.color.toLowerCase());
   const labelChanged = 'labelColor' in values && (values.labelColor ?? undefined) !== (node.color ?? undefined);
-  if (labelChanged && values.labelColor && labelIndexOf(values.labelColor) === 0) return 'legacy';
-
   const cmds: Command[] = [];
   const name = values.name.trim();
   if (name && name !== node.name) cmds.push({ type: 'renameLayer', layer: nodeId, name });
-  if (labelChanged) cmds.push({ type: 'setLayerSwitches', layers: [nodeId], patch: { label: labelIndexOf(values.labelColor) } });
+  if (labelChanged) {
+    // A colour outside the palette is a custom label (B3z `labelColor`).
+    const label = labelIndexOf(values.labelColor);
+    const patch = values.labelColor && label === 0 ? { labelColor: values.labelColor } : { label };
+    cmds.push({ type: 'setLayerSwitches', layers: [nodeId], patch });
+  }
   if (kind !== 'plain') {
     const t = node.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
     const size: Record<string, number> = {};

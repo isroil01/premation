@@ -2,8 +2,8 @@
  * The Inspector core's layer facts, read from the document MIRROR (B4,
  * docs/B4_MIRROR.md) — what the section registry, the selection header and
  * the transform/compositing sections ask about a layer: does it exist, what
- * kind is it, can it take the 3D switch, does it draw pixels. One place, so
- * the one gap below is marked once instead of in every section.
+ * kind is it (a plugin-provided kind included: `LayerInfo.generator`), can it
+ * take the 3D switch, does it draw pixels.
  */
 
 import { flicksToSeconds, type LayerInfo } from '@motion/engine-api';
@@ -11,9 +11,6 @@ import { documentMirror } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
 import { uiKindOf, isAbstractKind } from '@core/mirror/layerKinds';
 import { useActiveMirrorComp } from '@hooks/useMirror';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { splitKind } from '@core/plugins/layerKindSchema';
 
 /** The layer's mirror header, or undefined when it is gone (or not a layer). */
 export function mirrorLayer(id: string | null | undefined): LayerInfo | undefined {
@@ -32,13 +29,8 @@ export function layerExists(id: string | null | undefined): boolean {
 export function inspectorKindOf(id: string | null | undefined): string | null {
   const layer = mirrorLayer(id);
   if (!layer) return null;
-  if (layer.kind === 'generator' && id) {
-    // B4-gap: plugin layer kinds — LayerInfo names a `generator` but not which plugin kind (B4_MIRROR.md §4).
-    const node = defaultSceneGraph.getNode(id);
-    // B4-gap: same (the stored kind id).
-    const legacy = node ? readNodeKind(node) : null;
-    if (legacy && splitKind(legacy) !== null) return legacy;
-  }
+  // A plugin-provided kind: LayerInfo.generator names it (B4).
+  if (layer.kind === 'generator' && layer.generator !== '') return layer.generator;
   return uiKindOf(layer);
 }
 

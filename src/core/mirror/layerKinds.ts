@@ -47,3 +47,36 @@ export function uiKindOf(layer: Pick<LayerInfo, 'kind' | 'source'> | undefined):
 export function isAbstractKind(kind: SceneKind | null): boolean {
   return kind === 'camera' || kind === 'light' || kind === 'audio';
 }
+
+/** An image or video layer — what an Alt-drop can replace the source of (`replaceSourceDrop.isReplaceableLayer`). */
+export function isReplaceableSourceLayer(layer: Pick<LayerInfo, 'kind' | 'source'> | undefined): boolean {
+  const k = uiKindOf(layer);
+  return k === 'image' || k === 'video';
+}
+
+const THREE_D_CAPABLE: ReadonlySet<SceneKind> = new Set(['shape', 'text', 'image', 'video', 'null', 'svg']);
+
+/**
+ * Whether a layer can take the 3D switch — the twin of `threeD.canBe3D`: a
+ * content kind, or a SEALED composition layer (a collapsed one splices its
+ * layers into the host and is not a layer that draws). A plugin generator is
+ * not one (its editor kind is the plugin's own).
+ */
+export function canBe3DLayer(layer: Pick<LayerInfo, 'kind' | 'source' | 'generator' | 'switches'> | undefined): boolean {
+  if (!layer || (layer.kind === 'generator' && layer.generator !== '')) return false;
+  const k = uiKindOf(layer);
+  if (k === 'comp') return !layer.switches.collapse;
+  return k !== null && THREE_D_CAPABLE.has(k);
+}
+
+const PAINTABLE: ReadonlySet<SceneKind> = new Set(['shape', 'text', 'image', 'svg', 'video']);
+
+/**
+ * Whether a layer takes Paint strokes — the twin of `paintCoords.isPaintableKind`.
+ * A plugin generator layer is not one (its editor kind is the plugin's own).
+ */
+export function isPaintableLayer(layer: Pick<LayerInfo, 'kind' | 'source' | 'generator'> | undefined): boolean {
+  if (!layer || (layer.kind === 'generator' && layer.generator !== '')) return false;
+  const k = uiKindOf(layer);
+  return k !== null && PAINTABLE.has(k);
+}

@@ -109,6 +109,7 @@ import {
   moveItemsEdit,
   removeItemsEdit,
   renameItemEdit,
+  setItemLabelEdit,
   setItemTagsEdit,
 } from './assetEdits';
 import {
@@ -177,8 +178,11 @@ export function AssetsPanel(): JSX.Element {
   const folders = useAssetStore((s) => s.folders);
   // B3-legacy: engine gap — `importFiles` imports by PATH; a browser `File` (the picker's <input>, an OS drop, Import Folder) carries none in Electron 44, so those routes keep the store's importer (desktop Import Files… goes through the engine, see `openImportFiles`).
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
-  // B3-legacy: engine gap — the store keeps a LABEL_COLORS id (`'slate'`) in `label`; `setItemLabel` writes the label's hex colour, which this panel (and the bundle's saved labels) would no longer recognise.
-  const setLabel = useAssetStore((s) => s.setLabel);
+  // The label menu through the engine (B3z): setItemLabel stores the palette id this panel reads.
+  const setLabel = (ids: string[], labelId: string | null): void => {
+    const items = ids.filter((id) => useAssetStore.getState().assets.some((a) => a.id === id));
+    void setItemLabelEdit(items, labelId);
+  };
   const setTags = (assetId: string, tags: string[]): void => { void setItemTagsEdit([{ id: assetId, tags }]); };
 
   const view = useAssetsViewStore((s) => s.view);

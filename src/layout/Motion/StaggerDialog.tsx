@@ -32,7 +32,9 @@ import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { flicksToSeconds } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompFps } from '@hooks/useMirror';
 import { moveBars } from '@layout/Timeline/timelineEdits';
 import { staggerKeyframesEdit } from '@layout/Menu/appEdits';
 import {
@@ -70,7 +72,7 @@ function StaggerBody({ nodeIds, close, onDone }: StaggerBodyProps): JSX.Element 
   const [balance, setBalance] = useState(false);
   const [seed, setSeed] = useState(1);
 
-  const fps = getTimelineController().fps || 30;
+  const fps = useActiveCompFps();
   const step = frames / fps;
 
   /**
@@ -100,8 +102,6 @@ function StaggerBody({ nodeIds, close, onDone }: StaggerBodyProps): JSX.Element 
       close();
       return;
     }
-    const controller = getTimelineController();
-
     if (target === 'animation') {
       // The same pattern on each layer's keyframes, one undo entry:
       // `shiftLayerKeyframes` (B3z) moves whole tracks in LAYER time — sub-frame
@@ -116,7 +116,13 @@ function StaggerBody({ nodeIds, close, onDone }: StaggerBodyProps): JSX.Element 
     // Bars. The offsets are resolved against each layer's CURRENT start, so a
     // stagger applied twice compounds rather than snapping back to a fresh
     // ladder — which is what makes it usable as a nudge.
-    const bars = nodeIds.map((id) => controller.clipStartsForNode(id));
+    // One bar per layer in the document (the mirror's `timing`; a split makes
+    // a new layer), addressed as the timeline addresses it: `clip:<layer>`.
+    const m = documentMirror();
+    const bars = nodeIds.map((id) => {
+      const layer = m.layer(id);
+      return layer ? [{ layerId: `clip:${id}`, startSeconds: flicksToSeconds(layer.timing.inPoint) }] : [];
+    });
     // A row's position for the clamp is its EARLIEST bar: that is the one that
     // reaches t=0 first, and a split layer must not have its head pushed
     // through zero because a later fragment cleared it.

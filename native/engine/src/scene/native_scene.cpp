@@ -2,6 +2,8 @@
 
 #include <chrono>
 
+#include "color_settings.hpp"
+
 namespace premation::scene {
 
 ViewSpec export_view(double outW, double outH, double compW, double compH) {
@@ -67,6 +69,11 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
                         : cm.displayTransform == "hlg" ? api::RenderDisplayTransform::hlg
                                                        : api::RenderDisplayTransform::srgb;
   v.bit_depth = cm.bitDepth == 32 ? 32 : 16;
+  // D3 colour management from the project's settings (absent = the TS pipeline);
+  // textures are tagged with their interpretation by SceneTextures (set_color_managed).
+  ColorManagementChoice cmc = color_management_of(c.d, view.outputColorSpace);
+  v.color_management = std::move(cmc.management);
+  if (!cmc.note.empty()) nf.errors.push_back({"", "", "color", std::move(cmc.note)});
   v.float16_textures = true;
   v.float32_textures = true;
   v.surface_format = view.surfaceFormat;

@@ -44,20 +44,30 @@ import { asCommandId } from '@app-types/common';
 import { getCommandRegistry } from '@core/commands/Command';
 import { Icon } from '@components/Icon';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { useChoreographyStore, type ChoreographyRecord } from '@stores/choreographyStore';
-import { findAudioLayer } from '@core/audio/beatGrid';
-import { rampTargets } from '@core/animation/speedRampCommands';
-import { transitionTargets } from '@core/animation/smartAnimateCommands';
+import { documentMirror } from '@stores/documentMirror';
+import {
+  useActiveCompFps,
+  useActiveCompId,
+  useMirrorKeys,
+  useMirrorLayersWatch,
+  useMirrorTrackWatch,
+} from '@hooks/useMirror';
+import {
+  curveAnimatedLayerIds,
+  firstAudioLayerIn,
+  retimableLayerIds,
+  smartAnimateTargetsIn,
+  staggerLayersIn,
+} from '@core/mirror/motionAssist';
 import { EASE_PRESETS, type EasePresetId } from '@core/animation/easePresets';
 import {
   DEFAULT_STAGGER_PARAMS,
   feelDurationSec,
   feelStaggerFrames,
   planStagger,
-  staggerLayersFor,
   STAGGER_ORDERS,
   type ChoreographyFeel,
   type StaggerOrder,
@@ -67,7 +77,6 @@ import {
   reapplyChoreography,
   revertChoreography,
   runChoreography,
-  staggerTargets,
 } from '@core/animation/choreographyCommands';
 import styles from './ChoreographySection.module.css';
 
@@ -96,6 +105,9 @@ const MAX_TARGETS = 4;
 /** Rows before the per-layer list stops competing with the preset library. */
 const MAX_LAYER_ROWS = 12;
 
+/** The tracks the stagger orders read (resting position). */
+const POSITION_TRACKS: readonly string[] = ['x', 'y'];
+
 function run(id: string): void {
   const command = getCommandRegistry().get(asCommandId(id));
   void command?.execute({} as never);
@@ -107,19 +119,32 @@ function canRun(id: string): boolean {
   return command.enabled ? command.enabled() !== false : true;
 }
 
+/**
+ * The auto-minted empty placeholder comp (the start-cards state) — what
+ * Smart Animate never offers as a target.
+ * B4-gap: the composition's `pristine` flag — editor-minted placeholder state
+ * the API's CompSettings does not carry (a `CompSettings.pristine: bool` would close it).
+ */
+function isPlaceholderComp(compId: string): boolean {
+  return useProjectStore.getState().comps[compId]?.pristine === true;
+}
+
 export function ChoreographySection(): JSX.Element {
-  // These stores are read so the buttons re-evaluate as things change: the
-  // selection drives most `enabled()` checks, and the scene revision covers
-  // layers being added or deleted underneath a stale render.
+  // The selection drives most `enabled()` checks; the document parts below
+  // come from the document mirror (B4), subscribed to exactly what they read.
   const selected = useSelectionStore((s) => s.ids);
-  const compId = useCompositionStore((s) => s.id);
-  const fps = useCompositionStore((s) => s.fps) || 30;
+  const activeId = useActiveCompId();
+  // The key choreography records are filed under (`choreographyCommands`
+  // `activeCompId`): the active tab's composition, or the default record's id.
+  const compId = activeId ?? DEFAULT_COMPOSITION.id;
+  const fps = useActiveCompFps();
   const record = useChoreographyStore((s) => s.byComp[compId]);
-  // Subscribed to, not read: both are what make the rows below re-evaluate.
-  // The scene revision covers layers appearing or going, and the comps map
-  // covers a board being created, renamed or deleted.
-  useSceneRevision((s) => s.rev);
-  useProjectStore((s) => s.comps);
+  const m = documentMirror();
+  // Layers appearing or going (the audio row), the boards (Smart Animate: a
+  // board created, renamed, deleted or drawn into), the selection's headers,
+  // trees and keys (ramp / stagger availability).
+  useMirrorKeys(['layers', 'comps', ...m.compIds.flatMap((c) => [`comp:${c}`, `order:${c}`])]);
+  useMirrorLayersWatch(selected);
 
   /**
    * The DRAFT parameters — edited freely, applied on a button press.
@@ -145,16 +170,14 @@ export function ChoreographySection(): JSX.Element {
 
   const patch = (next: Partial<StaggerParams>): void => setDraft((d) => ({ ...d, ...next }));
 
-  // Derived on every render rather than memoised. They read live stores that
-  // are NOT in any dependency array — a `useMemo` here would need the stores
-  // themselves as deps, which is how the first version ended up calling a hook
-  // inside a dependency list. These are cheap array walks; correctness is
-  // worth more than skipping them.
+  // Derived on every render rather than memoised, from the mirror's immutable
+  // records (the subscriptions above wake this for exactly what they read).
+  // These are cheap array walks; correctness is worth more than skipping them.
   const hasSelection = selected.length > 0;
-  const hasAudio = findAudioLayer() !== undefined;
-  const canRamp = rampTargets().length > 0;
-  const targets = transitionTargets();
-  const canStagger = staggerTargets().length >= 2;
+  const hasAudio = firstAudioLayerIn(m) !== undefined;
+  const canRamp = retimableLayerIds(m, selected).length > 0;
+  const targets = smartAnimateTargetsIn(m, activeId, isPlaceholderComp);
+  const canStagger = curveAnimatedLayerIds(m, selected).length >= 2;
 
   /**
    * The layers the offset list is about: the recorded run's when there is one,
@@ -163,7 +186,9 @@ export function ChoreographySection(): JSX.Element {
    * numbers you are about to re-apply must not silently become another set.
    */
   const listedIds = record ? record.nodeIds : selected;
-  const layers = staggerLayersFor(listedIds, record?.atCompTime ?? 0);
+  // Their names and resting x / y (the "by position" orders) at the anchor time.
+  useMirrorTrackWatch(listedIds, POSITION_TRACKS);
+  const layers = staggerLayersIn(m, listedIds, record?.atCompTime ?? 0);
   const plan = planStagger(layers, draft);
 
   const setOverride = (nodeId: string, raw: string): void => {
@@ -177,7 +202,7 @@ export function ChoreographySection(): JSX.Element {
   };
 
   const apply = (kind: 'in' | 'out' | 'stagger'): void => {
-    const ids = kind === 'stagger' ? staggerTargets() : selected;
+    const ids = kind === 'stagger' ? curveAnimatedLayerIds(documentMirror(), selected) : selected;
     if (ids.length === 0) return;
     runChoreography({ kind, nodeIds: ids, params: draft });
   };

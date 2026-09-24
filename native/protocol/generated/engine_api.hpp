@@ -793,6 +793,8 @@ struct BeginGesture;
 struct EndGesture;
 struct ClearHistory;
 struct SetHistoryLimit;
+struct AddHistoryCheckpoint;
+struct RestoreDocument;
 struct NewProject;
 struct OpenProject;
 struct SaveProject;
@@ -995,6 +997,7 @@ struct PrecomposeResult;
 struct RenderItemList;
 struct LayerRef;
 struct LayerList;
+struct RenameLayerResult;
 struct GroupList;
 struct TransitionRef;
 struct PropertyWriteResult;
@@ -1015,6 +1018,7 @@ struct CompInfo;
 struct LayerSwitches;
 struct LayerTiming;
 struct LayerInfo;
+struct MemberExpression;
 struct PropertyInfo;
 struct PropertyTree;
 struct KeyframeSet;
@@ -1406,6 +1410,17 @@ struct SetHistoryLimit {
   bool operator==(const SetHistoryLimit&) const = default;
 };
 
+struct AddHistoryCheckpoint {
+  std::string label;
+  bool operator==(const AddHistoryCheckpoint&) const = default;
+};
+
+struct RestoreDocument {
+  std::vector<std::uint8_t> document;
+  std::optional<std::string> label;
+  bool operator==(const RestoreDocument&) const = default;
+};
+
 struct NewProject {
   std::optional<std::string> template_;
   bool operator==(const NewProject&) const = default;
@@ -1473,6 +1488,8 @@ struct InterpretationPatch {
   std::optional<Time> start_timecode;
   std::optional<bool> invert_alpha;
   std::optional<bool> clear_conform;
+  std::optional<std::uint32_t> remove_pulldown;
+  std::optional<bool> clear_remove_pulldown;
   bool operator==(const InterpretationPatch&) const = default;
 };
 
@@ -1591,6 +1608,9 @@ struct CompSettingsPatch {
   std::optional<bool> preserve_frame_rate;
   std::optional<bool> preserve_resolution;
   std::optional<std::string> world;
+  std::optional<std::string> responsive_time;
+  std::optional<std::string> template_fields;
+  std::optional<std::string> background_paint;
   bool operator==(const CompSettingsPatch&) const = default;
 };
 
@@ -1757,6 +1777,7 @@ struct LayerSwitchesPatch {
   std::optional<AutoOrient> auto_orient;
   std::optional<bool> preserve_transparency;
   std::optional<std::uint32_t> label;
+  std::optional<std::string> label_color;
   bool operator==(const LayerSwitchesPatch&) const = default;
 };
 
@@ -2519,6 +2540,8 @@ struct Command {
     end_gesture = 5,
     clear_history = 6,
     set_history_limit = 7,
+    add_history_checkpoint = 21,
+    restore_document = 20,
     new_project = 10,
     open_project = 11,
     save_project = 12,
@@ -2647,7 +2670,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -2963,6 +2986,13 @@ struct LayerList {
   bool operator==(const LayerList&) const = default;
 };
 
+struct RenameLayerResult {
+  std::uint32_t repaired = 0;
+  std::uint32_t captured = 0;
+  bool name_already_in_use = false;
+  bool operator==(const RenameLayerResult&) const = default;
+};
+
 struct GroupList {
   std::vector<PropPath> groups;
   bool operator==(const GroupList&) const = default;
@@ -3020,6 +3050,8 @@ struct CommandResult {
     end_gesture = 5,
     clear_history = 6,
     set_history_limit = 7,
+    add_history_checkpoint = 21,
+    restore_document = 20,
     new_project = 10,
     open_project = 11,
     save_project = 12,
@@ -3148,7 +3180,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -3175,6 +3207,7 @@ struct Interpretation {
   std::string color_profile;
   std::optional<Time> start_timecode;
   bool invert_alpha = false;
+  std::optional<std::uint32_t> remove_pulldown;
   bool operator==(const Interpretation&) const = default;
 };
 
@@ -3226,6 +3259,9 @@ struct CompSettings {
   bool preserve_frame_rate = false;
   bool preserve_resolution = false;
   std::optional<std::string> world;
+  std::optional<std::string> responsive_time;
+  std::optional<std::string> template_fields;
+  std::optional<std::string> background_paint;
   bool operator==(const CompSettings&) const = default;
 };
 
@@ -3282,6 +3318,7 @@ struct LayerSwitches {
   AutoOrient auto_orient = AutoOrient::off;
   bool preserve_transparency = false;
   std::uint32_t label = 0;
+  std::optional<std::string> label_color;
   bool operator==(const LayerSwitches&) const = default;
 };
 
@@ -3292,6 +3329,7 @@ struct LayerTiming {
   double stretch = 0.0;
   bool time_remap_enabled = false;
   RetimeMode retime = RetimeMode::normal;
+  std::optional<Time> source_duration;
   bool operator==(const LayerTiming&) const = default;
 };
 
@@ -3311,7 +3349,18 @@ struct LayerInfo {
   bool has_audio = false;
   std::vector<Marker> markers;
   std::string comment;
+  std::string generator;
+  std::vector<std::string> pinned;
+  std::uint32_t effect_count = 0;
   bool operator==(const LayerInfo&) const = default;
+};
+
+struct MemberExpression {
+  std::uint32_t member = 0;
+  std::string source;
+  bool enabled = false;
+  std::string error;
+  bool operator==(const MemberExpression&) const = default;
 };
 
 struct PropertyInfo {
@@ -3339,6 +3388,7 @@ struct PropertyInfo {
   std::uint32_t keyframe_count = 0;
   std::vector<PropPath> children;
   bool hidden = false;
+  std::vector<MemberExpression> member_expressions;
   bool operator==(const PropertyInfo&) const = default;
 };
 
@@ -4521,6 +4571,10 @@ void encode(wire::Writer& w, const ClearHistory& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ClearHistory& out);
 void encode(wire::Writer& w, const SetHistoryLimit& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetHistoryLimit& out);
+void encode(wire::Writer& w, const AddHistoryCheckpoint& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AddHistoryCheckpoint& out);
+void encode(wire::Writer& w, const RestoreDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RestoreDocument& out);
 void encode(wire::Writer& w, const NewProject& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, NewProject& out);
 void encode(wire::Writer& w, const OpenProject& v);
@@ -4925,6 +4979,8 @@ void encode(wire::Writer& w, const LayerRef& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerRef& out);
 void encode(wire::Writer& w, const LayerList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerList& out);
+void encode(wire::Writer& w, const RenameLayerResult& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenameLayerResult& out);
 void encode(wire::Writer& w, const GroupList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GroupList& out);
 void encode(wire::Writer& w, const TransitionRef& v);
@@ -4965,6 +5021,8 @@ void encode(wire::Writer& w, const LayerTiming& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerTiming& out);
 void encode(wire::Writer& w, const LayerInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerInfo& out);
+void encode(wire::Writer& w, const MemberExpression& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MemberExpression& out);
 void encode(wire::Writer& w, const PropertyInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PropertyInfo& out);
 void encode(wire::Writer& w, const PropertyTree& v);

@@ -43,6 +43,38 @@ struct ChainResult {
   std::string_view name;
 };
 
+/// G1: native SDK plugin effects — a `native-plugin` chain entry (written by
+/// the scene builder, src/plugins/scene_native_fx.cpp) is handed to this host
+/// (the plugin host's render glue, src/plugins/render_glue.cpp), which runs the
+/// plugin on the CPU or on this device and leaves its result in `dest`.
+class NativeEffectHost {
+ public:
+  struct Call {
+    const api::RenderEffect* effect = nullptr;
+    /// The chain's current buffer (a pool target), and its name.
+    RenderTarget* source = nullptr;
+    std::string_view sourceName;
+    /// A free pool target of the same size for the result.
+    std::string_view dest;
+    const api::Renderable* self = nullptr;
+    std::string_view selfId;
+    const ById* byId = nullptr;
+    MapLayerSource* maps = nullptr;
+    const FxSpace* space = nullptr;
+    /// The pool itself uses MATTE_TARGET: layer checkouts are unavailable (as for displacement maps).
+    bool poolHasMatte = false;
+  };
+  NativeEffectHost() = default;
+  virtual ~NativeEffectHost() = default;
+  NativeEffectHost(const NativeEffectHost&) = delete;
+  NativeEffectHost& operator=(const NativeEffectHost&) = delete;
+  NativeEffectHost(NativeEffectHost&&) = delete;
+  NativeEffectHost& operator=(NativeEffectHost&&) = delete;
+  /// True: `dest` holds the effect's output. False: the effect is skipped (the
+  /// chain continues with its input; the host recorded why — layerErrors).
+  virtual bool apply(PassContext& ctx, const Call& call) = 0;
+};
+
 ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEffect>& effects, TexRef input,
                               std::span<const std::string_view> pool, const ById& byId, std::string_view selfId,
                               MapLayerSource& maps, const FxSpace* space = nullptr);

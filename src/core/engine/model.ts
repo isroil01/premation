@@ -15,6 +15,7 @@ import type {
   Marker,
   MarkerOwner,
   PropertyInfo,
+  MemberExpression,
   KeyframeSet,
   CompInfo,
   Transition,
@@ -43,8 +44,10 @@ import { readNodeMatte } from '@core/effects/matte';
 import { readNodeMaskAnim } from '@core/effects/mask';
 import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import { parseColorChannels } from '@core/effects/effects';
+import { parseColorChannels, readNodeEffects } from '@core/effects/effects';
 import { readRetimeMode } from '@core/animation/retime';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { splitKind } from '@core/plugins/layerKindSchema';
 import { BLEND_MODES as API_BLEND_MODES } from './enums';
 import type { SceneNode } from '@core/types';
 import {
@@ -68,16 +71,28 @@ export function hexToColor(hex: string | undefined, fallback: Color = { r: 0, g:
   return { r, g, b, a };
 }
 
-/** Label colour hex → AE label index (1-based into LABEL_COLORS, 0 = none/custom). */
+/**
+ * Label colour hex — or a palette id (`slate`: the Project panel stores footage
+ * labels that way) → AE label index (1-based into LABEL_COLORS, 0 = none/custom).
+ */
 export function labelIndexOf(color: string | null | undefined): number {
   if (!color) return 0;
-  const i = LABEL_COLORS.findIndex((c) => c.color.toLowerCase() === color.toLowerCase());
+  const want = color.toLowerCase();
+  const i = LABEL_COLORS.findIndex((c) => c.color.toLowerCase() === want || c.id === color);
   return i < 0 ? 0 : i + 1;
 }
 
 export function labelColorOf(index: number): string | undefined {
   return index > 0 ? LABEL_COLORS[index - 1]?.color : undefined;
 }
+
+/** The palette entry's id for a label index (`setItemLabel` stores footage labels by id). */
+export function labelIdOf(index: number): string | undefined {
+  return index > 0 ? LABEL_COLORS[index - 1]?.id : undefined;
+}
+
+/** A custom label colour: `#rgb`, `#rrggbb` or `#rrggbbaa` (setLayerSwitches `labelColor`). */
+export const LABEL_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 // ── Timing ───────────────────────────────────────────────────────────
 
@@ -150,6 +165,8 @@ export function layerTiming(layerId: string): LayerTiming {
   }
   const first = bars[0]!;
   const last = bars[bars.length - 1]!;
+  // B4: the bar's source bound (Clip.sourceDuration, comp frames) — null = unbounded.
+  const srcDur = first.clip.sourceDuration;
   return {
     inPoint: framesToFlicks(first.start, fps),
     outPoint: framesToFlicks(last.start + last.duration, fps),
@@ -157,6 +174,7 @@ export function layerTiming(layerId: string): LayerTiming {
     stretch,
     timeRemapEnabled,
     retime,
+    ...(srcDur !== null && Number.isFinite(srcDur) ? { sourceDuration: framesToFlicks(srcDur, fps) } : {}),
   };
 }
 
@@ -188,6 +206,8 @@ export function layerSwitches(node: SceneNode): LayerSwitches {
     autoOrient: AUTO_ORIENT[readAutoOrientMode(node)] ?? 'off',
     preserveTransparency: readLayerFlag(node, 'preserveTransparency'),
     label: labelIndexOf(node.color),
+    // B3z: a colour outside the palette is reported as itself.
+    ...(node.color && labelIndexOf(node.color) === 0 ? { labelColor: node.color } : {}),
   };
 }
 
@@ -262,7 +282,25 @@ export function layerInfo(layerId: string): LayerInfo {
     hasAudio: kind === 'audio' || (kind === 'video' && node.components.some((c) => (c.props as Record<string, unknown>).hasAudioTrack !== false)),
     markers: layerMarkers(layerId),
     comment: typeof comment === 'string' ? comment : '',
+    generator: kind === 'generator' ? pluginKindOf(node) : '',
+    pinned: pinnedOf(node),
+    effectCount: readNodeEffects(node).length,
   };
+}
+
+/** B4: the layer's pinned properties — `__pinnedProps` on the first component carrying the list (pinnedProps.ts `readPinnedProps`). */
+function pinnedOf(node: SceneNode): string[] {
+  for (const c of node.components) {
+    const bag = (c.props as Record<string, unknown>).__pinnedProps;
+    if (Array.isArray(bag)) return bag.filter((k): k is string => typeof k === 'string');
+  }
+  return [];
+}
+
+/** B4: a plugin layer kind's id (`<pluginId>.<kindId>`, layerKindSchema `splitKind`), '' for any other kind. */
+function pluginKindOf(node: SceneNode): string {
+  const k = readNodeKind(node) as string;
+  return splitKind(k) !== null ? k : '';
 }
 
 // ── Compositions ─────────────────────────────────────────────────────
@@ -362,6 +400,9 @@ function interpretationOf(a: ImportedAsset): Interpretation {
     loops: i.loopCount ?? 1,
     colorProfile: 'auto',
     invertAlpha: false,
+    // B3z: Remove Pulldown — sourceInfo.ts `interpretationOf`'s validation (an integer phase 0..4).
+    ...(typeof i.pulldownPhase === 'number' && Number.isInteger(i.pulldownPhase) && i.pulldownPhase >= 0 && i.pulldownPhase <= 4
+      ? { removePulldown: i.pulldownPhase } : {}),
   };
 }
 
@@ -466,7 +507,29 @@ export function propertyInfo(layerId: string, cat: Catalog, b: PropBinding): Pro
     keyframeCount: keyCount,
     children: b.separated ? [...cat.byPath.keys()].filter((p) => p.startsWith(`${b.path}/`)) : [],
     hidden: b.hidden === true,
+    memberExpressions: memberExpressionsOf(layerId, b),
   };
+}
+
+/**
+ * B4: per-dimension expressions of an UNSEPARATED multi-member property
+ * (setExpression `member`) — every member carrying one, when the members do not
+ * all carry the same (source, enabled). Empty for one shared expression or none.
+ */
+function memberExpressionsOf(layerId: string, b: PropBinding): MemberExpression[] {
+  if (b.separated || b.members.length < 2) return [];
+  const per = b.members.map((m) => ({
+    source: defaultAnimation.getExpressionSrc(layerId, m) ?? '',
+    enabled: defaultAnimation.isExpressionEnabled(layerId, m),
+  }));
+  const first = per[0]!;
+  if (per.every((p) => p.source === first.source && (p.source === '' || p.enabled === first.enabled))) return [];
+  const out: MemberExpression[] = [];
+  per.forEach((p, i) => {
+    if (p.source === '') return;
+    out.push({ member: i, source: p.source, enabled: p.enabled, error: defaultAnimation.getExpressionError(layerId, b.members[i]!) ?? '' });
+  });
+  return out;
 }
 
 export function groupInfo(cat: Catalog, path: string): PropertyInfo {
@@ -475,7 +538,7 @@ export function groupInfo(cat: Catalog, path: string): PropertyInfo {
     path, name: g.name, matchName: g.matchName, kind: g.kind, valueType: 'none', animatable: false,
     animated: false, dimensions: 0, separated: false, enabled: g.enabled, choices: [], unit: '',
     expression: '', expressionEnabled: false, expressionError: '', keyframeCount: 0,
-    children: [...g.children], hidden: false,
+    children: [...g.children], hidden: false, memberExpressions: [],
   };
 }
 

@@ -35,8 +35,9 @@ import { reportEngineError } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { secondsToFlicks } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
 import { catalogFor, readStatic } from '@core/engine/props';
+import { trackRefIn } from '@core/mirror/trackIndex';
+import { documentMirror } from '@stores/documentMirror';
 
 /** One new key: composition seconds + the API value. */
 export interface SpliceKey {
@@ -189,9 +190,26 @@ export async function removeAnimationCommands(prop: PropRef, client: EngineClien
   return [{ type: 'deleteKeyframes', ids }, { type: 'setProperty', prop, value: before }];
 }
 
-/** `setExpression ''` on `prop` when one of `tracks` carries an expression (the bake rule: a baked track under a live expression matches neither). */
+/**
+ * `setExpression ''` on `prop` when one of `tracks` carries an expression (the
+ * bake rule: a baked track under a live expression matches neither). B4: read
+ * from the document mirror at call time — the property's expression, or, on an
+ * unseparated vector whose dimensions differ, the member the track names.
+ */
 export function clearExpressionCommands(prop: PropRef, tracks: readonly string[]): Command[] {
-  return tracks.some((t) => defaultAnimation.hasExpression(prop.layer, t))
+  const m = documentMirror();
+  const info = m.property(prop.layer, prop.path);
+  if (!info) return [];
+  const tree = m.tree(prop.layer);
+  // An engine that does not report per-member expressions yet sends none.
+  const perMember = info.memberExpressions ?? [];
+  const has = (track: string): boolean => {
+    const ref = trackRefIn(tree, track);
+    const member = ref && ref.path === prop.path && perMember.length > 0 ? ref.member : undefined;
+    if (member === undefined) return info.expression !== '' || perMember.some((e) => e.source !== '');
+    return perMember.some((e) => e.member === member && e.source !== '');
+  };
+  return tracks.some(has)
     ? [{ type: 'setExpression', prop, source: '', enabled: true }]
     : [];
 }

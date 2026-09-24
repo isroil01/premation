@@ -16,13 +16,12 @@
  * marked `B3-legacy` with the gap. Display reads stay direct until B4.
  */
 
-import type { Command, EngineClient } from '@motion/engine-api';
-import { defaultAnimation, layerNameRefsIn } from '@motion/animation';
+import type { Command, EngineClient, RenameLayerResult as EngineRenameResult } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { canReparent, enclosingCompRootOf } from '@core/scene/parenting';
-import { renameLayer, type RenameLayerResult } from '@core/scene/renameLayer';
+import type { RenameLayerResult, RepairedRef } from '@core/scene/renameLayer';
 import { getNodeLayerTime } from '@core/scene/layerTime';
 import { deleteComposition } from '@core/composition/compositionOps';
 import { apiParentOf, compOfLayer, isCompItem, isLayer, layersUsingItem } from '@core/engine/doc';
@@ -157,13 +156,6 @@ export async function moveLayersInTreeEdit(ids: ReadonlyArray<string>, targetId:
 
 // ── Rename ────────────────────────────────────────────────────────────
 
-/** Does any expression reference a layer by one of these names? */
-function expressionsName(...names: string[]): boolean {
-  const wanted = names.filter((n) => n !== '');
-  if (wanted.length === 0) return false;
-  return defaultAnimation.allExpressions().some((e) => layerNameRefsIn(e.src).some((r) => wanted.includes(r)));
-}
-
 function countNamed(name: string): number {
   let n = 0;
   defaultSceneGraph.traverse((node) => {
@@ -174,10 +166,9 @@ function countNamed(name: string): number {
 
 /**
  * Inline rename (F2 / double-click). Through the engine's `renameLayer` —
- * or `renameItem` for a composition root's row, which renames the comp and
- * its record together — when no expression names the old or the new name, so
- * there is nothing to repair or capture. Otherwise the legacy rename, which
- * follows the rename through those references in the same entry.
+ * which follows the rename through the expressions that name the layer in the
+ * same entry and reports repaired / captured counts (B3z) — or `renameItem`
+ * for a composition root's row, which renames the comp and its record together.
  */
 export async function renameLayerEdit(nodeId: string, name: string): Promise<RenameLayerResult> {
   const none: RenameLayerResult = { ok: false, repaired: [], captured: [], nameAlreadyInUse: false };
@@ -186,17 +177,20 @@ export async function renameLayerEdit(nodeId: string, name: string): Promise<Ren
   const oldName = node.name ?? '';
   const trimmed = name.trim();
   if (trimmed === '' || trimmed === oldName) return { ...none, ok: trimmed !== '' };
-  if (expressionsName(oldName, trimmed) || (!isLayer(nodeId) && !isCompItem(nodeId))) {
-    // B3-legacy: engine gap — `renameLayer` renames only; the legacy rename also rewrites every
-    // expression whose `layer('<old name>')` resolved to this layer and reports captured references.
-    return renameLayer(nodeId, name);
+  if (!isLayer(nodeId) && !isCompItem(nodeId)) return none;
+  const label = `Rename “${oldName}” to “${trimmed}”`;
+  if (!isLayer(nodeId)) {
+    const nameAlreadyInUse = countNamed(trimmed) > 0;
+    const res = await edit(label, { type: 'renameItem', item: nodeId, name: trimmed });
+    return { ok: res.ok, repaired: [], captured: [], nameAlreadyInUse: res.ok && nameAlreadyInUse };
   }
-  const nameAlreadyInUse = countNamed(trimmed) > 0;
-  const cmd: Command = isLayer(nodeId)
-    ? { type: 'renameLayer', layer: nodeId, name: trimmed }
-    : { type: 'renameItem', item: nodeId, name: trimmed };
-  const res = await edit(`Rename “${oldName}” to “${trimmed}”`, cmd);
-  return { ok: res.ok, repaired: [], captured: [], nameAlreadyInUse: res.ok && nameAlreadyInUse };
+  // The engine follows the rename through the expressions that name the layer
+  // (B3z `renameLayer`) and counts what it repaired / what now reads this layer.
+  const res = await edit(label, { type: 'renameLayer', layer: nodeId, name: trimmed });
+  if (!res.ok) return none;
+  const r = res.value[0] as EngineRenameResult;
+  const counted = (n: number): RepairedRef[] => Array.from({ length: n }, () => ({ nodeId, prop: '' }));
+  return { ok: true, repaired: counted(r.repaired), captured: counted(r.captured), nameAlreadyInUse: r.nameAlreadyInUse };
 }
 
 // ── Delete ────────────────────────────────────────────────────────────

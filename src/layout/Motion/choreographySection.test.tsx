@@ -17,6 +17,8 @@ import { render, screen, fireEvent, cleanup, within, act } from '@testing-librar
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { getEventBus } from '@core/events/EventBus';
+import { resetDocumentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useChoreographyStore } from '@stores/choreographyStore';
 import { activeCompId } from '@core/animation/choreographyCommands';
@@ -52,6 +54,9 @@ function offsetInputs(): HTMLInputElement[] {
 
 beforeAll(() => {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) as never }));
+  // Providers binds this at boot: an animation write reaches the document
+  // mirror (B4) the panel renders from.
+  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
 });
 
 beforeEach(() => {
@@ -62,6 +67,9 @@ beforeEach(() => {
   // test that confuses the two cannot pass by accident.
   LAYERS.forEach((id, i) => addLayer(id, 500 - i * 150));
   defaultAnimation.clear();
+  // The fixture was rebuilt around the engine (no change events): the panel's
+  // document mirror starts over, as it would on a document reset.
+  resetDocumentMirror();
   useChoreographyStore.setState({ byComp: {}, lastParams: null });
   useSelectionStore.setState({ ids: [...LAYERS] } as never);
 });

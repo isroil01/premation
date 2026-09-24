@@ -38,6 +38,9 @@ export function ProxyRow({ assetId }: { assetId: string }): JSX.Element | null {
   // Subscribe to the LIST so a status transition written by a background job
   // repaints this row. Reading through the selector rather than getState is what
   // makes 'generating' → 'ready' visible without a second interaction.
+  // B4-gap: the footage's media type (video?) and its proxy RECORD (status generating / failed + error, proxy size,
+  // userSupplied) — `ItemInfo` carries only `proxyPath` / `proxyEnabled` and no media type; closes with
+  // `ItemInfo.mediaType` + an `ItemInfo.proxy` record (or proxy jobs reported as engine jobs, C-phase).
   const asset = useAssetStore((s) => s.assets.find((a) => a.id === assetId));
   const useProxies = usePreferenceStore((s) => s.useProxies);
   const setPref = usePreferenceStore((s) => s.set);

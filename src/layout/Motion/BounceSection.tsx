@@ -27,12 +27,14 @@ import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
-import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { useCurrentTime } from '@stores/playbackClockStore';
+import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { useBounceStore } from '@stores/bounceStore';
-import { defaultAnimation, sampleTrack, type Keyframe } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
+import { layerHasAnimation } from '@core/mirror/motionAssist';
+import { sampleTrack, type Keyframe } from '@motion/animation';
 import {
   BOUNCE_STYLES,
   applyBounce,
@@ -110,11 +112,11 @@ function BouncePreview({ keyframes }: { keyframes: ReadonlyArray<Keyframe> }): J
 
 export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
   const notify = useUIStore((s) => s.notify);
-  // Keyframes live in the engine, not in a store: without this, "Add to
-  // Existing" would stay greyed out after the user animated the layer from
-  // anywhere else, and light up only when something unrelated re-rendered.
-  useAnimationRevision();
-  const playhead = useCurrentTime();
+  // The layer's keys and expressions, from the document mirror (B4): without
+  // this subscription "Add to Existing" would stay greyed out after the user
+  // animated the layer from anywhere else. The tree carries the expressions.
+  useRetainTree(nodeId);
+  useMirrorKeys([`keys:${nodeId}`, `tree:${nodeId}`, `layer:${nodeId}`]);
 
   const bounce = useBounceStore((s) => s.bounce);
   const drop = useBounceStore((s) => s.drop);
@@ -136,7 +138,7 @@ export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
   }, [drop, bounce]);
 
   /** Can "Add to Existing" do anything? It needs two keys that actually move. */
-  const hasAnimation = defaultAnimation.animatedProps(nodeId).length > 0;
+  const hasAnimation = layerHasAnimation(documentMirror(), nodeId);
 
   /**
    * Both buttons go through `applyBounce` so they report and reveal identically
@@ -147,7 +149,9 @@ export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
     // B3-legacy: a core assistant that computes AND writes per-member tracks
     // (x/y, scale) in one call; it becomes an addKeyframes macro when the
     // keyframe assistants migrate (their pure halves already exist).
-    const result = applyBounce(nodeId, { atTime: playhead, mode, drop, bounce, squash: squashOpts });
+    // The playhead at the click (read here, not subscribed: the panel does not
+    // re-render per played frame).
+    const result = applyBounce(nodeId, { atTime: getTime(), mode, drop, bounce, squash: squashOpts });
     if (result) {
       revealBounce(nodeId);
       notify({ level: 'success', message: describeBounce(result), durationMs: 3200 });

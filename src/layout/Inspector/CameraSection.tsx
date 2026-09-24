@@ -7,12 +7,10 @@
  * view. Focal length is in comp-space px (pinhole model — see Project3D).
  */
 
-import { useMemo } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useComponentProp, writeComponentProps } from './useComponentProp';
 import { setLayersSwitch } from './inspectorEdits';
 import { edit } from '@core/engine/uiEdits';
-import { values } from '@core/engine/propRefs';
+import { componentOfType, values } from '@core/engine/propRefs';
 import { POI_PATH } from '@core/engine/pointOfInterest';
 import { Project3D } from '@motion/scene';
 import { useMirrorLayer } from '@hooks/useMirror';
@@ -37,37 +35,37 @@ const LENS_PRESETS: Array<{ label: string; fov: number }> = [
   { label: '135mm — Tele', fov: 15 },
 ];
 
+/** The rows' component: the layer's Transform, resolved by the write seam when a row writes (the reads are the mirror's). */
+const TRANSFORM = { type: 'Transform' } as const;
+
 export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // The layer's header and the active comp from the document mirror (B4).
   const layer = useMirrorLayer(nodeId);
   const { width: compWidth, height: compHeight } = useActiveCompSize();
   const compLayers = useActiveCompLayers();
-  // B4-gap: component id for the write path (useComponentProp/writeComponentProps address a component) — B3z
-  const node = defaultSceneGraph.getNode(nodeId);
-  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
-  const [focalRaw, setFocal, focalField] = useComponentProp(nodeId, tComp?.id, 'focalLength');
-  const [filmSizeRaw, setFilmSize] = useComponentProp(nodeId, tComp?.id, 'filmSize');
-  const [yawRaw, setYaw] = useComponentProp(nodeId, tComp?.id, 'orbitYaw');
-  const [pitchRaw, setPitch] = useComponentProp(nodeId, tComp?.id, 'orbitPitch');
-  const [rollRaw, setRoll] = useComponentProp(nodeId, tComp?.id, 'orientationZ');
-  const [oriXRaw, setOriX] = useComponentProp(nodeId, tComp?.id, 'orientationX');
-  const [oriYRaw, setOriY] = useComponentProp(nodeId, tComp?.id, 'orientationY');
-  const [dofRaw, setDofStrength] = useComponentProp(nodeId, tComp?.id, 'dofStrength');
-  const [focusRaw, setFocusDistance] = useComponentProp(nodeId, tComp?.id, 'focusDistance');
-  const [apertureRaw, setAperture] = useComponentProp(nodeId, tComp?.id, 'dofAperture');
-  const [fStopRaw, setFStop] = useComponentProp(nodeId, tComp?.id, 'fStop');
-  const [irisBladesRaw, setIrisBlades] = useComponentProp(nodeId, tComp?.id, 'irisBlades');
-  const [irisRoundnessRaw, setIrisRoundness] = useComponentProp(nodeId, tComp?.id, 'irisRoundness');
-  const [highlightGainRaw, setHighlightGain] = useComponentProp(nodeId, tComp?.id, 'highlightGain');
-  const [irisRotationRaw, setIrisRotation] = useComponentProp(nodeId, tComp?.id, 'irisRotation');
-  const [irisAspectRaw, setIrisAspect] = useComponentProp(nodeId, tComp?.id, 'irisAspect');
-  const [highlightThresholdRaw, setHighlightThreshold] = useComponentProp(nodeId, tComp?.id, 'highlightThreshold');
-  const [highlightSaturationRaw, setHighlightSaturation] = useComponentProp(nodeId, tComp?.id, 'highlightSaturation');
-  const [diffractionFringeRaw, setDiffractionFringe] = useComponentProp(nodeId, tComp?.id, 'diffractionFringe');
-  const [poiXRaw, setPoiX] = useComponentProp(nodeId, tComp?.id, 'poiX');
-  const [poiYRaw, setPoiY] = useComponentProp(nodeId, tComp?.id, 'poiY');
-  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, tComp?.id, 'poiZ');
-  if (!layer || !node || !tComp) return null;
+  const [focalRaw, setFocal, focalField] = useComponentProp(nodeId, TRANSFORM, 'focalLength');
+  const [filmSizeRaw, setFilmSize] = useComponentProp(nodeId, TRANSFORM, 'filmSize');
+  const [yawRaw, setYaw] = useComponentProp(nodeId, TRANSFORM, 'orbitYaw');
+  const [pitchRaw, setPitch] = useComponentProp(nodeId, TRANSFORM, 'orbitPitch');
+  const [rollRaw, setRoll] = useComponentProp(nodeId, TRANSFORM, 'orientationZ');
+  const [oriXRaw, setOriX] = useComponentProp(nodeId, TRANSFORM, 'orientationX');
+  const [oriYRaw, setOriY] = useComponentProp(nodeId, TRANSFORM, 'orientationY');
+  const [dofRaw, setDofStrength] = useComponentProp(nodeId, TRANSFORM, 'dofStrength');
+  const [focusRaw, setFocusDistance] = useComponentProp(nodeId, TRANSFORM, 'focusDistance');
+  const [apertureRaw, setAperture] = useComponentProp(nodeId, TRANSFORM, 'dofAperture');
+  const [fStopRaw, setFStop] = useComponentProp(nodeId, TRANSFORM, 'fStop');
+  const [irisBladesRaw, setIrisBlades] = useComponentProp(nodeId, TRANSFORM, 'irisBlades');
+  const [irisRoundnessRaw, setIrisRoundness] = useComponentProp(nodeId, TRANSFORM, 'irisRoundness');
+  const [highlightGainRaw, setHighlightGain] = useComponentProp(nodeId, TRANSFORM, 'highlightGain');
+  const [irisRotationRaw, setIrisRotation] = useComponentProp(nodeId, TRANSFORM, 'irisRotation');
+  const [irisAspectRaw, setIrisAspect] = useComponentProp(nodeId, TRANSFORM, 'irisAspect');
+  const [highlightThresholdRaw, setHighlightThreshold] = useComponentProp(nodeId, TRANSFORM, 'highlightThreshold');
+  const [highlightSaturationRaw, setHighlightSaturation] = useComponentProp(nodeId, TRANSFORM, 'highlightSaturation');
+  const [diffractionFringeRaw, setDiffractionFringe] = useComponentProp(nodeId, TRANSFORM, 'diffractionFringe');
+  const [poiXRaw, setPoiX] = useComponentProp(nodeId, TRANSFORM, 'poiX');
+  const [poiYRaw, setPoiY] = useComponentProp(nodeId, TRANSFORM, 'poiY');
+  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, TRANSFORM, 'poiZ');
+  if (!layer) return null;
 
   const defaultFocal = Project3D.focalLengthForFov(compWidth, 39.6);
   const focal = typeof focalRaw === 'number' && focalRaw > 0 ? focalRaw : defaultFocal;
@@ -372,7 +370,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             onClick={() => {
               // Back to the default framing: comp centre, pulled back by the
               // focal length so the comp plane renders exactly 1:1, no orbit.
-              writeComponentProps(nodeId, tComp.id, { x: compWidth / 2, y: compHeight / 2, z: -Math.round(focal), orbitYaw: 0, orbitPitch: 0 }, 'Reset Camera');
+              writeComponentProps(nodeId, componentOfType(nodeId, 'Transform') ?? '', { x: compWidth / 2, y: compHeight / 2, z: -Math.round(focal), orbitYaw: 0, orbitPitch: 0 }, 'Reset Camera');
             }}
           >
             Reset camera

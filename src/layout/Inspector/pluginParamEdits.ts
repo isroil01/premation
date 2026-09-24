@@ -18,25 +18,25 @@
  */
 
 import type { Command, KeyframeInsert, PropertyWrite, Value } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
 import { isLayer } from '@core/engine/doc';
 import { compTime, values } from '@core/engine/propRefs';
-import { readPropertyValue } from '@core/inspector/multiSelection';
 import {
   paramAxes,
   paramHoldsValue,
   pluginParamComponentType,
-  pluginParamPath,
-  pluginParamSlug,
   type PluginInspectorPanelContribution,
   type PluginParamSchema,
 } from '@core/plugins/uiParams';
-import { pluginParamComponent, readPluginParam } from '@core/plugins/uiParamValues';
+import {
+  mirrorHasPluginPanel,
+  mirrorPluginAxisAt,
+  mirrorPluginParamAnimated,
+  pluginParamApiPath,
+} from '@core/mirror/pluginParams';
+import { documentMirror } from '@stores/documentMirror';
 
 /** The API path of one param (a point's axes are members of it). */
-export function pluginParamApiPath(pluginId: string, panelId: string, name: string): string {
-  return `plugin/${pluginParamSlug(pluginId)}/${panelId}/${name}`;
-}
+export { pluginParamApiPath };
 
 /** A declared default as the Value the panel group's `init` carries (null when it holds none). */
 function defaultValue(schema: PluginParamSchema): Value | null {
@@ -55,10 +55,11 @@ function defaultValue(schema: PluginParamSchema): Value | null {
 
 /**
  * The panel group, seeded with every declared default — [] when the layer has
- * it already (or is not a layer).
+ * it already (or is not a layer). B4: "has it already" is the document mirror's
+ * `plugin/<slug>/<panel>` group, read at call time.
  */
 export function ensurePanelCommands(nodeId: string, pluginId: string, panel: PluginInspectorPanelContribution): Command[] {
-  if (!isLayer(nodeId) || pluginParamComponent(nodeId, pluginId, panel.id)) return [];
+  if (!isLayer(nodeId) || mirrorHasPluginPanel(documentMirror(), nodeId, pluginId, panel.id)) return [];
   const init: Array<{ path: string; value: Value }> = [];
   for (const p of panel.params) {
     if (!paramHoldsValue(p)) continue;
@@ -68,13 +69,9 @@ export function ensurePanelCommands(nodeId: string, pluginId: string, panel: Plu
   return [{ type: 'addPropertyGroup', layer: nodeId, parent: 'plugin', matchName: pluginParamComponentType(pluginId, panel.id), init }];
 }
 
-/** One layer's numeric param (or one axis of a point) at comp time `seconds`, stored units. */
+/** One layer's numeric param (or one axis of a point) at comp time `seconds`, stored units — from the document mirror. */
 function currentAxis(nodeId: string, pluginId: string, panel: PluginInspectorPanelContribution, schema: PluginParamSchema, axis: string | undefined, seconds: number): number {
-  const track = pluginParamPath(pluginId, panel.id, schema.name, axis);
-  const sampled = defaultAnimation.isAnimated(nodeId, track) ? readPropertyValue(nodeId, track, seconds) : undefined;
-  if (sampled !== undefined) return sampled;
-  const v = readPluginParam(nodeId, pluginId, panel.id, schema, axis);
-  return typeof v === 'number' ? v : 0;
+  return mirrorPluginAxisAt(documentMirror(), nodeId, pluginId, panel.id, schema, axis, seconds);
 }
 
 /**
@@ -103,8 +100,8 @@ export function numericParamCommands(
       : axes.map((a) => (a === axis ? w.value : currentAxis(w.nodeId, pluginId, panel, schema, a, opts.seconds)));
     const value: Value = nums.length === 1 ? values.scalar(nums[0]!) : nums.length === 2 ? values.vec2(nums[0]!, nums[1]!) : values.vec3(nums[0]!, nums[1]!, nums[2]!);
     const prop = { layer: w.nodeId, path: pluginParamApiPath(pluginId, panel.id, schema.name) };
-    const tracks = axes.length === 0 ? [pluginParamPath(pluginId, panel.id, schema.name)] : axes.map((a) => pluginParamPath(pluginId, panel.id, schema.name, a));
-    const animated = tracks.some((t) => defaultAnimation.isAnimated(w.nodeId, t));
+    // A point's axes are members of ONE property: keyed on any axis = keyed.
+    const animated = mirrorPluginParamAnimated(documentMirror(), w.nodeId, pluginId, panel.id, schema.name);
     if (!animated && opts.autoKeyframe) keys.push({ prop, time, value, spatialIn: [], spatialOut: [] });
     else sets.push({ prop, value, time });
   }

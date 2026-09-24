@@ -196,6 +196,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     mediaTex_->set_exact_timeout(std::chrono::milliseconds(250));
 #endif
     textures_->set_playing(frame.playing);
+    textures_->set_color_managed(frame.file.view.color_management.has_value());
     api::RenderFrameFile file = frame.file;  // refs are filled per draw (hashes depend on the cache)
     PrepareStats ps;
     textures_->prepare(frame.textures, file.textures, ps);

@@ -447,6 +447,7 @@ int batch(const Options& o) {
       }
       // Textures.
       sc::PrepareStats ps;
+      eng.textures->set_color_managed(nf.file.view.color_management.has_value());
       eng.textures->prepare(nf.textures, nf.file.textures, ps);
       // Reasons this frame falls back.
       std::set<std::string> reasons;
@@ -756,6 +757,7 @@ int bench(const Options& o) {
       sc::NativeFrame nf = sc::build_native_frame(ctx, c.p->comp, t, view, false);
       const auto t1 = std::chrono::steady_clock::now();
       sc::PrepareStats ps;
+      eng.textures->set_color_managed(nf.file.view.color_management.has_value());
       eng.textures->prepare(nf.textures, nf.file.textures, ps);
       const auto t2 = std::chrono::steady_clock::now();
       premation::rg::FrameStats stats;

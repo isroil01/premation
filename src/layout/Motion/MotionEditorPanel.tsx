@@ -35,9 +35,10 @@ import { cn } from '@utils/cn';
 import { EmptyState } from '@components/EmptyState';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { useSceneRevision } from '@stores/sceneStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { seekPlayhead } from '@core/timeline/timelineView';
+import { useActiveCompFps, useActiveMirrorComp, useMirrorKeys, useRetainTree } from '@hooks/useMirror';
+import { flicksToSeconds } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
 import { Icon } from '@components/Icon';
 import { Tabs } from '@components/Tabs';
@@ -73,13 +74,19 @@ export function MotionEditorPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   const selectedIds = useSelectionStore((s) => s.ids);
   const playhead = useCurrentTime();
-  const duration = useCompositionStore((s) => s.durationSeconds);
-  const fps = useCompositionStore((s) => s.fps);
-  // The engine mutates keyframes in place, so the track keeps its reference.
-  // Bump-driven `rev` is what tells the property list to recompute.
-  const rev = useSceneRevision((s) => s.rev);
+  const comp = useActiveMirrorComp();
+  const duration = comp ? flicksToSeconds(comp.settings.duration) : DEFAULT_COMPOSITION.durationSeconds;
+  const fps = useActiveCompFps();
+  // The property list recomputes when the layer's keys or its tree (an
+  // expression added or removed) change in the document mirror (B4).
+  useRetainTree(primary);
+  const rev = useMirrorKeys(primary ? [`keys:${primary}`, `tree:${primary}`, `layer:${primary}`] : []);
 
   const propList = useMemo(
+    // B4-gap: the animated MEMBER tracks (`y` alone of an unseparated
+    // Position) — the API keys and animates a whole property (one keyframe per
+    // time for every dimension, ENGINE_API.md §3.3), so which member carries
+    // keys is not in the mirror (a per-member keyed flag / key list would close it).
     () => (primary ? defaultAnimation.animatedProps(primary) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [primary, rev],
@@ -142,7 +149,7 @@ export function MotionEditorPanel(): JSX.Element {
               onScrollChange={setScrollLeft}
               onZoom={setZoomedPps}
               frameRate={fps}
-              onScrub={(t) => getTimelineController().seekSeconds(t)}
+              onScrub={seekPlayhead}
             />
           </div>
 

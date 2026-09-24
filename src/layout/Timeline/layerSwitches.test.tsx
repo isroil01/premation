@@ -70,8 +70,8 @@ afterEach(async () => {
 
 describe('switch helpers', () => {
   it('the sunburst is Continuous Rasterize on vector layers and nothing on a null', async () => {
-    expect(collapseSwitchKind(defaultSceneGraph.getNode(TEXT))).toBe('raster');
-    expect(collapseSwitchKind(defaultSceneGraph.getNode(NUL))).toBeNull();
+    expect(collapseSwitchKind(TEXT)).toBe('raster');
+    expect(collapseSwitchKind(NUL)).toBeNull();
     toggleCollapseSwitch(TEXT);
     await idle();
     // The legacy label, kept: `toggleLayerFlags` named the column, not the meaning.
@@ -93,8 +93,8 @@ describe('switch helpers', () => {
   });
 
   it('frame blending only on layers with frames, Off ↔ Frame Mix', async () => {
-    expect(frameBlendSwitchAvailable(defaultSceneGraph.getNode(TEXT))).toBe(false);
-    expect(frameBlendSwitchAvailable(defaultSceneGraph.getNode(VIDEO))).toBe(true);
+    expect(frameBlendSwitchAvailable(TEXT)).toBe(false);
+    expect(frameBlendSwitchAvailable(VIDEO)).toBe(true);
     toggleFrameBlendSwitch(VIDEO);
     await idle();
     expect(getNodeLayerTime(VIDEO).frameBlend).toBe('mix');

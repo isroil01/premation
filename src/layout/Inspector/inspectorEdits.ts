@@ -1,8 +1,9 @@
 /**
  * inspectorEdits — the Inspector's command builders over the engine API (B3,
  * docs/B3_PATTERNS.md). Everything here COMPOSES commands from what a panel
- * holds today (node ids + track names, comp-time seconds) and reads the live
- * document only to decide what to send (display reads stay direct until B4).
+ * holds today (node ids + track names, comp-time seconds) and reads the
+ * document MIRROR (B4) only to decide what to send — the other members of a
+ * vector at the playhead, whether a property is keyed.
  * Sending is the caller's: `edit(label, cmds)` for a click / a typed value,
  * `useGesture().send(cmds)` inside a drag.
  *
@@ -46,7 +47,6 @@ import { isDistributeMode, planAlign, type AlignMode } from '@core/scene/alignNo
 import { getTime } from '@stores/playbackClockStore';
 import {
   clearTrackTangents,
-  defaultAnimation,
   EASY_EASE_BEZIER,
   EASY_EASE_IN_BEZIER,
   EASY_EASE_OUT_BEZIER,
@@ -56,9 +56,11 @@ import { compTime, propRefForTrack, valueOfNumbers, type TrackRef } from '@core/
 import { apiUnitFactor } from '@core/engine/props';
 import { engine } from '@core/engine/engineInstance';
 import { isLayer } from '@core/engine/doc';
-import { KEYFRAME_EPS, readPropertyValue } from '@core/inspector/multiSelection';
+import { KEYFRAME_EPS, readTrack } from '@core/mirror/selection';
+import { numbersOfValue } from '@core/mirror/trackIndex';
+import { documentMirror } from '@stores/documentMirror';
 import { edit } from '@core/engine/uiEdits';
-import { staticOrDefaultValue } from '@core/inspector/propertyValue';
+import type { Keyframe as TsKeyframe } from '@motion/animation';
 
 const refKey = (r: PropRef): string => `${r.layer}\u0000${r.path}`;
 
@@ -106,14 +108,18 @@ function resolvedWrites(
     if (r && !byProp.has(r.ref.path)) byProp.set(r.ref.path, r);
   }
   const time = compTime(seconds);
+  const mirror = documentMirror();
   const out: Array<{ write: PropertyWrite; r: TrackRef }> = [];
   for (const r of byProp.values()) {
-    const nums = r.members.map((m) => {
+    // The members not given keep their value at the playhead — read from the
+    // mirror in API units (a static property's value, else the value at
+    // `time`), the property's default where the mirror has none.
+    const current = numbersOfValue(mirror.valueAt(nodeId, r.ref.path, time));
+    const fallback = numbersOfValue(mirror.property(nodeId, r.ref.path)?.defaultValue);
+    const nums = r.members.map((m, i) => {
       const v = given.get(m);
-      const stored = v !== undefined && Number.isFinite(v)
-        ? v
-        : readPropertyValue(nodeId, m, seconds) ?? staticOrDefaultValue(nodeId, m);
-      return stored * apiUnitFactor(m);
+      if (v !== undefined && Number.isFinite(v)) return v * apiUnitFactor(m);
+      return current[i] ?? fallback[i] ?? 0;
     });
     out.push({ write: { prop: r.ref, value: valueOfNumbers(r.valueType, nums), time }, r });
   }
@@ -143,7 +149,7 @@ export function valueCommands(
     const finite = Object.fromEntries(Object.entries(e.values).filter(([, v]) => Number.isFinite(v)));
     if (Object.keys(finite).length === 0) continue;
     for (const { write: w, r } of resolvedWrites(e.nodeId, finite, opts.seconds)) {
-      const animated = r.members.some((m) => defaultAnimation.isAnimated(e.nodeId, m));
+      const animated = isRefAnimated(e.nodeId, r);
       if (!animated && opts.autoKeyframe && r.animatable) {
         keys.push({ prop: w.prop, time: w.time!, value: w.value, spatialIn: [], spatialOut: [] });
       } else {
@@ -171,11 +177,12 @@ export function applyPresetValues(
 ): void {
   const entries: Array<{ nodeId: string; values: Record<string, number> }> = [];
   const skipped = new Set<string>();
+  const mirror = documentMirror();
   for (const nodeId of nodeIds) {
     const values: Record<string, number> = {};
     for (const [prop, v] of Object.entries(bag)) {
       if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-      if (readPropertyValue(nodeId, prop, opts.seconds) === undefined) continue;
+      if (readTrack(mirror, nodeId, prop, opts.seconds) === undefined) continue;
       if (trackRef(nodeId, prop)) values[prop] = v;
       else skipped.add(prop);
     }
@@ -211,7 +218,10 @@ export function uniqueRefs(nodeIds: ReadonlyArray<string>, tracks: ReadonlyArray
   return out;
 }
 
-const isRefAnimated = (nodeId: string, r: TrackRef): boolean => r.members.some((m) => defaultAnimation.isAnimated(nodeId, m));
+/** Whether the property behind `r` is keyed (the mirror's key list: one per API property). */
+function isRefAnimated(nodeId: string, r: TrackRef): boolean {
+  return documentMirror().keyframes(nodeId, r.ref.path).length > 0;
+}
 
 /**
  * The stopwatch over the selection for one or several tracks (a pair row's
@@ -375,6 +385,7 @@ export function alignLayers(
   compHeight: number,
 ): void {
   const seconds = getTime();
+  // B4-gap: world-space layer bounds and the parent-space inverse (planAlign's getBounds / toParentSpace evaluate the TS engine's transforms) — the API answers them as getLayerBounds / getLayerTransforms QUERIES; this synchronous macro still measures the scene graph.
   const writes = planAlign(ids.filter((id) => isLayer(id)), mode, alignTo, compWidth, compHeight)
     .flatMap((m) => trackWrites(m.id, { x: m.x, y: m.y }, seconds));
   if (writes.length > 0) void edit(isDistributeMode(mode) ? 'Distribute' : 'Align', { type: 'setProperties', writes });
@@ -395,9 +406,16 @@ export async function motionPathCommands(nodeId: string, mode: 'smooth' | 'strai
   const res = await engine().query({ type: 'getKeyframes', props: [r.ref] });
   if (!res.ok) return [];
   const apiKeys = res.value.sets[0]?.keyframes ?? [];
-  const tracks = r.members.map((m) => defaultAnimation.getTrackKeyframes(nodeId, m) ?? []);
-  const x = tracks[0] ?? [];
-  if (apiKeys.length === 0 || apiKeys.length !== x.length) return [];
+  if (apiKeys.length === 0) return [];
+  // Each member as the pure tangent functions take it — time, value, tangents
+  // — from the API keys themselves (tangents are ratios of value to time, so
+  // flicks serve as well as seconds).
+  const tracks: TsKeyframe[][] = r.members.map((_, i) => apiKeys.map((k) => ({
+    t: k.time,
+    value: numbersOfValue(k.value)[i] ?? 0,
+    ...(k.spatialIn.length > 0 ? { si: k.spatialIn[i] ?? 0 } : {}),
+    ...(k.spatialOut.length > 0 ? { so: k.spatialOut[i] ?? 0 } : {}),
+  }) as TsKeyframe));
   const shaped = mode === 'smooth'
     ? tracks.map((t, i) => (i < 2 ? smoothTrackTangents(t) : t))
     : tracks.map((t, i) => (i < 2 ? clearTrackTangents(t) : t));

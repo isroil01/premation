@@ -8,31 +8,33 @@
 
 import { Switch } from '@components/Switch';
 
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { isPrecomp } from '@core/scene/precomp';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { fieldValue } from '@core/mirror/layerFields';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorSupportsContinuousRaster } from '@core/mirror/continuousRaster';
 import { edit } from '@core/engine/uiEdits';
 import { boolFieldCommands } from './layerFieldEdits';
-import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { setLayersSwitch } from './inspectorEdits';
-import { readCompCollapse } from '@core/scene/compInstance';
 import { CompOverridesSection } from './CompOverridesSection';
 import { RetimeSection } from './RetimeSection';
 import styles from './ParentControl.module.css';
 
 export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || nodeId === 'comp_root') return null;
-  const kind = readNodeKind(node);
+  const layer = useMirrorLayer(nodeId);
+  // The CR test and the Precompose switch read fields of the property tree:
+  // keep it loaded and re-render when it changes.
+  const tree = useMirrorTree(nodeId);
+  if (!layer || nodeId === 'comp_root') return null;
+  const kind = uiKindOf(layer);
+  const m = documentMirror();
 
   // A placed COMPOSITION (kind 'comp') has no Precompose switch — it is already
   // a composition — but it owns the one switch that decides whether it is a flat
   // card or part of the host's 3D scene. It used to show neither, nor Time
   // Remap, because this component returned null for every kind but 'group'.
   if (kind === 'comp') {
-    const collapsed = readCompCollapse(node);
+    const collapsed = layer.switches.collapse;
     return (
       <>
         <div className={styles.row}>
@@ -66,8 +68,8 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
     flat solid has no edge to sharpen, so a switch there would cost memory and
     change nothing.
   */
-  if (supportsContinuousRaster(node)) {
-    const cr = readContinuousRaster(node);
+  if (tree && mirrorSupportsContinuousRaster(m, nodeId)) {
+    const cr = layer.switches.collapse;
     return (
       <>
         <div className={styles.row}>
@@ -89,7 +91,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
 
   if (kind !== 'group') return null;
 
-  const on = isPrecomp(node);
+  const on = fieldValue(m, nodeId, 'layer/precompose') === true;
 
   return (
     <>

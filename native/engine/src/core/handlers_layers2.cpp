@@ -252,6 +252,12 @@ ResultOf<api::SetLayerSwitches> handle(const api::SetLayerSwitches& c, HCtx& x) 
       fail(ErrorCode::unsupported, "Orient Towards Point of Interest is a camera/light option the TypeScript engine does not have");
     }
     if (p.label && *p.label > 0 && !label_color_of(*p.label)) fail(ErrorCode::out_of_range, "label " + std::to_string(*p.label) + " does not exist");
+    if (p.label_color) {
+      if (p.label) fail(ErrorCode::invalid_argument, "send either label or labelColor, not both");
+      if (!p.label_color->empty() && !is_label_color(*p.label_color)) {
+        fail(ErrorCode::invalid_argument, "'" + *p.label_color + "' is not a #rgb, #rrggbb or #rrggbbaa colour");
+      }
+    }
   }
   x.label = "Layer Switches";
   for (const auto& id : c.layers) {
@@ -262,6 +268,7 @@ ResultOf<api::SetLayerSwitches> handle(const api::SetLayerSwitches& c, HCtx& x) 
       if (p.locked) n.locked = *p.locked;
       if (p.shy) n.shy = *p.shy;
       if (p.label) n.color = label_color_of(*p.label);
+      if (p.label_color) n.color = p.label_color->empty() ? std::nullopt : std::optional<std::string>(*p.label_color);
     }
     const Node& n = *d.node(id);
     if (p.audio_enabled) {

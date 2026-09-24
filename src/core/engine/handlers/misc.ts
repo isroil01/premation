@@ -16,8 +16,39 @@ import { graph, requireLayer } from '../doc';
 import { K, documentScope, newScope, scopeLayer } from '../state';
 import type { HandlerTable } from '../handler';
 import { remintKeyIds } from './common';
+import { loadDocumentIntoStores } from '../documentLoad';
 
 export const miscHandlers: HandlerTable = {
+  /**
+   * B3z: a saved / cloud version restored as ONE undoable entry. The version is
+   * parsed and migrated before anything changes (a newer format refuses whole);
+   * the load is openProject's (documentLoad.ts) inside document scope, so undo
+   * writes every part back exactly. Guides / swatches / materials / plugin
+   * storage follow the version but are not parts (not in the entry).
+   */
+  restoreDocument: (cmd) => {
+    let doc: EditorDocument;
+    try {
+      doc = JSON.parse(new TextDecoder().decode(cmd.document)) as EditorDocument;
+    } catch {
+      return fail('decode', 'the document is not a .motion project (malformed JSON)');
+    }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) fail('decode', 'the document is not a .motion project');
+    try {
+      doc = migrateDocument(doc);
+    } catch (err) {
+      fail('unsupported', `this engine cannot read that document: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return {
+      scope: documentScope(),
+      label: cmd.label || 'Restore Version',
+      apply: () => {
+        loadDocumentIntoStores(doc);
+        return {};
+      },
+    };
+  },
+
   setProjectSettings: (cmd) => {
     const p = cmd.patch;
     if (p.framesStartAt !== undefined && p.framesStartAt > 1) fail('outOfRange', 'frames start at 0 or 1');

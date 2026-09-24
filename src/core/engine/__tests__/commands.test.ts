@@ -31,6 +31,16 @@ async function opacityKeys(h: Harness, layer: string): Promise<string[]> {
 export const CASES: Partial<Record<CommandType, Case>> = {
   // ── Project ──
   setProjectSettings: { cmd: () => ({ type: 'setProjectSettings', patch: { timeDisplay: 'frames', framesStartAt: 1 } }) },
+  // B3z: a saved version restored as one undoable entry.
+  restoreDocument: {
+    cmd: async (s, h) => {
+      await h.run({ type: 'saveProject', path: 'C:/p/version.motion', copy: true });
+      await h.run({ type: 'renameLayer', layer: s.A, name: 'After the version' });
+      await h.run({ type: 'deleteLayers', layers: [s.B] });
+      const bytes = new TextEncoder().encode(JSON.stringify(h.files.get('C:/p/version.motion')));
+      return { type: 'restoreDocument', document: bytes, label: 'Restore Version' };
+    },
+  },
   importProject: {
     cmd: async (_s, h) => {
       await h.run({ type: 'saveProject', path: 'C:/p/other.motion', copy: true });
@@ -107,6 +117,56 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   separateLayer: { cmd: (s) => ({ type: 'separateLayer', layer: s.T }), fails: 'unsupported' },
   autoTrace: { cmd: (s) => ({ type: 'autoTrace', layer: s.A, range: { start: 0, duration: sec(1) }, channel: 'alpha', threshold: 0.5, tolerance: 1 }), fails: 'unsupported' },
   setLayerComment: { cmd: (s) => ({ type: 'setLayerComment', layer: s.A, comment: 'check this' }) },
+  // ── B3z (WS-T, WS-K, effects, strokes) ──
+  clearWorkArea: { cmd: (s) => ({ type: 'clearWorkArea', comp: s.comp }) },
+  timeStretchLayers: { cmd: (s) => ({ type: 'timeStretchLayers', layers: [s.B], stretch: 2, hold: 'inPoint' }) },
+  unfreezeLayers: {
+    cmd: async (s, h) => {
+      await h.run({ type: 'freezeFrame', layer: s.V, time: sec(1), lastFrame: false });
+      return { type: 'unfreezeLayers', layers: [s.V] };
+    },
+  },
+  rippleDeleteRange: { cmd: (s) => ({ type: 'rippleDeleteRange', comp: s.comp, range: { start: sec(1), duration: sec(1) }, layers: [] }) },
+  shiftLayerKeyframes: { cmd: (s) => ({ type: 'shiftLayerKeyframes', items: [{ layer: s.B, delta: sec(0.5) }] }) },
+  addTransition: {
+    cmd: async (s, h) => {
+      await h.run({ type: 'setLayerTiming', items: [
+        { layer: s.A, startTime: 0, inPoint: sec(1), outPoint: sec(2) },
+        { layer: s.B, startTime: 0, inPoint: sec(2), outPoint: sec(3) },
+      ] });
+      return { type: 'addTransition', left: s.A, right: s.B, kind: 'dipToBlack', duration: sec(0.4), alignment: 'centred' };
+    },
+  },
+  setTransition: {
+    cmd: async (s, h) => {
+      await h.run({ type: 'setLayerTiming', items: [
+        { layer: s.A, startTime: 0, inPoint: sec(1), outPoint: sec(2) },
+        { layer: s.B, startTime: 0, inPoint: sec(2), outPoint: sec(3) },
+      ] });
+      const { transition } = await h.run({ type: 'addTransition', left: s.A, right: s.B, kind: 'dipToBlack', duration: sec(0.4), alignment: 'centred' });
+      return { type: 'setTransition', transition, duration: sec(0.2), alignment: 'startAtCut' };
+    },
+  },
+  removeTransitions: {
+    cmd: async (s, h) => {
+      await h.run({ type: 'setLayerTiming', items: [
+        { layer: s.A, startTime: 0, inPoint: sec(1), outPoint: sec(2) },
+        { layer: s.B, startTime: 0, inPoint: sec(2), outPoint: sec(3) },
+      ] });
+      const { transition } = await h.run({ type: 'addTransition', left: s.A, right: s.B, kind: 'dipToBlack', duration: sec(0.4), alignment: 'centred' });
+      return { type: 'removeTransitions', transitions: [transition] };
+    },
+  },
+  pasteEffects: {
+    cmd: (s) => ({ type: 'pasteEffects', layers: [s.B], effects: JSON.stringify([{ effect: { id: 'fx_src', type: 'glow', params: {}, enabled: true }, tracks: {} }]) }),
+  },
+  removeStroke: {
+    cmd: async (s, h) => {
+      const stroke = (width: number) => ({ enabled: true, color: '#ff0000', width, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
+      await h.run({ type: 'setProperty', prop: { layer: s.B, path: 'layer/strokes' }, value: { kind: 'json', value: JSON.stringify([stroke(2), stroke(4)]) } });
+      return { type: 'removeStroke', layer: s.B, index: 0 };
+    },
+  },
   // ── Layer time ──
   setLayerTiming: { cmd: (s) => ({ type: 'setLayerTiming', items: [{ layer: s.A, inPoint: sec(1), outPoint: sec(4) }, { layer: s.B, stretch: -2 }] }) },
   moveLayersInTime: { cmd: (s) => ({ type: 'moveLayersInTime', layers: [s.A], delta: sec(1), ripple: false }) },
@@ -242,7 +302,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(93);
+  expect(edits.length).toBe(105);
 });
 
 describe.each(edits)('%s', (type) => {

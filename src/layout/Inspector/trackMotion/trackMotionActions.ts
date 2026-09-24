@@ -10,9 +10,12 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import type { LayerInfo } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTrackerStore, type AutoPhase, type TrackerMode, type TrackerResult } from '@stores/trackerStore';
-import type { CompositionSettings } from '@stores/compositionStore';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { canParentTo } from '@core/mirror/tracking';
 import { trackVideoLayerPoints } from '@core/tracking/trackVideoLayer';
 import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { smoothStabilizeVideoLayer } from '@core/tracking/smoothStabilize';
@@ -26,7 +29,6 @@ import {
   planTransformTrack,
   type TrackPlan,
 } from '@core/tracking/applyTrack';
-import { canReparent } from '@core/scene/parenting';
 import { matteToPath } from '@core/tracking/rotoMatte';
 import { grabCutMatte } from '@core/tracking/grabCut';
 import { segmentSamSync } from '@core/tracking/samSegment';
@@ -44,13 +46,21 @@ import { runRotoBrush } from '@core/tracking/rotoBrush';
 import { runContentAwareFill } from '@core/effects/contentAwareFillVideo';
 import { trackLayerMask } from '@core/tracking/maskTrack';
 import { densifyQuad } from '@core/tracking/planarFit';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { readGeometry } from '@core/workspace/geometry';
-import type { SceneNode } from '@core/types';
 import { customConfirm } from '@components/Modal';
 import { needsSelfApplyConfirm, selfApplyConfirmCopy } from './applyTargetGuard';
 
 export type StabVariant = 'similarity' | 'subspace' | 'rolling-shutter';
+
+/** A layer offered as the track's target (a mirror layer header). */
+export type TrackTarget = Pick<LayerInfo, 'id' | 'name'>;
+
+/** The composition the plans map into (its size; no root id — the plans then search the whole document, as they always have). */
+export interface TrackComp {
+  width: number;
+  height: number;
+  rootId?: string;
+}
 
 /** What the section knows when a button is pressed — the old closure scope. */
 export interface TrackMotionContext {
@@ -68,11 +78,11 @@ export interface TrackMotionContext {
   endCompTime: number;
   fps: number;
   durationSeconds: number;
-  comp: CompositionSettings;
+  comp: TrackComp;
   src: { width: number; height: number } | null;
   stabVariant: StabVariant;
   /** Layers offered as the track's target, this layer among them. */
-  targets: ReadonlyArray<SceneNode>;
+  targets: ReadonlyArray<TrackTarget>;
   /** Reported when "Create null & apply" lands, so the section can offer the
    *  follow-up (attach a layer) instead of a note asking the user to do it. */
   onNullCreated?: (nullId: string) => void;
@@ -161,8 +171,9 @@ export function trackMotionActions(ctx: TrackMotionContext) {
    * simply starts following.
    */
   const onAttachToNull = async (childId: string, nullId: string): Promise<void> => {
-    const nullName = defaultSceneGraph.getNode(nullId)?.name || nullId;
-    const ok = isLayer(childId) && isLayer(nullId) && canReparent(childId, nullId)
+    const m = documentMirror();
+    const nullName = m.layer(nullId)?.name || nullId;
+    const ok = isLayer(childId) && isLayer(nullId) && canParentTo(m, childId, nullId)
       && (await edit('Parent', { type: 'setParent', layers: [childId], parent: nullId, keepWorldTransform: true }, { quiet: true })).ok;
     store.getState().finishTracking(
       result,
@@ -261,9 +272,9 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     }
     let plan: TrackPlan | null = null;
     let what = '';
+    const targetIsCamera = uiKindOf(documentMirror().layer(targetId)) === 'camera';
     if (mode === 'follow') {
-      const targetNode = defaultSceneGraph.getNode(targetId);
-      if (targetNode && readNodeKind(targetNode) === 'camera') {
+      if (targetIsCamera) {
         plan = planTrackToCamera({
           videoNodeId: nodeId,
           targetNodeId: targetId,
@@ -285,8 +296,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         what = `position keyframes to “${targetName(targetId)}”`;
       }
     } else if (mode === 'transform') {
-      const targetNode = defaultSceneGraph.getNode(targetId);
-      if (targetNode && readNodeKind(targetNode) === 'camera') {
+      if (targetIsCamera) {
         plan = planCameraSolveTrack({
           videoNodeId: nodeId,
           targetNodeId: targetId,
@@ -466,6 +476,8 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   /** SAM-class click segment → an Add mask on this layer (`addMask` + its 2 px feather, one entry). */
   const onSegmentSam = async (): Promise<void> => {
+    // Engine-side until C-phase: the layer's DRAWN box (readGeometry resolves
+    // it from the render components), which the mask vertices scale into.
     const target = defaultSceneGraph.getNode(nodeId);
     const g = target ? readGeometry(target) : null;
     const w = src?.width ?? 64;
