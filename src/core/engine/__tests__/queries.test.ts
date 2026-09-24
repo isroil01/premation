@@ -50,11 +50,25 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getJobs: () => ({ type: 'getJobs' }),
   getRenderQueue: () => ({ type: 'getRenderQueue' }),
   getCommandLog: () => ({ type: 'getCommandLog', fromRevision: 0 }),
+  listPlugins: () => ({ type: 'listPlugins' }),
+  getEffectUi: (x) => ({ type: 'getEffectUi', layer: x.A, effect: `effects/${x.fx}` }),
 };
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(32);
+  expect(Object.keys(QUERIES)).toHaveLength(34);
+});
+
+test('listPlugins: the TypeScript engine hosts no native plugins (G1: the C++ engine does)', async () => {
+  expect((await h.query({ type: 'listPlugins' })).plugins).toEqual([]);
+});
+
+test('getEffectUi: a builtin effect has every param enabled and visible; an unknown effect is notFound', async () => {
+  const ui = await h.query({ type: 'getEffectUi', layer: s.A, effect: `effects/${s.fx}` });
+  expect(ui.params.length).toBeGreaterThan(0);
+  expect(ui.params.every((p) => p.enabled && !p.hidden && p.key !== '' && p.name !== '')).toBe(true);
+  const r = await h.engine.query({ type: 'getEffectUi', layer: s.A, effect: 'effects/nope' });
+  expect(!r.ok && r.error.code).toBe('notFound');
 });
 
 test.each(Object.keys(CASES) as QueryType[])('%s answers (or says unsupported) and changes nothing', async (type) => {

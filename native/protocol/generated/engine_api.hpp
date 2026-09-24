@@ -533,6 +533,15 @@ enum class PropertyKind : std::uint32_t {
 [[nodiscard]] std::string_view to_string(PropertyKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PropertyKind& out) noexcept;
 
+enum class PluginStatus : std::uint32_t {
+  loaded = 0,
+  disabled = 1,
+  failed = 2,
+  quarantined = 3,
+};
+[[nodiscard]] std::string_view to_string(PluginStatus v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, PluginStatus& out) noexcept;
+
 enum class HitMode : std::uint32_t {
   topmost = 0,
   all = 1,
@@ -969,6 +978,8 @@ struct ListEffects;
 struct ListGroupTypes;
 struct ListPresets;
 struct GetCapabilities;
+struct ListPlugins;
+struct GetEffectUi;
 struct HitTest;
 struct GetLayerBounds;
 struct GetLayerTransforms;
@@ -1046,6 +1057,10 @@ struct GroupTypeList;
 struct PresetInfo;
 struct PresetList;
 struct Capabilities;
+struct PluginInfo;
+struct PluginList;
+struct EffectParamUi;
+struct EffectUi;
 struct HitResult;
 struct LayerBounds;
 struct LayerBoundsList;
@@ -2784,6 +2799,17 @@ struct GetCapabilities {
   bool operator==(const GetCapabilities&) const = default;
 };
 
+struct ListPlugins {
+  bool operator==(const ListPlugins&) const = default;
+};
+
+struct GetEffectUi {
+  LayerId layer;
+  PropPath effect;
+  std::optional<Time> time;
+  bool operator==(const GetEffectUi&) const = default;
+};
+
 struct HitTest {
   ItemId comp;
   Time time = 0;
@@ -2887,6 +2913,8 @@ struct Query {
     list_group_types = 1041,
     list_presets = 1042,
     get_capabilities = 1043,
+    list_plugins = 1086,
+    get_effect_ui = 1087,
     hit_test = 1060,
     get_layer_bounds = 1061,
     get_layer_transforms = 1062,
@@ -2902,7 +2930,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, GetCapabilities, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3607,6 +3635,37 @@ struct Capabilities {
   bool operator==(const Capabilities&) const = default;
 };
 
+struct PluginInfo {
+  std::string id;
+  std::string name;
+  std::string version;
+  std::string vendor;
+  std::string sdk;
+  PluginStatus status = PluginStatus::loaded;
+  std::string error;
+  std::vector<std::string> effects;
+  bool gpu = false;
+  bool operator==(const PluginInfo&) const = default;
+};
+
+struct PluginList {
+  std::vector<PluginInfo> plugins;
+  bool operator==(const PluginList&) const = default;
+};
+
+struct EffectParamUi {
+  std::string key;
+  std::string name;
+  bool enabled = false;
+  bool hidden = false;
+  bool operator==(const EffectParamUi&) const = default;
+};
+
+struct EffectUi {
+  std::vector<EffectParamUi> params;
+  bool operator==(const EffectUi&) const = default;
+};
+
 struct HitResult {
   std::vector<LayerId> layers;
   bool operator==(const HitResult&) const = default;
@@ -3765,6 +3824,8 @@ struct QueryResult {
     list_group_types = 1041,
     list_presets = 1042,
     get_capabilities = 1043,
+    list_plugins = 1086,
+    get_effect_ui = 1087,
     hit_test = 1060,
     get_layer_bounds = 1061,
     get_layer_transforms = 1062,
@@ -3780,7 +3841,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, Capabilities, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -4923,6 +4984,10 @@ void encode(wire::Writer& w, const ListPresets& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListPresets& out);
 void encode(wire::Writer& w, const GetCapabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetCapabilities& out);
+void encode(wire::Writer& w, const ListPlugins& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ListPlugins& out);
+void encode(wire::Writer& w, const GetEffectUi& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetEffectUi& out);
 void encode(wire::Writer& w, const HitTest& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, HitTest& out);
 void encode(wire::Writer& w, const GetLayerBounds& v);
@@ -5077,6 +5142,14 @@ void encode(wire::Writer& w, const PresetList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PresetList& out);
 void encode(wire::Writer& w, const Capabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Capabilities& out);
+void encode(wire::Writer& w, const PluginInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginInfo& out);
+void encode(wire::Writer& w, const PluginList& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginList& out);
+void encode(wire::Writer& w, const EffectParamUi& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, EffectParamUi& out);
+void encode(wire::Writer& w, const EffectUi& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, EffectUi& out);
 void encode(wire::Writer& w, const HitResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, HitResult& out);
 void encode(wire::Writer& w, const LayerBounds& v);

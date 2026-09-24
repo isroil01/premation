@@ -45,6 +45,7 @@ std::unique_ptr<Ocio> Ocio::open(std::string_view /*config*/, std::string& error
   error = "this build has no OpenColorIO (vcpkg feature `engine`)";
   return nullptr;
 }
+struct Ocio::Impl {};  // nothing to hold without OpenColorIO
 Ocio::~Ocio() = default;
 bool Ocio::program(const Request& /*req*/, Program& /*out*/, std::string& error) const {
   error = "no OpenColorIO";

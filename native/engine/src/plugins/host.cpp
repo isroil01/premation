@@ -663,6 +663,8 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
         [this](std::string_view type) { return initial_sequence(type); },
         [this](const doc::NativeActionRequest& r) { return user_changed(r); },
         [this](std::string_view plugin, bool enabled) { return set_enabled(plugin, enabled); });
+    doc::NativeEffects::set_query_handlers([this] { return plugin_infos(); },
+                                           [this](const doc::NativeActionRequest& r) { return params_ui_for(r); });
   }
 }
 
@@ -1814,6 +1816,68 @@ std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::user_changed(const
   }
   for (auto& [i, bytes] : arbWrites) edit.arb.emplace_back(e->params.at(i - 1).key, std::move(bytes));
   return edit;
+}
+
+std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
+  std::vector<api::PluginInfo> out;
+  for (PluginRecord& r : plugins()) {
+    api::PluginInfo i;
+    i.id = std::move(r.id);
+    i.name = std::move(r.name);
+    i.version = std::move(r.version);
+    i.vendor = std::move(r.vendor);
+    i.sdk = std::move(r.sdk);
+    switch (r.status) {
+      case PluginStatus::loaded: i.status = api::PluginStatus::loaded; break;
+      case PluginStatus::disabled: i.status = api::PluginStatus::disabled; break;
+      case PluginStatus::quarantined: i.status = api::PluginStatus::quarantined; break;
+      default: i.status = api::PluginStatus::failed; break;
+    }
+    i.error = std::move(r.error);
+    i.effects = std::move(r.effects);
+    i.gpu = r.gpu;
+    out.push_back(std::move(i));
+  }
+  return out;
+}
+
+std::variant<std::vector<api::EffectParamUi>, doc::NativeFailure> PluginHost::params_ui_for(const doc::NativeActionRequest& req) {
+  const EffectSpec* e = effect(req.type);
+  if (e == nullptr) return doc::NativeFailure{"the plugin that provides '" + req.type + "' is not loaded"};
+  RenderInputs in;
+  in.matchName = e->matchName;
+  in.instance = req.layer + "/" + req.effectId;
+  in.layerId = req.layer;
+  in.sequence = req.sequence;
+  in.values = values_from_json(*e, req.params);
+  for (const auto& [k, bytes] : req.arb) {
+    for (std::size_t i = 0; i < e->params.size(); ++i) {
+      if (e->params[i].key == k) in.values[i].arb = bytes;
+    }
+  }
+  in.compTime = static_cast<std::int64_t>(std::llround(req.timeSeconds * PR_TIME_SCALE));
+  in.layerTime = in.compTime;
+  {
+    Impl& m = *impl_;
+    const std::scoped_lock lock(m.instancesMutex);
+    if (const auto it = m.instances.find(in.instance); it != m.instances.end()) {
+      in.layerW = it->second->layerW.load(std::memory_order_relaxed);
+      in.layerH = it->second->layerH.load(std::memory_order_relaxed);
+    }
+  }
+  auto r = params_ui(in);
+  if (auto* why = std::get_if<std::string>(&r)) return doc::NativeFailure{std::move(*why)};
+  std::vector<api::EffectParamUi> out;
+  for (ParamUi& u : std::get<std::vector<ParamUi>>(r)) {
+    const ParamSpec* s = nullptr;
+    for (const ParamSpec& ps : e->params) {
+      if (ps.key == u.key) s = &ps;
+    }
+    // Group delimiters and buttons are not properties: the Inspector asks about params it draws.
+    if (s != nullptr && (s->type == PR_PARAM_GROUP_END)) continue;
+    out.push_back(api::EffectParamUi{std::move(u.key), std::move(u.name), u.enabled, u.hidden});
+  }
+  return out;
 }
 
 std::variant<std::vector<ParamUi>, std::string> PluginHost::params_ui(const RenderInputs& in) {

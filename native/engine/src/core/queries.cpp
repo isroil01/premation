@@ -11,6 +11,7 @@
 #include "fxstate.hpp"
 #include "handlers_common.hpp"
 #include "handlers_layers.hpp"
+#include "handlers_native.hpp"
 #include "native_effects.hpp"
 #include "readmodel.hpp"
 #include "rig.hpp"
@@ -335,6 +336,17 @@ struct Q {
   }
   api::QueryResult operator()(const api::GetCapabilities&) const {
     return query_result_for<api::GetCapabilities>(c.capabilities());
+  }
+  api::QueryResult operator()(const api::ListPlugins&) const {
+    // G1: the native SDK plugins this process hosts (none without a host).
+    api::PluginList out;
+    out.plugins = NativeEffects::plugins();
+    return query_result_for<api::ListPlugins>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetEffectUi& q) const {
+    api::EffectUi out;
+    out.params = native_effect_ui(d, q.layer, q.effect, q.time.value_or(0));
+    return query_result_for<api::GetEffectUi>(std::move(out));
   }
   api::QueryResult operator()(const api::HitTest&) const {
     fail(ErrorCode::unsupported, "'hitTest' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");

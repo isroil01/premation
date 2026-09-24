@@ -172,6 +172,8 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   listGroupTypes: { id: 1041, family: "Catalog", result: "GroupTypeList", doc: "Which group match names can be added under a parent path (the Add ▸ menus)." },
   listPresets: { id: 1042, family: "Catalog", result: "PresetList", doc: "" },
   getCapabilities: { id: 1043, family: "Catalog", result: "Capabilities", doc: "" },
+  listPlugins: { id: 1086, family: "Catalog", result: "PluginList", doc: "G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list." },
+  getEffectUi: { id: 1087, family: "Catalog", result: "EffectUi", doc: "G1 — a native plugin effect's parameter UI at `time` (UPDATE_PARAMS_UI: which params are enabled, hidden or renamed for the current values). A builtin effect answers every param enabled and visible under its catalog name. `notFound` for no such layer or effect." },
   hitTest: { id: 1060, family: "Interaction", result: "HitResult", doc: "" },
   getLayerBounds: { id: 1061, family: "Interaction", result: "LayerBoundsList", doc: "" },
   getLayerTransforms: { id: 1062, family: "Interaction", result: "LayerTransformList", doc: "" },
@@ -220,4 +222,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":72,"structs":370,"unions":11,"commands":136,"queries":32,"events":28} as const;
+export const SCHEMA_COUNTS = {"enums":73,"structs":376,"unions":11,"commands":136,"queries":34,"events":28} as const;

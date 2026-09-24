@@ -348,6 +348,30 @@ system fonts.
 | G2 | **Decided (owner, 2026-09-22): today's JavaScript/WGSL plugin system is not ported.** Existing installed plugins are left untouched and may be removed; the native SDK is the plugin system of the C++ engine | — | done |
 | G3 | AE-SDK compatibility shim (loading real AE `.aex`/`.plugin` binaries) — a separate product decision after G1; G1's API is shaped so it stays possible | — | later |
 
+**G1 progress (2026-09-24): the host runs in the engine; every exit criterion
+the engine can meet today is tested.** `docs/PLUGIN_SDK.md` is the SDK guide.
+The sample bundles build with the engine (`native/sdk/CMakeLists.txt`) and
+load through the manifest scan. They render at 8/16/32 bpc, and the depths
+agree to within quantisation. Renders are byte-deterministic, and params drive
+the render. `rings` keeps its palette in the document's sequence data: shuffle
+is one undo entry, and undo renders the old palette. Layer Displace and Time
+Echo check out another layer and their own layer at other times. Every fault
+class the samples inject is contained in-process: access violation, divide by
+zero, stack overflow, C++ exception, error return. A hang or `abort()` ends the
+process, and the crash journal then quarantines the plugin. All of this is
+proven in `engine_plugins_tests` (180 assertions); crash cases run in a child
+process through the `premation-plugins` tool. Engine wiring: `--plugins` /
+`--plugin-journal` / `PREMATION_PLUGIN_PATH` start the host in
+`premation-engine`, and Electron passes `<userData>/native-plugins`. The frame
+builder completes plugin entries (`finish_native_frame`). The render glue
+(`render_glue.cpp`) implements the graph's `NativeEffectHost`:
+SMART_RENDER_GPU on the engine's device inside an error scope, otherwise read
+back → CPU render → upload. New queries: `listPlugins` and `getEffectUi`, in
+both engines. **Remaining:** the GPU path and the render glue are compiled
+(against the pinned Dawn's headers) but not yet run on a GPU. Editor surfaces
+for native plugins wait for D5, when `engine()` becomes the C++ engine. Export
+parity needs F1.
+
 ---
 
 ## 6. How we keep the product working the whole way

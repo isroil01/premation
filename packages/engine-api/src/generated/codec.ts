@@ -188,6 +188,10 @@ const PropertyKind_TO_NUM: Record<string, number> = { 'property': 0, 'group': 1,
 const PropertyKind_FROM_NUM: readonly (T.PropertyKind | undefined)[] = ['property', 'group', 'indexedGroup'];
 function enc_PropertyKind(v: T.PropertyKind): number { const n = PropertyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PropertyKind: invalid value ' + String(v)); return n; }
 function dec_PropertyKind(n: number): T.PropertyKind { const v = PropertyKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PropertyKind: unknown value ' + n, 'badEnum'); return v; }
+const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3 };
+const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined'];
+function enc_PluginStatus(v: T.PluginStatus): number { const n = PluginStatus_TO_NUM[v]; if (n === undefined) throw new RangeError('PluginStatus: invalid value ' + String(v)); return n; }
+function dec_PluginStatus(n: number): T.PluginStatus { const v = PluginStatus_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PluginStatus: unknown value ' + n, 'badEnum'); return v; }
 const HitMode_TO_NUM: Record<string, number> = { 'topmost': 0, 'all': 1 };
 const HitMode_FROM_NUM: readonly (T.HitMode | undefined)[] = ['topmost', 'all'];
 function enc_HitMode(v: T.HitMode): number { const n = HitMode_TO_NUM[v]; if (n === undefined) throw new RangeError('HitMode: invalid value ' + String(v)); return n; }
@@ -8388,6 +8392,179 @@ function decS_GetCapabilities(r: Reader, end: number, o: any): T.GetCapabilities
   r.expectAt(end);
   return o;
 }
+function encS_ListPlugins(w: Writer, v: T.ListPlugins): void {
+  void w; void v;
+}
+function decS_ListPlugins(r: Reader, end: number, o: any): T.ListPlugins {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  return o;
+}
+function encS_GetEffectUi(w: Writer, v: T.GetEffectUi): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); w.str(v.effect);
+  if (v.time !== undefined) { w.byte(24); w.i64(v.time); }
+}
+function decS_GetEffectUi(r: Reader, end: number, o: any): T.GetEffectUi {
+  let h_layer = false;
+  let h_effect = false;
+  let v_layer: string | undefined;
+  let v_effect: string | undefined;
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_effect = r.str(); h_effect = true; break;
+      case 24: v_time = r.i64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetEffectUi.layer: missing', 'missingField');
+  if (!h_effect) throw new DecodeError('GetEffectUi.effect: missing', 'missingField');
+  o.layer = v_layer;
+  o.effect = v_effect;
+  if (v_time !== undefined) o.time = v_time;
+  return o;
+}
+function encS_PluginInfo(w: Writer, v: T.PluginInfo): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.name);
+  w.byte(26); w.str(v.version);
+  w.byte(34); w.str(v.vendor);
+  w.byte(42); w.str(v.sdk);
+  w.byte(48); w.varint(enc_PluginStatus(v.status));
+  w.byte(58); w.str(v.error);
+  { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(66); w.str(a[i]!); } }
+  w.byte(72); w.bool(v.gpu);
+}
+function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
+  const l_effects: string[] = [];
+  let h_id = false;
+  let h_name = false;
+  let h_version = false;
+  let h_vendor = false;
+  let h_sdk = false;
+  let h_status = false;
+  let h_error = false;
+  let h_gpu = false;
+  let v_id: string | undefined;
+  let v_name: string | undefined;
+  let v_version: string | undefined;
+  let v_vendor: string | undefined;
+  let v_sdk: string | undefined;
+  let v_status: T.PluginStatus | undefined;
+  let v_error: string | undefined;
+  let v_gpu: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 26: v_version = r.str(); h_version = true; break;
+      case 34: v_vendor = r.str(); h_vendor = true; break;
+      case 42: v_sdk = r.str(); h_sdk = true; break;
+      case 48: v_status = dec_PluginStatus(r.varint()); h_status = true; break;
+      case 58: v_error = r.str(); h_error = true; break;
+      case 66: l_effects.push(r.str()); break;
+      case 72: v_gpu = r.bool(); h_gpu = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('PluginInfo.id: missing', 'missingField');
+  if (!h_name) throw new DecodeError('PluginInfo.name: missing', 'missingField');
+  if (!h_version) throw new DecodeError('PluginInfo.version: missing', 'missingField');
+  if (!h_vendor) throw new DecodeError('PluginInfo.vendor: missing', 'missingField');
+  if (!h_sdk) throw new DecodeError('PluginInfo.sdk: missing', 'missingField');
+  if (!h_status) throw new DecodeError('PluginInfo.status: missing', 'missingField');
+  if (!h_error) throw new DecodeError('PluginInfo.error: missing', 'missingField');
+  if (!h_gpu) throw new DecodeError('PluginInfo.gpu: missing', 'missingField');
+  o.id = v_id;
+  o.name = v_name;
+  o.version = v_version;
+  o.vendor = v_vendor;
+  o.sdk = v_sdk;
+  o.status = v_status;
+  o.error = v_error;
+  o.effects = l_effects;
+  o.gpu = v_gpu;
+  return o;
+}
+function encS_PluginList(w: Writer, v: T.PluginList): void {
+  { const a = v.plugins; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_PluginInfo(w, a[i]!); w.endLd(s); } } }
+}
+function decS_PluginList(r: Reader, end: number, o: any): T.PluginList {
+  const l_plugins: T.PluginInfo[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_plugins.push(decS_PluginInfo(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.plugins = l_plugins;
+  return o;
+}
+function encS_EffectParamUi(w: Writer, v: T.EffectParamUi): void {
+  w.byte(10); w.str(v.key);
+  w.byte(18); w.str(v.name);
+  w.byte(24); w.bool(v.enabled);
+  w.byte(32); w.bool(v.hidden);
+}
+function decS_EffectParamUi(r: Reader, end: number, o: any): T.EffectParamUi {
+  let h_key = false;
+  let h_name = false;
+  let h_enabled = false;
+  let h_hidden = false;
+  let v_key: string | undefined;
+  let v_name: string | undefined;
+  let v_enabled: boolean | undefined;
+  let v_hidden: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_key = r.str(); h_key = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 24: v_enabled = r.bool(); h_enabled = true; break;
+      case 32: v_hidden = r.bool(); h_hidden = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_key) throw new DecodeError('EffectParamUi.key: missing', 'missingField');
+  if (!h_name) throw new DecodeError('EffectParamUi.name: missing', 'missingField');
+  if (!h_enabled) throw new DecodeError('EffectParamUi.enabled: missing', 'missingField');
+  if (!h_hidden) throw new DecodeError('EffectParamUi.hidden: missing', 'missingField');
+  o.key = v_key;
+  o.name = v_name;
+  o.enabled = v_enabled;
+  o.hidden = v_hidden;
+  return o;
+}
+function encS_EffectUi(w: Writer, v: T.EffectUi): void {
+  { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_EffectParamUi(w, a[i]!); w.endLd(s); } } }
+}
+function decS_EffectUi(r: Reader, end: number, o: any): T.EffectUi {
+  const l_params: T.EffectParamUi[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_params.push(decS_EffectParamUi(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.params = l_params;
+  return o;
+}
 function encS_EffectCatalog(w: Writer, v: T.EffectCatalog): void {
   { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_EffectInfo(w, a[i]!); w.endLd(s); } } }
 }
@@ -12831,6 +13008,8 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getJobs': w.varint(8666); { const s = w.beginLd(); encS_GetJobs(w, v); w.endLd(s); } return;
     case 'getRenderQueue': w.varint(8674); { const s = w.beginLd(); encS_GetRenderQueue(w, v); w.endLd(s); } return;
     case 'getCommandLog': w.varint(8682); { const s = w.beginLd(); encS_GetCommandLog(w, v); w.endLd(s); } return;
+    case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_ListPlugins(w, v); w.endLd(s); } return;
+    case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -12872,6 +13051,8 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8666: out = decS_GetJobs(r, r.ldEnd(), { type: 'getJobs' }) as T.Query; break;
       case 8674: out = decS_GetRenderQueue(r, r.ldEnd(), { type: 'getRenderQueue' }) as T.Query; break;
       case 8682: out = decS_GetCommandLog(r, r.ldEnd(), { type: 'getCommandLog' }) as T.Query; break;
+      case 8690: out = decS_ListPlugins(r, r.ldEnd(), { type: 'listPlugins' }) as T.Query; break;
+      case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -12913,6 +13094,8 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getJobs': w.varint(8666); { const s = w.beginLd(); encS_JobList(w, v); w.endLd(s); } return;
     case 'getRenderQueue': w.varint(8674); { const s = w.beginLd(); encS_RenderQueueState(w, v); w.endLd(s); } return;
     case 'getCommandLog': w.varint(8682); { const s = w.beginLd(); encS_CommandLog(w, v); w.endLd(s); } return;
+    case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
+    case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -12954,6 +13137,8 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8666: out = decS_JobList(r, r.ldEnd(), { type: 'getJobs' }) as T.QueryResult; break;
       case 8674: out = decS_RenderQueueState(r, r.ldEnd(), { type: 'getRenderQueue' }) as T.QueryResult; break;
       case 8682: out = decS_CommandLog(r, r.ldEnd(), { type: 'getCommandLog' }) as T.QueryResult; break;
+      case 8690: out = decS_PluginList(r, r.ldEnd(), { type: 'listPlugins' }) as T.QueryResult; break;
+      case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -13318,6 +13503,12 @@ export const codecs = {
   ListGroupTypes: mk<T.ListGroupTypes>(encS_ListGroupTypes, (r, e) => decS_ListGroupTypes(r, e, {})),
   ListPresets: mk<T.ListPresets>(encS_ListPresets, (r, e) => decS_ListPresets(r, e, {})),
   GetCapabilities: mk<T.GetCapabilities>(encS_GetCapabilities, (r, e) => decS_GetCapabilities(r, e, {})),
+  ListPlugins: mk<T.ListPlugins>(encS_ListPlugins, (r, e) => decS_ListPlugins(r, e, {})),
+  GetEffectUi: mk<T.GetEffectUi>(encS_GetEffectUi, (r, e) => decS_GetEffectUi(r, e, {})),
+  PluginInfo: mk<T.PluginInfo>(encS_PluginInfo, (r, e) => decS_PluginInfo(r, e, {})),
+  PluginList: mk<T.PluginList>(encS_PluginList, (r, e) => decS_PluginList(r, e, {})),
+  EffectParamUi: mk<T.EffectParamUi>(encS_EffectParamUi, (r, e) => decS_EffectParamUi(r, e, {})),
+  EffectUi: mk<T.EffectUi>(encS_EffectUi, (r, e) => decS_EffectUi(r, e, {})),
   EffectCatalog: mk<T.EffectCatalog>(encS_EffectCatalog, (r, e) => decS_EffectCatalog(r, e, {})),
   GroupTypeInfo: mk<T.GroupTypeInfo>(encS_GroupTypeInfo, (r, e) => decS_GroupTypeInfo(r, e, {})),
   GroupTypeList: mk<T.GroupTypeList>(encS_GroupTypeList, (r, e) => decS_GroupTypeList(r, e, {})),

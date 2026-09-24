@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "core/log.hpp"
 #include "render/render_thread.hpp"
@@ -37,6 +38,10 @@ struct EngineOptions {
   /// With testPorts: a directory the fake project files are mirrored to (and read from when not in memory).
   std::string testPortsDir;
   log::Level logLevel = log::Level::info;
+  /// G1: native plugin folders (a bundle, or a folder of bundles); PREMATION_PLUGIN_PATH adds more.
+  std::vector<std::string> pluginPaths;
+  /// G1: the plugin crash journal (empty = none: a plugin that kills the engine is not remembered).
+  std::string pluginJournal;
 };
 
 inline constexpr int kExitOk = 0;

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string_view>
 #include <thread>
@@ -17,6 +18,7 @@
 #include "io/framed_writer.hpp"
 #include "io/pipe_ffi.hpp"
 #include "os_ffi.hpp"
+#include "plugins/host.hpp"
 #include "premation/protocol/framing.hpp"
 
 #if defined(PREMATION_HAVE_SCENE)
@@ -145,6 +147,30 @@ int run_engine(const EngineOptions& options) {
   BlockingQueue<CoreItem> queue;
   const auto sendFrames = [&outbox](const frames::Message& m) { outbox.send_frames(m); };
 
+  // G1: the native plugin host. Declared before the render thread and the
+  // session so it outlives both (the render glue and the document reach it
+  // through PluginHost::active()). Absent when no plugin folder is configured.
+  std::unique_ptr<plugins::PluginHost> pluginHost;
+  {
+    std::vector<std::filesystem::path> paths(options.pluginPaths.begin(), options.pluginPaths.end());
+    if (const std::optional<std::string> env = os::env_var("PREMATION_PLUGIN_PATH")) {
+      std::string_view rest = *env;
+      while (!rest.empty()) {
+        const std::size_t cut = rest.find(';');
+        if (cut != 0) paths.emplace_back(std::string(rest.substr(0, cut)));
+        if (cut == std::string_view::npos) break;
+        rest.remove_prefix(cut + 1);
+      }
+    }
+    if (!paths.empty()) {
+      plugins::HostOptions ho;
+      ho.searchPaths = std::move(paths);
+      ho.journal = options.pluginJournal;
+      pluginHost = std::make_unique<plugins::PluginHost>(std::move(ho));
+      const std::vector<plugins::PluginRecord> recs = pluginHost->scan();
+      PREMATION_LOG(info, "plugins_scanned").kv("count", static_cast<std::uint64_t>(recs.size()));
+    }
+  }
   std::unique_ptr<render::RenderThread> gpuSink;
   std::unique_ptr<SimulatedSink> simSink;
   FrameSink* sink = nullptr;

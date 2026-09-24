@@ -248,6 +248,38 @@ query listEffects = 1040 { category: string = 1; } -> EffectCatalog;
 query listGroupTypes = 1041 { layer: LayerId = 1; parent: PropPath = 2; } -> GroupTypeList;
 query listPresets = 1042 { category: string = 1; } -> PresetList;
 query getCapabilities = 1043 {} -> Capabilities;
+/// G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list.
+query listPlugins = 1086 {} -> PluginList;
+/// G1 — a native plugin effect's parameter UI at `time` (UPDATE_PARAMS_UI: which params are enabled, hidden or renamed for the current values). A builtin effect answers every param enabled and visible under its catalog name. `notFound` for no such layer or effect.
+query getEffectUi = 1087 { layer: LayerId = 1; effect: PropPath = 2; time?: Time = 3; } -> EffectUi;
+
+enum PluginStatus { loaded = 0; disabled = 1; failed = 2; quarantined = 3; }
+
+struct PluginInfo {
+  id: string = 1;
+  name: string = 2;
+  version: string = 3;
+  vendor: string = 4;
+  /// The SDK version the plugin was built against (`major.minor`).
+  sdk: string = 5;
+  status: PluginStatus = 6;
+  /// Why a plugin failed or was quarantined ('' otherwise).
+  error: string = 7;
+  /// The match names of its effects.
+  effects: string[] = 8;
+  /// Any of its effects renders on the GPU (SMART_RENDER_GPU).
+  gpu: bool = 9;
+}
+struct PluginList { plugins: PluginInfo[] = 1; }
+
+struct EffectParamUi {
+  /// The param's property key under the effect (`p3`).
+  key: string = 1;
+  name: string = 2;
+  enabled: bool = 3;
+  hidden: bool = 4;
+}
+struct EffectUi { params: EffectParamUi[] = 1; }
 
 struct EffectCatalog { effects: EffectInfo[] = 1; }
 struct GroupTypeInfo { matchName: string = 1; displayName: string = 2; category: string = 3; }

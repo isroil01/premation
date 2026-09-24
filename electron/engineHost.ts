@@ -229,7 +229,22 @@ export interface EngineHostOptions {
   getWindow(): BrowserWindow | null;
   sharedTexture: SharedTextureApi | null;
   supervisor?: Partial<SupervisorOptions>;
+  /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
+  nativePluginDir?: string;
+  /** G1: the plugin crash journal — a plugin that killed the engine is quarantined at the next start. */
+  nativePluginJournal?: string;
   log?(line: string): void;
+}
+
+/**
+ * The engine's plugin arguments (G1, docs/PLUGIN_SDK.md). The engine process
+ * hosts native SDK plugins itself; `PREMATION_PLUGIN_PATH` adds folders on its side.
+ */
+export function nativePluginArgs(dir: string | undefined, journal: string | undefined): string[] {
+  const args: string[] = [];
+  if (dir) args.push('--plugins', dir);
+  if (journal) args.push('--plugin-journal', journal);
+  return args;
 }
 
 export interface EngineHostStatusReply {
@@ -278,7 +293,10 @@ export class EngineHost {
         hello: { client: 'premation-ui', clientVersion: o.appVersion, capabilities: ['frames.sharedTexture'] },
         log: (level, event, data) => log(`[engine] ${level} ${event}${data ? ` ${JSON.stringify(data)}` : ''}`),
       },
-      o.supervisor ?? {},
+      {
+        ...o.supervisor,
+        extraArgs: [...(o.supervisor?.extraArgs ?? []), ...nativePluginArgs(o.nativePluginDir, o.nativePluginJournal)],
+      },
     );
     const sup = this.supervisor;
     sup.on('ready', () => this.frames.engineStarted());

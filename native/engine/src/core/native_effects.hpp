@@ -99,6 +99,10 @@ class NativeEffects {
   using ActionFn = std::function<std::variant<NativeEdit, NativeFailure>(const NativeActionRequest&)>;
   using EnabledFn = std::function<bool(std::string_view plugin, bool enabled)>;
   static void set_handlers(CreatedFn created, ActionFn action, EnabledFn enabled);
+  /// listPlugins / getEffectUi (the host answers; no host = no plugins).
+  using ListFn = std::function<std::vector<api::PluginInfo>()>;
+  using UiFn = std::function<std::variant<std::vector<api::EffectParamUi>, NativeFailure>(const NativeActionRequest&)>;
+  static void set_query_handlers(ListFn list, UiFn ui);
   static void clear_handlers();
 
   /// addEffect: the initial flat sequence data for a new instance (nullopt = none).
@@ -107,6 +111,10 @@ class NativeEffects {
   [[nodiscard]] static std::variant<NativeEdit, NativeFailure> action(const NativeActionRequest& r);
   /// setPluginEnabled: false = no such plugin (or no host).
   [[nodiscard]] static bool set_enabled(std::string_view plugin, bool enabled);
+  /// listPlugins: every plugin the host found (empty without a host).
+  [[nodiscard]] static std::vector<api::PluginInfo> plugins();
+  /// getEffectUi for a native effect instance (`action` unused). No host = a NativeFailure.
+  [[nodiscard]] static std::variant<std::vector<api::EffectParamUi>, NativeFailure> params_ui(const NativeActionRequest& r);
 };
 
 /// The document's pluginData group of an effect instance, and its keys (setPluginData's group/key).

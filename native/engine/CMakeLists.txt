@@ -289,11 +289,42 @@ add_library(engine_plugins STATIC
   src/plugins/module_ffi.cpp
   src/plugins/guard_ffi.cpp
   src/plugins/journal_ffi.cpp
+  src/plugins/cpu_render.cpp
 )
 target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
 target_link_libraries(engine_plugins PUBLIC engine_core Threads::Threads PRIVATE ${CMAKE_DL_LIBS} motion::options)
 if(MSVC)
   target_compile_options(engine_plugins PRIVATE /bigobj)
+endif()
+
+# The engine process starts the host (--plugins / PREMATION_PLUGIN_PATH, engine_process.cpp).
+if(TARGET premation-engine)
+  target_link_libraries(premation-engine PRIVATE engine_plugins)
+endif()
+# engine_plugins_gpu: the render glue — the render graph's NativeEffectHost
+# (read back / CPU render / upload, and SMART_RENDER_GPU on the engine's device).
+if(TARGET engine_render_graph)
+  add_library(engine_plugins_gpu STATIC src/plugins/render_glue.cpp)
+  target_link_libraries(engine_plugins_gpu PUBLIC engine_plugins engine_render_graph dawn::webgpu_dawn PRIVATE motion::options)
+  if(MSVC)
+    target_compile_options(engine_plugins_gpu PRIVATE /bigobj)
+  endif()
+endif()
+
+# premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
+add_executable(premation-plugins tools/premation_plugins.cpp)
+target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
+if(MOTION_BUILD_TESTS)
+  # The host against the SDK's sample bundles (native/sdk): load, render at
+  # 8/16/32 bpc, sequence data, checkouts, the journal, crash isolation.
+  add_executable(engine_plugins_tests tests/test_plugin_host.cpp tests/test_plugin_session.cpp)
+  target_link_libraries(engine_plugins_tests PRIVATE engine_plugins motion::options Catch2::Catch2WithMain)
+  target_include_directories(engine_plugins_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  target_compile_definitions(engine_plugins_tests PRIVATE
+    PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
+    PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>")
+  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout)
+  add_test(NAME engine_plugins_tests COMMAND engine_plugins_tests --reporter compact)
 endif()
 
 # anim.cpp samples keyframes through motion_eval's C++ entry points (eval.hpp,
@@ -634,7 +665,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   # thread's BuiltFrameDrawer). premation-engine uses it when present.
   if(TARGET engine_gpu AND TARGET premation-engine)
     add_library(engine_frames STATIC src/scene/engine_frames.cpp)
-    target_link_libraries(engine_frames PUBLIC engine_scene engine_gpu PRIVATE motion::options)
+    target_link_libraries(engine_frames PUBLIC engine_scene engine_gpu engine_plugins_gpu PRIVATE motion::options)
     if(TARGET engine_audio)
       target_link_libraries(engine_frames PUBLIC engine_audio)
       target_compile_definitions(engine_frames PRIVATE PREMATION_HAVE_AUDIO=1)

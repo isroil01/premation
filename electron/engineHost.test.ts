@@ -7,7 +7,7 @@
 
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
-import { FrameForwarder, engineBackendEnabled, type SharedTextureApi } from './engineHost';
+import { FrameForwarder, engineBackendEnabled, nativePluginArgs, type SharedTextureApi } from './engineHost';
 import type { FrameReadyMessage, SlotsMessage } from './engineFraming';
 
 describe('engineBackendEnabled', () => {
@@ -26,6 +26,16 @@ describe('engineBackendEnabled', () => {
 
   it('the environment can force it off over the preference', () => {
     expect(engineBackendEnabled({ PREMATION_ENGINE: 'ts' }, 'engine.json', read('{"backend":"process"}'))).toBe(false);
+  });
+});
+
+describe('nativePluginArgs (G1)', () => {
+  it('hands the engine the plugin folder and the crash journal', () => {
+    expect(nativePluginArgs('/u/native-plugins', '/u/journal.bin')).toEqual(['--plugins', '/u/native-plugins', '--plugin-journal', '/u/journal.bin']);
+  });
+  it('omits what is not configured', () => {
+    expect(nativePluginArgs(undefined, undefined)).toEqual([]);
+    expect(nativePluginArgs('/u/p', undefined)).toEqual(['--plugins', '/u/p']);
   });
 });
 

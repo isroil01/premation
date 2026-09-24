@@ -418,6 +418,13 @@ export type PropertyKind =
   | 'indexedGroup';
 export const PropertyKindValues = ['property', 'group', 'indexedGroup'] as const;
 
+export type PluginStatus =
+  | 'loaded'
+  | 'disabled'
+  | 'failed'
+  | 'quarantined';
+export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined'] as const;
+
 export type HitMode =
   | 'topmost'
   | 'all';
@@ -2720,6 +2727,48 @@ export interface ListPresets {
 
 export interface GetCapabilities {}
 
+/** G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list. */
+export interface ListPlugins {}
+
+/** G1 — a native plugin effect's parameter UI at `time` (UPDATE_PARAMS_UI: which params are enabled, hidden or renamed for the current values). A builtin effect answers every param enabled and visible under its catalog name. `notFound` for no such layer or effect. */
+export interface GetEffectUi {
+  layer: LayerId;
+  effect: PropPath;
+  time?: Time;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  vendor: string;
+  /** The SDK version the plugin was built against (`major.minor`). */
+  sdk: string;
+  status: PluginStatus;
+  /** Why a plugin failed or was quarantined ('' otherwise). */
+  error: string;
+  /** The match names of its effects. */
+  effects: string[];
+  /** Any of its effects renders on the GPU (SMART_RENDER_GPU). */
+  gpu: boolean;
+}
+
+export interface PluginList {
+  plugins: PluginInfo[];
+}
+
+export interface EffectParamUi {
+  /** The param's property key under the effect (`p3`). */
+  key: string;
+  name: string;
+  enabled: boolean;
+  hidden: boolean;
+}
+
+export interface EffectUi {
+  params: EffectParamUi[];
+}
+
 export interface EffectCatalog {
   effects: EffectInfo[];
 }
@@ -3900,6 +3949,8 @@ export type Query =
   | ({ type: 'listGroupTypes' } & ListGroupTypes)
   | ({ type: 'listPresets' } & ListPresets)
   | ({ type: 'getCapabilities' } & GetCapabilities)
+  | ({ type: 'listPlugins' } & ListPlugins)
+  | ({ type: 'getEffectUi' } & GetEffectUi)
   | ({ type: 'hitTest' } & HitTest)
   | ({ type: 'getLayerBounds' } & GetLayerBounds)
   | ({ type: 'getLayerTransforms' } & GetLayerTransforms)
@@ -3936,6 +3987,8 @@ export type QueryResult =
   | ({ type: 'listGroupTypes' } & GroupTypeList)
   | ({ type: 'listPresets' } & PresetList)
   | ({ type: 'getCapabilities' } & Capabilities)
+  | ({ type: 'listPlugins' } & PluginList)
+  | ({ type: 'getEffectUi' } & EffectUi)
   | ({ type: 'hitTest' } & HitResult)
   | ({ type: 'getLayerBounds' } & LayerBoundsList)
   | ({ type: 'getLayerTransforms' } & LayerTransformList)
@@ -4284,6 +4337,8 @@ export interface QueryArgs {
   listGroupTypes: ListGroupTypes;
   listPresets: ListPresets;
   getCapabilities: GetCapabilities;
+  listPlugins: ListPlugins;
+  getEffectUi: GetEffectUi;
   hitTest: HitTest;
   getLayerBounds: GetLayerBounds;
   getLayerTransforms: GetLayerTransforms;
@@ -4320,6 +4375,8 @@ export interface QueryResults {
   listGroupTypes: GroupTypeList;
   listPresets: PresetList;
   getCapabilities: Capabilities;
+  listPlugins: PluginList;
+  getEffectUi: EffectUi;
   hitTest: HitResult;
   getLayerBounds: LayerBoundsList;
   getLayerTransforms: LayerTransformList;

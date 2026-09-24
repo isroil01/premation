@@ -22,6 +22,11 @@ void native_effect_added(Document& d, std::string_view layer, std::string_view e
 /// history entry. Fails (EngineFail) when `group` is not a native effect.
 void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string& action);
 
+/// getEffectUi: a native effect's params through UPDATE_PARAMS_UI; a builtin
+/// effect's params all enabled and visible. notFound for no such effect.
+[[nodiscard]] std::vector<api::EffectParamUi> native_effect_ui(const Document& d, const std::string& layer, const std::string& path,
+                                                               api::Time time);
+
 /// Write one entry of fx.pluginData (setPluginData's storage; empty bytes = delete).
 void native_write_plugin_data(Document& d, std::string_view layer, std::string_view group, std::string_view key,
                               const std::vector<std::uint8_t>& bytes);

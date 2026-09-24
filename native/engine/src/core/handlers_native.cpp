@@ -23,7 +23,50 @@ namespace {
   fail(ErrorCode::unsupported,
        "effect action buttons belong to native SDK plugins (G1); the JavaScript plugin system is not ported (plan §5 G2)");
 }
+/// What the host needs about one native effect instance: its static params,
+/// the document's flat sequence data and arbitrary-data params.
+NativeActionRequest request_for(const Node& node, const std::string& layer, const std::string& effectId, const Json& e,
+                                const NativeEffect& ne, api::Time time) {
+  NativeActionRequest req;
+  req.layer = layer;
+  req.effectId = effectId;
+  req.type = ne.def.type;
+  req.params = params_of(e);
+  req.timeSeconds = flicks_to_seconds(time);
+  const std::string dataGroup = native_data_group(effectId);
+  if (auto seq = native_read_plugin_data(node, dataGroup, kNativeSequenceKey)) req.sequence = std::move(*seq);
+  for (const std::string& key : ne.arbitrary) {
+    if (auto bytes = native_read_plugin_data(node, dataGroup, native_arb_key(key))) req.arb.emplace_back(key, std::move(*bytes));
+  }
+  return req;
+}
 }  // namespace
+
+std::vector<api::EffectParamUi> native_effect_ui(const Document& d, const std::string& layer, const std::string& path, api::Time time) {
+  const Node& node = require_layer(d, layer);
+  const std::vector<std::string> seg = split(path, '/');
+  const std::vector<Json> effects = read_node_effects(node);
+  const Json* e = seg.size() == 2 && seg[0] == "effects" ? find_by_id(effects, seg[1]) : nullptr;
+  if (e == nullptr) fail(ErrorCode::not_found, "no effect '" + path + "'", {.layer = layer, .path = path});
+  const std::string type = e->at("type").is_string() ? e->at("type").str() : "";
+  const NativeEffect* ne = NativeEffects::find(type);
+  if (ne == nullptr) {
+    // A builtin effect: every param enabled and visible under its catalog name (the TypeScript engine's answer).
+    std::vector<api::EffectParamUi> out;
+    if (const EffectDef* def = registry().effect(type)) {
+      for (const auto& p : def->params) {
+        if (p.type == "resolved") continue;
+        out.push_back(api::EffectParamUi{p.key, p.label, true, false});
+      }
+    }
+    return out;
+  }
+  const auto r = NativeEffects::params_ui(request_for(node, layer, seg[1], *e, *ne, time));
+  if (const auto* f = std::get_if<NativeFailure>(&r)) {
+    fail(ErrorCode::internal, "plugin '" + ne->provider + "': " + f->message, {.layer = layer, .path = path});
+  }
+  return std::get<std::vector<api::EffectParamUi>>(r);
+}
 
 void native_check_addable(std::string_view type) {
   if (NativeEffects::find(type) != nullptr && !NativeEffects::available(type)) {
@@ -77,18 +120,9 @@ void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string&
     fail(ErrorCode::not_found, "effect '" + type + "' has no action '" + action + "'", {.layer = group.layer, .path = group.path});
   }
 
-  NativeActionRequest req;
-  req.layer = group.layer;
-  req.effectId = effectId;
-  req.type = type;
+  NativeActionRequest req = request_for(node, group.layer, effectId, *e, *ne, x.time);
   req.action = action;
-  req.params = params_of(*e);
-  req.timeSeconds = flicks_to_seconds(x.time);
   const std::string dataGroup = native_data_group(effectId);
-  if (auto seq = native_read_plugin_data(node, dataGroup, kNativeSequenceKey)) req.sequence = std::move(*seq);
-  for (const std::string& key : ne->arbitrary) {
-    if (auto bytes = native_read_plugin_data(node, dataGroup, native_arb_key(key))) req.arb.emplace_back(key, std::move(*bytes));
-  }
 
   const std::variant<NativeEdit, NativeFailure> result = NativeEffects::action(req);
   if (const auto* f = std::get_if<NativeFailure>(&result)) {

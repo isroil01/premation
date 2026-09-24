@@ -66,5 +66,6 @@ if(MOTION_BUILD_NAPI)
 endif()
 
 if(MOTION_BUILD_ENGINE)
+  add_subdirectory(sdk)  # the plugin SDK + sample bundles (G1); the engine's plugin tests load them
   add_subdirectory(engine)
 endif()

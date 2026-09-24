@@ -8,7 +8,7 @@
 
 import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
-import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
+import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
 import { listPresets } from '@core/animation/animationPresets';
 import { world2DAt } from '@core/scene/layerSpace';
 import { readCompRef } from '@core/scene/compInstance';
@@ -221,6 +221,19 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         .filter((p) => q.category === '' || p.category === q.category || p.folder === q.category)
         .map((p) => ({ id: p.name, name: p.name, category: p.folder ?? p.category ?? '', description: p.description ?? '' }));
       return { type: q.type, presets };
+    }
+    case 'listPlugins':
+      // Native SDK plugins live in the C++ engine process (G1); this engine hosts none.
+      return { type: q.type, plugins: [] };
+    case 'getEffectUi': {
+      requireLayer(q.layer);
+      const seg = q.effect.split('/');
+      const fx = seg.length === 2 && seg[0] === 'effects' ? getNodeEffects(q.layer).find((e) => e.id === seg[1]) : undefined;
+      if (!fx) fail('notFound', `no effect '${q.effect}'`, { layer: q.layer, path: q.effect });
+      const def = effectDefFor(fx.type);
+      // A builtin effect: every param enabled and visible under its catalog name.
+      const params = (def?.params ?? []).filter((p) => p.type !== 'resolved').map((p) => ({ key: p.key, name: p.label, enabled: true, hidden: false }));
+      return { type: q.type, params };
     }
     case 'getCapabilities':
       return {

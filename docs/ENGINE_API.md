@@ -564,6 +564,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |
+| `listPlugins`, `getEffectUi` | G1: the native SDK plugins the engine found (loaded / disabled / failed with why / quarantined after ending the engine); a plugin effect's parameter UI at a time (UPDATE_PARAMS_UI: enabled, hidden, renamed). The TypeScript engine hosts no native plugins (empty list; builtin effects answer every param enabled). |
 | `hitTest` | Layers under a comp point at a time (topmost or all). |
 | `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer/viewport space; 4×4 layer→comp matrices — what gizmos draw from. |
 | `getTextLayout` | Glyph boxes/lines for in-viewport text editing. |

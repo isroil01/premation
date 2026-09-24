@@ -17,7 +17,7 @@ import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
 import { localFileUrlToPath } from './localFileUrl';
 import { EngineHost, engineBackendEnabled, enginePreferenceFile, registerEngineIpc, type SharedTextureApi } from './engineHost';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
 import { FfmpegStdinStream, RAW_PIPE_MAX_CHUNK_BYTES } from './ffmpegStream';
 import { EncoderProbe } from './encoderProbe';
@@ -498,6 +498,16 @@ function registerBlobIpc(): void {
  * point every other handler here works on it exactly as if it had never been
  * interrupted. See electron/renderResume.ts.
  */
+/** Create `dir` when missing (best effort — the engine skips a folder that is not there) and return it. */
+function ensureDir(dir: string): string {
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    // Read-only profile: plugins simply do not load from here.
+  }
+  return dir;
+}
+
 /** What `registerRenderIpc` hands the export supervisor: teardown by window. */
 interface RenderIpcControl {
   /**
@@ -1917,6 +1927,9 @@ app.whenReady().then(() => {
     getGPUInfo: (level) => app.getGPUInfo(level),
     getWindow: () => mainWindow,
     sharedTexture: sharedTexture as unknown as SharedTextureApi,
+    // G1: native SDK plugins load in the engine process from this folder.
+    nativePluginDir: ensureDir(path.join(app.getPath('userData'), 'native-plugins')),
+    nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
   });
   registerEngineIpc(engineHost);
   // Dev only: the real-app harness reads the frame-forwarding counters from

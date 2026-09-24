@@ -211,6 +211,10 @@ class PluginHost {
   std::variant<doc::NativeEdit, doc::NativeFailure> user_changed(const doc::NativeActionRequest& r);
   /// UPDATE_PARAMS_UI (getEffectUi): every param's UI state for these inputs.
   std::variant<std::vector<ParamUi>, std::string> params_ui(const RenderInputs& in);
+  /// getEffectUi for a document effect instance (the document's static params, sequence and arbitrary data).
+  std::variant<std::vector<api::EffectParamUi>, doc::NativeFailure> params_ui_for(const doc::NativeActionRequest& r);
+  /// listPlugins.
+  [[nodiscard]] std::vector<api::PluginInfo> plugin_infos() const;
 
   // ── render side (any thread) ──
   CallResult pre_render(const RenderInputs& in, std::vector<CheckoutRequest>& out);

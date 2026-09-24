@@ -16,6 +16,9 @@
 #include "log.hpp"
 #include "model.hpp"
 #include "native_scene.hpp"
+#include "host.hpp"
+#include "render_glue.hpp"
+#include "scene_finish.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_renderer.hpp"
@@ -135,6 +138,16 @@ class EngineFrameBuilder final : public FrameBuilder {
       vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
       const double seconds = doc::flicks_to_seconds(time);
       NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, true);
+      // G1: native plugin entries completed from the document (sequence data,
+      // times), their checkouts at other times added, disabled instances reported.
+      plugins::PluginHost* host = plugins::PluginHost::active();
+      plugins::finish_native_frame(ctx, comp, seconds, vs, true, nf, host);
+      if (host != nullptr) {
+        host->next_frame();
+        // Instances no frame has used for a while give their state back
+        // (SEQUENCE_SETDOWN); the document's flat copy rebuilds them on use.
+        if ((++builtFrames_ & 255U) == 0) host->collect_instances(kIdleInstanceFrames);
+      }
       out->file = std::move(nf.file);
       out->textures = std::move(nf.textures);
       errors.reserve(nf.errors.size());
@@ -158,8 +171,10 @@ class EngineFrameBuilder final : public FrameBuilder {
   }
 
  private:
+  static constexpr std::uint64_t kIdleInstanceFrames = 600;
   Fonts fonts_;
   std::unique_ptr<TextMeasurer> measurer_;
+  std::uint64_t builtFrames_ = 0;
 };
 
 // ── the render-thread drawer ──────────────────────────────────────────────
@@ -180,6 +195,9 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     d->textures_->set_media(d->media_.get(), d->mediaTex_.get());
 #endif
     d->renderer_->set_external_textures(d->textures_.get());
+    // G1: `native-plugin` chain entries run through the engine's plugin host.
+    d->plugins_ = std::make_unique<plugins::RenderGlue>();
+    d->renderer_->set_native_effects(d->plugins_.get());
     return d;
   }
 
@@ -225,6 +243,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   Fonts fonts_;
   std::unique_ptr<rg::SceneRenderer> renderer_;
   std::unique_ptr<SceneTextures> textures_;
+  std::unique_ptr<plugins::RenderGlue> plugins_;
 #if defined(PREMATION_HAVE_MEDIA)
   std::unique_ptr<media::MediaSystem> media_;
   std::unique_ptr<media::MediaTextures> mediaTex_;

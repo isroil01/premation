@@ -32,6 +32,8 @@ struct State {
   NativeEffects::CreatedFn created;
   NativeEffects::ActionFn action;
   NativeEffects::EnabledFn enabled;
+  NativeEffects::ListFn list;
+  NativeEffects::UiFn ui;
 };
 
 State& state() {
@@ -94,7 +96,17 @@ void NativeEffects::set_handlers(CreatedFn created, ActionFn action, EnabledFn e
   s.enabled = std::move(enabled);
 }
 
-void NativeEffects::clear_handlers() { set_handlers({}, {}, {}); }
+void NativeEffects::set_query_handlers(ListFn list, UiFn ui) {
+  State& s = state();
+  const std::scoped_lock lock(s.handlerMutex);
+  s.list = std::move(list);
+  s.ui = std::move(ui);
+}
+
+void NativeEffects::clear_handlers() {
+  set_handlers({}, {}, {});
+  set_query_handlers({}, {});
+}
 
 std::optional<std::vector<std::uint8_t>> NativeEffects::created(std::string_view type) {
   State& s = state();
@@ -125,6 +137,27 @@ bool NativeEffects::set_enabled(std::string_view plugin, bool enabled) {
     fn = s.enabled;
   }
   return fn ? fn(plugin, enabled) : false;
+}
+
+std::vector<api::PluginInfo> NativeEffects::plugins() {
+  State& s = state();
+  ListFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.list;
+  }
+  return fn ? fn() : std::vector<api::PluginInfo>{};
+}
+
+std::variant<std::vector<api::EffectParamUi>, NativeFailure> NativeEffects::params_ui(const NativeActionRequest& r) {
+  State& s = state();
+  UiFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.ui;
+  }
+  if (!fn) return NativeFailure{"no native plugin host is attached to this engine"};
+  return fn(r);
 }
 
 std::string native_data_group(std::string_view effectId) { return "effects/" + std::string(effectId); }

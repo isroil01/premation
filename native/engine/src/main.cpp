@@ -11,6 +11,8 @@
 //                    [--test-ports]        in-memory projects + fake media (cross-engine tests)
 //                    [--test-ports-dir D]  with --test-ports: project files also read from / written to D
 //                    [--log-level debug|info|warn|error]
+//                    [--plugins DIR]       native plugin bundles (repeatable; + PREMATION_PLUGIN_PATH)
+//                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
 //                    [--version]
 //
 // stdin/stdout: the command pipe; fd 3/4: the frame channel; stderr: log.
@@ -62,6 +64,12 @@ int run(int argc, char** argv) {
       ok = parse_u32(v, o.render.slots);
     } else if (k == "--power") {
       o.render.highPerformance = v != "low";
+    } else if (k == "--plugins") {
+      o.pluginPaths.emplace_back(v);
+      ok = !v.empty();
+    } else if (k == "--plugin-journal") {
+      o.pluginJournal = std::string(v);
+      ok = !v.empty();
     } else if (k == "--log-level") {
       if (v == "debug") o.logLevel = premation::log::Level::debug;
       else if (v == "warn") o.logLevel = premation::log::Level::warn;
