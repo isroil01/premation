@@ -548,7 +548,17 @@ no Skia and no GPU:
 | `auto_color_kernels.cpp` | `aeColorAdvanced.ts` (histogram autos, HSL selectors, toner) |
 | `transition_kernels.cpp` | `transitions.ts`, `aeChannel.ts` |
 | `ae_*_kernels.cpp`, `round_*_kernels.cpp`, `warp_kernels.cpp` | the AE rounds: `aeStylizeAdvanced`, `aeTransitionsAdvanced`, `aeDistortAdvanced`, `aeRoundSix`, `aeRoundSeven*`, `ae*RoundFive`, `warp.ts` + `stylize.ts` noise bites |
-| `kernel_dispatch.cpp` | effect type + the TS kernel's argument names → kernel (120 effects) |
+| `paint_kernels.cpp` | `strokePaint.ts` (dab, Float32 paint buffer, Paint Style, polyline walk), `pathStroke.ts`, `scribble.ts`, `writeOnBrush.ts` |
+| `generate_round_five_kernels.cpp` | `generateRoundFive.ts` (Star Burst, Snowfall, Rainfall, classic Write-on, Light Burst) |
+| `round_seven_distort_kernels.cpp`, `simulation_kernels.cpp` | `aeRoundSevenDistort.ts`, `aeRoundSevenSimulation.ts` |
+| `pattern_warp_lut_kernels.cpp` | `bezierWarp.ts`, `generatePatterns.ts` (Cell Pattern), `cubeLut.ts` |
+| `glow_beam_kernels.cpp` | `deepGlow.ts` (with the renderer's `deepGlowKernel.ts`), `beamPath.ts` |
+| `kernel_dispatch.cpp`, `kernel_dispatch_generate.cpp` | effect type + the TS kernel's argument names → kernel (139 effects) |
+
+Arguments are numbers by name (`KernelArgs`) plus numeric arrays by name
+(`KernelLists`): the resolved lists `buildSnapshot` hands the TS kernels —
+packed mask paths (`maskPathsMeta` / `maskPathsXY`), Write-on brush trails,
+`pathPoints` spines, `.cube` tables.
 
 **Byte-exact.** Every kernel keeps the TS's operation order and its JavaScript
 store semantics (`pixel_ops.hpp`): `Uint8ClampedArray` rounds half to even,
@@ -561,7 +571,12 @@ the same order statistic.
 
 **Threads.** `ThreadPool` (`std::jthread` workers) splits OUTPUT rows (or
 column strips for vertical passes), so no output depends on the thread count;
-the parity test runs every row on 1 and on 4 threads. No intrinsics: the loops
+the parity test runs every row on 1 and on 4 threads. Kernels that stamp in
+sequence (brush dabs, particles, discs, streaks; a later stamp composites over
+an earlier one) build the stamp list first and have every row chunk replay all
+of it in order, clipped to its rows, so each pixel sees the TS's sequence. CC
+Scatterize's forward scatter computes destinations in parallel and writes them
+serially in scan order (the last writer wins, as in the TS). No intrinsics: the loops
 are plain C++ (branch-free JS stores, no libm in the inner loops, since baseline
 x86-64 has no `roundsd`), one path for every target.
 
@@ -581,8 +596,8 @@ node native/engine/tests/bench_effects_ts.mjs [--only <effect>]
 
 Not wired yet: the bake CHAIN (compositing the kernels between Canvas2D-drawn
 effects, masks, fill opacity, the effect-param → kernel-argument mapping of the
-`apply*` wrappers) and the canvas-drawn effects; see the E4 table in
-`docs/NATIVE_CORE_PLAN.md`.
+`apply*` wrappers) and the 27 canvas-drawn effects, which need the E3
+`raster::Canvas` in the chain; see the E4 table in `docs/NATIVE_CORE_PLAN.md`.
 
 ## Adding a library (N2+)
 
