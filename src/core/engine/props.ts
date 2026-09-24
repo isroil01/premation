@@ -92,6 +92,7 @@ import {
   type RigRef,
 } from './rigProps';
 import { addParticleBindings, readParticleColor, writeParticleColor } from './particleProps';
+import { controlBindings, controlGroupInfo, controlGroupPath, readControls } from './controlProps';
 
 /** The registered variable-font axes and the Text props their static values and keys live in (fontAxes.ts). */
 const AXIS_OF_MEMBER: Readonly<Record<string, string>> = { fontWeight: 'wght', fontWidth: 'wdth', fontSlant: 'slnt' };
@@ -294,9 +295,15 @@ export function catalogFor(layerId: string): Catalog {
     for (const spec of EFFECT_FIELDS) add(effectFieldBinding(effectId, spec));
   };
 
+  // B3: expression controls (controlProps.ts) — `effects/ctrl_<name>/<param>`,
+  // claiming their stored numbers' rows.
+  const controls = controlBindings(node);
+  const controlMembers = new Set(controls.flatMap((b) => b.members));
+
   for (const row of rows) {
     // Effect Opacity is listed for EVERY effect below (B3z), not only once touched.
     if (EFFECT_OPACITY_ROW.test(row.prop)) continue;
+    if (row.members.length > 0 && row.members.every((m) => controlMembers.has(m))) continue;
     if (row.maskTrack || row.prop === MASK_ANIM_PROP) {
       // One Mask Path property per mask (whole-mask snapshots in fx.maskAnim).
       for (const p of mask?.paths ?? []) addMaskProps(p, add);
@@ -345,6 +352,8 @@ export function catalogFor(layerId: string): Catalog {
       ...(def ? { defaultValue: def } : {}),
     });
   }
+
+  for (const b of controls) add(b);
 
   // Separated position: the combined property still exists (not animatable).
   const sepX = byPath.get('transform/position/x');
@@ -500,6 +509,8 @@ export function catalogFor(layerId: string): Catalog {
   const groupName = (path: string): { name: string; matchName: string; enabled: boolean; kind: PropertyKind } => {
     const rig = rigGroupInfo(node, path);
     if (rig) return rig;
+    const control = controlGroupInfo(node, path);
+    if (control) return control;
     const seg = path.split('/');
     if (seg.length === 1) return { name: ROOT_NAMES[seg[0]!] ?? seg[0]!, matchName: seg[0]!, enabled: true, kind: INDEXED_ROOTS.has(seg[0]!) || path === 'text/animators' ? 'indexedGroup' : 'group' };
     if (seg[0] === 'effects' && seg.length === 2) {
@@ -551,6 +562,7 @@ export function catalogFor(layerId: string): Catalog {
   };
   // Every group of the layer exists even when empty (an effect with no numeric params).
   for (const e of effects) ensureGroup(`effects/${e.id}`);
+  for (const c of readControls(node)) ensureGroup(controlGroupPath(c.name));
   for (const p of mask?.paths ?? []) ensureGroup(`masks/${p.id}`);
   for (const a of animators) {
     ensureGroup(`text/animators/${a.id}/props`);

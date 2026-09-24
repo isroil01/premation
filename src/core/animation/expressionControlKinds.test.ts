@@ -7,15 +7,17 @@
  * keyframe engine animates. The kind decides presentation, not representation —
  * a colour is three numeric controls, exactly how colours are keyframed
  * everywhere else, rather than a second colour model.
+ *
+ * Adding / removing / renaming controls is the engine's addPropertyGroup /
+ * removePropertyGroups / renamePropertyGroup on `effects/ctrl_<name>`
+ * (src/core/engine/__tests__/expressionControls.test.ts). What stays here is
+ * the storage contract every kind keeps and the ctrl() resolution.
  */
 
 import SceneGraph from '@core/scene/SceneGraph';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import {
-  addControl,
-  removeControl,
-  controlKind,
   listControls,
   nextControlName,
   controlValue,
@@ -34,69 +36,61 @@ function node(id: string): SceneNode {
 
 const KINDS: ControlKind[] = ['slider', 'angle', 'point', 'color', 'checkbox', 'dropdown', 'layer'];
 
+/** What `addPropertyGroup` stores for a control (controlProps.ts planControlAdd). */
+function store(kind: ControlKind, name: string, values: number[]): void {
+  const t = defaultSceneGraph.getNode('a')!.components[0]!;
+  CONTROL_COMPONENTS[kind].forEach((sfx, i) => defaultSceneGraph.writeProp('a', t.id, `ctrl_${name}${sfx}`, values[i] ?? 0));
+  defaultSceneGraph.writeProp('a', t.id, `ctrlkind_${name}`, kind);
+}
+
 beforeEach(() => {
   (defaultSceneGraph as unknown as SceneGraph).clear();
   defaultSceneGraph.addNode(node('a'));
 });
 
-describe('every kind can be created and removed', () => {
+describe('every kind resolves through ctrl() as numbers', () => {
   it.each(KINDS)('%s', (kind) => {
-    const name = addControl('a', kind);
-    expect(name).toBeTruthy();
-    expect(controlKind('a', name!)).toBe(kind);
-    // Every component it owns resolves as a number through ctrl.
-    for (const suffix of CONTROL_COMPONENTS[kind]) {
-      expect(typeof controlValue(name! + suffix, 0)).toBe('number');
-    }
-    removeControl('a', name!);
-    expect(listControls().some((c) => c.name.startsWith(name!))).toBe(false);
+    const name = nextControlName(kind);
+    store(kind, name, [7, 8, 9]);
+    CONTROL_COMPONENTS[kind].forEach((suffix, i) => {
+      expect(controlValue(name + suffix, 0)).toBe([7, 8, 9][i]);
+    });
   });
 });
 
 describe('multi-component kinds', () => {
-  it('a point control owns .x and .y', () => {
-    const name = addControl('a', 'point')!;
+  it('a point control owns .x and .y; a colour control .r, .g and .b', () => {
+    expect(CONTROL_COMPONENTS.point).toEqual(['.x', '.y']);
+    expect(CONTROL_COMPONENTS.color).toEqual(['.r', '.g', '.b']);
+    store('point', 'P', [1, 2]);
     const names = listControls().map((c) => c.name);
-    expect(names).toContain(`${name}.x`);
-    expect(names).toContain(`${name}.y`);
-  });
-
-  it('a colour control owns .r, .g and .b — the same decomposition used everywhere else', () => {
-    const name = addControl('a', 'color')!;
-    const names = listControls().map((c) => c.name);
-    for (const ch of ['.r', '.g', '.b']) expect(names).toContain(`${name}${ch}`);
-    expect(controlValue(`${name}.r`, 0)).toBe(255);
-  });
-
-  it('removing a multi-component control removes ALL of its components', () => {
-    const name = addControl('a', 'point')!;
-    removeControl('a', name);
-    expect(listControls().map((c) => c.name).filter((n) => n.startsWith(name))).toEqual([]);
+    expect(names).toContain('P.x');
+    expect(names).toContain('P.y');
   });
 });
 
 describe('naming', () => {
   it('names by kind and never collides', () => {
-    const a = addControl('a', 'slider')!;
-    const b = addControl('a', 'slider')!;
-    expect(a).not.toBe(b);
-    expect(addControl('a', 'angle')).toMatch(/^Angle/);
+    const a = nextControlName('slider');
+    store('slider', a, [50]);
+    expect(nextControlName('slider')).not.toBe(a);
+    expect(nextControlName('angle')).toMatch(/^Angle/);
   });
 
   it('a point control reserves its BASE name, not just its components', () => {
     // Nothing is stored at the base name, so a naive "is it taken" check would
     // hand the same base to a second point control and they would overwrite.
-    const first = addControl('a', 'point')!;
+    const first = nextControlName('point');
+    store('point', first, [0, 0]);
     expect(nextControlName('point')).not.toBe(first);
   });
 });
 
 describe('back-compatibility', () => {
-  it('a control with no recorded kind reads as a slider', () => {
+  it('a control with no recorded kind still resolves', () => {
     // Projects predating kinds stored only `ctrl_<name>`.
     const t = defaultSceneGraph.getNode('a')!.components[0]!;
     defaultSceneGraph.writeProp('a', t.id, 'ctrl_Legacy', 42);
-    expect(controlKind('a', 'Legacy')).toBe('slider');
     expect(controlValue('Legacy', 0)).toBe(42);
   });
 });

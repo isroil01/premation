@@ -47,6 +47,7 @@ import { LAYER_FIELDS } from '../layerFieldSpecs';
 import { LATENT_PROPS } from '../latentPropSpecs';
 import { EFFECT_FIELDS, STYLE_FIELDS, GLASS_PROPERTIES } from '../effectFieldSpecs';
 import { RIG_PROPS } from '../rigSpecs';
+import { CONTROL_SPECS } from '../controlSpecs';
 import { listPresets } from '@core/animation/animationPresets';
 import { DEFAULT_PARTICLE_CONFIG, PARTICLE_COLOR_KEYS, PARTICLE_NUMERIC_KEYS } from '@core/particles/particleSim';
 import { PATHOP_FIELDS, POLYSTAR_FIELDS } from '../shapeFieldSpecs';
@@ -169,6 +170,8 @@ function data(): unknown {
       layer: LAYER_FIELDS,
       // B3z WS-R: puppet / skeleton properties (rigSpecs.ts ⇄ rig.cpp).
       rig: RIG_PROPS,
+      // B3: expression controls (controlSpecs.ts ⇄ controls.cpp).
+      control: CONTROL_SPECS,
       // B3z-a: effect Compositing Options fields, layer-style switches, Glass (effectFieldSpecs.ts).
       effect: EFFECT_FIELDS, style: STYLE_FIELDS, glass: GLASS_PROPERTIES,
       // B3z-a (E1): path-operator / Polystar fields (shapeFieldSpecs.ts), the particle emitter's keys (particleProps.ts).

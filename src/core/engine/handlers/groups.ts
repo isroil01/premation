@@ -62,6 +62,15 @@ import {
   type RigGroupRef,
 } from '../rigProps';
 import { plural } from './common';
+import {
+  CONTROL_GROUP_TYPES,
+  resolveControl,
+  planControlAdd,
+  removeControlGroup,
+  planControlRename,
+  type LayerControl,
+} from '../controlProps';
+import { controlSpecForMatchName } from '../controlSpecs';
 import { PLUGIN_PANEL_TRACK_PREFIX, panelGroupForMatchName, panelInitProps, parsePanelGroupPath } from '../pluginProps';
 
 const STYLE_DEFAULTS: Record<string, () => unknown> = {
@@ -84,6 +93,7 @@ export const GROUP_TYPES: Array<{ parent: string; matchName: string; displayName
   { parent: 'text/animators/*/selectors', matchName: 'ADBE Text Expressible Selector', displayName: 'Expression Selector', category: 'text' },
   ...Object.keys(STYLE_DEFAULTS).map((k) => ({ parent: 'styles', matchName: `style:${k}`, displayName: k, category: 'styles' })),
   ...RIG_GROUP_TYPES,
+  ...CONTROL_GROUP_TYPES,
   ...(['zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater', 'wiggleTransform'] as const)
     .map((t) => ({ parent: 'contents', matchName: `pathop:${t}`, displayName: t, category: 'contents' })),
 ];
@@ -99,6 +109,8 @@ type GroupRef =
   | { kind: 'pathop'; layer: string; id: string }
   /** A puppet / skeleton group (rigProps.ts). */
   | { kind: 'rig'; layer: string; id: string; rig: RigGroupRef }
+  /** B3: an expression control `effects/ctrl_<name>` (controlProps.ts) — `id` = `ctrl_<name>`. */
+  | { kind: 'control'; layer: string; id: string; control: LayerControl }
   /** B3z: a contributed plugin panel's params (pluginProps.ts) — `id` = the component TYPE, `path` = plugin/<slug>/<panel>. */
   | { kind: 'plugin'; layer: string; id: string; path: string; prefix: string };
 
@@ -108,6 +120,8 @@ function resolveGroup(ref: PropRef): GroupRef {
   const nf = (): never => fail('notFound', `layer '${ref.layer}' has no group '${ref.path}'`, { layer: ref.layer, path: ref.path });
   const rig = resolveRigGroup(node, ref.layer, ref.path);
   if (rig) return { kind: 'rig', layer: ref.layer, id: rigGroupPath(rig), rig };
+  const control = resolveControl(node, ref.path);
+  if (control) return { kind: 'control', layer: ref.layer, id: seg[1]!, control };
   const panel = parsePanelGroupPath(ref.path);
   if (panel) {
     if (!node.components.some((c) => c.type === panel.type)) nf();
@@ -153,6 +167,7 @@ function groupPath(g: GroupRef): string {
     case 'style': return `styles/${g.id}`;
     case 'pathop': return `contents/${g.id}`;
     case 'rig': return rigGroupPath(g.rig);
+    case 'control': return `effects/${g.id}`;
     case 'plugin': return g.path;
   }
 }
@@ -397,6 +412,10 @@ export const groupHandlers: HandlerTable = {
         setPathOps(layer, next);
         return `contents/${id}`;
       };
+    } else if (parent === 'effects' && controlSpecForMatchName(cmd.matchName)) {
+      // B3: an expression control (controlProps.ts): named by `name`, else the
+      // next free "Slider 1"-style name; `init` writes its value.
+      run = planControlAdd(node, controlSpecForMatchName(cmd.matchName)!, cmd.name, cmd.index);
     } else if (parent === 'plugin' && panelGroupForMatchName(cmd.matchName)) {
       // B3z: a contributed plugin panel's params, seeded WHOLE from `init` (the
       // client holds the panel's declared defaults — the engine has no schema).
@@ -451,6 +470,7 @@ export const groupHandlers: HandlerTable = {
   movePropertyGroup: (cmd) => {
     const r = resolveGroup(cmd.group);
     if (r.kind === 'plugin') fail('unsupported', 'plugin panels have no order');
+    if (r.kind === 'control') fail('unsupported', 'expression controls keep the order they were added in');
     return {
       scope: layerScopeOf([r.layer]),
       label: 'Move Group',
@@ -508,6 +528,7 @@ export const groupHandlers: HandlerTable = {
     for (const r of refs) if (r.kind === 'style') fail('unsupported', 'a layer has at most one style of each kind');
     for (const r of refs) if (r.kind === 'rig') fail('unsupported', 'rig groups are duplicated by adding a new pin / bone in this engine');
     for (const r of refs) if (r.kind === 'plugin') fail('unsupported', 'a layer has at most one of each plugin panel');
+    for (const r of refs) if (r.kind === 'control') fail('unsupported', 'expression controls are added by name with addPropertyGroup');
     const plans = refs.map((r) => ({ r, newId: mintFor(r, r.layer, ctx) }));
     return {
       scope: layerScopeOf(refs.map((r) => r.layer)),
@@ -522,6 +543,7 @@ export const groupHandlers: HandlerTable = {
     for (const r of refs) if (r.kind === 'animator' || r.kind === 'selector') fail('unsupported', 'text animators are copied with their layer in this engine');
     for (const r of refs) if (r.kind === 'rig') fail('unsupported', 'a rig is copied whole through layer/puppet or layer/skeleton in this engine');
     for (const r of refs) if (r.kind === 'plugin') fail('unsupported', 'plugin panels are added to a layer with addPropertyGroup');
+    for (const r of refs) if (r.kind === 'control') fail('unsupported', 'expression controls are added by name with addPropertyGroup');
     for (const l of cmd.toLayers) requireLayer(l);
     const plans: Array<{ r: GroupRef; to: string; newId: string }> = [];
     for (const to of cmd.toLayers) for (const r of refs) {
@@ -574,6 +596,7 @@ export const groupHandlers: HandlerTable = {
     if (cmd.groups.length === 0) fail('invalidArgument', 'no groups given');
     const refs = cmd.groups.map(resolveGroup);
     for (const r of refs) if (r.kind === 'plugin') fail('unsupported', 'a plugin panel has no enable switch (the plugin itself is enabled in the Plugins panel)');
+    for (const r of refs) if (r.kind === 'control') fail('unsupported', 'an expression control has no enable switch');
     return {
       scope: layerScopeOf(refs.map((r) => r.layer)),
       label: cmd.enabled ? 'Enable' : 'Disable',
@@ -589,12 +612,15 @@ export const groupHandlers: HandlerTable = {
     if (r.kind === 'style' || r.kind === 'pathop') fail('unsupported', `'${groupPath(r)}' cannot be renamed in this engine`);
     if (r.kind === 'plugin') fail('unsupported', `'${groupPath(r)}' cannot be renamed`);
     if (r.kind === 'rig' && r.rig.kind !== 'pin' && r.rig.kind !== 'bone' && r.rig.kind !== 'controller') fail('unsupported', `'${groupPath(r)}' cannot be renamed`);
+    // An expression control's name is its `ctrl('<name>')` key and its path id: the path follows the name.
+    const controlRename = r.kind === 'control' ? planControlRename(requireLayer(r.layer), r.control, cmd.name) : null;
     return {
       scope: layerScopeOf([r.layer]),
       label: 'Rename Group',
       apply: () => {
         const name = cmd.name.trim() === '' ? undefined : cmd.name;
-        if (r.kind === 'rig') renameRigGroup(r.rig, cmd.name);
+        if (r.kind === 'control') controlRename!();
+        else if (r.kind === 'rig') renameRigGroup(r.rig, cmd.name);
         else if (r.kind === 'effect') writeNodeEffects(r.layer, getNodeEffects(r.layer).map((e) => (e.id === r.id ? withName(e, name) : e)));
         else if (r.kind === 'mask') writeMasks(r.layer, (paths) => paths.map((p) => (p.id === r.id ? withName(p, name) : p)));
         else if (r.kind === 'animator') withAnimators(r.layer, (list) => list.map((a) => (a.id === r.id ? withName(a, name) : a)));
@@ -722,6 +748,7 @@ function mintFor(r: GroupRef, layer: string, ctx: HandlerCtx): string {
     case 'selector': return ctx.mintGroupId('sel_', () => false);
     case 'style': return r.id;
     case 'rig': return fail('unsupported', 'rig groups cannot be copied');
+    case 'control': return fail('unsupported', 'expression controls cannot be copied');
     case 'plugin': return fail('unsupported', 'plugin panels cannot be copied');
   }
 }
@@ -735,6 +762,9 @@ function removeGroup(r: GroupRef): void {
       return;
     case 'rig':
       removeRigGroup(r.rig);
+      return;
+    case 'control':
+      removeControlGroup(r.layer, r.control);
       return;
     case 'effect':
       writeNodeEffects(r.layer, getNodeEffects(r.layer).filter((e) => e.id !== r.id));
@@ -780,6 +810,8 @@ function setEnabled(r: GroupRef, on: boolean): void {
     case 'rig':
       setRigGroupEnabled(r.rig, on);
       return;
+    case 'control':
+      return fail('unsupported', 'an expression control has no enable switch');
     case 'effect':
       writeNodeEffects(r.layer, getNodeEffects(r.layer).map((e) => {
         if (e.id !== r.id) return e;
@@ -883,6 +915,8 @@ function copyGroup(r: GroupRef, to: string, newId: string, ctx: HandlerCtx, afte
       return fail('unsupported', 'duplicate the animator to copy its selectors');
     case 'rig':
       return fail('unsupported', 'rig groups cannot be copied');
+    case 'control':
+      return fail('unsupported', 'expression controls cannot be copied');
     case 'plugin':
       return fail('unsupported', 'plugin panels cannot be copied');
   }

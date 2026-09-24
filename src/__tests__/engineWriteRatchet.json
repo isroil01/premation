@@ -1,6 +1,6 @@
 {
   "comment": "B3 ratchet (docs/B3_PATTERNS.md). Counts may only go DOWN; lower them with `node scripts/lint/engineWritesReport.mjs --update` after migrating.",
-  "total": 58,
+  "total": 57,
   "areas": {
     "text": 0,
     "inspector": 0,
@@ -9,7 +9,7 @@
     "effects": 0,
     "layers": 0,
     "comps/assets/dialogs": 3,
-    "AI/plugins/commands": 2,
+    "AI/plugins/commands": 1,
     "tools/core": 43,
     "other": 8
   }

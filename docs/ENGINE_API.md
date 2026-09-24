@@ -259,7 +259,7 @@ their `GroupId`, never by index.
 | Puppet pin | `puppet/<pinId>/position` … | `puppet.<pin>.*` |
 | Audio | `audio/levels`, `audio/pan` | `audioLevelDb`, `audioPan` |
 | Time remap / retime | `timeRemap`, `layer/timeSpeed` | `timeRemap`, `timeSpeed` |
-| Expression controls | `effects/<controlId>/<param>` | `ctrl_<name>` |
+| Expression controls | group `effects/ctrl_<name>`, value `effects/ctrl_<name>/<param>` (`slider`, `angle`, `point`, `color`, `checkbox`, `menu`, `layer`) — see §15.9 "Expression controls" | `ctrl_<name>[.x\|.y\|.r\|.g\|.b]` + `ctrlkind_<name>` on the Transform |
 | Layer-level params (solid colour, plugin layer params) | `layer/<param>`, `plugin/<param>` | component props |
 
 Non-animatable fields (mask mode, blend mode of a style, text box size…) are
@@ -1409,6 +1409,47 @@ the property is animated or auto-keyframe is on) or `setProperty` (static);
 IK/FK switch = a client macro (`planChainSwitch`) writing `mode`, rotations
 and `target`; a rig preset = `setProperty('layer/skeleton')`. 3D IK
 (Ik3DSection) is a client macro over transform rotation keys.
+
+#### Expression controls (B3, both engines)
+
+After Effects' Expression Controls are effects, so a control is a property
+group under `effects`, addressed by `ctrl_<name>` — its NAME is its id,
+because `ctrl('<name>')` resolves by name. The generic group commands and the
+generic value commands (`setProperty`, `addKeyframes`, …, expressions) apply;
+no control-specific command. Storage is unchanged: one number per component on
+the layer's Transform, `ctrl_<name><suffix>`, plus the kind marker
+`ctrlkind_<name>` (absent = slider, as pre-kind projects have it), so keys,
+`ctrl()` expressions and saved documents behave exactly as before. The kind
+table is DATA shared by both engines: `src/core/engine/controlSpecs.ts`
+(generated into the C++ catalog as `fields.control`); bindings
+`src/core/engine/controlProps.ts` ⇄ `native/engine/src/core/controls.cpp`.
+
+| Match name (`listGroupTypes` parent `effects`, category `controls`) | Value path | Value type | Stored numbers | New value |
+|---|---|---|---|---|
+| `ADBE Slider Control` | `…/slider` ("Slider") | scalar | `ctrl_<n>` | 50 |
+| `ADBE Angle Control` | `…/angle` ("Angle", °) | scalar | `ctrl_<n>` | 0 |
+| `ADBE Point Control` | `…/point` ("Point", px) | vec2 | `ctrl_<n>.x`, `.y` | 0, 0 |
+| `ADBE Color Control` | `…/color` ("Color") | color — r/g/b are the stored numbers AS STORED (0–255, what `ctrl('<n>.r')` returns); alpha is not stored and reads 1 | `ctrl_<n>.r`, `.g`, `.b` | 255, 255, 255 |
+| `ADBE Checkbox Control` | `…/checkbox` | scalar 0 / 1 | `ctrl_<n>` | 0 |
+| `ADBE Dropdown Control` | `…/menu` ("Menu") | scalar (the selected index) | `ctrl_<n>` | 0 |
+| `ADBE Layer Control` | `…/layer` | scalar (the referenced layer's index) | `ctrl_<n>` | 0 |
+
+- `addPropertyGroup{parent:'effects', matchName, name?, init}` adds one to the
+  layer (it must have a Transform): named `name` (trimmed), else the next free
+  "Slider 1"-style name across the document (a point's base name counts as
+  taken by `<n>.x`). A name that is empty or contains `/` is
+  `invalidArgument`; one the layer's controls (or stored keys) already use is
+  `conflict`; `index` is `unsupported` (controls keep the order they were
+  added in, after the layer's effects). Returns `effects/ctrl_<name>`.
+- `removePropertyGroups` drops the numbers, the marker and every key /
+  expression on them. `renamePropertyGroup` moves all of those to the new
+  name — the group's PATH changes with it (the id is the name); expressions
+  that referenced the old name are not rewritten (AE's behaviour).
+- `movePropertyGroup`, `duplicatePropertyGroups`, `copyPropertyGroups`,
+  `setGroupEnabled` answer `unsupported`.
+- Reading: a number `ctrl_<s>` belongs to the kinded control whose name +
+  component suffix spells `s`, else it is a slider named `s`; names that are
+  empty or contain `/` are not exposed.
 
 #### Layer fields (B3z-a, both engines)
 

@@ -8,6 +8,7 @@
 #include <set>
 
 #include "catalog_data.hpp"
+#include "controls.hpp"
 #include "fail.hpp"
 #include "fields.hpp"
 #include "rig.hpp"
@@ -239,9 +240,19 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     add(std::move(b));
     for (const Json& spec : registry().fields.at("effect").arr()) add(effect_field_binding(effectId, spec));
   };
+  // B3: expression controls (controls.hpp) — `effects/ctrl_<name>/<param>`,
+  // claiming their stored numbers' rows.
+  std::vector<PropBinding> controls = control_bindings(node);
+  std::set<std::string, std::less<>> controlMembers;
+  for (const PropBinding& b : controls) controlMembers.insert(b.members.begin(), b.members.end());
+
   for (const StaticPropertyRow& row : rows) {
     // Effect Opacity is listed for EVERY effect below (B3z), not only once touched.
     if (effect_opacity_row(row.prop)) continue;
+    if (!row.members.empty() &&
+        std::all_of(row.members.begin(), row.members.end(), [&](const std::string& m) { return controlMembers.contains(m); })) {
+      continue;
+    }
     if (row.maskTrack || row.prop == kMaskAnimProp) {
       if (mask) {
         for (const Json& p : mask->at("paths").arr()) add_mask_props(p);
@@ -301,6 +312,8 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     b.defaultValue = default_for(vt, row.members, node, meta.defaultValue);
     add(std::move(b));
   }
+
+  for (PropBinding& b : controls) add(std::move(b));
 
   // Separated position: the combined property still exists (not animatable).
   if (cat.byPath.contains("transform/position/x")) {
@@ -508,6 +521,7 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       rig->path = path;
       return *rig;
     }
+    if (auto control = control_group_info(node, path)) return *control;
     const std::vector<std::string> seg = split(path, '/');
     auto str_or = [](const Json& v, const std::string& fb) {
       if (v.is_undefined() || v.is_null()) return fb;
@@ -640,6 +654,7 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     }
   };
   for (const Json& e : effects) ensure_group("effects/" + (e.at("id").is_string() ? e.at("id").str() : std::string("undefined")));
+  for (const LayerControl& c : read_controls(node)) ensure_group(control_group_path(c.name));
   if (mask) {
     for (const Json& p : mask->at("paths").arr()) ensure_group("masks/" + (p.at("id").is_string() ? p.at("id").str() : std::string("undefined")));
   }

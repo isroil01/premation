@@ -1919,6 +1919,52 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     await h.run({ type: 'undo' });
   },
 
+  'B3: expression controls — every kind, auto names, init, keys, ctrl() expressions, rename, remove, refusals — save → open': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const { layer: a } = await h.run({ type: 'createLayer', comp, kind: 'null', name: 'Rig', init: [] });
+    const { layer: b } = await h.run({ type: 'createLayer', comp, kind: 'solid', name: 'Driven', init: [] });
+    const add = (layer: string, matchName: string, extra: { name?: string; index?: number; init?: Array<{ path: string; value: ReturnType<typeof scalar> | ReturnType<typeof v2> }> } = {}) =>
+      h.run({ type: 'addPropertyGroup', layer, parent: 'effects', matchName, init: extra.init ?? [], ...(extra.name !== undefined ? { name: extra.name } : {}), ...(extra.index !== undefined ? { index: extra.index } : {}) });
+    await h.query({ type: 'listGroupTypes', layer: a, parent: 'effects' });
+    const { groups: [slider] } = await add(a, 'ADBE Slider Control');
+    const { groups: [point] } = await add(a, 'ADBE Point Control', { init: [{ path: 'point', value: v2(5, 6) }] });
+    await add(a, 'ADBE Color Control');
+    await add(a, 'ADBE Checkbox Control');
+    await add(a, 'ADBE Dropdown Control');
+    await add(a, 'ADBE Layer Control');
+    const { groups: [angle] } = await add(b, 'ADBE Angle Control', { name: 'Spin' });
+    await add(b, 'ADBE Slider Control', { name: 'Spin' }).catch(ignore);
+    await add(b, 'ADBE Slider Control', { name: 'x/y' }).catch(ignore);
+    await add(b, 'ADBE Slider Control', { index: 0 }).catch(ignore);
+    await add(b, 'ADBE Nope Control').catch(ignore);
+    await h.run({ type: 'setProperty', prop: P(a, `${point}/point`), value: v2(10, 20) });
+    await h.run({ type: 'setProperty', prop: P(a, 'effects/ctrl_Color 1/color'), value: { kind: 'color', value: { r: 12, g: 34, b: 56, a: 1 } } });
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: P(a, `${slider}/slider`), time: sec(0), value: scalar(0), spatialIn: [], spatialOut: [] },
+      { prop: P(a, `${slider}/slider`), time: sec(1), value: scalar(90), spatialIn: [], spatialOut: [] },
+    ] });
+    await h.run({ type: 'setProperty', prop: P(b, `${angle}/angle`), value: scalar(45), time: sec(0.5) }).catch(ignore);
+    await h.run({ type: 'setExpression', prop: P(b, 'transform/rotation'), source: "ctrl('Slider 1') + ctrl('Spin')", enabled: true });
+    await h.query({ type: 'getPropertyValues', props: [P(b, 'transform/rotation'), P(a, `${point}/point`)], time: sec(0.5), evaluated: true });
+    await h.run({ type: 'renamePropertyGroup', group: P(a, slider!), name: 'Drive' });
+    await h.run({ type: 'renamePropertyGroup', group: P(a, point!), name: 'Spin' });
+    await h.run({ type: 'renamePropertyGroup', group: P(a, point!), name: 'Aim' }).catch(ignore);
+    await h.run({ type: 'setGroupEnabled', groups: [P(b, angle!)], enabled: false }).catch(ignore);
+    await h.run({ type: 'movePropertyGroup', group: P(b, angle!), toIndex: 0 }).catch(ignore);
+    await h.run({ type: 'duplicatePropertyGroups', groups: [P(b, angle!)] }).catch(ignore);
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'removePropertyGroups', groups: [P(a, 'effects/ctrl_Checkbox 1'), P(b, angle!)] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'saveProject', path: 'C:/p/controls.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/controls.motion' });
+    for (const id of [a, b]) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    await h.query({ type: 'getPropertyValues', props: [P(b, 'transform/rotation')], time: sec(0.25), evaluated: true });
+  },
+
   'B3z: Layer Above track matte and latent text Tracking / Leading — save → open': async (h) => {
     const comp = 'comp_root';
     const P = (layer: string, path: string) => ({ layer, path });
