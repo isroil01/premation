@@ -18,6 +18,7 @@
 
 import type { Command, ImportBytesFile, InterpretationPatch } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
+import { diskPathOf } from '@core/assets/local/diskPathOf';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { layersUsingItem } from '@core/engine/doc';
 import { rateOf } from '@layout/Composition/compositionEdits';
@@ -86,12 +87,6 @@ export interface BrowserFileImport {
   folderId?: string | null;
 }
 
-/** The `File`'s disk path when Electron exposes one (kept as the item's origin). */
-function originPathOf(file: File): string | undefined {
-  const p = (file as File & { path?: unknown }).path;
-  return typeof p === 'string' && p.length > 0 ? p : undefined;
-}
-
 /** A Blob's bytes (FileReader where `arrayBuffer` is missing — older runtimes, jsdom). */
 function blobBytes(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
@@ -104,7 +99,7 @@ function blobBytes(blob: Blob): Promise<ArrayBuffer> {
 }
 
 async function bytesFileOf({ file, folderId }: BrowserFileImport): Promise<ImportBytesFile> {
-  const origin = originPathOf(file);
+  const origin = diskPathOf(file);
   return {
     name: file.name,
     data: new Uint8Array(await blobBytes(file)),
