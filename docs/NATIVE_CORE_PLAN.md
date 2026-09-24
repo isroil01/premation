@@ -182,6 +182,24 @@ in parallel.
 | B4 | The UI reads through a mirror fed by change events | Inspector/timeline render from the mirror only | 3 wk |
 | B5 | AI tools, scripts and plugins call the same API; command logs can be recorded and replayed | Replay of recorded sessions reproduces documents exactly | 2 wk |
 
+**B4 / B5 status (2026-09-24).** **B5 exit met** for everything the API
+addresses: UI edits, AI turns (one gesture, origin `ai`), user scripts (a
+sandboxed Worker speaking the protocol, one gesture, origin `script`) and now
+the plugin verbs (compositions, properties, effect parameters, keyframes in
+layer time, subtree delete; origin `plugin`) are engine commands, and a
+recorded session of them replays into a fresh engine with a byte-identical
+saved project (and an equal undo stack; `src/core/automation/commandLog.test.ts`).
+What still writes around the engine is a NAMED fallback, counted by a new
+ratchet (`npm run lint:automation-writes`: 133 sites — AI 92, plugins 41,
+scripts 0); a recording that reaches one reports `writesAroundEngine > 0`, and
+an AI turn that does commits as one snapshot entry (ENGINE_API.md §15.6). **B4**: the read ratchet is at 765 (from 852;
+1543 before the panel work): engine wiring left the UI shell (expression
+providers, timeline upkeep, the plugin write hook), and the rule stops counting
+session state and camera-tool dispatch. What remains is listed by category with
+reasons in `docs/B4_MIRROR.md` §5 — per-frame viewport reads (the mirror is
+asynchronous) and the page renderer's inputs stay until C/D5; the rest are
+ordinary panel conversions. UI writes stay at 0.
+
 ### Phase C — The engine process and the viewport
 
 | Step | What | Exit | Size |

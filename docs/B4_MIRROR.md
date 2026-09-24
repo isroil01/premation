@@ -122,3 +122,46 @@ commit. Files are CRLF: use the Edit tool, never `sed -i`. Never start Vite.
   but not which one.
 - Stroke-stack units (taper length units, wave units) used by the metadata
   registry.
+
+## 5. What is left (2026-09-24: 765 reads, from 852)
+
+The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools
+239, other 135, inspector 112, timeline 69, AI/plugins/commands 66,
+comps/assets/dialogs 61, layers 41, text 25, effects 17. By kind: helper 452,
+singleton 153, store 67, revision 46, timeline 42, viewport 5.
+
+What came off in the B4 finish, and why each is sound:
+
+- **Engine wiring out of the UI shell.** The expression engine's providers
+  (`layer()`, `thisComp`, `sourceRectAtTime`, `toComp`, `marker`, `ctrl()`,
+  audio level, the change sink) moved from `Providers.tsx` to
+  `core/engine/expressionProviders.ts`; App's `SceneGraphChanged →
+  syncFromScene` bar upkeep to `core/engine/timelineUpkeep.ts`; PluginHost's
+  write-path hook to `plugins/authoredWriteHook.ts`. They read the TS
+  engine's document because they ARE the engine; they leave with it (D1).
+  Plugin management (`pluginHost.*` — install, list, logs, panels) no longer
+  counts as a document read.
+- **Classification.** A @core module that uses `useProjectStore` is an engine
+  reader only when it mentions `comps` (rule D's own test — tabs, dirty flags
+  and the active tab are session state). Camera-navigation dispatch
+  (`orbitNavBy`, `trackNavBy`, `dollyNavBy`, `smoothDollyNavBy`,
+  `cancelSmoothDolly`) is a tool operation in the engine-side tool port, not a
+  read (`TOOL_DISPATCH` in the rule); choosing the camera
+  (`findNavTarget`, `resolveOrbitPivot`) stays counted.
+- **Conversions.** The timeline stopwatch / key diamond (`appEdits`) decide
+  "animated" from the mirror's key list.
+
+The remaining reads fall into these categories. The first three stay until
+their owner moves into the engine process; the rest are ordinary conversions
+(§1) that were not sound to do blind.
+
+| Category | ≈ Sites | Why it is still a direct read |
+|---|---|---|
+| **Per-frame playhead reads in the viewport** — overlays and gizmos (motion path, puppet / bone / IK, gradient and focus-plane handles, text-edit box, 3D axis widget, paint space, track points) drawing evaluated geometry (`readGeometry`, `motionPath*`, world matrices, `sample`, `evaluateNode`) | 75 | They redraw on every played frame. The mirror is asynchronous — `valueAt` answers the last known value until a batched `getPropertyValues` lands — and a query per played frame is forbidden (§2). They move with the viewport (C/D5): the engine returns `getLayerTransforms` / `getMotionPath` / `hitTest` answers with the frame it renders. **Left on purpose.** |
+| **The TypeScript renderer's inputs in the page** — `useViewportRenderer`, `useLayerViewerRenderer`, Presentation, Source Monitor, export preview (`buildSnapshot`, `compSizeOf`, snapshot signatures) | 32 | The renderer still runs in the page and its input IS the engine's document; D5 moves it into the engine process behind the flag. Not a display read to convert. |
+| **Engine jobs run from the UI** — tracking / scene-edit detection / auto-trace / bake (`@core/tracking`, `sceneEditCommand`, `bakeCommands`), and the command builders the palette calls (`build*Commands`) | 35 | Analysis that reads pixels and the document engine-side and returns commands. The API has `startJob` but these jobs are not registered as engine jobs yet (G-phase). |
+| **Legacy revision plumbing** — `useSceneRevision`, `useNodeRevision`, bus `AnimationChanged` / `SceneGraphChanged` / `NodeUpdated` subscriptions | 46 | Re-render triggers of components that still read the scene graph; each goes when its component reads the mirror (a `useMirror*` subscription replaces it). |
+| **Timeline controller** — clip geometry, `getLayersForNode`, markers, `getRemappedTime` in clip-edit commands, fit, the multicam viewer | 42 | The mirror carries `layer.timing` and markers; callers that need clip GEOMETRY (bars after stretch / remap, `clipGeometrySignature`) have no mirror field yet. |
+| **App-shell commands** (`Providers.tsx` 73, `App.tsx` 28) — command-palette `enabled` predicates, Select All, selection pruning on scene change, the property-reveal commands | ~100 | Each predicate reads a node / kind / animated fact at call time; convertible one by one to `documentMirror()` + `uiKindOf` / `isTrackAnimated`, but several rely on non-catalog tracks (legacy data tracks) the mirror does not list. |
+| **Panels not converted yet** — Layers tree (`sceneRows`: built from a `SceneGraph` the ordering tests pass in), Inspector tracker / paragraph / bone / mograph / SVG sections, Character panel, effect browser previews, export form, asset assembly | ~250 | Ordinary §1 conversions; several touch the §4 gaps (modifier stacks, per-member expressions, plugin layer kinds, stroke units) and keys outside the catalog (a mirror conversion would silently drop them). |
+| **Keyframe assistants / stagger** (`appEdits` `layerKeys`, `hasKeys`) | 6 | The legacy assistants act on EVERY stored track, including tracks outside the catalog; the mirror lists API properties only, so converting would change which keys move. Needs the catalog to cover those tracks first (B3z/G1). |

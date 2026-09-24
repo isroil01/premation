@@ -1133,6 +1133,37 @@ Gaps B5 found on the engine side were closed in G2 (§15.8): gesture ids are in 
 id counters, the app's undo/redo/jump send engine requests, and `applyPreset`
 converts to the layer's keyframe axis.
 
+**B5 finish (2026-09-24).** Plugins call the same commands as the UI (§12), origin
+`plugin`, one entry per call named after the plugin: `composition.create / rename /
+delete` → `createComposition` / `renameItem` / `removeItems` (+ the pristine
+placeholder when the last composition goes); `scene.setProperty` (a static field or
+one numeric member) → `setProperty`, a key at the playhead when animated;
+`effects.setParam` → `setProperty` of `effects/<id>/<key>`;
+`animation.setKeyframe / setKeyframes / removeKeyframe` → `addKeyframes` /
+`setKeyframes` / `deleteKeyframes` (the plugin API speaks LAYER time; the host converts
+with `keyframeToCompTime`); `scene.deleteLayer` of a layer with children → ONE
+`deleteLayers` of the subtree (`doc.layerSubtree`). The AI tools `delete_layer` on a
+parent, `update_layer`'s track matte (`setTrackMatte`) and material options
+(`setProperties` of the `material/*` rows) moved too. The builders are shared —
+`src/core/engine/trackWrites.ts` (key targets, effect params, static writes, track
+matte, playhead) — so the AI facades, the plugin host and the Inspector cannot drift.
+A recorded plugin + AI session (commandLog.test.ts) is exact (`writesAroundEngine` 0)
+and replays to a byte-identical saved project.
+
+What still writes AROUND the engine is pinned by the B5 ratchet
+(`npm run lint:automation-writes`, `scripts/lint/automationWritesReport.mjs`,
+`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites — ai 92, plugins 41,
+scripts/automation 0. Every one is a named fallback, not a default path: `LEGACY_GAPS`
+in toolContext.ts (kinds the layer factory lacks, caller-chosen effect ids, NTSC comp
+rates, puppet rigs, points data keys, per-member keys the API cannot address, a
+refusal); the plugin layer-kind machinery (`plugin:<id>/<kind>` creation, proxy
+subtrees, structured props, inspector params, param supervision — the TS engine
+refuses `component` layers); `scene.apply` (its all-or-nothing guarantee is a
+synchronous document snapshot; as an engine gesture it needs an abort that reverts
+on the first failing op); `animation.setExpression` from a plugin (the stored
+expression carries its owner plugin id; `setExpression` has no owner field); colour
+channel and non-Position vector keyframes from a plugin; composition-less nodes.
+
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 
 **Fields.** Everything a layer stores outside its keyframe tracks that the UI
