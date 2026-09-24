@@ -205,6 +205,32 @@ made every transfer time out); the viewport tells the engine a preview size
 and pixel ratio, not a window rectangle. Dawn comes from vcpkg's `dawn` port
 behind a manifest feature `engine`: 16 min clean build, 565 MB cache.
 
+**C4 result (2026-09-23, audited and finished 2026-09-24):** Electron
+32.1.2 → **44.4.5** (latest stable; Chromium 152, Node 24), pinned exactly
+because `sharedTexture` is still experimental; electron-builder 24 → 26.15.3
+(latest). The 33–44 breaking-change notes were walked against the code:
+custom-scheme URL parsing (33, `localFileUrl.ts`), `console-message` details
+on the event (35, render-tests harness), no `postinstall` download and
+Node ≥ 22.12 (42, CI on Node 22), dialogs defaulting to Downloads (43,
+`dialogDirs.ts`), better-sqlite3 13 (N-API). `protocol.handle` and
+`WebContentsView`-era APIs were already in use (no `BrowserView`, no
+`protocol.register*Protocol`), every window is `sandbox: true`, and 44's
+32-bit/ANGLE/clipboard/`net.request` changes touch nothing here. The one
+missed site was Electron 32's removal of `File.path`: two importers still
+read it, so dropped files lost their origin path; they now use
+`webUtils.getPathForFile` through the preload (`motionEditor.file.pathOf`,
+`src/core/assets/local/diskPathOf.ts`). **Exit met** on the owner's machine
+(render-tests green ×2, real-app export crash/retry/editor-killed, Render
+Queue, route C in the real window). On a Linux/SwiftShader box, jest,
+lint, tsc and e2e 11/11 (CLI hidden-window render included) pass; render-tests
+there flag `ext-text-depth-300` (webgpu 2.55 %) and
+`fill-opacity-zero-inner-shadow` (webgpu 3.61 % vs its 3.29 % ceiling)
+identically on 44.4.3 and 44.4.5, so that is a host difference, not the
+upgrade. Not re-blessed from that host. **Next upgrade:** sync `safeStorage`
+(three vaults) is deprecated in 45 and removed in 46; move to the async
+methods first. 46 also stops `utilityProcess.kill()` escalating to SIGKILL:
+check that the native plugin host's kill still ends a hung plugin child.
+
 **C3 result (2026-09-23, `docs/ENGINE_API.md` §15.5):** the C++ engine is a
 second `EngineClient` backend (`ProcessEngineClient`), selected by
 `PREMATION_ENGINE=process` (default off) and wired end to end: supervisor in
