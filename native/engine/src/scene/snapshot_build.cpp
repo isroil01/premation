@@ -759,11 +759,6 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   }
   with_text_more_options(out, n, a);  // textMoreOptions + OpenType switches (text_port.cpp)
   if (!out.obj().empty()) l.textExtras = std::move(out);
-  for (const auto& c : n.components) {
-    if (c.type != "Text") continue;
-    const Json& p = c.props;
-    if (p.at("boxWidth").is_number() && p.at("boxWidth").num() > 0) unported(l, n, "paragraph text (box wrapping)");
-  }
   if (doc::read_text_path_config(n)) l.textPath = resolve_layer_text_path(n, a);  // text_port.cpp
   l.textStrokePaint = text_stroke_paint(n, a);                                     // text_port.cpp
   const Json axes = doc::read_font_axes_prop(n);
@@ -1214,6 +1209,9 @@ void Walk::build_node(const doc::Node& n) {
     if (tc != nullptr && tc->props.at("__runs").is_array() && !tc->props.at("__runs").arr().empty()) {
       l.runs = normalize_runs(tc->props, *l.text);
     }
+    // Paragraph text renders WRAPPED (wrappedLayerText, text_port.cpp) — after the animators
+    // and runs, which index the raw text.
+    if (std::string why = paragraph_layer(l, n, c_.measurer, *l.text); !why.empty()) unported(l, n, why);
   }
   // Temporal ghosts (Echo / Wide Time).
   for (const Json& e : l.effects) {

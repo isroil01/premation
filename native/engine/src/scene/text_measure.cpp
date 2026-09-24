@@ -14,6 +14,7 @@
 #include "canvas.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
+#include "line_break.hpp"
 #include "optical_kerning.hpp"
 #include "scene_math.hpp"
 #include "text_runs.hpp"
@@ -69,9 +70,18 @@ class CanvasMeasurer final : public TextMeasurer {
  public:
   explicit CanvasMeasurer(raster::CanvasOptions opts) : opts_(opts) {}
 
-  std::optional<std::pair<double, double>> measure_text_size(const MeasuredStyle& s) override {
-    if (s.vertical || s.boxWidth || s.hasFontAxes || s.fontWidth || s.fontSlant) return std::nullopt;
-    if (s.textTransform == "capitalize") return std::nullopt;
+  std::optional<std::pair<double, double>> measure_text_size(const MeasuredStyle& input) override {
+    if (input.vertical || input.hasFontAxes || input.fontWidth || input.fontSlant) return std::nullopt;
+    if (input.textTransform == "capitalize") return std::nullopt;
+    // Paragraph text measures its WRAPPED content (measureTextSize → wrappedStyle).
+    std::optional<MeasuredStyle> wrapped;
+    if (input.boxWidth) {
+      // Line runs restack the lines, and an anchored auto-height box offsets them: not ported.
+      if (input.hasLineRuns || (!input.boxHeight && input.boxAnchorHeight)) return std::nullopt;
+      wrapped = wrapped_style(input, nullptr);
+      if (!wrapped) return std::nullopt;
+    }
+    const MeasuredStyle& s = wrapped ? *wrapped : input;
     const std::scoped_lock lock(m_);
     // A pure function of the style: memoised (the TS caches measureTextBoxes the
     // same way), so a paused or playing frame re-shapes only text that changed.
@@ -116,6 +126,8 @@ class CanvasMeasurer final : public TextMeasurer {
     k += s.fauxBold ? '1' : '0';
     k += s.fauxItalic ? '1' : '0';
     k += s.opticalKerning ? 'o' : '-';
+    opt(s.boxWidth);
+    opt(s.boxHeight);
     k += s.fontFamily;
     k += '\x02';
     k += s.fontWeight;
@@ -197,8 +209,104 @@ class CanvasMeasurer final : public TextMeasurer {
     const double halfH = (motion::js::max_of(hh) + fauxH) * tr.sy + std::abs(tr.dy);
     const double width = halfW * 2;
     const double height = std::max(lineBlock * tr.sy + std::abs(tr.dy) * 2, halfH * 2);
-    return std::pair<double, double>{std::max(16.0, std::ceil(width) + kPadX * 2), std::max(16.0, std::ceil(height) + kPadY * 2)};
+    // Paragraph text's width is AUTHORED; a FIXED box is authored in both directions.
+    const double w = s.boxWidth ? std::max(16.0, std::ceil(*s.boxWidth) + kPadX * 2) : std::max(16.0, std::ceil(width) + kPadX * 2);
+    const double h = s.boxWidth && s.boxHeight ? std::max(16.0, std::ceil(*s.boxHeight) + kPadY * 2)
+                                               : std::max(16.0, std::ceil(height) + kPadY * 2);
+    return std::pair<double, double>{w, h};
   }
+
+ public:
+  std::optional<MeasuredStyle> wrapped_style(const MeasuredStyle& s, std::string* why) override {
+    // wrappedStyle: vertical type breaks its columns at layout time.
+    if (!s.boxWidth || s.vertical) return s;
+    if (s.boxFit && s.boxHeight) {
+      if (why != nullptr) *why = "paragraph text: Fit Text to Box";
+      return std::nullopt;
+    }
+    if (s.softBreakLines) return s;  // idempotent: already wrapped
+    const std::scoped_lock lock(m_);
+    const auto wrapped = wrap_text(s, why);
+    if (!wrapped) return std::nullopt;
+    MeasuredStyle out = s;
+    out.softBreakLines = soft_break_lines(s.content, *wrapped);
+    if (!out.softBreakLines) {
+      if (why != nullptr) *why = "paragraph text: inserted line breaks";
+      return std::nullopt;
+    }
+    out.content = *wrapped;
+    return out;
+  }
+
+ private:
+  /// measureText.ts wrapText: greedy word wrap at the box (less the indents);
+  /// each break REPLACES one space, so the wrapped string keeps its length.
+  std::optional<std::string> wrap_text(const MeasuredStyle& s, std::string* why) {
+    if (!ctx_) ctx_ = raster::Canvas2D::make(1, 1, opts_);
+    raster::Canvas2D& g = *ctx_;
+    const std::string style = s.fontStyle == "italic" ? "italic " : "";
+    const std::string font = style + s.fontWeight + " " + css_number(s.fontSize) + "px \"" + s.fontFamily + "\", Inter, system-ui, sans-serif";
+    if (!g.setFont(font)) return std::nullopt;
+    std::string variation = "normal";
+    {
+      const auto parsedWeight = js::parse(s.fontWeight);
+      const double wt = parsedWeight && parsedWeight->is_number() ? parsedWeight->num() : std::nan("");
+      if (std::isfinite(wt)) variation = "'wght' " + css_number(wt);
+    }
+    g.setFontVariationSettings(variation);
+    g.setFontKerning(!s.opticalKerning);
+    const auto advance = [&](const std::string& text) {
+      const auto chars = static_cast<double>(raster::split_graphemes(text).size());
+      return g.measureText(text).width + (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + optical_line_delta(s, style, text);
+    };
+    const double inner = *s.boxWidth - s.leftIndent.value_or(0) - s.rightIndent.value_or(0);
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    for (;;) {
+      const std::size_t nl = s.content.find('\n', start);
+      const std::string paragraph = s.content.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+      for (const std::string& c : raster::split_graphemes(paragraph)) {
+        if (raster::is_ideographic_unit(c)) {
+          if (why != nullptr) *why = "paragraph text: CJK line breaking";
+          return std::nullopt;
+        }
+      }
+      std::vector<std::string> words;
+      {
+        std::size_t ws = 0;
+        for (;;) {
+          const std::size_t sp = paragraph.find(' ', ws);
+          words.push_back(paragraph.substr(ws, sp == std::string::npos ? std::string::npos : sp - ws));
+          if (sp == std::string::npos) break;
+          ws = sp + 1;
+        }
+      }
+      std::string line = words[0];
+      bool first = true;
+      for (std::size_t w = 1; w < words.size(); ++w) {
+        const std::string& word = words[w];
+        const std::string candidate = line + " " + word;
+        const double limit = inner - (first ? s.firstLineIndent.value_or(0) : 0);
+        if (!raster::is_js_blank(line) && !word.empty() && advance(candidate) > limit) {
+          out.push_back(line);
+          line = word;
+          first = false;
+        } else {
+          line = candidate;
+        }
+      }
+      out.push_back(line);
+      if (nl == std::string::npos) break;
+      start = nl + 1;
+    }
+    std::string joined;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      if (i > 0) joined += '\n';
+      joined += out[i];
+    }
+    return joined;
+  }
+ private:
 
   /// measureText.ts opticalLineDelta: the sum of the pair kerns the painter adds.
   double optical_line_delta(const MeasuredStyle& s, const std::string& style, const std::string& line) {
@@ -294,7 +402,63 @@ std::optional<MeasuredStyle> read_measured_text_style(const doc::Node& n,
   if (s.baselineShift == 0) s.baselineShift.reset();
   const Json axes = doc::read_font_axes_prop(n);
   s.hasFontAxes = axes.is_object() && !axes.obj().empty();
+  if (s.boxWidth) {
+    // readLineRuns: runs that change a line's size or leading.
+    for (const auto& c : n.components) {
+      if (c.type != "Text" || !c.props.at("__runs").is_array()) continue;
+      for (const Json& r : c.props.at("__runs").arr()) {
+        const Json& st = r.at("style");
+        const auto pos = [&st](const char* k) { return st.at(k).is_number() && st.at(k).num() > 0; };
+        if (st.is_object() && (pos("fontSize") || pos("lineHeight"))) s.hasLineRuns = true;
+      }
+    }
+    // readParagraphBox (text on a path has none: boxWidth was already dropped above).
+    double bw = 0;
+    double bh = 0;
+    std::string autoSize;
+    std::string valign = "top";
+    const auto read = [&](const Json& p) {
+      if (p.at("boxWidth").is_finite_number()) bw = p.at("boxWidth").num();
+      if (p.at("boxHeight").is_finite_number()) bh = p.at("boxHeight").num();
+      if (p.at("boxAutoSize").is_string()) {
+        const std::string& a = p.at("boxAutoSize").str();
+        if (a == "off" || a == "height" || a == "fit") autoSize = a;
+      }
+      if (p.at("boxVerticalAlign").is_string()) {
+        const std::string& v = p.at("boxVerticalAlign").str();
+        if (v == "top" || v == "center" || v == "bottom") valign = v;
+      }
+    };
+    for (const auto& c : n.components) read(c.props);
+    for (const auto& [k, v] : overrides) {
+      if (k == "boxWidth" && std::isfinite(v)) bw = v;
+      else if (k == "boxHeight" && std::isfinite(v)) bh = v;
+    }
+    if (bw > 0) {
+      const std::string resolved = bh > 0 ? (autoSize.empty() ? "off" : autoSize) : "height";
+      if (resolved != "height") {
+        s.boxHeight = bh;
+        if (valign != "top") s.boxVerticalAlign = valign;
+        s.boxFit = resolved == "fit";
+      } else if (bh > 0 && !s.vertical) {
+        s.boxAnchorHeight = bh;
+      }
+    }
+  }
   return s;
+}
+
+std::optional<std::vector<int>> soft_break_lines(std::string_view raw, std::string_view wrapped) {
+  if (raw.size() > wrapped.size()) return std::vector<int>{};
+  if (raw.size() < wrapped.size()) return std::nullopt;  // inserted breaks (CJK): not ported
+  std::vector<int> out;
+  int line = 0;
+  for (std::size_t i = 0; i < wrapped.size(); ++i) {
+    if (wrapped[i] != '\n') continue;
+    if (raw[i] != '\n') out.push_back(line);
+    ++line;
+  }
+  return out;
 }
 
 std::unique_ptr<TextMeasurer> make_canvas_measurer(const raster::CanvasOptions& opts) {

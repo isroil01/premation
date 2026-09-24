@@ -11,6 +11,7 @@
 #include "eval.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
+#include "text_measure.hpp"
 #include "text_unicode.hpp"
 
 namespace premation::scene {
@@ -257,6 +258,54 @@ Json text_stroke_paint(const doc::Node& n, const Values& a) {
     return out;
   }
   return Json();
+}
+
+std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measurer, const std::string& raw) {
+  // wrappedLayerText: hasTextPath ? 0 : readNumProp(node, 'boxWidth').
+  if (doc::read_text_path_config(n)) return {};
+  std::optional<double> bw;
+  for (const auto& c : n.components) {
+    if (c.props.at("boxWidth").is_number()) {
+      bw = c.props.at("boxWidth").num();
+      break;
+    }
+  }
+  if (!bw || !(*bw > 0)) return {};
+  if (measurer == nullptr) return "paragraph text (no fonts)";
+  auto style = read_measured_text_style(n, {{"boxWidth", *bw}});
+  if (!style) return {};
+  style->content = raw;
+  std::string why;
+  const auto wrapped = measurer->wrapped_style(*style, &why);
+  if (!wrapped) return why.empty() ? "paragraph text (box wrapping)" : why;
+  if (style->hasLineRuns) return "paragraph text: runs that change line height";
+  l.text = wrapped->content;
+  // textExtrasForNode(node, style.softBreakLines, …).
+  Json x = l.textExtras.is_object() ? l.textExtras : Json::object();
+  std::string align;
+  for (const auto& c : n.components) {
+    if (c.props.at("align").is_string()) align = c.props.at("align").str();
+  }
+  const auto nz = [&x](const char* k) { return x.at(k).is_number() && x.at(k).num() != 0; };
+  const bool needsLines = align.starts_with("justify") || nz("leftIndent") || nz("rightIndent") || nz("firstLineIndent") ||
+                          nz("spaceBefore") || nz("spaceAfter") ||
+                          (x.at("direction").is_string() && (x.at("direction").str() == "rtl" || x.at("direction").str() == "auto"));
+  if (needsLines && wrapped->softBreakLines) {
+    Json lines = Json::array();
+    for (const int ln : *wrapped->softBreakLines) lines.arr_mut().push_back(Json::number(ln));
+    x.set("softBreakLines", std::move(lines));
+  }
+  // readParagraphBox(node) — no overrides here, as textExtrasForNode reads it.
+  const auto box = read_measured_text_style(n, {});
+  if (box && box->boxHeight) {
+    x.set("boxHeight", Json::number(*box->boxHeight));
+    if (!box->boxVerticalAlign.empty()) x.set("boxVerticalAlign", Json::string(box->boxVerticalAlign));
+    if (box->boxFit) return "paragraph text: Fit Text to Box";
+  } else if (box && box->boxAnchorHeight) {
+    return "paragraph text: anchored auto-height box";
+  }
+  if (!x.obj().empty()) l.textExtras = std::move(x);
+  return {};
 }
 
 double text_raster_padding(const RLayer& l) {

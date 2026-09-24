@@ -18,6 +18,8 @@
 
 namespace premation::scene {
 
+class TextMeasurer;
+
 /// `flattenMaskPath(path, perSegment)` on a stored MaskPath: `{pts, closed}` as
 /// a JSON object ({"pts": [{x, y}…], "closed": bool}).
 [[nodiscard]] Json flatten_mask_path(const Json& maskPath, int perSegment = 24);
@@ -47,6 +49,13 @@ void with_text_more_options(Json& extras, const doc::Node& n, const Values& a);
 /// `applyGradientTracks(readTextStrokePaint(node), a, TEXT_STROKE_GRADIENT_TRACKS)`:
 /// the text stroke's linear / radial gradient (undefined for a solid stroke).
 [[nodiscard]] Json text_stroke_paint(const doc::Node& n, const Values& a);
+
+/// buildSnapshot's paragraph text: `wrappedLayerText` (l.text = the wrapped
+/// raw text) and textExtrasForNode's paragraph fields (softBreakLines when a
+/// justify / indent / spacing / rtl reads them, the fixed box's height and
+/// vertical alignment). Returns why the paragraph is not ported, "" when it is
+/// (or when the layer is point text).
+[[nodiscard]] std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measurer, const std::string& raw);
 
 /// vectorDraw.ts rasterPadding for a NON-shape layer: glyphSpread (animator
 /// escape) and textPathSpread, clamped to MAX_GLYPH_PAD (baked-effect bleed is
