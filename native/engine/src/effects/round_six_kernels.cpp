@@ -31,6 +31,44 @@ double or_one(double v) { return (v == 0 || std::isnan(v)) ? 1 : v; }
 
 }  // namespace
 
+std::vector<float> luma_alpha_field(RgbaView img, double blur_radius, ThreadPool* pool) {
+  const int w = img.w;
+  const int h = img.h;
+  const auto uw = static_cast<std::size_t>(w);
+  // lumaField: Float32 luma·alpha, then a clamped-count box (skip, not clamp,
+  // out-of-range taps) horizontally then vertically; float sums in tap order.
+  std::vector<float> field(img.pixels());
+  const std::uint8_t* s = img.data.data();
+  for (std::size_t i = 0; i < field.size(); ++i) {
+    field[i] = static_cast<float>(luma709(s[i * 4], s[i * 4 + 1], s[i * 4 + 2]) * (s[i * 4 + 3] / 255.0));
+  }
+  const int r = static_cast<int>(std::max(0.0, js::round(blur_radius)));
+  if (r > 0) {
+    for (int pass = 0; pass < 2; ++pass) {
+      std::vector<float> g(field.size());
+      for_rows(pool, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+          for (int x = 0; x < w; ++x) {
+            double sum = 0;
+            double cnt = 0;
+            for (int k = -r; k <= r; ++k) {
+              const int xx = pass == 0 ? x + k : x;
+              const int yy = pass == 0 ? y : y + k;
+              if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+              sum += static_cast<double>(field[static_cast<std::size_t>(yy) * uw + static_cast<std::size_t>(xx)]);
+              cnt += 1;
+            }
+            g[static_cast<std::size_t>(y) * uw + static_cast<std::size_t>(x)] =
+                cnt > 0 ? static_cast<float>(sum / cnt) : 0.0F;
+          }
+        }
+      });
+      field.swap(g);
+    }
+  }
+  return field;
+}
+
 void unmult(RgbaView img, double threshold, double boost, ThreadPool* pool) {
   const double thresh = std::max(0.0, std::min(0.99, threshold / 100));
   const double boost_gain = std::max(0.1, boost / 100);
@@ -307,37 +345,7 @@ void plastic(RgbaView img, double surface_bump, double softness, double light_an
   const int w = img.w;
   const int h = img.h;
   const auto uw = static_cast<std::size_t>(w);
-  // lumaField: Float32 luma·alpha, then a clamped-count box (skip, not clamp,
-  // out-of-range taps) horizontally then vertically; float sums in tap order.
-  std::vector<float> field(img.pixels());
-  const std::uint8_t* s = img.data.data();
-  for (std::size_t i = 0; i < field.size(); ++i) {
-    field[i] = static_cast<float>(luma709(s[i * 4], s[i * 4 + 1], s[i * 4 + 2]) * (s[i * 4 + 3] / 255.0));
-  }
-  const int r = static_cast<int>(std::max(0.0, js::round(softness)));
-  if (r > 0) {
-    for (int pass = 0; pass < 2; ++pass) {
-      std::vector<float> g(field.size());
-      for_rows(pool, h, [&](int y0, int y1) {
-        for (int y = y0; y < y1; ++y) {
-          for (int x = 0; x < w; ++x) {
-            double sum = 0;
-            double cnt = 0;
-            for (int k = -r; k <= r; ++k) {
-              const int xx = pass == 0 ? x + k : x;
-              const int yy = pass == 0 ? y : y + k;
-              if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-              sum += static_cast<double>(field[static_cast<std::size_t>(yy) * uw + static_cast<std::size_t>(xx)]);
-              cnt += 1;
-            }
-            g[static_cast<std::size_t>(y) * uw + static_cast<std::size_t>(x)] =
-                cnt > 0 ? static_cast<float>(sum / cnt) : 0.0F;
-          }
-        }
-      });
-      field.swap(g);
-    }
-  }
+  const std::vector<float> field = luma_alpha_field(img, softness, pool);
   const double bump = (surface_bump / 100) * 8;
   const double la = light_angle * kDeg;
   const double lx = js::cos(la);

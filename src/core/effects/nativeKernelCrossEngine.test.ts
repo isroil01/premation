@@ -298,6 +298,20 @@ const CASES: Case[] = [
   C('scale-wipe', 'wide', { completion: 55, stretch: 4, direction: 200, centerX: -50, centerY: 5 }),
   C('plastic', 'small', { surfaceBump: 25, softness: 5, lightAngle: 45, lightIntensity: 100, specular: 50 }),
   C('plastic', 'tall', { surfaceBump: 80, softness: 0, lightAngle: 200, lightIntensity: 70, specular: 90 }),
+  C('glass', 'small', { bumpSoftness: 3, height: 50, displacement: 20, lightAngle: 45, lightIntensity: 100, shininess: 50 }),
+  C('glass', 'wide', { bumpSoftness: 0, height: 120, displacement: 60, lightAngle: 250, lightIntensity: 60, shininess: 100 }),
+  C('texturize', 'small', { pattern: 0, contrast: 50, scale: 100, lightAngle: 45 }),
+  C('texturize', 'small', { pattern: 1, contrast: 80, scale: 60, lightAngle: 135 }),
+  C('texturize', 'tall', { pattern: 2, contrast: 40, scale: 150, lightAngle: -30 }),
+  C('texturize', 'wide', { pattern: 3, contrast: 100, scale: 40, lightAngle: 90 }),
+  C('threads', 'small', { thickness: 6, spacing: 2, depth: 50 }),
+  C('threads', 'wide', { thickness: 3, spacing: 0, depth: 100 }),
+  C('chromatic-aberration', 'small', { amount: 5, aberrationMode: 0, falloff: 50 }),
+  C('chromatic-aberration', 'wide', { amount: 3.5, aberrationMode: 1, angle: 30 }),
+  C('hex-tile', 'small', { radius: 6, border: 30 }),
+  C('hex-tile', 'wide', { radius: 4.5, border: 0 }),
+  C('vector-blur', 'small', { amount: 8, angleOffset: 0, smoothness: 2 }),
+  C('vector-blur', 'tall', { amount: 15, angleOffset: 60, smoothness: 0 }),
 ];
 
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {

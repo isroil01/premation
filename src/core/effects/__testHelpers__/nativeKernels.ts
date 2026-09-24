@@ -37,6 +37,9 @@ import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteCh
 import { mosaicData, findEdgesData, embossData, roughenEdgesData, scatterData } from '../stylize';
 import { waveWarpData, turbulentDisplaceData, curlNoiseData } from '../warp';
 import {
+  glassData, texturizeData, threadsData, chromaticAberrationData, hexTileData, vectorBlurData,
+} from '../aeStylizeRoundFive';
+import {
   unmultData, ccCompositeData, compositeBlendMode, ccScatterizeData, radialFastBlurData, radialFastBlurModeOf, crossBlurData,
   scaleWipeData, plasticData,
 } from '../aeRoundSix';
@@ -416,6 +419,24 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'plastic':
       data.set(plasticData(data, w, h, n('surfaceBump', 25), n('softness', 5), n('lightAngle', 45), n('lightIntensity', 100), n('specular', 50)));
+      return;
+    case 'glass':
+      data.set(glassData(data, w, h, n('bumpSoftness', 3), n('height', 50), n('displacement', 20), n('lightAngle', 45), n('lightIntensity', 100), n('shininess', 50)));
+      return;
+    case 'texturize':
+      data.set(texturizeData(data, w, h, n('pattern', 1), n('contrast', 50), n('scale', 100), n('lightAngle', 45)));
+      return;
+    case 'threads':
+      data.set(threadsData(data, w, h, n('thickness', 6), n('spacing', 2), n('depth', 50)));
+      return;
+    case 'chromatic-aberration':
+      data.set(chromaticAberrationData(data, w, h, n('amount', 5), n('aberrationMode', 0), n('angle', 0), n('falloff', 50), n('centerX', 0), n('centerY', 0)));
+      return;
+    case 'hex-tile':
+      data.set(hexTileData(data, w, h, n('radius', 12), n('border', 30)));
+      return;
+    case 'vector-blur':
+      data.set(vectorBlurData(data, w, h, n('amount', 8), n('angleOffset', 0), n('smoothness', 2)));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

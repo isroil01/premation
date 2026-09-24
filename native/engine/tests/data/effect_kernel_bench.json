@@ -107,6 +107,12 @@
     { "effect": "radial-fast-blur", "args": { "amount": 30, "mode": 1 } },
     { "effect": "cross-blur", "args": { "radiusX": 15, "radiusY": 15 } },
     { "effect": "scale-wipe", "args": { "completion": 40, "stretch": 10 } },
-    { "effect": "plastic", "args": { "surfaceBump": 25, "softness": 5 } }
+    { "effect": "plastic", "args": { "surfaceBump": 25, "softness": 5 } },
+    { "effect": "glass", "args": { "bumpSoftness": 3, "height": 50, "displacement": 20 } },
+    { "effect": "texturize", "args": { "pattern": 1, "contrast": 50 } },
+    { "effect": "threads", "args": { "thickness": 6, "spacing": 2, "depth": 50 } },
+    { "effect": "chromatic-aberration", "args": { "amount": 5, "falloff": 50 } },
+    { "effect": "hex-tile", "args": { "radius": 12, "border": 30 } },
+    { "effect": "vector-blur", "args": { "amount": 8, "smoothness": 2 } }
   ]
 }

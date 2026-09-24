@@ -71,6 +71,10 @@ void plane_min_max(std::vector<float>& plane, int w, int h, int r, bool take_max
 /// stores and float sums in the TS's tap order (aeKeyingAdvanced.ts
 /// `boxBlurAlpha`, aeDistortAdvanced.ts `blurField`).
 void box_blur_plane(std::vector<float>& plane, int w, int h, double radius, ThreadPool* pool);
+/// aeRoundSix.ts / aeStylizeRoundFive.ts `lumaField`: Float32 Rec.709 luma × alpha,
+/// then a box of radius round(blurRadius) that SKIPS out-of-range taps
+/// (horizontal, then vertical), float sums in tap order.
+[[nodiscard]] std::vector<float> luma_alpha_field(RgbaView img, double blur_radius, ThreadPool* pool);
 
 // ── keying: keylight.ts, keyingEffects.ts, aeKeyingAdvanced.ts ──────────────
 struct Rgb {
@@ -295,6 +299,16 @@ void scale_wipe(RgbaView img, double completion, double stretch, double directio
                 ThreadPool* pool);
 void plastic(RgbaView img, double surface_bump, double softness, double light_angle, double light_intensity,
              double specular, ThreadPool* pool);
+
+// ── aeStylizeRoundFive.ts ───────────────────────────────────────────────────
+void glass(RgbaView img, double bump_softness, double height, double displacement, double light_angle,
+           double light_intensity, double shininess, ThreadPool* pool);
+void texturize(RgbaView img, double pattern, double contrast, double scale, double light_angle, ThreadPool* pool);
+void threads(RgbaView img, double thickness, double spacing, double depth, ThreadPool* pool);
+void chromatic_aberration(RgbaView img, double amount, double aberration_mode, double angle, double falloff,
+                          double center_x, double center_y, ThreadPool* pool);
+void hex_tile(RgbaView img, double radius, double border, ThreadPool* pool);
+void vector_blur(RgbaView img, double amount, double angle_offset, double smoothness, ThreadPool* pool);
 
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).

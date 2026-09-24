@@ -8,7 +8,7 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 105> kPorted{
+constexpr std::array<std::string_view, 111> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
@@ -26,7 +26,8 @@ constexpr std::array<std::string_view, 105> kPorted{
     "page-turn",       "split",           "slant",         "smear",           "rolling-shutter",  "radial-shadow",
     "color-difference-key", "wire-removal", "broadcast-colors", "noise-hls",   "block-load",       "kernel",
     "3d-glasses",      "fractal",         "unmult",        "cc-composite",    "cc-scatterize",    "radial-fast-blur",
-    "cross-blur",      "scale-wipe",      "plastic",
+    "cross-blur",      "scale-wipe",      "plastic",       "glass",           "texturize",        "threads",
+    "chromatic-aberration", "hex-tile",   "vector-blur",
 };
 
 }  // namespace
@@ -313,6 +314,20 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
   } else if (type == "plastic") {
     plastic(img, a("surfaceBump", 25), a("softness", 5), a("lightAngle", 45), a("lightIntensity", 100),
             a("specular", 50), pool);
+  } else if (type == "glass") {
+    glass(img, a("bumpSoftness", 3), a("height", 50), a("displacement", 20), a("lightAngle", 45),
+          a("lightIntensity", 100), a("shininess", 50), pool);
+  } else if (type == "texturize") {
+    texturize(img, a("pattern", 1), a("contrast", 50), a("scale", 100), a("lightAngle", 45), pool);
+  } else if (type == "threads") {
+    threads(img, a("thickness", 6), a("spacing", 2), a("depth", 50), pool);
+  } else if (type == "chromatic-aberration") {
+    chromatic_aberration(img, a("amount", 5), a("aberrationMode", 0), a("angle", 0), a("falloff", 50),
+                         a("centerX", 0), a("centerY", 0), pool);
+  } else if (type == "hex-tile") {
+    hex_tile(img, a("radius", 12), a("border", 30), pool);
+  } else if (type == "vector-blur") {
+    vector_blur(img, a("amount", 8), a("angleOffset", 0), a("smoothness", 2), pool);
   } else {
     return false;
   }
