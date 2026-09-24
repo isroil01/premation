@@ -105,6 +105,8 @@ std::string api_path_for(std::string_view prop, const StaticPropertyRow* row, co
   if (prop == kAudioPanProp) return "audio/pan";
   if (prop == "timeRemap") return "timeRemap";
   if (prop == "timeSpeed") return "layer/timeSpeed";
+  // B3z: a plugin layer kind's prop / a contributed panel's param (plugin_props.cpp).
+  if (auto plugin = plugin_api_path(prop)) return *plugin;
   if (row != nullptr) {
     const std::string& g = row->group;
     if (g == "material" || g == "geometry" || g == "camera" || g == "light") return g + "/" + std::string(prop);
@@ -475,6 +477,17 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     add(std::move(b));
   }
 
+  // B3z: PLUGIN properties (plugin_props.cpp) — a plugin layer kind's props and
+  // each contributed inspector panel's params, typed by what is stored; they
+  // claim the plugin.* / pluginUi.* tracks.
+  {
+    std::vector<std::string> trackNames;
+    if (const NodeAnim* an = d.anim(layerId)) {
+      for (const auto& [prop, keys] : an->tracks) trackNames.push_back(prop);
+    }
+    add_plugin_bindings(node, trackNames, add);
+  }
+
   if (const NodeAnim* an = d.anim(layerId)) {
     for (const auto& [prop, keys] : an->tracks) {
       if (cat.byMember.contains(prop)) continue;
@@ -689,6 +702,7 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
   }
   for (const Json& o : ops) ensure_group("contents/" + o.at("id").str());
   for (const auto& g : rig_group_paths(node)) ensure_group(g);
+  for (const auto& g : plugin_panel_group_paths(node)) ensure_group(g);
   for (const PropBinding& b : cat.props) {
     const std::size_t slash = b.path.rfind('/');
     if (slash == std::string::npos) {

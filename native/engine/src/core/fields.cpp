@@ -8,6 +8,7 @@
 #include "fail.hpp"
 #include "fxstate.hpp"
 #include "meta.hpp"
+#include "plugin_props.hpp"
 #include "scene.hpp"
 #include "strokes.hpp"
 #include "strutil.hpp"
@@ -727,6 +728,7 @@ api::Value read_field(const Node& node, const PropBinding& b) {
   }
   if (f.owner == "strokes") return read_stroke_stack(node);
   if (f.owner == "poi") return read_point_of_interest(node);
+  if (f.owner == "plugin") return read_plugin_field(node, b);
   if (f.owner == "textPath") {
     const auto cfg = read_text_path_config(node);
     if (!cfg) return v_string("");
@@ -826,6 +828,10 @@ void write_field(Document& d, std::string_view layer, const PropBinding& b, cons
   }
   if (f.owner == "poi") {
     write_point_of_interest(d, layer, value);
+    return;
+  }
+  if (f.owner == "plugin") {
+    write_plugin_field(d, layer, b, value);
     return;
   }
   if (f.owner == "fillPaint" || f.owner == "fills") {
