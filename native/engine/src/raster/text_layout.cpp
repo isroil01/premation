@@ -59,7 +59,11 @@ TextExtras read_text_extras(const json::Value& v) {
   x.ligaturesOff = v["ligatures"].is_bool() && !v["ligatures"].truthy();
   x.discretionaryLigatures = v["discretionaryLigatures"].truthy();
   x.contextualAlternatesOff = v["contextualAlternates"].is_bool() && !v["contextualAlternates"].truthy();
-  for (const auto& n : v["stylisticSets"].items()) x.stylisticSets.push_back(static_cast<int>(n.num()));
+  for (const auto& n : v["stylisticSets"].items()) {
+    // featureSettingsString keeps Number.isInteger values in 1..20 only.
+    const double d = n.num(std::nan(""));
+    if (d >= 1 && d <= 20 && d == std::floor(d)) x.stylisticSets.push_back(static_cast<int>(d));
+  }
   x.direction = v["direction"].str_or("");
   x.vertical = v["orientation"].str_or("") == "vertical";
   x.verticalRomanAlignment = v["verticalRomanAlignment"].truthy();

@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "raster/font_features.hpp"
 #include "raster/json.hpp"
 #include "raster/line_break.hpp"
 #include "raster/optical_math.hpp"
@@ -129,6 +130,16 @@ TEST_CASE("line breaks: kinsoku and the greedy wrap", "[raster][linebreak]") {
   CHECK(is_ideographic_unit("日"));
   CHECK_FALSE(is_ideographic_unit("a"));
   CHECK(vertical_orientation_of(U'a') == 'R');
+}
+
+// ── alias FontFace features (font_features.hpp) ─────────────────────────────
+
+TEST_CASE("font features: fontFaceVariants.ts featureSettingsString", "[raster][fonts]") {
+  CHECK(feature_settings_string(false, false, false, {}).empty());
+  // The TS unit test's case (fontAxes.test.ts).
+  CHECK(feature_settings_string(true, true, true, {3, 1, 3, 25}) == "'liga' 0, 'clig' 0, 'dlig' 1, 'calt' 0, 'ss01' 1, 'ss03' 1");
+  CHECK(feature_settings_string(true, false, false, {}) == "'liga' 0, 'clig' 0");
+  CHECK(feature_settings_string(false, false, false, {20, 0, 7, 7, 21, 12}) == "'ss07' 1, 'ss12' 1, 'ss20' 1");
 }
 
 // ── system fonts (system_fonts_ffi.cpp, fontconfig) ──────────────────────────

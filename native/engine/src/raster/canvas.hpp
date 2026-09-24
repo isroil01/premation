@@ -128,6 +128,13 @@ struct CanvasOptions {
   /// grayscale glyph masks FROM LCD (ClearType 3×1) masks — softer edges than
   /// plain grayscale AA. Parity knob; unknown geometry is the deterministic default.
   bool lcdGeometry = false;
+  /// Draw as if every alias FontFace (fontFaceVariants.ts) had loaded — the
+  /// TS's settled look: a text layer's OpenType features (ligatures off,
+  /// dlig, calt off, stylistic sets) are applied, and ligatures-off no longer
+  /// needs glyph-by-glyph drawing. The TS loads alias faces asynchronously and
+  /// the render-tests harness renders with none loaded (the raster key's
+  /// `fv0`), so the parity runs keep this off.
+  bool aliasFaces = false;
 };
 
 class Canvas2D {
