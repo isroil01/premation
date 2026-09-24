@@ -22,6 +22,12 @@ int take_code(unsigned long code, unsigned long* out) {
 }
 
 /// The frame that holds __try: no object with a destructor may live here.
+/// SEH is the only way to catch a fault in-process on Windows; -Wpedantic
+/// calls __try/__except a language extension, which is the point here.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wlanguage-extension-token"
+#endif
 bool seh_call(GuardedFn fn, void* ctx, unsigned long* code) {
   __try {
     fn(ctx);
@@ -30,6 +36,9 @@ bool seh_call(GuardedFn fn, void* ctx, unsigned long* code) {
     return false;
   }
 }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 FaultKind kind_of(unsigned long code) {
   switch (code) {

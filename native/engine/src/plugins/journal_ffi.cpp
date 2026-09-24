@@ -61,7 +61,7 @@ void put(std::array<char, N>& dst, std::string_view s) noexcept {
 
 template <std::size_t N>
 std::string get(const std::array<char, N>& src) {
-  const auto* end = std::find(src.begin(), src.end(), '\0');
+  const auto end = std::find(src.begin(), src.end(), '\0');
   return {src.begin(), end};
 }
 

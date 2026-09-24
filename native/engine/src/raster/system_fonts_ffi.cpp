@@ -115,11 +115,6 @@ Equiv equiv_of(std::string_view name) {
   return Equiv::other;
 }
 
-/// SkFontConfigInterface_direct.cpp IsFallbackFontAllowed.
-bool is_fallback_font_allowed(std::string_view family) {
-  return iequals(family, "sans") || iequals(family, "serif") || iequals(family, "monospace");
-}
-
 }  // namespace
 
 std::string linux_generic_family(std::string_view family) {
@@ -161,6 +156,11 @@ bool is_metric_compatible_replacement(std::string_view a, std::string_view b) {
 #if defined(PREMATION_HAVE_FONTCONFIG)
 
 namespace {
+
+/// SkFontConfigInterface_direct.cpp IsFallbackFontAllowed.
+bool is_fallback_font_allowed(std::string_view family) {
+  return iequals(family, "sans") || iequals(family, "serif") || iequals(family, "monospace");
+}
 
 struct PatternFree {
   void operator()(FcPattern* p) const noexcept { FcPatternDestroy(p); }

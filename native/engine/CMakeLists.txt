@@ -344,6 +344,9 @@ endif()
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
 target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
+if(MSVC)
+  target_compile_definitions(premation-plugins PRIVATE _CRT_SECURE_NO_WARNINGS)  # sscanf / getenv in argument parsing
+endif()
 if(MOTION_BUILD_TESTS)
   # The host against the SDK's sample bundles (native/sdk): load, render at
   # 8/16/32 bpc, sequence data, checkouts, the journal, crash isolation.
