@@ -337,6 +337,44 @@ key/interleave. `premation-scene --mesh-check` is wired. **Remaining:** 3D
 layers in the C++ scene builder, which is where extrusions, primitives and
 models are placed.
 
+**D2w 3D (2026-09-25): 3D layers and lights build from the C++ document.**
+The scene builder no longer reports "3D layers" / "light layers". The work is
+in new files beside `snapshot_build` / `frame_build`, which only call hooks:
+- `camera3d_port` / `lights3d` / `env_light` (in `engine_scene_core`, pure):
+  DOF (legacy ramp and thin-lens, iris, planar CoC corners), Material Options,
+  light props / falloff / reach, per-quad Lambert, shader lights, and the
+  environment light's SH rig plus its prefiltered reflection atlas.
+- `threed_port` (Scene3D): the view camera (active, `camera:<id>`, ortho,
+  custom) with the parent lift, `parentWorld3d`, `affineAt` (orientation and
+  rotation summed per axis, anchor Z, scale Z, toward-camera), the near-plane
+  drop, camera motion blur, DOF effects, shading / shade3d, shadow lights
+  (a budget of two maps), the 2D drop-shadow twin, the form rig, washes, landed
+  beams, projected caster shadows and their splice, the run-bounded depth sort,
+  and the extrusion / primitive mesh carriers (including the gradient paint
+  plate) with the front quad inset, mesh-drawn or planar-DOF.
+- `threed_frame`: `model3dFor`, mesh placement, castsShadow, per-fragment shade
+  vs the tint fold, `lightToRenderable`, `enforceExtrusionPathAgreement` /
+  `dropMeshes*`, and camera3d / lights3d / envMap / ssao.
+- `light_wash`: `rasterizeLight` on the C++ Canvas2D.
+
+`threeDCrossEngine.test.ts` → `threed_parity.json` pins the pure ports
+bit-exact (2644 assertions). `premation-scene`'s structural diff now covers
+threeD, the mesh key, camera3d, lights3d, ssao and envMap.
+
+On the 52 golden frames that fell back on 3D or lights, 47 are now ported, and
+all 47 are pixel-equal to the webgpu frame (0.000%, except
+ext-mesh-rounded-concave at 0.005% and ext-mesh-text-styled at 0.411%). That
+count needs the harness fix in the same change: scene projects are exported at
+`CURRENT_DOCUMENT_VERSION`. At the old '1.1.0' label, the 1.7→1.8 migration
+stamped every light `falloff: 'legacy'`, and the shadow-map-* and lit-primitive
+frames failed until the next full run re-exports them.
+
+**Remaining:** glTF models (the model registry, and footage that is a `blob:`
+URL); height-map displacement; the extrusion fallbacks (the slice stack and
+geometric faces, only reached when an outline cannot be traced); per-character
+3D text; image (`asset:`) environment skies; sealed-precomp 3D scopes, which
+wait on composition instances; corner pin on 3D layers.
+
 **D2 leftovers + D3 (2026-09-23): 436/436 frames bit-identical, 32 bpc, OCIO.**
 *The 7 low-alpha frames were never a renderer difference*: the C++ surface
 bytes already equalled the TS surface bytes. The harness's PNG encode

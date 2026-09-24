@@ -326,6 +326,10 @@ add_library(engine_scene_core STATIC
   src/scene/extrude_mesh.cpp
   src/scene/trace_bitmap.cpp
   src/scene/primitive_mesh.cpp
+  src/scene/camera3d_port.cpp
+  src/scene/lights3d.cpp
+  src/scene/env_light.cpp
+  src/scene/readers.cpp  # the node readers (Color.fromHex for the light shading)
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
 target_link_libraries(engine_scene_core PUBLIC engine_core motion::jsmath PRIVATE motion::options)
@@ -335,7 +339,7 @@ endif()
 if(MOTION_BUILD_TESTS)
   # The rig block against buildSnapshot's meshes (tests/data/rig_parity.json,
   # src/core/rig/rigCrossEngine.test.ts).
-  add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp)
+  add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp tests/test_threed_parity.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -711,7 +715,6 @@ endif()
 #                     render-tests `native-scene` backend) + the frame-build bench
 if(TARGET engine_raster AND TARGET engine_render_graph)
   add_library(engine_scene STATIC
-    src/scene/readers.cpp
     src/scene/effects_port.cpp
     src/scene/effects_spatial.cpp
     src/scene/effects_spatial_a.cpp
@@ -719,6 +722,9 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/layer_styles.cpp
     src/scene/path_ops.cpp
     src/scene/snapshot_build.cpp
+    src/scene/threed_port.cpp
+    src/scene/threed_frame.cpp
+    src/scene/light_wash.cpp
     src/scene/frame_build.cpp
     src/scene/text_measure.cpp
     src/scene/scene_textures.cpp

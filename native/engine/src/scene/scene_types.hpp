@@ -17,12 +17,14 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "engine_api.hpp"
 #include "json.hpp"
+#include "transform.hpp"
 
 namespace premation::scene {
 
@@ -62,6 +64,45 @@ struct ResolvedGlass {
   std::string rimColor;
   double rimOpacity = 0, rimWidth = 0, rimAngle = 0, specularAngle = 0, specularIntensity = 0, specularFalloff = 0,
          grain = 0;
+};
+
+/// RenderLayer.light — a light layer's screen-blended glow quad.
+struct LightWash {
+  std::string color;
+  double intensity = 100;
+  double radius = 500;
+  double screenRadius = 500;
+  std::string type = "point";
+  double cone = 45;
+  double coneFeather = 50;
+  bool pool = false;
+};
+
+/// RenderLayer.extrudedMesh.ranges[i] — one draw range of an extruded / primitive mesh.
+struct MeshRange3D {
+  api::RenderMeshRole role = api::RenderMeshRole::front;
+  std::uint32_t first = 0;
+  std::uint32_t count = 0;
+  std::string fill;  ///< the range colour as the snapshot names it (graded by the frame build)
+  double gain = 1;
+  bool textured = false;
+  bool paintTextured = false;
+};
+
+/// RenderLayer.extrudedMesh — the mesh a 3D solid draws (extrusion, primitive).
+struct ExtrudedMeshData {
+  /// Key + vertex / index bytes + index format (ranges left empty; see `ranges`).
+  api::RenderExtrudedMesh geometry;
+  std::vector<MeshRange3D> ranges;
+  /// The gradient plate the paint-textured wall ranges sample (paint:<id>): the
+  /// layer box filled edge to edge with its fillPaint (absent = none).
+  struct Paint {
+    std::string key;
+    Json fillPaint;
+    std::string fill;
+    double width = 0, height = 0;
+  };
+  std::optional<Paint> paint;
 };
 
 /// RenderLayer — the fields the port carries (see the header note).
@@ -130,6 +171,23 @@ struct RLayer {
   bool premultipliedSource = false;
   // ── rigs ──
   std::optional<DeformedMeshData> deformedMesh;
+  // ── 3D (threed_port.cpp) ──
+  /// The layer's 4×4 world matrix (column-major) for the depth-tested path.
+  std::optional<std::array<double, 16>> world3d;
+  /// Per-quad Lambert gain (Accepts Lights).
+  std::optional<std::array<double, 3>> lighting;
+  /// Per-fragment material (the snapshot's `shade3d`; quadGain is added by the frame build).
+  std::optional<api::RenderShade3D> shade3d;
+  bool castsShadow3d = false;
+  /// Only ever false (a receiver that refuses shadows).
+  std::optional<bool> acceptsShadows3d;
+  /// A light layer's glow wash (RenderLayer.light).
+  std::optional<LightWash> light;
+  /// A 3D solid's mesh. shared_ptr: the vertex bytes are immutable once built and
+  /// every copy of the layer (shadows, the depth sort's moves) shares them.
+  std::shared_ptr<const ExtrudedMeshData> extrudedMesh;
+  /// RenderLayer.flatFacet: a facet of a larger body (no SDF edge coverage).
+  bool flatFacet = false;
   // ── port bookkeeping ──
   /// Features this layer uses that the C++ port does not produce yet (the
   /// explicit fallback: reported per layer, never silently dropped).
@@ -153,6 +211,11 @@ struct Snapshot {
   double fps = 30;
   std::vector<RLayer> layers;
   std::vector<LayerError> layerErrors;
+  // ── 3D (threed_port.cpp; present only when a layer has world3d) ──
+  std::optional<api::RenderCamera3D> camera3d;
+  std::vector<api::RenderLight3D> lights3d;
+  std::optional<api::RenderSsao> ssao;
+  std::optional<api::RenderEnvMap> envMap;
 };
 
 /// SnapshotComp (buildSnapshot.ts) — comp-level inputs.
@@ -167,6 +230,12 @@ struct SnapshotComp {
   std::string rootId;
   /// Comp instance recursion (MAX_COMP_DEPTH).
   std::vector<std::string> compStack;
+  /// SnapshotComp.camera3dMode: 'active', an ortho axis view, or `camera:<id>`.
+  std::string camera3dMode = "active";
+  /// SnapshotComp.customViewCamera (a custom 3D view; replaces the scene camera).
+  std::optional<motion::xf::Camera> customViewCamera;
+  /// SnapshotComp.draft3d.
+  bool draft3d = false;
 };
 
 /// MotionBlurConfig (effects/motionBlur.ts).

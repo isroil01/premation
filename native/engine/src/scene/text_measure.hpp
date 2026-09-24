@@ -64,6 +64,9 @@ class TextMeasurer {
   /// `measureTextSize(style)` → {w, h}; nullopt when this style is outside the
   /// port (vertical type, paragraph boxes, optical kerning, variable axes).
   [[nodiscard]] virtual std::optional<std::pair<double, double>> measure_text_size(const MeasuredStyle& s) = 0;
+  /// The canvas (fonts) the measurer draws with — what text extrusion traces its
+  /// outline on. Null = no canvas (text bodies report unported).
+  [[nodiscard]] virtual const raster::CanvasOptions* canvas_options() const noexcept { return nullptr; }
 };
 
 /// The Canvas2D-metrics measurer over the E3 raster module (fonts from `opts`).

@@ -9,6 +9,7 @@
 
 #include "image_decode.hpp"
 #include "json.hpp"
+#include "light_wash.hpp"
 #include "raster_source.hpp"
 
 #if defined(PREMATION_HAVE_MEDIA)
@@ -194,7 +195,9 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     const Miss& m = misses[i];
     auto e = std::make_shared<RasterEntry>();
     raster::RasterOutput out =
-        raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas);
+        m.req->kind == TexKind::light  // a light's glow wash (light_wash.cpp)
+            ? draw_light_wash(light_wash_of_spec(m.req->spec), opts_.canvas)
+            : raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas);
     e->width = out.width;
     e->height = out.height;
     e->rgba = std::move(out.rgba);

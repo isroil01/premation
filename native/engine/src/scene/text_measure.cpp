@@ -68,6 +68,8 @@ class CanvasMeasurer final : public TextMeasurer {
  public:
   explicit CanvasMeasurer(raster::CanvasOptions opts) : opts_(opts) {}
 
+  [[nodiscard]] const raster::CanvasOptions* canvas_options() const noexcept override { return &opts_; }
+
   std::optional<std::pair<double, double>> measure_text_size(const MeasuredStyle& s) override {
     if (s.vertical || s.boxWidth || s.opticalKerning || s.hasFontAxes || s.fontWidth || s.fontSlant) return std::nullopt;
     if (s.textTransform == "capitalize") return std::nullopt;

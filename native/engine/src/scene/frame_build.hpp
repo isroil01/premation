@@ -16,7 +16,7 @@
 
 namespace premation::scene {
 
-enum class TexKind : std::uint8_t { text, path, mask, media };
+enum class TexKind : std::uint8_t { text, path, mask, media, light };
 
 struct TextureRequest {
   std::string key;
