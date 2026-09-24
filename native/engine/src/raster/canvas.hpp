@@ -184,6 +184,12 @@ class Canvas2D {
   virtual bool setGlobalCompositeOperation(std::string_view op) = 0;
   [[nodiscard]] virtual std::string globalCompositeOperation() const = 0;
   virtual void setFilter(const css::Filter& f) = 0;
+  /// `ctx.filter = css` with the whole CSS filter list (the bake chain's CSS
+  /// effects: blur, drop-shadow, brightness, …). The default applies what
+  /// css::parse_filter understands — `none` and a lone blur() — and returns
+  /// false, leaving the filter unchanged, for anything else: the Skia canvas
+  /// does not draw the other filter functions yet (E4).
+  virtual bool setFilterString(std::string_view css);
   virtual void setImageSmoothing(bool on) = 0;
 
   // ── shadows (shadowColor / shadowBlur / shadowOffsetX / shadowOffsetY) ──

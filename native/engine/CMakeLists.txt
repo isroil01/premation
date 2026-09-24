@@ -531,6 +531,7 @@ add_library(engine_raster_core STATIC
   src/raster/canvas.cpp           # the Canvas2D interface (Skia behind it: canvas_ffi)
   src/raster/paint_common.cpp
   src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
+  src/raster/mask_paint.cpp       # paintMaskMatte (mask.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
   src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
 )
@@ -561,7 +562,6 @@ if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenB
     src/raster/text_layout.cpp
     src/raster/canvas_replay.cpp
     src/raster/vector_paint.cpp
-    src/raster/mask_paint.cpp
     src/raster/optical_kerning.cpp
     src/raster/text_paint.cpp
     src/raster/raster_source.cpp
@@ -642,15 +642,23 @@ add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp)
 target_include_directories(engine_canvas_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE motion::options)
 
+# The bake CHAIN (effectBake.ts applyEffectChain): param mapping of the apply*
+# wrappers, LUT / colour-matrix / CSS / procedural routes, fill opacity, the
+# opacity + scoped-mask blend, on any Canvas2D. Skia-free.
+add_library(engine_effect_chain STATIC src/effects/effect_chain.cpp src/effects/effect_apply.cpp src/effects/effect_color.cpp)
+target_include_directories(engine_effect_chain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
+target_link_libraries(engine_effect_chain PUBLIC engine_effects engine_canvas_effects engine_raster_core motion::jsmath PRIVATE motion::options)
+
 add_executable(premation-effects tools/premation_effects.cpp)
-target_link_libraries(premation-effects PRIVATE engine_effects engine_raster_core motion::options)
+target_include_directories(premation-effects PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)  # recording_canvas.hpp: the --chain bench's CPU canvas
+target_link_libraries(premation-effects PRIVATE engine_effect_chain engine_effects engine_raster_core motion::options)
 if(MSVC)
   target_compile_definitions(premation-effects PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv
