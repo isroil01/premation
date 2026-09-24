@@ -7,6 +7,7 @@
 //                                          engine MUST use the same adapter for shared textures
 //                    [--power low|high]    adapter preference when no vendor is given (default high)
 //                    [--slots N]           frame-slot ring size (default 3, C1's measured value)
+//                    [--frame-cache-mb N]  D4 frame cache budget (default: a quarter of the adapter's VRAM budget; 0 = off)
 //                    [--no-gpu]            no Dawn: frames are simulated (protocol work, CI)
 //                    [--test-ports]        in-memory projects + fake media (cross-engine tests)
 //                    [--test-ports-dir D]  with --test-ports: project files also read from / written to D
@@ -62,6 +63,10 @@ int run(int argc, char** argv) {
       ok = parse_u32(v, o.render.vendorId);
     } else if (k == "--slots") {
       ok = parse_u32(v, o.render.slots);
+    } else if (k == "--frame-cache-mb") {
+      std::uint32_t mb = 0;
+      ok = parse_u32(v, mb);
+      o.render.frameCacheBytes = std::size_t{mb} << 20U;
     } else if (k == "--power") {
       o.render.highPerformance = v != "low";
     } else if (k == "--plugins") {

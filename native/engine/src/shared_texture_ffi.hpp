@@ -24,6 +24,7 @@ struct Slot {
   wgpu::TextureView view;
   std::uint64_t remoteHandle = 0;  // valid in the Electron main process
   bool free = true;
+  bool copyable = false;  // CopySrc + CopyDst allowed (the D4 frame cache needs both)
 };
 
 class SharedTexturePool {

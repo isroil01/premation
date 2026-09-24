@@ -26,7 +26,9 @@ struct RenderThread::SlotSet {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   bool shared = false;
-  std::vector<wgpu::Texture> textures;  // offscreen slots
+  /// Every slot allows copies in and out (the D4 frame cache).
+  bool copyable = true;
+  std::vector<wgpu::Texture> textures;  // every slot's texture (offscreen, or the shared slot's own)
   std::vector<wgpu::TextureView> views;
 #ifdef _WIN32
   std::unique_ptr<shared::SharedTexturePool> pool;
@@ -132,6 +134,11 @@ std::string RenderThread::backend() const {
   return backend_;
 }
 
+FrameCacheStats RenderThread::cache_stats() const {
+  const std::lock_guard<std::mutex> lock(m_);
+  return cacheStats_;
+}
+
 void RenderThread::run(std::promise<std::string>& ready) {
   {
 #ifdef _WIN32
@@ -157,6 +164,17 @@ void RenderThread::run(std::promise<std::string>& ready) {
       if (!drawer_) {
         PREMATION_LOG(warn, "scene_drawer_failed").kv("error", error);
       }
+    }
+    if (drawer_ && options_.frameCacheBytes != 0) {
+      // D4: only built frames have content keys; C2's quads are never cached.
+      std::size_t budget = options_.frameCacheBytes;
+      if (budget == kFrameCacheAuto) {
+        wgpu::AdapterInfo info{};
+        gpu_->adapter.GetInfo(&info);
+        budget = default_frame_cache_budget(info.vendorID, info.deviceID);
+      }
+      cache_ = std::make_unique<FrameCache>(gpu_->device, budget);
+      PREMATION_LOG(info, "frame_cache").kv("budgetMB", static_cast<double>(budget) / (1024.0 * 1024.0));
     }
     const std::lock_guard<std::mutex> lock(m_);
     adapter_ = gpu_->adapterName;
@@ -215,6 +233,7 @@ void RenderThread::run(std::promise<std::string>& ready) {
   if (gpu_) wait_idle(*gpu_);
   slots_.reset();
   retired_.clear();
+  cache_.reset();
   drawer_.reset();
   compositor_.reset();
   gpu_.reset();
@@ -241,6 +260,8 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
         next->shared = true;
         for (auto& s : pool->slots()) {
           next->views.push_back(s.view);
+          next->textures.push_back(s.texture);
+          next->copyable = next->copyable && s.copyable;
           announce.handles.push_back(s.remoteHandle);
         }
         next->pool = std::move(pool);
@@ -257,7 +278,8 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
         wgpu::TextureDescriptor td{};
         td.size = {config.width, config.height, 1};
         td.format = wgpu::TextureFormat::RGBA8Unorm;
-        td.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc;
+        // CopyDst: a frame-cache hit is copied in; CopySrc: a drawn frame is copied out to the cache.
+        td.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
         wgpu::Texture t = gpu_->device.CreateTexture(&td);
         next->views.push_back(t.CreateView());
         next->textures.push_back(std::move(t));
@@ -301,10 +323,29 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
 #endif
   bool drawn = false;
   if (job.built && drawer_) {
-    std::string error;
-    drawn = drawer_->draw(*job.built, set.views[slot], set.width, set.height, error);
+    const wgpu::Texture& slotTexture = set.textures[slot];
+    std::optional<std::uint64_t> key;
+    if (cache_ && set.copyable) key = drawer_->content_key(*job.built, set.width, set.height);
+    if (key) {
+      // D4: the same content was drawn before — a copy instead of the frame.
+      wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
+      if (cache_->copy_to(*key, set.width, set.height, slotTexture, enc)) {
+        const wgpu::CommandBuffer cb = enc.Finish();
+        gpu_->queue.Submit(1, &cb);
+        drawn = true;
+      }
+    }
     if (!drawn) {
-      PREMATION_LOG(error, "scene_draw_failed").kv("error", error).kv("frame", job.frame);
+      std::string error;
+      drawn = drawer_->draw(*job.built, set.views[slot], set.width, set.height, error);
+      if (!drawn) {
+        PREMATION_LOG(error, "scene_draw_failed").kv("error", error).kv("frame", job.frame);
+      } else if (key && drawer_->last_frame_exact()) {
+        wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
+        cache_->store(*key, set.width, set.height, slotTexture, enc);
+        const wgpu::CommandBuffer cb = enc.Finish();
+        gpu_->queue.Submit(1, &cb);
+      }
     }
   }
   if (!drawn) {
@@ -339,6 +380,7 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   if (send_) send_(frames::Message{.v = ready});
 
   const std::lock_guard<std::mutex> lock(m_);
+  if (cache_) cacheStats_ = cache_->stats();
   ++counters_.rendered;
   ++windowFrames_;
   windowGpuMs_ += gpuMs;
