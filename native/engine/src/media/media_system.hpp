@@ -56,6 +56,9 @@ struct MediaConfig {
   std::size_t gpuCacheBytes = std::size_t{1} << 30U;  // 1 GiB of GPU-resident hardware frames
   HwPolicy hw = HwPolicy::automatic;
   std::shared_ptr<HwContext> hwContext;  // null → software decode
+  /// When set, streams deeper than 8 bits decode here instead (media_config_for:
+  /// nvdec on NVIDIA when Dawn can't import P010, so d3d11va would download anyway).
+  std::shared_ptr<HwContext> hwContextHighBit;
   bool keepOnGpu = true;
   bool keepHighBitOnGpu = false;  // see DecoderOptions
   int decodeThreads = 0;

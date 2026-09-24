@@ -668,6 +668,13 @@ DecodeStatus FfmpegDecoder::next(FramePtr& out, std::string& error, const std::a
       continue;
     }
     if (pkt_->stream_index == stream_) {
+      // Long-GOP scrub: a frame shown before the target that no other frame
+      // references need not be decoded at all (the B-frames of an IBBP GOP —
+      // most of the walk from the keyframe). Only with an exact index, where
+      // the target's pts is known to the tick; playback after the target decodes everything.
+      const bool skippable = !video_->intraOnly && index_.exact() && target_ > 0 && pkt_->pts != AV_NOPTS_VALUE &&
+                             pkt_->pts < index_.pts(target_);
+      codec_->skip_frame = skippable ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
       const int sr = avcodec_send_packet(codec_.get(), pkt_.get());
       if (sr < 0 && sr != AVERROR(EAGAIN) && sr != AVERROR_INVALIDDATA) {
         av_packet_unref(pkt_.get());

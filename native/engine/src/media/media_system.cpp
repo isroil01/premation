@@ -238,7 +238,8 @@ void MediaSystem::signal() {
 void MediaSystem::run(Source& s) {
   DecoderOptions opt;
   opt.hw = config_.hw;
-  opt.hwContext = config_.hwContext;
+  const bool highBit = s.info.video && s.info.video->bitDepth > 8;
+  opt.hwContext = highBit && config_.hwContextHighBit ? config_.hwContextHighBit : config_.hwContext;
   opt.keepOnGpu = config_.keepOnGpu;
   opt.threads = config_.decodeThreads;
   opt.keepHighBitOnGpu = config_.keepHighBitOnGpu;

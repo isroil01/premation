@@ -13,8 +13,9 @@
 //       file's rate, counting late frames (a frame not decoded by its deadline).
 //
 // Options: --vendor 0x10de|0x1002|0x8086 (render/decode adapter; default:
-// high-performance), --hw auto|sw|hw, --path d3d11va|d3d12va|dxva2|nvdec
-// (the hardware device; default d3d11va — nvdec is CUDA on the render
+// high-performance), --hw auto|sw|hw, --path auto|d3d11va|d3d12va|dxva2|nvdec
+// (the hardware device; default d3d11va; auto = the engine's media_config_for
+// policy — nvdec is CUDA on the render
 // adapter, frames downloaded and uploaded), --download (hardware frames to
 // system memory instead of the zero-copy surface), --threads N.
 // `tools/run_decode_bench.mjs` runs the E1 matrix over gen_media_clips.mjs's clips.
@@ -35,6 +36,7 @@
 
 #include "decoder.hpp"
 #include "frame_convert.hpp"
+#include "media_config.hpp"
 #include "media_system.hpp"
 #include "platform_ffi.hpp"
 
@@ -55,6 +57,7 @@ struct Args {
   std::uint32_t vendor = 0;
   HwPolicy hw = HwPolicy::automatic;
   DecodePath path = DecodePath::d3d11va;
+  bool autoPath = false;
   bool download = false;
   int threads = 0;
 };
@@ -151,6 +154,14 @@ void print_info(const MediaInfo& mi) {
 }
 
 MediaConfig config_of(const Args& a, const Gpu& g, std::string& hwNote) {
+  if (a.autoPath && a.hw != HwPolicy::softwareOnly) {
+    // The engine's own policy (media_config_for).
+    MediaConfig c = media_config_for(g.device, hwNote);
+    c.hw = a.hw;
+    c.decodeThreads = a.threads;
+    if (a.download) c.keepOnGpu = false;
+    return c;
+  }
   MediaConfig c;
   c.hw = a.hw;
   c.keepOnGpu = !a.download;
@@ -312,6 +323,7 @@ int play(const Args& a, const Gpu& g) {
               wall / 1000, static_cast<double>(shown) * 1000 / wall, fps,
               static_cast<double>(shown) * 1000 / wall >= fps * 0.995 ? "FULL RATE" : "below rate");
   if (a.paced) std::printf("  late frames: %lld of %lld\n", static_cast<long long>(late), static_cast<long long>(shown * a.streams));
+  std::printf("  surface imports into Dawn: %llu (%.1f ms total)\n", static_cast<unsigned long long>(conv.stats().imports), conv.stats().importMs);
   std::printf("  frame time p50 %.1f p95 %.1f ms; CPU %.0f%% of one core (%.0f%% of %u); peak WS %.0f MB; cache %zu frames %.0f MB CPU %.0f MB GPU; zero-copy %llu/%llu\n",
               pct(frameMs, 0.5), pct(frameMs, 0.95), 100.0 * (u1.cpuMs - u0.cpuMs) / wall, 100.0 * (u1.cpuMs - u0.cpuMs) / wall / cores, cores,
               static_cast<double>(u1.peakWorkingSet) / 1048576.0, cs.frames, static_cast<double>(cs.cpuBytes) / 1048576.0,
@@ -338,6 +350,7 @@ int main(int argc, char** argv) {
     else if (s == "--threads") a.threads = std::atoi(next().c_str());
     else if (s == "--path") {
       const std::string v = next();
+      a.autoPath = v == "auto";
       a.path = v == "nvdec" ? DecodePath::nvdec : v == "d3d12va" ? DecodePath::d3d12va : v == "dxva2" ? DecodePath::dxva2 : DecodePath::d3d11va;
     }
     else if (s == "--hw") {
