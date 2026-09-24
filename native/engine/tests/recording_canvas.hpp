@@ -8,7 +8,9 @@
 
 #include <cmath>
 #include <map>
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -115,6 +117,19 @@ class RecordingCanvas final : public Canvas2D {
   [[nodiscard]] std::string globalCompositeOperation() const override { return gco_; }
   void setFilter(const css::Filter& f) override { set("filter", f.blurPx > 0 ? quote("blur(" + num(f.blurPx) + "px)") : quote("none")); }
   void setImageSmoothing(bool on) override { set("imageSmoothingEnabled", on ? "true" : "false"); }
+  void setShadowColor(const css::Color& c) override { set("shadowColor", color(c)); }
+  void setShadowBlur(double b) override { set("shadowBlur", num(b)); }
+  void setShadowOffsetX(double x) override { set("shadowOffsetX", num(x)); }
+  void setShadowOffsetY(double y) override { set("shadowOffsetY", num(y)); }
+  [[nodiscard]] std::vector<std::uint8_t> getImageData(int x, int y, std::uint32_t w, std::uint32_t h) const override {
+    const_cast<RecordingCanvas*>(this)->call("getImageData", {std::to_string(x), std::to_string(y), std::to_string(w), std::to_string(h)});  // NOLINT(cppcoreguidelines-pro-type-const-cast): a read is still an op of the program
+    return std::vector<std::uint8_t>(static_cast<std::size_t>(w) * h * 4, 0);
+  }
+  void putImageData(std::span<const std::uint8_t> rgba, std::uint32_t w, std::uint32_t h, int x, int y) override {
+    std::uint64_t hash = 0xcbf29ce484222325ULL;  // FNV-1a 64 of the bytes, so the log pins the data too
+    for (const std::uint8_t b : rgba) hash = (hash ^ b) * 0x100000001b3ULL;
+    call("putImageData", {quote(std::to_string(hash)), std::to_string(w), std::to_string(h), std::to_string(x), std::to_string(y)});
+  }
 
   bool setFont(std::string_view font) override {
     set("font", quote(font));

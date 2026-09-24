@@ -20,136 +20,9 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PaintConfig, PaintStroke } from './paintStrokes';
+import { beginRecording, recordingCanvas, withRecordingCanvases } from '@core/rendering/raster/__testHelpers__/recordingCanvas';
 
 const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/paint_raster_parity.json');
-
-// ── A recording canvas (the harness grammar, normalised) ────────────────
-
-type Op = unknown[];
-
-/** Canonical colour: rgba(r,g,b,a) with JS number formatting. */
-function canonColor(s: string): string {
-  const t = s.trim().toLowerCase();
-  let m = /^#([0-9a-f]{3,8})$/.exec(t);
-  if (m) {
-    const h = m[1]!;
-    const x = (i: number, n: number): number => parseInt(h.slice(i, i + n), 16);
-    if (h.length === 3 || h.length === 4) {
-      return `rgba(${x(0, 1) * 17},${x(1, 1) * 17},${x(2, 1) * 17},${h.length === 4 ? (x(3, 1) * 17) / 255 : 1})`;
-    }
-    return `rgba(${x(0, 2)},${x(2, 2)},${x(4, 2)},${h.length === 8 ? x(6, 2) / 255 : 1})`;
-  }
-  m = /^rgba?\(([^)]*)\)$/.exec(t);
-  if (m) {
-    const p = m[1]!.split(',').map((v) => Number(v.trim()));
-    return `rgba(${p[0]},${p[1]},${p[2]},${p[3] ?? 1})`;
-  }
-  throw new Error(`fixture colour not canonicalisable: ${s}`);
-}
-
-interface Session { ops: Op[]; nextCanvas: number; nextGrad: number }
-let session: Session;
-
-class FakeGradient {
-  constructor(readonly id: number) {}
-  addColorStop(offset: number, color: string): void {
-    session.ops.push([-1, 'stop', this.id, offset, canonColor(color)]);
-  }
-}
-
-type M = [number, number, number, number, number, number];
-
-class FakeContext {
-  private m: M = [1, 0, 0, 1, 0, 0];
-  private stack: Array<{ m: M; fill: unknown; stroke: unknown }> = [];
-  private fill_: unknown = '#000';
-  private stroke_: unknown = '#000';
-  constructor(readonly canvas: FakeCanvas) {}
-  private get id(): number { return this.canvas.id(); }
-  private call(name: string, ...args: unknown[]): void { session.ops.push([this.id, 'call', name, ...args]); }
-  private set(name: string, v: unknown): void { session.ops.push([this.id, 'set', name, v]); }
-  private style(v: unknown): unknown { return v instanceof FakeGradient ? { $g: v.id } : canonColor(String(v)); }
-
-  save(): void { this.stack.push({ m: [...this.m] as M, fill: this.fill_, stroke: this.stroke_ }); this.call('save'); }
-  restore(): void {
-    const s = this.stack.pop();
-    if (s) { this.m = s.m; this.fill_ = s.fill; this.stroke_ = s.stroke; }
-    this.call('restore');
-  }
-  translate(x: number, y: number): void {
-    const [a, b, c, d, e, f] = this.m;
-    this.m = [a, b, c, d, a * x + c * y + e, b * x + d * y + f];
-    this.call('translate', x, y);
-  }
-  scale(x: number, y: number): void {
-    const [a, b, c, d, e, f] = this.m;
-    this.m = [a * x, b * x, c * y, d * y, e, f];
-    this.call('scale', x, y);
-  }
-  rotate(t: number): void {
-    const [a, b, c, d, e, f] = this.m;
-    const cos = Math.cos(t);
-    const sin = Math.sin(t);
-    this.m = [a * cos + c * sin, b * cos + d * sin, c * cos - a * sin, d * cos - b * sin, e, f];
-    this.call('rotate', t);
-  }
-  setTransform(a: number | { a: number; b: number; c: number; d: number; e: number; f: number }, b?: number, c?: number, d?: number, e?: number, f?: number): void {
-    this.m = typeof a === 'number' ? [a, b!, c!, d!, e!, f!] : [a.a, a.b, a.c, a.d, a.e, a.f];
-    this.call('setTransform', ...this.m);
-  }
-  getTransform(): { a: number; b: number; c: number; d: number; e: number; f: number } {
-    const [a, b, c, d, e, f] = this.m;
-    return { a, b, c, d, e, f };
-  }
-  set fillStyle(v: unknown) { this.fill_ = v; this.set('fillStyle', this.style(v)); }
-  get fillStyle(): unknown { return this.fill_; }
-  set strokeStyle(v: unknown) { this.stroke_ = v; this.set('strokeStyle', this.style(v)); }
-  get strokeStyle(): unknown { return this.stroke_; }
-  set lineWidth(v: number) { this.set('lineWidth', v); }
-  set lineCap(v: string) { this.set('lineCap', v); }
-  set lineJoin(v: string) { this.set('lineJoin', v); }
-  set globalAlpha(v: number) { this.set('globalAlpha', v); }
-  set globalCompositeOperation(v: string) { this.set('globalCompositeOperation', v); }
-  set filter(v: string) { this.set('filter', v); }
-  beginPath(): void { this.call('beginPath'); }
-  moveTo(x: number, y: number): void { this.call('moveTo', x, y); }
-  lineTo(x: number, y: number): void { this.call('lineTo', x, y); }
-  arc(x: number, y: number, r: number, a0: number, a1: number, ccw = false): void { this.call('arc', x, y, r, a0, a1, ccw); }
-  fill(rule: string = 'nonzero'): void { this.call('fill', rule); }
-  stroke(): void { this.call('stroke'); }
-  fillRect(x: number, y: number, w: number, h: number): void { this.call('fillRect', x, y, w, h); }
-  clearRect(x: number, y: number, w: number, h: number): void { this.call('clearRect', x, y, w, h); }
-  createRadialGradient(x0: number, y0: number, r0: number, x1: number, y1: number, r1: number): FakeGradient {
-    const g = new FakeGradient(session.nextGrad++);
-    session.ops.push([this.id, 'grad', g.id, 'radial', x0, y0, r0, x1, y1, r1]);
-    return g;
-  }
-  drawImage(img: FakeCanvas, ...a: number[]): void {
-    const src = { $c: img.id() };
-    if (a.length === 2) this.call('drawImage', src, 0, 0, img.width, img.height, a[0], a[1], img.width, img.height);
-    else if (a.length === 4) this.call('drawImage', src, 0, 0, img.width, img.height, a[0], a[1], a[2], a[3]);
-    else this.call('drawImage', src, ...a);
-  }
-}
-
-class FakeCanvas {
-  width = 300;
-  height = 150;
-  private ctx: FakeContext | null = null;
-  private cid = -1;
-  id(): number {
-    if (this.cid < 0) {
-      this.cid = session.nextCanvas++;
-      session.ops.push([this.cid, 'canvas', this.width, this.height]);
-    }
-    return this.cid;
-  }
-  getContext(): FakeContext {
-    this.id();
-    this.ctx ??= new FakeContext(this);
-    return this.ctx;
-  }
-}
 
 // ── Cases ──────────────────────────────────────────────────────────────
 
@@ -216,30 +89,22 @@ const CASES: Case[] = [
 ];
 
 function runCase(c: Case): string[] {
-  session = { ops: [], nextCanvas: 0, nextGrad: 0 };
-  const root = new FakeCanvas();
-  root.width = c.w;
-  root.height = c.h;
-  const ctx = root.getContext();
+  const ops = beginRecording();
+  const { ctx } = recordingCanvas(c.w, c.h);
   // Prelude: the raster's supersample + centring, and some content to erase / clone.
   ctx.scale(c.ss, c.ss);
   ctx.translate(c.w / c.ss / 2, c.h / c.ss / 2);
   ctx.fillStyle = '#3366cc';
   ctx.fillRect(-30, -20, 60, 40);
-  const create = document.createElement.bind(document);
-  const spy = jest.spyOn(document, 'createElement').mockImplementation(((tag: string) =>
-    (tag === 'canvas' ? new FakeCanvas() : create(tag))) as typeof document.createElement);
-  try {
+  withRecordingCanvases(() => {
     // A fresh module per case: paintRaster's scratch canvases and stamp cache
     // are module state, the C++ keeps them per drawPaint pass.
     jest.isolateModules(() => {
       const { drawPaint } = require('./paintRaster') as typeof import('./paintRaster');
       drawPaint(ctx as unknown as CanvasRenderingContext2D, c.paint);
     });
-  } finally {
-    spy.mockRestore();
-  }
-  return session.ops.map((op) => JSON.stringify(op));
+  });
+  return ops.map((op) => JSON.stringify(op));
 }
 
 test('the C++ paint-stroke parity fixture matches paintRaster.ts', () => {

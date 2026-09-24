@@ -593,6 +593,11 @@ add_library(engine_effects STATIC
 target_include_directories(engine_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
 target_compile_features(engine_effects PUBLIC cxx_std_20)
 target_link_libraries(engine_effects PUBLIC motion::jsmath PRIVATE motion::options)
+# The canvas-drawn effects (fill, wipes, generators) on the raster module's
+# Canvas2D interface — Skia-free here; Skia sits behind the interface.
+add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp)
+target_include_directories(engine_canvas_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE motion::options)
 
 add_executable(premation-effects tools/premation_effects.cpp)
 target_link_libraries(premation-effects PRIVATE engine_effects engine_raster_core motion::options)
@@ -601,8 +606,8 @@ if(MSVC)
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_effects_tests tests/test_effect_kernels.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -185,6 +186,15 @@ class Canvas2D {
   virtual void setFilter(const css::Filter& f) = 0;
   virtual void setImageSmoothing(bool on) = 0;
 
+  // ── shadows (shadowColor / shadowBlur / shadowOffsetX / shadowOffsetY) ──
+  // Drawn when the colour is not transparent and the blur or an offset is
+  // non-zero; offset and blur are canvas pixels (the transform does not scale
+  // them), the blur's σ is half of shadowBlur. Invalid values are ignored.
+  virtual void setShadowColor(const css::Color& c) = 0;
+  virtual void setShadowBlur(double blur) = 0;
+  virtual void setShadowOffsetX(double x) = 0;
+  virtual void setShadowOffsetY(double y) = 0;
+
   // ── text state ──
   /// The `font` shorthand; returns false (unchanged) if it does not parse.
   virtual bool setFont(std::string_view font) = 0;
@@ -235,6 +245,14 @@ class Canvas2D {
   virtual void drawImage(const Canvas2D& src, double sx, double sy, double sw, double sh, double dx, double dy, double dw,
                          double dh) = 0;
   [[nodiscard]] std::shared_ptr<Pattern> createPattern(std::string_view repetition) const;
+
+  // ── pixels (ImageData) — the bridge to the CPU effect kernels (engine_effects) ──
+  /// getImageData(x, y, w, h): STRAIGHT (unpremultiplied) RGBA8 rows, as a
+  /// canvas returns it; pixels outside the canvas read as 0.
+  [[nodiscard]] virtual std::vector<std::uint8_t> getImageData(int x, int y, std::uint32_t w, std::uint32_t h) const = 0;
+  /// putImageData(data, x, y): straight RGBA8 w × h written as is — no
+  /// transform, alpha, composite, shadow or clip; clipped to the canvas.
+  virtual void putImageData(std::span<const std::uint8_t> rgba, std::uint32_t w, std::uint32_t h, int x, int y) = 0;
 
  protected:
   Canvas2D() = default;
