@@ -10,7 +10,9 @@ import { blurRgba, blurDimensions, radialBlurData, channelBlurData, unsharpMaskD
 import { turbulentNoiseData, addGrainData, medianData } from '../noiseEffects';
 import { minimaxData, minimaxOp, minimaxChannel, simpleChokerData } from '../keyingEffects';
 import { mosaicData, findEdgesData, embossData } from '../stylize';
-import { vibranceData } from '../colorEffects';
+import { vibranceData, coloramaData, COLORAMA_PALETTES } from '../colorEffects';
+import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from '../aeColor';
+import { selectiveColorData, selectiveRange, shadowHighlightData } from '../toneEffects';
 import { bilateralBlurData, smartBlurData, cameraLensBlurData } from '../aeBlurAdvanced';
 import { sharpenData, addNoiseData } from '../canvas2dEffects';
 
@@ -80,6 +82,39 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
     case 'camera-lens-blur':
       data.set(cameraLensBlurData(data, w, h, n('radius', 0), n('blades', 0), n('rotation', 0), n('gain', 1), n('threshold', 100)));
       return;
+    case 'photo-filter':
+      photoFilterData(data, n('filterR', 255), n('filterG', 128), n('filterB', 0), n('density', 25), b('preserveLuminosity', true));
+      return;
+    case 'black-and-white':
+      blackAndWhiteData(
+        data,
+        { reds: n('reds', 0.4), yellows: n('yellows', 0.6), greens: n('greens', 0.4), cyans: n('cyans', 0.6), blues: n('blues', 0.2), magentas: n('magentas', 0.8) },
+        b('useTint', false) ? [n('tintR', 0), n('tintG', 0), n('tintB', 0)] : null,
+      );
+      return;
+    case 'tritone':
+      tritoneData(
+        data,
+        [n('shadowsR', 0), n('shadowsG', 0), n('shadowsB', 0)],
+        [n('midtonesR', 128), n('midtonesG', 128), n('midtonesB', 128)],
+        [n('highlightsR', 255), n('highlightsG', 255), n('highlightsB', 255)],
+        n('blend', 0),
+      );
+      return;
+    case 'threshold':
+      thresholdData(data, n('level', 128));
+      return;
+    case 'selective-color':
+      selectiveColorData(data, selectiveRange(n('range', 0)), n('cyan', 0), n('magenta', 0), n('yellow', 0), n('black', 0), b('relative', true));
+      return;
+    case 'shadow-highlight':
+      shadowHighlightData(data, w, h, n('shadowAmount', 0), n('highlightAmount', 0), n('radius', 0), n('tonalWidth', 50));
+      return;
+    case 'colorama': {
+      const idx = Math.max(0, Math.min(COLORAMA_PALETTES.length - 1, Math.round(n('palette', 0))));
+      coloramaData(data, COLORAMA_PALETTES[idx]!.stops, n('phaseShift', 0), n('cycleRepetitions', 1), n('blendWithOriginal', 0));
+      return;
+    }
     default:
       throw new Error(`no kernel for ${type}`);
   }

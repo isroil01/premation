@@ -1,15 +1,18 @@
 #include "kernel_dispatch.hpp"
 
+#include <algorithm>
 #include <array>
 
 namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 19> kPorted{
-    "gaussian-blur", "fast-box-blur", "radial-blur",    "channel-blur", "unsharp-mask",   "sharpen",   "noise",
-    "add-grain",     "turbulent-noise", "median",       "minimax",      "simple-choker",  "mosaic",    "find-edges",
-    "emboss",        "vibrance",      "bilateral-blur", "smart-blur",   "camera-lens-blur",
+constexpr std::array<std::string_view, 26> kPorted{
+    "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
+    "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
+    "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
+    "camera-lens-blur", "photo-filter",   "black-and-white", "tritone",       "threshold",        "selective-color",
+    "shadow-highlight", "colorama",
 };
 
 }  // namespace
@@ -60,6 +63,29 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     smart_blur(img, a("radius", 0), a("threshold", 0), a("mode", 0), pool);
   } else if (type == "camera-lens-blur") {
     camera_lens_blur(img, a("radius", 0), a("blades", 0), a("rotation", 0), a("gain", 1), a("threshold", 100), pool);
+  } else if (type == "photo-filter") {
+    photo_filter(img, a("filterR", 255), a("filterG", 128), a("filterB", 0), a("density", 25),
+                 b("preserveLuminosity", true), pool);
+  } else if (type == "black-and-white") {
+    const BwWeights wts{a("reds", 0.4), a("yellows", 0.6), a("greens", 0.4), a("cyans", 0.6), a("blues", 0.2),
+                        a("magentas", 0.8)};
+    const std::array<double, 3> tint{a("tintR", 0), a("tintG", 0), a("tintB", 0)};
+    black_and_white(img, wts, b("useTint", false) ? &tint : nullptr, pool);
+  } else if (type == "tritone") {
+    tritone(img, {a("shadowsR", 0), a("shadowsG", 0), a("shadowsB", 0)},
+            {a("midtonesR", 128), a("midtonesG", 128), a("midtonesB", 128)},
+            {a("highlightsR", 255), a("highlightsG", 255), a("highlightsB", 255)}, a("blend", 0), pool);
+  } else if (type == "threshold") {
+    threshold(img, a("level", 128), pool);
+  } else if (type == "selective-color") {
+    selective_color(img, selective_range(a("range", 0)), a("cyan", 0), a("magenta", 0), a("yellow", 0), a("black", 0),
+                    b("relative", true), pool);
+  } else if (type == "shadow-highlight") {
+    shadow_highlight(img, a("shadowAmount", 0), a("highlightAmount", 0), a("radius", 0), a("tonalWidth", 50), pool);
+  } else if (type == "colorama") {
+    // applyColorama: Math.max(0, Math.min(len - 1, Math.round(palette))).
+    const int idx = static_cast<int>(std::max(0.0, std::min(4.0, js::round(a("palette", 0)))));
+    colorama(img, idx, a("phaseShift", 0), a("cycleRepetitions", 1), a("blendWithOriginal", 0), pool);
   } else {
     return false;
   }

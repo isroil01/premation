@@ -21,6 +21,13 @@
     { "effect": "vibrance", "args": { "vibrance": 50, "saturation": 10 } },
     { "effect": "bilateral-blur", "args": { "radius": 6, "colorSigma": 30 } },
     { "effect": "smart-blur", "args": { "radius": 5, "threshold": 25 } },
-    { "effect": "camera-lens-blur", "args": { "radius": 8, "blades": 6, "rotation": 10, "gain": 2, "threshold": 70 } }
+    { "effect": "camera-lens-blur", "args": { "radius": 8, "blades": 6, "rotation": 10, "gain": 2, "threshold": 70 } },
+    { "effect": "photo-filter", "args": { "filterR": 236, "filterG": 138, "filterB": 0, "density": 40, "preserveLuminosity": 1 } },
+    { "effect": "black-and-white", "args": { "useTint": 1, "tintR": 225, "tintG": 180, "tintB": 120 } },
+    { "effect": "tritone", "args": { "blend": 20 } },
+    { "effect": "threshold", "args": { "level": 128 } },
+    { "effect": "selective-color", "args": { "range": 0, "cyan": -40, "magenta": 20, "yellow": 10, "black": 5 } },
+    { "effect": "shadow-highlight", "args": { "shadowAmount": 50, "highlightAmount": 20, "radius": 30, "tonalWidth": 50 } },
+    { "effect": "colorama", "args": { "palette": 1, "phaseShift": 45, "cycleRepetitions": 1 } }
   ]
 }

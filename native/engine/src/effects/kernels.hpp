@@ -15,6 +15,7 @@
 // intrinsics, so the one code path is also the scalar twin.
 #pragma once
 
+#include <array>
 #include <string_view>
 
 #include "pixel_ops.hpp"
@@ -69,6 +70,33 @@ void find_edges(RgbaView img, bool invert, ThreadPool* pool);
 void emboss(RgbaView img, double angle_deg, double relief, double contrast, double blend, ThreadPool* pool);
 /// `vibranceData(data, vibrance, saturation)`.
 void vibrance(RgbaView img, double vibrance, double saturation, ThreadPool* pool);
+
+// ── aeColor.ts / toneEffects.ts / colorEffects.ts colorama ─────────────────
+/// `photoFilterData(data, filterR, filterG, filterB, density, preserveLuminosity)`.
+void photo_filter(RgbaView img, double fr, double fg, double fb, double density, bool preserve_luminosity,
+                  ThreadPool* pool);
+struct BwWeights {
+  double reds, yellows, greens, cyans, blues, magentas;
+};
+/// `blackAndWhiteData(data, weights, tint)`; `tint` null = no tint.
+void black_and_white(RgbaView img, const BwWeights& weights, const std::array<double, 3>* tint, ThreadPool* pool);
+/// `tritoneData(data, shadows, midtones, highlights, blend)`.
+void tritone(RgbaView img, const std::array<double, 3>& shadows, const std::array<double, 3>& midtones,
+             const std::array<double, 3>& highlights, double blend, ThreadPool* pool);
+/// `thresholdData(data, level)`.
+void threshold(RgbaView img, double level, ThreadPool* pool);
+enum class SelectiveRange : std::uint8_t { reds, yellows, greens, cyans, blues, magentas, whites, neutrals, blacks };
+/// `selectiveRange(v)`.
+[[nodiscard]] SelectiveRange selective_range(double v) noexcept;
+/// `selectiveColorData(data, range, cyan, magenta, yellow, black, relative)`.
+void selective_color(RgbaView img, SelectiveRange range, double cyan, double magenta, double yellow, double black,
+                     bool relative, ThreadPool* pool);
+/// `shadowHighlightData(data, w, h, shadowAmount, highlightAmount, radius, tonalWidth)`.
+void shadow_highlight(RgbaView img, double shadow_amount, double highlight_amount, double radius, double tonal_width,
+                      ThreadPool* pool);
+/// `coloramaData(data, COLORAMA_PALETTES[palette].stops, phaseShift, cycleRepetitions, blendWithOriginal)`.
+void colorama(RgbaView img, int palette, double phase_shift, double cycle_repetitions, double blend_with_original,
+              ThreadPool* pool);
 
 // ── aeBlurAdvanced.ts ───────────────────────────────────────────────────────
 /// `bilateralBlurData(src, w, h, radius, colorSigma, preserveAlpha)`.

@@ -83,6 +83,23 @@ const CASES: Case[] = [
   C('camera-lens-blur', 'small', { radius: 4, blades: 0, rotation: 0, gain: 1, threshold: 100 }),
   C('camera-lens-blur', 'small', { radius: 5, blades: 6, rotation: 15, gain: 3, threshold: 70 }),
   C('camera-lens-blur', 'wide', { radius: 7, blades: 5, rotation: 33, gain: 2, threshold: 50 }),
+  C('photo-filter', 'small', { filterR: 236, filterG: 138, filterB: 0, density: 40, preserveLuminosity: 1 }),
+  C('photo-filter', 'tall', { filterR: 0, filterG: 90, filterB: 255, density: 100, preserveLuminosity: 0 }),
+  C('black-and-white', 'small', { reds: 0.4, yellows: 0.6, greens: 0.4, cyans: 0.6, blues: 0.2, magentas: 0.8 }),
+  C('black-and-white', 'tall', { reds: 1.2, yellows: -0.3, greens: 0.1, cyans: 0.9, blues: 0.5, magentas: 0.35, useTint: 1, tintR: 225, tintG: 180, tintB: 120 }),
+  C('tritone', 'small', { shadowsR: 20, shadowsG: 10, shadowsB: 60, midtonesR: 200, midtonesG: 120, midtonesB: 80, highlightsR: 255, highlightsG: 250, highlightsB: 220, blend: 0 }),
+  C('tritone', 'wide', { blend: 45 }),
+  C('threshold', 'small', { level: 128 }),
+  C('threshold', 'tall', { level: 77.5 }),
+  C('selective-color', 'small', { range: 0, cyan: -40, magenta: 20, yellow: 10, black: 5, relative: 1 }),
+  C('selective-color', 'small', { range: 7, cyan: 15, magenta: -25, yellow: 30, black: -10, relative: 0 }),
+  C('selective-color', 'tall', { range: 8, black: 60, relative: 1 }),
+  C('selective-color', 'wide', { range: 4, cyan: 50, yellow: -50 }),
+  C('shadow-highlight', 'small', { shadowAmount: 50, highlightAmount: 0, radius: 6, tonalWidth: 50 }),
+  C('shadow-highlight', 'wide', { shadowAmount: 35, highlightAmount: 40, radius: 20, tonalWidth: 30 }),
+  C('colorama', 'small', { palette: 1, phaseShift: 45, cycleRepetitions: 1, blendWithOriginal: 0 }),
+  C('colorama', 'tall', { palette: 0, phaseShift: -90, cycleRepetitions: 2.5, blendWithOriginal: 0.3 }),
+  C('colorama', 'wide', { palette: 4, phaseShift: 0, cycleRepetitions: 1 }),
 ];
 
 function fnv1a64(bytes: Uint8Array | Uint8ClampedArray): string {
