@@ -14,6 +14,11 @@ import {
 } from '../keyingEffects';
 import { applyKeyData, chokeAlpha, softenAlpha } from '../keylight';
 import {
+  venetianBlindsData, gradientWipeData, luminanceMapFrom, cardWipeData, cardWipeDirection, radialWipeData,
+  radialWipeDirection, blockDissolveData,
+} from '../transitions';
+import { alphaLevelsData, solidCompositeData, channelCombinerData, removeColorMattingData } from '../aeChannel';
+import {
   equalizeData, autoLevelsData, autoContrastData, autoColorData, changeColorData, changeToColorData, leaveColorData,
   tonerData,
 } from '../aeColorAdvanced';
@@ -220,6 +225,33 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'toner':
       tonerData(data, rgb('black', [0, 0, 0]), rgb('shadows', [60, 40, 90]), rgb('midtones', [140, 120, 100]), rgb('highlights', [220, 210, 180]), rgb('white', [255, 255, 255]), n('blend', 0));
+      return;
+    case 'venetian-blinds':
+      venetianBlindsData(data, w, h, n('completion', 0), n('direction', 0), n('width', 20), n('feather', 0));
+      return;
+    case 'gradient-wipe':
+      gradientWipeData(data, luminanceMapFrom(data), n('completion', 0), n('softness', 0), b('invert', false));
+      return;
+    case 'card-wipe':
+      cardWipeData(data, w, h, n('completion', 0), n('rows', 4), n('columns', 6), cardWipeDirection(n('flipOrder', 0)));
+      return;
+    case 'radial-wipe':
+      radialWipeData(data, w, h, n('completion', 0), n('startAngle', 0), radialWipeDirection(n('direction', 0)), n('centerX', w / 2), n('centerY', h / 2), n('feather', 0));
+      return;
+    case 'block-dissolve':
+      blockDissolveData(data, w, h, n('completion', 0), n('blockWidth', 8), n('blockHeight', 8), n('feather', 0), n('seed', 0));
+      return;
+    case 'alpha-levels':
+      alphaLevelsData(data, n('inBlack', 0), n('inWhite', 255), n('gamma', 1), n('outBlack', 0), n('outWhite', 255));
+      return;
+    case 'solid-composite':
+      solidCompositeData(data, rgb('color', [255, 255, 255]), n('sourceOpacity', 100), n('solidOpacity', 100), n('mode', 0));
+      return;
+    case 'channel-combiner':
+      channelCombinerData(data, n('mode', 0));
+      return;
+    case 'remove-color-matting':
+      removeColorMattingData(data, rgb('bg', [0, 0, 0]), n('threshold', 0), n('amount', 100));
       return;
     default:
       throw new Error(`no kernel for ${type}`);

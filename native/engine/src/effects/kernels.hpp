@@ -159,6 +159,31 @@ void leave_color(RgbaView img, const Rgb& target, double tolerance, double softn
 /// `tonerData(data, black, shadows, midtones, highlights, white, blend)`.
 void toner(RgbaView img, const std::array<Rgb, 5>& stops, double blend, ThreadPool* pool);
 
+// ── transitions.ts / aeChannel.ts ───────────────────────────────────────────
+/// `venetianBlindsData(data, w, h, completion 0–1, angleDeg, widthPx, feather)`.
+void venetian_blinds(RgbaView img, double completion, double angle_deg, double width_px, double feather,
+                     ThreadPool* pool);
+/// `gradientWipeData(data, luminanceMapFrom(data), completion 0–1, softness 0–1, invert)`.
+void gradient_wipe(RgbaView img, double completion, double softness, bool invert, ThreadPool* pool);
+/// `cardWipeData(data, w, h, completion 0–1, rows, columns, cardWipeDirection(flipOrder))`.
+void card_wipe(RgbaView img, double completion, double rows, double columns, double flip_order, ThreadPool* pool);
+/// `radialWipeData(data, w, h, completion 0–1, startAngleDeg, radialWipeDirection(dir), cx, cy, featherDeg)`.
+void radial_wipe(RgbaView img, double completion, double start_angle_deg, double direction, double cx, double cy,
+                 double feather_deg, ThreadPool* pool);
+/// `blockDissolveData(data, w, h, completion 0–1, blockWidth, blockHeight, feather, seed)`.
+void block_dissolve(RgbaView img, double completion, double block_width, double block_height, double feather,
+                    double seed, ThreadPool* pool);
+/// `alphaLevelsData(data, inBlack, inWhite, gamma, outBlack, outWhite)`.
+void alpha_levels(RgbaView img, double in_black, double in_white, double gamma, double out_black, double out_white,
+                  ThreadPool* pool);
+/// `solidCompositeData(data, color, sourceOpacity, solidOpacity, mode)`.
+void solid_composite(RgbaView img, const Rgb& color, double source_opacity, double solid_opacity, double mode,
+                     ThreadPool* pool);
+/// `channelCombinerData(data, mode)`.
+void channel_combiner(RgbaView img, double mode, ThreadPool* pool);
+/// `removeColorMattingData(data, bg, threshold, amount)`.
+void remove_color_matting(RgbaView img, const Rgb& bg, double threshold, double amount, ThreadPool* pool);
+
 // ── distort.ts: inverse-map resamples ───────────────────────────────────────
 /// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
 void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);

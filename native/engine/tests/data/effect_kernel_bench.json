@@ -55,6 +55,15 @@
     { "effect": "change-color", "args": { "targetR": 250, "targetG": 40, "targetB": 20, "hueTol": 20, "hueShift": 120 } },
     { "effect": "change-to-color", "args": { "fromR": 250, "fromG": 40, "fromB": 20, "toR": 20, "toG": 90, "toB": 250 } },
     { "effect": "leave-color", "args": { "targetR": 250, "targetG": 40, "targetB": 20 } },
-    { "effect": "toner", "args": { "blend": 0 } }
+    { "effect": "toner", "args": { "blend": 0 } },
+    { "effect": "venetian-blinds", "args": { "completion": 0.4, "direction": 30, "width": 40, "feather": 3 } },
+    { "effect": "gradient-wipe", "args": { "completion": 0.4, "softness": 0.1 } },
+    { "effect": "card-wipe", "args": { "completion": 0.45, "rows": 6, "columns": 10, "flipOrder": 4 } },
+    { "effect": "radial-wipe", "args": { "completion": 0.4, "startAngle": 45, "feather": 5 } },
+    { "effect": "block-dissolve", "args": { "completion": 0.5, "blockWidth": 16, "blockHeight": 16, "feather": 2, "seed": 3 } },
+    { "effect": "alpha-levels", "args": { "inBlack": 20, "inWhite": 200, "gamma": 1.6 } },
+    { "effect": "solid-composite", "args": { "colorR": 30, "colorG": 60, "colorB": 200, "sourceOpacity": 80, "solidOpacity": 50, "mode": 2 } },
+    { "effect": "channel-combiner", "args": { "mode": 0 } },
+    { "effect": "remove-color-matting", "args": { "threshold": 5, "amount": 100 } }
   ]
 }
