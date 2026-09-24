@@ -173,6 +173,92 @@ Json resolve_layer_text_path(const doc::Node& n, const Values& a) {
   return tp;
 }
 
+void with_text_more_options(Json& extras, const doc::Node& n, const Values& a) {
+  // readTextMoreOptions.
+  std::string grouping = "character";
+  double alignX = 0;
+  double alignY = 0;
+  bool allAsOne = false;
+  std::string blending = "normal";
+  static constexpr std::array<std::string_view, 17> kBlends{
+      "normal", "darken", "multiply", "color-burn", "add", "lighten", "screen", "color-dodge", "overlay",
+      "soft-light", "hard-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"};
+  for (const auto& c : n.components) {
+    if (c.type != "Text") continue;
+    const Json& p = c.props;
+    if (p.at("anchorGrouping").is_string()) {
+      const std::string& g = p.at("anchorGrouping").str();
+      if (g == "character" || g == "word" || g == "line" || g == "all") grouping = g;
+    }
+    if (p.at("groupingAlignX").is_finite_number()) alignX = p.at("groupingAlignX").num();
+    if (p.at("groupingAlignY").is_finite_number()) alignY = p.at("groupingAlignY").num();
+    if (p.at("fillStrokeMode").is_string() && p.at("fillStrokeMode").str() == "allAsOne") allAsOne = true;
+    if (p.at("interCharacterBlending").is_string()) {
+      const std::string& b = p.at("interCharacterBlending").str();
+      if (b != "normal" && std::ranges::find(kBlends, b) != kBlends.end()) blending = b;
+    }
+  }
+  const double ax = a.get("groupingAlignX").value_or(alignX);
+  const double ay = a.get("groupingAlignY").value_or(alignY);
+  if (grouping != "character") extras.set("anchorGrouping", Json::string(grouping));
+  if (ax != 0 || ay != 0) {
+    Json g = Json::array();
+    g.arr_mut().push_back(Json::number(ax));
+    g.arr_mut().push_back(Json::number(ay));
+    extras.set("groupingAlign", std::move(g));
+  }
+  if (allAsOne) extras.set("fillStrokeMode", Json::string("allAsOne"));
+  if (blending != "normal") extras.set("interCharacterBlending", Json::string(blending));
+  for (const auto& c : n.components) {
+    if (c.type != "Text") continue;
+    const Json& p = c.props;
+    if (p.at("ligatures").is_bool() && !p.at("ligatures").b()) extras.set("ligatures", Json::boolean(false));
+    if (p.at("discretionaryLigatures").is_bool() && p.at("discretionaryLigatures").b()) {
+      extras.set("discretionaryLigatures", Json::boolean(true));
+    }
+    if (p.at("contextualAlternates").is_bool() && !p.at("contextualAlternates").b()) {
+      extras.set("contextualAlternates", Json::boolean(false));
+    }
+    if (p.at("stylisticSets").is_array()) {
+      std::vector<double> sets;
+      for (const Json& v : p.at("stylisticSets").arr()) {
+        const double x = v.is_number() ? v.num() : -1;
+        if (x >= 1 && x <= 20 && std::floor(x) == x && std::ranges::find(sets, x) == sets.end()) sets.push_back(x);
+      }
+      std::ranges::sort(sets);
+      if (!sets.empty()) {
+        Json s = Json::array();
+        for (const double x : sets) s.arr_mut().push_back(Json::number(x));
+        extras.set("stylisticSets", std::move(s));
+      }
+    }
+  }
+}
+
+Json text_stroke_paint(const doc::Node& n, const Values& a) {
+  for (const auto& c : n.components) {
+    if (c.type != "Text") continue;
+    const Json& p = c.props.at("strokePaint");
+    const std::string type = p.at("type").is_string() ? p.at("type").str() : "";
+    if (!p.is_object() || (type != "linear" && type != "radial") || !p.at("stops").is_array() || p.at("stops").arr().empty()) {
+      return Json();
+    }
+    Json out = p;
+    if (type == "linear") {
+      if (const auto angle = a.get("strokeAngle")) out.set("angle", Json::number(*angle));
+      return out;
+    }
+    const auto cx = a.get("strokeCenterX");
+    const auto cy = a.get("strokeCenterY");
+    const auto r = a.get("strokeRadius");
+    if (cx) out.set("cx", Json::number(*cx));
+    if (cy) out.set("cy", Json::number(*cy));
+    if (r) out.set("radius", Json::number(*r));
+    return out;
+  }
+  return Json();
+}
+
 double text_raster_padding(const RLayer& l) {
   constexpr double kMaxGlyphPad = 512;
   const double em = l.fontSize;

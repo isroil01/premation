@@ -757,23 +757,15 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   if (x.at("orientation").is_string()) {
     unported(l, n, "vertical text");
   }
+  with_text_more_options(out, n, a);  // textMoreOptions + OpenType switches (text_port.cpp)
   if (!out.obj().empty()) l.textExtras = std::move(out);
-  // textMoreOptions / OpenType switches — reported, not produced.
   for (const auto& c : n.components) {
     if (c.type != "Text") continue;
     const Json& p = c.props;
-    for (const char* k : {"anchorGrouping", "groupingAlignX", "groupingAlignY", "fillStrokeMode", "interCharacterBlending",
-                          "stylisticSets"}) {
-      if (!p.at(k).is_undefined()) unported(l, n, std::string("text more options (") + k + ")");
-    }
-    if (p.at("ligatures").is_bool() && !p.at("ligatures").b()) unported(l, n, "OpenType ligature switches");
-    if (p.at("discretionaryLigatures").is_bool() && p.at("discretionaryLigatures").b()) unported(l, n, "OpenType ligature switches");
-    if (p.at("contextualAlternates").is_bool() && !p.at("contextualAlternates").b()) unported(l, n, "OpenType ligature switches");
-    const Json& sp = p.at("strokePaint");
-    if (sp.is_object() && sp.at("stops").is_array() && !sp.at("stops").arr().empty()) unported(l, n, "text stroke gradients");
     if (p.at("boxWidth").is_number() && p.at("boxWidth").num() > 0) unported(l, n, "paragraph text (box wrapping)");
   }
   if (doc::read_text_path_config(n)) l.textPath = resolve_layer_text_path(n, a);  // text_port.cpp
+  l.textStrokePaint = text_stroke_paint(n, a);                                     // text_port.cpp
   const Json axes = doc::read_font_axes_prop(n);
   if (axes.is_object() && !axes.obj().empty()) unported(l, n, "variable font axes");
   if (doc::anim_has_expr(d_, n.id, "text.source") || doc::anim_expr(d_, n.id, "sourceText") != nullptr) {

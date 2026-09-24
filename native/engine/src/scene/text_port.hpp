@@ -39,6 +39,15 @@ namespace premation::scene {
 [[nodiscard]] Json evaluate_text_animators(std::string_view text, const std::vector<Json>& animators, double time,
                                          std::string* why);
 
+/// textMoreOptions.ts withTextMoreOptions: Anchor Point Grouping, Grouping
+/// Alignment (sampled), Fill & Stroke, Inter-Character Blending and the
+/// OpenType switches folded into the layer's `textExtras` (absent at defaults).
+void with_text_more_options(Json& extras, const doc::Node& n, const Values& a);
+
+/// `applyGradientTracks(readTextStrokePaint(node), a, TEXT_STROKE_GRADIENT_TRACKS)`:
+/// the text stroke's linear / radial gradient (undefined for a solid stroke).
+[[nodiscard]] Json text_stroke_paint(const doc::Node& n, const Values& a);
+
 /// vectorDraw.ts rasterPadding for a NON-shape layer: glyphSpread (animator
 /// escape) and textPathSpread, clamped to MAX_GLYPH_PAD (baked-effect bleed is
 /// the E4 chain's, and text paint layers are reported unported).
