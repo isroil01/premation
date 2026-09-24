@@ -20,7 +20,7 @@ import { ColorPicker } from '@components/ColorPicker';
 import { EmptyState } from '@components/EmptyState';
 import { useSwatchStore } from '@stores/swatchStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useMirrorRevision } from '@hooks/useMirror';
 import { solidFill } from '@core/paint/fill';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands } from '@layout/Text/textEdits';
@@ -57,7 +57,9 @@ export function SwatchesPanel(): JSX.Element {
   const refreshDocumentColors = useSwatchStore((s) => s.refreshDocumentColors);
 
   const selectedIds = useSelectionStore((s) => s.ids);
-  const sceneRevision = useSceneRevision((s) => s.rev);
+  // B4: the document mirror's revision — it moves on every edit (a paint edit,
+  // an add, a delete) and never on playback.
+  const sceneRevision = useMirrorRevision();
 
   const [draft, setDraft] = useState('#5282b8');
   const [editingId, setEditingId] = useState<string | null>(null);

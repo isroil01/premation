@@ -76,21 +76,19 @@ import { VirtualList } from '@components/VirtualList';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { isLibraryAsset, useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
 import { useAssetsViewStore, type AssetSortKey } from '@stores/assetsViewStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorRevision } from '@hooks/useMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import { openSourceMonitor } from '@stores/sourceMonitorStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { replaceTargetLayer } from './replaceTarget';
 import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
 import { insertMediaEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import { setPanelAssetSelection } from '@core/composition/assetSelection';
-import { assetIdOf } from '@core/source/sourceInfo';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import type { SceneNode } from '@core/types';
 import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { runNewCompFromClips, runAssembleFromFootage } from '@layout/Assets/footageAssembly';
@@ -201,14 +199,16 @@ export function AssetsPanel(): JSX.Element {
   const drawerOpen = useAssetsViewStore((s) => s.drawerOpen);
   const setDrawerOpen = useAssetsViewStore((s) => s.setDrawerOpen);
 
-  // Which layers use which asset — re-derived per scene revision, which is
-  // the only thing that can change the answer.
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // Which layers use which asset — every layer's source item, from the
+  // document mirror, re-derived per document revision (the only thing that
+  // can change the answer).
+  const docRev = useMirrorRevision();
   const usage = useMemo(() => {
-    const nodes: SceneNode[] = [];
-    defaultSceneGraph.traverse((n) => nodes.push(n));
-    return usageByAsset(nodes, assetIdOf);
-  }, [sceneRev]);
+    void docRev;
+    const m = documentMirror();
+    const layers = m.layerIds().map((id) => m.layer(id)).filter((l): l is NonNullable<typeof l> => !!l);
+    return usageByAsset(layers, (l) => l.source ?? null);
+  }, [docRev]);
   const usedCount = (assetId: string): number => usage.get(assetId)?.length ?? 0;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -704,9 +704,10 @@ export function AssetsPanel(): JSX.Element {
       // the menu. Keyframes, effects and masks on the layer survive; only the
       // pixels change. AE's Alt-drag replace, as a click.
       ...(() => {
-        const target = replaceableSelectedLayer();
-        if (!target || many || asset.type === 'audio') return [];
-        const name = defaultSceneGraph.getNode(target)?.name ?? 'layer';
+        const picked = replaceTargetLayer();
+        if (!picked || many || asset.type === 'audio') return [];
+        const target = picked.id;
+        const name = picked.name || 'layer';
         return [{
           id: 'use-as-source',
           label: `Use as Source for “${name}”`,
@@ -943,7 +944,7 @@ export function AssetsPanel(): JSX.Element {
   };
 
   const usedBy = singleSelectedAsset
-    ? (usage.get(singleSelectedAsset.id) ?? []).map((id) => ({ id, name: defaultSceneGraph.getNode(id)?.name ?? id }))
+    ? (usage.get(singleSelectedAsset.id) ?? []).map((id) => ({ id, name: documentMirror().layer(id)?.name ?? id }))
     : [];
 
   const sortItems: DropdownItem[] = [
