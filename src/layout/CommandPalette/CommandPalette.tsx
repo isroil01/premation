@@ -36,9 +36,11 @@ import { Kbd } from '@components/Kbd';
 import { cn } from '@utils/cn';
 import { useCommandPaletteStore } from '@stores/commandPaletteStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode, displayFramesToDomainSeconds } from '@core/time/timecode';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { seekPlayhead } from '@core/timeline/timelineView';
 import { useSceneRevision } from '@stores/sceneStore';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
@@ -299,8 +301,9 @@ function buildItems({ query, closePalette, recent, context, docs, now }: BuildIn
   if (wantTime) {
     const displaySec = parseTimecode(term);
     if (displaySec !== null) {
-      const comp = useCompositionStore.getState();
-      const fps = comp.fps || FPS;
+      const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+      const comp = { startFrame: settingsStartFrame(settings) };
+      const fps = settingsFps(settings, FPS) || FPS;
       // The user types the DISPLAYED timecode, which includes the comp's start
       // offset — subtract it to land on the real playhead time. (Keyframes and
       // playback are 0-based; only the label is shifted.)
@@ -316,7 +319,7 @@ function buildItems({ query, closePalette, recent, context, docs, now }: BuildIn
           // Seek through the timeline, not straight into the store: a direct
           // setTime leaves the engine playhead where it was, so the next
           // play/step jumps back.
-          getTimelineController().seekSeconds(sec);
+          seekPlayhead(sec);
         },
       });
     }

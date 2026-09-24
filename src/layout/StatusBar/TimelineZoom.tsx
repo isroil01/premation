@@ -17,6 +17,12 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import {
+  onTimelineZoomChanged,
+  playheadSeconds,
+  setTimelinePixelsPerSecond,
+  timelinePixelsPerSecond,
+} from '@core/timeline/timelineView';
+import {
   subscribeTimelineViewport,
   getTimelineViewport,
 } from '@layout/Timeline/timelineViewport';
@@ -37,17 +43,15 @@ const ZOOM_DEFAULT = 80;
 const clamp = (v: number): number => Math.min(TIMELINE_ZOOM_MAX, Math.max(TIMELINE_ZOOM_MIN, v));
 
 export function TimelineZoom(): JSX.Element {
-  const [pps, setPps] = useState(() => getTimelineController().getPixelsPerSecond());
+  const [pps, setPps] = useState(() => timelinePixelsPerSecond());
   /** Whether a timeline is mounted and measured — both fit actions need a width. */
   const [fitReady, setFitReady] = useState(() => getTimelineViewport().width > 0);
   const [workAreaSet, setWorkAreaSet] = useState(false);
 
   useEffect(() => {
-    const c = getTimelineController();
-    const sync = (): void => setPps(c.getPixelsPerSecond());
+    const sync = (): void => setPps(timelinePixelsPerSecond());
     sync();
-    const sub = c.timeline.events.on('TimelineZoomChanged', sync);
-    return () => sub.dispose();
+    return onTimelineZoomChanged(sync);
   }, []);
 
   // The fit buttons are only live once the timeline panel has reported how wide
@@ -70,12 +74,11 @@ export function TimelineZoom(): JSX.Element {
   useEffect(() => installTimelineFitCommands(), []);
 
   const setZoom = (next: number): void => {
-    const c = getTimelineController();
-    c.setPixelsPerSecond(clamp(next), c.currentSeconds);
-    setPps(c.getPixelsPerSecond());
+    setTimelinePixelsPerSecond(clamp(next), playheadSeconds());
+    setPps(timelinePixelsPerSecond());
   };
 
-  const afterFit = (): void => setPps(getTimelineController().getPixelsPerSecond());
+  const afterFit = (): void => setPps(timelinePixelsPerSecond());
 
   const pct = Math.round((pps / ZOOM_DEFAULT) * 100);
 

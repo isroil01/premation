@@ -29,6 +29,9 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
 import { audioSliderNullEdit, expressionBakeEdit, exponentialScaleEdit } from './menuCommandEdits';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport, seekPlayhead } from '@core/timeline/timelineView';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
@@ -645,9 +648,9 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
     // Honest disable: with fewer than N markers the key does nothing, and a
     // command that reports itself enabled while doing nothing is the dead-control
     // shape this codebase keeps finding.
-    enabled: () => getTimelineController().compMarkerCount() >= n,
+    enabled: () => (documentMirror().comp(activeCompIdNow() ?? '')?.markers.length ?? 0) >= n,
     execute: () => {
-      if (!getTimelineController().goToMarkerIndex(n)) {
+      if (!goToMarkerIndex(n)) {
         notify(`No comp marker ${n}`, 'info');
       }
     },
@@ -1012,8 +1015,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
         armMotionSketch(nodeId);
-        const ctrl = getTimelineController();
-        if (!ctrl.isPlaying) ctrl.play();
+        if (!isTransportPlaying()) playTransport();
         notify('Motion Sketch armed — drag to record, Esc to cancel', 'info');
 
         /*
@@ -1038,7 +1040,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         const onUp = (): void => {
           cleanup();
           const n = finishMotionSketch();
-          if (ctrl.isPlaying) ctrl.pause();
+          if (isTransportPlaying()) pauseTransport();
           notify(
             n > 0 ? `Motion Sketch — ${n} keyframes recorded` : 'Motion Sketch — nothing recorded',
             n > 0 ? 'success' : 'warning',
@@ -1048,7 +1050,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
           if (ev.key !== 'Escape') return;
           cleanup();
           cancelMotionSketch();
-          if (ctrl.isPlaying) ctrl.pause();
+          if (isTransportPlaying()) pauseTransport();
           notify('Motion Sketch cancelled', 'info');
         };
         window.addEventListener('pointerup', onUp);
@@ -3168,7 +3170,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
                       // Was `Math.round(t * 60)` — a hardcoded 60 fps that put
                       // the frame number on a different clock from the comp for
                       // every project not shot at 60.
-                      getTimelineController().seekSeconds(t);
+                      seekPlayhead(t);
                       bumpScene();
                       // The history baseline after crash recovery (a load boundary).
                       void baselineHistoryEdit('Recovered');

@@ -70,6 +70,14 @@ import { useGesture } from '@hooks/useGesture';
 import type { Command } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import {
+  goToNextKeyframe,
+  goToPrevKeyframe,
+  playheadSeconds,
+  seekPlayhead,
+  setTimelinePixelsPerSecond,
+  setTimelineScrollPixels,
+} from '@core/timeline/timelineView';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
@@ -339,10 +347,9 @@ function EditorShellInner(): JSX.Element {
   // pps = ppf × fps. Driven by the transport zoom buttons and Ctrl+Wheel.
   const pps = useTimelinePixelsPerSecond(activeCompId);
   const handleZoom = useCallback((next: number, anchorSeconds?: number): void => {
-    const c = getTimelineController();
     // Anchor on the point the gesture was aimed at, falling back to the
     // playhead when there was none (a slider, a keyboard zoom).
-    c.setPixelsPerSecond(clampPps(next), anchorSeconds ?? c.currentSeconds);
+    setTimelinePixelsPerSecond(clampPps(next), anchorSeconds ?? playheadSeconds());
   }, []);
 
   const toggleExpand = useCallback((id: string): void => {
@@ -703,7 +710,7 @@ function EditorShellInner(): JSX.Element {
 
   // Wire scrub → Timeline Engine (authority); it mirrors seconds into the store.
   const handleScrub = (t: number): void => {
-    getTimelineController().seekSeconds(t);
+    seekPlayhead(t);
   };
 
   // Clicking a timeline track selects its node (Shift/Cmd = additive).
@@ -1069,13 +1076,13 @@ function EditorShellInner(): JSX.Element {
         id: 'goto-prev-kf',
         label: 'Go to Previous Keyframe',
         shortcut: 'J',
-        onSelect: () => getTimelineController().goToPrevKeyframe(),
+        onSelect: () => goToPrevKeyframe(),
       },
       {
         id: 'goto-next-kf',
         label: 'Go to Next Keyframe',
         shortcut: 'K',
-        onSelect: () => getTimelineController().goToNextKeyframe(),
+        onSelect: () => goToNextKeyframe(),
       },
       { id: 'sep-nav', separator: true },
       {
@@ -1090,7 +1097,7 @@ function EditorShellInner(): JSX.Element {
         shortcut: 'Ctrl+V',
         onSelect: () => {
           const targets = useSelectionStore.getState().ids;
-          if (targets.length > 0) void pasteKeyframesAt(targets, getTimelineController().currentSeconds);
+          if (targets.length > 0) void pasteKeyframesAt(targets, playheadSeconds());
         },
       },
       {
@@ -1469,7 +1476,7 @@ function EditorShellInner(): JSX.Element {
               onClipSlip={handleClipSlip}
               onClipSlide={handleClipSlide}
               onClipContextMenu={handleClipContextMenu}
-              onScroll={(px) => getTimelineController().setScrollPixels(px)}
+              onScroll={(px) => setTimelineScrollPixels(px)}
               onZoom={handleZoom}
               onTrackSelect={handleTrackSelect}
               onTrackSelectMany={handleTrackSelectMany}
@@ -1492,7 +1499,7 @@ function EditorShellInner(): JSX.Element {
                   layers: [trackId],
                   ...(parentId ? { parent: parentId } : {}),
                   keepWorldTransform: options?.preserveWorld ?? true,
-                  ...(jump ? { jump: true, time: compTime(getTimelineController().currentSeconds) } : {}),
+                  ...(jump ? { jump: true, time: compTime(playheadSeconds()) } : {}),
                 });
               }}
               onTrackToggleFlag={(trackId, flag) => {

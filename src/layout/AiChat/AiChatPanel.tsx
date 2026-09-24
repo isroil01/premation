@@ -19,7 +19,7 @@ import { useAiProviderStore } from '@stores/aiProviderStore';
 
 import type { GatewayProviderId, AiProviderId } from '@core/api/client';
 import { processImageFile, type PendingImage } from '@core/ai/imageAttachment';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { goToStart, isTransportPlaying, pauseTransport, playTransport } from '@core/timeline/timelineView';
 import { useAiChatContext } from './AiChatContext';
 import { openAiSettings } from '@layout/Settings/openCustomizeDialog';
 import styles from './AiChatPanel.module.css';
@@ -273,13 +273,12 @@ export function AiChatPanel(): JSX.Element {
 
   const togglePlayPreview = (): void => {
     try {
-      const tc = getTimelineController();
-      if (tc.isPlaying) {
-        tc.pause();
+      if (isTransportPlaying()) {
+        pauseTransport();
         setIsPlayingPreview(false);
       } else {
-        tc.goToStart();
-        tc.play();
+        goToStart();
+        playTransport();
         setIsPlayingPreview(true);
       }
     } catch {

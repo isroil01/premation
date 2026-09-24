@@ -21,19 +21,17 @@ import { useDismissOnOutside } from '@hooks/useDismissOnOutside';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorTabStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useActiveCompName } from '@layout/Composition/activeCompName';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useAssetStore } from '@stores/assetStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
 import { canOpenInLayerPanel, openLayerPanel } from '@layout/LayerViewer/openLayer';
 import { LayerViewer } from '@layout/LayerViewer/LayerViewer';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { openContextMenu } from '@stores/contextMenuStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { assetIdOf } from '@core/source/sourceInfo';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveCompId, useActiveMirrorComp, useMirrorComp, useMirrorLayer } from '@hooks/useMirror';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { openFootagePreview, useLastFootagePreview, clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
@@ -71,13 +69,9 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   // A pristine, never-adopted, still-empty comp is the AE fresh-project state
   // — the engine keeps a root under the hood. Drawing into it makes it real by
   // use, flag or no flag.
-  const rawCompName = useCompositionStore((s) => s.name);
-  const activePristine = useProjectStore((s) => {
-    const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
-    if (!id || s.comps[id]?.pristine !== true) return false;
-    const node = defaultSceneGraph.getNode(id);
-    return !node || node.children.length === 0;
-  });
+  const rawCompName = useActiveMirrorComp()?.settings.name ?? '';
+  const activeMirrorComp = useMirrorComp(useActiveCompId());
+  const activePristine = activeMirrorComp?.settings.pristine === true && activeMirrorComp.layers.length === 0;
   // The TAB names whichever comp is active — pristine or not. It used to read
   // "Composition (none)" for a pristine comp, while the timeline tab, the
   // status bar and Composition Settings all named the very comp it was
@@ -102,12 +96,10 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   const lastPreviewed = useLastFootagePreview((s) => s.asset);
   const selectionIds = useSelectionStore((s) => s.ids);
   const assets = useAssetStore((s) => s.assets);
-  useSceneRevision((s) => s.rev);
   const singleSelectedLayer = selectionIds.length === 1 ? selectionIds[0]! : null;
+  const selectedLayerInfo = useMirrorLayer(singleSelectedLayer);
   const selectedAsset = (() => {
-    if (!singleSelectedLayer) return null;
-    const node = defaultSceneGraph.getNode(singleSelectedLayer);
-    const assetId = node ? assetIdOf(node) : null;
+    const assetId = selectedLayerInfo?.source;
     return assetId ? assets.find((a) => a.id === assetId) ?? null : null;
   })();
   const selectedMedia =
@@ -127,13 +119,13 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   }, [assets, lastPreviewed]);
   // AE's Layer panel (LayerViewer): open while its layer still exists.
   const layerViewerId = useLayerViewerStore((s) => s.nodeId);
-  const layerViewerOpen = layerViewerId !== null && !!defaultSceneGraph.getNode(layerViewerId);
-  const selectedViewable = singleSelectedLayer !== null
-    && canOpenInLayerPanel(defaultSceneGraph.getNode(singleSelectedLayer));
+  const layerViewerInfo = useMirrorLayer(layerViewerId);
+  const layerViewerOpen = layerViewerId !== null && !!layerViewerInfo;
+  const selectedViewable = selectedLayerInfo !== undefined && canOpenInLayerPanel(selectedLayerInfo.id);
   const layerTabName = layerViewerOpen
-    ? defaultSceneGraph.getNode(layerViewerId!)?.name ?? null
+    ? layerViewerInfo?.name ?? null
     : singleSelectedLayer
-      ? defaultSceneGraph.getNode(singleSelectedLayer)?.name ?? null
+      ? selectedLayerInfo?.name ?? null
       : null;
   const viewMode = useWorkspaceViewStore((s) => s.mode);
 
@@ -199,7 +191,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             openContextMenu(e.clientX, e.clientY, [
               ...open.map((t) => ({
                 id: `open-${t.id}`,
-                label: st.comps[t.compositionId]?.name ?? defaultSceneGraph.getNode(t.compositionId)?.name ?? t.title,
+                label: st.comps[t.compositionId]?.name ?? documentMirror().layer(t.compositionId)?.name ?? t.title,
                 icon: t.id === st.activeTabId ? ('check' as const) : undefined,
                 onSelect: () => {
                   activate(SCENE_TAB_ID);

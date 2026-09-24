@@ -20,10 +20,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { lookThroughCamera, lookThroughCameras } from '@core/scene/camera3d';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow, useMirrorSelect } from '@hooks/useMirror';
+import { mirrorLookThroughCamera, mirrorLookThroughCameras } from '@core/mirror/cameras';
 import { cameraViewMode, cameraViewNodeId, isCameraViewMode, type CameraViewMode } from '@core/scene/cameraViewMode';
-import { useSceneRevision } from '@stores/sceneStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import {
   useRenderQualityStore,
@@ -32,7 +32,6 @@ import {
 } from '@stores/renderQualityStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { Dropdown, type DropdownItem, type DropdownProps } from '@components/Dropdown';
 import { OnionSkinSettingsPopover } from '@layout/BottomTimeline/OnionSkinSettings';
 import { cacheWorkAreaNow, installPreviewCacheCommands } from '@layout/Timeline/previewCacheCommands';
@@ -55,8 +54,8 @@ function cameraName(name: string | undefined): string {
   return name && name.trim() ? name : 'Camera';
 }
 
-function compRootOr(rootId?: string): string {
-  return rootId ?? useCompositionStore.getState().id;
+function compRootOr(rootId?: string): string | undefined {
+  return rootId ?? activeCompIdNow();
 }
 
 /**
@@ -67,13 +66,13 @@ function compRootOr(rootId?: string): string {
  */
 export function effectiveViewMode(mode: Camera3dMode, rootId?: string): Camera3dMode {
   if (!isCameraViewMode(mode)) return mode;
-  return lookThroughCamera(defaultSceneGraph, cameraViewNodeId(mode), compRootOr(rootId)) ? mode : 'active';
+  return mirrorLookThroughCamera(documentMirror(), cameraViewNodeId(mode), compRootOr(rootId)) ? mode : 'active';
 }
 
 /** The label for ANY view mode — a camera view by its layer's name. */
 export function cameraViewLabel(mode: Camera3dMode, rootId?: string): string {
   if (!isCameraViewMode(mode)) return CAMERA_VIEW_LABEL[mode];
-  const node = lookThroughCamera(defaultSceneGraph, cameraViewNodeId(mode), compRootOr(rootId));
+  const node = mirrorLookThroughCamera(documentMirror(), cameraViewNodeId(mode), compRootOr(rootId));
   return node ? cameraName(node.name) : CAMERA_VIEW_LABEL.active;
 }
 
@@ -94,8 +93,8 @@ export interface CameraViewOption {
  * is one walk of the comp and a string compare.
  */
 export function useCompCameraViews(rootId: string): CameraViewOption[] {
-  const signature = useSceneRevision(() =>
-    JSON.stringify(lookThroughCameras(defaultSceneGraph, rootId).map((n) => [n.id, cameraName(n.name)])),
+  const signature = useMirrorSelect(['doc'], (m) =>
+    JSON.stringify(mirrorLookThroughCameras(m, rootId).map((l) => [l.id, cameraName(l.name)])),
   );
   return useMemo(
     () =>
@@ -160,7 +159,8 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
   // Set the ROI to the composition's centre half — a sensible starting region
   // the user then drags to taste on the canvas.
   const setCentreRoi = (): void => {
-    const comp = useCompositionStore.getState();
+    const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+    const comp = { width: settings?.width ?? 1920, height: settings?.height ?? 1080 };
     setRoi({ x: Math.round(comp.width / 4), y: Math.round(comp.height / 4), width: Math.round(comp.width / 2), height: Math.round(comp.height / 2) });
   };
 

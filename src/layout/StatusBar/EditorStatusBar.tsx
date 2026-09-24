@@ -20,7 +20,8 @@ import { Kbd } from '@components/Kbd';
 import { cn } from '@utils/cn';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { openPalette } from '@stores/commandPaletteStore';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { useActiveCompName } from '@layout/Composition/activeCompName';
@@ -51,10 +52,11 @@ export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Eleme
   // The COMPOSITION's name, not the tab's title — a tab keeps the title it was
   // minted with ("Main Comp") through every rename. See `activeCompName.ts`.
   const compName = useActiveCompName();
-  const compFps = useCompositionStore((s) => s.fps);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
-  const compStartFrame = useCompositionStore((s) => s.startFrame);
+  const compSettings = useActiveMirrorComp()?.settings;
+  const compFps = settingsFps(compSettings);
+  const compWidth = compSettings?.width ?? 1920;
+  const compHeight = compSettings?.height ?? 1080;
+  const compStartFrame = settingsStartFrame(compSettings);
 
   return (
     <StatusBar
