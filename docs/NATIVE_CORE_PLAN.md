@@ -502,8 +502,9 @@ built or syntax-checked with the project's warning flags. Pixel parity of the ne
 paths (`premation-raster --mode native` on the golden scenes) is still to run on a
 machine with the vcpkg `engine` feature.
 
-Open: the GPU (Graphite) raster path (needs a GPU), CPU-baked effect chains (E4:
-wiring, 18 canvas-drawn effects), macOS system fonts (CoreText), variation axes and
+Open: the GPU (Graphite) raster path (needs a GPU), the CPU bake chain under the
+engine (E4: the chain and all 27 canvas-drawn effects are ported — see the E4 chain
+note — `frame_build.cpp` does not call it yet), macOS system fonts (CoreText), variation axes and
 the 'vert' face through alias faces, the D2w scene builder's own paint resolution
 (`snapshot_build.cpp` still marks paint unported), pixel parity of the above.
 
@@ -715,25 +716,108 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `deep-glow` | `deepGlow.ts` | 7398 | 2730 | 1287 | 2.7 | 5.7 |
 | `beam-path` | `beamPath.ts` | 13728 | 2578 | 934 | 5.3 | 14.7 |
 
-Not ported (27) — all draw through Canvas2D and need the E3 `raster::Canvas`
-in the chain before they can move:
+The 27 canvas-drawn effects were not ported by the kernel rounds; E3 ported 9
+of them on `raster::Canvas` (`engine_canvas_effects`). The chain round below
+ports the other 18 and runs all 27 in the chain.
 
-| status | effects (`applyCanvas2dEffect` cases) |
-|---|---|
-| **Forces a bake today** (`CANVAS2D_ONLY`, no WGSL) | `vegas`, `numbers`, `timecode`, `audio-spectrum`, `audio-waveform`, `lightning`, `plexus` |
-| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs) | `fill`, `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `linear-wipe`, `transform`, `beam`, `lens-flare`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves`, `cc-repetile` |
-| Canvas-drawn, ported by E3 on `raster::Canvas` (`engine_canvas_effects`, call-log parity; not yet in the chain) | `fill`, `linear-wipe`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves`, `light-rays`, `light-sweep` |
+**E4 chain (2026-09-24, branch `e4-chain`, CPU only, built on Linux without
+Skia).** `engine_effect_chain` (`native/engine/src/effects/effect_chain.cpp`,
+`effect_apply.cpp`, `effect_color.cpp`; see `native/README.md` § The bake
+chain) is `effectBake.ts` `applyEffectChain` + `bakeWorkerCore.ts` `runBakeJob`
+on the Skia-free `raster::Canvas2D`:
+
+- **Param mapping.** All 139 pixel effects go through a port of their TS
+  `apply*` wrapper, not the kernel's argument names: the guards that skip
+  neutral settings (a guard that returns never touches the frame, so it is part
+  of the Canvas2D program), renames, `/100` scalings, `w/2 +` centre offsets,
+  `Math.round` / clamps, the three colour parsers, Find Edges' blend,
+  `deepGlowSettings`, `beamPathSettings` + `beamFlicker`, `pickMaskPaths`'
+  index, `fromStoredLut`'s validation.
+- **Routes, in `applyOne`'s order.** 10 LUT effects (`colorLut.ts` +
+  `aeRoundSevenLuts.ts`, Float32 tables), the 11 CSS effects (their filter
+  strings, batched and flushed as one `ctx.filter` draw — the Skia canvas draws
+  only `blur()` of them so far, and reports the rest in
+  `ChainReport::unsupported`), the colour-matrix pair (tint, channel mixer),
+  the two procedural generators, plugins (reported), and the canvas2d route:
+  the 139 kernels and **all 27 canvas-drawn effects** — the 18 left after E3
+  (stroke, the interior styles, satin, bevel, four-colour gradient,
+  directional blur, transform, beam, CC RepeTile, lens flare, numbers,
+  timecode, audio spectrum / waveform, lightning, plexus, vegas) ported call
+  for call onto `raster::Canvas2D`, with a `CanvasEffectContext` for what the TS
+  keeps in module state (the `scratch(role)` pool, the fill-opacity style
+  silhouette). They need Skia only to rasterise, not to verify: their parity is
+  the call log.
+- **Interleaving.** Fill opacity (silhouette snapshot + `destination-in`
+  fade, the silhouette installed for every style), the Compositing-Options
+  opacity and effect-scoped masks (one before / after blend; the mask painted
+  by `raster/mask_paint`, now in the Skia-free core), and the batched ImageData
+  exactly as the TS intercepts it — including that every non-CSS step's
+  `flushCss()` lands the batch, so consecutive pixel passes each pay a
+  get / put pair in the TS and must in C++ too (on Skia the put / get round
+  trip is premultiplied, so dropping it would change bytes at partial alpha).
+
+**Parity.** `effectChainCrossEngine.test.ts` runs `runBakeJob` on the
+recording canvas, which now holds pixels: getImageData / putImageData are real
+(every put logs the FNV-1a 64 of its bytes) and the chain's own composites go
+through a reference compositor both recorders share; filters, shadows, paths,
+gradients, text and scaled draws are pinned by the call log only. Cases: every
+registered effect alone at its registry defaults and at two random points of
+its declared ranges, 15 stacks (every route interleaved; fill opacity 0, 0.35
+and 0.4 under the styles; opacity 0 / 55 / 100 and scoped-mask blends
+including a missing mask id; LUT and colour-matrix families; drawn passes
+between kernels; generators on mask paths; brushes), and a keyframed stack
+sampled through `resolveEffectParams` at three times. `engine_effects_tests`:
+**606 / 606 cases exact on 1 thread and on 4 — 50 585 / 50 585 Canvas2D ops,
+1 093 byte-checked putImageData, every final buffer, every route** (474 cases
+change pixels; the rest are neutral defaults or drawn-only). Zero tolerance.
+Two TS bugs the port reproduces on purpose, for the TS to fix first: Stroke
+inside / center draws no inner band on a reused scratch canvas (its pooled
+context keeps `destination-out`), and Audio Waveform is always mid grey
+(`rgba()` of `bandColor`'s `rgb(...)` string).
+
+**Bench** (`premation-effects --chain tests/data/effect_chain_bench.json`,
+1920×1080 baked layer through `run_bake_job`: seed, chain, read-back; the
+canvas holds pixels for ImageData only, so this is the chain's CPU work and
+the canvas's own rasterisation — blits, filters, paths, text — is Skia's and
+not in it; shared 4-vCPU container, CPU pressure 0.4–7 %, best of 3):
+
+- 382 single-effect layers (191 effects × defaults / active) + 6 stacks:
+  **306 / 388 within 41.7 ms on 4 threads** (251 on 1 thread); median 10.0 ms.
+- At the active settings: 147 / 191 effects fit a 24 fps frame on 4 threads
+  (115 on 1); median 11.7 ms (24.2 ms on 1 thread). 52 of the defaults are
+  neutral and cost only the seed / read-back (≈ 1.7 ms).
+- Over budget on 4 threads at the active setting (44): the heavy kernels of
+  the table above (Deep Glow ≈ 1.05 s, Cross Blur 287 ms, Beam Path 244,
+  Light Burst 240, Brush Strokes 237, Vector Blur 230, Radial Blur 159–179,
+  Fractal 160, …), Gaussian / Fast Box Blur at radius 60 (96–109 ms), and
+  Vegas active (163 ms: a contour stroke per speckle of the synthetic layer,
+  657 k draws).
+- Stacks (4 threads): title card (fill 0.5 + drop shadow + glow + fill)
+  1.7 ms; keyed plate (Keylight, spill, matte choker, scoped colour balance)
+  64 ms; graded footage (levels, curves, vibrance, masked 12 px blur, grain)
+  97 ms; generators 122 ms; stylised (median, find edges, posterize, 50 %
+  unsharp) 140 ms; distort (turbulent displace, twirl, chromatic aberration)
+  157 ms.
+
+So the exit criterion is not met on the CPU alone for the heavy kernels: they
+need the lower-precision twins behind the golden gate noted above, or their
+WGSL on the GPU (they are ported effects: they bake only when a layer bakes for
+another reason).
 
 Open work for E4:
-- **Wire the chain.** Map each effect's params onto its kernel arguments (the
-  TS `apply*` wrappers), and interleave the kernels with the canvas-drawn
-  passes, masks, fill opacity and interior styles. `layer_is_baked` layers then
-  render through `engine_effects` instead of being reported as unported by
-  `frame_build.cpp`, and the golden gate runs on whole frames.
-- The 27 canvas-drawn effects (above, after E3's canvas lands in the chain),
-  and the non-effect CPU bake sites in
-  `src/core/rendering` (`pixelMotion*`, `deinterlace`, `channelView`,
-  `frameTap`, `AppTextureProvider`'s read-backs).
+- **Put the chain under the engine.** `frame_build.cpp` still reports
+  `layer_is_baked` layers as unported: it needs the layer raster (E3 text /
+  vector on Skia), the job's effects built from the document (`params_of` +
+  `scaleEffectLengths` from the registry's `px` units, and the layer mask
+  pre-applied), `run_bake_job` on the Skia canvas, and the texture upload
+  (GPU; out of scope here). Then the golden gate runs on whole frames.
+- **Skia side, unverifiable here:** CSS filter functions beyond `blur()`
+  (brightness, contrast, saturate, grayscale, sepia, hue-rotate, invert,
+  drop-shadow) on `canvas_ffi.cpp`'s `setFilterString`; Plexus' float16
+  OffscreenCanvas scratch (the chain takes the TS's direct path); pixel parity
+  of all 27 drawn effects against Chromium (`premation-raster`, golden scenes).
+- The non-effect CPU bake sites in `src/core/rendering` (`pixelMotion*`,
+  `deinterlace`, `channelView`, `frameTap`, `AppTextureProvider`'s read-backs).
 - Toolchain not checked here: clang-tidy (CI runs it on `native/libs` only),
   the sanitizers (this container has no compiler-rt runtime, which also stops
   `engine_fuzz` from linking), MSVC / clang-cl and WASM builds.

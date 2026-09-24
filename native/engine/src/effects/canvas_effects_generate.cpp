@@ -15,7 +15,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <bit>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -845,7 +847,22 @@ std::vector<Contour> extract_alpha_contours(const std::vector<std::uint8_t>& alp
     CPt a, b;
   };
   std::vector<S> segs;
-  std::map<std::pair<double, double>, std::vector<std::size_t>> by_start;
+  // vegas.ts keys endpoints by the string of their rounded µpx coordinates; a
+  // hash of the two rounded doubles (−0 folded into +0, as the string does)
+  // groups the same points. Lookups only: the per-key lists keep insertion order.
+  struct KeyHash {
+    std::size_t operator()(const std::pair<double, double>& k) const noexcept {
+      const auto a = std::bit_cast<std::uint64_t>(k.first + 0.0);
+      const auto b = std::bit_cast<std::uint64_t>(k.second + 0.0);
+      return static_cast<std::size_t>(a * 0x9E3779B97F4A7C15ULL ^ (b + 0x632BE59BD9B4E019ULL + (a << 6U) + (a >> 2U)));
+    }
+  };
+  struct KeyEq {
+    bool operator()(const std::pair<double, double>& x, const std::pair<double, double>& y) const noexcept {
+      return x.first == y.first && x.second == y.second;
+    }
+  };
+  std::unordered_map<std::pair<double, double>, std::vector<std::size_t>, KeyHash, KeyEq> by_start;
   for (int cy = -1; cy < h; ++cy) {
     for (int cx = -1; cx < w; ++cx) {
       const double tl = s(cx, cy);
@@ -926,13 +943,10 @@ CPt point_at_arc(const Contour& pts, const Arc& t, double s) {
   if (n == 0) return {0, 0};
   if (t.total <= 0) return pts[0];
   const double u = t.closed ? std::fmod(std::fmod(s, t.total) + t.total, t.total) : clampd(s, 0, t.total);
-  std::size_t i = n - 1;
-  for (std::size_t j = 0; j + 1 < n; ++j) {
-    if (u < t.cum[j + 1]) {
-      i = j;
-      break;
-    }
-  }
+  // The first j with u < cum[j + 1] (cum never decreases: a binary search finds
+  // the vertex the TS's linear scan does); none → the closing edge.
+  const auto it = std::upper_bound(t.cum.begin() + 1, t.cum.end(), u);
+  const auto i = static_cast<std::size_t>(it - (t.cum.begin() + 1));
   const double seg_len = (i == n - 1 ? t.total : t.cum[i + 1]) - t.cum[i];
   const double f = seg_len > 0 ? (u - t.cum[i]) / seg_len : 0;
   const CPt& a = pts[i];
@@ -947,9 +961,10 @@ Contour walk_arc(const Contour& pts, const Arc& t, double from, double len) {
     const double s1 = clampd(from + len, 0, t.total);
     if (s1 <= s0) return {};
     Contour run{point_at_arc(pts, t, s0)};
-    for (std::size_t k = 0; k < n; ++k) {
-      if (t.cum[k] > s0 && t.cum[k] < s1) run.push_back(pts[k]);
-    }
+    // The vertices strictly inside (s0, s1): one contiguous run of the sorted `cum`.
+    const auto first = std::upper_bound(t.cum.begin(), t.cum.end(), s0);
+    const auto last = std::lower_bound(first, t.cum.end(), s1);
+    for (auto k = first; k != last; ++k) run.push_back(pts[static_cast<std::size_t>(k - t.cum.begin())]);
     run.push_back(point_at_arc(pts, t, s1));
     return run;
   }
@@ -957,8 +972,7 @@ Contour walk_arc(const Contour& pts, const Arc& t, double from, double len) {
   Contour out{point_at_arc(pts, t, from)};
   const double start = std::fmod(std::fmod(from, t.total) + t.total, t.total);
   const auto arc_of = [&](std::size_t k) { return t.cum[k % n] + t.total * std::floor(static_cast<double>(k) / static_cast<double>(n)); };
-  std::size_t k = 0;
-  while (k < n && t.cum[k] <= start) ++k;
+  auto k = static_cast<std::size_t>(std::upper_bound(t.cum.begin(), t.cum.end(), start) - t.cum.begin());
   const double target = start + span;
   const std::size_t last = k + n;
   while (k <= last && arc_of(k) < target) {

@@ -10,9 +10,11 @@
 // layer of the bench comp — every effect alone at its defaults and at an active
 // setting, and multi-effect stacks — including the chain's ImageData transfers,
 // composites and the seed / read-back, against the 41.7 ms (24 fps) frame. The
-// canvas under it is the recording canvas's pixel model with logging off (the
-// CPU cost of the chain; Skia's draws of canvas-drawn effects and CSS filters
-// are not in it).
+// canvas under it is the recording canvas holding pixels for ImageData only
+// (logging and reference compositing off): the chain's CPU work — kernels,
+// ImageData transfers, seed and read-back — without the canvas's own
+// rasterisation (blits, filters, paths, text), which is Skia's and is counted
+// per layer instead ("draws").
 // Parity is not checked here — that is engine_effects_tests against
 // tests/data/effect_kernel_parity.json and effect_chain_parity.json.
 #include <algorithm>
@@ -102,18 +104,20 @@ double time_ms(const std::string& effect, const fx::KernelArgs& args, const fx::
 
 /// Best-of-N ms of one baked layer through the chain (seed, chain, read-back).
 double time_chain(const json::Value& c, const std::vector<std::uint8_t>& input, int w, int h, fx::ThreadPool* pool, int iterations,
-                  std::size_t& unported) {
+                  std::size_t& unported, std::size_t& draws) {
   double best = 1e300;
   const json::Value* mask = c.has("mask") ? &c["mask"] : nullptr;
   for (int i = 0; i < iterations + 1; ++i) {
     auto rec = std::make_shared<premation::raster::test::Recording>();
     rec->log = false;
+    rec->model = false;
     premation::raster::test::RecordingCanvas oc(rec, static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
     fx::ChainReport report;
     const auto t0 = std::chrono::steady_clock::now();
     const std::vector<std::uint8_t> out = fx::run_bake_job(oc, input, c["effects"], c["fillOpacity"].num(1), mask, pool, report);
     const auto t1 = std::chrono::steady_clock::now();
     unported = report.unported.size();
+    draws = rec->draws;
     if (i > 0) best = std::min(best, std::chrono::duration<double, std::milli>(t1 - t0).count());
   }
   return best;
@@ -127,7 +131,7 @@ int run_chain(const json::Value& cfg, const std::string& only, int iterations, u
   constexpr double kBudget = 1000.0 / 24;
   std::printf("bake chain, %dx%d baked layer, best of %d, %u threads; budget %.1f ms (24 fps)\n", w, h, iterations, pool.size(),  // NOLINT(cppcoreguidelines-pro-type-vararg)
               kBudget);
-  std::printf("%-32s %10s %10s %8s\n", "layer", "1 thr ms", "N thr ms", "scale");  // NOLINT(cppcoreguidelines-pro-type-vararg)
+  std::printf("%-32s %10s %10s %8s %6s\n", "layer", "1 thr ms", "N thr ms", "scale", "draws");  // NOLINT(cppcoreguidelines-pro-type-vararg)
   int n = 0;
   int under1 = 0;
   int under_n = 0;
@@ -136,14 +140,16 @@ int run_chain(const json::Value& cfg, const std::string& only, int iterations, u
     const std::string name = c["name"].str();
     if (!only.empty() && name.find(only) == std::string::npos) continue;
     std::size_t unported = 0;
-    const double one = time_chain(c, input, w, h, nullptr, iterations, unported);
-    const double many = time_chain(c, input, w, h, &pool, iterations, unported);
+    std::size_t draws = 0;
+    const double one = time_chain(c, input, w, h, nullptr, iterations, unported, draws);
+    const double many = time_chain(c, input, w, h, &pool, iterations, unported, draws);
     ++n;
     under1 += one <= kBudget ? 1 : 0;
     under_n += many <= kBudget ? 1 : 0;
     many_all.push_back(many);
-    std::printf("%-32s %10.2f %10.2f %7.1fx%s%s\n", name.c_str(), one, many, one / std::max(1e-9, many),  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    std::printf("%-32s %10.2f %10.2f %7.1fx %6zu%s%s\n", name.c_str(), one, many, one / std::max(1e-9, many), draws,  // NOLINT(cppcoreguidelines-pro-type-vararg)
                 many > kBudget ? "  > 24 fps budget" : "", unported > 0 ? "  (unported effect)" : "");
+    (void)std::fflush(stdout);
   }
   std::ranges::sort(many_all);
   std::printf("%d layers: %d within %.1f ms on 1 thread, %d on %u threads; median %.2f ms on %u threads\n", n, under1, kBudget,  // NOLINT(cppcoreguidelines-pro-type-vararg)

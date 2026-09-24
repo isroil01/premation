@@ -33,6 +33,11 @@ namespace premation::raster::test {
 struct Recording {
   /// False: keep the pixels and the state, record nothing (the chain bench's CPU canvas).
   bool log = true;
+  /// False: no reference compositing either — the canvas holds pixels for
+  /// getImageData / putImageData only, and `draws` counts what a real canvas
+  /// would rasterise (the chain bench: the chain's CPU work, not Skia's).
+  bool model = true;
+  std::size_t draws = 0;
   std::vector<std::string> ops;
   int nextCanvas = 0;
   int nextGrad = 0;
@@ -221,8 +226,9 @@ class RecordingCanvas final : public Canvas2D {
   void setShadowOffsetY(double y) override { set("shadowOffsetY", num(y)); }
   [[nodiscard]] std::vector<std::uint8_t> getImageData(int x, int y, std::uint32_t w, std::uint32_t h) const override {
     const_cast<RecordingCanvas*>(this)->call("getImageData", {std::to_string(x), std::to_string(y), std::to_string(w), std::to_string(h)});  // NOLINT(cppcoreguidelines-pro-type-const-cast): a read is still an op of the program
-    std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4, 0);
     const std::vector<std::uint8_t>& p = px();
+    if (x == 0 && y == 0 && w == w_ && h == h_) return p;  // the whole frame: one copy
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4, 0);
     for (std::uint32_t j = 0; j < h; ++j) {
       for (std::uint32_t i = 0; i < w; ++i) {
         const long sx = x + static_cast<long>(i);
@@ -242,6 +248,10 @@ class RecordingCanvas final : public Canvas2D {
       call("putImageData", {quote(std::to_string(hash)), std::to_string(w), std::to_string(h), std::to_string(x), std::to_string(y)});
     }
     std::vector<std::uint8_t>& p = px();
+    if (x == 0 && y == 0 && w == w_ && h == h_ && rgba.size() == p.size()) {
+      std::copy(rgba.begin(), rgba.end(), p.begin());
+      return;
+    }
     for (std::uint32_t j = 0; j < h; ++j) {
       for (std::uint32_t i = 0; i < w; ++i) {
         const long dx = x + static_cast<long>(i);
@@ -295,16 +305,25 @@ class RecordingCanvas final : public Canvas2D {
     call("roundRect", {num(x), num(y), num(w), num(h)});
   }
   void closePath() override { call("closePath", {}); }
-  void fill(FillRule rule) override { call("fill", {rule == FillRule::evenodd ? "\"evenodd\"" : "\"nonzero\""}); }
-  void stroke() override { call("stroke", {}); }
+  void fill(FillRule rule) override {
+    ++rec_->draws;
+    call("fill", {rule == FillRule::evenodd ? "\"evenodd\"" : "\"nonzero\""});
+  }
+  void stroke() override {
+    ++rec_->draws;
+    call("stroke", {});
+  }
   void clip(FillRule rule) override { call("clip", {rule == FillRule::evenodd ? "\"evenodd\"" : "\"nonzero\""}); }
   void fill(const Path2D& path, FillRule rule) override {
+    ++rec_->draws;
     call("fillPath2D", {rule == FillRule::evenodd ? "\"evenodd\"" : "\"nonzero\"", path_json(path)});
   }
   void stroke(const Path2D& /*path*/) override { call("strokePath2D", {}); }
   void clip(const Path2D& /*path*/, FillRule /*rule*/) override { call("clipPath2D", {}); }
   void fillRect(double x, double y, double w, double h) override {
     call("fillRect", {num(x), num(y), num(w), num(h)});
+    ++rec_->draws;
+    if (!rec_->model) return;
     if (fill_.kind != Style::Kind::color || !m_.is_identity() || !detail::modeled(gco_)) return;
     const css::Color c = fill_.color;
     const double as = c.a * alpha_;
@@ -317,17 +336,24 @@ class RecordingCanvas final : public Canvas2D {
   void strokeRect(double x, double y, double w, double h) override { call("strokeRect", {num(x), num(y), num(w), num(h)}); }
   void clearRect(double x, double y, double w, double h) override {
     call("clearRect", {num(x), num(y), num(w), num(h)});
+    ++rec_->draws;
+    if (!rec_->model) return;
     if (!m_.is_identity()) return;
     visit_rect(x, y, w, h, true, [](std::uint8_t* d, bool /*inside*/) { d[0] = d[1] = d[2] = d[3] = 0; });
   }
-  void fillText(std::string_view t, double x, double y) override { call("fillText", {quote(t), num(x), num(y)}); }
+  void fillText(std::string_view t, double x, double y) override {
+    ++rec_->draws;
+    call("fillText", {quote(t), num(x), num(y)});
+  }
   void strokeText(std::string_view t, double x, double y) override { call("strokeText", {quote(t), num(x), num(y)}); }
   [[nodiscard]] TextMetrics measureText(std::string_view /*text*/) override { return {}; }
   void drawImage(const Canvas2D& src, double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh) override {
     const auto* r = dynamic_cast<const RecordingCanvas*>(&src);
     const std::string ref = "{\"$c\":" + std::to_string(r != nullptr ? r->id() : -1) + "}";
     call("drawImage", {ref, num(sx), num(sy), num(sw), num(sh), num(dx), num(dy), num(dw), num(dh)});
+    ++rec_->draws;
     // The model: a 1:1 integer blit at identity. Scaled / transformed draws leave the pixels.
+    if (!rec_->model) return;
     if (r == nullptr || !m_.is_identity() || !detail::modeled(gco_) || sw != dw || sh != dh) return;
     for (const double v : {sx, sy, sw, sh, dx, dy}) {
       if (v != std::floor(v)) return;
@@ -373,7 +399,8 @@ class RecordingCanvas final : public Canvas2D {
     }
   }
 
-  static std::string num(double v) { return motion::js::number_to_string(v); }
+  /// Unlogged programs skip the formatting (the chain bench would otherwise time JS number printing).
+  [[nodiscard]] std::string num(double v) const { return rec_->log ? motion::js::number_to_string(v) : std::string(); }
   static std::string quote(std::string_view s) {
     std::string out = "\"";
     for (const char c : s) {
@@ -382,11 +409,11 @@ class RecordingCanvas final : public Canvas2D {
     }
     return out + "\"";
   }
-  static std::string color(const css::Color& c) {
+  [[nodiscard]] std::string color(const css::Color& c) const {
     return quote("rgba(" + num(c.r) + "," + num(c.g) + "," + num(c.b) + "," + num(c.a) + ")");
   }
   /// A Path2D's commands as the TS RecordingPath2D logs them.
-  static std::string path_json(const Path2D& path) {
+  [[nodiscard]] std::string path_json(const Path2D& path) const {
     std::string out = "[";
     bool first = true;
     for (const auto& c : path.cmds) {
