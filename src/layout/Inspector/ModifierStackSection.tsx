@@ -32,15 +32,11 @@ import { useCallback, useMemo, useState } from 'react';
 import type { Command } from '@motion/engine-api';
 import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
-import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
-import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
-import {
-  resolvePropertyMeta,
-  propertyLabel,
-  GROUP_PLACEHOLDER_PREFIX,
-} from '@core/inspector/propertyMeta';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { mirrorModifierStacks, mirrorNumericTracks } from '@core/mirror/modifierStacks';
+import { memberHasExpression } from '@core/mirror/memberExpressions';
+import { trackRef } from '@core/mirror/selection';
 import { BAKE_REFUSAL_TEXT } from '@core/animation/convertExpressionToKeyframes';
 import {
   AUDIO_BANDS,
@@ -52,7 +48,6 @@ import {
   defaultModifier,
   describeModifier,
   patchModifier,
-  readModifierStacks,
   type AudioBandName,
   type LoopModeName,
   type Modifier,
@@ -64,9 +59,6 @@ import { useEngineEdit } from './useEngineEdit';
 import { behaviorRecipeCommands, bakeModifierStackCommands, modifierStackCommands, modifiersMoved, modifiersWithout } from './modifierEdits';
 import styles from './ModifierStackSection.module.css';
 
-/** Property value types a numeric modifier chain can sensibly drive. */
-const NUMERIC_TYPES = new Set(['number', 'percent', 'angle', 'multiplier']);
-
 interface PropOption {
   path: string;
   label: string;
@@ -75,34 +67,15 @@ interface PropOption {
 /**
  * Every numeric property of this layer that can hold a keyframe.
  *
- * Derived from `buildStaticPropertyTree`, not from a hand-written list — which
- * is what makes effect parameters, expression-control sliders and plugin
- * layer-kind properties appear here without this file knowing they exist.
- *
- * The same derivation lives in `AudioDriverSection`. It is duplicated rather
- * than shared because the two sections are the only callers and neither owns
- * the other; if a third appears, this is the moment to lift it into
- * `propertyMeta` — where the definition of "numeric and animatable" belongs —
- * rather than have one panel import the other.
+ * Derived from the layer's property tree in the document mirror
+ * (`mirrorNumericTracks`, B4), not from a hand-written list — which is what
+ * makes effect parameters, expression-control sliders and plugin layer-kind
+ * properties appear here without this file knowing they exist.
  */
 function numericProps(nodeId: string): PropOption[] {
-  const out: PropOption[] = [];
-  const seen = new Set<string>();
-  for (const row of buildStaticPropertyTree(nodeId)) {
-    for (const path of row.members) {
-      if (seen.has(path)) continue;
-      if (path.startsWith(GROUP_PLACEHOLDER_PREFIX)) continue;
-      const meta = resolvePropertyMeta(path, nodeId);
-      if (!NUMERIC_TYPES.has(meta.type)) continue;
-      seen.add(path);
-      const own = propertyLabel(path, nodeId);
-      out.push({
-        path,
-        label: row.members.length > 1 && own !== row.label ? `${row.label} · ${own}` : row.label,
-      });
-    }
-  }
-  return out;
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  return mirrorNumericTracks(layer, layer ? m.tree(nodeId) : undefined);
 }
 
 /**
@@ -299,14 +272,25 @@ export function ModifierParams({
 
 // ── The section ─────────────────────────────────────────────────────
 
+const NO_STACKS: Readonly<Record<string, never>> = Object.freeze({});
+
+/** Whether `track` (a property, or one dimension of an unseparated vector) carries an expression, enabled or not — read at call time. */
+function trackHasExpression(nodeId: string, track: string): boolean {
+  const r = trackRef(documentMirror(), nodeId, track);
+  return !!r && memberHasExpression(r.info, r.member);
+}
+
 export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  const rev = useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
+  // B4: the layer's header and property tree (the numeric tracks, the
+  // `layer/modifiers` record) from the document mirror.
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
 
   // No early return above this line: every hook below runs on every render,
   // including for a node that has just been deleted.
-  const options = useMemo(() => (node ? numericProps(nodeId) : []), [nodeId, rev, node]);
-  const stacks = useMemo(() => (node ? readModifierStacks(node) : {}), [node, rev]);
+  const options = useMemo(() => mirrorNumericTracks(layer, tree), [layer, tree]);
+  // Same object while the record is unchanged (mirrorModifierStacks caches per record).
+  const stacks = layer && tree ? mirrorModifierStacks(documentMirror(), nodeId) : NO_STACKS;
 
   const [prop, setProp] = useState<string>('');
   const [note, setNote] = useState<string | null>(null);
@@ -334,7 +318,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
   const compiled = useMemo(() => compileModifierStack(modifiers), [modifiers]);
   const error = useMemo(() => modifierCompileError(modifiers), [modifiers]);
 
-  if (!node || options.length === 0 || !activePath) return null;
+  if (!layer || options.length === 0 || !activePath) return null;
 
   const hasStack = stacks[activePath] !== undefined;
 
@@ -486,7 +470,7 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
             if (!cmds) { setNote(BAKE_REFUSAL_TEXT['no-expression']); return; }
             void edit('Bake Modifier Stack', cmds, { quiet: true }).then((r) => {
               if (!r.ok) {
-                setNote(BAKE_REFUSAL_TEXT[r.error.code === 'outOfRange' ? 'empty-range' : defaultAnimation.hasExpression(nodeId, activePath) ? 'expression-disabled' : 'no-expression']);
+                setNote(BAKE_REFUSAL_TEXT[r.error.code === 'outOfRange' ? 'empty-range' : trackHasExpression(nodeId, activePath) ? 'expression-disabled' : 'no-expression']);
                 return;
               }
               const res = r.value[0] as { ids?: string[] } | undefined;

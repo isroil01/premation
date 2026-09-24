@@ -5,17 +5,16 @@ import { ValueField } from '@components/ValueField';
 import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { eligibleParents, parentOfNode } from '@core/scene/parenting';
-import { getNodeBlend } from '@core/effects/blendMode';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorEligibleParents, mirrorParentOf } from '@core/mirror/parenting';
+import { mirrorMatte } from '@core/mirror/layerFacts';
+import { retimableLayerIds } from '@core/mirror/motionAssist';
+import type { LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
-import { getNodeMatte } from '@core/effects/matte';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
-import { getNodeAdjustment } from '@core/effects/adjustment';
-import { getNodeMotionBlur } from '@core/effects/motionBlur';
 import { getNodeLayerTime, FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
-import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
-import { getNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
+import { stretchValueOf } from '@core/animation/layerTimeCommands';
+import type { LayerQuality } from '@core/effects/layerQuality';
 import { Segmented } from '@components/Segmented';
 import { cryptomatteForNode } from '@core/media/cryptomatteCommands';
 import { createIdMatteLayerEdit } from './idMatteEdits';
@@ -25,6 +24,7 @@ import { layerStretchCommands, setFreezeFrameEdit, setFreezeTimeEdit } from '@la
 import { useEngineEdit } from './useEngineEdit';
 import { LAYER_SWITCHES, applyLayerSwitch } from './SelectionHeader';
 import { parentLayer, setLayerMatte, setLayersBlend, setLayersSwitch } from './inspectorEdits';
+import { siblingsOf, useCompLayersWatch } from './inspectorMirror';
 import styles from './CompositingSection.module.css';
 
 /** The engine's frame-blend switch value for the stored one. */
@@ -60,16 +60,23 @@ function idMatteItems(nodeId: string): DropdownItem[] {
 }
 
 export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element {
+  // B4-gap: the layer's time config (Freeze Frame and its time, a footage layer's Reverse, a baked Time Stretch on a
+  // layer with no source — `fx.time`, `fx.__bakedStretch`) and an EXR's Cryptomatte set have no API datum
+  // (`LayerTiming` carries the signed stretch only): the scene revision re-reads them. Everything else below is the
+  // document mirror's: the header (parent, blend, matte, switches) and every layer of the comp (the pickers).
   useSceneRevision((s) => s.rev);
   const mb = useMotionBlurStore();
   const e = useEngineEdit();
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  const isRoot = !node || nodeId === 'comp_root';
+  const layer = useCompLayersWatch(nodeId);
+  const m = documentMirror();
+  // The matte-source list: the other layers under the same parent, back to front (the order it has always used).
+  const siblings = layer ? siblingsOf(m, layer) : [];
+  const isRoot = !layer || nodeId === 'comp_root';
 
   // 1. Parent
-  const currentParent = !isRoot ? parentOfNode(nodeId) : null;
-  const parentOptions = !isRoot ? eligibleParents(nodeId) : [];
+  const currentParent = !isRoot ? mirrorParentOf(m, nodeId) : null;
+  const parentOptions = !isRoot ? mirrorEligibleParents(m, nodeId) : [];
   const currentParentName = currentParent
     ? parentOptions.find((o) => o.id === currentParent)?.name ?? 'Parent'
     : 'None';
@@ -93,14 +100,13 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
   ];
 
   // 2. Blend & Matte
-  const blend = getNodeBlend(nodeId);
+  const blend = (layer?.blendMode ?? 'normal') as LayerBlendMode;
   const blendLabel = blendModeLabel(blend);
   const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setLayersBlend([nodeId], m));
 
-  const matte = getNodeMatte(nodeId);
+  const matte = mirrorMatte(layer);
   const currentMatteOption = matteOptionId(matte);
   const currentSourceId = matte?.sourceId;
-  const siblings = node && node.parent ? defaultSceneGraph.getChildren(node.parent).filter((n) => n.id !== nodeId) : [];
 
   const matteLabel = MATTE_OPTIONS.find((m) => m.id === currentMatteOption)?.label ?? 'No matte';
   const matteItems: DropdownItem[] = MATTE_OPTIONS.map((m) => ({
@@ -138,8 +144,9 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
   ];
 
   // 3. Switches
-  const isAdjustment = getNodeAdjustment(nodeId);
-  const motionBlur = getNodeMotionBlur(nodeId);
+  const isAdjustment = layer?.switches.adjustment === true;
+  const motionBlur = layer?.switches.motionBlur === true;
+  const retimable = retimableLayerIds(m, [nodeId]).length > 0;
 
   // 4. Time
   const time = getNodeLayerTime(nodeId);
@@ -247,7 +254,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             </span>
             <Segmented<LayerQuality>
               size="sm"
-              value={getNodeQuality(nodeId)}
+              value={(layer?.switches.quality ?? 'best') as LayerQuality}
               onChange={(q) => { void setLayersSwitch([nodeId], { quality: q }, q === 'best' ? 'Best Quality' : q === 'draft' ? 'Draft Quality' : 'Wireframe Quality'); }}
               options={[
                 { value: 'best', label: 'Best' },
@@ -299,14 +306,14 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
         <div className={styles.row}>
           <span
             className={styles.label}
-            title={isRetimableLayer(nodeId)
+            title={retimable
               ? 'Playback speed of the source: 200 % plays at half speed'
               : 'Stretches this layer’s bar, keyframes and markers about its in-point (negative reverses them). Applied on release.'}
           >
             Time Stretch
           </span>
           <div style={{ width: 120 }}>
-            {isRetimableLayer(nodeId) ? (
+            {retimable ? (
               <ValueField
                 value={time.stretch}
                 min={1}

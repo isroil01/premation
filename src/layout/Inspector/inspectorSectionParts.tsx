@@ -15,12 +15,14 @@
  */
 
 import { Button } from '@components/Button';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { childOrderOf } from '@core/mirror/layerTree';
 import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { useFocusStore } from '@stores/focusStore';
 import { PrecompControl } from './PrecompControl';
 import { RevertSvgRow } from './SvgSection';
 import { TransformSection } from './TransformSection';
+import { useCompLayersWatch } from './inspectorMirror';
 import { LayerStylesControls } from '@layout/Effects/LayerStylesControls';
 import { StylePresetsSection } from './StylePresetsSection';
 import styles from '@layout/EditorLayout/panels.module.css';
@@ -45,7 +47,11 @@ export function TransformWithThreeDSection({ nodeId }: { nodeId: string }): JSX.
 export function PrecompGroupSection({ nodeId }: { nodeId: string }): JSX.Element {
   // Before any early return — the hook count must not depend on the node.
   const enterFocus = useFocusStore((s) => s.enter);
-  const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
+  // B4: the group's members (its header) and the layers parented to it (the comp's stack).
+  useCompLayersWatch(nodeId);
+  const childrenCount = childOrderOf(documentMirror(), nodeId).length;
+  // B4-gap: whether the group still holds the paths its original SVG produced (`canRevertToSvg`: the retained
+  // SVG source) — no API field (see SvgSection).
   return (
     <>
       <PrecompControl nodeId={nodeId} />

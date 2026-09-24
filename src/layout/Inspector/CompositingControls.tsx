@@ -1,17 +1,17 @@
-import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { useMirrorLayer } from '@hooks/useMirror';
-import { useMirrorSiblings } from '@hooks/useMirrorSiblings';
+import { documentMirror } from '@stores/documentMirror';
 import { mirrorMatte } from '@core/mirror/layerFacts';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
 import { setLayerMatte, setLayersBlend } from './inspectorEdits';
+import { siblingsOf, useCompLayersWatch } from './inspectorMirror';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
 import styles from '../Effects/EffectsPanel.module.css';
 
 export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element {
-  const layer = useMirrorLayer(nodeId);
+  // The header (blend, matte) and every layer of the comp (the matte-source list).
+  const layer = useCompLayersWatch(nodeId);
 
   const blend = (layer?.blendMode ?? 'normal') as LayerBlendMode;
   const blendLabel = blendModeLabel(blend);
@@ -21,9 +21,8 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
   const currentOption = matteOptionId(matte);
   const currentSourceId = matte?.sourceId;
 
-  // Back to front, the order the matte-source list has always used (the mirror lists top first).
-  const top = useMirrorSiblings(nodeId);
-  const siblings = useMemo(() => [...top].reverse(), [top]);
+  // Back to front, the order the matte-source list has always used.
+  const siblings = layer ? siblingsOf(documentMirror(), layer) : [];
 
   const matteLabel = MATTE_OPTIONS.find((m) => m.id === currentOption)?.label ?? 'No matte';
   const matteItems: DropdownItem[] = MATTE_OPTIONS.map((m) => ({

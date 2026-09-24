@@ -28,20 +28,22 @@ import { ValueField } from '@components/ValueField';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
+import { activeCompIdNow, useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { plainValue, trackRefIn } from '@core/mirror/trackIndex';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands } from '@layout/Text/textEdits';
 import { BEVEL_STYLES } from '@core/scene/threeD';
 import type { BevelStyle } from '@core/scene/extrusion';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
+import { compHasKind } from '@core/mirror/deviceNames';
 import { useUIStore } from '@stores/uiStore';
 import { AnimToggle } from './AnimToggle';
 import { allAddressable, scalarValueCommands, setLayersSwitch, stopwatchCommands } from './inspectorEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { canBe3DLayer, inspectorKindOf } from './inspectorMirror';
 import s from './ThreeDControl.module.css';
+
+const CAMERA_TIP = 'Tip: add a Camera (+ camera button in the viewport bar) to move in 3D';
 
 /** Menu labels for the bevel profiles — the union stays the source of truth. */
 const BEVEL_STYLE_LABELS: Record<BevelStyle, string> = {
@@ -168,10 +170,10 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
           onChange={(e) => {
             const next = e.currentTarget.checked;
             void setLayersSwitch([nodeId], { threeD: next }, next ? 'Enable 3D Layer' : 'Disable 3D Layer');
-            if (next) {
-              notifyCameraTipIfMissing((message, level) =>
-                useUIStore.getState().notify({ level, message, durationMs: 3200 }),
-              );
+            // Without a camera, 3D depth does not move — surface the one-step fix
+            // (cameraNav's `notifyCameraTipIfMissing`, asked of the mirror).
+            if (next && !compHasKind(documentMirror(), activeCompIdNow(), 'camera')) {
+              useUIStore.getState().notify({ level: 'info', message: CAMERA_TIP, durationMs: 3200 });
             }
           }}
           aria-label="3D layer"

@@ -34,13 +34,13 @@ import { Icon } from '@components/Icon';
 import { AngleDial } from '@components/AngleDial';
 import { Popover } from '@components/Popover';
 import { PropertyRowLayoutContext } from '@components/PropertyRow';
-import { estimateNodeBounds } from '@core/scene/anchor';
 import { TRANSFORM_PRESET_PROPS } from '@core/inspector/sectionPresets';
 import type { PresetValues } from '@stores/sectionPresetStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
-import { trackRefIn } from '@core/mirror/trackIndex';
+import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { MultiPropertyRow } from './MultiPropertyRow';
@@ -120,6 +120,27 @@ function sizeOf(nodeId: string, time: number): { width: number; height: number }
   const animated = isTrackAnimated(m, nodeId, 'width') || isTrackAnimated(m, nodeId, 'height');
   // A text layer's tree lists a 0 × 0 box size it never stored.
   return width > 0 || height > 0 || animated ? { width, height } : null;
+}
+
+/**
+ * The box an anchor preset snaps against when the layer has no live Size (the
+ * twin of `anchor.estimateNodeBounds`): its stored width × height, else the
+ * kind's heuristic (text 300 × 50, anything else 100 × 100).
+ */
+function estimatedBounds(nodeId: string): { width: number; height: number } {
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  if (!layer) return { width: 100, height: 100 };
+  const tree = m.tree(nodeId);
+  const w = trackRefIn(tree, 'width');
+  const h = trackRefIn(tree, 'height');
+  // A text layer's tree lists a 0 × 0 box it never stored — its heuristic wins.
+  if (w && h && uiKindOf(layer) !== 'text') {
+    const width = storedNumber(w, w.info.value);
+    const height = storedNumber(h, h.info.value);
+    if (width !== undefined && height !== undefined) return { width, height };
+  }
+  return uiKindOf(layer) === 'text' ? { width: 300, height: 50 } : { width: 100, height: 100 };
 }
 
 /** Every transform preset property the layer has, at `time` (stored units). */
@@ -224,8 +245,8 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
 
   // Interactive 3x3 anchor snapping, applied to every selected layer against
   // its OWN bounds — one undo entry for the lot.
-  // B4-gap: content bounds of a layer with no stored Size (text, paths) — the API answers it as a `getLayerBounds` QUERY, not mirror data, and a query per render is not allowed.
-  const bounds = size ?? estimateNodeBounds(nodeId);
+  // A layer with no live Size snaps against the estimate `anchor.estimateNodeBounds` has always used.
+  const bounds = size ?? estimatedBounds(nodeId);
   const anchorX = read('anchorX');
   const anchorY = read('anchorY');
 
@@ -234,8 +255,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
     const mm = documentMirror();
     const writes = nodeIds.flatMap((id) => {
       if (!mm.layer(id) || !trackRefIn(mm.tree(id), 'anchorX')) return [];
-      // B4-gap: same (content bounds of a layer with no stored Size).
-      const b = sizeOf(id, time) ?? estimateNodeBounds(id);
+      const b = sizeOf(id, time) ?? estimatedBounds(id);
       const target = preset.getOffset(b.width, b.height);
       return trackWrites(id, { anchorX: target.x, anchorY: target.y }, time);
     });

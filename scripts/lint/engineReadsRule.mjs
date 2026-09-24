@@ -113,6 +113,23 @@ const PURE_READS = new Set([
   'hasFlag', // core/audio/audioEffects: a flag test on the AudioEffect given
   'thinLevels', // core/audio/ducking: keyframe thinning over the levels given
   'gateLevels', 'planGate', // core/audio/audioGate: gate curve and keys over the envelope given (time mapping is the caller's)
+  'styledSurfaceFill', // core/effects/layerStyles: colour mixing over the LayerStyles given
+  'nextFaceMaterials', // core/scene/faceMaterials: patches the FaceMaterials given
+  'materialParamsOf', 'normalizeMaterialParams', // core/scene/material: reshapes / normalises the record given
+  'primitiveLayerBox', // core/scene/primitiveLayer: the bounds of the mesh built from the spec given
+  'isDistributeMode', // core/scene/alignNodes: a type guard over a static table
+  'defaultAudioDriver', 'expressionBlocker', // core/audio/audioDriver: a default record; a check over the AudioDriver given
+  'defaultAudioWaveform', // core/audio/audioWaveformGen: a default record
+  'detectSilences', 'totalSilenceSec', // core/audio/silenceRemoval: analysis over the samples / ranges given
+  'readAudioEffects', // core/audio/audioEffects: validates the chain on the component-shaped object given
+  'hasClipboard', // core/animation/keyframeClipboard: the editor's keyframe clipboard — not the document
+  'getMographItem', 'mographDuration', 'mographRestTime', // core/library/mographLibrary: the static MOGRAPH_ITEMS catalog and its choreography maths
+  'amplitudeEnvelope', 'planAudioKeyframes', // core/audio/audioKeyframes: over the AudioBuffer / envelope given
+  'rangesToCompIntervals', // core/audio/silenceRemoval: interval maths over the timings and ranges given
+  'canSolveCamera', // core/tracking/applyTrack: a count check over the tracks given
+  'describeConversion', // core/svg/svgConvert: sentences about the SvgLayerData given
+  'requestExpressionEditor', 'consumeExpressionEditorRequest', 'onExpressionEditorRequest', // core/animation/expressionCommands: the editor's "open this expression field" channel — UI state, not the document
+  'parentOptionsFor', // core/scene/parenting: modifier keys → reparent options
 ]);
 
 /**

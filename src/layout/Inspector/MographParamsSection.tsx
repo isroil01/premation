@@ -19,8 +19,9 @@ import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { ColorPicker } from '@components/ColorPicker';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import type { Command } from '@motion/engine-api';
+import { flicksToSeconds, type Command } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { childOrderOf } from '@core/mirror/layerTree';
 import { fieldWrite } from '@core/engine/propRefs';
 import { getTime } from '@stores/playbackClockStore';
 import { useGesture } from '@hooks/useGesture';
@@ -54,7 +55,7 @@ export function MographParamsSection(): JSX.Element | null {
 
   const itemId = mographIdOf(root);
   const item = itemId ? getMographItem(itemId) : null;
-  const name = defaultSceneGraph.getNode(root)?.name ?? item?.name ?? 'Motion graphic';
+  const name = documentMirror().layer(root)?.name ?? item?.name ?? 'Motion graphic';
 
   // Replay the element's own choreography from wherever it was written. The
   // keyframes carry that start time; the item carries the length.
@@ -102,13 +103,17 @@ export function MographParamsSection(): JSX.Element | null {
 /** Earliest keyframe time (seconds) anywhere in the element — where its
  *  choreography was written. Falls back to 0 for an element with no tracks. */
 function elementStart(rootId: string): number {
+  // The document mirror at call time: every keyframe of the element's layers (comp time).
+  const m = documentMirror();
   let earliest = Number.POSITIVE_INFINITY;
+  const seen = new Set<string>();
   const walk = (id: string): void => {
-    const span = defaultAnimation.timeSpan(id);
-    if (span && span.start < earliest) earliest = span.start;
-    for (const child of defaultSceneGraph.getNode(id)?.children ?? []) {
-      walk(typeof child === 'string' ? child : (child as { id: string }).id);
+    if (seen.has(id)) return;
+    seen.add(id);
+    for (const keys of m.layerKeyframes(id).values()) {
+      for (const k of keys) earliest = Math.min(earliest, flicksToSeconds(k.time));
     }
+    for (const child of childOrderOf(m, id)) walk(child);
   };
   walk(rootId);
   return Number.isFinite(earliest) ? earliest : 0;

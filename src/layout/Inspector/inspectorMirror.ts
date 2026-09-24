@@ -7,9 +7,10 @@
  */
 
 import { flicksToSeconds, type LayerInfo } from '@motion/engine-api';
-import { documentMirror } from '@stores/documentMirror';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
 import { uiKindOf, isAbstractKind } from '@core/mirror/layerKinds';
+import { childOrderOf } from '@core/mirror/layerTree';
 import { useActiveMirrorComp, useMirrorComp, useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
 
 /** The layer's mirror header, or undefined when it is gone (or not a layer). */
@@ -98,4 +99,16 @@ export function useCompLayersWatch(nodeId: string | null | undefined): LayerInfo
   const comp = useMirrorComp(layer?.comp);
   useMirrorKeys(comp ? ['layers', ...comp.layers.map((id) => `layer:${id}`)] : []);
   return layer;
+}
+
+/**
+ * The other layers under `layer`'s parent (the composition's top layers when it
+ * has none), BACK to FRONT — the scene graph's `getChildren(parent)` order,
+ * minus the layer itself. What the matte-source pickers list.
+ */
+export function siblingsOf(m: DocumentMirror, layer: LayerInfo): LayerInfo[] {
+  return childOrderOf(m, layer.parent ?? layer.comp)
+    .filter((id) => id !== layer.id)
+    .map((id) => m.layer(id))
+    .filter((l): l is LayerInfo => l !== undefined);
 }
