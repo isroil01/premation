@@ -100,6 +100,18 @@ const PURE_READS = new Set([
   'thinSamples', // core/paint/paintSpace: point thinning
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given
+  // B4 panels (checked the same way).
+  'effectDefFor', // core/effects/effects: the effect REGISTRY (built-ins + registered plugin effects), not the document
+  'defaultParams', 'newInstanceParamsOf', // core/effects/effects: an EffectDef's declared defaults
+  'paramsOf', 'effectParam', // core/effects/effects: the Effect record it is given, over its def's defaults
+  'resolveChannelColor', // core/effects/effects: stored hex + the channel samples it is handed
+  'effectDisplayNames', // core/effects/effects: labels for the Effect list it is given
+  'layerStyleEffectId', // core/effects/layerStyles: builds an id string
+  'layerFlagDef', // core/scene/layerFlags: the static switch table
+  'nextQuality', // core/effects/layerQuality: best → draft → wireframe cycle
+  'animatorPropPath', 'selectorPropPath', 'animatorAxisPropPath', // core/text/textAnimators: build a track name
+  'missingFontsMessage', // core/fonts/missingFonts: pluralised message
+  'solidFill', // core/paint/fill: builds a solid paint from a colour
 ]);
 
 /**

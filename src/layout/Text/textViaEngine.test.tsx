@@ -28,7 +28,9 @@ import { TooltipProvider } from '@components/Tooltip';
 import { TextSettingsBody } from '@layout/Inspector/CharacterPanel';
 import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
 import { TextPathOptions } from '@layout/Inspector/TextOptionControls';
-import { textPresetEdit, typewriterEdit } from './textEdits';
+import { addSelectorEdit, textPresetEdit, typewriterEdit } from './textEdits';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorAnimators } from './textMirror';
 
 jest.useFakeTimers();
 
@@ -179,6 +181,21 @@ describe('Text animators', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     await idle();
   }
+
+  test('B4: the section reads its animators from the mirror — the same records as the stored data', async () => {
+    await act(async () => { await addSelectorEdit(s.T, s.animator, 'wiggly'); });
+    await idle();
+    const m = documentMirror();
+    const legacy = animators(s.T);
+    const mirrored = mirrorAnimators(m, s.T);
+    expect(mirrored.map((a) => a.id)).toEqual(legacy.map((a) => a.id));
+    for (const [i, a] of legacy.entries()) {
+      const b = mirrored[i]!;
+      for (const k of ['x', 'y', 'scale', 'rotation', 'opacity', 'tracking'] as const) expect(b[k]).toBe(a[k]);
+      expect(b.enabled !== false).toBe(a.enabled !== false);
+      expect((b.selectors ?? []).map((x) => [x.id, x.kind])).toEqual((a.selectors ?? []).map((x) => [x.id, x.kind]));
+    }
+  });
 
   test('Add animator / remove animator are one entry each, by id; undo exact', async () => {
     renderAnimators();

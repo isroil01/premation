@@ -25,14 +25,10 @@ import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
 import { AnimToggle } from './AnimToggle';
 
-import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { toHexColor } from '@core/text/cssColor';
 import {
-  hasTextComponent,
-  readAnimatorData,
   animatorPropPath,
   selectorPropPath,
   type AnimatorParam,
@@ -57,14 +53,15 @@ import {
   ANCHOR_GROUPINGS,
   FILL_STROKE_MODES,
   INTER_CHARACTER_BLEND_MODES,
-  readTextMoreOptions,
   type AnchorGrouping,
   type FillStrokeMode,
 } from '@core/text/textMoreOptions';
-import { REGISTERED_AXES, MAX_ANIMATED_AXES, axisLabel, readFontAxesProp } from '@core/text/fontAxes';
+import { REGISTERED_AXES, MAX_ANIMATED_AXES, axisLabel } from '@core/text/fontAxes';
 import { loadFamilyAxes } from '@core/text/fontAxesLoader';
 import { paths } from '@core/engine/propRefs';
-import { is3DEnabled, isPerChar3D } from '@core/scene/threeD';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTree } from '@hooks/useMirror';
+import { hasTextLayer, mirrorAnimators, mirrorTextMoreOptions, storedFontAxes, textField } from '@layout/Text/textMirror';
 import {
   addAnimatorEdit,
   addAnimatorPropertiesEdit,
@@ -183,7 +180,6 @@ function ParamRow({
   max?: number;
   step?: number;
 }): JSX.Element {
-  useSceneRevision((s) => s.rev);
   // Engine API (B3): a key at the playhead when animated, else the static
   // value; a scrub is one gesture. `onStatic` is the caller's custom static
   // writer, when the value is stored somewhere other than its track.
@@ -853,10 +849,10 @@ function defaultAnimatorColor(): string {
  * and stroke layer across characters, and how glyphs blend over each other.
  */
 function MoreOptionsGroup({ nodeId }: { nodeId: string }): JSX.Element | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const comp = node?.components.find((c) => c.type === 'Text');
-  if (!node || !comp) return null;
-  const o = readTextMoreOptions(node);
+  // B4: read from the mirror (the parent re-renders on this layer's tree).
+  const m = documentMirror();
+  if (!hasTextLayer(m, nodeId)) return null;
+  const o = mirrorTextMoreOptions(m, nodeId);
   // Anchor Point Grouping / Fill & Stroke / Inter-Character Blending: text fields (G1).
   const write = (label: string, key: string, value: string): void => {
     void fieldEdit(label, nodeId, `text/${key}`, value);
@@ -899,23 +895,25 @@ function useAxisTags(nodeId: string, family: string): string[] {
     void loadFamilyAxes(family).then((r) => { if (live) setFontTags(r.fromFont ? r.axes.map((a) => a.tag) : []); });
     return () => { live = false; };
   }, [family]);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const layerTags = node ? Object.keys(readFontAxesProp(node)) : [];
+  // B4: the stored axes beyond wght / wdth / slnt (those are registered, listed above anyway).
+  const layerTags = Object.keys(storedFontAxes(documentMirror(), nodeId));
   return [...new Set([...fontTags, ...REGISTERED_AXES.map((a) => a.tag), ...layerTags])];
 }
 
 export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // B4: the document mirror — this layer's header and property tree wake the section.
+  useMirrorTree(nodeId);
   const time = useActiveWorkspace()?.time ?? 0;
-  const node = defaultSceneGraph.getNode(nodeId);
-  const family = String(
-    (node?.components.find((c) => c.type === 'Text')?.props as Record<string, unknown> | undefined)?.fontFamily ?? 'Inter',
-  );
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  const family = String(textField(m, nodeId, 'fontFamily') ?? 'Inter');
   // Before the early return: hooks must run on every render.
   const axisTags = useAxisTags(nodeId, family);
-  if (!node || !hasTextComponent(node)) return null;
+  if (!layer || !hasTextLayer(m, nodeId)) return null;
 
-  const animators = readAnimatorData(node);
+  const animators = mirrorAnimators(m, nodeId);
+  const show3D = layer.switches.threeD;
+  const perChar3D = textField(m, nodeId, 'perCharacter3D') === true;
 
   const handleAutoTypewriter = async (): Promise<void> => {
     if (await typewriterEdit(nodeId, time)) {
@@ -969,8 +967,8 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
               nodeId={nodeId}
               index={i}
               data={a}
-              show3D={is3DEnabled(node)}
-              perChar3D={isPerChar3D(node)}
+              show3D={show3D}
+              perChar3D={perChar3D}
               axisTags={axisTags}
             />
           ))}
