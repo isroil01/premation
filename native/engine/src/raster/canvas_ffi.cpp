@@ -253,7 +253,7 @@ struct State {
 
 class SkiaCanvas final : public Canvas2D {
  public:
-  SkiaCanvas(std::uint32_t w, std::uint32_t h, const CanvasOptions& o) : opts_(o) { alloc(w, h); }
+  SkiaCanvas(std::uint32_t w, std::uint32_t h, const CanvasOptions& o, bool f16 = false) : opts_(o), f16_(f16) { alloc(w, h); }
   SkiaCanvas(const SkiaCanvas&) = delete;
   SkiaCanvas& operator=(const SkiaCanvas&) = delete;
   SkiaCanvas(SkiaCanvas&&) = delete;
@@ -266,6 +266,12 @@ class SkiaCanvas final : public Canvas2D {
   void resize(std::uint32_t w, std::uint32_t h) override { alloc(w, h); }
   [[nodiscard]] std::unique_ptr<Canvas2D> create_canvas(std::uint32_t w, std::uint32_t h) const override {
     return std::make_unique<SkiaCanvas>(w, h, opts_);
+  }
+  /// Chromium's `colorType: 'float16'` 2D context: an RGBA F16 surface, blended
+  /// in the colours' own encoding (the 8-bit canvases here are untagged too).
+  void set_will_read_frequently(bool on) override { accelerated_ = !on; }
+  [[nodiscard]] std::unique_ptr<Canvas2D> create_float16_canvas(std::uint32_t w, std::uint32_t h) const override {
+    return std::make_unique<SkiaCanvas>(w, h, opts_, true);
   }
 
   [[nodiscard]] std::vector<std::uint8_t> pixels() const override {
@@ -515,6 +521,10 @@ class SkiaCanvas final : public Canvas2D {
 
  private:
   CanvasOptions opts_;
+  bool f16_ = false;  ///< an RGBA F16 surface (create_float16_canvas)
+  /// Chromium accelerates a 2D canvas unless it was created willReadFrequently:
+  /// an accelerated canvas blurs with the GPU (shader) algorithm (set_will_read_frequently).
+  bool accelerated_ = true;
   std::uint32_t w_ = 0;
   std::uint32_t h_ = 0;
   sk_sp<SkSurface> surface_;
@@ -554,8 +564,8 @@ class SkiaCanvas final : public Canvas2D {
     w_ = std::max<std::uint32_t>(w, 1);
     h_ = std::max<std::uint32_t>(h, 1);
     const SkSurfaceProps props(0, opts_.lcdGeometry ? kRGB_H_SkPixelGeometry : kUnknown_SkPixelGeometry);
-    surface_ = SkSurfaces::Raster(SkImageInfo::Make(static_cast<int>(w_), static_cast<int>(h_), kRGBA_8888_SkColorType,
-                                                    kPremul_SkAlphaType),
+    surface_ = SkSurfaces::Raster(SkImageInfo::Make(static_cast<int>(w_), static_cast<int>(h_),
+                                                    f16_ ? kRGBA_F16_SkColorType : kRGBA_8888_SkColorType, kPremul_SkAlphaType),
                                   &props);
     st_ = State{};
     stack_.clear();
@@ -694,6 +704,37 @@ class SkiaCanvas final : public Canvas2D {
       c->setMatrix(to_sk(st_.ctm));
       fn(c, paint);
       return;
+    }
+    if (accelerated_ && !shadows && st_.filterOps.empty() && st_.blurPx > 0) {
+      // A GPU-accelerated Chromium canvas blurs with Skia's shader algorithm
+      // (σ ≤ 4 per pass, rescaled above), not the CPU's box approximation:
+      // blur the draw as a non-8888 image so the raster engine picks the same
+      // algorithm, then composite it with the canvas's operation. Measured:
+      // fill-opacity-zero-inner-shadow (σ 40) 11 % → 0.004 % of pixels off by
+      // more than 4/255, mask-feather 6.2 % → 0.24 %.
+      const sk_sp<SkSurface> tmp = SkSurfaces::Raster(
+          SkImageInfo::Make(static_cast<int>(w_), static_cast<int>(h_), kRGBA_F16_SkColorType, kPremul_SkAlphaType));
+      if (tmp) {
+        tmp->getCanvas()->setMatrix(to_sk(st_.ctm));
+        paint.setBlendMode(SkBlendMode::kSrcOver);
+        fn(tmp->getCanvas(), paint);
+        const sk_sp<SkImageFilter> blur = SkImageFilters::Blur(f(st_.blurPx), f(st_.blurPx), SkTileMode::kDecal, nullptr);
+        const SkIRect all = SkIRect::MakeWH(static_cast<int>(w_), static_cast<int>(h_));
+        SkIRect outSubset;
+        SkIPoint offset;
+        const sk_sp<SkImage> blurred =
+            SkImages::MakeWithFilter(tmp->makeImageSnapshot(), blur.get(), all, all, &outSubset, &offset);
+        if (blurred) {
+          SkPaint lp;
+          lp.setBlendMode(st_.blend);
+          c->setMatrix(SkMatrix::I());
+          c->drawImageRect(blurred, SkRect::Make(outSubset),
+                           SkRect::MakeXYWH(static_cast<float>(offset.x()), static_cast<float>(offset.y()),
+                                            static_cast<float>(outSubset.width()), static_cast<float>(outSubset.height())),
+                           SkSamplingOptions(), &lp, SkCanvas::kStrict_SrcRectConstraint);
+        }
+        return;
+      }
     }
     SkPaint lp;
     lp.setBlendMode(st_.blend);

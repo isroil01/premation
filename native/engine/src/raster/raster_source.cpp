@@ -58,6 +58,7 @@ RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, doub
   const auto w = static_cast<std::uint32_t>(std::max(1.0, js_round(bw * ss)));
   const auto h = static_cast<std::uint32_t>(std::max(1.0, js_round(bh * ss)));
   const auto ctx = Canvas2D::make(w, h, opts);
+  if (bake) ctx->set_will_read_frequently(true);  // bakeContextOptions(bake)
   ctx->scale(ss, ss);
   if (kind == RasterKind::text) {
     ctx->translate(padding, padding);

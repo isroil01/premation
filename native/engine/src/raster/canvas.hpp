@@ -157,6 +157,18 @@ class Canvas2D {
   /// document.createElement('canvas') sized w × h, with this canvas's options
   /// (the painters' scratch canvases: tip stamps, snapshots, buffers).
   [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_canvas(std::uint32_t width, std::uint32_t height) const = 0;
+  /// `getContext('2d', { willReadFrequently })`: Chromium keeps such a canvas on
+  /// the CPU; every other canvas is GPU-accelerated there, which changes how a
+  /// filter blur is computed (see canvas_ffi.cpp). Default: accelerated.
+  virtual void set_will_read_frequently(bool on) { (void)on; }
+  /// `new OffscreenCanvas(w, h).getContext('2d', { colorType: 'float16' })`: a
+  /// canvas that blends in half floats and rounds only when drawn back into an
+  /// 8-bit one — or null where there is none (a recording canvas, like jsdom).
+  [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_float16_canvas(std::uint32_t width, std::uint32_t height) const {
+    (void)width;
+    (void)height;
+    return nullptr;
+  }
 
   // ── state ──
   virtual void save() = 0;
