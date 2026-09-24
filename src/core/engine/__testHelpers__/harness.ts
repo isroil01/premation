@@ -61,7 +61,8 @@ export function fakePorts(files: Map<string, EditorDocument>): EnginePorts {
     },
     writeProject: async (path, doc) => {
       files.set(path, structuredClone(doc));
-      return { bytes: JSON.stringify(doc).length };
+      // UTF-8 bytes, as the real port writes (and the C++ test port counts).
+      return { bytes: new TextEncoder().encode(JSON.stringify(doc)).length };
     },
   };
 }

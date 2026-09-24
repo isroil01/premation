@@ -2711,7 +2711,10 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     // pasteLayers fragment (offDocument.ts) — the bytes are recorded in the log, so both
     // engines paste exactly what the builder produced.
     const built = (build: () => unknown) => {
-      const b = buildLayerFragment(s.comp, build);
+      // offDocument holds the APP engine's write detector (engineInstance); this
+      // harness engine is not it, so hold it too — else the scratch build reads
+      // as a write around the engine (a documentReset{resync}) the app never sends.
+      const b = h.engine.holdDetection(() => buildLayerFragment(s.comp, build));
       if (!b) throw new Error('the builder added no layers');
       return b;
     };

@@ -171,10 +171,14 @@ int run_engine(const EngineOptions& options) {
       PREMATION_LOG(info, "plugins_scanned").kv("count", static_cast<std::uint64_t>(recs.size()));
     }
   }
+#if !defined(PREMATION_ENGINE_HEADLESS)
   std::unique_ptr<render::RenderThread> gpuSink;
+#endif
   std::unique_ptr<SimulatedSink> simSink;
   FrameSink* sink = nullptr;
+#if !defined(PREMATION_ENGINE_HEADLESS)
   render::RenderOptions renderOptions = options.render;
+#endif
 #if defined(PREMATION_HAVE_SCENE)
   // D2w: the viewport draws the engine's own document through the render
   // graph (scene/engine_frames.hpp). PREMATION_ENGINE_SCENE=0 keeps C2's quads.
@@ -192,6 +196,11 @@ int run_engine(const EngineOptions& options) {
     mediaClock = scene::make_media_clock(os::env_var("PREMATION_AUDIO_DEVICE").value_or("") != "null", audioError);
   }
 #endif
+#if defined(PREMATION_ENGINE_HEADLESS)
+  // No Dawn in this build: frames are always simulated (as --no-gpu).
+  simSink = std::make_unique<SimulatedSink>(sendFrames, options.render.slots);
+  sink = simSink.get();
+#else
   if (options.noGpu) {
     simSink = std::make_unique<SimulatedSink>(sendFrames, options.render.slots);
     sink = simSink.get();
@@ -208,18 +217,22 @@ int run_engine(const EngineOptions& options) {
     }
     sink = gpuSink.get();
   }
+#endif
 
   // Readers block in ReadFile/read with no portable way to interrupt them; at
   // shutdown they are detached and die with the process (they touch only the
   // queue and the sinks, which outlive them until exit).
   std::thread(command_reader, pipes.commandIn, std::ref(queue)).detach();
   if (pipes.framesIn.valid()) {
+#if !defined(PREMATION_ENGINE_HEADLESS)
     if (gpuSink) {
       render::RenderThread* r = gpuSink.get();
       std::thread([in = pipes.framesIn, &queue, r] {
         frames_reader(in, queue, [r](std::uint32_t g, std::uint32_t s) { r->release(g, s); });
       }).detach();
-    } else {
+    } else
+#endif
+    {
       SimulatedSink* r = simSink.get();
       std::thread([in = pipes.framesIn, &queue, r] {
         frames_reader(in, queue, [r](std::uint32_t g, std::uint32_t s) { r->release(g, s); });
@@ -274,7 +287,9 @@ int run_engine(const EngineOptions& options) {
   os::high_resolution_timer(false);
   PREMATION_LOG(info, "shutdown").kv("exitCode", exitCode).kv("revision", session.revision());
 
+#if !defined(PREMATION_ENGINE_HEADLESS)
   if (gpuSink) gpuSink->stop();
+#endif
   commandOut.close(std::chrono::milliseconds(500));
   framesOut.close(std::chrono::milliseconds(200));
   if (commandOut.detached() || framesOut.detached()) {

@@ -372,6 +372,9 @@ class Document {
   void peek_journal(Parts& out) const {
     if (journal_) out = *journal_;
   }
+  /// The node ids whose animation the open transaction touched, in the order
+  /// first touched (the TS scope's key order: stampMissingKeyIds mints in it).
+  [[nodiscard]] const std::vector<std::string>& journal_anim_order() const noexcept { return animOrder_; }
 
  private:
   void note_node(std::string_view id);
@@ -394,6 +397,7 @@ class Document {
   Ptr<Json> tx_;
   DocExtras extras_ = default_doc_extras();
   std::unique_ptr<Parts> journal_;
+  std::vector<std::string> animOrder_;
   std::unordered_set<std::string> tlTouched_;
   bool tlAllDirty_ = true;
 };
