@@ -32,6 +32,7 @@
 
 #if defined(PREMATION_HAVE_MEDIA)
 #include "media_system.hpp"
+#include "media_config.hpp"
 #include "media_textures.hpp"
 #endif
 
@@ -193,7 +194,11 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     d->textures_ = std::make_unique<SceneTextures>(to);
     d->textures_->set_device(&d->renderer_->device());
 #if defined(PREMATION_HAVE_MEDIA)
-    d->media_ = std::make_unique<media::MediaSystem>(media::MediaConfig{});
+    // E1: hardware decode on the render GPU (d3d11va for 8-bit, NVDEC for
+    // deeper streams on NVIDIA), software as the floor — media_config.hpp.
+    std::string decodeNote;
+    d->media_ = std::make_unique<media::MediaSystem>(media::media_config_for(gpu.device, decodeNote));
+    PREMATION_LOG(info, "media_decode").kv("policy", decodeNote);
     d->mediaTex_ = std::make_unique<media::MediaTextures>(*d->media_, gpu.device, media::MediaTextures::Mode::preview);
     d->textures_->set_media(d->media_.get(), d->mediaTex_.get());
 #endif
