@@ -45,6 +45,7 @@
     "lint": "eslint . --max-warnings 620",
     "lint:engine-writes": "node scripts/lint/engineWritesReport.mjs --check",
     "lint:engine-reads": "node scripts/lint/engineReadsReport.mjs --check",
+    "lint:automation-writes": "node scripts/lint/automationWritesReport.mjs --check",
     "worktree": "node scripts/worktree.mjs",
     "release:patch": "npm version patch -m \"release: v%s\"",
     "release:minor": "npm version minor -m \"release: v%s\"",

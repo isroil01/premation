@@ -135,6 +135,8 @@ const NOT_WRITES = new Set([
   'applyIk', // core/rig/rigDeform: solves a pose, returns new Bone objects (pure; also used by the renderer)
   'reorderSiblings', // core/scene/parenting: returns a reordered id array (pure; the caller sends reorderLayers)
   'pastePathEdit', // core/workspace/pathCommands: Edit ▸ Paste of copied vertices — ONE engine edit (setProperty / editPathTopology per target outline), not a direct write
+  'setPluginPropWriteHandler', // core/scene/pluginPropWrites: REGISTERS the plugin system's write-path callback (plugins/authoredWriteHook.ts); writes nothing
+  'insertCaptionLayers', // core/captions/captionLayers: ONE engine edit (deleteLayers + pasteLayers of an off-document build), not a direct write
   'importLocalAsset', // core/assets/local: content-addresses a File's bytes into the bundle BLOB store and returns a record + src (storage, dedup by hash); it adds no item — assetStore's importer (also the engine's importFiles port) does
 ]);
 const NOT_WRITE_SHAPE = /^create\w*(Player|Renderer|Painter|Port|Cache|Backend|Store)$|ForTests?$/;
