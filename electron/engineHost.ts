@@ -73,6 +73,29 @@ export function engineBackendEnabled(env: Record<string, string | undefined>, pr
   }
 }
 
+/**
+ * F2 (NATIVE_CORE_PLAN §5 Phase F): does the ENGINE own the document — the
+ * editor's New / Open / Save / Revert / autosave / recovery go through engine
+ * requests, the page holding only the mirror? Needs the process backend on.
+ * `PREMATION_ENGINE_OWNER=engine` (or `ui`) wins; then `{ "owner": "engine" }`
+ * in the preference file; default off — the TypeScript engine stays the owner
+ * for one release (the plan's F2 row).
+ */
+export function engineOwnsDocument(env: Record<string, string | undefined>, prefFile: string | null, read: (p: string) => string | null = readText): boolean {
+  if (!engineBackendEnabled(env, prefFile, read)) return false;
+  const v = env.PREMATION_ENGINE_OWNER?.trim().toLowerCase();
+  if (v === 'engine') return true;
+  if (v === 'ui' || v === 'ts' || v === 'off') return false;
+  if (!prefFile) return false;
+  const text = read(prefFile);
+  if (!text) return false;
+  try {
+    return (JSON.parse(text) as { owner?: unknown }).owner === 'engine';
+  } catch {
+    return false;
+  }
+}
+
 function readText(p: string): string | null {
   try {
     return readFileSync(p, 'utf8');
@@ -218,6 +241,8 @@ export class FrameForwarder {
 
 export interface EngineHostOptions {
   enabled: boolean;
+  /** F2: the engine owns the document (engineOwnsDocument); reported in `engine:status`. */
+  ownsDocument?: boolean;
   isDev: boolean;
   isPackaged: boolean;
   resourcesPath: string;
@@ -254,6 +279,8 @@ export interface EngineHostStatusReply {
   engineVersion?: string;
   revision?: number;
   fallbackReason?: string;
+  /** F2: the engine owns the document (the page's lifecycle goes through engine requests). */
+  ownsDocument?: boolean;
 }
 
 export class EngineHost {
@@ -350,6 +377,7 @@ export class EngineHost {
       state: sup.state,
       ...(w ? { engine: w.engine, engineVersion: w.engineVersion, revision: w.revision } : {}),
       ...(this.fallbackReason ? { fallbackReason: this.fallbackReason } : {}),
+      ...(this.o.ownsDocument ? { ownsDocument: true } : {}),
     };
   }
 

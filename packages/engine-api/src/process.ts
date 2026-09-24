@@ -57,6 +57,8 @@ export interface EngineHostStatus {
   /** Revision the engine reported at its last handshake. */
   revision?: number;
   fallbackReason?: string;
+  /** F2: the engine owns the document — the editor's lifecycle goes through engine requests. */
+  ownsDocument?: boolean;
 }
 
 export type EngineWireReply =

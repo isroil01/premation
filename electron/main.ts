@@ -15,7 +15,7 @@ import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFi
 import { writeFileAtomic } from './atomicWrite';
 import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
 import { localFileUrlToPath } from './localFileUrl';
-import { EngineHost, engineBackendEnabled, enginePreferenceFile, registerEngineIpc, type SharedTextureApi } from './engineHost';
+import { EngineHost, engineBackendEnabled, engineOwnsDocument, enginePreferenceFile, registerEngineIpc, type SharedTextureApi } from './engineHost';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
@@ -1917,6 +1917,8 @@ app.whenReady().then(() => {
   // boot); `engine:status` answers `enabled: false` when the flag is off.
   engineHost = new EngineHost({
     enabled: engineBackendEnabled(process.env, enginePreferenceFile(app.getPath('userData'))),
+    // F2: the document lifecycle through the engine (PREMATION_ENGINE_OWNER=engine); default off.
+    ownsDocument: engineOwnsDocument(process.env, enginePreferenceFile(app.getPath('userData'))),
     isDev,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
