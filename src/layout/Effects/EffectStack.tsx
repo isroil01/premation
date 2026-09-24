@@ -80,10 +80,10 @@ import {
   dropEffectEdit,
   duplicateEffectEdit,
   effectOpacityCommands,
-  legacyEffectOpacityStopwatch,
-  legacySetEffectLabelColor,
-  legacySetEffectMask,
-  legacySetEffectOpacity,
+  effectOpacityStopwatchEdit,
+  setEffectLabelColorEdit,
+  setEffectMaskEdit,
+  setEffectOpacityEdit,
   nudgeEffectEdit,
   paramCommands,
   paramStopwatchCommands,
@@ -208,19 +208,17 @@ function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }
   const navigator = useTrackNavigator(nodeId, [path], 'Effect Opacity', () => [display]);
 
   // Keyframe when the property is already animated (an engine key at the
-  // playhead), set the static instance field when it is not — that half, the
-  // stopwatch and the reset keep the legacy writer (see effectEdits' gap note).
+  // playhead), set the static instance field when it is not.
   const onChange = (v: number): void => {
     const next = Math.max(0, Math.min(100, v));
     const cmds = effectOpacityCommands(nodeId, effect.id, next, time);
     if (cmds) e.send('Set Effect Opacity', cmds);
-    else legacySetEffectOpacity(nodeId, effect.id, next);
+    else void setEffectOpacityEdit(nodeId, effect.id, next);
   };
 
-  // Stopwatch off puts the last sampled value back as the STATIC one, so the
-  // frame looks as it did; on stamps the field so the layer is on the CPU bake
-  // from the first frame — see `Effect.opacity`.
-  const toggle = (): void => legacyEffectOpacityStopwatch(nodeId, effect, time, display);
+  // Stopwatch off puts the value at the playhead back as the STATIC one, so the
+  // frame looks as it did (the engine's setAnimated semantics).
+  const toggle = (): void => { void effectOpacityStopwatchEdit(nodeId, effect, time); };
 
   return (
     <ParamLine>
@@ -229,7 +227,7 @@ function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }
         animated={animated}
         onStopwatch={toggle}
         navigator={navigator}
-        onReset={animated ? undefined : () => legacySetEffectOpacity(nodeId, effect.id, undefined)}
+        onReset={animated ? undefined : () => { void setEffectOpacityEdit(nodeId, effect.id, undefined); }}
         compact
       >
         <ValueField
@@ -264,7 +262,7 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
           <span className={row.paramLabel}>Effect Mask</span>
           <select
             value={current}
-            onChange={(ev) => legacySetEffectMask(nodeId, effect.id, ev.currentTarget.value || undefined)}
+            onChange={(ev) => { void setEffectMaskEdit(nodeId, effect.id, ev.currentTarget.value || undefined); }}
             aria-label={`${effect.type} effect mask`}
             title="Restrict this effect to a mask path. Prefer a path with mode None so it scopes the effect without also cutting the layer."
             className={panel.paramSelect}
@@ -636,7 +634,7 @@ function effectLabelColorMenuItems(
       id: 'fx-label-none',
       label: 'None (Default)',
       icon: current === undefined ? 'check' : undefined,
-      onSelect: () => legacySetEffectLabelColor(nodeId, effectId, undefined),
+      onSelect: () => { void setEffectLabelColorEdit(nodeId, effectId, undefined); },
     },
     { id: 'fx-label-sep', separator: true },
     ...LABEL_COLORS.map((c): ContextMenuItem => ({
@@ -659,7 +657,7 @@ function effectLabelColorMenuItems(
         </>
       ),
       icon: current === c.color ? 'check' : undefined,
-      onSelect: () => legacySetEffectLabelColor(nodeId, effectId, c.color),
+      onSelect: () => { void setEffectLabelColorEdit(nodeId, effectId, c.color); },
     })),
   ];
 }

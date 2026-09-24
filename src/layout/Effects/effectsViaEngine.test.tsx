@@ -37,16 +37,26 @@ import {
   duplicateEffectEdit,
   dropEffectEdit,
   effectOpacityCommands,
+  effectOpacityStopwatchEdit,
+  enableSimulationEdit,
   globalLightCommands,
   layerStretchCommands,
   maskValueCommands,
   paramCommands,
+  patchLayerStyleEdit,
   pasteEffectsEdit,
   removeMaskEdit,
   renameMaskEdit,
   resetEffectEdit,
+  setEffectLabelColorEdit,
+  setEffectMaskEdit,
+  setEffectOpacityEdit,
   setFrameBlendEdit,
+  setFreezeFrameEdit,
+  setFreezeTimeEdit,
   setLayerEffectsEnabledEdit,
+  setLayerStyleOnEdit,
+  setMaskVertexFeatherEdit,
   setMaskInvertedEdit,
   setMaskModeEdit,
   setMaskShapeAnimatedEdit,
@@ -312,8 +322,9 @@ test('EVERY built-in preset applies through the engine, identical to the legacy 
   expect(differ).toEqual([]);
   // Cinematic Grade sets `vibrance` on Lumetri, a key Lumetri does not declare
   // (a dead value in the preset data): `addEffect` cannot carry an undeclared
-  // param, so that one preset keeps the legacy snapshot paste.
-  expect(fellBack).toEqual(['Cinematic Grade']);
+  // param, so that preset is a `pasteEffects` of its snapshot — still ONE
+  // "Apply" entry, so nothing falls back any more.
+  expect(fellBack).toEqual([]);
 });
 
 // ── Compositing Options ───────────────────────────────────────────────
@@ -327,6 +338,48 @@ test('Effect Opacity: an animated value keys through the engine; a static one ke
   expect(cmds).not.toBeNull();
   await act(async () => { await edit('Set Effect Opacity', cmds!); });
   expect(defaultAnimation.getTrackKeyframes(s.A, effectOpacityPath(s.fx))!.map((k) => k.value)).toEqual([100, 40]);
+});
+
+test('compositing options: opacity, its stopwatch, effect mask and label are one engine entry each', async () => {
+  const fx = (): ReturnType<typeof fxOf> => getNodeEffects(s.A).find((e) => e.id === s.fx);
+  await act(async () => { await setEffectOpacityEdit(s.A, s.fx, 40); });
+  expect(fx()!.opacity).toBeCloseTo(40);
+  await act(async () => { await effectOpacityStopwatchEdit(s.A, fx()!, 0); });
+  expect(defaultAnimation.isAnimated(s.A, effectOpacityPath(s.fx))).toBe(true);
+  await act(async () => { await effectOpacityStopwatchEdit(s.A, fx()!, 0); });
+  expect(defaultAnimation.isAnimated(s.A, effectOpacityPath(s.fx))).toBe(false);
+  await act(async () => { await setEffectOpacityEdit(s.A, s.fx, undefined); });
+  expect(fx()!.opacity ?? 100).toBeCloseTo(100);
+  await act(async () => { await setEffectMaskEdit(s.A, s.fx, s.mask); });
+  expect(fx()!.maskId).toBe(s.mask);
+  await act(async () => { await setEffectMaskEdit(s.A, s.fx, undefined); });
+  expect(fx()!.maskId).toBeUndefined();
+  await act(async () => { await setEffectLabelColorEdit(s.A, s.fx, '#ff0000'); });
+  expect(fx()!.labelColor).toBe('#ff0000');
+  settle();
+  expect(historyLabels()).toEqual([
+    'Set Effect Opacity', 'Animate Effect Opacity', 'Remove Effect Opacity animation', 'Reset Effect Opacity',
+    'Set effect mask', 'Set effect mask', 'Set effect label',
+  ]);
+});
+
+test('Effects ▸ Simulation switches the layer\'s Cloner on, one entry', async () => {
+  await act(async () => { await enableSimulationEdit(s.A, 'cloner'); });
+  const { values: [v] } = await h.query({ type: 'getPropertyValues', props: [{ layer: s.A, path: 'layer/cloner' }], time: 0, evaluated: false });
+  expect(v!.value).toMatchObject({ kind: 'json' });
+  expect(JSON.parse((v!.value as { value: string }).value)).toMatchObject({ enabled: true });
+  expect(historyLabels()).toEqual(['Add Cloner']);
+});
+
+test('per-vertex mask feather is one path write; clearing every vertex removes them', async () => {
+  const pts = (): ReturnType<typeof getNodeMask>['paths'][number]['points'] => getNodeMask(s.A).paths[0]!.points;
+  await act(async () => { await setMaskVertexFeatherEdit(s.A, s.mask, [{ index: 1, feather: 12 }], 0); });
+  expect(pts().map((p) => p.feather)).toEqual([undefined, 12, undefined, undefined]);
+  await act(async () => { await setMaskVertexFeatherEdit(s.A, s.mask, [{ index: 2, feather: 4 }], 0); });
+  expect(pts().map((p) => p.feather)).toEqual([undefined, 12, 4, undefined]);
+  await act(async () => { await setMaskVertexFeatherEdit(s.A, s.mask, [0, 1, 2, 3].map((index) => ({ index, feather: undefined })), 0); });
+  expect(pts().every((p) => p.feather === undefined)).toBe(true);
+  expect(historyLabels()).toEqual(['Mask Vertex Feather', 'Mask Vertex Feather', 'Mask Vertex Feather']);
 });
 
 // ── Masks ─────────────────────────────────────────────────────────────
@@ -343,8 +396,8 @@ test('mask card edits: add, mode, inverted, rename, feather, shape stopwatch, re
   let cur = getNodeMask(s.B).paths[0]!;
   expect(cur).toMatchObject({ id: m.id, mode: 'subtract', inverted: true, name: 'Hole', feather: 12, opacity: 0.4 });
   await act(async () => { await setMaskShapeAnimatedEdit(s.B, m.id, true, 0); });
-  // A keyed mask shape: its values belong in the shape keyframe (legacy route).
-  expect(maskValueCommands(s.B, m.id, 'feather', 3, 0)).toBeNull();
+  // A keyed mask shape: feather is still the mask's own property (it holds across shape keys).
+  expect(maskValueCommands(s.B, m.id, 'feather', 3, 0)).not.toBeNull();
   await act(async () => { await setMaskShapeAnimatedEdit(s.B, m.id, false, 0); });
   await act(async () => { await removeMaskEdit(s.B, m.id, 'Remove Mask 1'); });
   expect(getNodeMask(s.B).paths).toHaveLength(0);
@@ -377,6 +430,32 @@ test('layer styles: the checkbox adds / removes the style, a field scrub is one 
   expect(h.doc()).toEqual(before);
 });
 
+test('layer style switches, Glass and a bound angle go through the engine', async () => {
+  await act(async () => { await setLayerStyleOnEdit(s.A, 'dropShadow', true, 'Drop Shadow'); });
+  await act(async () => { await setLayerStyleOnEdit(s.A, 'glass', true, 'Glass'); });
+  await act(async () => { await patchLayerStyleEdit(s.A, 'dropShadow', { useGlobalLight: true }); });
+  expect(getNodeLayerStyles(s.A).dropShadow!.useGlobalLight).not.toBe(false);
+  getCommandSystem().getHistory().clear();
+  const before = h.doc();
+  render(<LayerStylesControls nodeId={s.A} />);
+  // Editing the angle the Global Light drives unbinds it in the same entry.
+  await typeInto('Angle', '45');
+  expect(getNodeLayerStyles(s.A).dropShadow).toMatchObject({ angle: 45, useGlobalLight: false });
+  cleanup(); // the panel re-renders from its host on a document change
+  render(<LayerStylesControls nodeId={s.A} />);
+  await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: 'Use global light' })); await engineIdle(); });
+  expect(getNodeLayerStyles(s.A).dropShadow!.useGlobalLight).toBe(true);
+  // Glass is `styles/glass/<param>`, valued in stored units (0..1 opacities).
+  await typeInto('Glass tint opacity', '50');
+  expect(getNodeLayerStyles(s.A).glass!.tintOpacity).toBeCloseTo(0.5);
+  await act(async () => { await patchLayerStyleEdit(s.A, 'glass', { blur: 20, rimColor: '#00ff00' }); });
+  expect(getNodeLayerStyles(s.A).glass).toMatchObject({ blur: 20, rimColor: '#00ff00' });
+  settle();
+  expect(historyLabels()).toEqual(['Set Angle', 'Edit Layer Style', 'Set Glass tint opacity', 'Edit Layer Style']);
+  for (let i = 0; i < 4; i++) await undo();
+  expect(h.doc()).toEqual(before);
+});
+
 test('Global Light is a composition setting (one entry per typed value)', async () => {
   await act(async () => { await edit('Global Light', globalLightCommands({ globalLightAngle: 33 })); });
   expect(useCompositionStore.getState().globalLightAngle).toBe(33);
@@ -395,5 +474,17 @@ test('the fx switch, stretch / reverse and frame blending go through the engine'
   await act(async () => { await setFrameBlendEdit(s.V, 'mix'); });
   expect(getNodeLayerTime(s.V).frameBlend).toBe('mix');
   expect(historyLabels()).toEqual(['Disable Effects', 'Time Stretch', 'Time-Reverse Layer', 'Frame Blending']);
+});
+
+test('freeze frame on / off and its hold time go through the engine', async () => {
+  await act(async () => { await setFreezeFrameEdit(s.V, true, 1); });
+  expect(getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 1 });
+  await act(async () => { await setFreezeTimeEdit(s.V, 2.5); });
+  expect(getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 2.5 });
+  await act(async () => { await setFreezeFrameEdit(s.V, false, 0); });
+  expect(getNodeLayerTime(s.V).freeze).toBe(false);
+  expect(historyLabels()).toEqual(['Freeze Frame', 'Freeze Frame', 'Unfreeze Frame']);
+  await undo();
+  expect(getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 2.5 });
 });
 

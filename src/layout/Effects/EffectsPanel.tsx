@@ -58,9 +58,7 @@ import { readNodePhysics } from '@core/simulation/physicsBodies';
 import {
   addMaskEdit,
   applyEffectPresetEdit,
-  legacyEnableSimulation,
-  legacyPatchAnimatedMask,
-  legacySetMaskVertexFeather,
+  enableSimulationEdit,
   maskValueCommands,
   pasteEffectsEdit,
   removeMaskEdit,
@@ -68,6 +66,7 @@ import {
   setMaskInvertedEdit,
   setMaskModeEdit,
   setMaskShapeAnimatedEdit,
+  setMaskVertexFeatherEdit,
 } from './effectEdits';
 import { EFFECT_CATEGORY } from './effectCategory';
 import { effectPreviewFor, EFFECT_PREVIEW_H, EFFECT_PREVIEW_W } from './effectPreviewThumbs';
@@ -401,7 +400,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
         revealEffectsInProperties();
         break;
       case 'sim':
-        legacyEnableSimulation(primary, row.id === 'cloner' ? 'cloner' : 'physics');
+        void enableSimulationEdit(primary, row.id === 'cloner' ? 'cloner' : 'physics');
         revealEffectsInProperties();
         break;
     }
@@ -712,23 +711,20 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
  *
  * Every edit is an engine command (B3): Rectangle / Ellipse / Remove / Mode /
  * Inverted / Name are one entry each, a Feather / Opacity / Expansion scrub is
- * one gesture. Two things keep the legacy writer, both engine gaps: values of a
- * mask whose SHAPE is keyframed (they belong in the shape keyframe at the
- * playhead) and per-vertex feather.
+ * one gesture (they hold across the shape's keys when the SHAPE is keyframed);
+ * per-vertex feather is one write of the path's feather points.
  */
 function MaskCard({
   nodeId,
   mask: m,
   index: i,
   time,
-  shapeKeyed,
 }: {
   nodeId: string;
   mask: MaskPath;
   index: number;
   /** The playhead, comp seconds. */
   time: number;
-  shapeKeyed: boolean;
 }): JSX.Element {
   const e = useEngineEdit();
   // The name commits on blur / Enter — one "Rename Mask" entry, not one per keystroke.
@@ -742,9 +738,7 @@ function MaskCard({
   const setValue = (key: 'feather' | 'opacity' | 'expansion', v: number, label: string): void => {
     const cmds = maskValueCommands(nodeId, m.id, key, v, time);
     if (cmds) e.send(label, cmds);
-    else legacyPatchAnimatedMask(nodeId, m.id, key === 'opacity' ? { opacity: v / 100 } : { [key]: v }, time);
   };
-  const onEngine = (): boolean => !shapeKeyed;
   const variable = m.points.some((pt) => typeof pt.feather === 'number');
 
   return (
@@ -813,7 +807,7 @@ function MaskCard({
             same column as an effect's Softness rather than in a
             three-up strip of its own. */}
         <PropertyRow label="Feather" compact>
-          <ValueField {...e.scrub('Set Mask Feather', onEngine)} value={m.feather} min={0} max={200} precision={0} unit="px"
+          <ValueField {...e.scrub('Set Mask Feather')} value={m.feather} min={0} max={200} precision={0} unit="px"
             onChange={(v) => setValue('feather', v, 'Set Mask Feather')} aria-label="Mask feather" />
         </PropertyRow>
         {/* Variable-width feather: one row per vertex. A vertex with
@@ -829,7 +823,7 @@ function MaskCard({
               // Toggle ON seeds every vertex at the uniform value (so
               // nothing visibly changes until a vertex is edited);
               // toggle OFF clears every override.
-              legacySetMaskVertexFeather(nodeId, m.id, m.points.map((_, vi) => ({ index: vi, feather: variable ? undefined : m.feather })), time);
+              void setMaskVertexFeatherEdit(nodeId, m.id, m.points.map((_, vi) => ({ index: vi, feather: variable ? undefined : m.feather })), time);
             }}
             aria-label={`Variable feather for Mask ${i + 1}`}
             style={{ width: 14, height: 14 }}
@@ -841,17 +835,17 @@ function MaskCard({
               <ValueField
                 value={Math.round(pt.feather ?? m.feather)}
                 min={0} max={200} precision={0} unit="px"
-                onChange={(v) => legacySetMaskVertexFeather(nodeId, m.id, [{ index: vi, feather: v }], time)}
+                onChange={(v) => { void setMaskVertexFeatherEdit(nodeId, m.id, [{ index: vi, feather: v }], time); }}
                 aria-label={`Mask ${i + 1} vertex ${vi + 1} feather`}
               />
             </PropertyRow>
           ))}
         <PropertyRow label="Opacity" compact>
-          <ValueField {...e.scrub('Set Mask Opacity', onEngine)} value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
+          <ValueField {...e.scrub('Set Mask Opacity')} value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
             onChange={(v) => setValue('opacity', v, 'Set Mask Opacity')} aria-label="Mask opacity" />
         </PropertyRow>
         <PropertyRow label="Expansion" compact>
-          <ValueField {...e.scrub('Set Mask Expansion', onEngine)} value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
+          <ValueField {...e.scrub('Set Mask Expansion')} value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
             onChange={(v) => setValue('expansion', v, 'Set Mask Expansion')} aria-label="Mask expansion" />
         </PropertyRow>
         <PropertyRow label="Inverted" compact>
@@ -962,7 +956,7 @@ export function EffectsPanel(): JSX.Element {
       {masks.length > 0 && (
         <div className={styles.stackList}>
           {masks.map((m, i) => (
-            <MaskCard key={m.id} nodeId={primary} mask={m} index={i} time={maskCompTime} shapeKeyed={shapeKeyed} />
+            <MaskCard key={m.id} nodeId={primary} mask={m} index={i} time={maskCompTime} />
           ))}
         </div>
       )}

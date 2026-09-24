@@ -1,8 +1,8 @@
 /**
  * TimeControls (Prompt E6) — per-layer time: stretch %, reverse, freeze frame,
  * and frame blending. Stretch / reverse (one signed `setLayerTiming` stretch)
- * and frame blending (`setLayerSwitches`) go through the engine API (B3); the
- * freeze frame keeps its legacy writer (engine gap, see effectEdits).
+ * and frame blending (`setLayerSwitches`) go through the engine API (B3), and
+ * so does the freeze frame (`freezeFrame` / `unfreezeLayers`).
  */
 
 import { Icon } from '@components/Icon';
@@ -11,7 +11,8 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Switch } from '@components/Switch';
 import { getNodeLayerTime, FRAME_BLENDS } from '@core/scene/layerTime';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
-import { layerStretchCommands, legacyPatchLayerTime, setFrameBlendEdit } from './effectEdits';
+import { layerStretchCommands, setFrameBlendEdit, setFreezeFrameEdit, setFreezeTimeEdit } from './effectEdits';
+import { getTime } from '@stores/playbackClockStore';
 import styles from './EffectsPanel.module.css';
 
 export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
@@ -58,7 +59,7 @@ export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
         <span className={styles.blendLabel}>Freeze frame</span>
         <Switch
           checked={time.freeze}
-          onChange={(ev) => legacyPatchLayerTime(nodeId, { freeze: ev.currentTarget.checked })}
+          onChange={(ev) => { void setFreezeFrameEdit(nodeId, ev.currentTarget.checked, getTime()); }}
           aria-label="Freeze frame"
         />
       </div>
@@ -72,7 +73,7 @@ export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
               min={0}
               precision={2}
               unit="s"
-              onChange={(v) => legacyPatchLayerTime(nodeId, { freezeTime: v })}
+              onChange={(v) => { void setFreezeTimeEdit(nodeId, v); }}
               aria-label="Freeze time"
             />
           </label>

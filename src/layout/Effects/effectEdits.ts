@@ -11,18 +11,20 @@
  *                 animated, AE setValueAtTime), dropdowns as `choice` BY LABEL,
  *                 checkboxes `bool`, layer pickers `layer`, curves `json`
  *   masks         add / remove / rename / mode / inverted / feather / opacity /
- *                 expansion / shape stopwatch (`masks/<id>/…`)
+ *                 expansion / shape stopwatch / per-vertex feather (`masks/<id>/…`)
+ *   compositing   effect opacity, effect mask, label (`effects/<id>/compositing/…`)
  *   layer styles  add / remove (`styles/<key>`), numeric + colour params
- *                 (`styles/<key>/<param>`), the composition's Global Light
- *   layer         the fx switch, time stretch / reverse / frame blend
+ *                 (`styles/<key>/<param>`, Glass `styles/glass/<param>`), the
+ *                 switches, the composition's Global Light
+ *   layer         the fx switch, time stretch / reverse / frame blend, freeze
+ *                 frame, Cloner / Physics (`layer/cloner|physics`)
  *
  * Effects are addressed by their stable id, never by stack index. Display
  * reads stay direct (B4's mirror replaces them); this module only reads to
  * decide what to send.
  *
- * What the engine cannot say yet keeps its pre-API writer, funnelled through
- * the `legacy…` functions at the bottom — each one marked `B3-legacy` with the
- * precise gap, so the remaining direct writes of this area live in one place.
+ * The one write the engine cannot say yet (an effect on a node that is not a
+ * layer) keeps its pre-API writer, marked `B3-legacy` with the gap.
  */
 
 import type { Command, PropertyInit, PropertyWrite, Value } from '@motion/engine-api';
@@ -32,8 +34,8 @@ import { isLayer } from '@core/engine/doc';
 import { maskToBezier } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { engine } from '@core/engine/engineInstance';
+import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import {
   addEffect,
   effectDefFor,
@@ -43,28 +45,31 @@ import {
   newInstanceParamsOf,
   paramsOf,
   parseColorChannels,
-  setEffectLabelColor,
-  setEffectMaskId,
-  setEffectOpacity,
   type Effect,
   type EffectParamDef,
   type EffectParamValue,
   type EffectType,
 } from '@core/effects/effects';
 import {
-  applyEffectPreset,
   captureEffect,
   listEffectPresets,
-  pasteEffects,
   readEffectClipboard,
   type CopiedEffect,
 } from '@core/effects/effectClipboard';
-import { getNodeLayerStyles, setLayerStyles, type LayerStyles } from '@core/effects/layerStyles';
-import { hasMaskAnim, setMaskPointFeather, updateMaskPath, type MaskPath } from '@core/effects/mask';
-import { updateNodeLayerTime, type FrameBlend as StoredFrameBlend, type LayerTime } from '@core/scene/layerTime';
-import { enableNodeCloner } from '@core/scene/clonerExpand';
-import { enableNodePhysics } from '@core/simulation/physicsBodies';
+import {
+  layerStyleEffectId,
+  LAYER_STYLE_COLOR_PARAMS,
+  LAYER_STYLE_NUMBER_PARAMS,
+  type LayerStyles,
+} from '@core/effects/layerStyles';
+import { glassPropPath } from '@core/effects/glassResolve';
+import { GLASS_PROPERTIES, STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
+import type { MaskPath } from '@core/effects/mask';
+import type { FrameBlend as StoredFrameBlend } from '@core/scene/layerTime';
+import { Color } from '@motion/renderer';
 import { useWorkspaceStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
+import { getTime } from '@stores/playbackClockStore';
 import { scalarValueCommands, stopwatchCommands, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 
 // ── Addressing ─────────────────────────────────────────────────────────
@@ -247,9 +252,8 @@ export async function resetEffectEdit(nodeId: string, effectId: string, name: st
 
 /**
  * A value typed / scrubbed into Effect Opacity. On an ANIMATED opacity it is a
- * key at the playhead through the engine; a static one keeps the legacy writer
- * (see `legacySetEffectOpacity`). Returns the commands for the engine route,
- * null when the caller must take the legacy one.
+ * key at the playhead; a static one is `setEffectOpacityEdit`. Returns the key
+ * commands, or null when the opacity is static.
  */
 export function effectOpacityCommands(nodeId: string, effectId: string, pct: number, seconds: number): Command[] | null {
   const track = effectOpacityPath(effectId);
@@ -266,7 +270,7 @@ const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON
  * effect is still on its source layer exactly as copied, this is the API's
  * `copyPropertyGroups` (params, keyframes, expressions, fx switch, compositing
  * options, label all come along); a clipboard whose source was since edited
- * or deleted is a snapshot the API cannot paste yet (legacy).
+ * or deleted is pasted from its captured snapshot (`pasteEffects`).
  */
 export async function pasteEffectsEdit(targets: ReadonlyArray<string>): Promise<void> {
   const layers = layersOf(targets);
@@ -287,7 +291,7 @@ export async function pasteEffectsEdit(targets: ReadonlyArray<string>): Promise<
     });
     return;
   }
-  legacyPasteEffects(layers);
+  await pasteSnapshotEdit(items.length === 1 ? 'Paste Effect' : 'Paste Effects', items, layers);
 }
 
 /**
@@ -325,7 +329,7 @@ function snapshotAddCommand(item: CopiedEffect, layers: string[]): Command | nul
  * Apply a built-in or saved effect preset to `targets`, appending like a
  * paste — ONE entry ("Apply <name>"). A preset of plain effects (every
  * built-in) is `addEffect`s with initial params; one that captured keyframes
- * or instance options keeps the legacy snapshot paste.
+ * or instance options is pasted from its snapshot (`pasteEffects`).
  */
 export async function applyEffectPresetEdit(name: string, targets: ReadonlyArray<string>): Promise<boolean> {
   const layers = layersOf(targets);
@@ -336,7 +340,8 @@ export async function applyEffectPresetEdit(name: string, targets: ReadonlyArray
     const res = await edit(`Apply ${name}`, cmds);
     return res.ok;
   }
-  return legacyApplyEffectPreset(name, layers);
+  const res = await pasteSnapshotEdit(`Apply ${name}`, preset.items, layers);
+  return res.ok;
 }
 
 // ── Masks (the Effects panel's mask cards) ─────────────────────────────
@@ -372,9 +377,8 @@ export function renameMaskEdit(nodeId: string, maskId: string, name: string): Pr
 
 /**
  * Feather / Opacity (0..100) / Expansion of a mask as commands, or null when
- * the layer's mask shape is keyframed (whole-mask snapshots): there the edit
- * belongs in the shape keyframe at the playhead, which the API's scalar
- * property does not reach (see `legacyPatchAnimatedMask`).
+ * the engine does not address the mask. On a keyframed shape the engine holds
+ * the value across every shape keyframe (AE: these are not part of the path).
  */
 export function maskValueCommands(
   nodeId: string,
@@ -383,8 +387,6 @@ export function maskValueCommands(
   value: number,
   seconds: number,
 ): Command[] | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || hasMaskAnim(node)) return null;
   const track = `mask.${maskId}.${key}`;
   if (!trackRef(nodeId, track)) return null;
   return scalarValueCommands(track, [{ nodeId, value }], { seconds });
@@ -413,12 +415,10 @@ export function setLayerStyleOnEdit(nodeId: string, styleKey: keyof LayerStyles,
 
 /**
  * True when the engine addresses this style track (`effect.layerstyle:<key>.<param>`
- * → `styles/<key>/<param>`). Glass is not a compiled-effect style: its
- * `glass.<field>` tracks resolve through glassResolve and are not catalog
- * properties, so it never takes the engine route.
+ * → `styles/<key>/<param>`, and Glass's `glass.<param>` → `styles/glass/<param>`).
  */
 export function styleTrackOnEngine(nodeId: string, track: string | null): boolean {
-  if (!track || !track.startsWith('effect.layerstyle:')) return false;
+  if (!track || !(track.startsWith('effect.layerstyle:') || track.startsWith('glass.'))) return false;
   const r = trackRef(nodeId, track.replace(/_[rgba]$/, '_r'));
   return r !== null;
 }
@@ -458,53 +458,41 @@ export function setFrameBlendEdit(nodeId: string, blend: StoredFrameBlend): Prom
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// Legacy writers — every write of this area the engine cannot say yet.
+// Compositing options, simulation, mask feather, layer styles, freeze
+// (B3z-a: closed engine gaps — effectsB3za.test.ts pins the engine side)
 // ════════════════════════════════════════════════════════════════════════
 
-/** Effect Opacity's static value (and its Reset). */
-export function legacySetEffectOpacity(nodeId: string, effectId: string, pct: number | undefined): void {
-  // B3-legacy: engine gap — `effects/<id>/compositing/opacity` is absent from the TS catalog until the field is set, and its static write lands in `params['fx.opacity']` instead of `Effect.opacity` (propertyValue.writeEffectValue has no case for EFFECT_OPACITY_KEY).
-  setEffectOpacity(nodeId, effectId, pct);
-}
+const effectField = (nodeId: string, effectId: string, field: 'mask' | 'label') =>
+  ref(nodeId, `${paths.effectGroup(effectId)}/compositing/${field}`);
 
-/** Effect Opacity's stopwatch (same gap: setAnimated reads/writes the static through `params`). */
-export function legacyEffectOpacityStopwatch(nodeId: string, effect: Effect, seconds: number, display: number): void {
-  const path = effectOpacityPath(effect.id);
-  // B3-legacy: engine gap — same as legacySetEffectOpacity (setAnimated on/off reads and writes the static value through the wrong field); the legacy key axis.
-  const layerT = compToKeyframeTime(nodeId, seconds);
-  if (defaultAnimation.isAnimated(nodeId, path)) {
-    // B3-legacy: engine gap — as above.
-    runAnimEdit('Remove Effect Opacity animation', () => {
-      // B3-legacy: engine gap — as above.
-      defaultAnimation.removeTrack(nodeId, path);
-      // B3-legacy: engine gap — as above. The last sampled value becomes the static one, so the frame looks as it did.
-      setEffectOpacity(nodeId, effect.id, display);
-    });
-    return;
-  }
-  const stored = effect.opacity ?? 100;
-  // B3-legacy: engine gap — as above.
-  runAnimEdit('Animate Effect Opacity', () => {
-    // B3-legacy: engine gap — as above.
-    defaultAnimation.setKeyframe(nodeId, path, layerT, stored);
-    // B3-legacy: engine gap — as above. Stamp the field so the layer is on the CPU bake from the first frame (see `Effect.opacity`).
-    if (effect.opacity === undefined) setEffectOpacity(nodeId, effect.id, stored);
+/** Effect Opacity's static value; `undefined` = Reset (100, which the engine stores as absent). */
+export function setEffectOpacityEdit(nodeId: string, effectId: string, pct: number | undefined): Promise<unknown> {
+  const v = pct === undefined ? 100 : Math.max(0, Math.min(100, pct));
+  return edit(pct === undefined ? 'Reset Effect Opacity' : 'Set Effect Opacity', {
+    type: 'setProperty', prop: ref(nodeId, paths.effectOpacity(effectId)), value: values.scalar(v),
   });
 }
 
-/** Compositing Options › Effect Mask. */
-export function legacySetEffectMask(nodeId: string, effectId: string, maskId: string | undefined): void {
-  // B3-legacy: engine gap — Effect Mask (`Effect.maskId`) has no API property (`effects/<id>/compositing/mask` is not in the catalog of either engine).
-  runAnimEdit('Set effect mask', () => {
-    // B3-legacy: engine gap — as above.
-    setEffectMaskId(nodeId, effectId, maskId);
+/**
+ * Effect Opacity's stopwatch. On keys the current value at the playhead; off
+ * leaves the value at the playhead as the static one, so the frame looks as it
+ * did (the engine's setAnimated semantics).
+ */
+export function effectOpacityStopwatchEdit(nodeId: string, effect: Effect, seconds: number): Promise<unknown> {
+  const animated = defaultAnimation.isAnimated(nodeId, effectOpacityPath(effect.id));
+  return edit(animated ? 'Remove Effect Opacity animation' : 'Animate Effect Opacity', {
+    type: 'setAnimated', prop: ref(nodeId, paths.effectOpacity(effect.id)), animated: !animated, time: compTime(seconds),
   });
 }
 
-/** The label colour of one applied effect. */
-export function legacySetEffectLabelColor(nodeId: string, effectId: string, color: string | undefined): void {
-  // B3-legacy: engine gap — an effect instance's label colour (`Effect.labelColor`) has no API property or command.
-  setEffectLabelColor(nodeId, effectId, color);
+/** Compositing Options › Effect Mask (`undefined` = the whole layer). */
+export function setEffectMaskEdit(nodeId: string, effectId: string, maskId: string | undefined): Promise<unknown> {
+  return edit('Set effect mask', { type: 'setProperty', prop: effectField(nodeId, effectId, 'mask'), value: values.string(maskId ?? '') });
+}
+
+/** The label colour of one applied effect (`undefined` = none). */
+export function setEffectLabelColorEdit(nodeId: string, effectId: string, color: string | undefined): Promise<unknown> {
+  return edit('Set effect label', { type: 'setProperty', prop: effectField(nodeId, effectId, 'label'), value: values.string(color ?? '') });
 }
 
 function legacyAddEffect(nodeIds: string[], type: EffectType): void {
@@ -512,80 +500,136 @@ function legacyAddEffect(nodeIds: string[], type: EffectType): void {
   for (const id of nodeIds) addEffect(id, type);
 }
 
-function legacyPasteEffects(layers: string[]): void {
-  // B3-legacy: engine gap — pasting a captured effect SNAPSHOT (source edited or deleted since the copy): `copyPropertyGroups` needs the live source and there is no fragment-based group paste.
-  pasteEffects(layers);
+/** Captured effects (a clipboard snapshot or a saved preset) onto `layers` — ONE `pasteEffects`. */
+function pasteSnapshotEdit(label: string, items: ReadonlyArray<CopiedEffect>, layers: string[]): Promise<{ ok: boolean }> {
+  const effects = items.map(({ effect, tracks }) => ({ effect, tracks }));
+  return edit(label, { type: 'pasteEffects', layers, effects: JSON.stringify(effects) });
 }
 
-function legacyApplyEffectPreset(name: string, layers: string[]): boolean {
-  // B3-legacy: engine gap — a saved preset that captured keyframes / fx switch / compositing options / label colour: `addEffect` takes static params only and there is no fragment-based group paste.
-  return applyEffectPreset(name, layers);
-}
-
-/** Effects ▸ Simulation: Cloner / Physics. */
-export function legacyEnableSimulation(nodeId: string, kind: 'cloner' | 'physics'): void {
-  // B3-legacy: engine gap — Cloner / Physics are layer modifiers with no API group type (`listGroupTypes` has neither).
-  if (kind === 'cloner') enableNodeCloner(nodeId);
-  // B3-legacy: engine gap — as above.
-  else enableNodePhysics(nodeId);
-}
-
-/** Feather / Opacity / Expansion on a mask whose shape is keyframed (see `maskValueCommands`). */
-export function legacyPatchAnimatedMask(nodeId: string, maskId: string, patch: Partial<MaskPath>, seconds: number): void {
-  // B3-legacy: engine gap — whole-mask shape keyframes (`fx.maskAnim`): the edit lands in the shape keyframe at the playhead; the API's `masks/<id>/feather|opacity|expansion` write the static mask.
-  const t = compToKeyframeTime(nodeId, seconds);
-  // B3-legacy: engine gap — as above.
-  updateMaskPath(nodeId, maskId, patch, t);
-}
-
-/** Per-vertex feather (variable-width mask feather). */
-export function legacySetMaskVertexFeather(nodeId: string, maskId: string, updates: ReadonlyArray<{ index: number; feather: number | undefined }>, seconds: number): void {
-  // B3-legacy: engine gap — variable-width mask feather (`BezierPath.featherPoints`) is not implemented in the TS engine (ENGINE_API.md §14.1).
-  const t = compToKeyframeTime(nodeId, seconds);
-  for (const u of updates) {
-    // B3-legacy: engine gap — as above (the 700 ms recorder folds a toggle's per-vertex writes into one entry, as before).
-    setMaskPointFeather(nodeId, maskId, u.index, u.feather, t);
+/**
+ * Effects ▸ Simulation: switch the layer's Cloner / Physics on, keeping any
+ * settings it already carries (`layer/cloner`, `layer/physics` — json fields).
+ */
+export function enableSimulationEdit(nodeId: string, kind: 'cloner' | 'physics'): Promise<unknown> {
+  const path = paths.layerParam(kind);
+  const m = documentMirror();
+  m.tree(nodeId);
+  const cur = m.property(nodeId, path)?.value;
+  let prev: Record<string, unknown> = {};
+  if (cur?.kind === 'json') {
+    try {
+      const parsed: unknown = JSON.parse(cur.value);
+      if (parsed && typeof parsed === 'object') prev = parsed as Record<string, unknown>;
+    } catch { /* an unreadable value starts from the defaults */ }
   }
+  return edit(kind === 'cloner' ? 'Add Cloner' : 'Add Physics', {
+    type: 'setProperty', prop: ref(nodeId, path), value: values.json({ ...prev, enabled: true }),
+  });
 }
 
 /**
- * A layer-style field the API does not address: Glass (all of it), the
- * non-numeric switches (Use Global Light, Invert, Carve, Stroke Position) and
- * an angle still bound to the Global Light (editing it unbinds, which is a
- * switch write). `patch` is merged into the style.
+ * Per-vertex feather (variable-width mask feather) as ONE path write at the
+ * playhead: the mask's feather points are the whole answer (a vertex without
+ * one has none; `[{segment: 0, radius: -1}]` clears every vertex).
  */
-export function legacyPatchLayerStyle(nodeId: string, styleKey: keyof LayerStyles, patch: Record<string, unknown>): void {
-  const cur = getNodeLayerStyles(nodeId) as Record<string, Record<string, unknown> | undefined>;
-  // B3-legacy: engine gap — Glass params and the layer-style switches (useGlobalLight, invert, direction, position) are not catalog properties (layer styles are `Value.json` in ENGINE_API.md §14.2).
-  setLayerStyles(nodeId, { ...(cur as LayerStyles), [styleKey]: { ...(cur[styleKey as string] ?? {}), ...patch } } as LayerStyles);
-}
-
-/**
- * Keyframes on a style track the API does not address (Glass `glass.<field>`
- * tracks; a global-light-bound angle, whose first key must also unbind it).
- * `keys` = track → value at the playhead; `remove` = drop these tracks.
- */
-export function legacyStyleKeys(
+export async function setMaskVertexFeatherEdit(
   nodeId: string,
-  label: string,
-  op: { keys?: Readonly<Record<string, number>>; remove?: ReadonlyArray<string>; before?: () => void },
+  maskId: string,
+  updates: ReadonlyArray<{ index: number; feather: number | undefined }>,
   seconds: number,
-  mergeKey?: string,
-): void {
-  // B3-legacy: engine gap — as legacyPatchLayerStyle (the legacy key axis).
-  const layerT = compToKeyframeTime(nodeId, seconds);
-  // B3-legacy: engine gap — as legacyPatchLayerStyle (Glass tracks are not catalog properties; unbinding the Global Light is a switch write).
-  runAnimEdit(label, () => {
-    op.before?.();
-    // B3-legacy: engine gap — as above.
-    for (const [track, v] of Object.entries(op.keys ?? {})) defaultAnimation.setKeyframe(nodeId, track, layerT, v);
-    // B3-legacy: engine gap — as above.
-    for (const track of op.remove ?? []) defaultAnimation.removeTrack(nodeId, track);
-  }, mergeKey);
+): Promise<void> {
+  const prop = ref(nodeId, paths.mask(maskId, 'path'));
+  const time = compTime(seconds);
+  const res = await engine().query({ type: 'getPropertyValues', props: [prop], time, evaluated: false });
+  if (!res.ok) return;
+  const cur = res.value.values[0]?.value;
+  if (cur?.kind !== 'path') return;
+  const n = cur.value.vertices.length / 2;
+  const feather: Array<number | undefined> = Array.from({ length: n }, () => undefined);
+  for (const fp of cur.value.featherPoints) if (fp.t === 0 && fp.radius >= 0 && fp.segment < n) feather[fp.segment] = fp.radius;
+  for (const u of updates) if (u.index >= 0 && u.index < n) feather[u.index] = u.feather === undefined ? undefined : Math.max(0, u.feather);
+  const featherPoints = feather.flatMap((r, segment) => (r === undefined ? [] : [{ segment, t: 0, radius: r, tension: 0 }]));
+  const path = { ...cur.value, featherPoints: featherPoints.length > 0 ? featherPoints : [{ segment: 0, t: 0, radius: -1, tension: 0 }] };
+  await edit('Mask Vertex Feather', { type: 'setProperty', prop, value: { kind: 'path', value: path }, time });
 }
 
-/** Freeze frame on/off and its hold time (layer keyframe-axis seconds). */
-export function legacyPatchLayerTime(nodeId: string, patch: Partial<LayerTime>): void {
-  // B3-legacy: engine gap — `freezeFrame` can only turn a freeze ON (at a comp time); turning it off and editing the held time (layer-time seconds) have no API form.
-  updateNodeLayerTime(nodeId, patch);
+/** The keyframe track of one layer-style field (numbers and colour bases), or null. */
+function styleFieldTrack(styleKey: string, field: string): { track: string; scale: number; color: boolean } | null {
+  if (styleKey === 'glass') {
+    const g = GLASS_PROPERTIES.find((x) => x.key === field);
+    return g ? { track: glassPropPath(field as Parameters<typeof glassPropPath>[0]), scale: 1, color: g.type === 'color' } : null;
+  }
+  const n = LAYER_STYLE_NUMBER_PARAMS[styleKey]?.[field];
+  if (n) return { track: effectPropPath(layerStyleEffectId(styleKey as keyof LayerStyles), n.param), scale: n.scale, color: false };
+  const c = LAYER_STYLE_COLOR_PARAMS[styleKey]?.[field];
+  if (c) return { track: effectPropPath(layerStyleEffectId(styleKey as keyof LayerStyles), c), scale: 1, color: true };
+  return null;
+}
+
+/**
+ * A layer-style patch (STORED units, as the style object holds them: 0..1
+ * opacities, hex colours) as commands: the switches (Use Global Light, Invert,
+ * Direction, Position) as field writes FIRST — so an angle that also unbinds the
+ * Global Light lands unbound — then the numbers and colours at the playhead
+ * (keyed when animated). Fields no binding describes are reported and skipped.
+ */
+export function layerStylePatchCommands(
+  nodeId: string,
+  styleKey: keyof LayerStyles,
+  patch: Readonly<Record<string, unknown>>,
+  seconds: number,
+): Command[] {
+  const key = styleKey as string;
+  const fields: Command[] = [];
+  const nums: Record<string, number> = {};
+  const skipped: string[] = [];
+  for (const [field, v] of Object.entries(patch)) {
+    const sw = STYLE_FIELDS.find((f) => f.style === key && f.key === field);
+    if (sw) {
+      if (sw.type === 'bool' && typeof v === 'boolean') {
+        fields.push({ type: 'setProperty', prop: ref(nodeId, paths.styleParam(key, field)), value: values.bool(v) });
+      } else if (sw.type === 'choice' && typeof v === 'string') {
+        fields.push({ type: 'setProperty', prop: ref(nodeId, paths.styleParam(key, field)), value: values.choice(v) });
+      } else skipped.push(field);
+      continue;
+    }
+    const t = styleFieldTrack(key, field);
+    if (t && t.color && typeof v === 'string') {
+      const c = Color.fromHex(v);
+      Object.assign(nums, { [`${t.track}_r`]: c.r, [`${t.track}_g`]: c.g, [`${t.track}_b`]: c.b, [`${t.track}_a`]: c.a ?? 1 });
+    } else if (t && !t.color && typeof v === 'number' && Number.isFinite(v)) {
+      nums[t.track] = v * t.scale;
+    } else skipped.push(field);
+  }
+  if (skipped.length > 0) console.warn(`[layerStylePatchCommands] ${key}: not addressed by the engine: ${skipped.join(', ')}`);
+  const vals = Object.keys(nums).length > 0 ? valueCommands([{ nodeId, values: nums }], { seconds }) : [];
+  return [...fields, ...vals];
+}
+
+/** Switch a style's Use Global Light off (so its own angle / altitude render). */
+export function unbindGlobalLightCommands(nodeId: string, styleKey: keyof LayerStyles): Command[] {
+  return layerStylePatchCommands(nodeId, styleKey, { useGlobalLight: false }, 0);
+}
+
+/** A layer-style patch as ONE undo entry at the active playhead. */
+export function patchLayerStyleEdit(nodeId: string, styleKey: keyof LayerStyles, patch: Readonly<Record<string, unknown>>): Promise<unknown> {
+  const cmds = layerStylePatchCommands(nodeId, styleKey, patch, getTime());
+  return cmds.length > 0 ? edit('Edit Layer Style', cmds) : Promise.resolve();
+}
+
+/**
+ * Freeze frame on/off and its hold time (source seconds on the layer's
+ * keyframe axis). On holds the frame at `seconds` (the playhead); a typed hold
+ * time re-freezes there — `unfreezeLayers` + `freezeFrame` as one entry.
+ */
+export function setFreezeFrameEdit(nodeId: string, on: boolean, seconds: number): Promise<unknown> {
+  if (!on) return edit('Unfreeze Frame', { type: 'unfreezeLayers', layers: [nodeId] });
+  return edit('Freeze Frame', { type: 'freezeFrame', layer: nodeId, time: compTime(seconds), lastFrame: false });
+}
+
+export function setFreezeTimeEdit(nodeId: string, holdSeconds: number): Promise<unknown> {
+  return edit('Freeze Frame', [
+    { type: 'unfreezeLayers', layers: [nodeId] },
+    { type: 'freezeFrame', layer: nodeId, time: compTime(keyframeToCompTime(nodeId, Math.max(0, holdSeconds))), lastFrame: false },
+  ]);
 }

@@ -70,9 +70,10 @@ describe('Effect Controls panel wiring', () => {
     const edits = readFileSync(join(SRC, 'layout/Effects/effectEdits.ts'), 'utf8');
     const props = readFileSync(join(SRC, 'layout/Inspector/inspectorSections.ts'), 'utf8');
     expect(library).toMatch(/Simulation/);
-    expect(library).toMatch(/legacyEnableSimulation/);
-    expect(edits).toMatch(/enableNodeCloner/);
-    expect(edits).toMatch(/enableNodePhysics/);
+    expect(library).toMatch(/enableSimulationEdit/);
+    // One `setProperty` on the layer's `cloner` / `physics` json field.
+    expect(edits).toMatch(/export function enableSimulationEdit/);
+    expect(edits).toMatch(/paths\.layerParam\(kind\)/);
     expect(controls).toMatch(/ClonerSection/);
     expect(controls).toMatch(/PhysicsSection/);
     // Properties must not still mount them on every layer.
