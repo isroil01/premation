@@ -161,7 +161,9 @@ export function MulticamViewerBody(): JSX.Element {
     setSyncing(true);
     try {
       // The analysis (core, no write), then the bar shifts as ONE engine entry
-      // (`setLayerTiming` through moveBars, B3z).
+      // (`setLayerTiming` through moveBars, B3z). B4-gap: an engine job — it
+      // decodes every angle's audio (not a registered engine job yet, G-phase)
+      // over the multicam angle tags (see collectAngleViews).
       const { moves, report } = await planMulticamAudioSync();
       if (moves.length > 0) await moveBars(moves, 'Sync Multicam by Audio');
       setSyncNote(report.note);

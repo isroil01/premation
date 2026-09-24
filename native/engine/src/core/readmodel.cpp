@@ -439,6 +439,8 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
     }
   }
   if (c.at("backgroundPaint").is_object()) s.background_paint = stringify(c.at("backgroundPaint"));
+  // The empty project's placeholder mark; absent when unset (the TS engine's compSettings).
+  if (c.at("pristine").is_bool() && c.at("pristine").b()) s.pristine = true;
   return s;
 }
 

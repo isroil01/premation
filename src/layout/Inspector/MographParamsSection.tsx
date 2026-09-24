@@ -39,6 +39,11 @@ export function MographParamsSection(): JSX.Element | null {
   const selected = useSelectionStore((s) => s.ids);
   // Field values live in the SCENE, not in a store — re-read them whenever the
   // scene changes so an edit made anywhere else (canvas, layers, AI) shows here.
+  // B4-gap: which group is an inserted element (`__mographId` on a component —
+  // no API field) and its fields (a child's Text / Style COMPONENT, skipped when
+  // Source Text is a data track): `findMographRoot` / `readMographFields` walk
+  // the scene graph. A `layer/mographId` field closes the root; the fields are
+  // then `text/sourceText` / `layer/fill` of the children.
   const revision = useSceneRevision();
   const primary = selected[0] ?? null;
 
@@ -122,6 +127,7 @@ function elementStart(rootId: string): number {
 /** Current value of a field, read from the scene rather than remembered — this
  *  panel has no store of its own, and the scene is the authority. */
 function currentValue(field: TemplateField): string {
+  // B4-gap: the field's target is a COMPONENT prop (TemplateField.target) — see MographParamsSection.
   const node = defaultSceneGraph.getNode(field.target.nodeId);
   const comp = node?.components.find((c) => c.type === field.target.componentType);
   const v = comp ? (comp.props as Record<string, unknown>)[field.target.prop] : undefined;
@@ -139,6 +145,7 @@ function templateFieldCommands(field: TemplateField, value: string): Command[] {
   const seconds = getTime();
   if (componentType === 'Text' && prop === 'content') return sourceTextCommand(nodeId, value, seconds) ?? [];
   if (prop === 'fill') {
+    // B4-gap: `fieldWrite` composes the write per component id (the B3 write layer).
     const comp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === componentType);
     const w = comp ? fieldWrite(nodeId, comp.id, 'fill', value, seconds) : null;
     return w ? [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) }] : [];
@@ -147,7 +154,7 @@ function templateFieldCommands(field: TemplateField, value: string): Command[] {
 }
 
 function FieldRow({ field }: { field: TemplateField }): JSX.Element {
-  useSceneRevision(); // re-read after any scene write
+  useSceneRevision(); // re-read after any scene write (B4-gap: component-prop target, see above)
   const value = currentValue(field);
   const eng = useEngineEdit();
   // A typing session (first keystroke → blur) is ONE undo entry; the canvas

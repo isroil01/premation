@@ -39,6 +39,20 @@ export function settingsWorkArea(s: Pick<CompSettings, 'workArea'> | undefined):
   return { start, end: start + flicksToSeconds(s.workArea.duration) };
 }
 
+/**
+ * Whether a work area is SET: the API states "none" as the whole composition
+ * (`{ start: 0, duration }`), so a range covering exactly that reads as unset —
+ * what the timeline controller's `getWorkArea() === null` meant.
+ */
+export function settingsHasWorkArea(s: Pick<CompSettings, 'workArea' | 'duration'> | undefined): boolean {
+  return !!s && !(s.workArea.start === 0 && s.workArea.duration === s.duration);
+}
+
+/** The work area in seconds when one is set (`settingsHasWorkArea`), else null. */
+export function settingsSetWorkArea(s: Pick<CompSettings, 'workArea' | 'duration'> | undefined): { start: number; end: number } | null {
+  return settingsHasWorkArea(s) ? settingsWorkArea(s) : null;
+}
+
 /** A time (flicks) in frames at `fps` — snapped to the whole frame when it is one within rounding. */
 export function framesOfTime(t: number, fps: number): number {
   const x = flicksToSeconds(t) * fps;

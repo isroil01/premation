@@ -42,6 +42,10 @@ interface TextTarget {
 }
 
 function textTarget(id: string): TextTarget | null {
+  // B4-gap: the Text COMPONENT (its id and stored props: an unstored fill /
+  // stroke / width falls back to this module's defaults, which the catalog's
+  // registry defaults do not match) — `componentPropsCommands` composes the
+  // swap per component id (the B3 write layer).
   const node = defaultSceneGraph.getNode(id);
   const comp = node?.components.find((c) => c.type === 'Text');
   return node && comp ? { node, compId: comp.id, props: comp.props as Record<string, unknown> } : null;

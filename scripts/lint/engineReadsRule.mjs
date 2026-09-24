@@ -160,6 +160,19 @@ const PURE_READS = new Set([
   'missingFontsMessage', // core/fonts/missingFonts: pluralised message
   'solidFill', // core/paint/fill: builds a solid paint from a colour
   'sanitizeLayerSize', // core/scene/layerSettings: clamps and rounds the number it is given
+  // B4 timeline (checked: arguments only, a static table, or the editor's own module state — no singleton,
+  // store, controller or document on any path).
+  'propertyResetValue', // core/scene/layerTransformOps: picks from the defaults it is handed
+  'activeEasingKind', 'isHoldKind', // core/animation/easingVocabulary: over the keyframe / easing string given
+  'presetCurve', // core/animation/keyframeAssistants: the static easing-preset table
+  'smoothTrackKeyframes', 'wiggleTrackKeyframes', // core/animation/keyframeAssistants: over the keyframe list given (seeded)
+  'matchBounceStyle', 'bounceInTracks', 'describeBounce', // core/animation/bounce: the static style table; keys built from the options given; a sentence about the result given
+  'revealBounce', // core/animation/bounce: emits the editor's RevealAnimatedProps (a view request, no read)
+  'feelDurationSec', 'feelStaggerFrames', 'planStagger', // core/animation/choreography: the static feel table; the plan over the StaggerLayers given
+  'clipboardEntries', // core/animation/keyframeClipboard: the editor's keyframe clipboard — not the document
+  'countUserPresets', // core/animation/animationPresets: the user's preset library in settings — not the document
+  'previewChoreography', // core/library/insertPreview: seek + play + a scheduled pause of the transport (§6 control), no document read
+  'notifyNoSvgGeometry', 'notifySvgConverted', // core/svg/svgConvert: a toast about the file name / SvgLayerData given
 ]);
 
 /**
@@ -199,9 +212,12 @@ const ALIASES = [
   ['@utils/', 'src/utils/'],
 ];
 
-/** Package entry points whose EXPORTS are engine state (by name). */
+/**
+ * Package entry points whose EXPORTS are engine state (by name). (`expandKeyframeProp` is not: it maps the
+ * Position row's pseudo-track name to `x`/`y`/`z` — a string table, B4 timeline.)
+ */
 const PACKAGE_READS = {
-  '@motion/animation': new Set(['defaultAnimation', 'AnimationEngine', 'expandKeyframeProp']),
+  '@motion/animation': new Set(['defaultAnimation', 'AnimationEngine']),
 };
 
 const readerCache = new Map();

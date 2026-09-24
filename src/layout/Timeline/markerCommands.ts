@@ -24,7 +24,10 @@
 
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { documentMirror } from '@stores/documentMirror';
+import { settingsFps, framesOfTime } from '@core/mirror/compFacts';
+import { mirrorMarkerById } from '@core/mirror/markers';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { DEFAULT_MARKER_COLOR } from './markerGeometry';
@@ -53,12 +56,22 @@ export function markersChanged(): void {
  * the marker's stored colour (B3z), one undo entry.
  */
 export function addCompMarkerAtPlayhead(label = 'Marker'): void {
-  const t = getTimelineController().timeline;
-  const rate = t.getFrameRate().fps || 30;
+  const comp = activeCompId();
+  const rate = activeFps(comp);
   void edit('Add Marker', {
     type: 'addMarkers',
-    markers: [{ owner: { comp: activeCompId() }, time: framesToFlicks(Math.round(t.currentFrame), rate), duration: 0, name: label, comment: '', label: 0, color: DEFAULT_MARKER_COLOR }],
+    markers: [{ owner: { comp }, time: framesToFlicks(playheadFrame(rate), rate), duration: 0, name: label, comment: '', label: 0, color: DEFAULT_MARKER_COLOR }],
   });
+}
+
+/** The composition's frame rate, from the document mirror (B4). */
+function activeFps(comp: string): number {
+  return settingsFps(documentMirror().comp(comp)?.settings) || 30;
+}
+
+/** The playhead's whole frame (transport state, not the document). */
+function playheadFrame(rate: number): number {
+  return Math.round(playheadSeconds() * rate);
 }
 
 /** The legacy layer-marker colour (`TimelineController.addLayerMarkerAtPlayhead`). */
@@ -76,16 +89,17 @@ const LAYER_MARKER_COLOR = '#a855f7';
  * Returns how many layers get one (synchronously, for the transport's fallback).
  */
 export function addLayerMarkersAtPlayhead(label = 'Marker'): number {
-  const controller = getTimelineController();
-  const t = controller.timeline;
-  const rate = t.getFrameRate().fps || 30;
-  const playhead = Math.round(t.currentFrame);
   const comp = activeCompId();
+  const rate = activeFps(comp);
+  const playhead = playheadFrame(rate);
+  const m = documentMirror();
   const markers: MarkerInsert[] = [];
   for (const nodeId of useSelectionStore.getState().ids) {
-    const bar = controller.getLayersForNode(nodeId)[0];
-    if (!bar) continue;
-    markers.push({ owner: { comp, layer: nodeId }, time: framesToFlicks(playhead - bar.start, rate), duration: 0, name: label, comment: '', label: 0, color: LAYER_MARKER_COLOR });
+    // A layer of this composition (its bar starts at the in point, `layer.timing`).
+    const layer = m.layer(nodeId);
+    if (!layer || (m.comp(comp) && layer.comp !== comp)) continue;
+    const barStart = framesOfTime(layer.timing.inPoint, rate);
+    markers.push({ owner: { comp, layer: nodeId }, time: framesToFlicks(playhead - barStart, rate), duration: 0, name: label, comment: '', label: 0, color: LAYER_MARKER_COLOR });
   }
   if (markers.length > 0) void edit(markers.length === 1 ? 'Add Marker' : 'Add Markers', { type: 'addMarkers', markers });
   return markers.length;
@@ -104,7 +118,7 @@ export function updateMarker(
   id: string,
   patch: MarkerEditPatch,
 ): boolean {
-  if (!getTimelineController().timeline.getMarker(id)) return false;
+  if (!mirrorMarkerById(documentMirror(), activeCompId(), id)) return false;
   void editMarker(id, patch);
   return true;
 }

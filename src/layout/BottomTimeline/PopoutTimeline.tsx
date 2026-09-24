@@ -17,8 +17,7 @@ import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveCompId } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { installLegacyTimelineSync } from '@core/engine/timelineUpkeep';
 import { playheadSeconds, seekPlayhead, setTimelinePixelsPerSecond, setTimelineScrollPixels } from '@core/timeline/timelineView';
 import { edit } from '@core/engine/uiEdits';
 import { labelIndexOf } from '@core/engine/model';
@@ -33,15 +32,10 @@ export function PopoutTimeline(): JSX.Element {
   const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
 
   // Keep this window's Timeline Engine bars seeded for layers written around
-  // the engine API (document sync). WRITE-side upkeep, as in App.tsx: the bars
-  // hold layer timing until the controller moves into the engine; nothing here
+  // the engine API (document sync). WRITE-side upkeep of the TS engine, the
+  // same installer App.tsx uses (core/engine/timelineUpkeep); nothing here
   // drives a render — the rows below follow the document mirror.
-  useEffect(() => {
-    const graphSub = getEventBus().on('SceneGraphChanged', () => {
-      getTimelineController().syncFromScene();
-    });
-    return () => graphSub.dispose();
-  }, []);
+  useEffect(() => installLegacyTimelineSync(), []);
 
   // The same model the editor shell builds (Timeline/useTimelineModel).
   const tracks = useTimelineTracks(activeCompId, expandedIds);

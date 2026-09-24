@@ -55,6 +55,11 @@ import s from './PrimitiveSection.module.css';
  * layer has no such field.
  */
 export function primitiveCommands(nodeId: string, patch: Partial<PrimitiveSpec>, seconds: number): Command[] {
+  // B4-gap: the STORED primitive params — a type switch fills the UNSTORED ones
+  // from the new type's defaults (readNodePrimitive), while the catalog reports
+  // every `primitive/*` param at the old type's value, so a mirror spec would
+  // size the box wrongly. Closes when `setProperty primitive/type` returns (or
+  // the engine writes) the layer box itself.
   const node = defaultSceneGraph.getNode(nodeId);
   const comp = node?.components.find((c) => c.type === 'Primitive');
   if (!node || !comp) return [];

@@ -254,6 +254,10 @@ export function useClipDrag({
                 clip.trackId,
               );
         if (!cut) return;
+        // B4-gap: clip GEOMETRY — the roll's limits are the two bars' source
+        // handles in stored clip frames (sourceIn / sourceOut after stretch);
+        // `LayerTiming` gives the bar and `sourceDuration`, not the clip's
+        // source window. A `rollLimits` query (or clip source-in on the timing) closes it.
         const limits = getTimelineController().rollLimitsFor(cut.leftNodeId, cut.rightNodeId);
         if (!limits) return;
         const fps = model.frameRate || 30;

@@ -12,7 +12,9 @@
  * could get the right scale and still be looking at the wrong part of the comp.
  */
 
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { setTimelinePixelsPerSecond } from '@core/timeline/timelineView';
+import { settingsDurationSeconds, settingsHasWorkArea, settingsSetWorkArea } from '@core/mirror/compFacts';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import {
   fitPixelsPerSecond,
   getTimelineViewport,
@@ -50,8 +52,7 @@ export function fitTimelineToRange(startSeconds: number, endSeconds: number): Fi
   });
   if (pps === null) return null;
 
-  const controller = getTimelineController();
-  controller.setPixelsPerSecond(pps, startSeconds);
+  setTimelinePixelsPerSecond(pps, startSeconds);
   // Lane content for time t sits at `8 + t·pps` (the lanes' left offset), so
   // this parks `startSeconds` 8px inside the panel edge rather than flush
   // against it — the same gutter time 0 gets at scroll 0.
@@ -67,17 +68,18 @@ export function fitTimelineToRange(startSeconds: number, endSeconds: number): Fi
 
 /** Fit the whole composition into the visible lanes. */
 export function fitTimelineToComposition(): FitResult | null {
-  return fitTimelineToRange(0, getTimelineController().durationSeconds);
+  // The active tab's composition, from the document mirror (B4); no tab → an empty span → no-op.
+  return fitTimelineToRange(0, settingsDurationSeconds(activeCompSettingsNow(), 0));
 }
 
 /** Fit the work area into the visible lanes. No work area set → no-op. */
 export function fitTimelineToWorkArea(): FitResult | null {
-  const wa = getTimelineController().getWorkArea();
+  const wa = settingsSetWorkArea(activeCompSettingsNow());
   if (!wa) return null;
   return fitTimelineToRange(wa.start, wa.end);
 }
 
 /** Whether "Fit work area" has anything to do right now. */
 export function hasWorkArea(): boolean {
-  return getTimelineController().getWorkArea() !== null;
+  return settingsHasWorkArea(activeCompSettingsNow());
 }

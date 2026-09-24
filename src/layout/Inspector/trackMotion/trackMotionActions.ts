@@ -476,8 +476,8 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   /** SAM-class click segment → an Add mask on this layer (`addMask` + its 2 px feather, one entry). */
   const onSegmentSam = async (): Promise<void> => {
-    // Engine-side until C-phase: the layer's DRAWN box (readGeometry resolves
-    // it from the render components), which the mask vertices scale into.
+    // B4-gap: engine-side until C-phase — the layer's DRAWN box (readGeometry
+    // resolves it from the render components), which the mask vertices scale into.
     const target = defaultSceneGraph.getNode(nodeId);
     const g = target ? readGeometry(target) : null;
     const w = src?.width ?? 64;

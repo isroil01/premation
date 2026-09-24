@@ -27,7 +27,19 @@
  */
 
 import { useEffect } from 'react';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import {
+  goToEnd,
+  goToNextKeyframe,
+  goToNextMarker,
+  goToPrevKeyframe,
+  goToPrevMarker,
+  goToStart,
+  playheadSeconds,
+  stepBackward,
+  stepForward,
+} from '@core/timeline/timelineView';
+import { settingsFps } from '@core/mirror/compFacts';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
@@ -59,7 +71,6 @@ export function useTimelineKeys(): void {
     const onKey = (e: KeyboardEvent): void => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
-      const c = getTimelineController();
 
       // ── Arrow-key keyframe nudge ────────────────────────────────
       // Before the Ctrl branch, and gated on a keyframe selection so the
@@ -75,7 +86,7 @@ export function useTimelineKeys(): void {
           const delta = nudgeForKey(
             e.key,
             { shift: e.shiftKey, alt: e.altKey, meta },
-            1 / (c.fps || 30),
+            1 / (settingsFps(activeCompSettingsNow()) || 30),
           );
           if (delta) {
             e.preventDefault();
@@ -117,6 +128,7 @@ export function useTimelineKeys(): void {
           const kfIds = useKeyframeSelectionStore.getState().ids;
           if (kfIds.size > 0) {
             e.preventDefault();
+            // B4-gap: the clipboard captures the TS keyframe records (stored axis, si/so, roving) — shared with propertyRowMenu.
             copyKeyframes(kfIds);
           }
           return;
@@ -126,7 +138,7 @@ export function useTimelineKeys(): void {
           const targetIds = useSelectionStore.getState().ids;
           if (targetIds.length > 0) {
             e.preventDefault();
-            const playhead = getTimelineController().currentSeconds;
+            const playhead = playheadSeconds();
             void pasteKeyframesAt(targetIds, playhead);
           }
           return;
@@ -137,7 +149,8 @@ export function useTimelineKeys(): void {
           const ids = useSelectionStore.getState().ids;
           if (ids.length > 0) {
             // Off-document, sent as setKeyframes per property: one entry
-            // (core/engine/assistantKeys.ts).
+            // (core/engine/assistantKeys.ts). B4-gap: the assistant runs on the
+            // stored member tracks (keyframe assistants, B4_MIRROR.md §5).
             void assistantKeyframesEdit('Smooth motion path', ids, () => {
               for (const id of ids) smoothMotionPath(id);
             });
@@ -168,11 +181,11 @@ export function useTimelineKeys(): void {
       switch (e.key) {
         case 'Home':
           e.preventDefault();
-          c.goToStart();
+          goToStart();
           break;
         case 'End':
           e.preventDefault();
-          c.goToEnd();
+          goToEnd();
           break;
         case 'PageDown':
         case 'PageUp': {
@@ -187,23 +200,23 @@ export function useTimelineKeys(): void {
           }
           e.preventDefault();
           if (e.shiftKey) {
-            if (later) c.goToNextMarker();
-            else c.goToPrevMarker();
-          } else if (later) c.nextFrame();
-          else c.previousFrame();
+            if (later) goToNextMarker();
+            else goToPrevMarker();
+          } else if (later) stepForward();
+          else stepBackward();
           break;
         }
         case 'j':
         case 'J':
           if (!timelineOwns('j')) break;
           e.preventDefault();
-          c.goToPrevKeyframe();
+          goToPrevKeyframe();
           break;
         case 'k':
         case 'K':
           if (!timelineOwns('k')) break;
           e.preventDefault();
-          c.goToNextKeyframe();
+          goToNextKeyframe();
           break;
         case 'b':
           e.preventDefault();

@@ -44,7 +44,6 @@ import { asCommandId } from '@app-types/common';
 import { getCommandRegistry } from '@core/commands/Command';
 import { Icon } from '@components/Icon';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useProjectStore } from '@stores/projectStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { useChoreographyStore, type ChoreographyRecord } from '@stores/choreographyStore';
 import { documentMirror } from '@stores/documentMirror';
@@ -121,12 +120,10 @@ function canRun(id: string): boolean {
 
 /**
  * The auto-minted empty placeholder comp (the start-cards state) — what
- * Smart Animate never offers as a target.
- * B4-gap: the composition's `pristine` flag — editor-minted placeholder state
- * the API's CompSettings does not carry (a `CompSettings.pristine: bool` would close it).
+ * Smart Animate never offers as a target: its `CompSettings.pristine` mark.
  */
 function isPlaceholderComp(compId: string): boolean {
-  return useProjectStore.getState().comps[compId]?.pristine === true;
+  return documentMirror().comp(compId)?.settings.pristine === true;
 }
 
 export function ChoreographySection(): JSX.Element {
@@ -204,6 +201,9 @@ export function ChoreographySection(): JSX.Element {
   const apply = (kind: 'in' | 'out' | 'stagger'): void => {
     const ids = kind === 'stagger' ? curveAnimatedLayerIds(documentMirror(), selected) : selected;
     if (ids.length === 0) return;
+    // B4-gap: the choreography runners (run / re-apply / revert) capture and
+    // shift EVERY stored track of the layers, catalog or not, inside one legacy
+    // animation edit — the keyframe-assistants gap (B4_MIRROR.md §5).
     runChoreography({ kind, nodeIds: ids, params: draft });
   };
 

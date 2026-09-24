@@ -26,13 +26,25 @@
 import { asCommandId } from '@app-types/common';
 import { BuiltinCommands, getCommandRegistry, type Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
+import { documentMirror } from '@stores/documentMirror';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import { extractRange, liftRange, workAreaRange } from '@core/timeline/rangeEdits';
-import { barOf, rippleDeleteLayers } from './timelineEdits';
+import { extractRange, liftRange, type RangeSeconds } from '@core/timeline/rangeEdits';
+import { settingsSetWorkArea } from '@core/mirror/compFacts';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { activeCompId, barOf, rippleDeleteLayers } from './timelineEdits';
+
+/**
+ * The range Lift / Extract act on: the work area when one is SET, else null —
+ * never a silent fallback (see `rangeEdits.workAreaRange`). Read from the
+ * document mirror (B4); the API states "none" as the whole composition.
+ */
+function workAreaRange(): RangeSeconds | null {
+  const wa = settingsSetWorkArea(activeCompSettingsNow());
+  return wa && wa.end - wa.start > 0 ? wa : null;
+}
 
 function notify(message: string, level: 'success' | 'info' | 'warning' | 'error' = 'success'): void {
   useUIStore.getState().notify({ level, message, durationMs: 4000 });
@@ -55,25 +67,27 @@ export function rippleDeleteClip(clipId: string): void {
 }
 
 /**
- * Ripple-delete every bar of every SELECTED layer.
+ * Ripple-delete every SELECTED, unlocked layer of the active composition.
+ * Returns how many layers go.
  *
- * Reverse order over a snapshot of the bar list: each delete slides the bars
- * after it left, so walking forwards would compute the second deletion's gap
- * against geometry the first one had already changed.
+ * ONE engine command over the layers: the engine closes the union of the gaps
+ * in one pass, so deleting one bar cannot shift the geometry the next deletion
+ * measures (and the whole selection is one undo entry). The layers come from
+ * the document mirror (B4).
  */
 export function rippleDeleteSelection(): number {
-  const controller = getTimelineController();
-  const selected = new Set(useSelectionStore.getState().ids);
-  if (selected.size === 0) return 0;
-  const bars = controller
-    .layersOfComp()
-    .filter((l) => l.sourceId !== null && selected.has(l.sourceId) && !l.locked)
-    .sort((a, b) => b.start - a.start);
-  // ONE engine command over the layers: the engine closes the union of the
-  // gaps in one pass, so the order problem above cannot arise (and the whole
-  // selection is one undo entry).
-  if (bars.length > 0) void rippleDeleteLayers([...new Set(bars.map((b) => b.sourceId!))]);
-  return bars.length;
+  const selected = [...new Set(useSelectionStore.getState().ids)];
+  if (selected.length === 0) return 0;
+  const m = documentMirror();
+  const comp = activeCompId();
+  // A group opened as a tab is not a composition: its layers are the root comp's.
+  const scoped = !!m.comp(comp);
+  const ids = selected.filter((id) => {
+    const layer = m.layer(id);
+    return !!layer && !layer.switches.locked && (!scoped || layer.comp === comp);
+  });
+  if (ids.length > 0) void rippleDeleteLayers(ids);
+  return ids.length;
 }
 
 /**
@@ -117,6 +131,10 @@ async function runRangeEdit(kind: 'lift' | 'extract'): Promise<void> {
   // layer" — and to everything the range crosses when there is not, which is
   // what removing a moment from a cut means.
   const nodeIds = useSelectionStore.getState().ids;
+  // B4-gap: Lift has no API command (`rippleDeleteRange` is Extract, and reports
+  // new layer ids, not the split / deleted / shifted counts the toast states);
+  // both still run the controller's clip macro (rangeEdits). A `liftRange`
+  // (= deleteRange without ripple) returning those counts closes it.
   const result = kind === 'lift' ? await liftRange(range, nodeIds) : await extractRange(range, nodeIds);
   bumpScene();
   notify(

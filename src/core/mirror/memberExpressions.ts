@@ -10,7 +10,8 @@
  * `defaultAnimation.hasExpression(id, 'y')`) from that record.
  */
 
-import type { PropertyInfo } from '@motion/engine-api';
+import type { LayerInfo, PropertyInfo } from '@motion/engine-api';
+import { trackRefIn, type MirrorTreeLike } from './trackIndex';
 
 export interface MemberExpressionFacts {
   source: string;
@@ -33,4 +34,20 @@ export function memberExpressionOf(info: PropertyInfo | undefined, member: numbe
 /** Whether dimension `member` of `info` carries an expression (enabled or not). */
 export function memberHasExpression(info: PropertyInfo | undefined, member: number): boolean {
   return memberExpressionOf(info, member) !== null;
+}
+
+/**
+ * The expression one legacy TRACK carries (`x` → Position's member 0, a
+ * scalar → its property), or null when it has none or the layer has no such
+ * track — the mirror twin of `defaultAnimation.hasExpression` /
+ * `isExpressionEnabled` for a row's context menu.
+ */
+export function trackExpressionFacts(
+  m: { layer(id: string): LayerInfo | undefined; tree(id: string): MirrorTreeLike | undefined },
+  nodeId: string,
+  track: string,
+): MemberExpressionFacts | null {
+  if (!m.layer(nodeId)) return null;
+  const ref = trackRefIn(m.tree(nodeId), track);
+  return ref ? memberExpressionOf(ref.info, ref.member) : null;
 }

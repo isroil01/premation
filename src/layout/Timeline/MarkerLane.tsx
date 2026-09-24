@@ -31,9 +31,11 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@utils/cn';
 import { Icon } from '@components/Icon';
 import { openContextMenu } from '@stores/contextMenuStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { markerViewOf, mirrorMarkerById } from '@core/mirror/markers';
 import type { TimelineMarker } from './TimelineModel';
 import { deleteMarker, updateMarker } from './markerCommands';
+import { activeCompId } from './timelineEdits';
 import {
   MARKER_COLORS,
   MARKER_DRAG_THRESHOLD_PX,
@@ -202,7 +204,9 @@ function MarkerEditor({
   y: number;
   onClose: () => void;
 }): JSX.Element | null {
-  const initial = getTimelineController().getMarkerById(id);
+  // The popover's starting values, read once from the document mirror (B4).
+  const found = mirrorMarkerById(documentMirror(), activeCompId(), id);
+  const initial = found ? markerViewOf(found) : null;
   const [label, setLabel] = useState(initial?.label ?? 'Marker');
   const [comment, setComment] = useState(initial?.comment ?? '');
   const [durationText, setDurationText] = useState(String(initial?.duration ?? 0));

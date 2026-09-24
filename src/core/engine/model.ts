@@ -357,6 +357,8 @@ export function compSettings(compId: string): CompSettings {
     ...rootJson(compId, '__responsiveTime', 'responsiveTime'),
     ...rootJson(compId, '__templateFields', 'templateFields'),
     ...(c.backgroundPaint ? { backgroundPaint: JSON.stringify(c.backgroundPaint) } : {}),
+    // The empty project's placeholder mark (setCompositionSettings `pristine`); absent when unset.
+    ...(c.pristine === true ? { pristine: true } : {}),
   };
 }
 

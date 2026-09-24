@@ -15,7 +15,8 @@
 
 import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { useActiveTabCompSettings } from '@hooks/useMirrorFrame';
+import { settingsHasWorkArea } from '@core/mirror/compFacts';
 import {
   onTimelineZoomChanged,
   playheadSeconds,
@@ -29,7 +30,6 @@ import {
 import {
   fitTimelineToComposition,
   fitTimelineToWorkArea,
-  hasWorkArea,
   TIMELINE_ZOOM_MIN,
   TIMELINE_ZOOM_MAX,
 } from '@layout/Timeline/timelineFit';
@@ -46,7 +46,10 @@ export function TimelineZoom(): JSX.Element {
   const [pps, setPps] = useState(() => timelinePixelsPerSecond());
   /** Whether a timeline is mounted and measured — both fit actions need a width. */
   const [fitReady, setFitReady] = useState(() => getTimelineViewport().width > 0);
-  const [workAreaSet, setWorkAreaSet] = useState(false);
+  // The work area is optional, and B/N set it from anywhere. Read from the
+  // document mirror (B4) so the button disables itself rather than being a
+  // control that silently no-ops.
+  const workAreaSet = settingsHasWorkArea(useActiveTabCompSettings());
 
   useEffect(() => {
     const sync = (): void => setPps(timelinePixelsPerSecond());
@@ -58,16 +61,6 @@ export function TimelineZoom(): JSX.Element {
   // its lanes are — with no width there is nothing to fit INTO, and the action
   // would either do nothing or slam the zoom to a clamp bound.
   useEffect(() => subscribeTimelineViewport((s) => setFitReady(s.width > 0)), []);
-
-  // The work area is optional, and B/N set it from anywhere. Tracked so the
-  // button disables itself rather than being a control that silently no-ops.
-  useEffect(() => {
-    const c = getTimelineController();
-    const sync = (): void => setWorkAreaSet(hasWorkArea());
-    sync();
-    const sub = c.timeline.events.on('RangeChanged', sync);
-    return () => sub.dispose();
-  }, []);
 
   // Commands (menu / palette / keyboard: `;` and Alt+`;`). Idempotent, so
   // remounting the status bar does not re-register anything.

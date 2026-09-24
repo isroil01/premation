@@ -1,17 +1,29 @@
 /**
- * The controller is mocked: this suite is about the fit ARITHMETIC and the
+ * The controller (the ruler's zoom) and the active composition's mirror
+ * settings are mocked: this suite is about the fit ARITHMETIC and the
  * zoom-then-scroll ordering, neither of which needs a real timeline engine.
  */
 
+const FLICKS = 705_600_000;
 const controller = {
   durationSeconds: 10,
   workArea: null as null | { start: number; end: number },
   setPixelsPerSecond: jest.fn(),
-  getWorkArea: (): null | { start: number; end: number } => controller.workArea,
 };
 
 jest.mock('@core/timeline/TimelineController', () => ({
   getTimelineController: () => controller,
+}));
+
+// The API states "no work area" as the whole composition.
+jest.mock('@hooks/useMirrorFrame', () => ({
+  activeCompSettingsNow: () => {
+    const wa = controller.workArea ?? { start: 0, end: controller.durationSeconds };
+    return {
+      duration: controller.durationSeconds * FLICKS,
+      workArea: { start: wa.start * FLICKS, duration: (wa.end - wa.start) * FLICKS },
+    };
+  },
 }));
 
 import {

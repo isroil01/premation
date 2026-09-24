@@ -61,6 +61,10 @@ jest.mock('./keyframeNudge', () => ({
     isOpen: () => false,
   }),
 }));
+// No composition open: the nudge's frame step falls back to 30 fps (the mirror is not booted here).
+jest.mock('@hooks/useMirrorFrame', () => ({
+  activeCompSettingsNow: () => undefined,
+}));
 
 describe('arrow-key keyframe nudge', () => {
   beforeEach(() => {

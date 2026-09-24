@@ -4,8 +4,10 @@ import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { documentMirror } from '@stores/documentMirror';
+import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
+import { activeCompIdNow } from '@hooks/useMirror';
+import type { Command, MotionBlurSettings as MotionBlurSettingsApi } from '@motion/engine-api';
 import { mirrorEligibleParents, mirrorParentOf } from '@core/mirror/parenting';
 import { mirrorMatte } from '@core/mirror/layerFacts';
 import { retimableLayerIds } from '@core/mirror/motionAssist';
@@ -39,6 +41,7 @@ function setSwitch(nodeId: string, id: 'adjustment' | 'motionBlur', on: boolean)
 
 /** "ID matte: <object>" entries for a layer whose EXR carries a Cryptomatte set; empty otherwise. */
 function idMatteItems(nodeId: string): DropdownItem[] {
+  // B4-gap: the EXR's Cryptomatte set (decoded manifest on the media side) — no API datum (see CompositingSection).
   const found = cryptomatteForNode(nodeId);
   if (!found) return [];
   const items: DropdownItem[] = [{ type: 'separator' }];
@@ -65,8 +68,15 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
   // (`LayerTiming` carries the signed stretch only): the scene revision re-reads them. Everything else below is the
   // document mirror's: the header (parent, blend, matte, switches) and every layer of the comp (the pickers).
   useSceneRevision((s) => s.rev);
-  const mb = useMotionBlurStore();
   const e = useEngineEdit();
+  // The composition's motion-blur settings from the mirror (`CompSettings.motionBlur`), written with
+  // `setCompositionSettings` (one entry; a scrub is one gesture).
+  const mb = useActiveMotionBlur();
+  const mbCommands = (patch: Partial<MotionBlurSettingsApi>): Command[] => {
+    const comp = activeCompIdNow();
+    const cur = comp ? documentMirror().comp(comp)?.settings.motionBlur : undefined;
+    return comp && cur ? [{ type: 'setCompositionSettings', comp, patch: { motionBlur: { ...cur, ...patch } } } as Command] : [];
+  };
 
   const layer = useCompLayersWatch(nodeId);
   const m = documentMirror();
@@ -149,6 +159,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
   const retimable = retimableLayerIds(m, [nodeId]).length > 0;
 
   // 4. Time
+  // B4-gap: the time config (freeze, reverse, frame blend as stored) — see the section's header comment.
   const time = getNodeLayerTime(nodeId);
   const frameBlendItems: DropdownItem[] = FRAME_BLENDS.map((b) => ({
     type: 'item',
@@ -279,22 +290,22 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
           <div className={styles.nestedCard}>
             <div className={styles.row}>
               <span className={styles.label}>Comp Enabled</span>
-              <Switch checked={mb.enabled} onChange={(e) => mb.setEnabled(e.currentTarget.checked)} aria-label="Comp enabled motion blur" />
+              <Switch checked={mb.enabled} onChange={(ev) => e.send('Motion Blur', mbCommands({ enabled: ev.currentTarget.checked }))} aria-label="Comp enabled motion blur" />
             </div>
             <div className={styles.fieldGrid}>
               <label className={styles.fieldLabel}>
                 <span>Shutter</span>
-                <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="°" onChange={mb.setShutterAngle} aria-label="Shutter angle" />
+                <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="°" onChange={(v) => e.send('Shutter Angle', mbCommands({ shutterAngle: v }))} {...e.scrub('Shutter Angle')} aria-label="Shutter angle" />
               </label>
               <label className={styles.fieldLabel}>
                 <span>Phase</span>
-                <ValueField value={mb.shutterPhase ?? -90} min={-360} max={360} precision={0} unit="°" onChange={mb.setShutterPhase} aria-label="Shutter phase" />
+                <ValueField value={mb.shutterPhase ?? -90} min={-360} max={360} precision={0} unit="°" onChange={(v) => e.send('Shutter Phase', mbCommands({ shutterPhase: v }))} {...e.scrub('Shutter Phase')} aria-label="Shutter phase" />
               </label>
             </div>
             <div className={styles.fieldGrid}>
               <label className={styles.fieldLabel}>
                 <span>Samples</span>
-                <ValueField value={mb.samples} min={2} max={32} precision={0} onChange={mb.setSamples} aria-label="Motion blur samples" />
+                <ValueField value={mb.samples} min={2} max={32} precision={0} onChange={(v) => e.send('Motion Blur Samples', mbCommands({ samplesPerFrame: Math.round(v) }))} {...e.scrub('Motion Blur Samples')} aria-label="Motion blur samples" />
               </label>
             </div>
           </div>
@@ -328,6 +339,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             ) : (
               <ValueField
                 // The layer's stored, absolute stretch (e.g. 200 or −100).
+                // B4-gap: a BAKED stretch (`fx.__bakedStretch`, a layer with no source) — see the header comment.
                 value={stretchValueOf(nodeId)}
                 min={-1000}
                 max={1000}

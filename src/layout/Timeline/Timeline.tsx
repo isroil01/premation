@@ -39,8 +39,8 @@ import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
 import { readTransitionDrag, isTransitionDrag } from './transitionPalette';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
-import { resolveReplaceTarget } from '@core/scene/replaceSourceDrop';
-import { barOf, replaceSourceWithAsset, splitLayersAt } from './timelineEdits';
+import { documentMirror } from '@stores/documentMirror';
+import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt } from './timelineEdits';
 import {
   layoutTransitions,
   durationFromEdgeDrag,
@@ -49,8 +49,8 @@ import {
   type TransitionBox,
 } from './transitionOverlay';
 import { installTransitionCommands } from './transitionCommands';
+import { transitionViewsOf } from '@core/mirror/transitions';
 import {
-  useTransitionStore,
   DEFAULT_TRANSITION_FRAMES,
   TRANSITION_LABEL,
   type TransitionKind,
@@ -84,7 +84,7 @@ import { HeatLane } from './HeatLane';
 import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead, installTimelineMarkerCommands } from './markerCommands';
 import { deleteSelectionFromTimeline, installTimelineClipEditCommands, rippleDeleteSelection } from './clipEditCommands';
 import { stickyCategoryFor } from './stickyCategory';
-import { activeCompIdNow } from '@hooks/useMirror';
+import { activeCompIdNow, compFps, useMirrorComps } from '@hooks/useMirror';
 import {
   RULER_HEIGHT_DEFAULT,
   TRACK_HEIGHT_DEFAULT,
@@ -105,9 +105,9 @@ import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
 import { DragHud, type DragHudState } from './DragHudOverlay';
 import { Minimap, Ruler, generateRulerTicks, rulerProgressWidth } from './RulerStack';
 import { TrackHeader, PropertyHeader, TrackCategoryHeader } from './TrackHeaderColumn';
-import { canResetProperties } from '@core/scene/layerTransformOps';
+import { mirrorCanResetProperties } from '@core/mirror/resetFacts';
 import { activeCompSize, resetPropertiesEdit, resetTransformEdit } from './resetEdits';
-import { expressionMenuItems } from '@core/animation/expressionCommands';
+import { expressionRowMenuItems } from './expressionRowMenu';
 import { TrackContent, LaneRow } from './Lanes';
 import { Keyframes } from './KeyframeLayer';
 import { useClipDrag } from './useClipDrag';
@@ -742,12 +742,13 @@ function Timeline({
    * comp's tracks, and `layoutTransitions` drops any record whose two nodes are
    * not among them — so filtering by comp id here would be a second, weaker copy
    * of a test the layout already makes, and one more place to be wrong about
-   * which comp is active.
+   * which comp is active. Read from the document mirror (B4): each comp's
+   * `transitions`, in frames of that comp.
    */
-  const transitionsByComp = useTransitionStore((s) => s.byComp);
+  const mirrorComps = useMirrorComps();
   const allTransitions = useMemo(
-    () => Object.values(transitionsByComp).flat(),
-    [transitionsByComp],
+    () => [...mirrorComps.values()].flatMap((c) => transitionViewsOf(c.transitions, compFps(c))),
+    [mirrorComps],
   );
   const transitionBoxes = useMemo(
     () => layoutTransitions(allTransitions, model.tracks, (id) => trackRowIndex.get(id), model.frameRate || 30),
@@ -1567,7 +1568,7 @@ function Timeline({
         const payload = e.altKey ? readCanvasDrag(e) : null;
         if (payload?.kind === 'asset') {
           e.preventDefault();
-          void replaceSourceWithAsset(resolveReplaceTarget(lanesTrackIdAt(e.clientY)), payload.assetId);
+          void replaceSourceWithAsset(replaceTargetAt(lanesTrackIdAt(e.clientY)), payload.assetId);
         }
         return;
       }
@@ -2342,7 +2343,7 @@ function Timeline({
                       {
                         id: 'reset',
                         label: 'Reset',
-                        disabled: !canResetProperties(row.track.id, props),
+                        disabled: !mirrorCanResetProperties(documentMirror(), row.track.id, props),
                         onSelect: () => {
                           void resetPropertiesEdit(row.track.id, props, activeCompSize(), `Reset ${row.prop.label}`);
                         },
@@ -2350,7 +2351,7 @@ function Timeline({
                       { id: 'expr-sep', separator: true },
                       // AE's Add / Enable-Disable / Remove Expression — the same
                       // helper (and undo step) as the inspector's `=` toggle.
-                      ...expressionMenuItems(row.track.id, props),
+                      ...expressionRowMenuItems(row.track.id, props),
                     ];
                   }}
                 />

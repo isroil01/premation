@@ -37,9 +37,8 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 
 import { useFocusStore } from '@stores/focusStore';
 import { openContextMenu } from '@stores/contextMenuStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { seekPlayhead } from '@core/timeline/timelineView';
 import { setCompDuration } from '@layout/Timeline/timelineEdits';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { deleteCompositionEdit, deleteCompositionWarning, duplicateCompositionEdit } from '@layout/Scene/sceneEdits';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { customConfirm } from '@components/Modal';
@@ -363,7 +362,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
       // taking that away to add dragging would be a net loss.
       if (hit === 'outside') {
         const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        getTimelineController().seekSeconds(ratio * props.model.duration);
+        seekPlayhead(ratio * props.model.duration);
         return;
       }
       e.preventDefault();
@@ -524,7 +523,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                     // A group opened in its own tab is a LAYER of another comp,
                     // not a composition: duplicating or deleting "it" here
                     // would act on the group inside its parent.
-                    const isGroupTab = !!defaultSceneGraph.getNode(compId)?.parent;
+                    // (B4: the mirror names a group as a LAYER; a composition is never one.)
+                    const isGroupTab = !documentMirror().comp(compId) && !!documentMirror().layer(compId);
                     openContextMenu(e.clientX, e.clientY, [
                       {
                         id: 'settings',
@@ -688,7 +688,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                       startFrame,
                       durationSeconds: props.model.duration,
                     });
-                    if (sec !== null) getTimelineController().seekSeconds(sec);
+                    if (sec !== null) seekPlayhead(sec);
                     setGoToOpen(false);
                   }}
                 />

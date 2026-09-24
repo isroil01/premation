@@ -16,7 +16,6 @@
 import { Button } from '@components/Button';
 import { EmptyState } from '@components/EmptyState';
 import { flicksToSeconds } from '@motion/engine-api';
-import { useProjectStore } from '@stores/projectStore';
 import { compFps, useActiveMirrorComp } from '@hooks/useMirror';
 import { channelsToHex } from '@core/mirror/paintFields';
 import { framesToTimecode } from '@core/time/timecode';
@@ -40,12 +39,8 @@ export function CompositionSummary(): JSX.Element {
   const duration = settings ? flicksToSeconds(settings.duration) : 0;
   const background = settings ? channelsToHex(settings.background) : '';
   const transparent = settings?.transparent === true;
-  // B4-gap: the auto-minted comp's `pristine` flag (CompositionSettings.pristine) — CompSettings does not carry it (a `CompSettings.pristine` would close it).
-  const pristineFlag = useProjectStore((s) => {
-    const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
-    return !!id && s.comps[id]?.pristine === true;
-  });
-  const pristine = pristineFlag && (comp?.layers.length ?? 0) === 0;
+  // The auto-minted comp's placeholder mark (`CompSettings.pristine`), as EditorTabs reads it.
+  const pristine = settings?.pristine === true && (comp?.layers.length ?? 0) === 0;
 
   if (pristine) {
     return <EmptyState icon="mouse-pointer" title="No selection" message={`${HINT}.`} />;

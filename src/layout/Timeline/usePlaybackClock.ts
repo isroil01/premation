@@ -21,6 +21,7 @@
 import { useEffect, useRef } from 'react';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { pauseInactiveComps } from '@core/timeline/timelineView';
 import { videoDiag, playbackHealth } from '@core/rendering/videoPlaybackDiag';
 import { flushRenderNow } from '@core/perf/framePump';
 
@@ -90,10 +91,13 @@ export function usePlaybackClock(): void {
   // leaving them running did (a comp that resumed playing on its own when you
   // switched back to its tab).
   useEffect(() => {
-    getTimelineController().pauseInactiveComps();
+    pauseInactiveComps();
   }, [activeTabId]);
 
   useEffect(() => {
+    // B4-kept: the transport PUMP — `tick` advances the TS controller's clock
+    // every played frame and `fps` paces it. Per-frame playhead state, not a
+    // document read; it becomes the engine's transport clock in C/D (§5).
     const controller = getTimelineController();
     // Keep the engine's play-state in sync with the store flag the transport flips.
     if (playing && !controller.isPlaying) controller.play();

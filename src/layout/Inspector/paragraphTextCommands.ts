@@ -17,6 +17,14 @@
  * "Convert to Paragraph Text" (`text.convertToParagraphText`) and
  * "Convert to Point Text" (`text.convertToPointText`); the same two rows in
  * the viewport/timeline layer context menu for text layers.
+ *
+ * B4-gap: TEXT LAYOUT. Both conversions measure the text as it renders
+ * (`readMeasuredTextStyle` / `measureParagraphBox` over the scene node: line
+ * metrics, soft wraps, the Fit-to-Box scale) and hold it still through the
+ * layer's evaluated pose (`readTransformProp`); the API has no text-layout
+ * query (a `getTextLayout` answer — lines, box, fit scale — closes it) and the
+ * Text COMPONENT id is what `componentPropsCommands` writes through. Whether
+ * Source Text is keyed stays `isDataAnimated` with it.
  */
 
 import { asCommandId } from '@app-types/common';

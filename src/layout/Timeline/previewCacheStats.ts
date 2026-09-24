@@ -17,8 +17,7 @@
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { idleCacheSpan, type IdleCacheSpan } from '@core/rendering/idleCacheSpan';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { settingsDurationSeconds, settingsFps, settingsWorkArea } from '@core/mirror/compFacts';
+import { settingsDurationSeconds, settingsFps, settingsHasWorkArea, settingsWorkArea } from '@core/mirror/compFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 
@@ -80,8 +79,8 @@ export function previewCacheStats(): PreviewCacheStats {
   return {
     cached,
     total: span ? span.length : 0,
-    // B4-gap: whether a work area is SET — the API's `CompSettings.workArea` is the whole composition when none is.
-    workArea: getTimelineController().getWorkArea() !== null,
+    // Whether a work area is SET: the API states "none" as the whole composition (settingsHasWorkArea).
+    workArea: settingsHasWorkArea(documentMirror().comp(activeCompIdNow() ?? '')?.settings),
     ramMb: viewportFrameCache.totalBytesHeld / MB,
     diskMb: disk ? disk.totalBytes / MB : null,
   };
