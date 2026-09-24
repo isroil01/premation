@@ -10,6 +10,7 @@
 // shaper; letter spacing added once per cluster; bidi runs in visual order.
 
 #include "fonts.hpp"
+#include "system_fonts.hpp"
 #include "skia_ffi.hpp"
 
 #include <algorithm>
@@ -464,8 +465,29 @@ std::size_t FontSet::add_system_family(const std::string& family) {
   }
   return added;
 #else
-  (void)family;
-  return 0;  // fontconfig / CoreText lookup: not ported yet
+  // Linux: fontconfig, matched as Chromium's font service does
+  // (system_fonts_ffi.cpp); macOS (CoreText) is not ported — nothing found there.
+  const std::string l = lower(family);
+  for (const auto& f : impl_->faces) {
+    if (f->familyLower == l) return 0;  // registered already (a manifest face wins)
+  }
+  const auto installed = resolve_system_family(family);
+  if (!installed) return 0;
+  std::size_t added = 0;
+  for (const SystemFace& sf : list_system_faces(*installed)) {
+    std::ifstream in(sf.file, std::ios::binary);
+    if (!in) continue;
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    FaceInfo info;
+    info.family = family;
+    info.weight = sf.weight;
+    info.italic = sf.italic;
+    info.file = "system:" + sf.file;
+    info.ttcIndex = sf.ttcIndex;
+    std::string err;
+    if (add_face(info, bytes, err)) ++added;
+  }
+  return added;
 #endif
 }
 

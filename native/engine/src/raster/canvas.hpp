@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -128,6 +129,13 @@ struct CanvasOptions {
   /// grayscale glyph masks FROM LCD (ClearType 3×1) masks — softer edges than
   /// plain grayscale AA. Parity knob; unknown geometry is the deterministic default.
   bool lcdGeometry = false;
+  /// Draw as if every alias FontFace (fontFaceVariants.ts) had loaded — the
+  /// TS's settled look: a text layer's OpenType features (ligatures off,
+  /// dlig, calt off, stylistic sets) are applied, and ligatures-off no longer
+  /// needs glyph-by-glyph drawing. The TS loads alias faces asynchronously and
+  /// the render-tests harness renders with none loaded (the raster key's
+  /// `fv0`), so the parity runs keep this off.
+  bool aliasFaces = false;
 };
 
 class Canvas2D {
@@ -146,6 +154,9 @@ class Canvas2D {
   virtual void resize(std::uint32_t width, std::uint32_t height) = 0;
   /// Premultiplied RGBA8, rows top-down — the bytes a canvas upload produces.
   [[nodiscard]] virtual std::vector<std::uint8_t> pixels() const = 0;
+  /// document.createElement('canvas') sized w × h, with this canvas's options
+  /// (the painters' scratch canvases: tip stamps, snapshots, buffers).
+  [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_canvas(std::uint32_t width, std::uint32_t height) const = 0;
 
   // ── state ──
   virtual void save() = 0;
@@ -174,6 +185,15 @@ class Canvas2D {
   [[nodiscard]] virtual std::string globalCompositeOperation() const = 0;
   virtual void setFilter(const css::Filter& f) = 0;
   virtual void setImageSmoothing(bool on) = 0;
+
+  // ── shadows (shadowColor / shadowBlur / shadowOffsetX / shadowOffsetY) ──
+  // Drawn when the colour is not transparent and the blur or an offset is
+  // non-zero; offset and blur are canvas pixels (the transform does not scale
+  // them), the blur's σ is half of shadowBlur. Invalid values are ignored.
+  virtual void setShadowColor(const css::Color& c) = 0;
+  virtual void setShadowBlur(double blur) = 0;
+  virtual void setShadowOffsetX(double x) = 0;
+  virtual void setShadowOffsetY(double y) = 0;
 
   // ── text state ──
   /// The `font` shorthand; returns false (unchanged) if it does not parse.
@@ -225,6 +245,14 @@ class Canvas2D {
   virtual void drawImage(const Canvas2D& src, double sx, double sy, double sw, double sh, double dx, double dy, double dw,
                          double dh) = 0;
   [[nodiscard]] std::shared_ptr<Pattern> createPattern(std::string_view repetition) const;
+
+  // ── pixels (ImageData) — the bridge to the CPU effect kernels (engine_effects) ──
+  /// getImageData(x, y, w, h): STRAIGHT (unpremultiplied) RGBA8 rows, as a
+  /// canvas returns it; pixels outside the canvas read as 0.
+  [[nodiscard]] virtual std::vector<std::uint8_t> getImageData(int x, int y, std::uint32_t w, std::uint32_t h) const = 0;
+  /// putImageData(data, x, y): straight RGBA8 w × h written as is — no
+  /// transform, alpha, composite, shadow or clip; clipped to the canvas.
+  virtual void putImageData(std::span<const std::uint8_t> rgba, std::uint32_t w, std::uint32_t h, int x, int y) = 0;
 
  protected:
   Canvas2D() = default;

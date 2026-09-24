@@ -11,63 +11,10 @@
 namespace premation::raster {
 namespace {
 
-constexpr int kBandCount = 30;
-constexpr double kBandBottomEm = -0.25;
-constexpr double kBandTopEm = 0.95;
-constexpr double kBandH = (kBandTopEm - kBandBottomEm) / kBandCount;
-constexpr double kOpenCapEm = 0.08;
-constexpr double kOpticalStrength = 0.6;
-constexpr double kMaxTightenEm = 0.15;
-constexpr double kMaxLoosenEm = 0.05;
-constexpr double kMinInkGapEm = 0.02;
-constexpr double kDefaultXHeightEm = 0.52;
-constexpr double kDefaultTargetEm = 0.1;
-constexpr int kAlphaFloor = 8;
-const double kNaN = std::numeric_limits<double>::quiet_NaN();
-
+using namespace optical;
 using Profile = OpticalKerner::InkProfile;
 
-int band_of(double yEm) { return static_cast<int>(std::floor((yEm - kBandBottomEm) / kBandH)); }
-double band_centre(int i) { return kBandBottomEm + (i + 0.5) * kBandH; }
-
-Profile empty_profile(double advance) {
-  return {advance, std::vector<double>(kBandCount, kNaN), std::vector<double>(kBandCount, kNaN), kNaN};
-}
-
-void widen(Profile& p, int band, double x) {
-  if (band < 0 || band >= kBandCount) return;
-  const auto b = static_cast<std::size_t>(band);
-  if (std::isnan(p.left[b]) || x < p.left[b]) p.left[b] = x;
-  if (std::isnan(p.right[b]) || x > p.right[b]) p.right[b] = x;
-}
-
-/// profileFromAlpha.
-Profile profile_from_alpha(const std::vector<std::uint8_t>& rgba, std::uint32_t width, std::uint32_t height, double penX,
-                           double baselineY, double emPx, double advancePx) {
-  Profile p = empty_profile(advancePx / emPx);
-  for (std::uint32_t row = 0; row < height; ++row) {
-    const double yEm = (baselineY - (row + 0.5)) / emPx;
-    const int band = band_of(yEm);
-    if (band < 0 || band >= kBandCount) continue;
-    const std::size_t base = static_cast<std::size_t>(row) * width;
-    std::ptrdiff_t first = -1;
-    for (std::uint32_t col = 0; col < width; ++col) {
-      if (rgba[(base + col) * 4 + 3] >= kAlphaFloor) { first = col; break; }
-    }
-    if (first < 0) continue;
-    std::ptrdiff_t last = first;
-    for (auto col = static_cast<std::ptrdiff_t>(width) - 1; col > first; --col) {
-      if (rgba[(base + static_cast<std::size_t>(col)) * 4 + 3] >= kAlphaFloor) { last = col; break; }
-    }
-    const double aL = rgba[(base + static_cast<std::size_t>(first)) * 4 + 3] / 255.0;
-    const double aR = rgba[(base + static_cast<std::size_t>(last)) * 4 + 3] / 255.0;
-    widen(p, band, (static_cast<double>(first) + 1 - aL - penX) / emPx);
-    widen(p, band, (static_cast<double>(last) + aR - penX) / emPx);
-    const double top = (baselineY - row) / emPx;
-    if (std::isnan(p.top) || top > p.top) p.top = top;
-  }
-  return p;
-}
+constexpr double kBandH = (kBandTopEm - kBandBottomEm) / kBandCount;
 
 /// addEdge: one straight edge (em) widens every band it crosses.
 void add_edge(Profile& p, double x0, double y0, double x1, double y1) {
@@ -120,90 +67,15 @@ Profile profile_from_outline(const GlyphOutlineUnits& g) {
   return p;
 }
 
-double band_weight(double yEm, double xHeight) {
-  if (yEm < 0) return 0.3;
-  if (yEm <= xHeight) return 1;
-  if (yEm <= xHeight + 0.25) return 0.5;
-  return 0.25;
-}
-
-struct PairGap {
-  double area, dmin;
-};
-
-std::optional<PairGap> measure_pair_gap(const Profile& a, double sizeA, const Profile& b, double sizeB, double xHeightEm) {
-  const double penB = a.advance * sizeA;
-  const double cap = kOpenCapEm * std::min(sizeA, sizeB);
-  const auto facing = [&](int i) { return sizeA == sizeB ? i : band_of((band_centre(i) * sizeA) / sizeB); };
-  const auto leftB = [&](int j) { return j >= 0 && j < kBandCount ? b.left[static_cast<std::size_t>(j)] : kNaN; };
-  double dmin = std::numeric_limits<double>::infinity();
-  bool anyA = false;
-  bool anyB = false;
-  std::vector<std::pair<double, double>> both;
-  double openW = 0;
-  for (int i = 0; i < kBandCount; ++i) {
-    const double ra = a.right[static_cast<std::size_t>(i)];
-    const int j = facing(i);
-    const double lb = leftB(j);
-    const bool hasA = !std::isnan(ra);
-    const bool hasB = !std::isnan(lb);
-    anyA = anyA || hasA;
-    anyB = anyB || hasB;
-    if (!hasA && !hasB) continue;
-    const double w = band_weight(band_centre(i), xHeightEm);
-    if (hasA && hasB) {
-      const double d = penB + lb * sizeB - ra * sizeA;
-      both.emplace_back(d, w);
-      dmin = std::min(dmin, d);
-    } else {
-      openW += w;
-    }
-    if (hasA) {
-      for (const int jj : {j - 1, j + 1}) {
-        const double nb = leftB(jj);
-        if (!std::isnan(nb)) dmin = std::min(dmin, penB + nb * sizeB - ra * sizeA);
-      }
-    }
-  }
-  if (!anyA || !anyB) return std::nullopt;
-  if (both.empty()) {
-    double maxRA = -std::numeric_limits<double>::infinity();
-    double minLB = std::numeric_limits<double>::infinity();
-    for (const double v : a.right) {
-      if (!std::isnan(v)) maxRA = std::max(maxRA, v);
-    }
-    for (const double v : b.left) {
-      if (!std::isnan(v)) minLB = std::min(minLB, v);
-    }
-    const double clear = penB + minLB * sizeB - maxRA * sizeA;
-    const double d = std::isfinite(dmin) ? std::min(dmin, clear) : clear;
-    return PairGap{d + cap, d};
-  }
-  double sum = 0;
-  double wsum = 0;
-  for (const auto& [d, w] : both) {
-    sum += std::min(d, dmin + cap) * w;
-    wsum += w;
-  }
-  sum += (dmin + cap) * openW;
-  wsum += openW;
-  return PairGap{sum / wsum, dmin};
-}
-
-double pair_adjustment(const PairGap& gap, double targetPx, double sizePx) {
-  double k = (targetPx - gap.area) * kOpticalStrength;
-  k = std::max(-kMaxTightenEm * sizePx, std::min(kMaxLoosenEm * sizePx, k));
-  if (k < 0) k = std::max(k, std::min(0.0, kMinInkGapEm * sizePx - gap.dmin));
-  return k;
-}
-
 bool is_upper(const std::string& c) { return c != to_lower(c) && c == to_upper(c); }
 
 }  // namespace
 
 OpticalKerner::OpticalKerner(const CanvasOptions& opts, Source source)
-    : canvas_(Canvas2D::make(static_cast<std::uint32_t>(kRefEmPx * 4), static_cast<std::uint32_t>(kRefEmPx * 2), opts)),
-      source_(source) {}
+    : opts_(opts),
+      canvas_(Canvas2D::make(static_cast<std::uint32_t>(kRefEmPx * 4), static_cast<std::uint32_t>(kRefEmPx * 2), opts)),
+      source_(source),
+      vertical_([this](const std::string& css, const std::string& cluster) { return vertical_raster(css, cluster); }) {}
 
 OpticalKerner::~OpticalKerner() = default;
 
@@ -211,9 +83,9 @@ const OpticalKerner::InkProfile* OpticalKerner::profile(const std::string& css, 
   const std::string key = css + std::string(1, '\0') + cluster;
   const auto hit = profiles_.find(key);
   if (hit != profiles_.end()) return hit->second ? &*hit->second : nullptr;
-  if (source_ == Source::outline && canvas_->options().fonts != nullptr) {
+  if (source_ == Source::outline && opts_.fonts != nullptr) {
     if (const auto font = css::parse_font(css)) {
-      if (const auto outline = canvas_->options().fonts->glyph_outline(cluster, *font)) {
+      if (const auto outline = opts_.fonts->glyph_outline(cluster, *font)) {
         auto& slot = profiles_[key];
         slot = profile_from_outline(*outline);
         return &*slot;
@@ -280,6 +152,29 @@ double OpticalKerner::kern_px(const std::string& cssA, const std::string& a, dou
   }
   pairs_[key] = em;
   return em * sizeA;
+}
+
+/// opticalKerning.ts defaultVerticalRasterizer: a 2 em square canvas, the
+/// cluster centred on a 'middle' baseline, profiled from its alpha.
+std::optional<OpticalKerner::InkProfile> OpticalKerner::vertical_raster(const std::string& css, const std::string& cluster) {
+  const auto side = static_cast<std::uint32_t>(kRefEmPx * 2);
+  if (!verticalCanvas_) verticalCanvas_ = Canvas2D::make(side, side, opts_);
+  Canvas2D& g = *verticalCanvas_;
+  const double cx = side / 2.0;
+  const double cy = side / 2.0;
+  g.setTransform({});
+  g.clearRect(0, 0, side, side);
+  (void)g.setFont(css);
+  g.setTextAlign(TextAlign::center);
+  g.setTextBaseline(TextBaseline::middle);
+  g.setFillStyle(Style{});  // default: opaque black ('#000')
+  g.fillText(cluster, cx, cy);
+  return vertical_profile_from_alpha(g.pixels(), side, side, cx - kRefEmPx / 2, cy - kRefEmPx / 2, kRefEmPx);
+}
+
+double OpticalKerner::kern_vertical_px(const std::string& cssA, const std::string& a, double sizeA, const std::string& cssB,
+                                       const std::string& b, double sizeB) {
+  return vertical_.kern_px(cssA, a, sizeA, cssB, b, sizeB);
 }
 
 }  // namespace premation::raster

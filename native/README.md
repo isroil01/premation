@@ -486,14 +486,40 @@ ports of the TS painters on top of it:
 | `mask_paint.cpp` | `paintMaskMatte` (+ expansion, feather as device-space blur) |
 | `text_layout.cpp` | `textLayout` / `textExtras` / `verticalLayout`: wrapping, bidi lines, vertical columns, tate-chu-yoko, kinsoku, vertical forms |
 | `text_paint.cpp` | `paintTextInBox`: fast + glyph paths, animators, text on path, gradients, stroke order, optical kerning wiring |
-| `optical_kerning.cpp` | `opticalKerning.ts` (raster ink profiles; outline profiles via `FontSet::glyph_outline`) |
-| `fonts_ffi.cpp` | font loading (woff2, TTC, system families via DirectWrite), CSS face matching + unicode-range fallback, HarfBuzz shaping with Blink's font funcs |
+| `optical_kerning.cpp` / `optical_math.cpp` | `opticalKerning.ts` (raster ink profiles; outline profiles via `FontSet::glyph_outline`; vertical upright CJK pairs) |
+| `paint_raster.cpp` | `paintRaster.ts` + `paintDabs.ts`: paint / eraser / clone strokes, dabs, Paint On Transparent |
+| `line_break.cpp` / `word_break_ffi.cpp` | `lineBreak.ts`: kinsoku, break opportunities, greedy wrap; `Intl.Segmenter` word joins through the OS's ICU |
+| `fonts_ffi.cpp` / `system_fonts_ffi.cpp` | font loading (woff2, TTC, system families via DirectWrite / fontconfig), CSS face matching + unicode-range fallback, HarfBuzz shaping with Blink's font funcs |
 | `bidi_ffi.cpp` / `text_unicode.cpp` | SheenBidi (UAX #9 + L1 by hand), graphemes, case mapping |
 | `raster_source.cpp` | `Canvas2DVectorRasterizer`: one raster from its source spec |
 
+`engine_raster_core` (no Skia) holds the Canvas2D interface and everything that
+only talks to it or to plain data: JSON / CSS, graphemes, line breaking + word
+joins, fontconfig lookups, the optical-kerning math, `paint_common` and the
+paint-stroke painter; `engine_raster` adds Skia, HarfBuzz, SheenBidi and the
+text / vector painters. The canvas-drawn effects (`src/effects/canvas_effects.cpp`,
+`engine_canvas_effects`) run on the same interface.
+
 Dependencies (vcpkg `engine` feature): `skia` (overlay port in `vcpkg-overlays/`
 building Skia with clang-cl: MSVC builds fall back to the scalar raster
-pipeline), `harfbuzz`, `freetype[brotli]`, `woff2`, `sheenbidi`.
+pipeline), `harfbuzz`, `freetype[brotli]`, `woff2`, `sheenbidi`, `fontconfig`
+(Linux). ICU is not linked: `word_break_ffi.cpp` loads the OS's ICU at run time
+(Windows `icu.dll`, macOS `libicucore`, Linux `libicuuc.so.NN`) and binds its
+stable C API; with none, word joins are off, exactly the TS's no-`Intl.Segmenter`
+branch. The OS's ICU may be older or newer than Chromium's: raw word segments can
+differ (ICU 74 vs 78 disagree on `x:y`), the break opportunities built from them
+did not on the fixture.
+
+**Cross-engine fixtures (Skia-free).** Four TS tests write fixtures that the
+native tests replay, each `GEN_NATIVE_*=1 npx jest <name>` to regenerate:
+`lineBreakCrossEngine` → `line_break_parity.json`; `opticalKerningCrossEngine`
+→ `optical_kerning_parity.json` (synthetic exact-coverage glyph rasters);
+`paintRasterCrossEngine` and `canvasEffectsCrossEngine` → the Canvas2D PROGRAM
+the TS painter issues on a recording canvas
+(`src/core/rendering/raster/__testHelpers__/recordingCanvas.ts`), which the C++
+must issue op for op on `tests/recording_canvas.hpp` — calls, arguments to the
+bit, gradient stops, canvas ids. Pixels are then the Canvas2D's job, which the
+harness below gates.
 
 **Glyph profiles.** `FontOptions::chromium_windows()` (DirectWrite, slight
 hinting, subpixel positioning, LCD edging on an RGB-geometry surface, so
@@ -524,9 +550,11 @@ caches of those values (bit-identical), without which 16 raster workers ran 4×
 slower than one.
 
 Not ported yet (each reported by name, never silently drawn wrong): CPU-baked
-effect chains (E4), paint brush strokes, vertical optical kerning, variable
-mask feather, alias FontFace features, `capitalize`, anisotropic blur,
-Intl word-break joins, WOFF1, system fonts on macOS / Linux.
+effect chains (E4), variable mask feather, `capitalize`, anisotropic blur,
+WOFF1, system fonts on macOS, variation axes and the 'vert' face through alias
+faces (`CanvasOptions::aliasFaces` covers OpenType features). Clone strokes that
+name another layer or time draw as the TS raster does without a host clone
+source (nothing / this layer's pixels).
 
 ## CPU effect kernels (engine/src/effects, E4)
 

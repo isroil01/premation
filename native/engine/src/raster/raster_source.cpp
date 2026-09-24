@@ -6,6 +6,7 @@
 #include "json.hpp"
 #include "mask_paint.hpp"
 #include "paint_common.hpp"
+#include "paint_raster.hpp"
 #include "text_paint.hpp"
 #include "vector_paint.hpp"
 
@@ -61,8 +62,13 @@ RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, doub
   if (kind == RasterKind::text) {
     ctx->translate(padding, padding);
     paint_text_in_box(*ctx, spec, out.unsupported);
-    if (spec["paint"].is_object() && spec["paint"]["strokes"].is_array() && spec["paint"]["strokes"].size() > 0) {
-      out.unsupported.emplace_back("paint strokes (brush / eraser / clone)");
+    if (has_paint_strokes(spec["paint"])) {
+      // Paint over the glyphs, before the bake's mask and chain — the path
+      // raster's order. Strokes live in the box's CENTRED space.
+      ctx->save();
+      ctx->translate(w0 / 2, h0 / 2);
+      draw_paint(*ctx, spec["paint"]);
+      ctx->restore();
     }
   } else {
     ctx->translate(bw / 2, bh / 2);

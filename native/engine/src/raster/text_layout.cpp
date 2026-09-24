@@ -59,7 +59,11 @@ TextExtras read_text_extras(const json::Value& v) {
   x.ligaturesOff = v["ligatures"].is_bool() && !v["ligatures"].truthy();
   x.discretionaryLigatures = v["discretionaryLigatures"].truthy();
   x.contextualAlternatesOff = v["contextualAlternates"].is_bool() && !v["contextualAlternates"].truthy();
-  for (const auto& n : v["stylisticSets"].items()) x.stylisticSets.push_back(static_cast<int>(n.num()));
+  for (const auto& n : v["stylisticSets"].items()) {
+    // featureSettingsString keeps Number.isInteger values in 1..20 only.
+    const double d = n.num(std::nan(""));
+    if (d >= 1 && d <= 20 && d == std::floor(d)) x.stylisticSets.push_back(static_cast<int>(d));
+  }
   x.direction = v["direction"].str_or("");
   x.vertical = v["orientation"].str_or("") == "vertical";
   x.verticalRomanAlignment = v["verticalRomanAlignment"].truthy();
@@ -155,20 +159,6 @@ std::string_view resolve_paragraph_direction(std::string_view direction, std::st
   if (direction == "rtl") return "rtl";
   if (direction == "auto") return paragraph_level_of(paragraphText) == 1 ? "rtl" : "ltr";
   return "ltr";
-}
-
-// ── unicode data ─────────────────────────────────────────────────────────────
-
-char vertical_orientation_of(char32_t cp) {
-  const auto it = std::ranges::upper_bound(kVoStarts, cp);
-  if (it == kVoStarts.begin()) return 'R';
-  const auto i = static_cast<std::size_t>(it - kVoStarts.begin() - 1);
-  return i < kVoValues.size() ? kVoValues[i] : 'R';
-}
-
-bool is_ideographic_unit(const std::string& unit) {
-  if (unit.empty() || unit == " " || unit == "\t") return false;
-  return vertical_orientation_of(code_points(unit).front()) != 'R';
 }
 
 // ── textLayout.ts ────────────────────────────────────────────────────────────
@@ -766,66 +756,6 @@ VerticalForm resolve_vertical_form(const std::string& cluster, bool alternates, 
   return VerticalForm{cluster, true, false, corner};
 }
 
-namespace {
-bool is_break_space(const std::string& u) { return u == " " || u == "\t"; }
-}  // namespace
-
-bool kinsoku_allows(const std::vector<std::string>& units, std::size_t i) {
-  if (i == 0 || i >= units.size()) return false;
-  const auto a = code_points(units[i - 1]);
-  const auto b = code_points(units[i]);
-  if (!b.empty() && std::ranges::find(kKinsokuNoStart, b.front()) != kKinsokuNoStart.end()) return false;
-  if (!a.empty() && std::ranges::find(kKinsokuNoEnd, a.back()) != kKinsokuNoEnd.end()) return false;
-  return true;
-}
-
-std::vector<bool> break_opportunities(const std::vector<std::string>& units) {
-  const std::size_t n = units.size();
-  std::vector<bool> out(n, false);
-  if (n < 2) return out;
-  // The TS also allows a break between two word-like Intl.Segmenter words (ICU's
-  // dictionary word breaks: Thai, Lao, Khmer …). Not ported: no ICU here.
-  for (std::size_t i = 1; i < n; ++i) {
-    const auto& a = units[i - 1];
-    const auto& b = units[i];
-    if (is_break_space(b)) continue;
-    if (!kinsoku_allows(units, i)) continue;
-    if (is_break_space(a)) { out[i] = true; continue; }
-    if (is_ideographic_unit(a) || is_ideographic_unit(b)) { out[i] = true; continue; }
-    const auto acps = code_points(a);
-    // a.codePointAt(a.length - 1): the last UTF-16 unit — the last code point for BMP text.
-    if (!acps.empty() && (acps.back() == 0x2D || acps.back() == 0x2010)) out[i] = true;
-  }
-  return out;
-}
-
-std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const std::vector<double>& lengths, double limit) {
-  std::vector<std::size_t> starts;
-  if (!(limit > 0)) return starts;
-  const auto opportunities = break_opportunities(units);
-  constexpr double kFitEps = 0.5;
-  std::size_t start = 0;
-  double len = 0;
-  for (std::size_t i = 0; i < units.size(); ++i) {
-    const double w = i < lengths.size() ? lengths[i] : 0;
-    if (i > start && !is_break_space(units[i]) && len + w > limit + kFitEps) {
-      std::size_t b = i;
-      while (b > start && !opportunities[b]) --b;
-      if (b == start) {
-        b = i;
-        while (b - 1 > start && !kinsoku_allows(units, b)) --b;
-        if (!kinsoku_allows(units, b)) b = i;
-      }
-      starts.push_back(b);
-      start = b;
-      len = 0;
-      for (std::size_t k = b; k < i; ++k) len += k < lengths.size() ? lengths[k] : 0;
-    }
-    len += w;
-  }
-  return starts;
-}
-
 // ── verticalLayout.ts ────────────────────────────────────────────────────────
 
 namespace {
@@ -1025,7 +955,9 @@ TextLayout layout_vertical_text(const std::string& text, const TextStyle& base, 
     softEnd.push_back(false);
   }
 
-  if (opts.opticalKern) {
+  // Optical kerning sits between two units of the same column too: sideways
+  // pairs as horizontal pairs, upright pairs from their top / bottom ink.
+  if (opts.opticalKern || opts.opticalKernVertical) {
     for (auto& col : columns) {
       for (std::size_t j = 0; j + 1 < col.size(); ++j) {
         Unit& u = col[j];
@@ -1034,7 +966,12 @@ TextLayout layout_vertical_text(const std::string& text, const TextStyle& base, 
         const Member& a = u.members[0];
         const Member& b = v.members[0];
         if (is_js_blank(a.drawn) || is_js_blank(b.drawn)) continue;
-        if (!a.form.upright && !b.form.upright) u.advance += opts.opticalKern(a.drawn, a.style, b.drawn, b.style) * glyph_style_scale(a.style).sx;
+        if (!a.form.upright && !b.form.upright) {
+          if (opts.opticalKern) u.advance += opts.opticalKern(a.drawn, a.style, b.drawn, b.style) * glyph_style_scale(a.style).sx;
+        } else if (a.form.upright && b.form.upright && opts.opticalKernVertical) {
+          u.advance += opts.opticalKernVertical(a.drawn, a.style, b.drawn, b.style, a.form.alternate, b.form.alternate) *
+                       glyph_style_scale(a.style).sy;
+        }
       }
     }
   }

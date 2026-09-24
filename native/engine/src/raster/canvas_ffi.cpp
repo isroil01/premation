@@ -227,6 +227,10 @@ struct State {
   double globalAlpha = 1.0;
   SkBlendMode blend = SkBlendMode::kSrcOver;
   double blurPx = 0.0;
+  css::Color shadowColor{0, 0, 0, 0};  // transparent black: no shadow
+  double shadowBlur = 0.0;
+  double shadowOffsetX = 0.0;
+  double shadowOffsetY = 0.0;
   bool smoothing = true;
   std::string fontString = "10px sans-serif";
   css::Font font = [] {
@@ -258,6 +262,9 @@ class SkiaCanvas final : public Canvas2D {
   [[nodiscard]] std::uint32_t width() const noexcept override { return w_; }
   [[nodiscard]] std::uint32_t height() const noexcept override { return h_; }
   void resize(std::uint32_t w, std::uint32_t h) override { alloc(w, h); }
+  [[nodiscard]] std::unique_ptr<Canvas2D> create_canvas(std::uint32_t w, std::uint32_t h) const override {
+    return std::make_unique<SkiaCanvas>(w, h, opts_);
+  }
 
   [[nodiscard]] std::vector<std::uint8_t> pixels() const override {
     std::vector<std::uint8_t> out(static_cast<std::size_t>(w_) * h_ * 4);
@@ -330,6 +337,34 @@ class SkiaCanvas final : public Canvas2D {
   [[nodiscard]] std::string globalCompositeOperation() const override { return std::string(blend_name(st_.blend)); }
   void setFilter(const css::Filter& f) override { st_.blurPx = f.blurPx; }
   void setImageSmoothing(bool on) override { st_.smoothing = on; }
+  void setShadowColor(const css::Color& c) override { st_.shadowColor = c; }
+  void setShadowBlur(double b) override {
+    if (std::isfinite(b) && b >= 0) st_.shadowBlur = b;
+  }
+  void setShadowOffsetX(double x) override {
+    if (std::isfinite(x)) st_.shadowOffsetX = x;
+  }
+  void setShadowOffsetY(double y) override {
+    if (std::isfinite(y)) st_.shadowOffsetY = y;
+  }
+
+  [[nodiscard]] std::vector<std::uint8_t> getImageData(int x, int y, std::uint32_t w, std::uint32_t h) const override {
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4, 0);
+    if (surface_ == nullptr || w == 0 || h == 0) return out;
+    // Chromium reads canvas pixels back unpremultiplied through Skia's own conversion.
+    const SkImageInfo info = SkImageInfo::Make(static_cast<int>(w), static_cast<int>(h), kRGBA_8888_SkColorType,
+                                               kUnpremul_SkAlphaType);
+    const SkPixmap pm(info, out.data(), static_cast<std::size_t>(w) * 4);
+    (void)surface_->readPixels(pm, x, y);
+    return out;
+  }
+  void putImageData(std::span<const std::uint8_t> rgba, std::uint32_t w, std::uint32_t h, int x, int y) override {
+    if (surface_ == nullptr || w == 0 || h == 0 || rgba.size() < static_cast<std::size_t>(w) * h * 4) return;
+    const SkImageInfo info = SkImageInfo::Make(static_cast<int>(w), static_cast<int>(h), kRGBA_8888_SkColorType,
+                                               kUnpremul_SkAlphaType);
+    const SkPixmap pm(info, rgba.data(), static_cast<std::size_t>(w) * 4);
+    surface_->writePixels(pm, x, y);
+  }
 
   bool setFont(std::string_view font) override {
     auto f = css::parse_font(font);
@@ -620,7 +655,9 @@ class SkiaCanvas final : public Canvas2D {
   template <typename F>
   void draw(const F& fn, SkPaint paint) {
     SkCanvas* c = canvas();
-    const bool layer = st_.blurPx > 0 || is_full_canvas_op(st_.blend);
+    // CanvasRenderingContext2DState::ShouldDrawShadows.
+    const bool shadows = st_.shadowColor.a > 0 && (st_.shadowBlur > 0 || st_.shadowOffsetX != 0 || st_.shadowOffsetY != 0);
+    const bool layer = st_.blurPx > 0 || shadows || is_full_canvas_op(st_.blend);
     if (!layer) {
       paint.setBlendMode(st_.blend);
       c->setMatrix(to_sk(st_.ctm));
@@ -634,6 +671,14 @@ class SkiaCanvas final : public Canvas2D {
       // IDENTITY matrix, so a canvas filter length is canvas (device) pixels —
       // the transform does not scale it. Measured on mask-feather (2× raster).
       lp.setImageFilter(SkImageFilters::Blur(f(st_.blurPx), f(st_.blurPx), SkTileMode::kDecal, nullptr));
+    }
+    if (shadows) {
+      // Shadow and foreground in one drop-shadow filter, under the same
+      // identity-matrix layer: offset and blur are canvas pixels, σ = blur / 2
+      // (the HTML shadow model Blink implements).
+      const float sigma = f(st_.shadowBlur / 2);
+      lp.setImageFilter(SkImageFilters::DropShadow(f(st_.shadowOffsetX), f(st_.shadowOffsetY), sigma, sigma,
+                                                   to_skcolor(st_.shadowColor, 1.0), lp.refImageFilter()));
     }
     c->setMatrix(SkMatrix::I());
     c->saveLayer(nullptr, &lp);

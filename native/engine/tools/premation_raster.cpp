@@ -157,6 +157,7 @@ struct Options {
   int threads = 0;  // --bench worker count (0 = hardware threads)
   int hinting = -1;  // -1 = FontOptions default
   bool lcd = false;
+  bool aliasFaces = false;  // --alias-faces 1: draw with loaded alias FontFaces (CanvasOptions::aliasFaces)
   /// "chromium" (FontOptions::chromium_windows + LCD surface geometry) or
   /// "portable" (FreeType, the knobs below).
   std::string profile = "portable";
@@ -202,6 +203,7 @@ int run(const Options& o) {
   rs::CanvasOptions copts;
   copts.fonts = &fonts;
   copts.lcdGeometry = o.lcd || o.profile == "chromium";
+  copts.aliasFaces = o.aliasFaces;
 
   std::vector<fs::path> files;
   for (const auto& dir : fs::directory_iterator(o.batch)) {
@@ -385,6 +387,7 @@ int bench_cmd(const Options& o) {
   rs::CanvasOptions copts;
   copts.fonts = &fonts;
   copts.lcdGeometry = o.profile != "portable";
+  copts.aliasFaces = o.aliasFaces;
   std::printf("{\"scenes\":[");  // NOLINT(cppcoreguidelines-pro-type-vararg)
   bool firstScene = true;
   for (const auto& dir : fs::directory_iterator(o.batch)) {
@@ -468,6 +471,7 @@ int main(int argc, char** argv) {
     else if (k == "--hinting") { o.hinting = std::stoi(v); ++i; }
     else if (k == "--lcd") { o.lcd = v == "1"; ++i; }
     else if (k == "--profile") { o.profile = v; ++i; }
+    else if (k == "--alias-faces") { o.aliasFaces = v == "1"; ++i; }
     else if (k == "--bench") { o.batch = v; o.bench = true; ++i; }
     else if (k == "--iterations") { o.iterations = std::stoi(v); ++i; }
     else if (k == "--threads") { o.threads = std::stoi(v); ++i; }

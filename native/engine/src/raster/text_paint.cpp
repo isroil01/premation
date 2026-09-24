@@ -3,8 +3,10 @@
 // Parity notes (what the TS depends on that is not in the spec):
 //   * Alias FontFaces (fontFaceVariants.ts) load asynchronously in the TS; the
 //     render-tests harness renders with none loaded (the raster key's `fv0`).
-//     This port draws as if no alias exists — font features and variation
-//     axes a loaded alias would add are the documented follow-up.
+//     By default this port draws as if no alias exists; with
+//     CanvasOptions::aliasFaces it draws the loaded state for OpenType
+//     features (HarfBuzz takes them directly). Variation axes and the 'vert'
+//     alternates face still draw as the plain family.
 //   * `ctx.fontVariationSettings` is not a Chromium canvas property; the TS
 //     assignment is inert, so it is not replayed here either.
 
@@ -21,6 +23,7 @@
 #include <utility>
 
 #include "numconv.hpp"
+#include "font_features.hpp"
 #include "optical_kerning.hpp"
 #include "paint_common.hpp"
 #include "text_layout.hpp"
@@ -699,11 +702,17 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
     height = vh;
   }
   const double boxScale = fitting ? *ex.fitScale : 1;
-  if (!ex.stylisticSets.empty() || ex.discretionaryLigatures || ex.contextualAlternatesOff) {
-    unsupported.emplace_back("OpenType feature alias faces (fontFaceVariants) — drawn without the features");
-  }
+  // OpenType features reach the TS canvas only through an alias FontFace
+  // (fontFaceVariants.ts); drawn with one when CanvasOptions::aliasFaces
+  // says the aliases have loaded, as the plain family (fv0) otherwise.
+  const std::string features =
+      feature_settings_string(ex.ligaturesOff, ex.discretionaryLigatures, ex.contextualAlternatesOff, ex.stylisticSets);
+  const bool aliased = ctx.options().aliasFaces && !features.empty();
+  if (aliased) ctx.setFontFeatureSettings(features);
   const bool ligaturesOff = ex.ligaturesOff;
-  const bool ligatureFallback = ligaturesOff;  // no alias face (see the file note)
+  // Standard ligatures off with no alias face to turn them off: drawing glyph
+  // by glyph is the one way that works for every font.
+  const bool ligatureFallback = ligaturesOff && !aliased;
   const std::string_view blendOp = inter_char_op(ex.interCharacterBlending);
 
   TextStyle specStyle;
@@ -947,6 +956,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
   // the faces at the reference size, exactly as textPaint.ts opticalFaceOf.
   std::optional<OpticalKerner> kerner;
   OpticalKern opticalKern;
+  OpticalKernVertical opticalKernVertical;
   if (optical) {
     kerner.emplace(ctx.options());
     opticalKern = [&](const std::string& a, const TextStyle& sa, const std::string& b, const TextStyle& sb) {
@@ -956,7 +966,17 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
       rb.fontSize = OpticalKerner::kRefEmPx;
       return kerner->kern_px(font_for(ra), a, sa.fontSize, font_for(rb), b, sb.fontSize);
     };
-    if (vertical) unsupported.emplace_back("vertical optical kerning of upright CJK pairs (opticalKernVerticalPx)");
+    // verticalOpticalFaceOf: the vertical alternates face when the glyph draws
+    // with one — never here (no 'vert' alias faces, see resolve_vertical_form),
+    // so the plain face at the reference size, as opticalFaceOf.
+    opticalKernVertical = [&](const std::string& a, const TextStyle& sa, const std::string& b, const TextStyle& sb,
+                              bool /*upperAlt*/, bool /*lowerAlt*/) {
+      TextStyle ra = sa;
+      TextStyle rb = sb;
+      ra.fontSize = OpticalKerner::kRefEmPx;
+      rb.fontSize = OpticalKerner::kRefEmPx;
+      return kerner->kern_vertical_px(font_for(ra), a, sa.fontSize, font_for(rb), b, sb.fontSize);
+    };
   }
 
   ctx.setLetterSpacing(0);
@@ -1015,6 +1035,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
     vo.romanUpright = ex.verticalRomanAlignment;
     vo.tateChuYokoDigits = ex.tateChuYokoDigits;
     vo.opticalKern = opticalKern;
+    vo.opticalKernVertical = opticalKernVertical;
     laid = layout_vertical_text(text, base, measure, vo);
   } else {
     laid = layout_text(text, base, measure, lo);

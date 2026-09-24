@@ -251,6 +251,14 @@ class Replayer {
       c.setSmallCaps(v.str_or("normal") == "small-caps");
     } else if (prop == "imageSmoothingEnabled") {
       c.setImageSmoothing(v.truthy());
+    } else if (prop == "shadowColor") {
+      if (const auto col = css::parse_color(v.str_or(""))) c.setShadowColor(*col);
+    } else if (prop == "shadowBlur") {
+      c.setShadowBlur(v.num(std::nan("")));
+    } else if (prop == "shadowOffsetX") {
+      c.setShadowOffsetX(v.num(std::nan("")));
+    } else if (prop == "shadowOffsetY") {
+      c.setShadowOffsetY(v.num(std::nan("")));
     } else if (prop == "fontVariationSettings" || prop == "getImageData" || prop == "putImageData") {
       // Not canvas properties in Chromium: the TS assignment only adds an
       // expando (fontVariationSettings) or patches a method; nothing to draw.

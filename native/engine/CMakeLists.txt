@@ -473,7 +473,11 @@ if(MOTION_BUILD_TESTS)
 endif()
 
 # ── E3: text + vector rasterisation (src/raster; kept in its own block) ─────
-#   engine_raster_core  Skia-free: JSON, CSS values (colour / font / filter)
+#   engine_raster_core  Skia-free: JSON, CSS values (colour / font / filter),
+#                       graphemes, line breaking + Intl word joins (ICU at run
+#                       time, word_break_ffi), fontconfig families (Linux),
+#                       optical-kerning math, the Canvas2D interface and the
+#                       paint-stroke painter (paint_raster) that runs on it
 #   engine_raster       the Canvas2D semantics on Skia's CPU raster backend
 #                       (canvas_ffi), fonts (FreeType + woff2) + HarfBuzz shaping
 #                       + SheenBidi (fonts_ffi), the recorded-call replayer and
@@ -482,10 +486,30 @@ endif()
 #                       SheenBidi / woff2 only in *_ffi.cpp (vcpkg `engine`).
 #   premation-raster    parity harness (vs the TS rasters exported with each
 #                       golden FrameScene) + the raster bench
-add_library(engine_raster_core STATIC src/raster/json.cpp src/raster/css.cpp)
+add_library(engine_raster_core STATIC
+  src/raster/json.cpp
+  src/raster/css.cpp
+  src/raster/text_unicode.cpp
+  src/raster/line_break.cpp
+  src/raster/optical_math.cpp
+  src/raster/canvas.cpp           # the Canvas2D interface (Skia behind it: canvas_ffi)
+  src/raster/paint_common.cpp
+  src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
+  src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
+  src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
+)
 target_include_directories(engine_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/raster)
 target_compile_features(engine_raster_core PUBLIC cxx_std_20)
-target_link_libraries(engine_raster_core PRIVATE motion::options)
+target_link_libraries(engine_raster_core PUBLIC motion::jsmath ${CMAKE_DL_LIBS} PRIVATE motion::options)
+if(NOT WIN32 AND NOT APPLE)
+  find_package(Fontconfig QUIET)
+  if(TARGET Fontconfig::Fontconfig)
+    target_link_libraries(engine_raster_core PRIVATE Fontconfig::Fontconfig)
+    target_compile_definitions(engine_raster_core PRIVATE PREMATION_HAVE_FONTCONFIG=1)
+  else()
+    message(STATUS "premation-engine: fontconfig not found — FontSet::add_system_family finds no Linux system fonts")
+  endif()
+endif()
 
 find_package(unofficial-skia CONFIG QUIET)
 find_package(harfbuzz CONFIG QUIET)
@@ -495,14 +519,11 @@ find_library(PREMATION_WOFF2DEC woff2dec)
 find_library(PREMATION_WOFF2COMMON woff2common)
 if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenBidi::SheenBidi AND PREMATION_WOFF2DEC)
   add_library(engine_raster STATIC
-    src/raster/canvas.cpp
     src/raster/canvas_ffi.cpp
     src/raster/fonts_ffi.cpp
     src/raster/bidi_ffi.cpp
-    src/raster/text_unicode.cpp
     src/raster/text_layout.cpp
     src/raster/canvas_replay.cpp
-    src/raster/paint_common.cpp
     src/raster/vector_paint.cpp
     src/raster/mask_paint.cpp
     src/raster/optical_kerning.cpp
@@ -528,8 +549,9 @@ else()
   message(STATUS "premation-engine: Skia / HarfBuzz / SheenBidi / woff2 not found — E3 builds its Skia-free core only")
 endif()
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_raster_tests tests/test_raster.cpp)
+  add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
     target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp)
     target_link_libraries(engine_raster_tests PRIVATE engine_raster)
@@ -571,6 +593,11 @@ add_library(engine_effects STATIC
 target_include_directories(engine_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
 target_compile_features(engine_effects PUBLIC cxx_std_20)
 target_link_libraries(engine_effects PUBLIC motion::jsmath PRIVATE motion::options)
+# The canvas-drawn effects (fill, wipes, generators) on the raster module's
+# Canvas2D interface — Skia-free here; Skia sits behind the interface.
+add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp)
+target_include_directories(engine_canvas_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE motion::options)
 
 add_executable(premation-effects tools/premation_effects.cpp)
 target_link_libraries(premation-effects PRIVATE engine_effects engine_raster_core motion::options)
@@ -579,8 +606,8 @@ if(MSVC)
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_effects_tests tests/test_effect_kernels.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv
