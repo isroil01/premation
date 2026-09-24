@@ -7,13 +7,15 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 35> kPorted{
+constexpr std::array<std::string_view, 45> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
     "camera-lens-blur", "photo-filter",   "black-and-white", "tritone",       "threshold",        "selective-color",
     "shadow-highlight", "colorama",        "keylight",        "linear-color-key", "luma-key",     "shift-channels",
-    "color-key",       "color-range",     "extract",       "spill-suppressor", "matte-choker",
+    "color-key",       "color-range",     "extract",       "spill-suppressor", "matte-choker",     "bulge",
+    "spherize",        "twirl",           "corner-pin",    "polar-coordinates", "mirror",          "offset",
+    "optics-compensation", "mesh-warp",   "liquify",
 };
 
 }  // namespace
@@ -110,6 +112,35 @@ bool run_kernel(std::string_view type, const KernelArgs& a, RgbaView img, Thread
     spill_suppressor(img, key(), a("amount", 50), b("preserveLuma", true), pool);
   } else if (type == "matte-choker") {
     matte_choker(img, a("spread", 0), a("choke", 0), a("softness", 0), a("iterations", 1), pool);
+  } else if (type == "bulge") {
+    bulge(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("radius", 50), a("height", 50), pool);
+  } else if (type == "spherize") {
+    spherize(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("radius", 50), a("amount", 50), pool);
+  } else if (type == "twirl") {
+    twirl(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("radius", 50), a("angle", 90), pool);
+  } else if (type == "corner-pin") {
+    const std::array<double, 8> c{a("tlx", 0), a("tly", 0), a("trx", img.w), a("try", 0),
+                                  a("brx", img.w), a("bry", img.h), a("blx", 0), a("bly", img.h)};
+    corner_pin(img, c, pool);
+  } else if (type == "polar-coordinates") {
+    polar_coordinates(img, a("interpolation", 100), a("conversion", 0) >= 1, pool);
+  } else if (type == "mirror") {
+    mirror(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("angle", 0), pool);
+  } else if (type == "offset") {
+    offset(img, a("shiftX", img.w / 2.0), a("shiftY", img.h / 2.0), a("blend", 0), pool);
+  } else if (type == "optics-compensation") {
+    optics_compensation(img, a("fov", 0), b("reverse", false), a("centerX", 0), a("centerY", 0), pool);
+  } else if (type == "mesh-warp") {
+    std::array<Pt2, 16> o{};
+    static constexpr std::array<std::string_view, 16> kX{"mx0", "mx1", "mx2",  "mx3",  "mx4",  "mx5",  "mx6",  "mx7",
+                                                         "mx8", "mx9", "mx10", "mx11", "mx12", "mx13", "mx14", "mx15"};
+    static constexpr std::array<std::string_view, 16> kY{"my0", "my1", "my2",  "my3",  "my4",  "my5",  "my6",  "my7",
+                                                         "my8", "my9", "my10", "my11", "my12", "my13", "my14", "my15"};
+    for (std::size_t i = 0; i < 16; ++i) o[i] = Pt2{a(kX[i], 0), a(kY[i], 0)};
+    mesh_warp(img, o, pool);
+  } else if (type == "liquify") {
+    liquify(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("radius", 50), a("pushX", 0), a("pushY", 0),
+            a("twirl", 0), a("pinch", 0), pool);
   } else {
     return false;
   }

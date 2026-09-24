@@ -37,6 +37,16 @@
     { "effect": "color-range", "args": { "keyR": 250, "keyG": 40, "keyB": 20, "minTol": 5, "maxTol": 30 } },
     { "effect": "extract", "args": { "channel": 0, "black": 40, "white": 220, "blackSoft": 20, "whiteSoft": 10 } },
     { "effect": "spill-suppressor", "args": { "keyR": 20, "keyG": 200, "keyB": 40, "amount": 80 } },
-    { "effect": "matte-choker", "args": { "spread": 2, "choke": 1, "softness": 2, "iterations": 2 } }
+    { "effect": "matte-choker", "args": { "spread": 2, "choke": 1, "softness": 2, "iterations": 2 } },
+    { "effect": "bulge", "args": { "centerX": 960, "centerY": 540, "radius": 400, "height": 60 } },
+    { "effect": "spherize", "args": { "centerX": 960, "centerY": 540, "radius": 500, "amount": 70 } },
+    { "effect": "twirl", "args": { "centerX": 960, "centerY": 540, "radius": 500, "angle": 120 } },
+    { "effect": "corner-pin", "args": { "tlx": 100, "tly": 50, "trx": 1800, "try": 120, "brx": 1850, "bry": 1000, "blx": 60, "bly": 950 } },
+    { "effect": "polar-coordinates", "args": { "interpolation": 100, "conversion": 0 } },
+    { "effect": "mirror", "args": { "centerX": 960, "centerY": 540, "angle": 30 } },
+    { "effect": "offset", "args": { "shiftX": 1300, "shiftY": 200, "blend": 0 } },
+    { "effect": "optics-compensation", "args": { "fov": 60 } },
+    { "effect": "mesh-warp", "args": { "mx5": 60, "my5": -40, "mx6": -35, "my6": 20, "mx9": 40, "my9": 70, "mx10": -80, "my10": -22 } },
+    { "effect": "liquify", "args": { "centerX": 960, "centerY": 540, "radius": 300, "pushX": 40, "twirl": 45, "pinch": 20 } }
   ]
 }

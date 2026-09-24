@@ -138,6 +138,33 @@ void shadow_highlight(RgbaView img, double shadow_amount, double highlight_amoun
 void colorama(RgbaView img, int palette, double phase_shift, double cycle_repetitions, double blend_with_original,
               ThreadPool* pool);
 
+// ── distort.ts: inverse-map resamples ───────────────────────────────────────
+/// `bulgeData(data, w, h, centerX, centerY, radius, height)` (centre in px).
+void bulge(RgbaView img, double cx, double cy, double radius, double height, ThreadPool* pool);
+/// `spherizeData(data, w, h, centerX, centerY, radius, amountPct)`.
+void spherize(RgbaView img, double cx, double cy, double radius, double amount_pct, ThreadPool* pool);
+/// `twirlData(data, w, h, centerX, centerY, radius, angleDeg)`.
+void twirl(RgbaView img, double cx, double cy, double radius, double angle_deg, ThreadPool* pool);
+/// `cornerPinData(data, w, h, [tlx, tly, trx, try, brx, bry, blx, bly])`.
+void corner_pin(RgbaView img, const std::array<double, 8>& corners, ThreadPool* pool);
+/// `polarCoordinatesData(data, w, h, interpolation, polarConversion(type))`.
+void polar_coordinates(RgbaView img, double interpolation, bool polar_to_rect, ThreadPool* pool);
+/// `mirrorData(data, w, h, centerX, centerY, angleDeg)`.
+void mirror(RgbaView img, double cx, double cy, double angle_deg, ThreadPool* pool);
+/// `offsetData(data, w, h, shiftX, shiftY, blend)`.
+void offset(RgbaView img, double shift_x, double shift_y, double blend, ThreadPool* pool);
+/// `opticsCompensationData(data, w, h, fieldOfView, reverse, centerX, centerY)`.
+void optics_compensation(RgbaView img, double field_of_view, bool reverse, double center_x, double center_y,
+                         ThreadPool* pool);
+struct Pt2 {
+  double x, y;
+};
+/// `meshWarpData(data, w, h, offsets)` for the 4×4 (MESH_WARP_N) grid.
+void mesh_warp(RgbaView img, const std::array<Pt2, 16>& offsets, ThreadPool* pool);
+/// `liquifyData(data, w, h, centerX, centerY, radius, pushX, pushY, twirlDeg, pinchPct)`.
+void liquify(RgbaView img, double cx, double cy, double radius, double push_x, double push_y, double twirl_deg,
+             double pinch_pct, ThreadPool* pool);
+
 // ── aeBlurAdvanced.ts ───────────────────────────────────────────────────────
 /// `bilateralBlurData(src, w, h, radius, colorSigma, preserveAlpha)`.
 void bilateral_blur(RgbaView img, double radius, double color_sigma, bool preserve_alpha, ThreadPool* pool);

@@ -13,6 +13,10 @@ import {
   shiftChannelsData, channelSource,
 } from '../keyingEffects';
 import { applyKeyData, chokeAlpha, softenAlpha } from '../keylight';
+import {
+  bulgeData, spherizeData, twirlData, cornerPinData, polarCoordinatesData, polarConversion, mirrorData, offsetData,
+  opticsCompensationData, meshWarpData, liquifyData,
+} from '../distort';
 import { colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData } from '../aeKeyingAdvanced';
 import { mosaicData, findEdgesData, embossData } from '../stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from '../colorEffects';
@@ -154,6 +158,38 @@ export function runKernel(type: string, a: Args, data: Uint8ClampedArray, w: num
       return;
     case 'matte-choker':
       data.set(matteChokerData(data, w, h, n('spread', 0), n('choke', 0), n('softness', 0), n('iterations', 1)));
+      return;
+    case 'bulge':
+      data.set(bulgeData(data, w, h, n('centerX', w / 2), n('centerY', h / 2), n('radius', 50), n('height', 50)));
+      return;
+    case 'spherize':
+      data.set(spherizeData(data, w, h, n('centerX', w / 2), n('centerY', h / 2), n('radius', 50), n('amount', 50)));
+      return;
+    case 'twirl':
+      data.set(twirlData(data, w, h, n('centerX', w / 2), n('centerY', h / 2), n('radius', 50), n('angle', 90)));
+      return;
+    case 'corner-pin':
+      data.set(cornerPinData(data, w, h, [n('tlx', 0), n('tly', 0), n('trx', w), n('try', 0), n('brx', w), n('bry', h), n('blx', 0), n('bly', h)]));
+      return;
+    case 'polar-coordinates':
+      data.set(polarCoordinatesData(data, w, h, n('interpolation', 100), polarConversion(n('conversion', 0))));
+      return;
+    case 'mirror':
+      data.set(mirrorData(data, w, h, n('centerX', w / 2), n('centerY', h / 2), n('angle', 0)));
+      return;
+    case 'offset':
+      offsetData(data, w, h, n('shiftX', w / 2), n('shiftY', h / 2), n('blend', 0));
+      return;
+    case 'optics-compensation':
+      data.set(opticsCompensationData(data, w, h, n('fov', 0), b('reverse', false), n('centerX', 0), n('centerY', 0)));
+      return;
+    case 'mesh-warp': {
+      const offsets = Array.from({ length: 16 }, (_, i) => ({ x: n(`mx${i}`, 0), y: n(`my${i}`, 0) }));
+      data.set(meshWarpData(data, w, h, offsets));
+      return;
+    }
+    case 'liquify':
+      data.set(liquifyData(data, w, h, n('centerX', w / 2), n('centerY', h / 2), n('radius', 50), n('pushX', 0), n('pushY', 0), n('twirl', 0), n('pinch', 0)));
       return;
     default:
       throw new Error(`no kernel for ${type}`);
