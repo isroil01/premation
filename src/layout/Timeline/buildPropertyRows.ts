@@ -26,11 +26,11 @@
  */
 
 import type { KeyId, NodeId } from '@app-types/common';
-import { POSITION_PSEUDO_PROP, SOURCE_TEXT_PROP } from '@motion/animation';
+import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { flicksToSeconds, type Keyframe, type LayerInfo, type PropertyInfo } from '@motion/engine-api';
-import { storedKeyIndex, storedKeyOf, uiKeyId, type StoredKey } from './keyframeSelectionIds';
+import { selectionKeyId, timelineTracksOf } from '@core/mirror/keySelection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
-import { membersOf, trackRefIn, type MirrorTreeLike } from '@core/mirror/trackIndex';
+import { trackRefIn, type MirrorTreeLike } from '@core/mirror/trackIndex';
 import {
   buildStaticPropertyTree,
   groupForProp,
@@ -46,8 +46,6 @@ export interface PropertyRowSources {
   tree: MirrorTreeLike | undefined;
   /** Every animated property's keys (path → keys), `DocumentMirror.layerKeyframes`. */
   keys: ReadonlyMap<string, readonly Keyframe[]>;
-  /** The layer's stored-key index (`storedKeyIndex`), when the caller already built it. */
-  stored?: ReadonlyMap<string, StoredKey>;
 }
 
 /** The session mirror's records for one layer (loads its tree on demand). */
@@ -58,22 +56,9 @@ export function mirrorRowSources(nodeId: string): PropertyRowSources {
 
 const NUMERIC = new Set(['scalar', 'int', 'bool', 'choice', 'vec2', 'vec3', 'vec4']);
 const MASK_PATH = /^masks\/[^/]+\/path$/;
-/** The TS engine's gradient-stops data track (engine fillStops.ts `FILL_STOPS_TRACK`). */
-const FILL_STOPS_TRACK = 'fill.stops';
-const EMPTY_STORED: ReadonlyMap<string, StoredKey> = new Map();
 
-/**
- * The timeline track names a mirror property stands for: its member tracks, or
- * — for a data property (Source Text, a path, gradient stops) — the one data
- * track the TS engine keeps its keys on.
- */
-export function timelineTracksOf(info: PropertyInfo): readonly string[] {
-  if (info.path === 'text/sourceText') return [SOURCE_TEXT_PROP];
-  if (info.path === 'layer/fillStops') return [FILL_STOPS_TRACK];
-  if (MASK_PATH.test(info.path)) return [MASK_ANIM_PROP];
-  const members = membersOf(info);
-  return members.length > 0 ? members : [info.matchName];
-}
+/** The timeline track names a mirror property stands for (the selection adapter owns the mapping). */
+export { timelineTracksOf };
 
 /** Whether a property's keys are data keys (no numeric curve). */
 export function isDataProperty(info: PropertyInfo): boolean {
@@ -87,7 +72,13 @@ interface AnimatedTrack {
   info: PropertyInfo;
 }
 
-function keyRefs(nodeId: string, prop: string, a: AnimatedTrack, stored: ReadonlyMap<string, StoredKey>): TimelineKeyframeRef[] {
+/**
+ * The diamonds of one row. Each is named by its ENGINE key id (the selection
+ * adapter, core/mirror/keySelection.ts); a member row of a property drawn as
+ * several rows (Scale X / Scale Y) adds its member index so the two rows'
+ * diamonds stay apart. `member` is undefined for a whole-key row.
+ */
+function keyRefs(nodeId: string, a: AnimatedTrack, member: number | undefined): TimelineKeyframeRef[] {
   const keys = a.keys;
   // Source Text can never tween, so its keys are always hold.
   const text = a.info.valueType === 'textDocument' || a.info.valueType === 'string';
@@ -95,7 +86,7 @@ function keyRefs(nodeId: string, prop: string, a: AnimatedTrack, stored: Readonl
   return keys.map((kf, i) => {
     const hold = text || kf.easing === 'hold' || kf.easing === 'step';
     return {
-      id: uiKeyId(nodeId, prop, storedKeyOf(stored, kf, prop).t) as KeyId,
+      id: selectionKeyId(nodeId, kf.id, member) as KeyId,
       nodeId: nodeId as NodeId,
       // Comp time: where the renderer applies the key (the engine already
       // honoured trim / sourceIn / stretch / precomp remaps).
@@ -113,18 +104,24 @@ function keyRefs(nodeId: string, prop: string, a: AnimatedTrack, stored: Readonl
   });
 }
 
+/** The member index a row's diamonds carry: set when the property is drawn as several member rows. */
+function rowMember(prop: string, a: AnimatedTrack): number | undefined {
+  const i = a.tracks.indexOf(prop);
+  return a.tracks.length > 1 && i >= 0 ? i : undefined;
+}
+
 /** An animated row, straight off one property (one of its member tracks). */
-function animatedRow(nodeId: string, prop: string, a: AnimatedTrack, src: PropertyRowSources, stored: ReadonlyMap<string, StoredKey>): TimelinePropertyTrack {
+function animatedRow(nodeId: string, prop: string, a: AnimatedTrack, src: PropertyRowSources): TimelinePropertyTrack {
   // Label and unit from the property registry, resolved with this layer's
   // mirror facts so `effect.<id>.<key>` reads "Glow Radius", not its path.
   const meta = mirrorPropertyMeta(prop, src.layer, src.tree);
   if (isDataProperty(a.info)) {
-    return { prop, label: meta.label || a.info.name, keyframes: keyRefs(nodeId, prop, a, stored), stopwatchProps: [prop] };
+    return { prop, label: meta.label || a.info.name, keyframes: keyRefs(nodeId, a, rowMember(prop, a)), stopwatchProps: [prop] };
   }
   return {
     prop,
     label: meta.label || a.info.name,
-    keyframes: keyRefs(nodeId, prop, a, stored),
+    keyframes: keyRefs(nodeId, a, rowMember(prop, a)),
     // A real (animated) row edits its own track — one field, so the value can
     // be changed here rather than only in the inspector.
     valueProps: [prop],
@@ -135,13 +132,13 @@ function animatedRow(nodeId: string, prop: string, a: AnimatedTrack, src: Proper
 }
 
 /** X and Y (and Z) as AE's single Position row: the Position property's keys. */
-function positionRow(nodeId: string, a: AnimatedTrack, src: PropertyRowSources, stored: ReadonlyMap<string, StoredKey>): TimelinePropertyTrack {
+function positionRow(nodeId: string, a: AnimatedTrack, src: PropertyRowSources): TimelinePropertyTrack {
   const members = [...a.tracks];
   const meta = mirrorPropertyMeta(POSITION_PSEUDO_PROP, src.layer, src.tree);
   return {
     prop: POSITION_PSEUDO_PROP,
     label: meta.label || a.info.name,
-    keyframes: keyRefs(nodeId, POSITION_PSEUDO_PROP, a, stored),
+    keyframes: keyRefs(nodeId, a, undefined),
     // The merged Position row edits the real tracks behind it — Z included.
     valueProps: members,
     valueUnit: meta.unit || undefined,
@@ -150,7 +147,7 @@ function positionRow(nodeId: string, a: AnimatedTrack, src: PropertyRowSources, 
 }
 
 /** The Mask Shape row — whole-mask snapshots: one diamond per time across the masks. */
-function maskRow(nodeId: string, spec: StaticPropertyRow, masks: ReadonlyArray<AnimatedTrack>, stored: ReadonlyMap<string, StoredKey>): TimelinePropertyTrack {
+function maskRow(nodeId: string, spec: StaticPropertyRow, masks: ReadonlyArray<AnimatedTrack>): TimelinePropertyTrack {
   const byTime = new Map<number, Keyframe>();
   for (const a of masks) for (const kf of a.keys) if (!byTime.has(kf.time)) byTime.set(kf.time, kf);
   const list = [...byTime.values()].sort((x, y) => x.time - y.time);
@@ -160,7 +157,8 @@ function maskRow(nodeId: string, spec: StaticPropertyRow, masks: ReadonlyArray<A
     group: spec.group,
     animated: list.length > 0 ? undefined : false,
     keyframes: list.map((kf, i) => ({
-      id: uiKeyId(nodeId, MASK_ANIM_PROP, storedKeyOf(stored, kf, MASK_ANIM_PROP).t) as KeyId,
+      // One diamond per time across the masks, named by the first mask's key there.
+      id: selectionKeyId(nodeId, kf.id) as KeyId,
       nodeId: nodeId as NodeId,
       time: flicksToSeconds(kf.time),
       isFirst: i === 0,
@@ -221,12 +219,11 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
     for (const t of a.tracks) if (!animated.has(t)) animated.set(t, a);
   }
 
-  const stored = src.stored ?? (src.keys.size > 0 ? storedKeyIndex(nodeId) : EMPTY_STORED);
   const out: TimelinePropertyTrack[] = [];
   // B4-gap: the timeline's AE row projection (sections, order, placeholder rows, the legacy track names row writes use) — the mirror tree lists the catalog in another order and with more properties (Width/Height under `layer`, not Contents); moving the projection onto the tree is its own parity-checked step.
   for (const spec of buildStaticPropertyTree(nodeId)) {
     if (spec.maskTrack) {
-      out.push(maskRow(nodeId, spec, masks, stored));
+      out.push(maskRow(nodeId, spec, masks));
       continue;
     }
     const keyed = spec.members.filter((p) => animated.has(p));
@@ -237,7 +234,7 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
     const lead = animated.get(keyed[0]!)!;
     if (spec.merged === POSITION_PSEUDO_PROP) {
       for (const p of lead.tracks) animated.delete(p);
-      out.push({ ...positionRow(nodeId, lead, src, stored), group: spec.group });
+      out.push({ ...positionRow(nodeId, lead, src), group: spec.group });
       continue;
     }
     // Every member of the keyed property draws the property's keys.
@@ -245,10 +242,10 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
       const a = animated.get(p);
       if (!a) continue;
       animated.delete(p);
-      out.push({ ...animatedRow(nodeId, p, a, src, stored), group: spec.group });
+      out.push({ ...animatedRow(nodeId, p, a, src), group: spec.group });
     }
   }
 
-  for (const [prop, a] of animated) out.push({ ...animatedRow(nodeId, prop, a, src, stored), group: groupForProp(prop, nodeId) });
+  for (const [prop, a] of animated) out.push({ ...animatedRow(nodeId, prop, a, src), group: groupForProp(prop, nodeId) });
   return out;
 }

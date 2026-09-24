@@ -13,8 +13,6 @@
 
 import {
   defaultAnimation,
-  makeKeyframeId,
-  parseKeyframeId,
   expandKeyframeProp,
   type EasingKind,
   type BezierHandles,
@@ -22,6 +20,8 @@ import {
 } from '@motion/animation';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { selectionStoredRefs, trackSelectionId } from '@core/mirror/keySelection';
 import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -202,13 +202,10 @@ export function copySelection(): void {
   if (kfIds.size > 0) {
     const copiedKfs: ClipboardState['copiedKeyframes'] = [];
 
-    // Use the shared codec. This used to hand-parse "nodeId::prop@time", but
-    // the real format is "nodeId::prop::t" — so every id failed to parse and
-    // copy silently did nothing.
-    const parsed = Array.from(kfIds)
-      .map((id) => parseKeyframeId(id))
-      .filter((x): x is NonNullable<typeof x> => x !== null)
-      // A selected "Position" row stands for the x/y/z tracks.
+    // Selection ids name ENGINE keys (core/mirror/keySelection.ts); this legacy
+    // copy reads the TS engine's tracks, so it takes each key's stored position.
+    const parsed = selectionStoredRefs(documentMirror(), kfIds)
+      // A "Position" track stands for the x/y/z tracks.
       .flatMap(({ nodeId, prop, t }) => expandKeyframeProp(prop).map((p) => ({ nodeId, prop: p, t })));
 
     if (parsed.length > 0) {
@@ -288,9 +285,7 @@ export function cutSelection(): void {
   copySelection();
 
   if (kfIds.size > 0) {
-    const refs = Array.from(kfIds)
-      .map((id) => parseKeyframeId(id))
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+    const refs = selectionStoredRefs(documentMirror(), kfIds);
     if (!refs.length) return;
     runAnimEdit('Cut keyframes', () => {
       for (const ref of refs) {
@@ -324,7 +319,7 @@ export async function pasteSelection(): Promise<PasteResult> {
     const controller = getTimelineController();
     const curTime = controller.currentSeconds;
     const selectedLayerIds = useSelectionStore.getState().ids;
-    const newSelectionIds = new Set<string>();
+    const pasted: Array<{ layerId: string; prop: string; t: number }> = [];
 
     // AE logic: paste on selected layers if available
     if (selectedLayerIds.length === 0) return null;
@@ -355,11 +350,18 @@ export async function pasteSelection(): Promise<PasteResult> {
               roving: kf.roving,
             });
           }
-          newSelectionIds.add(makeKeyframeId(layerId, kf.prop, layerT));
+          pasted.push({ layerId, prop: kf.prop, t: layerT });
         }
       }
     });
 
+    // Select the pasted keys by their engine ids (a key the legacy writer left
+    // without a stable id cannot be named, and is left unselected).
+    const newSelectionIds = new Set<string>();
+    for (const p of pasted) {
+      const id = defaultAnimation.getTrackKeyframes(p.layerId, p.prop)?.find((k) => Math.abs(k.t - p.t) < T_EPSILON)?.id;
+      if (id) newSelectionIds.add(trackSelectionId(documentMirror(), p.layerId, p.prop, id));
+    }
     if (newSelectionIds.size > 0) {
       useKeyframeSelectionStore.getState().set(newSelectionIds);
     }

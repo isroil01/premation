@@ -5,7 +5,9 @@
  */
 
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { documentMirror } from '@stores/documentMirror';
 import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
+import { selectionStoredRefs } from '@core/mirror/keySelection';
 
 /**
  * The keyframes an easing action targets: the current keyframe selection, or —
@@ -20,6 +22,6 @@ export function easingTargetKeyframes(): string[] {
 export function applyEasingToSelection(preset: EasingPreset): boolean {
   const kfIds = easingTargetKeyframes();
   if (kfIds.length === 0) return false;
-  applyEasingToKeyframes(kfIds, preset);
+  applyEasingToKeyframes(selectionStoredRefs(documentMirror(), kfIds), preset);
   return true;
 }

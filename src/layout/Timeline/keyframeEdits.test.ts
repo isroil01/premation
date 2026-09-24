@@ -1,8 +1,9 @@
 /**
- * The timeline's keyframe edits through the engine API (B3): the selection's
- * positional ids are resolved to ENGINE keyframe ids (`getKeyframes`), every
- * user action is one undo entry, and a diamond on a member row (Scale X) is the
- * whole property's key at that time, as in After Effects.
+ * The timeline's keyframe edits through the engine API (B3): selection ids
+ * (engine key ids, core/mirror/keySelection.ts) are verified against the
+ * engine (`getKeyframes`), every user action is one undo entry, and a diamond
+ * on a member row (Scale X) is the whole property's key at that time, as in
+ * After Effects.
  */
 
 import { defaultAnimation, POSITION_PSEUDO_PROP } from '@motion/animation';
@@ -20,7 +21,8 @@ import {
   pasteKeyframesAt,
   resolveKeyIds,
 } from './keyframeEdits';
-import { uiKeyId } from './keyframeSelectionIds';
+import { rowSelectionId as uiKeyId } from '@core/engine/__testHelpers__/selectionIds';
+import { parseSelectionKey } from '@core/mirror/keySelection';
 import { createSelectionNudger } from './keyframeNudge';
 import { applyKeyframeVelocity } from './keyframeVelocity';
 
@@ -58,7 +60,7 @@ afterEach(async () => {
 });
 
 describe('ids', () => {
-  it('resolves positional selection ids to the engine’s keyframe ids', async () => {
+  it('resolves selection ids to the engine’s keyframe ids', async () => {
     const res = await h.query({ type: 'getKeyframes', props: [{ layer: L, path: 'transform/opacity' }] });
     const ids = await resolveKeyIds([uiKeyId(L, 'opacity', 1)]);
     expect(ids?.get(uiKeyId(L, 'opacity', 1))).toBe(res.sets[0]!.keyframes[1]!.id);
@@ -69,6 +71,20 @@ describe('ids', () => {
     const ids = await resolveKeyIds([uiKeyId(L, 'scaleX', 1), uiKeyId(L, 'scaleY', 1)]);
     expect(ids).not.toBeNull();
     expect(new Set(ids!.values()).size).toBe(1);
+  });
+
+  it('Scale X and Scale Y diamonds of one key have their own selection ids', async () => {
+    await keys('transform/scale', [[0, { x: 100, y: 100 }], [1, { x: 50, y: 50 }]]);
+    expect(uiKeyId(L, 'scaleX', 1)).not.toBe(uiKeyId(L, 'scaleY', 1));
+    expect(parseSelectionKey(uiKeyId(L, 'scaleY', 1))?.member).toBe(1);
+  });
+
+  it('a selection id survives the key moving (it names the engine key, not a position)', async () => {
+    const id = uiKeyId(L, 'opacity', 1);
+    await moveKeyframesTo([{ id, time: 1.5 }]);
+    expect(times('opacity')).toEqual([0, 1.5, 2]);
+    expect(uiKeyId(L, 'opacity', 1.5)).toBe(id);
+    expect(await resolveKeyIds([id])).not.toBeNull();
   });
 });
 

@@ -3,7 +3,8 @@
  * undo entry per user action, exact undo / redo, the legacy writers' rules.
  */
 
-import { defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { defaultAnimation } from '@motion/animation';
+import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readLayerFlag } from '@core/scene/layerFlags';
 import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
@@ -178,7 +179,7 @@ describe('property rows', () => {
 });
 
 describe('keyframe menu', () => {
-  const uiId = (t: number) => makeKeyframeId(s.B, 'Position', t);
+  const uiId = (t: number) => rowSelectionId(s.B, 'Position', t);
 
   it('interpolation kinds and hold, one entry each', async () => {
     await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'linear', 'Linear interpolation'), 'Set keyframe easing: Linear');

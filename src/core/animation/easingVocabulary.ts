@@ -38,13 +38,13 @@
 
 import {
   defaultAnimation,
-  parseKeyframeId,
   expandKeyframeProp,
   type AnimationEngine,
   type EasingKind,
 } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import type { EasingPreset } from '@core/animation/keyframeAssistants';
+import type { StoredKeyRef } from '@core/mirror/keySelection';
 
 /**
  * Every kind, with the name the UI shows. A `Record` over the union rather than
@@ -129,7 +129,9 @@ export function easingPresetForKind(kind: EasingKind): EasingPreset | null {
 }
 
 /**
- * Apply an interpolation KIND to a set of keyframe ids, as one undo step.
+ * Apply an interpolation KIND to a set of keyframes (by STORED position — a
+ * keyframe selection decodes to these through `selectionStoredRefs`,
+ * core/mirror/keySelection.ts), as one undo step.
  *
  * The kind counterpart of `applyEasingToKeyframes`, and it reaches the same
  * places that does: a merged "Position" id expands to its x/y/z tracks, and
@@ -137,15 +139,13 @@ export function easingPresetForKind(kind: EasingKind): EasingPreset | null {
  * `setDataEasing` instead of being silently skipped.
  */
 export function applyEasingKindToKeyframes(
-  kfIds: ReadonlyArray<string>,
+  refs: ReadonlyArray<StoredKeyRef>,
   kind: EasingKind,
   engine: AnimationEngine = defaultAnimation,
 ): void {
-  if (kfIds.length === 0) return;
+  if (refs.length === 0) return;
   runAnimEdit(`Set keyframe easing: ${EASING_KIND_LABEL[kind]}`, () => {
-    for (const kfId of kfIds) {
-      const ref = parseKeyframeId(kfId);
-      if (!ref) continue;
+    for (const ref of refs) {
       const { nodeId, t } = ref;
       for (const prop of expandKeyframeProp(ref.prop)) {
         // Data tracks first: they have no scalar keyframes, so the scalar

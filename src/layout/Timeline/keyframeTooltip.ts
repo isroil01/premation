@@ -13,10 +13,10 @@
  * value changed.
  */
 
-import { expandKeyframeProp } from '@motion/animation';
-import { numbersOfValue } from '@core/mirror/trackIndex';
+import { memberTrackRef } from '@core/mirror/memberKeys';
+import { resolveSelectionKey } from '@core/mirror/keySelection';
+import { numbersOfValue, storedNumber } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
-import { mirrorKeyOf, parseUiKey, storedTimeOf } from './keyframeSelectionIds';
 import { framesToTimecode } from '@core/time/timecode';
 
 export interface KeyframeLabelInput {
@@ -74,15 +74,17 @@ export function keyframeDragLines(input: {
  * read from the MIRROR (B4): each member's number of the key, stored units.
  */
 export function keyframeValues(kfId: string): number[] {
-  const ref = parseUiKey(kfId);
-  if (!ref) return [];
   const m = documentMirror();
-  const storedT = storedTimeOf(ref.nodeId);
+  const hit = resolveSelectionKey(m, kfId);
+  // A numeric key only: a data key (Source Text, a mask shape) has no number to show.
+  if (!hit || numbersOfValue(hit.key.value).length === 0) return [];
+  const tree = m.tree(hit.sel.layer);
   const out: number[] = [];
-  for (const prop of expandKeyframeProp(ref.prop)) {
-    const hit = mirrorKeyOf(m, { nodeId: ref.nodeId, prop, t: ref.t }, storedT);
-    // A numeric key only: a data key (Source Text, a mask shape) has no number to show.
-    if (hit && numbersOfValue(hit.key.key.value).length > 0) out.push(hit.key.value);
+  // The row's own members (a member row: its one; the merged Position row: x, y).
+  for (const track of hit.tracks) {
+    const ref = memberTrackRef(tree, track);
+    const v = ref && ref.path === hit.path ? storedNumber(ref, hit.key.value) : undefined;
+    if (v !== undefined) out.push(v);
   }
   return out;
 }

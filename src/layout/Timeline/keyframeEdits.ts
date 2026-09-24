@@ -3,14 +3,15 @@
  * docs/B3_PATTERNS.md §4): move, delete, ease, velocity, nudge, paste.
  *
  * ── Ids ──────────────────────────────────────────────────────────────
- * The timeline, the graph editor and the keyframe selection store still name a
- * key by its POSITION (`nodeId::prop::t`, stored time) — that id is editor
- * state shared with App.tsx and `src/core/animation`, and it changes format
- * when the selection store moves to engine ids (B4, with the mirror). What
- * changes here is the WRITE: every edit resolves those positions to the
- * ENGINE's keyframe ids with the `getKeyframes` query (never `makeKeyframeId`)
- * and sends commands that carry them. The codec itself is
- * `keyframeSelectionIds.ts`.
+ * The keyframe SELECTION names a key by its ENGINE id (plus a member index for
+ * a member row's diamond) — the adapter is `core/mirror/keySelection.ts`. A
+ * selection id is resolved through the document mirror to the key and its
+ * property, and every edit is verified against the engine's own answer (the
+ * `getKeyframes` query) before a command carries the id.
+ *
+ * The member-level editors (graph editor handles, typed fields, the velocity
+ * dialog) still address one MEMBER track's key by its stored time
+ * (`MemberKeyAt`), because their curve math works on the stored axis.
  *
  * ── One key per time (ENGINE_API.md §3.3) ────────────────────────────
  * After Effects' model: a vector or colour property (Scale, Anchor Point, a
@@ -24,13 +25,11 @@
  * whole keys; the engine fills the missing members on the first edit.
  *
  * ── Reads (B4) ───────────────────────────────────────────────────────
- * What these builders compose a command from — which key a selection id
- * names, its comp time, the other members' numbers of a whole-key value — is
- * read from the document MIRROR at call time (`documentMirror()`,
- * `mirrorKeyOf`), never from the TS engine's tracks. The stored time a
- * selection id carries is matched through `storedKeyIndex`
- * (keyframeSelectionIds.ts: the one B4-gap, until the selection moves to
- * engine ids).
+ * What these builders compose a command from — which key an id names, its
+ * comp time, the other members' numbers of a whole-key value — is read from
+ * the document MIRROR at call time (`documentMirror()`), never from the TS
+ * engine's tracks. Only the member-level editors' stored times go through
+ * `storedTimeOf` (keySelection.ts: the one B4-gap).
  */
 
 import { secondsToFlicks, type Command, type CubicBezier, type Easing, type Keyframe, type KeyframePatch, type PropRef, type SpatialInterp, type Value } from '@motion/engine-api';
@@ -42,27 +41,31 @@ import { apiUnitFactor } from '@core/engine/props';
 import { engine, engineIdle } from '@core/engine/engineInstance';
 import { edit, type GestureSession } from '@core/engine/uiEdits';
 import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
-import { memberKeysOf, type MemberKey, type StoredTimeOf } from '@core/mirror/memberKeys';
+import { memberKeyIndexAt, memberKeyOf, memberKeysOf, type MemberKey, type StoredTimeOf } from '@core/mirror/memberKeys';
+import { resolveSelectionKey, storedTimeOf } from '@core/mirror/keySelection';
 import { numbersOfValue, type TrackRef as MirrorTrackRef } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
 import { isDataProperty } from './buildPropertyRows';
-import { mirrorKeyOf, parseUiKey, storedTimeOf, uiKeyId, type UiKey } from './keyframeSelectionIds';
 
-export { parseUiKey, uiKeyId, type UiKey };
+/** One MEMBER track's key by its stored time — the member-level editors' address (`id` is the caller's own key). */
+export interface MemberKeyAt {
+  id: string;
+  nodeId: string;
+  /** A member track (`x`, `scaleX`, `opacity`). */
+  prop: string;
+  /** Stored time (seconds). */
+  t: number;
+}
 
 interface Target {
   ref: PropRef;
-  /** The member track the key was found on. */
+  /** The member track the key was read through. */
   member: string;
   /** The property, as the document mirror describes it. */
   prop: MirrorTrackRef;
   /** The key, seen from `member` (B4: read from the document mirror). */
   key: MemberKey;
-  /**
-   * The id the engine gives this key (the mirror's keyframe id). Matched on
-   * STORED time, never on comp time — two keys a trimmed clip clamps onto the
-   * same comp instant must not resolve to one id.
-   */
+  /** The engine's id of this key (the mirror's keyframe id). */
   expected: string;
 }
 
@@ -79,31 +82,39 @@ function storedTimes(): (layer: string) => StoredTimeOf {
   };
 }
 
-/**
- * The API property a selection key lives on, or null when there is no such
- * key any more — read from the document MIRROR (B4): the member tracks the row
- * stands for, the first holding a key at the stored time (whole-mask rows: the
- * first mask's Path, whose snapshot keys every mask shares).
- */
-function targetOf(k: UiKey, storedT: StoredTimeOf = storedTimeOf(k.nodeId)): Target | null {
+/** A selection id → the key and property it names, from the document MIRROR (B4). Null when the key is gone. */
+function selectionTarget(id: string): Target | null {
   const m = documentMirror();
-  if (!m.layer(k.nodeId)) return null;
-  const hit = mirrorKeyOf(m, k, storedT);
-  if (!hit) return null;
-  return { ref: { layer: k.nodeId, path: hit.ref.path }, member: hit.track, prop: hit.ref, key: hit.key, expected: hit.key.key.id };
+  const r = resolveSelectionKey(m, id);
+  if (!r || !r.ref || !m.layer(r.sel.layer)) return null;
+  return { ref: { layer: r.sel.layer, path: r.path }, member: r.lookup, prop: r.ref, key: memberKeyOf(r.ref, r.key), expected: r.key.id };
 }
 
-/** Selection keys → their targets (null when any is gone), verified against the engine's own keys. */
-async function resolveTargets(uiKeys: ReadonlyArray<UiKey>): Promise<Map<string, Target> | null> {
-  const stored = storedTimes();
-  const keys: Array<{ k: UiKey; tgt: Target }> = [];
-  for (const k of uiKeys) {
-    const tgt = targetOf(k, stored(k.nodeId));
-    if (!tgt) return null;
-    keys.push({ k, tgt });
-  }
+/**
+ * A member track's key at a STORED time, from the document MIRROR — matched on
+ * stored time, never on comp time: two keys a trimmed clip clamps onto the
+ * same comp instant must not resolve to one id.
+ */
+function memberTarget(k: MemberKeyAt, storedT: StoredTimeOf): Target | null {
+  const m = documentMirror();
+  if (!m.layer(k.nodeId)) return null;
+  const hit = memberKeysOf(m, k.nodeId, k.prop, storedT);
+  if (!hit) return null;
+  const index = memberKeyIndexAt(hit.keys, k.t);
+  if (index < 0) return null;
+  const key = hit.keys[index]!;
+  return { ref: { layer: k.nodeId, path: hit.ref.path }, member: k.prop, prop: hit.ref, key, expected: key.key.id };
+}
+
+/** Targets (null when any is gone), verified against the engine's own keys; keyed by the caller's ids. */
+async function verifyTargets(found: ReadonlyArray<{ id: string; tgt: Target | null }>): Promise<Map<string, Target> | null> {
   const out = new Map<string, Target>();
-  if (keys.length === 0) return out;
+  if (found.length === 0) return out;
+  const keys: Array<{ id: string; tgt: Target }> = [];
+  for (const x of found) {
+    if (!x.tgt) return null;
+    keys.push({ id: x.id, tgt: x.tgt });
+  }
   const byPath = new Map<string, PropRef>();
   for (const x of keys) byPath.set(`${x.tgt.ref.layer}|${x.tgt.ref.path}`, x.tgt.ref);
   // The engine's own answer for these properties: every expected id must be one
@@ -114,37 +125,38 @@ async function resolveTargets(uiKeys: ReadonlyArray<UiKey>): Promise<Map<string,
   for (const set of res.value.sets) for (const kf of set.keyframes) known.add(`${set.prop.layer}|${set.prop.path}|${kf.id}`);
   for (const x of keys) {
     if (!known.has(`${x.tgt.ref.layer}|${x.tgt.ref.path}|${x.tgt.expected}`)) return null;
-    out.set(x.k.id, x.tgt);
+    out.set(x.id, x.tgt);
   }
+  return out;
+}
+
+/** Selection ids → their targets (null when any is gone). */
+function resolveSelection(uiIds: Iterable<string>): Promise<Map<string, Target> | null> {
+  const found: Array<{ id: string; tgt: Target | null }> = [];
+  for (const id of uiIds) found.push({ id, tgt: selectionTarget(id) });
+  return verifyTargets(found);
+}
+
+function idsOf(targets: ReadonlyMap<string, Target>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [id, t] of targets) out.set(id, t.expected);
   return out;
 }
 
 /**
  * Selection ids → engine keyframe ids, in input order. Null when ANY of them no
  * longer names a key (a stale selection: the caller does nothing).
- * Unparseable ids are dropped.
  */
 export async function resolveKeyIds(uiIds: Iterable<string>): Promise<Map<string, string> | null> {
-  return resolveKeys(decodeKeys(uiIds));
+  const targets = await resolveSelection(uiIds);
+  return targets ? idsOf(targets) : null;
 }
 
-/** Decode selection ids (unparseable ones dropped). */
-function decodeKeys(uiIds: Iterable<string>): UiKey[] {
-  const keys: UiKey[] = [];
-  for (const id of uiIds) {
-    const k = parseUiKey(id);
-    if (k) keys.push(k);
-  }
-  return keys;
-}
-
-/** `resolveKeyIds` over already-decoded keys (keyed by their `id`). */
-export async function resolveKeys(uiKeys: ReadonlyArray<UiKey>): Promise<Map<string, string> | null> {
-  const targets = await resolveTargets(uiKeys);
-  if (!targets) return null;
-  const out = new Map<string, string>();
-  for (const [id, t] of targets) out.set(id, t.expected);
-  return out;
+/** Member keys at stored times → engine keyframe ids (keyed by their `id`). Null when any is gone. */
+export async function resolveKeys(keys: ReadonlyArray<MemberKeyAt>): Promise<Map<string, string> | null> {
+  const stored = storedTimes();
+  const targets = await verifyTargets(keys.map((k) => ({ id: k.id, tgt: memberTarget(k, stored(k.nodeId)) })));
+  return targets ? idsOf(targets) : null;
 }
 
 // ── Move / delete ────────────────────────────────────────────────────
@@ -157,7 +169,7 @@ export async function resolveKeys(uiKeys: ReadonlyArray<UiKey>): Promise<Map<str
  */
 export async function moveKeyframesTo(moves: ReadonlyArray<{ id: string; time: number }>): Promise<void> {
   if (moves.length === 0) return;
-  const targets = await resolveTargets(decodeKeys(moves.map((m) => m.id)));
+  const targets = await resolveSelection(moves.map((m) => m.id));
   if (!targets) return;
   const byDelta = new Map<number, string[]>();
   for (const m of moves) {
@@ -217,7 +229,7 @@ export async function easeKeyframes(
   label: string,
 ): Promise<void> {
   if (uiIds.length === 0) return;
-  const targets = await resolveTargets(decodeKeys(uiIds));
+  const targets = await resolveSelection(uiIds);
   if (!targets) return;
   const patches: KeyframePatch[] = [];
   const seen = new Set<string>();
@@ -252,7 +264,7 @@ export function easePresetOnKeys(uiIds: ReadonlyArray<string>, preset: EasingPre
 export async function easeKindOnKeys(uiIds: ReadonlyArray<string>, kind: EasingKind): Promise<void> {
   if (uiIds.length === 0) return;
   const label = `Set keyframe easing: ${EASING_KIND_LABEL[kind]}`;
-  const targets = await resolveTargets(decodeKeys(uiIds));
+  const targets = await resolveSelection(uiIds);
   if (!targets) return;
   const patches: KeyframePatch[] = [];
   const seen = new Set<string>();
@@ -331,7 +343,7 @@ export async function memberKeyPatches(
 ): Promise<KeyframePatch[] | null> {
   const r = propRefForTrack(nodeId, member);
   if (!r) return null;
-  const keys = writes.map((w, i): UiKey => ({ id: String(i), nodeId, prop: member, t: w.t }));
+  const keys = writes.map((w, i): MemberKeyAt => ({ id: String(i), nodeId, prop: member, t: w.t }));
   const ids = await resolveKeys(keys);
   if (!ids) return null;
   const out: KeyframePatch[] = [];
@@ -399,9 +411,9 @@ export function memberKeyValue(start: MemberKeyStart, replace: ReadonlyMap<numbe
 
 /**
  * Where the key with engine id `eid` sits now on `member`'s property (stored
- * time), or null — the selection's positional ids are rewritten from this
- * after a gesture moved keys (the diamond drag, roving). Read from the
- * document mirror (B4).
+ * time), or null — the graph editor's focused key follows a key a gesture
+ * moved (the diamond drag, roving) through this. Read from the document
+ * mirror (B4).
  */
 export function keyTimeById(nodeId: string, member: string, eid: string): number | null {
   const hit = memberKeysOf(documentMirror(), nodeId, member, storedTimeOf(nodeId));
@@ -414,7 +426,7 @@ export function keyTimeById(nodeId: string, member: string, eid: string): number
  * name at the first move, so the gesture's first message stamps them (an
  * unchanged label) and the ids are read again.
  */
-export async function resolveKeysForGesture(gesture: GestureSession, uiKeys: ReadonlyArray<UiKey>): Promise<Map<string, string> | null> {
+export async function resolveKeysForGesture(gesture: GestureSession, uiKeys: ReadonlyArray<MemberKeyAt>): Promise<Map<string, string> | null> {
   const ids = await resolveKeys(uiKeys);
   if (!ids) return null;
   const positional = [...new Set([...ids.values()].filter((id) => id.startsWith('@')))];

@@ -15,7 +15,8 @@
  * that stood both of those up would be testing the bus.
  */
 
-import { makeKeyframeId, POSITION_PSEUDO_PROP } from '@motion/animation';
+import { POSITION_PSEUDO_PROP } from '@motion/animation';
+import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import type { Value } from '@motion/engine-api';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
@@ -152,8 +153,8 @@ describe('isKeyframeHot', () => {
     markHeatSaved();
     await key(OPACITY, 1, 100);
     const diff = heatFor('save');
-    expect(isKeyframeHot(diff, makeKeyframeId(NODE, 'opacity', 1))).toBe(true);
-    expect(isKeyframeHot(diff, makeKeyframeId(NODE, 'opacity', 0))).toBe(false);
+    expect(isKeyframeHot(diff, rowSelectionId(NODE, 'opacity', 1))).toBe(true);
+    expect(isKeyframeHot(diff, rowSelectionId(NODE, 'opacity', 0))).toBe(false);
   });
 
   it('matches a MERGED position row, which no engine track is filed under', async () => {
@@ -161,13 +162,12 @@ describe('isKeyframeHot', () => {
     markHeatSaved();
     await key(POSITION, 1, { x: 50, y: 0 });
     const diff = heatFor('save');
-    // The model's merged Position row carries a pseudo-prop id. A raw set
-    // lookup misses every position keyframe an AI run wrote; the row → property
-    // mapping is the same one the keyframe edits resolve selections with.
-    expect(isKeyframeHot(diff, makeKeyframeId(NODE, POSITION_PSEUDO_PROP, 1))).toBe(true);
+    // The model's merged Position row names the whole Position key by its
+    // engine id; the selection adapter finds the property it is filed under.
+    expect(isKeyframeHot(diff, rowSelectionId(NODE, POSITION_PSEUDO_PROP, 1))).toBe(true);
     // …and so does a MEMBER row of the property (one key per time, as in AE).
-    expect(isKeyframeHot(diff, makeKeyframeId(NODE, 'y', 1))).toBe(true);
-    expect(isKeyframeHot(diff, makeKeyframeId(NODE, POSITION_PSEUDO_PROP, 0))).toBe(false);
+    expect(isKeyframeHot(diff, rowSelectionId(NODE, 'y', 1))).toBe(true);
+    expect(isKeyframeHot(diff, rowSelectionId(NODE, POSITION_PSEUDO_PROP, 0))).toBe(false);
   });
 
   it('says no for an id that does not parse', async () => {

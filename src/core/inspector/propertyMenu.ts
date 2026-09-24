@@ -15,10 +15,9 @@
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { defaultAnimation } from '@motion/animation';
-import { makeKeyframeId } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
-import { copyKeyframes, pasteKeyframes, hasClipboard } from '@core/animation/keyframeClipboard';
+import { copyKeyframeAt, pasteKeyframes, hasClipboard } from '@core/animation/keyframeClipboard';
 import { convertExpressionToKeyframes } from '@core/animation/convertExpressionToKeyframes';
 import {
   addExpression,
@@ -114,13 +113,13 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
           label: p.label,
           // Formatted per call: the label follows the keyboard (⇧F9 vs Shift+F9).
           ...(p.chord ? { shortcut: formatChord(p.chord) } : {}),
-          onSelect: () => applyEasingToKeyframes([makeKeyframeId(nodeId, prop, at.t)], p.id),
+          onSelect: () => applyEasingToKeyframes([{ nodeId, prop, t: at.t }], p.id),
         })),
       });
       items.push({
         id: 'kf-copy',
         label: 'Copy Keyframe',
-        onSelect: () => copyKeyframes(new Set([makeKeyframeId(nodeId, prop, at.t)])),
+        onSelect: () => copyKeyframeAt(nodeId, prop, at.t),
       });
     }
 

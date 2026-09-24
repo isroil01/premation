@@ -1,6 +1,9 @@
 import { create } from 'zustand';
-import { defaultAnimation, expandKeyframeProp, type EasingKind } from '@motion/animation';
-import { easeKeyframes, parseUiKey } from '@layout/Timeline/keyframeEdits';
+import type { EasingKind } from '@motion/animation';
+import { memberKeyOf } from '@core/mirror/memberKeys';
+import { resolveSelectionKey } from '@core/mirror/keySelection';
+import { documentMirror } from '@stores/documentMirror';
+import { easeKeyframes } from '@layout/Timeline/keyframeEdits';
 
 export interface EaseClipboard {
   easing: 'linear' | 'bezier' | 'step';
@@ -21,14 +24,10 @@ export const useEaseClipboardStore = create<EaseClipboard & EaseClipboardActions
   copied: false,
 
   copyEase: (kfId) => {
-    const ref = parseUiKey(kfId);
-    if (!ref) return;
-    const prop = expandKeyframeProp(ref.prop)[0];
-    if (!prop) return;
-
-    const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, prop);
-    const kf = kfs?.find((k) => Math.abs(k.t - ref.t) < 1e-6);
-    if (!kf) return;
+    // The key from the document mirror (B4), seen from the row's member (its ease, per dimension).
+    const hit = resolveSelectionKey(documentMirror(), kfId);
+    if (!hit?.ref) return;
+    const kf = memberKeyOf(hit.ref, hit.key);
 
     set({
       easing: (kf.easing as 'linear' | 'bezier' | 'step') ?? 'linear',

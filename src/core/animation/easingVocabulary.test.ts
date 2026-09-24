@@ -8,7 +8,7 @@
  * they stay reconciled is a test that states each one out loud.
  */
 
-import { AnimationEngine, makeKeyframeId, EASY_EASE_BEZIER, type EasingKind } from '@motion/animation';
+import { AnimationEngine, EASY_EASE_BEZIER, type EasingKind } from '@motion/animation';
 import {
   EASING_KINDS,
   EASING_KIND_LABEL,
@@ -68,7 +68,7 @@ describe("'ease' the kind is not 'Ease' the preset", () => {
 
   it('agrees with what the shared apply path actually writes', () => {
     const anim = engineWithTrack();
-    const id = makeKeyframeId(NODE, 'x', 0);
+    const id = { nodeId: NODE, prop: 'x', t: 0 };
     for (const preset of ['Linear', 'Ease', 'EaseIn', 'EaseOut', 'Hold', 'expo-out'] as const) {
       applyEasingToKeyframes([id], preset, anim);
       expect(kfAt(anim, 'x', 0).easing).toBe(easingKindForPreset(preset));
@@ -105,7 +105,7 @@ describe('activeEasingKind', () => {
 describe('applyEasingKindToKeyframes', () => {
   it('writes every kind onto the keyframe verbatim', () => {
     const anim = engineWithTrack();
-    const id = makeKeyframeId(NODE, 'x', 0);
+    const id = { nodeId: NODE, prop: 'x', t: 0 };
     for (const { kind } of EASING_KINDS) {
       applyEasingKindToKeyframes([id], kind, anim);
       expect(kfAt(anim, 'x', 0).easing).toBe(kind);
@@ -114,7 +114,7 @@ describe('applyEasingKindToKeyframes', () => {
 
   it('seeds handles when switching to a custom bezier', () => {
     const anim = engineWithTrack();
-    applyEasingKindToKeyframes([makeKeyframeId(NODE, 'x', 0)], 'bezier', anim);
+    applyEasingKindToKeyframes([{ nodeId: NODE, prop: 'x', t: 0 }], 'bezier', anim);
     expect(kfAt(anim, 'x', 0).bezier).toBeDefined();
   });
 
@@ -124,7 +124,7 @@ describe('applyEasingKindToKeyframes', () => {
       anim.setKeyframe(NODE, prop, 0, 0, 'linear');
       anim.setKeyframe(NODE, prop, 1, 10, 'linear');
     }
-    applyEasingKindToKeyframes([makeKeyframeId(NODE, 'Position', 0)], 'easeOut', anim);
+    applyEasingKindToKeyframes([{ nodeId: NODE, prop: 'Position', t: 0 }], 'easeOut', anim);
     for (const prop of ['x', 'y', 'z'] as const) {
       expect(kfAt(anim, prop, 0).easing).toBe('easeOut');
     }
@@ -141,15 +141,15 @@ describe('applyEasingKindToKeyframes', () => {
         { t: 2, value: [{ x: 60, y: 0 }] },
       ],
     } as never);
-    applyEasingKindToKeyframes([makeKeyframeId('m', PIN, 0)], 'hold', anim);
+    applyEasingKindToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'hold', anim);
     expect(anim.getDataTrack('m', PIN)!.keyframes[0]!.easing).toBe('hold');
   });
 
-  it('ignores an empty id list and unparseable ids', () => {
+  it('ignores an empty list and a key that does not exist', () => {
     const anim = engineWithTrack();
     const before = JSON.stringify(anim.getTrackKeyframes(NODE, 'x'));
     applyEasingKindToKeyframes([], 'hold', anim);
-    applyEasingKindToKeyframes(['not-an-id'], 'hold', anim);
+    applyEasingKindToKeyframes([{ nodeId: 'no-such-node', prop: 'x', t: 0 }], 'hold', anim);
     expect(JSON.stringify(anim.getTrackKeyframes(NODE, 'x'))).toBe(before);
   });
 });
