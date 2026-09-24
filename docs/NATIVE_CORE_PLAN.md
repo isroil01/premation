@@ -385,6 +385,80 @@ program so output views stop using the lattice (1.5e-2 in gamut at 65³ today),
 | E3 | Text and vector with Skia + HarfBuzz; bidi, vertical, kinsoku parity with today | Noto text goldens match; animated-text bench ≥ 3× | 8 wk |
 | E4 | Effects: GPU effects keep their WGSL; the 28 Canvas2D-only effects and 44 CPU bake sites become SIMD kernels on all cores | No effect drops the bench comp below 24 fps; golden parity | 8–10 wk |
 
+**E1 local results (2026-09-25, Windows 11, RTX 4060 Laptop + Radeon 780M,
+Ryzen 16 threads; branch `worktree-agent-a3ee1a99a16026443` off `native-core`).**
+Clips from `native/engine/tools/gen_media_clips.mjs` (testsrc2 + grain, 23.976
+fps: 4K ProRes 422 HQ ≈ 700 Mbit/s = Apple's rate; 4K ProRes 4444 + 16-bit alpha
+≈ 2 Gbit/s, about 4444 XQ; DNxHR HQ/HQX; H.264 High and HEVC Main10 at GOP 48
+with B-frames; VP9 alpha), measured with `run_decode_bench.mjs` →
+`premation-decode-bench` (60 random seeks through MediaSystem's latest lane,
+cold cache; "texture" = decoded AND converted to RGBA16F on the GPU, GPU idle —
+the honest scrub latency; hardware "decoded" times are submission times). The
+machine was shared with other agents' builds: every run waited for CPU load
+< 35 % and the load at start was 6–33 %. Render adapter RTX 4060 unless noted.
+
+| clip · path | scrub texture p50 / p95 ms, before → after | frames decoded / 60 targets | playback ×1 fps (after) |
+|---|---|---|---|
+| 4K ProRes 422 HQ · software | 18.8 / 25.4 → 15.7 / 29.8 (p95 is noise-level; ≤ 50 ✔) | 62 → 60 | 62–67 |
+| 4K ProRes 4444 + alpha (≈ 2 Gbit/s) · software | 52.3 / 92.8 → 42.6 / 65.7 | 64 → 60 | 24.1–24.2 (just full rate) |
+| 4K ProRes 4444 at ≈ 4 Gbit/s (grain stress, before only) · software | 61.0 / 96.4 | 64 | 18.3 |
+| 1080p ProRes 422 HQ · software | 7.0 / 10.1 → 6.3 / 8.6 | 62 → 60 | 213 |
+| 1080p DNxHR HQ · software | 5.2 / 7.8 → 4.8 / 7.8 | 62 → 60 | 264 |
+| 4K DNxHR HQ · software | 17.4 / 22.6 → 14.7 / 24.7 | 62 → 60 | 91 |
+| 4K DNxHR HQX (10-bit) · software | 17.6 / 29.0 → 15.3 / 21.7 | 62 → 60 | 71 |
+| 4K H.264 · software | 432 / 926 → 380 / 827 | 884 → 695 | 51 |
+| 4K H.264 · d3d11va zero-copy | 55.9 / 506 → 56.3 / 458 | 155 | 73–76 |
+| 4K H.264 · nvdec (download + upload) | — → 116 / 432 | 270 | 79 |
+| 1080p H.264 · d3d11va zero-copy | 11.7 / 137 → 12.2 / 119 | 130 | 261 |
+| 1080p H.264 · nvdec | — → 12.9 / 108 | 130 | 279 |
+| 4K HEVC Main10 · software | 292 / 499 → 250 / 471 | 1111 → 768 | 122 |
+| 4K HEVC Main10 · d3d11va (P010 downloaded) | 51.2 / 252 → 46.6 / 262 | 253 | 81 |
+| 4K HEVC Main10 · nvdec (= policy "auto") | — → 37.4 / 169 | 253 | 115–123 |
+| 1080p VP9 alpha · software (libvpx) | 5.5 / 352 → 3.8 / 348 | 376 | 101 |
+| **6 × 1080p paced at 23.976** | H.264 sw / d3d11va / nvdec, ProRes 422 HQ, DNxHR HQ: **all full rate**, 2–10 late of 720 (the first frames) | | |
+| 780M as render adapter · d3d11va | 4K H.264 scrub 84.6 / 649, playback 33 fps; 6 × 1080p H.264 full rate in 3 of 4 runs (one 4.3 fps run while other agents used the GPU, not reproduced) | | |
+
+- **Exit criteria.** 4K ProRes 422 HQ scrub ≤ 50 ms: met (p95 25–30 ms to a
+  texture). ProRes 4444 at ≈ 2 Gbit/s is 66 ms p95: CPU-bound (≈ 30 ms
+  slice-threaded decode on 16 threads + ≈ 12 ms to upload four 16-bit 4:4:4
+  planes, 66 MB a frame); a lighter 4444 (Apple's ≈ 1.1 Gbit/s) would land near
+  the limit. Closing it needs either a GPU ProRes decode (a Vulkan compute
+  path; nothing in our Windows ffmpeg build offers one, not verified further) or
+  uploading the 10-bit planes packed. 6 × 1080p at full rate: met on every path.
+- **Changes behind the numbers.** Intra-only streams seek unless the target is
+  the next frame (a 1–2 frame gap used to be decoded through: 62–64 → 60 decodes
+  per 60 seeks). Long-GOP scrubs skip non-reference frames before the target
+  (exact index only): 884 → 695 frames for 4K H.264 in software; these x264 /
+  NVENC encodes use B-pyramids, so fewer B-frames are skippable than in an
+  IBBP camera GOP. Long-GOP scrub remains bounded by GOP length (48 here):
+  p95 ≈ 0.45 s on hardware, ≈ 0.8 s in software. Threading was already right:
+  slice threads for intra codecs, frame + slice for long-GOP, one thread for hwaccel.
+- **NVDEC vs d3d11va (decision).** On NVIDIA, d3d11va *is* NVDEC (same
+  silicon), and on the render adapter it lands in Dawn with no CPU copy — so
+  **d3d11va on the render adapter stays first** for 8-bit streams: 4K H.264
+  scrub p50 56 vs 116 ms, playback CPU 56 % vs 78 % of a core. **10-bit goes
+  to nvdec** when the render adapter is a CUDA device: the pinned Dawn can't
+  import P010 on D3D12, so d3d11va downloads 10-bit through a staging copy,
+  and CUDA's download is faster (4K HEVC Main10 scrub p95 262 → 169 ms,
+  playback 81 → 115 fps). NVDEC is opened only on the CUDA device whose LUID
+  is Dawn's adapter (`cuda_ffi.cpp`); with the engine on the 780M it declines
+  and d3d11va runs on the 780M (VCN). `media_config_for(device)` encodes this.
+- **Reliability.** A hardware decoder that refuses a stream or fails
+  mid-stream hands that clip to threaded software from the frame it was on
+  (`SourceStats::hwFallback`, `media_hw_fallback` in the engine log); tested by
+  fault injection with bit-identical frames. Colour: the CPU twin and the GPU
+  pass match swscale for BT.601/709/2020 (+ FCC, 240M on the CPU) × limited/full
+  × 8/10/12(/16)-bit, P010-style storage included, and a wrong matrix or range
+  fails by ≥ 8× the tolerance. A six-codec mixed timeline decodes interleaved
+  with no cross-talk and an empty cache after close.
+- **Open.** `scene/engine_frames.cpp` still creates its `MediaSystem` with
+  `MediaConfig{}` (software only): switching it to `media_config_for(gpu.device,
+  note)` is one line in scene/, left to its owner. VideoToolbox (macOS) and
+  VAAPI / Vulkan Video (Linux) are compiled but unmeasured. CUDA → D3D12
+  zero-copy interop for nvdec, and P010 zero-copy once Dawn offers
+  `MultiPlanarFormatP010` on D3D12. GPU ProRes (Vulkan) for 4444 at 4K.
+  A GPU-busy gate for the bench (it gates on CPU only).
+
 **E3 progress (2026-09-24, uncommitted on `native-core`).** `native/engine/src/raster`
 is a Canvas2D-semantics layer on Skia's CPU raster backend (Chromium's canvas is
 Skia) with call-for-call ports of the TS vector, mask and text painters, HarfBuzz
