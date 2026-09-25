@@ -30,6 +30,7 @@
 
 #include "canvas.hpp"
 #include "frame_build.hpp"
+#include "raster_source.hpp"
 #include "render_context.hpp"
 
 namespace premation::effects {
@@ -59,6 +60,11 @@ struct PrepareStats {
   std::uint32_t rasterHits = 0;
   std::uint32_t rasterMisses = 0;
   double rasterMs = 0;        // wall time spent drawing misses (parallel)
+  // Summed over the misses (thread time, not wall): content paint, bake (mask
+  // matte + effect chain), pixel read-back. Measurement only, never an input.
+  double contentMs = 0;
+  double bakeMs = 0;
+  double readMs = 0;
   std::uint32_t mediaRefs = 0;
   /// Features the painters could not draw (key → what), for the explicit-fallback report.
   std::vector<std::pair<std::string, std::string>> unsupported;
@@ -70,6 +76,8 @@ class SceneTextures final : public rg::ExternalTextureSource {
     raster::CanvasOptions canvas;
     /// CPU raster cache budget (bytes of RGBA8).
     std::size_t rasterCacheBytes = std::size_t{768} << 20U;
+    /// Baked-content cache budget (bytes of canvas pixels); 0 = off.
+    std::size_t contentCacheBytes = std::size_t{256} << 20U;
     /// Raster worker threads for a frame's misses (0 = hardware concurrency, capped at 8).
     unsigned threads = 0;
     /// Relative media paths resolve against this directory (the project's).
@@ -118,6 +126,9 @@ class SceneTextures final : public rg::ExternalTextureSource {
   std::string model_ref(const TextureRequest& r, PrepareStats& stats);
   void insert(std::string hash, std::shared_ptr<const RasterEntry> e);
   [[nodiscard]] std::shared_ptr<const RasterEntry> find(std::string_view hash);
+  /// Baked rasters' painted content (raster_source.hpp BakedContent), by content key.
+  [[nodiscard]] std::shared_ptr<const raster::BakedContent> find_content(std::uint64_t key);
+  void insert_content(std::uint64_t key, std::shared_ptr<const raster::BakedContent> c);
 
   Options opts_;
   rg::Device* dev_ = nullptr;
@@ -129,6 +140,17 @@ class SceneTextures final : public rg::ExternalTextureSource {
   std::list<Slot> lru_;
   std::unordered_map<std::string, std::list<Slot>::iterator, rg::KeyHash, std::equal_to<>> byHash_;
   std::size_t bytes_ = 0;
+  // The baked content cache: a re-bake whose content key is unchanged (only
+  // the stack's params or the fill opacity moved) copies the painted canvas
+  // instead of repainting it. Small LRU; guarded by m_.
+  struct ContentSlot {
+    std::uint64_t key;
+    std::shared_ptr<const raster::BakedContent> content;  // shared: a bake in flight keeps its copy source
+    std::size_t bytes;
+  };
+  std::list<ContentSlot> contentLru_;
+  std::unordered_map<std::uint64_t, std::list<ContentSlot>::iterator> contentByKey_;
+  std::size_t contentBytes_ = 0;
   std::unordered_map<std::string, std::uint32_t> sources_;  // resolved path → SourceId
   std::unordered_map<std::string, std::string> openErrors_;
   /// The CPU bakes' kernel pool (bake_chain.hpp SharedPool): one bake at a time

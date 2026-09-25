@@ -154,6 +154,12 @@ class Canvas2D {
   virtual void resize(std::uint32_t width, std::uint32_t height) = 0;
   /// Premultiplied RGBA8, rows top-down — the bytes a canvas upload produces.
   [[nodiscard]] virtual std::vector<std::uint8_t> pixels() const = 0;
+  /// An exact copy — pixels, drawing state (transform, styles, alpha, composite,
+  /// filter, shadow, text state, current path), options — that draws exactly as
+  /// this canvas would from here on; null when the canvas holds state a copy
+  /// cannot carry (a save() stack, a clip). The raster cache keeps a baked
+  /// layer's painted content this way, so a re-bake does not repaint it.
+  [[nodiscard]] virtual std::unique_ptr<Canvas2D> clone() const { return nullptr; }
   /// document.createElement('canvas') sized w × h, with this canvas's options
   /// (the painters' scratch canvases: tip stamps, snapshots, buffers).
   [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_canvas(std::uint32_t width, std::uint32_t height) const = 0;

@@ -284,6 +284,25 @@ class SkiaCanvas final : public Canvas2D {
     return out;
   }
 
+  [[nodiscard]] std::unique_ptr<Canvas2D> clone() const override {
+    if (surface_ == nullptr || !stack_.empty()) return nullptr;
+    SkCanvas* c = surface_->getCanvas();
+    // Only a wide-open clip is carried (clip() outside save() is kept by the canvas).
+    if (c->getSaveCount() != 1 || !c->isClipRect() ||
+        !c->getDeviceClipBounds().contains(SkIRect::MakeWH(static_cast<int>(w_), static_cast<int>(h_)))) {
+      return nullptr;
+    }
+    auto out = std::make_unique<SkiaCanvas>(w_, h_, opts_, f16_);
+    SkPixmap dst;
+    if (out->surface_ == nullptr || !out->surface_->peekPixels(&dst)) return nullptr;
+    // Same colour type and alpha type: a plain copy of the stored bytes.
+    if (!surface_->readPixels(dst, 0, 0)) return nullptr;
+    out->accelerated_ = accelerated_;
+    out->st_ = st_;
+    out->path_ = path_;
+    return out;
+  }
+
   [[nodiscard]] sk_sp<SkImage> snapshot() const { return surface_ ? surface_->makeImageSnapshot() : nullptr; }
 
   // ── state ──
