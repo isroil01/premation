@@ -1576,6 +1576,11 @@ function applyStroke(oc: CanvasRenderingContext2D, w: number, h: number, e: Effe
     const ic = inner.getContext('2d');
     if (!ic) return;
     ic.setTransform(1, 0, 0, 1, 0, 0);
+    // The pooled context keeps its state between uses, and this one ends its
+    // last use on 'destination-out' — which would draw the silhouette as
+    // nothing, and leave every inside / centre stroke after the first at a
+    // given size with no inner band.
+    ic.globalCompositeOperation = 'source-over';
     ic.clearRect(0, 0, w, h);
     // Start from full silhouette tinted, then punch a contracted hole.
     ic.drawImage(snap, 0, 0);
