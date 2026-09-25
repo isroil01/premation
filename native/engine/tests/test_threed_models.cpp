@@ -299,6 +299,50 @@ TEST_CASE("3D leftovers: an image (asset:) environment sky lights and reflects f
   CHECK(f.file.scene.lights3d.size() == rig.size());
 }
 
+TEST_CASE("3D leftovers: a corner-pinned 3D layer renders on the pinned 2D path", "[scene][cornerpin]") {
+  const std::string project = R"({"version":"1.9.0","scene":{"version":"1.0.0","nodes":[
+    {"id":"comp_root","name":"Composition 1","parent":null,"children":["card","flat","cam"],"transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},"visible":true,"locked":false,"components":[{"id":"comp_root_meta","type":"group","props":{"__kind":"group"}}]},
+    {"id":"card","name":"card","children":[],"parent":"comp_root","transform":{"position":{"x":200,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[
+      {"id":"card_t","type":"Transform","props":{"__kind":"shape","x":200,"y":180,"rotation":0,"width":160,"height":100,"z":40,"rotationY":25}},
+      {"id":"card_s","type":"Style","props":{"opacity":100,"fill":"#3a7bd5"}},
+      {"id":"card_fx","type":"fx","props":{"cornerPin":[0.1,0.05,0.93,0.12,0.88,0.97,0.02,0.9]}}],"visible":true,"locked":false},
+    {"id":"flat","name":"flat","children":[],"parent":"comp_root","transform":{"position":{"x":360,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[
+      {"id":"flat_t","type":"Transform","props":{"__kind":"shape","x":360,"y":180,"rotation":0,"width":80,"height":80}},
+      {"id":"flat_s","type":"Style","props":{"opacity":100,"fill":"#d53a7b"}},
+      {"id":"flat_fx","type":"fx","props":{"cornerPin":[0,0,1,0,0.2,0.2,0,1]}}],"visible":true,"locked":false},
+    {"id":"cam","name":"cam","children":[],"parent":"comp_root","transform":{"position":{"x":240,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[{"id":"cam_t","type":"Transform","props":{"__kind":"camera","x":240,"y":180,"rotation":0,"z":-1000,"focalLength":1000}}],"visible":true,"locked":false}]},
+    "animation":{"tracks":{},"expressions":{}},"comps":{"comp_root":{"id":"comp_root","name":"comp_root","width":480,"height":360,"fps":30,"durationSeconds":10,"background":"#0c0c12"}},
+    "motionBlur":{"enabled":false,"shutterAngle":180,"shutterPhase":-90,"samples":8,"adaptiveSampleLimit":128},
+    "colorManagement":{"workingSpace":"srgb-linear","displayTransform":"srgb","bitDepth":16},"projectItems":{"folders":[],"footage":{}},
+    "openTabs":{"tabOrder":["tab1"],"activeTabId":"tab1","tabs":{"tab1":{"id":"tab1","compositionId":"comp_root","breadcrumbPath":["comp_root"],"title":"comp_root","time":0,"frame":0}}}})";
+  const auto json = js::parse(project);
+  REQUIRE(json.has_value());
+  doc::Document d;
+  doc::EditorView view;
+  doc::ExprCache cache;
+  (void)doc::restore_document(d, view, *json, {});
+  doc::DocExprEnv env(d, view, cache);
+  const sc::BuildContext ctx{d, view, env, cache, nullptr};
+  const sc::NativeFrame f = sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), false);
+  for (const auto& e : f.errors) {
+    INFO(e.layerId << ": " << e.message);
+    CHECK(e.message.find("corner pin") == std::string::npos);
+  }
+  const api::Renderable* card = nullptr;
+  const api::Renderable* flat = nullptr;
+  for (const api::Renderable& r : f.file.scene.renderables) {
+    if (r.id == "card") card = &r;
+    if (r.id == "flat") flat = &r;
+  }
+  REQUIRE(card != nullptr);
+  CHECK(card->corner_pin.size() == 8);
+  CHECK_FALSE(card->three_d.has_value());  // the pin keeps it off the mat4 path
+  REQUIRE(card->model_matrix.size() == 9);
+  CHECK((card->model_matrix[2] != 0 || card->model_matrix[5] != 0));  // projective: a non-affine bottom row
+  REQUIRE(flat != nullptr);
+  CHECK(flat->corner_pin.empty());  // a non-convex pin reads as none
+}
+
 TEST_CASE("3D leftovers: what the document cannot supply is reported, never guessed", "[scene][gltf][displacement]") {
   std::string why;
   CHECK(sc::height_field_for("prime:bumps", "prime:bumps", why) == nullptr);

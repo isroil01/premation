@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "bake_chain.hpp"
+#include "corner_pin.hpp"
 #include "effects_port.hpp"
 #include "lut_port.hpp"
 #include "jsmath.hpp"
@@ -478,6 +479,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   }
   r.model_matrix = mat_wire(model);
   r.bounds = bounds_of(model);
+  apply_corner_pin(l.cornerPin, model, r);  // resolveCornerPin (corner_pin.cpp)
   r.opacity = opacity;
   r.blend = adv > 0 ? api::RenderBlendMode::normal : (l.blend == "add" ? api::RenderBlendMode::add : api::RenderBlendMode::normal);
   if (adv > 0) r.advanced_blend = adv;

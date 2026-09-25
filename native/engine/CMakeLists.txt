@@ -380,6 +380,7 @@ add_library(engine_scene_core STATIC
   src/scene/height_displacement.cpp  # heightDisplacement.ts (D2w 3D leftovers)
   src/scene/gltf_model.cpp  # gltf.ts parse + modelMesh.ts entries + the model registry
   src/scene/styled_surface.cpp  # layerStyles.ts styledSurfaceFill (extrusion walls under overlays)
+  src/scene/corner_pin.cpp  # cornerPin.ts + resolveCornerPin + Homography.ts
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
 target_link_libraries(engine_scene_core PUBLIC engine_core motion::jsmath PRIVATE motion::options)
@@ -391,7 +392,8 @@ if(MOTION_BUILD_TESTS)
   # src/core/rig/rigCrossEngine.test.ts).
   add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp tests/test_threed_parity.cpp
                                          tests/test_height_displacement_parity.cpp tests/test_gltf_model_parity.cpp
-                                         tests/test_env_asset_parity.cpp tests/test_styled_surface_parity.cpp)
+                                         tests/test_env_asset_parity.cpp tests/test_styled_surface_parity.cpp
+                                         tests/test_corner_pin_parity.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
