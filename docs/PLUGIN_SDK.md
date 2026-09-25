@@ -153,7 +153,17 @@ encoder, on the engine's own Dawn device:
   scope. A GPU error drops the command buffer unsubmitted, and the effect renders
   on its CPU path for that frame.
 - `GPU_DEVICE_SETUP` runs once per device. If it fails, the effect uses its CPU
-  path on that device.
+  path on that device. When the engine's device changes (a new renderer, a
+  recovered device loss), the host sends `GPU_DEVICE_SETDOWN` for the old one
+  first and sets up again on the next frame.
+- Keep the GPU and CPU paths the same maths. At 16 bpc they can still differ on
+  over-range values: the CPU world is integer 0..32768 and clips, the GPU buffer
+  is half float and does not. `grade`'s *Debug ▸ GPU Fault* records invalid
+  commands, so you can watch the error scope and the CPU fallback work
+  (`engine_plugins_gpu_tests`).
+- `premation-render --plugins <dir> [--plugin-gpu 0]` renders a FrameScene with
+  native plugin entries outside the editor. Use `--plugin-gpu 0` to force the
+  CPU path.
 
 ## Crash isolation
 
