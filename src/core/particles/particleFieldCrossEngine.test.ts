@@ -90,10 +90,8 @@ function generate(): unknown[] {
   for (const c of CASES) {
     for (const time of c.times) {
       jest.isolateModules(() => {
-        /* eslint-disable @typescript-eslint/no-require-imports */
         const rec = require('@core/rendering/raster/__testHelpers__/recordingCanvas') as Rec;
         const { drawParticleField } = require('./particleRender') as typeof import('./particleRender');
-        /* eslint-enable @typescript-eslint/no-require-imports */
         const cfg = { ...DEFAULT_PARTICLE_CONFIG, ...c.cfg } as ParticleConfig;
         const fps = c.fps ?? 30;
         const pxW = Math.max(1, Math.round(c.w * c.scale));
