@@ -30,6 +30,7 @@ import { COMP_REF_PROP, COMP_COLLAPSE_PROP } from '@core/scene/compInstance';
 import { useAssetStore } from '@stores/assetStore';
 import { node, type Scene } from '../../../packages/render-tests/harness/sceneKit';
 import { sceneToProject } from '../../../packages/render-tests/harness/sceneProject';
+import polygonClipping from 'polygon-clipping';
 
 const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/time_comp_parity.json');
 const COMP = { width: 480, height: 320, background: '#101014' };
@@ -241,6 +242,24 @@ const DEFS: Def[] = [
         kind: 'shape', position: { x: 0, y: 0 }, style: { fill: '#1982c4' },
         components: [{ id: 'mergeX_fx', type: 'fx', props: { booleanOp: 'exclude', booleanSources: ['opA', 'opB'] } }],
       }));
+    },
+  },
+  {
+    id: 'offset-paths-cleanup',
+    frames: [0],
+    build(graph) {
+      // A U with a narrow slot: offset outward, the limbs overlap and the
+      // cleanup unions the surviving loops; inward, a limb pinches off.
+      const u = [
+        [-70, -60], [-20, -60], [-20, 30], [20, 30], [20, -60], [70, -60], [70, 70], [-70, 70],
+      ].map(([x, y]) => ({ x, y, inX: x, inY: y, outX: x, outY: y }));
+      for (const [id, x, amount, join] of [['offOut', 130, 26, 'miter'], ['offIn', 330, -24, 'round'], ['offBevel', 240, 34, 'bevel']] as const) {
+        graph.addNode(node(id, {
+          kind: 'shape', position: { x, y: 160 }, transform: { width: 140, height: 130 }, style: { fill: '#ffca3a' },
+          components: [{ id: `${id}_g`, type: 'Geometry', props: { points: u, open: false } }],
+        }));
+        graph.setPathOps(id, [{ id: `${id}_o`, type: 'offset', amount, detail: 0, lineJoin: join, miterLimit: 4 }]);
+      }
     },
   },
   {

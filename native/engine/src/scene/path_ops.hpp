@@ -31,9 +31,9 @@ enum class GeometryStatus : std::uint8_t {
 /// pathPoints / subpaths / pathOpen / primitive / corner radii / visible /
 /// width / height exactly as the TypeScript does. `layerTime` is the layer's
 /// own time (remapOf(id)(t)), the axis Roughen's wiggle rides.
-/// Every operator is ported; `unported` (layer left untouched) is returned only
-/// when Offset Paths' non-convex cleanup leaves several loops that the
-/// TypeScript merges with polygon-clipping's union (Martinez), not ported.
+/// Every operator is ported (Offset Paths' non-convex cleanup through
+/// polygon_clipping.cpp); `unported` is kept for operators added later.
+
 GeometryStatus apply_path_ops(const doc::Node& n, const Values& a, double layerTime, RLayer& layer);
 
 /// pathOps.ts `shapeOutline(primitive, w, h, ellipseSteps, subdivide, radii, axisScale)` —
