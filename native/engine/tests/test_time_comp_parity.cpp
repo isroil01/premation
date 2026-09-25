@@ -144,6 +144,26 @@ void cmp_layer(Cmp& c, const std::string& at, const sc::RLayer& l, const Json& w
       }
     }
   }
+  if (w.at("subpaths").is_array()) {
+    if (!l.subpaths.is_array() || l.subpaths.arr().size() != w.at("subpaths").arr().size()) {
+      c.diffs.push_back(p + "subpaths: count differs");
+    } else {
+      for (std::size_t s = 0; s < l.subpaths.arr().size(); ++s) {
+        const Json& gotPts = l.subpaths.arr()[s].at("points");
+        const Json& wantPts = w.at("subpaths").arr()[s];
+        if (gotPts.arr().size() != wantPts.arr().size()) {
+          c.diffs.push_back(p + "subpaths[" + std::to_string(s) + "]: point count differs");
+          continue;
+        }
+        for (std::size_t i = 0; i < gotPts.arr().size(); ++i) {
+          const std::vector<double> got = {gotPts.arr()[i].at("x").num(), gotPts.arr()[i].at("y").num()};
+          c.vec(p + "subpaths[" + std::to_string(s) + "][" + std::to_string(i) + "]", got, wantPts.arr()[i]);
+        }
+      }
+    }
+  } else if (l.subpaths.is_array()) {
+    c.diffs.push_back(p + "subpaths: unexpected");
+  }
   c.boolean(p + "precompScene3d", l.precompScene3d.has_value(), w.at("precompScene3d"));
   if (!w.at("depth").is_null()) c.num(p + "depth", l.depth, w.at("depth"));
   const auto optArr = [&](const std::string& what, const auto& got, const Json& want) {

@@ -825,6 +825,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   src/scene/threed_card.cpp       #   the 3D comp card (Scene3D::comp_card)
   src/scene/cloner_port.cpp       #   cloners (clonerPlan, expandCloners, the cascade)
   src/scene/particle_port.cpp     #   particle layers (sims, the Canvas2D field)
+  src/scene/polygon_clipping.cpp  #   polygon-clipping (Martinez) + splaytree + orient2d, exact
+  src/scene/merge_paths.cpp       #   live Merge Paths (mergePaths.ts)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )
@@ -855,7 +857,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   # the D4 frame cache) — the pixel parity is premation-scene's (render-tests).
   if(MOTION_BUILD_TESTS)
     add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
-               tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp)
+               tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp tests/test_polygon_clipping_parity.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

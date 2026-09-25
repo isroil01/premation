@@ -17,6 +17,7 @@
 #include "rig_bridge.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
+#include "merge_paths.hpp"
 #include "misc_port.hpp"
 #include "paint_port.hpp"
 #include "particle_port.hpp"
@@ -1140,8 +1141,29 @@ void Walk::build_node(const doc::Node& n) {
     }
   }
   if (fx.at("audioWaveform").is_object()) unported(l, n, "audio waveform generator");
-  if (fx.at("booleanOp").is_string() && fx.at("booleanSources").is_array() && fx.at("booleanSources").arr().size() >= 2) {
-    unported(l, n, "live merge paths");
+  // Live Merge Paths (merge_paths.cpp): the boolean re-evaluated from the operands'
+  // world outlines each frame, recentred onto this layer (the pose lands after 3D).
+  std::optional<LiveBooleanResult> liveBoolean;
+  if (has_live_boolean(n)) {
+    OperandReader reader;
+    reader.node = [this](const std::string& id) { return d_.node(id); };
+    reader.world = [this](const std::string& id) { return world_of(id); };
+    reader.values = [this](const std::string& id) -> const Values& { return values_of(id); };
+    reader.pathPoints = [this](const std::string& id) -> Json {
+      const doc::DataTrack* tr = doc::anim_data_track(d_, sid(id), "path.points");
+      if (tr == nullptr) return {};
+      const auto v = doc::sample_data_track(*tr, remap(id, t_, false));
+      if (!v || !v->is_array() || v->arr().size() < 3 || !v->arr()[0].is_object() || !v->arr()[0].has("x")) return {};
+      return live_path_points(d_, sid(id), remap(id, t_, false));
+    };
+    liveBoolean = evaluate_live_boolean(n, reader);
+    if (liveBoolean) {
+      pathPoints = liveBoolean->points;
+      if (liveBoolean->subpaths.is_array() && liveBoolean->subpaths.arr().size() > 1) {
+        staticSubpaths = liveBoolean->subpaths;
+        pathPoints = liveBoolean->subpaths.arr()[0].at("points");
+      }
+    }
   }
   // 3D (threed_port.cpp): placement below; the mesh-carrying kinds are not ported yet.
   const bool is3d = doc::is_3d_enabled(n);
@@ -1190,6 +1212,17 @@ void Walk::build_node(const doc::Node& n) {
   }
   // Behind the camera's near plane: not drawn (and neither casts nor receives).
   if (is3d && !three_->place(n, a, base.x, base.y, base.rotation, base.scaleX, base.scaleY, world, s3, px, py, sx, sy, rot, l)) return;
+  if (liveBoolean) {  // the merge rides its union centre, identity scale: the outline is in world px
+    px = liveBoolean->cx;
+    py = liveBoolean->cy;
+    layerW = liveBoolean->width;
+    layerH = liveBoolean->height;
+    sx = 1;
+    sy = 1;
+    rot = 0;
+    l.matrix.reset();
+    l.world3d.reset();
+  }
 
   // Fill paint (+ its keyframed geometry and stops).
   Json fillPaint = read_node_fill(n);

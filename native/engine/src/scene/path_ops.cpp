@@ -1026,6 +1026,14 @@ std::optional<std::vector<Json>> run_paints(const std::vector<Run>& runs, const 
 
 }  // namespace
 
+std::vector<std::array<double, 2>> shape_outline_points(const std::string& primitive, double w, double h, double ellipseSteps,
+                                                     double subdivide, const std::optional<std::array<double, 4>>& radii,
+                                                     const std::optional<std::array<double, 2>>& axisScale) {
+  std::vector<std::array<double, 2>> out;
+  for (const Pt& p : shape_outline(primitive, w, h, ellipseSteps, subdivide, radii, axisScale)) out.push_back({p.x, p.y});
+  return out;
+}
+
 GeometryStatus apply_path_ops(const doc::Node& n, const Values& a, double layerTime, RLayer& layer) {
   std::vector<Op> ops;
   for (const Json& raw : doc::read_path_ops(n)) {

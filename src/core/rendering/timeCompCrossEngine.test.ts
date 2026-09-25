@@ -207,6 +207,43 @@ const DEFS: Def[] = [
     },
   },
   {
+    id: 'live-merge-paths',
+    frames: [0, 18],
+    build(graph, anim) {
+      const operand = (n: ReturnType<typeof rect>) => {
+        n.components.push({ id: `${n.id}_fx`, type: 'fx', props: { booleanOperand: true } } as never);
+        return n;
+      };
+      // Operands: a scaled rounded rect with an animated x, an ellipse under a
+      // rotating null, a curved Geometry path.
+      graph.addNode(operand(rect('opA', 180, 150, 160, 110, '#888', { cornerRadius: 24, scaleX: 1.2, scaleY: 0.9 })));
+      anim.setKeyframe('opA', 'x', 0, 170);
+      anim.setKeyframe('opA', 'x', 1, 230);
+      graph.addNode(node('spin', { kind: 'null', position: { x: 260, y: 170 } }));
+      anim.setKeyframe('spin', 'rotation', 0, 0);
+      anim.setKeyframe('spin', 'rotation', 1, 50);
+      graph.addChild('spin', operand(ellipse('opB', 40, 0, 120, '#888')));
+      graph.addNode(operand(node('opC', {
+        kind: 'shape', position: { x: 200, y: 110 }, transform: { width: 120, height: 80 }, style: { fill: '#888' },
+        components: [{ id: 'opC_g', type: 'Geometry', props: { open: false, points: [
+          { x: -60, y: -30, inX: -60, inY: -30, outX: -20, outY: -60 },
+          { x: 50, y: -20, inX: 30, inY: -50, outX: 50, outY: -20 },
+          { x: 40, y: 40, inX: 40, inY: 40, outX: 40, outY: 40 },
+          { x: -50, y: 30, inX: -50, inY: 30, outX: -50, outY: 30 },
+        ] } }],
+      }) as never));
+      // Subtract (A minus the others) and exclude (holes / islands as subpaths).
+      graph.addNode(node('mergeSub', {
+        kind: 'shape', position: { x: 0, y: 0 }, style: { fill: '#ff595e' },
+        components: [{ id: 'mergeSub_fx', type: 'fx', props: { booleanOp: 'subtract', booleanSources: ['opA', 'opB', 'opC'] } }],
+      }));
+      graph.addNode(node('mergeX', {
+        kind: 'shape', position: { x: 0, y: 0 }, style: { fill: '#1982c4' },
+        components: [{ id: 'mergeX_fx', type: 'fx', props: { booleanOp: 'exclude', booleanSources: ['opA', 'opB'] } }],
+      }));
+    },
+  },
+  {
     id: 'instance-cycle-guard',
     frames: [0],
     sizes: { A: { width: 240, height: 160 }, B: { width: 160, height: 100 } },
@@ -353,6 +390,7 @@ function projLayer(l: RenderLayer): Proj {
     motionSamples: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => [s.x, s.y, s.rotation, s.scaleX, s.scaleY, s.opacity]) : [],
     maskPaths: l.mask?.paths.length ?? 0,
     pathPoints: Array.isArray(l.pathPoints) ? l.pathPoints.map((p) => [p.x, p.y, p.inX, p.inY, p.outX, p.outY]) : null,
+    subpaths: Array.isArray(l.subpaths) ? l.subpaths.map((s) => s.points.map((p) => [p.x, p.y])) : null,
     precompScene3d: !!l.precompScene3d,
     depth: l.matrix ? l.depth : null,  // a 2D layer's depth is never read
     matrix: l.matrix ? [...l.matrix] : null,
