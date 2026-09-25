@@ -143,6 +143,7 @@ export class EngineSupervisor {
   private transport: EngineTransport | null = null;
   private heartbeat: unknown = null;
   private lastPong = 0;
+  private lastTick = 0;
   private nonce = 0;
   private crashes: number[] = [];
   private pendingCause: EngineRestartedInfo['cause'] | null = null;
@@ -367,10 +368,16 @@ export class EngineSupervisor {
 
   private startHeartbeat(gen: number): void {
     this.stopHeartbeat();
+    this.lastTick = this.timers.now();
     this.heartbeat = this.timers.setInterval(() => {
       if (gen !== this.generation || this.state_ !== 'running') return;
-      if (this.timers.now() - this.lastPong > this.opts.hangMs) {
-        this.log('error', 'engine_hung', { sincePongMs: this.timers.now() - this.lastPong });
+      const now = this.timers.now();
+      // A late tick means THIS process's event loop was blocked: the engine's
+      // pong may be sitting unread, so it gets a fresh window, not a kill.
+      if (now - this.lastTick > 2 * this.opts.heartbeatMs) this.lastPong = now;
+      this.lastTick = now;
+      if (now - this.lastPong > this.opts.hangMs) {
+        this.log('error', 'engine_hung', { sincePongMs: now - this.lastPong });
         this.pendingCause = 'hang';
         this.stopHeartbeat();
         this.child?.kill();

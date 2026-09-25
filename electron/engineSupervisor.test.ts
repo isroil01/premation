@@ -162,6 +162,11 @@ class ManualTimers implements SupervisorTimers {
     this.t = end;
     await flush();
   }
+  /** A blocked event loop: time passes, due timers fire once, late. */
+  stall(ms: number) {
+    this.t += ms;
+    for (const v of this.timers.values()) v.at = Math.max(v.at, this.t);
+  }
 }
 
 /** Let stream deliveries (nextTick) and promise chains settle. */
@@ -243,6 +248,25 @@ describe('EngineSupervisor', () => {
     await timers.advance(300);
     expect(sup.state).toBe('running');
     expect(restarts[0]!.cause).toBe('hang');
+  });
+
+  it('a stall of the host\'s own event loop is not blamed on the engine', async () => {
+    const { sup, timers, spawned } = setup([{}, { pong: false }]);
+    await sup.start();
+    timers.stall(7000);
+    await timers.advance(3000);
+    expect(spawned[0]!.killed).toBe(false);
+    expect(sup.state).toBe('running');
+  });
+
+  it('a hung engine is still killed after a host stall', async () => {
+    const { sup, timers, spawned } = setup([{ pong: false }, {}]);
+    await sup.start();
+    timers.stall(7000);
+    await timers.advance(1);
+    expect(spawned[0]!.killed).toBe(false);
+    await timers.advance(6000);
+    expect(spawned[0]!.killed).toBe(true);
   });
 
   it('a healthy engine answering pings is never killed', async () => {
