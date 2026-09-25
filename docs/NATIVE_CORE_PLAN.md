@@ -480,6 +480,51 @@ program so output views stop using the lattice (1.5e-2 in gamut at 65³ today),
 16/32-bit export (F*), and the C++ document producing `colorManagement` + footage
 `inputSpace` (the TS producer never sets them).
 
+**D2w effects (2026-09-25): baked layers, colour LUTs and the paint effects
+render from the C++ document, on the E4 chain.** `native/engine/src/scene`:
+`bake_chain.cpp` (Canvas2DVectorRasterizer's bake branch: the layer mask as a
+matte over the padded raster, the stack resolved with `params_of` and px-scaled
+by `scaleEffectLengths`, handed to `effects::apply_effect_chain` — THE chain,
+`effect_chain_parity.json` — through a BakeHook on `draw_raster_source`;
+`bakedEffectSpread` pads the raster), `lut_port.cpp` (the `lut:<id>` 256×1 and
+`cubelut:<id>` slice strips as builder-computed textures, `TexKind::pixels`,
+byte-identical to the TS uploads, from the chain's per-effect tables; the
+apply-color-lut entry; uniform fills graded through the strip) and
+`effect_handoff.cpp` (buildSnapshot's packed mask geometry / `pathMaskIndex` /
+`pathPoints` / `wiggleState`); D4's content key hashes the pixels textures.
+Raster side: `css::parse_filter_list` → SkImageFilters (the chain's batched CSS
+effects draw instead of being reported), accelerated canvases blur with Skia's
+shader algorithm as Chromium's GPU canvas does (the bake canvas stays
+willReadFrequently), a float16 canvas for Plexus. Parity:
+`nativeBakeChainCrossEngine.test.ts` → `bake_chain_parity.json` →
+`test_bake_chain.cpp` pins the scene side over the chain (9/9 whole bakes,
+2366/2366 Canvas2D ops, every putImageData the same bytes, on real pixels);
+`effect_chain_parity` 606/606. It found a TS bug the chain's port reproduced:
+applyStroke's pooled `stroke-inner` context kept `destination-out`, so every
+inside / centre Stroke after the first drew no inner band — fixed in both.
+Quick loop (`--tag effects`, 436 frames, RTX 4060), effects family before the
+wiring: **ported 247 → 265**; the reasons "CPU-baked effect chain / fill
+opacity (E4)" (10 + 10 raster), "per-channel LUT effects" (7 + 7), "3D LUT
+effect" (1) and "CPU-baked effect (E4) (vegas / plexus / path-stroke /
+scribble)" (5) are gone (on native-core with 3D: 312 ported, 303 within
+tolerance). Two ceilings in `native-scene-baseline.json` (effect-posterize
+1.105 %, effect-plexus 4.411 % — Chromium's GPU canvas raster vs Skia CPU, not
+the builder); fill-opacity-zero-inner-shadow 11 % → 0.000 %, mask-feather
+6.2 % → 0.02 % from the blur. Glass / layer styles / backdrop blur were already
+ported (4/4, 9/9). **Not ported, by decision:** JS/WGSL plugin effects and
+plugin generator layers (13 frames) — their shaders, passes and params live in
+the page's plugin registry (`registerEffects`), not in the document, and G2
+keeps that system out of the engine; reported as such. Also still reported:
+footage (image / video) bakes, Write-on's brush form (dab history sampled at
+past times). **E4 exit not met yet:** per-effect bench (162 effects, a
+full-frame 1080p shape baked every frame, opacity animated so no raster hit,
+`premation-scene --bench`, RTX 4060): the bake with no effect costs 50 ms (46
+ms raster: the 1080p path raster + ImageData round trips), median 80 ms with
+one effect, worst inner-shadow 1027 / stroke 814 / inner-glow 478 / vegas 279
+ms — the styles are dozens of full-frame drawImage calls on Skia's CPU raster.
+Next: a GPU route for the styles, cached silhouettes, and not re-rasterizing
+the content when only effect params change.
+
 ### Phase E — Media, audio, text, effects
 
 | Step | What | Exit | Size |
@@ -917,17 +962,17 @@ WGSL on the GPU (they are ported effects: they bake only when a layer bakes for
 another reason).
 
 Open work for E4:
-- **Put the chain under the engine.** `frame_build.cpp` still reports
-  `layer_is_baked` layers as unported: it needs the layer raster (E3 text /
-  vector on Skia), the job's effects built from the document (`params_of` +
-  `scaleEffectLengths` from the registry's `px` units, and the layer mask
-  pre-applied), `run_bake_job` on the Skia canvas, and the texture upload
-  (GPU; out of scope here). Then the golden gate runs on whole frames.
-- **Skia side, unverifiable here:** CSS filter functions beyond `blur()`
-  (brightness, contrast, saturate, grayscale, sepia, hue-rotate, invert,
-  drop-shadow) on `canvas_ffi.cpp`'s `setFilterString`; Plexus' float16
-  OffscreenCanvas scratch (the chain takes the TS's direct path); pixel parity
-  of all 27 drawn effects against Chromium (`premation-raster`, golden scenes).
+- ~~Put the chain under the engine.~~ Done for shape / text rasters (D2w
+  effects, 2026-09-25, see Phase D): `scene/bake_chain.cpp` builds the job from
+  the document (`params_of` + `scaleEffectLengths`, the layer mask as a matte)
+  and runs `apply_effect_chain` on the raster's Skia canvas; the golden gate
+  runs on whole frames. Left: footage bakes (`setImage` / `setVideo`) and the
+  24 fps exit (styles on a 1080p layer cost 0.4–0.9 s a frame on Skia's CPU
+  raster; see the D2w bench).
+- ~~Skia side~~: CSS filter lists (`css::parse_filter_list` → SkImageFilters)
+  and Plexus' float16 scratch are in; accelerated canvases blur with the GPU
+  canvas's algorithm. Pixel parity of all 27 drawn effects against Chromium on
+  their own (`premation-raster`) is still to run; the golden effect scenes pass.
 - The non-effect CPU bake sites in `src/core/rendering` (`pixelMotion*`,
   `deinterlace`, `channelView`, `frameTap`, `AppTextureProvider`'s read-backs).
 - Toolchain not checked here: clang-tidy (CI runs it on `native/libs` only),
