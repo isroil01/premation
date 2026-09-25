@@ -9,6 +9,7 @@
 #include <set>
 #include <unordered_map>
 
+#include "effect_handoff.hpp"
 #include "effects_port.hpp"
 #include "frame_build.hpp"
 #include "rig_bridge.hpp"
@@ -543,6 +544,13 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
   }
   if (own.empty()) return {};
   std::vector<Json> resolved = resolve_effect_params(own, a, layerTime);
+  {  // path / paint effects' resolved geometry (effect_handoff.cpp)
+    std::vector<std::string> notes;
+    resolve_effect_handoffs(resolved, n, a, layerTime, notes);
+    if (note != nullptr) {
+      for (std::string& w : notes) unported(*note, n, std::move(w));
+    }
+  }
   for (Json& e : resolved) {
     if (!(e.at("type").is_string() && e.at("type").str() == "beam-path") || !effect_enabled(e)) continue;
     // buildSnapshot's path hand-off: the assigned mask path, flattened at the

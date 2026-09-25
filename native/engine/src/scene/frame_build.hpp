@@ -16,7 +16,9 @@
 
 namespace premation::scene {
 
-enum class TexKind : std::uint8_t { text, path, mask, media, light };
+/// light: a light's glow wash (light_wash.cpp). pixels: a texture the builder
+/// computes itself (a colour-LUT strip), uploaded as given.
+enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels };
 
 struct TextureRequest {
   std::string key;
@@ -32,6 +34,10 @@ struct TextureRequest {
   bool premultiplied = false;
   /// The composition's frame rate (the frame-blend grid's last fallback).
   double compFps = 30;
+  /// Pixels: straight RGBA8 rows (alpha 255 for the LUT strips), pxWidth × pxHeight.
+  std::vector<std::uint8_t> pixels;
+  std::uint32_t pxWidth = 0;
+  std::uint32_t pxHeight = 0;
   /// The layer this texture belongs to (diagnostics).
   std::string layerId;
 };

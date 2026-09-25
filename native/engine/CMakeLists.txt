@@ -806,11 +806,15 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/retime_port.cpp
     src/scene/extrusion_mesh.cpp
     src/scene/mesh_check.cpp
+    src/scene/lut_port.cpp          # D2w effects: colour LUT strips (colorLut.ts, cubeLut.ts)
+    src/scene/bake_chain.cpp        # D2w effects: a baked raster's mask + stack handed to engine_effect_chain
+    src/scene/effect_handoff.cpp    #   the path / paint effects' resolved geometry (buildSnapshot)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )
   target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
-  target_link_libraries(engine_scene PUBLIC engine_core engine_scene_core engine_plugins engine_raster engine_render_graph PRIVATE motion::options)
+  target_link_libraries(engine_scene PUBLIC engine_core engine_scene_core engine_plugins engine_raster engine_render_graph
+                                            engine_effect_chain PRIVATE motion::options)
   if(WIN32)
     target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)
   endif()

@@ -10,6 +10,7 @@
 #include "scene_native_fx.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
+#include "lut_port.hpp"
 #include "scene_math.hpp"
 
 namespace premation::scene {
@@ -184,7 +185,11 @@ bool effects_need_cpu_bake(const std::vector<Json>& effects) {
     if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return true;
     const bool hasOpacity = e.at("opacity").is_number() && std::isfinite(e.at("opacity").num());
     if (hasOpacity && !gpu_blends_effect_opacity(t)) return true;
-    // effectFollowsPath (write-on's brush form is detected by the caller as unported).
+    // effectFollowsPath: Write-on's brush form (writeOnUsesBrush, read through paramsOf).
+    if (t == "write-on") {
+      const Json& mode = doc::params_of(e).at("writeOnMode");
+      if (mode.is_number() && motion::js::round(mode.num()) == 0) return true;
+    }
     if (t != "beam-path") {
       const Json& pm = e.at("params").at("pathMaskId");
       if (pm.is_string() && !pm.str().empty()) return true;
@@ -209,13 +214,14 @@ const char* effect_unported_reason(const Json& e) {
   if (is_color_effect(t)) return nullptr;
   if (is_native_effect(t)) return nullptr;  // G1: native SDK plugins render in the chain (scene_native_fx.cpp)
   if (doc::registry().effect(t) == nullptr) return "plugin effects";
-  if (is_canvas2d_only(t)) return "CPU-baked effect (E4)";
-  if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return "effect scoped to a mask (CPU bake, E4)";
+  // A baked layer's chain runs in the raster (bake_chain.cpp): what it cannot
+  // draw is reported there, per effect, with the raster.
+  if (is_canvas2d_only(t)) return nullptr;
+  if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return nullptr;
   const Json& pm = e.at("params").at("pathMaskId");
-  if (t != "beam-path" && pm.is_string() && !pm.str().empty()) return "path-following effect (CPU bake, E4)";
-  if (e.at("opacity").is_number() && !gpu_blends_effect_opacity(t)) return "effect opacity (CPU bake, E4)";
-  if (is_lut_effect(t)) return "per-channel LUT effect";
-  if (t == "apply-color-lut") return "3D LUT effect";
+  if (t != "beam-path" && pm.is_string() && !pm.str().empty()) return nullptr;
+  if (e.at("opacity").is_number() && !gpu_blends_effect_opacity(t)) return nullptr;
+  if (is_lut_effect(t) || t == "apply-color-lut") return nullptr;  // lut:<id> strip / apply-color-lut entry (lut_port.cpp)
   if (!is_ported_spatial(t) && !is_more_spatial(t)) return "GPU effect not in the C++ port";
   return nullptr;
 }
@@ -509,6 +515,9 @@ std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onl
       w.color("color", c("color", n("opacity") / 100));
       if (position != 0) w.num("position", position);
       spatial.push_back(w.done());
+    }
+    if (t == "apply-color-lut") {
+      if (auto lut = apply_color_lut_entry(e, params, l)) spatial.push_back(std::move(*lut));
     }
     if (!is_ported_spatial(t)) (void)extract_more_spatial(e, params, l, spatial);
     if (t == "sharpen") spatial.push_back(FxWriter("sharpen").num("amount", n("amount") / 100).done());
