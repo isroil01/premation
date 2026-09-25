@@ -4,6 +4,7 @@
 // in the other.
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,5 +32,16 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& doc, cons
 
 /// A saved scene node (`ProjectFile.nodes[i]`) as a Node (SceneGraph.wrap's reading).
 [[nodiscard]] Node node_from_json(const Json& o);
+
+/// guidesStore.restore(s) over the current guides `g` (only the keys `s` carries, as the store does).
+[[nodiscard]] Json restore_guides(Json g, const Json& s);
+/// guidesStore.settings(): the persisted fields, the optional ones only when not default.
+[[nodiscard]] Json guides_settings(const Json& g);
+/// swatchStore canonicalHex.
+[[nodiscard]] std::optional<std::string> canonical_hex(const Json& raw);
+/// swatchStore normalizeSwatches (an entry without a usable id: `sw_doc_<n>`).
+[[nodiscard]] Json normalize_swatches(const Json& raw);
+/// materialStore normalizeMaterials (deterministic ids for entries without one).
+[[nodiscard]] Json normalize_materials(const Json& raw);
 
 }  // namespace premation::doc

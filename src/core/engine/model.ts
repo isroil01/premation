@@ -34,6 +34,9 @@ import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from 
 import { useAssetStore, type ImportedAsset, type AssetFolder } from '@stores/assetStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useTransitionStore } from '@stores/transitionStore';
+import { useGuidesStore } from '@stores/guidesStore';
+import { useSwatchStore } from '@stores/swatchStore';
+import { useMaterialStore } from '@stores/materialStore';
 import type { TransitionRecord, TransitionKind, TransitionAlignment } from '@core/timeline/transitionModel';
 import { readLayerFlag } from '@core/scene/layerFlags';
 import { readNodeQuality } from '@core/effects/layerQuality';
@@ -630,5 +633,8 @@ function documentSnapshotIndexed(
     propertyTrees,
     keyframes,
     renderQueue: getRenderQueue(),
+    guides: JSON.stringify(useGuidesStore.getState().settings()),
+    swatches: useSwatchStore.getState().list(),
+    materials: useMaterialStore.getState().list().map((m) => ({ id: m.id, name: m.name, params: JSON.stringify(m.params), swatch: m.swatch ?? '' })),
   };
 }

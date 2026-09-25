@@ -23,7 +23,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   clearHistory: { id: 6, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "Drop all history (the document is unchanged)." },
   setHistoryLimit: { id: 7, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "" },
   addHistoryCheckpoint: { id: 21, kind: 'control', coalesce: false, family: "History", result: "Empty", doc: "B3z — History panel ▸ Snapshot: push a NAMED entry that changes nothing, a point the panel can jump back to (Photoshop's snapshot; After Effects has none). Undoing / redoing it changes nothing and moves the revision like any step. Clears the redo stack like any new entry. Refused while a gesture is open (`gestureOpen`); an empty label is `invalidArgument`." },
-  restoreDocument: { id: 20, kind: 'edit', coalesce: false, family: "History", result: "Empty", doc: "B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches, materials and plugin storage are applied too but — like every authored extra no command edits — are not part of the entry. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default \"Restore Version\")." },
+  restoreDocument: { id: 20, kind: 'edit', coalesce: false, family: "History", result: "Empty", doc: "B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches and materials are part of the entry; its plugin storage is applied too but — like every authored extra no command edits — is not. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default \"Restore Version\")." },
   newProject: { id: 10, kind: 'io', coalesce: false, family: "Project", result: "Empty", doc: "Replace the document with an empty project. Clears history." },
   openProject: { id: 11, kind: 'io', coalesce: false, family: "Project", result: "OpenProjectResult", doc: "Open a .motion project (or a recovery file). Clears history; the UI receives documentReset." },
   saveProject: { id: 12, kind: 'io', coalesce: false, family: "Project", result: "SaveProjectResult", doc: "Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged." },
@@ -32,6 +32,9 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   revertProject: { id: 15, kind: 'io', coalesce: false, family: "Project", result: "Empty", doc: "Revert to the last saved state. Clears history." },
   collectFiles: { id: 16, kind: 'io', coalesce: false, family: "Project", result: "SaveProjectResult", doc: "Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged." },
   setAutosave: { id: 17, kind: 'control', coalesce: false, family: "Project", result: "Empty", doc: "Autosave / crash-recovery cadence (a preference the engine executes; not document state)." },
+  setGuides: { id: 22, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — patch the document's guide settings (the persisted half of the guides store: rulers, grids, safe areas, motion-path display, overlay opacity, user ruler guides, camera bookmarks). `patch` is a JSON object; every key it carries replaces the stored field, sanitized and clamped as on open (a malformed guide or bookmark is dropped), unknown keys are ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings." },
+  setSwatches: { id: 23, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — replace the project palette, in order. Colours are canonicalized; a colour that is not hex is `invalidArgument` (nothing changes); an empty or repeated id is re-minted (`sw_doc_<n>`), a blank name becomes the colour. Inverse: the previous palette." },
+  setMaterials: { id: 24, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — replace the project material library, in order. `params` are normalized (every axis clamped, unknown keys dropped); params that are not a JSON object are `invalidArgument`; an empty, repeated or `builtin:` id is re-minted (`mat_doc_<n>`), names are trimmed and a blank one becomes \"Material\", a swatch that is not `#rrggbb` is dropped. Inverse: the previous library." },
   importFiles: { id: 50, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "Import files as footage items. Undo removes the items (files on disk are never touched)." },
   importBytes: { id: 70, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`." },
   relinkItem: { id: 51, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Point an item at a different file (relink missing footage / Replace Footage). Undo restores the old path." },
@@ -164,6 +167,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
 
 export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   getDocument: { id: 1000, family: "Model", result: "DocumentSnapshot", doc: "" },
+  exportDocument: { id: 1088, family: "Model", result: "ExportedDocument", doc: "F2 — the whole project document at the answer's revision, exactly as saveProject writes it (cloud upload, versions, templates and export read it here instead of capturing a copy in the page). Byte order of keys is the engine's; parse it, do not compare bytes across engines." },
   getComposition: { id: 1001, family: "Model", result: "CompositionDetails", doc: "" },
   getLayers: { id: 1002, family: "Model", result: "LayerDetails", doc: "" },
   getPropertyTree: { id: 1003, family: "Model", result: "PropertyTree", doc: "The property tree under `path` ('' = whole layer) to `depth` levels (0 = unlimited), values at `time`." },
@@ -214,6 +218,9 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
   markersChanged: { id: 2011, ephemeral: false, family: "DocumentEvents", doc: "All markers of one owner (full replacement)." },
   renderQueueChanged: { id: 2012, ephemeral: false, family: "DocumentEvents", doc: "" },
   transitionsChanged: { id: 2013, ephemeral: false, family: "DocumentEvents", doc: "B3z — every transition of one composition (full replacement), after a transition command or its undo." },
+  guidesChanged: { id: 2014, ephemeral: false, family: "DocumentEvents", doc: "F2 — the guide settings (full replacement, as DocumentSnapshot.guides), after setGuides, a restore or their undo." },
+  swatchesChanged: { id: 2015, ephemeral: false, family: "DocumentEvents", doc: "F2 — the project palette (full replacement)." },
+  materialsChanged: { id: 2016, ephemeral: false, family: "DocumentEvents", doc: "F2 — the project material library (full replacement)." },
   historyChanged: { id: 2050, ephemeral: true, family: "StatusEvents", doc: "" },
   dirtyChanged: { id: 2051, ephemeral: true, family: "StatusEvents", doc: "" },
   transportChanged: { id: 2052, ephemeral: true, family: "StatusEvents", doc: "" },
@@ -231,4 +238,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":74,"structs":390,"unions":11,"commands":145,"queries":34,"events":28} as const;
+export const SCHEMA_COUNTS = {"enums":74,"structs":400,"unions":11,"commands":148,"queries":35,"events":31} as const;

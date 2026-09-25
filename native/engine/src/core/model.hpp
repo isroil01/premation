@@ -20,6 +20,7 @@
 //   Items       assetStore — footage records (JSON) and folders.
 //   project / rq / mb / cm  documentExtras' project settings and render queue,
 //               the motion-blur store, colour management.
+//   guides / swatches / materials  the guides, swatch and material stores' document halves.
 //
 // ## Parts, copy-on-write and history
 //
@@ -238,18 +239,12 @@ using IdList = std::vector<std::string>;
 /// saved with the project and read back on open, exactly as the TS stores do
 /// (docio.cpp). Not journaled — no command changes it, so no undo entry can.
 struct DocExtras {
-  /// guidesStore: every persisted field (settings() writes the defaults-omitted form).
-  Json guides;
-  /// swatchStore.list(): `{id, name, hex}` in the user's order.
-  Json swatches;
-  /// materialStore.list(): project materials only.
-  Json materials;
   /// pluginStorage (project scope): plugin id → key → string.
-  Json pluginStorage;
+  Json pluginStorage = Json::object();
 };
 
-/// A new project's extras (projectDocumentIO.createEmpty + the stores' defaults).
-[[nodiscard]] DocExtras default_doc_extras();
+/// guidesStore at its defaults: every persisted field (settings() writes the defaults-omitted form).
+[[nodiscard]] Json default_guides();
 
 [[nodiscard]] api::ProjectSettings default_project_settings();
 
@@ -275,6 +270,10 @@ struct Parts {
   std::optional<Ptr<ColorMgmt>> cm;
   /// B3z: the transition records (transitionStore.capture(): comp id → records) — the `tx` part.
   std::optional<Ptr<Json>> tx;
+  /// F2: guidesStore's persisted fields, swatchStore.list(), materialStore.list() — the `guides` / `swatches` / `materials` parts.
+  std::optional<Ptr<Json>> guides;
+  std::optional<Ptr<Json>> swatches;
+  std::optional<Ptr<Json>> materials;
   /// F2 (undo parity): the order `apply` re-inserts composition records and
   /// timelines in — not a part, a hint. Compositions have no order part (see
   /// `note_comp_order`): the TypeScript engine re-inserts a restored record at
@@ -318,7 +317,13 @@ class Document {
   [[nodiscard]] const ColorMgmt& color() const noexcept { return *cm_; }
   /// B3z: transitionStore — comp id → transition records (journaled: the `tx` part).
   [[nodiscard]] const Json& transitions() const noexcept { return *tx_; }
-  /// Swatches, materials, guides, plugin storage (not journaled).
+  /// F2: guidesStore — every persisted field (journaled: the `guides` part).
+  [[nodiscard]] const Json& guides() const noexcept { return *guides_; }
+  /// F2: swatchStore — `{id, name, hex}` in the user's order (the `swatches` part).
+  [[nodiscard]] const Json& swatches() const noexcept { return *swatches_; }
+  /// F2: materialStore — project materials only (the `materials` part).
+  [[nodiscard]] const Json& materials() const noexcept { return *materials_; }
+  /// Plugin storage (not journaled).
   [[nodiscard]] const DocExtras& extras() const noexcept { return extras_; }
   DocExtras& extras_mut() noexcept { return extras_; }
   [[nodiscard]] const OrderedMap<Ptr<Node>>& nodes() const noexcept { return nodes_; }
@@ -345,6 +350,9 @@ class Document {
   MotionBlur& motion_blur_mut();
   ColorMgmt& color_mut();
   Json& transitions_mut();
+  Json& guides_mut();
+  Json& swatches_mut();
+  Json& materials_mut();
   /// Reorder the node insertion order (the saved order).
   void reorder_nodes(const IdList& order);
 
@@ -406,7 +414,10 @@ class Document {
   Ptr<MotionBlur> mb_;
   Ptr<ColorMgmt> cm_;
   Ptr<Json> tx_;
-  DocExtras extras_ = default_doc_extras();
+  Ptr<Json> guides_;
+  Ptr<Json> swatches_;
+  Ptr<Json> materials_;
+  DocExtras extras_;
   std::unique_ptr<Parts> journal_;
   /// The composition order when the journal began (ChangeSet::compSeq).
   IdList journalCompOrder_;

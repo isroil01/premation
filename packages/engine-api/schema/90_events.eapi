@@ -30,6 +30,12 @@ event markersChanged = 2011 { owner: MarkerOwner = 1; markers: Marker[] = 2; }
 event renderQueueChanged = 2012 { items: RenderItemInfo[] = 1; }
 /// B3z — every transition of one composition (full replacement), after a transition command or its undo.
 event transitionsChanged = 2013 { comp: ItemId = 1; transitions: Transition[] = 2; }
+/// F2 — the guide settings (full replacement, as DocumentSnapshot.guides), after setGuides, a restore or their undo.
+event guidesChanged = 2014 { guides: string = 1; }
+/// F2 — the project palette (full replacement).
+event swatchesChanged = 2015 { swatches: Swatch[] = 1; }
+/// F2 — the project material library (full replacement).
+event materialsChanged = 2016 { materials: LibraryMaterial[] = 1; }
 
 family "StatusEvents";
 

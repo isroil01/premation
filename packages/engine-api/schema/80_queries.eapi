@@ -136,7 +136,14 @@ struct DocumentSnapshot {
   propertyTrees: PropertyTree[] = 8;
   keyframes: KeyframeSet[] = 9;
   renderQueue: RenderItemInfo[] = 10;
+  /// F2 — the guide settings as saved (a JSON object; defaults omitted, `{}` when all default). setGuides patches it.
+  guides: string = 11;
+  swatches: Swatch[] = 12;
+  materials: LibraryMaterial[] = 13;
 }
+
+/// The document as saveProject would write it: a .motion project's JSON, UTF-8.
+struct ExportedDocument { document: bytes = 1; }
 
 struct RenderItemInfo {
   id: RenderItemId = 1;
@@ -149,6 +156,8 @@ struct RenderItemInfo {
 }
 
 query getDocument = 1000 { includeProperties: bool = 1; includeKeyframes: bool = 2; } -> DocumentSnapshot;
+/// F2 — the whole project document at the answer's revision, exactly as saveProject writes it (cloud upload, versions, templates and export read it here instead of capturing a copy in the page). Byte order of keys is the engine's; parse it, do not compare bytes across engines.
+query exportDocument = 1088 {} -> ExportedDocument;
 query getComposition = 1001 { comp: ItemId = 1; } -> CompositionDetails;
 query getLayers = 1002 { layers: LayerId[] = 1; } -> LayerDetails;
 /// The property tree under `path` ('' = whole layer) to `depth` levels (0 = unlimited), values at `time`.

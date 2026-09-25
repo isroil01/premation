@@ -5,6 +5,7 @@
 #include <functional>
 
 #include "catalog_data.hpp"
+#include "docio.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
 #include "scene.hpp"
@@ -474,6 +475,23 @@ std::vector<api::Transition> transitions_of(const Document& d, std::string_view 
   return out;
 }
 
+std::string guides_info(const Document& d) { return stringify(guides_settings(d.guides())); }
+
+std::vector<api::Swatch> swatch_infos(const Document& d) {
+  std::vector<api::Swatch> out;
+  for (const Json& s : d.swatches().arr()) out.push_back(api::Swatch{s.at("id").str(), s.at("name").str(), s.at("hex").str()});
+  return out;
+}
+
+std::vector<api::LibraryMaterial> material_infos(const Document& d) {
+  std::vector<api::LibraryMaterial> out;
+  for (const Json& m : d.materials().arr()) {
+    const Json& sw = m.at("swatch");
+    out.push_back(api::LibraryMaterial{m.at("id").str(), m.at("name").str(), stringify(m.at("params")), sw.is_string() ? sw.str() : std::string()});
+  }
+  return out;
+}
+
 api::CompInfo comp_info(const Document& d, std::string_view comp) {
   api::CompInfo info;
   info.id = std::string(comp);
@@ -735,6 +753,9 @@ api::DocumentSnapshot document_snapshot(const PCtx& c, api::Revision revision, c
     }
   }
   s.render_queue = d.render_queue();
+  s.guides = guides_info(d);
+  s.swatches = swatch_infos(d);
+  s.materials = material_infos(d);
   return s;
 }
 

@@ -824,6 +824,11 @@ struct SetProjectSettings;
 struct RevertProject;
 struct CollectFiles;
 struct SetAutosave;
+struct SetGuides;
+struct Swatch;
+struct SetSwatches;
+struct LibraryMaterial;
+struct SetMaterials;
 struct InterpretationPatch;
 struct ImportFile;
 struct ImportFiles;
@@ -984,6 +989,7 @@ struct SetPluginEnabled;
 struct SetPluginData;
 struct Command;
 struct GetDocument;
+struct ExportDocument;
 struct GetComposition;
 struct GetLayers;
 struct GetPropertyTree;
@@ -1060,6 +1066,7 @@ struct KeyframeSet;
 struct RenderSettings;
 struct RenderItemInfo;
 struct DocumentSnapshot;
+struct ExportedDocument;
 struct CompositionDetails;
 struct LayerDetails;
 struct PropertyValue;
@@ -1124,6 +1131,9 @@ struct PropertyGroupsChangedEvent;
 struct MarkersChangedEvent;
 struct RenderQueueChangedEvent;
 struct TransitionsChangedEvent;
+struct GuidesChangedEvent;
+struct SwatchesChangedEvent;
+struct MaterialsChangedEvent;
 struct HistoryChangedEvent;
 struct DirtyChangedEvent;
 struct TransportChangedEvent;
@@ -1522,6 +1532,36 @@ struct SetAutosave {
   std::uint32_t interval_seconds = 0;
   std::uint32_t keep = 0;
   bool operator==(const SetAutosave&) const = default;
+};
+
+struct SetGuides {
+  std::string patch;
+  bool operator==(const SetGuides&) const = default;
+};
+
+struct Swatch {
+  std::string id;
+  std::string name;
+  std::string hex;
+  bool operator==(const Swatch&) const = default;
+};
+
+struct SetSwatches {
+  std::vector<Swatch> swatches;
+  bool operator==(const SetSwatches&) const = default;
+};
+
+struct LibraryMaterial {
+  std::string id;
+  std::string name;
+  std::string params;
+  std::string swatch;
+  bool operator==(const LibraryMaterial&) const = default;
+};
+
+struct SetMaterials {
+  std::vector<LibraryMaterial> materials;
+  bool operator==(const SetMaterials&) const = default;
 };
 
 struct InterpretationPatch {
@@ -2685,6 +2725,9 @@ struct Command {
     revert_project = 15,
     collect_files = 16,
     set_autosave = 17,
+    set_guides = 22,
+    set_swatches = 23,
+    set_materials = 24,
     import_files = 50,
     import_bytes = 70,
     relink_item = 51,
@@ -2814,7 +2857,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -2823,6 +2866,10 @@ struct GetDocument {
   bool include_properties = false;
   bool include_keyframes = false;
   bool operator==(const GetDocument&) const = default;
+};
+
+struct ExportDocument {
+  bool operator==(const ExportDocument&) const = default;
 };
 
 struct GetComposition {
@@ -3025,6 +3072,7 @@ struct GetCommandLog {
 struct Query {
   enum class Kind : std::uint32_t {
     get_document = 1000,
+    export_document = 1088,
     get_composition = 1001,
     get_layers = 1002,
     get_property_tree = 1003,
@@ -3059,7 +3107,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3222,6 +3270,9 @@ struct CommandResult {
     revert_project = 15,
     collect_files = 16,
     set_autosave = 17,
+    set_guides = 22,
+    set_swatches = 23,
+    set_materials = 24,
     import_files = 50,
     import_bytes = 70,
     relink_item = 51,
@@ -3351,7 +3402,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -3616,7 +3667,15 @@ struct DocumentSnapshot {
   std::vector<PropertyTree> property_trees;
   std::vector<KeyframeSet> keyframes;
   std::vector<RenderItemInfo> render_queue;
+  std::string guides;
+  std::vector<Swatch> swatches;
+  std::vector<LibraryMaterial> materials;
   bool operator==(const DocumentSnapshot&) const = default;
+};
+
+struct ExportedDocument {
+  std::vector<std::uint8_t> document;
+  bool operator==(const ExportedDocument&) const = default;
 };
 
 struct CompositionDetails {
@@ -3951,6 +4010,7 @@ struct CommandLog {
 struct QueryResult {
   enum class Kind : std::uint32_t {
     get_document = 1000,
+    export_document = 1088,
     get_composition = 1001,
     get_layers = 1002,
     get_property_tree = 1003,
@@ -3985,7 +4045,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -4104,6 +4164,21 @@ struct TransitionsChangedEvent {
   bool operator==(const TransitionsChangedEvent&) const = default;
 };
 
+struct GuidesChangedEvent {
+  std::string guides;
+  bool operator==(const GuidesChangedEvent&) const = default;
+};
+
+struct SwatchesChangedEvent {
+  std::vector<Swatch> swatches;
+  bool operator==(const SwatchesChangedEvent&) const = default;
+};
+
+struct MaterialsChangedEvent {
+  std::vector<LibraryMaterial> materials;
+  bool operator==(const MaterialsChangedEvent&) const = default;
+};
+
 struct HistoryChangedEvent {
   HistoryState state;
   std::string undo_label;
@@ -4209,6 +4284,9 @@ struct Event {
     markers_changed = 2011,
     render_queue_changed = 2012,
     transitions_changed = 2013,
+    guides_changed = 2014,
+    swatches_changed = 2015,
+    materials_changed = 2016,
     history_changed = 2050,
     dirty_changed = 2051,
     transport_changed = 2052,
@@ -4224,7 +4302,7 @@ struct Event {
     fonts_changed = 2062,
     autosaved = 2063,
   };
-  std::variant<DocumentResetEvent, ProjectSettingsChangedEvent, ItemsChangedEvent, ItemsRemovedEvent, CompositionChangedEvent, LayersChangedEvent, LayersRemovedEvent, LayerOrderChangedEvent, PropertiesChangedEvent, KeyframesChangedEvent, PropertyGroupsChangedEvent, MarkersChangedEvent, RenderQueueChangedEvent, TransitionsChangedEvent, HistoryChangedEvent, DirtyChangedEvent, TransportChangedEvent, PlayheadEvent, RenderStatsUpdatedEvent, CacheChangedEvent, EngineErrorEvent, LayerErrorsEvent, JobProgressEvent, JobFinishedEvent, ProjectSavedEvent, AssetStatusChangedEvent, FontsChangedEvent, AutosavedEvent> v;
+  std::variant<DocumentResetEvent, ProjectSettingsChangedEvent, ItemsChangedEvent, ItemsRemovedEvent, CompositionChangedEvent, LayersChangedEvent, LayersRemovedEvent, LayerOrderChangedEvent, PropertiesChangedEvent, KeyframesChangedEvent, PropertyGroupsChangedEvent, MarkersChangedEvent, RenderQueueChangedEvent, TransitionsChangedEvent, GuidesChangedEvent, SwatchesChangedEvent, MaterialsChangedEvent, HistoryChangedEvent, DirtyChangedEvent, TransportChangedEvent, PlayheadEvent, RenderStatsUpdatedEvent, CacheChangedEvent, EngineErrorEvent, LayerErrorsEvent, JobProgressEvent, JobFinishedEvent, ProjectSavedEvent, AssetStatusChangedEvent, FontsChangedEvent, AutosavedEvent> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Event&) const = default;
 };
@@ -4800,6 +4878,16 @@ void encode(wire::Writer& w, const CollectFiles& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CollectFiles& out);
 void encode(wire::Writer& w, const SetAutosave& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetAutosave& out);
+void encode(wire::Writer& w, const SetGuides& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetGuides& out);
+void encode(wire::Writer& w, const Swatch& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, Swatch& out);
+void encode(wire::Writer& w, const SetSwatches& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetSwatches& out);
+void encode(wire::Writer& w, const LibraryMaterial& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, LibraryMaterial& out);
+void encode(wire::Writer& w, const SetMaterials& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetMaterials& out);
 void encode(wire::Writer& w, const InterpretationPatch& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, InterpretationPatch& out);
 void encode(wire::Writer& w, const ImportFile& v);
@@ -5120,6 +5208,8 @@ void encode(wire::Writer& w, const Command& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Command& out);
 void encode(wire::Writer& w, const GetDocument& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetDocument& out);
+void encode(wire::Writer& w, const ExportDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ExportDocument& out);
 void encode(wire::Writer& w, const GetComposition& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetComposition& out);
 void encode(wire::Writer& w, const GetLayers& v);
@@ -5272,6 +5362,8 @@ void encode(wire::Writer& w, const RenderItemInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderItemInfo& out);
 void encode(wire::Writer& w, const DocumentSnapshot& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, DocumentSnapshot& out);
+void encode(wire::Writer& w, const ExportedDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ExportedDocument& out);
 void encode(wire::Writer& w, const CompositionDetails& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CompositionDetails& out);
 void encode(wire::Writer& w, const LayerDetails& v);
@@ -5400,6 +5492,12 @@ void encode(wire::Writer& w, const RenderQueueChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderQueueChangedEvent& out);
 void encode(wire::Writer& w, const TransitionsChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TransitionsChangedEvent& out);
+void encode(wire::Writer& w, const GuidesChangedEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GuidesChangedEvent& out);
+void encode(wire::Writer& w, const SwatchesChangedEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SwatchesChangedEvent& out);
+void encode(wire::Writer& w, const MaterialsChangedEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MaterialsChangedEvent& out);
 void encode(wire::Writer& w, const HistoryChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, HistoryChangedEvent& out);
 void encode(wire::Writer& w, const DirtyChangedEvent& v);

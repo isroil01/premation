@@ -911,8 +911,9 @@ Json migrate_document(Json doc) {
 // ── Document extras: guides, swatches, materials, transitions, plugin storage ──
 // The stores' document halves (guidesStore settings()/restore, swatchStore
 // normalizeSwatches, materialStore normalizeMaterials, transitionStore,
-// pluginStorage restoreProjectStorage/captureProjectStorage). No command edits
-// them (ENGINE_API.md §14.3); they ride through open → save unchanged.
+// pluginStorage restoreProjectStorage/captureProjectStorage). Guides, swatches
+// and materials are journaled parts (setGuides / setSwatches / setMaterials);
+// plugin storage rides through open → save unchanged.
 namespace {
 
 double clamp_round(double v, double lo, double hi) { return std::max(lo, std::min(hi, motion::js::round(v))); }
@@ -999,7 +1000,8 @@ Json sanitize_stored_guides(const Json& raw) {
   return out;
 }
 
-/// guidesStore.restore(s) over the current guides (only the keys `s` carries, as the store does).
+}  // namespace
+
 Json restore_guides(Json g, const Json& s) {
   for (const char* k : {"rulers", "grid", "snapToGrid", "proportionalGrid", "safeArea", "motionPathVisible"}) {
     if (s.at(k).is_bool()) g.set(k, s.at(k));
@@ -1034,7 +1036,6 @@ Json restore_guides(Json g, const Json& s) {
   return g;
 }
 
-/// guidesStore.settings(): the persisted fields, the optional ones only when not default.
 Json guides_settings(const Json& g) {
   Json out = Json::object();
   for (const char* k : {"rulers", "grid", "gridSpacing", "gridSubdivisions", "snapToGrid", "gridColor", "gridStyle", "proportionalGrid",
@@ -1051,7 +1052,6 @@ Json guides_settings(const Json& g) {
   return out;
 }
 
-/// swatchStore canonicalHex.
 std::optional<std::string> canonical_hex(const Json& raw) {
   if (!raw.is_string()) return std::nullopt;
   std::string_view t = raw.str();
@@ -1077,6 +1077,8 @@ std::optional<std::string> canonical_hex(const Json& raw) {
   return "#" + full;
 }
 
+namespace {
+
 std::string upper(std::string s) {
   for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
   return s;
@@ -1086,7 +1088,8 @@ bool blank(const std::string& s) {
   return std::all_of(s.begin(), s.end(), [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; });
 }
 
-/// swatchStore normalizeSwatches (an entry without a usable id: `sw_doc_<n>`).
+}  // namespace
+
 Json normalize_swatches(const Json& raw) {
   Json out = Json::array();
   if (!raw.is_array()) return out;
@@ -1108,6 +1111,8 @@ Json normalize_swatches(const Json& raw) {
   }
   return out;
 }
+
+namespace {
 
 /// material.ts normalizeMaterialParams.
 Json normalize_material_params(const Json& raw) {
@@ -1156,7 +1161,8 @@ std::string trim_ws(const std::string& s) {
   return std::string(t);
 }
 
-/// materialStore normalizeMaterials (deterministic ids for entries without one).
+}  // namespace
+
 Json normalize_materials(const Json& raw) {
   Json out = Json::array();
   if (!raw.is_array()) return out;
@@ -1186,6 +1192,8 @@ Json normalize_materials(const Json& raw) {
   return out;
 }
 
+namespace {
+
 /// pluginStorage isScopeStore: plugin id → { key → string }.
 bool is_scope_store(const Json& v) {
   if (!v.is_object()) return false;
@@ -1208,22 +1216,9 @@ Json capture_project_storage(const Json& store) {
   return out;
 }
 
-/// restoreDocument's extras: present keys replace (swatches, materials) or
-/// merge (guides) over what the session held; plugin storage
-/// is assigned unconditionally.
-DocExtras restore_extras(const DocExtras& prev, const Json& doc) {
-  DocExtras x = prev;
-  x.pluginStorage = is_scope_store(doc.at("pluginStorage")) ? doc.at("pluginStorage") : Json::object();
-  if (truthy(doc.at("guides"))) x.guides = restore_guides(prev.guides, doc.at("guides"));
-  if (truthy(doc.at("swatches"))) x.swatches = normalize_swatches(doc.at("swatches"));
-  if (truthy(doc.at("materials"))) x.materials = normalize_materials(doc.at("materials"));
-  return x;
-}
-
 }  // namespace
 
-DocExtras default_doc_extras() {
-  DocExtras x;
+Json default_guides() {
   Json g = Json::object();
   g.set("rulers", Json::boolean(false));
   g.set("grid", Json::boolean(false));
@@ -1243,11 +1238,7 @@ DocExtras default_doc_extras() {
   g.set("motionPathShow", Json::string("all"));
   g.set("motionPathWindowSeconds", Json::number(2));
   g.set("userGuides", Json::array());
-  x.guides = std::move(g);
-  x.swatches = Json::array();
-  x.materials = Json::array();
-  x.pluginStorage = Json::object();
-  return x;
+  return g;
 }
 
 Json capture_document(const Document& d) {
@@ -1274,15 +1265,15 @@ Json capture_document(const Document& d) {
   mbj.set("samples", Json::number(mb.samples));
   mbj.set("adaptiveSampleLimit", Json::number(mb.adaptiveSampleLimit));
   doc.set("motionBlur", std::move(mbj));
-  doc.set("guides", guides_settings(d.extras().guides));
+  doc.set("guides", guides_settings(d.guides()));
   const ColorMgmt& cm = d.color();
   Json cmj = Json::object();
   cmj.set("workingSpace", Json::string(cm.workingSpace));
   cmj.set("displayTransform", Json::string(cm.displayTransform));
   cmj.set("bitDepth", Json::number(cm.bitDepth));
   doc.set("colorManagement", std::move(cmj));
-  doc.set("swatches", d.extras().swatches);
-  doc.set("materials", d.extras().materials);
+  doc.set("swatches", d.swatches());
+  doc.set("materials", d.materials());
   doc.set("transitions", d.transitions());
   // Absent when empty (captureProjectStorage), so such a document reads back byte-identical.
   if (Json ps = capture_project_storage(d.extras().pluginStorage); !ps.obj().empty()) doc.set("pluginStorage", std::move(ps));
@@ -1477,7 +1468,12 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& input, co
       }
     }
   }
-  nd.extras_mut() = restore_extras(d.extras(), doc);
+  // Present keys replace (swatches, materials) or merge (guides) over what the
+  // session held; plugin storage is assigned unconditionally.
+  nd.extras_mut().pluginStorage = is_scope_store(doc.at("pluginStorage")) ? doc.at("pluginStorage") : Json::object();
+  nd.guides_mut() = truthy(doc.at("guides")) ? restore_guides(d.guides(), doc.at("guides")) : d.guides();
+  nd.swatches_mut() = truthy(doc.at("swatches")) ? normalize_swatches(doc.at("swatches")) : d.swatches();
+  nd.materials_mut() = truthy(doc.at("materials")) ? normalize_materials(doc.at("materials")) : d.materials();
   // transitionStore.restore: a present map replaces, an absent one keeps what the session held.
   nd.transitions_mut() = truthy(doc.at("transitions")) ? doc.at("transitions") : d.transitions();
   d = std::move(nd);

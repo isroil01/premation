@@ -1028,7 +1028,7 @@ export interface AddHistoryCheckpoint {
   label: string;
 }
 
-/** B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches, materials and plugin storage are applied too but — like every authored extra no command edits — are not part of the entry. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default "Restore Version"). */
+/** B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches and materials are part of the entry; its plugin storage is applied too but — like every authored extra no command edits — is not. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default "Restore Version"). */
 export interface RestoreDocument {
   document: Uint8Array;
   label?: string;
@@ -1109,6 +1109,39 @@ export interface SetAutosave {
   enabled: boolean;
   intervalSeconds: number;
   keep: number;
+}
+
+/** One named colour of the project palette (the Swatches panel), in the user's order. */
+export interface Swatch {
+  id: string;
+  name: string;
+  /** Canonical lowercase `#rrggbb` / `#rrggbbaa` (a trailing opaque `ff` dropped). */
+  hex: string;
+}
+
+/** One named 3D material of the project library (built-ins are the editor's, never the document's). */
+export interface LibraryMaterial {
+  id: string;
+  name: string;
+  /** The Material Options it applies (`MaterialParams`), JSON — every axis, normalized. */
+  params: string;
+  /** `#rrggbb` the library thumbnail is tinted with ('' = none). Presentation only. */
+  swatch: string;
+}
+
+/** F2 — patch the document's guide settings (the persisted half of the guides store: rulers, grids, safe areas, motion-path display, overlay opacity, user ruler guides, camera bookmarks). `patch` is a JSON object; every key it carries replaces the stored field, sanitized and clamped as on open (a malformed guide or bookmark is dropped), unknown keys are ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings. */
+export interface SetGuides {
+  patch: string;
+}
+
+/** F2 — replace the project palette, in order. Colours are canonicalized; a colour that is not hex is `invalidArgument` (nothing changes); an empty or repeated id is re-minted (`sw_doc_<n>`), a blank name becomes the colour. Inverse: the previous palette. */
+export interface SetSwatches {
+  swatches: Swatch[];
+}
+
+/** F2 — replace the project material library, in order. `params` are normalized (every axis clamped, unknown keys dropped); params that are not a JSON object are `invalidArgument`; an empty, repeated or `builtin:` id is re-minted (`mat_doc_<n>`), names are trimmed and a blank one becomes "Material", a swatch that is not `#rrggbb` is dropped. Inverse: the previous library. */
+export interface SetMaterials {
+  materials: LibraryMaterial[];
 }
 
 export interface OpenProjectResult {
@@ -2664,6 +2697,15 @@ export interface DocumentSnapshot {
   propertyTrees: PropertyTree[];
   keyframes: KeyframeSet[];
   renderQueue: RenderItemInfo[];
+  /** F2 — the guide settings as saved (a JSON object; defaults omitted, `{}` when all default). setGuides patches it. */
+  guides: string;
+  swatches: Swatch[];
+  materials: LibraryMaterial[];
+}
+
+/** The document as saveProject would write it: a .motion project's JSON, UTF-8. */
+export interface ExportedDocument {
+  document: Uint8Array;
 }
 
 export interface RenderItemInfo {
@@ -2680,6 +2722,9 @@ export interface GetDocument {
   includeProperties: boolean;
   includeKeyframes: boolean;
 }
+
+/** F2 — the whole project document at the answer's revision, exactly as saveProject writes it (cloud upload, versions, templates and export read it here instead of capturing a copy in the page). Byte order of keys is the engine's; parse it, do not compare bytes across engines. */
+export interface ExportDocument {}
 
 export interface GetComposition {
   comp: ItemId;
@@ -3217,6 +3262,21 @@ export interface RenderQueueChangedEvent {
 export interface TransitionsChangedEvent {
   comp: ItemId;
   transitions: Transition[];
+}
+
+/** F2 — the guide settings (full replacement, as DocumentSnapshot.guides), after setGuides, a restore or their undo. */
+export interface GuidesChangedEvent {
+  guides: string;
+}
+
+/** F2 — the project palette (full replacement). */
+export interface SwatchesChangedEvent {
+  swatches: Swatch[];
+}
+
+/** F2 — the project material library (full replacement). */
+export interface MaterialsChangedEvent {
+  materials: LibraryMaterial[];
 }
 
 export interface HistoryChangedEvent {
@@ -3819,6 +3879,9 @@ export type Command =
   | ({ type: 'revertProject' } & RevertProject)
   | ({ type: 'collectFiles' } & CollectFiles)
   | ({ type: 'setAutosave' } & SetAutosave)
+  | ({ type: 'setGuides' } & SetGuides)
+  | ({ type: 'setSwatches' } & SetSwatches)
+  | ({ type: 'setMaterials' } & SetMaterials)
   | ({ type: 'importFiles' } & ImportFiles)
   | ({ type: 'importBytes' } & ImportBytes)
   | ({ type: 'relinkItem' } & RelinkItem)
@@ -3968,6 +4031,9 @@ export type CommandResult =
   | ({ type: 'revertProject' } & Empty)
   | ({ type: 'collectFiles' } & SaveProjectResult)
   | ({ type: 'setAutosave' } & Empty)
+  | ({ type: 'setGuides' } & Empty)
+  | ({ type: 'setSwatches' } & Empty)
+  | ({ type: 'setMaterials' } & Empty)
   | ({ type: 'importFiles' } & ItemList)
   | ({ type: 'importBytes' } & ItemList)
   | ({ type: 'relinkItem' } & Empty)
@@ -4101,6 +4167,7 @@ export type CommandResultType = CommandResult['type'];
 /** Every query, keyed by its schema id. */
 export type Query =
   | ({ type: 'getDocument' } & GetDocument)
+  | ({ type: 'exportDocument' } & ExportDocument)
   | ({ type: 'getComposition' } & GetComposition)
   | ({ type: 'getLayers' } & GetLayers)
   | ({ type: 'getPropertyTree' } & GetPropertyTree)
@@ -4139,6 +4206,7 @@ export type QueryType = Query['type'];
 /** The typed result of a query; same key as its query. */
 export type QueryResult =
   | ({ type: 'getDocument' } & DocumentSnapshot)
+  | ({ type: 'exportDocument' } & ExportedDocument)
   | ({ type: 'getComposition' } & CompositionDetails)
   | ({ type: 'getLayers' } & LayerDetails)
   | ({ type: 'getPropertyTree' } & PropertyTree)
@@ -4190,6 +4258,9 @@ export type Event =
   | ({ type: 'markersChanged' } & MarkersChangedEvent)
   | ({ type: 'renderQueueChanged' } & RenderQueueChangedEvent)
   | ({ type: 'transitionsChanged' } & TransitionsChangedEvent)
+  | ({ type: 'guidesChanged' } & GuidesChangedEvent)
+  | ({ type: 'swatchesChanged' } & SwatchesChangedEvent)
+  | ({ type: 'materialsChanged' } & MaterialsChangedEvent)
   | ({ type: 'historyChanged' } & HistoryChangedEvent)
   | ({ type: 'dirtyChanged' } & DirtyChangedEvent)
   | ({ type: 'transportChanged' } & TransportChangedEvent)
@@ -4225,6 +4296,9 @@ export interface CommandArgs {
   revertProject: RevertProject;
   collectFiles: CollectFiles;
   setAutosave: SetAutosave;
+  setGuides: SetGuides;
+  setSwatches: SetSwatches;
+  setMaterials: SetMaterials;
   importFiles: ImportFiles;
   importBytes: ImportBytes;
   relinkItem: RelinkItem;
@@ -4374,6 +4448,9 @@ export interface CommandResults {
   revertProject: Empty;
   collectFiles: SaveProjectResult;
   setAutosave: Empty;
+  setGuides: Empty;
+  setSwatches: Empty;
+  setMaterials: Empty;
   importFiles: ItemList;
   importBytes: ItemList;
   relinkItem: Empty;
@@ -4507,6 +4584,7 @@ export interface CommandResults {
 /** Arguments of each query, by name. */
 export interface QueryArgs {
   getDocument: GetDocument;
+  exportDocument: ExportDocument;
   getComposition: GetComposition;
   getLayers: GetLayers;
   getPropertyTree: GetPropertyTree;
@@ -4545,6 +4623,7 @@ export interface QueryArgs {
 /** Result of each query, by name. */
 export interface QueryResults {
   getDocument: DocumentSnapshot;
+  exportDocument: ExportedDocument;
   getComposition: CompositionDetails;
   getLayers: LayerDetails;
   getPropertyTree: PropertyTree;
@@ -4596,6 +4675,9 @@ export interface EventPayloads {
   markersChanged: MarkersChangedEvent;
   renderQueueChanged: RenderQueueChangedEvent;
   transitionsChanged: TransitionsChangedEvent;
+  guidesChanged: GuidesChangedEvent;
+  swatchesChanged: SwatchesChangedEvent;
+  materialsChanged: MaterialsChangedEvent;
   historyChanged: HistoryChangedEvent;
   dirtyChanged: DirtyChangedEvent;
   transportChanged: TransportChangedEvent;

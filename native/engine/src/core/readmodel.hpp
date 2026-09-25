@@ -54,6 +54,12 @@ struct MatteState {
 [[nodiscard]] api::Transition transition_info(const Document& d, std::string_view comp, const Json& rec);
 /// model.ts `transitionsOf(comp)`.
 [[nodiscard]] std::vector<api::Transition> transitions_of(const Document& d, std::string_view comp);
+/// F2: model.ts `guidesInfo()` — guidesStore.settings() as JSON.
+[[nodiscard]] std::string guides_info(const Document& d);
+/// F2: model.ts `swatchInfos()`.
+[[nodiscard]] std::vector<api::Swatch> swatch_infos(const Document& d);
+/// F2: model.ts `materialInfos()`.
+[[nodiscard]] std::vector<api::LibraryMaterial> material_infos(const Document& d);
 
 [[nodiscard]] api::ItemInfo footage_info(const Json& asset);
 [[nodiscard]] api::ItemInfo folder_info(const Folder& f);

@@ -6,6 +6,9 @@ import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useAssetStore, replaceProjectItems } from '@stores/assetStore';
 import { getProjectSettings, setProjectSettingsState } from '@core/project/documentExtras';
+import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
+import { canonicalHex, useSwatchStore } from '@stores/swatchStore';
+import { useMaterialStore } from '@stores/materialStore';
 import { migrateDocument } from '@core/project/migrations';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP } from '@core/scene/compInstance';
@@ -23,8 +26,8 @@ export const miscHandlers: HandlerTable = {
    * B3z: a saved / cloud version restored as ONE undoable entry. The version is
    * parsed and migrated before anything changes (a newer format refuses whole);
    * the load is openProject's (documentLoad.ts) inside document scope, so undo
-   * writes every part back exactly. Guides / swatches / materials / plugin
-   * storage follow the version but are not parts (not in the entry).
+   * writes every part back exactly. Plugin storage follows the version but is
+   * not a part (not in the entry). Guides, swatches and materials are.
    */
   restoreDocument: (cmd) => {
     let doc: EditorDocument;
@@ -44,6 +47,65 @@ export const miscHandlers: HandlerTable = {
       label: cmd.label || 'Restore Version',
       apply: () => {
         loadDocumentIntoStores(doc);
+        return {};
+      },
+    };
+  },
+
+  setGuides: (cmd) => {
+    let patch: unknown;
+    try {
+      patch = JSON.parse(cmd.patch);
+    } catch {
+      return fail('decode', 'the guides patch is not JSON');
+    }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) fail('invalidArgument', 'the guides patch must be a JSON object');
+    const s = newScope();
+    s.keys.add(K.guides);
+    return {
+      scope: s,
+      label: 'Guides',
+      apply: () => {
+        useGuidesStore.getState().restore(patch as Partial<GuidesSettings>);
+        return {};
+      },
+    };
+  },
+
+  setSwatches: (cmd) => {
+    cmd.swatches.forEach((sw, i) => {
+      if (!canonicalHex(sw.hex)) fail('invalidArgument', `swatch ${i} is not a hex colour`);
+    });
+    const s = newScope();
+    s.keys.add(K.swatches);
+    return {
+      scope: s,
+      label: 'Swatches',
+      apply: () => {
+        useSwatchStore.getState().restore(cmd.swatches);
+        return {};
+      },
+    };
+  },
+
+  setMaterials: (cmd) => {
+    const raw = cmd.materials.map((m, i) => {
+      let params: unknown;
+      try {
+        params = JSON.parse(m.params);
+      } catch {
+        fail('invalidArgument', `material ${i} params are not a JSON object`);
+      }
+      if (!params || typeof params !== 'object' || Array.isArray(params)) fail('invalidArgument', `material ${i} params are not a JSON object`);
+      return { id: m.id, name: m.name, params, ...(m.swatch ? { swatch: m.swatch } : {}) };
+    });
+    const s = newScope();
+    s.keys.add(K.materials);
+    return {
+      scope: s,
+      label: 'Materials',
+      apply: () => {
+        useMaterialStore.getState().restore(raw);
         return {};
       },
     };

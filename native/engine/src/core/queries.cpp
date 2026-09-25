@@ -8,6 +8,7 @@
 #include "catalog_data.hpp"
 #include "controls.hpp"
 #include "docexpr.hpp"
+#include "docio.hpp"
 #include "fail.hpp"
 #include "fxstate.hpp"
 #include "handlers_common.hpp"
@@ -131,6 +132,10 @@ struct Q {
   api::QueryResult operator()(const api::GetDocument& q) const {
     return query_result_for<api::GetDocument>(
         document_snapshot(pc, c.revision, c.projectPath, c.dirty, q.include_properties, q.include_keyframes));
+  }
+  api::QueryResult operator()(const api::ExportDocument& /*q*/) const {
+    const std::string text = stringify(capture_document(d));
+    return query_result_for<api::ExportDocument>(api::ExportedDocument{std::vector<std::uint8_t>(text.begin(), text.end())});
   }
   api::QueryResult operator()(const api::GetComposition& q) const {
     require_comp(d, q.comp);

@@ -11,6 +11,9 @@
  */
 
 import type { Event, ItemInfo, PropertyInfo } from '@motion/engine-api';
+import { useGuidesStore } from '@stores/guidesStore';
+import { useSwatchStore } from '@stores/swatchStore';
+import { useMaterialStore } from '@stores/materialStore';
 import { graph, compOfLayer, isCompItem, layerIdsOfComp } from './doc';
 import type { Parts, ItemsPart, TimelinePart } from './state';
 import {
@@ -78,6 +81,9 @@ export class EventBuilder {
     let itemsDirty = false;
     let projectDirty = false;
     let rqDirty = false;
+    let guidesDirty = false;
+    let swatchesDirty = false;
+    let materialsDirty = false;
     let allComps = false;
     const txComps = new Set<string>();
 
@@ -166,6 +172,9 @@ export class EventBuilder {
         case 'items': itemsDirty = true; break;
         case 'project': projectDirty = true; break;
         case 'rq': rqDirty = true; break;
+        case 'guides': guidesDirty = true; break;
+        case 'swatches': swatchesDirty = true; break;
+        case 'materials': materialsDirty = true; break;
         case 'mb': allComps = true; break;
         case 'tx': {
           const b = (before.get(key) ?? {}) as Record<string, unknown>;
@@ -244,6 +253,14 @@ export class EventBuilder {
       }
     }
     if (rqDirty) events.push({ type: 'renderQueueChanged', items: getRenderQueue() });
+    if (guidesDirty) events.push({ type: 'guidesChanged', guides: JSON.stringify(useGuidesStore.getState().settings()) });
+    if (swatchesDirty) events.push({ type: 'swatchesChanged', swatches: useSwatchStore.getState().list() });
+    if (materialsDirty) {
+      events.push({
+        type: 'materialsChanged',
+        materials: useMaterialStore.getState().list().map((m) => ({ id: m.id, name: m.name, params: JSON.stringify(m.params), swatch: m.swatch ?? '' })),
+      });
+    }
     for (const comp of [...txComps].sort()) {
       if (isCompItem(comp)) events.push({ type: 'transitionsChanged', comp, transitions: transitionsOf(comp) });
     }

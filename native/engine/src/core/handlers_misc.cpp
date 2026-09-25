@@ -116,8 +116,54 @@ ResultOf<api::RestoreDocument> handle(const api::RestoreDocument& c, HCtx& x) {
     if (!target.timelines.contains(id)) target.timelines.emplace(id, nullptr);
   }
   d.apply(target);
-  // Authored extras follow the version; not journaled (no command edits them).
+  // Plugin storage follows the version; not journaled (no command edits it).
   d.extras_mut() = scratch.extras();
+  return {};
+}
+
+ResultOf<api::SetGuides> handle(const api::SetGuides& c, HCtx& x) {
+  Document& d = x.d;
+  const std::optional<Json> patch = js::parse(c.patch);
+  if (!patch) fail(ErrorCode::decode, "the guides patch is not JSON");
+  if (!patch->is_object()) fail(ErrorCode::invalid_argument, "the guides patch must be a JSON object");
+  Json merged = d.guides();
+  for (const auto& m : patch->obj()) merged.set(m.key, m.value);
+  Json next = restore_guides(d.guides(), merged);
+  d.guides_mut() = std::move(next);
+  return {};
+}
+
+ResultOf<api::SetSwatches> handle(const api::SetSwatches& c, HCtx& x) {
+  Json list = Json::array();
+  for (std::size_t i = 0; i < c.swatches.size(); ++i) {
+    const api::Swatch& s = c.swatches[i];
+    if (!canonical_hex(Json::string(s.hex))) fail(ErrorCode::invalid_argument, "swatch " + std::to_string(i) + " is not a hex colour");
+    Json o = Json::object();
+    o.set("id", Json::string(s.id));
+    o.set("name", Json::string(s.name));
+    o.set("hex", Json::string(s.hex));
+    list.arr_mut().push_back(std::move(o));
+  }
+  x.d.swatches_mut() = normalize_swatches(list);
+  return {};
+}
+
+ResultOf<api::SetMaterials> handle(const api::SetMaterials& c, HCtx& x) {
+  Json list = Json::array();
+  for (std::size_t i = 0; i < c.materials.size(); ++i) {
+    const api::LibraryMaterial& m = c.materials[i];
+    std::optional<Json> params = js::parse(m.params);
+    if (!params || !params->is_object()) {
+      fail(ErrorCode::invalid_argument, "material " + std::to_string(i) + " params are not a JSON object");
+    }
+    Json o = Json::object();
+    o.set("id", Json::string(m.id));
+    o.set("name", Json::string(m.name));
+    o.set("params", std::move(*params));
+    o.set("swatch", Json::string(m.swatch));
+    list.arr_mut().push_back(std::move(o));
+  }
+  x.d.materials_mut() = normalize_materials(list);
   return {};
 }
 

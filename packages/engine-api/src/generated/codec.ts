@@ -1922,6 +1922,122 @@ function decS_SetAutosave(r: Reader, end: number, o: any): T.SetAutosave {
   o.keep = v_keep;
   return o;
 }
+function encS_Swatch(w: Writer, v: T.Swatch): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.name);
+  w.byte(26); w.str(v.hex);
+}
+function decS_Swatch(r: Reader, end: number, o: any): T.Swatch {
+  let h_id = false;
+  let h_name = false;
+  let h_hex = false;
+  let v_id: string | undefined;
+  let v_name: string | undefined;
+  let v_hex: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 26: v_hex = r.str(); h_hex = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('Swatch.id: missing', 'missingField');
+  if (!h_name) throw new DecodeError('Swatch.name: missing', 'missingField');
+  if (!h_hex) throw new DecodeError('Swatch.hex: missing', 'missingField');
+  o.id = v_id;
+  o.name = v_name;
+  o.hex = v_hex;
+  return o;
+}
+function encS_LibraryMaterial(w: Writer, v: T.LibraryMaterial): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.name);
+  w.byte(26); w.str(v.params);
+  w.byte(34); w.str(v.swatch);
+}
+function decS_LibraryMaterial(r: Reader, end: number, o: any): T.LibraryMaterial {
+  let h_id = false;
+  let h_name = false;
+  let h_params = false;
+  let h_swatch = false;
+  let v_id: string | undefined;
+  let v_name: string | undefined;
+  let v_params: string | undefined;
+  let v_swatch: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 26: v_params = r.str(); h_params = true; break;
+      case 34: v_swatch = r.str(); h_swatch = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('LibraryMaterial.id: missing', 'missingField');
+  if (!h_name) throw new DecodeError('LibraryMaterial.name: missing', 'missingField');
+  if (!h_params) throw new DecodeError('LibraryMaterial.params: missing', 'missingField');
+  if (!h_swatch) throw new DecodeError('LibraryMaterial.swatch: missing', 'missingField');
+  o.id = v_id;
+  o.name = v_name;
+  o.params = v_params;
+  o.swatch = v_swatch;
+  return o;
+}
+function encS_SetGuides(w: Writer, v: T.SetGuides): void {
+  w.byte(10); w.str(v.patch);
+}
+function decS_SetGuides(r: Reader, end: number, o: any): T.SetGuides {
+  let h_patch = false;
+  let v_patch: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_patch = r.str(); h_patch = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_patch) throw new DecodeError('SetGuides.patch: missing', 'missingField');
+  o.patch = v_patch;
+  return o;
+}
+function encS_SetSwatches(w: Writer, v: T.SetSwatches): void {
+  { const a = v.swatches; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_Swatch(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetSwatches(r: Reader, end: number, o: any): T.SetSwatches {
+  const l_swatches: T.Swatch[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_swatches.push(decS_Swatch(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.swatches = l_swatches;
+  return o;
+}
+function encS_SetMaterials(w: Writer, v: T.SetMaterials): void {
+  { const a = v.materials; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LibraryMaterial(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetMaterials(r: Reader, end: number, o: any): T.SetMaterials {
+  const l_materials: T.LibraryMaterial[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_materials.push(decS_LibraryMaterial(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.materials = l_materials;
+  return o;
+}
 function encS_OpenProjectResult(w: Writer, v: T.OpenProjectResult): void {
   { const a = v.warnings; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   { const a = v.missingItems; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
@@ -7824,6 +7940,9 @@ function encS_DocumentSnapshot(w: Writer, v: T.DocumentSnapshot): void {
   { const a = v.propertyTrees; for (let i = 0; i < a.length; i++) { w.byte(66); { const s = w.beginLd(); encS_PropertyTree(w, a[i]!); w.endLd(s); } } }
   { const a = v.keyframes; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_KeyframeSet(w, a[i]!); w.endLd(s); } } }
   { const a = v.renderQueue; for (let i = 0; i < a.length; i++) { w.byte(82); { const s = w.beginLd(); encS_RenderItemInfo(w, a[i]!); w.endLd(s); } } }
+  w.byte(90); w.str(v.guides);
+  { const a = v.swatches; for (let i = 0; i < a.length; i++) { w.byte(98); { const s = w.beginLd(); encS_Swatch(w, a[i]!); w.endLd(s); } } }
+  { const a = v.materials; for (let i = 0; i < a.length; i++) { w.byte(106); { const s = w.beginLd(); encS_LibraryMaterial(w, a[i]!); w.endLd(s); } } }
 }
 function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapshot {
   const l_items: T.ItemInfo[] = [];
@@ -7832,14 +7951,18 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
   const l_propertyTrees: T.PropertyTree[] = [];
   const l_keyframes: T.KeyframeSet[] = [];
   const l_renderQueue: T.RenderItemInfo[] = [];
+  const l_swatches: T.Swatch[] = [];
+  const l_materials: T.LibraryMaterial[] = [];
   let h_revision = false;
   let h_projectPath = false;
   let h_dirty = false;
   let h_settings = false;
+  let h_guides = false;
   let v_revision: number | undefined;
   let v_projectPath: string | undefined;
   let v_dirty: boolean | undefined;
   let v_settings: T.ProjectSettings | undefined;
+  let v_guides: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7853,6 +7976,9 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
       case 66: l_propertyTrees.push(decS_PropertyTree(r, r.ldEnd(), {})); break;
       case 74: l_keyframes.push(decS_KeyframeSet(r, r.ldEnd(), {})); break;
       case 82: l_renderQueue.push(decS_RenderItemInfo(r, r.ldEnd(), {})); break;
+      case 90: v_guides = r.str(); h_guides = true; break;
+      case 98: l_swatches.push(decS_Swatch(r, r.ldEnd(), {})); break;
+      case 106: l_materials.push(decS_LibraryMaterial(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -7861,6 +7987,7 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
   if (!h_projectPath) throw new DecodeError('DocumentSnapshot.projectPath: missing', 'missingField');
   if (!h_dirty) throw new DecodeError('DocumentSnapshot.dirty: missing', 'missingField');
   if (!h_settings) throw new DecodeError('DocumentSnapshot.settings: missing', 'missingField');
+  if (!h_guides) throw new DecodeError('DocumentSnapshot.guides: missing', 'missingField');
   o.revision = v_revision;
   o.projectPath = v_projectPath;
   o.dirty = v_dirty;
@@ -7871,6 +7998,27 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
   o.propertyTrees = l_propertyTrees;
   o.keyframes = l_keyframes;
   o.renderQueue = l_renderQueue;
+  o.guides = v_guides;
+  o.swatches = l_swatches;
+  o.materials = l_materials;
+  return o;
+}
+function encS_ExportedDocument(w: Writer, v: T.ExportedDocument): void {
+  w.byte(10); w.bytes(v.document);
+}
+function decS_ExportedDocument(r: Reader, end: number, o: any): T.ExportedDocument {
+  let h_document = false;
+  let v_document: Uint8Array | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_document = r.bytes(); h_document = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_document) throw new DecodeError('ExportedDocument.document: missing', 'missingField');
+  o.document = v_document;
   return o;
 }
 function encS_RenderItemInfo(w: Writer, v: T.RenderItemInfo): void {
@@ -7949,6 +8097,19 @@ function decS_GetDocument(r: Reader, end: number, o: any): T.GetDocument {
   if (!h_includeKeyframes) throw new DecodeError('GetDocument.includeKeyframes: missing', 'missingField');
   o.includeProperties = v_includeProperties;
   o.includeKeyframes = v_includeKeyframes;
+  return o;
+}
+function encS_ExportDocument(w: Writer, v: T.ExportDocument): void {
+  void w; void v;
+}
+function decS_ExportDocument(r: Reader, end: number, o: any): T.ExportDocument {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
   return o;
 }
 function encS_GetComposition(w: Writer, v: T.GetComposition): void {
@@ -10287,6 +10448,56 @@ function decS_TransitionsChangedEvent(r: Reader, end: number, o: any): T.Transit
   if (!h_comp) throw new DecodeError('TransitionsChangedEvent.comp: missing', 'missingField');
   o.comp = v_comp;
   o.transitions = l_transitions;
+  return o;
+}
+function encS_GuidesChangedEvent(w: Writer, v: T.GuidesChangedEvent): void {
+  w.byte(10); w.str(v.guides);
+}
+function decS_GuidesChangedEvent(r: Reader, end: number, o: any): T.GuidesChangedEvent {
+  let h_guides = false;
+  let v_guides: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_guides = r.str(); h_guides = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_guides) throw new DecodeError('GuidesChangedEvent.guides: missing', 'missingField');
+  o.guides = v_guides;
+  return o;
+}
+function encS_SwatchesChangedEvent(w: Writer, v: T.SwatchesChangedEvent): void {
+  { const a = v.swatches; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_Swatch(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SwatchesChangedEvent(r: Reader, end: number, o: any): T.SwatchesChangedEvent {
+  const l_swatches: T.Swatch[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_swatches.push(decS_Swatch(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.swatches = l_swatches;
+  return o;
+}
+function encS_MaterialsChangedEvent(w: Writer, v: T.MaterialsChangedEvent): void {
+  { const a = v.materials; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LibraryMaterial(w, a[i]!); w.endLd(s); } } }
+}
+function decS_MaterialsChangedEvent(r: Reader, end: number, o: any): T.MaterialsChangedEvent {
+  const l_materials: T.LibraryMaterial[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_materials.push(decS_LibraryMaterial(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.materials = l_materials;
   return o;
 }
 function encS_HistoryChangedEvent(w: Writer, v: T.HistoryChangedEvent): void {
@@ -12829,6 +13040,9 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setAutosave': w.varint(138); { const s = w.beginLd(); encS_SetAutosave(w, v); w.endLd(s); } return;
     case 'restoreDocument': w.varint(162); { const s = w.beginLd(); encS_RestoreDocument(w, v); w.endLd(s); } return;
     case 'addHistoryCheckpoint': w.varint(170); { const s = w.beginLd(); encS_AddHistoryCheckpoint(w, v); w.endLd(s); } return;
+    case 'setGuides': w.varint(178); { const s = w.beginLd(); encS_SetGuides(w, v); w.endLd(s); } return;
+    case 'setSwatches': w.varint(186); { const s = w.beginLd(); encS_SetSwatches(w, v); w.endLd(s); } return;
+    case 'setMaterials': w.varint(194); { const s = w.beginLd(); encS_SetMaterials(w, v); w.endLd(s); } return;
     case 'importFiles': w.varint(402); { const s = w.beginLd(); encS_ImportFiles(w, v); w.endLd(s); } return;
     case 'relinkItem': w.varint(410); { const s = w.beginLd(); encS_RelinkItem(w, v); w.endLd(s); } return;
     case 'reloadItems': w.varint(418); { const s = w.beginLd(); encS_ReloadItems(w, v); w.endLd(s); } return;
@@ -12983,6 +13197,9 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 138: out = decS_SetAutosave(r, r.ldEnd(), { type: 'setAutosave' }) as T.Command; break;
       case 162: out = decS_RestoreDocument(r, r.ldEnd(), { type: 'restoreDocument' }) as T.Command; break;
       case 170: out = decS_AddHistoryCheckpoint(r, r.ldEnd(), { type: 'addHistoryCheckpoint' }) as T.Command; break;
+      case 178: out = decS_SetGuides(r, r.ldEnd(), { type: 'setGuides' }) as T.Command; break;
+      case 186: out = decS_SetSwatches(r, r.ldEnd(), { type: 'setSwatches' }) as T.Command; break;
+      case 194: out = decS_SetMaterials(r, r.ldEnd(), { type: 'setMaterials' }) as T.Command; break;
       case 402: out = decS_ImportFiles(r, r.ldEnd(), { type: 'importFiles' }) as T.Command; break;
       case 410: out = decS_RelinkItem(r, r.ldEnd(), { type: 'relinkItem' }) as T.Command; break;
       case 418: out = decS_ReloadItems(r, r.ldEnd(), { type: 'reloadItems' }) as T.Command; break;
@@ -13137,6 +13354,9 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setAutosave': w.varint(138); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'restoreDocument': w.varint(162); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addHistoryCheckpoint': w.varint(170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setGuides': w.varint(178); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setSwatches': w.varint(186); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setMaterials': w.varint(194); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'importFiles': w.varint(402); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'relinkItem': w.varint(410); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'reloadItems': w.varint(418); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -13291,6 +13511,9 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 138: out = decS_Empty(r, r.ldEnd(), { type: 'setAutosave' }) as T.CommandResult; break;
       case 162: out = decS_Empty(r, r.ldEnd(), { type: 'restoreDocument' }) as T.CommandResult; break;
       case 170: out = decS_Empty(r, r.ldEnd(), { type: 'addHistoryCheckpoint' }) as T.CommandResult; break;
+      case 178: out = decS_Empty(r, r.ldEnd(), { type: 'setGuides' }) as T.CommandResult; break;
+      case 186: out = decS_Empty(r, r.ldEnd(), { type: 'setSwatches' }) as T.CommandResult; break;
+      case 194: out = decS_Empty(r, r.ldEnd(), { type: 'setMaterials' }) as T.CommandResult; break;
       case 402: out = decS_ItemList(r, r.ldEnd(), { type: 'importFiles' }) as T.CommandResult; break;
       case 410: out = decS_Empty(r, r.ldEnd(), { type: 'relinkItem' }) as T.CommandResult; break;
       case 418: out = decS_Empty(r, r.ldEnd(), { type: 'reloadItems' }) as T.CommandResult; break;
@@ -13462,6 +13685,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getCommandLog': w.varint(8682); { const s = w.beginLd(); encS_GetCommandLog(w, v); w.endLd(s); } return;
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_ListPlugins(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
+    case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportDocument(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13505,6 +13729,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8682: out = decS_GetCommandLog(r, r.ldEnd(), { type: 'getCommandLog' }) as T.Query; break;
       case 8690: out = decS_ListPlugins(r, r.ldEnd(), { type: 'listPlugins' }) as T.Query; break;
       case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
+      case 8706: out = decS_ExportDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -13548,6 +13773,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getCommandLog': w.varint(8682); { const s = w.beginLd(); encS_CommandLog(w, v); w.endLd(s); } return;
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
+    case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportedDocument(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13591,6 +13817,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8682: out = decS_CommandLog(r, r.ldEnd(), { type: 'getCommandLog' }) as T.QueryResult; break;
       case 8690: out = decS_PluginList(r, r.ldEnd(), { type: 'listPlugins' }) as T.QueryResult; break;
       case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
+      case 8706: out = decS_ExportedDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -13614,6 +13841,9 @@ function encU_Event(w: Writer, v: T.Event): void {
     case 'markersChanged': w.varint(16090); { const s = w.beginLd(); encS_MarkersChangedEvent(w, v); w.endLd(s); } return;
     case 'renderQueueChanged': w.varint(16098); { const s = w.beginLd(); encS_RenderQueueChangedEvent(w, v); w.endLd(s); } return;
     case 'transitionsChanged': w.varint(16106); { const s = w.beginLd(); encS_TransitionsChangedEvent(w, v); w.endLd(s); } return;
+    case 'guidesChanged': w.varint(16114); { const s = w.beginLd(); encS_GuidesChangedEvent(w, v); w.endLd(s); } return;
+    case 'swatchesChanged': w.varint(16122); { const s = w.beginLd(); encS_SwatchesChangedEvent(w, v); w.endLd(s); } return;
+    case 'materialsChanged': w.varint(16130); { const s = w.beginLd(); encS_MaterialsChangedEvent(w, v); w.endLd(s); } return;
     case 'historyChanged': w.varint(16402); { const s = w.beginLd(); encS_HistoryChangedEvent(w, v); w.endLd(s); } return;
     case 'dirtyChanged': w.varint(16410); { const s = w.beginLd(); encS_DirtyChangedEvent(w, v); w.endLd(s); } return;
     case 'transportChanged': w.varint(16418); { const s = w.beginLd(); encS_TransportChangedEvent(w, v); w.endLd(s); } return;
@@ -13651,6 +13881,9 @@ function decU_Event(r: Reader, end: number): T.Event {
       case 16090: out = decS_MarkersChangedEvent(r, r.ldEnd(), { type: 'markersChanged' }) as T.Event; break;
       case 16098: out = decS_RenderQueueChangedEvent(r, r.ldEnd(), { type: 'renderQueueChanged' }) as T.Event; break;
       case 16106: out = decS_TransitionsChangedEvent(r, r.ldEnd(), { type: 'transitionsChanged' }) as T.Event; break;
+      case 16114: out = decS_GuidesChangedEvent(r, r.ldEnd(), { type: 'guidesChanged' }) as T.Event; break;
+      case 16122: out = decS_SwatchesChangedEvent(r, r.ldEnd(), { type: 'swatchesChanged' }) as T.Event; break;
+      case 16130: out = decS_MaterialsChangedEvent(r, r.ldEnd(), { type: 'materialsChanged' }) as T.Event; break;
       case 16402: out = decS_HistoryChangedEvent(r, r.ldEnd(), { type: 'historyChanged' }) as T.Event; break;
       case 16410: out = decS_DirtyChangedEvent(r, r.ldEnd(), { type: 'dirtyChanged' }) as T.Event; break;
       case 16418: out = decS_TransportChangedEvent(r, r.ldEnd(), { type: 'transportChanged' }) as T.Event; break;
@@ -13743,6 +13976,11 @@ export const codecs = {
   RevertProject: mk<T.RevertProject>(encS_RevertProject, (r, e) => decS_RevertProject(r, e, {})),
   CollectFiles: mk<T.CollectFiles>(encS_CollectFiles, (r, e) => decS_CollectFiles(r, e, {})),
   SetAutosave: mk<T.SetAutosave>(encS_SetAutosave, (r, e) => decS_SetAutosave(r, e, {})),
+  Swatch: mk<T.Swatch>(encS_Swatch, (r, e) => decS_Swatch(r, e, {})),
+  LibraryMaterial: mk<T.LibraryMaterial>(encS_LibraryMaterial, (r, e) => decS_LibraryMaterial(r, e, {})),
+  SetGuides: mk<T.SetGuides>(encS_SetGuides, (r, e) => decS_SetGuides(r, e, {})),
+  SetSwatches: mk<T.SetSwatches>(encS_SetSwatches, (r, e) => decS_SetSwatches(r, e, {})),
+  SetMaterials: mk<T.SetMaterials>(encS_SetMaterials, (r, e) => decS_SetMaterials(r, e, {})),
   OpenProjectResult: mk<T.OpenProjectResult>(encS_OpenProjectResult, (r, e) => decS_OpenProjectResult(r, e, {})),
   SaveProjectResult: mk<T.SaveProjectResult>(encS_SaveProjectResult, (r, e) => decS_SaveProjectResult(r, e, {})),
   ItemList: mk<T.ItemList>(encS_ItemList, (r, e) => decS_ItemList(r, e, {})),
@@ -13935,8 +14173,10 @@ export const codecs = {
   KeyframeSet: mk<T.KeyframeSet>(encS_KeyframeSet, (r, e) => decS_KeyframeSet(r, e, {})),
   PropertyValue: mk<T.PropertyValue>(encS_PropertyValue, (r, e) => decS_PropertyValue(r, e, {})),
   DocumentSnapshot: mk<T.DocumentSnapshot>(encS_DocumentSnapshot, (r, e) => decS_DocumentSnapshot(r, e, {})),
+  ExportedDocument: mk<T.ExportedDocument>(encS_ExportedDocument, (r, e) => decS_ExportedDocument(r, e, {})),
   RenderItemInfo: mk<T.RenderItemInfo>(encS_RenderItemInfo, (r, e) => decS_RenderItemInfo(r, e, {})),
   GetDocument: mk<T.GetDocument>(encS_GetDocument, (r, e) => decS_GetDocument(r, e, {})),
+  ExportDocument: mk<T.ExportDocument>(encS_ExportDocument, (r, e) => decS_ExportDocument(r, e, {})),
   GetComposition: mk<T.GetComposition>(encS_GetComposition, (r, e) => decS_GetComposition(r, e, {})),
   GetLayers: mk<T.GetLayers>(encS_GetLayers, (r, e) => decS_GetLayers(r, e, {})),
   GetPropertyTree: mk<T.GetPropertyTree>(encS_GetPropertyTree, (r, e) => decS_GetPropertyTree(r, e, {})),
@@ -14028,6 +14268,9 @@ export const codecs = {
   MarkersChangedEvent: mk<T.MarkersChangedEvent>(encS_MarkersChangedEvent, (r, e) => decS_MarkersChangedEvent(r, e, {})),
   RenderQueueChangedEvent: mk<T.RenderQueueChangedEvent>(encS_RenderQueueChangedEvent, (r, e) => decS_RenderQueueChangedEvent(r, e, {})),
   TransitionsChangedEvent: mk<T.TransitionsChangedEvent>(encS_TransitionsChangedEvent, (r, e) => decS_TransitionsChangedEvent(r, e, {})),
+  GuidesChangedEvent: mk<T.GuidesChangedEvent>(encS_GuidesChangedEvent, (r, e) => decS_GuidesChangedEvent(r, e, {})),
+  SwatchesChangedEvent: mk<T.SwatchesChangedEvent>(encS_SwatchesChangedEvent, (r, e) => decS_SwatchesChangedEvent(r, e, {})),
+  MaterialsChangedEvent: mk<T.MaterialsChangedEvent>(encS_MaterialsChangedEvent, (r, e) => decS_MaterialsChangedEvent(r, e, {})),
   HistoryChangedEvent: mk<T.HistoryChangedEvent>(encS_HistoryChangedEvent, (r, e) => decS_HistoryChangedEvent(r, e, {})),
   DirtyChangedEvent: mk<T.DirtyChangedEvent>(encS_DirtyChangedEvent, (r, e) => decS_DirtyChangedEvent(r, e, {})),
   TransportChangedEvent: mk<T.TransportChangedEvent>(encS_TransportChangedEvent, (r, e) => decS_TransportChangedEvent(r, e, {})),

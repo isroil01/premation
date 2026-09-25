@@ -13,6 +13,7 @@ import { listPresets } from '@core/animation/animationPresets';
 import { world2DAt } from '@core/scene/layerSpace';
 import { readCompRef } from '@core/scene/compInstance';
 import { getFontWeights } from '@core/text/fontCatalog';
+import { captureDocument } from '@core/api/cloudDocument';
 import { fail } from './errors';
 import { graph, requireComp, requireLayer, compOfLayer, layerIdsOfComp, compItemIds, layerKindOf, isCompItem, resolveItem } from './doc';
 import {
@@ -84,6 +85,10 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
   switch (q.type) {
     case 'getDocument':
       return { type: q.type, ...documentSnapshot(ctx.revision, ctx.projectPath, ctx.dirty, q.includeProperties, q.includeKeyframes) };
+    case 'exportDocument': {
+      const document = new TextEncoder().encode(JSON.stringify(captureDocument()));
+      return { type: q.type, document };
+    }
     case 'getComposition':
       requireComp(q.comp);
       return { type: q.type, comp: compInfo(q.comp), layers: layerIdsOfComp(q.comp).map(layerInfo) };

@@ -335,6 +335,9 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
       if (is_comp_item(d, comp)) events.push_back(make_event(api::TransitionsChangedEvent{comp, transitions_of(d, comp)}));
     }
   }
+  if (before.guides) events.push_back(make_event(api::GuidesChangedEvent{guides_info(d)}));
+  if (before.swatches) events.push_back(make_event(api::SwatchesChangedEvent{swatch_infos(d)}));
+  if (before.materials) events.push_back(make_event(api::MaterialsChangedEvent{material_infos(d)}));
   return events;
 }
 

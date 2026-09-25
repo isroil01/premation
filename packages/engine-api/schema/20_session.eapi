@@ -17,7 +17,7 @@ command clearHistory = 6 [control] {}
 command setHistoryLimit = 7 [control] { entries: u32 = 1; }
 /// B3z — History panel ▸ Snapshot: push a NAMED entry that changes nothing, a point the panel can jump back to (Photoshop's snapshot; After Effects has none). Undoing / redoing it changes nothing and moves the revision like any step. Clears the redo stack like any new entry. Refused while a gesture is open (`gestureOpen`); an empty label is `invalidArgument`.
 command addHistoryCheckpoint = 21 [control] { label: string = 1; }
-/// B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches, materials and plugin storage are applied too but — like every authored extra no command edits — are not part of the entry. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default "Restore Version").
+/// B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches and materials are part of the entry; its plugin storage is applied too but — like every authored extra no command edits — is not. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default "Restore Version").
 command restoreDocument = 20 { document: bytes = 1; label?: string = 2; }
 
 struct HistoryStep {
@@ -75,6 +75,31 @@ command revertProject = 15 [io] {}
 command collectFiles = 16 [io] { folder: string = 1; onlyUsed: bool = 2; } -> SaveProjectResult;
 /// Autosave / crash-recovery cadence (a preference the engine executes; not document state).
 command setAutosave = 17 [control] { enabled: bool = 1; intervalSeconds: u32 = 2; keep: u32 = 3; }
+
+/// One named colour of the project palette (the Swatches panel), in the user's order.
+struct Swatch {
+  id: string = 1;
+  name: string = 2;
+  /// Canonical lowercase `#rrggbb` / `#rrggbbaa` (a trailing opaque `ff` dropped).
+  hex: string = 3;
+}
+
+/// One named 3D material of the project library (built-ins are the editor's, never the document's).
+struct LibraryMaterial {
+  id: string = 1;
+  name: string = 2;
+  /// The Material Options it applies (`MaterialParams`), JSON — every axis, normalized.
+  params: string = 3;
+  /// `#rrggbb` the library thumbnail is tinted with ('' = none). Presentation only.
+  swatch: string = 4;
+}
+
+/// F2 — patch the document's guide settings (the persisted half of the guides store: rulers, grids, safe areas, motion-path display, overlay opacity, user ruler guides, camera bookmarks). `patch` is a JSON object; every key it carries replaces the stored field, sanitized and clamped as on open (a malformed guide or bookmark is dropped), unknown keys are ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings.
+command setGuides = 22 { patch: string = 1; }
+/// F2 — replace the project palette, in order. Colours are canonicalized; a colour that is not hex is `invalidArgument` (nothing changes); an empty or repeated id is re-minted (`sw_doc_<n>`), a blank name becomes the colour. Inverse: the previous palette.
+command setSwatches = 23 { swatches: Swatch[] = 1; }
+/// F2 — replace the project material library, in order. `params` are normalized (every axis clamped, unknown keys dropped); params that are not a JSON object are `invalidArgument`; an empty, repeated or `builtin:` id is re-minted (`mat_doc_<n>`), names are trimmed and a blank one becomes "Material", a swatch that is not `#rrggbb` is dropped. Inverse: the previous library.
+command setMaterials = 24 { materials: LibraryMaterial[] = 1; }
 
 struct OpenProjectResult {
   /// Migrations applied, missing fonts, missing footage, …

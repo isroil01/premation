@@ -19,6 +19,7 @@ const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'hitTest', 'get
 
 const CASES: Record<QueryType, (s: Scene) => Query> = {
   getDocument: () => ({ type: 'getDocument', includeProperties: true, includeKeyframes: true }),
+  exportDocument: () => ({ type: 'exportDocument' }),
   getComposition: (x) => ({ type: 'getComposition', comp: x.comp }),
   getLayers: (x) => ({ type: 'getLayers', layers: [x.A, x.T] }),
   getPropertyTree: (x) => ({ type: 'getPropertyTree', layer: x.A, path: '', depth: 0, time: sec(1) }),
@@ -56,7 +57,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(34);
+  expect(Object.keys(QUERIES)).toHaveLength(35);
 });
 
 test('listPlugins: the TypeScript engine hosts no native plugins (G1: the C++ engine does)', async () => {

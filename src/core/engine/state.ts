@@ -41,6 +41,9 @@ import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurS
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
 import { bumpScene } from '@stores/sceneStore';
 import { useTransitionStore } from '@stores/transitionStore';
+import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
+import { useSwatchStore } from '@stores/swatchStore';
+import { useMaterialStore } from '@stores/materialStore';
 import type { TransitionRecord } from '@core/timeline/transitionModel';
 import { getEventBus } from '@core/events/EventBus';
 import {
@@ -101,6 +104,9 @@ export const K = {
   cm: 'cm',
   /** B3z: the cut-transition records (transitionStore), comp id → records. */
   tx: 'tx',
+  guides: 'guides',
+  swatches: 'swatches',
+  materials: 'materials',
 } as const;
 
 /** A layer's node + animation. */
@@ -182,6 +188,9 @@ function captureOne(key: string, clipsCache: { v?: Record<string, Record<string,
     case 'mb': return structuredClone(useMotionBlurStore.getState().settings());
     case 'cm': return structuredClone(useColorManagementStore.getState().settings());
     case 'tx': return useTransitionStore.getState().capture();
+    case 'guides': return useGuidesStore.getState().settings();
+    case 'swatches': return useSwatchStore.getState().list();
+    case 'materials': return useMaterialStore.getState().list();
     default: throw new Error(`unknown part key '${key}'`);
   }
 }
@@ -201,7 +210,7 @@ export function allPartKeys(): string[] {
   for (const c of comps) {
     keys.push(K.comp(c), K.clips(c), K.tl(c));
   }
-  keys.push(K.order, K.items, K.project, K.rq, K.mb, K.cm, K.tx);
+  keys.push(K.order, K.items, K.project, K.rq, K.mb, K.cm, K.tx, K.guides, K.swatches, K.materials);
   return keys;
 }
 
@@ -375,6 +384,9 @@ export function applyParts(parts: Parts): void {
   if (parts.has(K.tx)) useTransitionStore.getState().restore((parts.get(K.tx) as Record<string, TransitionRecord[]> | undefined) ?? {});
   const cm = parts.get(K.cm) as ColorManagementSettings | undefined;
   if (cm) useColorManagementStore.getState().restore(structuredClone(cm));
+  if (parts.has(K.guides)) useGuidesStore.getState().restore(structuredClone(parts.get(K.guides) as GuidesSettings));
+  if (parts.has(K.swatches)) useSwatchStore.getState().restore(structuredClone(parts.get(K.swatches)));
+  if (parts.has(K.materials)) useMaterialStore.getState().restore(structuredClone(parts.get(K.materials)));
 
   bumpScene();
   getEventBus().emit('DocumentChanged', { source: 'composition' });

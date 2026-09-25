@@ -62,7 +62,7 @@ api::ProjectSettings default_project_settings() {
 
 bool Parts::empty() const noexcept {
   return nodes.empty() && anims.empty() && comps.empty() && timelines.empty() && !nodeOrder && !compOrder &&
-         !tlOrder && !items && !project && !rq && !mb && !cm && !tx;
+         !tlOrder && !items && !project && !rq && !mb && !cm && !tx && !guides && !swatches && !materials;
 }
 
 namespace {
@@ -144,6 +144,9 @@ void ChangeSet::merge(const ChangeSet& later) {
   merge_opt_before(before.mb, later.before.mb);
   merge_opt_before(before.cm, later.before.cm);
   merge_opt_before(before.tx, later.before.tx);
+  merge_opt_before(before.guides, later.before.guides);
+  merge_opt_before(before.swatches, later.before.swatches);
+  merge_opt_before(before.materials, later.before.materials);
   merge_map_after(after.nodes, later.after.nodes);
   merge_map_after(after.anims, later.after.anims);
   merge_map_after(after.comps, later.after.comps);
@@ -157,6 +160,9 @@ void ChangeSet::merge(const ChangeSet& later) {
   merge_opt_after(after.mb, later.after.mb);
   merge_opt_after(after.cm, later.after.cm);
   merge_opt_after(after.tx, later.after.tx);
+  merge_opt_after(after.guides, later.after.guides);
+  merge_opt_after(after.swatches, later.after.swatches);
+  merge_opt_after(after.materials, later.after.materials);
 }
 
 void ChangeSet::prune() {
@@ -173,6 +179,9 @@ void ChangeSet::prune() {
   prune_opt(before.mb, after.mb);
   prune_opt(before.cm, after.cm);
   prune_opt(before.tx, after.tx);
+  prune_opt(before.guides, after.guides);
+  prune_opt(before.swatches, after.swatches);
+  prune_opt(before.materials, after.materials);
 }
 
 ChangeSet ChangeSet::reversed() const {
@@ -197,6 +206,9 @@ std::vector<std::string> ChangeSet::keys() const {
   if (before.mb) out.emplace_back("mb");
   if (before.cm) out.emplace_back("cm");
   if (before.tx) out.emplace_back("tx");
+  if (before.guides) out.emplace_back("guides");
+  if (before.swatches) out.emplace_back("swatches");
+  if (before.materials) out.emplace_back("materials");
   return out;
 }
 
@@ -208,7 +220,10 @@ Document::Document()
       rq_(std::make_shared<RenderQueue>()),
       mb_(std::make_shared<MotionBlur>()),
       cm_(std::make_shared<ColorMgmt>()),
-      tx_(std::make_shared<Json>(Json::object())) {}
+      tx_(std::make_shared<Json>(Json::object())),
+      guides_(std::make_shared<Json>(default_guides())),
+      swatches_(std::make_shared<Json>(Json::array())),
+      materials_(std::make_shared<Json>(Json::array())) {}
 
 const Node* Document::node(std::string_view id) const {
   const auto* p = nodes_.find(id);
@@ -350,6 +365,18 @@ Json& Document::transitions_mut() {
   if (journal_ && !journal_->tx) journal_->tx = tx_;
   return unshare(tx_);
 }
+Json& Document::guides_mut() {
+  if (journal_ && !journal_->guides) journal_->guides = guides_;
+  return unshare(guides_);
+}
+Json& Document::swatches_mut() {
+  if (journal_ && !journal_->swatches) journal_->swatches = swatches_;
+  return unshare(swatches_);
+}
+Json& Document::materials_mut() {
+  if (journal_ && !journal_->materials) journal_->materials = materials_;
+  return unshare(materials_);
+}
 
 void Document::reorder_nodes(const IdList& order) {
   note_node_order();
@@ -389,6 +416,9 @@ Parts Document::current_of(const Parts& keys) const {
   if (keys.mb) out.mb = mb_;
   if (keys.cm) out.cm = cm_;
   if (keys.tx) out.tx = tx_;
+  if (keys.guides) out.guides = guides_;
+  if (keys.swatches) out.swatches = swatches_;
+  if (keys.materials) out.materials = materials_;
   return out;
 }
 
@@ -510,6 +540,18 @@ void Document::apply(const Parts& p) {
     if (journal_ && !journal_->tx) journal_->tx = tx_;
     tx_ = *p.tx;
   }
+  if (p.guides && *p.guides) {
+    if (journal_ && !journal_->guides) journal_->guides = guides_;
+    guides_ = *p.guides;
+  }
+  if (p.swatches && *p.swatches) {
+    if (journal_ && !journal_->swatches) journal_->swatches = swatches_;
+    swatches_ = *p.swatches;
+  }
+  if (p.materials && *p.materials) {
+    if (journal_ && !journal_->materials) journal_->materials = materials_;
+    materials_ = *p.materials;
+  }
 }
 
 Parts Document::capture_all() const {
@@ -527,6 +569,9 @@ Parts Document::capture_all() const {
   out.mb = mb_;
   out.cm = cm_;
   out.tx = tx_;
+  out.guides = guides_;
+  out.swatches = swatches_;
+  out.materials = materials_;
   return out;
 }
 
