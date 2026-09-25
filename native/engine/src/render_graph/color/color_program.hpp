@@ -39,6 +39,21 @@ enum class OpType : std::uint8_t {
   moncurve_rev = 4,  // linear → encoded: x > break ? x^g·scale − offset : x·slope
   range = 5,         // rgb' = clamp(rgb·scale + offset, lo, hi)
   lut3d = 6,         // shaper → N³ lattice, float trilinear
+  // D3 (ACES output transforms): OCIO's own kernels, ported op for op.
+  fixed_function = 7,  // p[0].x = FixedFn, p[0].y/.z = its parameters
+  log = 8,             // rgb' = log2(max(rgb, FLT_MIN)) · p[0].x (OCIO LogRenderer, base 2 / 10)
+  antilog = 9,         // rgb' = exp2(rgb · p[0].x) (OCIO AntiLogRenderer)
+  curve = 10,          // OCIO GradingRGBCurve (B-splines, forward, log style): p[0] = float offsets of
+                       // the R, G, B, master curves in Program::curves (−1 = identity)
+};
+
+/// OCIO FixedFunction styles the program runs (forward direction; DarkToDim10
+/// inverse is the same kernel with the inverse gamma).
+enum class FixedFn : std::uint8_t {
+  red_mod_03 = 1,   // FixedFunctionOpCPU Renderer_ACES_RedMod03_Fwd
+  red_mod_10 = 2,   // Renderer_ACES_RedMod10_Fwd
+  glow = 3,         // Renderer_ACES_Glow03_Fwd (Glow03: 0.075 / 0.1, Glow10: 0.05 / 0.08) — p[0].y gain, .z mid
+  dark_to_dim = 4,  // Renderer_ACES_DarkToDim10_Fwd — p[0].y = gamma − 1
 };
 
 /// OCIO NegativeStyle, as the kernels apply it.
@@ -58,7 +73,9 @@ struct Op {
   std::array<std::array<float, 4>, 5> p{};
 };
 
-inline constexpr std::size_t kMaxOps = 8;
+/// The ACES 1.0 output views are 15 ops (matrix, RedMod, Glow, ranges, the log-domain
+/// tonescale curves, DarkToDim, the display encoding).
+inline constexpr std::size_t kMaxOps = 16;
 /// Floats one op occupies in the uniform block (header + 5 rows).
 inline constexpr std::size_t kOpFloats = 24;
 
@@ -68,11 +85,35 @@ struct Program {
   /// then g, then b (atlas texel (r + b·N, g)).
   std::uint32_t lutSize = 0;
   std::vector<float> lut;
+  /// Curve ops' knots and coefficients, one block per non-identity curve:
+  /// [knot count, coefficient sets, knots…, A…, B…, C…] (OCIO KnotsCoefs,
+  /// per curve). Uploaded as a 1-row RGBA32F texture in the lattice's binding
+  /// (a program is baked or holds curves, never both); padded to whole texels.
+  std::vector<float> curves;
   /// Cache identity (the request that built it).
   std::string key;
   [[nodiscard]] bool identity() const noexcept { return ops.empty(); }
   [[nodiscard]] bool baked() const noexcept { return lutSize != 0; }
 };
+
+/// One OCIO GradingBSplineCurve (a monotonic RGB curve): its control points and
+/// the user slopes (all zero = OCIO estimates them).
+struct CurvePoints {
+  std::vector<float> x;
+  std::vector<float> y;
+  std::vector<float> slopes;
+};
+
+/// OCIO computeKnotsAndCoefsForRGBCurve for one curve, appended to `curves` as
+/// a block (see Program::curves). Returns the block's float offset, or −1 for
+/// an identity curve (every point on the diagonal and default slopes).
+float append_curve(const CurvePoints& c, std::vector<float>& curves);
+
+/// Ops for the D3 kernels.
+Op fixed_function_op(FixedFn fn, float a = 0.0F, float b = 0.0F) noexcept;
+Op log_op(float logScale) noexcept;
+Op antilog_op(float log2Base) noexcept;
+Op curve_op(const std::array<float, 4>& offsets) noexcept;
 
 /// Apply the program to straight RGB triples in place — exactly what the WGSL
 /// interpreter computes, in float.

@@ -110,9 +110,81 @@ std::array<double, 9> invert3(const std::array<double, 9>& m, bool& ok) noexcept
           (d * i - e * h) * id, (b * h - a * i) * id, (a * e - b * d) * id};
 }
 
-/// One transform of the optimized processor → an op. False = not expressible (bake instead).
-bool to_op(const OCIO::ConstTransformRcPtr& t, Op& op) {
+/// One GradingBSplineCurve → CurvePoints.
+CurvePoints curve_points(const OCIO::ConstGradingBSplineCurveRcPtr& c) {
+  CurvePoints p;
+  const std::size_t n = c->getNumControlPoints();
+  for (std::size_t i = 0; i < n; ++i) {
+    const OCIO::GradingControlPoint& cp = c->getControlPoint(i);
+    p.x.push_back(cp.m_x);
+    p.y.push_back(cp.m_y);
+    p.slopes.push_back(c->getSlope(i));
+  }
+  return p;
+}
+
+/// One transform of the optimized processor → an op (curve data appended to
+/// `curves`). False = not expressible (bake instead).
+bool to_op(const OCIO::ConstTransformRcPtr& t, Op& op, std::vector<float>& curves) {
   const bool inverse = t->getDirection() == OCIO::TRANSFORM_DIR_INVERSE;
+  // D3: the ACES 1.x output transforms' kernels (aces_ops.cpp).
+  if (auto ff = OCIO::DynamicPtrCast<const OCIO::FixedFunctionTransform>(t)) {
+    switch (ff->getStyle()) {
+      case OCIO::FIXED_FUNCTION_ACES_RED_MOD_03:
+        if (inverse) return false;
+        op = fixed_function_op(FixedFn::red_mod_03);
+        return true;
+      case OCIO::FIXED_FUNCTION_ACES_RED_MOD_10:
+        if (inverse) return false;
+        op = fixed_function_op(FixedFn::red_mod_10);
+        return true;
+      case OCIO::FIXED_FUNCTION_ACES_GLOW_03:
+        if (inverse) return false;
+        op = fixed_function_op(FixedFn::glow, 0.075F, 0.1F);
+        return true;
+      case OCIO::FIXED_FUNCTION_ACES_GLOW_10:
+        if (inverse) return false;
+        op = fixed_function_op(FixedFn::glow, 0.05F, 0.08F);
+        return true;
+      case OCIO::FIXED_FUNCTION_ACES_DARK_TO_DIM_10:
+        // Renderer_ACES_DarkToDim10_Fwd with 0.9811 / 1.0192640913260627; it stores gamma − 1.
+        op = fixed_function_op(FixedFn::dark_to_dim, (inverse ? 1.0192640913260627F : 0.9811F) - 1.F);
+        return true;
+      default: return false;
+    }
+  }
+  if (auto lg = OCIO::DynamicPtrCast<const OCIO::LogTransform>(t)) {
+    // LogOpCPU: base 2 → scale 1; base 10 → LOG10_2 / LOG2_10. Other bases use the
+    // lin-to-log renderer, which this op does not model.
+    constexpr float kLog10of2 = 0.301029995663981198F;
+    constexpr float kLog2of10 = 3.321928094887362348F;
+    const double base = lg->getBase();
+    if (base == 2.0) {
+      op = inverse ? antilog_op(1.F) : log_op(1.F);
+      return true;
+    }
+    if (base == 10.0) {
+      op = inverse ? antilog_op(kLog2of10) : log_op(kLog10of2);
+      return true;
+    }
+    return false;
+  }
+  if (auto gc = OCIO::DynamicPtrCast<const OCIO::GradingRGBCurveTransform>(t)) {
+    // Forward curves in log / video style (no internal lin↔log wrap); the linear
+    // style's SSE lin-log shapers and the inverse's evalCurveRev are not modelled.
+    if (inverse) return false;
+    if (gc->getStyle() == OCIO::GRADING_LIN && !gc->getBypassLinToLog()) return false;
+    const OCIO::ConstGradingRGBCurveRcPtr v = gc->getValue();
+    const std::array<OCIO::RGBCurveType, 4> kinds = {OCIO::RGB_RED, OCIO::RGB_GREEN, OCIO::RGB_BLUE, OCIO::RGB_MASTER};
+    std::array<float, 4> offsets{};
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+      const OCIO::ConstGradingBSplineCurveRcPtr c = v->getCurve(kinds.at(i));
+      if (c->getSplineType() != OCIO::B_SPLINE && c->getSplineType() != OCIO::DIAGONAL_B_SPLINE) return false;
+      offsets.at(i) = append_curve(curve_points(c), curves);
+    }
+    op = curve_op(offsets);
+    return true;
+  }
   if (auto m = OCIO::DynamicPtrCast<const OCIO::MatrixTransform>(t)) {
     std::array<double, 16> m44{};
     std::array<double, 4> off{};
@@ -208,7 +280,7 @@ bool Ocio::program(const Request& req, Program& out, std::string& error) const {
       const OCIO::ConstGroupTransformRcPtr g = proc->createGroupTransform();
       for (int i = 0; i < g->getNumTransforms() && expressible; ++i) {
         Op op;
-        expressible = to_op(g->getTransform(i), op);
+        expressible = to_op(g->getTransform(i), op, out.curves);
         if (expressible) out.ops.push_back(op);
       }
       expressible = expressible && out.ops.size() <= kMaxOps;

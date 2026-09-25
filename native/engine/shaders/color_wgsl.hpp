@@ -65,6 +65,95 @@ fn lutOp(c : vec3<f32>, s : vec4<f32>, n : i32) -> vec3<f32> {
   let c11 = mix(lutTap(i0.x, i1.y, i1.z, n), lutTap(i1.x, i1.y, i1.z, n), fr.x);
   return mix(mix(c00, c10, fr.y), mix(c01, c11, fr.y), fr.z);
 }
+// ── D3: OCIO's ACES kernels (render_graph/color/aces_ops.cpp, op for op) ─────
+fn satWeight(c : vec3<f32>) -> f32 {
+  let mn = min(c.r, min(c.g, c.b));
+  let mx = max(c.r, max(c.g, c.b));
+  return (max(1e-10, mx) - max(1e-10, mn)) / max(0.01, mx);
+}
+fn hueWeight(c : vec3<f32>, invWidth : f32) -> f32 {
+  let a = 2.0 * c.r - (c.g + c.b);
+  let b = 1.7320508075688772 * (c.g - c.b);
+  let knot = atan2(b, a) * invWidth + 2.0;
+  let j = i32(knot);  // truncation toward zero, as OCIO's (int) cast
+  if (j < 0 || j >= 4) { return 0.0; }
+  let t = knot - f32(j);
+  var m = vec4<f32>(0.25, 0.0, 0.0, 0.0);
+  if (j == 1) { m = vec4<f32>(-0.75, 0.75, 0.75, 0.25); }
+  if (j == 2) { m = vec4<f32>(0.75, -1.5, 0.0, 1.0); }
+  if (j == 3) { m = vec4<f32>(-0.25, 0.75, -0.75, 0.25); }
+  return m.w + t * (m.z + t * (m.y + t * m.x));
+}
+fn redMod(cIn : vec3<f32>, oneMinusScale : f32, invWidth : f32, restoreHue : bool) -> vec3<f32> {
+  var c = cIn;
+  let fH = hueWeight(c, invWidth);
+  if (fH > 0.0) {
+    let fS = satWeight(c);
+    let newRed = c.r + fH * fS * (0.03 - c.r) * oneMinusScale;
+    if (restoreHue) {
+      if (c.g >= c.b) {
+        c.g = (c.g - c.b) / max(1e-10, c.r - c.b) * (newRed - c.b) + c.b;
+      } else {
+        c.b = (c.b - c.g) / max(1e-10, c.r - c.g) * (newRed - c.g) + c.g;
+      }
+    }
+    c.r = newRed;
+  }
+  return c;
+}
+fn glowOp(c : vec3<f32>, gain : f32, mid : f32) -> vec3<f32> {
+  let chroma = sqrt(c.b * (c.b - c.g) + c.g * (c.g - c.r) + c.r * (c.r - c.b));
+  let yc = (c.b + c.g + c.r + 1.75 * chroma) / 3.0;
+  let x = (satWeight(c) - 0.4) * 5.0;
+  let sg = select(1.0, -1.0, x < 0.0);
+  let t = max(0.0, 1.0 - 0.5 * sg * x);
+  let s = (1.0 + sg * (1.0 - t * t)) * 0.5;
+  let g = gain * s;
+  var out = 0.0;
+  if (yc >= mid * 2.0) { out = 0.0; } else if (yc <= mid * 2.0 / 3.0) { out = g; } else { out = g * (mid / yc - 0.5); }
+  return c * (1.0 + out);
+}
+fn darkToDim(c : vec3<f32>, gm1 : f32) -> vec3<f32> {
+  let y = max(1e-10, 0.27222871678091454 * c.r + 0.67408176581114831 * c.g + 0.053689517407937051 * c.b);
+  return c * pow(y, gm1);
+}
+fn curveF(i : u32) -> f32 {
+  let t = textureLoad(lutTex, vec2<i32>(i32(i / 4u), 0), 0);
+  let k = i % 4u;
+  if (k == 0u) { return t.x; }
+  if (k == 1u) { return t.y; }
+  if (k == 2u) { return t.z; }
+  return t.w;
+}
+fn evalCurve(offset : f32, x : f32) -> f32 {
+  if (offset < 0.0) { return x; }
+  let o = u32(offset);
+  let knots = u32(curveF(o));
+  let sets = u32(curveF(o + 1u));
+  if (sets == 0u || knots < 2u) { return x; }
+  let kn = o + 2u;
+  let ca = kn + knots;
+  let cb = ca + sets;
+  let cc = cb + sets;
+  let knStart = curveF(kn);
+  let knEnd = curveF(kn + knots - 1u);
+  if (x <= knStart) { return (x - knStart) * curveF(cb) + curveF(cc); }
+  if (x >= knEnd) {
+    let a = curveF(ca + sets - 1u);
+    let b = curveF(cb + sets - 1u);
+    let c = curveF(cc + sets - 1u);
+    let t = knEnd - curveF(kn + knots - 2u);
+    return (x - knEnd) * (2.0 * a * t + b) + ((a * t + b) * t + c);
+  }
+  var i = 0u;
+  loop {
+    if (i >= knots - 2u) { break; }
+    if (x < curveF(kn + i + 1u)) { break; }
+    i = i + 1u;
+  }
+  let t = x - curveF(kn + i);
+  return (curveF(ca + i) * t + curveF(cb + i)) * t + curveF(cc + i);
+}
 fn applyOps(rgbIn : vec3<f32>) -> vec3<f32> {
   var c = rgbIn;
   let count = u32(obj.info.x);
@@ -95,6 +184,19 @@ fn applyOps(rgbIn : vec3<f32>) -> vec3<f32> {
       c = clamp(c * p0.xyz + p1.xyz, p2.xyz, p3.xyz);
     } else if (kind == 6u) {
       c = lutOp(c, p0, i32(h.z));
+    } else if (kind == 7u) {
+      let fn_ = u32(p0.x);
+      if (fn_ == 1u) { c = redMod(c, 1.0 - 0.85, 1.9098593171027443, true); }
+      else if (fn_ == 2u) { c = redMod(c, 1.0 - 0.82, 1.6976527263135504, false); }
+      else if (fn_ == 3u) { c = glowOp(c, p0.y, p0.z); }
+      else if (fn_ == 4u) { c = darkToDim(c, p0.y); }
+    } else if (kind == 8u) {
+      c = log2(max(c, vec3<f32>(1.17549435e-38))) * p0.x;
+    } else if (kind == 9u) {
+      c = exp2(c * p0.x);
+    } else if (kind == 10u) {
+      let t = vec3<f32>(evalCurve(p0.x, c.r), evalCurve(p0.y, c.g), evalCurve(p0.z, c.b));
+      c = vec3<f32>(evalCurve(p0.w, t.r), evalCurve(p0.w, t.g), evalCurve(p0.w, t.b));
     }
   }
   return c;
@@ -107,14 +209,14 @@ fn unpremul(t : vec4<f32>) -> vec4<f32> {
 
 // Object: mvp (mat3, 12 floats) · uvRect · info (x = op count) · viewer
 // (scene-blit-lut's cr0: ±size, intensity, domainMin, domainMax; size 0 = off)
-// · 8 ops × 6 vec4.
+// · 16 ops × 6 vec4 (color_program.hpp kMaxOps).
 inline constexpr const char* kColorObjectWgsl = R"WGSL(
 struct Object {
   mvp : mat3x3<f32>,
   uvRect : vec4<f32>,
   info : vec4<f32>,
   viewer : vec4<f32>,
-  ops : array<vec4<f32>, 48>,
+  ops : array<vec4<f32>, 96>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };

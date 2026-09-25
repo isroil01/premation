@@ -217,25 +217,38 @@ TEST_CASE("OCIO: op list vs a baked lattice — the measurement behind the defau
   CHECK(lutErr33 > opErr);  // the reason the op list is the default
   CHECK(lutErr65 < lutErr33);
 
-  // An ACES output view has fixed-function ops no op list expresses: baked.
+  // D3: the ACES output view's fixed functions, log/antilog and tonescale
+  // curves are ops now (aces_ops.cpp) — no lattice, OCIO's own maths.
   color::Request view{color::Space::aces_cg, color::Space::srgb, "ACES 1.0 - SDR Video", false, 65};
   color::Program aces;
   REQUIRE(ocio->program(view, aces, err));
-  CHECK(aces.baked());
+  CHECK_FALSE(aces.baked());
+  CHECK_FALSE(aces.curves.empty());
   auto v = probe_values(true);
   auto vr = v;
   REQUIRE(ocio->apply_cpu(view, vr, err));
+  auto lv = v;
   color::evaluate(aces, v);
   // Worst over the in-gamut ramp (the first 65 triples: non-negative, ≤ 1) and over everything (HDR, negatives).
   const std::size_t inGamut = 65 * 3;
-  const double acesErrInGamut =
-      worst_error(std::vector<float>(v.begin(), v.begin() + inGamut), std::vector<float>(vr.begin(), vr.begin() + inGamut), false);
+  const auto inGamutOf = [&](const std::vector<float>& x) { return std::vector<float>(x.begin(), x.begin() + inGamut); };
+  const double acesErrInGamut = worst_error(inGamutOf(v), inGamutOf(vr), false);
   const double acesErr = worst_error(v, vr, false);
+  // The lattice it replaces, measured on the same values.
+  color::Request lr = view;
+  lr.forceLut = true;
+  color::Program lattice;
+  REQUIRE(ocio->program(lr, lattice, err));
+  color::evaluate(lattice, lv);
+  const double latticeErr = worst_error(inGamutOf(lv), inGamutOf(vr), false);
   std::string opsDesc;
   REQUIRE(ocio->describe(view, opsDesc, err));
-  std::printf("[measure] ACES 1.0 SDR Video view (%s), 65^3 log2-shaped lattice: worst |error| in gamut %.2e, with HDR + negatives %.2e\n",
-              opsDesc.c_str(), acesErrInGamut, acesErr);
-  CHECK(acesErrInGamut < 2e-2);  // ≈ 5/255 — a lattice limit; see native/README.md (D3) for the fixed-function port that removes it
+  std::printf("[measure] ACES 1.0 SDR Video view (%s): op program worst |error| in gamut %.2e, with HDR + negatives %.2e; "
+              "65^3 lattice in gamut %.2e\n",
+              opsDesc.c_str(), acesErrInGamut, acesErr, latticeErr);
+  CHECK(acesErrInGamut < 1e-5);  // float-for-float with OCIO's CPU kernels (the lattice was ≈ 1.5e-2)
+  CHECK(acesErr < 1e-4);
+  CHECK(acesErrInGamut < latticeErr);
 }
 
 TEST_CASE("footage input conversion on the GPU matches OCIO (read back in float)", "[color][gpu]") {

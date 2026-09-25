@@ -134,6 +134,19 @@ TexRef ColorSystem::dummy_rgba8() {
 }
 
 TexRef ColorSystem::lut_texture(const color::Program& p) {
+  if (!p.baked() && !p.curves.empty()) {
+    // D3: curve ops' knots + coefficients, one row of RGBA32F texels (curveF in the WGSL).
+    const std::string key = "cm:curves:" + p.key;
+    if (const auto it = luts_.find(key); it != luts_.end()) return it->second;
+    std::vector<float> texels = p.curves;
+    texels.resize((texels.size() + 3) / 4 * 4, 0.0F);
+    std::vector<std::uint8_t> bytes(texels.size() * sizeof(float));
+    std::memcpy(bytes.data(), texels.data(), bytes.size());
+    const auto width = static_cast<std::uint32_t>(texels.size() / 4);
+    const TexRef t = dev_.texture(key, width, 1, wgpu::TextureFormat::RGBA32Float, bytes, false);
+    luts_.emplace(key, t);
+    return t;
+  }
   if (!p.baked()) return dummy_f32();
   // Uploaded once per program and held here (the view keeps the texture alive
   // past the pool's GC), so a frame never re-packs the lattice.
