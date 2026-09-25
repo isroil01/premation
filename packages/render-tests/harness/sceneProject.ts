@@ -163,7 +163,7 @@ export function sceneToProject(scene: Scene, graph: SceneGraph, anim: AnimationE
   const document: Record<string, unknown> = {
     // The CURRENT document version: the scene is authored in memory with today's
     // code, so it must not be run through the load-time migrations again (1.8.0
-    // stamps every light alloff: 'legacy', which the TypeScript frame never had).
+    // stamps every light falloff: 'legacy', which the TypeScript frame never had).
     version: CURRENT_DOCUMENT_VERSION,
     scene: { version: '1.0.0', nodes },
     animation: anim.snapshot(),

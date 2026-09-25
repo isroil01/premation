@@ -139,10 +139,11 @@ export function stagedVideoInput(pattern: string, fps: number): string[] {
  * returns — so for every format that staged PNG the encoder sees identical
  * input. Formats that staged JPEG lose the JPEG generation instead.
  */
-export function rawVideoInput(width: number, height: number, fps: number): string[] {
+export function rawVideoInput(width: number, height: number, fps: number, pixFmt: 'rgba' | 'rgba64le' = 'rgba'): string[] {
   return [
     '-f', 'rawvideo',
-    '-pix_fmt', 'rgba',
+    // rgba64le: the engine's 16-bit output (F1, electron/engineExport.ts).
+    '-pix_fmt', pixFmt,
     '-video_size', `${width}x${height}`,
     '-framerate', ffmpegRate(fps),
     '-i', 'pipe:0',

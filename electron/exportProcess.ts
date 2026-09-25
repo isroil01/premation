@@ -37,10 +37,19 @@
 
 import { app, BrowserWindow, dialog, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { writeFileAtomic } from './atomicWrite';
 import { hiddenRenderWebPreferences, rendererEntry } from './cliRender';
 import { handle, on } from './ipcGuard';
+import {
+  engineIneligible,
+  startEngineExport,
+  type EngineExportCallbacks,
+  type EngineExportRun,
+} from './engineExport';
+import { resolveEngineExecutable } from './engineSupervisor';
+import { resolveFfmpegBinary } from './ffmpegBinary';
 
 /*
   ★ The three payload shapes below are DUPLICATED in src/types/motionEditor.d.ts
@@ -93,6 +102,13 @@ export interface ExportJobSpec {
   transparent?: boolean;
   videoEncoder?: string;
   chapters?: unknown;
+  /**
+   * Bits per channel handed to the encoder. 16 renders through the engine
+   * (F1: `-pix_fmt rgba64le` from a half-float surface) and only for mov
+   * (ProRes is 10-bit); a job that falls back to the window renders at 8 and
+   * says so in its warnings.
+   */
+  bitDepth?: 8 | 16;
   /** What the UI calls this job — "Promo → promo.mp4". */
   label: string;
   /** Frames in the range, for progress. */
@@ -123,6 +139,12 @@ export interface ExportJobRecord {
   warnings?: string[];
   /** How many times this job has been started. 1 on its first run. */
   attempts: number;
+  /**
+   * Which renderer is producing (or produced) the current attempt: `engine`
+   * (premation-engine --export, F1) or `chromium` (a hidden window). Absent on
+   * records written before F1 and on jobs that have not started.
+   */
+  renderer?: 'engine' | 'chromium';
 }
 
 export type ExportQueueEvent =
@@ -148,8 +170,20 @@ export interface WorkerWindow {
   on(event: 'gone' | 'unresponsive' | 'fail-load', cb: (detail: string) => void): void;
 }
 
+/**
+ * F1: runs a job in premation-engine instead of a window (electron/engineExport.ts).
+ * Injected so the state machine is tested against a fake engine.
+ */
+export interface EngineLauncher {
+  /** Why this spec renders in a window (null = the engine may take it). */
+  ineligible(spec: ExportJobSpec): string | null;
+  start(jobId: string, spec: ExportJobSpec, cb: EngineExportCallbacks): EngineExportRun;
+}
+
 export interface SupervisorDeps {
   createWindow(): WorkerWindow;
+  /** F1: the engine path; absent/null = every job renders in a window (the default). */
+  engine?: EngineLauncher | null;
   /** The queue file. `read` resolves null when there is none yet. */
   persist: { read(): Promise<string | null>; write(text: string): Promise<void> };
   /** Create the job's snapshot directory and return the project path inside it. */
@@ -248,6 +282,12 @@ export function validateSpec(raw: unknown): ExportJobSpec {
   const enc = optStr('videoEncoder');
   if (enc !== undefined) out.videoEncoder = enc;
   if (Array.isArray(s['chapters']) && s['chapters'].length > 0) out.chapters = s['chapters'];
+  const depth = optNum('bitDepth');
+  if (depth !== undefined) {
+    if (depth !== 8 && depth !== 16) throw new Error('Export job: "bitDepth" must be 8 or 16.');
+    if (depth === 16 && out.format !== 'mov') throw new Error('Export job: 16-bit output is written as mov (ProRes) only.');
+    out.bitDepth = depth;
+  }
   return out;
 }
 
@@ -261,10 +301,13 @@ function freshProgress(totalFrames: number): ExportJobProgress {
   return { fraction: 0, frame: 0, totalFrames, fps: null, etaSec: null };
 }
 
-/** A running job: its window and its clocks. */
+/** A running job: its window or its engine process, and its clocks. */
 interface Run {
   jobId: string;
-  win: WorkerWindow;
+  /** The hidden window rendering it (the Chromium path). */
+  win: WorkerWindow | null;
+  /** The engine job rendering it (F1); replaced by `win` when it falls back. */
+  engine: EngineExportRun | null;
   watchdog: ReturnType<typeof setTimeout> | null;
   /** When the first frame was reported — the rate is measured from here. */
   renderStartedAt: number | null;
@@ -489,6 +532,70 @@ export class ExportSupervisor {
     job.progress = freshProgress(job.spec.totalFrames);
     delete job.error;
 
+    const run: Run = { jobId: job.id, win: null, engine: null, watchdog: null, renderStartedAt: null, lastEmitAt: 0, settled: false };
+    this.runs.set(job.id, run);
+    const engine = this.deps.engine;
+    const why = engine ? engine.ineligible(job.spec) : 'off';
+    if (engine && why === null) {
+      this.startEngine(job, run, engine);
+      return;
+    }
+    if (engine && why !== 'off') this.log(`job ${job.id}: rendering in a window (${why})`);
+    this.startWindow(job, run);
+  }
+
+  /** F1: the job in premation-engine; a `fallback` outcome continues it in a window. */
+  private startEngine(job: ExportJobRecord, run: Run, engine: EngineLauncher): void {
+    job.renderer = 'engine';
+    let started = false;
+    const handle = engine.start(job.id, job.spec, {
+      started: () => {
+        if (run.settled || run.engine !== handle) return;
+        started = true;
+        this.kick(run);
+      },
+      progress: (fraction) => {
+        if (run.settled || run.engine !== handle) return;
+        this.progressOf(job, run, fraction);
+      },
+    });
+    run.engine = handle;
+    // Preflight + GPU start share the window path's boot clock.
+    this.arm(run, this.bootTimeoutMs, () =>
+      this.settle(job, 'failed', `The export engine did not start rendering within ${Math.round(this.bootTimeoutMs / 1000)}s.`));
+    this.persist();
+    this.emitJob(job);
+    this.log(`job ${job.id} started in the engine (${job.spec.label})`);
+    void handle.done.then((outcome) => {
+      if (run.settled || run.engine !== handle) return;
+      switch (outcome.kind) {
+        case 'completed':
+          job.progress = { ...job.progress, fraction: 1, frame: job.spec.totalFrames, etaSec: 0 };
+          this.settle(job, 'completed');
+          return;
+        case 'failed':
+          this.settle(job, 'failed', outcome.message);
+          return;
+        case 'cancelled':
+          // Only a cancel of ours ends it this way, and that settled the run first.
+          this.settle(job, 'cancelled', 'Cancelled.');
+          return;
+        case 'fallback':
+        default:
+          // Not delivered, nothing to undo: the same attempt continues on the
+          // Chromium path, which is the reference renderer.
+          this.log(`job ${job.id}: engine → window (${outcome.kind === 'fallback' ? outcome.reason : 'unknown'})${started ? ' after it had started' : ''}`);
+          run.engine = null;
+          run.renderStartedAt = null;
+          job.progress = freshProgress(job.spec.totalFrames);
+          job.status = 'preparing';
+          this.startWindow(job, run);
+      }
+    });
+  }
+
+  private startWindow(job: ExportJobRecord, run: Run): void {
+    job.renderer = 'chromium';
     let win: WorkerWindow;
     try {
       win = this.deps.createWindow();
@@ -496,8 +603,7 @@ export class ExportSupervisor {
       this.settle(job, 'failed', `Could not open a render window: ${(err as Error).message}`);
       return;
     }
-    const run: Run = { jobId: job.id, win, watchdog: null, renderStartedAt: null, lastEmitAt: 0, settled: false };
-    this.runs.set(job.id, run);
+    run.win = win;
     this.bySender.set(win.id, job.id);
 
     // Every window event is ignored once this run has settled: a renderer
@@ -572,6 +678,11 @@ export class ExportSupervisor {
     const job = jobId ? this.jobs.get(jobId) : undefined;
     const run = jobId ? this.runs.get(jobId) : undefined;
     if (!job || !run || run.settled) return;
+    this.progressOf(job, run, fraction);
+  }
+
+  /** Progress from either renderer: restart the stall clock, update the rate, emit (coalesced). */
+  private progressOf(job: ExportJobRecord, run: Run, fraction: unknown): void {
     this.kick(run);
     const f = typeof fraction === 'number' && Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;
     const now = this.now();
@@ -616,6 +727,10 @@ export class ExportSupervisor {
     }
     job.progress = { ...job.progress, fraction: 1, frame: job.spec.totalFrames, etaSec: 0 };
     if (Array.isArray(r.warnings) && r.warnings.length > 0) job.warnings = r.warnings.map(String);
+    if (job.spec.bitDepth === 16) {
+      // The window path has 8 bits per channel and nothing more to give.
+      job.warnings = [...(job.warnings ?? []), 'Rendered at 8 bits per channel: 16-bit output needs the engine, which could not render this job.'];
+    }
     this.settle(job, 'completed');
   }
 
@@ -635,16 +750,21 @@ export class ExportSupervisor {
       run.settled = true;
       if (run.watchdog) clearTimeout(run.watchdog);
       this.runs.delete(job.id);
-      this.bySender.delete(run.win.id);
-      // ffmpeg first, window second: a window destroyed mid-chunk leaves
-      // main's stream waiting on a pipe nobody will write to again.
-      if (status !== 'completed') {
-        void Promise.resolve(this.deps.abortRenderJobsOwnedBy(run.win.id)).catch(() => undefined);
-      }
-      try {
-        run.win.destroy();
-      } catch {
-        /* already gone */
+      // An engine job: its process takes its own ffmpeg child down with it.
+      if (run.engine && status !== 'completed') run.engine.cancel();
+      const win = run.win;
+      if (win) {
+        this.bySender.delete(win.id);
+        // ffmpeg first, window second: a window destroyed mid-chunk leaves
+        // main's stream waiting on a pipe nobody will write to again.
+        if (status !== 'completed') {
+          void Promise.resolve(this.deps.abortRenderJobsOwnedBy(win.id)).catch(() => undefined);
+        }
+        try {
+          win.destroy();
+        } catch {
+          /* already gone */
+        }
       }
     }
     job.status = status;
@@ -717,6 +837,7 @@ function readRecord(v: unknown): ExportJobRecord | null {
   if (finishedAt !== undefined) out.finishedAt = finishedAt;
   if (typeof r['error'] === 'string') out.error = r['error'];
   if (Array.isArray(r['warnings'])) out.warnings = r['warnings'].map(String);
+  if (r['renderer'] === 'engine' || r['renderer'] === 'chromium') out.renderer = r['renderer'];
   return out;
 }
 
@@ -857,7 +978,35 @@ export function createExportSupervisor(opts: {
     removeSnapshot: (id) => rm(path.join(root, id), { recursive: true, force: true }),
     abortRenderJobsOwnedBy: opts.abortRenderJobsOwnedBy,
     maxConcurrent: positiveInt(process.env.MOTION_EXPORT_MAX_CONCURRENT, 1),
+    engine: exportEngineEnabled(process.env) ? createEngineLauncher(root) : null,
   });
+}
+
+/** F1's flag: engine export jobs are opt-in until they flip on golden parity (CLAUDE.md). */
+export function exportEngineEnabled(env: Record<string, string | undefined>): boolean {
+  return env.PREMATION_EXPORT_ENGINE === '1';
+}
+
+/** The real engine launcher: premation-engine from the usual places, ffmpeg as the Chromium path finds it. */
+function createEngineLauncher(root: string): EngineLauncher {
+  const enginePath = resolveEngineExecutable({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath ?? '',
+    appPath: app.getAppPath(),
+    platform: process.platform,
+    vars: process.env,
+    exists: existsSync,
+  });
+  const deps = {
+    enginePath,
+    ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
+    workDirFor: (id: string) => path.join(root, id, 'engine'),
+    log: (m: string) => console.log(`[export/engine] ${m}`),
+  };
+  return {
+    ineligible: (spec) => engineIneligible(spec, enginePath),
+    start: (jobId, spec, cb) => startEngineExport(jobId, spec, cb, deps),
+  };
 }
 
 /**

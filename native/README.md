@@ -691,6 +691,38 @@ is the chain's CPU work — kernels, LUT / matrix passes, ImageData transfers,
 seed and read-back; the canvas's own rasterisation (blits, filters, paths,
 text) is Skia's and is reported per layer as a count of draw calls (`draws`).
 
+## Export (engine/src/export, F1)
+
+`premation-engine --export JOB.json` renders one export job and exits; the
+export supervisor (`electron/exportProcess.ts` → `electron/engineExport.ts`)
+starts one per job when `PREMATION_EXPORT_ENGINE=1`, instead of a hidden
+Chromium window. The protocol (JSON lines on stdin/stdout), the exit codes and
+the thread structure are in `export_job.hpp`.
+
+- `project_open` — a `.motion` bundle (chunks + `assets/registry.json`, every
+  `motion-blob:<hash>` pointed at `blobs/<hh>/<hash>`) or a JSON document.
+- preflight — every frame of the range built once by the scene builder, in
+  parallel; any layer error / unported feature → exit 3 and the supervisor
+  renders the job on the Chromium path. So does a GPU that will not start, a
+  pass that cannot be honoured mid-render, and an engine crash.
+- pipeline — N build workers (a document copy each), one render thread with
+  `inFlight` frames on the GPU (`SceneRenderer::render_submit` /
+  `take_readback`), one writer thread feeding the encoder in frame order.
+- encoder — ffmpeg with the command line the SUPERVISOR built
+  (`buildEncodeArgs`, the Chromium raw pipe's own), spawned by
+  `child_process_ffi.cpp` (a Windows job object kills it with the engine).
+- pixels — straight-alpha RGBA8 exactly as `getImageData` hands the raw pipe
+  (`frame_convert.hpp`); `depth: 16` reads an rgba16float surface into
+  rgba64le. Audio — the comp's E2 mix as the WAV `encodeWav` writes.
+
+```sh
+node scripts/bench-export-engine.cjs --frames 300 --formats mp4 \
+    --scenes kf-transform,motion-blur --out report.json   # parity + fps vs the Chromium path
+```
+
+`premation-export-sink` stands in for ffmpeg (stdin → its last argument) so
+the two renderers' raw streams can be compared byte for byte.
+
 ## Adding a library (N2+)
 
 `libs/<name>/CMakeLists.txt` with a `STATIC` target linking `motion::options`

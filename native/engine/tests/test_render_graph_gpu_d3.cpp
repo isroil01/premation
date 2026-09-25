@@ -401,7 +401,7 @@ TEST_CASE("the display pass costs: TS scene blit vs OCIO op list vs baked lattic
   const double acesView = time(aces, 0);
   r->color_system().force_lattice(0);
   std::printf("[measure] 1080p frame, median ms (render + submit + GPU idle): TS scene blit %.3f, OCIO op list %.3f, "
-              "33^3 lattice %.3f, ACES view (65^3 lattice) %.3f\n",
+              "33^3 lattice %.3f, ACES view (15-op program) %.3f\n",
               blit, ops, lattice, acesView);
   CHECK(ops > 0);
 }

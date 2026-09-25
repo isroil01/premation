@@ -44,4 +44,23 @@ struct EngineFramesOptions {
 /// NullDevice (tests, headless). Null when the engine was built without audio.
 [[nodiscard]] std::unique_ptr<MediaClock> make_media_clock(bool useDevice, std::string& error);
 
+/// Every font family the document's text names (component props + rich-text
+/// runs), sorted and unique — registered on a FontSet before measuring.
+[[nodiscard]] std::vector<std::string> document_font_families(const doc::Document& d);
+
+/// F1 export: a composition's audio mixed offline (the same voices the
+/// viewport's MediaClock plays, the E2 mixer's sample-exact render).
+struct CompAudioMix {
+  int sampleRate = 48000;
+  /// Some unmuted voice reaches the range; false = a silent export (no audio track).
+  bool audible = false;
+  /// Planar float channels, ceil((end − start) × rate) frames each; empty when !audible.
+  std::vector<std::vector<float>> channels;
+  /// What the voice builder reports as outside the port (audio_unported).
+  std::vector<std::string> notes;
+};
+/// False (with `error`) when a source never finished decoding or there is no audio engine.
+bool mix_comp_audio(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr, doc::ExprCache& cache,
+                    std::string_view comp, double startSec, double endSec, CompAudioMix& out, std::string& error);
+
 }  // namespace premation::scene

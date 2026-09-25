@@ -88,6 +88,8 @@ export interface ExportJobSpec {
   transparent?: boolean;
   videoEncoder?: string;
   chapters?: unknown;
+  /** Bits per channel handed to the encoder: 16 = the engine's rgba64le path (F1; mov only). */
+  bitDepth?: 8 | 16;
   label: string;
   totalFrames: number;
 }
@@ -112,6 +114,8 @@ export interface ExportJobRecord {
   error?: string;
   warnings?: string[];
   attempts: number;
+  /** Which renderer runs the current attempt: premation-engine (F1) or a hidden window. */
+  renderer?: 'engine' | 'chromium';
 }
 
 export type ExportQueueEvent =

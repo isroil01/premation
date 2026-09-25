@@ -880,3 +880,48 @@ endif()
 if(MOTION_BUILD_TESTS AND TARGET engine_tests)
   target_sources(engine_tests PRIVATE tests/test_session_hooks.cpp)
 endif()
+
+# ── F1: export from the engine (src/export; kept in its own block) ──────────
+#   engine_export_core   GPU-free: the job spec, the .motion bundle reader, the
+#                        raw-pipe pixel conversion, the WAV writer, the encoder
+#                        child process (child_process_ffi.cpp)
+#   engine_export        the job: preflight over the scene builder, the
+#                        multi-frame pipeline (build workers → render graph with
+#                        several frames on the GPU → encoder), the audio mixdown
+#                        (engine_frames' E2 program) — `premation-engine --export JOB`
+#   premation-export-sink  test double for ffmpeg: copies stdin to its last argument
+add_library(engine_export_core STATIC src/export/project_open.cpp src/export/child_process_ffi.cpp)
+target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
+target_link_libraries(engine_export_core PUBLIC engine_core PRIVATE motion::options)
+if(WIN32)
+  target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+endif()
+add_executable(premation-export-sink tools/premation_export_sink.cpp)
+target_link_libraries(premation-export-sink PRIVATE motion::options)
+if(MSVC)
+  target_compile_definitions(premation-export-sink PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+if(TARGET engine_frames)
+  add_library(engine_export STATIC src/export/export_job.cpp)
+  target_link_libraries(engine_export PUBLIC engine_export_core engine_frames engine_scene PRIVATE motion::options)
+  if(TARGET engine_media_gpu)
+    target_include_directories(engine_export SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  endif()
+  if(MSVC)
+    target_compile_options(engine_export PRIVATE /bigobj)
+    target_compile_definitions(engine_export PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv (read before threads start)
+  endif()
+  target_link_libraries(premation-engine PRIVATE engine_export)
+  target_compile_definitions(premation-engine PRIVATE PREMATION_HAVE_EXPORT=1)
+endif()
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_export_tests tests/test_export.cpp)
+  target_link_libraries(engine_export_tests PRIVATE engine_export_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_export_tests PRIVATE
+    PREMATION_EXPORT_SINK="$<TARGET_FILE:premation-export-sink>")
+  add_dependencies(engine_export_tests premation-export-sink)
+  if(MSVC)
+    target_compile_definitions(engine_export_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  add_test(NAME engine_export_tests COMMAND engine_export_tests --reporter compact)
+endif()
