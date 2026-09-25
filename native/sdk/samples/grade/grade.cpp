@@ -7,7 +7,11 @@
 // WebGPU is called through the DawnProcTable the host hands over
 // (PrGpuDeviceInfo.procs), so this module links no Dawn of its own.
 //
-//   Gain (color) · Lift · Saturation · Hue (angle) ▸ Debug: Fault
+//   Gain (color) · Lift · Saturation · Hue (angle) ▸ Debug: Fault, GPU Fault
+//
+// GPU Fault = "Invalid commands" records a draw with no pipeline set — a
+// validation error the host's error scope catches: the command buffer is
+// dropped unsubmitted and the frame renders through the CPU path instead.
 #include <premation_sdk/premation_sdk.h>
 
 #include <dawn/dawn_proc_table.h>
@@ -22,7 +26,8 @@
 
 namespace {
 
-enum : uint32_t { kGain = 1, kLift = 2, kSaturation = 3, kHue = 4 };
+enum : uint32_t { kGain = 1, kLift = 2, kSaturation = 3, kHue = 4, kGpuFault = 5 };
+enum : int { kGpuFaultNone = 1, kGpuFaultInvalidCommands = 2 };
 
 /// The grade as 3×3 + offset, shared by the CPU and GPU paths.
 struct Grade {
@@ -209,8 +214,11 @@ PrErr gpu_render(const PrInData* in, PrOutData* out, PrParamDef* const* params, 
   rp.colorAttachmentCount = 1;
   rp.colorAttachments = &ca;
   const WGPURenderPassEncoder pass = p->commandEncoderBeginRenderPass(static_cast<WGPUCommandEncoder>(x->wgpu_command_encoder), &rp);
-  p->renderPassEncoderSetPipeline(pass, pipe);
-  p->renderPassEncoderSetBindGroup(pass, 0, bg, 0, nullptr);
+  const bool invalid = static_cast<int>(prs::num(params, in, kGpuFault, 0, kGpuFaultNone)) == kGpuFaultInvalidCommands;
+  if (!invalid) {  // the injected GPU fault: a draw with no pipeline (a validation error at Finish)
+    p->renderPassEncoderSetPipeline(pass, pipe);
+    p->renderPassEncoderSetBindGroup(pass, 0, bg, 0, nullptr);
+  }
   p->renderPassEncoderDraw(pass, 3, 1, 0, 0);
   p->renderPassEncoderEnd(pass);
   p->renderPassEncoderRelease(pass);
@@ -247,7 +255,11 @@ PrErr PR_CALL grade_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrParamD
       if (e == PR_ERR_NONE) e = prs::add_float(in, kLift, "Lift", 0, -100, 100, -20, 20, 2);
       if (e == PR_ERR_NONE) e = prs::add_float(in, kSaturation, "Saturation", 100, 0, 400, 0, 200, 1);
       if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_ANGLE, kHue, "Hue", {0, 0, 0, 0});
-      if (e == PR_ERR_NONE) e = prs::add_fault_params(in);
+      // The shared Debug group, plus this sample's GPU-side fault.
+      if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_GROUP_START, prs::kFaultGroupId, "Debug", {}, PR_PARAM_FLAG_START_COLLAPSED);
+      if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_POPUP, prs::kFaultParamId, "Fault", {1, 0, 0, 0}, 0, prs::kFaultChoices);
+      if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_POPUP, kGpuFault, "GPU Fault", {kGpuFaultNone, 0, 0, 0}, 0, "None|Invalid commands");
+      if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_GROUP_END, prs::kFaultGroupEndId, "", {});
       return e;
     }
     case PR_CMD_SMART_PRE_RENDER: return in->host->checkout_layer(in->host_ref, 0, 0, in->current_time, nullptr);

@@ -36,9 +36,24 @@ class PluginHost;
 
 class RenderGlue final : public rg::NativeEffectHost {
  public:
+  /// What the glue did, per path (tests, benches, the HUD).
+  struct Stats {
+    std::uint64_t gpu = 0;          ///< SMART_RENDER_GPU submitted and drawn
+    std::uint64_t cpu = 0;          ///< rendered through read back → CPU → upload
+    std::uint64_t gpuErrors = 0;    ///< a GPU render the error scope caught (then the CPU path ran)
+    std::uint64_t declined = 0;     ///< the chain continued from its input (crash, missing plugin, …)
+    std::uint64_t deviceResets = 0; ///< the device changed under the glue (plugin GPU data rebuilt)
+  };
+
   /// `host` nullptr = PluginHost::active() at each call (the engine's host).
   explicit RenderGlue(PluginHost* host = nullptr) : host_(host) {}
   bool apply(rg::PassContext& ctx, const Call& call) override;
+
+  /// false = never offer the GPU path (every effect renders on the CPU) — the
+  /// CPU twin a GPU effect is compared against, and a user-facing escape hatch.
+  void set_gpu_enabled(bool on) noexcept { gpuEnabled_ = on; }
+  [[nodiscard]] bool gpu_enabled() const noexcept { return gpuEnabled_; }
+  [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
 
  private:
   struct OwnTexture {
@@ -48,6 +63,12 @@ class RenderGlue final : public rg::NativeEffectHost {
   };
   OwnTexture& own(rg::Device& dev, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format, std::uint32_t slot);
   PluginHost* host_;
+  bool gpuEnabled_ = true;
+  Stats stats_;
+  /// The device the plugins' GPU data was built on: a different device (a new
+  /// renderer, a recovered device loss) sets the old data down first, or a
+  /// plugin would record into a device the frame never submits to.
+  WGPUDevice device_ = nullptr;
   std::uint32_t deviceIndex_ = 0;
   std::uint64_t nextId_ = 0;
   std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, OwnTexture> textures_;

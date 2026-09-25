@@ -11,10 +11,12 @@
 #include <utility>
 
 #include "bake_chain.hpp"
+#include "corner_pin.hpp"
 #include "effects_port.hpp"
 #include "lut_port.hpp"
 #include "jsmath.hpp"
 #include "misc_port.hpp"
+#include "model_carrier.hpp"
 #include "readers.hpp"
 #include "scene_math.hpp"
 #include "light_wash.hpp"
@@ -389,6 +391,7 @@ void Flattener::feed(const RLayer& l) {
     r.layerId = l.id;
     textures_.push_back(std::move(r));
   }
+  append_model_map_textures(l, textures_);  // pbrmap:<id>:* (model_carrier.cpp)
   if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
     TextureRequest r;
     r.key = "asset:" + l.id;
@@ -476,6 +479,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   }
   r.model_matrix = mat_wire(model);
   r.bounds = bounds_of(model);
+  apply_corner_pin(l.cornerPin, model, r);  // resolveCornerPin (corner_pin.cpp)
   r.opacity = opacity;
   r.blend = adv > 0 ? api::RenderBlendMode::normal : (l.blend == "add" ? api::RenderBlendMode::add : api::RenderBlendMode::normal);
   if (adv > 0) r.advanced_blend = adv;

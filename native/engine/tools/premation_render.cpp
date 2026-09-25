@@ -7,6 +7,12 @@
 //   premation-render --bench <file.pfs> [--frames N]            frame time of one scene
 //   common: [--gpu-vendor N] (default: the adapter the TS frame was rendered on)
 //           [--raw 1] (PNG = the surface bytes, without the harness readback emulation)
+//           [--plugins DIR[;DIR…]] run `native-plugin` effect entries through the
+//           native plugin host (G1: render_glue — SMART_RENDER_GPU on this
+//           device, else read back → CPU → upload); without it they pass through
+//           [--plugin-gpu 0] never offer plugins the GPU path (the CPU twin)
+//
+// `--scene` prints `<status> <error> [reasons] {diagnostic}…` on one line.
 //
 // A frame using a feature the graph has not ported is reported `not-ported`
 // with the reasons and is not rendered. Exit: 0 ran (even with not-ported
@@ -19,13 +25,16 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "host.hpp"
 #include "png_write.hpp"
+#include "render_glue.hpp"
 #include "scene_renderer.hpp"
 #include "support.hpp"
 
@@ -152,6 +161,36 @@ std::unique_ptr<premation::rg::SceneRenderer> make_renderer(std::uint32_t vendor
   return premation::rg::SceneRenderer::create(o, err);
 }
 
+/// --plugins: the native plugin host and its render glue, attached to every renderer.
+struct Plugins {
+  std::unique_ptr<premation::plugins::PluginHost> host;
+  std::unique_ptr<premation::plugins::RenderGlue> glue;
+  void attach(premation::rg::SceneRenderer& r) const {
+    if (glue) r.set_native_effects(glue.get());
+  }
+};
+
+void load_plugins(const std::map<std::string, std::string, std::less<>>& opt, Plugins& out) {
+  const auto it = opt.find("plugins");
+  if (it == opt.end()) return;
+  premation::plugins::HostOptions o;
+  std::stringstream ss(it->second);
+  std::string dir;
+  while (std::getline(ss, dir, ';')) {
+    if (!dir.empty()) o.searchPaths.emplace_back(dir);
+  }
+  o.attachToDocument = false;  // frames carry their params; no document here
+  out.host = std::make_unique<premation::plugins::PluginHost>(std::move(o));
+  for (const auto& rec : out.host->scan()) {
+    if (rec.status != premation::plugins::PluginStatus::loaded) {
+      std::fprintf(stderr, "premation-render: plugin %s %s: %s\n", rec.id.c_str(),
+                   std::string(premation::plugins::to_string(rec.status)).c_str(), rec.error.c_str());
+    }
+  }
+  out.glue = std::make_unique<premation::plugins::RenderGlue>(out.host.get());
+  if (const auto g = opt.find("plugin-gpu"); g != opt.end() && g->second == "0") out.glue->set_gpu_enabled(false);
+}
+
 struct OutputMode {
   bool raw = false;                    // --raw 1
   std::vector<std::uint8_t> table;     // --readback-table
@@ -222,6 +261,8 @@ int run(int argc, char** argv) {
       return 64;
     }
   }
+  Plugins plugins;  // outlives every renderer below (they hold its glue)
+  load_plugins(opt, plugins);
 
   if (const auto it = opt.find("scene"); it != opt.end()) {
     RenderFrameFile f;
@@ -235,9 +276,11 @@ int run(int argc, char** argv) {
       std::fprintf(stderr, "premation-render: %s\n", err.c_str());
       return 1;
     }
+    plugins.attach(*r);
     const FrameReport rep = render_one(*r, f, opt.count("out") != 0 ? fs::path(opt["out"]) : fs::path("out.png"), mode);
     std::printf("%s %s", rep.status.c_str(), rep.error.c_str());
     for (const auto& reason : rep.reasons) std::printf(" [%s]", reason.c_str());
+    for (const auto& d : rep.diagnostics) std::printf(" {%s}", d.c_str());
     std::printf("\n");
     return rep.status == "error" ? 1 : 0;
   }
@@ -259,6 +302,7 @@ int run(int argc, char** argv) {
       std::fprintf(stderr, "premation-render: %s\n", err.c_str());
       return 1;
     }
+    plugins.attach(*r);
     int frames = 200;
     if (opt.count("frames") != 0) std::from_chars(opt["frames"].data(), opt["frames"].data() + opt["frames"].size(), frames);
     std::vector<double> total;
@@ -286,6 +330,12 @@ int run(int argc, char** argv) {
         static_cast<unsigned long long>(st.bindGroupMisses), static_cast<unsigned long long>(st.pipelinesCreated),
         static_cast<unsigned long long>(st.targetHits), static_cast<unsigned long long>(st.targetMisses),
         static_cast<unsigned long long>(st.gpuBytes));
+    if (plugins.glue) {
+      const auto& ps = plugins.glue->stats();
+      std::fprintf(stderr, "premation-render: plugin effects gpu %llu, cpu %llu, gpu errors %llu, declined %llu\n",
+                   static_cast<unsigned long long>(ps.gpu), static_cast<unsigned long long>(ps.cpu),
+                   static_cast<unsigned long long>(ps.gpuErrors), static_cast<unsigned long long>(ps.declined));
+    }
     return 0;
   }
 
@@ -331,6 +381,7 @@ int run(int argc, char** argv) {
           std::fprintf(stderr, "premation-render: %s\n", err.c_str());
           return 1;
         }
+        plugins.attach(*r);
         adapter = r->adapter();
         backend = r->backend();
       }

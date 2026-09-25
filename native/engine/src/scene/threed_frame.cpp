@@ -126,8 +126,8 @@ bool depth_eligible_3d(const api::Renderable& r) {
 }
 
 void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r) {
-  // Corner pin is not ported (reported by the walk), so `!pinned` holds.
-  if (l.world3d && l.matrix && placement_ok(parent)) {
+  // A corner-pinned layer stays on the 2D pinned path (corner_pin.cpp): `!pinned`.
+  if (l.world3d && l.matrix && r.corner_pin.empty() && placement_ok(parent)) {
     api::RenderThreeD t;
     t.model = model3d_for(*l.world3d, l);
     r.three_d = std::move(t);

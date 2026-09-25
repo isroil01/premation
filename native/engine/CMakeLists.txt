@@ -336,6 +336,31 @@ if(TARGET engine_render_graph)
   if(MSVC)
     target_compile_options(engine_plugins_gpu PRIVATE /bigobj)
   endif()
+  # premation-render --plugins: native-plugin chain entries through the glue.
+  target_link_libraries(premation-render PRIVATE engine_plugins_gpu)
+  if(MOTION_BUILD_TESTS AND TARGET grade)
+    # G1 on a real GPU: the grade sample's SMART_RENDER_GPU against its CPU twin
+    # at 8/16/32 bpc through the render graph, GPU faults contained, and a
+    # native-plugin FrameScene through premation-render (skipped without an adapter).
+    add_executable(engine_plugins_gpu_tests tests/test_plugin_gpu.cpp)
+    target_link_libraries(engine_plugins_gpu_tests PRIVATE engine_plugins_gpu motion::options Catch2::Catch2WithMain)
+    target_include_directories(engine_plugins_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_definitions(engine_plugins_gpu_tests PRIVATE
+      PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
+      PREMATION_RENDER_TOOL="$<TARGET_FILE:premation-render>")
+    add_dependencies(engine_plugins_gpu_tests premation-render grade)
+    if(MSVC)
+      target_compile_options(engine_plugins_gpu_tests PRIVATE /bigobj)
+      target_compile_definitions(engine_plugins_gpu_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+    add_test(NAME engine_plugins_gpu_tests COMMAND engine_plugins_gpu_tests --reporter compact)
+    if(WIN32 AND DEFINED _dxc_bin)
+      add_custom_command(TARGET engine_plugins_gpu_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxc_bin}/dxcompiler.dll" "${_dxc_bin}/dxil.dll"
+                "$<TARGET_FILE_DIR:engine_plugins_gpu_tests>"
+        VERBATIM)
+    endif()
+  endif()
 endif()
 
 # engine_scene_core: the scene builder's GPU- and raster-free ports — rigs
@@ -352,6 +377,10 @@ add_library(engine_scene_core STATIC
   src/scene/lights3d.cpp
   src/scene/env_light.cpp
   src/scene/readers.cpp  # the node readers (Color.fromHex for the light shading)
+  src/scene/height_displacement.cpp  # heightDisplacement.ts (D2w 3D leftovers)
+  src/scene/gltf_model.cpp  # gltf.ts parse + modelMesh.ts entries + the model registry
+  src/scene/styled_surface.cpp  # layerStyles.ts styledSurfaceFill (extrusion walls under overlays)
+  src/scene/corner_pin.cpp  # cornerPin.ts + resolveCornerPin + Homography.ts
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
 target_link_libraries(engine_scene_core PUBLIC engine_core motion::jsmath PRIVATE motion::options)
@@ -361,7 +390,10 @@ endif()
 if(MOTION_BUILD_TESTS)
   # The rig block against buildSnapshot's meshes (tests/data/rig_parity.json,
   # src/core/rig/rigCrossEngine.test.ts).
-  add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp tests/test_threed_parity.cpp)
+  add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp tests/test_threed_parity.cpp
+                                         tests/test_height_displacement_parity.cpp tests/test_gltf_model_parity.cpp
+                                         tests/test_env_asset_parity.cpp tests/test_styled_surface_parity.cpp
+                                         tests/test_corner_pin_parity.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -801,6 +833,10 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/snapshot_build.cpp
     src/scene/threed_port.cpp
     src/scene/threed_frame.cpp
+    src/scene/mesh_displacement.cpp
+    src/scene/model_carrier.cpp
+    src/scene/env_asset.cpp
+    src/scene/scene_textures_model.cpp
     src/scene/light_wash.cpp
     src/scene/frame_build.cpp
     src/scene/text_measure.cpp
@@ -847,7 +883,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   # engine_scene_tests: the scene builder's GPU-free units (colour settings,
   # the D4 frame cache) — the pixel parity is premation-scene's (render-tests).
   if(MOTION_BUILD_TESTS)
-    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp)
+    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
+                                      tests/test_threed_models.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

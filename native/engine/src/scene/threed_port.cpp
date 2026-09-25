@@ -7,15 +7,20 @@
 #include <utility>
 
 #include "anim.hpp"
+#include "env_asset.hpp"
 #include "env_light.hpp"
 #include "extrusion_mesh.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
+#include "gltf_model.hpp"
+#include "mesh_displacement.hpp"
+#include "model_carrier.hpp"
 #include "primitive_mesh.hpp"
 #include "text_measure.hpp"
 #include "jsmath.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
+#include "styled_surface.hpp"
 #include "timeline.hpp"
 #include "worldxf.hpp"
 
@@ -389,10 +394,18 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
         er.nodeId = n->id;
         envReflect_ = std::move(er);
         const std::string sky = lt.envPreset.is_string() ? lt.envPreset.str() : "studio";
-        const auto rig = environment_rig_for(sky, envIntensity, envRot);
+        auto rig = environment_rig_for(sky, envIntensity, envRot);
         if (!rig) {
-          unported_.emplace_back(n->id, "environment light from an image (asset:) sky");
-          continue;
+          // An image sky (env_asset.cpp): its SH, or the default preset where the TS falls back.
+          std::string why;
+          if (const auto ea = environment_asset(c_.d, sky, why)) {
+            rig = environment_rig(ea->sh, envIntensity, envRot);
+          } else if (why.empty()) {
+            rig = environment_rig_for("studio", envIntensity, envRot);
+          } else {
+            unported_.emplace_back(n->id, "environment light from an image (asset:) sky (" + why + ")");
+            continue;
+          }
         }
         for (const EnvRigLight& rl : *rig) {
           SceneLight s = scene_light_of(lt);
@@ -812,14 +825,8 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
                             return m.value.is_object() && m.value.at("enabled").is_bool() && m.value.at("enabled").b();
                           });
     const std::string wallBase = layer.fill.value_or("#2a2a2a");  // EXTRUSION_WALL_FALLBACK_FILL
-    std::string wallFill = wallBase;
-    if (anyStyle) {
-      const auto overlayOn = [&](const char* k) {
-        const Json& o = styles.at(k);
-        return o.is_object() && o.at("enabled").is_bool() && o.at("enabled").b() && o.at("opacity").num() > 0;
-      };
-      if (overlayOn("colorOverlay") || overlayOn("gradientOverlay")) report("extrusion walls under a colour / gradient overlay style");
-    }
+    // styledSurfaceFill: a Colour / Gradient Overlay repaints the front, so the walls follow it.
+    const std::string wallFill = styled_surface_fill(styles, wallBase);
     std::vector<Json> faceStyles;
     if (anyStyle) {
       const auto compiled = layer_styles_to_effects(styles, comp_.globalLightAngle, comp_.globalLightAltitude,
@@ -913,7 +920,18 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
           p.height = layerH;
           data->paint = std::move(p);
         }
-        if (std::abs(extMat.displacement) > 1e-6 && (extMat.heightMapAssetId || extMat.heightMapSrc)) report("height-map displacement");
+        // Height displacement (displacedCarrierFor, mesh_displacement.cpp): the
+        // displaced mesh replaces the geometry; ranges scale by the subdivision.
+        std::string dispWhy;
+        if (const auto disp = displaced_carrier_for(c_.d, built->key, mesh.vertices, mesh.indices, extMat, dispWhy)) {
+          displaced_to_api(*disp, data->geometry);
+          const auto k = static_cast<std::uint32_t>(disp->mesh.triangleScale);
+          for (MeshRange3D& r : data->ranges) {
+            r.first *= k;
+            r.count *= k;
+          }
+        }
+        if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
         const bool carriesContent = isMedia || hasFrontCap;
         RLayer carrier;
         if (carriesContent) {
@@ -961,20 +979,84 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
 
   // ── glTF models / parametric primitives: the mesh REPLACES the quad ──
   std::optional<RLayer> modelLayer;
-  if (n.comp("Model") != nullptr && n.comp("Model")->props.at("modelKey").is_string()) {
-    report("glTF models placed in 3D");
+  const doc::Component* modelComp = n.comp("Model");
+  const bool modelRef = modelComp != nullptr && modelComp->props.at("modelKey").is_string() && modelComp->props.at("mesh").is_number() &&
+                        modelComp->props.at("prim").is_number();  // readNodeModelRef
+  if (modelRef) {
+    // An imported model (modelMesh.ts via gltf_model.cpp): the entry replaces the quad.
+    const Json& mp = modelComp->props;
+    const std::string modelKey = mp.at("modelKey").str();
+    std::string why;
+    const auto model = gltf::model_for(c_.d, modelKey, why);
+    const gltf::Entry* entry = nullptr;
+    if (!model) {
+      report("glTF model (" + why + ")");
+    } else if (!model->parsed) {
+      report("glTF model (the file is refused: " + model->error + ")");
+    } else if (mp.at("mesh").num() >= 0 && mp.at("prim").num() >= 0) {
+      const auto it = model->entries.find({static_cast<std::size_t>(mp.at("mesh").num()), static_cast<std::size_t>(mp.at("prim").num())});
+      if (it != model->entries.end()) entry = &it->second;  // no entry: the plain layer, as the TS
+    }
+    if (entry != nullptr) {
+      const Material& mMat = s.mat;
+      const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
+      if (entry->morphTargets > 0) report("glTF morph targets (morphedMeshFor)");
+      if (entry->skinned && mp.at("skin").is_number()) report("glTF skinning (skinnedMeshFor)");
+      const bool textured = entry->textureImage && layer.kind == LayerKind::image && layer.src && !layer.src->empty();
+      std::string dispWhy;
+      const auto disp = displaced_carrier_for(c_.d, entry->key, entry->vertices, entry->indices, mMat, dispWhy);
+      if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
+      auto data = std::make_shared<ExtrudedMeshData>();
+      if (disp) {
+        displaced_to_api(*disp, data->geometry);
+      } else {
+        model_entry_to_api(*entry, data->geometry);
+      }
+      MeshRange3D r;
+      r.role = entry->doubleSided ? api::RenderMeshRole::front : api::RenderMeshRole::side;
+      r.first = 0;
+      r.count = static_cast<std::uint32_t>(disp ? disp->mesh.indices.size() : entry->indices.size());
+      r.fill = textured ? "#ffffffff" : entry->fill;
+      r.gain = 1;
+      r.textured = textured;
+      data->ranges.push_back(std::move(r));
+      model_pbr_maps(*entry, modelKey, layer.id, *data);
+      RLayer m = layer;
+      std::vector<Json> meshFx;
+      for (const Json& e : layer.effects) {
+        if (fx_enabled(e) && (is_color_type(type_of(e)) || is_lut_type(type_of(e)))) meshFx.push_back(e);
+      }
+      scrub_carrier(m);
+      m.effects = std::move(meshFx);
+      m.extrudedMesh = std::move(data);
+      // The base-colour texture: the session object URL in `src` is dead in a
+      // saved document (modelHydrate repoints it); the engine reads the image
+      // out of the model instead.
+      if (textured) m.src = gltf::image_src(modelKey, *entry->textureImage);
+      if (mLit) {
+        m.lighting = std::array<double, 3>{1, 1, 1};
+        m.shade3d = mesh_shade(mMat);
+      }
+      modelLayer = std::move(m);
+    }
   } else if (primKey) {
     if (const auto pm = primitive_mesh_for_key(*primKey)) {
       const Material& mMat = s.mat;
       const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
-      if (std::abs(mMat.displacement) > 1e-6 && (mMat.heightMapAssetId || mMat.heightMapSrc)) report("height-map displacement");
+      std::string dispWhy;
+      const auto disp = displaced_carrier_for(c_.d, pm->key, pm->vertices, pm->indices, mMat, dispWhy);
+      if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
       auto data = std::make_shared<ExtrudedMeshData>();
-      primitive_mesh_to_api(*pm, data->geometry);
+      if (disp) {
+        displaced_to_api(*disp, data->geometry);
+      } else {
+        primitive_mesh_to_api(*pm, data->geometry);
+      }
       data->geometry.ranges.clear();
       MeshRange3D r;
       r.role = pm->doubleSided ? api::RenderMeshRole::front : api::RenderMeshRole::side;
       r.first = 0;
-      r.count = static_cast<std::uint32_t>(pm->indices.size());
+      r.count = static_cast<std::uint32_t>(disp ? disp->mesh.indices.size() : pm->indices.size());
       r.fill = layer.fill.value_or("#3b8276");  // PRIMITIVE_FALLBACK_FILL
       r.gain = 1;
       data->ranges.push_back(std::move(r));
@@ -1064,7 +1146,10 @@ void Scene3D::finish(std::vector<RLayer>& layers) {
   // that would carry envMap falls back.
   if (envReflect_ && envReflect_->intensity > 0 && has_world3d(layers) && envReflect_->sky.is_string() &&
       envReflect_->sky.str().starts_with("asset:")) {
-    unported_.emplace_back(envReflect_->nodeId, "environment reflection map of an image (asset:) sky");
+    std::string why;
+    if (!environment_asset(c_.d, envReflect_->sky.str(), why) && !why.empty()) {
+      unported_.emplace_back(envReflect_->nodeId, "environment reflection map of an image (asset:) sky (" + why + ")");
+    }
   }
   const auto findTop = [&layers](const std::string& id) -> std::ptrdiff_t {
     for (std::size_t i = 0; i < layers.size(); ++i) {
@@ -1276,7 +1361,14 @@ void Scene3D::emit(Snapshot& s, const std::vector<RLayer>& layers) const {
   if (envReflect_ && envReflect_->intensity > 0) {
     // environmentSpecularMap(sky): the prefiltered atlas (memoised on the sky).
     const std::string sky = envReflect_->sky.is_string() ? envReflect_->sky.str() : "studio";
-    if (const auto map = environment_specular_map(sky)) {
+    std::optional<EnvSpecularMap> spec = environment_specular_map(sky);
+    if (!spec) {
+      // An image sky: its own atlas, or the default preset's while it cannot load (the TS's fallback).
+      std::string why;
+      const auto ea = environment_asset(c_.d, sky, why);
+      spec = ea ? std::optional<EnvSpecularMap>(ea->specular) : environment_specular_map("studio");
+    }
+    if (const auto& map = spec) {
       api::RenderEnvMap em;
       em.id = map->id;
       em.width = map->width;

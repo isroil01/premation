@@ -23,6 +23,7 @@
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
+#include "corner_pin.hpp"
 #include "svg_layer.hpp"
 #include "text_port.hpp"
 #include "text_runs.hpp"
@@ -1195,7 +1196,7 @@ void Walk::build_node(const doc::Node& n) {
     const Json& cr = comp.props.at("continuousRasterize");
     if (cr.is_bool() && cr.b()) unported(l, n, "continuous rasterization");
   }
-  if (!fx.at("cornerPin").is_undefined()) unported(l, n, "corner pin");
+  l.cornerPin = read_node_corner_pin(n);  // readNodeCornerPin (corner_pin.cpp)
   {
     const bool rounded = resolvedCornerRadius > 0 || has_independent_corner_radii(radii);
     if (rounded) l.cornerRadii = radii;

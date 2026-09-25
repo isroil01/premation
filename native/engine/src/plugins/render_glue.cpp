@@ -173,6 +173,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   PluginHost* host = host_ != nullptr ? host_ : PluginHost::active();
   const auto decline = [&](std::string code, std::string detail) {
     ctx.diagnostics.push_back({std::move(code), std::move(detail)});
+    ++stats_.declined;
     return false;
   };
   std::string matchName;
@@ -200,9 +201,20 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   in.layerToWorld = layer_to_world(ctx, call, in, w, h);
 
   rg::Device& dev = ctx.dev;
+  if (dev.device().Get() != device_) {
+    // Another device: the plugins' per-device data (pipelines, buffers, a
+    // reference on the old device) and the glue's own textures belong to the
+    // old one. Set them down; GPU_DEVICE_SETUP runs again on first use.
+    if (device_ != nullptr) {
+      host->gpu_device_gone(deviceIndex_);
+      ++stats_.deviceResets;
+    }
+    textures_.clear();
+    device_ = dev.device().Get();
+  }
 
   // ── GPU: the effect records into the engine's own device ──
-  if (spec->has(PR_OUT_FLAG_GPU_RENDER)) {
+  if (gpuEnabled_ && spec->has(PR_OUT_FLAG_GPU_RENDER)) {
     const OwnTexture& out = own(dev, w, h, src.format, 1);
     PrGpuDeviceInfo info{};
     info.struct_size = sizeof(PrGpuDeviceInfo);
@@ -234,6 +246,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
     if (r.ok && validation.empty() && oom.empty()) {
       dev.queue().Submit(1, &cb);
       draw_full(ctx, call.dest, rg::TexRef{out.view, out.id, w, h, false});
+      ++stats_.gpu;
       return true;
     }
     if (r.fault) return decline("native-plugin-crash", matchName + ": " + r.message);
@@ -241,6 +254,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
     if (!validation.empty() || !oom.empty()) {
       // Never submitted. The CPU path below still renders the frame.
       ctx.diagnostics.push_back({"native-plugin-gpu-error", matchName + ": " + (validation.empty() ? oom : validation)});
+      ++stats_.gpuErrors;
     }
   }
 
@@ -277,6 +291,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   const wgpu::Extent3D size{w, h, 1};
   dev.queue().WriteTexture(&dst, out.bytes.data(), out.bytes.size(), &layout, &size);
   draw_full(ctx, call.dest, rg::TexRef{up.view, up.id, w, h, false});
+  ++stats_.cpu;
   return true;
 }
 
