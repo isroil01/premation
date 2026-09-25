@@ -20,6 +20,7 @@
 #include "paint_port.hpp"
 #include "path_ops.hpp"
 #include "jsmath.hpp"
+#include "raw_world.hpp"
 #include "readers.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
@@ -64,6 +65,38 @@ std::optional<std::string> kind_fill(std::string_view kind) {
 }
 
 double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
+
+/// JavaScript truthiness of a JSON value.
+bool truthy(const Json& v) {
+  if (v.is_bool()) return v.b();
+  if (v.is_number()) return v.num() != 0 && !std::isnan(v.num());
+  if (v.is_string()) return !v.str().empty();
+  return v.is_array() || v.is_object();
+}
+
+/// continuousRaster.ts `readContinuousRaster`.
+bool read_continuous_raster(const doc::Node& n) {
+  return std::ranges::any_of(n.components, [](const doc::Component& c) {
+    const Json& v = c.props.at("continuousRasterize");
+    return v.is_bool() && v.b();
+  });
+}
+
+/// continuousRaster.ts `supportsContinuousRaster`: vector kinds, and a shape only
+/// when it is not a flat solid rect (no path, stroke or corner radius).
+bool supports_continuous_raster(const doc::Node& n) {
+  const std::string kind = n.kind();
+  if (kind == "text" || kind == "svg") return true;
+  if (kind != "shape") return false;
+  for (const doc::Component& c : n.components) {
+    const Json& p = c.props;
+    if (p.at("pathPoints").is_array() && !p.at("pathPoints").arr().empty()) return true;
+    if (truthy(p.at("stroke")) || truthy(p.at("strokeWidth"))) return true;
+    if (p.at("cornerRadius").is_number() && p.at("cornerRadius").num() > 0) return true;
+    if (truthy(p.at("shapeType")) && !(p.at("shapeType").is_string() && p.at("shapeType").str() == "rect")) return true;
+  }
+  return false;
+}
 
 /// flattenComposition(graph, rootId): the root, then its subtree depth-first,
 /// children back-most first.
@@ -278,6 +311,8 @@ class Walk final : public Scene3DHost {
   const SnapshotComp& comp_;
   double t_;
   const std::optional<MotionBlurCfg>& mb_;
+  /// The raw graph's world transforms (rawLocalOf / rawWorldCache).
+  RawWorld raw_{c_.d, c_.expr, c_.cache, t_};
   double fps_ = 30;
   bool anySolo_ = false;
 
@@ -949,8 +984,11 @@ void Walk::build_node(const doc::Node& n) {
                     : !staticPath.is_undefined() && !staticPath.is_null() ? staticPath
                     : staticSubpaths.is_array() && !staticSubpaths.arr().empty() ? staticSubpaths.arr()[0].at("points")
                                                                                 : Json();
+  // POINTS FOLLOW NULLS: bound vertices track their null's world position (raw_world.cpp).
   if (geom != nullptr && geom->props.at("pointBindings").is_array() && !geom->props.at("pointBindings").arr().empty()) {
-    unported(l, n, "path points bound to nulls");
+    if (Json moved = bind_path_points(raw_, n.id, pathPoints, geom->props.at("pointBindings")); !moved.is_undefined()) {
+      pathPoints = std::move(moved);
+    }
   }
   const bool pathOpen = geom != nullptr && geom->props.at("open").is_bool() && geom->props.at("open").b();
   const std::optional<std::string> shapeType = jstr(doc::transform_props(n).at("shapeType"));
@@ -992,11 +1030,9 @@ void Walk::build_node(const doc::Node& n) {
   if (is3d) {
     for (const std::string& what : three_->unported_features(n, a)) unported(l, n, what);
   }
-  // Auto-orient along the path applies to 2D layers only; Toward Camera is part of the 3D placement.
-  if (!is3d && ((fx.at("autoOrient").is_string() && fx.at("autoOrient").str() == "path") ||
-                (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b()))) {
-    unported(l, n, "auto-orient");
-  }
+  // Auto-orient along the path applies to 2D layers only (below); Toward Camera is part of the 3D placement.
+  const bool autoOrientPath = !is3d && ((fx.at("autoOrient").is_string() && fx.at("autoOrient").str() == "path") ||
+                                        (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b()));
   for (const auto& comp : n.components) {
     const Json& ph = comp.props.at("__physics");
     if (ph.is_object() && !(ph.at("enabled").is_bool() && !ph.at("enabled").b())) unported(l, n, "rigid-body physics");
@@ -1007,6 +1043,24 @@ void Walk::build_node(const doc::Node& n) {
   double sx = world.scale_x;
   double sy = world.scale_y;
   double rot = world.rotation;
+  // Auto-orient (motionPath.ts autoOrientAngleDeg): a moving layer faces its
+  // direction of travel, the velocity over 1/120 s at its own time.
+  if (autoOrientPath) {
+    double bx = 0;
+    double by = 0;
+    for (const auto& comp : n.components) {  // baseXY: the last numeric x / y
+      if (comp.props.at("x").is_number()) bx = comp.props.at("x").num();
+      if (comp.props.at("y").is_number()) by = comp.props.at("y").num();
+    }
+    const double tt = remap(n.id, t_, false);
+    const double x0 = anim_sample_of(n.id, "x", tt).value_or(bx);
+    const double y0 = anim_sample_of(n.id, "y", tt).value_or(by);
+    const double x1 = anim_sample_of(n.id, "x", tt + 1.0 / 120).value_or(bx);
+    const double y1 = anim_sample_of(n.id, "y", tt + 1.0 / 120).value_or(by);
+    const double dx = x1 - x0;
+    const double dy = y1 - y0;
+    if (!(dx == 0 && dy == 0)) rot = (motion::js::atan2(dy, dx) * 180) / std::numbers::pi;
+  }
   // Behind the camera's near plane: not drawn (and neither casts nor receives).
   if (is3d && !three_->place(n, a, base.x, base.y, base.rotation, base.scaleX, base.scaleY, world, s3, px, py, sx, sy, rot, l)) return;
 
@@ -1254,10 +1308,7 @@ void Walk::build_node(const doc::Node& n) {
     if (fit.is_string() && fit.str() == "cover") unported(l, n, "media slot cover crop");
   }
   l.preserveTransparency = read_node_preserve_transparency(n);
-  for (const auto& comp : n.components) {
-    const Json& cr = comp.props.at("continuousRasterize");
-    if (cr.is_bool() && cr.b()) unported(l, n, "continuous rasterization");
-  }
+  l.continuousRaster = read_continuous_raster(n) && supports_continuous_raster(n);  // continuousRaster.ts
   if (!fx.at("cornerPin").is_undefined()) unported(l, n, "corner pin");
   {
     const bool rounded = resolvedCornerRadius > 0 || has_independent_corner_radii(radii);

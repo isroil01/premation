@@ -129,6 +129,9 @@ struct RLayer {
   bool isMatteSource = false;
   bool isAdjustment = false;
   bool draft = false;  ///< quality === 'draft'
+  /// Continuous Rasterization (RenderLayer.continuousRaster): vector content re-rasterizes
+  /// at its scale past the clamped tier ladder.
+  bool continuousRaster = false;
   /// A precomp container: its inner layers (present = container).
   std::optional<std::vector<RLayer>> precompLayers;
   /// A sealed comp instance's own 3D frame (see PrecompScene3D).

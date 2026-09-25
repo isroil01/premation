@@ -63,10 +63,10 @@ double continuous_resolution_tier(double scale, double boxW, double boxH) {
   return std::min(chosen, std::max(kContinuousTiers.front(), limit));
 }
 
-/// AppTextureProvider.tierFor (Continuous Rasterization off: the clamped ladder up
-/// to 4x, the bounded extended ladder past it).
-double tier_for(double scale, double boxW, double boxH) {
-  if (scale <= kTiers.back()) return resolution_tier(scale);
+/// AppTextureProvider.tierFor: Continuous Rasterization off, the clamped ladder up
+/// to 4x and the bounded extended ladder past it; on, the extended ladder at every scale.
+double tier_for(double scale, double boxW, double boxH, bool continuous = false) {
+  if (!continuous && scale <= kTiers.back()) return resolution_tier(scale);
   return continuous_resolution_tier(scale, boxW, boxH);
 }
 
@@ -374,7 +374,7 @@ void Flattener::feed(const RLayer& l) {
   // MotionRendererBackend's per-layer texture feed (the keys layerToRenderable names).
   const double layerScale = std::max({1.0, std::abs(l.scaleX != 0 ? l.scaleX : 1), std::abs(l.scaleY != 0 ? l.scaleY : 1)});
   const double effective = rasterScale_ * layerScale;
-  const double tier = tier_for(effective, l.width, l.height);
+  const double tier = tier_for(effective, l.width, l.height, l.continuousRaster);
   if (l.extrudedMesh && l.extrudedMesh->paint) {
     // An extrusion's gradient plate: the layer box filled edge to edge with the
     // fill paint, a plain rect through the path rasteriser (MotionRendererBackend 0a).
