@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -52,13 +53,15 @@ class FakeBuilder final : public FrameBuilder {
  public:
   std::shared_ptr<BuiltFrame> build(const doc::Document& /*d*/, const doc::EditorView& /*view*/,
                                     const doc::ExprEnv& /*expr*/, doc::ExprCache& /*cache*/, std::string_view /*comp*/,
-                                    api::Time /*time*/, const ViewportConfig& /*viewport*/, bool /*playing*/,
+                                    api::Time /*time*/, const ViewportConfig& viewport, bool /*playing*/,
                                     std::vector<api::LayerError>& errors) override {
     ++builds;
+    lastViewport = viewport;
     errors = next;
     return nullptr;  // the Session draws C2's quads for this frame
   }
   int builds = 0;
+  ViewportConfig lastViewport;
   std::vector<api::LayerError> next;
 };
 
@@ -183,6 +186,35 @@ TEST_CASE("session hooks: the frame builder's layer errors are announced when th
   for (const api::Event& e : ev) {
     if (const auto* le = std::get_if<api::LayerErrorsEvent>(&e.v)) CHECK(le->errors.empty());
   }
+}
+
+TEST_CASE("session hooks: setViewport carries the page's camera to the frame builder (D5)", "[session][frames]") {
+  Harness h(64);
+  FakeBuilder builder;
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  (void)open_comp(h);  // 640 × 360 at DPR 1, zoom 0 = fit
+  CHECK(builder.lastViewport.zoom == 0.0);
+
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 2.0;
+  v.zoom = 1.5;
+  v.pan = api::Vec2{960.0, 540.0};
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(builder.lastViewport.width == 1280);  // physical px
+  CHECK(builder.lastViewport.height == 720);
+  CHECK(builder.lastViewport.devicePixelRatio == 2.0);
+  CHECK(builder.lastViewport.zoom == 1.5);
+  CHECK(builder.lastViewport.panX == 960.0);
+  CHECK(builder.lastViewport.panY == 540.0);
+
+  // A zoom that is not a positive finite number means fit.
+  v.zoom = std::numeric_limits<double>::quiet_NaN();
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(builder.lastViewport.zoom == 0.0);
 }
 
 }  // namespace premation::test

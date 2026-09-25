@@ -140,6 +140,17 @@ class EngineFrameBuilder final : public FrameBuilder {
       // overlays are drawn against (docs/VIEWPORT_ROUTE.md).
       ViewSpec vs = export_view(std::max<double>(1, viewport.width), std::max<double>(1, viewport.height),
                                 std::max(1.0, sc.width), std::max(1.0, sc.height));
+      if (viewport.zoom > 0) {
+        // D5: the page's own camera (viewToCamera), so the engine's frame lines up
+        // with the overlays the page draws over it: CSS px, DPR, zoom, centre.
+        const double dpr = viewport.devicePixelRatio > 0 ? viewport.devicePixelRatio : 1.0;
+        vs.cssWidth = std::max(1.0, static_cast<double>(viewport.width) / dpr);
+        vs.cssHeight = std::max(1.0, static_cast<double>(viewport.height) / dpr);
+        vs.dpr = dpr;
+        vs.zoom = viewport.zoom;
+        vs.centerX = viewport.panX;
+        vs.centerY = viewport.panY;
+      }
       vs.clear = api::Color{0, 0, 0, 1};
       vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
       const double seconds = doc::flicks_to_seconds(time);
@@ -236,8 +247,10 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
         PREMATION_LOG(warn, "scene_texture_unsupported").kv("key", key).kv("what", what);
       }
     }
-    if (file.view.css_width * file.view.device_pixel_ratio != width ||
-        file.view.css_height * file.view.device_pixel_ratio != height) {
+    // Rounded: a fractional DPR (2.18 on the owner's laptop) makes css × dpr
+    // miss the slot size by an ulp even when the frame was built for this slot.
+    if (std::lround(file.view.css_width * file.view.device_pixel_ratio) != static_cast<long>(width) ||
+        std::lround(file.view.css_height * file.view.device_pixel_ratio) != static_cast<long>(height)) {
       // A frame built for the previous slot size (resize in flight): draw it
       // into this size (the camera is re-fitted by the next frame).
       file.view.css_width = width;

@@ -57,6 +57,14 @@ struct ViewportConfig {
   /// rendered at this fraction and scaled up into the slot.
   double resolution = 1.0;
   bool open = false;
+  /// D5: the page's view of the comp — screen CSS px per comp px, and the comp
+  /// point at the viewport's centre (snapshotToFrameScene viewToCamera). zoom ≤ 0
+  /// = fit the comp into the viewport (export_view).
+  double zoom = 0.0;
+  double panX = 0.0;
+  double panY = 0.0;
+  /// CSS px per physical px of the slot (the slot is width × height physical px).
+  double devicePixelRatio = 1.0;
   bool operator==(const ViewportConfig&) const = default;
 };
 

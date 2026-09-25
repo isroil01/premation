@@ -848,6 +848,12 @@ struct ControlVisitor {
     v.height = static_cast<std::uint32_t>(h);
     v.resolution = s.resolution_;
     v.open = true;
+    // D5: the page's camera (zoom ≤ 0 = fit). Only finite values; the pan is the
+    // comp point at the viewport centre.
+    v.zoom = std::isfinite(c.zoom) && c.zoom > 0.0 ? c.zoom : 0.0;
+    v.panX = std::isfinite(c.pan.x) ? c.pan.x : 0.0;
+    v.panY = std::isfinite(c.pan.y) ? c.pan.y : 0.0;
+    v.devicePixelRatio = dpr;
     if (!(v == s.viewport_)) {
       s.viewport_ = v;
       s.sink_.configure(v);
