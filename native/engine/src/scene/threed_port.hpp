@@ -103,6 +103,12 @@ class Scene3D {
                                                                                double baseRot, const Layer3D& s);
   [[nodiscard]] bool camera_animated() const noexcept { return cameraAnimated_; }
 
+  /// A temporal ghost's matrix / world3d at comp time `ti` (buildSnapshot's ghost
+  /// `affineAt`): x / y / rotation offset by `dx/dy/drot`, z and the X / Y
+  /// rotations resampled, Scale Z at `affineAt`'s default of 1.
+  void place_ghost(const Layer3D& s, const std::function<std::optional<double>(std::string_view, double)>& sample,
+                   double ti, double dx, double dy, double drot, RLayer& g) const;
+
   /// The GPU-effect block after the content hash: DOF blur, cast-shadow
   /// bookkeeping, receivers, the shadow switches and `Only` modes.
   void effects(const Layer3D& s, bool isSolid, double px, double py, RLayer& l);

@@ -77,9 +77,9 @@ std::optional<GhostSpec> read_ghost_spec(const std::vector<Json>& effects, doubl
   return std::nullopt;
 }
 
-std::vector<RLayer> ghost_layers(const RLayer& layer, const GhostSpec& spec, double t,
-                                 const std::function<std::optional<double>(std::string_view, double)>& sample,
-                                 double localX, double localY, double localRot, double px, double py, double rot) {
+std::vector<RLayer> ghost_layers(const RLayer& layer, const GhostSpec& spec, double t, const GhostSampler& sample,
+                                 double localX, double localY, double localRot, double px, double py, double rot,
+                                 const GhostPlace3D& place3d) {
   std::vector<RLayer> out;
   for (std::size_t k = 0; k < spec.steps.size(); ++k) {
     const GhostStep& step = spec.steps[k];
@@ -96,9 +96,16 @@ std::vector<RLayer> ghost_layers(const RLayer& layer, const GhostSpec& spec, dou
     g.isMatteSource = false;
     g.isAdjustment = false;
     g.motionSamples.clear();
-    g.x = px + (sample("x", ti).value_or(localX) - localX);
-    g.y = py + (sample("y", ti).value_or(localY) - localY);
-    g.rotation = rot + (sample("rotation", ti).value_or(localRot) - localRot);
+    const double dx = sample("x", ti).value_or(localX) - localX;
+    const double dy = sample("y", ti).value_or(localY) - localY;
+    const double drot = sample("rotation", ti).value_or(localRot) - localRot;
+    if (place3d) {
+      place3d(g, ti, dx, dy, drot);
+    } else {
+      g.x = px + dx;
+      g.y = py + dy;
+      g.rotation = rot + drot;
+    }
     out.push_back(std::move(g));
   }
   return out;

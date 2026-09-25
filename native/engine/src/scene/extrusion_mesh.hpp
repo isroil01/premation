@@ -65,6 +65,10 @@ struct KeyedMesh {
 [[nodiscard]] std::vector<mesh::Ring> trace_text_rings(const Json& spec, double width, double height, int oversample,
                                                        const raster::CanvasOptions& canvas);
 
+/// `traceTextSpec(spec)` at its default 4x: the smoothed closed runs in layer
+/// space, cached by the spec's key. Empty when nothing traces.
+[[nodiscard]] std::shared_ptr<const std::vector<mesh::BezRun>> trace_text_runs(const Json& spec, const raster::CanvasOptions& canvas);
+
 /// The FrameScene carrier's geometry half: vertices / indices as their
 /// little-endian bytes (Float32Array / Uint16Array | Uint32Array), the index
 /// format and the ranges' role / first / count (colour, gain and texture are

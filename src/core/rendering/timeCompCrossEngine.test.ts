@@ -369,6 +369,64 @@ const DEFS: Def[] = [
     },
   },
   {
+    id: 'ghosts-3d',
+    frames: [0, 18],
+    build(graph, anim) {
+      graph.addNode(node('cam', { kind: 'camera', position: { x: 240, y: 160 }, transform: { z: -800, focalLength: 800 } }));
+      // Echo on a 3D rect moving in x, z and both 3D rotations; the ghosts leave its Scale Z behind.
+      graph.addNode(rect('echo3d', 120, 120, 80, 40, '#ff595e', { z: 0, rotationY: 20, scaleZ: 2 }));
+      anim.setKeyframe('echo3d', 'x', 0, 100);
+      anim.setKeyframe('echo3d', 'x', 1, 320);
+      anim.setKeyframe('echo3d', 'z', 0, 0);
+      anim.setKeyframe('echo3d', 'z', 1, -200);
+      anim.setKeyframe('echo3d', 'rotationY', 0, 20);
+      anim.setKeyframe('echo3d', 'rotationY', 1, 80);
+      anim.setKeyframe('echo3d', 'rotationX', 0, 0);
+      anim.setKeyframe('echo3d', 'rotationX', 1, 30);
+      graph.setEffects('echo3d', [{ id: 'e3', type: 'echo', params: { echoTime: -0.1, numEchoes: 3, startIntensity: 90, decay: 70, echoOperator: 0 } }]);
+      // Wide Time on a 3D child of a rotated 3D null (the parent lift).
+      graph.addNode(node('rig3d', { kind: 'null', position: { x: 300, y: 220 }, transform: { z: 50, rotationY: 25 } }));
+      graph.addChild('rig3d', rect('wide3d', 20, 0, 40, 40, '#1982c4', { z: 0 }));
+      anim.setKeyframe('wide3d', 'y', 0, -40);
+      anim.setKeyframe('wide3d', 'y', 1, 40);
+      anim.setKeyframe('wide3d', 'rotation', 0, 0);
+      anim.setKeyframe('wide3d', 'rotation', 1, 90);
+      graph.setEffects('wide3d', [{ id: 'w3', type: 'wide-time', params: { forwardSteps: 1, backwardSteps: 2 } }]);
+    },
+  },
+  {
+    id: 'energy-beam-paths',
+    frames: [0],
+    build(graph) {
+      // Energy Beam along expanded mask paths: a grown closed curve and a shrunk open one.
+      graph.addNode(rect('beamed', 240, 160, 300, 200, '#202830'));
+      graph.setMask('beamed', {
+        paths: [
+          {
+            id: 'grown', mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 18, inverted: false,
+            points: [
+              { x: -100, y: -60, inX: -120, inY: -20, outX: -60, outY: -90 },
+              { x: 90, y: -50, inX: 50, inY: -80, outX: 90, outY: -50 },
+              { x: 60, y: 70, inX: 60, inY: 70, outX: 20, outY: 90 },
+            ],
+          },
+          {
+            id: 'shrunk', mode: 'none', closed: false, feather: 0, opacity: 1, expansion: -6, inverted: false,
+            points: [
+              { x: -120, y: 80, inX: -120, inY: 80, outX: -60, outY: 20 },
+              { x: 0, y: 40, inX: -30, inY: 60, outX: 30, outY: 20 },
+              { x: 120, y: 80, inX: 80, inY: 20, outX: 120, outY: 80 },
+            ],
+          },
+        ],
+      });
+      graph.setEffects('beamed', [
+        { id: 'b1', type: 'beam-path', params: { pathMaskId: 'grown' } },
+        { id: 'b2', type: 'beam-path', params: { pathMaskId: 'shrunk' } },
+      ]);
+    },
+  },
+  {
     id: 'bound-points-continuous-raster',
     frames: [0, 15],
     build(graph, anim) {
@@ -430,11 +488,15 @@ function projLayer(l: RenderLayer): Proj {
     precompScene3d: !!l.precompScene3d,
     depth: l.matrix ? l.depth : null,  // a 2D layer's depth is never read
     matrix: l.matrix ? [...l.matrix] : null,
+    world3d: l.world3d ? [...l.world3d] : null,
     quad3d: l.quad3d ? [...l.quad3d] : null,
     lighting: l.lighting ? [...l.lighting] : null,
     particles: l.particles ? JSON.stringify(l.particles) : null,
     contentAwareFillSrc: l.contentAwareFillSrc ?? null,
     sampleQuads: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => (s.quad ? [...s.quad] : null)) : [],
+    effectPaths: (l.effects ?? [])
+      .filter((e) => Array.isArray(e.params.pathPoints))
+      .map((e) => ({ id: e.id, points: e.params.pathPoints, closed: e.params.pathClosed ?? null })),
     precompLayers: l.precompLayers ? l.precompLayers.map(projLayer) : null,
   };
 }
@@ -526,7 +588,7 @@ test('the C++ time/comp parity fixture matches what buildSnapshot + snapshotToFr
   // Every case really exercises its feature (a vacuous fixture pins nothing).
   const all = JSON.stringify(cases);
   for (const needle of ['inst::iRect', 'inst::iDeep::dRect', 'inst2::iRect', 'coll::iRect', 'seal::iRect', 'vfa:clip', 'vfb:clip',
-    'echoed__echo0', 'ring~c6::petal', 'dot~c19::root', 'bar~c3::root', 'bead~c5::root', 'sat~c4::satBody', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
+    'echoed__echo0', 'ring~c6::petal', 'dot~c19::root', 'bar~c3::root', 'bead~c5::root', 'sat~c4::satBody', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true', 'echo3d__echo2', 'wide3d__echo0', '"effectPaths":[{"id":"b1"']) {
     expect(all).toContain(needle);
   }
   for (const c of cases as Array<{ frames: Array<{ errors: string[] }> }>) for (const f of c.frames) expect(f.errors).toEqual([]);

@@ -607,6 +607,14 @@ std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const do
   };
 }
 
+void Scene3D::place_ghost(const Layer3D& s, const std::function<std::optional<double>(std::string_view, double)>& sample,
+                          double ti, double dx, double dy, double drot, RLayer& g) const {
+  const Affine g3 = affine_at(s, s.ownX + dx, s.ownY + dy, sample("z", ti).value_or(s.z3), sample("rotationX", ti).value_or(s.rotX),
+                              sample("rotationY", ti).value_or(s.rotY), s.ownRot + drot, s.ownScaleX, s.ownScaleY, 1);
+  g.matrix = g3.matrix;
+  g.world3d = to_arr(g3.world);
+}
+
 void Scene3D::effects(const Layer3D& s, bool isSolid, double px, double py, RLayer& l) {
   std::vector<Json> gpuFx;
   if (s.is3d && dof_) {

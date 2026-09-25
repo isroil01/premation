@@ -31,12 +31,16 @@ struct GhostSpec {
 /// `readGhostSpec(effects, fps)`: Echo wins over Wide Time; null = no ghosts.
 [[nodiscard]] std::optional<GhostSpec> read_ghost_spec(const std::vector<Json>& effects, double fps);
 
-/// The 2D ghost copies of `layer` (buildSnapshot's emission, 2D branch): each
-/// resampled through `sample(prop, compTime)` (undefined = the live value).
-/// `localX/Y/Rot` are the layer's live local values, `px/py/rot` its placed ones.
-[[nodiscard]] std::vector<RLayer> ghost_layers(const RLayer& layer, const GhostSpec& spec, double t,
-                                               const std::function<std::optional<double>(std::string_view, double)>& sample,
+using GhostSampler = std::function<std::optional<double>(std::string_view, double)>;
+/// Places a 3D ghost at comp time `ti` from its x / y / rotation offsets.
+using GhostPlace3D = std::function<void(RLayer&, double ti, double dx, double dy, double drot)>;
+
+/// The ghost copies of `layer` (buildSnapshot's emission): each resampled
+/// through `sample(prop, compTime)` (undefined = the live value). `localX/Y/Rot`
+/// are the layer's live local values, `px/py/rot` its placed ones. A 3D layer
+/// passes `place3d`, which rebuilds the ghost's matrix instead of moving x / y.
+[[nodiscard]] std::vector<RLayer> ghost_layers(const RLayer& layer, const GhostSpec& spec, double t, const GhostSampler& sample,
                                                double localX, double localY, double localRot, double px, double py,
-                                               double rot);
+                                               double rot, const GhostPlace3D& place3d);
 
 }  // namespace premation::scene

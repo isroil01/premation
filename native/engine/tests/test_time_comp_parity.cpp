@@ -182,12 +182,33 @@ void cmp_layer(Cmp& c, const std::string& at, const sc::RLayer& l, const Json& w
   c.str(p + "contentAwareFillSrc", l.contentAwareFillSrc.value_or("<null>"),
         w.at("contentAwareFillSrc").is_string() ? w.at("contentAwareFillSrc") : Json::string("<null>"));
   optArr("matrix", l.matrix, w.at("matrix"));
+  optArr("world3d", l.world3d, w.at("world3d"));
   optArr("quad3d", l.quad3d, w.at("quad3d"));
   optArr("lighting", l.lighting, w.at("lighting"));
   const Json& sq = w.at("sampleQuads");
   if (sq.arr().size() == (l.motionSamples.size() > 1 ? l.motionSamples.size() : 0)) {
     for (std::size_t i = 0; i < sq.arr().size(); ++i) optArr("sampleQuads[" + std::to_string(i) + "]", l.motionSamples[i].quad, sq.arr()[i]);
   }
+  std::size_t pathIdx = 0;
+  const Json::Array& wantPaths = w.at("effectPaths").arr();
+  for (const Json& e : l.effects) {
+    const Json& pts = e.at("params").at("pathPoints");
+    if (!pts.is_array()) continue;
+    const std::string q = p + "effectPaths[" + std::to_string(pathIdx) + "].";
+    if (pathIdx >= wantPaths.size()) {
+      c.diffs.push_back(q + "unexpected");
+      break;
+    }
+    const Json& want = wantPaths[pathIdx++];
+    c.str(q + "id", e.at("id").str(), want.at("id"));
+    std::vector<double> got;
+    for (const Json& v : pts.arr()) got.push_back(v.num());
+    c.vec(q + "points", got, want.at("points"));
+    const Json& closed = e.at("params").at("pathClosed");
+    if (want.at("closed").is_null() != closed.is_undefined()) c.diffs.push_back(q + "closed: presence differs");
+    else if (closed.is_bool()) c.boolean(q + "closed", closed.b(), want.at("closed"));
+  }
+  if (pathIdx != wantPaths.size()) c.diffs.push_back(p + "effectPaths: " + std::to_string(pathIdx) + " want " + std::to_string(wantPaths.size()));
   if (w.at("precompLayers").is_array()) {
     if (!l.precompLayers) c.diffs.push_back(p + "precompLayers: missing");
     else cmp_layers(c, p, *l.precompLayers, w.at("precompLayers"));

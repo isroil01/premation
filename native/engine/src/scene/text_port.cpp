@@ -174,6 +174,68 @@ Json resolve_layer_text_path(const doc::Node& n, const Values& a) {
   return tp;
 }
 
+Json point_text_extras(const doc::Node& n) {
+  // readTextExtrasProps.
+  Json x = Json::object();
+  for (const auto& c : n.components) {
+    const Json& p = c.props;
+    for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
+      if (p.at(k).is_number() && std::isfinite(p.at(k).num())) x.set(k, p.at(k));
+    }
+    if (p.at("strokeLineJoin").is_string()) {
+      const std::string& j = p.at("strokeLineJoin").str();
+      if (j == "miter" || j == "round" || j == "bevel") x.set("strokeLineJoin", p.at("strokeLineJoin"));
+    }
+    if (p.at("strokeOrder").is_string()) x.set("strokeOrder", p.at("strokeOrder"));
+    for (const char* k : {"fauxBold", "fauxItalic", "noFill", "noStroke"}) {
+      if (p.at(k).is_bool()) x.set(k, p.at(k));
+    }
+    if (p.at("kerningMode").is_string() && (p.at("kerningMode").str() == "metrics" || p.at("kerningMode").str() == "optical")) {
+      x.set("kerningMode", p.at("kerningMode"));
+    }
+    if (p.at("direction").is_string()) {
+      const std::string& dir = p.at("direction").str();
+      if (dir == "rtl" || dir == "auto") x.set("direction", p.at("direction"));
+      else if (dir == "ltr") x.erase("direction");
+    }
+    if (p.at("orientation").is_string() && p.at("orientation").str() == "vertical") x.set("orientation", Json::string("vertical"));
+    else if (p.at("orientation").is_string() && p.at("orientation").str() == "horizontal") x.erase("orientation");
+    // Standard Vertical Roman Alignment, auto tate-chu-yoko.
+    if (p.at("verticalRomanAlignment").is_bool()) {
+      if (p.at("verticalRomanAlignment").b()) x.set("verticalRomanAlignment", Json::boolean(true));
+      else x.erase("verticalRomanAlignment");
+    }
+    if (p.at("tateChuYokoAuto").is_bool()) {
+      if (p.at("tateChuYokoAuto").b()) {
+        if (!x.at("tateChuYokoDigits").is_number()) x.set("tateChuYokoDigits", Json::number(2));  // TATE_CHU_YOKO_DEFAULT_DIGITS
+      } else {
+        x.erase("tateChuYokoDigits");
+      }
+    }
+    if (x.at("tateChuYokoDigits").is_number() && p.at("tateChuYokoDigits").is_finite_number()) {
+      x.set("tateChuYokoDigits", Json::number(std::max(1.0, std::min(4.0, std::floor(p.at("tateChuYokoDigits").num() + 0.5)))));
+    }
+  }
+  // compactTextExtras.
+  Json out = Json::object();
+  for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
+    if (x.at(k).is_number() && x.at(k).num() != 0) out.set(k, x.at(k));
+  }
+  if (x.at("strokeLineJoin").is_string() && x.at("strokeLineJoin").str() != "round") out.set("strokeLineJoin", x.at("strokeLineJoin"));
+  if (x.at("strokeOrder").is_string() && !x.at("strokeOrder").str().empty()) out.set("strokeOrder", x.at("strokeOrder"));
+  for (const char* k : {"fauxBold", "fauxItalic", "noFill", "noStroke"}) {
+    if (x.at(k).is_bool() && x.at(k).b()) out.set(k, Json::boolean(true));
+  }
+  if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") out.set("kerningMode", x.at("kerningMode"));
+  if (x.at("direction").is_string()) out.set("direction", x.at("direction"));
+  if (x.at("orientation").is_string()) {
+    out.set("orientation", Json::string("vertical"));
+    if (x.at("verticalRomanAlignment").b()) out.set("verticalRomanAlignment", Json::boolean(true));
+    if (x.at("tateChuYokoDigits").is_number() && x.at("tateChuYokoDigits").num() >= 1) out.set("tateChuYokoDigits", x.at("tateChuYokoDigits"));
+  }
+  return out;
+}
+
 void with_text_more_options(Json& extras, const doc::Node& n, const Values& a) {
   // readTextMoreOptions.
   std::string grouping = "character";

@@ -41,6 +41,10 @@ class TextMeasurer;
 [[nodiscard]] Json evaluate_text_animators(std::string_view text, const std::vector<Json>& animators, double time,
                                          std::string* why);
 
+/// textExtras.ts `textExtrasForNode(node)` for point text: readTextExtrasProps +
+/// compactTextExtras (an empty object at defaults).
+[[nodiscard]] Json point_text_extras(const doc::Node& n);
+
 /// textMoreOptions.ts withTextMoreOptions: Anchor Point Grouping, Grouping
 /// Alignment (sampled), Fill & Stroke, Inter-Character Blending and the
 /// OpenType switches folded into the layer's `textExtras` (absent at defaults).

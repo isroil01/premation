@@ -644,12 +644,18 @@ layer's outline (trimPath's arc table, tangent-aligned). The time/comp fixture
 covers all three (`live-merge-paths`, `offset-paths-cleanup`, and an open rail
 under a moving null plus a closed ellipse in `cloners`).
 
+**3D ghosts and expanded-mask Energy Beam (2026-09-26).** Echo and Wide Time
+on a 3D layer rebuild that ghost's matrix and `world3d` at the echoed time
+(`Scene3D::place_ghost`, Scale Z left at `affineAt`'s default of 1, matching
+the TypeScript). Energy Beam on a mask flattens the path after its expansion.
+Both are in the time/comp fixture (`ghosts-3d`, `energy-beam-paths`).
+
 **Still reported, and why:** Pixel Motion frame blending (optical flow + warp
 over the two decoded frames — the decoded frames are GPU textures in
 `MediaTextures`, so the warp belongs in the render graph); the audio waveform
 generator (needs the engine's decoded audio peaks — `audio::query_peaks` —
-reachable from the scene builder); Energy Beam on a text outline / an expanded
-mask path; temporal ghosts on 3D layers (the ghost's own `affineAt`).
+reachable from the scene builder); Energy Beam on a paragraph text box. Point
+text is traced through the extrusion run cache; that path is not in the fixture.
 
 **D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
 content.** A frame drawn before is a GPU copy into the slot instead of rasters,

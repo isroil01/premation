@@ -624,63 +624,10 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
   std::vector<Json> resolved = resolve_effect_params(own, a, layerTime);
   {  // path / paint effects' resolved geometry (effect_handoff.cpp)
     std::vector<std::string> notes;
-    resolve_effect_handoffs(resolved, n, a, layerTime, notes);
+    resolve_effect_handoffs(resolved, n, a, layerTime, c_.measurer, notes);
     if (note != nullptr) {
       for (std::string& w : notes) unported(*note, n, std::move(w));
     }
-  }
-  for (Json& e : resolved) {
-    if (!(e.at("type").is_string() && e.at("type").str() == "beam-path") || !effect_enabled(e)) continue;
-    // buildSnapshot's path hand-off: the assigned mask path, flattened at the
-    // frame's time into `pathPoints` (maskPathPolyline, 16 samples a segment).
-    if (std::round(effect_number(e, "source")) == 2) {  // BEAM_SOURCE.text: traceTextRuns
-      if (note != nullptr) unported(*note, n, "Energy Beam on the layer's text outline");
-      continue;
-    }
-    const Json& pm = e.at("params").at("pathMaskId");
-    if (!pm.is_string() || pm.str().empty()) continue;
-    const Json m = layerTime ? read_node_mask_at(n, *layerTime) : Json{};
-    const Json mask = m.is_undefined() ? doc::read_node_mask(n).value_or(Json{}) : m;
-    const Json* path = nullptr;
-    if (mask.at("paths").is_array()) {
-      for (const Json& p : mask.at("paths").arr()) {
-        if (p.at("id").is_string() && p.at("id").str() == pm.str()) path = &p;
-        if (path != nullptr) break;
-      }
-    }
-    Json flat = Json::array();
-    bool closed = false;
-    if (path != nullptr) {
-      closed = path->at("closed").is_bool() && path->at("closed").b();
-      if (path->at("expansion").is_number() && path->at("expansion").num() != 0) {
-        if (note != nullptr) unported(*note, n, "Energy Beam on an expanded mask path");
-        continue;
-      }
-      const Json::Array& pts = path->at("points").is_array() ? path->at("points").arr() : Json::Array{};
-      const std::size_t np = pts.size();
-      const std::size_t last = np < 2 ? 0 : (closed ? np : np - 1);
-      const auto g = [](const Json& o, std::string_view k) { return o.at(k).num(); };
-      for (std::size_t i = 0; i < last; ++i) {
-        const Json& pa = pts[i];
-        const Json& pb = pts[(i + 1) % np];
-        if (i == 0) {
-          flat.arr_mut().push_back(Json::number(g(pa, "x")));
-          flat.arr_mut().push_back(Json::number(g(pa, "y")));
-        }
-        for (int s = 1; s <= 16; ++s) {
-          const double t = s / 16.0;
-          const double u = 1 - t;
-          flat.arr_mut().push_back(Json::number(u * u * u * g(pa, "x") + 3 * u * u * t * g(pa, "outX") +
-                                                3 * u * t * t * g(pb, "inX") + t * t * t * g(pb, "x")));
-          flat.arr_mut().push_back(Json::number(u * u * u * g(pa, "y") + 3 * u * u * t * g(pa, "outY") +
-                                                3 * u * t * t * g(pb, "inY") + t * t * t * g(pb, "y")));
-        }
-      }
-    }
-    Json params = e.at("params");
-    params.set("pathPoints", std::move(flat));
-    params.set("pathClosed", Json::boolean(closed));
-    e.set("params", std::move(params));
   }
   if (note != nullptr) {
     for (const Json& e : resolved) {
@@ -911,65 +858,9 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   l.baselineShift = a.get("baselineShift") ? a.get("baselineShift") : base.baselineShift;
   l.textStroke = base.textStroke;
   l.textStrokeWidth = a.get("strokeWidth") ? a.get("strokeWidth") : base.textStrokeWidth;
-  // textExtras.ts readTextExtrasProps + compactTextExtras (point text).
-  Json x = Json::object();
-  for (const auto& c : n.components) {
-    const Json& p = c.props;
-    for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
-      if (p.at(k).is_number() && std::isfinite(p.at(k).num())) x.set(k, p.at(k));
-    }
-    if (p.at("strokeLineJoin").is_string()) {
-      const std::string& j = p.at("strokeLineJoin").str();
-      if (j == "miter" || j == "round" || j == "bevel") x.set("strokeLineJoin", p.at("strokeLineJoin"));
-    }
-    if (p.at("strokeOrder").is_string()) x.set("strokeOrder", p.at("strokeOrder"));
-    for (const char* k : {"fauxBold", "fauxItalic", "noFill", "noStroke"}) {
-      if (p.at(k).is_bool()) x.set(k, p.at(k));
-    }
-    if (p.at("kerningMode").is_string() && (p.at("kerningMode").str() == "metrics" || p.at("kerningMode").str() == "optical")) {
-      x.set("kerningMode", p.at("kerningMode"));
-    }
-    if (p.at("direction").is_string()) {
-      const std::string& dir = p.at("direction").str();
-      if (dir == "rtl" || dir == "auto") x.set("direction", p.at("direction"));
-      else if (dir == "ltr") x.erase("direction");
-    }
-    if (p.at("orientation").is_string() && p.at("orientation").str() == "vertical") x.set("orientation", Json::string("vertical"));
-    else if (p.at("orientation").is_string() && p.at("orientation").str() == "horizontal") x.erase("orientation");
-    // readTextExtrasProps: Standard Vertical Roman Alignment, auto tate-chu-yoko.
-    if (p.at("verticalRomanAlignment").is_bool()) {
-      if (p.at("verticalRomanAlignment").b()) x.set("verticalRomanAlignment", Json::boolean(true));
-      else x.erase("verticalRomanAlignment");
-    }
-    if (p.at("tateChuYokoAuto").is_bool()) {
-      if (p.at("tateChuYokoAuto").b()) {
-        if (!x.at("tateChuYokoDigits").is_number()) x.set("tateChuYokoDigits", Json::number(2));  // TATE_CHU_YOKO_DEFAULT_DIGITS
-      } else {
-        x.erase("tateChuYokoDigits");
-      }
-    }
-    if (x.at("tateChuYokoDigits").is_number() && p.at("tateChuYokoDigits").is_finite_number()) {
-      x.set("tateChuYokoDigits", Json::number(std::max(1.0, std::min(4.0, std::floor(p.at("tateChuYokoDigits").num() + 0.5)))));
-    }
-  }
-  Json out = Json::object();
-  for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
-    if (x.at(k).is_number() && x.at(k).num() != 0) out.set(k, x.at(k));
-  }
-  if (x.at("strokeLineJoin").is_string() && x.at("strokeLineJoin").str() != "round") out.set("strokeLineJoin", x.at("strokeLineJoin"));
-  if (x.at("strokeOrder").is_string() && !x.at("strokeOrder").str().empty()) out.set("strokeOrder", x.at("strokeOrder"));
-  for (const char* k : {"fauxBold", "fauxItalic", "noFill", "noStroke"}) {
-    if (x.at(k).is_bool() && x.at(k).b()) out.set(k, Json::boolean(true));
-  }
-  if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") out.set("kerningMode", x.at("kerningMode"));
-  if (x.at("direction").is_string()) out.set("direction", x.at("direction"));
-  if (x.at("orientation").is_string()) {
-    out.set("orientation", Json::string("vertical"));
-    if (x.at("verticalRomanAlignment").b()) out.set("verticalRomanAlignment", Json::boolean(true));
-    if (x.at("tateChuYokoDigits").is_number() && x.at("tateChuYokoDigits").num() >= 1) out.set("tateChuYokoDigits", x.at("tateChuYokoDigits"));
-    // Vertical optical pairs (opticalKernVertical) are not in the scene port's measurer.
-    if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") unported(l, n, "vertical text with optical kerning");
-  }
+  Json out = point_text_extras(n);  // text_port.cpp
+  // Vertical optical pairs (opticalKernVertical) are not in the scene port's measurer.
+  if (out.at("orientation").is_string() && out.at("kerningMode").is_string()) unported(l, n, "vertical text with optical kerning");
   with_text_more_options(out, n, a);  // textMoreOptions + OpenType switches (text_port.cpp)
   if (!out.obj().empty()) l.textExtras = std::move(out);
   if (doc::read_text_path_config(n)) l.textPath = resolve_layer_text_path(n, a);  // text_port.cpp
@@ -1594,16 +1485,16 @@ void Walk::build_node(const doc::Node& n) {
   // times, behind the layer — or after it for Composite In Front.
   std::vector<RLayer> echoesInFront;
   if (const std::optional<GhostSpec> ghosts = read_ghost_spec(l.effects, fps_)) {
-    if (is3d) {
-      unported(l, n, "temporal ghosts on 3D layers");
-    } else {
-      std::vector<RLayer> copies = ghost_layers(
-          l, *ghosts, t_, [&](std::string_view p, double tt) { return anim_sample_of(n.id, p, tt); },
-          a.get("x").value_or(base.x), a.get("y").value_or(base.y), a.get("rotation").value_or(base.rotation), px, py, rot);
-      for (RLayer& g : copies) {
-        if (ghosts->inFront) echoesInFront.push_back(std::move(g));
-        else emit(std::move(g), n);
-      }
+    const GhostSampler sample = [&](std::string_view p, double tt) { return anim_sample_of(n.id, p, tt); };
+    GhostPlace3D place3d;
+    if (is3d && l.matrix) {
+      place3d = [&](RLayer& g, double ti, double dx, double dy, double drot) { three_->place_ghost(s3, sample, ti, dx, dy, drot, g); };
+    }
+    std::vector<RLayer> copies = ghost_layers(l, *ghosts, t_, sample, a.get("x").value_or(base.x), a.get("y").value_or(base.y),
+                                              a.get("rotation").value_or(base.rotation), px, py, rot, place3d);
+    for (RLayer& g : copies) {
+      if (ghosts->inFront) echoesInFront.push_back(std::move(g));
+      else emit(std::move(g), n);
     }
   }
   // Extrusion / primitive mesh carriers, then the front quad (inset, mesh-drawn, planar DOF).

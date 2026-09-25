@@ -261,6 +261,13 @@ std::vector<mesh::BezRun> json_runs(const Json::Array& subs) {
   return runs;
 }
 
+using RunsPtr = std::shared_ptr<const std::vector<mesh::BezRun>>;
+
+Lru<RunsPtr>& text_runs() {
+  static Lru<RunsPtr> c(64);
+  return c;
+}
+
 }  // namespace
 
 const char* bevel_profile_name(mesh::BevelProfile p) noexcept {
@@ -318,10 +325,13 @@ void mesh_to_api(const std::string& key, const mesh::ExtrudedMesh& m, api::Rende
 void clear_extrusion_mesh_caches() {
   outlines().clear();
   meshes().clear();
+  text_runs().clear();
 }
 
-std::vector<mesh::Ring> trace_text_rings(const Json& spec, double width, double height, int oversample,
-                                         const rs::CanvasOptions& canvas) {
+namespace {
+
+/// traceTextSpec(spec, oversample): the smoothed runs in layer space.
+std::vector<mesh::BezRun> traced_runs(const Json& spec, double width, double height, int oversample, const rs::CanvasOptions& canvas) {
   // rasterizeTextSpec.
   if (!spec.at("text").is_string() || blank(spec.at("text").str())) return {};
   const double os = oversample;
@@ -358,8 +368,26 @@ std::vector<mesh::Ring> trace_text_rings(const Json& spec, double width, double 
     for (const auto& p : c.points) pts.push_back({(p.x - cx) / os, (p.y - cy) / os});
     runs.push_back({mesh::smooth_contour(pts, 0.55, 38.0), false});
   }
+  return runs;
+}
+
+}  // namespace
+
+std::vector<mesh::Ring> trace_text_rings(const Json& spec, double width, double height, int oversample,
+                                         const rs::CanvasOptions& canvas) {
+  const std::vector<mesh::BezRun> runs = traced_runs(spec, width, height, oversample, canvas);
   if (runs.empty()) return {};
   return mesh::bezier_runs_to_rings(runs, 0.5);
+}
+
+std::shared_ptr<const std::vector<mesh::BezRun>> trace_text_runs(const Json& spec, const rs::CanvasOptions& canvas) {
+  const std::string key = text_spec_key(spec);
+  std::optional<RunsPtr> hit = text_runs().get(key);
+  if (!hit) {
+    hit = std::make_shared<const std::vector<mesh::BezRun>>(traced_runs(spec, spec.at("width").num(), spec.at("height").num(), 4, canvas));
+    text_runs().set(key, *hit);
+  }
+  return *hit;
 }
 
 std::optional<ExtrusionOutline> extrusion_outline_for(const RLayer& layer, double width, double height,
