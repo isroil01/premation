@@ -19,7 +19,8 @@ namespace premation::scene {
 
 /// light: a light's glow wash (light_wash.cpp). pixels: a texture the builder
 /// computes itself (a colour-LUT strip), uploaded as given.
-enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels };
+/// particles: a particle emitter's field (particle_port.cpp).
+enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels, particles };
 
 struct TextureRequest {
   std::string key;

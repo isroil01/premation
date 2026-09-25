@@ -20,6 +20,7 @@
 #include "light_wash.hpp"
 #include "threed_frame.hpp"
 #include "precomp_frame.hpp"
+#include "particle_port.hpp"
 
 namespace premation::scene {
 namespace {
@@ -232,7 +233,7 @@ bool has_ordered_paint(const RLayer& l) {
 
 class Flattener {
  public:
-  Flattener(double rasterScale, double fps) : rasterScale_(rasterScale), fps_(fps) {}
+  Flattener(double rasterScale, double fps, double time) : rasterScale_(rasterScale), fps_(fps), time_(time) {}
   /// `placement` = flattenLayers' placement3d: the 2D placement the camera these layers draw through carries.
   void flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity, std::vector<api::Renderable>& out,
                const Mat3* placement = nullptr);
@@ -244,11 +245,13 @@ class Flattener {
   std::vector<std::pair<std::string, std::string>> unported_;
   api::Renderable layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
   api::Renderable precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
+  api::Renderable particles_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
   std::optional<api::Renderable> adjustment_to_renderable(const RLayer& l);
   void feed(const RLayer& l);
   static bool needs_isolation(const RLayer& l);
   double rasterScale_;
   double fps_;
+  double time_;  ///< snapshot.time (a particle field's clock)
 };
 
 bool Flattener::needs_isolation(const RLayer& l) {
@@ -399,7 +402,19 @@ void Flattener::feed(const RLayer& l) {
     r.layerId = l.id;
     textures_.push_back(std::move(r));
   }
-  if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
+  if (!l.particles.is_undefined()) {
+    // A particle emitter's field (AppTextureProvider.setParticles, particle_port.cpp):
+    // the layer's own scale on top of the raster scale, at the comp time (the
+    // snapshot gives an emitter no source time).
+    TextureRequest r;
+    r.key = "particles:" + l.id;
+    r.kind = TexKind::particles;
+    const double fieldScale = std::max(std::abs(l.scaleX), std::abs(l.scaleY));
+    r.spec = particle_field_spec(l.particles, l.sourceTime.value_or(time_), l.width, l.height, fieldScale, rasterScale_, fps_);
+    r.spec.set("key", Json::string(r.key));
+    r.layerId = l.id;
+    textures_.push_back(std::move(r));
+  } else if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
     TextureRequest r;
     r.key = "asset:" + l.id;
     r.kind = TexKind::media;
@@ -725,6 +740,49 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
   return r;
 }
 
+api::Renderable Flattener::particles_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
+  // particlesToRenderable: the layer-box field on the layer's model; the config's
+  // 'add' transfer composites additively unless the layer sets its own blend.
+  const Mat3 model = mat3_mul(parent, center_model(l));
+  const int adv = advanced_blend_id(l.blend);
+  const bool fieldAdd = l.particles.at("blend").is_string() && l.particles.at("blend").str() == "add" && l.blend == "normal";
+  api::Renderable r;
+  r.id = l.id;
+  r.kind = api::RenderableKind::image;
+  r.model_matrix = mat_wire(model);
+  r.bounds = bounds_of(model);
+  r.opacity = parentOpacity * l.opacity;
+  r.blend = adv > 0 ? api::RenderBlendMode::normal
+            : fieldAdd || l.blend == "add" ? api::RenderBlendMode::add
+                                           : api::RenderBlendMode::normal;
+  if (adv > 0) r.advanced_blend = adv;
+  r.preserve_transparency = l.preserveTransparency;
+  if (l.backdropBlur && *l.backdropBlur > 0) r.backdrop_blur = *l.backdropBlur;
+  if (l.glass) r.glass = to_renderable_glass(*l.glass);
+  r.color = to_color({1, 1, 1, 1});
+  r.texture_key = "particles:" + l.id;
+  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;
+  if (l.matte && l.matteSourceId) {
+    api::RenderMatte m;
+    m.mode = l.matte->luma ? api::RenderMatteMode::luma : api::RenderMatteMode::alpha;
+    m.inverted = l.matte->inverted;
+    m.source_id = *l.matteSourceId;
+    r.matte = m;
+  }
+  if (l.isMatteSource) r.matte_source = true;
+  if (!l.effects.empty()) {
+    const ColorMatrix cm = effect_color_matrix(l.effects);
+    if (!cm.identity) {
+      api::RenderColorMatrix wm;
+      wm.m.assign(cm.m.begin(), cm.m.end());
+      wm.offset.assign(cm.offset.begin(), cm.offset.end());
+      r.color_matrix = wm;
+    }
+  }
+  r.effects = extract_spatial_effects(l, false);
+  return r;
+}
+
 std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer& l) {
   const ColorMatrix cm = l.effects.empty() ? ColorMatrix{} : effect_color_matrix(l.effects);
   const bool lut = has_lut_effect(l);
@@ -763,7 +821,8 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
       if (!l.visible) continue;
       feed(l);
       if (l.isMatteSource) {
-        api::Renderable src = l.precompLayers && !l.precompLayers->empty() && needs_isolation(l)
+        api::Renderable src = !l.particles.is_undefined() ? particles_to_renderable(l, parent, parentOpacity)
+                              : l.precompLayers && !l.precompLayers->empty() && needs_isolation(l)
                                   ? precomp_to_renderable(l, parent, parentOpacity, placement)
                                   : layer_to_renderable(l, parent, parentOpacity, placement);
         src.matte_source = true;
@@ -782,6 +841,10 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         tr.spec = light_wash_spec(*l.light);
         tr.layerId = l.id;
         textures_.push_back(std::move(tr));
+        continue;
+      }
+      if (!l.particles.is_undefined()) {  // a particle emitter samples its field
+        out.push_back(particles_to_renderable(l, parent, parentOpacity));
         continue;
       }
       if (l.precompLayers && !l.precompLayers->empty()) {
@@ -911,7 +974,7 @@ bool needs_shape_raster(const RLayer& l) {
 
 FrameBuild build_frame_scene(const Snapshot& s, double rasterScale) {
   FrameBuild out;
-  Flattener f(rasterScale, s.fps);
+  Flattener f(rasterScale, s.fps, s.time);
   std::vector<api::Renderable> renderables;
   f.flatten(s.layers, Mat3::identity(), 1, renderables);
   api::RenderFrameScene& sc = out.scene;

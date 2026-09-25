@@ -11,6 +11,7 @@
 #include "image_decode.hpp"
 #include "json.hpp"
 #include "light_wash.hpp"
+#include "particle_port.hpp"
 #include "raster_source.hpp"
 #include "svg_layer.hpp"
 #include "thread_pool.hpp"
@@ -226,6 +227,8 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     raster::RasterOutput out =
         m.req->kind == TexKind::light  // a light's glow wash (light_wash.cpp)
             ? draw_light_wash(light_wash_of_spec(m.req->spec), opts_.canvas)
+        : m.req->kind == TexKind::particles  // a particle emitter's field (particle_port.cpp)
+            ? draw_particle_field(m.req->spec, opts_.canvas, opts_.mediaBase)
             : raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas,
                                          &bake);
     e->width = out.width;

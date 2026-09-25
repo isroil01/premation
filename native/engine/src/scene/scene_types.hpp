@@ -207,6 +207,8 @@ struct RLayer {
   bool castsShadow3d = false;
   /// Only ever false (a receiver that refuses shadows).
   std::optional<bool> acceptsShadows3d;
+  /// A particle emitter's resolved config (RenderLayer.particles; particle_port.cpp).
+  Json particles;
   /// A light layer's glow wash (RenderLayer.light).
   std::optional<LightWash> light;
   /// A 3D solid's mesh. shared_ptr: the vertex bytes are immutable once built and

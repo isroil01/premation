@@ -19,6 +19,7 @@
 #include "layer_styles.hpp"
 #include "misc_port.hpp"
 #include "paint_port.hpp"
+#include "particle_port.hpp"
 #include "path_ops.hpp"
 #include "precomp_frame.hpp"
 #include "jsmath.hpp"
@@ -1010,10 +1011,67 @@ void Walk::build_node(const doc::Node& n) {
     if (auto wash = three_->light_layer(n)) emit(std::move(*wash), n);
     return;
   }
-  if (kind == "particle" || kind.find('.') != std::string::npos) {
+  if (kind == "particle") {  // a self-drawing emitter layer (particle_port.cpp)
+    const Json staticCfg = read_node_particle(n);
+    if (staticCfg.is_undefined()) return;
+    const Values& pv = values_of(n.id);
+    const xf::Local2D w = world_of(n.id);
+    // readGeometry's box: an authored width AND height (the evaluated values
+    // winning), else 2·radius, else the particle kind's 140×140.
+    std::optional<double> gw, gh, radius;
+    for (const auto& comp : n.components) {
+      const Json& p = comp.props;
+      if (p.at("width").is_number()) gw = p.at("width").num();
+      if (p.at("height").is_number()) gh = p.at("height").num();
+      if (p.at("radius").is_number()) radius = p.at("radius").num();
+      else if (p.at("outerRadius").is_number()) radius = p.at("outerRadius").num();
+      else if (p.at("r").is_number()) radius = p.at("r").num();
+    }
+    if (const auto v = pv.get("width")) gw = v;
+    if (const auto v = pv.get("height")) gh = v;
+    const bool authored = gw && gh && *gw > 0 && *gh > 0;
+    const double boxW = authored ? *gw : radius && *radius > 0 ? *radius * 2 : 140;
+    const double boxH = authored ? *gh : radius && *radius > 0 ? *radius * 2 : 140;
+    Json synced = staticCfg;
+    synced.set("emitterWidth", Json::number(boxW));
+    synced.set("emitterHeight", Json::number(boxH));
+    Json cfg = resolve_particle_config(synced, pv);
+    // The comp shutter (velocity streaks) when this layer's motion-blur switch is on.
+    const bool blurOn = mb_ && mb_->enabled && read_node_motion_blur(n);
+    cfg.set("shutterSec", Json::number(blurOn ? (std::max(0.0, std::min(360.0, mb_->shutterAngle)) / 360) / std::max(1.0, mb_->fps) : 0));
+    if (cfg.at("spriteAssetId").is_string() && !cfg.at("spriteAssetId").str().empty()) {
+      if (const Json* asset = doc::find_asset(d_, cfg.at("spriteAssetId").str()); asset != nullptr && asset->at("src").is_string()) {
+        cfg.set("spriteSrc", asset->at("src"));
+      }
+    }
+    // A 3D emitter with no lens of its own takes the scene camera's focal length.
+    if (doc::is_3d_enabled(n) && three_->camera() && !(cfg.at("perspective").is_number() && cfg.at("perspective").num() > 0)) {
+      cfg.set("perspective", Json::number(three_->camera()->focal_length));
+    }
     RLayer l;
     l.id = n.id;
-    unported(l, n, kind == "particle" ? "particle layers" : "plugin generator / shader layers");
+    l.kind = LayerKind::shape;
+    l.x = w.x;
+    l.y = w.y;
+    l.rotation = w.rotation;
+    l.scaleX = w.scale_x;
+    l.scaleY = w.scale_y;
+    l.depth = 0;
+    l.opacity = pv.has("opacity") ? *pv.get("opacity") / 100 : 1;
+    l.width = boxW;
+    l.height = boxH;
+    l.fill = "#000";
+    l.visible = n.visible;
+    l.blend = read_node_blend(n);
+    l.preserveTransparency = read_node_preserve_transparency(n);
+    l.particles = std::move(cfg);
+    emit(std::move(l), n);
+    return;
+  }
+  if (kind.find('.') != std::string::npos) {
+    RLayer l;
+    l.id = n.id;
+    unported(l, n, "plugin generator / shader layers");
     emit_stub(n);
     return;
   }
