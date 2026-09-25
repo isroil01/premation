@@ -69,6 +69,10 @@ std::string hr_text(std::string_view what, HRESULT hr) {
 
 }  // namespace
 
+namespace {
+bool decode_frame(IWICBitmapDecoder* decoder, DecodedImage& out, std::string& error);
+}  // namespace
+
 bool decode_image_file(const std::filesystem::path& p, DecodedImage& out, std::string& error) {
   const ComScope com;
   if (!com.usable()) {
@@ -89,8 +93,50 @@ bool decode_image_file(const std::filesystem::path& p, DecodedImage& out, std::s
     error = hr_text("open " + p.string(), hr);
     return false;
   }
+  return decode_frame(decoder.Get(), out, error);
+}
+
+bool decode_image_bytes(std::span<const std::uint8_t> bytes, DecodedImage& out, std::string& error) {
+  const ComScope com;
+  if (!com.usable()) {
+    error = "COM unavailable";
+    return false;
+  }
+  if (bytes.empty() || bytes.size() > (std::numeric_limits<DWORD>::max)()) {
+    error = "image bytes unusable";
+    return false;
+  }
+  ComPtr<IWICImagingFactory> factory;
+  HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_IWICImagingFactory,
+                                reinterpret_cast<void**>(factory.GetAddressOf()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): COM out-param
+  if (FAILED(hr)) {
+    error = hr_text("WIC factory", hr);
+    return false;
+  }
+  ComPtr<IWICStream> stream;
+  hr = factory->CreateStream(&stream);
+  if (SUCCEEDED(hr)) {
+    // WIC reads the buffer in place (it never writes through this pointer).
+    hr = stream->InitializeFromMemory(const_cast<BYTE*>(bytes.data()), static_cast<DWORD>(bytes.size()));  // NOLINT(cppcoreguidelines-pro-type-const-cast)
+  }
+  if (FAILED(hr)) {
+    error = hr_text("memory stream", hr);
+    return false;
+  }
+  ComPtr<IWICBitmapDecoder> decoder;
+  hr = factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
+  if (FAILED(hr)) {
+    error = hr_text("decode", hr);
+    return false;
+  }
+  return decode_frame(decoder.Get(), out, error);
+}
+
+namespace {
+
+bool decode_frame(IWICBitmapDecoder* decoder, DecodedImage& out, std::string& error) {
   ComPtr<IWICBitmapFrameDecode> frame;
-  hr = decoder->GetFrame(0, &frame);
+  HRESULT hr = decoder->GetFrame(0, &frame);
   if (FAILED(hr)) {
     error = hr_text("first frame", hr);
     return false;
@@ -128,6 +174,8 @@ bool decode_image_file(const std::filesystem::path& p, DecodedImage& out, std::s
   return true;
 }
 
+}  // namespace
+
 #else
 
 FileStamp file_stamp(const std::filesystem::path& p) {
@@ -137,6 +185,13 @@ FileStamp file_stamp(const std::filesystem::path& p) {
 
 bool decode_image_file(const std::filesystem::path& p, DecodedImage& out, std::string& error) {
   (void)p;
+  (void)out;
+  error = "no still-image decoder on this platform yet";
+  return false;
+}
+
+bool decode_image_bytes(std::span<const std::uint8_t> bytes, DecodedImage& out, std::string& error) {
+  (void)bytes;
   (void)out;
   error = "no still-image decoder on this platform yet";
   return false;

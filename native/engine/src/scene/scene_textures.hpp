@@ -109,6 +109,7 @@ class SceneTextures final : public rg::ExternalTextureSource {
   };
   std::string media_ref(const TextureRequest& r, PrepareStats& stats, std::optional<api::RenderColorSpace>& space);
   std::string image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
+  std::string svg_ref(const TextureRequest& r, PrepareStats& stats);
   void insert(std::string hash, std::shared_ptr<const RasterEntry> e);
   [[nodiscard]] std::shared_ptr<const RasterEntry> find(std::string_view hash);
 

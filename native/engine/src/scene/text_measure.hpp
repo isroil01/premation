@@ -40,9 +40,24 @@ struct MeasuredStyle {
   bool fauxBold = false;
   bool fauxItalic = false;
   bool vertical = false;
+  bool verticalRomanAlignment = false;
+  std::optional<int> tateChuYokoDigits;  ///< auto tate-chu-yoko (vertical only)
   bool opticalKerning = false;
   bool hasFontAxes = false;
+  // Paragraph box (textExtras.ts readParagraphBox), paragraph text only.
+  std::optional<double> boxHeight;       ///< fixed box height (auto-size Off / Fit)
+  std::string boxVerticalAlign;          ///< "" = top, "center", "bottom"
+  bool boxFit = false;                   ///< Fit Text to Box
+  std::optional<double> boxAnchorHeight; ///< auto-height box's authored height
+  bool hasLineRuns = false;              ///< character runs that change a line's height
+  /// Set by wrapping: the wrapped content's soft-break line numbers.
+  std::optional<std::vector<int>> softBreakLines;
 };
+
+/// textExtras.ts softBreakLines(raw, wrapped) for a wrap that REPLACED spaces
+/// (same length): the wrapped line numbers that end in a soft break. nullopt
+/// when the wrap inserted characters (the CJK path, not ported).
+[[nodiscard]] std::optional<std::vector<int>> soft_break_lines(std::string_view raw, std::string_view wrapped);
 
 /// `readMeasuredTextStyle(node, overrides)` — nullopt when the node has no text
 /// content. `overrides` are the sampled animated values (fontSize, …) as the
@@ -67,6 +82,10 @@ class TextMeasurer {
   /// The canvas (fonts) the measurer draws with — what text extrusion traces its
   /// outline on. Null = no canvas (text bodies report unported).
   [[nodiscard]] virtual const raster::CanvasOptions* canvas_options() const noexcept { return nullptr; }
+  /// `wrappedStyle(s)`: paragraph text with its content wrapped at the box and
+  /// its soft breaks recorded; point text unchanged. nullopt = a wrap outside
+  /// the port (CJK line breaking, Fit Text to Box); `why` names it.
+  [[nodiscard]] virtual std::optional<MeasuredStyle> wrapped_style(const MeasuredStyle& s, std::string* why) = 0;
 };
 
 /// The Canvas2D-metrics measurer over the E3 raster module (fonts from `opts`).

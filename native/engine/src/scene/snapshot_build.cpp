@@ -15,12 +15,15 @@
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
 #include "misc_port.hpp"
+#include "paint_port.hpp"
 #include "path_ops.hpp"
 #include "jsmath.hpp"
 #include "readers.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
+#include "svg_layer.hpp"
+#include "text_port.hpp"
 #include "text_runs.hpp"
 #include "threed_port.hpp"
 #include "transform.hpp"
@@ -773,6 +776,21 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
     }
     if (p.at("orientation").is_string() && p.at("orientation").str() == "vertical") x.set("orientation", Json::string("vertical"));
     else if (p.at("orientation").is_string() && p.at("orientation").str() == "horizontal") x.erase("orientation");
+    // readTextExtrasProps: Standard Vertical Roman Alignment, auto tate-chu-yoko.
+    if (p.at("verticalRomanAlignment").is_bool()) {
+      if (p.at("verticalRomanAlignment").b()) x.set("verticalRomanAlignment", Json::boolean(true));
+      else x.erase("verticalRomanAlignment");
+    }
+    if (p.at("tateChuYokoAuto").is_bool()) {
+      if (p.at("tateChuYokoAuto").b()) {
+        if (!x.at("tateChuYokoDigits").is_number()) x.set("tateChuYokoDigits", Json::number(2));  // TATE_CHU_YOKO_DEFAULT_DIGITS
+      } else {
+        x.erase("tateChuYokoDigits");
+      }
+    }
+    if (x.at("tateChuYokoDigits").is_number() && p.at("tateChuYokoDigits").is_finite_number()) {
+      x.set("tateChuYokoDigits", Json::number(std::max(1.0, std::min(4.0, std::floor(p.at("tateChuYokoDigits").num() + 0.5)))));
+    }
   }
   Json out = Json::object();
   for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
@@ -786,27 +804,16 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") out.set("kerningMode", x.at("kerningMode"));
   if (x.at("direction").is_string()) out.set("direction", x.at("direction"));
   if (x.at("orientation").is_string()) {
-    unported(l, n, "vertical text");
+    out.set("orientation", Json::string("vertical"));
+    if (x.at("verticalRomanAlignment").b()) out.set("verticalRomanAlignment", Json::boolean(true));
+    if (x.at("tateChuYokoDigits").is_number() && x.at("tateChuYokoDigits").num() >= 1) out.set("tateChuYokoDigits", x.at("tateChuYokoDigits"));
+    // Vertical optical pairs (opticalKernVertical) are not in the scene port's measurer.
+    if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") unported(l, n, "vertical text with optical kerning");
   }
+  with_text_more_options(out, n, a);  // textMoreOptions + OpenType switches (text_port.cpp)
   if (!out.obj().empty()) l.textExtras = std::move(out);
-  // textMoreOptions / OpenType switches — reported, not produced.
-  for (const auto& c : n.components) {
-    if (c.type != "Text") continue;
-    const Json& p = c.props;
-    for (const char* k : {"anchorGrouping", "groupingAlignX", "groupingAlignY", "fillStrokeMode", "interCharacterBlending",
-                          "stylisticSets"}) {
-      if (!p.at(k).is_undefined()) unported(l, n, std::string("text more options (") + k + ")");
-    }
-    if (p.at("ligatures").is_bool() && !p.at("ligatures").b()) unported(l, n, "OpenType ligature switches");
-    if (p.at("discretionaryLigatures").is_bool() && p.at("discretionaryLigatures").b()) unported(l, n, "OpenType ligature switches");
-    if (p.at("contextualAlternates").is_bool() && !p.at("contextualAlternates").b()) unported(l, n, "OpenType ligature switches");
-    const Json& sp = p.at("strokePaint");
-    if (sp.is_object() && sp.at("stops").is_array() && !sp.at("stops").arr().empty()) unported(l, n, "text stroke gradients");
-    const Json& anims = p.at("__animators");
-    if (anims.is_array() && !anims.arr().empty()) unported(l, n, "text animators");
-    if (p.at("boxWidth").is_number() && p.at("boxWidth").num() > 0) unported(l, n, "paragraph text (box wrapping)");
-  }
-  if (doc::read_text_path_config(n)) unported(l, n, "text on a path");
+  if (doc::read_text_path_config(n)) l.textPath = resolve_layer_text_path(n, a);  // text_port.cpp
+  l.textStrokePaint = text_stroke_paint(n, a);                                     // text_port.cpp
   const Json axes = doc::read_font_axes_prop(n);
   if (axes.is_object() && !axes.obj().empty()) unported(l, n, "variable font axes");
   if (doc::anim_has_expr(d_, n.id, "text.source") || doc::anim_expr(d_, n.id, "sourceText") != nullptr) {
@@ -857,7 +864,6 @@ void Walk::build_node(const doc::Node& n) {
   RLayer l;
   l.id = n.id;
   l.kind = layerKind;
-  if (kind == "svg") unported(l, n, "SVG layers");
   const double layerTimeNow = remap(n.id, t_, false);
   const double baseOpacity = a.has("opacity") ? *a.get("opacity") / 100 : base.opacity;
   l.effects = effects_of(n, a, layerTimeNow, &l);
@@ -1074,7 +1080,13 @@ void Walk::build_node(const doc::Node& n) {
   l.matte = read_matte_of(n);
   l.isAdjustment = read_node_adjustment(n);
   l.draft = read_node_quality_s(n) == "draft";
-  if (doc::read_node_paint(n)) unported(l, n, "paint strokes");
+  if (doc::read_node_paint(n)) {  // paint_port.cpp: the frame's live strokes
+    LayerPaint lp = resolve_layer_paint(d_, n, layerTimeNow, a);
+    for (std::string& why : lp.unported) unported(l, n, std::move(why));
+    // Text draws paint into its raster with a paint pad, footage bakes it (E4): shapes only here.
+    if (!lp.paint.is_undefined() && layerKind != LayerKind::shape) unported(l, n, "paint strokes on text / footage layers");
+    l.paint = std::move(lp.paint);
+  }
   if (fx.at("contentAwareFill").is_object() && fx.at("contentAwareFill").at("frames").is_array() &&
       !fx.at("contentAwareFill").at("frames").arr().empty()) {
     unported(l, n, "content-aware fill");
@@ -1162,6 +1174,11 @@ void Walk::build_node(const doc::Node& n) {
       }
     }
     l.src = src;
+    if (kind == "svg") {  // svgLayerSrc: the stored document (svg_layer.cpp)
+      SvgLayerSource svg = svg_layer_source(n);
+      if (svg.src) l.src = std::move(svg.src);
+      for (std::string& why : svg.unported) unported(l, n, std::move(why));
+    }
     const Json& fit = doc::transform_props(n).at("slotFit");
     if (fit.is_string() && fit.str() == "cover") unported(l, n, "media slot cover crop");
   }
@@ -1241,11 +1258,21 @@ void Walk::build_node(const doc::Node& n) {
   }
   motion_samples(l, n, base, n.id, three_->matrix_at(n, a, base.x, base.y, base.rotation, s3));
   if (layerKind == LayerKind::text && l.text) {
+    // Text animators (text_port.cpp): per-glyph transforms over the unwrapped text.
+    if (const std::vector<Json> anims = resolve_text_animators(n, a); !anims.empty()) {
+      std::string why;
+      Json glyphs = evaluate_text_animators(*l.text, anims, layerTimeNow, &why);
+      if (why.empty()) l.glyphs = std::move(glyphs);
+      else unported(l, n, why);
+    }
     // Per-character styling (richText.ts readRuns + normalizeRuns): emitted only when non-empty.
     const doc::Component* tc = n.comp("Text");
     if (tc != nullptr && tc->props.at("__runs").is_array() && !tc->props.at("__runs").arr().empty()) {
       l.runs = normalize_runs(tc->props, *l.text);
     }
+    // Paragraph text renders WRAPPED (wrappedLayerText, text_port.cpp) — after the animators
+    // and runs, which index the raw text.
+    if (std::string why = paragraph_layer(l, n, c_.measurer, *l.text); !why.empty()) unported(l, n, why);
   }
   // Temporal ghosts (Echo / Wide Time).
   for (const Json& e : l.effects) {

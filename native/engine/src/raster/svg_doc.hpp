@@ -39,6 +39,8 @@ struct Node {
   std::string text;
   int parent = -1;
   std::vector<int> children;
+  /// A clone in a <use> element's shadow tree (expand_uses): never found by id.
+  bool shadow = false;
 
   [[nodiscard]] const std::string* attr(std::string_view name) const;
   void set_attr(std::string_view name, std::string value);
@@ -58,6 +60,14 @@ struct Document {
 /// DOCTYPE are skipped). False + a message on a well-formedness error — the
 /// image then fails to load in Chromium too.
 [[nodiscard]] bool parse_xml(std::string_view src, Document& out, std::string& error);
+
+/// Build every <use> element's shadow tree (SVGUseElement::BuildShadowTree):
+/// the referenced element is cloned as the use's only child, deeply, with
+/// nested uses expanded in the clone; a <symbol> or <svg> target keeps its tag
+/// (the renderer sizes it from the use's width / height). References that
+/// cycle or go deeper than Blink's limit are left empty. Clones are marked
+/// `shadow` and are invisible to by_id.
+void expand_uses(Document& doc);
 
 // ── values ───────────────────────────────────────────────────────────────────
 

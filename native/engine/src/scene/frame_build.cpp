@@ -1,4 +1,6 @@
 #include "frame_build.hpp"
+#include "paint_port.hpp"
+#include "text_port.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -244,6 +246,7 @@ bool Flattener::needs_isolation(const RLayer& l) {
   if (l.motionSamples.size() > 1) return true;
   if (l.blend != "normal") return true;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) return true;
+  if (l.paint.is_object() && !l.paint.at("strokes").arr().empty()) return true;
   if (l.matte && l.matteSourceId) return true;
   if (l.isMatteSource) return true;
   if (!l.effects.empty()) return true;
@@ -299,6 +302,7 @@ Json layer_json(const RLayer& l, std::string_view kind) {
     o.set("effects", std::move(a));
   }
   if (l.fillOpacity) o.set("fillOpacity", Json::number(*l.fillOpacity));
+  if (!l.paint.is_undefined()) o.set("paint", l.paint);
   o.set("__baked", Json::boolean(layer_is_baked(l)));
   o.set("__deviceMax", Json::number(kDeviceMax));
   return o;
@@ -390,6 +394,7 @@ void Flattener::feed(const RLayer& l) {
     r.sourceTime = l.sourceTime.value_or(0);
     r.video = l.kind == LayerKind::video;
     r.premultiplied = l.premultipliedSource;
+    r.fill = l.fill;
     r.compFps = fps_;
     r.layerId = l.id;
     textures_.push_back(std::move(r));
@@ -700,7 +705,7 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
 
 double raster_padding(const RLayer& l) {
   double pad = 0;  // bakedEffectSpread: baked layers are outside the port (E4)
-  if (l.kind != LayerKind::shape) return 0;  // glyph / text-path / paint escape: outside the port
+  if (l.kind != LayerKind::shape) return text_raster_padding(l);  // glyph / text-path escape (text_port.cpp)
   std::vector<const Json*> strokes;
   if (l.strokes.is_array() && !l.strokes.arr().empty()) {
     for (const Json& s : l.strokes.arr()) strokes.push_back(&s);
@@ -750,6 +755,7 @@ double raster_padding(const RLayer& l) {
       if (total > pad) pad = total;
     }
   }
+  pad = std::max(pad, paint_pad(l.paint));  // paintReach (paint_port.cpp)
   return pad > 0 ? std::min(kMaxGlyphPad, std::ceil(pad + 1)) : 0;
 }
 
@@ -771,6 +777,7 @@ bool needs_shape_raster(const RLayer& l) {
   }
   if (has_ordered_paint(l)) return true;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) return true;
+  if (l.paint.is_object() && !l.paint.at("strokes").arr().empty()) return true;
   if (l.cornerRadii) {
     const auto& r = *l.cornerRadii;
     if (!(r[0] == r[1] && r[1] == r[2] && r[2] == r[3])) return true;
