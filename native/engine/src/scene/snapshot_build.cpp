@@ -25,6 +25,7 @@
 #include "scene.hpp"
 #include "scene_math.hpp"
 #include "svg_layer.hpp"
+#include "temporal_ghosts.hpp"
 #include "text_port.hpp"
 #include "text_runs.hpp"
 #include "threed_port.hpp"
@@ -1344,19 +1345,29 @@ void Walk::build_node(const doc::Node& n) {
     // and runs, which index the raw text.
     if (std::string why = paragraph_layer(l, n, c_.measurer, *l.text); !why.empty()) unported(l, n, why);
   }
-  // Temporal ghosts (Echo / Wide Time).
-  for (const Json& e : l.effects) {
-    const std::string ty = e.at("type").is_string() ? e.at("type").str() : "";
-    if ((ty == "echo" || ty == "wide-time") && !(e.at("enabled").is_bool() && !e.at("enabled").b())) {
-      unported(l, n, "temporal ghosts (echo / wide time)");
+  three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
+  // Temporal ghosts (Echo / Wide Time, temporal_ghosts.cpp): copies at other
+  // times, behind the layer — or after it for Composite In Front.
+  std::vector<RLayer> echoesInFront;
+  if (const std::optional<GhostSpec> ghosts = read_ghost_spec(l.effects, fps_)) {
+    if (is3d) {
+      unported(l, n, "temporal ghosts on 3D layers");
+    } else {
+      std::vector<RLayer> copies = ghost_layers(
+          l, *ghosts, t_, [&](std::string_view p, double tt) { return anim_sample_of(n.id, p, tt); },
+          a.get("x").value_or(base.x), a.get("y").value_or(base.y), a.get("rotation").value_or(base.rotation), px, py, rot);
+      for (RLayer& g : copies) {
+        if (ghosts->inFront) echoesInFront.push_back(std::move(g));
+        else emit(std::move(g), n);
+      }
     }
   }
-  three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
   // Extrusion / primitive mesh carriers, then the front quad (inset, mesh-drawn, planar DOF).
   RLayer notes;
   notes.id = n.id;
   three_->finish_layer(n, a, s3, std::move(l), [&](RLayer out) { emit(std::move(out), n); },
                        [&](std::string what) { unported(notes, n, std::move(what)); });
+  for (RLayer& g : echoesInFront) emit(std::move(g), n);
 }
 
 Snapshot Walk::run() {

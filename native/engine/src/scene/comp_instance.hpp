@@ -4,7 +4,7 @@
 //   compInstance.ts            expandCompInstances (COLLAPSED instances splice
 //                              render-only clones of the referenced comp into the
 //                              host walk), readCompRef / isCompInstanceRoot
-//   compInstanceOverrides.ts   Essential Properties: readCompOverrides,
+//   compInstanceOverrides.ts   Essential Properties: readInstanceOverrides,
 //                              overriddenPropsFor, applyOverridesToComponents
 //   buildSnapshot.ts           nestedCompLayers (a SEALED instance is its own
 //                              recursive pass: its camera, its 3D sort, its size),
@@ -40,10 +40,10 @@ namespace premation::scene {
 inline constexpr std::size_t kMaxCompDepth = 8;
 
 /// An instance's Essential Properties: `<origNodeId>/<prop>` → value (validated).
-using CompOverrides = std::map<std::string, Json, std::less<>>;
+using InstanceOverrides = std::map<std::string, Json, std::less<>>;
 
-/// `readCompOverrides(node)`.
-[[nodiscard]] CompOverrides read_comp_overrides(const doc::Node& n);
+/// `readInstanceOverrides(node)`.
+[[nodiscard]] InstanceOverrides read_comp_overrides(const doc::Node& n);
 
 /// The nodes one snapshot walks: the flattened composition with its COLLAPSED
 /// instances expanded inline and the pass's own overrides applied.
@@ -74,7 +74,7 @@ struct WalkNodes {
 /// `expandCompInstances(graph, flat, activeRoot, readCompCollapse, compSizeOf)`
 /// then `applyOwnOverrides` (the sealed pass's `comp.compOverrides`).
 [[nodiscard]] WalkNodes expand_walk_nodes(const doc::Document& d, const std::vector<const doc::Node*>& flat,
-                                          const std::string& activeRoot, const CompOverrides& own);
+                                          const std::string& activeRoot, const InstanceOverrides& own);
 
 /// `compSizeOf(ref)`: the referenced composition record's size.
 [[nodiscard]] std::optional<std::pair<double, double>> comp_size_of(const doc::Document& d, std::string_view ref);

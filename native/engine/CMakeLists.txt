@@ -820,6 +820,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/effect_handoff.cpp    #   the path / paint effects' resolved geometry (buildSnapshot)
   src/scene/comp_instance.cpp     # D2w time/comp: nested + collapsed composition instances
   src/scene/precomp_frame.cpp     #   their frame side (sealed 3D scopes, the 3D card)
+  src/scene/temporal_ghosts.cpp   #   Echo / Wide Time ghost copies
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )

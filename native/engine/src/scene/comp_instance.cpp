@@ -57,7 +57,7 @@ std::optional<ParsedKey> parse_override_key(std::string_view key) {
 }
 
 /// overriddenPropsFor (with ANIMATED_CHANNELS: a colour is keyframed as channels).
-std::set<std::string, std::less<>> overridden_props_for(const CompOverrides& o, std::string_view node) {
+std::set<std::string, std::less<>> overridden_props_for(const InstanceOverrides& o, std::string_view node) {
   std::set<std::string, std::less<>> out;
   for (const auto& [k, v] : o) {
     const auto parsed = parse_override_key(k);
@@ -71,7 +71,7 @@ std::set<std::string, std::less<>> overridden_props_for(const CompOverrides& o, 
 
 /// applyOverridesToComponents: each prop onto the LAST component declaring it
 /// (the one readBase believes), else the Transform.
-std::vector<doc::Component> apply_overrides(const std::vector<doc::Component>& comps, const CompOverrides& o,
+std::vector<doc::Component> apply_overrides(const std::vector<doc::Component>& comps, const InstanceOverrides& o,
                                             const std::string& node) {
   if (o.empty()) return comps;
   std::vector<doc::Component> out;
@@ -106,7 +106,7 @@ class Expander {
   Expander(const doc::Document& d, WalkNodes& w) : d_(d), w_(w) {}
 
   const Node* push_clone(const Node& orig, const std::string& id, const std::string& parent, bool atRoot,
-                         const CompOverrides& overrides) {
+                         const InstanceOverrides& overrides) {
     auto clone = std::make_unique<Node>();
     clone->id = id;
     clone->name = orig.name;
@@ -160,7 +160,7 @@ class Expander {
 
   void clone_subtree(const std::vector<const Node*>& origs, const std::string& parentId, const std::string& prefix,
                      const std::vector<std::string>& stack, std::size_t depth, bool atRoot,
-                     const CompOverrides& overrides) {
+                     const InstanceOverrides& overrides) {
     if (depth > kMaxCompDepth) return;
     for (const Node* orig : origs) {
       const std::string cid = prefix + orig->id;
@@ -188,8 +188,8 @@ class Expander {
 
 }  // namespace
 
-CompOverrides read_comp_overrides(const doc::Node& n) {
-  CompOverrides out;
+InstanceOverrides read_comp_overrides(const doc::Node& n) {
+  InstanceOverrides out;
   for (const doc::Component& c : n.components) {
     const Json& bag = c.props.at("__compOverrides");
     if (!bag.is_object()) continue;
@@ -211,7 +211,7 @@ std::optional<std::pair<double, double>> comp_size_of(const doc::Document& d, st
 }
 
 WalkNodes expand_walk_nodes(const doc::Document& d, const std::vector<const doc::Node*>& flat,
-                            const std::string& activeRoot, const CompOverrides& own) {
+                            const std::string& activeRoot, const InstanceOverrides& own) {
   WalkNodes w;
   const bool anyInstance = std::ranges::any_of(flat, [](const Node* n) { return doc::read_comp_ref(*n).has_value(); });
   if (!anyInstance) {
