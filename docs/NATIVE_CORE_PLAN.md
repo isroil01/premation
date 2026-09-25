@@ -441,6 +441,53 @@ geometric faces, only reached when an outline cannot be traced); per-character
 3D text; image (`asset:`) environment skies; sealed-precomp 3D scopes, which
 wait on composition instances; corner pin on 3D layers.
 
+**D2w 3D leftovers (2026-09-25): glTF models, height displacement, image skies,
+corner pin and overlay-styled walls now build from the C++ document.** Each
+port lives in its own new file. `snapshot_build` / `frame_build` only gained hook
+calls. Every port is pinned byte for byte by a cross-engine fixture generated
+from the editor's own code:
+- `gltf_model` ports parseGltf and modelMesh.ts: GLB and embedded .gltf,
+  strided / sparse / normalized accessors, generated normals and indices, and
+  the Draco refusal with the TS message. It also ports modelKeyForBytes and
+  primitiveToEntry. The model registry resolves a leaf through the Model
+  component that carries the document's `glbData`. The carrier is built with
+  its PBR map keys, and every model image is fed from the file itself
+  (`gltf:<key>#<n>`, `scene_textures_model`). Fixture: `gltf_model_parity.json`,
+  5 files including the goldens' GLBs. Morph targets and skinning are reported,
+  not applied.
+- `height_displacement` ports heightDisplacement.ts. Its fixture is
+  `height_displacement_parity.json`, 9 cases including the golden's exact mesh
+  and field. `mesh_displacement` applies it to primitive, extrusion and model
+  carriers. It decodes the field from the asset or `heightMapSrc`: drawn
+  through the Canvas2D to at most 256 px, then read as luma.
+- `env_asset` handles `asset:` skies: decode, draw to at most 1024 px wide,
+  `resampleEquirect`, SH9, and the reflection atlas under
+  `asset:<id>#<hashEnvPixels>` (`env_asset_parity.json`). It mirrors the TS
+  fallback to 'studio'. An EXR sky is reported, because the TS projects float
+  planes the engine does not decode yet.
+- `corner_pin` ports readNodeCornerPin, resolveCornerPin and Homography.ts. A
+  pinned 3D layer stays on the 2D pinned path (`corner_pin_parity.json`).
+- `styled_surface` ports styledSurfaceFill for extrusion walls under a Colour /
+  Gradient Overlay (`styled_surface_parity.json`).
+
+`test_threed_models` builds all four features end to end from a document.
+
+Quick loop (`--tag threed2`, 436 frames, RTX 4060): 416 ported / 411 within
+tolerance / 129 bit-identical before and after, so nothing regressed. The 3
+3D frames still fall back, and they now name the actual gap. The model-maps
+pair's documents carry no file: the harness registered the model in memory.
+The displaced sphere's field is primed in memory (`prime:bumps`). With the GLB
+injected as `glbData`, premation-scene builds both model-maps frames
+structurally equal to the TS FrameScene, with every model texture byte-equal
+and 0 differing pixels against webgpu. `harness/scenes/modelMaps.ts` now stores
+`glbData` the way the importer does, so the next full run exports it and the
+pair ports. The displaced sphere stays pinned by the fixture only; porting that
+golden needs an image-backed field, which means re-blessing it.
+
+**Remaining:** per-character 3D text (layoutPerChar3D); the extrusion slice
+stack and geometric-face fallbacks; glTF morph targets and skinning; EXR
+skies; and sealed-precomp 3D scopes, which wait on composition instances.
+
 **D2 leftovers + D3 (2026-09-23): 436/436 frames bit-identical, 32 bpc, OCIO.**
 *The 7 low-alpha frames were never a renderer difference*: the C++ surface
 bytes already equalled the TS surface bytes. The harness's PNG encode
@@ -1187,6 +1234,47 @@ both engines. **Remaining:** the GPU path and the render glue are compiled
 (against the pinned Dawn's headers) but not yet run on a GPU. Editor surfaces
 for native plugins wait for D5, when `engine()` becomes the C++ engine. Export
 parity needs F1.
+
+**G1 GPU run (2026-09-25): the plugin GPU path runs on a real GPU.**
+`engine_plugins_gpu_tests` renders the `grade` sample through `render_glue`
+inside the render graph on this machine's RTX 4060 (D3D12). At every depth,
+SMART_RENDER_GPU (WGSL on the engine's Dawn device) equals its CPU twin, and
+the gap is only the chain buffer's rounding: max |diff| 1/255 at 8 bpc,
+4.9e-4 at 16 bpc and 4.5e-8 at 32 bpc.
+
+At 16 bpc the two paths legitimately differ on over-range values. The CPU
+world is integer 0..32768 and clips, while the GPU buffer is half float. This
+is documented in PLUGIN_SDK.md.
+
+GPU faults are contained. `grade`'s new *Debug ▸ GPU Fault* records a draw
+with no pipeline. The glue's error scope catches it and drops the command
+buffer. The CPU path then renders the exact same picture, and the frame
+reports `native-plugin-gpu-error`. No error escapes uncaptured, and the next
+frame's GPU render is clean.
+
+A crash inside SMART_RENDER_GPU (child process) disables the instance. The
+layer renders as its input.
+
+A fix found by running it: a new device under the same host is now detected.
+The glue calls `gpu_device_gone` and drops its textures. Before, the plugin's
+per-device pipelines and buffers would have been reused on a device the frame
+never submits to.
+
+`premation-render --plugins DIR [--plugin-gpu 0]` renders native-plugin
+FrameScenes. `--scene` prints the diagnostics.
+
+Measured at 1080p, as the median of render + submit + GPU idle, cost over no
+effect:
+
+| Depth | GPU path | CPU path |
+|---|---|---|
+| 8 bpc | +0.10 ms | +51.8 ms |
+| 16 bpc | +0.54 ms | +183 ms |
+| 32 bpc | +2.2 ms | +58 ms |
+
+At 16 bpc, the CPU path's half↔uint16 conversions dominate.
+**Remaining:** GPU checkouts of other layers (such effects use the CPU path);
+device-loss recovery end to end in the engine process.
 
 ---
 
