@@ -22,10 +22,13 @@ bool is_identity(const Mat3& m) {
   return a[0] == 1 && a[1] == 0 && a[2] == 0 && a[3] == 0 && a[4] == 1 && a[5] == 0 && a[6] == 0 && a[7] == 0 && a[8] == 1;
 }
 
-/// `threeDPlacementOk(parentMatrix, undefined)`: the host camera carries no
-/// placement, so only an identity flatten parent keeps the 3D path. (Sealed 3D
-/// comp scopes, whose camera carries the instance placement, are not ported.)
-bool placement_ok(const Mat3& parent) { return is_identity(parent); }
+/// `threeDPlacementOk(parentMatrix, placement3d)`: the host camera carries no
+/// placement (only an identity flatten parent keeps the 3D path); a sealed comp's
+/// own camera carries the instance placement, which the parent must equal exactly.
+bool placement_ok(const Mat3& parent, const Mat3* placement) {
+  if (placement == nullptr) return is_identity(parent);
+  return parent.m == placement->m;
+}
 
 /// `model3dFor(world3d, layer)`: world3d · the w×h unit-quad bridge (float64).
 std::vector<double> model3d_for(const std::array<double, 16>& world3d, const RLayer& l) {
@@ -125,16 +128,16 @@ bool depth_eligible_3d(const api::Renderable& r) {
   return true;
 }
 
-void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r) {
-  // A corner-pinned layer stays on the 2D pinned path (corner_pin.cpp): `!pinned`.
-  if (l.world3d && l.matrix && r.corner_pin.empty() && placement_ok(parent)) {
+void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r, const Mat3* placement) {
+  // A corner-pinned layer stays on the 2D pinned path (corner_pin.cpp): the mat4 would drop the homography.
+  if (l.world3d && l.matrix && r.corner_pin.empty() && placement_ok(parent, placement)) {
     api::RenderThreeD t;
     t.model = model3d_for(*l.world3d, l);
     r.three_d = std::move(t);
   }
   // Extruded / primitive mesh: the vertices are in the layer's centred pixel
   // frame, so the model is the bare world3d (no unit-quad bridge); it wins over the quad.
-  if (l.extrudedMesh && l.world3d && l.matrix && placement_ok(parent)) {
+  if (l.extrudedMesh && l.world3d && l.matrix && placement_ok(parent, placement)) {
     api::RenderThreeD t;
     t.model.assign(l.world3d->begin(), l.world3d->end());
     r.three_d = std::move(t);

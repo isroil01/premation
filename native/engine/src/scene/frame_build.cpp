@@ -21,6 +21,8 @@
 #include "scene_math.hpp"
 #include "light_wash.hpp"
 #include "threed_frame.hpp"
+#include "precomp_frame.hpp"
+#include "particle_port.hpp"
 
 namespace premation::scene {
 namespace {
@@ -64,10 +66,10 @@ double continuous_resolution_tier(double scale, double boxW, double boxH) {
   return std::min(chosen, std::max(kContinuousTiers.front(), limit));
 }
 
-/// AppTextureProvider.tierFor (Continuous Rasterization off: the clamped ladder up
-/// to 4x, the bounded extended ladder past it).
-double tier_for(double scale, double boxW, double boxH) {
-  if (scale <= kTiers.back()) return resolution_tier(scale);
+/// AppTextureProvider.tierFor: Continuous Rasterization off, the clamped ladder up
+/// to 4x and the bounded extended ladder past it; on, the extended ladder at every scale.
+double tier_for(double scale, double boxW, double boxH, bool continuous = false) {
+  if (!continuous && scale <= kTiers.back()) return resolution_tier(scale);
   return continuous_resolution_tier(scale, boxW, boxH);
 }
 
@@ -209,6 +211,11 @@ api::Color to_color(const Rgba& c) {
   return o;
 }
 
+/// renderPaint.ts `hasPaintStrokes(layer.paint)`.
+bool has_paint_strokes(const RLayer& l) {
+  return l.paint.is_object() && l.paint.at("strokes").is_array() && !l.paint.at("strokes").arr().empty();
+}
+
 bool stroke_renders(const Json& s) { return s.is_object() && s.at("width").is_number() && s.at("width").num() > 0; }
 
 bool has_ordered_paint(const RLayer& l) {
@@ -228,26 +235,32 @@ bool has_ordered_paint(const RLayer& l) {
 
 class Flattener {
  public:
-  Flattener(double rasterScale, double fps) : rasterScale_(rasterScale), fps_(fps) {}
-  void flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity, std::vector<api::Renderable>& out);
+  Flattener(double rasterScale, double fps, double time) : rasterScale_(rasterScale), fps_(fps), time_(time) {}
+  /// `placement` = flattenLayers' placement3d: the 2D placement the camera these layers draw through carries.
+  void flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity, std::vector<api::Renderable>& out,
+               const Mat3* placement = nullptr);
   [[nodiscard]] std::vector<TextureRequest> take_textures() noexcept { return std::move(textures_); }
   [[nodiscard]] std::vector<std::pair<std::string, std::string>> take_unported() noexcept { return std::move(unported_); }
 
  private:
   std::vector<TextureRequest> textures_;
   std::vector<std::pair<std::string, std::string>> unported_;
-  api::Renderable layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
-  api::Renderable precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
+  api::Renderable layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
+  api::Renderable precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
+  api::Renderable particles_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
   std::optional<api::Renderable> adjustment_to_renderable(const RLayer& l);
   void feed(const RLayer& l);
   static bool needs_isolation(const RLayer& l);
   double rasterScale_;
   double fps_;
+  double time_;  ///< snapshot.time (a particle field's clock)
 };
 
 bool Flattener::needs_isolation(const RLayer& l) {
   if (!l.precompLayers || l.precompLayers->empty()) return false;
+  if (l.precompScene3d) return true;  // its own 3D scope
   if (l.motionSamples.size() > 1) return true;
+  if (l.quad3d) return true;  // a 3D comp card draws from a flat offscreen
   if (l.blend != "normal") return true;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) return true;
   if (l.paint.is_object() && !l.paint.at("strokes").arr().empty()) return true;
@@ -371,7 +384,7 @@ void Flattener::feed(const RLayer& l) {
   // MotionRendererBackend's per-layer texture feed (the keys layerToRenderable names).
   const double layerScale = std::max({1.0, std::abs(l.scaleX != 0 ? l.scaleX : 1), std::abs(l.scaleY != 0 ? l.scaleY : 1)});
   const double effective = rasterScale_ * layerScale;
-  const double tier = tier_for(effective, l.width, l.height);
+  const double tier = tier_for(effective, l.width, l.height, l.continuousRaster);
   if (l.extrudedMesh && l.extrudedMesh->paint) {
     // An extrusion's gradient plate: the layer box filled edge to edge with the
     // fill paint, a plain rect through the path rasteriser (MotionRendererBackend 0a).
@@ -392,7 +405,19 @@ void Flattener::feed(const RLayer& l) {
     textures_.push_back(std::move(r));
   }
   append_model_map_textures(l, textures_);  // pbrmap:<id>:* (model_carrier.cpp)
-  if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
+  if (!l.particles.is_undefined()) {
+    // A particle emitter's field (AppTextureProvider.setParticles, particle_port.cpp):
+    // the layer's own scale on top of the raster scale, at the comp time (the
+    // snapshot gives an emitter no source time).
+    TextureRequest r;
+    r.key = "particles:" + l.id;
+    r.kind = TexKind::particles;
+    const double fieldScale = std::max(std::abs(l.scaleX), std::abs(l.scaleY));
+    r.spec = particle_field_spec(l.particles, l.sourceTime.value_or(time_), l.width, l.height, fieldScale, rasterScale_, fps_);
+    r.spec.set("key", Json::string(r.key));
+    r.layerId = l.id;
+    textures_.push_back(std::move(r));
+  } else if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
     TextureRequest r;
     r.key = "asset:" + l.id;
     r.kind = TexKind::media;
@@ -403,7 +428,27 @@ void Flattener::feed(const RLayer& l) {
     r.fill = l.fill;
     r.compFps = fps_;
     r.layerId = l.id;
-    textures_.push_back(std::move(r));
+    if (l.kind == LayerKind::video && l.contentAwareFillSrc) {
+      // A content-aware fill frame: the still stands in for the decoded footage.
+      r.src = *l.contentAwareFillSrc;
+      r.video = false;
+      textures_.push_back(std::move(r));
+    } else if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l) && !layer_is_baked(l)) {
+      if (l.frameBlend->mode == "pixelMotion") {
+        r.key = "vfm:" + l.id;  // the flow warp is not ported: the walk reports it, the key stays nearest-frame
+        textures_.push_back(std::move(r));
+      } else {  // Frame Mix: both bracket frames
+        TextureRequest b = r;
+        r.key = "vfa:" + l.id;
+        r.sourceTime = l.frameBlend->a;
+        b.key = "vfb:" + l.id;
+        b.sourceTime = l.frameBlend->b;
+        textures_.push_back(std::move(r));
+        textures_.push_back(std::move(b));
+      }
+    } else {
+      textures_.push_back(std::move(r));
+    }
   } else if (l.kind == LayerKind::text) {
     TextureRequest r;
     r.key = "text:" + l.id;
@@ -434,7 +479,8 @@ void Flattener::feed(const RLayer& l) {
   append_lut_textures(l, textures_);  // lut:<id> / cubelut:<id> (lut_port.cpp)
 }
 
-api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
+api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity,
+                                                const Mat3* placement) {
   const double pad = raster_padding(l);
   const int adv = advanced_blend_id(l.blend);
   Mat3 model;
@@ -567,31 +613,60 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   if (baked && (l.kind == LayerKind::image || l.kind == LayerKind::video)) {
     unported_.emplace_back(l.id, "CPU-baked effect chain on footage (E4)");
   }
-  apply_three_d(l, parent, r);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
+  apply_three_d(l, parent, r, placement);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
   return r;
 }
 
-api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
-  // precompChildParent(layer, parentMatrix).
+api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity,
+                                                  const Mat3* placement) {
+  // A 3D comp CARD (`quad3d`) draws its comp flat through a homography onto the
+  // projected corners; a degenerate quad falls back to the screen-space container.
+  const std::optional<Mat3> cardModel = l.quad3d ? square_to_quad(*l.quad3d) : std::nullopt;
+  // precompChildParent(layer, parentMatrix) (identity inside a card).
   const double rad = (l.rotation * std::numbers::pi) / 180;
   const Mat3 tOrigin = translation(-l.width / 2 - l.anchorX, -l.height / 2 - l.anchorY);
-  const Mat3 childParent = mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
+  const Mat3 childParent =
+      cardModel ? Mat3::identity() : mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
   api::Renderable r;
   std::vector<api::Renderable> inner;
-  if (l.precompLayers) flatten(*l.precompLayers, childParent, 1, inner);  // callers pass only precomps with layers
-  const Mat3 model = mat3_mul(parent, center_model(l));
+  // A sealed comp with its own 3D frame draws through its own camera, which carries
+  // `childParent`; a card's children are drawn in the card, not the scene.
+  const Mat3* innerPlacement = l.precompScene3d ? &childParent : cardModel ? nullptr : placement;
+  if (l.precompLayers) flatten(*l.precompLayers, childParent, 1, inner, innerPlacement);  // callers pass only precomps with layers
+  const Mat3 model = cardModel ? mat3_mul(parent, *cardModel) : mat3_mul(parent, center_model(l));
   const int adv = advanced_blend_id(l.blend);
   r.id = l.id;
   r.kind = api::RenderableKind::image;
   r.model_matrix = mat_wire(model);
   r.bounds = bounds_of(model);
+  if (cardModel) {  // the AABB of the four projected corners
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    double minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+    for (std::size_t i = 0; i < 8; i += 2) {
+      const auto& p = parent.m;
+      const double qx = (*l.quad3d)[i];
+      const double qy = (*l.quad3d)[i + 1];
+      // Mat3.transformPoint: float32 matrix entries, float64 arithmetic.
+      const double x = static_cast<double>(p[0]) * qx + static_cast<double>(p[3]) * qy + p[6];
+      const double y = static_cast<double>(p[1]) * qx + static_cast<double>(p[4]) * qy + p[7];
+      minX = std::min(minX, x);
+      minY = std::min(minY, y);
+      maxX = std::max(maxX, x);
+      maxY = std::max(maxY, y);
+    }
+    r.bounds.x = minX;
+    r.bounds.y = minY;
+    r.bounds.width = maxX - minX;
+    r.bounds.height = maxY - minY;
+  }
   r.opacity = parentOpacity * l.opacity;
   r.blend = adv > 0 ? api::RenderBlendMode::normal : (l.blend == "add" ? api::RenderBlendMode::add : api::RenderBlendMode::normal);
   if (adv > 0) r.advanced_blend = adv;
   r.preserve_transparency = l.preserveTransparency;
   if (l.backdropBlur && *l.backdropBlur > 0) r.backdrop_blur = *l.backdropBlur;
   if (l.glass) r.glass = to_renderable_glass(*l.glass);
-  r.color = to_color({1, 1, 1, 1});
+  // Accepts Lights on a 3D card: the per-quad gain as the tint.
+  r.color = l.lighting ? to_color({(*l.lighting)[0], (*l.lighting)[1], (*l.lighting)[2], 1}) : to_color({1, 1, 1, 1});
   r.texture_key = "precomp:" + l.id;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) {
     r.mask_texture_key = "mask:" + l.id;  // fed with the layer (feed)
@@ -614,12 +689,21 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
     }
   }
   r.effects = extract_spatial_effects(l, false);
-  r.precomp = api::RenderPrecompFrame{};
+  r.precomp = precomp_frame(l, childParent, cardModel.has_value());  // precompCamera3d / flat (precomp_frame.cpp)
   r.precomp_children = std::move(inner);
   if (l.motionSamples.size() > 1) {
     const double pad = raster_padding(l);
     const Origin so = quad_origin(l, pad);
     for (const MotionSample& s : l.motionSamples) {
+      if (cardModel && s.quad) {  // a 3D card's sample is its own perspective quad
+        if (const auto sq = square_to_quad(*s.quad)) {
+          api::RenderMotionSample ms;
+          ms.model_matrix = mat_wire(mat3_mul(parent, *sq));
+          ms.opacity = parentOpacity * s.opacity;
+          r.motion_samples.push_back(std::move(ms));
+          continue;
+        }
+      }
       const double srad = (s.rotation * std::numbers::pi) / 180;
       const double w = (l.width + 2 * pad) * s.scaleX;
       const double h = (l.height + 2 * pad) * s.scaleY;
@@ -630,6 +714,49 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
       r.motion_samples.push_back(std::move(ms));
     }
   }
+  return r;
+}
+
+api::Renderable Flattener::particles_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
+  // particlesToRenderable: the layer-box field on the layer's model; the config's
+  // 'add' transfer composites additively unless the layer sets its own blend.
+  const Mat3 model = mat3_mul(parent, center_model(l));
+  const int adv = advanced_blend_id(l.blend);
+  const bool fieldAdd = l.particles.at("blend").is_string() && l.particles.at("blend").str() == "add" && l.blend == "normal";
+  api::Renderable r;
+  r.id = l.id;
+  r.kind = api::RenderableKind::image;
+  r.model_matrix = mat_wire(model);
+  r.bounds = bounds_of(model);
+  r.opacity = parentOpacity * l.opacity;
+  r.blend = adv > 0 ? api::RenderBlendMode::normal
+            : fieldAdd || l.blend == "add" ? api::RenderBlendMode::add
+                                           : api::RenderBlendMode::normal;
+  if (adv > 0) r.advanced_blend = adv;
+  r.preserve_transparency = l.preserveTransparency;
+  if (l.backdropBlur && *l.backdropBlur > 0) r.backdrop_blur = *l.backdropBlur;
+  if (l.glass) r.glass = to_renderable_glass(*l.glass);
+  r.color = to_color({1, 1, 1, 1});
+  r.texture_key = "particles:" + l.id;
+  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;
+  if (l.matte && l.matteSourceId) {
+    api::RenderMatte m;
+    m.mode = l.matte->luma ? api::RenderMatteMode::luma : api::RenderMatteMode::alpha;
+    m.inverted = l.matte->inverted;
+    m.source_id = *l.matteSourceId;
+    r.matte = m;
+  }
+  if (l.isMatteSource) r.matte_source = true;
+  if (!l.effects.empty()) {
+    const ColorMatrix cm = effect_color_matrix(l.effects);
+    if (!cm.identity) {
+      api::RenderColorMatrix wm;
+      wm.m.assign(cm.m.begin(), cm.m.end());
+      wm.offset.assign(cm.offset.begin(), cm.offset.end());
+      r.color_matrix = wm;
+    }
+  }
+  r.effects = extract_spatial_effects(l, false);
   return r;
 }
 
@@ -664,16 +791,17 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
 }
 
 void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity,
-                        std::vector<api::Renderable>& out) {
+                        std::vector<api::Renderable>& out, const Mat3* placement) {
   for (const RLayer& l : layers) {
     const std::size_t mark = out.size();
     try {
       if (!l.visible) continue;
       feed(l);
       if (l.isMatteSource) {
-        api::Renderable src = l.precompLayers && !l.precompLayers->empty() && needs_isolation(l)
-                                  ? precomp_to_renderable(l, parent, parentOpacity)
-                                  : layer_to_renderable(l, parent, parentOpacity);
+        api::Renderable src = !l.particles.is_undefined() ? particles_to_renderable(l, parent, parentOpacity)
+                              : l.precompLayers && !l.precompLayers->empty() && needs_isolation(l)
+                                  ? precomp_to_renderable(l, parent, parentOpacity, placement)
+                                  : layer_to_renderable(l, parent, parentOpacity, placement);
         src.matte_source = true;
         out.push_back(std::move(src));
         continue;
@@ -692,17 +820,37 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         textures_.push_back(std::move(tr));
         continue;
       }
+      if (!l.particles.is_undefined()) {  // a particle emitter samples its field
+        out.push_back(particles_to_renderable(l, parent, parentOpacity));
+        continue;
+      }
       if (l.precompLayers && !l.precompLayers->empty()) {
         if (needs_isolation(l)) {
-          out.push_back(precomp_to_renderable(l, parent, parentOpacity));
+          out.push_back(precomp_to_renderable(l, parent, parentOpacity, placement));
           continue;
         }
         const double rad = (l.rotation * std::numbers::pi) / 180;
         const Mat3 tOrigin = translation(-l.width / 2 - l.anchorX, -l.height / 2 - l.anchorY);
         const Mat3 childParent = mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
-        flatten(*l.precompLayers, childParent, parentOpacity * l.opacity, out);
+        flatten(*l.precompLayers, childParent, parentOpacity * l.opacity, out, placement);
+      } else if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l)) {
+        // Frame blending: Pixel Motion samples the flow-warped in-between (`vfm:`);
+        // Frame Mix cross-dissolves the two bracket frames, B at the sub-frame weight.
+        api::Renderable a = layer_to_renderable(l, parent, parentOpacity, placement);
+        if (l.frameBlend->mode == "pixelMotion") {
+          a.texture_key = "vfm:" + l.id;
+          out.push_back(std::move(a));
+        } else {
+          a.texture_key = "vfa:" + l.id;
+          api::Renderable b = layer_to_renderable(l, parent, parentOpacity, placement);
+          b.id = l.id + "::fb";
+          b.texture_key = "vfb:" + l.id;
+          b.opacity = a.opacity * l.frameBlend->weight;
+          out.push_back(std::move(a));
+          out.push_back(std::move(b));
+        }
       } else {
-        out.push_back(layer_to_renderable(l, parent, parentOpacity));
+        out.push_back(layer_to_renderable(l, parent, parentOpacity, placement));
       }
     } catch (const std::exception& e) {
       out.resize(mark);
@@ -803,7 +951,7 @@ bool needs_shape_raster(const RLayer& l) {
 
 FrameBuild build_frame_scene(const Snapshot& s, double rasterScale) {
   FrameBuild out;
-  Flattener f(rasterScale, s.fps);
+  Flattener f(rasterScale, s.fps, s.time);
   std::vector<api::Renderable> renderables;
   f.flatten(s.layers, Mat3::identity(), 1, renderables);
   api::RenderFrameScene& sc = out.scene;

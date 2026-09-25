@@ -21,7 +21,8 @@ struct LayerPaint {
 };
 
 /// `resolveLayerPaintAt(node, layerT, values, …)`.
-[[nodiscard]] LayerPaint resolve_layer_paint(const doc::Document& d, const doc::Node& n, double layerT, const Values& a);
+[[nodiscard]] LayerPaint resolve_layer_paint(const doc::Document& d, const doc::Node& n, double layerT, const Values& a,
+                                             std::string_view animId = {});
 
 /// paintRaster.ts `paintReach(layer.paint)` (raster/paint_raster.cpp), 0 for no paint.
 [[nodiscard]] double paint_pad(const Json& paint);

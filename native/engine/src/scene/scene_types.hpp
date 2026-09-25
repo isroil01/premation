@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,6 +47,16 @@ struct DeformedMeshData {
 struct MotionSample {
   double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1, opacity = 1;
   std::optional<std::array<double, 6>> matrix;
+  /// A 3D comp card's projected corners at this sample (RenderLayer MotionSample.quad).
+  std::optional<std::array<double, 8>> quad;
+};
+
+/// RenderLayer.precompScene3d — a sealed comp instance's own 3D frame (its camera,
+/// lights and environment), in the INNER comp's world and pixels.
+struct PrecompScene3D {
+  api::RenderCamera3D camera3d;
+  std::vector<api::RenderLight3D> lights3d;
+  std::optional<api::RenderEnvMap> envMap;
 };
 
 /// TrackMatte (effects/matte.ts).
@@ -121,9 +132,23 @@ struct RLayer {
   bool isMatteSource = false;
   bool isAdjustment = false;
   bool draft = false;  ///< quality === 'draft'
+  /// Continuous Rasterization (RenderLayer.continuousRaster): vector content re-rasterizes
+  /// at its scale past the clamped tier ladder.
+  bool continuousRaster = false;
   /// A precomp container: its inner layers (present = container).
   std::optional<std::vector<RLayer>> precompLayers;
+  /// A sealed comp instance's own 3D frame (see PrecompScene3D).
+  std::optional<PrecompScene3D> precompScene3d;
+  /// A 3D comp CARD: the card's projected corners (TL, TR, BR, BL; comp px).
+  std::optional<std::array<double, 8>> quad3d;
   std::optional<double> sourceTime;
+  /// RenderLayer.frameBlend: the two source frames bracketing sourceTime and the
+  /// sub-frame weight toward the second (video only; mode mix | pixelMotion).
+  struct FrameBlend {
+    double a = 0, b = 0, weight = 0;
+    std::string mode;
+  };
+  std::optional<FrameBlend> frameBlend;
   std::vector<MotionSample> motionSamples;
   std::optional<std::array<double, 8>> cornerPin;
   double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1;
@@ -171,6 +196,8 @@ struct RLayer {
   // ── media ──
   std::optional<std::string> src;
   std::optional<std::string> assetId;
+  /// A content-aware fill frame (a still `data:` URL) standing in for the footage.
+  std::optional<std::string> contentAwareFillSrc;
   std::optional<std::array<double, 4>> uvRect;
   bool premultipliedSource = false;
   // ── rigs ──
@@ -185,6 +212,8 @@ struct RLayer {
   bool castsShadow3d = false;
   /// Only ever false (a receiver that refuses shadows).
   std::optional<bool> acceptsShadows3d;
+  /// A particle emitter's resolved config (RenderLayer.particles; particle_port.cpp).
+  Json particles;
   /// A light layer's glow wash (RenderLayer.light).
   std::optional<LightWash> light;
   /// A 3D solid's mesh. shared_ptr: the vertex bytes are immutable once built and
@@ -223,7 +252,7 @@ struct Snapshot {
 };
 
 /// SnapshotComp (buildSnapshot.ts) — comp-level inputs.
-struct SnapshotComp {
+struct SnapshotComp {  // NOLINT(bugprone-exception-escape): MSVC's std::map allocates a sentinel when moved
   double width = 1920, height = 1080;
   std::string background = "#101014";
   bool transparent = false;
@@ -234,6 +263,12 @@ struct SnapshotComp {
   std::string rootId;
   /// Comp instance recursion (MAX_COMP_DEPTH).
   std::vector<std::string> compStack;
+  /// SnapshotComp.compOverrides: the Essential Properties the owning instance hands
+  /// its sealed pass (`<origNodeId>/<prop>` → value).
+  std::map<std::string, Json, std::less<>> compOverrides;
+  /// The walk's frame rate when it is not the root comp's own: a nested pass runs
+  /// on the host timeline's rate, as the TypeScript's single timeline does.
+  std::optional<double> fps;
   /// SnapshotComp.camera3dMode: 'active', an ortho axis view, or `camera:<id>`.
   std::string camera3dMode = "active";
   /// SnapshotComp.customViewCamera (a custom 3D view; replaces the scene camera).

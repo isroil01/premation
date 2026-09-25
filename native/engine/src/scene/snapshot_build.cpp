@@ -9,22 +9,29 @@
 #include <set>
 #include <unordered_map>
 
+#include "cloner_port.hpp"
+#include "comp_instance.hpp"
 #include "effect_handoff.hpp"
 #include "effects_port.hpp"
 #include "frame_build.hpp"
 #include "rig_bridge.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
+#include "merge_paths.hpp"
 #include "misc_port.hpp"
 #include "paint_port.hpp"
+#include "particle_port.hpp"
 #include "path_ops.hpp"
+#include "precomp_frame.hpp"
 #include "jsmath.hpp"
+#include "raw_world.hpp"
 #include "readers.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
 #include "corner_pin.hpp"
 #include "svg_layer.hpp"
+#include "temporal_ghosts.hpp"
 #include "text_port.hpp"
 #include "text_runs.hpp"
 #include "threed_port.hpp"
@@ -63,6 +70,38 @@ std::optional<std::string> kind_fill(std::string_view kind) {
 }
 
 double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
+
+/// JavaScript truthiness of a JSON value.
+bool truthy(const Json& v) {
+  if (v.is_bool()) return v.b();
+  if (v.is_number()) return v.num() != 0 && !std::isnan(v.num());
+  if (v.is_string()) return !v.str().empty();
+  return v.is_array() || v.is_object();
+}
+
+/// continuousRaster.ts `readContinuousRaster`.
+bool read_continuous_raster(const doc::Node& n) {
+  return std::ranges::any_of(n.components, [](const doc::Component& c) {
+    const Json& v = c.props.at("continuousRasterize");
+    return v.is_bool() && v.b();
+  });
+}
+
+/// continuousRaster.ts `supportsContinuousRaster`: vector kinds, and a shape only
+/// when it is not a flat solid rect (no path, stroke or corner radius).
+bool supports_continuous_raster(const doc::Node& n) {
+  const std::string kind = n.kind();
+  if (kind == "text" || kind == "svg") return true;
+  if (kind != "shape") return false;
+  for (const doc::Component& c : n.components) {
+    const Json& p = c.props;
+    if (p.at("pathPoints").is_array() && !p.at("pathPoints").arr().empty()) return true;
+    if (truthy(p.at("stroke")) || truthy(p.at("strokeWidth"))) return true;
+    if (p.at("cornerRadius").is_number() && p.at("cornerRadius").num() > 0) return true;
+    if (truthy(p.at("shapeType")) && !(p.at("shapeType").is_string() && p.at("shapeType").str() == "rect")) return true;
+  }
+  return false;
+}
 
 /// flattenComposition(graph, rootId): the root, then its subtree depth-first,
 /// children back-most first.
@@ -230,8 +269,16 @@ class Walk final : public Scene3DHost {
   xf::Local2D world2d(const std::string& id) override { return world_of(id); }
   [[nodiscard]] std::optional<std::string> parent3d_of(const std::string& id) const override { return parent_of(id); }
   bool live3d(const std::string& id) override { return is_live_at(id); }
+  [[nodiscard]] std::string anim_id3d(const std::string& id) const override { return wn_.src(id); }
 
  private:
+  /// `srcId(id)` (comp_instance.cpp): the node a walked id samples animation and clips from.
+  [[nodiscard]] const std::string& sid(const std::string& id) const { return wn_.src(id); }
+  /// The animation wrapper's `sample` (an Essential-Properties override drops the track).
+  std::optional<double> anim_sample_of(const std::string& id, std::string_view prop, double tt) {
+    if (wn_.is_overridden(id, prop)) return std::nullopt;
+    return doc::anim_sample(d_, c_.expr, c_.cache, sid(id), prop, tt);
+  }
   // ── lookups ──
   [[nodiscard]] const doc::Node* node(std::string_view id) const {
     const auto it = byId_.find(std::string(id));
@@ -239,6 +286,8 @@ class Walk final : public Scene3DHost {
   }
   const Values& values_of(const std::string& id);
   double remap(const std::string& id, double tt, bool subFrame, bool extrapolate = false);
+  /// `cloneTimeOffsetOf(id)`: the nearest clone root's cascade delay, or 0.
+  [[nodiscard]] double clone_time_offset(const std::string& id) const;
   /// buildSnapshot `retimedAt` / `retimedSourceAt` (retime_port.cpp).
   std::optional<double> retimed_at(const std::string& id, double tt);
   double retimed_source_at(const std::string& id, double tt);
@@ -252,14 +301,17 @@ class Walk final : public Scene3DHost {
 
   // ── emission ──
   void emit(RLayer l, const doc::Node& n);
-  RLayer precomp_container(const doc::Node& group);
+  /// `buildPrecompContainer(group, nested?.layers, nested?.scene3d)`.
+  RLayer precomp_container(const doc::Node& group, std::optional<NestedComp>* nested = nullptr);
   void emit_stub(const doc::Node& n);
   void build_node(const doc::Node& n);
   void unported(RLayer& l, const doc::Node& n, std::string what);
   std::vector<Json> effects_of(const doc::Node& n, const Values& a, std::optional<double> layerTime, RLayer* note);
   /// `matrixAt` (3D layers): the projected affine per sample (threed_port `matrix_at`).
+  /// `quadAt`: a 3D comp card's perspective quad per sample (MotionSample.quad).
   void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {});
+                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {},
+                      const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt = {});
   void text_fields(RLayer& l, const doc::Node& n, const Base& base, const Values& a);
   void attach_precomps(std::vector<RLayer>& list);
 
@@ -268,10 +320,14 @@ class Walk final : public Scene3DHost {
   const SnapshotComp& comp_;
   double t_;
   const std::optional<MotionBlurCfg>& mb_;
+  /// The raw graph's world transforms (rawLocalOf / rawWorldCache).
+  RawWorld raw_{c_.d, c_.expr, c_.cache, t_};
   double fps_ = 30;
   bool anySolo_ = false;
 
   std::vector<const doc::Node*> nodes_;
+  /// The walked nodes' owner: collapsed-instance clones and override copies.
+  WalkNodes wn_;
   std::unordered_map<std::string, const doc::Node*> byId_;
   std::unordered_map<std::string, Values> values_;
   std::unordered_map<std::string, std::vector<const Bar*>> clips_;
@@ -290,21 +346,24 @@ class Walk final : public Scene3DHost {
 const Values& Walk::values_of(const std::string& id) {
   const auto it = values_.find(id);
   if (it != values_.end()) return it->second;
-  Values v(doc::anim_evaluate_node(d_, c_.expr, c_.cache, id, remap(id, t_, false)));
+  Values v(doc::anim_evaluate_node(d_, c_.expr, c_.cache, sid(id), remap(id, t_, false)));
+  if (const auto ov = wn_.overridden.find(id); ov != wn_.overridden.end()) {
+    for (const std::string& p : ov->second) v.erase(p);
+  }
   return values_.emplace(id, std::move(v)).first->second;
 }
 
 std::vector<const Bar*> Walk::governing_clips(const std::string& id) {
   const auto it = clips_.find(id);
   if (it != clips_.end()) return it->second;
-  std::vector<const Bar*> own = doc::tl_bars_for_node(d_, c_.view, id);
+  std::vector<const Bar*> own = doc::tl_bars_for_node(d_, c_.view, sid(id));
   if (own.empty()) {
     const doc::Node* cur = node(id);
     for (int depth = 0; depth < 32 && cur != nullptr; ++depth) {
       if (!cur->parent) break;
       const doc::Node* parent = node(*cur->parent);
       if (parent == nullptr || is_precomp_node(*parent) || parent->kind() != "group") break;
-      std::vector<const Bar*> pc = doc::tl_bars_for_node(d_, c_.view, parent->id);
+      std::vector<const Bar*> pc = doc::tl_bars_for_node(d_, c_.view, sid(parent->id));
       if (!pc.empty()) {
         own = std::move(pc);
         break;
@@ -316,9 +375,9 @@ std::vector<const Bar*> Walk::governing_clips(const std::string& id) {
 }
 
 std::optional<double> Walk::retimed_at(const std::string& id, double tt) {
-  if (!has_retime(d_, id)) return std::nullopt;
+  if (!has_retime(d_, sid(id))) return std::nullopt;
   const std::optional<RetimeClip> clip = retime_clip_of(pick_retime_bar(governing_clips(id), motion::js::round(tt * fps_)), fps_);
-  return retimed_chain_time(RetimeReader{d_, c_.expr, c_.cache}, id, tt, clip);
+  return retimed_chain_time(RetimeReader{d_, c_.expr, c_.cache}, sid(id), tt, clip);
 }
 
 double Walk::retimed_source_at(const std::string& id, double tt) {
@@ -326,8 +385,11 @@ double Walk::retimed_source_at(const std::string& id, double tt) {
   return retimed ? remap(id, *retimed, true, true) : remap(id, tt, false);
 }
 
-double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrapolate) {
+double Walk::remap(const std::string& id, double ttIn, bool subFrame, bool extrapolate) {
   const doc::Node* n = node(id);
+  // Cloner cascade: a clone plays its animation `timeOffset` behind, at COMP time,
+  // outside every clip map, loop and precomp remap (the offset lives on the clone root).
+  const double tt0 = ttIn - clone_time_offset(id);
   // Precomp time remap (buildRemap): the precomp ANCESTORS' retimes fold first,
   // outermost → innermost; the node's own retime is its container sourceTime.
   double tt = tt0;
@@ -340,7 +402,7 @@ double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrap
       if (is_precomp_node(*p)) chain.push_back(p);
       pid = p->parent;
     }
-    if (std::ranges::any_of(chain, [&](const doc::Node* pc) { return has_retime(d_, pc->id); })) {
+    if (std::ranges::any_of(chain, [&](const doc::Node* pc) { return has_retime(d_, sid(pc->id)); })) {
       for (auto it = chain.rbegin(); it != chain.rend(); ++it) tt = retimed_at((*it)->id, tt).value_or(tt);
     }
   }
@@ -389,7 +451,7 @@ double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrap
     if (const auto cfg = doc::read_node_layer_time(*n)) {
       double s0 = 0;
       double s1 = 1;
-      if (const auto span = doc::anim_time_span(d_, id)) {
+      if (const auto span = doc::anim_time_span(d_, sid(id))) {
         s0 = span->start;
         s1 = span->end;
       } else if (!clips.empty() && clips[0]->clip.duration > 0) {
@@ -404,6 +466,16 @@ double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrap
     }
   }
   return time;
+}
+
+double Walk::clone_time_offset(const std::string& id) const {
+  if (wn_.cloneOffsets.empty()) return 0;
+  const doc::Node* cur = node(id);
+  for (int i = 0; cur != nullptr && i < 64; ++i) {
+    if (const auto it = wn_.cloneOffsets.find(cur->id); it != wn_.cloneOffsets.end()) return it->second.timeOffset;
+    cur = cur->parent ? node(*cur->parent) : nullptr;
+  }
+  return 0;
 }
 
 bool Walk::is_live_at(const std::string& id) {
@@ -439,7 +511,9 @@ std::optional<xf::Local2D> Walk::local_of(const std::string& id) {
 
 std::optional<std::string> Walk::parent_of(const std::string& id) const {
   const doc::Node* n = node(id);
-  if (n == nullptr) return std::nullopt;
+  // A comp instance's top clones are authored in the referenced comp's own
+  // space: the transform chain stops at them (isCompInstanceRoot).
+  if (n == nullptr || wn_.instance_root(id)) return std::nullopt;
   return n->parent;
 }
 
@@ -617,15 +691,20 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
   return resolved;
 }
 
-RLayer Walk::precomp_container(const doc::Node& group) {
+RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>* nested) {
   const Values& gv = values_of(group.id);
   const Base gb = read_base(group);
   RLayer l;
   l.id = group.id;
   l.kind = LayerKind::shape;
   l.effects = effects_of(group, gv, std::nullopt, &l);
-  if (doc::read_comp_ref(group)) unported(l, group, "composition instances");
-  l.mask = apply_mask_property_tracks(read_node_mask_at(group, remap(group.id, t_, false)), gv);
+  // A comp INSTANCE has an intrinsic frame: the referenced comp's size, at the
+  // instance's own world transform, cropped to it (comp_instance.cpp).
+  const std::optional<std::string> ref = doc::read_comp_ref(group);
+  const std::optional<std::pair<double, double>> refSize = ref ? comp_size_of(d_, *ref) : std::nullopt;
+  const bool isInstance = refSize.has_value();
+  const Json authored = apply_mask_property_tracks(read_node_mask_at(group, remap(group.id, t_, false)), gv);
+  l.mask = isInstance ? instance_frame_mask(authored, group.id, refSize->first, refSize->second) : authored;
   l.blend = read_node_blend(group);
   l.preserveTransparency = read_node_preserve_transparency(group);
   l.matte = read_matte_of(group);
@@ -634,13 +713,82 @@ RLayer Walk::precomp_container(const doc::Node& group) {
   l.depth = 0;
   const auto groupOpacity = gv.get("opacity");
   l.opacity = groupOpacity ? *groupOpacity / 100 : gb.opacity;
-  l.width = comp_.width;
-  l.height = comp_.height;
+  l.width = isInstance ? refSize->first : comp_.width;
+  l.height = isInstance ? refSize->second : comp_.height;
   l.fill = "#000";
   l.visible = group.visible;
   l.precompLayers = std::vector<RLayer>{};  // filled by attach_precomps once the walk is done
-  l.sourceTime = remap(group.id, t_, false);
-  if (doc::read_retime_mode(d_, group.id) != api::RetimeMode::normal) unported(l, group, "precomp time remap / retime");
+  // precompSourceTime: its own retime (Speed % / Time Remap) through the clip map.
+  l.sourceTime = retimed_source_at(group.id, t_);
+  if (nested != nullptr && *nested) {
+    l.precompLayers = std::move((*nested)->layers);  // attach_precomps leaves a sealed pass's layers alone
+    l.precompScene3d = std::move((*nested)->scene3d);
+  }
+  if (isInstance) {
+    const xf::Local2D gWorld = world_of(group.id);
+    const auto [ax0, ay0] = read_node_anchor(group);
+    l.anchorX = gv.get("anchorX").value_or(ax0);
+    l.anchorY = gv.get("anchorY").value_or(ay0);
+    l.x = gWorld.x;
+    l.y = gWorld.y;
+    l.rotation = gWorld.rotation;
+    l.scaleX = gWorld.scale_x;
+    l.scaleY = gWorld.scale_y;
+    if (doc::is_3d_enabled(group)) {
+      // A 3D comp CARD: the comp drawn flat onto its projected corners (threed_card.cpp).
+      const Scene3D::CardPlan card = three_->comp_card(
+          group, gv, gWorld, gb.x, gb.y, gb.rotation, gb.scaleX, gb.scaleY, refSize->first, refSize->second, l.anchorX,
+          l.anchorY, [&](std::string_view p, double tt) { return anim_sample_of(group.id, p, tt); });
+      if (!card.still) {  // behind the camera: not drawn, like any 3D layer
+        l.visible = false;
+        l.opacity = 0;
+      } else {
+        const Scene3D::Card& c = *card.still;
+        const auto& m = c.matrix;
+        l.x = c.x;
+        l.y = c.y;
+        l.rotation = motion::js::atan2(m[1], m[0]) / kDeg;
+        l.scaleX = hypot2(m[0], m[1]);
+        l.scaleY = hypot2(m[2], m[3]);
+        l.depth = c.depth;
+        l.matrix = m;
+        l.quad3d = c.quad;
+        if (card.lighting) l.lighting = *card.lighting;
+        // Motion blur through its own perspective: one quad per shutter sample.
+        std::map<std::pair<double, double>, std::optional<Scene3D::Card>> seen;
+        const auto cardOf = [&](double ti, double tc) -> const std::optional<Scene3D::Card>& {
+          const auto key = std::make_pair(ti, tc);
+          auto it = seen.find(key);
+          if (it == seen.end()) it = seen.emplace(key, card.at(ti, tc)).first;
+          return it->second;
+        };
+        motion_samples(
+            l, group, gb, group.id,
+            [&](double ti, double tc) {
+              const auto& k = cardOf(ti, tc);
+              return k ? k->matrix : c.matrix;
+            },
+            [&](double ti, double tc) -> std::optional<std::array<double, 8>> {
+              const auto& k = cardOf(ti, tc);
+              return k ? std::optional<std::array<double, 8>>(k->quad) : std::nullopt;
+            });
+        if (!std::ranges::all_of(l.motionSamples, [](const MotionSample& s) { return s.quad.has_value(); })) l.motionSamples.clear();
+      }
+    } else {
+      // A comp LAYER's own motion blur: the walk's samples on its local pose,
+      // carried onto the world pose (the parent chain held still).
+      motion_samples(l, group, gb, group.id);
+      if (!l.motionSamples.empty()) {
+        LocalPose now;
+        now.x = gv.get("x").value_or(gb.x);
+        now.y = gv.get("y").value_or(gb.y);
+        now.rotation = gv.get("rotation").value_or(gb.rotation);
+        now.scaleX = gv.get("scale") ? *gv.get("scale") : gv.get("scaleX").value_or(gb.scaleX);
+        now.scaleY = gv.get("scale") ? *gv.get("scale") : gv.get("scaleY").value_or(gb.scaleY);
+        l.motionSamples = instance_world_samples(l.motionSamples, now, gWorld);
+      }
+    }
+  }
   return l;
 }
 
@@ -657,7 +805,8 @@ void Walk::attach_precomps(std::vector<RLayer>& list) {
 }
 
 void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                          const std::function<std::array<double, 6>(double, double)>& matrixAt) {
+                          const std::function<std::array<double, 6>(double, double)>& matrixAt,
+                          const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt) {
   if (!mb_) return;
   // Force Motion Blur (forceMotionBlur.ts readForceMotionBlur) overrides the two opt-ins.
   std::optional<MotionBlurCfg> forced;
@@ -681,10 +830,11 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
   static constexpr std::array<std::string_view, 12> kMoves = {
       "x", "y", "rotation", "scale", "scaleX", "scaleY", "z", "rotationX", "rotationY",
       "orientationX", "orientationY", "orientationZ"};
-  const bool moves = std::ranges::any_of(kMoves, [&](std::string_view p) { return doc::anim_is_animated(d_, id, p); });
+  const bool moves = std::ranges::any_of(
+      kMoves, [&](std::string_view p) { return !wn_.is_overridden(id, p) && doc::anim_is_animated(d_, sid(id), p); });
   // A 3D layer also moves on screen when the camera does.
   if (!moves && !(matrixAt && three_ && three_->camera_animated())) return;
-  const auto sample = [&](std::string_view prop, double tt) { return doc::anim_sample(d_, c_.expr, c_.cache, id, prop, tt); };
+  const auto sample = [&](std::string_view prop, double tt) { return anim_sample_of(id, prop, tt); };
   const double limit = cfg.adaptiveSampleLimit;
   const std::vector<double> probe = motion_blur_sample_times(t_, cfg.fps, cfg.shutterAngle, 2, cfg.shutterPhase, limit);
   double travel = 0;
@@ -745,6 +895,7 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
     s.opacity = op ? *op / 100 : base.opacity;
     if (matrixAt) s.matrix = matrixAt(ti, tc);
+    if (quadAt) s.quad = quadAt(ti, tc);
     out.push_back(s);
   }
   if (out.size() > 1) l.motionSamples = std::move(out);
@@ -825,7 +976,7 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   l.textStrokePaint = text_stroke_paint(n, a);                                     // text_port.cpp
   const Json axes = doc::read_font_axes_prop(n);
   if (axes.is_object() && !axes.obj().empty()) unported(l, n, "variable font axes");
-  if (doc::anim_has_expr(d_, n.id, "text.source") || doc::anim_expr(d_, n.id, "sourceText") != nullptr) {
+  if (doc::anim_has_expr(d_, sid(n.id), "text.source") || doc::anim_expr(d_, sid(n.id), "sourceText") != nullptr) {
     unported(l, n, "source text expressions");
   }
 }
@@ -833,10 +984,19 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
 void Walk::build_node(const doc::Node& n) {
   const std::string kind = n.kind();
   if (kind == "comp") {
+    // A SEALED instance renders the referenced comp through its own recursive
+    // pass; a COLLAPSED one was expanded into this walk and draws nothing itself.
     const auto ref = doc::read_comp_ref(n);
     if (ref && !doc::read_comp_collapse(n)) {
-      emit_stub(n);
-      errors_.push_back({n.id, n.name, "unported", "composition instances (nested compositions)"});
+      if (!fullBuild_.contains(n.id)) {
+        emit_stub(n);
+      } else {
+        std::optional<NestedComp> nested = nested_comp_layers(c_, comp_, fps_, n, *ref, retimed_source_at(n.id, t_), mb_);
+        if (nested) {
+          for (LayerError& e : nested->errors) errors_.push_back(std::move(e));
+        }
+        emit(precomp_container(n, &nested), n);
+      }
     }
     return;
   }
@@ -853,10 +1013,67 @@ void Walk::build_node(const doc::Node& n) {
     if (auto wash = three_->light_layer(n)) emit(std::move(*wash), n);
     return;
   }
-  if (kind == "particle" || kind.find('.') != std::string::npos) {
+  if (kind == "particle") {  // a self-drawing emitter layer (particle_port.cpp)
+    const Json staticCfg = read_node_particle(n);
+    if (staticCfg.is_undefined()) return;
+    const Values& pv = values_of(n.id);
+    const xf::Local2D w = world_of(n.id);
+    // readGeometry's box: an authored width AND height (the evaluated values
+    // winning), else 2·radius, else the particle kind's 140×140.
+    std::optional<double> gw, gh, radius;
+    for (const auto& comp : n.components) {
+      const Json& p = comp.props;
+      if (p.at("width").is_number()) gw = p.at("width").num();
+      if (p.at("height").is_number()) gh = p.at("height").num();
+      if (p.at("radius").is_number()) radius = p.at("radius").num();
+      else if (p.at("outerRadius").is_number()) radius = p.at("outerRadius").num();
+      else if (p.at("r").is_number()) radius = p.at("r").num();
+    }
+    if (const auto v = pv.get("width")) gw = v;
+    if (const auto v = pv.get("height")) gh = v;
+    const bool authored = gw && gh && *gw > 0 && *gh > 0;
+    const double boxW = authored ? *gw : radius && *radius > 0 ? *radius * 2 : 140;
+    const double boxH = authored ? *gh : radius && *radius > 0 ? *radius * 2 : 140;
+    Json synced = staticCfg;
+    synced.set("emitterWidth", Json::number(boxW));
+    synced.set("emitterHeight", Json::number(boxH));
+    Json cfg = resolve_particle_config(synced, pv);
+    // The comp shutter (velocity streaks) when this layer's motion-blur switch is on.
+    const bool blurOn = mb_ && mb_->enabled && read_node_motion_blur(n);
+    cfg.set("shutterSec", Json::number(blurOn ? (std::max(0.0, std::min(360.0, mb_->shutterAngle)) / 360) / std::max(1.0, mb_->fps) : 0));
+    if (cfg.at("spriteAssetId").is_string() && !cfg.at("spriteAssetId").str().empty()) {
+      if (const Json* asset = doc::find_asset(d_, cfg.at("spriteAssetId").str()); asset != nullptr && asset->at("src").is_string()) {
+        cfg.set("spriteSrc", asset->at("src"));
+      }
+    }
+    // A 3D emitter with no lens of its own takes the scene camera's focal length.
+    if (doc::is_3d_enabled(n) && three_->camera() && !(cfg.at("perspective").is_number() && cfg.at("perspective").num() > 0)) {
+      cfg.set("perspective", Json::number(three_->camera()->focal_length));
+    }
     RLayer l;
     l.id = n.id;
-    unported(l, n, kind == "particle" ? "particle layers" : "plugin generator / shader layers");
+    l.kind = LayerKind::shape;
+    l.x = w.x;
+    l.y = w.y;
+    l.rotation = w.rotation;
+    l.scaleX = w.scale_x;
+    l.scaleY = w.scale_y;
+    l.depth = 0;
+    l.opacity = pv.has("opacity") ? *pv.get("opacity") / 100 : 1;
+    l.width = boxW;
+    l.height = boxH;
+    l.fill = "#000";
+    l.visible = n.visible;
+    l.blend = read_node_blend(n);
+    l.preserveTransparency = read_node_preserve_transparency(n);
+    l.particles = std::move(cfg);
+    emit(std::move(l), n);
+    return;
+  }
+  if (kind.find('.') != std::string::npos) {
+    RLayer l;
+    l.id = n.id;
+    unported(l, n, "plugin generator / shader layers");
     emit_stub(n);
     return;
   }
@@ -874,20 +1091,26 @@ void Walk::build_node(const doc::Node& n) {
   l.id = n.id;
   l.kind = layerKind;
   const double layerTimeNow = remap(n.id, t_, false);
-  const double baseOpacity = a.has("opacity") ? *a.get("opacity") / 100 : base.opacity;
+  // A cloner clone's opacity MULTIPLIES the resolved one (cloner_port.cpp).
+  const auto cloneOff = wn_.cloneOffsets.find(n.id);
+  const CloneOffset* clone = cloneOff != wn_.cloneOffsets.end() ? &cloneOff->second : nullptr;
+  const double baseOpacity = (a.has("opacity") ? *a.get("opacity") / 100 : base.opacity) * (clone != nullptr ? clone->opacity / 100 : 1);
   l.effects = effects_of(n, a, layerTimeNow, &l);
 
   const bool isSolid = fx.at("solid").is_bool() && fx.at("solid").b();
   const doc::Component* geom = n.comp("Geometry");
   const Json staticPath = geom != nullptr ? geom->props.at("points") : Json();
-  const Json liveOutline = live_path_points(d_, n.id, layerTimeNow);
+  const Json liveOutline = live_path_points(d_, sid(n.id), layerTimeNow);
   Json staticSubpaths = liveOutline.is_undefined() && geom != nullptr ? geom->props.at("subpaths") : Json();
   Json pathPoints = !liveOutline.is_undefined() ? liveOutline
                     : !staticPath.is_undefined() && !staticPath.is_null() ? staticPath
                     : staticSubpaths.is_array() && !staticSubpaths.arr().empty() ? staticSubpaths.arr()[0].at("points")
                                                                                 : Json();
+  // POINTS FOLLOW NULLS: bound vertices track their null's world position (raw_world.cpp).
   if (geom != nullptr && geom->props.at("pointBindings").is_array() && !geom->props.at("pointBindings").arr().empty()) {
-    unported(l, n, "path points bound to nulls");
+    if (Json moved = bind_path_points(raw_, n.id, pathPoints, geom->props.at("pointBindings")); !moved.is_undefined()) {
+      pathPoints = std::move(moved);
+    }
   }
   const bool pathOpen = geom != nullptr && geom->props.at("open").is_bool() && geom->props.at("open").b();
   const std::optional<std::string> shapeType = jstr(doc::transform_props(n).at("shapeType"));
@@ -919,8 +1142,29 @@ void Walk::build_node(const doc::Node& n) {
     }
   }
   if (fx.at("audioWaveform").is_object()) unported(l, n, "audio waveform generator");
-  if (fx.at("booleanOp").is_string() && fx.at("booleanSources").is_array() && fx.at("booleanSources").arr().size() >= 2) {
-    unported(l, n, "live merge paths");
+  // Live Merge Paths (merge_paths.cpp): the boolean re-evaluated from the operands'
+  // world outlines each frame, recentred onto this layer (the pose lands after 3D).
+  std::optional<LiveBooleanResult> liveBoolean;
+  if (has_live_boolean(n)) {
+    OperandReader reader;
+    reader.node = [this](const std::string& id) { return d_.node(id); };
+    reader.world = [this](const std::string& id) { return world_of(id); };
+    reader.values = [this](const std::string& id) -> const Values& { return values_of(id); };
+    reader.pathPoints = [this](const std::string& id) -> Json {
+      const doc::DataTrack* tr = doc::anim_data_track(d_, sid(id), "path.points");
+      if (tr == nullptr) return {};
+      const auto v = doc::sample_data_track(*tr, remap(id, t_, false));
+      if (!v || !v->is_array() || v->arr().size() < 3 || !v->arr()[0].is_object() || !v->arr()[0].has("x")) return {};
+      return live_path_points(d_, sid(id), remap(id, t_, false));
+    };
+    liveBoolean = evaluate_live_boolean(n, reader);
+    if (liveBoolean) {
+      pathPoints = liveBoolean->points;
+      if (liveBoolean->subpaths.is_array() && liveBoolean->subpaths.arr().size() > 1) {
+        staticSubpaths = liveBoolean->subpaths;
+        pathPoints = liveBoolean->subpaths.arr()[0].at("points");
+      }
+    }
   }
   // 3D (threed_port.cpp): placement below; the mesh-carrying kinds are not ported yet.
   const bool is3d = doc::is_3d_enabled(n);
@@ -929,11 +1173,9 @@ void Walk::build_node(const doc::Node& n) {
   if (is3d) {
     for (const std::string& what : three_->unported_features(n, a)) unported(l, n, what);
   }
-  // Auto-orient along the path applies to 2D layers only; Toward Camera is part of the 3D placement.
-  if (!is3d && ((fx.at("autoOrient").is_string() && fx.at("autoOrient").str() == "path") ||
-                (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b()))) {
-    unported(l, n, "auto-orient");
-  }
+  // Auto-orient along the path applies to 2D layers only (below); Toward Camera is part of the 3D placement.
+  const bool autoOrientPath = !is3d && ((fx.at("autoOrient").is_string() && fx.at("autoOrient").str() == "path") ||
+                                        (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b()));
   for (const auto& comp : n.components) {
     const Json& ph = comp.props.at("__physics");
     if (ph.is_object() && !(ph.at("enabled").is_bool() && !ph.at("enabled").b())) unported(l, n, "rigid-body physics");
@@ -944,8 +1186,44 @@ void Walk::build_node(const doc::Node& n) {
   double sx = world.scale_x;
   double sy = world.scale_y;
   double rot = world.rotation;
+  if (clone != nullptr) {  // the cloner offset, on the RESOLVED transform
+    px += clone->x;
+    py += clone->y;
+    rot += clone->rotation;
+    sx *= clone->scaleX;
+    sy *= clone->scaleY;
+  }
+  // Auto-orient (motionPath.ts autoOrientAngleDeg): a moving layer faces its
+  // direction of travel, the velocity over 1/120 s at its own time.
+  if (autoOrientPath) {
+    double bx = 0;
+    double by = 0;
+    for (const auto& comp : n.components) {  // baseXY: the last numeric x / y
+      if (comp.props.at("x").is_number()) bx = comp.props.at("x").num();
+      if (comp.props.at("y").is_number()) by = comp.props.at("y").num();
+    }
+    const double tt = remap(n.id, t_, false);
+    const double x0 = anim_sample_of(n.id, "x", tt).value_or(bx);
+    const double y0 = anim_sample_of(n.id, "y", tt).value_or(by);
+    const double x1 = anim_sample_of(n.id, "x", tt + 1.0 / 120).value_or(bx);
+    const double y1 = anim_sample_of(n.id, "y", tt + 1.0 / 120).value_or(by);
+    const double dx = x1 - x0;
+    const double dy = y1 - y0;
+    if (!(dx == 0 && dy == 0)) rot = (motion::js::atan2(dy, dx) * 180) / std::numbers::pi;
+  }
   // Behind the camera's near plane: not drawn (and neither casts nor receives).
   if (is3d && !three_->place(n, a, base.x, base.y, base.rotation, base.scaleX, base.scaleY, world, s3, px, py, sx, sy, rot, l)) return;
+  if (liveBoolean) {  // the merge rides its union centre, identity scale: the outline is in world px
+    px = liveBoolean->cx;
+    py = liveBoolean->cy;
+    layerW = liveBoolean->width;
+    layerH = liveBoolean->height;
+    sx = 1;
+    sy = 1;
+    rot = 0;
+    l.matrix.reset();
+    l.world3d.reset();
+  }
 
   // Fill paint (+ its keyframed geometry and stops).
   Json fillPaint = read_node_fill(n);
@@ -958,7 +1236,7 @@ void Walk::build_node(const doc::Node& n) {
       if (a.has("fillRadius")) fillPaint.set("radius", Json::number(*a.get("fillRadius")));
     }
     if (ft == "linear" || ft == "radial") {
-      if (const doc::DataTrack* st = doc::anim_data_track(d_, n.id, "fill.stops")) {
+      if (const doc::DataTrack* st = doc::anim_data_track(d_, sid(n.id), "fill.stops")) {
         if (const auto live = doc::sample_data_track(*st, layerTimeNow);
             live && live->is_array() && !live->arr().empty() && live->arr()[0].is_object() && live->arr()[0].has("pos")) {
           Json stops = Json::array();
@@ -1090,21 +1368,52 @@ void Walk::build_node(const doc::Node& n) {
   l.isAdjustment = read_node_adjustment(n);
   l.draft = read_node_quality_s(n) == "draft";
   if (doc::read_node_paint(n)) {  // paint_port.cpp: the frame's live strokes
-    LayerPaint lp = resolve_layer_paint(d_, n, layerTimeNow, a);
+    LayerPaint lp = resolve_layer_paint(d_, n, layerTimeNow, a, sid(n.id));
     for (std::string& why : lp.unported) unported(l, n, std::move(why));
     // Text draws paint into its raster with a paint pad, footage bakes it (E4): shapes only here.
     if (!lp.paint.is_undefined() && layerKind != LayerKind::shape) unported(l, n, "paint strokes on text / footage layers");
     l.paint = std::move(lp.paint);
   }
+  // Content-aware fill (contentAwareFillVideo.ts contentAwareFillAt): the stored
+  // fill frame nearest the layer's time stands in for the footage.
   if (fx.at("contentAwareFill").is_object() && fx.at("contentAwareFill").at("frames").is_array() &&
       !fx.at("contentAwareFill").at("frames").arr().empty()) {
-    unported(l, n, "content-aware fill");
+    const Json::Array& frames = fx.at("contentAwareFill").at("frames").arr();
+    const Json* best = &frames.front();
+    double bestD = std::abs(best->at("t").num() - layerTimeNow);
+    for (const Json& fr : frames) {
+      const double dd = std::abs(fr.at("t").num() - layerTimeNow);
+      if (dd < bestD) {
+        best = &fr;
+        bestD = dd;
+      }
+    }
+    if (best->at("dataUrl").is_string()) l.contentAwareFillSrc = best->at("dataUrl").str();
   }
-  l.sourceTime = remap(n.id, t_, false);
-  if (doc::read_retime_mode(d_, n.id) != api::RetimeMode::normal) unported(l, n, "time remap / speed retime");
+  l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
   if (layerKind == LayerKind::video) {
+    // Frame blending: the source frames bracketing the (retimed) source time, on
+    // the source's own rate (Interpret Footage conform, then the probe, then the comp).
     if (const auto cfg = doc::read_node_layer_time(n); cfg && (cfg->frameBlend == "mix" || cfg->frameBlend == "pixelMotion")) {
-      unported(l, n, "frame blending");
+      double sourceFps = fps_;
+      if (base.assetId) {
+        if (const Json* asset = doc::find_asset(d_, *base.assetId)) {
+          const Json& conform = asset->at("interpret").at("conformFps");
+          const Json& probed = asset->at("metadata").at("fps");
+          const std::optional<double> f = conform.is_number() ? conform.num() : probed.is_number() ? std::optional<double>(probed.num()) : std::nullopt;
+          if (f && *f > 0) sourceFps = *f;
+        }
+      }
+      const double st = retimed_source_at(n.id, t_);
+      if (sourceFps > 0 && std::isfinite(st)) {  // bracketFrames
+        const double exact = st * sourceFps;
+        const double lo = std::floor(exact);
+        const double weight = exact - lo;
+        if (weight > 1e-3) {
+          l.frameBlend = RLayer::FrameBlend{lo / sourceFps, (lo + 1) / sourceFps, weight, cfg->frameBlend};
+          if (cfg->frameBlend == "pixelMotion") unported(l, n, "frame blending (Pixel Motion optical flow)");
+        }
+      }
     }
   }
   {
@@ -1147,7 +1456,7 @@ void Walk::build_node(const doc::Node& n) {
   // Text (`wrappedLayerText`: point text is the raw string; paragraph text is reported above).
   if (layerKind == LayerKind::text || base.text) {
     std::optional<std::string> txt = base.text;
-    if (const doc::DataTrack* st = doc::anim_data_track(d_, n.id, "text.source")) {
+    if (const doc::DataTrack* st = doc::anim_data_track(d_, sid(n.id), "text.source")) {
       if (const auto live = doc::sample_data_track(*st, layerTimeNow); live && live->is_string()) txt = live->str();
     }
     l.text = txt;
@@ -1192,10 +1501,7 @@ void Walk::build_node(const doc::Node& n) {
     if (fit.is_string() && fit.str() == "cover") unported(l, n, "media slot cover crop");
   }
   l.preserveTransparency = read_node_preserve_transparency(n);
-  for (const auto& comp : n.components) {
-    const Json& cr = comp.props.at("continuousRasterize");
-    if (cr.is_bool() && cr.b()) unported(l, n, "continuous rasterization");
-  }
+  l.continuousRaster = read_continuous_raster(n) && supports_continuous_raster(n);  // continuousRaster.ts
   l.cornerPin = read_node_corner_pin(n);  // readNodeCornerPin (corner_pin.cpp)
   {
     const bool rounded = resolvedCornerRadius > 0 || has_independent_corner_radii(radii);
@@ -1228,7 +1534,7 @@ void Walk::build_node(const doc::Node& n) {
       ri.pathPoints = l.pathPoints.is_array() ? &l.pathPoints : nullptr;
       ri.pathOpen = l.pathOpen;
       ri.rigT = l.sourceTime.value_or(t_);
-      RigResult rig = build_rig_mesh_for(d_, c_.expr, c_.cache, n.id, ri);
+      RigResult rig = build_rig_mesh_for(d_, c_.expr, c_.cache, sid(n.id), ri);
       for (std::string& what : rig.unported) unported(l, n, std::move(what));
       if (rig.unported.empty()) l.deformedMesh = std::move(rig.mesh);
     }
@@ -1283,26 +1589,39 @@ void Walk::build_node(const doc::Node& n) {
     // and runs, which index the raw text.
     if (std::string why = paragraph_layer(l, n, c_.measurer, *l.text); !why.empty()) unported(l, n, why);
   }
-  // Temporal ghosts (Echo / Wide Time).
-  for (const Json& e : l.effects) {
-    const std::string ty = e.at("type").is_string() ? e.at("type").str() : "";
-    if ((ty == "echo" || ty == "wide-time") && !(e.at("enabled").is_bool() && !e.at("enabled").b())) {
-      unported(l, n, "temporal ghosts (echo / wide time)");
+  three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
+  // Temporal ghosts (Echo / Wide Time, temporal_ghosts.cpp): copies at other
+  // times, behind the layer — or after it for Composite In Front.
+  std::vector<RLayer> echoesInFront;
+  if (const std::optional<GhostSpec> ghosts = read_ghost_spec(l.effects, fps_)) {
+    if (is3d) {
+      unported(l, n, "temporal ghosts on 3D layers");
+    } else {
+      std::vector<RLayer> copies = ghost_layers(
+          l, *ghosts, t_, [&](std::string_view p, double tt) { return anim_sample_of(n.id, p, tt); },
+          a.get("x").value_or(base.x), a.get("y").value_or(base.y), a.get("rotation").value_or(base.rotation), px, py, rot);
+      for (RLayer& g : copies) {
+        if (ghosts->inFront) echoesInFront.push_back(std::move(g));
+        else emit(std::move(g), n);
+      }
     }
   }
-  three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
   // Extrusion / primitive mesh carriers, then the front quad (inset, mesh-drawn, planar DOF).
   RLayer notes;
   notes.id = n.id;
   three_->finish_layer(n, a, s3, std::move(l), [&](RLayer out) { emit(std::move(out), n); },
                        [&](std::string what) { unported(notes, n, std::move(what)); });
+  for (RLayer& g : echoesInFront) emit(std::move(g), n);
 }
 
 Snapshot Walk::run() {
-  nodes_ = flatten_composition(d_, comp_.rootId);
+  // Collapsed instances expand into clones; a sealed pass applies its overrides (comp_instance.cpp).
+  wn_ = expand_walk_nodes(d_, flatten_composition(d_, comp_.rootId), comp_.rootId, comp_.compOverrides);
+  expand_cloners(wn_, raw_);  // cloner_port.cpp
+  nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
-  fps_ = doc::comp_fps(d_, comp_.rootId);
+  fps_ = comp_.fps ? *comp_.fps : doc::comp_fps(d_, comp_.rootId);
   // The camera, DOF and lights resolve before the walk (buildSnapshot order).
   three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);
   three_->setup(nodes_);

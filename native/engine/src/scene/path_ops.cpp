@@ -1,5 +1,9 @@
 #include "path_ops.hpp"
 
+#include <stdexcept>
+
+#include "polygon_clipping.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -591,7 +595,7 @@ std::vector<Poly> split_ring_at_self_intersections(const Poly& ring) {
   return loops;
 }
 
-std::vector<Poly> clean_closed_offset(Poly ring, const Poly& src, Ctx& ctx) {
+std::vector<Poly> clean_closed_offset(Poly ring, const Poly& src, Ctx& /*ctx*/) {
   const std::size_t n = src.size();
   bool sawPos = false;
   bool sawNeg = false;
@@ -626,10 +630,36 @@ std::vector<Poly> clean_closed_offset(Poly ring, const Poly& src, Ctx& ctx) {
     if (std::fabs(a) > 1e-6 && (a >= 0 ? 1 : -1) == want) kept.push_back(std::move(l));
   }
   if (kept.size() <= 1) return kept;
-  // Several overlapping loops go through polygon-clipping's union (Martinez)
-  // in the TypeScript — outside the port.
-  ctx.unported = true;
-  return kept;
+  // Several surviving loops can overlap (two limbs offset outward into each
+  // other): polygon-clipping's union (polygon_clipping.cpp), each loop simple.
+  try {
+    pc::MultiPolygon first;
+    std::vector<pc::MultiPolygon> rest;
+    for (std::size_t k = 0; k < kept.size(); ++k) {
+      pc::Ring r;
+      for (const Pt& p : kept[k]) r.push_back({p.x, p.y});
+      r.push_back({kept[k][0].x, kept[k][0].y});
+      if (k == 0) first.push_back(pc::Polygon{std::move(r)});
+      else rest.push_back(pc::MultiPolygon{pc::Polygon{std::move(r)}});
+    }
+    const pc::MultiPolygon result = pc::run(pc::OpType::union_, first, rest);
+    std::vector<Poly> out;
+    for (const pc::Polygon& poly : result) {
+      for (const pc::Ring& r : poly) {
+        Poly pts;
+        for (const pc::Pair& q : r) pts.push_back({q[0], q[1]});
+        if (!pts.empty()) {
+          const Pt& f0 = pts.front();
+          const Pt& l0 = pts.back();
+          if (std::fabs(f0.x - l0.x) < 1e-9 && std::fabs(f0.y - l0.y) < 1e-9) pts.pop_back();
+        }
+        if (pts.size() >= 3 && std::fabs(signed_area(pts)) > 1e-6) out.push_back(std::move(pts));
+      }
+    }
+    return out.empty() ? kept : out;
+  } catch (const std::runtime_error&) {  // degenerate geometry the clipper refuses: the kept loops
+    return kept;
+  }
 }
 
 std::vector<Poly> offset_path_runs(const Poly& pts, bool closed, double amount, const std::string& join,
@@ -1025,6 +1055,14 @@ std::optional<std::vector<Json>> run_paints(const std::vector<Run>& runs, const 
 }
 
 }  // namespace
+
+std::vector<std::array<double, 2>> shape_outline_points(const std::string& primitive, double w, double h, double ellipseSteps,
+                                                     double subdivide, const std::optional<std::array<double, 4>>& radii,
+                                                     const std::optional<std::array<double, 2>>& axisScale) {
+  std::vector<std::array<double, 2>> out;
+  for (const Pt& p : shape_outline(primitive, w, h, ellipseSteps, subdivide, radii, axisScale)) out.push_back({p.x, p.y});
+  return out;
+}
 
 GeometryStatus apply_path_ops(const doc::Node& n, const Values& a, double layerTime, RLayer& layer) {
   std::vector<Op> ops;

@@ -121,6 +121,8 @@ class SceneTextures final : public rg::ExternalTextureSource {
   };
   std::string media_ref(const TextureRequest& r, PrepareStats& stats, std::optional<api::RenderColorSpace>& space);
   std::string image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
+  /// A still carried as a `data:image/…;base64,` URL (a content-aware fill frame).
+  std::string data_image_ref(const TextureRequest& r, PrepareStats& stats);
   std::string svg_ref(const TextureRequest& r, PrepareStats& stats);
   /// `gltf:<modelKey>#<image>`: a registered model's image (scene_textures_model.cpp).
   std::string model_ref(const TextureRequest& r, PrepareStats& stats);

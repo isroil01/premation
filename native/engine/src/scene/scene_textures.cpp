@@ -11,6 +11,8 @@
 #include "image_decode.hpp"
 #include "json.hpp"
 #include "light_wash.hpp"
+#include "native_effects.hpp"
+#include "particle_port.hpp"
 #include "raster_source.hpp"
 #include "svg_layer.hpp"
 #include "thread_pool.hpp"
@@ -276,6 +278,8 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     raster::RasterOutput out =
         m.req->kind == TexKind::light  // a light's glow wash (light_wash.cpp)
             ? draw_light_wash(light_wash_of_spec(m.req->spec), opts_.canvas)
+        : m.req->kind == TexKind::particles  // a particle emitter's field (particle_port.cpp)
+            ? draw_particle_field(m.req->spec, opts_.canvas, opts_.mediaBase)
             : raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas,
                                          &bake, m.contentKey != 0 ? &reuse : nullptr);
     if (reuse.painted) insert_content(m.contentKey, std::move(reuse.painted));
@@ -381,6 +385,7 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   if (is_svg_src(r.src)) return svg_ref(r, stats);
   // An imported model's images (gltf_model.hpp): decoded out of the model file.
   if (r.src.starts_with("gltf:")) return model_ref(r, stats);
+  if (r.src.starts_with("data:image/") && !r.video) return data_image_ref(r, stats);
   if (r.src.starts_with("data:") || r.src.starts_with("blob:") || r.src.starts_with("http:") ||
       r.src.starts_with("https:")) {
     stats.unsupported.emplace_back(r.key, "footage that is not a file on disk");
@@ -441,6 +446,45 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   stats.unsupported.emplace_back(r.key, "footage (built without E1 media)");
   return {};
 #endif
+}
+
+std::string SceneTextures::data_image_ref(const TextureRequest& r, PrepareStats& stats) {
+  // Cached by the URL itself (its bytes ARE the content) × the alpha mode.
+  std::string hash = "img:data:" + hex64(fnv1a(r.premultiplied ? "|p" : "|s", fnv1a(r.src)));
+  if (const auto oe = openErrors_.find(hash); oe != openErrors_.end()) {
+    stats.unsupported.emplace_back(r.key, "image did not decode: " + oe->second);
+    return {};
+  }
+  if (find(hash)) return hash;
+  const auto t0 = std::chrono::steady_clock::now();
+  const std::size_t comma = r.src.find(',');
+  const std::string_view head = std::string_view(r.src).substr(0, comma == std::string::npos ? 0 : comma);
+  std::optional<std::vector<std::uint8_t>> bytes;
+  if (comma != std::string::npos && head.ends_with(";base64")) bytes = doc::native_unbase64(std::string_view(r.src).substr(comma + 1));
+  DecodedImage img;
+  std::string error = bytes ? std::string() : std::string("not a base64 data URL");
+  if (!bytes || !decode_image_bytes(*bytes, img, error)) {
+    openErrors_.emplace(hash, error);
+    stats.unsupported.emplace_back(r.key, "image did not decode: " + error);
+    return {};
+  }
+  if (!r.premultiplied) {  // premultiplied at decode, as image_ref does
+    for (std::size_t i = 0; i + 3 < img.rgba.size(); i += 4) {
+      const unsigned a = img.rgba[i + 3];
+      for (std::size_t c = 0; c < 3; ++c) {
+        const unsigned prod = (img.rgba[i + c] * a) + 128U;
+        img.rgba[i + c] = static_cast<std::uint8_t>((prod + (prod >> 8U)) >> 8U);
+      }
+    }
+  }
+  auto e = std::make_shared<RasterEntry>();
+  e->width = img.width;
+  e->height = img.height;
+  e->rgba = std::move(img.rgba);
+  insert(hash, std::move(e));
+  ++stats.rasterMisses;
+  stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return hash;
 }
 
 std::string SceneTextures::svg_ref(const TextureRequest& r, PrepareStats& stats) {

@@ -572,6 +572,75 @@ ms — the styles are dozens of full-frame drawImage calls on Skia's CPU raster.
 Next: a GPU route for the styles, cached silhouettes, and not re-rasterizing
 the content when only effect params change.
 
+**D2w time/comp (2026-09-25): nested compositions, retime, ghosts, particles and
+cloners build from the C++ document.** New files beside `snapshot_build` /
+`frame_build`, which only call hooks (the walk gained an instance-aware
+`sid()` / `anim_sample_of` that every animation and clip read goes through):
+- `comp_instance`: a SEALED instance is its own recursive `build_snapshot`
+  (`nested_comp_layers`: its camera, 3D sort and size, `compStack` /
+  `MAX_COMP_DEPTH` cycle guard, ids re-keyed `<instance>::`, errors carried up,
+  its 3D frame as `precompScene3d`); COLLAPSED instances expand into render-only
+  clones (`expand_walk_nodes`: `__instanceSource`, the `isCompInstanceRoot`
+  transform barrier, the centre anchor); Essential Properties on both
+  (`__compOverrides`: the component patch and the dropped tracks). The container
+  carries the instance frame: referenced size, `::frame` crop mask, anchor,
+  world transform, 2D motion samples.
+- `threed_card` (`Scene3D::comp_card`): a 3D comp layer is a card — placed like
+  a 3D layer, corners projected through the host camera, one quad per shutter
+  sample through the sub-frame camera, Accepts Lights. `precomp_frame`: the
+  frame side — `precompCamera3d` (the inner camera with the placement lifted
+  onto its projection), `placement3d` threaded through the flatten
+  (`threeDPlacementOk`), the card's `squareToQuad` homography.
+- Retime: precomp and layer Speed % / Time Remap through `retimed_source_at`
+  (`retime_port` already had the integral); frame blending (Frame Mix: the
+  bracket pair on the source's own rate, `vfa:` / `vfb:`).
+- `temporal_ghosts` (Echo / Wide Time, 2D), auto-orient, `raw_world` (the raw
+  graph's world chain: points bound to nulls, the cloner's field), Continuous
+  Rasterization (on by default for inserted vector layers — the tier ladder
+  change), corner pin (the render homography, pinned bounds), content-aware
+  fill (the nearest fill frame; SceneTextures decodes `data:image` stills).
+- `cloner_port`: cloners were SILENTLY DROPPED by the C++ walk (it never ran
+  `expandCloners`; a cloner rendered as its single source with no report) —
+  now `clonerPlan` (linear / grid / radial, step, JS-exact hashed random, order
+  and layer falloff, push), the subtree clones, the offset on the resolved
+  transform and opacity, and the cascade on the clone's clock.
+- `particle_port`: particle layers — `resolveParticleConfig`, the closed-form
+  and the frame-stepping emitters (drag, wander / curl turbulence, trails,
+  3-point ramps, death / continuous / bounce bursts, collisions; the stateful
+  state cached per layer and stepped forward), `drawParticleField` +
+  `drawPlexusLinks` on the C++ Canvas2D, `particlesToRenderable` and a
+  `particles:` texture (`TexKind::particles`).
+
+Parity: `timeCompCrossEngine.test.ts` → `time_comp_parity.json` →
+`test_time_comp_parity.cpp` (engine_scene_tests): 10 harness-style documents
+(the golden harness's own `sceneToProject`), 20 frames — sealed instances incl.
+instance-in-instance and two placements, collapsed clones with overrides, the
+cycle guard, 3D cards (dollying camera, lit, motion-blurred, one behind the
+camera), Speed % and Time Remap, Frame Mix and content-aware fill, Echo + Wide
+Time, auto-orient, bound points, Continuous Rasterization, corner pin, cloners,
+particle configs: every snapshot field and renderable equal, nothing
+unported. `particleFieldCrossEngine.test.ts` → `particle_parity.json` →
+`test_particle_parity.cpp`: 11 Canvas2D programs (every emitter, shape, trails,
+streaks, plexus, the stateful sim) equal op for op on the recording canvases.
+Quick loop (`--tag timecomp`, 436 frames, RTX 4060): **ported 416 → 420, within
+tolerance 411 → 415**; the four golden frames of this family —
+precomp-collapse (composition instances), precomp-time-remap (precomp retime),
+effect-echo (temporal ghosts), particles-v2 (particle layers) — are all
+bit-identical to webgpu. The remaining 16 fallbacks are plugin effects /
+generators (13, G2 by decision), glTF models (2) and height displacement (1).
+ctest 13/13.
+
+**Still reported, and why:** live merge paths and Offset Paths' non-convex
+cleanup (both run `polygon-clipping`'s Martinez union — needs an exact port of
+that library, splay trees and snap rounding included); Pixel Motion frame
+blending (optical flow + warp over the two decoded frames — the decoded frames
+are GPU textures in `MediaTextures`, so the warp belongs in the render graph);
+the audio waveform generator (needs the engine's decoded audio peaks —
+`audio::query_peaks` — reachable from the scene builder); Energy Beam on a text
+outline / an expanded mask path; the cloner's `path` mode (mergePaths'
+`nodeWorldOutline`; it falls back to the linear arrangement as the TS does
+without a path); temporal ghosts on 3D layers (the ghost's own `affineAt`).
+
 ### Phase E — Media, audio, text, effects
 
 | Step | What | Exit | Size |

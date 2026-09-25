@@ -68,7 +68,8 @@ double paint_pad(const Json& paint) {
   return raster::paint_reach(v);
 }
 
-LayerPaint resolve_layer_paint(const doc::Document& d, const doc::Node& n, double layerT, const Values& a) {
+LayerPaint resolve_layer_paint(const doc::Document& d, const doc::Node& n, double layerT, const Values& a,
+                               std::string_view animId) {
   LayerPaint out;
   const auto stored = doc::read_node_paint(n);
   if (!stored || stored->empty()) return out;
@@ -90,7 +91,7 @@ LayerPaint resolve_layer_paint(const doc::Document& d, const doc::Node& n, doubl
     const std::map<std::string, double, std::less<>>* tracks = bt == buckets.end() ? nullptr : &bt->second;
     // resolveStrokeAt.
     Json livePath;
-    if (const doc::DataTrack* dt = doc::anim_data_track(d, n.id, "paint." + id + ".path")) {
+    if (const doc::DataTrack* dt = doc::anim_data_track(d, animId.empty() ? std::string_view(n.id) : animId, "paint." + id + ".path")) {
       if (auto v = doc::sample_data_track(*dt, layerT)) livePath = std::move(*v);
     }
     const bool clone = s.at("mode").is_string() && s.at("mode").str() == "clone";
