@@ -936,9 +936,15 @@ endif()
 #                        several frames on the GPU → encoder), the audio mixdown
 #                        (engine_frames' E2 program) — `premation-engine --export JOB`
 #   premation-export-sink  test double for ffmpeg: copies stdin to its last argument
-add_library(engine_export_core STATIC src/export/project_open.cpp src/export/child_process_ffi.cpp)
+add_library(engine_export_core STATIC
+  src/export/project_open.cpp
+  src/export/child_process_ffi.cpp
+  src/export/png_write.cpp
+  src/export/zlib_ffi.cpp
+  src/export/zip_write.cpp)
 target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
-target_link_libraries(engine_export_core PUBLIC engine_core PRIVATE motion::options)
+find_package(ZLIB REQUIRED)
+target_link_libraries(engine_export_core PUBLIC engine_core ZLIB::ZLIB PRIVATE motion::options)
 if(WIN32)
   target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 endif()

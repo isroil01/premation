@@ -88,6 +88,10 @@ struct JobSpec {
   /// The encoder, when known up front (tools / benches); otherwise it arrives on stdin.
   std::optional<std::string> encodeBin;
   std::vector<std::string> encodeArgs;
+  /// Image sequence instead of an encoder: "png", "exr", "png-zip", or "exr-zip".
+  std::string sequence;
+  /// Resolved chapters written to workDir/chapters.ffmeta before the encoder starts.
+  std::vector<std::pair<std::pair<double, double>, std::string>> chapters;
   /// Tools: stop after the preflight report.
   bool preflightOnly = false;
 };

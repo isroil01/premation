@@ -11,9 +11,13 @@
 #include <vector>
 
 #include "child_process.hpp"
+#include "exr_write.hpp"
+#include "ffmetadata.hpp"
 #include "frame_convert.hpp"
+#include "png_write.hpp"
 #include "project_open.hpp"
 #include "wav_write.hpp"
+#include "zip_write.hpp"
 
 namespace ex = premation::exporter;
 namespace fs = std::filesystem;
@@ -184,4 +188,35 @@ TEST_CASE("a JSON document opens; a render-tests scene brings its footage", "[ex
   write_text(d / "bad.json", "{nope");
   CHECK_FALSE(ex::open_project(d / "bad.json", p, err));
   CHECK_FALSE(ex::open_project(d / "missing.json", p, err));
+}
+
+TEST_CASE("chapter metadata matches the editor's FFMETADATA1 text", "[export]") {
+  CHECK(ex::format_ffmetadata({}).empty());
+  const std::string text = ex::format_ffmetadata({{0, 2000, "Intro"}, {2000, 5000, "Body"}});
+  CHECK(text == ";FFMETADATA1\n"
+                 "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\ntitle=Intro\n"
+                 "[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=5000\ntitle=Body\n");
+  const std::string escaped = ex::format_ffmetadata({{0, 1000, "A = B; Take #3"}});
+  CHECK(escaped.find("title=A \\= B\\; Take \\#3\n") != std::string::npos);
+}
+
+TEST_CASE("a PNG sequence frame is a readable RGBA PNG, and a zip of frames stores them", "[export]") {
+  const std::vector<std::uint8_t> px = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 128};
+  std::vector<std::uint8_t> png;
+  REQUIRE(ex::encode_png_rgba8(px, 2, 2, png));
+  REQUIRE(png.size() > 8);
+  CHECK(png[0] == 0x89);
+  CHECK(png[1] == 'P');
+  CHECK(png[2] == 'N');
+  CHECK(png[3] == 'G');
+  const std::vector<std::uint8_t> half(2 * 2 * 8, 0);
+  const std::vector<std::uint8_t> exr = ex::encode_exr_half(half, 2, 2);
+  REQUIRE(exr.size() > 8);
+  CHECK(exr[0] == 0x76);  // magic 20000630 little-endian starts with 0x76
+  const fs::path d = temp_dir("zip");
+  ex::ZipWriter zip;
+  REQUIRE(zip.open(d / "frames.zip"));
+  REQUIRE(zip.add("frame_0001.png", png));
+  REQUIRE(zip.finish());
+  CHECK(fs::file_size(d / "frames.zip") > png.size());
 }

@@ -1290,8 +1290,11 @@ a hidden window, unchanged. These fall back:
 - an engine crash. ffmpeg dies with it through a Windows job object, and nothing
   is delivered.
 
-These go straight to the window instead: image sequences, chapters, and hardware
-encoders.
+An image-sequence job (`sequence`: `png`, `exr`, `png-zip`, or `exr-zip`) writes
+numbered frames, or one STORE zip, instead of spawning an encoder. Chapters on the
+job are written to `chapters.ffmeta` (FFMETADATA1, the same text as the editor)
+before the encoder starts. Hardware encoders still go straight to the window:
+`encoderProbe` lives in main's render IPC.
 
 Real engine, through the launcher: a kill -9 mid-render gives fallback, with no
 file and no orphaned ffmpeg. Cancel gives cancelled. `effect-echo` gives fallback
@@ -1337,8 +1340,6 @@ only; not yet exposed in the Export UI.
 - The engine's own native-plugin host and the remaining preflight fallbacks
   (D2w/E4 ports).
 - Hardware encoders: `encoderProbe` lives in main's render IPC.
-- Chapters: the FFMETADATA formatter is in `src/`.
-- PNG/EXR sequences.
 - Partial-alpha unpremultiply is modelled on Skia's float path and is only
   unit-tested; the alpha golden scenes cannot run in the CLI because their
   harness footage is not resolvable there.

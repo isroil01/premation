@@ -23,8 +23,12 @@
 #include "docio.hpp"
 #include "engine_frames.hpp"
 #include "fonts.hpp"
+#include "exr_write.hpp"
+#include "ffmetadata.hpp"
 #include "frame_convert.hpp"
 #include "log.hpp"
+#include "png_write.hpp"
+#include "zip_write.hpp"
 #include "model.hpp"
 #include "native_scene.hpp"
 #include "project_open.hpp"
@@ -634,6 +638,27 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
       if (a.is_string()) out.encodeArgs.push_back(a.str());
     }
   }
+  if (!j.at("sequence").is_undefined()) {
+    if (!j.at("sequence").is_string()) {
+      error = "job: \"sequence\" must be png, exr, png-zip, or exr-zip";
+      return false;
+    }
+    const std::string& s = j.at("sequence").str();
+    if (s != "png" && s != "exr" && s != "png-zip" && s != "exr-zip") {
+      error = "job: \"sequence\" must be png, exr, png-zip, or exr-zip";
+      return false;
+    }
+    out.sequence = s;
+  }
+  if (j.at("chapters").is_array()) {
+    for (const Json& c : j.at("chapters").arr()) {
+      if (!c.at("startMs").is_finite_number() || !c.at("endMs").is_finite_number() || !c.at("title").is_string()) {
+        error = "job: each chapter needs startMs, endMs, and title";
+        return false;
+      }
+      out.chapters.push_back({{c.at("startMs").num(), c.at("endMs").num()}, c.at("title").str()});
+    }
+  }
   return true;
 }
 
@@ -660,7 +685,7 @@ int run_export(const std::string& jobPath) {
   if (job.fontsManifest.empty()) {
     if (const char* m = std::getenv("PREMATION_FONTS_MANIFEST")) job.fontsManifest = m;  // NOLINT(concurrency-mt-unsafe): read before any thread starts
   }
-  if (!job.encodeBin) ctl.start_reader();
+  if (!job.encodeBin && job.sequence.empty()) ctl.start_reader();
 
   // The GPU starts first, while the project opens and the preflight runs
   // (Dawn + the shader compiler: ~1 s). The renderer is used on this thread
@@ -819,10 +844,20 @@ int run_export(const std::string& jobPath) {
     return kExitOk;
   }
 
-  // ── the encoder ──
+  // ── the encoder, or an image sequence ──
+  if (!job.chapters.empty()) {
+    std::vector<Chapter> chapters;
+    chapters.reserve(job.chapters.size());
+    for (const auto& c : job.chapters) chapters.push_back({c.first.first, c.first.second, c.second});
+    std::ofstream meta(u8path(job.workDir) / "chapters.ffmeta", std::ios::binary);
+    meta << format_ffmetadata(chapters);
+  }
+  const bool sequence = !job.sequence.empty();
+  const bool asZip = job.sequence == "png-zip" || job.sequence == "exr-zip";
+  const bool asExr = job.sequence == "exr" || job.sequence == "exr-zip";
   std::string bin = job.encodeBin.value_or("");
   std::vector<std::string> args = job.encodeArgs;
-  if (!job.encodeBin && !ctl.wait_encode(bin, args)) return kExitCancelled;
+  if (!sequence && !job.encodeBin && !ctl.wait_encode(bin, args)) return kExitCancelled;
 
   // ── GPU ──
   const auto tGpu = Clock::now();
@@ -850,10 +885,28 @@ int run_export(const std::string& jobPath) {
   stats.gpuWaitMs = ms_since(tGpu);
 
   const fs::path ffLog = u8path(job.workDir) / "ffmpeg.log";
-  auto child = ChildProcess::spawn(bin, args, ffLog.string(), err);
-  if (!child) {
-    ctl.emit(error_line(false, err));
-    return kExitFailed;
+  const fs::path framesDir = u8path(job.workDir) / "frames";
+  std::unique_ptr<ChildProcess> child;
+  ZipWriter zip;
+  bool zipOpen = false;
+  if (sequence) {
+    std::error_code ec;
+    if (asZip) {
+      zipOpen = zip.open(u8path(job.workDir) / (asExr ? "frames.exr.zip" : "frames.png.zip"));
+      if (!zipOpen) {
+        ctl.emit(error_line(false, "the sequence archive could not be created"));
+        return kExitFailed;
+      }
+    } else if (!fs::create_directories(framesDir, ec) && !fs::is_directory(framesDir)) {
+      ctl.emit(error_line(false, "the sequence directory could not be created"));
+      return kExitFailed;
+    }
+  } else {
+    child = ChildProcess::spawn(bin, args, ffLog.string(), err);
+    if (!child) {
+      ctl.emit(error_line(false, err));
+      return kExitFailed;
+    }
   }
 
   // ── render ──
@@ -861,9 +914,33 @@ int run_export(const std::string& jobPath) {
   std::int64_t written = 0;
   auto lastEmit = Clock::now() - std::chrono::seconds(1);
   const std::int64_t total = plan.frames();
+  const auto wpx = static_cast<std::uint32_t>(plan.width);
+  const auto hpx = static_cast<std::uint32_t>(plan.height);
   const auto sink = [&](const OutFrame& f) {
     if (ctl.cancelled()) return false;
-    if (!child->write(f.rgba)) return false;
+    if (sequence) {
+      std::string name = std::to_string(f.index);
+      if (name.size() < 5) name.insert(0, 5 - name.size(), '0');
+      name = "frame_" + name + (asExr ? ".exr" : ".png");
+      std::vector<std::uint8_t> bytes;
+      if (asExr) {
+        const auto row = wpx * (plan.depth == 16 ? 8U : 4U);
+        std::vector<std::uint8_t> half(std::size_t{wpx} * hpx * 8);
+        target_to_half_rgba(f.rgba, wpx, hpx, row, plan.depth == 16 ? LinearFormat::float16 : LinearFormat::unorm8, half);
+        bytes = encode_exr_half(half, wpx, hpx);
+      } else if (!encode_png_rgba8(f.rgba, wpx, hpx, bytes)) {
+        return false;
+      }
+      if (asZip) {
+        if (!zip.add(name, bytes)) return false;
+      } else {
+        std::ofstream out(framesDir / name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        if (!out) return false;
+      }
+    } else if (!child->write(f.rgba)) {
+      return false;
+    }
     ++written;
     const auto now = Clock::now();
     if (written == total || now - lastEmit >= std::chrono::milliseconds(100)) {
@@ -881,7 +958,7 @@ int run_export(const std::string& jobPath) {
   const int code = pipeline.run(*renderer, textures, job.inFlight, sink, failure);
   stats.renderMs = ms_since(tRender);
   if (code != kExitOk) {
-    child->kill();
+    if (child) child->kill();
     if (code == kExitCancelled || ctl.cancelled()) return kExitCancelled;
     if (code == kExitFailed) {
       const std::string tail = tail_of(ffLog, 600);
@@ -890,10 +967,17 @@ int run_export(const std::string& jobPath) {
     ctl.emit(error_line(code == kExitFallback, failure));
     return code;
   }
-  const int ffCode = child->finish();
-  if (ffCode != 0) {
-    ctl.emit(error_line(false, "The encode failed: ffmpeg exited " + std::to_string(ffCode) + ": " + tail_of(ffLog, 600)));
-    return kExitFailed;
+  if (sequence) {
+    if (asZip && !zip.finish()) {
+      ctl.emit(error_line(false, "the sequence archive could not be finished"));
+      return kExitFailed;
+    }
+  } else {
+    const int ffCode = child->finish();
+    if (ffCode != 0) {
+      ctl.emit(error_line(false, "The encode failed: ffmpeg exited " + std::to_string(ffCode) + ": " + tail_of(ffLog, 600)));
+      return kExitFailed;
+    }
   }
   stats.totalMs = ms_since(tStart);
   ctl.mark_done();
