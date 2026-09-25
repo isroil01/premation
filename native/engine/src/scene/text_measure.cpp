@@ -17,6 +17,7 @@
 #include "line_break.hpp"
 #include "optical_kerning.hpp"
 #include "scene_math.hpp"
+#include "text_layout.hpp"
 #include "text_runs.hpp"
 #include "text_unicode.hpp"
 
@@ -71,7 +72,9 @@ class CanvasMeasurer final : public TextMeasurer {
   explicit CanvasMeasurer(raster::CanvasOptions opts) : opts_(opts) {}
 
   std::optional<std::pair<double, double>> measure_text_size(const MeasuredStyle& input) override {
-    if (input.vertical || input.hasFontAxes || input.fontWidth || input.fontSlant) return std::nullopt;
+    if (input.hasFontAxes || input.fontWidth || input.fontSlant) return std::nullopt;
+    // Vertical optical pairs and vertical runs are outside the port.
+    if (input.vertical && (input.opticalKerning || input.hasLineRuns)) return std::nullopt;
     if (input.textTransform == "capitalize") return std::nullopt;
     // Paragraph text measures its WRAPPED content (measureTextSize → wrappedStyle).
     std::optional<MeasuredStyle> wrapped;
@@ -126,6 +129,8 @@ class CanvasMeasurer final : public TextMeasurer {
     k += s.fauxBold ? '1' : '0';
     k += s.fauxItalic ? '1' : '0';
     k += s.opticalKerning ? 'o' : '-';
+    k += s.vertical ? (s.verticalRomanAlignment ? 'V' : 'v') : '-';
+    k += s.tateChuYokoDigits ? static_cast<char>('0' + *s.tateChuYokoDigits) : '-';
     opt(s.boxWidth);
     opt(s.boxHeight);
     k += s.fontFamily;
@@ -158,6 +163,7 @@ class CanvasMeasurer final : public TextMeasurer {
     std::string content = s.content;
     if (s.textTransform == "uppercase") content = ascii_case(content, true);
     else if (s.textTransform == "lowercase") content = ascii_case(content, false);
+    if (s.vertical) return measure_vertical(s, content, g);
     // measureTextBoxes (horizontal).
     std::vector<std::string> lines;
     {
@@ -308,6 +314,41 @@ class CanvasMeasurer final : public TextMeasurer {
   }
  private:
 
+  /// measureTextSize's vertical branch: verticalLayoutOf(s, g) (layoutVerticalText
+  /// over single-cluster canvas widths), scaled by the style transform.
+  std::optional<std::pair<double, double>> measure_vertical(const MeasuredStyle& s, const std::string& content, raster::Canvas2D& g) {
+    std::unordered_map<std::string, double> widths;
+    const auto measureOne = [&](const std::string& t) {
+      if (const auto it = widths.find(t); it != widths.end()) return it->second;
+      const double w = g.measureText(t).width;
+      widths.emplace(t, w);
+      return w;
+    };
+    raster::TextStyle base;
+    base.fontSize = s.fontSize;
+    base.letterSpacing = s.letterSpacing;
+    base.lineHeight = s.lineHeight;
+    base.paragraphSpacing = s.paragraphSpacing;
+    base.spaceBefore = s.spaceBefore;
+    base.spaceAfter = s.spaceAfter;
+    raster::VerticalLayoutOptions o;
+    o.boxWidth = s.boxWidth ? *s.boxWidth + kPadX * 2 : 0;
+    o.padX = kPadX;
+    if (s.boxWidth) o.columnLimit = s.boxHeight;
+    o.measureRun = [&](const std::string& t, const raster::TextStyle&) {
+      return measureOne(t) + static_cast<double>(raster::split_graphemes(t).size()) * s.letterSpacing;
+    };
+    o.romanUpright = s.verticalRomanAlignment;
+    o.tateChuYokoDigits = s.tateChuYokoDigits;
+    const raster::TextLayout laid =
+        raster::layout_vertical_text(content, base, [&](const std::string& t, const raster::TextStyle&) { return measureOne(t); }, o);
+    const StyleTransform vt = text_style_transform(s);
+    const double w = s.boxWidth ? std::max(16.0, std::ceil(*s.boxWidth) + kPadX * 2) : std::max(16.0, std::ceil(laid.width * vt.sx) + kPadX * 2);
+    const double h = s.boxWidth && s.boxHeight ? std::max(16.0, std::ceil(*s.boxHeight) + kPadY * 2)
+                                               : std::max(16.0, std::ceil(laid.height * vt.sy + std::abs(vt.dy) * 2) + kPadY * 2);
+    return std::pair<double, double>{w, h};
+  }
+
   /// measureText.ts opticalLineDelta: the sum of the pair kerns the painter adds.
   double optical_line_delta(const MeasuredStyle& s, const std::string& style, const std::string& line) {
     if (!s.opticalKerning || raster::utf16_length(line) < 2) return 0;
@@ -333,7 +374,9 @@ std::optional<MeasuredStyle> read_measured_text_style(const doc::Node& n,
                                                       const std::vector<std::pair<std::string, double>>& overrides) {
   MeasuredStyle s;
   std::optional<std::string> content;
-  const auto extras = [&s](const Json& p) {
+  bool tcyAuto = false;
+  double tcyDigits = 2;  // TATE_CHU_YOKO_DEFAULT_DIGITS
+  const auto extras = [&s, &tcyAuto, &tcyDigits](const Json& p) {
     for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
       const Json& v = p.at(k);
       if (!(v.is_number() && std::isfinite(v.num()))) continue;
@@ -354,6 +397,9 @@ std::optional<MeasuredStyle> read_measured_text_style(const doc::Node& n,
     if (auto v = num(p.at("baselineShift"))) s.baselineShift = v;
     if (p.at("orientation").is_string()) s.vertical = p.at("orientation").str() == "vertical";
     if (p.at("kerningMode").is_string()) s.opticalKerning = p.at("kerningMode").str() == "optical";
+    if (p.at("verticalRomanAlignment").is_bool()) s.verticalRomanAlignment = p.at("verticalRomanAlignment").b();
+    if (p.at("tateChuYokoAuto").is_bool()) tcyAuto = p.at("tateChuYokoAuto").b();
+    if (p.at("tateChuYokoDigits").is_finite_number()) tcyDigits = p.at("tateChuYokoDigits").num();
   };
   for (const auto& c : n.components) {
     const Json& p = c.props;
@@ -402,6 +448,8 @@ std::optional<MeasuredStyle> read_measured_text_style(const doc::Node& n,
   if (s.baselineShift == 0) s.baselineShift.reset();
   const Json axes = doc::read_font_axes_prop(n);
   s.hasFontAxes = axes.is_object() && !axes.obj().empty();
+  if (s.vertical && tcyAuto) s.tateChuYokoDigits = static_cast<int>(std::max(1.0, std::min(4.0, std::floor(tcyDigits + 0.5))));
+  if (!s.vertical) s.verticalRomanAlignment = false;
   if (s.boxWidth) {
     // readLineRuns: runs that change a line's size or leading.
     for (const auto& c : n.components) {

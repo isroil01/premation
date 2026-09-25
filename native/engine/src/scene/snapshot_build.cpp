@@ -742,6 +742,21 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
     }
     if (p.at("orientation").is_string() && p.at("orientation").str() == "vertical") x.set("orientation", Json::string("vertical"));
     else if (p.at("orientation").is_string() && p.at("orientation").str() == "horizontal") x.erase("orientation");
+    // readTextExtrasProps: Standard Vertical Roman Alignment, auto tate-chu-yoko.
+    if (p.at("verticalRomanAlignment").is_bool()) {
+      if (p.at("verticalRomanAlignment").b()) x.set("verticalRomanAlignment", Json::boolean(true));
+      else x.erase("verticalRomanAlignment");
+    }
+    if (p.at("tateChuYokoAuto").is_bool()) {
+      if (p.at("tateChuYokoAuto").b()) {
+        if (!x.at("tateChuYokoDigits").is_number()) x.set("tateChuYokoDigits", Json::number(2));  // TATE_CHU_YOKO_DEFAULT_DIGITS
+      } else {
+        x.erase("tateChuYokoDigits");
+      }
+    }
+    if (x.at("tateChuYokoDigits").is_number() && p.at("tateChuYokoDigits").is_finite_number()) {
+      x.set("tateChuYokoDigits", Json::number(std::max(1.0, std::min(4.0, std::floor(p.at("tateChuYokoDigits").num() + 0.5)))));
+    }
   }
   Json out = Json::object();
   for (const char* k : {"leftIndent", "rightIndent", "firstLineIndent", "spaceBefore", "spaceAfter"}) {
@@ -755,7 +770,11 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") out.set("kerningMode", x.at("kerningMode"));
   if (x.at("direction").is_string()) out.set("direction", x.at("direction"));
   if (x.at("orientation").is_string()) {
-    unported(l, n, "vertical text");
+    out.set("orientation", Json::string("vertical"));
+    if (x.at("verticalRomanAlignment").b()) out.set("verticalRomanAlignment", Json::boolean(true));
+    if (x.at("tateChuYokoDigits").is_number() && x.at("tateChuYokoDigits").num() >= 1) out.set("tateChuYokoDigits", x.at("tateChuYokoDigits"));
+    // Vertical optical pairs (opticalKernVertical) are not in the scene port's measurer.
+    if (x.at("kerningMode").is_string() && x.at("kerningMode").str() == "optical") unported(l, n, "vertical text with optical kerning");
   }
   with_text_more_options(out, n, a);  // textMoreOptions + OpenType switches (text_port.cpp)
   if (!out.obj().empty()) l.textExtras = std::move(out);

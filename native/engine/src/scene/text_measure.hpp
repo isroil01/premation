@@ -40,6 +40,8 @@ struct MeasuredStyle {
   bool fauxBold = false;
   bool fauxItalic = false;
   bool vertical = false;
+  bool verticalRomanAlignment = false;
+  std::optional<int> tateChuYokoDigits;  ///< auto tate-chu-yoko (vertical only)
   bool opticalKerning = false;
   bool hasFontAxes = false;
   // Paragraph box (textExtras.ts readParagraphBox), paragraph text only.
