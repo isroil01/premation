@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "anim.hpp"
+#include "env_asset.hpp"
 #include "env_light.hpp"
 #include "extrusion_mesh.hpp"
 #include "fxstate.hpp"
@@ -392,10 +393,18 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
         er.nodeId = n->id;
         envReflect_ = std::move(er);
         const std::string sky = lt.envPreset.is_string() ? lt.envPreset.str() : "studio";
-        const auto rig = environment_rig_for(sky, envIntensity, envRot);
+        auto rig = environment_rig_for(sky, envIntensity, envRot);
         if (!rig) {
-          unported_.emplace_back(n->id, "environment light from an image (asset:) sky");
-          continue;
+          // An image sky (env_asset.cpp): its SH, or the default preset where the TS falls back.
+          std::string why;
+          if (const auto ea = environment_asset(c_.d, sky, why)) {
+            rig = environment_rig(ea->sh, envIntensity, envRot);
+          } else if (why.empty()) {
+            rig = environment_rig_for("studio", envIntensity, envRot);
+          } else {
+            unported_.emplace_back(n->id, "environment light from an image (asset:) sky (" + why + ")");
+            continue;
+          }
         }
         for (const EnvRigLight& rl : *rig) {
           SceneLight s = scene_light_of(lt);
@@ -1142,7 +1151,10 @@ void Scene3D::finish(std::vector<RLayer>& layers) {
   // that would carry envMap falls back.
   if (envReflect_ && envReflect_->intensity > 0 && has_world3d(layers) && envReflect_->sky.is_string() &&
       envReflect_->sky.str().starts_with("asset:")) {
-    unported_.emplace_back(envReflect_->nodeId, "environment reflection map of an image (asset:) sky");
+    std::string why;
+    if (!environment_asset(c_.d, envReflect_->sky.str(), why) && !why.empty()) {
+      unported_.emplace_back(envReflect_->nodeId, "environment reflection map of an image (asset:) sky (" + why + ")");
+    }
   }
   const auto findTop = [&layers](const std::string& id) -> std::ptrdiff_t {
     for (std::size_t i = 0; i < layers.size(); ++i) {
@@ -1354,7 +1366,14 @@ void Scene3D::emit(Snapshot& s, const std::vector<RLayer>& layers) const {
   if (envReflect_ && envReflect_->intensity > 0) {
     // environmentSpecularMap(sky): the prefiltered atlas (memoised on the sky).
     const std::string sky = envReflect_->sky.is_string() ? envReflect_->sky.str() : "studio";
-    if (const auto map = environment_specular_map(sky)) {
+    std::optional<EnvSpecularMap> spec = environment_specular_map(sky);
+    if (!spec) {
+      // An image sky: its own atlas, or the default preset's while it cannot load (the TS's fallback).
+      std::string why;
+      const auto ea = environment_asset(c_.d, sky, why);
+      spec = ea ? std::optional<EnvSpecularMap>(ea->specular) : environment_specular_map("studio");
+    }
+    if (const auto& map = spec) {
       api::RenderEnvMap em;
       em.id = map->id;
       em.width = map->width;

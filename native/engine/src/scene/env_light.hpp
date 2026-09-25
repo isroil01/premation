@@ -12,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,5 +51,29 @@ struct EnvSpecularMap {
 /// `environmentSpecularMap(sky)` for a preset sky (unknown → 'studio'); nullopt
 /// for an asset: sky. Memoised per content id (the TypeScript's LRU of 8).
 [[nodiscard]] std::optional<EnvSpecularMap> environment_specular_map(std::string_view sky);
+
+// ── image (`asset:`) skies: the pure half (env_asset.cpp resolves + decodes) ──
+
+/// Linear RGB float equirect (`EnvPixels`).
+struct EnvPixels {
+  int width = 0;
+  int height = 0;
+  std::vector<float> data;  ///< RGB triples, Float32Array storage
+};
+
+/// `resampleEquirect(pixels, w, h, outW, outH, { isLinear })` over decoded 8-bit
+/// RGBA (or RGB) samples: box average, sRGB linearised before averaging.
+[[nodiscard]] EnvPixels resample_equirect(std::span<const std::uint8_t> pixels, int width, int height, int outWidth, int outHeight,
+                                          bool isLinear);
+/// `shProject(px)`.
+[[nodiscard]] std::array<float, 27> sh_project(const EnvPixels& px);
+/// envAtlasCache.ts `hashEnvPixels(px)` (FNV-1a over the float words, base 36).
+[[nodiscard]] std::string hash_env_pixels(const EnvPixels& px);
+/// `envAtlasKey(content, ENV_SPEC_WIDTH, ENV_SPEC_HEIGHT, ENV_SPEC_LEVELS)`.
+[[nodiscard]] std::string env_atlas_key(std::string_view content);
+/// `buildEnvSpecularAtlas(base, id)`.
+[[nodiscard]] EnvSpecularMap build_env_specular_atlas(const EnvPixels& base, std::string id);
+inline constexpr int kEnvSpecWidth = 256;   ///< ENV_SPEC_WIDTH (= ENV_PROJECT_MAX_WIDTH)
+inline constexpr int kEnvSpecHeight = 128;  ///< ENV_SPEC_HEIGHT (= ENV_PROJECT_MAX_HEIGHT)
 
 }  // namespace premation::scene

@@ -1,6 +1,7 @@
 #include "env_light.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <functional>
 #include <mutex>
@@ -336,11 +337,23 @@ std::optional<EnvSpecularMap> environment_specular_map(std::string_view sky) {
       if (e.id == key) return e;
     }
   }
-  const std::vector<float> base = preset_pixels(content, kSpecW, kSpecH);
+  EnvPixels base;
+  base.width = kSpecW;
+  base.height = kSpecH;
+  base.data = preset_pixels(content, kSpecW, kSpecH);
+  EnvSpecularMap out = build_env_specular_atlas(base, key);
+  const std::scoped_lock lock(m);
+  cache.push_back(out);
+  return out;
+}
+
+EnvSpecularMap build_env_specular_atlas(const EnvPixels& base, std::string id) {
+  const int w = base.width;
+  const int h = base.height;
   std::vector<std::vector<float>> levels;
   for (int i = 0; i < kSpecLevels; ++i) {
     const double r = static_cast<double>(i) / (kSpecLevels - 1);
-    levels.push_back(blur_equirect_angular(base, kSpecW, kSpecH, r * r));
+    levels.push_back(blur_equirect_angular(base.data, w, h, r * r));
   }
   double max = 0;
   for (const auto& lv : levels) {
@@ -349,14 +362,14 @@ std::optional<EnvSpecularMap> environment_specular_map(std::string_view sky) {
     }
   }
   EnvSpecularMap out;
-  out.id = key;
-  out.width = kSpecW;
-  out.height = static_cast<std::uint32_t>(kSpecH * kSpecLevels);
+  out.id = std::move(id);
+  out.width = static_cast<std::uint32_t>(w);
+  out.height = static_cast<std::uint32_t>(h * kSpecLevels);
   out.levels = kSpecLevels;
   out.scale = std::max(1e-4, max);
-  out.data.reserve(static_cast<std::size_t>(kSpecW) * kSpecH * kSpecLevels * 4);
+  out.data.reserve(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * kSpecLevels * 4);
   for (const auto& lv : levels) {
-    for (std::size_t p = 0; p < static_cast<std::size_t>(kSpecW) * kSpecH; ++p) {
+    for (std::size_t p = 0; p < static_cast<std::size_t>(w) * static_cast<std::size_t>(h); ++p) {
       for (std::size_t c = 0; c < 3; ++c) {
         const double v = std::sqrt(std::max(0.0, static_cast<double>(lv[p * 3 + c])) / out.scale);
         out.data.push_back(static_cast<std::uint8_t>(std::max(0.0, std::min(255.0, motion::js::round(v * 255)))));
@@ -364,9 +377,76 @@ std::optional<EnvSpecularMap> environment_specular_map(std::string_view sky) {
       out.data.push_back(255);
     }
   }
-  const std::scoped_lock lock(m);
-  cache.push_back(out);
   return out;
+}
+
+EnvPixels resample_equirect(std::span<const std::uint8_t> pixels, int width, int height, int outWidth, int outHeight, bool isLinear) {
+  const int w = std::max(1, width);
+  const int h = std::max(1, height);
+  const auto wh = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  const double ratio = std::floor(static_cast<double>(pixels.size()) / static_cast<double>(wh));
+  const auto stride = static_cast<std::size_t>(std::max(3.0, std::min(4.0, ratio != 0 && !std::isnan(ratio) ? ratio : 3.0)));
+  constexpr double scale = 1.0 / 255;
+  const auto srgb_to_linear = [](double c) { return c <= 0.04045 ? c / 12.92 : motion::js::pow((c + 0.055) / 1.055, 2.4); };
+  EnvPixels out;
+  out.width = std::max(1, std::min(outWidth, w));
+  out.height = std::max(1, std::min(outHeight, h));
+  out.data.assign(static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height) * 3, 0.0F);
+  const auto at = [&](std::size_t o) { return o < pixels.size() ? static_cast<double>(pixels[o]) : 0.0; };
+  for (int j = 0; j < out.height; ++j) {
+    const double y0 = std::floor(static_cast<double>(j) * h / out.height);
+    const double y1 = std::max(y0 + 1, std::floor(static_cast<double>(j + 1) * h / out.height));
+    for (int i = 0; i < out.width; ++i) {
+      const double x0 = std::floor(static_cast<double>(i) * w / out.width);
+      const double x1 = std::max(x0 + 1, std::floor(static_cast<double>(i + 1) * w / out.width));
+      double r = 0;
+      double g = 0;
+      double b = 0;
+      double n = 0;
+      for (auto y = static_cast<std::size_t>(y0); static_cast<double>(y) < y1; ++y) {
+        for (auto x = static_cast<std::size_t>(x0); static_cast<double>(x) < x1; ++x) {
+          const std::size_t o = (y * static_cast<std::size_t>(w) + x) * stride;
+          double cr = at(o) * scale;
+          double cg = at(o + 1) * scale;
+          double cb = at(o + 2) * scale;
+          if (!isLinear) {
+            cr = srgb_to_linear(cr);
+            cg = srgb_to_linear(cg);
+            cb = srgb_to_linear(cb);
+          }
+          r += cr;
+          g += cg;
+          b += cb;
+          n += 1;
+        }
+      }
+      const std::size_t o = (static_cast<std::size_t>(j) * static_cast<std::size_t>(out.width) + static_cast<std::size_t>(i)) * 3;
+      out.data[o] = static_cast<float>(r / n);
+      out.data[o + 1] = static_cast<float>(g / n);
+      out.data[o + 2] = static_cast<float>(b / n);
+    }
+  }
+  return out;
+}
+
+std::array<float, 27> sh_project(const EnvPixels& px) { return sh_project(px.data, px.width, px.height); }
+
+std::string hash_env_pixels(const EnvPixels& px) {
+  std::uint32_t h = 0x811c9dc5U;
+  for (const float f : px.data) h = (h ^ std::bit_cast<std::uint32_t>(f)) * 0x01000193U;
+  h = (h ^ static_cast<std::uint32_t>(px.width)) * 0x01000193U;
+  h = (h ^ static_cast<std::uint32_t>(px.height)) * 0x01000193U;
+  constexpr std::string_view kDigits = "0123456789abcdefghijklmnopqrstuvwxyz";
+  std::string s;
+  do {
+    s.insert(s.begin(), kDigits[h % 36U]);
+    h /= 36U;
+  } while (h != 0);
+  return s;
+}
+
+std::string env_atlas_key(std::string_view content) {
+  return "v1|" + std::string(content) + "|" + std::to_string(kSpecW) + "x" + std::to_string(kSpecH) + "x" + std::to_string(kSpecLevels);
 }
 
 std::optional<std::vector<EnvRigLight>> environment_rig_for(std::string_view sky, double intensityPct, double rotationDeg) {

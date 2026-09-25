@@ -24,6 +24,8 @@
 
 #include "docexpr.hpp"
 #include "docio.hpp"
+#include "env_asset.hpp"
+#include "env_light.hpp"
 #include "gltf_model.hpp"
 #include "height_displacement.hpp"
 #include "image_decode.hpp"
@@ -228,6 +230,73 @@ TEST_CASE("3D leftovers: a glTF model and a displaced primitive build from the C
   CHECK(bumpy->extruded_mesh->vertices == wantBytes);
   REQUIRE(bumpy->extruded_mesh->ranges.size() == 1);
   CHECK(bumpy->extruded_mesh->ranges[0].count == want.indices.size());
+}
+
+TEST_CASE("3D leftovers: an image (asset:) environment sky lights and reflects from the document", "[scene][env]") {
+  sc::clear_environment_assets();
+  // A 64×32 equirect (bright top, warm band, dark ground), opaque.
+  constexpr std::uint32_t kW = 64;
+  constexpr std::uint32_t kH = 32;
+  std::vector<std::uint8_t> rgb(std::size_t{kW} * kH * 3);
+  for (std::uint32_t y = 0; y < kH; ++y) {
+    for (std::uint32_t x = 0; x < kW; ++x) {
+      const std::size_t i = (std::size_t{y} * kW + x) * 3;
+      rgb[i] = static_cast<std::uint8_t>(y < 12 ? 230 : y < 18 ? 250 : 40 + x);
+      rgb[i + 1] = static_cast<std::uint8_t>(y < 12 ? 235 : y < 18 ? 150 : 30);
+      rgb[i + 2] = static_cast<std::uint8_t>(y < 12 ? 255 : y < 18 ? 60 : 20 + (x & 15U));
+    }
+  }
+  const std::string src = "data:image/bmp;base64," + base64(bmp(kW, kH, rgb));
+  {
+    sc::DecodedImage probe;
+    std::string err;
+    if (!sc::decode_image_bytes(premation::doc::native_unbase64(src.substr(src.find(',') + 1)).value(), probe, err)) {
+      WARN("no still-image codec on this platform (" << err << "): skipped");
+      return;
+    }
+  }
+  const std::string project = R"({"version":"1.9.0","scene":{"version":"1.0.0","nodes":[
+    {"id":"comp_root","name":"Composition 1","parent":null,"children":["ball","env","cam"],"transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},"visible":true,"locked":false,"components":[{"id":"comp_root_meta","type":"group","props":{"__kind":"group"}}]},
+    {"id":"ball","name":"ball","children":[],"parent":"comp_root","transform":{"position":{"x":240,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[
+      {"id":"ball_t","type":"Transform","props":{"__kind":"shape","x":240,"y":180,"rotation":0,"width":160,"height":160,"acceptsLights":true,"z":0,"shadingModel":"pbr","metal":100,"roughness":20}},
+      {"id":"ball_s","type":"Style","props":{"opacity":100,"fill":"#c0c0c0"}},
+      {"id":"ball_prim","type":"Primitive","props":{"type":"sphere","radius":96,"radialSegments":24,"heightSegments":12}}],"visible":true,"locked":false},
+    {"id":"env","name":"env","children":[],"parent":"comp_root","transform":{"position":{"x":240,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[{"id":"env_t","type":"Transform","props":{"__kind":"light","x":240,"y":180,"rotation":0,"intensity":90,"lightType":"environment","envPreset":"asset:sky1","envRotation":30,"envReflections":100}},{"id":"env_s","type":"Style","props":{"opacity":100}}],"visible":true,"locked":false},
+    {"id":"cam","name":"cam","children":[],"parent":"comp_root","transform":{"position":{"x":240,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[{"id":"cam_t","type":"Transform","props":{"__kind":"camera","x":240,"y":180,"rotation":0,"z":-1000,"focalLength":1000}}],"visible":true,"locked":false}]},
+    "animation":{"tracks":{},"expressions":{}},"comps":{"comp_root":{"id":"comp_root","name":"comp_root","width":480,"height":360,"fps":30,"durationSeconds":10,"background":"#0c0c12"}},
+    "motionBlur":{"enabled":false,"shutterAngle":180,"shutterPhase":-90,"samples":8,"adaptiveSampleLimit":128},
+    "colorManagement":{"workingSpace":"srgb-linear","displayTransform":"srgb","bitDepth":16},"projectItems":{"folders":[],"footage":{"sky1":{}}},
+    "openTabs":{"tabOrder":["tab1"],"activeTabId":"tab1","tabs":{"tab1":{"id":"tab1","compositionId":"comp_root","breadcrumbPath":["comp_root"],"title":"comp_root","time":0,"frame":0}}}})";
+  const auto json = js::parse(project);
+  REQUIRE(json.has_value());
+  Json asset = Json::object();
+  asset.set("id", Json::string("sky1"));
+  asset.set("name", Json::string("sky.bmp"));
+  asset.set("type", Json::string("image"));
+  asset.set("src", Json::string(src));
+  doc::Document d;
+  doc::EditorView view;
+  doc::ExprCache cache;
+  (void)doc::restore_document(d, view, *json, {asset});
+  doc::DocExprEnv env(d, view, cache);
+  const sc::BuildContext ctx{d, view, env, cache, nullptr};
+  const sc::NativeFrame f = sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), false);
+  for (const auto& e : f.errors) {
+    INFO(e.layerId << ": " << e.message);
+    CHECK(e.message.find("asset:") == std::string::npos);
+  }
+  // What the builder must have derived: the same pixels through the ported pipeline.
+  std::vector<std::uint8_t> rgba;
+  for (std::size_t i = 0; i < std::size_t{kW} * kH; ++i) rgba.insert(rgba.end(), {rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2], 255});
+  const sc::EnvPixels base = sc::resample_equirect(rgba, kW, kH, sc::kEnvSpecWidth, sc::kEnvSpecHeight, false);
+  const std::string id = sc::env_atlas_key("asset:sky1#" + sc::hash_env_pixels(base));
+  REQUIRE(f.file.scene.env_map.has_value());
+  CHECK(f.file.scene.env_map->id == id);
+  CHECK(f.file.scene.env_map->data == sc::build_env_specular_atlas(base, id).data);
+  CHECK(f.file.scene.env_map->rotation_deg == 30);
+  // The irradiance rig rides the light array: as many lights as environment_rig derives.
+  const auto rig = sc::environment_rig(sc::sh_project(base), 90, 30);
+  CHECK(f.file.scene.lights3d.size() == rig.size());
 }
 
 TEST_CASE("3D leftovers: what the document cannot supply is reported, never guessed", "[scene][gltf][displacement]") {

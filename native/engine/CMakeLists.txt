@@ -389,7 +389,8 @@ if(MOTION_BUILD_TESTS)
   # The rig block against buildSnapshot's meshes (tests/data/rig_parity.json,
   # src/core/rig/rigCrossEngine.test.ts).
   add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp tests/test_threed_parity.cpp
-                                         tests/test_height_displacement_parity.cpp tests/test_gltf_model_parity.cpp)
+                                         tests/test_height_displacement_parity.cpp tests/test_gltf_model_parity.cpp
+                                         tests/test_env_asset_parity.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -831,6 +832,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/threed_frame.cpp
     src/scene/mesh_displacement.cpp
     src/scene/model_carrier.cpp
+    src/scene/env_asset.cpp
     src/scene/scene_textures_model.cpp
     src/scene/light_wash.cpp
     src/scene/frame_build.cpp
