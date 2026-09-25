@@ -31,6 +31,9 @@ struct QCtx {
   /// clears it before any command runs): repeated queries at one revision —
   /// a scrub, a panel re-reading its rows — build each layer's catalog once.
   std::unordered_map<std::string, Catalog>* catalogs = nullptr;
+  /// D5: the per-layer errors the frame builder last reported for a comp ('' =
+  /// the comp it last built) — what `layerErrors` announced. Unset = none.
+  std::function<std::vector<api::LayerError>(const std::string&)> layerErrors;
 };
 
 /// `catalogFor(layer)` through the query's cache (require_layer first).
