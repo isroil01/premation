@@ -18,7 +18,14 @@
 // Checkouts: the input at the frame's time is the chain buffer; a LAYER param
 // or the effect's own layer at ANOTHER time resolves through the chain's
 // MapLayerSource (displacement maps' path) — other times by the hidden
-// `<layer>@<flicks>` renderables finish_native_frame added to the frame.
+// `<layer>@<flicks>` renderables finish_native_frame added to the frame. Both
+// paths draw a checkout through the free target so it lands at the chain
+// buffer's size and space: the CPU path reads it back, the GPU path copies it
+// into a texture of its own (checkout_layer_gpu).
+//
+// Plugin GPU data lives as long as the device it was built on is the glue's:
+// a new device, or the glue going away (the drawer rebuilt after a device
+// loss), sends GPU_DEVICE_SETDOWN for the old one.
 //
 // Render thread only (the Device is single-threaded).
 #pragma once
@@ -47,6 +54,11 @@ class RenderGlue final : public rg::NativeEffectHost {
 
   /// `host` nullptr = PluginHost::active() at each call (the engine's host).
   explicit RenderGlue(PluginHost* host = nullptr) : host_(host) {}
+  ~RenderGlue() override;
+  RenderGlue(const RenderGlue&) = delete;
+  RenderGlue& operator=(const RenderGlue&) = delete;
+  RenderGlue(RenderGlue&&) = delete;
+  RenderGlue& operator=(RenderGlue&&) = delete;
   bool apply(rg::PassContext& ctx, const Call& call) override;
 
   /// false = never offer the GPU path (every effect renders on the CPU) — the
@@ -67,8 +79,9 @@ class RenderGlue final : public rg::NativeEffectHost {
   Stats stats_;
   /// The device the plugins' GPU data was built on: a different device (a new
   /// renderer, a recovered device loss) sets the old data down first, or a
-  /// plugin would record into a device the frame never submits to.
-  WGPUDevice device_ = nullptr;
+  /// plugin would record into a device the frame never submits to. Held, so
+  /// a new device can never reuse its address and pass for it.
+  wgpu::Device device_;
   std::uint32_t deviceIndex_ = 0;
   std::uint64_t nextId_ = 0;
   std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, OwnTexture> textures_;

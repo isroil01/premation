@@ -348,7 +348,7 @@ if(TARGET engine_render_graph)
     target_compile_definitions(engine_plugins_gpu_tests PRIVATE
       PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
       PREMATION_RENDER_TOOL="$<TARGET_FILE:premation-render>")
-    add_dependencies(engine_plugins_gpu_tests premation-render grade)
+    add_dependencies(engine_plugins_gpu_tests premation-render grade checkout)
     if(MSVC)
       target_compile_options(engine_plugins_gpu_tests PRIVATE /bigobj)
       target_compile_definitions(engine_plugins_gpu_tests PRIVATE _CRT_SECURE_NO_WARNINGS)

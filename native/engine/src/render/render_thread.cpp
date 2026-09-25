@@ -1,6 +1,7 @@
 #include "render_thread.hpp"
 
 #include <algorithm>
+#include <utility>
 
 #include "log.hpp"
 #include "os_ffi.hpp"
@@ -142,53 +143,77 @@ FrameCacheStats RenderThread::cache_stats() const {
   return cacheStats_;
 }
 
-void RenderThread::run(std::promise<std::string>& ready) {
-  {
+std::string RenderThread::open_gpu() {
 #ifdef _WIN32
-    const bool wantShared = options_.hostPid != 0;
+  const bool wantShared = options_.hostPid != 0;
 #else
-    const bool wantShared = false;
+  const bool wantShared = false;
 #endif
-    gpu_ = create_gpu(wantShared, options_.highPerformance, options_.vendorId);
-    if (!gpu_) {
-      ready.set_value("no GPU adapter / device (Dawn)");
-      return;
+  gpu_ = create_gpu(wantShared, options_.highPerformance, options_.vendorId);
+  if (!gpu_) return "no GPU adapter / device (Dawn)";
+  compositor_ = std::make_unique<Compositor>();
+  if (!compositor_->init(*gpu_)) return "compositor pipelines failed to build";
+  if (options_.makeDrawer) {
+    // D2w: the render graph over the engine's own document. A drawer that
+    // cannot start leaves C2's quad compositor in charge (logged, not fatal).
+    std::string error;
+    drawer_ = options_.makeDrawer(*gpu_, error);
+    if (!drawer_) {
+      PREMATION_LOG(warn, "scene_drawer_failed").kv("error", error);
     }
-    compositor_ = std::make_unique<Compositor>();
-    if (!compositor_->init(*gpu_)) {
-      ready.set_value("compositor pipelines failed to build");
-      return;
+  }
+  if (drawer_ && options_.frameCacheBytes != 0) {
+    // D4: only built frames have content keys; C2's quads are never cached.
+    std::size_t budget = options_.frameCacheBytes;
+    if (budget == kFrameCacheAuto) {
+      wgpu::AdapterInfo info{};
+      gpu_->adapter.GetInfo(&info);
+      budget = default_frame_cache_budget(info.vendorID, info.deviceID);
     }
-    if (options_.makeDrawer) {
-      // D2w: the render graph over the engine's own document. A drawer that
-      // cannot start leaves C2's quad compositor in charge (logged, not fatal).
-      std::string error;
-      drawer_ = options_.makeDrawer(*gpu_, error);
-      if (!drawer_) {
-        PREMATION_LOG(warn, "scene_drawer_failed").kv("error", error);
-      }
-    }
-    if (drawer_ && options_.frameCacheBytes != 0) {
-      // D4: only built frames have content keys; C2's quads are never cached.
-      std::size_t budget = options_.frameCacheBytes;
-      if (budget == kFrameCacheAuto) {
-        wgpu::AdapterInfo info{};
-        gpu_->adapter.GetInfo(&info);
-        budget = default_frame_cache_budget(info.vendorID, info.deviceID);
-      }
-      cache_ = std::make_unique<FrameCache>(gpu_->device, budget);
-      PREMATION_LOG(info, "frame_cache").kv("budgetMB", static_cast<double>(budget) / (1024.0 * 1024.0));
-    }
-    const std::lock_guard<std::mutex> lock(m_);
-    adapter_ = gpu_->adapterName;
-    backend_ = gpu_->backend;
-    sharedCapable_ = wantShared && gpu_->sharedTextureCapable;
+    cache_ = std::make_unique<FrameCache>(gpu_->device, budget);
+    PREMATION_LOG(info, "frame_cache").kv("budgetMB", static_cast<double>(budget) / (1024.0 * 1024.0));
   }
   PREMATION_LOG(info, "gpu_ready")
       .kv("adapter", gpu_->adapterName)
       .kv("backend", gpu_->backend)
       .kv("sharedTexture", gpu_->sharedTextureCapable)
       .kv("slots", options_.slots);
+  const std::lock_guard<std::mutex> lock(m_);
+  adapter_ = gpu_->adapterName;
+  backend_ = gpu_->backend;
+  sharedCapable_ = wantShared && gpu_->sharedTextureCapable;
+  return {};
+}
+
+void RenderThread::close_gpu() {
+  if (gpu_) wait_idle(*gpu_);
+  slots_.reset();
+  retired_.clear();
+  cache_.reset();
+  drawer_.reset();
+  compositor_.reset();
+  gpu_.reset();
+}
+
+bool RenderThread::recover_device() {
+  ++lossesSinceFrame_;
+  PREMATION_LOG(error, "device_lost").kv("losses", lossesSinceFrame_);
+  close_gpu();
+  if (lossesSinceFrame_ > kMaxDeviceRecoveries) return false;
+  if (std::string error = open_gpu(); !error.empty()) {
+    PREMATION_LOG(error, "device_recovery_failed").kv("error", error);
+    close_gpu();
+    return false;
+  }
+  return true;
+}
+
+void RenderThread::run(std::promise<std::string>& ready) {
+  if (std::string error = open_gpu(); !error.empty()) {
+    close_gpu();
+    ready.set_value(std::move(error));
+    return;
+  }
   ready.set_value({});
 
   std::unique_lock<std::mutex> lock(m_);
@@ -197,6 +222,18 @@ void RenderThread::run(std::promise<std::string>& ready) {
       return quit_ || configDirty_ || (pending_ && config_.open && slots_ && ring_.any_free());
     });
     if (quit_) break;
+    if (gpu_->device_lost()) {
+      lock.unlock();
+      const bool recovered = recover_device();
+      if (!recovered && onFatal_) onFatal_("GPU device lost");
+      lock.lock();
+      if (!recovered) break;
+      // New slots (a new generation the host imports), and the last frame
+      // again unless a newer one is waiting: the viewport is never left blank.
+      configDirty_ = true;
+      if (!pending_) std::swap(pending_, lastJob_);
+      continue;
+    }
     const auto now = SteadyClock::now();
     if (!retired_.empty()) {
       lock.unlock();
@@ -222,24 +259,12 @@ void RenderThread::run(std::promise<std::string>& ready) {
     const ViewportConfig config = config_;
     lock.unlock();
     render(job, *slot, config);
+    lastJob_ = std::move(job);
     lock.lock();
-    if (device_lost()) {
-      lock.unlock();
-      PREMATION_LOG(error, "device_lost");
-      if (onFatal_) onFatal_("GPU device lost");
-      lock.lock();
-      break;
-    }
   }
   lock.unlock();
   // Tear down on this thread, which created everything.
-  if (gpu_) wait_idle(*gpu_);
-  slots_.reset();
-  retired_.clear();
-  cache_.reset();
-  drawer_.reset();
-  compositor_.reset();
-  gpu_.reset();
+  close_gpu();
 }
 
 void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
@@ -365,6 +390,12 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   // complete on the GPU before its slot is announced (docs/VIEWPORT_ROUTE.md,
   // implication 6). The ring keeps throughput; this costs latency only.
   wait_idle(*gpu_);
+  if (gpu_->device_lost()) {
+    // The slot holds nothing: never announced; the loop recovers and draws the job again.
+    ring_.unacquire(slot);
+    return;
+  }
+  lossesSinceFrame_ = 0;
   const double doneUs = os::epoch_us();
   const double gpuMs = std::chrono::duration<double, std::milli>(SteadyClock::now() - t0).count();
 

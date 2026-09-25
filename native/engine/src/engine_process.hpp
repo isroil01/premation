@@ -17,7 +17,8 @@
 //
 // Exit codes: 0 normal (Goodbye or host gone), 2 cannot start (no GPU,
 // no stdio) — the supervisor falls back to the TypeScript engine without
-// retrying, 3 GPU device lost, 4 unrecoverable framing error on the command
+// retrying, 3 GPU device lost and not recoverable in-process (the render
+// thread recovers a loss itself when it can), 4 unrecoverable framing error on the command
 // pipe, 70 unexpected exception.
 #pragma once
 

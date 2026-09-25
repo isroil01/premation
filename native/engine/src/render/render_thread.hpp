@@ -4,6 +4,15 @@
 // channel. It never blocks the core: submit replaces a job that has not
 // started, and a full ring (every slot still with Chromium) holds the newest
 // job until a slot comes back — older ones are dropped and counted.
+//
+// Device loss (driver reset, TDR) is recovered in-process: everything built on
+// the lost device is dropped (slots, frame cache, the drawer — and with it the
+// render graph's resources and every native plugin's GPU data), a new device
+// is created, new slots are announced (a new generation), and the last frame
+// is drawn again. A frame drawn on the lost device is never announced. Only
+// when no device can be had, or losses keep coming without a frame between
+// (kMaxDeviceRecoveries), is the loss fatal: OnFatal, and the supervisor
+// restarts the engine.
 #pragma once
 
 #include <chrono>
@@ -102,7 +111,14 @@ class RenderThread final : public FrameSink {
 
  private:
   struct SlotSet;
+  static constexpr std::uint32_t kMaxDeviceRecoveries = 3;
   void run(std::promise<std::string>& ready);
+  /// Device, compositor, drawer and frame cache; "" or why not.
+  std::string open_gpu();
+  /// Everything open_gpu and the slots built (idempotent).
+  void close_gpu();
+  /// After a loss: close, then open again. False = the loss is fatal.
+  bool recover_device();
   void rebuild(const ViewportConfig& config, bool shared);
   void render(RenderJob& job, std::uint32_t slot, const ViewportConfig& config);
   void collect_retired(std::chrono::steady_clock::time_point now);
@@ -130,6 +146,9 @@ class RenderThread final : public FrameSink {
   std::vector<std::unique_ptr<SlotSet>> retired_;
   std::uint32_t generation_ = 0;
   FrameRing ring_;
+  /// The job drawn last, drawn again on a recovered device.
+  std::optional<RenderJob> lastJob_;
+  std::uint32_t lossesSinceFrame_ = 0;
 
   // Counters (m_).
   RenderCounters counters_;

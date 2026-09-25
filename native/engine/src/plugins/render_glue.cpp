@@ -2,8 +2,10 @@
 
 #include <dawn/native/DawnNative.h>
 
+#include <atomic>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -17,6 +19,10 @@
 
 namespace premation::plugins {
 namespace {
+
+/// The glue's own textures per size + format: the CPU path's upload, the GPU
+/// path's output, then one per GPU checkout.
+enum : std::uint32_t { kUploadSlot = 0, kGpuOutputSlot = 1, kFirstCheckoutSlot = 2 };
 
 std::optional<TexelFormat> texel_format_of(wgpu::TextureFormat f) noexcept {
   switch (f) {
@@ -120,18 +126,39 @@ std::array<double, 9> layer_to_world(const rg::PassContext& ctx, const rg::Nativ
   return {sx, 0, box.x * w, 0, sy, box.y * h, 0, 0, 1};
 }
 
-/// The GPU path's checkouts: the input texture only (the SDK's GPU checkouts
-/// of other layers are not offered yet — such an effect gets the CPU path).
-class GpuInput final : public CheckoutSource {
+/// The GPU path's checkouts: checkout id → a texture of the chain buffer's size
+/// and format. A missing id checks out empty (nullptr), as the SDK allows.
+class GpuCheckouts final : public CheckoutSource {
  public:
-  explicit GpuInput(const PrGpuWorld& input) : input_(input) {}
-  PrWorld* cpu_checkout(std::uint32_t /*id*/) override { return nullptr; }
+  void set(std::uint32_t checkoutId, const PrGpuWorld& world) { worlds_[checkoutId] = world; }
+  PrWorld* cpu_checkout(std::uint32_t /*checkoutId*/) override { return nullptr; }
   PrWorld* cpu_output() override { return nullptr; }
-  const PrGpuWorld* gpu_checkout(std::uint32_t id) override { return id == 0 ? &input_ : nullptr; }
+  const PrGpuWorld* gpu_checkout(std::uint32_t checkoutId) override {
+    const auto it = worlds_.find(checkoutId);
+    return it == worlds_.end() ? nullptr : &it->second;
+  }
 
  private:
-  const PrGpuWorld& input_;
+  std::map<std::uint32_t, PrGpuWorld> worlds_;
 };
+
+/// A checkout other than the input at the frame's time, drawn as the chain
+/// would see it: a LAYER param's layer, or the effect's own layer at another
+/// time (the hidden `<layer>@<flicks>` renderables). Empty when unavailable.
+rg::TexRef checkout_texture(rg::PassContext& ctx, const rg::NativeEffectHost::Call& call, const RenderInputs& in,
+                            const CheckoutRequest& c) {
+  if (call.poolHasMatte || call.maps == nullptr || call.byId == nullptr) return {};
+  std::string layer = c.paramIndex == 0 ? in.layerId
+                      : c.paramIndex - 1 < in.values.size() ? in.values[c.paramIndex - 1].layer
+                                                             : std::string();
+  if (layer.empty()) return {};
+  if (c.time != in.layerTime) layer = checkout_renderable_id(layer, c.time);
+  return call.maps->map_layer(ctx, *call.byId, layer, call.selfId);
+}
+
+/// Plugin-visible device indices are unique per process: each glue and each
+/// device it meets gets its own, so SETUP / SETDOWN pairs never cross.
+std::atomic<std::uint32_t> g_nextDeviceIndex{0};  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 /// Pop one error scope; its message, or "" when the scope saw no error.
 std::string pop_scope(rg::Device& dev) {
@@ -150,6 +177,11 @@ std::string pop_scope(rg::Device& dev) {
 }
 
 }  // namespace
+
+RenderGlue::~RenderGlue() {
+  PluginHost* host = host_ != nullptr ? host_ : PluginHost::active();
+  if (device_ != nullptr && host != nullptr) host->gpu_device_gone(deviceIndex_);
+}
 
 RenderGlue::OwnTexture& RenderGlue::own(rg::Device& dev, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format, std::uint32_t slot) {
   const auto key = std::make_tuple(w, h, static_cast<std::uint32_t>(format), slot);
@@ -201,7 +233,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   in.layerToWorld = layer_to_world(ctx, call, in, w, h);
 
   rg::Device& dev = ctx.dev;
-  if (dev.device().Get() != device_) {
+  if (dev.device().Get() != device_.Get()) {
     // Another device: the plugins' per-device data (pipelines, buffers, a
     // reference on the old device) and the glue's own textures belong to the
     // old one. Set them down; GPU_DEVICE_SETUP runs again on first use.
@@ -210,12 +242,17 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
       ++stats_.deviceResets;
     }
     textures_.clear();
-    device_ = dev.device().Get();
+    device_ = dev.device();
+    deviceIndex_ = g_nextDeviceIndex.fetch_add(1, std::memory_order_relaxed);
   }
 
   // ── GPU: the effect records into the engine's own device ──
   if (gpuEnabled_ && spec->has(PR_OUT_FLAG_GPU_RENDER)) {
-    const OwnTexture& out = own(dev, w, h, src.format, 1);
+    std::vector<CheckoutRequest> reqs;
+    const CallResult pre = host->pre_render(in, reqs);
+    if (pre.fault) return decline("native-plugin-crash", matchName + ": " + pre.message);
+    if (!pre.ok && !pre.skipped) return decline("native-plugin-failed", matchName + ": " + pre.message);
+    const OwnTexture& out = own(dev, w, h, src.format, kGpuOutputSlot);
     PrGpuDeviceInfo info{};
     info.struct_size = sizeof(PrGpuDeviceInfo);
     info.framework = PR_GPU_FRAMEWORK_WEBGPU_DAWN;
@@ -229,12 +266,34 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
     wgpu::AdapterInfo ai{};
     if (adapter != nullptr && adapter.GetInfo(&ai)) info.backend = backend_of(ai.backendType);
     info.float32_filterable = dev.device().HasFeature(wgpu::FeatureName::Float32Filterable) ? 1 : 0;
-    PrGpuWorld inWorld{sizeof(PrGpuWorld), static_cast<std::int32_t>(w), static_cast<std::int32_t>(h), gpu_format_of(*tf),
-                       src.texture.Get(), src.view.Get(), nullptr};
-    PrGpuWorld outWorld{sizeof(PrGpuWorld), static_cast<std::int32_t>(w), static_cast<std::int32_t>(h), gpu_format_of(*tf),
-                        out.texture.Get(), out.view.Get(), nullptr};
-    GpuInput io(inWorld);
-    dev.flush();  // the chain so far runs before the plugin's commands
+    const auto world = [&](const wgpu::Texture& t, const wgpu::TextureView& v) {
+      return PrGpuWorld{sizeof(PrGpuWorld), static_cast<std::int32_t>(w), static_cast<std::int32_t>(h), gpu_format_of(*tf), t.Get(), v.Get(),
+                        nullptr};
+    };
+    const PrGpuWorld inWorld = world(src.texture, src.view);
+    const PrGpuWorld outWorld = world(out.texture, out.view);
+    GpuCheckouts io;
+    for (std::uint32_t i = 0; i < reqs.size(); ++i) {
+      const CheckoutRequest& c = reqs[i];
+      if (c.paramIndex == 0 && c.time == in.layerTime) {
+        io.set(c.id, inWorld);
+        continue;
+      }
+      const rg::TexRef tex = checkout_texture(ctx, call, in, c);
+      if (!tex) continue;
+      // Through the free target (the chain buffer's size and space), then into
+      // a texture of the checkout's own: the next checkout reuses the target.
+      draw_full(ctx, call.dest, tex);
+      const OwnTexture& held = own(dev, w, h, src.format, kFirstCheckoutSlot + i);
+      wgpu::TexelCopyTextureInfo from{};
+      from.texture = dest->texture;
+      wgpu::TexelCopyTextureInfo to{};
+      to.texture = held.texture;
+      const wgpu::Extent3D size{w, h, 1};
+      dev.encoder().CopyTextureToTexture(&from, &to, &size);
+      io.set(c.id, world(held.texture, held.view));
+    }
+    dev.flush();  // the chain so far (and the checkouts) run before the plugin's commands
     wgpu::CommandEncoder enc = dev.device().CreateCommandEncoder();
     dev.device().PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
     dev.device().PushErrorScope(wgpu::ErrorFilter::Validation);
@@ -264,13 +323,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   if (!read_back(dev, src.texture, w, h, *tf, input, error)) return decline("native-plugin-readback", error);
   std::deque<TexelImage> held;  // checkouts stay alive for the render (stable addresses)
   const CheckoutImageFn checkout = [&](const CheckoutRequest& c) -> const TexelImage* {
-    if (call.poolHasMatte || call.maps == nullptr || call.byId == nullptr) return nullptr;
-    std::string layer = c.paramIndex == 0 ? in.layerId
-                        : c.paramIndex - 1 < in.values.size() ? in.values[c.paramIndex - 1].layer
-                                                               : std::string();
-    if (layer.empty()) return nullptr;
-    if (c.time != in.layerTime) layer = checkout_renderable_id(layer, c.time);
-    const rg::TexRef tex = call.maps->map_layer(ctx, *call.byId, layer, call.selfId);
+    const rg::TexRef tex = checkout_texture(ctx, call, in, c);
     if (!tex) return nullptr;
     // Through the free target, so its pixels land at the chain buffer's size and space.
     draw_full(ctx, call.dest, tex);
@@ -282,7 +335,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   TexelImage out;
   const CallResult r = run_native_cpu(*host, in, input, checkout, out);
   if (!r.ok) return decline(r.fault ? "native-plugin-crash" : "native-plugin-failed", matchName + ": " + r.message);
-  const OwnTexture& up = own(dev, w, h, src.format, 0);
+  const OwnTexture& up = own(dev, w, h, src.format, kUploadSlot);
   wgpu::TexelCopyTextureInfo dst{};
   dst.texture = up.texture;
   wgpu::TexelCopyBufferLayout layout{};

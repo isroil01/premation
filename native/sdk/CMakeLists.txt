@@ -9,8 +9,8 @@
 #
 #     ripple    CPU effect, smart render, 8/16/32 bpc, threaded rows
 #     rings     generator with sequence data and a button (USER_CHANGED_PARAM)
-#     checkout  layer checkouts: another layer (Layer Displace), own layer at
-#               other times (Time Echo)
+#     checkout  layer checkouts: another layer (Layer Displace — on the GPU too
+#               where Dawn's headers are), own layer at other times (Time Echo)
 #     grade     GPU effect (SMART_RENDER_GPU on the engine's Dawn device) + CPU
 #               fallback — needs Dawn's headers, so only with the `engine` feature
 
@@ -50,10 +50,12 @@ premation_sample_plugin(ripple samples/ripple/ripple.cpp)
 premation_sample_plugin(rings samples/rings/rings.cpp)
 premation_sample_plugin(checkout samples/checkout/checkout.cpp)
 
-# grade calls WebGPU through the proc table the host hands over, so it links
-# no Dawn — it needs only the headers (webgpu.h, dawn_proc_table.h).
+# The GPU samples call WebGPU through the proc table the host hands over, so
+# they link no Dawn — they need only the headers (webgpu.h, dawn_proc_table.h).
 find_package(Dawn CONFIG QUIET)
 if(TARGET dawn::webgpu_dawn)
   premation_sample_plugin(grade samples/grade/grade.cpp)
   target_include_directories(grade PRIVATE $<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_include_directories(checkout PRIVATE $<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(checkout PRIVATE PRS_SAMPLE_GPU)
 endif()

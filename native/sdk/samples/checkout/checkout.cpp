@@ -3,16 +3,23 @@
 //   Layer Displace  displaces the input by ANOTHER layer's pixels (a Layer
 //                   parameter checked out at the current time in pre-render):
 //                   Map Layer · Use (Luminance | Red/Green) · Max Horizontal ·
-//                   Max Vertical ▸ Debug: Fault
+//                   Max Vertical ▸ Debug: Fault. Where the build has Dawn's
+//                   headers (PRS_SAMPLE_GPU) a GPU effect too: its
+//                   SMART_RENDER_GPU reads the map through checkout_layer_gpu
+//                   and computes what SMART_RENDER does, in WGSL.
 //   Time Echo       mixes the input with its OWN layer at earlier / later
 //                   times (checkouts of param 0 at other times —
 //                   PR_OUT_FLAG_WIDE_TIME_INPUT): Echo Time (s) · Echoes ·
 //                   Decay ▸ Debug: Fault
 #include <premation_sdk/premation_sdk.h>
 
+#include <array>
 #include <cmath>
 
 #include "sample_util.hpp"
+#if defined(PRS_SAMPLE_GPU)
+#include "sample_gpu.hpp"
+#endif
 
 namespace {
 
@@ -63,14 +70,75 @@ PrErr displace_render(const PrInData* in, PrOutData* out, PrParamDef* const* par
   return prs::for_rows(in, dst->height, row);
 }
 
+#if defined(PRS_SAMPLE_GPU)
+constexpr uint32_t kDisplaceFlags = PR_OUT_FLAG_DEEP_COLOR_AWARE | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_SMART_RENDER |
+                                    PR_OUT_FLAG_GPU_RENDER | PR_OUT_FLAG_THREADED_RENDER;
+
+/// displace_render's maths per output pixel: prs::sample's bilinear taps, transparent outside.
+constexpr const char* kDisplaceWgsl = R"(
+struct U { p: vec4f };  // (max horizontal px, max vertical px, luminance, has map)
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var map: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> u: U;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let xy = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(xy * 2.0 - 1.0, 0.0, 1.0);
+}
+fn tap(p: vec2i) -> vec4f {
+  let size = vec2i(textureDimensions(src));
+  if (any(p < vec2i(0)) || any(p >= size)) { return vec4f(0.0); }
+  return textureLoad(src, p, 0);
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let xy = vec2i(pos.xy);
+  var d = vec2f(0.0);
+  if (u.p.w > 0.0) {
+    let m = textureLoad(map, xy, 0);
+    if (m.a > 0.0) {
+      let inv = 1.0 / m.a;
+      let l = 0.2126 * m.r * inv + 0.7152 * m.g * inv + 0.0722 * m.b * inv;
+      let hv = select(vec2f(m.r * inv, m.g * inv), vec2f(l), u.p.z > 0.0);
+      d = (hv - 0.5) * 2.0 * u.p.xy;
+    }
+  }
+  let f = vec2f(xy) + d;
+  let f0 = floor(f);
+  let t = f - f0;
+  let i = vec2i(f0);
+  let a = tap(i);
+  let b = tap(i + vec2i(1, 0));
+  let c = tap(i + vec2i(0, 1));
+  let e = tap(i + vec2i(1, 1));
+  return (a * (1.0 - t.x) + b * t.x) * (1.0 - t.y) + (c * (1.0 - t.x) + e * t.x) * t.y;
+}
+)";
+
+PrErr displace_gpu_render(const PrInData* in, PrOutData* out, PrParamDef* const* params, PrSmartRenderGpuExtra* x) {
+  if (const PrErr f = prs::inject(prs::by_id(params, in, prs::kFaultParamId), out); f != PR_ERR_NONE) return f;
+  const prs::gpu::State* st = prs::gpu::state_of(in, x->gpu_data);
+  if (st == nullptr || x->input == nullptr || x->output == nullptr) return PR_ERR_INVALID_PARAM;
+  const PrGpuWorld* map = nullptr;
+  if (PrErr e = in->host->checkout_layer_gpu(in->host_ref, kMapCheckout, &map); e != PR_ERR_NONE) return e;
+  const double scale = 0.5 * (in->pixel_scale_x + in->pixel_scale_y);
+  const std::array<float, 4> u{static_cast<float>(prs::num(params, in, kMaxH) * scale), static_cast<float>(prs::num(params, in, kMaxV) * scale),
+                               prs::num(params, in, kUse) < 2 ? 1.0F : 0.0F, map != nullptr ? 1.0F : 0.0F};
+  // No map: the input stands in at its binding, unread (u.p.w = 0).
+  const std::array<const PrGpuWorld*, 2> textures{x->input, map != nullptr ? map : x->input};
+  prs::gpu::draw(*st, x, textures, u);
+  return PR_ERR_NONE;
+}
+#else
+constexpr uint32_t kDisplaceFlags =
+    PR_OUT_FLAG_DEEP_COLOR_AWARE | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_SMART_RENDER | PR_OUT_FLAG_THREADED_RENDER;
+#endif
+
 PrErr PR_CALL displace_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrParamDef* const* params, PrWorld* /*output*/,
-                            void* /*extra*/) {
+                            [[maybe_unused]] void* extra) {
   switch (cmd) {
     case PR_CMD_ABOUT: prs::message(out, "Layer Displace 1.0 — Premation SDK sample (checks out another layer)."); return PR_ERR_NONE;
     case PR_CMD_GLOBAL_SETUP:
       out->my_version = PR_VERSION(1, 0, 0);
-      out->out_flags = PR_OUT_FLAG_DEEP_COLOR_AWARE | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_SMART_RENDER |
-                       PR_OUT_FLAG_THREADED_RENDER;
+      out->out_flags = kDisplaceFlags;
       return PR_ERR_NONE;
     case PR_CMD_PARAMS_SETUP: {
       PrErr e = prs::add_simple(in, PR_PARAM_LAYER, kMapLayer, "Map Layer", {});
@@ -87,6 +155,11 @@ PrErr PR_CALL displace_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrPar
       return e;
     }
     case PR_CMD_SMART_RENDER: return displace_render(in, out, params);
+#if defined(PRS_SAMPLE_GPU)
+    case PR_CMD_GPU_DEVICE_SETUP: return prs::gpu::setup(in, static_cast<PrGpuDeviceSetupExtra*>(extra), kDisplaceWgsl, "prs-displace", 16);
+    case PR_CMD_GPU_DEVICE_SETDOWN: return prs::gpu::setdown(in, static_cast<PrGpuDeviceSetupExtra*>(extra));
+    case PR_CMD_SMART_RENDER_GPU: return displace_gpu_render(in, out, params, static_cast<PrSmartRenderGpuExtra*>(extra));
+#endif
     default: return PR_ERR_NONE;
   }
 }

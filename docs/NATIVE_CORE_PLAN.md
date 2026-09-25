@@ -1414,8 +1414,16 @@ effect:
 | 32 bpc | +2.2 ms | +58 ms |
 
 At 16 bpc, the CPU path's half↔uint16 conversions dominate.
-**Remaining:** GPU checkouts of other layers (such effects use the CPU path);
-device-loss recovery end to end in the engine process.
+
+**G1 (2026-09-26): another layer's pixels check out on the GPU, and a lost
+device is rebuilt in-process.** The `checkout` sample's Layer Displace is a
+GPU effect when Dawn's headers are present: `SMART_RENDER_GPU` reads the map
+through `checkout_layer_gpu` and matches its CPU twin (the plugin GPU tests,
+8 bpc, one unorm step). A lost device (the render thread sees `Gpu::device_lost`)
+drops the slots, the frame cache, the drawer and every plugin's GPU data,
+opens a new device, announces a new slot generation and draws the last frame
+again. Three losses with no frame between them, or a device that will not
+open, is fatal: `OnFatal`, and the supervisor restarts the engine.
 
 ---
 

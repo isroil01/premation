@@ -176,6 +176,52 @@ bool has_diag(const rg::FrameStats& s, std::string_view code) {
   return std::ranges::any_of(s.diagnostics, [&](const rg::GraphDiagnostic& d) { return d.code == code; });
 }
 
+/// `img` displaced by a second layer `map` (a horizontal red ramp).
+api::RenderFrameFile displace_frame(std::uint32_t bits, bool effect) {
+  api::RenderEffect fx;
+  fx.type = "native-plugin";
+  fx.params = {text("matchName", "com.premation.samples.checkout.displace"),
+               text("instance", "img/fx1"),
+               text("layerId", "img"),
+               text("p.p1", "map"),
+               num("p.p2", 1),
+               num("p.p3", 12),
+               num("p.p4", 8),
+               num("layerW", 32),
+               num("layerH", 32)};
+  api::RenderFrameFile f = frame(bits, effect ? &fx : nullptr, kW, kH, 32, 32, 16, 8);
+  constexpr std::uint32_t mw = 32;
+  constexpr std::uint32_t mh = 32;
+  std::vector<float> px(std::size_t{mw} * mh * 4, 0);
+  for (std::uint32_t y = 0; y < mh; ++y) {
+    for (std::uint32_t x = 0; x < mw; ++x) {
+      float* p = &px[(std::size_t{y} * mw + x) * 4];
+      p[0] = static_cast<float>(x) / static_cast<float>(mw - 1);
+      p[3] = 1;
+    }
+  }
+  std::vector<std::uint8_t> bytes(px.size() * sizeof(float));
+  std::memcpy(bytes.data(), px.data(), bytes.size());
+  f.blobs.push_back({"hash:map", mw, mh, api::RenderTextureFormat::rgba32float, std::move(bytes), false});
+  api::RenderTextureRef ref;
+  ref.key = "map";
+  ref.hash = "hash:map";
+  ref.ready = true;
+  f.textures.push_back(ref);
+  api::Renderable map;
+  map.id = "map";
+  map.kind = api::RenderableKind::image;
+  map.model_matrix = {static_cast<double>(mw), 0, 0, 0, static_cast<double>(mh), 0, 16, 8, 1};
+  map.bounds = {16, 8, static_cast<double>(mw), static_cast<double>(mh)};
+  map.opacity = 1;
+  map.texture_key = "map";
+  api::Renderable img = std::move(f.scene.renderables.back());
+  f.scene.renderables.pop_back();
+  f.scene.renderables.push_back(std::move(map));
+  f.scene.renderables.push_back(std::move(img));
+  return f;
+}
+
 std::unique_ptr<rg::SceneRenderer> renderer_or_skip() {
   std::string err;
   auto r = rg::SceneRenderer::create({}, err);
@@ -230,6 +276,33 @@ TEST_CASE("plugin GPU: grade's SMART_RENDER_GPU equals its CPU twin at 8, 16 and
                 static_cast<double>(tol));
     CHECK(d <= tol);
   }
+}
+
+TEST_CASE("plugin GPU: a layer checkout displaces on the GPU the same as the CPU twin", "[plugins][gpu]") {
+  auto r = renderer_or_skip();
+  if (!r) return;
+  pl::PluginHost host(options());
+  host.scan();
+  const pl::EffectSpec* spec = host.effect("com.premation.samples.checkout.displace");
+  REQUIRE(spec != nullptr);
+  REQUIRE(spec->has(PR_OUT_FLAG_GPU_RENDER));
+  pl::RenderGlue glue(&host);
+  r->set_native_effects(&glue);
+
+  const Rendered plain = render(*r, displace_frame(8, false));
+  glue.set_gpu_enabled(true);
+  const auto before = glue.stats();
+  const Rendered gpu = render(*r, displace_frame(8, true));
+  CHECK(glue.stats().gpu == before.gpu + 1);
+  CHECK(gpu.stats.diagnostics.empty());
+  glue.set_gpu_enabled(false);
+  const Rendered cpu = render(*r, displace_frame(8, true));
+  CHECK(glue.stats().cpu == before.cpu + 1);
+  CHECK(cpu.stats.diagnostics.empty());
+  CHECK(max_diff(gpu.scene, plain.scene) > 0.01F);
+  const float d = max_diff(gpu.scene, cpu.scene);
+  std::printf("[measure] displace GPU vs CPU twin at 8 bpc: max |diff| %.3g\n", static_cast<double>(d));
+  CHECK(d <= 1.01F / 255.0F);
 }
 
 TEST_CASE("plugin GPU: invalid GPU commands are caught by the error scope; the CPU path renders the frame", "[plugins][gpu]") {
