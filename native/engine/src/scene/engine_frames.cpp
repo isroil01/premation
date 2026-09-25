@@ -8,7 +8,9 @@
 #include <cstring>
 #include <span>
 #include <exception>
+#include <limits>
 #include <map>
+#include <thread>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -388,6 +390,40 @@ class EngineAudio final : public MediaClock {
     system_.set_program(std::move(p));
   }
 
+  /// F1 export: the program set_document built, mixed offline over
+  /// [startSec, endSec) once every source has conformed (audioMixdown.ts
+  /// `mixdownBuffer`: ceil(duration × rate) frames; nothing when no unmuted
+  /// voice reaches the range).
+  bool mixdown(double startSec, double endSec, CompAudioMix& out, std::string& error) {
+    const audio::ProgramPtr program = system_.program();
+    out = {};
+    out.sampleRate = system_.format().sampleRate;
+    out.notes.assign(notes_.begin(), notes_.end());
+    if (!program || !(endSec > startSec)) return true;
+    // Conform is asynchronous (AudioSystem's worker pool): wait for every source.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    for (const auto& [path, id] : sources_) {
+      if (id == 0) continue;
+      while (system_.state(id) == audio::SourceState::conforming || system_.state(id) == audio::SourceState::unknown) {
+        if (std::chrono::steady_clock::now() > deadline) {
+          error = "audio source did not finish decoding: " + path;
+          return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    }
+    for (const audio::Voice& v : program->voices) {
+      if (v.muted) continue;
+      const double rate = std::max(0.01, v.playbackRate);
+      const double wall = v.outSec > 0 ? (v.outSec - v.inSec) / rate : std::numeric_limits<double>::infinity();
+      if (v.startSec < endSec && v.startSec + wall > startSec) out.audible = true;
+    }
+    if (!out.audible) return true;
+    const auto frames = static_cast<std::int64_t>(std::ceil((endSec - startSec) * out.sampleRate));
+    out.channels = system_.render(*program, startSec, frames);
+    return true;
+  }
+
  private:
   static audio::AudioSystemOptions options(bool useDevice) {
     audio::AudioSystemOptions o;
@@ -648,6 +684,22 @@ std::unique_ptr<MediaClock> make_media_clock(bool useDevice, std::string& error)
   (void)useDevice;
   error = "built without audio (E2)";
   return nullptr;
+#endif
+}
+
+std::vector<std::string> document_font_families(const doc::Document& d) { return document_families(d); }
+
+bool mix_comp_audio(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr, doc::ExprCache& cache,
+                    std::string_view comp, double startSec, double endSec, CompAudioMix& out, std::string& error) {
+#if defined(PREMATION_HAVE_AUDIO)
+  EngineAudio a(false);
+  a.set_document(d, view, expr, cache, comp);
+  return a.mixdown(startSec, endSec, out, error);
+#else
+  (void)d, (void)view, (void)expr, (void)cache, (void)comp, (void)startSec, (void)endSec;
+  out = {};
+  error = "built without audio (E2)";
+  return false;
 #endif
 }
 

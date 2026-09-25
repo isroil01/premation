@@ -40,9 +40,19 @@ struct NativeFrame {
   double sceneMs = 0;
 };
 
+/// What an export changes about the composition it renders (offlineRenderer.ts
+/// `exportComp` + the job's `transparent`).
+struct CompOverrides {
+  /// A DELIVERED frame: guide layers dropped (exportComp's `forExport`).
+  bool forExport = false;
+  /// The job's alpha choice (`req.transparent ?? comp.transparent`); nullopt = the comp's.
+  std::optional<bool> transparent;
+};
+
 /// Build one frame. `motionBlur` false = the harness's no-blur scenes (buildSnapshot
 /// gets no config); true = the document's own motion-blur settings.
 [[nodiscard]] NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, double t, const ViewSpec& view,
-                                             bool motionBlur, const std::string& sceneId = {}, std::int64_t frame = 0);
+                                             bool motionBlur, const std::string& sceneId = {}, std::int64_t frame = 0,
+                                             const CompOverrides& overrides = {});
 
 }  // namespace premation::scene

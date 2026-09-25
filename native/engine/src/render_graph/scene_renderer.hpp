@@ -5,7 +5,9 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -46,6 +48,17 @@ struct TargetPixels {
   std::vector<float> rgba;
 };
 
+/// F1: a submitted frame whose surface copy is still in flight (render_submit).
+/// The GPU work is queue-ordered, so the next frame may be submitted before this
+/// one is taken; `take_readback` waits for exactly this frame's copy.
+struct PendingReadback {
+  wgpu::Buffer staging;  // reused when the size matches (the caller recycles it)
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::uint32_t bytesPerRow = 0;  // row stride in `staging` (256-aligned)
+  bool bgra = false;              // the surface was BGRA8 (channels 0 and 2 swapped)
+};
+
 struct FrameStats {
   double encodeMs = 0;   // CPU: graph execution + encoding
   double gpuMs = 0;      // submit → GPU idle (wall clock; measurement only)
@@ -74,6 +87,15 @@ class SceneRenderer {
   /// pixel size — the viewport's frame slot) instead of the renderer's own surface.
   bool render_into(const api::RenderFrameFile& file, const wgpu::TextureView& target, wgpu::TextureFormat format,
                    FrameStats& stats, std::string& error);
+  /// F1 (export): render `file` and record its surface copy into `pending`
+  /// WITHOUT waiting for the GPU — several frames can be in flight. `stats.gpuMs`
+  /// stays 0 (nothing was waited on).
+  bool render_submit(const api::RenderFrameFile& file, PendingReadback& pending, FrameStats& stats, std::string& error);
+  /// Wait for `pending`'s copy and hand out its mapped rows (`bytesPerRow`
+  /// stride, top-down, premultiplied, BGRA when `pending.bgra`) to `consume`,
+  /// then unmap. False when the map failed (device lost).
+  bool take_readback(PendingReadback& pending, const std::function<void(std::span<const std::uint8_t>)>& consume,
+                     std::string& error);
 
   /// Read back graph target `name` as the last frame left it (tests and tools:
   /// the float scene-color before the display encode). False when the last
@@ -98,7 +120,7 @@ class SceneRenderer {
  private:
   SceneRenderer() = default;
   bool render_impl(const api::RenderFrameFile& file, const wgpu::TextureView* target, wgpu::TextureFormat targetFormat,
-                   Frame* readback, FrameStats& stats, std::string& error);
+                   Frame* readback, FrameStats& stats, std::string& error, PendingReadback* pending = nullptr);
   std::unique_ptr<Device> dev_;
   std::unique_ptr<RenderGraph> graph_;
   std::unique_ptr<ColorSystem> colorSystem_;

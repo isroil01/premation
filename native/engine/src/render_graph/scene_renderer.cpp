@@ -172,9 +172,39 @@ bool SceneRenderer::render_into(const api::RenderFrameFile& file, const wgpu::Te
   return render_impl(file, &target, format, nullptr, stats, error);
 }
 
+bool SceneRenderer::render_submit(const api::RenderFrameFile& file, PendingReadback& pending, FrameStats& stats,
+                                  std::string& error) {
+  return render_impl(file, nullptr, wgpu::TextureFormat::Undefined, nullptr, stats, error, &pending);
+}
+
+bool SceneRenderer::take_readback(PendingReadback& pending,
+                                  const std::function<void(std::span<const std::uint8_t>)>& consume,
+                                  std::string& error) {
+  if (pending.staging == nullptr) {
+    error = "no readback in flight";
+    return false;
+  }
+  bool mapped = false;
+  dev_->instance().WaitAny(pending.staging.MapAsync(wgpu::MapMode::Read, 0, pending.staging.GetSize(),
+                                                    wgpu::CallbackMode::WaitAnyOnly,
+                                                    [&mapped](wgpu::MapAsyncStatus s, wgpu::StringView) {
+                                                      mapped = s == wgpu::MapAsyncStatus::Success;
+                                                    }),
+                           UINT64_MAX);
+  if (!mapped) {
+    error = "surface readback failed";
+    return false;
+  }
+  const std::size_t bytes = std::size_t{pending.bytesPerRow} * pending.height;
+  const auto* src = static_cast<const std::uint8_t*>(pending.staging.GetConstMappedRange(0, bytes));
+  consume(std::span<const std::uint8_t>(src, bytes));
+  pending.staging.Unmap();
+  return true;
+}
+
 bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::TextureView* target,
                                 wgpu::TextureFormat targetFormat, Frame* readback, FrameStats& stats,
-                                std::string& error) {
+                                std::string& error, PendingReadback* pending) {
   using Clock = std::chrono::steady_clock;
   const auto t0 = Clock::now();
   const ViewportState vp = ViewportState::from(file.view);
@@ -277,9 +307,35 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
     dst.layout.rowsPerImage = vp.pixelHeight;
     const wgpu::Extent3D size{vp.pixelWidth, vp.pixelHeight, 1};
     dev_->encoder().CopyTextureToBuffer(&src, &dst, &size);
+  } else if (pending != nullptr) {
+    const std::uint64_t need = std::uint64_t{bytesPerRow} * vp.pixelHeight;
+    if (pending->staging == nullptr || pending->staging.GetSize() != need) {
+      wgpu::BufferDescriptor bd{};
+      bd.size = need;
+      bd.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+      pending->staging = dev_->device().CreateBuffer(&bd);
+    }
+    pending->width = vp.pixelWidth;
+    pending->height = vp.pixelHeight;
+    pending->bytesPerRow = bytesPerRow;
+    pending->bgra = surfaceFormat == wgpu::TextureFormat::BGRA8Unorm;
+    wgpu::TexelCopyTextureInfo src{};
+    src.texture = surface_;
+    wgpu::TexelCopyBufferInfo dst{};
+    dst.buffer = pending->staging;
+    dst.layout.bytesPerRow = bytesPerRow;
+    dst.layout.rowsPerImage = vp.pixelHeight;
+    const wgpu::Extent3D size{vp.pixelWidth, vp.pixelHeight, 1};
+    dev_->encoder().CopyTextureToBuffer(&src, &dst, &size);
   }
   const auto t1 = Clock::now();
   stats.collected = dev_->end_frame();
+  if (pending != nullptr) {
+    // Pipelined (F1 export): the caller maps the copy later (take_readback).
+    stats.encodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    stats.gpuError = take_error();
+    return true;
+  }
   wait_idle(dev_->instance(), dev_->queue());
   const auto t2 = Clock::now();
   stats.encodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();

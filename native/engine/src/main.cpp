@@ -15,6 +15,7 @@
 //                    [--plugins DIR]       native plugin bundles (repeatable; + PREMATION_PLUGIN_PATH)
 //                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
 //                    [--version]
+//   premation-engine --export JOB.json     F1: render one export job and exit (export/export_job.hpp)
 //
 // stdin/stdout: the command pipe; fd 3/4: the frame channel; stderr: log.
 // See engine_process.hpp for the thread structure and exit codes.
@@ -25,6 +26,11 @@
 #include <string_view>
 
 #include "engine_process.hpp"
+#if defined(PREMATION_HAVE_EXPORT)
+#include <string>
+
+#include "export_job.hpp"
+#endif
 
 namespace {
 
@@ -44,6 +50,19 @@ int run(int argc, char** argv) {
     if (k == "--version") {
       std::printf("%s\n", premation::kEngineVersion);
       return 0;
+    } else if (k == "--export") {
+      // F1: one export job, then exit (export/export_job.hpp). No command pipe,
+      // no viewport: the export supervisor talks to it in JSON lines.
+#if defined(PREMATION_HAVE_EXPORT)
+      if (v.empty()) {
+        std::fprintf(stderr, "premation-engine: --export needs a job file\n");
+        return 64;
+      }
+      return premation::exporter::run_export(std::string(v));
+#else
+      std::fprintf(stderr, "premation-engine: built without export (F1)\n");
+      return 3;
+#endif
     } else if (k == "--no-gpu") {
       o.noGpu = true;
       continue;

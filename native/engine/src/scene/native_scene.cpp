@@ -23,11 +23,14 @@ ViewSpec export_view(double outW, double outH, double compW, double compH) {
 }
 
 NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, double t, const ViewSpec& view,
-                               bool motionBlur, const std::string& sceneId, std::int64_t frame) {
+                               bool motionBlur, const std::string& sceneId, std::int64_t frame,
+                               const CompOverrides& overrides) {
   using Clock = std::chrono::steady_clock;
   NativeFrame nf;
   const auto t0 = Clock::now();
-  const SnapshotComp sc = snapshot_comp_of(c.d, comp);
+  SnapshotComp sc = snapshot_comp_of(c.d, comp);
+  if (overrides.forExport) sc.forExport = true;
+  if (overrides.transparent) sc.transparent = *overrides.transparent;
   std::optional<MotionBlurCfg> mb;
   if (motionBlur) mb = motion_blur_of(c.d, comp);
   Snapshot snap = build_snapshot(c, sc, t, mb);
