@@ -511,7 +511,7 @@ describe('F1: engine jobs', () => {
     expect(h.runs).toHaveLength(1);
     expect(h.sup.get('a')!.renderer).toBe('engine');
     expect(status(h, 'a')).toBe('preparing');
-    h.runs[0]!.cb.started?.({ frames: 24, width: 1920, height: 1080, fps: 24, alpha: false, audio: null, comp: 'c', compName: 'C' });
+    h.runs[0]!.cb.started?.({ frames: 24, width: 1920, height: 1080, fps: 24, alpha: false, depth: 8, audio: null, comp: 'c', compName: 'C' });
     h.clock.now += 1000;
     h.runs[0]!.cb.progress(0.5);
     expect(status(h, 'a')).toBe('rendering');
@@ -605,5 +605,22 @@ describe('F1: engine jobs', () => {
     again.disk.text = h.disk.text;
     await again.sup.load();
     expect(again.sup.get('a')!.renderer).toBe('engine');
+  });
+});
+describe('F1: 16-bit output', () => {
+  it('bitDepth is 8 or 16, and 16 only for mov', () => {
+    expect(validateSpec({ ...spec(), format: 'mov', bitDepth: 16 }).bitDepth).toBe(16);
+    expect(validateSpec({ ...spec(), bitDepth: 8 }).bitDepth).toBe(8);
+    expect(() => validateSpec({ ...spec(), bitDepth: 16 })).toThrow(/mov/);
+    expect(() => validateSpec({ ...spec(), format: 'mov', bitDepth: 10 })).toThrow(/8 or 16/);
+  });
+
+  it('a 16-bit job that ends up in a window says it was rendered at 8 bits', () => {
+    const h = harness();
+    h.sup.enqueue({ ...spec(), format: 'mov', bitDepth: 16 }, 'a');
+    const w = h.windows[0]!;
+    h.sup.takeJob(w.id);
+    h.sup.reportDone(w.id, { ok: true, outPath: abs('out', 'job1.mov'), frames: 24 });
+    expect(h.sup.get('a')!.warnings).toEqual([expect.stringMatching(/8 bits per channel/)]);
   });
 });

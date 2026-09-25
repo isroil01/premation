@@ -196,6 +196,8 @@ struct Plan {
   double width = 1920, height = 1080;
   std::int64_t start = 0, end = 0;  // inclusive (resolveRange)
   bool alpha = false;
+  /// Output bits per channel: 8 (rgba, the raw pipe) or 16 (rgba64le from a half-float surface).
+  int depth = 8;
   sc::ViewSpec view;
   sc::CompOverrides overrides;
   [[nodiscard]] std::int64_t frames() const noexcept { return end - start + 1; }
@@ -264,7 +266,9 @@ bool make_plan(const doc::Document& d, const JobSpec& job, Plan& p, std::string&
   p.overrides.transparent = p.alpha;
   p.view = sc::export_view(p.width, p.height, p.compW, p.compH);
   // RGBA surface: the read-back rows are the raw pipe's channel order already.
-  p.view.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
+  // 16-bit output draws the same display-encoded frame into a half-float surface.
+  p.depth = job.depth;
+  p.view.surfaceFormat = p.depth == 16 ? api::RenderTextureFormat::rgba16float : api::RenderTextureFormat::rgba8unorm;
   return true;
 }
 
@@ -309,7 +313,7 @@ std::unique_ptr<Built> build_frame(DocCopy& dc, const Plan& p, std::int64_t fram
 // ── the pipeline ────────────────────────────────────────────────────────────
 
 struct Stats {
-  double preflightMs = 0, audioMs = 0, renderMs = 0, totalMs = 0;
+  double openMs = 0, preflightMs = 0, audioMs = 0, gpuInitMs = 0, gpuWaitMs = 0, renderMs = 0, totalMs = 0;
   double buildMsSum = 0, prepareMsSum = 0, submitMsSum = 0, readbackMsSum = 0, writeMsSum = 0;
   double renderWaitBuildMs = 0, renderWaitWriterMs = 0;
   std::uint64_t rasterMisses = 0;
@@ -358,7 +362,7 @@ class Pipeline {
   int run(rg::SceneRenderer& renderer, sc::SceneTextures& textures, unsigned inFlight,
           const std::function<bool(const OutFrame&)>& sink, std::string& failure) {
     const std::size_t window = docs_.size() * 2 + inFlight + 2;
-    const std::size_t frameBytes = static_cast<std::size_t>(plan_.width) * static_cast<std::size_t>(plan_.height) * 4;
+    const std::size_t frameBytes = static_cast<std::size_t>(plan_.width) * static_cast<std::size_t>(plan_.height) * (plan_.depth == 16 ? 8U : 4U);
 
     // Build workers: claim the next index while it is within `window` of the render cursor.
     std::vector<std::jthread> workers;
@@ -437,7 +441,11 @@ class Pipeline {
       const bool ok = renderer.take_readback(
           pending,
           [&](std::span<const std::uint8_t> rows) {
-            surface_to_straight_rgba(rows, pending.width, pending.height, pending.bytesPerRow, pending.bgra, buf);
+            if (pending.half) {
+              half_surface_to_rgba64(rows, pending.width, pending.height, pending.bytesPerRow, buf);
+            } else {
+              surface_to_straight_rgba(rows, pending.width, pending.height, pending.bytesPerRow, pending.bgra, buf);
+            }
           },
           err);
       stats_.readbackMsSum += ms_since(r0);
@@ -605,6 +613,13 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
   if (j.at("transparent").is_bool()) out.transparent = j.at("transparent").b();
   if (j.at("chromiumProfile").is_bool()) out.chromiumProfile = j.at("chromiumProfile").b();
   if (j.at("audio").is_bool()) out.audio = j.at("audio").b();
+  if (!j.at("depth").is_undefined()) {
+    if (!j.at("depth").is_number() || (j.at("depth").num() != 8 && j.at("depth").num() != 16)) {
+      error = "job: \"depth\" must be 8 or 16";
+      return false;
+    }
+    out.depth = static_cast<int>(j.at("depth").num());
+  }
   if (j.at("preflightOnly").is_bool()) out.preflightOnly = j.at("preflightOnly").b();
   if (j.at("buildThreads").is_finite_number()) out.buildThreads = static_cast<unsigned>(std::clamp(j.at("buildThreads").num(), 0.0, 64.0));
   if (j.at("inFlight").is_finite_number()) out.inFlight = static_cast<unsigned>(std::clamp(j.at("inFlight").num(), 1.0, 8.0));
@@ -638,10 +653,32 @@ int run_export(const std::string& jobPath) {
       return kExitUsage;
     }
   }
+  if (job.buildThreads == 0) {
+    // Benches / the "8 cores" measurement: a thread count without touching the job file.
+    if (const char* t = std::getenv("PREMATION_EXPORT_THREADS")) job.buildThreads = static_cast<unsigned>(std::strtoul(t, nullptr, 10));  // NOLINT(concurrency-mt-unsafe): read before any thread starts
+  }
   if (job.fontsManifest.empty()) {
     if (const char* m = std::getenv("PREMATION_FONTS_MANIFEST")) job.fontsManifest = m;  // NOLINT(concurrency-mt-unsafe): read before any thread starts
   }
   if (!job.encodeBin) ctl.start_reader();
+
+  // The GPU starts first, while the project opens and the preflight runs
+  // (Dawn + the shader compiler: ~1 s). The renderer is used on this thread
+  // only after the join — never concurrently.
+  std::unique_ptr<rg::SceneRenderer> renderer;
+  std::string gpuErr;
+  double gpuInitMs = 0;
+  std::jthread gpuInit;
+  if (!job.preflightOnly) {
+    rg::RendererOptions ro;
+    ro.highPerformance = true;
+    if (const char* v = std::getenv("PREMATION_EXPORT_GPU_VENDOR")) ro.vendorId = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 0));  // NOLINT(concurrency-mt-unsafe): read before the thread starts
+    gpuInit = std::jthread([&renderer, &gpuErr, &gpuInitMs, ro] {
+      const auto t0 = Clock::now();
+      renderer = rg::SceneRenderer::create(ro, gpuErr);
+      gpuInitMs = ms_since(t0);
+    });
+  }
 
   // ── open + plan ──
   OpenedProject proj;
@@ -695,6 +732,7 @@ int run_export(const std::string& jobPath) {
   }
 
   Stats stats;
+  stats.openMs = ms_since(tStart);
   stats.buildThreads = static_cast<unsigned>(docs.size());
   stats.inFlight = job.inFlight;
   Pipeline pipeline(plan, docs, ctl, stats);
@@ -770,6 +808,7 @@ int run_export(const std::string& jobPath) {
     j.set("comp", Json::string(plan.compId));
     j.set("compName", Json::string(plan.compName));
     j.set("alpha", Json::boolean(plan.alpha));
+    j.set("depth", Json::number(plan.depth));
     j.set("audio", audioPath ? Json::string(*audioPath) : Json::null());
     j.set("warnings", str_array(warnings));
     j.set("ms", Json::number(stats.preflightMs));
@@ -786,12 +825,10 @@ int run_export(const std::string& jobPath) {
   if (!job.encodeBin && !ctl.wait_encode(bin, args)) return kExitCancelled;
 
   // ── GPU ──
-  rg::RendererOptions ro;
-  ro.highPerformance = true;
-  if (const char* v = std::getenv("PREMATION_EXPORT_GPU_VENDOR")) ro.vendorId = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 0));  // NOLINT(concurrency-mt-unsafe): single-threaded here
-  auto renderer = rg::SceneRenderer::create(ro, err);
+  const auto tGpu = Clock::now();
+  if (gpuInit.joinable()) gpuInit.join();
   if (!renderer) {
-    ctl.emit(error_line(true, "the GPU could not be started: " + err));
+    ctl.emit(error_line(true, "the GPU could not be started: " + gpuErr));
     return kExitFallback;
   }
   const Fonts renderFonts(job.fontsManifest, job.chromiumProfile, families);
@@ -809,6 +846,8 @@ int run_export(const std::string& jobPath) {
   textures.set_media(&mediaSystem, &mediaTex);
 #endif
   renderer->set_external_textures(&textures);
+  stats.gpuInitMs = gpuInitMs;
+  stats.gpuWaitMs = ms_since(tGpu);
 
   const fs::path ffLog = u8path(job.workDir) / "ffmpeg.log";
   auto child = ChildProcess::spawn(bin, args, ffLog.string(), err);
@@ -862,6 +901,9 @@ int run_export(const std::string& jobPath) {
     const double n = static_cast<double>(std::max<std::int64_t>(1, total));
     Json s = Json::object();
     s.set("totalMs", Json::number(stats.totalMs));
+    s.set("openMs", Json::number(stats.openMs));
+    s.set("gpuInitMs", Json::number(stats.gpuInitMs));
+    s.set("gpuWaitMs", Json::number(stats.gpuWaitMs));
     s.set("preflightMs", Json::number(stats.preflightMs));
     s.set("audioMs", Json::number(stats.audioMs));
     s.set("renderMs", Json::number(stats.renderMs));

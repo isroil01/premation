@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -107,6 +108,27 @@ TEST_CASE("premultiplied surface rows become the raw pipe's straight RGBA", "[ex
       CHECK(std::abs(static_cast<double>(o[0]) - exact) <= 0.5 + 1e-3);
     }
   }
+}
+
+TEST_CASE("16-bit output: half-float surface → straight rgba64le", "[export]") {
+  CHECK(ex::half_to_float(0x3C00) == 1.0F);
+  CHECK(ex::half_to_float(0x3800) == 0.5F);
+  CHECK(ex::half_to_float(0x0001) == 5.9604645e-08F);  // smallest subnormal, 2^-24
+  CHECK(ex::half_to_float(0xC000) == -2.0F);
+  // (0.25, 0.5, 1.5, a = 0.5) premultiplied → straight (0.5, 1.0, clamp 1.0, 0.5); then a = 0.
+  const std::vector<std::uint16_t> px = {0x3400, 0x3800, 0x3E00, 0x3800, 0x3C00, 0x3C00, 0x3C00, 0x0000};
+  std::vector<std::uint8_t> src(px.size() * 2);
+  std::memcpy(src.data(), px.data(), src.size());
+  std::vector<std::uint8_t> dst(16);
+  ex::half_surface_to_rgba64(src, 2, 1, 16, dst);
+  std::vector<std::uint16_t> o(8);
+  std::memcpy(o.data(), dst.data(), dst.size());
+  CHECK(o[0] == 32768);  // round(0.5 × 65535) = 32767.5 → 32768
+  CHECK(o[1] == 65535);
+  CHECK(o[2] == 65535);
+  CHECK(o[3] == 32768);
+  CHECK(o[4] == 0);
+  CHECK(o[7] == 0);
 }
 
 TEST_CASE("the WAV matches audioMixdown.ts encodeWav", "[export]") {

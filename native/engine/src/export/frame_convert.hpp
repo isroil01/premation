@@ -10,6 +10,7 @@
 // follow the model, which is not verified against Chromium beyond ±1.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -66,6 +67,61 @@ inline void surface_to_straight_rgba(std::span<const std::uint8_t> src, std::uin
       continue;
     }
     for (std::size_t i = 0; i < row; i += 4) unpremultiply_px(s + i, d + i, bgra);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  }
+}
+
+/// IEEE binary16 → float (exact).
+[[nodiscard]] inline float half_to_float(std::uint16_t h) noexcept {
+  const std::uint32_t sign = (std::uint32_t{h} & 0x8000U) << 16U;
+  const std::uint32_t exp = (std::uint32_t{h} >> 10U) & 0x1FU;
+  std::uint32_t man = std::uint32_t{h} & 0x3FFU;
+  std::uint32_t bits = 0;
+  if (exp == 0) {
+    if (man == 0) {
+      bits = sign;
+    } else {  // subnormal: normalise
+      int e = -1;
+      do {
+        ++e;
+        man <<= 1U;
+      } while ((man & 0x400U) == 0);
+      bits = sign | (static_cast<std::uint32_t>(127 - 15 - e) << 23U) | ((man & 0x3FFU) << 13U);
+    }
+  } else if (exp == 31) {
+    bits = sign | 0x7F800000U | (man << 13U);
+  } else {
+    bits = sign | ((exp + 127 - 15) << 23U) | (man << 13U);
+  }
+  float f = 0;
+  std::memcpy(&f, &bits, sizeof f);
+  return f;
+}
+
+/// F1 16-bit output: a half-float premultiplied surface (display-encoded,
+/// 8 bytes a pixel, `stride` per row) → straight RGBA64 little-endian, the
+/// `-pix_fmt rgba64le` raw input. Channels are clamped to [0, 1] and rounded
+/// to nearest (round(v × 65535)); a = 0 becomes 0.
+inline void half_surface_to_rgba64(std::span<const std::uint8_t> src, std::uint32_t width, std::uint32_t height,
+                                   std::uint32_t stride, std::span<std::uint8_t> dst) noexcept {
+  const auto u16 = [](float v) {
+    v = v < 0 || v != v ? 0 : v > 1 ? 1 : v;  // NaN → 0
+    return static_cast<std::uint16_t>(v * 65535.0F + 0.5F);
+  };
+  for (std::uint32_t y = 0; y < height; ++y) {
+    const std::uint8_t* s = src.data() + std::size_t{y} * stride;              // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    std::uint8_t* d = dst.data() + std::size_t{y} * std::size_t{width} * 8;    // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    for (std::uint32_t x = 0; x < width; ++x) {
+      std::array<std::uint16_t, 4> h{};
+      std::memcpy(h.data(), s + std::size_t{x} * 8, 8);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      const float a = half_to_float(h[3]);
+      std::array<std::uint16_t, 4> o{};
+      if (a > 0) {
+        const float inv = a >= 1 ? 1.0F : 1.0F / a;
+        for (std::size_t c = 0; c < 3; ++c) o[c] = u16(half_to_float(h[c]) * inv);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+        o[3] = u16(a);
+      }
+      std::memcpy(d + std::size_t{x} * 8, o.data(), 8);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): little-endian hosts only (x86-64, arm64)
+    }
   }
 }
 

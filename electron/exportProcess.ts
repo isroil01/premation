@@ -102,6 +102,13 @@ export interface ExportJobSpec {
   transparent?: boolean;
   videoEncoder?: string;
   chapters?: unknown;
+  /**
+   * Bits per channel handed to the encoder. 16 renders through the engine
+   * (F1: `-pix_fmt rgba64le` from a half-float surface) and only for mov
+   * (ProRes is 10-bit); a job that falls back to the window renders at 8 and
+   * says so in its warnings.
+   */
+  bitDepth?: 8 | 16;
   /** What the UI calls this job — "Promo → promo.mp4". */
   label: string;
   /** Frames in the range, for progress. */
@@ -275,6 +282,12 @@ export function validateSpec(raw: unknown): ExportJobSpec {
   const enc = optStr('videoEncoder');
   if (enc !== undefined) out.videoEncoder = enc;
   if (Array.isArray(s['chapters']) && s['chapters'].length > 0) out.chapters = s['chapters'];
+  const depth = optNum('bitDepth');
+  if (depth !== undefined) {
+    if (depth !== 8 && depth !== 16) throw new Error('Export job: "bitDepth" must be 8 or 16.');
+    if (depth === 16 && out.format !== 'mov') throw new Error('Export job: 16-bit output is written as mov (ProRes) only.');
+    out.bitDepth = depth;
+  }
   return out;
 }
 
@@ -714,6 +727,10 @@ export class ExportSupervisor {
     }
     job.progress = { ...job.progress, fraction: 1, frame: job.spec.totalFrames, etaSec: 0 };
     if (Array.isArray(r.warnings) && r.warnings.length > 0) job.warnings = r.warnings.map(String);
+    if (job.spec.bitDepth === 16) {
+      // The window path has 8 bits per channel and nothing more to give.
+      job.warnings = [...(job.warnings ?? []), 'Rendered at 8 bits per channel: 16-bit output needs the engine, which could not render this job.'];
+    }
     this.settle(job, 'completed');
   }
 

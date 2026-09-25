@@ -15,7 +15,7 @@
 //
 //   stdout (engine → supervisor)
 //     {"ev":"preflight","ok":true,"frames":N,"width":W,"height":H,"fps":F,
-//      "comp":ID,"compName":S,"alpha":B,"audio":PATH|null,"warnings":[…],"ms":T}
+//      "comp":ID,"compName":S,"alpha":B,"depth":8|16,"audio":PATH|null,"warnings":[…],"ms":T}
 //     {"ev":"preflight","ok":false,"reason":S,"unported":[{"frame":i,"reason":S}…]}
 //     {"ev":"progress","frame":k,"total":N}              (k frames are in the encoder)
 //     {"ev":"done","frames":N,"stats":{…}}
@@ -81,6 +81,10 @@ struct JobSpec {
   unsigned inFlight = 3;
   /// Mix the comp's audio (off: a video-only job, as a GIF).
   bool audio = true;
+  /// Output bits per channel. 8 = the raw pipe's rgba (byte-compatible with the
+  /// Chromium path); 16 = rgba64le read from a half-float surface (engine only:
+  /// ~11 significant bits near white, more toward black — binary16's mantissa).
+  int depth = 8;
   /// The encoder, when known up front (tools / benches); otherwise it arrives on stdin.
   std::optional<std::string> encodeBin;
   std::vector<std::string> encodeArgs;

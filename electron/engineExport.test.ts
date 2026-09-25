@@ -93,7 +93,7 @@ const spec = (over: Partial<EngineExportSpec> = {}): EngineExportSpec => ({
   ...over,
 });
 
-const pre: EnginePreflight = { frames: 48, width: 1920, height: 1080, fps: 24, alpha: false, audio: abs('jobs', 'j1', 'engine', 'audio.wav'), comp: 'comp_1', compName: 'Promo' };
+const pre: EnginePreflight = { frames: 48, width: 1920, height: 1080, fps: 24, alpha: false, depth: 8, audio: abs('jobs', 'j1', 'engine', 'audio.wav'), comp: 'comp_1', compName: 'Promo' };
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 async function until(cond: () => boolean): Promise<void> {
@@ -140,6 +140,14 @@ describe('the job file and the encoder command line', () => {
     expect(mov).toContain('prores_ks');
     expect(mov).toContain('yuva444p10le');
     expect(mov.join(' ')).toContain('setparams=color_primaries=bt709:color_trc=iec61966-2-1');
+  });
+
+  it('16-bit: the job asks for depth 16 and the encoder reads rgba64le', () => {
+    expect(engineJobFile(spec({ format: 'mov', bitDepth: 16 }), abs('w')).depth).toBe(16);
+    expect(engineJobFile(spec({ format: 'mov' }), abs('w'))).not.toHaveProperty('depth');
+    const args = engineEncodeArgs(spec({ format: 'mov', proresProfile: '4444', bitDepth: 16 }), { ...pre, depth: 16 }, abs('w', 'out.mov'));
+    expect(args.slice(0, 6)).toEqual(['-y', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-video_size']);
+    expect(args).toContain('yuva444p10le');
   });
 });
 

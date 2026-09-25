@@ -56,6 +56,8 @@ export interface EngineExportSpec {
   transparent?: boolean;
   videoEncoder?: string;
   chapters?: unknown;
+  /** 16 = rgba64le from the engine's half-float surface (mov only). */
+  bitDepth?: 8 | 16;
 }
 
 export type EngineExportOutcome =
@@ -84,6 +86,8 @@ export interface EnginePreflight {
   height: number;
   fps: number;
   alpha: boolean;
+  /** Bits per channel of the raw frames (8 = rgba, 16 = rgba64le). */
+  depth: 8 | 16;
   audio: string | null;
   comp: string;
   compName: string;
@@ -133,6 +137,7 @@ export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<s
     if (typeof spec[k] === 'number') job[k] = spec[k];
   }
   if (typeof spec.transparent === 'boolean') job.transparent = spec.transparent;
+  if (spec.bitDepth === 16) job.depth = 16;
   // A GIF carries no sound (buildEncodeArgs drops it), so the engine skips the mix.
   job.audio = spec.format !== 'gif';
   return job;
@@ -142,7 +147,7 @@ export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<s
 export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, out: string): string[] {
   return buildEncodeArgs({
     format: spec.format as EncodeFormat,
-    videoInput: rawVideoInput(pre.width, pre.height, pre.fps),
+    videoInput: rawVideoInput(pre.width, pre.height, pre.fps, pre.depth === 16 ? 'rgba64le' : 'rgba'),
     frame: { width: pre.width, height: pre.height, fps: pre.fps },
     quality: spec.quality,
     proresProfile: spec.proresProfile,
@@ -246,6 +251,7 @@ export function startEngineExport(
             height: Number(msg.height),
             fps: Number(msg.fps),
             alpha: msg.alpha === true,
+            depth: msg.depth === 16 ? 16 : 8,
             audio: typeof msg.audio === 'string' ? msg.audio : null,
             comp: String(msg.comp ?? ''),
             compName: String(msg.compName ?? ''),

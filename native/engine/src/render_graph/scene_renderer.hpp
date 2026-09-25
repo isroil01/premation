@@ -57,6 +57,7 @@ struct PendingReadback {
   std::uint32_t height = 0;
   std::uint32_t bytesPerRow = 0;  // row stride in `staging` (256-aligned)
   bool bgra = false;              // the surface was BGRA8 (channels 0 and 2 swapped)
+  bool half = false;              // the surface was RGBA16Float (8 bytes a pixel, IEEE binary16)
 };
 
 struct FrameStats {

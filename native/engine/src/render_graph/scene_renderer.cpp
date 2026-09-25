@@ -211,7 +211,13 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
   const wgpu::TextureFormat surfaceFormat =
       target != nullptr ? targetFormat
       : file.view.surface_format == api::RenderTextureFormat::rgba8unorm ? wgpu::TextureFormat::RGBA8Unorm
+      // F1: a 16-bit export draws the display-encoded frame into a half-float surface.
+      : file.view.surface_format == api::RenderTextureFormat::rgba16float ? wgpu::TextureFormat::RGBA16Float
                                                                           : wgpu::TextureFormat::BGRA8Unorm;
+  if (surfaceFormat == wgpu::TextureFormat::RGBA16Float && readback != nullptr) {
+    error = "a half-float surface is read back through render_submit";
+    return false;
+  }
   if (target == nullptr && (surface_ == nullptr || surfaceW_ != vp.pixelWidth || surfaceH_ != vp.pixelHeight ||
                             surface_.GetFormat() != surfaceFormat)) {
     wgpu::TextureDescriptor td{};
@@ -292,7 +298,7 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
 
   // Readback copy rides the frame's own command buffer.
   wgpu::Buffer staging;
-  const std::uint32_t rowBytes = vp.pixelWidth * 4;
+  const std::uint32_t rowBytes = vp.pixelWidth * (surfaceFormat == wgpu::TextureFormat::RGBA16Float ? 8U : 4U);
   const std::uint32_t bytesPerRow = (rowBytes + 255) / 256 * 256;
   if (readback != nullptr) {
     wgpu::BufferDescriptor bd{};
@@ -319,6 +325,7 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
     pending->height = vp.pixelHeight;
     pending->bytesPerRow = bytesPerRow;
     pending->bgra = surfaceFormat == wgpu::TextureFormat::BGRA8Unorm;
+    pending->half = surfaceFormat == wgpu::TextureFormat::RGBA16Float;
     wgpu::TexelCopyTextureInfo src{};
     src.texture = surface_;
     wgpu::TexelCopyBufferInfo dst{};
