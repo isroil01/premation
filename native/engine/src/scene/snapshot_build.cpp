@@ -1626,15 +1626,10 @@ void Walk::build_node(const doc::Node& n) {
 Snapshot Walk::run() {
   // Collapsed instances expand into clones; a sealed pass applies its overrides (comp_instance.cpp).
   wn_ = expand_walk_nodes(d_, flatten_composition(d_, comp_.rootId), comp_.rootId, comp_.compOverrides);
-  std::vector<std::pair<std::string, std::string>> clonerNotes;
-  expand_cloners(wn_, raw_, clonerNotes);  // cloner_port.cpp
+  expand_cloners(wn_, raw_);  // cloner_port.cpp
   nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
-  for (auto& [id, what] : clonerNotes) {
-    const doc::Node* cn = d_.node(id);
-    errors_.push_back({id, cn != nullptr ? cn->name : std::string(), "unported", std::move(what)});
-  }
   fps_ = comp_.fps ? *comp_.fps : doc::comp_fps(d_, comp_.rootId);
   // The camera, DOF and lights resolve before the walk (buildSnapshot order).
   three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);

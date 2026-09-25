@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "anim.hpp"
 #include "model.hpp"
@@ -28,6 +29,10 @@ class RawWorld {
   /// `worldMatrixOf(id, rawLocalOf, rawParentOf, rawWorldCache)` (a missing node is identity).
   [[nodiscard]] motion::xf::Mat2D world_matrix(const std::string& id);
   [[nodiscard]] const doc::Document& document() const noexcept { return d_; }
+  /// `rawAnim.evaluateNode(id, t)` (comp time, no clip map).
+  [[nodiscard]] std::vector<std::pair<std::string, double>> values(const std::string& id);
+  /// `rawAnim.sampleData(id, 'path.points', t)` as BezierPoints (≥ 3), else undefined.
+  [[nodiscard]] Json path_points(const std::string& id) const;
 
  private:
   const doc::Document& d_;

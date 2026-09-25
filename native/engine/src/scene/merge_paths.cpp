@@ -86,13 +86,10 @@ std::vector<pc::Pair> flatten_outline(const std::vector<BPt>& pts, bool open) {
   return out;
 }
 
-struct Outline {
-  std::vector<pc::Pair> points;
-  bool closed = true;
-};
+}  // namespace
 
 /// nodeWorldOutline(node, sample, pathSample).
-std::optional<Outline> node_world_outline(const doc::Node& n, const std::string& id, const OperandReader& r) {
+std::optional<WorldOutline> node_world_outline(const doc::Node& n, const std::string& id, const OperandReader& r) {
   if (n.kind() != "shape") return std::nullopt;
   const doc::Component* t = n.comp("Transform");
   if (t == nullptr) return std::nullopt;
@@ -107,7 +104,7 @@ std::optional<Outline> node_world_outline(const doc::Node& n, const std::string&
   const double rot = (w.rotation * std::numbers::pi) / 180;
   const double sx = w.scale_x;
   const double sy = w.scale_y;
-  Outline o;
+  WorldOutline o;
   const doc::Component* geom = n.comp("Geometry");
   const Json live = r.pathPoints(id);
   if (live.is_array() && live.arr().size() >= 3) {
@@ -139,6 +136,8 @@ std::optional<Outline> node_world_outline(const doc::Node& n, const std::string&
   return o;
 }
 
+namespace {
+
 Json local_bezier(const pc::Ring& ring, double cx, double cy) {
   Json out = Json::array();
   for (const pc::Pair& q : ring) {
@@ -168,7 +167,7 @@ std::optional<LiveBooleanResult> evaluate_live_boolean(const doc::Node& result, 
     const doc::Node* n = r.node(id);
     if (n == nullptr) continue;
     // nodeWorldPolygon: a closed outline of ≥ 3 points, as a closed GeoJSON ring.
-    const std::optional<Outline> o = node_world_outline(*n, id, r);
+    const std::optional<WorldOutline> o = node_world_outline(*n, id, r);
     if (!o || !o->closed || o->points.size() < 3) continue;
     pc::Ring ring = o->points;
     ring.push_back(ring.front());

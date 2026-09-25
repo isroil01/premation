@@ -1,13 +1,18 @@
 #include "cloner_port.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <numbers>
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "jsmath.hpp"
+#include "merge_paths.hpp"
 #include "scene_math.hpp"
 
 namespace premation::scene {
@@ -155,8 +160,67 @@ double field_weight(double x, double y, const Falloff& f, const std::optional<xf
 struct BasePos {
   double x = 0, y = 0, rot = 0;
 };
-BasePos base_position(int i, const Config& cfg, int total) {
-  // `mode: 'path'` with no usable path falls through to the linear arrangement.
+/// trimPath.ts ArcTable over the driving path, in the cloner's local frame.
+struct ArcTable {
+  std::vector<std::array<double, 2>> pts;
+  bool closed = true;
+  std::vector<double> cum{0};
+  double total = 0;
+};
+
+ArcTable arc_table(std::vector<std::array<double, 2>> pts, bool closed) {
+  ArcTable t;
+  t.pts = std::move(pts);
+  t.closed = closed;
+  const std::size_t n = t.pts.size();
+  const std::size_t count = closed ? n : n - 1;
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto& a = t.pts[i];
+    const auto& b = t.pts[(i + 1) % n];
+    const double d = hypot2(b[0] - a[0], b[1] - a[1]);
+    t.total += d;
+    t.cum.push_back(t.cum.back() + d);
+  }
+  return t;
+}
+
+/// pointAndTangentAtLength (angle in radians). `t.pts` has at least 2 points.
+BasePos point_and_tangent(const ArcTable& t, double len) {
+  const auto& pts = t.pts;
+  const std::size_t n = pts.size();
+  if (t.total <= 0) return {pts[0][0], pts[0][1], 0};
+  const std::size_t count = t.closed ? n : n - 1;
+  const double target = t.closed ? std::fmod(std::fmod(len, t.total) + t.total, t.total) : len;
+  const auto seg = [&](std::size_t i) { return t.cum[i + 1] - t.cum[i]; };
+  const auto at = [&](std::size_t i, double u) {
+    const auto& a = pts[i];
+    const auto& b = pts[(i + 1) % n];
+    return BasePos{a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, motion::js::atan2(b[1] - a[1], b[0] - a[0])};
+  };
+  if (!t.closed && target < 0) return at(0, target / (seg(0) != 0 ? seg(0) : 1));
+  if (!t.closed && target > t.total) {
+    const std::size_t i = count - 1;
+    return at(i, 1 + (target - t.total) / (seg(i) != 0 ? seg(i) : 1));
+  }
+  std::size_t lo = 0;
+  std::size_t hi = count - 1;
+  while (lo < hi) {
+    const std::size_t mid = (lo + hi + 1) >> 1U;
+    if (t.cum[mid] <= target) lo = mid;
+    else hi = mid - 1;
+  }
+  const double d = seg(lo);
+  return at(lo, d > 0 ? (target - t.cum[lo]) / d : 0);
+}
+
+BasePos base_position(int i, const Config& cfg, int total, const std::optional<ArcTable>& path) {
+  if (cfg.mode == "path" && path && path->pts.size() >= 2) {
+    // A closed loop divides by n (the last clone must not land on the first), an open run by n − 1.
+    const double denom = path->closed ? total : std::max(1.0, static_cast<double>(total - 1));
+    BasePos at = point_and_tangent(*path, (path->total * i) / denom);
+    at.rot = cfg.alignToRadius ? (at.rot * 180) / std::numbers::pi : 0;
+    return at;
+  }
   if (cfg.mode == "grid") {
     const double cols = std::max(1.0, std::floor(cfg.countX));
     const double rows = std::max(1.0, std::floor(cfg.countY));
@@ -175,14 +239,14 @@ BasePos base_position(int i, const Config& cfg, int total) {
   return {(i - mid) * cfg.offsetX, (i - mid) * cfg.offsetY, 0};
 }
 
-/// clonerPlan (no path geometry).
-std::vector<CloneOffset> cloner_plan(const Config& cfg, const std::optional<xf::Vec2>& field) {
+/// clonerPlan.
+std::vector<CloneOffset> cloner_plan(const Config& cfg, const std::optional<xf::Vec2>& field, const std::optional<ArcTable>& path) {
   const int total = clone_count(cfg);
   std::vector<CloneOffset> out;
   if (total == 0) return out;
   const auto seed = static_cast<double>(motion::js::to_int32(cfg.random.seed));
   for (int i = 0; i < total; ++i) {
-    const BasePos base = base_position(i, cfg, total);
+    const BasePos base = base_position(i, cfg, total, path);
     const double w = falloff_weight(i, total, cfg.falloff) * field_weight(base.x, base.y, cfg.falloff, field);
     const double t = total <= 1 ? 0 : static_cast<double>(i) / (total - 1);
     const double rx = hash11(i, 1, seed) * cfg.random.position;
@@ -231,7 +295,7 @@ std::vector<const Node*> subtree_of(const std::vector<const Node*>& nodes, const
 
 }  // namespace
 
-void expand_cloners(WalkNodes& w, RawWorld& raw, std::vector<std::pair<std::string, std::string>>& unported) {
+void expand_cloners(WalkNodes& w, RawWorld& raw) {
   std::vector<const Node*> cloners;
   for (const Node* n : w.nodes) {
     if (read_cloner(*n)) cloners.push_back(n);
@@ -271,8 +335,34 @@ void expand_cloners(WalkNodes& w, RawWorld& raw, std::vector<std::pair<std::stri
       const xf::Local2D rel = xf::local_under_parent(raw.world_matrix(cfg.falloff.layerId), raw.world_matrix(node->id));
       field = xf::Vec2{rel.x, rel.y};
     }
-    if (cfg.mode == "path" && !cfg.pathLayerId.empty()) unported.emplace_back(node->id, "cloner along a path");
-    const std::vector<CloneOffset> plan = cloner_plan(cfg, field);
+    // pathOf: the driving layer's outline (raw graph) in the cloner's local frame.
+    std::optional<ArcTable> path;
+    if (cfg.mode == "path" && !cfg.pathLayerId.empty()) {
+      const doc::Node* pn = raw.document().node(cfg.pathLayerId);
+      if (pn != nullptr && raw.document().node(node->id) != nullptr) {
+        std::unordered_map<std::string, Values> vals;
+        OperandReader reader;
+        reader.node = [&raw](const std::string& id) { return raw.document().node(id); };
+        reader.world = [&raw](const std::string& id) { return xf::matrix_to_local(raw.world_matrix(id)); };
+        reader.values = [&raw, &vals](const std::string& id) -> const Values& {
+          auto it = vals.find(id);
+          if (it == vals.end()) it = vals.emplace(id, Values(raw.values(id))).first;
+          return it->second;
+        };
+        reader.pathPoints = [&raw](const std::string& id) { return raw.path_points(id); };
+        if (const std::optional<WorldOutline> o = node_world_outline(*pn, cfg.pathLayerId, reader)) {
+          const xf::Mat2D inv = xf::invert(raw.world_matrix(node->id));
+          std::vector<std::array<double, 2>> local;
+          local.reserve(o->points.size());
+          for (const auto& q : o->points) {
+            const xf::Vec2 v = xf::transform_point(inv, {q[0], q[1]});
+            local.push_back({v.x, v.y});
+          }
+          path = arc_table(std::move(local), o->closed);
+        }
+      }
+    }
+    const std::vector<CloneOffset> plan = cloner_plan(cfg, field, path);
     const std::vector<const Node*>& sub = subtrees.at(node->id);
     for (const CloneOffset& clone : plan) {
       const std::string prefix = node->id + "~c" + std::to_string(clone.index) + "::";

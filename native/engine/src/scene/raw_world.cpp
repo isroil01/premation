@@ -46,6 +46,32 @@ std::optional<xf::Local2D> RawWorld::local(const std::string& id) {
   return l;
 }
 
+std::vector<std::pair<std::string, double>> RawWorld::values(const std::string& id) {
+  return doc::anim_evaluate_node(d_, expr_, cache_, id, t_);
+}
+
+Json RawWorld::path_points(const std::string& id) const {
+  const doc::DataTrack* tr = doc::anim_data_track(d_, id, "path.points");
+  if (tr == nullptr) return {};
+  const auto v = doc::sample_data_track(*tr, t_);
+  if (!v || !v->is_array() || v->arr().size() < 3 || !v->arr()[0].is_object() || !v->arr()[0].has("x")) return {};
+  Json out = Json::array();
+  for (const Json& p : v->arr()) {
+    const Json& px = p.at("x");
+    const Json& py = p.at("y");
+    const auto h = [&p](const char* k, const Json& fb) { return p.at(k).is_undefined() || p.at(k).is_null() ? fb : p.at(k); };
+    Json q = Json::object();
+    q.set("x", px);
+    q.set("y", py);
+    q.set("inX", h("inX", px));
+    q.set("inY", h("inY", py));
+    q.set("outX", h("outX", px));
+    q.set("outY", h("outY", py));
+    out.arr_mut().push_back(std::move(q));
+  }
+  return out;
+}
+
 xf::Mat2D RawWorld::world_matrix(const std::string& nodeId) {
   if (const auto it = world_.find(nodeId); it != world_.end()) return it->second;
   std::vector<std::string> path;

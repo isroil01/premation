@@ -5,9 +5,11 @@
 // (the rings recentred onto the result layer, holes as subpaths).
 #pragma once
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "model.hpp"
 #include "readers.hpp"
@@ -33,6 +35,14 @@ struct LiveBooleanResult {
   Json subpaths;  ///< Subpath[] when there is more than one ring, else undefined
   double width = 1, height = 1, cx = 0, cy = 0;
 };
+
+/// `nodeWorldOutline(node, sample, pathSample)`: the shape's outline in world px,
+/// flattened and labelled open or closed (nullopt for a non-shape / no outline).
+struct WorldOutline {
+  std::vector<std::array<double, 2>> points;
+  bool closed = true;
+};
+[[nodiscard]] std::optional<WorldOutline> node_world_outline(const doc::Node& n, const std::string& id, const OperandReader& r);
 
 /// `readLiveBoolean(node) !== null`.
 [[nodiscard]] bool has_live_boolean(const doc::Node& n);

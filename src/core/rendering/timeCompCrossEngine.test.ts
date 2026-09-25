@@ -30,7 +30,6 @@ import { COMP_REF_PROP, COMP_COLLAPSE_PROP } from '@core/scene/compInstance';
 import { useAssetStore } from '@stores/assetStore';
 import { node, type Scene } from '../../../packages/render-tests/harness/sceneKit';
 import { sceneToProject } from '../../../packages/render-tests/harness/sceneProject';
-import polygonClipping from 'polygon-clipping';
 
 const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/time_comp_parity.json');
 const COMP = { width: 480, height: 320, background: '#101014' };
@@ -179,6 +178,24 @@ const DEFS: Def[] = [
       // A plain linear cloner.
       graph.addNode(rect('bar', 240, 280, 30, 10, '#8ac926'));
       graph.setFxKey('bar', '__cloner', { enabled: true, mode: 'linear', count: 4, offsetX: 40, offsetY: -5 });
+      // Clones along an open curved path under a moving, rotated null (aligned
+      // to the tangent), and along a closed ellipse driving a rotated cloner.
+      graph.addNode(node('track', { kind: 'null', position: { x: 60, y: 60 }, rotation: 8 }));
+      anim.setKeyframe('track', 'x', 0, 40);
+      anim.setKeyframe('track', 'x', 1, 90);
+      graph.addChild('track', node('rail', {
+        kind: 'shape', position: { x: 120, y: 20 }, transform: { width: 200, height: 60 }, style: { fill: '#444' },
+        components: [{ id: 'rail_g', type: 'Geometry', props: { open: true, points: [
+          { x: -100, y: 0, inX: -100, inY: 0, outX: -40, outY: -60 },
+          { x: 100, y: 10, inX: 40, inY: 60, outX: 100, outY: 10 },
+        ] } }],
+      }) as never);
+      graph.addNode(rect('bead', 300, 40, 18, 8, '#ffca3a'));
+      graph.setFxKey('bead', '__cloner', { enabled: true, mode: 'path', count: 6, pathLayerId: 'rail', alignToRadius: true });
+      graph.addNode(ellipse('orbit', 400, 250, 90, '#333'));
+      graph.addNode(node('sat', { kind: 'group', position: { x: 420, y: 230 }, rotation: -20, transform: { scaleX: 1.2 } }));
+      graph.addChild('sat', rect('satBody', 0, 0, 12, 12, '#6a4c93'));
+      graph.setFxKey('sat', '__cloner', { enabled: true, mode: 'path', count: 5, pathLayerId: 'orbit', alignToRadius: true });
     },
   },
   {
@@ -509,7 +526,7 @@ test('the C++ time/comp parity fixture matches what buildSnapshot + snapshotToFr
   // Every case really exercises its feature (a vacuous fixture pins nothing).
   const all = JSON.stringify(cases);
   for (const needle of ['inst::iRect', 'inst::iDeep::dRect', 'inst2::iRect', 'coll::iRect', 'seal::iRect', 'vfa:clip', 'vfb:clip',
-    'echoed__echo0', 'ring~c6::petal', 'dot~c19::root', 'bar~c3::root', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
+    'echoed__echo0', 'ring~c6::petal', 'dot~c19::root', 'bar~c3::root', 'bead~c5::root', 'sat~c4::satBody', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
     expect(all).toContain(needle);
   }
   for (const c of cases as Array<{ frames: Array<{ errors: string[] }> }>) for (const f of c.frames) expect(f.errors).toEqual([]);
