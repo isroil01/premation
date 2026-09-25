@@ -19,6 +19,7 @@
 #include "misc_port.hpp"
 #include "paint_port.hpp"
 #include "path_ops.hpp"
+#include "precomp_frame.hpp"
 #include "jsmath.hpp"
 #include "raw_world.hpp"
 #include "readers.hpp"
@@ -1219,8 +1220,28 @@ void Walk::build_node(const doc::Node& n) {
   }
   l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
   if (layerKind == LayerKind::video) {
+    // Frame blending: the source frames bracketing the (retimed) source time, on
+    // the source's own rate (Interpret Footage conform, then the probe, then the comp).
     if (const auto cfg = doc::read_node_layer_time(n); cfg && (cfg->frameBlend == "mix" || cfg->frameBlend == "pixelMotion")) {
-      unported(l, n, "frame blending");
+      double sourceFps = fps_;
+      if (base.assetId) {
+        if (const Json* asset = doc::find_asset(d_, *base.assetId)) {
+          const Json& conform = asset->at("interpret").at("conformFps");
+          const Json& probed = asset->at("metadata").at("fps");
+          const std::optional<double> f = conform.is_number() ? conform.num() : probed.is_number() ? std::optional<double>(probed.num()) : std::nullopt;
+          if (f && *f > 0) sourceFps = *f;
+        }
+      }
+      const double st = retimed_source_at(n.id, t_);
+      if (sourceFps > 0 && std::isfinite(st)) {  // bracketFrames
+        const double exact = st * sourceFps;
+        const double lo = std::floor(exact);
+        const double weight = exact - lo;
+        if (weight > 1e-3) {
+          l.frameBlend = RLayer::FrameBlend{lo / sourceFps, (lo + 1) / sourceFps, weight, cfg->frameBlend};
+          if (cfg->frameBlend == "pixelMotion") unported(l, n, "frame blending (Pixel Motion optical flow)");
+        }
+      }
     }
   }
   {
@@ -1309,7 +1330,17 @@ void Walk::build_node(const doc::Node& n) {
   }
   l.preserveTransparency = read_node_preserve_transparency(n);
   l.continuousRaster = read_continuous_raster(n) && supports_continuous_raster(n);  // continuousRaster.ts
-  if (!fx.at("cornerPin").is_undefined()) unported(l, n, "corner pin");
+  // Corner Pin (cornerPin.ts readNodeCornerPin): eight finite numbers, not the
+  // identity, strictly convex — else the affine path.
+  if (const Json& cp = fx.at("cornerPin"); cp.is_array() && cp.arr().size() == 8) {
+    std::array<double, 8> quad{};
+    bool finite = true;
+    for (std::size_t i = 0; i < 8; ++i) {
+      finite = finite && cp.arr()[i].is_number() && std::isfinite(cp.arr()[i].num());
+      quad[i] = cp.arr()[i].num();
+    }
+    if (finite && !is_identity_quad(quad) && is_convex_quad(quad)) l.cornerPin = quad;
+  }
   {
     const bool rounded = resolvedCornerRadius > 0 || has_independent_corner_radii(radii);
     if (rounded) l.cornerRadii = radii;

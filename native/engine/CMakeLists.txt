@@ -851,7 +851,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   # engine_scene_tests: the scene builder's GPU-free units (colour settings,
   # the D4 frame cache) — the pixel parity is premation-scene's (render-tests).
   if(MOTION_BUILD_TESTS)
-    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp)
+    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
+               tests/test_time_comp_parity.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

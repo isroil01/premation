@@ -139,6 +139,13 @@ struct RLayer {
   /// A 3D comp CARD: the card's projected corners (TL, TR, BR, BL; comp px).
   std::optional<std::array<double, 8>> quad3d;
   std::optional<double> sourceTime;
+  /// RenderLayer.frameBlend: the two source frames bracketing sourceTime and the
+  /// sub-frame weight toward the second (video only; mode mix | pixelMotion).
+  struct FrameBlend {
+    double a = 0, b = 0, weight = 0;
+    std::string mode;
+  };
+  std::optional<FrameBlend> frameBlend;
   std::vector<MotionSample> motionSamples;
   std::optional<std::array<double, 8>> cornerPin;
   double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1;

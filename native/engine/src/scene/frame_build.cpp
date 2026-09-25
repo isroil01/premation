@@ -208,6 +208,11 @@ api::Color to_color(const Rgba& c) {
   return o;
 }
 
+/// renderPaint.ts `hasPaintStrokes(layer.paint)`.
+bool has_paint_strokes(const RLayer& l) {
+  return l.paint.is_object() && l.paint.at("strokes").is_array() && !l.paint.at("strokes").arr().empty();
+}
+
 bool stroke_renders(const Json& s) { return s.is_object() && s.at("width").is_number() && s.at("width").num() > 0; }
 
 bool has_ordered_paint(const RLayer& l) {
@@ -405,7 +410,22 @@ void Flattener::feed(const RLayer& l) {
     r.fill = l.fill;
     r.compFps = fps_;
     r.layerId = l.id;
-    textures_.push_back(std::move(r));
+    if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l) && !layer_is_baked(l)) {
+      if (l.frameBlend->mode == "pixelMotion") {
+        r.key = "vfm:" + l.id;  // the flow warp is not ported: the walk reports it, the key stays nearest-frame
+        textures_.push_back(std::move(r));
+      } else {  // Frame Mix: both bracket frames
+        TextureRequest b = r;
+        r.key = "vfa:" + l.id;
+        r.sourceTime = l.frameBlend->a;
+        b.key = "vfb:" + l.id;
+        b.sourceTime = l.frameBlend->b;
+        textures_.push_back(std::move(r));
+        textures_.push_back(std::move(b));
+      }
+    } else {
+      textures_.push_back(std::move(r));
+    }
   } else if (l.kind == LayerKind::text) {
     TextureRequest r;
     r.key = "text:" + l.id;
@@ -480,8 +500,40 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
       r.motion_samples.push_back(std::move(ms));
     }
   }
+  // Corner Pin (resolveCornerPin): the homography composed onto the RENDER model
+  // and every sample; bounds are the pinned corners through the affine model.
+  std::optional<api::Rect> pinnedBounds;
+  if (l.cornerPin && !is_identity_quad(*l.cornerPin) && is_convex_quad(*l.cornerPin)) {
+    if (const std::optional<Mat3> pin = square_to_quad(*l.cornerPin)) {
+      const auto& q = *l.cornerPin;
+      const auto& m = model.m;
+      constexpr double kInf = std::numeric_limits<double>::infinity();
+      double minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+      for (std::size_t i = 0; i < 8; i += 2) {
+        const double x = static_cast<double>(m[0]) * q[i] + static_cast<double>(m[3]) * q[i + 1] + m[6];
+        const double y = static_cast<double>(m[1]) * q[i] + static_cast<double>(m[4]) * q[i + 1] + m[7];
+        minX = std::min(minX, x);
+        minY = std::min(minY, y);
+        maxX = std::max(maxX, x);
+        maxY = std::max(maxY, y);
+      }
+      api::Rect b;
+      b.x = minX;
+      b.y = minY;
+      b.width = maxX - minX;
+      b.height = maxY - minY;
+      pinnedBounds = b;
+      model = mat3_mul(model, *pin);
+      for (api::RenderMotionSample& ms : r.motion_samples) {
+        Mat3 sm;
+        for (std::size_t i = 0; i < 9; ++i) sm.m[i] = static_cast<float>(ms.model_matrix[i]);
+        ms.model_matrix = mat_wire(mat3_mul(sm, *pin));
+      }
+      r.corner_pin.assign(q.begin(), q.end());
+    }
+  }
   r.model_matrix = mat_wire(model);
-  r.bounds = bounds_of(model);
+  r.bounds = pinnedBounds ? *pinnedBounds : bounds_of(model);
   r.opacity = opacity;
   r.blend = adv > 0 ? api::RenderBlendMode::normal : (l.blend == "add" ? api::RenderBlendMode::add : api::RenderBlendMode::normal);
   if (adv > 0) r.advanced_blend = adv;
@@ -741,6 +793,22 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         const Mat3 tOrigin = translation(-l.width / 2 - l.anchorX, -l.height / 2 - l.anchorY);
         const Mat3 childParent = mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
         flatten(*l.precompLayers, childParent, parentOpacity * l.opacity, out, placement);
+      } else if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l)) {
+        // Frame blending: Pixel Motion samples the flow-warped in-between (`vfm:`);
+        // Frame Mix cross-dissolves the two bracket frames, B at the sub-frame weight.
+        api::Renderable a = layer_to_renderable(l, parent, parentOpacity, placement);
+        if (l.frameBlend->mode == "pixelMotion") {
+          a.texture_key = "vfm:" + l.id;
+          out.push_back(std::move(a));
+        } else {
+          a.texture_key = "vfa:" + l.id;
+          api::Renderable b = layer_to_renderable(l, parent, parentOpacity, placement);
+          b.id = l.id + "::fb";
+          b.texture_key = "vfb:" + l.id;
+          b.opacity = a.opacity * l.frameBlend->weight;
+          out.push_back(std::move(a));
+          out.push_back(std::move(b));
+        }
       } else {
         out.push_back(layer_to_renderable(l, parent, parentOpacity, placement));
       }

@@ -16,6 +16,10 @@ namespace premation::scene {
 /// column-major; null for a degenerate quad.
 [[nodiscard]] std::optional<Mat3> square_to_quad(const std::array<double, 8>& q);
 
+/// Homography.ts `isConvexQuad` (strictly convex, non-degenerate) and `isIdentityQuad` (the unit square).
+[[nodiscard]] bool is_convex_quad(const std::array<double, 8>& q);
+[[nodiscard]] bool is_identity_quad(const std::array<double, 8>& q, double eps = 1e-6);
+
 /// `precomp: { renderables, ...precompCamera3d(own, childParent), flat }` without
 /// the renderables: the inner camera (projection lifted by `placement`), lights
 /// and environment when `own` is set, the flat card size when `card`.

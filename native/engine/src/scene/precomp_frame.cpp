@@ -40,6 +40,35 @@ std::optional<Mat3> square_to_quad(const std::array<double, 8>& q) {
   return m;
 }
 
+bool is_convex_quad(const std::array<double, 8>& q) {
+  // signedArea (shoelace) then the consecutive cross products, all one sign.
+  double s = 0;
+  for (std::size_t i = 0; i < 4; ++i) {
+    const std::size_t j = (i + 1) % 4;
+    s += q[i * 2] * q[j * 2 + 1] - q[j * 2] * q[i * 2 + 1];
+  }
+  if (std::abs(s / 2) < 1e-9) return false;
+  double sign = 0;
+  for (std::size_t i = 0; i < 4; ++i) {
+    const std::size_t b = (i + 1) % 4;
+    const std::size_t c = (i + 2) % 4;
+    const double cross = (q[b * 2] - q[i * 2]) * (q[c * 2 + 1] - q[b * 2 + 1]) - (q[b * 2 + 1] - q[i * 2 + 1]) * (q[c * 2] - q[b * 2]);
+    if (std::abs(cross) < 1e-9) return false;
+    const double sg = cross > 0 ? 1 : -1;
+    if (sign == 0) sign = sg;
+    else if (sg != sign) return false;
+  }
+  return true;
+}
+
+bool is_identity_quad(const std::array<double, 8>& q, double eps) {
+  static constexpr std::array<double, 8> kUnit = {0, 0, 1, 0, 1, 1, 0, 1};
+  for (std::size_t i = 0; i < 8; ++i) {
+    if (std::abs(q[i] - kUnit[i]) > eps) return false;
+  }
+  return true;
+}
+
 api::RenderPrecompFrame precomp_frame(const RLayer& l, const Mat3& placement, bool card) {
   api::RenderPrecompFrame out;
   if (l.precompScene3d) {
