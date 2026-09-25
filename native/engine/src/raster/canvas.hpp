@@ -157,6 +157,18 @@ class Canvas2D {
   /// document.createElement('canvas') sized w × h, with this canvas's options
   /// (the painters' scratch canvases: tip stamps, snapshots, buffers).
   [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_canvas(std::uint32_t width, std::uint32_t height) const = 0;
+  /// `getContext('2d', { willReadFrequently })`: Chromium keeps such a canvas on
+  /// the CPU; every other canvas is GPU-accelerated there, which changes how a
+  /// filter blur is computed (see canvas_ffi.cpp). Default: accelerated.
+  virtual void set_will_read_frequently(bool on) { (void)on; }
+  /// `new OffscreenCanvas(w, h).getContext('2d', { colorType: 'float16' })`: a
+  /// canvas that blends in half floats and rounds only when drawn back into an
+  /// 8-bit one — or null where there is none (a recording canvas, like jsdom).
+  [[nodiscard]] virtual std::unique_ptr<Canvas2D> create_float16_canvas(std::uint32_t width, std::uint32_t height) const {
+    (void)width;
+    (void)height;
+    return nullptr;
+  }
 
   // ── state ──
   virtual void save() = 0;
@@ -185,10 +197,10 @@ class Canvas2D {
   [[nodiscard]] virtual std::string globalCompositeOperation() const = 0;
   virtual void setFilter(const css::Filter& f) = 0;
   /// `ctx.filter = css` with the whole CSS filter list (the bake chain's CSS
-  /// effects: blur, drop-shadow, brightness, …). The default applies what
-  /// css::parse_filter understands — `none` and a lone blur() — and returns
-  /// false, leaving the filter unchanged, for anything else: the Skia canvas
-  /// does not draw the other filter functions yet (E4).
+  /// effects: blur, drop-shadow, brightness, …), parsed by css::parse_filter_list
+  /// into the operations Blink's FilterEffectBuilder builds (the Skia canvas
+  /// chains them as image filters); false, leaving the filter unchanged, for a
+  /// list that does not parse.
   virtual bool setFilterString(std::string_view css);
   virtual void setImageSmoothing(bool on) = 0;
 

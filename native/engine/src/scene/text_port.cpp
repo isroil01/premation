@@ -308,7 +308,7 @@ std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measure
   return {};
 }
 
-double text_raster_padding(const RLayer& l) {
+double text_raster_padding(const RLayer& l, double bakedSpread) {
   constexpr double kMaxGlyphPad = 512;
   const double em = l.fontSize;
   // glyphSpread.
@@ -342,7 +342,10 @@ double text_raster_padding(const RLayer& l) {
     }
     path = spread > 0 ? spread + em : 0;
   }
-  const double pad = std::min(kMaxGlyphPad, std::max(glyph, path));
+  // rasterPadding: the baked-effect bleed, widened by the text's own escape.
+  double pad = bakedSpread;
+  const double escape = std::min(kMaxGlyphPad, std::max(glyph, path));
+  if (escape > pad) pad = escape;
   return pad > 0 ? std::min(kMaxGlyphPad, std::ceil(pad + 1)) : 0;
 }
 

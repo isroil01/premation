@@ -10,7 +10,9 @@
 #include <numbers>
 #include <utility>
 
+#include "bake_chain.hpp"
 #include "effects_port.hpp"
+#include "lut_port.hpp"
 #include "jsmath.hpp"
 #include "misc_port.hpp"
 #include "readers.hpp"
@@ -356,8 +358,9 @@ Json text_spec(const RLayer& l) {
     o.set("effects", std::move(a));
   }
   if (l.mask.is_object()) o.set("mask", l.mask);
+  if (l.fillOpacity) o.set("fillOpacity", Json::number(*l.fillOpacity));  // TextSpec.fillOpacity (the bake's fade)
   o.set("kind", Json::string("text"));
-  o.set("__baked", Json::boolean(layer_is_baked(l)));  // text_spec is only built for text layers
+  o.set("__baked",Json::boolean(layer_is_baked(l)));  // text_spec is only built for text layers
   o.set("__deviceMax", Json::number(kDeviceMax));
   return o;
 }
@@ -425,7 +428,7 @@ void Flattener::feed(const RLayer& l) {
     r.layerId = l.id;
     textures_.push_back(std::move(r));
   }
-  if (has_lut_effect(l)) unported_.emplace_back(l.id, "per-channel LUT effects (Levels / Curves / …)");
+  append_lut_textures(l, textures_);  // lut:<id> / cubelut:<id> (lut_port.cpp)
 }
 
 api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
@@ -492,7 +495,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     Rgba c = color_from_hex(rep);
     if (!l.effects.empty()) {
       const ColorMatrix cm = effect_color_matrix(l.effects);
-      const auto rgb = apply_color_matrix(cm, {c.r, c.g, c.b});
+      const auto rgb = grade_uniform_lut(l, apply_color_matrix(cm, {c.r, c.g, c.b}));  // gradeUniformColor
       c = {rgb[0], rgb[1], rgb[2], c.a};
     }
     r.color = to_color(c);
@@ -555,7 +558,11 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   }
   r.effects = extract_spatial_effects(l, baked);
   if (l.deformedMesh) r.deformed_mesh = deformed_mesh_wire(*l.deformedMesh, l.width, l.height, pad);
-  if (baked) unported_.emplace_back(l.id, "CPU-baked effect chain / fill opacity (E4)");
+  // Shape / text bakes run on their raster (bake_chain.cpp); footage bakes
+  // (AppTextureProvider setImage / setVideo) are not ported yet.
+  if (baked && (l.kind == LayerKind::image || l.kind == LayerKind::video)) {
+    unported_.emplace_back(l.id, "CPU-baked effect chain on footage (E4)");
+  }
   apply_three_d(l, parent, r);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
   return r;
 }
@@ -646,7 +653,6 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
   }
   if (lut) {
     adj.lut_texture_key = "lut:" + l.id;
-    unported_.emplace_back(l.id, "per-channel LUT effects (Levels / Curves / …)");
   }
   r.adjustment = adj;
   r.effects = std::move(spatial);
@@ -704,8 +710,9 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
 }  // namespace
 
 double raster_padding(const RLayer& l) {
-  double pad = 0;  // bakedEffectSpread: baked layers are outside the port (E4)
-  if (l.kind != LayerKind::shape) return text_raster_padding(l);  // glyph / text-path escape (text_port.cpp)
+  double pad = bake::baked_effect_spread(l);  // bakedEffectSpread (bake_chain.cpp)
+  // Non-shape: the bleed widened by the glyph / text-path escape (text_port.cpp).
+  if (l.kind != LayerKind::shape) return text_raster_padding(l, pad);
   std::vector<const Json*> strokes;
   if (l.strokes.is_array() && !l.strokes.arr().empty()) {
     for (const Json& s : l.strokes.arr()) strokes.push_back(&s);

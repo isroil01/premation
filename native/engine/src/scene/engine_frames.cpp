@@ -275,6 +275,9 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
       h.f64(t.sourceTime);
       h.u64((t.video ? 1U : 0U) | (t.premultiplied ? 2U : 0U));
       h.f64(t.compFps);
+      // Builder-computed textures (TexKind::pixels: the colour-LUT strips).
+      h.u64((std::uint64_t{t.pxWidth} << 32U) | t.pxHeight);
+      h.bytes(t.pixels);
     }
     for (const std::string& f : frame.fontFamilies) h.str(f);
     return h.value();

@@ -159,7 +159,7 @@ class Chain final {
   }
 
   void filter(Canvas2D& c, std::string_view css) {
-    if (!c.setFilterString(css)) report_.unsupported.push_back("CSS filter '" + std::string(css) + "' (the Skia canvas draws blur() only)");
+    if (!c.setFilterString(css)) report_.unsupported.push_back("CSS filter '" + std::string(css) + "' (not a filter list the canvas parses)");
   }
 
   [[nodiscard]] std::unique_ptr<Canvas2D> scratch() const {

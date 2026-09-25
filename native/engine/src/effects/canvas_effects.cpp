@@ -398,6 +398,7 @@ void apply_stroke(CanvasEffectContext& x, Canvas2D& oc, double w, double h, cons
   if (inside || center) {
     Canvas2D& inner = x.scratch(oc, "stroke-inner", uw, uh);
     inner.setTransform({});
+    (void)inner.setGlobalCompositeOperation("source-over");  // its last use ended on destination-out (applyStroke)
     inner.clearRect(0, 0, w, h);
     draw_at(inner, snap, 0, 0);
     (void)inner.setGlobalCompositeOperation("source-in");

@@ -7,11 +7,13 @@
 #include <cstdio>
 #include <thread>
 
+#include "bake_chain.hpp"
 #include "image_decode.hpp"
 #include "json.hpp"
 #include "light_wash.hpp"
 #include "raster_source.hpp"
 #include "svg_layer.hpp"
+#include "thread_pool.hpp"
 
 #if defined(PREMATION_HAVE_MEDIA)
 #include "media_system.hpp"
@@ -89,7 +91,9 @@ std::string file_url_path(std::string_view src) {
   return out;
 }
 
-SceneTextures::SceneTextures(Options opts) : opts_(std::move(opts)) {}
+SceneTextures::SceneTextures(Options opts)
+    : opts_(std::move(opts)),
+      bakePool_(std::make_unique<effects::ThreadPool>(std::min(8U, std::max(1U, std::thread::hardware_concurrency())))) {}
 SceneTextures::~SceneTextures() = default;
 
 void SceneTextures::set_media(media::MediaSystem* system, media::MediaTextures* frames) noexcept {
@@ -153,6 +157,24 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
       refs.push_back(std::move(ref));
       continue;
     }
+    if (r.kind == TexKind::pixels) {
+      // A builder-computed texture (colour-LUT strip): data, not colour, so no
+      // inputSpace; keyed by its bytes like a raster.
+      std::array<char, 32> dims{};
+      std::snprintf(dims.data(), dims.size(), "|px|%u|%u", r.pxWidth, r.pxHeight);  // NOLINT(cppcoreguidelines-pro-type-vararg)
+      const std::string_view bytes(reinterpret_cast<const char*>(r.pixels.data()), r.pixels.size());  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+      ref.hash = "rs:" + hex64(fnv1a(dims.data(), fnv1a(bytes)));
+      ref.ready = r.pxWidth > 0 && r.pxHeight > 0 && r.pixels.size() == static_cast<std::size_t>(r.pxWidth) * r.pxHeight * 4;
+      if (ref.ready && !find(ref.hash)) {
+        auto e = std::make_shared<RasterEntry>();
+        e->width = r.pxWidth;
+        e->height = r.pxHeight;
+        e->rgba = r.pixels;
+        insert(ref.hash, std::move(e));
+      }
+      refs.push_back(std::move(ref));
+      continue;
+    }
     std::string spec = js::stringify(r.spec);
     std::array<char, 64> tail{};
     std::snprintf(tail.data(), tail.size(), "|%d|%.17g|%.17g", static_cast<int>(r.kind), r.resolutionScale, r.padding);  // NOLINT(cppcoreguidelines-pro-type-vararg)
@@ -195,10 +217,17 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
   const auto work = [&](std::size_t i) {
     const Miss& m = misses[i];
     auto e = std::make_shared<RasterEntry>();
+    // A baked layer's chain runs on the raster canvas (bake_chain.cpp, E4 wiring).
+    const Json& drawable = m.req->spec;
+    const raster::BakeHook bake = [this, &drawable](raster::Canvas2D& ctx, double bw, double bh, double ss,
+                                                   std::vector<std::string>& unsupported) {
+      bake::bake_layer_raster(ctx, drawable, bw, bh, ss, unsupported, bake::SharedPool{bakePool_.get(), &bakePoolM_});
+    };
     raster::RasterOutput out =
         m.req->kind == TexKind::light  // a light's glow wash (light_wash.cpp)
             ? draw_light_wash(light_wash_of_spec(m.req->spec), opts_.canvas)
-            : raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas);
+            : raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas,
+                                         &bake);
     e->width = out.width;
     e->height = out.height;
     e->rgba = std::move(out.rgba);

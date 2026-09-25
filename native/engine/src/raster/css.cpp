@@ -301,6 +301,177 @@ std::optional<Filter> parse_filter(std::string_view in) {
   return std::nullopt;
 }
 
+namespace {
+
+std::array<std::uint8_t, 256> identity_table() {
+  std::array<std::uint8_t, 256> t{};
+  for (std::size_t i = 0; i < 256; ++i) t[i] = static_cast<std::uint8_t>(i);
+  return t;
+}
+/// FEComponentTransfer LINEAR: slope · i + 255 · intercept, clamped, truncated.
+std::array<std::uint8_t, 256> linear_table(double slope, double intercept) {
+  std::array<std::uint8_t, 256> t{};
+  for (std::size_t i = 0; i < 256; ++i) {
+    const double v = clamp(slope * static_cast<double>(i) + 255 * intercept, 0, 255);
+    t[i] = static_cast<std::uint8_t>(v);
+  }
+  return t;
+}
+/// FEComponentTransfer TABLE over two values.
+std::array<std::uint8_t, 256> table2(double v0, double v1) {
+  std::array<std::uint8_t, 256> t{};
+  for (std::size_t i = 0; i < 256; ++i) {
+    const double c = static_cast<double>(i) / 255.0;
+    t[i] = static_cast<std::uint8_t>(clamp(255.0 * (v0 + c * (v1 - v0)), 0, 255));
+  }
+  return t;
+}
+FilterOp rgb_table(const std::array<std::uint8_t, 256>& t) {
+  FilterOp op;
+  op.kind = FilterOp::Kind::table;
+  op.table = {t, t, t, identity_table()};
+  return op;
+}
+FilterOp matrix3(const std::array<double, 9>& m) {
+  FilterOp op;
+  op.kind = FilterOp::Kind::matrix;
+  const auto f = [](double v) { return static_cast<float>(v); };
+  op.matrix = {f(m[0]), f(m[1]), f(m[2]), 0, 0, f(m[3]), f(m[4]), f(m[5]), 0, 0, f(m[6]), f(m[7]), f(m[8]), 0, 0, 0, 0, 0, 1, 0};
+  return op;
+}
+/// SVG FEColorMatrix saturate / hueRotate; filter_effect_builder.cc grayscale / sepia.
+FilterOp saturate_op(double s) {
+  return matrix3({0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 + 0.285 * s,
+                  0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s});
+}
+FilterOp hue_rotate_op(double deg) {
+  const double rad = deg * 3.141592653589793 / 180.0;
+  const double c = std::cos(rad);
+  const double s = std::sin(rad);
+  return matrix3({0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
+                  0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283,
+                  0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072});
+}
+FilterOp grayscale_op(double amount) {
+  const double o = clamp(1 - amount, 0, 1);
+  return matrix3({0.2126 + 0.7874 * o, 0.7152 - 0.7152 * o, 0.0722 - 0.0722 * o, 0.2126 - 0.2126 * o, 0.7152 + 0.2848 * o,
+                  0.0722 - 0.0722 * o, 0.2126 - 0.2126 * o, 0.7152 - 0.7152 * o, 0.0722 + 0.9278 * o});
+}
+FilterOp sepia_op(double amount) {
+  const double o = clamp(1 - amount, 0, 1);
+  return matrix3({0.393 + 0.607 * o, 0.769 - 0.769 * o, 0.189 - 0.189 * o, 0.349 - 0.349 * o, 0.686 + 0.314 * o,
+                  0.168 - 0.168 * o, 0.272 - 0.272 * o, 0.534 - 0.534 * o, 0.131 + 0.869 * o});
+}
+
+/// A number or a percentage ("1.2", "120%").
+std::optional<double> amount_of(std::string_view a) {
+  if (!a.empty() && a.back() == '%') {
+    const auto v = number(a.substr(0, a.size() - 1));
+    return v ? std::optional<double>(*v / 100) : std::nullopt;
+  }
+  return number(a);
+}
+
+}  // namespace
+
+std::optional<Filter> parse_filter_list(std::string_view in) {
+  const std::string s = lower_trim(in);
+  if (s == "none" || s.empty()) return Filter{};
+  Filter out;
+  std::size_t i = 0;
+  while (i < s.size()) {
+    while (i < s.size() && s[i] == ' ') ++i;
+    if (i >= s.size()) break;
+    const std::size_t open = s.find('(', i);
+    if (open == std::string::npos) return std::nullopt;
+    const std::string_view fn = std::string_view(s).substr(i, open - i);
+    // The matching ')' (drop-shadow's colour may hold its own parentheses).
+    int depth = 0;
+    std::size_t close = open;
+    for (; close < s.size(); ++close) {
+      if (s[close] == '(') ++depth;
+      if (s[close] == ')' && --depth == 0) break;
+    }
+    if (close >= s.size()) return std::nullopt;
+    std::string_view arg = std::string_view(s).substr(open + 1, close - open - 1);
+    while (!arg.empty() && arg.front() == ' ') arg.remove_prefix(1);
+    while (!arg.empty() && arg.back() == ' ') arg.remove_suffix(1);
+    i = close + 1;
+    if (fn == "blur") {
+      const auto px = parse_length_px(arg, 16.0);
+      if (!px || *px < 0) return std::nullopt;
+      FilterOp op;
+      op.kind = FilterOp::Kind::blur;
+      op.sigma = *px;
+      out.ops.push_back(op);
+    } else if (fn == "drop-shadow") {
+      // <dx> <dy> [<blur>] [<color>]: lengths first, the colour is the rest.
+      std::vector<double> lens;
+      std::size_t j = 0;
+      while (j < arg.size() && lens.size() < 3) {
+        while (j < arg.size() && arg[j] == ' ') ++j;
+        std::size_t k = j;
+        while (k < arg.size() && arg[k] != ' ') ++k;
+        const auto px = parse_length_px(arg.substr(j, k - j), 16.0);
+        if (!px) break;
+        lens.push_back(*px);
+        j = k;
+      }
+      if (lens.size() < 2 || (lens.size() == 3 && lens[2] < 0)) return std::nullopt;
+      std::string_view col = arg.substr(std::min(j, arg.size()));
+      while (!col.empty() && col.front() == ' ') col.remove_prefix(1);
+      FilterOp op;
+      op.kind = FilterOp::Kind::dropShadow;
+      op.dx = lens[0];
+      op.dy = lens[1];
+      // The CSS blur radius is two standard deviations (Filter Effects §drop-shadow).
+      op.sigma = lens.size() == 3 ? lens[2] / 2 : 0;
+      if (col.empty()) {
+        op.color = Color{0, 0, 0, 1};  // currentcolor on a canvas: black
+      } else {
+        const auto c = parse_color(col);
+        if (!c) return std::nullopt;
+        op.color = *c;
+      }
+      out.ops.push_back(op);
+    } else if (fn == "hue-rotate") {
+      std::string_view a = arg;
+      double scale = 1;
+      if (a.ends_with("deg")) a.remove_suffix(3);
+      else if (a.ends_with("turn")) { a.remove_suffix(4); scale = 360; }
+      else if (a.ends_with("rad")) { a.remove_suffix(3); scale = 180 / 3.141592653589793; }
+      const auto v = number(a);
+      if (!v) return std::nullopt;
+      out.ops.push_back(hue_rotate_op(*v * scale));
+    } else {
+      const auto v = amount_of(arg);
+      if (!v || *v < 0 || !std::isfinite(*v)) return std::nullopt;
+      const double a = *v;
+      if (fn == "brightness") out.ops.push_back(rgb_table(linear_table(a, 0)));
+      else if (fn == "contrast") out.ops.push_back(rgb_table(linear_table(a, -0.5 * a + 0.5)));
+      else if (fn == "saturate") out.ops.push_back(saturate_op(a));
+      else if (fn == "grayscale") out.ops.push_back(grayscale_op(std::min(1.0, a)));
+      else if (fn == "sepia") out.ops.push_back(sepia_op(std::min(1.0, a)));
+      else if (fn == "invert") out.ops.push_back(rgb_table(table2(std::min(1.0, a), 1 - std::min(1.0, a))));
+      else if (fn == "opacity") {
+        FilterOp op;
+        op.kind = FilterOp::Kind::table;
+        op.table = {identity_table(), identity_table(), identity_table(), table2(0, std::min(1.0, a))};
+        out.ops.push_back(op);
+      } else {
+        return std::nullopt;
+      }
+    }
+  }
+  // A lone blur keeps the plain blur path (identical to parse_filter's).
+  if (out.ops.size() == 1 && out.ops[0].kind == FilterOp::Kind::blur) {
+    Filter b;
+    b.blurPx = out.ops[0].sigma;
+    return b;
+  }
+  return out;
+}
+
 std::vector<Range> parse_unicode_range(std::string_view in) {
   std::vector<Range> out;
   const std::string s = lower_trim(in);

@@ -57,9 +57,9 @@ void with_text_more_options(Json& extras, const doc::Node& n, const Values& a);
 /// (or when the layer is point text).
 [[nodiscard]] std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measurer, const std::string& raw);
 
-/// vectorDraw.ts rasterPadding for a NON-shape layer: glyphSpread (animator
-/// escape) and textPathSpread, clamped to MAX_GLYPH_PAD (baked-effect bleed is
-/// the E4 chain's, and text paint layers are reported unported).
-[[nodiscard]] double text_raster_padding(const RLayer& l);
+/// vectorDraw.ts rasterPadding for a NON-shape layer: `bakedSpread` (the E4
+/// chain's bakedEffectSpread) widened by glyphSpread (animator escape) and
+/// textPathSpread, clamped to MAX_GLYPH_PAD (text paint layers are reported unported).
+[[nodiscard]] double text_raster_padding(const RLayer& l, double bakedSpread);
 
 }  // namespace premation::scene

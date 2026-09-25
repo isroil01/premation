@@ -8,8 +8,8 @@
 // (tests/test_effect_chain.cpp against effectChainCrossEngine.test.ts).
 //
 // Text is drawn with the canvas's fillText / measureText, so its glyphs are the
-// FontSet's; Plexus takes the TS's direct path (the float16 OffscreenCanvas
-// scratch it prefers in Chromium has no Canvas2D-interface twin yet).
+// FontSet's; Plexus blends in a float16 canvas (Canvas2D::create_float16_canvas)
+// where the canvas has one, and takes the TS's direct path where it has none.
 
 #include <algorithm>
 #include <array>
@@ -689,7 +689,8 @@ std::array<double, 3> plexus_rgb(const std::string& hex) {
   return bytes_of(static_cast<long>(*v));
 }
 
-void apply_plexus(CanvasEffectContext& /*x*/, Canvas2D& oc, double w, double h, const Value& p) {
+/// drawPlexusInto.
+void draw_plexus_into(Canvas2D& oc, double w, double h, const Value& p) {
   constexpr double kMaxPoints = 700;  // PLEXUS_MAX_POINTS
   const double opacity = std::max(0.0, std::min(1.0, num(p, "opacity") / 100));
   if (opacity <= 0) return;
@@ -813,6 +814,30 @@ void apply_plexus(CanvasEffectContext& /*x*/, Canvas2D& oc, double w, double h, 
   }
   oc.restore();
   (void)oc.setGlobalCompositeOperation(prev);
+}
+
+/// drawPlexus: blend in a float16 canvas and round once (floatScratch) where
+/// the canvas offers one — Skia's CPU raster here, Chromium there. A recording
+/// canvas has none and takes the direct path, as the TS does under jsdom.
+void apply_plexus(CanvasEffectContext& /*x*/, Canvas2D& oc, double w, double h, const Value& p) {
+  const auto scratch = w > 0 && h > 0 ? oc.create_float16_canvas(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h)) : nullptr;
+  if (!scratch) {
+    draw_plexus_into(oc, w, h, p);
+    return;
+  }
+  const auto ow = static_cast<double>(oc.width());
+  const auto oh = static_cast<double>(oc.height());
+  scratch->drawImage(oc, 0, 0, ow, oh, 0, 0, ow, oh);
+  draw_plexus_into(*scratch, w, h, p);
+  const std::string prevOp = oc.globalCompositeOperation();
+  oc.save();
+  oc.setTransform({});
+  (void)oc.setGlobalCompositeOperation("copy");
+  const auto sw = static_cast<double>(scratch->width());
+  const auto sh = static_cast<double>(scratch->height());
+  oc.drawImage(*scratch, 0, 0, sw, sh, 0, 0, sw, sh);
+  oc.restore();
+  (void)oc.setGlobalCompositeOperation(prevOp);
 }
 
 // ── vegas.ts ─────────────────────────────────────────────────────────────────

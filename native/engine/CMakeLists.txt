@@ -815,12 +815,16 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/retime_port.cpp
     src/scene/extrusion_mesh.cpp
     src/scene/mesh_check.cpp
+    src/scene/lut_port.cpp          # D2w effects: colour LUT strips (colorLut.ts, cubeLut.ts)
+    src/scene/bake_chain.cpp        # D2w effects: a baked raster's mask + stack handed to engine_effect_chain
+    src/scene/effect_handoff.cpp    #   the path / paint effects' resolved geometry (buildSnapshot)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )
   target_include_directories(engine_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
   target_include_directories(engine_scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)  # eval.hpp: text selectors' ease (text_port.cpp)
-  target_link_libraries(engine_scene PUBLIC engine_core engine_scene_core engine_plugins engine_raster engine_render_graph PRIVATE motion::options)
+  target_link_libraries(engine_scene PUBLIC engine_core engine_scene_core engine_plugins engine_raster engine_render_graph
+                                            engine_effect_chain PRIVATE motion::options)
   if(WIN32)
     target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)
   endif()
@@ -843,9 +847,10 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   # engine_scene_tests: the scene builder's GPU-free units (colour settings,
   # the D4 frame cache) — the pixel parity is premation-scene's (render-tests).
   if(MOTION_BUILD_TESTS)
-    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp)
+    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
+    target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     if(MSVC)
       target_compile_options(engine_scene_tests PRIVATE /bigobj)
     endif()
