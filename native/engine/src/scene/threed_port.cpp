@@ -20,6 +20,7 @@
 #include "jsmath.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
+#include "styled_surface.hpp"
 #include "timeline.hpp"
 #include "worldxf.hpp"
 
@@ -824,14 +825,8 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
                             return m.value.is_object() && m.value.at("enabled").is_bool() && m.value.at("enabled").b();
                           });
     const std::string wallBase = layer.fill.value_or("#2a2a2a");  // EXTRUSION_WALL_FALLBACK_FILL
-    std::string wallFill = wallBase;
-    if (anyStyle) {
-      const auto overlayOn = [&](const char* k) {
-        const Json& o = styles.at(k);
-        return o.is_object() && o.at("enabled").is_bool() && o.at("enabled").b() && o.at("opacity").num() > 0;
-      };
-      if (overlayOn("colorOverlay") || overlayOn("gradientOverlay")) report("extrusion walls under a colour / gradient overlay style");
-    }
+    // styledSurfaceFill: a Colour / Gradient Overlay repaints the front, so the walls follow it.
+    const std::string wallFill = styled_surface_fill(styles, wallBase);
     std::vector<Json> faceStyles;
     if (anyStyle) {
       const auto compiled = layer_styles_to_effects(styles, comp_.globalLightAngle, comp_.globalLightAltitude,
