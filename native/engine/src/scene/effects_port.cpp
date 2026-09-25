@@ -213,7 +213,10 @@ const char* effect_unported_reason(const Json& e) {
   if (is_temporal(t)) return nullptr;  // handled by the snapshot's time plumbing (or reported there)
   if (is_color_effect(t)) return nullptr;
   if (is_native_effect(t)) return nullptr;  // G1: native SDK plugins render in the chain (scene_native_fx.cpp)
-  if (doc::registry().effect(t) == nullptr) return "plugin effects";
+  // A JS / WGSL plugin effect: its shader, passes and params live in the page's
+  // plugin registry (registerEffects), not in the document — decision G2 keeps
+  // that system out of the engine (the native SDK, G1, is the engine's).
+  if (doc::registry().effect(t) == nullptr) return "plugin effects (JS/WGSL plugin system, not ported: G2)";
   // A baked layer's chain runs in the raster (bake_chain.cpp): what it cannot
   // draw is reported there, per effect, with the raster.
   if (is_canvas2d_only(t)) return nullptr;
