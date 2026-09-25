@@ -43,6 +43,7 @@ import {
 import { useRenderBackendStore, type ActiveRenderTier } from '@stores/renderBackendStore';
 import { cpuBakeStats, type CpuBakeSample } from '@core/effects/effectBake';
 import { framePerf, type PerfSample, type PerfStageName } from '@core/perf/framePerf';
+import { useEngineViewportActive } from '@hooks/useEngineViewport';
 import styles from './ViewportHud.module.css';
 
 /** Sampling period. Fast enough to feel live, slow enough to be readable. */
@@ -86,6 +87,9 @@ export function ViewportHud(): JSX.Element | null {
 
   const quality = useRenderQualityStore((s) => s);
   const tier = useRenderBackendStore((s) => s.activeTier);
+  // D5: with the engine as the viewport, the frame row is the engine's (build +
+  // render to GPU completion, reported by EngineSurface) and so is the GPU.
+  const engineView = useEngineViewportActive();
 
   useEffect(() => {
     if (!on) return;
@@ -131,7 +135,7 @@ export function ViewportHud(): JSX.Element | null {
       </span>
 
       <span className={styles.key}>gpu</span>
-      <span className={styles.value}>{BACKEND_LABEL[tier]}</span>
+      <span className={styles.value}>{engineView ? 'C++ engine (Dawn)' : BACKEND_LABEL[tier]}</span>
 
       {/* Layers whose effect chain ran on the CPU this frame, and the effects
           that forced it — the number behind "playback is slow with effects". */}

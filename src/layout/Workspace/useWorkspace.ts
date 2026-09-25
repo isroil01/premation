@@ -134,6 +134,7 @@ import {
   type PluginModifiers,
 } from './pluginDrawOverlay';
 import { onPluginDrawChanged } from '@core/plugins/uiCanvas';
+import { useEngineViewportActive } from '@hooks/useEngineViewport';
 
 
 /**
@@ -227,6 +228,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   // way — see MotionRendererBackend.initFailed). The viewport shows a visible
   // error instead of dismissing the spinner into a silent blank canvas.
   const [renderError, setRenderError] = useState<string | null>(null);
+  // D5: the C++ engine's frames are the picture (owner flag on, no fallback).
+  // The TypeScript renderer then does not run: a null backend holds the
+  // canvas, and each render tick paints only the page's chrome (handles,
+  // guides, motion paths, plugin gizmos) — see the render() early-out.
+  const engineViewport = useEngineViewportActive();
 
   // Active on-canvas motion-path drag (E4): a keyframe point or one of its
   // spatial tangent handles ('in'/'out'), or null.
@@ -428,12 +434,15 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       return () => cancelAnimationFrame(retry);
     }
 
-    const backend = createRenderBackend();
+    const backend = createRenderBackend(engineViewport ? 'null' : 'auto');
     backend.attach(content);
     backend.setPreviewChrome?.(true);
     backendRef.current = backend;
     // `window.__motionPerf` (dev builds) — the per-stage timings the HUD shows.
     installPerfDevGlobal();
+    // The HUD's counters for the real-app harness (D5 measurements: the same
+    // numbers the HUD shows, TS path or engine path). Read-only use.
+    (window as unknown as { __premationViewportHud?: typeof viewportHudStats }).__premationViewportHud = viewportHudStats;
 
     // AnimationChanged revision — part of the cache key so a keyframe edit
     // during a playing loop invalidates every cached frame. Media decode
@@ -727,6 +736,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const startIdlePass = (): void => {
       idleTimer = null;
       const b = backendRef.current;
+      if (engineViewport) return;  // D5: the engine caches its own frames (D4)
       if (!b || b !== backend || isPlayingNow() || isExportBusy()) return;
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       const fps = compRef.current.fps || 60;
@@ -897,6 +907,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const b = backendRef.current;
       if (!b) return;
       renderSeq += 1;
+      if (engineViewport) {
+        // D5: the engine draws the composition (EngineSurface, under this
+        // overlay); the page draws only what it owns. No snapshot, no cache.
+        paintChrome();
+        return;
+      }
 
       // ── RAM preview ────────────────────────────────────────────────
       //
@@ -1382,7 +1398,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       backend.dispose();
       backendRef.current = null;
     };
-  }, [contentCanvasRef, overlayCanvasRef, stageRef, attachTick]);
+  }, [contentCanvasRef, overlayCanvasRef, stageRef, attachTick, engineViewport]);
 
   // Publish the content canvas so surfaces OUTSIDE the viewport can find it
   // without `document.querySelector('canvas')` — which returns whichever

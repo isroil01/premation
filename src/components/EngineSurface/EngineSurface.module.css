@@ -59,3 +59,51 @@
   border-top: 1px solid var(--color-overlay-panel-border);
   line-height: 1.4;
 }
+
+/*
+ * D5: THE viewport (the engine owns the document). Fills the stage where the
+ * TypeScript canvas was, in DOM order right after it, so the overlay canvas,
+ * the gizmos and every handle the page draws paint over the engine's picture.
+ * Pointer-transparent: every gesture belongs to the overlay above it.
+ */
+.viewport {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  background: var(--color-panel);
+}
+
+.viewportCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The same pixel-aspect preview stretch the page's canvases carry
+     (Workspace.module.css .overlay), so picture and overlays stay registered. */
+  transform: scaleX(var(--viewport-par, 1));
+  transform-origin: 50% 50%;
+}
+
+.waiting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.viewportNotice {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-2);
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-overlay-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-overlay-panel-bg);
+  color: var(--color-overlay-text);
+  font-size: var(--font-size-xs);
+}
