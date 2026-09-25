@@ -750,6 +750,84 @@ Open work for E4:
 | F1 | Export from the engine directly to ffmpeg, multi-frame across threads; the export supervisor launches engine jobs instead of hidden Chromium windows | ≥ 3× today's raw-pipe fps on 8 cores; md5-identical output at the same settings | 4 wk |
 | F2 | The engine owns the document and undo; the UI holds only its mirror. The TS engine is kept behind the flag for one release, then removed | No authoritative project state in the UI process; undo parity suite green | 6 wk |
 
+**F1 (2026-09-25): export jobs run in the engine, behind `PREMATION_EXPORT_ENGINE=1`.**
+`premation-engine --export JOB.json` (`native/engine/src/export`, protocol and exit
+codes in `export_job.hpp`) is one process per job. It opens the project on disk: a
+`.motion` bundle, including its asset registry, with `motion-blob:` refs pointed at
+`blobs/`, or a JSON document. It then:
+- **Preflights** every frame of the range through the scene builder, in parallel.
+- **Mixes the audio** with the E2 mixer into the WAV that `encodeWav` writes.
+- **Renders** with N build workers (one document copy each) and a render thread
+  that keeps 3 frames on the GPU (`SceneRenderer::render_submit` / `take_readback`).
+- **Writes** frames to ffmpeg from a writer thread, in order, as straight-alpha
+  RGBA8, the raw pipe's own bytes.
+
+The supervisor (`electron/engineExport.ts`) builds the ffmpeg command line with the
+Chromium path's `buildEncodeArgs`, so only pixels can differ. Progress, cancel and
+the watchdogs are the window path's. Any **fallback** continues the same attempt in
+a hidden window, unchanged. These fall back:
+- an unported frame found in preflight: layer errors, SVG layers, echo, LUT
+  effects, native plugins;
+- audio the E2 builder reports as unported;
+- no executable, or a GPU that will not start;
+- a pass that cannot be honoured mid-render;
+- an engine crash. ffmpeg dies with it through a Windows job object, and nothing
+  is delivered.
+
+These go straight to the window instead: image sequences, chapters, and hardware
+encoders.
+
+Real engine, through the launcher: a kill -9 mid-render gives fallback, with no
+file and no orphaned ffmpeg. Cancel gives cancelled. `effect-echo` gives fallback
+from preflight. A missing project gives fallback.
+
+**Parity** (`scripts/bench-export-engine.cjs`: both paths end to end from the same
+project; raw streams compared through `premation-export-sink`; files by md5).
+- 17 of 17 golden scenes whose native-scene frame equals the webgpu frame are
+  md5-identical over 30 frames, in the raw stream, mp4 (x264) and mov (ProRes
+  4444). They cover keyframes, motion blur, nested precomps, trim paths, puppet,
+  layer styles, bevel, dashes, fractal noise, a 3D camera, DOF, spot shadow maps
+  and 32 bpc.
+- Scenes where the native-scene port is off by ±1–13 stay off by exactly that
+  amount (blend-normal ±1 on 19 % of pixels). The export pipeline adds nothing:
+  engine frames equal the native-scene frames byte for byte. That is D2w's gap.
+- In today's scan, 118 ported scenes are bit-exact against webgpu.
+- The bench fixture's text is off by ≤ 228 on 0.9 % of pixels (E3 AA on system
+  Arial), so its md5 differs.
+
+**Speed** (RTX 4060 laptop, 8 cores / 16 threads, 1080p, 120 frames; "steady" is
+first frame to done):
+
+| comp | path | Chromium | engine | ratio |
+|---|---|--:|--:|--:|
+| bench fixture (6 shapes + 3 text) | raw pipe, no encoder | 15.6 fps steady, 12.7 fps wall | 186.5 fps steady, 56.3 fps wall | **12×** steady, **4.4×** wall |
+| bench fixture | mp4 x264 | 18.1 / 14.2 | 140.2 / 46.2 | 7.7× / 3.3× |
+| bench fixture | mov ProRes 4444 | 15.9 / 12.9 | 48.7 / 26.4 | 3.1× / 2.0× (prores_ks bound, 19 ms a frame) |
+| heavy (300 shapes + 12 text) | raw | 14.5 / 11.8 | 175.8 / 55.6 | 12× / 4.7× |
+| heavy | mp4 | 13.5 / 11.1 | 108.1 / 39.5 | 8.0× / 3.6× |
+
+The exit criterion is met on the raw pipe and on mp4: ≥ 3× both steady and wall
+clock. On this machine the Chromium hidden window renders 1080p at 14–18 fps; the
+121 fps quoted in §3 was not reproduced here. The engine's wall clock includes
+0.73 s of Dawn/DXC start, now overlapped with the project open (0.25 s). ProRes is
+bound by the encoder, not the render.
+
+**16-bit.** A job with `bitDepth: 16` (mov only) renders into an rgba16float
+surface and sends `-pix_fmt rgba64le`. Binary16 keeps ~11 significant bits near
+white. A 16-bit job that falls back is delivered at 8 bits with a warning. Engine
+only; not yet exposed in the Export UI.
+
+**Open:**
+- The engine's own native-plugin host and the remaining preflight fallbacks
+  (D2w/E4 ports).
+- Hardware encoders: `encoderProbe` lives in main's render IPC.
+- Chapters: the FFMETADATA formatter is in `src/`.
+- PNG/EXR sequences.
+- Partial-alpha unpremultiply is modelled on Skia's float path and is only
+  unit-tested; the alpha golden scenes cannot run in the CLI because their
+  harness footage is not resolvable there.
+- The real-app Render Queue run with the flag on.
+
 ### Phase G — Ecosystem
 
 | Step | What | Exit | Size |
