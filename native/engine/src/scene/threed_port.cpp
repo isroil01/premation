@@ -129,8 +129,9 @@ std::optional<xf::Node3DTransform> Scene3D::local3d(const std::string& id) {
   if (n == nullptr) return std::nullopt;
   const auto g = doc::read_geometry_local(*n);
   if (!g) return std::nullopt;
-  const double kt = doc::comp_to_keyframe_time(c_.d, c_.view, id, h_.remap3d(id, t_));
-  const Values av(doc::anim_evaluate_node(c_.d, c_.expr, c_.cache, id, kt));
+  const std::string& aid = h_.anim_id3d(id);  // a comp-instance clone samples its source
+  const double kt = doc::comp_to_keyframe_time(c_.d, c_.view, aid, h_.remap3d(id, t_));
+  const Values av(doc::anim_evaluate_node(c_.d, c_.expr, c_.cache, aid, kt));
   const auto [ax, ay] = read_node_anchor(*n);
   xf::Node3DTransform v;
   v.x = av.get("x").value_or(g->x);
@@ -296,7 +297,7 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
   }
   // Camera motion blur: an animated active camera blurs every 3D layer.
   if (!ortho_ && !custom && mb_ && viewCam_ != nullptr) {
-    cameraAnimated_ = std::ranges::any_of(kCameraMotionProps, [&](std::string_view p) { return doc::anim_is_animated(c_.d, viewCam_->id, p); });
+    cameraAnimated_ = std::ranges::any_of(kCameraMotionProps, [&](std::string_view p) { return doc::anim_is_animated(c_.d, h_.anim_id3d(viewCam_->id), p); });
   }
   // Depth of field (off in ortho / custom views and Draft 3D).
   if (!(ortho_ || custom || comp_.draft3d) && viewCam_ != nullptr) {
@@ -565,7 +566,7 @@ std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const do
   const double localX = a.get("x").value_or(baseX);
   const double localY = a.get("y").value_or(baseY);
   const double localRot = a.get("rotation").value_or(baseRot);
-  const std::string id = n.id;
+  const std::string id = h_.anim_id3d(n.id);
   return [this, id, localX, localY, localRot, s](double ti, double tc) {
     const auto sample = [&](std::string_view p, double tt) { return doc::anim_sample(c_.d, c_.expr, c_.cache, id, p, tt); };
     const auto sc = sample("scale", ti);
@@ -577,7 +578,7 @@ std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const do
     if (cameraAnimated_ && viewCam_ != nullptr) {
       auto it = subFrameCameras_.find(tc);
       if (it == subFrameCameras_.end()) {
-        const std::string camId = viewCam_->id;
+        const std::string camId = h_.anim_id3d(viewCam_->id);
         const xf::Camera cam = camera_from_node(*viewCam_, [this, camId, tc](std::string_view k) {
           return doc::anim_sample(c_.d, c_.expr, c_.cache, camId, k, tc);
         });

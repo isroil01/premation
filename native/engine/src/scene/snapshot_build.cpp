@@ -9,6 +9,7 @@
 #include <set>
 #include <unordered_map>
 
+#include "comp_instance.hpp"
 #include "effect_handoff.hpp"
 #include "effects_port.hpp"
 #include "frame_build.hpp"
@@ -229,8 +230,16 @@ class Walk final : public Scene3DHost {
   xf::Local2D world2d(const std::string& id) override { return world_of(id); }
   [[nodiscard]] std::optional<std::string> parent3d_of(const std::string& id) const override { return parent_of(id); }
   bool live3d(const std::string& id) override { return is_live_at(id); }
+  [[nodiscard]] const std::string& anim_id3d(const std::string& id) const override { return wn_.src(id); }
 
  private:
+  /// `srcId(id)` (comp_instance.cpp): the node a walked id samples animation and clips from.
+  [[nodiscard]] const std::string& sid(const std::string& id) const { return wn_.src(id); }
+  /// The animation wrapper's `sample` (an Essential-Properties override drops the track).
+  std::optional<double> anim_sample_of(const std::string& id, std::string_view prop, double tt) {
+    if (wn_.is_overridden(id, prop)) return std::nullopt;
+    return doc::anim_sample(d_, c_.expr, c_.cache, sid(id), prop, tt);
+  }
   // ── lookups ──
   [[nodiscard]] const doc::Node* node(std::string_view id) const {
     const auto it = byId_.find(std::string(id));
@@ -251,7 +260,8 @@ class Walk final : public Scene3DHost {
 
   // ── emission ──
   void emit(RLayer l, const doc::Node& n);
-  RLayer precomp_container(const doc::Node& group);
+  /// `buildPrecompContainer(group, nested?.layers, nested?.scene3d)`.
+  RLayer precomp_container(const doc::Node& group, std::optional<NestedComp>* nested = nullptr);
   void emit_stub(const doc::Node& n);
   void build_node(const doc::Node& n);
   void unported(RLayer& l, const doc::Node& n, std::string what);
@@ -271,6 +281,8 @@ class Walk final : public Scene3DHost {
   bool anySolo_ = false;
 
   std::vector<const doc::Node*> nodes_;
+  /// The walked nodes' owner: collapsed-instance clones and override copies.
+  WalkNodes wn_;
   std::unordered_map<std::string, const doc::Node*> byId_;
   std::unordered_map<std::string, Values> values_;
   std::unordered_map<std::string, std::vector<const Bar*>> clips_;
@@ -289,21 +301,24 @@ class Walk final : public Scene3DHost {
 const Values& Walk::values_of(const std::string& id) {
   const auto it = values_.find(id);
   if (it != values_.end()) return it->second;
-  Values v(doc::anim_evaluate_node(d_, c_.expr, c_.cache, id, remap(id, t_, false)));
+  Values v(doc::anim_evaluate_node(d_, c_.expr, c_.cache, sid(id), remap(id, t_, false)));
+  if (const auto ov = wn_.overridden.find(id); ov != wn_.overridden.end()) {
+    for (const std::string& p : ov->second) v.erase(p);
+  }
   return values_.emplace(id, std::move(v)).first->second;
 }
 
 std::vector<const Bar*> Walk::governing_clips(const std::string& id) {
   const auto it = clips_.find(id);
   if (it != clips_.end()) return it->second;
-  std::vector<const Bar*> own = doc::tl_bars_for_node(d_, c_.view, id);
+  std::vector<const Bar*> own = doc::tl_bars_for_node(d_, c_.view, sid(id));
   if (own.empty()) {
     const doc::Node* cur = node(id);
     for (int depth = 0; depth < 32 && cur != nullptr; ++depth) {
       if (!cur->parent) break;
       const doc::Node* parent = node(*cur->parent);
       if (parent == nullptr || is_precomp_node(*parent) || parent->kind() != "group") break;
-      std::vector<const Bar*> pc = doc::tl_bars_for_node(d_, c_.view, parent->id);
+      std::vector<const Bar*> pc = doc::tl_bars_for_node(d_, c_.view, sid(parent->id));
       if (!pc.empty()) {
         own = std::move(pc);
         break;
@@ -315,9 +330,9 @@ std::vector<const Bar*> Walk::governing_clips(const std::string& id) {
 }
 
 std::optional<double> Walk::retimed_at(const std::string& id, double tt) {
-  if (!has_retime(d_, id)) return std::nullopt;
+  if (!has_retime(d_, sid(id))) return std::nullopt;
   const std::optional<RetimeClip> clip = retime_clip_of(pick_retime_bar(governing_clips(id), motion::js::round(tt * fps_)), fps_);
-  return retimed_chain_time(RetimeReader{d_, c_.expr, c_.cache}, id, tt, clip);
+  return retimed_chain_time(RetimeReader{d_, c_.expr, c_.cache}, sid(id), tt, clip);
 }
 
 double Walk::retimed_source_at(const std::string& id, double tt) {
@@ -339,7 +354,7 @@ double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrap
       if (is_precomp_node(*p)) chain.push_back(p);
       pid = p->parent;
     }
-    if (std::ranges::any_of(chain, [&](const doc::Node* pc) { return has_retime(d_, pc->id); })) {
+    if (std::ranges::any_of(chain, [&](const doc::Node* pc) { return has_retime(d_, sid(pc->id)); })) {
       for (auto it = chain.rbegin(); it != chain.rend(); ++it) tt = retimed_at((*it)->id, tt).value_or(tt);
     }
   }
@@ -388,7 +403,7 @@ double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrap
     if (const auto cfg = doc::read_node_layer_time(*n)) {
       double s0 = 0;
       double s1 = 1;
-      if (const auto span = doc::anim_time_span(d_, id)) {
+      if (const auto span = doc::anim_time_span(d_, sid(id))) {
         s0 = span->start;
         s1 = span->end;
       } else if (!clips.empty() && clips[0]->clip.duration > 0) {
@@ -438,7 +453,9 @@ std::optional<xf::Local2D> Walk::local_of(const std::string& id) {
 
 std::optional<std::string> Walk::parent_of(const std::string& id) const {
   const doc::Node* n = node(id);
-  if (n == nullptr) return std::nullopt;
+  // A comp instance's top clones are authored in the referenced comp's own
+  // space: the transform chain stops at them (isCompInstanceRoot).
+  if (n == nullptr || wn_.instance_root(id)) return std::nullopt;
   return n->parent;
 }
 
@@ -616,15 +633,20 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
   return resolved;
 }
 
-RLayer Walk::precomp_container(const doc::Node& group) {
+RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>* nested) {
   const Values& gv = values_of(group.id);
   const Base gb = read_base(group);
   RLayer l;
   l.id = group.id;
   l.kind = LayerKind::shape;
   l.effects = effects_of(group, gv, std::nullopt, &l);
-  if (doc::read_comp_ref(group)) unported(l, group, "composition instances");
-  l.mask = apply_mask_property_tracks(read_node_mask_at(group, remap(group.id, t_, false)), gv);
+  // A comp INSTANCE has an intrinsic frame: the referenced comp's size, at the
+  // instance's own world transform, cropped to it (comp_instance.cpp).
+  const std::optional<std::string> ref = doc::read_comp_ref(group);
+  const std::optional<std::pair<double, double>> refSize = ref ? comp_size_of(d_, *ref) : std::nullopt;
+  const bool isInstance = refSize.has_value();
+  const Json authored = apply_mask_property_tracks(read_node_mask_at(group, remap(group.id, t_, false)), gv);
+  l.mask = isInstance ? instance_frame_mask(authored, group.id, refSize->first, refSize->second) : authored;
   l.blend = read_node_blend(group);
   l.preserveTransparency = read_node_preserve_transparency(group);
   l.matte = read_matte_of(group);
@@ -633,13 +655,44 @@ RLayer Walk::precomp_container(const doc::Node& group) {
   l.depth = 0;
   const auto groupOpacity = gv.get("opacity");
   l.opacity = groupOpacity ? *groupOpacity / 100 : gb.opacity;
-  l.width = comp_.width;
-  l.height = comp_.height;
+  l.width = isInstance ? refSize->first : comp_.width;
+  l.height = isInstance ? refSize->second : comp_.height;
   l.fill = "#000";
   l.visible = group.visible;
   l.precompLayers = std::vector<RLayer>{};  // filled by attach_precomps once the walk is done
-  l.sourceTime = remap(group.id, t_, false);
-  if (doc::read_retime_mode(d_, group.id) != api::RetimeMode::normal) unported(l, group, "precomp time remap / retime");
+  // precompSourceTime: its own retime (Speed % / Time Remap) through the clip map.
+  l.sourceTime = retimed_source_at(group.id, t_);
+  if (nested != nullptr && *nested) {
+    l.precompLayers = std::move((*nested)->layers);  // attach_precomps leaves a sealed pass's layers alone
+    l.precompScene3d = std::move((*nested)->scene3d);
+  }
+  if (isInstance) {
+    const xf::Local2D gWorld = world_of(group.id);
+    const auto [ax0, ay0] = read_node_anchor(group);
+    l.anchorX = gv.get("anchorX").value_or(ax0);
+    l.anchorY = gv.get("anchorY").value_or(ay0);
+    l.x = gWorld.x;
+    l.y = gWorld.y;
+    l.rotation = gWorld.rotation;
+    l.scaleX = gWorld.scale_x;
+    l.scaleY = gWorld.scale_y;
+    if (doc::is_3d_enabled(group)) {
+      unported(l, group, "3D comp layer (card)");
+    } else {
+      // A comp LAYER's own motion blur: the walk's samples on its local pose,
+      // carried onto the world pose (the parent chain held still).
+      motion_samples(l, group, gb, group.id);
+      if (!l.motionSamples.empty()) {
+        LocalPose now;
+        now.x = gv.get("x").value_or(gb.x);
+        now.y = gv.get("y").value_or(gb.y);
+        now.rotation = gv.get("rotation").value_or(gb.rotation);
+        now.scaleX = gv.get("scale") ? *gv.get("scale") : gv.get("scaleX").value_or(gb.scaleX);
+        now.scaleY = gv.get("scale") ? *gv.get("scale") : gv.get("scaleY").value_or(gb.scaleY);
+        l.motionSamples = instance_world_samples(l.motionSamples, now, gWorld);
+      }
+    }
+  }
   return l;
 }
 
@@ -680,10 +733,11 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
   static constexpr std::array<std::string_view, 12> kMoves = {
       "x", "y", "rotation", "scale", "scaleX", "scaleY", "z", "rotationX", "rotationY",
       "orientationX", "orientationY", "orientationZ"};
-  const bool moves = std::ranges::any_of(kMoves, [&](std::string_view p) { return doc::anim_is_animated(d_, id, p); });
+  const bool moves = std::ranges::any_of(
+      kMoves, [&](std::string_view p) { return !wn_.is_overridden(id, p) && doc::anim_is_animated(d_, sid(id), p); });
   // A 3D layer also moves on screen when the camera does.
   if (!moves && !(matrixAt && three_ && three_->camera_animated())) return;
-  const auto sample = [&](std::string_view prop, double tt) { return doc::anim_sample(d_, c_.expr, c_.cache, id, prop, tt); };
+  const auto sample = [&](std::string_view prop, double tt) { return anim_sample_of(id, prop, tt); };
   const double limit = cfg.adaptiveSampleLimit;
   const std::vector<double> probe = motion_blur_sample_times(t_, cfg.fps, cfg.shutterAngle, 2, cfg.shutterPhase, limit);
   double travel = 0;
@@ -824,7 +878,7 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   l.textStrokePaint = text_stroke_paint(n, a);                                     // text_port.cpp
   const Json axes = doc::read_font_axes_prop(n);
   if (axes.is_object() && !axes.obj().empty()) unported(l, n, "variable font axes");
-  if (doc::anim_has_expr(d_, n.id, "text.source") || doc::anim_expr(d_, n.id, "sourceText") != nullptr) {
+  if (doc::anim_has_expr(d_, sid(n.id), "text.source") || doc::anim_expr(d_, sid(n.id), "sourceText") != nullptr) {
     unported(l, n, "source text expressions");
   }
 }
@@ -832,10 +886,19 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
 void Walk::build_node(const doc::Node& n) {
   const std::string kind = n.kind();
   if (kind == "comp") {
+    // A SEALED instance renders the referenced comp through its own recursive
+    // pass; a COLLAPSED one was expanded into this walk and draws nothing itself.
     const auto ref = doc::read_comp_ref(n);
     if (ref && !doc::read_comp_collapse(n)) {
-      emit_stub(n);
-      errors_.push_back({n.id, n.name, "unported", "composition instances (nested compositions)"});
+      if (!fullBuild_.contains(n.id)) {
+        emit_stub(n);
+      } else {
+        std::optional<NestedComp> nested = nested_comp_layers(c_, comp_, fps_, n, *ref, retimed_source_at(n.id, t_), mb_);
+        if (nested) {
+          for (LayerError& e : nested->errors) errors_.push_back(std::move(e));
+        }
+        emit(precomp_container(n, &nested), n);
+      }
     }
     return;
   }
@@ -879,7 +942,7 @@ void Walk::build_node(const doc::Node& n) {
   const bool isSolid = fx.at("solid").is_bool() && fx.at("solid").b();
   const doc::Component* geom = n.comp("Geometry");
   const Json staticPath = geom != nullptr ? geom->props.at("points") : Json();
-  const Json liveOutline = live_path_points(d_, n.id, layerTimeNow);
+  const Json liveOutline = live_path_points(d_, sid(n.id), layerTimeNow);
   Json staticSubpaths = liveOutline.is_undefined() && geom != nullptr ? geom->props.at("subpaths") : Json();
   Json pathPoints = !liveOutline.is_undefined() ? liveOutline
                     : !staticPath.is_undefined() && !staticPath.is_null() ? staticPath
@@ -957,7 +1020,7 @@ void Walk::build_node(const doc::Node& n) {
       if (a.has("fillRadius")) fillPaint.set("radius", Json::number(*a.get("fillRadius")));
     }
     if (ft == "linear" || ft == "radial") {
-      if (const doc::DataTrack* st = doc::anim_data_track(d_, n.id, "fill.stops")) {
+      if (const doc::DataTrack* st = doc::anim_data_track(d_, sid(n.id), "fill.stops")) {
         if (const auto live = doc::sample_data_track(*st, layerTimeNow);
             live && live->is_array() && !live->arr().empty() && live->arr()[0].is_object() && live->arr()[0].has("pos")) {
           Json stops = Json::array();
@@ -1089,7 +1152,7 @@ void Walk::build_node(const doc::Node& n) {
   l.isAdjustment = read_node_adjustment(n);
   l.draft = read_node_quality_s(n) == "draft";
   if (doc::read_node_paint(n)) {  // paint_port.cpp: the frame's live strokes
-    LayerPaint lp = resolve_layer_paint(d_, n, layerTimeNow, a);
+    LayerPaint lp = resolve_layer_paint(d_, n, layerTimeNow, a, sid(n.id));
     for (std::string& why : lp.unported) unported(l, n, std::move(why));
     // Text draws paint into its raster with a paint pad, footage bakes it (E4): shapes only here.
     if (!lp.paint.is_undefined() && layerKind != LayerKind::shape) unported(l, n, "paint strokes on text / footage layers");
@@ -1099,8 +1162,7 @@ void Walk::build_node(const doc::Node& n) {
       !fx.at("contentAwareFill").at("frames").arr().empty()) {
     unported(l, n, "content-aware fill");
   }
-  l.sourceTime = remap(n.id, t_, false);
-  if (doc::read_retime_mode(d_, n.id) != api::RetimeMode::normal) unported(l, n, "time remap / speed retime");
+  l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
   if (layerKind == LayerKind::video) {
     if (const auto cfg = doc::read_node_layer_time(n); cfg && (cfg->frameBlend == "mix" || cfg->frameBlend == "pixelMotion")) {
       unported(l, n, "frame blending");
@@ -1146,7 +1208,7 @@ void Walk::build_node(const doc::Node& n) {
   // Text (`wrappedLayerText`: point text is the raw string; paragraph text is reported above).
   if (layerKind == LayerKind::text || base.text) {
     std::optional<std::string> txt = base.text;
-    if (const doc::DataTrack* st = doc::anim_data_track(d_, n.id, "text.source")) {
+    if (const doc::DataTrack* st = doc::anim_data_track(d_, sid(n.id), "text.source")) {
       if (const auto live = doc::sample_data_track(*st, layerTimeNow); live && live->is_string()) txt = live->str();
     }
     l.text = txt;
@@ -1227,7 +1289,7 @@ void Walk::build_node(const doc::Node& n) {
       ri.pathPoints = l.pathPoints.is_array() ? &l.pathPoints : nullptr;
       ri.pathOpen = l.pathOpen;
       ri.rigT = l.sourceTime.value_or(t_);
-      RigResult rig = build_rig_mesh_for(d_, c_.expr, c_.cache, n.id, ri);
+      RigResult rig = build_rig_mesh_for(d_, c_.expr, c_.cache, sid(n.id), ri);
       for (std::string& what : rig.unported) unported(l, n, std::move(what));
       if (rig.unported.empty()) l.deformedMesh = std::move(rig.mesh);
     }
@@ -1298,10 +1360,12 @@ void Walk::build_node(const doc::Node& n) {
 }
 
 Snapshot Walk::run() {
-  nodes_ = flatten_composition(d_, comp_.rootId);
+  // Collapsed instances expand into clones; a sealed pass applies its overrides (comp_instance.cpp).
+  wn_ = expand_walk_nodes(d_, flatten_composition(d_, comp_.rootId), comp_.rootId, comp_.compOverrides);
+  nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
-  fps_ = doc::comp_fps(d_, comp_.rootId);
+  fps_ = comp_.fps ? *comp_.fps : doc::comp_fps(d_, comp_.rootId);
   // The camera, DOF and lights resolve before the walk (buildSnapshot order).
   three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);
   three_->setup(nodes_);

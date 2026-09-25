@@ -19,6 +19,7 @@
 #include "scene_math.hpp"
 #include "light_wash.hpp"
 #include "threed_frame.hpp"
+#include "precomp_frame.hpp"
 
 namespace premation::scene {
 namespace {
@@ -227,15 +228,17 @@ bool has_ordered_paint(const RLayer& l) {
 class Flattener {
  public:
   Flattener(double rasterScale, double fps) : rasterScale_(rasterScale), fps_(fps) {}
-  void flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity, std::vector<api::Renderable>& out);
+  /// `placement` = flattenLayers' placement3d: the 2D placement the camera these layers draw through carries.
+  void flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity, std::vector<api::Renderable>& out,
+               const Mat3* placement = nullptr);
   [[nodiscard]] std::vector<TextureRequest> take_textures() noexcept { return std::move(textures_); }
   [[nodiscard]] std::vector<std::pair<std::string, std::string>> take_unported() noexcept { return std::move(unported_); }
 
  private:
   std::vector<TextureRequest> textures_;
   std::vector<std::pair<std::string, std::string>> unported_;
-  api::Renderable layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
-  api::Renderable precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
+  api::Renderable layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
+  api::Renderable precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
   std::optional<api::Renderable> adjustment_to_renderable(const RLayer& l);
   void feed(const RLayer& l);
   static bool needs_isolation(const RLayer& l);
@@ -245,7 +248,9 @@ class Flattener {
 
 bool Flattener::needs_isolation(const RLayer& l) {
   if (!l.precompLayers || l.precompLayers->empty()) return false;
+  if (l.precompScene3d) return true;  // its own 3D scope
   if (l.motionSamples.size() > 1) return true;
+  if (l.quad3d) return true;  // a 3D comp card draws from a flat offscreen
   if (l.blend != "normal") return true;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) return true;
   if (l.paint.is_object() && !l.paint.at("strokes").arr().empty()) return true;
@@ -431,7 +436,8 @@ void Flattener::feed(const RLayer& l) {
   append_lut_textures(l, textures_);  // lut:<id> / cubelut:<id> (lut_port.cpp)
 }
 
-api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
+api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity,
+                                                const Mat3* placement) {
   const double pad = raster_padding(l);
   const int adv = advanced_blend_id(l.blend);
   Mat3 model;
@@ -563,31 +569,60 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   if (baked && (l.kind == LayerKind::image || l.kind == LayerKind::video)) {
     unported_.emplace_back(l.id, "CPU-baked effect chain on footage (E4)");
   }
-  apply_three_d(l, parent, r);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
+  apply_three_d(l, parent, r, placement);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
   return r;
 }
 
-api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
-  // precompChildParent(layer, parentMatrix).
+api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity,
+                                                  const Mat3* placement) {
+  // A 3D comp CARD (`quad3d`) draws its comp flat through a homography onto the
+  // projected corners; a degenerate quad falls back to the screen-space container.
+  const std::optional<Mat3> cardModel = l.quad3d ? square_to_quad(*l.quad3d) : std::nullopt;
+  // precompChildParent(layer, parentMatrix) (identity inside a card).
   const double rad = (l.rotation * std::numbers::pi) / 180;
   const Mat3 tOrigin = translation(-l.width / 2 - l.anchorX, -l.height / 2 - l.anchorY);
-  const Mat3 childParent = mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
+  const Mat3 childParent =
+      cardModel ? Mat3::identity() : mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
   api::Renderable r;
   std::vector<api::Renderable> inner;
-  if (l.precompLayers) flatten(*l.precompLayers, childParent, 1, inner);  // callers pass only precomps with layers
-  const Mat3 model = mat3_mul(parent, center_model(l));
+  // A sealed comp with its own 3D frame draws through its own camera, which carries
+  // `childParent`; a card's children are drawn in the card, not the scene.
+  const Mat3* innerPlacement = l.precompScene3d ? &childParent : cardModel ? nullptr : placement;
+  if (l.precompLayers) flatten(*l.precompLayers, childParent, 1, inner, innerPlacement);  // callers pass only precomps with layers
+  const Mat3 model = cardModel ? mat3_mul(parent, *cardModel) : mat3_mul(parent, center_model(l));
   const int adv = advanced_blend_id(l.blend);
   r.id = l.id;
   r.kind = api::RenderableKind::image;
   r.model_matrix = mat_wire(model);
   r.bounds = bounds_of(model);
+  if (cardModel) {  // the AABB of the four projected corners
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    double minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+    for (std::size_t i = 0; i < 8; i += 2) {
+      const auto& p = parent.m;
+      const double qx = (*l.quad3d)[i];
+      const double qy = (*l.quad3d)[i + 1];
+      // Mat3.transformPoint: float32 matrix entries, float64 arithmetic.
+      const double x = static_cast<double>(p[0]) * qx + static_cast<double>(p[3]) * qy + p[6];
+      const double y = static_cast<double>(p[1]) * qx + static_cast<double>(p[4]) * qy + p[7];
+      minX = std::min(minX, x);
+      minY = std::min(minY, y);
+      maxX = std::max(maxX, x);
+      maxY = std::max(maxY, y);
+    }
+    r.bounds.x = minX;
+    r.bounds.y = minY;
+    r.bounds.width = maxX - minX;
+    r.bounds.height = maxY - minY;
+  }
   r.opacity = parentOpacity * l.opacity;
   r.blend = adv > 0 ? api::RenderBlendMode::normal : (l.blend == "add" ? api::RenderBlendMode::add : api::RenderBlendMode::normal);
   if (adv > 0) r.advanced_blend = adv;
   r.preserve_transparency = l.preserveTransparency;
   if (l.backdropBlur && *l.backdropBlur > 0) r.backdrop_blur = *l.backdropBlur;
   if (l.glass) r.glass = to_renderable_glass(*l.glass);
-  r.color = to_color({1, 1, 1, 1});
+  // Accepts Lights on a 3D card: the per-quad gain as the tint.
+  r.color = l.lighting ? to_color({(*l.lighting)[0], (*l.lighting)[1], (*l.lighting)[2], 1}) : to_color({1, 1, 1, 1});
   r.texture_key = "precomp:" + l.id;
   if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) {
     r.mask_texture_key = "mask:" + l.id;  // fed with the layer (feed)
@@ -610,12 +645,21 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
     }
   }
   r.effects = extract_spatial_effects(l, false);
-  r.precomp = api::RenderPrecompFrame{};
+  r.precomp = precomp_frame(l, childParent, cardModel.has_value());  // precompCamera3d / flat (precomp_frame.cpp)
   r.precomp_children = std::move(inner);
   if (l.motionSamples.size() > 1) {
     const double pad = raster_padding(l);
     const Origin so = quad_origin(l, pad);
     for (const MotionSample& s : l.motionSamples) {
+      if (cardModel && s.quad) {  // a 3D card's sample is its own perspective quad
+        if (const auto sq = square_to_quad(*s.quad)) {
+          api::RenderMotionSample ms;
+          ms.model_matrix = mat_wire(mat3_mul(parent, *sq));
+          ms.opacity = parentOpacity * s.opacity;
+          r.motion_samples.push_back(std::move(ms));
+          continue;
+        }
+      }
       const double srad = (s.rotation * std::numbers::pi) / 180;
       const double w = (l.width + 2 * pad) * s.scaleX;
       const double h = (l.height + 2 * pad) * s.scaleY;
@@ -660,7 +704,7 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
 }
 
 void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, double parentOpacity,
-                        std::vector<api::Renderable>& out) {
+                        std::vector<api::Renderable>& out, const Mat3* placement) {
   for (const RLayer& l : layers) {
     const std::size_t mark = out.size();
     try {
@@ -668,8 +712,8 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
       feed(l);
       if (l.isMatteSource) {
         api::Renderable src = l.precompLayers && !l.precompLayers->empty() && needs_isolation(l)
-                                  ? precomp_to_renderable(l, parent, parentOpacity)
-                                  : layer_to_renderable(l, parent, parentOpacity);
+                                  ? precomp_to_renderable(l, parent, parentOpacity, placement)
+                                  : layer_to_renderable(l, parent, parentOpacity, placement);
         src.matte_source = true;
         out.push_back(std::move(src));
         continue;
@@ -690,15 +734,15 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
       }
       if (l.precompLayers && !l.precompLayers->empty()) {
         if (needs_isolation(l)) {
-          out.push_back(precomp_to_renderable(l, parent, parentOpacity));
+          out.push_back(precomp_to_renderable(l, parent, parentOpacity, placement));
           continue;
         }
         const double rad = (l.rotation * std::numbers::pi) / 180;
         const Mat3 tOrigin = translation(-l.width / 2 - l.anchorX, -l.height / 2 - l.anchorY);
         const Mat3 childParent = mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
-        flatten(*l.precompLayers, childParent, parentOpacity * l.opacity, out);
+        flatten(*l.precompLayers, childParent, parentOpacity * l.opacity, out, placement);
       } else {
-        out.push_back(layer_to_renderable(l, parent, parentOpacity));
+        out.push_back(layer_to_renderable(l, parent, parentOpacity, placement));
       }
     } catch (const std::exception& e) {
       out.resize(mark);

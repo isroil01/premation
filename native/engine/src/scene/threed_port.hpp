@@ -50,6 +50,9 @@ class Scene3DHost {
   [[nodiscard]] virtual std::optional<std::string> parent3d_of(const std::string& id) const = 0;
   /// `isLiveAt(id)`.
   virtual bool live3d(const std::string& id) = 0;
+  /// `srcId(id)`: the node whose animation a walked id samples (a comp-instance
+  /// clone samples its source node's tracks).
+  [[nodiscard]] virtual const std::string& anim_id3d(const std::string& id) const { return id; }
 };
 
 /// One 3D layer's resolved state (the `is3D` locals of the layer walk).

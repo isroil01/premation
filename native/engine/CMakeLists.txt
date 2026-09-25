@@ -818,6 +818,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/lut_port.cpp          # D2w effects: colour LUT strips (colorLut.ts, cubeLut.ts)
     src/scene/bake_chain.cpp        # D2w effects: a baked raster's mask + stack handed to engine_effect_chain
     src/scene/effect_handoff.cpp    #   the path / paint effects' resolved geometry (buildSnapshot)
+  src/scene/comp_instance.cpp     # D2w time/comp: nested + collapsed composition instances
+  src/scene/precomp_frame.cpp     #   their frame side (sealed 3D scopes, the 3D card)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )

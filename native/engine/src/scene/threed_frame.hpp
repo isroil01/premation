@@ -16,7 +16,7 @@ namespace premation::scene {
 
 /// `layerToRenderable`'s 3D tail: `threeD` (quad model or extruded mesh), then
 /// castsShadow, then the Accepts-Lights routing. `parent` is the flatten parent.
-void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r);
+void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r, const Mat3* placement = nullptr);
 
 /// FrameScene.ts `depthEligible3D(r)`.
 [[nodiscard]] bool depth_eligible_3d(const api::Renderable& r);
