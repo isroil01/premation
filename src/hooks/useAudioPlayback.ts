@@ -25,6 +25,7 @@ import { readAudioLayers } from '@core/audio/audioScene';
 import { playbackHealth } from '@core/rendering/videoPlaybackDiag';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { previewIncludesAudio, usePreviewBehaviorStore } from '@stores/previewBehaviorStore';
+import { useEngineViewportActive } from '@hooks/useEngineViewport';
 
 /** During playback, refresh the layer list at most this often even with no
  *  revision bump — catches live edits (keyframed levels) whose paths don't
@@ -50,6 +51,10 @@ export function useAudioPlayback(): void {
   // would not reach the engine until the next playhead tick — and while paused,
   // never.
   const includeAudio = usePreviewBehaviorStore((s) => s.includeAudio);
+  // D5: when the C++ engine owns the document it plays the audio itself (E2,
+  // `play{audio:true}`, the audio clock paces the picture) — the page's
+  // WebAudio mix would be a second copy, out of sync.
+  const engineAudio = useEngineViewportActive();
 
   // readAudioLayers() walks the ENTIRE scene graph and linear-scans the asset
   // list — running it on every playhead mirror (once per comp frame, 30-60x/s)
@@ -82,8 +87,8 @@ export function useAudioPlayback(): void {
     // `includeAudio` is the Preview panel's switch (AE's Mute Audio / Include
     // Audio). Distinct from the master mute on the engine, which the user flips
     // to silence monitoring without changing what a preview is FOR.
-    audioEngine.sync(playing && !mutedRef.current && previewIncludesAudio(), time, entry.layers);
-  }, [playing, time, rev, clipRev, assets, compositionId, includeAudio]);
+    audioEngine.sync(playing && !engineAudio && !mutedRef.current && previewIncludesAudio(), time, entry.layers);
+  }, [playing, time, rev, clipRev, assets, compositionId, includeAudio, engineAudio]);
 
   useEffect(() => () => audioEngine.sync(false, 0, []), []);
 }

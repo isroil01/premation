@@ -883,7 +883,7 @@ api::CommandResult Session::run_control(const api::Command& cmd, api::Origin ori
 // ── queries ─────────────────────────────────────────────────────────────────
 
 api::QueryResult Session::run_query(const api::Query& q) {
-  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_};
+  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}};
   c.revision = revision_;
   c.projectPath = projectPath_;
   c.dirty = revision_ != savedRevision_;
@@ -911,7 +911,12 @@ api::QueryResult Session::run_query(const api::Query& q) {
     st.gpu_frame_ms = rc.gpuFrameMs;
     st.fps = rc.fps;
     st.dropped_frames = rc.dropped;
+    st.cpu_frame_ms = buildMs_;
     return st;
+  };
+  c.layerErrors = [this](const std::string& comp) {
+    if (!comp.empty() && comp != layerErrorsComp_) return std::vector<api::LayerError>{};
+    return layerErrors_;
   };
   // Queries never write the document: bar lookups come from an index for the
   // duration (timeline.hpp TlReadScope).
@@ -1125,6 +1130,7 @@ void Session::emit_stats(Clock::time_point now) {
   const RenderCounters c = sink_.counters();
   api::RenderStats st;
   st.gpu_frame_ms = c.gpuFrameMs;
+  st.cpu_frame_ms = buildMs_;
   st.fps = c.fps;
   st.dropped_frames = c.dropped + clockDropped_;
   std::vector<api::Event> ev;
@@ -1182,7 +1188,11 @@ void Session::submit_frame(std::uint32_t clockDropped) {
     // document through the render graph. Per-layer failures and features
     // outside the port come back as layerErrors, never as a blank frame.
     std::vector<api::LayerError> errors;
+    const auto t0 = Clock::now();
     job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, *c, time_, viewport_, playing_, errors);
+    // Measurement only (RenderStats.cpuFrameMs): an exponential moving average.
+    const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    buildMs_ = buildMs_ <= 0 ? ms : buildMs_ + (ms - buildMs_) * 0.2;
     announce_layer_errors(*c, std::move(errors));
   }
   // The scene's quad vector changes hands (core → render thread) once per

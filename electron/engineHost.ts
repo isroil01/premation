@@ -258,6 +258,8 @@ export interface EngineHostOptions {
   nativePluginDir?: string;
   /** G1: the plugin crash journal — a plugin that killed the engine is quarantined at the next start. */
   nativePluginJournal?: string;
+  /** F2 / D5: the recovery copy the engine-owned document's autosave writes (reported with ownsDocument). */
+  recoveryPath?: string;
   log?(line: string): void;
 }
 
@@ -281,6 +283,8 @@ export interface EngineHostStatusReply {
   fallbackReason?: string;
   /** F2: the engine owns the document (the page's lifecycle goes through engine requests). */
   ownsDocument?: boolean;
+  /** F2 / D5: where autosave writes the recovery copy (with ownsDocument). */
+  recoveryPath?: string;
 }
 
 export class EngineHost {
@@ -377,7 +381,7 @@ export class EngineHost {
       state: sup.state,
       ...(w ? { engine: w.engine, engineVersion: w.engineVersion, revision: w.revision } : {}),
       ...(this.fallbackReason ? { fallbackReason: this.fallbackReason } : {}),
-      ...(this.o.ownsDocument ? { ownsDocument: true } : {}),
+      ...(this.o.ownsDocument ? { ownsDocument: true, ...(this.o.recoveryPath ? { recoveryPath: this.o.recoveryPath } : {}) } : {}),
     };
   }
 

@@ -474,7 +474,11 @@ struct Q {
   }
   api::QueryResult operator()(const api::GetLayerErrors& q) const {
     if (q.comp) require_comp(d, *q.comp);
-    return query_result_for<api::GetLayerErrors>(api::LayerErrorList{});
+    // D5: the set the frame builder last announced (a UI that subscribed after
+    // the `layerErrors` event can still ask); empty without a frame builder.
+    api::LayerErrorList out;
+    if (c.layerErrors) out.errors = c.layerErrors(q.comp.value_or(""));
+    return query_result_for<api::GetLayerErrors>(std::move(out));
   }
   api::QueryResult operator()(const api::GetJobs&) const { return query_result_for<api::GetJobs>(api::JobList{}); }
   api::QueryResult operator()(const api::GetRenderQueue&) const {

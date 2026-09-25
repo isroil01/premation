@@ -89,6 +89,8 @@ import { pluginKeyDown } from './pluginDrawOverlay';
 import { TransportBar } from './TransportBar';
 import { ViewportHud } from './ViewportHud';
 import { EngineSurface } from '@components/EngineSurface/EngineSurface';
+import { useEngineViewportActive } from '@hooks/useEngineViewport';
+import { EngineUnportedNotice } from './EngineUnportedNotice';
 import { CompareOverlay } from './CompareOverlay';
 import { RotoBrushOverlay } from './RotoBrushOverlay';
 import { InlineAiPrompt } from './InlineAiPrompt';
@@ -315,6 +317,8 @@ export function WorkspaceViewport({
     getWorkspaceController().requestRender();
   }, [workspaceMode]);
 
+  // D5: the C++ engine's frames are the viewport (owner flag on, no fallback).
+  const engineViewport = useEngineViewportActive();
   const stageRef   = useRef<HTMLDivElement | null>(null);
   const canvasRef  = useRef<HTMLCanvasElement | null>(null);
   // RAM-preview blit layer — see `.cacheCanvas`. Sits between the content and
@@ -681,6 +685,10 @@ export function WorkspaceViewport({
             ref={canvasRef}
             className={cn(styles.canvas, displayMode !== 'shaded' && styles.canvasHidden)}
           />
+          {/* D5: when the C++ engine owns the document its frames ARE the
+              picture — right after the (idle) TypeScript canvas, under the
+              cache / onion / overlay canvases and every handle below. */}
+          {engineViewport && <EngineSurface mode="viewport" />}
           <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
           <canvas ref={onionRef} className={styles.onionCanvas} data-workspace-onion="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
@@ -751,8 +759,9 @@ export function WorkspaceViewport({
           <ViewportHud />
           {/* The C++ engine's picture, beside (not instead of) this viewport —
               renders nothing unless the process backend is on
-              (PREMATION_ENGINE=process; NATIVE_CORE_PLAN C3). */}
-          <EngineSurface />
+              (PREMATION_ENGINE=process; NATIVE_CORE_PLAN C3). In owner mode
+              it is the viewport instead (above), plus what it cannot draw yet. */}
+          {engineViewport ? <EngineUnportedNotice /> : <EngineSurface />}
           {/* Ctrl+Enter: an AI prompt anchored to the selection's screen rect. */}
           <InlineAiPrompt />
         </div>

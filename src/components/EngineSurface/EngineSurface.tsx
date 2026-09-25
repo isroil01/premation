@@ -1,25 +1,35 @@
 /**
- * EngineSurface — the C++ engine's frames in the app (NATIVE_CORE_PLAN §5 C3,
- * docs/VIEWPORT_ROUTE.md route C).
+ * EngineSurface — the C++ engine's frames in the app (NATIVE_CORE_PLAN §5 C3 /
+ * D5, docs/VIEWPORT_ROUTE.md route C).
  *
- * Mounted beside today's viewport, and renders nothing unless the process
- * backend exists (`processEngine()`: PREMATION_ENGINE=process). It
- *   - tells the engine its size: `setViewport` with CSS size × devicePixelRatio
- *     on mount, on resize (ResizeObserver) and on a DPR change (moving the
- *     window to another display, zoom), and again after an engine restart;
- *     `closeViewport` on unmount;
- *   - receives each finished frame as a VideoFrame over the preload's
- *     sharedTexture receiver and draws it with WebGPU
- *     `importExternalTexture` (zero copy), newest frame wins, at most one draw
- *     per animation frame; every frame is released exactly once, after the
- *     GPU is done with it, so the engine's ring slot comes back.
+ * Two modes:
  *
- * No React render per frame (CLAUDE.md): frames, stats and the HUD text go
- * through refs; React renders only when the client or a notice changes.
+ *   'beside'    (C3; the process backend is on, the TypeScript engine owns the
+ *               document) a picture-in-picture panel next to today's viewport,
+ *               the comp fitted into it. It replaces nothing.
+ *   'viewport'  (D5; the engine owns the document, engineOwnership.ts) THE
+ *               viewport: it fills the stage in place of the TypeScript canvas,
+ *               under the page's overlays, and follows the page's camera —
+ *               `setViewport{zoom = view.scale, pan = the comp point at the
+ *               stage centre (viewToCamera), CSS size, DPR}` whenever the
+ *               workspace's render tick sees the camera or the size change.
+ *
+ * Both
+ *   - tell the engine the size on mount / resize (ResizeObserver) / a DPR change,
+ *     and again after an engine restart; `closeViewport` on unmount;
+ *   - receive each finished frame as a VideoFrame over the preload's
+ *     sharedTexture receiver and draw it with WebGPU `importExternalTexture`
+ *     (zero copy), newest frame wins, at most one draw per animation frame;
+ *     every frame is released exactly once, after the GPU is done with it, so
+ *     the engine's ring slot comes back.
+ *
+ * No React render per frame (CLAUDE.md): frames, stats, the camera and the HUD
+ * text go through refs and subscriptions; React renders only when the client,
+ * a notice or the "no frame yet" state changes.
  */
 
-import { useEffect, useRef, useSyncExternalStore } from 'react';
-import type { EngineFrameMeta, ProcessEngineClient } from '@motion/engine-api';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { ChannelView, EngineFrameMeta, EventBatch, PreviewResolution as EnginePreviewResolution, ProcessEngineClient } from '@motion/engine-api';
 import {
   createAppProcessEngine,
   lastProcessEngineNotice,
@@ -28,10 +38,16 @@ import {
   processEngineEnabled,
   subscribeProcessEngine,
 } from '@core/engine/process/processEngine';
+import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { useGuidesStore } from '@stores/guidesStore';
+import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
+import { viewportHudStats } from '@stores/viewportDisplayStore';
 import styles from './EngineSurface.module.css';
 
 /** The engine viewport id this surface owns. */
 export const ENGINE_SURFACE_VIEWPORT = 1;
+
+export type EngineSurfaceMode = 'beside' | 'viewport';
 
 // ── the WebGPU members this file uses (typed locally; lib.dom has no WebGPU) ──
 
@@ -80,8 +96,9 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
   return textureSampleBaseClampToEdge(tex, samp, v.uv);
 }`;
 
-/** What the real-app harness reads (dev): `window.__premationEngineSurface`. */
+/** What the real-app harness reads: `window.__premationEngineSurface`. */
 export interface EngineSurfaceStats {
+  mode: EngineSurfaceMode;
   received: number;
   drawn: number;
   superseded: number;
@@ -90,14 +107,23 @@ export interface EngineSurfaceStats {
   lastFrame: number;
   /** Engine render done → drawn in this page, ms (measurement only). */
   lastLatencyMs: number;
+  /** The engine's render of the last drawn frame (render thread, GPU complete), ms. */
+  lastRenderMs: number;
+  /** The engine's frame build (document → FrameScene), moving average, ms (renderStatsUpdated). */
+  engineBuildMs: number;
+  /** performance.now() when the last frame was drawn (edit → frame latency, harness). */
+  lastDrawnAt: number;
   viewportsSent: number;
-  lastViewport: { width: number; height: number; dpr: number } | null;
+  lastViewport: { width: number; height: number; dpr: number; zoom: number; panX: number; panY: number } | null;
   errors: string[];
 }
 
 type Pending = { frame: VideoFrame; meta: EngineFrameMeta; release: () => void };
 
-export function EngineSurface(): JSX.Element | null {
+const CHANNEL: Record<string, ChannelView> = { rgb: 'rgb', red: 'red', green: 'green', blue: 'blue', alpha: 'alpha' };
+const RESOLUTION: Record<PreviewResolution, EnginePreviewResolution> = { 1: 'full', 2: 'half', 3: 'third', 4: 'quarter' };
+
+export function EngineSurface({ mode = 'beside' }: { mode?: EngineSurfaceMode }): JSX.Element | null {
   const client = useSyncExternalStore(subscribeProcessEngine, processEngine, () => null);
   const notice = useSyncExternalStore(subscribeProcessEngine, lastProcessEngineNotice, () => null);
   useEffect(() => {
@@ -114,7 +140,7 @@ export function EngineSurface(): JSX.Element | null {
     };
   }, []);
   if (!client) return null;
-  return <EngineSurfaceInner client={client} notice={notice ? noticeText(notice) : null} />;
+  return <EngineSurfaceInner key={mode} client={client} mode={mode} notice={notice ? noticeText(notice) : null} />;
 }
 
 function noticeText(n: NonNullable<ReturnType<typeof lastProcessEngineNotice>>): string {
@@ -122,20 +148,25 @@ function noticeText(n: NonNullable<ReturnType<typeof lastProcessEngineNotice>>):
   return `Engine restarted (${n.cause}) · ${n.replayed} requests replayed in ${n.ms} ms`;
 }
 
-function EngineSurfaceInner({ client, notice }: { client: ProcessEngineClient; notice: string | null }): JSX.Element {
+function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineClient; mode: EngineSurfaceMode; notice: string | null }): JSX.Element {
   const frameBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hudRef = useRef<HTMLSpanElement>(null);
+  // Viewport mode: a status line until the first frame lands (never a blank
+  // stage with no explanation). One React render when it changes.
+  const [firstFrame, setFirstFrame] = useState(false);
+  const [waitingLong, setWaitingLong] = useState(false);
 
   useEffect(() => {
     const box = frameBoxRef.current;
     const canvas = canvasRef.current;
     const bridge = processEngineBridge();
     if (!box || !canvas || !bridge?.onFrame) return undefined;
+    const isViewport = mode === 'viewport';
 
     const stats: EngineSurfaceStats = {
-      received: 0, drawn: 0, superseded: 0, fps: 0, lastRevision: 0, lastFrame: 0, lastLatencyMs: 0,
-      viewportsSent: 0, lastViewport: null, errors: [],
+      mode, received: 0, drawn: 0, superseded: 0, fps: 0, lastRevision: 0, lastFrame: 0, lastLatencyMs: 0,
+      lastRenderMs: 0, engineBuildMs: 0, lastDrawnAt: 0, viewportsSent: 0, lastViewport: null, errors: [],
     };
     (window as unknown as { __premationEngineSurface?: EngineSurfaceStats }).__premationEngineSurface = stats;
     const fail = (e: unknown): void => {
@@ -153,6 +184,8 @@ function EngineSurfaceInner({ client, notice }: { client: ProcessEngineClient; n
     let fpsCount = 0;
     let fpsSince = performance.now();
     let hudAt = 0;
+    let sawFirst = false;
+    const slowTimer = isViewport ? setTimeout(() => { if (!sawFirst && !disposed) setWaitingLong(true); }, 3000) : null;
 
     // ── GPU ──
     void (async () => {
@@ -218,12 +251,24 @@ function EngineSurfaceInner({ client, notice }: { client: ProcessEngineClient; n
         device.queue.submit([enc.finish()]);
         // The slot goes back to the engine once the GPU no longer reads it.
         device.queue.onSubmittedWorkDone().then(p.release, p.release);
+        const now = performance.now();
         stats.drawn += 1;
         stats.lastRevision = p.meta.revision;
         stats.lastFrame = p.meta.frame;
         stats.lastLatencyMs = Date.now() - p.meta.renderDoneUs / 1000;
+        stats.lastRenderMs = (p.meta.renderDoneUs - p.meta.renderStartUs) / 1000;
+        stats.lastDrawnAt = now;
+        // The viewport HUD's frame time is the engine's cost of this frame:
+        // its build (document → FrameScene) + its render (to GPU completion).
+        if (isViewport) viewportHudStats.report(stats.lastRenderMs + stats.engineBuildMs, false, now);
+        if (!sawFirst) {
+          sawFirst = true;
+          if (isViewport) {
+            setFirstFrame(true);
+            setWaitingLong(false);
+          }
+        }
         fpsCount += 1;
-        const now = performance.now();
         if (now - fpsSince >= 500) {
           stats.fps = (fpsCount * 1000) / (now - fpsSince);
           fpsCount = 0;
@@ -257,38 +302,70 @@ function EngineSurfaceInner({ client, notice }: { client: ProcessEngineClient; n
       schedule();
     });
 
-    // ── viewport size ──
-    let sizeRaf = 0;
-    const sendViewport = (): void => {
-      sizeRaf = 0;
-      if (disposed) return;
+    // ── viewport: size, camera, channel (one request in flight, latest wins) ──
+    let inFlight = false;
+    let again = false;
+    const desired = (): NonNullable<EngineSurfaceStats['lastViewport']> => {
       const r = box.getBoundingClientRect();
       const width = Math.max(1, Math.round(r.width));
       const height = Math.max(1, Math.round(r.height));
       const dpr = window.devicePixelRatio || 1;
+      if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0 };  // fit
+      // The page's camera (WorkspaceController.getView: CSS px per comp px and
+      // the comp origin on screen) → the comp point at the viewport centre.
+      const v = getWorkspaceController().getView();
+      const zoom = v.scale > 0 && Number.isFinite(v.scale) ? v.scale : 0;
+      return {
+        width, height, dpr, zoom,
+        panX: zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
+        panY: zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
+      };
+    };
+    let lastChannel = useGuidesStore.getState().channel;
+    const sendViewport = (force = false): void => {
+      if (disposed) return;
+      const d = desired();
       const last = stats.lastViewport;
-      if (last && last.width === width && last.height === height && last.dpr === dpr) return;
-      stats.lastViewport = { width, height, dpr };
+      const channel = useGuidesStore.getState().channel;
+      if (!force && last && channel === lastChannel && last.width === d.width && last.height === d.height && last.dpr === d.dpr
+        && last.zoom === d.zoom && last.panX === d.panX && last.panY === d.panY) return;
+      if (inFlight) {
+        again = true;
+        return;
+      }
+      stats.lastViewport = d;
+      lastChannel = channel;
       stats.viewportsSent += 1;
+      inFlight = true;
       void client.execute({
         type: 'setViewport',
         viewport: ENGINE_SURFACE_VIEWPORT,
-        width,
-        height,
-        devicePixelRatio: dpr,
-        zoom: 1,
-        pan: { x: 0, y: 0 },
-        channel: 'rgb',
+        width: d.width,
+        height: d.height,
+        devicePixelRatio: d.dpr,
+        zoom: d.zoom,
+        pan: { x: d.panX, y: d.panY },
+        channel: isViewport ? CHANNEL[channel] ?? 'rgb' : 'rgb',
         exposure: 0,
         transparencyGrid: false,
         displayTransform: '',
         layerRenderEffects: true,
       }).then((res) => {
         if (!res.ok) fail(`setViewport: ${res.error.code} ${res.error.message}`);
+      }).finally(() => {
+        inFlight = false;
+        if (again) {
+          again = false;
+          sendViewport();
+        }
       });
     };
+    let sizeRaf = 0;
     const requestViewport = (): void => {
-      if (!sizeRaf && !disposed) sizeRaf = requestAnimationFrame(sendViewport);
+      if (!sizeRaf && !disposed) sizeRaf = requestAnimationFrame(() => {
+        sizeRaf = 0;
+        sendViewport();
+      });
     };
     const ro = new ResizeObserver(requestViewport);
     ro.observe(box);
@@ -304,18 +381,43 @@ function EngineSurfaceInner({ client, notice }: { client: ProcessEngineClient; n
     }
     watchDpr();
     requestViewport();
+    // Viewport mode: the workspace's render tick runs whenever the camera may
+    // have moved (pan, zoom, fit, resize) — compare and send, in that frame.
+    const unRender = isViewport ? getWorkspaceController().onRender(() => sendViewport()) : null;
+    const unGuides = isViewport ? useGuidesStore.subscribe((s) => { if (s.channel !== lastChannel) sendViewport(); }) : null;
+    // Preview resolution (Full / Half / Third / Quarter) → the engine's.
+    let lastRes: PreviewResolution | null = null;
+    const sendResolution = (): void => {
+      const r = useRenderQualityStore.getState().resolution;
+      if (r === lastRes) return;
+      lastRes = r;
+      void client.execute({ type: 'setPreviewQuality', resolution: RESOLUTION[r] ?? 'full', fastPreview: 'off', draft3d: false, motionBlur: true, adaptiveFloor: 'half' });
+    };
+    const unQuality = isViewport ? useRenderQualityStore.subscribe(sendResolution) : null;
+    if (isViewport) sendResolution();
+
     // A restarted engine has no viewport until it is told again (the replay
     // restores it too; resending is cheap and makes the surface self-healing).
-    const unsub = client.subscribe((batch) => {
-      if (batch.events.some((e) => e.type === 'documentReset' && e.reason === 'engineRestarted')) {
-        stats.lastViewport = null;
-        requestViewport();
+    const unsub = client.subscribe((batch: EventBatch) => {
+      for (const e of batch.events) {
+        if (e.type === 'documentReset' && e.reason === 'engineRestarted') {
+          stats.lastViewport = null;
+          lastRes = null;
+          requestViewport();
+          if (isViewport) sendResolution();
+        } else if (e.type === 'renderStatsUpdated') {
+          stats.engineBuildMs = e.stats.cpuFrameMs;
+        }
       }
     });
 
     return () => {
       disposed = true;
+      if (slowTimer) clearTimeout(slowTimer);
       unsub();
+      unRender?.();
+      unGuides?.();
+      unQuality?.();
       ro.disconnect();
       dprQuery?.removeEventListener('change', onDpr);
       if (raf) cancelAnimationFrame(raf);
@@ -326,8 +428,21 @@ function EngineSurfaceInner({ client, notice }: { client: ProcessEngineClient; n
       void client.execute({ type: 'closeViewport', viewport: ENGINE_SURFACE_VIEWPORT });
       device?.destroy();
     };
-  }, [client]);
+  }, [client, mode]);
 
+  if (mode === 'viewport') {
+    return (
+      <div ref={frameBoxRef} className={styles.viewport} data-engine-surface="viewport" aria-hidden="true">
+        <canvas ref={canvasRef} className={styles.viewportCanvas} />
+        {!firstFrame && (
+          <div className={styles.waiting} role="status">
+            {notice ?? (waitingLong ? 'Waiting for the C++ engine’s first frame…' : '')}
+          </div>
+        )}
+        {firstFrame && notice && <div className={styles.viewportNotice} role="status">{notice}</div>}
+      </div>
+    );
+  }
   return (
     <div className={styles.surface} data-engine-surface="" aria-hidden="true">
       <div className={styles.title}>

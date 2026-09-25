@@ -98,7 +98,10 @@ void RenderThread::configure(const ViewportConfig& config) {
   {
     const std::lock_guard<std::mutex> lock(m_);
     if (config == config_) return;
+    const bool ring = ring_config_changed(config_, config);
     config_ = config;
+    // D5: a camera-only change keeps the ring (ring_config_changed).
+    if (!ring) return;
     configDirty_ = true;
   }
   cv_.notify_all();

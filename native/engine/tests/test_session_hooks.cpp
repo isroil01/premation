@@ -8,6 +8,8 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "session_harness.hpp"
@@ -215,6 +217,66 @@ TEST_CASE("session hooks: setViewport carries the page's camera to the frame bui
   v.zoom = std::numeric_limits<double>::quiet_NaN();
   REQUIRE(is_ok(h.run(cmd(v))));
   CHECK(builder.lastViewport.zoom == 0.0);
+}
+
+TEST_CASE("session hooks: a camera-only setViewport keeps the slot ring (D5)", "[session][frames]") {
+  ViewportConfig a;
+  a.viewport = 1;
+  a.width = 1280;
+  a.height = 720;
+  a.open = true;
+  a.zoom = 1.0;
+  ViewportConfig b = a;
+  b.zoom = 2.5;
+  b.panX = 100;
+  b.panY = -40;
+  b.devicePixelRatio = 2.0;
+  CHECK_FALSE(ring_config_changed(a, b));  // pan / zoom / DPR at the same physical size
+  b.width = 1281;
+  CHECK(ring_config_changed(a, b));
+  b = a;
+  b.resolution = 0.5;
+  CHECK(ring_config_changed(a, b));
+  b = a;
+  b.open = false;
+  CHECK(ring_config_changed(a, b));
+  b = a;
+  b.viewport = 2;
+  CHECK(ring_config_changed(a, b));
+}
+
+TEST_CASE("session hooks: getLayerErrors answers the set last announced (D5)", "[session][frames]") {
+  Harness h(64);
+  FakeBuilder builder;
+  builder.next = {api::LayerError{"layer_a", "unported", "glTF models", std::nullopt}};
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  const api::ItemId comp = open_comp(h);
+  const auto errors_of = [&h](std::optional<api::ItemId> c) {
+    api::GetLayerErrors q;
+    q.comp = std::move(c);
+    const api::Response r = h.ask(qry(q));
+    REQUIRE(r.outcome.kind() == api::Outcome::Kind::query);
+    const auto& qr = std::get<api::QueryResult>(r.outcome.v);
+    return std::visit(
+        [](const auto& x) -> std::vector<api::LayerError> {
+          if constexpr (std::is_same_v<std::decay_t<decltype(x)>, api::LayerErrorList>) {
+            return x.errors;
+          } else {
+            return {};
+          }
+        },
+        qr.v);
+  };
+  const auto named = errors_of(comp);
+  REQUIRE(named.size() == 1);
+  CHECK(named[0].stage == "unported");
+  CHECK(named[0].message == "glTF models");
+  CHECK(errors_of(std::nullopt).size() == 1);  // no comp = the comp last built
+
+  builder.next.clear();
+  REQUIRE(is_ok(h.run(cmd(api::Seek{kSec, api::SeekMode::exact}))));
+  CHECK(errors_of(comp).empty());
 }
 
 }  // namespace premation::test

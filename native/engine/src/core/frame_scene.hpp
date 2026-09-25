@@ -68,6 +68,17 @@ struct ViewportConfig {
   bool operator==(const ViewportConfig&) const = default;
 };
 
+/// D5: does going from `a` to `b` need a new slot ring? Only the slot
+/// geometry does (which viewport, its physical size, open/closed, the preview
+/// resolution). The camera (zoom / pan / DPR at the same physical size) is
+/// baked into each job by the frame builder, so a hand-tool drag or a wheel
+/// zoom — a setViewport per pointer move — must not re-create the shared
+/// textures (and drop every frame in flight) 60 times a second.
+[[nodiscard]] inline bool ring_config_changed(const ViewportConfig& a, const ViewportConfig& b) {
+  return a.viewport != b.viewport || a.width != b.width || a.height != b.height || a.open != b.open ||
+         a.resolution != b.resolution;
+}
+
 struct RenderCounters {
   std::uint64_t rendered = 0;
   std::uint64_t dropped = 0;     // ring full or superseded before rendering

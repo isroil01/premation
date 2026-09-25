@@ -59,6 +59,8 @@ export interface EngineHostStatus {
   fallbackReason?: string;
   /** F2: the engine owns the document — the editor's lifecycle goes through engine requests. */
   ownsDocument?: boolean;
+  /** F2 / D5: where the engine-owned document's autosave writes its recovery copy (with ownsDocument). */
+  recoveryPath?: string;
 }
 
 export type EngineWireReply =

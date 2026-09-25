@@ -71,6 +71,9 @@ import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
 import { bootEngine, shutdownEngine } from '@core/engine/engineInstance';
+import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
+import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
+import { installEngineOwnedSession } from './engineOwnedSession';
 import { commandLogRecordingEnabled } from '@core/automation/commandLog';
 import { installAutomationDevApi } from '@core/automation/devApi';
 import { createAppEnginePorts } from '@core/engine/appPorts';
@@ -2376,6 +2379,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
     };
     (async () => {
       await applyPreferencesToDocument();
+      // D5 / F2: does the C++ engine own the document in this window? Main
+      // decides (engine:status.ownsDocument); default off. A pop-out never
+      // owns anything (it mirrors the editor shell's window).
+      const ownsDocument = !isPopoutWindow() && await processEngineOwnsDocument();
+      setEngineOwnsDocument(ownsDocument);
 
       const selection = {
         get: () => useSelectionStore.getState().ids,
@@ -2917,7 +2925,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // view of the composition you already have open, and windowSync fills it
         // in from the editor shell. Seeding here is what made a popped-out Scene
         // panel list a completely different (demo) composition.
-        if (!isPopoutWindow()) {
+        // Owner mode seeds nothing: the first document is the engine's own
+        // newProject, which the page's replica receives too (engineOwnedSession).
+        if (!isPopoutWindow() && !ownsDocument) {
           try { seedDefaultScene(); } catch { /* ignore */ }
         }
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
@@ -2956,6 +2966,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // B5: the command log automation records/replays (dev builds and
             // VITE_RECORD_COMMAND_LOG=1; see core/automation/commandLog).
             recordLog: commandLogRecordingEnabled(),
+            ownsDocument,
           });
           track(() => { void shutdownEngine(); });
           // B5 automation (record/replay a session, run a script) on window.
@@ -2980,7 +2991,15 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // Dirty tracking + autosave (crash recovery). Edits mark the active
         // document dirty (amber dot); autosave persists a recovery snapshot
         // every 60s while dirty, never clearing the unsaved indicator.
-        try {
+        // Owner mode (D5 / F2): the engine's session does all three, from the
+        // mirror (engineOwnedSession.tsx) — the TypeScript bus is the replica's.
+        if (engineOwnsDocumentNow()) {
+          try {
+            await installEngineOwnedSession(track);
+          } catch (err) {
+            console.error('[boot] the engine-owned session failed to start', err);
+          }
+        } else try {
           const markDirty = (): void => {
             const s = useProjectStore.getState();
             if (s.activeTabId && !s.tabs[s.activeTabId]?.dirty) s.actions.markDirty(s.activeTabId, true);
@@ -3005,7 +3024,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         } catch { /* ignore */ }
 
         // Crash recovery: offer to restore the previous unsaved session.
-        try {
+        // (Owner mode: the engine's recovery record, offered above.)
+        if (!engineOwnsDocumentNow()) try {
           const rec = readRecovery();
           if (rec) {
             const mins = Math.max(1, Math.round((Date.now() - rec.savedAt) / 60_000));

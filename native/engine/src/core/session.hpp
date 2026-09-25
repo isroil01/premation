@@ -246,6 +246,10 @@ class Session {
   MediaClock* mediaClock_ = nullptr;
   std::vector<api::LayerError> layerErrors_;   // the set last announced (layerErrors event)
   std::string layerErrorsComp_;
+  /// D5: the frame builder's CPU time per frame (ms, moving average) — the
+  /// half of the engine's frame cost the render thread's gpuFrameMs does not
+  /// see (RenderStats.cpuFrameMs). Measurement only, never an input to pixels.
+  double buildMs_ = 0;
   api::Revision audioRevision_ = ~api::Revision{0};  // document revision the audio program was built from
   std::string audioComp_;
   bool mediaPaced_ = false;           // the last tick was paced by the audio clock
