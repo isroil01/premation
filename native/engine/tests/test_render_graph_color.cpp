@@ -124,7 +124,74 @@ TEST_CASE("a baked lattice reproduces its reference at the lattice points and in
   CHECK(run1(lut, 0.0F) == run1(lut, static_cast<float>(std::exp2(-12.0))));
 }
 
-TEST_CASE("pack lays out 8 ops of 24 floats: header (type, negative style, lattice N) + 5 rows") {
+TEST_CASE("D3 ops: log / antilog are OCIO's base-2 and base-10 renderers") {
+  Program p;
+  p.ops.push_back(log_op(1.0F));
+  CHECK(run1(p, 8.0F) == 3.0F);
+  CHECK(run1(p, 0.0F) == std::log2(std::numeric_limits<float>::min()));  // max(x, FLT_MIN), never -inf
+  Program round;
+  round.ops.push_back(log_op(0.301029995663981198F));      // log10
+  round.ops.push_back(antilog_op(3.321928094887362348F));  // 10^x
+  CHECK(std::abs(run1(round, 0.18F) - 0.18F) < 1e-6F);
+}
+
+TEST_CASE("D3 ops: the ACES fixed functions leave what their windows exclude untouched") {
+  // RedMod: a blue hue is outside the red window (f_H = 0).
+  Program red;
+  red.ops.push_back(fixed_function_op(FixedFn::red_mod_03));
+  std::vector<float> blue{0.1F, 0.2F, 0.9F};
+  const auto blueIn = blue;
+  evaluate(red, blue);
+  CHECK(blue == blueIn);
+  // …and a saturated red is pulled toward the pivot (red channel only drops).
+  std::vector<float> r{0.9F, 0.1F, 0.05F};
+  evaluate(red, r);
+  CHECK(r[0] < 0.9F);
+  // Glow: bright values (YC ≥ 2·mid) get no glow; DarkToDim at Y = 1 is identity.
+  Program glow;
+  glow.ops.push_back(fixed_function_op(FixedFn::glow, 0.075F, 0.1F));
+  std::vector<float> bright{0.8F, 0.8F, 0.8F};
+  evaluate(glow, bright);
+  CHECK(bright == std::vector<float>{0.8F, 0.8F, 0.8F});
+  Program dim;
+  dim.ops.push_back(fixed_function_op(FixedFn::dark_to_dim, 0.9811F - 1.F));
+  std::vector<float> white{1.0F, 1.0F, 1.0F};  // AP1 luminance weights sum to 1
+  evaluate(dim, white);
+  CHECK(std::abs(white[0] - 1.0F) < 1e-6F);
+}
+
+TEST_CASE("D3 ops: OCIO's RGB B-spline curve goes through its control points and extrapolates linearly") {
+  CurvePoints c;
+  c.x = {-5.0F, -1.0F, 0.0F, 2.0F, 6.0F};
+  c.y = {-4.0F, -1.5F, 0.2F, 1.4F, 2.0F};
+  c.slopes = {0, 0, 0, 0, 0};
+  Program p;
+  const float off = append_curve(c, p.curves);
+  REQUIRE(off == 0.0F);
+  p.ops.push_back(curve_op({off, off, off, -1.0F}));
+  for (std::size_t i = 0; i < c.x.size(); ++i) {
+    INFO("control point " << i);
+    CHECK(std::abs(run1(p, c.x[i]) - c.y[i]) < 1e-5F);
+  }
+  // Monotonic between points; linear beyond the ends.
+  float prev = run1(p, -5.0F);
+  for (float x = -4.9F; x < 6.0F; x += 0.1F) {
+    const float y = run1(p, x);
+    CHECK(y >= prev);
+    prev = y;
+  }
+  const float s1 = run1(p, 7.0F) - run1(p, 6.5F);
+  const float s2 = run1(p, 8.0F) - run1(p, 7.5F);
+  CHECK(std::abs(s1 - s2) < 1e-5F);
+  // A diagonal curve with default slopes is OCIO's identity: no block.
+  CurvePoints id;
+  id.x = {0.0F, 1.0F};
+  id.y = {0.0F, 1.0F};
+  id.slopes = {0, 0};
+  CHECK(append_curve(id, p.curves) == -1.0F);
+}
+
+TEST_CASE("pack lays out kMaxOps ops of 24 floats: header (type, negative style, lattice N) + 5 rows") {
   Program p;
   p.ops.push_back(matrix_op({1, 2, 3, 4, 5, 6, 7, 8, 9}, {10, 11, 12}));
   p.ops.push_back(exponent_op({2, 3, 4}, Negative::mirror));

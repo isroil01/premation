@@ -1,5 +1,7 @@
 #include "color_program.hpp"
 
+#include "aces_ops.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -97,6 +99,32 @@ void apply(const Program& prog, const Op& op, std::array<float, 3>& c) noexcept 
       for (std::size_t k = 0; k < 3; ++k) c.at(k) = std::clamp(c.at(k) * op.p[0].at(k) + op.p[1].at(k), op.p[2].at(k), op.p[3].at(k));
       break;
     case OpType::lut3d: lut3d(prog, op, c); break;
+    case OpType::fixed_function:
+      switch (static_cast<FixedFn>(static_cast<int>(op.p[0][0]))) {
+        case FixedFn::red_mod_03: aces::red_mod_03(c); break;
+        case FixedFn::red_mod_10: aces::red_mod_10(c); break;
+        case FixedFn::glow: aces::glow(c, op.p[0][1], op.p[0][2]); break;
+        case FixedFn::dark_to_dim: aces::dark_to_dim(c, op.p[0][1]); break;
+      }
+      break;
+    case OpType::log: {
+      // LogRenderer: max(x, FLT_MIN) → log2 → × scale.
+      constexpr float kMin = std::numeric_limits<float>::min();
+      for (float& v : c) v = std::log2(std::max(kMin, v)) * op.p[0][0];
+      break;
+    }
+    case OpType::antilog:
+      for (float& v : c) v = std::exp2(v * op.p[0][0]);
+      break;
+    case OpType::curve: {
+      // GradingRGBCurveFwdOpCPU::eval: the channel curves, then the master on each.
+      const auto& o = op.p[0];
+      std::array<float, 3> t{aces::eval_curve(prog.curves, o[0], c[0]), aces::eval_curve(prog.curves, o[1], c[1]),
+                             aces::eval_curve(prog.curves, o[2], c[2])};
+      for (float& v : t) v = aces::eval_curve(prog.curves, o[3], v);
+      c = t;
+      break;
+    }
     case OpType::none: break;
   }
 }
@@ -228,6 +256,57 @@ Op range_op(double scale, double offset, double lo, double hi) noexcept {
     op.p[3].at(k) = h;
   }
   return op;
+}
+
+Op fixed_function_op(FixedFn fn, float a, float b) noexcept {
+  Op op;
+  op.type = OpType::fixed_function;
+  op.p[0] = {static_cast<float>(fn), a, b, 0.0F};
+  return op;
+}
+
+Op log_op(float logScale) noexcept {
+  Op op;
+  op.type = OpType::log;
+  op.p[0][0] = logScale;
+  return op;
+}
+
+Op antilog_op(float log2Base) noexcept {
+  Op op;
+  op.type = OpType::antilog;
+  op.p[0][0] = log2Base;
+  return op;
+}
+
+Op curve_op(const std::array<float, 4>& offsets) noexcept {
+  Op op;
+  op.type = OpType::curve;
+  op.p[0] = offsets;
+  return op;
+}
+
+float append_curve(const CurvePoints& c, std::vector<float>& curves) {
+  // GradingBSplineCurveImpl::isIdentity (a B-spline): every point on the
+  // diagonal and default slopes.
+  const bool diagonal = [&] {
+    for (std::size_t i = 0; i < c.x.size() && i < c.y.size(); ++i) {
+      if (c.x[i] != c.y[i]) return false;
+    }
+    return true;
+  }();
+  const bool defaultSlopes = std::ranges::all_of(c.slopes, [](float s) { return s == 0.0F; });
+  if (c.x.size() < 2 || (diagonal && defaultSlopes)) return -1.0F;
+  std::vector<float> knots, a, b, cc;
+  if (!aces::fit_rgb_curve(c.x, c.y, c.slopes, knots, a, b, cc)) return -1.0F;
+  const auto offset = static_cast<float>(curves.size());
+  curves.push_back(static_cast<float>(knots.size()));
+  curves.push_back(static_cast<float>(a.size()));
+  curves.insert(curves.end(), knots.begin(), knots.end());
+  curves.insert(curves.end(), a.begin(), a.end());
+  curves.insert(curves.end(), b.begin(), b.end());
+  curves.insert(curves.end(), cc.begin(), cc.end());
+  return offset;
 }
 
 Program bake_lut(const Shaper& shaper, std::uint32_t n, const std::function<void(std::span<float>)>& reference) {

@@ -222,7 +222,7 @@ endif()
 #                   (so the sanitizer presets test them without Dawn)
 #   color_system    OCIO programs as render-graph passes → engine_render_graph
 #   ocio_ffi        the only file that includes OpenColorIO (vcpkg `engine` feature)
-target_sources(engine_rg_core PRIVATE src/render_graph/color/color_program.cpp)
+target_sources(engine_rg_core PRIVATE src/render_graph/color/color_program.cpp src/render_graph/color/aces_ops.cpp)
 if(TARGET engine_render_graph)
   target_sources(engine_render_graph PRIVATE src/render_graph/color/color_system.cpp)
   find_package(OpenColorIO CONFIG QUIET)
