@@ -144,6 +144,22 @@ void cmp_layer(Cmp& c, const std::string& at, const sc::RLayer& l, const Json& w
     }
   }
   c.boolean(p + "precompScene3d", l.precompScene3d.has_value(), w.at("precompScene3d"));
+  if (!w.at("depth").is_null()) c.num(p + "depth", l.depth, w.at("depth"));
+  const auto optArr = [&](const std::string& what, const auto& got, const Json& want) {
+    if (want.is_array()) {
+      if (!got) c.diffs.push_back(p + what + ": missing");
+      else c.vec(p + what, *got, want);
+    } else if (got) {
+      c.diffs.push_back(p + what + ": unexpected");
+    }
+  };
+  optArr("matrix", l.matrix, w.at("matrix"));
+  optArr("quad3d", l.quad3d, w.at("quad3d"));
+  optArr("lighting", l.lighting, w.at("lighting"));
+  const Json& sq = w.at("sampleQuads");
+  if (sq.arr().size() == (l.motionSamples.size() > 1 ? l.motionSamples.size() : 0)) {
+    for (std::size_t i = 0; i < sq.arr().size(); ++i) optArr("sampleQuads[" + std::to_string(i) + "]", l.motionSamples[i].quad, sq.arr()[i]);
+  }
   if (w.at("precompLayers").is_array()) {
     if (!l.precompLayers) c.diffs.push_back(p + "precompLayers: missing");
     else cmp_layers(c, p, *l.precompLayers, w.at("precompLayers"));

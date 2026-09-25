@@ -121,6 +121,25 @@ class Scene3D {
   /// A light layer (buildSnapshot `kind === 'light'`): the wash layer, or none.
   [[nodiscard]] std::optional<RLayer> light_layer(const doc::Node& n);
 
+  /// A 3D comp LAYER's card (buildPrecompContainer, threed_card.cpp): the
+  /// referenced comp drawn flat onto its projected corners around the anchor.
+  struct Card {
+    std::array<double, 8> quad{};
+    std::array<double, 6> matrix{};
+    double x = 0, y = 0, depth = 0;
+  };
+  struct CardPlan {
+    std::optional<Card> still;  ///< null = behind the camera (not drawn)
+    /// The card at (layer time ti, comp time tc) — one perspective quad per shutter sample.
+    std::function<std::optional<Card>(double, double)> at;
+    std::optional<std::array<double, 3>> lighting;  ///< Accepts Lights gain
+  };
+  /// `sample(prop, t)` is the walk's instance-aware sampler; `gWorld` the 2D world pose.
+  [[nodiscard]] CardPlan comp_card(const doc::Node& group, const Values& gv, const motion::xf::Local2D& gWorld,
+                                   double baseX, double baseY, double baseRot, double baseScaleX, double baseScaleY,
+                                   double refW, double refH, double anchorX, double anchorY,
+                                   const std::function<std::optional<double>(std::string_view, double)>& sample);
+
   /// After the walk: landed beams, projected shadows, the depth sort.
   void finish(std::vector<RLayer>& layers);
 

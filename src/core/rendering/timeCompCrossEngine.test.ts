@@ -122,6 +122,34 @@ const DEFS: Def[] = [
     comp: { rootId: 'host' },
   },
   {
+    id: 'comp-card-3d',
+    frames: [0, 14],
+    sizes: SIZES,
+    motionBlur: MB,
+    build(graph, anim) {
+      innerComp(graph, anim, false);
+      graph.addNode(node('host', { kind: 'group' }));
+      graph.addChild('host', node('cam', { kind: 'camera', position: { x: 280, y: 150 }, transform: { z: -800, focalLength: 800 } }));
+      graph.addChild('host', node('lamp', {
+        kind: 'light', position: { x: 60, y: 40 },
+        transform: { lightType: 'point', intensity: 120, radius: 60, z: -300, lightGlow: false },
+      }));
+      // A 3D comp layer: rotated in Y, anchored, keyframed in X and Z, motion-blurred, lit.
+      graph.addChild('host', instance('card', 'inner', 240, 160, {}, { z: 40, rotationY: 30, anchorX: 15, anchorY: 5, acceptsLights: true }));
+      graph.setMotionBlur('card', true);
+      anim.setKeyframe('card', 'x', 0, 180);
+      anim.setKeyframe('card', 'x', 1, 300);
+      anim.setKeyframe('card', 'z', 0, 40);
+      anim.setKeyframe('card', 'z', 1, -120);
+      // Behind the camera: not drawn.
+      graph.addChild('host', instance('behind', 'inner', 240, 160, {}, { z: -1200 }));
+      // The camera dollies, so every 3D card blurs through the sub-frame camera.
+      anim.setKeyframe('cam', 'x', 0, 280);
+      anim.setKeyframe('cam', 'x', 1, 220);
+    },
+    comp: { rootId: 'host' },
+  },
+  {
     id: 'instance-cycle-guard',
     frames: [0],
     sizes: { A: { width: 240, height: 160 }, B: { width: 160, height: 100 } },
@@ -260,6 +288,11 @@ function projLayer(l: RenderLayer): Proj {
     maskPaths: l.mask?.paths.length ?? 0,
     pathPoints: Array.isArray(l.pathPoints) ? l.pathPoints.map((p) => [p.x, p.y, p.inX, p.inY, p.outX, p.outY]) : null,
     precompScene3d: !!l.precompScene3d,
+    depth: l.matrix ? l.depth : null,  // a 2D layer's depth is never read
+    matrix: l.matrix ? [...l.matrix] : null,
+    quad3d: l.quad3d ? [...l.quad3d] : null,
+    lighting: l.lighting ? [...l.lighting] : null,
+    sampleQuads: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => (s.quad ? [...s.quad] : null)) : [],
     precompLayers: l.precompLayers ? l.precompLayers.map(projLayer) : null,
   };
 }
@@ -342,7 +375,7 @@ test('the C++ time/comp parity fixture matches what buildSnapshot + snapshotToFr
   // Every case really exercises its feature (a vacuous fixture pins nothing).
   const all = JSON.stringify(cases);
   for (const needle of ['inst::iRect', 'inst::iDeep::dRect', 'inst2::iRect', 'coll::iRect', 'seal::iRect', 'vfa:clip', 'vfb:clip',
-    'echoed__echo0', 'wide__echo4', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
+    'echoed__echo0', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
     expect(all).toContain(needle);
   }
   for (const c of cases as Array<{ frames: Array<{ errors: string[] }> }>) for (const f of c.frames) expect(f.errors).toEqual([]);

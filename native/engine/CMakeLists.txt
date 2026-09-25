@@ -822,6 +822,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   src/scene/precomp_frame.cpp     #   their frame side (sealed 3D scopes, the 3D card)
   src/scene/temporal_ghosts.cpp   #   Echo / Wide Time ghost copies
   src/scene/raw_world.cpp         #   raw-graph world transforms (points bound to nulls, cloner drivers)
+  src/scene/threed_card.cpp       #   the 3D comp card (Scene3D::comp_card)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )

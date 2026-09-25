@@ -302,8 +302,10 @@ class Walk final : public Scene3DHost {
   void unported(RLayer& l, const doc::Node& n, std::string what);
   std::vector<Json> effects_of(const doc::Node& n, const Values& a, std::optional<double> layerTime, RLayer* note);
   /// `matrixAt` (3D layers): the projected affine per sample (threed_port `matrix_at`).
+  /// `quadAt`: a 3D comp card's perspective quad per sample (MotionSample.quad).
   void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {});
+                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {},
+                      const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt = {});
   void text_fields(RLayer& l, const doc::Node& n, const Base& base, const Values& a);
   void attach_precomps(std::vector<RLayer>& list);
 
@@ -714,7 +716,45 @@ RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>
     l.scaleX = gWorld.scale_x;
     l.scaleY = gWorld.scale_y;
     if (doc::is_3d_enabled(group)) {
-      unported(l, group, "3D comp layer (card)");
+      // A 3D comp CARD: the comp drawn flat onto its projected corners (threed_card.cpp).
+      const Scene3D::CardPlan card = three_->comp_card(
+          group, gv, gWorld, gb.x, gb.y, gb.rotation, gb.scaleX, gb.scaleY, refSize->first, refSize->second, l.anchorX,
+          l.anchorY, [&](std::string_view p, double tt) { return anim_sample_of(group.id, p, tt); });
+      if (!card.still) {  // behind the camera: not drawn, like any 3D layer
+        l.visible = false;
+        l.opacity = 0;
+      } else {
+        const Scene3D::Card& c = *card.still;
+        const auto& m = c.matrix;
+        l.x = c.x;
+        l.y = c.y;
+        l.rotation = motion::js::atan2(m[1], m[0]) / kDeg;
+        l.scaleX = hypot2(m[0], m[1]);
+        l.scaleY = hypot2(m[2], m[3]);
+        l.depth = c.depth;
+        l.matrix = m;
+        l.quad3d = c.quad;
+        if (card.lighting) l.lighting = *card.lighting;
+        // Motion blur through its own perspective: one quad per shutter sample.
+        std::map<std::pair<double, double>, std::optional<Scene3D::Card>> seen;
+        const auto cardOf = [&](double ti, double tc) -> const std::optional<Scene3D::Card>& {
+          const auto key = std::make_pair(ti, tc);
+          auto it = seen.find(key);
+          if (it == seen.end()) it = seen.emplace(key, card.at(ti, tc)).first;
+          return it->second;
+        };
+        motion_samples(
+            l, group, gb, group.id,
+            [&](double ti, double tc) {
+              const auto& k = cardOf(ti, tc);
+              return k ? k->matrix : c.matrix;
+            },
+            [&](double ti, double tc) -> std::optional<std::array<double, 8>> {
+              const auto& k = cardOf(ti, tc);
+              return k ? std::optional<std::array<double, 8>>(k->quad) : std::nullopt;
+            });
+        if (!std::ranges::all_of(l.motionSamples, [](const MotionSample& s) { return s.quad.has_value(); })) l.motionSamples.clear();
+      }
     } else {
       // A comp LAYER's own motion blur: the walk's samples on its local pose,
       // carried onto the world pose (the parent chain held still).
@@ -746,7 +786,8 @@ void Walk::attach_precomps(std::vector<RLayer>& list) {
 }
 
 void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                          const std::function<std::array<double, 6>(double, double)>& matrixAt) {
+                          const std::function<std::array<double, 6>(double, double)>& matrixAt,
+                          const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt) {
   if (!mb_) return;
   // Force Motion Blur (forceMotionBlur.ts readForceMotionBlur) overrides the two opt-ins.
   std::optional<MotionBlurCfg> forced;
@@ -835,6 +876,7 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
     s.opacity = op ? *op / 100 : base.opacity;
     if (matrixAt) s.matrix = matrixAt(ti, tc);
+    if (quadAt) s.quad = quadAt(ti, tc);
     out.push_back(s);
   }
   if (out.size() > 1) l.motionSamples = std::move(out);
