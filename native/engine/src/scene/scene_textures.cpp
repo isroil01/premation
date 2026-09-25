@@ -324,6 +324,8 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   if (r.src.empty()) return {};
   // SVG footage and SVG layers: AppTextureProvider.rasterizeSvg, on the C++ SVG renderer (svg_layer.cpp).
   if (is_svg_src(r.src)) return svg_ref(r, stats);
+  // An imported model's images (gltf_model.hpp): decoded out of the model file.
+  if (r.src.starts_with("gltf:")) return model_ref(r, stats);
   if (r.src.starts_with("data:") || r.src.starts_with("blob:") || r.src.starts_with("http:") ||
       r.src.starts_with("https:")) {
     stats.unsupported.emplace_back(r.key, "footage that is not a file on disk");

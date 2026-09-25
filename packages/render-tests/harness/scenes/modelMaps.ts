@@ -60,6 +60,14 @@ import {
 const COMP = { width: 480, height: 360, background: '#0c0c12' };
 const CENTER = { x: 240, y: 180 };
 
+/** The .glb as the data: URL the importer stores on a model's root. */
+function glbDataUrl(glb: ArrayBuffer): string {
+  const bytes = new Uint8Array(glb);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return `data:model/gltf-binary;base64,${btoa(bin)}`;
+}
+
 /**
  * Register the fixture and add its single primitive as a model layer.
  *
@@ -106,7 +114,12 @@ function modelLayer(graph: Parameters<Scene['build']>[0], withMaps: boolean): vo
     components: [{
       id: 'panel_model',
       type: MODEL_COMPONENT,
-      props: { modelKey: key, mesh: 0, prim: 0 },
+      // `glbData` is the document's copy of the file — what an imported root
+      // carries (modelHydrate re-registers from it on open). buildSnapshot never
+      // reads it; it is here so the exported project document is complete and
+      // the C++ engine can build this frame from the document alone
+      // (native/engine/src/scene/gltf_model.cpp).
+      props: { modelKey: key, mesh: 0, prim: 0, glbData: glbDataUrl(glb) },
     }],
   }));
 }

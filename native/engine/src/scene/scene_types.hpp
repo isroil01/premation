@@ -103,6 +103,9 @@ struct ExtrudedMeshData {
     double width = 0, height = 0;
   };
   std::optional<Paint> paint;
+  /// An imported model's PBR maps: texture key (`pbrmap:<id>:<n|m|o|e>`, named
+  /// in geometry.pbr) → the image it is fed from (`gltf:<modelKey>#<image>`).
+  std::vector<std::pair<std::string, std::string>> mapSources;
 };
 
 /// RenderLayer — the fields the port carries (see the header note).

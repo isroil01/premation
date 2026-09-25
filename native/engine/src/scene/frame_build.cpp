@@ -15,6 +15,7 @@
 #include "lut_port.hpp"
 #include "jsmath.hpp"
 #include "misc_port.hpp"
+#include "model_carrier.hpp"
 #include "readers.hpp"
 #include "scene_math.hpp"
 #include "light_wash.hpp"
@@ -389,6 +390,7 @@ void Flattener::feed(const RLayer& l) {
     r.layerId = l.id;
     textures_.push_back(std::move(r));
   }
+  append_model_map_textures(l, textures_);  // pbrmap:<id>:* (model_carrier.cpp)
   if (l.kind == LayerKind::image || l.kind == LayerKind::video) {
     TextureRequest r;
     r.key = "asset:" + l.id;
