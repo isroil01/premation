@@ -134,6 +134,32 @@ void SceneTextures::clear() {
   lru_.clear();
   byHash_.clear();
   bytes_ = 0;
+  contentLru_.clear();
+  contentByKey_.clear();
+  contentBytes_ = 0;
+}
+
+std::shared_ptr<const raster::BakedContent> SceneTextures::find_content(std::uint64_t key) {
+  const std::scoped_lock lock(m_);
+  const auto it = contentByKey_.find(key);
+  if (it == contentByKey_.end()) return nullptr;
+  contentLru_.splice(contentLru_.begin(), contentLru_, it->second);
+  return it->second->content;
+}
+
+void SceneTextures::insert_content(std::uint64_t key, std::shared_ptr<const raster::BakedContent> c) {
+  if (c == nullptr || c->canvas == nullptr) return;
+  const std::size_t bytes = static_cast<std::size_t>(c->canvas->width()) * c->canvas->height() * 4;
+  const std::scoped_lock lock(m_);
+  if (bytes > opts_.contentCacheBytes || contentByKey_.contains(key)) return;
+  contentBytes_ += bytes;
+  contentLru_.push_front(ContentSlot{key, std::move(c), bytes});
+  contentByKey_.emplace(key, contentLru_.begin());
+  while (contentBytes_ > opts_.contentCacheBytes && contentLru_.size() > 1) {
+    contentBytes_ -= contentLru_.back().bytes;
+    contentByKey_.erase(contentLru_.back().key);
+    contentLru_.pop_back();
+  }
 }
 
 void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector<api::RenderTextureRef>& refs,
@@ -142,6 +168,7 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     const TextureRequest* req;
     std::string hash;
     std::string spec;
+    std::uint64_t contentKey = 0;  // a baked raster's content key (0 = not baked)
   };
   std::vector<Miss> misses;
   std::vector<std::string> seen;
@@ -183,11 +210,27 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     // rotation, scale, depth, opacity, blend) stay out of the key, so a layer
     // that only moves keeps its raster.
     std::uint64_t h = 0;
+    std::uint64_t contentKey = 0;
+    if ((r.kind == TexKind::path || r.kind == TexKind::text) && r.spec.is_object() && r.spec.at("__baked").b() &&
+        opts_.contentCacheBytes > 0) {
+      // What the painters read: the drawable without what only the bake reads
+      // (effects, fillOpacity, mask — bake_chain.cpp) and without placement.
+      js::Json keyed = r.spec;
+      for (const char* k : {"x", "y", "rotation", "scaleX", "scaleY", "depth", "opacity", "blend", "sourceTime", "effects",
+                            "fillOpacity", "mask"}) {
+        keyed.erase(k);
+      }
+      contentKey = fnv1a(tail.data(), fnv1a(js::stringify(keyed), fnv1a("baked-content")));
+      if (contentKey == 0) contentKey = 1;
+    }
     if ((r.kind == TexKind::path || r.kind == TexKind::mask) && r.spec.is_object()) {
       js::Json keyed = r.spec;
-      for (const char* k : {"x", "y", "rotation", "scaleX", "scaleY", "depth", "opacity", "blend"}) keyed.erase(k);
-      // sourceTime reaches the pixels only through a CPU-baked effect chain.
-      if (!r.spec.at("__baked").b()) keyed.erase("sourceTime");
+      // sourceTime too, baked or not (contentHash.ts keys it for media layers
+      // only): the painters never read it, and a baked chain sees time only
+      // through its resolved params (resolve_effect_params puts the layer time
+      // into timecode / strobe-light / particle-systems), which ARE keyed — so a
+      // baked layer whose stack does not animate keeps its bake across frames.
+      for (const char* k : {"x", "y", "rotation", "scaleX", "scaleY", "depth", "opacity", "blend", "sourceTime"}) keyed.erase(k);
       h = fnv1a(tail.data(), fnv1a(js::stringify(keyed)));
     } else if (r.kind == TexKind::text && r.spec.is_object()) {
       // The layer scale picks the tier (in `tail`); the text painters never read it.
@@ -206,7 +249,7 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
       ++stats.rasterHits;
     } else if (std::ranges::find(seen, ref.hash) == seen.end()) {
       seen.push_back(ref.hash);
-      misses.push_back({&r, ref.hash, std::move(spec)});
+      misses.push_back({&r, ref.hash, std::move(spec), contentKey});
     }
     refs.push_back(std::move(ref));
   }
@@ -214,6 +257,7 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
   stats.rasterMisses += static_cast<std::uint32_t>(misses.size());
   const auto t0 = std::chrono::steady_clock::now();
   std::vector<std::shared_ptr<RasterEntry>> done(misses.size());
+  std::vector<std::array<double, 3>> timing(misses.size());
   const auto work = [&](std::size_t i) {
     const Miss& m = misses[i];
     auto e = std::make_shared<RasterEntry>();
@@ -223,16 +267,24 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
                                                    std::vector<std::string>& unsupported) {
       bake::bake_layer_raster(ctx, drawable, bw, bh, ss, unsupported, bake::SharedPool{bakePool_.get(), &bakePoolM_});
     };
+    raster::ContentReuse reuse;
+    std::shared_ptr<const raster::BakedContent> cached;
+    if (m.contentKey != 0) {
+      cached = find_content(m.contentKey);
+      reuse.cached = cached.get();
+    }
     raster::RasterOutput out =
         m.req->kind == TexKind::light  // a light's glow wash (light_wash.cpp)
             ? draw_light_wash(light_wash_of_spec(m.req->spec), opts_.canvas)
             : raster::draw_raster_source(raster_kind(m.req->kind), m.spec, m.req->resolutionScale, m.req->padding, opts_.canvas,
-                                         &bake);
+                                         &bake, m.contentKey != 0 ? &reuse : nullptr);
+    if (reuse.painted) insert_content(m.contentKey, std::move(reuse.painted));
     e->width = out.width;
     e->height = out.height;
     e->rgba = std::move(out.rgba);
     e->unsupported = std::move(out.unsupported);
     if (!out.ok) e->error = out.error.empty() ? "raster failed" : out.error;
+    timing[i] = {out.contentMs, out.bakeMs, out.readMs};
     done[i] = std::move(e);
   };
   unsigned threads = opts_.threads != 0 ? opts_.threads : std::min(8U, std::max(1U, std::thread::hardware_concurrency()));
@@ -251,6 +303,9 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
   }
   stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   for (std::size_t i = 0; i < misses.size(); ++i) {
+    stats.contentMs += timing[i][0];
+    stats.bakeMs += timing[i][1];
+    stats.readMs += timing[i][2];
     for (const std::string& u : done[i]->unsupported) stats.unsupported.emplace_back(misses[i].req->key, u);
     if (!done[i]->error.empty()) stats.unsupported.emplace_back(misses[i].req->key, "raster error: " + done[i]->error);
     insert(misses[i].hash, std::move(done[i]));

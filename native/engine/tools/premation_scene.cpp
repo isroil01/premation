@@ -39,7 +39,9 @@
 #include <string>
 #include <vector>
 
+#include "catalog_data.hpp"
 #include "docexpr.hpp"
+#include "fxstate.hpp"
 #include "docio.hpp"
 #include "fonts.hpp"
 #include "mesh_check.hpp"
@@ -410,6 +412,7 @@ struct Options {
   int frames = 30;
   int synthetic = 0;
   bool bench = false;
+  bool hash = false;  ///< --bench --hash: print an FNV-1a 64 of every raster's bytes per case
 };
 
 struct Engine {
@@ -777,6 +780,51 @@ js::Json synthetic_document(int layers) {
   return docJ;
 }
 
+/// The E4 per-effect bench (`--gen-effect-bench DIR`): one project per registry
+/// effect with a CPU form (every effect not `gpuOnly`) plus `none`, each a
+/// 1920×1080 comp holding one full-frame gradient ellipse with that effect at
+/// its new-instance params, CPU-baked (fill opacity < 100 %, which bakes any
+/// stack) with the fill opacity keyframed 90 → 95 % over 2 s — so every frame's
+/// bake input changes (the chain re-runs) while the painted content does not.
+/// `--bench DIR` then gives the ms per 1080p frame of each.
+int gen_effect_bench(const fs::path& dir) {
+  using js::Json;
+  std::vector<std::pair<std::string, Json>> cases;
+  cases.emplace_back("none", Json::null());
+  for (const doc::EffectDef& def : doc::registry().effects) {
+    if (def.gpuOnly) continue;
+    cases.emplace_back(def.type, doc::new_instance_params_of(def));
+  }
+  int written = 0;
+  for (const auto& [type, params] : cases) {
+    const std::string fx = type == "none" ? std::string("[]")
+                                          : R"([{"id":"fx","type":")" + type + R"(","params":)" + js::stringify(params) + "}]";
+    const std::string id = "fxbench-" + type;
+    const std::string doc =
+        R"({"version":"1.9.0","scene":{"version":"1.0.0","nodes":[)"
+        R"({"id":"comp_root","name":"Composition 1","parent":null,"children":["subj"],"transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},"visible":true,"locked":false,"components":[{"id":"comp_root_meta","type":"group","props":{"__kind":"group"}}]},)"
+        R"({"id":"subj","name":"subj","children":[],"parent":"comp_root","transform":{"position":{"x":960,"y":540},"rotation":0,"scale":{"x":1,"y":1}},"visible":true,"locked":false,"components":[)"
+        R"({"id":"subj_t","type":"Transform","props":{"__kind":"shape","x":960,"y":540,"rotation":0,"width":1920,"height":1080,"shapeType":"ellipse"}},)"
+        R"({"id":"subj_s","type":"Style","props":{"opacity":100,"fill":"#000","fillOpacity":90}},)"
+        R"({"id":"subj_fx","type":"fx","props":{"fill":{"type":"linear","angle":30,"stops":[{"id":"a","offset":0,"color":"#2b3cff"},{"id":"b","offset":1,"color":"#ff7a1a"}]},"effects":)" +
+        fx +
+        R"(}}]}]},)"
+        R"("animation":{"tracks":{"subj":{"fillOpacity":{"nodeId":"subj","prop":"fillOpacity","keyframes":[{"t":0,"value":90},{"t":2,"value":95}]}}},"expressions":{}},)"
+        R"("comps":{"comp_root":{"id":"comp_root","name":"comp_root","width":1920,"height":1080,"fps":30,"durationSeconds":10,"background":"#0c0c12"}},)"
+        R"("projectItems":{"folders":[],"footage":{}},)"
+        R"("openTabs":{"tabOrder":["tab1"],"activeTabId":"tab1","tabs":{"tab1":{"id":"tab1","compositionId":"comp_root","breadcrumbPath":["comp_root"],"title":"comp_root","time":0,"frame":0}}},)"
+        R"("harness":{"sceneId":")" + id + R"(","frames":[0,15],"fps":30,"size":{"w":1920,"h":1080},"assets":[]}})";
+    if (!js::parse(doc)) {
+      std::fprintf(stderr, "premation-scene: %s does not parse\n", id.c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
+      return 1;
+    }
+    if (!write_file(dir / id / "project.json", std::span(reinterpret_cast<const std::uint8_t*>(doc.data()), doc.size()))) return 1;  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    ++written;
+  }
+  std::printf("premation-scene: %d effect-bench projects in %s\n", written, dir.string().c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
+  return 0;
+}
+
 int bench(const Options& o) {
   Fonts fonts;
   if (!load_fonts(o.fonts, o.profile, fonts)) return 2;
@@ -820,6 +868,10 @@ int bench(const Options& o) {
     const doc::Json* rec = c.p->d.comp(c.p->comp);
     const sc::ViewSpec view = sc::export_view(c.w, c.h, rec->at("width").num(), rec->at("height").num());
     std::vector<double> build, raster, encode, gpu, total;
+    double contentMs = 0;
+    double bakeMs = 0;
+    double readMs = 0;
+    std::uint64_t pixHash = 0xcbf29ce484222325ULL;
     std::size_t layers = 0;
     std::uint64_t misses = 0;
     for (int k = 0; k < o.frames + 3; ++k) {
@@ -839,7 +891,21 @@ int bench(const Options& o) {
       if (k < 3) continue;  // warm-up: fonts, pipelines, first rasters
       build.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
       raster.push_back(std::chrono::duration<double, std::milli>(t2 - t1).count());
+      if (o.hash) {
+        // --hash: every raster's bytes, so two builds can be compared for identity.
+        for (const api::RenderTextureRef& ref : nf.file.textures) {
+          const sc::RasterEntry* e = eng.textures->raster(ref.hash);
+          if (e == nullptr) continue;
+          for (const std::uint8_t b : e->rgba) {
+            pixHash ^= b;
+            pixHash *= 0x100000001b3ULL;
+          }
+        }
+      }
       misses += ps.rasterMisses;
+      contentMs += ps.contentMs;
+      bakeMs += ps.bakeMs;
+      readMs += ps.readMs;
       encode.push_back(stats.encodeMs);
       gpu.push_back(stats.gpuMs);
       total.push_back(std::chrono::duration<double, std::milli>(t3 - t0).count());
@@ -850,10 +916,14 @@ int bench(const Options& o) {
       std::ranges::sort(v);
       return v[v.size() / 2];
     };
-    std::printf("%s{\"case\":\"%s\",\"renderables\":%zu,\"frames\":%zu,\"buildMs\":%s,\"buildP50Ms\":%s,\"rasterMs\":%s,\"renderEncodeMs\":%s,\"renderGpuMs\":%s,\"totalMs\":%s,\"totalP50Ms\":%s,\"rasterMissesPerFrame\":%s}\n",  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    const double nf = std::max<double>(1, static_cast<double>(total.size()));
+    std::printf("%s{\"case\":\"%s\",\"renderables\":%zu,\"frames\":%zu,\"buildMs\":%s,\"buildP50Ms\":%s,\"rasterMs\":%s,\"rasterP50Ms\":%s,\"contentMs\":%s,\"bakeMs\":%s,\"readMs\":%s,\"renderEncodeMs\":%s,\"renderGpuMs\":%s,\"totalMs\":%s,\"totalP50Ms\":%s,\"rasterMissesPerFrame\":%s}\n",  // NOLINT(cppcoreguidelines-pro-type-vararg)
                 first ? "" : ",", esc(c.name).c_str(), layers, total.size(), fmt(mean(build)).c_str(), fmt(p50(build)).c_str(),
-                fmt(mean(raster)).c_str(), fmt(mean(encode)).c_str(), fmt(mean(gpu)).c_str(), fmt(mean(total)).c_str(), fmt(p50(total)).c_str(),
+                fmt(mean(raster)).c_str(), fmt(p50(raster)).c_str(), fmt(contentMs / nf).c_str(), fmt(bakeMs / nf).c_str(), fmt(readMs / nf).c_str(),
+                fmt(mean(encode)).c_str(), fmt(mean(gpu)).c_str(), fmt(mean(total)).c_str(), fmt(p50(total)).c_str(),
                 fmt(total.empty() ? 0.0 : static_cast<double>(misses) / static_cast<double>(total.size())).c_str());
+    if (o.hash) std::fprintf(stderr, "HASH %s %016llx\n", esc(c.name).c_str(), static_cast<unsigned long long>(pixHash));  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    std::fflush(stdout);
     first = false;
   }
   std::printf("]}\n");  // NOLINT(cppcoreguidelines-pro-type-vararg)
@@ -871,6 +941,7 @@ int run(int argc, char** argv) {
   if (opt.contains("fonts")) o.fonts = opt["fonts"];
   if (opt.contains("profile")) o.profile = opt["profile"];
   if (opt.contains("frames")) o.frames = std::stoi(opt["frames"]);
+  o.hash = opt.contains("hash");
   if (opt.contains("only")) {
     std::stringstream ss(opt["only"]);
     std::string s;
@@ -881,6 +952,7 @@ int run(int argc, char** argv) {
   if (opt.contains("readback-table")) {
     if (!read_file(opt["readback-table"], o.table) || o.table.size() != 65536) o.table.clear();
   }
+  if (opt.contains("gen-effect-bench")) return gen_effect_bench(opt["gen-effect-bench"]);
   if (opt.contains("synthetic")) {
     o.synthetic = std::stoi(opt["synthetic"]);
     return bench(o);
