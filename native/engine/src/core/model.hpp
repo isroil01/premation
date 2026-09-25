@@ -275,6 +275,14 @@ struct Parts {
   std::optional<Ptr<ColorMgmt>> cm;
   /// B3z: the transition records (transitionStore.capture(): comp id → records) — the `tx` part.
   std::optional<Ptr<Json>> tx;
+  /// F2 (undo parity): the order `apply` re-inserts composition records and
+  /// timelines in — not a part, a hint. Compositions have no order part (see
+  /// `note_comp_order`): the TypeScript engine re-inserts a restored record at
+  /// the END of `projectStore.comps` in its entry's key order, which is the
+  /// document order before the change followed by the compositions it created
+  /// in document order after it (state.ts `changedKeys` over `captureScope`).
+  /// Unset: key order.
+  Ptr<const IdList> compSeq;
   [[nodiscard]] bool empty() const noexcept;
 };
 
@@ -363,6 +371,9 @@ class Document {
   /// (a fresh document, or parts written back by undo/redo/rollback).
   [[nodiscard]] const std::unordered_set<std::string>& tl_touched() const noexcept { return tlTouched_; }
   [[nodiscard]] bool tl_all_dirty() const noexcept { return tlAllDirty_; }
+  /// A bar was written directly (write_geoms): the next reconcile looks at `id`
+  /// (a group member's pasted bar is dropped, as syncFromScene does).
+  void tl_touch(std::string_view id) { tlTouched_.emplace(id); }
   void tl_mark_clean() noexcept {
     tlTouched_.clear();
     tlAllDirty_ = false;
@@ -372,6 +383,9 @@ class Document {
   void peek_journal(Parts& out) const {
     if (journal_) out = *journal_;
   }
+  /// The node ids whose animation the open transaction touched, in the order
+  /// first touched (the TS scope's key order: stampMissingKeyIds mints in it).
+  [[nodiscard]] const std::vector<std::string>& journal_anim_order() const noexcept { return animOrder_; }
 
  private:
   void note_node(std::string_view id);
@@ -394,6 +408,9 @@ class Document {
   Ptr<Json> tx_;
   DocExtras extras_ = default_doc_extras();
   std::unique_ptr<Parts> journal_;
+  /// The composition order when the journal began (ChangeSet::compSeq).
+  IdList journalCompOrder_;
+  std::vector<std::string> animOrder_;
   std::unordered_set<std::string> tlTouched_;
   bool tlAllDirty_ = true;
 };

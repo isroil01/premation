@@ -106,6 +106,23 @@ export interface ProjectManagerDeps {
    * The app passes core/project/editorView.ts.
    */
   editorView?: { remember(path: string | null): void; recall(path: string | null): void };
+  /**
+   * F2 (NATIVE_CORE_PLAN §5 Phase F): the ENGINE owns the document. When set,
+   * New / Open / Save / Save As / snapshot / Close are engine requests
+   * (core/project/engineDocumentSession.ts) — the page never captures,
+   * parses or restores the document, and `io` / `storage` are not used for
+   * them. Unset (the default, the TypeScript engine as owner): unchanged.
+   */
+  engineDocument?: EngineOwnedDocument;
+}
+
+/** The engine-owned lifecycle ProjectManager delegates to (EngineDocumentSession implements it). */
+export interface EngineOwnedDocument {
+  newProject(): Promise<void>;
+  open(path: string): Promise<unknown>;
+  save(path: string): Promise<unknown>;
+  saveCopy(path: string): Promise<unknown>;
+  close(): Promise<void>;
 }
 
 export class ProjectManager {
@@ -113,10 +130,12 @@ export class ProjectManager {
   private io: ProjectDocumentIO;
   private readonly storage: ProjectStorage;
   private readonly listeners = new Set<(s: ProjectState) => void>();
-  private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io' | 'storage' | 'editorView'>> & Pick<ProjectManagerDeps, 'logger' | 'editorView'>;
+  private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io' | 'storage' | 'editorView' | 'engineDocument'>> & Pick<ProjectManagerDeps, 'logger' | 'editorView'>;
+  private readonly engineDocument: EngineOwnedDocument | null;
 
   constructor(deps: ProjectManagerDeps) {
     this.io = deps.io ?? emptyDocumentIO;
+    this.engineDocument = deps.engineDocument ?? null;
     this.deps = {
       service: deps.service,
       files: deps.files,
@@ -139,6 +158,9 @@ export class ProjectManager {
 
   getState(): ProjectState { return this.state; }
 
+  /** F2: is the document owned by the engine (lifecycle through engine requests)? */
+  get engineOwned(): boolean { return this.engineDocument !== null; }
+
   subscribe(listener: (s: ProjectState) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -151,7 +173,12 @@ export class ProjectManager {
 
   newProject(name = 'Untitled'): ProjectRef {
     const ref: ProjectRef = { id: this.deps.newId(), name, path: null };
-    this.io.restore(this.io.createEmpty(name));
+    if (this.engineDocument) {
+      // Requests are applied in order: an edit sent after this lands on the new document.
+      this.engineDocument.newProject().catch((err: unknown) => this.deps.logger?.error('Failed to create project', err));
+    } else {
+      this.io.restore(this.io.createEmpty(name));
+    }
     this.state = { current: ref };
     this.emit();
     this.deps.logger?.info(`New project "${name}"`);
@@ -164,10 +191,13 @@ export class ProjectManager {
   async open(): Promise<ProjectRef | null> {
     const picked = await this.deps.files.open({ extensions: ['motion', 'json'] });
     if (!picked) return null;
+    // F2: the engine reads the file itself; the page's copy of the contents is unused.
+    if (this.engineDocument && picked.path) return this.openInEngine(picked.path, picked.name);
     return this.load(picked.contents, picked.name, picked.path);
   }
 
   async openPath(path: string): Promise<ProjectRef | null> {
+    if (this.engineDocument) return this.openInEngine(path, projectNameFromFilePath(path));
     let file: VersionedDocument | null;
     try {
       file = await this.storage.load(path);
@@ -220,6 +250,24 @@ export class ProjectManager {
     const ref: ProjectRef = { id: this.deps.newId(), name, path };
     this.state = { current: ref };
     this.emit();
+    return ref;
+  }
+
+  /** F2: the engine opens (reads, migrates, loads) the file; become the current project. */
+  private async openInEngine(path: string, name: string): Promise<ProjectRef | null> {
+    try {
+      await this.engineDocument!.open(path);
+    } catch (err) {
+      this.deps.logger?.error('Failed to open project', err);
+      return null;
+    }
+    this.deps.editorView?.recall(path);
+    const ref: ProjectRef = { id: this.deps.newId(), name, path };
+    this.state = { current: ref };
+    this.emit();
+    this.recordRecent(ref);
+    this.deps.logger?.info(`Opened project "${name}"`);
+    getEventBus().emit('ProjectLoaded', { projectId: ref.id });
     return ref;
   }
 
@@ -289,6 +337,10 @@ export class ProjectManager {
    * would call "saving" happens.
    */
   async snapshotTo(path: string): Promise<void> {
+    if (this.engineDocument) {
+      await this.engineDocument.saveCopy(path);
+      return;
+    }
     await this.storage.save(path, this.io.capture());
   }
 
@@ -312,8 +364,13 @@ export class ProjectManager {
 
   private async writeTo(ref: ProjectRef, path: string): Promise<SaveOutcome> {
     try {
-      const file = this.io.capture();
-      await this.storage.save(path, file);
+      if (this.engineDocument) {
+        // F2: the engine serializes and writes (temp file + rename); dirty clears there.
+        await this.engineDocument.save(path);
+      } else {
+        const file = this.io.capture();
+        await this.storage.save(path, file);
+      }
       this.deps.editorView?.remember(path);
       const saved: ProjectRef = { ...ref, path };
       this.state = { current: saved };
@@ -345,7 +402,8 @@ export class ProjectManager {
     const prev = this.state.current;
     this.deps.editorView?.remember(prev?.path ?? null);
     try {
-      if (this.io.unload) this.io.unload();
+      if (this.engineDocument) this.engineDocument.close().catch((err: unknown) => this.deps.logger?.error('Failed to unload project document', err));
+      else if (this.io.unload) this.io.unload();
       else this.io.restore(this.io.createEmpty('Untitled'));
     } catch (err) {
       this.deps.logger?.error('Failed to unload project document', err);

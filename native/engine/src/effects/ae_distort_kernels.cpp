@@ -16,10 +16,7 @@ constexpr double kPi = 3.141592653589793;
 
 double clampd(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 
 }  // namespace
 

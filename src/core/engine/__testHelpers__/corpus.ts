@@ -171,7 +171,33 @@ function memberKeysFixture(): EditorDocument {
   };
 }
 
+/**
+ * B3z plugin properties (pluginProps.ts): a plugin-declared LAYER KIND's props
+ * (a `pluginLayer:<…>` component: number, bool, string, object, a keyed number)
+ * and a contributed inspector PANEL's params (a `PluginParams.<slug>.<panel>`
+ * component: number, point, bool, string, null). No API command creates a
+ * plugin layer kind, so the layers arrive in a document.
+ */
+export const FIXTURE_PLUGINS = 'C:/fixtures/plugins.motion';
+function pluginsFixture(): EditorDocument {
+  const doc = projectDocumentIO.createEmpty('Plugins');
+  const comp = doc.comps!.comp_root!;
+  const withComponent = (n: SceneNode, c: SceneNode['components'][number] | null): SceneNode =>
+    ({ ...n, parent: 'comp_root', components: c ? [...n.components, c] : n.components });
+  const kindLayer = withComponent(makeLayerNode({ kind: 'shape', id: 'layer_1', comp, name: 'Depth image' }),
+    { id: 'layer_1_pk', type: 'pluginLayer:studio.acme.lab.depthImage', props: { depth: 40, invert: false, mode: 'near', extra: { a: 1 }, seed: 7 } } as never);
+  const panelLayer = withComponent(makeLayerNode({ kind: 'solid', id: 'layer_2', comp, name: 'Lifted' }),
+    { id: 'pluginui_studio-acme-lab_lift', type: 'PluginParams.studio-acme-lab.lift', props: { amount: 0.5, 'center.x': 10, 'center.y': 20, on: true, label: 'hi', asset: null } } as never);
+  const plain = withComponent(makeLayerNode({ kind: 'solid', id: 'layer_3', comp, name: 'Plain' }), null);
+  const scene = doc.scene as { nodes: SceneNode[] };
+  const root = scene.nodes.find((n) => n.id === 'comp_root')!;
+  root.children = ['layer_3', 'layer_2', 'layer_1'];
+  scene.nodes.push(kindLayer, panelLayer, plain);
+  return doc;
+}
+
 export const CORPUS_FIXTURES: Record<string, () => EditorDocument> = {
+  [FIXTURE_PLUGINS]: pluginsFixture,
   [FIXTURE_MEMBER_KEYS]: memberKeysFixture,
   [FIXTURE_EXTRAS]: extrasFixture,
   [FIXTURE_BARE]: bareFixture,
@@ -903,6 +929,165 @@ export const FAMILY_CORPUS: Record<string, Session> = {
       { type: 'timeReverseLayers', layers: [W] },
       { type: 'freezeFrame', layer: A, lastFrame: true },
     ]);
+  },
+  // D1 (NATIVE_CORE_PLAN §5): what the evaluated values depend on, densely —
+  // d1EvalParity probes every property of every layer at eight times after it.
+  'D1: evaluation — parent chains 2D/3D, time remap, stretch, reverse, freeze, spatial/hold/roving keys, cross-layer expressions': async (h) => {
+    const comp = 'comp_root';
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const mk = async (kind: 'null' | 'solid' | 'shape' | 'text', name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
+    const key = (layer: string, path: string, t: number, value: ReturnType<typeof scalar> | ReturnType<typeof v2> | ReturnType<typeof v3>, extra: Record<string, unknown> = {}) =>
+      ({ prop: P(layer, path), time: sec(t), value, spatialIn: [] as number[], spatialOut: [] as number[], ...extra });
+    const ex = (layer: string, path: string, source: string) => h.run({ type: 'setExpression', prop: P(layer, path), source, enabled: true }).catch(ignore);
+    const root = await mk('null', 'Root');
+    const arm = await mk('solid', 'Arm');
+    const hand = await mk('shape', 'Hand');
+    const tip = await mk('text', 'Tip');
+    const follower = await mk('solid', 'Follower');
+    const clock = await mk('solid', 'Clock');
+    // A keyed chain: spatial Bézier position, eased rotation, hold scale, an anchor, opacity.
+    const { ids: chainKeys } = await h.run({ type: 'addKeyframes', keys: [
+      key(root, 'transform/position', 0, v2(200, 300), { spatialOut: [120, -80] }),
+      key(root, 'transform/position', 2, v2(900, 500), { easing: 'easeInOut', spatialIn: [-60, -140] }),
+      key(root, 'transform/position', 3, v2(1100, 200)),
+      key(root, 'transform/rotation', 0, scalar(0)),
+      key(root, 'transform/rotation', 3, scalar(270), { easing: 'easeIn' }),
+      key(arm, 'transform/scale', 0, v2(100, 100)),
+      key(arm, 'transform/scale', 1.5, v2(50, 150), { easing: 'hold' }),
+      key(arm, 'transform/scale', 2.5, v2(120, 80)),
+      key(arm, 'transform/anchorPoint', 0, v2(10, -20)),
+      key(arm, 'transform/anchorPoint', 2, v2(-40, 35)),
+      key(hand, 'transform/rotation', 0.5, scalar(-45)),
+      key(hand, 'transform/rotation', 1, scalar(30)),
+      key(hand, 'transform/rotation', 2.25, scalar(-10), { easing: 'easeOut' }),
+      key(tip, 'transform/opacity', 0, scalar(0)),
+      key(tip, 'transform/opacity', 1, scalar(100)),
+    ] });
+    // Parenting: world-preserving and not, through a null, three deep.
+    await h.run({ type: 'setParent', layers: [arm], parent: root, keepWorldTransform: true });
+    await h.run({ type: 'setParent', layers: [hand], parent: arm, keepWorldTransform: false });
+    await h.run({ type: 'setParent', layers: [tip], parent: hand, keepWorldTransform: true });
+    await h.run({ type: 'setProperty', prop: P(hand, 'transform/position'), value: v2(80, 0) });
+    await h.run({ type: 'setDimensionsSeparated', layer: follower, path: 'transform/position', separated: true }).catch(ignore);
+    // Cross-layer expressions: spaces through the chain, time sampling, loops.
+    await ex(follower, 'transform/position', 'thisComp.layer("Tip").toComp([0, 0])');
+    await ex(follower, 'transform/rotation', 'thisComp.layer("Hand").transform.rotation.valueAtTime(time * 2) + thisComp.layer("Root").transform.rotation');
+    await ex(follower, 'transform/scale', 'var s = thisComp.layer("Arm").transform.scale; [s[0] + time * 5, s[1]]');
+    await ex(follower, 'transform/opacity', 'linear(time, 0.5, 2.5, 20, 90)');
+    await ex(hand, 'transform/rotation', 'loopOut("pingpong")');
+    await ex(tip, 'transform/position', 'value + [Math.sin(time * 3) * 20, thisComp.layer("Root").transform.position.velocity[0] / 100]');
+    await ex(clock, 'transform/rotation', 'seedRandom(4, true); random(0, 360) + posterizeTime(6) * 0 + time * 45');
+    await ex(clock, 'transform/position', 'thisComp.layer("Hand").toWorld(thisComp.layer("Hand").anchorPoint)');
+    // Layer time: a clock with keys and an expression on time, stretched, reversed, frozen, remapped.
+    await h.run({ type: 'addKeyframes', keys: [
+      key(clock, 'transform/scale', 0, v2(100, 100)),
+      key(clock, 'transform/scale', 1, v2(160, 60), { easing: 'easeInOut' }),
+      key(clock, 'transform/scale', 2, v2(90, 110)),
+      key(clock, 'transform/opacity', 0.25, scalar(10)),
+      key(clock, 'transform/opacity', 2.75, scalar(95)),
+    ] });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: clock, startTime: sec(0.5) }] });
+    await h.run({ type: 'setLayerTiming', items: [{ layer: clock, stretch: 1.5 }] });
+    await h.run({ type: 'setTimeRemap', layer: clock, enabled: true });
+    await h.run({ type: 'addKeyframes', keys: [key(clock, 'timeRemap', 1, scalar(2.5)), key(clock, 'timeRemap', 2.5, scalar(0.25), { easing: 'easeInOut' })] }).catch(ignore);
+    const echo = await mk('solid', 'Echo');
+    await h.run({ type: 'addKeyframes', keys: [key(echo, 'transform/rotation', 0, scalar(0)), key(echo, 'transform/rotation', 2, scalar(180))] });
+    await ex(echo, 'transform/position', '[time * 100, thisComp.layer("Clock").transform.rotation]');
+    await h.run({ type: 'timeReverseLayers', layers: [echo] });
+    const still = await mk('solid', 'Still');
+    await h.run({ type: 'addKeyframes', keys: [key(still, 'transform/position', 0, v2(0, 0)), key(still, 'transform/position', 3, v2(600, 300))] });
+    await h.run({ type: 'freezeFrame', layer: still, time: sec(1.25), lastFrame: false });
+    // Roving: the Root's middle position key's time follows the path's speed.
+    await h.run({ type: 'updateKeyframes', patches: [{ id: chainKeys[1]!, roving: true, spatialIn: [-60, -140], spatialOut: [] }] }).catch(ignore);
+    // 3D: a 3D chain under a 2D null, orientation and axis rotations, a camera, toWorld through it.
+    await h.run({ type: 'setLayerSwitches', layers: [arm, hand], patch: { threeD: true } });
+    await h.run({ type: 'addKeyframes', keys: [
+      key(arm, 'transform/orientation', 0, v3(0, 0, 0)),
+      key(arm, 'transform/orientation', 2, v3(30, 60, 15)),
+      key(hand, 'transform/xRotation', 0, scalar(0)),
+      key(hand, 'transform/xRotation', 1.5, scalar(75)),
+      key(hand, 'transform/position', 0, v3(80, 0, 0)),
+      key(hand, 'transform/position', 2, v3(80, 40, -250)),
+    ] }).catch(ignore);
+    const { layer: cam } = await h.run({ type: 'createLayer', comp, kind: 'camera', name: 'Cam', init: [] });
+    await h.run({ type: 'setProperty', prop: P(cam, 'transform/position'), value: v3(960, 540, -1500) }).catch(ignore);
+    await ex(follower, 'transform/anchorPoint', 'var w = thisComp.layer("Hand").toWorld([0, 0, 0]); [w[0] / 10, w[2] / 10]');
+    // Precompose part of the chain and remap the precomp.
+    const pre = await h.run({ type: 'precompose', comp, layers: [echo, still], name: 'Inner', mode: 'moveAll', adjustDuration: false }).catch(ignore);
+    if (pre) {
+      const outer = (await h.query({ type: 'getComposition', comp })).comp.layers.find((l) => l !== root && ![arm, hand, tip, follower, clock, cam].includes(l));
+      if (outer) {
+        await h.run({ type: 'setTimeRemap', layer: outer, enabled: true }).catch(ignore);
+        await h.run({ type: 'setLayerTiming', items: [{ layer: outer, startTime: sec(-0.5) }] }).catch(ignore);
+      }
+    }
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+  },
+  'B3z: plugin properties — layer-kind props, panel groups, points, fields, keys, refusals — save → open': async (h) => {
+    const ignore = (): undefined => undefined;
+    const P = (layer: string, path: string) => ({ layer, path });
+    const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
+    const lift = 'plugin/studio-acme-lab/lift';
+    for (const [path, make] of Object.entries(CORPUS_FIXTURES)) if (!h.files.has(path)) h.files.set(path, make());
+    await h.run({ type: 'openProject', path: FIXTURE_PLUGINS });
+    const trees = async (): Promise<void> => {
+      for (const id of ['layer_1', 'layer_2', 'layer_3']) await h.query({ type: 'getPropertyTree', layer: id, path: '', depth: 0 });
+    };
+    await trees();
+    // The layer kind's props: typed by what is stored.
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/depth'), value: scalar(55) });
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/invert'), value: { kind: 'bool', value: true } });
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/mode'), value: { kind: 'string', value: 'far' } });
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/extra'), value: json({ b: 2 }) });
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/mode'), value: json(null) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/invert'), value: scalar(1) }).catch(ignore);
+    await h.run({ type: 'setProperty', prop: P('layer_1', 'plugin/nope'), value: scalar(1) }).catch(ignore);
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: P('layer_1', 'plugin/seed'), time: 0, value: scalar(7), spatialIn: [], spatialOut: [] },
+      { prop: P('layer_1', 'plugin/seed'), time: sec(2), value: scalar(19), easing: 'easeInOut', spatialIn: [], spatialOut: [] },
+    ] });
+    await h.run({ type: 'setExpression', prop: P('layer_1', 'plugin/depth'), source: 'value + time * 10', enabled: true }).catch(ignore);
+    // A panel's params: number, point, bool, string, null → json.
+    await h.run({ type: 'setProperty', prop: P('layer_2', `${lift}/amount`), value: scalar(0.8) });
+    await h.run({ type: 'setProperty', prop: P('layer_2', `${lift}/center`), value: v2(30, 40) });
+    await h.run({ type: 'setProperty', prop: P('layer_2', `${lift}/on`), value: { kind: 'bool', value: false } });
+    await h.run({ type: 'setProperty', prop: P('layer_2', `${lift}/asset`), value: json('asset_1') });
+    await h.run({ type: 'addKeyframes', keys: [
+      { prop: P('layer_2', `${lift}/center`), time: 0, value: v2(0, 0), spatialIn: [], spatialOut: [] },
+      { prop: P('layer_2', `${lift}/center`), time: sec(1), value: v2(100, 50), spatialIn: [], spatialOut: [] },
+    ] });
+    await trees();
+    // Panel groups: add with init (a point, a colour, json), conflicts, and every refusal.
+    const add = (layer: string, matchName: string, init: Array<{ path: string; value: unknown }>) =>
+      h.run({ type: 'addPropertyGroup', layer, parent: 'plugin', matchName, init } as never).catch(ignore);
+    await add('layer_3', 'PluginParams.studio-acme-lab.glow', [
+      { path: 'radius', value: scalar(4) }, { path: 'origin', value: v2(1, 2) },
+      { path: 'tint', value: { kind: 'color', value: { r: 1, g: 0.5, b: 0, a: 1 } } }, { path: 'meta', value: json({ k: [1, 2] }) },
+    ]);
+    await add('layer_3', 'PluginParams.studio-acme-lab.glow', []);
+    await add('layer_3', 'PluginParams.studio-acme-lab.bad', [{ path: 'Not-A-Name', value: scalar(1) }]);
+    await add('layer_3', 'PluginParams.studio-acme-lab.inf', [{ path: 'x', value: scalar(Number.POSITIVE_INFINITY) }]);
+    await add('layer_3', 'NotAPanel', []);
+    const glow = P('layer_3', 'plugin/studio-acme-lab/glow');
+    await h.run({ type: 'setProperty', prop: P('layer_3', 'plugin/studio-acme-lab/glow/radius'), value: scalar(9) }).catch(ignore);
+    await h.run({ type: 'movePropertyGroup', group: glow, toIndex: 0 }).catch(ignore);
+    await h.run({ type: 'duplicatePropertyGroups', groups: [glow] }).catch(ignore);
+    await h.run({ type: 'copyPropertyGroups', groups: [glow], toLayers: ['layer_1'] }).catch(ignore);
+    await h.run({ type: 'setGroupEnabled', groups: [glow], enabled: false }).catch(ignore);
+    await h.run({ type: 'renamePropertyGroup', group: glow, name: 'Glow 2' }).catch(ignore);
+    await h.run({ type: 'removePropertyGroups', groups: [P('layer_2', lift)] });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'redo' });
+    await h.run({ type: 'undo' });
+    await h.run({ type: 'removePropertyGroups', groups: [P('layer_2', 'plugin/studio-acme-lab/nope')] }).catch(ignore);
+    await trees();
+    await h.run({ type: 'saveProject', path: 'C:/p/plugins.motion', copy: false });
+    await h.run({ type: 'newProject' });
+    await h.run({ type: 'openProject', path: 'C:/p/plugins.motion' });
+    await trees();
   },
   // @@family:groups
   'groups: effects — add with params, index, many layers, move, duplicate, copy, enable, rename, remove, refusals': async (h) => {
@@ -2711,7 +2896,10 @@ export const FAMILY_CORPUS: Record<string, Session> = {
     // pasteLayers fragment (offDocument.ts) — the bytes are recorded in the log, so both
     // engines paste exactly what the builder produced.
     const built = (build: () => unknown) => {
-      const b = buildLayerFragment(s.comp, build);
+      // offDocument holds the APP engine's write detector (engineInstance); this
+      // harness engine is not it, so hold it too — else the scratch build reads
+      // as a write around the engine (a documentReset{resync}) the app never sends.
+      const b = h.engine.holdDetection(() => buildLayerFragment(s.comp, build));
       if (!b) throw new Error('the builder added no layers');
       return b;
     };

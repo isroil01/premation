@@ -19,10 +19,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kDeg = kPi / 180;
 
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 
 /// `gradAt(field, w, h, x, y)`.
 std::array<double, 2> grad_at(const std::vector<float>& f, int w, int h, int x, int y) {
@@ -221,27 +218,52 @@ void hex_tile(RgbaView img, double radius, double border, ThreadPool* pool) {
   const double hex_w = R * 1.5;
   const double hex_h = R * std::sqrt(3.0);
   const double bd = clamp01(border / 100);
+  // The candidate columns (and their parity, which picks the row offset)
+  // depend only on x, the candidate rows only on y and that parity, so both
+  // halves of each squared distance are tabulated once; the per-pixel search
+  // adds them and compares in the TS's order.
+  struct ColCand {
+    std::array<double, 3> ccx, dx2;
+    std::array<std::uint8_t, 3> odd;
+  };
+  std::vector<ColCand> cols(static_cast<std::size_t>(w));
+  for (int x = 0; x < w; ++x) {
+    ColCand& cc = cols[static_cast<std::size_t>(x)];
+    const double col = round_index(x / hex_w);
+    for (std::size_t k = 0; k < 3; ++k) {
+      const double c = col + (static_cast<double>(k) - 1);
+      cc.ccx[k] = c * hex_w;
+      cc.odd[k] = static_cast<std::int64_t>(c) % 2 == 0 ? 0 : 1;  // c is an integer
+      cc.dx2[k] = (x - cc.ccx[k]) * (x - cc.ccx[k]);
+    }
+  }
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
     for (int y = y0; y < y1; ++y) {
+      std::array<std::array<double, 3>, 2> ccy{};
+      std::array<std::array<double, 3>, 2> dy2{};
+      for (std::size_t p = 0; p < 2; ++p) {
+        const double off = p == 0 ? 0 : hex_h / 2;
+        const double row = round_index((y - off) / hex_h);
+        for (std::size_t k = 0; k < 3; ++k) {
+          ccy[p][k] = (row + (static_cast<double>(k) - 1)) * hex_h + off;
+          dy2[p][k] = (y - ccy[p][k]) * (y - ccy[p][k]);
+        }
+      }
       for (int x = 0; x < w; ++x) {
-        const double col = round_index(x / hex_w);
+        const ColCand& cc = cols[static_cast<std::size_t>(x)];
         double best = std::numeric_limits<double>::infinity();
         double bcx = 0;
         double bcy = 0;
-        for (int dc = -1; dc <= 1; ++dc) {
-          const double c = col + dc;
-          const double ccx = c * hex_w;
-          const double off = static_cast<std::int64_t>(c) % 2 == 0 ? 0 : hex_h / 2;  // c is an integer
-          const double row = round_index((y - off) / hex_h);
-          for (int dr = -1; dr <= 1; ++dr) {
-            const double ccy = (row + dr) * hex_h + off;
-            const double d = (x - ccx) * (x - ccx) + (y - ccy) * (y - ccy);
+        for (std::size_t dc = 0; dc < 3; ++dc) {
+          const std::size_t p = cc.odd[dc];
+          for (std::size_t dr = 0; dr < 3; ++dr) {
+            const double d = cc.dx2[dc] + dy2[p][dr];
             if (d < best) {
               best = d;
-              bcx = ccx;
-              bcy = ccy;
+              bcx = cc.ccx[dc];
+              bcy = ccy[p][dr];
             }
           }
         }
@@ -275,6 +297,10 @@ void vector_blur(RgbaView img, double amount, double angle_offset, double smooth
   const double sin_r = js::sin(rot);
   const int K = static_cast<int>(std::max(2.0, std::min(24.0, js::round(amount))));
   const double step = amount / K;
+  const auto taps = static_cast<std::size_t>(2 * K + 1);
+  // |flow| ≤ 1 (a rotated unit vector), so every tap is within
+  // max(w, h) + K·step (+ rounding slack) of the origin.
+  const bool fast_round = std::max(w, h) + 2 * K * step < 1125899906842624.0;  // 2^50
   const std::vector<std::uint8_t> src(img.data.begin(), img.data.end());
   std::uint8_t* out = img.data.data();
   for_rows(pool, h, [&](int y0, int y1) {
@@ -292,21 +318,40 @@ void vector_blur(RgbaView img, double amount, double angle_offset, double smooth
         }
         std::uint8_t* o = out + idx4(x, y, w);
         if (fx == 0 && fy == 0) continue;  // source pixel, already in place
-        std::array<double, 4> acc{};
-        double cnt = 0;
-        for (int k = -K; k <= K; ++k) {
-          const double sx = round_index(x + fx * k * step);
-          const double sy = round_index(y + fy * k * step);
-          if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
+        // The TS sums bytes in doubles: at most 49 · 255 per channel, exact
+        // either way, so integer sums give the same quotient.
+        std::array<std::uint32_t, 4> acc{};
+        std::uint32_t cnt = 0;
+        const auto take = [&](double sx, double sy) {
+          if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
           const std::uint8_t* s = src.data() + idx4(static_cast<int>(sx), static_cast<int>(sy), w);
-          for (std::size_t c = 0; c < 4; ++c) acc[c] += s[c];
-          cnt += 1;
+          acc[0] += s[0];
+          acc[1] += s[1];
+          acc[2] += s[2];
+          acc[3] += s[3];
+          ++cnt;
+        };
+        if (fast_round) {
+          // Every tap coordinate is inside ±2^50, where `Math.round` is the
+          // branch-free round_js_small: all taps' coordinates in one
+          // vectorisable pass, then the gather in tap order.
+          std::array<double, 49> txs{};
+          std::array<double, 49> tys{};
+          for (int k = -K; k <= K; ++k) {
+            const auto i = static_cast<std::size_t>(k + K);
+            txs[i] = round_js_small(x + fx * k * step);
+            tys[i] = round_js_small(y + fy * k * step);
+          }
+          for (std::size_t i = 0; i < taps; ++i) take(txs[i], tys[i]);
+        } else {
+          for (int k = -K; k <= K; ++k) take(round_index(x + fx * k * step), round_index(y + fy * k * step));
         }
         if (cnt == 0) {
           o[0] = o[1] = o[2] = o[3] = 0;
           continue;
         }
-        for (std::size_t c = 0; c < 4; ++c) o[c] = u8c(clamp255(acc[c] / cnt));
+        const double n = cnt;
+        for (std::size_t c = 0; c < 4; ++c) o[c] = u8c(clamp255(acc[c] / n));
       }
     }
   });

@@ -278,6 +278,72 @@ engines (9/9, 0 mismatches; the C2-subset session 41/41 compared). Real app:
 | D4 | RAM and disk frame cache in the engine, sized by the machine, not by Chromium's heap | Cached playback of a heavy comp holds full rate | 3 wk |
 | D5 | Engine viewport default-on; the TS renderer stays behind the flag for one release | HUD frame time ≤ TS path on every bench comp | 2 wk |
 
+**D1 progress (2026-09-24): the replay corpus evaluates identically in both
+engines — 0 differences in 17 491 compared records, from 520.** A new gate
+measures D1's exit directly, in process, with no engine binary and no Dawn:
+`src/core/engine/__tests__/d1EvalParity.test.ts` runs every corpus session
+(B2 + family + generated, 61 sessions) on the TypeScript engine, records every
+request and response, then PROBES the finished document — every layer's
+property tree, every numeric property evaluated at 8 composition times
+(before 0, on and between frames, past the end) and pre-expression, the world
+transforms of every stack (parenting), motion paths, 31-point samples with
+speed of every keyed or expressed property, and all keyframes.
+`native/engine/tests/test_d1_eval_parity.cpp` (`engine_d1_parity_tests`)
+replays the same bytes into a C++ `Session` and compares every response byte
+for byte (refusals by error code) and every revision step; ratchet 0.
+Fixture `tests/data/d1_eval_parity.bin` (3.9 MB: large answers stored as
+length + hash, repeated probes as deltas; `GEN_NATIVE_D1_FULL=<file>` +
+`D1_FIXTURE=<file>` explain a difference with both values). Two new corpus
+sessions: *D1: evaluation* (a three-deep parent chain through a null with
+spatial Bézier / eased / hold / roving keys, a 3D sub-chain with orientation
+and axis rotations under a camera, toComp / toWorld / valueAtTime / velocity /
+loopOut / seedRandom / posterizeTime expressions across layers, stretch, time
+remap keys, reverse, freeze, a remapped precomp) and *B3z: plugin properties*.
+- **Measured gap before → after.** First run: 520 of 17 177 records differed
+  (358 probes; 17 of 59 sessions identical). Now: 0 of 17 491 (61/61
+  sessions). The cross-engine process replay (`crossEngine.test.ts`) against
+  `premation-engine-headless` (new: the engine process without Dawn, frames
+  simulated — `PREMATION_ENGINE_PATH`): 62/62 sessions, 10 539 requests
+  compared, **0 answered `unsupported`**, 0 dependent, 0 mismatches (first run:
+  54/60 — two 120 s timeouts on a loaded machine, now 600 s, and four
+  harness faults fixed below).
+- **C++ fixes** (each was a wrong evaluated value or step): material switches
+  (Accepts Lights / Casts / Accepts Shadows) read and write as the TS
+  `readMaterialSwitch` (every 3D layer's Accepts Lights read 0); two dangling
+  references to by-value temporaries in `strokes.cpp` (every shape-stroke
+  colour read #ffffff, every stroke gradient point 0); `sampleProperty` speed
+  through V8's `Math.hypot`; new keyframe ids minted in the order the command
+  touched the layers, not by id; plugin properties wired — `plugin_props.cpp`
+  (ported, never compiled) now builds the `plugin/<name>` and
+  `plugin/<slug>/<panel>/<param>` bindings, statics, fields and panel groups
+  (add / remove / every refusal); a pasted group member's bar no longer
+  outlives the command (`write_geoms` marks it for the reconcile — was an
+  extra `compositionChanged`); saved documents no longer carry editor state
+  (`openTabs`, a timeline's `view` / `currentFrame` — B4 removed them from the
+  TS save; the C++ file was ~300 bytes larger, now equal except the TS's
+  random track id).
+- **TypeScript fixes:** `loadDocument` dropped the load's own pending debounced
+  snapshot, which became a phantom "Edit N" undo step under the next command
+  after every open / revert; test ports count saved UTF-8 bytes like the real
+  port; the WS-L1 session holds the harness engine's write detector during
+  off-document builds; `crossEngine.test.ts` clones request bytes from any
+  realm (a pasted fragment was cloned as an object), counts history pushes
+  that do not move the revision, and sends an undo/redo the model has no
+  entry for (both engines must refuse it).
+- **Remaining for D1:** the render-side evaluation — the engine producing its
+  own FrameScene from the C++ document (`scene/snapshot_build`, buildSnapshot's
+  port) — is gated by the D2 golden suite, not by this fixture, and still
+  reports shape operators, paragraph text and image-layer rig culling;
+  `getLayerTransforms` is 2D in both engines (3D world space is observable only
+  through toWorld/toComp expressions, which the fixture covers); the corpus
+  has no session for footage decode-dependent values (E1) or audio-driven
+  expressions (E2); 12 of 114 edit commands are never issued by the corpus
+  (`restoreDocument`, `importBytes`, `clearWorkArea`, `timeStretchLayers`,
+  `unfreezeLayers`, `rippleDeleteRange`, `shiftLayerKeyframes`, the three
+  transition commands, `editPathTopology`, `setShapeOutline`), so their parity
+  is unmeasured; saveProject's byte count is compared by path only (the TS
+  track id is random).
+
 **D2 progress (2026-09-23): the render graph runs in C++ on Dawn, at parity
 on the whole golden suite.** Decoupled from the C++ document (still C2's
 subset) through a **serialized FrameScene** — engine-api family `Render`,
@@ -548,14 +614,16 @@ built or syntax-checked with the project's warning flags. Pixel parity of the ne
 paths (`premation-raster --mode native` on the golden scenes) is still to run on a
 machine with the vcpkg `engine` feature.
 
-Open: the GPU (Graphite) raster path (needs a GPU), CPU-baked effect chains (E4:
-wiring, 18 canvas-drawn effects), macOS system fonts (CoreText), variation axes and
+Open: the GPU (Graphite) raster path (needs a GPU), the CPU bake chain under the
+engine (E4: the chain and all 27 canvas-drawn effects are ported — see the E4 chain
+note — `frame_build.cpp` does not call it yet), macOS system fonts (CoreText), variation axes and
 the 'vert' face through alias faces, the D2w scene builder's own paint resolution
 (`snapshot_build.cpp` still marks paint unported), pixel parity of the above.
 
-**E4 progress (2026-09-24, branch `e4-effects`).** `native/engine/src/effects`
-(`engine_effects`, Skia- and GPU-free) holds C++ ports of **120 of the 166 CPU
-effect passes** the bake chain runs (`applyCanvas2dEffect`,
+**E4 progress (2026-09-24, branches `e4-effects`, `e4-more`).** `native/engine/src/effects`
+(`engine_effects`, Skia- and GPU-free) holds C++ ports of **139 of the 166 CPU
+effect passes** the bake chain runs — every pure buffer kernel; the 27 left
+draw through Canvas2D (`applyCanvas2dEffect`,
 `src/core/effects/canvas2dEffects.ts`); see `native/README.md` § CPU effect
 kernels. Each is a port of its TS kernel operation for operation, including
 JavaScript's store rounding (`Uint8ClampedArray` half-to-even, `Uint8Array` /
@@ -566,15 +634,18 @@ window per pixel, the C++ uses algorithms that give the same result: sliding
 integer sums, van Herk min / max, Huang running-median histograms, lattices
 computed once. Where the TS sums floats, the C++ keeps the TS's order.
 **Parity:** `nativeKernelCrossEngine.test.ts` writes
-`native/engine/tests/data/effect_kernel_parity.json`: 297 cases over three
+`native/engine/tests/data/effect_kernel_parity.json`: 359 cases over three
 synthetic inputs, one of them > 512 px for the edge-aware blurs' budget proxy.
 `engine_effects_tests` matches **every FNV-1a 64 exactly, on 1 thread and on
-4**, with zero tolerance.
+4**, with zero tolerance. Kernels whose TS arguments are resolved lists
+(packed mask paths, brush trails, spines, `.cube` tables) take them as named
+numeric arrays; kernels that stamp in sequence (dabs, particles, streaks)
+replay the whole stamp list per row chunk, so every pixel sees the TS's order.
 
 The plan's "28 Canvas2D-only effects" count predates GPU-port rounds 6–14.
 Today `CANVAS2D_ONLY` (no WGSL, so it forces a bake) has **9** members. 7 of
-them draw through Canvas2D. `path-stroke` and `scribble` are pure buffer kernels
-and are next. The other 157 passes run on the CPU only when a layer is baked
+them draw through Canvas2D; the other two, `path-stroke` and `scribble`, are pure
+buffer kernels over the resolved mask paths and are ported. The other 157 passes run on the CPU only when a layer is baked
 for another reason (interior styles, effect masks, fill opacity, paths), where
 they are the WGSL's parity twins.
 
@@ -585,17 +656,33 @@ jobs (Linux CPU pressure 10–85 % during the runs; a pure-compute parallel loop
 scaled only 1.2× on 4 threads under that load). The thread column is therefore
 a floor, not a scaling measurement. Summary:
 
-- Median over the 120 effects: C++ on **1 thread is 2.1× the TS**, and on
-  **4 threads 5.0×**. The range runs from 0.5× (Vignette, whose TS memoises its
+- Median over the 139 effects: C++ on **1 thread is 2.2× the TS**, and on
+  **4 threads 5.1×**. The range runs from 0.5× (Vignette, whose TS memoises its
   gain map across frames) to 80× (Median, now a running histogram instead of a
   sort).
-- 93 of the 120 TS kernels take more than 41.7 ms (24 fps) on a 1080p layer.
-  On 4 contended threads, 77 of the C++ ports are under 41.7 ms and 43 are not.
-  The slowest are the per-pixel noise and trig resamples (Vector Blur, Radial
-  Fast Blur, Turbulent Displace, Drizzle, CC Scatterize) at 110–250 ms. They
-  are the next optimisation targets, via lattice caching or a lower-precision
-  twin behind the golden gate. Measuring the exit criterion ("no effect drops
-  the bench comp below 24 fps") needs the chain wired into the engine first.
+- 107 of the 139 TS kernels take more than 41.7 ms (24 fps) on a 1080p layer.
+  On 4 contended threads, 91 of the C++ ports are under 41.7 ms and 48 are not.
+- Optimised without changing a byte (`e4-more`, interleaved A/B against the
+  previous build, same session): Radial Fast Blur 4.8× on 1 thread (source
+  column / row per tap tabulated, Bright / Dark gain a table of the byte sum),
+  Drizzle 4.5× (drops culled per row and pixel by |vy| − ringR and
+  |vx| − ringR, which `Math.hypot` never undercuts), Turbulent Displace 2.9× and
+  Curl Noise 2.3× (per-row fbm with each octave's lattice corners reused along
+  the row), Hex Tile 2.3× (candidate cells tabulated per column / row), Vector
+  Blur 1.6× (integer tap sums, a vectorisable `Math.round`), CC Scatterize 1.2×
+  on 1 thread and 2.1× on 4 (destinations in parallel, writes replayed in scan
+  order). Shared by every kernel: V8's two-argument `Math.hypot` inlined
+  (checked bit for bit against `motion::js::hypot`), `remap` copying a pixel
+  that maps to its own centre, and `hash2`'s ToInt32 off the `fmod` path —
+  Bulge, Liquify, Magnify, Smear, Mirror, Ripple Pulse and Cell Pattern gained
+  1.7–2.8× from those alone.
+- The slowest now are Deep Glow (1.3 s on 4 threads at radius 60: eight
+  33-tap separable Float32 passes per octave, the TS order kept) and Energy
+  Beam (0.9 s: per-pixel distance to 64 spine segments plus a 4-fbm curl), then
+  Light Burst, Radial Blur, Cross Blur and Vector Blur at 150–230 ms. Deep Glow
+  and Beam are candidates for a lower-precision twin behind the golden gate.
+  Measuring the exit criterion ("no effect drops the bench comp below 24 fps")
+  needs the chain wired into the engine first.
 
 Ported, with parity (every row byte-identical) and ms per 1080p frame:
 
@@ -678,8 +765,8 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `dust-scratches` | `aeTransitionsAdvanced.ts` | 8867 | 140 | 52.9 | 63.2 | 167.7 |
 | `noise-alpha` | `aeTransitionsAdvanced.ts` | 31.4 | 31.6 | 11.5 | 1.0 | 2.7 |
 | `wave-warp` | `warp.ts` | 178 | 135 | 48.0 | 1.3 | 3.7 |
-| `turbulent-displace` | `warp.ts` | 507 | 510 | 181 | 1.0 | 2.8 |
-| `curl-noise` | `warp.ts` | 846 | 286 | 110 | 3.0 | 7.7 |
+| `turbulent-displace` | `warp.ts` | 507 | 176 | 95.7 | 2.9 | 5.3 |
+| `curl-noise` | `warp.ts` | 846 | 124 | 66.8 | 6.8 | 12.7 |
 | `roughen-edges` | `stylize.ts` | 188 | 153 | 112 | 1.2 | 1.7 |
 | `scatter` | `stylize.ts` | 137 | 44.9 | 27.5 | 3.1 | 5.0 |
 | `ripple` | `aeDistortAdvanced.ts` | 430 | 231 | 83.7 | 1.9 | 5.1 |
@@ -701,8 +788,8 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `fractal` | `aeRoundSevenStylize.ts` | 465 | 242 | 120 | 1.9 | 3.9 |
 | `unmult` | `aeRoundSix.ts` | 54.7 | 28.9 | 15.3 | 1.9 | 3.6 |
 | `cc-composite` | `aeRoundSix.ts` | 49.2 | 25.4 | 17.6 | 1.9 | 2.8 |
-| `cc-scatterize` | `aeRoundSix.ts` | 278 | 182 | 172 | 1.5 | 1.6 |
-| `radial-fast-blur` | `aeRoundSix.ts` | 1059 | 509 | 242 | 2.1 | 4.4 |
+| `cc-scatterize` | `aeRoundSix.ts` | 278 | 146 | 84.4 | 1.9 | 3.3 |
+| `radial-fast-blur` | `aeRoundSix.ts` | 1059 | 108 | 55.9 | 9.8 | 18.9 |
 | `cross-blur` | `aeRoundSix.ts` | 708 | 314 | 161 | 2.3 | 4.4 |
 | `scale-wipe` | `aeRoundSix.ts` | 253 | 105 | 51.9 | 2.4 | 4.9 |
 | `plastic` | `aeRoundSix.ts` | 555 | 197 | 111 | 2.8 | 5.0 |
@@ -710,35 +797,139 @@ Ported, with parity (every row byte-identical) and ms per 1080p frame:
 | `texturize` | `aeStylizeRoundFive.ts` | 222 | 186 | 90.7 | 1.2 | 2.4 |
 | `threads` | `aeStylizeRoundFive.ts` | 70.9 | 48.5 | 25.6 | 1.5 | 2.8 |
 | `chromatic-aberration` | `aeStylizeRoundFive.ts` | 582 | 247 | 120 | 2.4 | 4.9 |
-| `hex-tile` | `aeStylizeRoundFive.ts` | 127 | 134 | 120 | 0.9 | 1.1 |
-| `vector-blur` | `aeStylizeRoundFive.ts` | 788 | 449 | 248 | 1.8 | 3.2 |
+| `hex-tile` | `aeStylizeRoundFive.ts` | 127 | 60.1 | 17.1 | 2.1 | 7.4 |
+| `vector-blur` | `aeStylizeRoundFive.ts` | 788 | 288 | 153 | 2.7 | 5.2 |
 | `flo-motion` | `aeDistortRoundFive.ts` | 329 | 181 | 72.3 | 1.8 | 4.6 |
 | `lens` | `aeDistortRoundFive.ts` | 138 | 48.9 | 26.7 | 2.8 | 5.2 |
 | `griddler` | `aeDistortRoundFive.ts` | 195 | 96.0 | 48.9 | 2.0 | 4.0 |
 | `ball-action` | `aeDistortRoundFive.ts` | 206 | 94.4 | 72.0 | 2.2 | 2.9 |
-| `drizzle` | `aeDistortRoundFive.ts` | 1362 | 313 | 172 | 4.4 | 7.9 |
+| `drizzle` | `aeDistortRoundFive.ts` | 1362 | 76.1 | 47.1 | 17.9 | 28.9 |
 | `jaws` | `aeTransitionsRoundFive.ts` | 116 | 93.9 | 37.7 | 1.2 | 3.1 |
 | `pixel-polly` | `aeTransitionsRoundFive.ts` | 56.6 | 34.6 | 12.7 | 1.6 | 4.4 |
 | `twister` | `aeTransitionsRoundFive.ts` | 50.2 | 28.5 | 12.4 | 1.8 | 4.0 |
 | `card-dance` | `aeTransitionsRoundFive.ts` | 41.9 | 32.6 | 15.6 | 1.3 | 2.7 |
+| `path-stroke` | `pathStroke.ts` | 116 | 34.7 | 26.3 | 3.3 | 4.4 |
+| `scribble` | `scribble.ts` | 134 | 39.7 | 37.0 | 3.4 | 3.6 |
+| `write-on` | `writeOnBrush.ts` | 74.0 | 23.8 | 22.2 | 3.1 | 3.3 |
+| `star-burst` | `generateRoundFive.ts` | 23.1 | 15.6 | 11.5 | 1.5 | 2.0 |
+| `snowfall` | `generateRoundFive.ts` | 17.7 | 2.6 | 1.7 | 6.8 | 10.4 |
+| `rainfall` | `generateRoundFive.ts` | 9.5 | 1.0 | 2.5 | 9.5 | 3.8 |
+| `light-burst` | `generateRoundFive.ts` | 1034 | 676 | 233 | 1.5 | 4.4 |
+| `cc-tiler` | `aeRoundSevenDistort.ts` | 344 | 137 | 47.3 | 2.5 | 7.3 |
+| `ripple-pulse` | `aeRoundSevenDistort.ts` | 466 | 56.0 | 23.8 | 8.3 | 19.6 |
+| `radial-scale-wipe` | `aeRoundSevenDistort.ts` | 174 | 49.0 | 20.3 | 3.6 | 8.6 |
+| `glass-wipe` | `aeRoundSevenDistort.ts` | 428 | 110 | 40.9 | 3.9 | 10.5 |
+| `image-wipe` | `aeRoundSevenDistort.ts` | 57.4 | 17.2 | 6.3 | 3.3 | 9.1 |
+| `particle-systems` | `aeRoundSevenSimulation.ts` | 14.7 | 1.6 | 0.8 | 9.2 | 18.4 |
+| `cc-bubbles` | `aeRoundSevenSimulation.ts` | 38.1 | 9.2 | 3.6 | 4.1 | 10.6 |
+| `bezier-warp` | `bezierWarp.ts` | 1926 | 296 | 109 | 6.5 | 17.7 |
+| `cell-pattern` | `generatePatterns.ts` | 803 | 224 | 88.4 | 3.6 | 9.1 |
+| `apply-color-lut` | `cubeLut.ts` | 223 | 78.3 | 29.8 | 2.8 | 7.5 |
+| `deep-glow` | `deepGlow.ts` | 7398 | 2730 | 1287 | 2.7 | 5.7 |
+| `beam-path` | `beamPath.ts` | 13728 | 2578 | 934 | 5.3 | 14.7 |
 
-Not ported yet (46):
+The 27 canvas-drawn effects were not ported by the kernel rounds; E3 ported 9
+of them on `raster::Canvas` (`engine_canvas_effects`). The chain round below
+ports the other 18 and runs all 27 in the chain.
 
-| status | effects (`applyCanvas2dEffect` cases) |
-|---|---|
-| **Forces a bake today** (`CANVAS2D_ONLY`, no WGSL) — canvas-drawn, needs the E3 `raster::Canvas` | `vegas`, `numbers`, `timecode`, `audio-spectrum`, `audio-waveform`, `lightning`, `plexus` |
-| **Forces a bake today** — pure buffer kernels over mask polylines resolved into params; next to port | `path-stroke` (`pathStroke.ts`), `scribble` (`scribble.ts`) |
-| Pure kernel, not ported yet (same recipe as above) | `bezier-warp`, `cell-pattern`, `apply-color-lut` (`applyLutToImageData`), `write-on` (+ brush form), `star-burst`, `snowfall`, `rainfall`, `light-burst`, `deep-glow`, `beam-path`, `cc-tiler`, `ripple-pulse`, `radial-scale-wipe`, `glass-wipe`, `image-wipe`, `particle-systems`, `cc-bubbles` |
-| Canvas-drawn (gradients, `drawImage` compositing, `ctx.filter` blurs), needs `raster::Canvas` in the chain | `stroke`, `four-color-gradient`, `inner-shadow`, `inner-glow`, `satin`, `bevel`, `directional-blur`, `transform`, `beam`, `lens-flare`, `cc-repetile` — ported to `engine_canvas_effects` (on the Canvas2D interface, op-for-op with the TS; E3 round two): `fill`, `linear-wipe`, `light-rays`, `light-sweep`, `checkerboard`, `grid`, `circle`, `ellipse`, `radio-waves` |
+**E4 chain (2026-09-24, branch `e4-chain`, CPU only, built on Linux without
+Skia).** `engine_effect_chain` (`native/engine/src/effects/effect_chain.cpp`,
+`effect_apply.cpp`, `effect_color.cpp`; see `native/README.md` § The bake
+chain) is `effectBake.ts` `applyEffectChain` + `bakeWorkerCore.ts` `runBakeJob`
+on the Skia-free `raster::Canvas2D`:
+
+- **Param mapping.** All 139 pixel effects go through a port of their TS
+  `apply*` wrapper, not the kernel's argument names: the guards that skip
+  neutral settings (a guard that returns never touches the frame, so it is part
+  of the Canvas2D program), renames, `/100` scalings, `w/2 +` centre offsets,
+  `Math.round` / clamps, the three colour parsers, Find Edges' blend,
+  `deepGlowSettings`, `beamPathSettings` + `beamFlicker`, `pickMaskPaths`'
+  index, `fromStoredLut`'s validation.
+- **Routes, in `applyOne`'s order.** 10 LUT effects (`colorLut.ts` +
+  `aeRoundSevenLuts.ts`, Float32 tables), the 11 CSS effects (their filter
+  strings, batched and flushed as one `ctx.filter` draw — the Skia canvas draws
+  only `blur()` of them so far, and reports the rest in
+  `ChainReport::unsupported`), the colour-matrix pair (tint, channel mixer),
+  the two procedural generators, plugins (reported), and the canvas2d route:
+  the 139 kernels and **all 27 canvas-drawn effects** — the 18 left after E3
+  (stroke, the interior styles, satin, bevel, four-colour gradient,
+  directional blur, transform, beam, CC RepeTile, lens flare, numbers,
+  timecode, audio spectrum / waveform, lightning, plexus, vegas) ported call
+  for call onto `raster::Canvas2D`, with a `CanvasEffectContext` for what the TS
+  keeps in module state (the `scratch(role)` pool, the fill-opacity style
+  silhouette). They need Skia only to rasterise, not to verify: their parity is
+  the call log.
+- **Interleaving.** Fill opacity (silhouette snapshot + `destination-in`
+  fade, the silhouette installed for every style), the Compositing-Options
+  opacity and effect-scoped masks (one before / after blend; the mask painted
+  by `raster/mask_paint`, now in the Skia-free core), and the batched ImageData
+  exactly as the TS intercepts it — including that every non-CSS step's
+  `flushCss()` lands the batch, so consecutive pixel passes each pay a
+  get / put pair in the TS and must in C++ too (on Skia the put / get round
+  trip is premultiplied, so dropping it would change bytes at partial alpha).
+
+**Parity.** `effectChainCrossEngine.test.ts` runs `runBakeJob` on the
+recording canvas, which now holds pixels: getImageData / putImageData are real
+(every put logs the FNV-1a 64 of its bytes) and the chain's own composites go
+through a reference compositor both recorders share; filters, shadows, paths,
+gradients, text and scaled draws are pinned by the call log only. Cases: every
+registered effect alone at its registry defaults and at two random points of
+its declared ranges, 15 stacks (every route interleaved; fill opacity 0, 0.35
+and 0.4 under the styles; opacity 0 / 55 / 100 and scoped-mask blends
+including a missing mask id; LUT and colour-matrix families; drawn passes
+between kernels; generators on mask paths; brushes), and a keyframed stack
+sampled through `resolveEffectParams` at three times. `engine_effects_tests`:
+**606 / 606 cases exact on 1 thread and on 4 — 50 585 / 50 585 Canvas2D ops,
+1 093 byte-checked putImageData, every final buffer, every route** (474 cases
+change pixels; the rest are neutral defaults or drawn-only). Zero tolerance.
+Two TS bugs the port reproduces on purpose, for the TS to fix first: Stroke
+inside / center draws no inner band on a reused scratch canvas (its pooled
+context keeps `destination-out`), and Audio Waveform is always mid grey
+(`rgba()` of `bandColor`'s `rgb(...)` string).
+
+**Bench** (`premation-effects --chain tests/data/effect_chain_bench.json`,
+1920×1080 baked layer through `run_bake_job`: seed, chain, read-back; the
+canvas holds pixels for ImageData only, so this is the chain's CPU work and
+the canvas's own rasterisation — blits, filters, paths, text — is Skia's and
+not in it; shared 4-vCPU container, CPU pressure 0.4–7 %, best of 3):
+
+- 382 single-effect layers (191 effects × defaults / active) + 6 stacks:
+  **306 / 388 within 41.7 ms on 4 threads** (251 on 1 thread); median 10.0 ms.
+- At the active settings: 147 / 191 effects fit a 24 fps frame on 4 threads
+  (115 on 1); median 11.7 ms (24.2 ms on 1 thread). 52 of the defaults are
+  neutral and cost only the seed / read-back (≈ 1.7 ms).
+- Over budget on 4 threads at the active setting (44): the heavy kernels of
+  the table above (Deep Glow ≈ 1.05 s, Cross Blur 287 ms, Beam Path 244,
+  Light Burst 240, Brush Strokes 237, Vector Blur 230, Radial Blur 159–179,
+  Fractal 160, …), Gaussian / Fast Box Blur at radius 60 (96–109 ms), and
+  Vegas active (163 ms: a contour stroke per speckle of the synthetic layer,
+  657 k draws).
+- Stacks (4 threads): title card (fill 0.5 + drop shadow + glow + fill)
+  1.7 ms; keyed plate (Keylight, spill, matte choker, scoped colour balance)
+  64 ms; graded footage (levels, curves, vibrance, masked 12 px blur, grain)
+  97 ms; generators 122 ms; stylised (median, find edges, posterize, 50 %
+  unsharp) 140 ms; distort (turbulent displace, twirl, chromatic aberration)
+  157 ms.
+
+So the exit criterion is not met on the CPU alone for the heavy kernels: they
+need the lower-precision twins behind the golden gate noted above, or their
+WGSL on the GPU (they are ported effects: they bake only when a layer bakes for
+another reason).
+
 Open work for E4:
-- **Wire the chain.** Map each effect's params onto its kernel arguments (the
-  TS `apply*` wrappers), and interleave the kernels with the canvas-drawn
-  passes, masks, fill opacity and interior styles. `layer_is_baked` layers then
-  render through `engine_effects` instead of being reported as unported by
-  `frame_build.cpp`, and the golden gate runs on whole frames.
-- Port the remaining kernels (above), and the non-effect CPU bake sites in
-  `src/core/rendering` (`pixelMotion*`, `deinterlace`, `channelView`,
-  `frameTap`, `AppTextureProvider`'s read-backs).
+- **Put the chain under the engine.** `frame_build.cpp` still reports
+  `layer_is_baked` layers as unported: it needs the layer raster (E3 text /
+  vector on Skia), the job's effects built from the document (`params_of` +
+  `scaleEffectLengths` from the registry's `px` units, and the layer mask
+  pre-applied), `run_bake_job` on the Skia canvas, and the texture upload
+  (GPU; out of scope here). Then the golden gate runs on whole frames.
+- **Skia side, unverifiable here:** CSS filter functions beyond `blur()`
+  (brightness, contrast, saturate, grayscale, sepia, hue-rotate, invert,
+  drop-shadow) on `canvas_ffi.cpp`'s `setFilterString`; Plexus' float16
+  OffscreenCanvas scratch (the chain takes the TS's direct path); pixel parity
+  of all 27 drawn effects against Chromium (`premation-raster`, golden scenes).
+- The non-effect CPU bake sites in `src/core/rendering` (`pixelMotion*`,
+  `deinterlace`, `channelView`, `frameTap`, `AppTextureProvider`'s read-backs).
 - Toolchain not checked here: clang-tidy (CI runs it on `native/libs` only),
   the sanitizers (this container has no compiler-rt runtime, which also stops
   `engine_fuzz` from linking), MSVC / clang-cl and WASM builds.
@@ -749,6 +940,98 @@ Open work for E4:
 |---|---|---|---|
 | F1 | Export from the engine directly to ffmpeg, multi-frame across threads; the export supervisor launches engine jobs instead of hidden Chromium windows | ≥ 3× today's raw-pipe fps on 8 cores; md5-identical output at the same settings | 4 wk |
 | F2 | The engine owns the document and undo; the UI holds only its mirror. The TS engine is kept behind the flag for one release, then removed | No authoritative project state in the UI process; undo parity suite green | 6 wk |
+
+**F2 progress (2026-09-24): the undo parity suite is green; the document
+lifecycle runs through either engine behind a flag.** Branch `f2-ownership`.
+- **Undo parity suite** (the exit's second half):
+  `src/core/engine/__tests__/undoParity.test.ts` runs every replay-corpus
+  session (B2 + family + generated, and a new F2 lifecycle session) on the
+  TypeScript engine and probes `getHistory` (labels, origins, position,
+  can-undo/redo, gesture open, limit) and `getDocument` (property trees,
+  keyframes, items, comps, layers, dirty) after EVERY non-query request; then
+  a WALK per session: undo to 0 and one past, redo to the end and one past,
+  `jumpToHistory` 0 / middle / end / past the end, a checkpoint undone and
+  redone, a blank checkpoint, a cancelled gesture (with undo / redo / jump /
+  checkpoint / nested gesture / clearHistory / a wrong gesture id refused
+  inside it), a committed 3-message drag, undo/redo of it, a new edit
+  clearing the redo tail, an empty and a round-trip gesture, a batch, the
+  history limit (0 refused, 2 dropping the oldest), `clearHistory`.
+  `native/engine/tests/test_undo_parity.cpp` (`engine_undo_parity_tests`,
+  ctest) replays the bytes into an in-process C++ `Session` and compares
+  every response byte for byte and every revision step (fixture
+  `tests/data/undo_parity.bin`, 7.0 MB, `GEN_NATIVE_UNDO=1` regenerates; the
+  fixture format and replayer are now shared with D1:
+  `__testHelpers__/parityFixture.ts`, `tests/parity_fixture.hpp`;
+  `PARITY_DUMP=<dir>` writes both engines' bytes for a difference).
+  **62 sessions, 58 364 records (10 002 walk steps, 37 796 probes): 0
+  differences, ratchet 0.** First run: 57 (one session).
+- **C++ gap found and fixed:** redo of a command that CREATED several
+  compositions (a deep `duplicateComposition`) re-inserted them in key order
+  (`comp_3, comp_4`), the TypeScript engine in its entry's order
+  (`comp_4, comp_3`) — items and comps listed differently after any undo/redo
+  across such a command. Compositions have no order part in either engine, so
+  a `ChangeSet` now carries `compSeq` (the composition order when the edit
+  began, then the ones it created in document order) and `Document::apply`
+  re-inserts compositions and timelines in that order. D1 stays at 0.
+- **Lifecycle through the engine** (`src/core/project/engineDocumentSession.ts`):
+  New / Open / Save / Save As / Save a Copy / Revert / Close as `newProject` /
+  `openProject` / `saveProject` / `revertProject`; autosave =
+  `saveProject{recovery, copy:true}` when the MIRROR is dirty + a recovery
+  record (editor state); recovery = `openProject` of the file it belonged to
+  (or `newProject`) + `restoreDocument` as one undoable "Recover Unsaved
+  Work" entry — dirty, still bound to its file, Undo shows the saved version.
+  Path / dirty / history come from the document mirror only.
+  `ProjectManager` delegates to it when given `engineDocument`; the flag is
+  `PREMATION_ENGINE_OWNER=engine` (or `"owner": "engine"` in
+  `<userData>/engine.json`) on top of `PREMATION_ENGINE=process`, reported as
+  `ownsDocument` by `engine:status` (`processEngineOwnsDocument()`). Default
+  off: the TypeScript engine stays the owner (this release). Tested on both
+  engines (`engineDocumentSession.test.ts`, the C++ one through
+  `ProcessEngineClient` + `premation-engine-headless` writing real files
+  temp + rename): the full cycle incl. a crash between autosave and recovery,
+  a never-saved project's recovery, a stale record, refusals, and
+  ProjectManager with a page document IO that throws if touched.
+- **Remaining for F2:** wire the flag in `Providers` (the recovery prompt, the
+  autosave timer, the title-bar dirty dot, `ProjectLoaded` no longer
+  rebuilding the TS engine as owner) and route `engine()` to the process
+  client when it owns the document — that needs the engine viewport (D5),
+  otherwise UI edits vanish from the TS-drawn viewport; `.motion` BUNDLES
+  (collected footage) are written by the page today — the engine's FilePorts
+  write plain JSON; the API gaps in the inventory below (guides / swatches /
+  materials commands, a query returning the saved document for cloud upload);
+  pop-out windows as second mirrors; the command log moving to main; then
+  every row of the inventory, and deleting the TS engine after one release.
+
+
+
+**F2 inventory — authoritative project state in the UI process (2026-09-24).**
+Everything below is document state the page holds and that is *not* the
+mirror (`src/stores/documentMirror.ts`). With the TypeScript engine as owner
+it is the document; with the engine as owner it must be gone, derived from the
+mirror, or demoted to editor state. The column "how" names the route; "state"
+is where it stands on `f2-ownership`.
+
+| Holder (UI process) | What it holds | Why it is authoritative today | Must move to / how | State |
+|---|---|---|---|---|
+| `defaultSceneGraph` (`src/core/scene`) | every layer row: components, switches, nesting (= parenting), effects, masks, text, styles | `captureDocument` saves it; the TS renderer draws it; 53 UI files still import it | the engine's `doc::Document` nodes. Reads → mirror (B4 read ratchet, 681 left, mostly per-frame viewport reads); the TS renderer's input goes with D5 (engine viewport default-on) | reads ratcheted; writes 0 (B3) |
+| `defaultAnimation` | tracks, keyframes, expressions, data tracks | same; 26 UI files import it | the engine's `anim` parts; reads → `mirror.keyframes` / `valueAt` | as above |
+| `useProjectStore.comps` | composition settings per comp | `captureDocument().comps`; `replaceComps` on restore | `mirror.comps` (`CompInfo.settings`); the store keeps TABS only (editor state, `editorView.ts`) | mirror carries them; store still written by restore |
+| `useCompositionStore` | the active comp's settings incl. background gradient | render hooks read it into `buildSnapshot` | derived: `useActiveMirrorComp()`; deleted with the TS renderer (D5) | derived copy |
+| `TimelineController` (`src/core/timeline`) | bars (clip ids, in/out, stretch), comp/layer markers, work area, bar order | `capture()`/`restore()` in the document (`timelines`) | `LayerInfo.timing`, `CompInfo.markers/workArea` in the mirror; the controller keeps zoom/scroll only | mirror complete (B4 exit for the timeline) |
+| `useAssetStore` + `documentItems` + localStorage caches (`saveFolders/Assignments/Interpretations`) | footage records, folders, interpretation, proxy, tags, label, comment | `captureProjectItems` / `applyProjectItems` | engine items (`ItemInfo`, item commands exist); object URLs, thumbnails and decode caches stay UI session state keyed by item id until E1 moves decode | commands + mirror exist; store still the TS source |
+| `motionBlurStore`, `guidesStore`, `colorManagementStore`, `swatchStore`, `materialStore`, `transitionStore` | project motion blur, guides/grid/camera bookmarks, colour management, swatches, materials, transition records | captured/restored whole by `cloudDocument` | the C++ document already saves/loads all of them (D1: identical saves). Missing: COMMANDS for guides, swatches and materials (today "authored extras no command edits", ENGINE_API §4.1 `restoreDocument`) → add `setGuides` / swatch / material commands, then these stores become mirror views | API gap |
+| `documentExtras.ts` | project settings, the SAVED render queue | captured/restored by `cloudDocument` | engine (`setProjectSettings`, render-queue commands; mirror `settings` / `renderQueue`); module deleted with the TS engine | engine-owned in C++ |
+| `projectStorage` / `restoredPluginRefs` | JS plugin storage and dependency block | captured into the document | JS plugins are not ported (G2); native SDK sequence data lives in the engine (G1) | retire with G2 |
+| `HistoryService` (CommandSystem) + `EngineHistoryEntry` | the undo stack, labels, position, limit | the TS engine's entries live on the app's stack | the C++ `History`; the page reads `mirror.history`, Ctrl+Z / History-panel jumps are already engine requests (`setHistoryRoute`). **Parity: `engine_undo_parity_tests`** | parity suite green |
+| `historyStore` legacy debounce recorder (`LEGACY_DEBOUNCE_RECORDER`, `StoreSnapshotCommand`, baselines) | undo for writes made AROUND the engine (whole-store snapshots) | 133 automation sites (`lint:automation-writes`) still write around the engine | delete when the automation-write ratchet reaches 0 (UI writes are already 0); an engine-owned document has no such writes by construction | ratcheted |
+| `LocalEngine` per-document state | id counters, key index, project path, saved revision (dirty), open gesture, command log | the TS engine runs in the page | the C++ `Session` has each (ids.ts / key index / `projectPath_` / `savedRevision_` / gesture); the replay log moves from the page to main (C3 limit) | C++ equivalent exists |
+| `projectStore.tabs[].dirty` + Providers' `markDirty` on bus events | the unsaved indicator | computed from TS bus traffic | `mirror.dirty` (engine `dirtyChanged`, cleared by `saveProject`, restored by undo to the saved revision) | mirror carries it; UI still reads the tab flag |
+| `ProjectManager` + `projectDocumentIO` + `bundleProjectIO` / `localProjectIO` | New/Open/Save/Save As/Close: `io.capture()` → storage, storage → `io.restore()`; `.motion` bundles collect footage | the page serializes and parses the document | `EngineDocumentSession` (engine `newProject` / `openProject` / `saveProject` / `revertProject`) — ProjectManager delegates when given `engineDocument` (the F2 flag). **Gap:** the engine's FilePorts write plain JSON; bundle writing (footage collection, zip) must move to the engine or main | done behind the flag, jest on both engines; bundles pending |
+| `AutosaveController` + `recovery.ts` (+ worker, localStorage ring) | crash-recovery snapshots of `captureDocument()` | the page captures the document every interval | `EngineDocumentSession.autosave` (`saveProject{recovery, copy}` when `mirror.dirty`) + `recover` (`openProject` + `restoreDocument` as one undoable "Recover Unsaved Work" entry); the cadence is `setAutosave` | done behind the flag; Providers' prompt not rewired |
+| `CloudAutosave`, `ApiFileAdapter.createProject`, `VersionHistoryPanel`, `publishTemplate`, `exportMogrt`, `exportManager` | whole-document captures for upload / templates / export | `captureDocument()` in the page | a query that returns the saved document bytes (`exportDocument`, API gap) or `saveProject{copy}` to a temp file uploaded by main; version restore is already `restoreDocument` | API gap |
+| `windowSync` (pop-out windows) | the whole document over BroadcastChannel/IPC, both ways | `captureDocument` / `restoreDocument` per settle | a pop-out is a second mirror over the same engine (events relayed by main), edits are engine requests | to do |
+| `compositeEdit`, `documentSwap`, `headlessRender` | document snapshots for composite edits, swapping the live document for a render, missing-asset scans | page-side capture/restore | composite edits → batches/`restoreDocument`; render swaps → F1 engine export jobs (`saveProject{copy}` is the snapshot); missing assets → `openProject.missingItems` | to do (F1 for renders) |
+| Selection, keyframe/property selection, `renderQueueStore` running jobs, component/template libraries | ids, UI session state, user libraries | — | NOT document state: stays in the UI (the rule "editor state never enters the document") | stays |
 
 ### Phase G — Ecosystem
 

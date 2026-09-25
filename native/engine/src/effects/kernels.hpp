@@ -16,6 +16,7 @@
 #pragma once
 
 #include <array>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -362,5 +363,145 @@ void smart_blur(RgbaView img, double radius, double threshold, double mode, Thre
 /// `cameraLensBlurData(src, w, h, radius, blades, rotation, gain, threshold)`.
 void camera_lens_blur(RgbaView img, double radius, double blades, double rotation, double gain, double threshold,
                       ThreadPool* pool);
+
+// ── strokePaint.ts family: pathStroke.ts, scribble.ts, writeOnBrush.ts ─────
+/// One mask of `unpackMaskPaths(maskPathsMeta, maskPathsXY, w, h)`: raster px,
+/// mode as its MASK_MODE_CODES index (none, add, subtract, intersect, lighten,
+/// darken, difference).
+struct MaskPolyline {
+  std::vector<Pt2> points;
+  bool closed = false;
+  int mode = 1;
+  bool inverted = false;
+};
+/// `unpackMaskPaths(meta, xy, w, h)`.
+[[nodiscard]] std::vector<MaskPolyline> unpack_mask_paths(std::span<const double> meta, std::span<const double> xy,
+                                                          int w, int h);
+/// `pickMaskPaths(params, w, h, allMasks)` with the picked mask's index
+/// resolved (`pathMaskIndex`; < 0 or out of range = none).
+[[nodiscard]] std::vector<MaskPolyline> pick_mask_paths(const std::vector<MaskPolyline>& masks, bool all_masks,
+                                                        double pick_index);
+
+struct PathStrokeOptions {
+  Rgb rgb{255, 255, 255};
+  double brush_size = 0, hardness = 0, opacity = 0, start = 0, end = 0, spacing = 0, paint_style = 0;
+  bool sequential = false;
+};
+/// `pathStrokeData(src, w, h, paths, options)`.
+void path_stroke(RgbaView img, const std::vector<MaskPolyline>& paths, const PathStrokeOptions& o, ThreadPool* pool);
+
+struct ScribbleOptions {
+  double mode = 0, fill_type = 0, edge_width = 0, end_cap = 0, join = 0, miter_limit = 0;
+  Rgb rgb{255, 255, 255};
+  double opacity = 0, angle = 0, stroke_width = 0, curviness = 0, curviness_variation = 0, spacing = 0,
+         spacing_variation = 0, path_overlap = 0, path_overlap_variation = 0, start = 0, end = 0;
+  bool sequential = true;
+  double seed = 0, wiggle_state = 0;
+  bool smooth_wiggle = false;
+  double composite = 0;
+};
+/// `scribbleData(src, w, h, masks, picked, options)`.
+void scribble(RgbaView img, const std::vector<MaskPolyline>& masks, const std::vector<MaskPolyline>& picked,
+              const ScribbleOptions& o, ThreadPool* pool);
+
+struct WriteOnTrail {
+  std::vector<double> xy, size, attr;
+  bool filled = false;
+};
+struct WriteOnBrushOptions {
+  double brush_x = 0, brush_y = 0;
+  Rgb rgb{255, 255, 255};
+  double size = 0, hardness = 0, opacity = 0, paint_time_props = 0, brush_time_props = 0, paint_style = 0;
+};
+/// `writeOnBrushData(src, w, h, trail, options)`.
+void write_on_brush(RgbaView img, const WriteOnTrail& trail, const WriteOnBrushOptions& o, ThreadPool* pool);
+
+// ── generateRoundFive.ts ────────────────────────────────────────────────────
+void star_burst(RgbaView img, double phase, double amount, double size, Rgb star, double blend, double seed,
+                ThreadPool* pool);
+void snowfall(RgbaView img, double amount, double size, double evolution, double wind, double opacity, Rgb flake,
+              double seed, ThreadPool* pool);
+void rainfall(RgbaView img, double amount, double length, double angle, double evolution, double opacity, Rgb rain,
+              double seed, ThreadPool* pool);
+/// `writeOnData` — Write-on's classic Start → End line.
+void write_on_line(RgbaView img, double start_x, double start_y, double end_x, double end_y, double completion,
+                   double brush_size, Rgb brush, double wobble, double taper, ThreadPool* pool);
+/// `writeOnPathData` — Write-on along a resolved mask polyline (layer-centred, flat x, y).
+void write_on_path(RgbaView img, std::span<const double> flat, double completion, double brush_size, Rgb brush,
+                   double taper, ThreadPool* pool);
+void light_burst(RgbaView img, double center_x, double center_y, double intensity, double ray_length,
+                 ThreadPool* pool);
+
+// ── aeRoundSevenDistort.ts ──────────────────────────────────────────────────
+void cc_tiler(RgbaView img, double scale, double center_x, double center_y, double blend_with_original,
+              ThreadPool* pool);
+void ripple_pulse(RgbaView img, double center_x, double center_y, double pulse_radius, double amplitude, double width,
+                  bool render_bump, ThreadPool* pool);
+void radial_scale_wipe(RgbaView img, double completion, double center_x, double center_y, bool reverse,
+                       ThreadPool* pool);
+void glass_wipe(RgbaView img, double completion, double displacement, double softness, ThreadPool* pool);
+void image_wipe(RgbaView img, double completion, double border_softness, double gradient_channel,
+                bool invert_gradient, ThreadPool* pool);
+
+// ── aeRoundSevenSimulation.ts ───────────────────────────────────────────────
+/// `ParticleOptions`.
+struct ParticleOptions {
+  double birth_rate = 0, longevity = 0, producer_x = 0, producer_y = 0, producer_radius_x = 0, producer_radius_y = 0,
+         animation = 0, direction = 0, spread = 0, velocity = 0, velocity_variation = 0, gravity = 0, resistance = 0,
+         birth_size = 0, death_size = 0, size_variation = 0;
+  Rgb birth{255, 226, 122};
+  Rgb death{255, 59, 0};
+  double opacity = 0, blend = 0, seed = 0;
+};
+/// `particleSystemsData(src, w, h, time, o)`.
+void particle_systems(RgbaView img, double time, const ParticleOptions& o, ThreadPool* pool);
+/// `bubblesData(src, w, h, …)`'s arguments.
+struct BubbleOptions {
+  double amount = 100, speed = 300, wobble_amplitude = 10, wobble_frequency = 2, size = 12, size_variation = 40,
+         shading = 0;
+  Rgb color{255, 255, 255};
+  double opacity = 80, evolution = 0, seed = 1;
+};
+void bubbles(RgbaView img, const BubbleOptions& o, ThreadPool* pool);
+
+// ── bezierWarp.ts, generatePatterns.ts (Cell Pattern), cubeLut.ts ───────────
+/// `bezierWarpData(data, w, h, points)`; the twelve points clockwise from the
+/// top-left vertex, in layer px.
+void bezier_warp(RgbaView img, const std::array<Pt2, 12>& points, ThreadPool* pool);
+/// `defaultWarpPoints(w, h)`.
+[[nodiscard]] std::array<Pt2, 12> bezier_warp_rest(double w, double h);
+/// `cellPatternData(data, w, h, size, evolution, contrast, invert, membrane)`.
+void cell_pattern(RgbaView img, double size, double evolution, double contrast, bool invert, bool membrane,
+                  ThreadPool* pool);
+/// `applyLutToImageData(data, fromStoredLut({size, size1d, data, domainMin, domainMax}), intensity)`;
+/// a table `fromStoredLut` rejects leaves the layer unchanged.
+void apply_color_lut(RgbaView img, double size, double size1d, std::span<const double> data,
+                     std::span<const double> domain_min, std::span<const double> domain_max, double intensity,
+                     ThreadPool* pool);
+
+// ── deepGlow.ts, beamPath.ts ────────────────────────────────────────────────
+/// `DeepGlowSettings` (tint in linear light).
+struct DeepGlowSettings {
+  double radius = 0, gain = 1, threshold = 0, aspect_x = 1, aspect_y = 1;
+  Rgb chroma{1, 1, 1};
+  Rgb tint{1, 1, 1};
+  double tint_amount = 0;
+  bool glow_only = false, dither = true;
+  double octaves = 6;
+};
+/// `deepGlowData(src, w, h, settings)`.
+void deep_glow(RgbaView img, const DeepGlowSettings& s, ThreadPool* pool);
+/// `BeamPathSettings` less the spine, which `beam_path` builds (`beamSpine`)
+/// from the centred `pathPoints` polyline or, absent that, Start → End.
+struct BeamPathOptions {
+  double start_x = -100, start_y = 0, end_x = 100, end_y = 0;
+  double core_width = 6, core_softness = 0.3;
+  Rgb core_color{1, 1, 1};
+  Rgb glow_color{0.05, 0.4, 1};
+  double glow_spread = 8, glow_intensity = 1, glow_exponent = 2, start = 0, end = 1, start_size = 1, end_size = 1,
+         distortion = 0, distortion_scale = 40, evolution = 0, composite = 0, flicker = 1;
+};
+/// `beamPathData(src, w, h, settings)`.
+void beam_path(RgbaView img, std::span<const double> path_points, const BeamPathOptions& o, ThreadPool* pool);
 
 }  // namespace premation::effects

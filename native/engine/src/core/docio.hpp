@@ -13,7 +13,7 @@
 namespace premation::doc {
 
 /// `captureDocument()`: the whole document as an EditorDocument.
-[[nodiscard]] Json capture_document(const Document& d, const EditorView& v);
+[[nodiscard]] Json capture_document(const Document& d);
 
 struct RestoreResult {
   /// Footage the document lists that the session does not hold (kept as placeholders).

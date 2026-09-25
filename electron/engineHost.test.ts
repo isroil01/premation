@@ -7,7 +7,7 @@
 
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
-import { FrameForwarder, engineBackendEnabled, nativePluginArgs, type SharedTextureApi } from './engineHost';
+import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, type SharedTextureApi } from './engineHost';
 import type { FrameReadyMessage, SlotsMessage } from './engineFraming';
 
 describe('engineBackendEnabled', () => {
@@ -26,6 +26,26 @@ describe('engineBackendEnabled', () => {
 
   it('the environment can force it off over the preference', () => {
     expect(engineBackendEnabled({ PREMATION_ENGINE: 'ts' }, 'engine.json', read('{"backend":"process"}'))).toBe(false);
+  });
+});
+
+describe('engineOwnsDocument (F2)', () => {
+  const read = (text: string | null) => () => text;
+
+  it('is off by default, and off without the process backend', () => {
+    expect(engineOwnsDocument({}, null)).toBe(false);
+    expect(engineOwnsDocument({ PREMATION_ENGINE: 'process' }, null)).toBe(false);
+    expect(engineOwnsDocument({ PREMATION_ENGINE_OWNER: 'engine' }, null)).toBe(false);
+    expect(engineOwnsDocument({}, 'engine.json', read('{"owner":"engine"}'))).toBe(false);
+  });
+
+  it('turns on with PREMATION_ENGINE_OWNER=engine or the preference, over the process backend', () => {
+    expect(engineOwnsDocument({ PREMATION_ENGINE: 'process', PREMATION_ENGINE_OWNER: 'engine' }, null)).toBe(true);
+    expect(engineOwnsDocument({}, 'engine.json', read('{"backend":"process","owner":"engine"}'))).toBe(true);
+  });
+
+  it('the environment can force it off over the preference', () => {
+    expect(engineOwnsDocument({ PREMATION_ENGINE_OWNER: 'ui' }, 'engine.json', read('{"backend":"process","owner":"engine"}'))).toBe(false);
   });
 });
 

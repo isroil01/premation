@@ -23,6 +23,13 @@ void Gradient::add_stop(double offset, const css::Color& c) {
 
 Canvas2D::~Canvas2D() = default;
 
+bool Canvas2D::setFilterString(std::string_view css) {
+  const auto f = css::parse_filter(css);
+  if (!f) return false;
+  setFilter(*f);
+  return true;
+}
+
 std::shared_ptr<Pattern> Canvas2D::createPattern(std::string_view repetition) const {
   auto p = std::make_shared<Pattern>();
   p->width = width();

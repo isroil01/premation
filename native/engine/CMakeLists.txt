@@ -119,7 +119,26 @@ if(Dawn_FOUND)
     # premation-render lands in the same directory; the copy above covers it.
   endif()
 else()
-  message(STATUS "premation-engine: Dawn not found — building engine_core, its tests and the fuzzer only")
+  message(STATUS "premation-engine: Dawn not found — building engine_core, its tests, the fuzzer and premation-engine-headless only")
+endif()
+
+# premation-engine-headless: the engine process without Dawn — the same pipes,
+# core loop and Session, frames always simulated (as --no-gpu). For the
+# cross-engine replay (crossEngine.test.ts, PREMATION_ENGINE_PATH=<it>) on
+# machines and CI jobs without the vcpkg `engine` feature. Never shipped.
+add_executable(premation-engine-headless
+  src/main.cpp
+  src/engine_process.cpp
+  src/os_ffi.cpp
+  src/io/pipe_ffi.cpp
+  src/io/framed_writer.cpp
+)
+target_include_directories(premation-engine-headless PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/io)
+target_compile_definitions(premation-engine-headless PRIVATE PREMATION_ENGINE_HEADLESS=1)
+target_link_libraries(premation-engine-headless PRIVATE engine_core engine_plugins motion::options)
+if(WIN32)
+  target_link_libraries(premation-engine-headless PRIVATE winmm)
+  target_compile_definitions(premation-engine-headless PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 endif()
 
 # ── tests ───────────────────────────────────────────────────────────────────
@@ -266,6 +285,7 @@ set(ENGINE_DOC_SOURCES
   src/core/native_effects.cpp
   src/core/parenting.cpp
   src/core/particle_props.cpp
+  src/core/plugin_props.cpp
   src/core/props.cpp
   src/core/ptree.cpp
   src/core/queries.cpp
@@ -376,6 +396,7 @@ if(WIN32)
   if(TARGET premation-engine)
     target_link_options(premation-engine PRIVATE ${_doc_stack})
   endif()
+  target_link_options(premation-engine-headless PRIVATE ${_doc_stack})
   if(TARGET engine_tests)
     target_link_options(engine_tests PRIVATE ${_doc_stack})
   endif()
@@ -383,6 +404,36 @@ endif()
 if(TARGET engine_tests)
   # The replay corpus (tests/data/replay_corpus.bin, dumped by crossEngine.test.ts).
   target_compile_definitions(engine_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()
+if(MOTION_BUILD_TESTS)
+  # D1's exit: the replay corpus's evaluated values against the TypeScript
+  # engine's, byte for byte (tests/data/d1_eval_parity.bin, written by
+  # src/core/engine/__tests__/d1EvalParity.test.ts).
+  add_executable(engine_d1_parity_tests tests/test_d1_eval_parity.cpp)
+  target_link_libraries(engine_d1_parity_tests PRIVATE engine_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_d1_parity_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  if(MSVC)
+    target_compile_options(engine_d1_parity_tests PRIVATE /bigobj)
+  endif()
+  if(WIN32)
+    target_link_options(engine_d1_parity_tests PRIVATE ${_doc_stack})
+  endif()
+  add_test(NAME engine_d1_parity_tests COMMAND engine_d1_parity_tests --reporter compact)
+  # F2's exit: the undo parity suite — the replay corpus with its history
+  # probed after every request, then walked (undo/redo/jumps/gestures/
+  # checkpoints/limit), against the TypeScript engine's, byte for byte
+  # (tests/data/undo_parity.bin, written by
+  # src/core/engine/__tests__/undoParity.test.ts).
+  add_executable(engine_undo_parity_tests tests/test_undo_parity.cpp)
+  target_link_libraries(engine_undo_parity_tests PRIVATE engine_core motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_undo_parity_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  if(MSVC)
+    target_compile_options(engine_undo_parity_tests PRIVATE /bigobj)
+  endif()
+  if(WIN32)
+    target_link_options(engine_undo_parity_tests PRIVATE ${_doc_stack})
+  endif()
+  add_test(NAME engine_undo_parity_tests COMMAND engine_undo_parity_tests --reporter compact)
 endif()
 if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).
@@ -507,6 +558,7 @@ add_library(engine_raster_core STATIC
   src/raster/canvas.cpp           # the Canvas2D interface (Skia behind it: canvas_ffi)
   src/raster/paint_common.cpp
   src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
+  src/raster/mask_paint.cpp       # paintMaskMatte (mask.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
   src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
 )
@@ -537,7 +589,6 @@ if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenB
     src/raster/text_layout.cpp
     src/raster/canvas_replay.cpp
     src/raster/vector_paint.cpp
-    src/raster/mask_paint.cpp
     src/raster/optical_kerning.cpp
     src/raster/text_paint.cpp
     src/raster/raster_source.cpp
@@ -600,26 +651,41 @@ add_library(engine_effects STATIC
   src/effects/round_five_stylize_kernels.cpp
   src/effects/round_five_distort_kernels.cpp
   src/effects/round_five_transition_kernels.cpp
+  src/effects/paint_kernels.cpp
+  src/effects/generate_round_five_kernels.cpp
+  src/effects/round_seven_distort_kernels.cpp
+  src/effects/simulation_kernels.cpp
+  src/effects/pattern_warp_lut_kernels.cpp
+  src/effects/glow_beam_kernels.cpp
   src/effects/kernel_dispatch.cpp
+  src/effects/kernel_dispatch_generate.cpp
 )
 target_include_directories(engine_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
 target_compile_features(engine_effects PUBLIC cxx_std_20)
 target_link_libraries(engine_effects PUBLIC motion::jsmath PRIVATE motion::options)
 # The canvas-drawn effects (fill, wipes, generators) on the raster module's
 # Canvas2D interface — Skia-free here; Skia sits behind the interface.
-add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp)
+add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp src/effects/canvas_effects_generate.cpp)
 target_include_directories(engine_canvas_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE motion::options)
+target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE engine_effects motion::options)
+
+# The bake CHAIN (effectBake.ts applyEffectChain): param mapping of the apply*
+# wrappers, LUT / colour-matrix / CSS / procedural routes, fill opacity, the
+# opacity + scoped-mask blend, on any Canvas2D. Skia-free.
+add_library(engine_effect_chain STATIC src/effects/effect_chain.cpp src/effects/effect_apply.cpp src/effects/effect_color.cpp)
+target_include_directories(engine_effect_chain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
+target_link_libraries(engine_effect_chain PUBLIC engine_effects engine_canvas_effects engine_raster_core motion::jsmath PRIVATE motion::options)
 
 add_executable(premation-effects tools/premation_effects.cpp)
-target_link_libraries(premation-effects PRIVATE engine_effects engine_raster_core motion::options)
+target_include_directories(premation-effects PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)  # recording_canvas.hpp: the --chain bench's CPU canvas
+target_link_libraries(premation-effects PRIVATE engine_effect_chain engine_effects engine_raster_core motion::options)
 if(MSVC)
   target_compile_definitions(premation-effects PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv

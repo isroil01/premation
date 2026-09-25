@@ -572,8 +572,9 @@ gates those frames against webgpu (`packages/render-tests/native-raster-baseline
 caches of those values (bit-identical), without which 16 raster workers ran 4×
 slower than one.
 
-Not ported yet (each reported by name, never silently drawn wrong): CPU-baked
-effect chains (E4), variable mask feather, `capitalize`, anisotropic blur,
+Not ported yet (each reported by name, never silently drawn wrong): CSS filter
+functions other than `blur()` on the Skia canvas (the bake chain's CSS effects,
+E4 — the chain itself is `engine_effect_chain`), variable mask feather, `capitalize`, anisotropic blur,
 WOFF1, system fonts on macOS, variation axes and the 'vert' face through alias
 faces (`CanvasOptions::aliasFaces` covers OpenType features). Clone strokes that
 name another layer or time draw as the TS raster does without a host clone
@@ -599,7 +600,17 @@ no Skia and no GPU:
 | `auto_color_kernels.cpp` | `aeColorAdvanced.ts` (histogram autos, HSL selectors, toner) |
 | `transition_kernels.cpp` | `transitions.ts`, `aeChannel.ts` |
 | `ae_*_kernels.cpp`, `round_*_kernels.cpp`, `warp_kernels.cpp` | the AE rounds: `aeStylizeAdvanced`, `aeTransitionsAdvanced`, `aeDistortAdvanced`, `aeRoundSix`, `aeRoundSeven*`, `ae*RoundFive`, `warp.ts` + `stylize.ts` noise bites |
-| `kernel_dispatch.cpp` | effect type + the TS kernel's argument names → kernel (120 effects) |
+| `paint_kernels.cpp` | `strokePaint.ts` (dab, Float32 paint buffer, Paint Style, polyline walk), `pathStroke.ts`, `scribble.ts`, `writeOnBrush.ts` |
+| `generate_round_five_kernels.cpp` | `generateRoundFive.ts` (Star Burst, Snowfall, Rainfall, classic Write-on, Light Burst) |
+| `round_seven_distort_kernels.cpp`, `simulation_kernels.cpp` | `aeRoundSevenDistort.ts`, `aeRoundSevenSimulation.ts` |
+| `pattern_warp_lut_kernels.cpp` | `bezierWarp.ts`, `generatePatterns.ts` (Cell Pattern), `cubeLut.ts` |
+| `glow_beam_kernels.cpp` | `deepGlow.ts` (with the renderer's `deepGlowKernel.ts`), `beamPath.ts` |
+| `kernel_dispatch.cpp`, `kernel_dispatch_generate.cpp` | effect type + the TS kernel's argument names → kernel (139 effects) |
+
+Arguments are numbers by name (`KernelArgs`) plus numeric arrays by name
+(`KernelLists`): the resolved lists `buildSnapshot` hands the TS kernels —
+packed mask paths (`maskPathsMeta` / `maskPathsXY`), Write-on brush trails,
+`pathPoints` spines, `.cube` tables.
 
 **Byte-exact.** Every kernel keeps the TS's operation order and its JavaScript
 store semantics (`pixel_ops.hpp`): `Uint8ClampedArray` rounds half to even,
@@ -612,7 +623,12 @@ the same order statistic.
 
 **Threads.** `ThreadPool` (`std::jthread` workers) splits OUTPUT rows (or
 column strips for vertical passes), so no output depends on the thread count;
-the parity test runs every row on 1 and on 4 threads. No intrinsics: the loops
+the parity test runs every row on 1 and on 4 threads. Kernels that stamp in
+sequence (brush dabs, particles, discs, streaks; a later stamp composites over
+an earlier one) build the stamp list first and have every row chunk replay all
+of it in order, clipped to its rows, so each pixel sees the TS's sequence. CC
+Scatterize's forward scatter computes destinations in parallel and writes them
+serially in scan order (the last writer wins, as in the TS). No intrinsics: the loops
 are plain C++ (branch-free JS stores, no libm in the inner loops, since baseline
 x86-64 has no `roundsd`), one path for every target.
 
@@ -630,10 +646,50 @@ premation-effects --bench native/engine/tests/data/effect_kernel_bench.json [--t
 node native/engine/tests/bench_effects_ts.mjs [--only <effect>]
 ```
 
-Not wired yet: the bake CHAIN (compositing the kernels between Canvas2D-drawn
-effects, masks, fill opacity, the effect-param → kernel-argument mapping of the
-`apply*` wrappers) and the canvas-drawn effects; see the E4 table in
-`docs/NATIVE_CORE_PLAN.md`.
+### The bake chain (engine_effect_chain)
+
+`effect_chain.cpp` is `effectBake.ts` `applyEffectChain` + `bakeWorkerCore.ts`
+`runBakeJob` on any `raster::Canvas2D` (Skia-free):
+
+| file | TS it ports |
+|---|---|
+| `effect_chain.cpp` | `applyEffectChain`: the `applyOne` routes (LUT → CSS → colour matrix → procedural → plugin → canvas2d), the batched ImageData, fill opacity (silhouette + `destination-in`), the Compositing-Options / scoped-mask blend (`compositeBlend`, the mask painted by `raster/mask_paint`), the CSS flush |
+| `effect_apply.cpp` | every pixel effect's `apply*` wrapper (139): guards, param renames, `/100`, `w/2 +` centres, `Math.round` / clamps, colour parsing (`parseHex`, `hexRgb`, `hexBytes`), post-passes (Find Edges' blend), `deepGlowSettings`, `beamPathSettings` + `beamFlicker`, `pickMaskPaths`' index, `fromStoredLut` |
+| `effect_color.cpp` | `colorLut.ts` + `aeRoundSevenLuts.ts` (10 LUT effects), `effectColorMatrix.ts`, the effects' `css` strings, `proceduralCanvas2d.ts` |
+| `canvas_effects.cpp`, `canvas_effects_generate.cpp` | all 27 canvas-drawn effects (styles, generators, text readouts, audio, lightning, plexus, vegas), with a `CanvasEffectContext` for the TS's module state: the `scratch(role)` pool and the fill-opacity style silhouette |
+
+Input is the bake job: straight RGBA, the effects as JSON
+(`{type, enabled?, params: paramsOf(e) with lengths already scaled, opacity?, maskId?}`),
+fill opacity and the mask stack. An effect it cannot draw (a plugin) is named
+in `ChainReport::unported`; a canvas feature the Skia canvas cannot apply yet
+(CSS filter functions other than `blur()`, variable mask feather) in
+`ChainReport::unsupported`. `Canvas2D::setFilterString` carries the whole CSS
+filter list.
+
+**Parity.** `npx jest effectChainCrossEngine` (`GEN_NATIVE_EFFECT_CHAIN=1` to
+regenerate) runs `runBakeJob` on the recording canvas
+(`recordingCanvas.ts` / `tests/recording_canvas.hpp`), which now holds pixels:
+getImageData / putImageData read and write them, every put logs the FNV-1a 64
+of its bytes, and the chain's own composites (full-frame `fillRect` /
+`clearRect` with a colour, 1:1 integer `drawImage`, at identity) go through a
+reference compositor both recorders share. That compositor is not Skia's
+arithmetic, and filters, shadows, paths, gradients, text and scaled draws leave
+the model's pixels alone: those are pinned by the call log, and their pixels
+are the Skia canvas's job (the render-tests harness). The fixture holds every
+registered effect alone at its defaults and at two random points of its
+declared ranges, stacks that interleave every route, fill opacity 0 / 0.35 /
+0.4 under the styles, opacity and scoped-mask blends, and a keyframed stack
+sampled through `resolveEffectParams` at three times. `engine_effects_tests`
+must match every op and the final bytes on 1 thread and on 4.
+
+**Bench.** `premation-effects --chain native/engine/tests/data/effect_chain_bench.json [--threads N] [--only <case>]`:
+every effect alone at its defaults and at an active setting, and multi-effect
+stacks, each as a 1920×1080 baked layer through `run_bake_job` (seed, chain,
+read-back) against the 41.7 ms (24 fps) frame. The canvas under it holds
+pixels for ImageData only (no logging, no reference compositing), so the number
+is the chain's CPU work — kernels, LUT / matrix passes, ImageData transfers,
+seed and read-back; the canvas's own rasterisation (blits, filters, paths,
+text) is Skia's and is reported per layer as a count of draw calls (`draws`).
 
 ## Adding a library (N2+)
 

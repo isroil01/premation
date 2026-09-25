@@ -90,6 +90,24 @@ export async function processEngineEnabled(): Promise<boolean> {
 }
 
 /**
+ * F2: does the ENGINE own the document (`PREMATION_ENGINE=process` +
+ * `PREMATION_ENGINE_OWNER=engine`, or `{ "backend": "process", "owner":
+ * "engine" }`)? Then New / Open / Save / Revert / autosave / recovery go
+ * through engine requests (core/project/engineDocumentSession.ts). False when
+ * unknown — the TypeScript engine stays the owner.
+ */
+export async function processEngineOwnsDocument(): Promise<boolean> {
+  const bridge = processEngineBridge();
+  if (!bridge) return false;
+  try {
+    const s = await bridge.status();
+    return s.enabled === true && s.ownsDocument === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create (once) the window's process-backend client. Call only when
  * `processEngineEnabled()` said yes — the client falls back at once otherwise.
  * Returns null without a bridge (browser build, tests).

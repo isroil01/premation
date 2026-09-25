@@ -279,7 +279,9 @@ async function replaySession(name: string): Promise<SessionReport> {
     const captured: Array<{ request: Request }> = [];
     const original = rec.engine.request.bind(rec.engine);
     rec.engine.request = (req: Request): Promise<Response> => {
-      captured.push({ request: JSON.parse(JSON.stringify(req, (_k, v: unknown) => (v instanceof Uint8Array ? { __bytes: [...v] } : v)), (_k, v: unknown) => (v && typeof v === 'object' && '__bytes' in (v as object) ? Uint8Array.from((v as { __bytes: number[] }).__bytes) : v)) as Request });
+      // ArrayBuffer.isView, not instanceof: a fragment's bytes may come from another
+      // realm (TextEncoder under jsdom), and were then cloned as a plain object.
+      captured.push({ request: JSON.parse(JSON.stringify(req, (_k, v: unknown) => (ArrayBuffer.isView(v) ? { __bytes: [...new Uint8Array(v.buffer, v.byteOffset, v.byteLength)] } : v)), (_k, v: unknown) => (v && typeof v === 'object' && '__bytes' in (v as object) ? Uint8Array.from((v as { __bytes: number[] }).__bytes) : v)) as Request });
       return original(req);
     };
     const header = rec.engine.commandLog().header;
@@ -372,7 +374,15 @@ async function replaySession(name: string): Promise<SessionReport> {
       const cmd = req.body.kind === 'command' ? req.body.value : null;
       const isEdit = req.body.kind === 'batch' || (cmd !== null && commandKind(cmd.type) === 'edit');
       const tsBefore = ts.batches.length;
+      // An edit can push a history entry without moving the revision (a
+      // no-op insertGap / extract): both engines do, so the model counts it.
+      const historyPos = async (c: EngineClient): Promise<number> => {
+        const r = await c.query({ type: 'getHistory' });
+        return r.ok ? r.value.position : -1;
+      };
+      const tsPosBefore = isEdit ? await historyPos(ts.engine) : 0;
       const tsRes: Response = await ts.engine.request(req);
+      const tsPushed = isEdit && (await historyPos(ts.engine)) > tsPosBefore;
       const tsMine = ts.batches.slice(tsBefore).filter((b) => b.causedBy === req.seq);
       const dTs = tsRes.revision - tsRev;
       tsRev = tsRes.revision;
@@ -380,7 +390,7 @@ async function replaySession(name: string): Promise<SessionReport> {
 
       // An edit only the TS engine applied: a TS-only history entry.
       const tsOnlyEdit = (): void => {
-        if (!isEdit || dTs === 0) return;
+        if (!isEdit || (dTs === 0 && !tsPushed)) return;
         if (gesture) gesture.ts = true;
         else pushEntry(false);
       };
@@ -398,15 +408,17 @@ async function replaySession(name: string): Promise<SessionReport> {
       if (cmd?.type === 'undo' || cmd?.type === 'redo') {
         const entry = cmd.type === 'undo' ? stack[pos - 1] : stack[pos];
         if (!entry) {
-          report.mismatches.push(`${where}: the history model has no entry to ${cmd.type}`);
-          continue;
+          // Nothing to move over: both engines must refuse it (nothingToUndo/Redo).
+          if (tsRes.outcome.kind !== 'error') report.mismatches.push(`${where}: the history model has no entry to ${cmd.type}`);
+          cxxReq = req;
+        } else {
+          pos += cmd.type === 'undo' ? -1 : 1;
+          if (!entry.cxx) {
+            report.tsOnlyHistory += 1;
+            continue;
+          }
+          cxxReq = req;
         }
-        pos += cmd.type === 'undo' ? -1 : 1;
-        if (!entry.cxx) {
-          report.tsOnlyHistory += 1;
-          continue;
-        }
-        cxxReq = req;
       } else if (cmd?.type === 'jumpToHistory') {
         const from = cxxPos(pos);
         const to = cxxPos(cmd.position);
@@ -428,7 +440,9 @@ async function replaySession(name: string): Promise<SessionReport> {
 
       sentToCxx.push(encodeEngineMessage({ kind: 'request', value: cxxReq }));
       const cxxBefore = cxxBatches.length;
+      const cxxPosBefore = isEdit ? await historyPos(cxx) : 0;
       const cxxRes: Response = await cxx.request(cxxReq);
+      const cxxPushed = isEdit && (await historyPos(cxx)) > cxxPosBefore;
       const cxxMine = cxxBatches.slice(cxxBefore).filter((b) => b.causedBy === cxxReq.seq);
       const dCxx = cxxRes.revision - cxxRev;
       cxxRev = cxxRes.revision;
@@ -465,11 +479,11 @@ async function replaySession(name: string): Promise<SessionReport> {
       } else if (cmd?.type === 'clearHistory' || cmd?.type === 'newProject') {
         stack.length = 0;
         pos = 0;
-      } else if (isEdit && dTs > 0) {
+      } else if (isEdit && (dTs > 0 || tsPushed)) {
         if (gesture) {
           gesture.ts = true;
-          if (dCxx > 0) gesture.cxx = true;
-        } else pushEntry(dCxx > 0);
+          if (dCxx > 0 || cxxPushed) gesture.cxx = true;
+        } else pushEntry(dCxx > 0 || cxxPushed);
       }
       if (revisionComparable && dTs !== dCxx) report.mismatches.push(`${where}: revision +${dTs} (ts) vs +${dCxx} (c++)`);
       // ONE batch per request, in both engines (§8.1), and a revision change always arrives as events.
@@ -704,5 +718,5 @@ describeNative('C3: the replay corpus against both engines', () => {
       expect(r.compared).toBe(r.records);
       expect(r.finalLayers).toBeGreaterThanOrEqual(3);
     }
-  }, 120_000);
+  }, 600_000);  // the property sessions replay ~3 000 requests each, with a history query per edit
 });

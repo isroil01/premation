@@ -17,10 +17,7 @@ double hypot3(double a, double b, double c) {
   const std::array<double, 3> v{a, b, c};
   return js::hypot(v);
 }
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return js::hypot(v);
-}
+double hypot2(double a, double b) { return jhypot2(a, b); }
 
 }  // namespace
 
