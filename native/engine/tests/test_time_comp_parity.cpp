@@ -153,6 +153,11 @@ void cmp_layer(Cmp& c, const std::string& at, const sc::RLayer& l, const Json& w
       c.diffs.push_back(p + what + ": unexpected");
     }
   };
+  if (w.at("particles").is_string()) {
+    c.str(p + "particles", l.particles.is_undefined() ? std::string("<none>") : premation::js::stringify(l.particles), w.at("particles"));
+  } else if (!l.particles.is_undefined()) {
+    c.diffs.push_back(p + "particles: unexpected");
+  }
   optArr("matrix", l.matrix, w.at("matrix"));
   optArr("quad3d", l.quad3d, w.at("quad3d"));
   optArr("lighting", l.lighting, w.at("lighting"));

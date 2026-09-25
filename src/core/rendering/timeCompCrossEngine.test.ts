@@ -181,6 +181,32 @@ const DEFS: Def[] = [
     },
   },
   {
+    id: 'particle-layers',
+    frames: [0, 12],
+    motionBlur: MB,
+    build(graph, anim) {
+      graph.addNode(node('cam', { kind: 'camera', position: { x: 240, y: 160 }, transform: { z: -900, focalLength: 900 } }));
+      // A 3D emitter (takes the scene lens), keyframed rate / size / colour
+      // channel, a width track, motion blur on (the comp shutter), a sprite asset.
+      useAssetStore.setState({ assets: [{ id: 'spark-png', name: 'spark.png', type: 'image', src: 'spark.png' }] as never });
+      graph.addNode(node('emit', { kind: 'particle', position: { x: 200, y: 150 }, rotation: 15, transform: { width: 300, height: 200, z: 20 } }));
+      graph.setParticle('emit', { birthRate: 40, shape: 'sprite', spriteAssetId: 'spark-png', colorStart: '#336699', seed: 4 });
+      graph.setMotionBlur('emit', true);
+      anim.setKeyframe('emit', 'particle.birthRate', 0, 20);
+      anim.setKeyframe('emit', 'particle.birthRate', 1, 90);
+      anim.setKeyframe('emit', 'particle.sizeStart', 0, 4);
+      anim.setKeyframe('emit', 'particle.sizeStart', 1, 16);
+      anim.setKeyframe('emit', 'particle.colorStart_r', 0, 0.1);
+      anim.setKeyframe('emit', 'particle.colorStart_r', 1, 0.9);
+      anim.setKeyframe('emit', 'width', 0, 300);
+      anim.setKeyframe('emit', 'width', 1, 360);
+      // A 2D emitter with a radius-sized box, normal transfer, a layer blend mode.
+      graph.addNode(node('ring', { kind: 'particle', position: { x: 380, y: 240 }, transform: { radius: 50 } }));
+      graph.setParticle('ring', { emitterType: 'circle', blend: 'normal', shape: 'square' });
+      graph.setBlendMode('ring', 'screen');
+    },
+  },
+  {
     id: 'instance-cycle-guard',
     frames: [0],
     sizes: { A: { width: 240, height: 160 }, B: { width: 160, height: 100 } },
@@ -323,6 +349,7 @@ function projLayer(l: RenderLayer): Proj {
     matrix: l.matrix ? [...l.matrix] : null,
     quad3d: l.quad3d ? [...l.quad3d] : null,
     lighting: l.lighting ? [...l.lighting] : null,
+    particles: l.particles ? JSON.stringify(l.particles) : null,
     sampleQuads: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => (s.quad ? [...s.quad] : null)) : [],
     precompLayers: l.precompLayers ? l.precompLayers.map(projLayer) : null,
   };
@@ -377,6 +404,15 @@ function generate(): unknown[] {
     const anim = new AnimationEngine();
     sc.build(graph, anim);
     const exp = sceneToProject(sc, graph, anim);
+    // sceneToProject lists only the assets a node names by `assetId`; a particle
+    // sprite names its asset inside the config, so the session's assets ride too.
+    const harness = exp.document.harness as { assets: Array<{ id: string }> };
+    for (const a of useAssetStore.getState().assets) {
+      if (harness.assets.some((x) => x.id === a.id)) continue;
+      harness.assets.push(JSON.parse(JSON.stringify(a)) as { id: string });
+      const items = exp.document.projectItems as { footage: Record<string, unknown> };
+      items.footage[a.id] = { name: a.name ?? a.id, type: a.type };
+    }
     const frames = def.frames.map((f) => {
       const snap = buildSnapshot(graph, anim, f / sc.fps, undefined, undefined, undefined, sc.motionBlur, sc.comp as SnapshotComp);
       const fs = snapshotToFrameScene(snap);
