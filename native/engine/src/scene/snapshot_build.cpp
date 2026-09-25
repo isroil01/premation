@@ -267,7 +267,7 @@ class Walk final : public Scene3DHost {
   xf::Local2D world2d(const std::string& id) override { return world_of(id); }
   [[nodiscard]] std::optional<std::string> parent3d_of(const std::string& id) const override { return parent_of(id); }
   bool live3d(const std::string& id) override { return is_live_at(id); }
-  [[nodiscard]] const std::string& anim_id3d(const std::string& id) const override { return wn_.src(id); }
+  [[nodiscard]] std::string anim_id3d(const std::string& id) const override { return wn_.src(id); }
 
  private:
   /// `srcId(id)` (comp_instance.cpp): the node a walked id samples animation and clips from.

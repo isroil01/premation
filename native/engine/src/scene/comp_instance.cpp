@@ -148,7 +148,7 @@ class Expander {
     return p;
   }
 
-  std::vector<const Node*> children_of(const std::string& id) const {
+  [[nodiscard]] std::vector<const Node*> children_of(const std::string& id) const {
     std::vector<const Node*> out;
     const Node* n = d_.node(id);
     if (n == nullptr) return out;

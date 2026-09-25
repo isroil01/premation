@@ -55,7 +55,7 @@ struct CloneOffset {
 
 /// The nodes one snapshot walks: the flattened composition with its COLLAPSED
 /// instances expanded inline and the pass's own overrides applied.
-struct WalkNodes {
+struct WalkNodes {  // NOLINT(bugprone-exception-escape): MSVC's node-based containers allocate a sentinel when moved
   std::vector<const doc::Node*> nodes;
   /// Clones and override-patched copies (stable addresses).
   std::vector<std::unique_ptr<doc::Node>> owned;

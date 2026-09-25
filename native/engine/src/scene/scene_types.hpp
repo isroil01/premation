@@ -247,7 +247,7 @@ struct Snapshot {
 };
 
 /// SnapshotComp (buildSnapshot.ts) — comp-level inputs.
-struct SnapshotComp {
+struct SnapshotComp {  // NOLINT(bugprone-exception-escape): MSVC's std::map allocates a sentinel when moved
   double width = 1920, height = 1080;
   std::string background = "#101014";
   bool transparent = false;

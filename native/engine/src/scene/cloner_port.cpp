@@ -1,6 +1,7 @@
 #include "cloner_port.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <numbers>
 #include <optional>
@@ -115,8 +116,8 @@ double hash01(double i, double salt, double seed) {
   using motion::js::to_uint32;
   double n = static_cast<double>(to_int32(i)) * 374761393 + static_cast<double>(to_int32(salt)) * 668265263 +
              static_cast<double>(to_int32(seed)) * 2246822519.0;
-  n = static_cast<double>(to_int32(n) ^ to_int32(static_cast<double>(to_uint32(n) >> 13U))) * 1274126177;
-  n = static_cast<double>(to_int32(n) ^ to_int32(static_cast<double>(to_uint32(n) >> 16U)));
+  n = static_cast<double>(std::bit_cast<std::int32_t>(to_uint32(n) ^ (to_uint32(n) >> 13U))) * 1274126177;
+  n = static_cast<double>(std::bit_cast<std::int32_t>(to_uint32(n) ^ (to_uint32(n) >> 16U)));
   return static_cast<double>(to_uint32(n)) / 4294967296.0;
 }
 double hash11(double i, double salt, double seed) { return hash01(i, salt, seed) * 2 - 1; }
@@ -179,7 +180,7 @@ std::vector<CloneOffset> cloner_plan(const Config& cfg, const std::optional<xf::
   const int total = clone_count(cfg);
   std::vector<CloneOffset> out;
   if (total == 0) return out;
-  const double seed = static_cast<double>(motion::js::to_int32(cfg.random.seed));
+  const auto seed = static_cast<double>(motion::js::to_int32(cfg.random.seed));
   for (int i = 0; i < total; ++i) {
     const BasePos base = base_position(i, cfg, total);
     const double w = falloff_weight(i, total, cfg.falloff) * field_weight(base.x, base.y, cfg.falloff, field);
@@ -260,7 +261,9 @@ void expand_cloners(WalkNodes& w, RawWorld& raw, std::vector<std::pair<std::stri
       if (!dropped.contains(node->id)) out.push_back(node);
       continue;
     }
-    const Config cfg = *read_cloner(*node);
+    const std::optional<Config> cfgOpt = read_cloner(*node);
+    if (!cfgOpt) continue;
+    const Config& cfg = *cfgOpt;
     // fieldOf: the driving layer's position in the cloner's local frame (raw graph).
     std::optional<xf::Vec2> field;
     if (cfg.falloff.source == "layer" && !cfg.falloff.layerId.empty() && raw.document().node(cfg.falloff.layerId) != nullptr &&

@@ -28,7 +28,7 @@ double transform_num(const doc::Node& n, std::string_view k) {
 
 std::array<double, 16> arr16(const xf::Mat4& m) {
   std::array<double, 16> a{};
-  std::copy(m.begin(), m.end(), a.begin());
+  std::ranges::copy(m, a.begin());
   return a;
 }
 
@@ -78,8 +78,10 @@ Scene3D::CardPlan Scene3D::comp_card(const doc::Node& group, const Values& gv, c
   const double x0 = parent3d ? num("x").value_or(baseX) : gWorld.x;
   const double y0 = parent3d ? num("y").value_or(baseY) : gWorld.y;
   const double r0 = parent3d ? num("rotation").value_or(baseRot) : gWorld.rotation;
-  const double sx0 = parent3d ? (num("scaleX") ? *num("scaleX") : num("scale").value_or(baseScaleX)) : gWorld.scale_x;
-  const double sy0 = parent3d ? (num("scaleY") ? *num("scaleY") : num("scale").value_or(baseScaleY)) : gWorld.scale_y;
+  const std::optional<double> sxv = num("scaleX");
+  const std::optional<double> syv = num("scaleY");
+  const double sx0 = parent3d ? sxv.value_or(num("scale").value_or(baseScaleX)) : gWorld.scale_x;
+  const double sy0 = parent3d ? syv.value_or(num("scale").value_or(baseScaleY)) : gWorld.scale_y;
   const auto poseAt = [=](double ti) {
     const xf::Mat4 L = xf::compose(xf::Parts3D{
         .position = {worldProp("x", x0, ti), worldProp("y", y0, ti), ownProp("z", z0, ti)},
@@ -121,6 +123,7 @@ Scene3D::CardPlan Scene3D::comp_card(const doc::Node& group, const Values& gv, c
       auto it = subFrameCameras_.find(tcomp);
       if (it == subFrameCameras_.end()) {
         const std::string camId = h_.anim_id3d(viewCam_->id);
+        // NOLINTNEXTLINE(bugprone-exception-escape): a sampler into std::function, as matrix_at's
         const xf::Camera cam = camera_from_node(*viewCam_, [this, camId, tcomp](std::string_view k) {
           return doc::anim_sample(c_.d, c_.expr, c_.cache, camId, k, tcomp);
         });

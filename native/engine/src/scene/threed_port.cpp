@@ -129,7 +129,7 @@ std::optional<xf::Node3DTransform> Scene3D::local3d(const std::string& id) {
   if (n == nullptr) return std::nullopt;
   const auto g = doc::read_geometry_local(*n);
   if (!g) return std::nullopt;
-  const std::string& aid = h_.anim_id3d(id);  // a comp-instance clone samples its source
+  const std::string aid = h_.anim_id3d(id);  // a comp-instance clone samples its source
   const double kt = doc::comp_to_keyframe_time(c_.d, c_.view, aid, h_.remap3d(id, t_));
   const Values av(doc::anim_evaluate_node(c_.d, c_.expr, c_.cache, aid, kt));
   const auto [ax, ay] = read_node_anchor(*n);

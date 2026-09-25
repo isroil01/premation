@@ -1,6 +1,7 @@
 #include "particle_port.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -197,8 +198,8 @@ double hash01(double i, double salt, double seed) {
   using mjs::to_uint32;
   double n = static_cast<double>(to_int32(i)) * 374761393 + static_cast<double>(to_int32(salt)) * 668265263 +
              static_cast<double>(to_int32(seed)) * 2246822519.0;
-  n = static_cast<double>(to_int32(n) ^ to_int32(static_cast<double>(to_uint32(n) >> 13U))) * 1274126177;
-  n = static_cast<double>(to_int32(n) ^ to_int32(static_cast<double>(to_uint32(n) >> 16U)));
+  n = static_cast<double>(std::bit_cast<std::int32_t>(to_uint32(n) ^ (to_uint32(n) >> 13U))) * 1274126177;
+  n = static_cast<double>(std::bit_cast<std::int32_t>(to_uint32(n) ^ (to_uint32(n) >> 16U)));
   return static_cast<double>(to_uint32(n)) / 4294967296.0;
 }
 
@@ -299,7 +300,7 @@ V2 wander_offset(double i, double age, const Cfg& c) {
   const double amp = c.turbulence;
   if (amp <= 0) return {};
   const double speed = c.turbulenceSpeed;
-  const double seed = static_cast<double>(mjs::to_int32(c.seed));
+  const auto seed = static_cast<double>(mjs::to_int32(c.seed));
   const double t = age * speed;
   const auto axis = [&](double saltA, double saltB) {
     const double f1 = 0.7 + hash01(i, saltA, seed) * 1.1;
@@ -322,7 +323,7 @@ double value_noise(double x, double y, double t, double seed) {
   const double sy = sm(y - yi);
   const double st = sm(t - ti);
   const auto corner = [&](double dx, double dy, double dt) {
-    const std::int32_t k = mjs::to_int32((xi + dx) * 73856093) ^ mjs::to_int32((yi + dy) * 19349663) ^ mjs::to_int32((ti + dt) * 83492791);
+    const auto k = std::bit_cast<std::int32_t>(mjs::to_uint32((xi + dx) * 73856093) ^ mjs::to_uint32((yi + dy) * 19349663) ^ mjs::to_uint32((ti + dt) * 83492791));
     return hash01(static_cast<double>(k), 7, seed) * 2 - 1;
   };
   const auto plane = [&](double dt) { return lerp(lerp(corner(0, 0, dt), corner(1, 0, dt), sx), lerp(corner(0, 1, dt), corner(1, 1, dt), sx), sy); };
@@ -335,7 +336,7 @@ V2 curl_force(double x, double y, double timeSec, const Cfg& c) {
   if (amp <= 0) return {};
   const double scale = std::max(1.0, c.turbulenceScale);
   const double speed = c.turbulenceSpeed;
-  const double seed = static_cast<double>(mjs::to_int32(c.seed));
+  const auto seed = static_cast<double>(mjs::to_int32(c.seed));
   const double nx = x / scale;
   const double ny = y / scale;
   const double nt = timeSec * speed;
@@ -463,7 +464,7 @@ std::vector<Particle> simulate_particles(const Cfg& c, double time) {
   double iStart = std::max(0.0, std::ceil((time - maxLife) * rate));
   const double iEnd = std::floor(time * rate);
   if (iEnd - iStart > c.maxParticles) iStart = iEnd - c.maxParticles;
-  const double seed = static_cast<double>(mjs::to_int32(c.seed));
+  const auto seed = static_cast<double>(mjs::to_int32(c.seed));
   const double dirBase = (c.direction * kPi) / 180;
   const double spreadRad = (c.spread * kPi) / 180;
   for (double i = iStart; i <= iEnd; ++i) {
@@ -544,17 +545,15 @@ double js_mod(double a, double b) { return std::fmod(a, b); }
 
 class StatefulSim {
  public:
-  StatefulSim(const Cfg& c, double fps) : c_(c) {
-    n_ = static_cast<std::size_t>(std::max(1.0, std::floor(c.maxParticles)));
-    fps_ = std::max(1.0, fps);
-    dt_ = 1 / fps_;
-    floorY_ = c.bounceFloor;
+  StatefulSim(const Cfg& c, double fps)
+      : c_(c), n_(static_cast<std::size_t>(std::max(1.0, std::floor(c.maxParticles)))), fps_(std::max(1.0, fps)),
+        dt_(1 / fps_), floorY_(c.bounceFloor) {
     restitution_ = std::max(0.0, std::min(1.0, c.bounceRestitution));
     damping_ = std::max(0.0, std::min(1.0, c.bounceDamping)) * mjs::exp(-std::max(0.0, c.drag) * dt_);
     birthPerFrame_ = std::max(0.0, c.birthRate) / fps_;
     ringSize_ = static_cast<std::size_t>(trail_ring_spec(c, fps_).ringSize);
   }
-  SoA init() const {
+  [[nodiscard]] SoA init() const {
     SoA s;
     for (auto* v : {&s.id, &s.x, &s.y, &s.vx, &s.vy, &s.age, &s.life, &s.alive, &s.z, &s.vz, &s.generation, &s.aliveFrames}) v->assign(n_, 0);
     s.trailRing.assign(n_ * ringSize_ * 2, 0);
@@ -654,12 +653,12 @@ class StatefulSim {
   [[nodiscard]] std::size_t ring_size() const noexcept { return ringSize_; }
 
  private:
-  double radius_at(const SoA& s, std::size_t i) const {
+  [[nodiscard]] double radius_at(const SoA& s, std::size_t i) const {
     const double life = s.life[i];
     const double a01 = life > 0 ? std::min(1.0, s.age[i] / life) : 1;
     return std::max(0.0, lerp(c_.sizeStart, c_.sizeEnd, a01)) / 2;
   }
-  std::size_t free_slot(const SoA& s) const {
+  [[nodiscard]] std::size_t free_slot(const SoA& s) const {
     for (std::size_t i = 0; i < n_; ++i) {
       if (s.alive[i] < 0.5) return i;
     }
@@ -675,8 +674,8 @@ class StatefulSim {
   }
   void spawn(SoA& s, std::size_t slot, double birthId) const {
     const Cfg& c = c_;
-    const double seed = static_cast<double>(mjs::to_int32(c.seed));
-    const double i = static_cast<double>(mjs::to_int32(birthId));
+    const auto seed = static_cast<double>(mjs::to_int32(c.seed));
+    const auto i = static_cast<double>(mjs::to_int32(birthId));
     const double life = std::max(0.05, c.lifetime * (1 + c.lifetimeRandom * (hash01_stateful(i, 1, seed) * 2 - 1)));
     const double speed = c.speed * (1 + c.speedRandom * (hash01_stateful(i, 2, seed) * 2 - 1));
     const double dirBase = (c.direction * kPi) / 180;
@@ -697,7 +696,7 @@ class StatefulSim {
     s.aliveFrames[slot] = 0;
   }
   void spawn_child(SoA& s, std::size_t slot, double childId, double x, double y, double z) const {
-    const double seed = static_cast<double>(mjs::to_int32(c_.seed));
+    const auto seed = static_cast<double>(mjs::to_int32(c_.seed));
     const double dir = hash01_stateful(childId, 30, seed) * kPi * 2;
     const double speed = c_.subSpeed * (0.5 + hash01_stateful(childId, 31, seed));
     s.id[slot] = childId;
@@ -841,8 +840,8 @@ std::vector<Sprite> to_sprites(std::vector<Particle> particles, double fieldW, d
     s.opacity = p.opacity;
     s.head = true;
     if (streakSec > 0 && p.vx && p.vy) {
-      s.sx = *p.vx * streakSec * sc * 0.5;
-      s.sy = *p.vy * streakSec * sc * 0.5;
+      s.sx = p.vx.value_or(0) * streakSec * sc * 0.5;
+      s.sy = p.vy.value_or(0) * streakSec * sc * 0.5;
     }
     s.spriteFrame = p.spriteFrame;
     out.push_back(std::move(s));
@@ -872,7 +871,7 @@ void paint_shape(raster::Canvas2D& ctx, const Sprite& s, const std::string& shap
     const double frames = std::max(1.0, sprite->frames);
     const double fw = sprite->width / frames;
     const double f = std::min(frames - 1, std::max(0.0, s.spriteFrame.value_or(0)));
-    const double k = s.size / std::max(1.0, std::max(fw, sprite->height));
+    const double k = s.size / std::max({1.0, fw, sprite->height});
     const double dw = fw * k;
     const double dh = sprite->height * k;
     ctx.drawImage(*sprite->canvas, f * fw, 0, fw, sprite->height, -dw / 2, -dh / 2, dw, dh);
@@ -1166,7 +1165,7 @@ void paint_field(raster::Canvas2D& canvas, const Json& spec, const SpriteImage* 
       for (double k = 0; k < nn; ++k) {
         const double t = nn == 1 ? 0 : (k / (nn - 1)) * 2 - 1;
         ctx->save();
-        ctx->translate(*s.sx * t, *s.sy * t);
+        ctx->translate(s.sx.value_or(0) * t, s.sy.value_or(0) * t);
         ctx->rotate((s.rotation * kPi) / 180);
         paint_shape(*ctx, s, c.shape, spr);
         ctx->restore();
