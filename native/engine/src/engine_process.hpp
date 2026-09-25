@@ -35,6 +35,7 @@ struct RenderOptions {
   std::uint32_t hostPid = 0;
   std::uint32_t vendorId = 0;
   bool highPerformance = false;
+  std::size_t frameCacheBytes = 0;  // --frame-cache-mb (D4); no cache without a GPU
 };
 }  // namespace premation::render
 #else
