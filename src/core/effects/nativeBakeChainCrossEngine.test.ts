@@ -157,12 +157,10 @@ function generate() {
     jest.isolateModules(() => {
       // Fresh modules per case: canvas2dEffects.ts pools its scratch canvases by
       // role, and a pooled context keeps its state from the previous case.
-      /* eslint-disable @typescript-eslint/no-require-imports */
       const rec = require('@core/rendering/raster/__testHelpers__/recordingCanvas') as Rec;
       const { applyEffectChain } = require('./effectBake') as typeof import('./effectBake');
       const { scaleEffectLengths, migrateEffect } = require('./effects') as typeof import('./effects');
       const { paintMaskMatte } = require('./mask') as typeof import('./mask');
-      /* eslint-enable @typescript-eslint/no-require-imports */
       const effects = c.effects.map(migrateEffect);
       const bw = c.width + 2 * c.pad;
       const bh = c.height + 2 * c.pad;

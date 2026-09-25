@@ -486,7 +486,8 @@ golden needs an image-backed field, which means re-blessing it.
 
 **Remaining:** per-character 3D text (layoutPerChar3D); the extrusion slice
 stack and geometric-face fallbacks; glTF morph targets and skinning; EXR
-skies; and sealed-precomp 3D scopes, which wait on composition instances.
+skies. Sealed-precomp 3D scopes landed with composition instances (D2w
+time/comp: `comp_instance`'s `precompScene3d`).
 
 **D2 leftovers + D3 (2026-09-23): 436/436 frames bit-identical, 32 bpc, OCIO.**
 *The 7 low-alpha frames were never a renderer difference*: the C++ surface
@@ -630,16 +631,72 @@ bit-identical to webgpu. The remaining 16 fallbacks are plugin effects /
 generators (13, G2 by decision), glTF models (2) and height displacement (1).
 ctest 13/13.
 
-**Still reported, and why:** live merge paths and Offset Paths' non-convex
-cleanup (both run `polygon-clipping`'s Martinez union — needs an exact port of
-that library, splay trees and snap rounding included); Pixel Motion frame
-blending (optical flow + warp over the two decoded frames — the decoded frames
-are GPU textures in `MediaTextures`, so the warp belongs in the render graph);
-the audio waveform generator (needs the engine's decoded audio peaks —
-`audio::query_peaks` — reachable from the scene builder); Energy Beam on a text
-outline / an expanded mask path; the cloner's `path` mode (mergePaths'
-`nodeWorldOutline`; it falls back to the linear arrangement as the TS does
-without a path); temporal ghosts on 3D layers (the ghost's own `affineAt`).
+**Merge Paths, Offset Paths cleanup and path cloners (2026-09-25).**
+`polygon_clipping` is a line-for-line port of `polygon-clipping` 0.15.7
+(Martinez–Rueda sweep) with the splay tree whose comparison order its output
+depends on and robust-predicates' `orient2d`, pinned by
+`polygonClippingCrossEngine.test.ts` → `polygon_clipping_parity.json` (16
+cases × 4 operations). `merge_paths` builds live Merge Paths results
+(`nodeWorldOutline` over each operand's world pose, the boolean, the result's
+subpaths) and Offset Paths' non-convex cleanup unions the surviving loops
+through it. Cloners in `path` mode place their clones along the driving
+layer's outline (trimPath's arc table, tangent-aligned). The time/comp fixture
+covers all three (`live-merge-paths`, `offset-paths-cleanup`, and an open rail
+under a moving null plus a closed ellipse in `cloners`).
+
+**Still reported, and why:** Pixel Motion frame blending (optical flow + warp
+over the two decoded frames — the decoded frames are GPU textures in
+`MediaTextures`, so the warp belongs in the render graph); the audio waveform
+generator (needs the engine's decoded audio peaks — `audio::query_peaks` —
+reachable from the scene builder); Energy Beam on a text outline / an expanded
+mask path; temporal ghosts on 3D layers (the ghost's own `affineAt`).
+
+**D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
+content.** A frame drawn before is a GPU copy into the slot instead of rasters,
+effects and the render graph. The key is a 64-bit hash of the built frame (the
+encoded frame, the texture feed, fonts, slot size), so an edit that leaves a
+frame unchanged keeps it and undo returns to cached keys; there is no
+revision-based clear. `render/frame_cache` is an LRU over a byte budget (evicted
+textures are reused by size); `render/vram_ffi` sizes it at a quarter of the
+render adapter's DXGI local budget (non-local on iGPUs), clamped to
+256 MiB–4 GiB, 1 GiB elsewhere; `--frame-cache-mb N` overrides (0 = off). Only
+exact frames are stored: a frame drawn mid-playback with a nearest decoded
+footage frame is not. Baked rasters keep their bake across time and a re-bake
+over unchanged content starts from a copy of the painted canvas (E4 perf, a
+256 MB LRU beside the raster cache). `engine_gpu_tests` pins the round trip
+(byte-identical), eviction, size mismatch, over-budget frames. **Exit not yet
+measured:** cached playback of a heavy comp at full rate, in the real app.
+
+**D5 (2026-09-25): with the owner flag on, the engine's frames are the
+viewport.** Behind `PREMATION_ENGINE=process` + `PREMATION_ENGINE_OWNER=engine`
+(default off):
+- `engine()` is an `OwnedEngineClient` over the process client: its answers,
+  events, history and dirty flag are the truth. The TypeScript engine becomes
+  a replica fed the same edits, lifecycle and history requests in order (for
+  the overlays that still read the page's document, B4 §5); differences are
+  counted, never shown. After a fallback nothing is forwarded (the owner is
+  then the same TypeScript engine).
+- Providers read the flag from `engine:status`; `ProjectManager` delegates to
+  `EngineDocumentSession`; the dirty dot follows `mirror.dirty`; autosave runs
+  `session.autosave()` every 60 s into `<userData>/recovery/`; the recovery
+  prompt offers the engine's record as one undoable entry.
+- `engineTransport`: play / pause / seek and the active comp go to the engine,
+  whose playhead events drive the timeline; the page's clock and WebAudio mix
+  stand down (the engine's clock is audio-paced, E2).
+- `EngineSurface` in `viewport` mode fills the stage under the overlay canvas
+  and every handle; the workspace render tick sends `setViewport` with the
+  workspace camera (one request in flight, latest wins, no React render per
+  frame). A camera-only `setViewport` keeps the shared-texture ring. The
+  TypeScript renderer gets a null backend and paints chrome only; it returns
+  if the process backend falls back. The HUD shows the engine's frame time
+  (build + render to GPU completion; `RenderStats.cpuFrameMs` is the build
+  half). `EngineUnportedNotice` lists what the engine drew the comp without.
+- Tests: `ownedEngineClient` (routing, replication, gesture id mapping,
+  fallback), `ownerMode` (a real `premation-engine-headless` owner and the TS
+  replica: equal documents, 0 differences), `engine_tests` (ring decision,
+  `getLayerErrors`).
+**Exit not yet measured:** HUD frame time ≤ the TS path on every bench comp,
+in the real app; then the default flips.
 
 ### Phase E — Media, audio, text, effects
 
@@ -716,15 +773,24 @@ machine was shared with other agents' builds: every run waited for CPU load
   × 8/10/12(/16)-bit, P010-style storage included, and a wrong matrix or range
   fails by ≥ 8× the tolerance. A six-codec mixed timeline decodes interleaved
   with no cross-talk and an empty cache after close.
-- **Open.** `scene/engine_frames.cpp` still creates its `MediaSystem` with
-  `MediaConfig{}` (software only): switching it to `media_config_for(gpu.device,
-  note)` is one line in scene/, left to its owner. VideoToolbox (macOS) and
-  VAAPI / Vulkan Video (Linux) are compiled but unmeasured. CUDA → D3D12
+- **Open.** (The engine's frames and export jobs both open their
+  `MediaSystem` with `media_config_for`, so they use the policy above.)
+  VideoToolbox (macOS) and VAAPI / Vulkan Video (Linux) are compiled but
+  unmeasured. CUDA → D3D12
   zero-copy interop for nvdec, and P010 zero-copy once Dawn offers
   `MultiPlanarFormatP010` on D3D12. GPU ProRes (Vulkan) for 4444 at 4K.
   A GPU-busy gate for the bench (it gates on CPU only).
 
-**E3 progress (2026-09-24, uncommitted on `native-core`).** `native/engine/src/raster`
+**E2 (2026-09-24): exit met.** `native/engine/src/audio`: decode-once sources
+(48 kHz float stereo), per-clip voices with varispeed / reverse / loop, the 13
+built-in effects ported with Chromium's DSP, keyframed automation, the master
+limiter and meter, miniaudio / WASAPI output, and a DLL-locked audio transport
+clock: **A/V within one frame over 10 minutes** (the wall clock drifts 4–7
+frames). The mixdown equals the TypeScript's on 36 scenes
+(`tests/data/audio_parity.bin`); offline render is bit-deterministic. Export
+jobs mix with it (F1). Open: audio-driven expressions in the D1 corpus.
+
+**E3 progress (2026-09-24).** `native/engine/src/raster`
 is a Canvas2D-semantics layer on Skia's CPU raster backend (Chromium's canvas is
 Skia) with call-for-call ports of the TS vector, mask and text painters, HarfBuzz
 shaping with Blink's font funcs, SheenBidi, and the vertical / TCY / kinsoku /

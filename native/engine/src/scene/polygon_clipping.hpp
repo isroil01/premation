@@ -13,6 +13,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <vector>
 
 namespace premation::scene::pc {

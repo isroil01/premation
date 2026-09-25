@@ -74,7 +74,7 @@ const CASES: Case[] = [
   { name: 'three operands', subject: [[circle(0, 0, 60, 24)]], clipping: [[[rect(-10, -80, 20, 160)]], [[star(40, 0, 50, 20, 6)]]] },
   { name: 'polygon with a hole vs rect', subject: [[rect(0, 0, 200, 200), rect(50, 50, 100, 100).slice().reverse()]], clipping: [[[rect(120, 20, 150, 60)]]] },
   { name: 'self-intersecting bow tie', subject: [[[[0, 0], [100, 100], [100, 0], [0, 100], [0, 0]]]], clipping: [[[rect(25, 25, 50, 50)]]] },
-  { name: 'near-coincident vertices (snap)', subject: [[rect(0, 0, 100, 100)]], clipping: [[[[100 + 1e-14, 0], [200, 0], [200, 100], [100 - 1e-14, 100], [100 + 1e-14, 0]]]] },
+  { name: 'near-coincident vertices (snap)', subject: [[rect(0, 0, 100, 100)]], clipping: [[[[[100 + 1e-14, 0], [200, 0], [200, 100], [100 - 1e-14, 100], [100 + 1e-14, 0]]]]] },
   { name: 'identical polygons', subject: [[star(0, 0, 50, 20, 5)]], clipping: [[[star(0, 0, 50, 20, 5)]]] },
   { name: 'random blobs A', subject: [[blob(1, 0, 0, 100, 40)]], clipping: [[[blob(2, 40, 30, 90, 36)]]] },
   { name: 'random blobs B', subject: [[blob(3, 0, 0, 120, 60)]], clipping: [[[blob(4, -30, 20, 80, 50)]], [[blob(5, 50, -40, 70, 44)]]] },

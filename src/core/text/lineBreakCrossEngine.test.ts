@@ -85,8 +85,17 @@ test('the C++ line-break parity fixture matches lineBreak.ts', () => {
     return;
   }
   expect(existsSync(OUT)).toBe(true);
-  const stored = JSON.parse(readFileSync(OUT, 'utf8'));
-  // A different Node ICU may segment a dictionary script differently; compare the TS logic, not the ICU build.
-  expect(stored.rows.map((r: Row) => r.units)).toEqual(fixture.rows.map((r) => r.units));
-  if (stored.icu === fixture.icu) expect(stored).toEqual(JSON.parse(text));
+  const stored = JSON.parse(readFileSync(OUT, 'utf8')) as { icu: string; rows: Row[] };
+  if (stored.icu === fixture.icu) {
+    expect(stored).toEqual(JSON.parse(text));
+    return;
+  }
+  // Another ICU splits graphemes and dictionary words differently, so only the
+  // ICU-free logic is comparable: breaks with the segmenter off, over the stored units.
+  setWordSegmenterForTest(true);
+  try {
+    expect(stored.rows.map((r) => trueIdx(breakOpportunities(r.units)))).toEqual(stored.rows.map((r) => r.withoutSegmenter));
+  } finally {
+    setWordSegmenterForTest(false);
+  }
 });

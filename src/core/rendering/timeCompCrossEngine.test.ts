@@ -426,7 +426,7 @@ function projLayer(l: RenderLayer): Proj {
     motionSamples: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => [s.x, s.y, s.rotation, s.scaleX, s.scaleY, s.opacity]) : [],
     maskPaths: l.mask?.paths.length ?? 0,
     pathPoints: Array.isArray(l.pathPoints) ? l.pathPoints.map((p) => [p.x, p.y, p.inX, p.inY, p.outX, p.outY]) : null,
-    subpaths: Array.isArray(l.subpaths) ? l.subpaths.map((s) => s.points.map((p) => [p.x, p.y])) : null,
+    subpaths: l.subpaths ? l.subpaths.map((s) => s.points.map((p) => [p.x, p.y])) : null,
     precompScene3d: !!l.precompScene3d,
     depth: l.matrix ? l.depth : null,  // a 2D layer's depth is never read
     matrix: l.matrix ? [...l.matrix] : null,
