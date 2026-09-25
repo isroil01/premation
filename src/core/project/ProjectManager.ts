@@ -131,7 +131,7 @@ export class ProjectManager {
   private readonly storage: ProjectStorage;
   private readonly listeners = new Set<(s: ProjectState) => void>();
   private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io' | 'storage' | 'editorView' | 'engineDocument'>> & Pick<ProjectManagerDeps, 'logger' | 'editorView'>;
-  private readonly engineDocument: EngineOwnedDocument | null;
+  private engineDocument: EngineOwnedDocument | null;
 
   constructor(deps: ProjectManagerDeps) {
     this.io = deps.io ?? emptyDocumentIO;
@@ -160,6 +160,15 @@ export class ProjectManager {
 
   /** F2: is the document owned by the engine (lifecycle through engine requests)? */
   get engineOwned(): boolean { return this.engineDocument !== null; }
+
+  /**
+   * F2 / D5: hand the lifecycle to the engine (or back, with null). The app
+   * builds ProjectManager before it knows the owner flag (coreServices), so
+   * Providers attaches the engine's session here once main has answered.
+   */
+  setEngineDocument(doc: EngineOwnedDocument | null): void {
+    this.engineDocument = doc;
+  }
 
   subscribe(listener: (s: ProjectState) => void): () => void {
     this.listeners.add(listener);

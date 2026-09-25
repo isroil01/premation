@@ -24,6 +24,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { pauseInactiveComps } from '@core/timeline/timelineView';
 import { videoDiag, playbackHealth } from '@core/rendering/videoPlaybackDiag';
 import { flushRenderNow } from '@core/perf/framePump';
+import { useEngineViewportActive } from '@hooks/useEngineViewport';
 
 /** Element lag (ms behind the playhead) where the timeline starts slowing to
  *  meet the decoder. Under this, the rate trim absorbs it invisibly. */
@@ -82,6 +83,7 @@ export function usePlaybackClock(): void {
     s.activeTabId ? s.tabs[s.activeTabId]?.playing ?? false : false,
   );
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
+  const engineClock = useEngineViewportActive();
 
   const lastRef = useRef<number | undefined>(undefined);
 
@@ -103,7 +105,10 @@ export function usePlaybackClock(): void {
     if (playing && !controller.isPlaying) controller.play();
     if (!playing && controller.isPlaying) controller.pause();
 
-    if (!playing) {
+    if (!playing || engineClock) {
+      // D5: when the C++ engine owns the document, IT runs the clock (audio
+      // paced) and its playhead events move this controller
+      // (core/engine/engineTransport.ts) — pumping here too would race it.
       lastRef.current = undefined;
       playbackHealth.realtimeFactor = 1;
       return;
@@ -166,7 +171,7 @@ export function usePlaybackClock(): void {
       if (handle.raf !== undefined) cancelAnimationFrame(handle.raf);
       if (handle.timer !== undefined) clearTimeout(handle.timer);
     };
-  }, [playing]);
+  }, [playing, engineClock]);
 }
 
 export default usePlaybackClock;

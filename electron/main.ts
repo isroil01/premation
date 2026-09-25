@@ -1933,6 +1933,8 @@ app.whenReady().then(() => {
     // G1: native SDK plugins load in the engine process from this folder.
     nativePluginDir: ensureDir(path.join(app.getPath('userData'), 'native-plugins')),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
+    // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
+    recoveryPath: path.join(ensureDir(path.join(app.getPath('userData'), 'recovery')), 'engine-recovery.json'),
   });
   registerEngineIpc(engineHost);
   // Dev only: the real-app harness reads the frame-forwarding counters from
