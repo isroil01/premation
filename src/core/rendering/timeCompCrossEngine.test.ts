@@ -256,6 +256,15 @@ const DEFS: Def[] = [
         style: { opacity: 100 },
       }));
       graph.setLayerTime('clip', { frameBlend: 'mix' });
+      // A second clip carrying content-aware fill frames: the nearest one stands in.
+      graph.addNode(node('filled', {
+        kind: 'video', position: { x: 120, y: 80 },
+        transform: { assetId: 'asset-clip', width: 160, height: 90 },
+        style: { opacity: 100 },
+        components: [{ id: 'filled_fx', type: 'fx', props: { contentAwareFill: { frames: [
+          { t: 0.1, dataUrl: 'data:image/png;base64,AAAA' }, { t: 0.3, dataUrl: 'data:image/png;base64,BBBB' },
+        ] } } }],
+      }));
       anim.setKeyframe('clip', 'timeSpeed', 0, 70);
       anim.setKeyframe('clip', 'timeSpeed', 1, 70);
     },
@@ -350,6 +359,7 @@ function projLayer(l: RenderLayer): Proj {
     quad3d: l.quad3d ? [...l.quad3d] : null,
     lighting: l.lighting ? [...l.lighting] : null,
     particles: l.particles ? JSON.stringify(l.particles) : null,
+    contentAwareFillSrc: l.contentAwareFillSrc ?? null,
     sampleQuads: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => (s.quad ? [...s.quad] : null)) : [],
     precompLayers: l.precompLayers ? l.precompLayers.map(projLayer) : null,
   };

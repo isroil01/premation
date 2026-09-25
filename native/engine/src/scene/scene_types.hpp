@@ -193,6 +193,8 @@ struct RLayer {
   // ── media ──
   std::optional<std::string> src;
   std::optional<std::string> assetId;
+  /// A content-aware fill frame (a still `data:` URL) standing in for the footage.
+  std::optional<std::string> contentAwareFillSrc;
   std::optional<std::array<double, 4>> uvRect;
   bool premultipliedSource = false;
   // ── rigs ──

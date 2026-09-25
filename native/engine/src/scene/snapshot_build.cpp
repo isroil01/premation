@@ -1340,9 +1340,21 @@ void Walk::build_node(const doc::Node& n) {
     if (!lp.paint.is_undefined() && layerKind != LayerKind::shape) unported(l, n, "paint strokes on text / footage layers");
     l.paint = std::move(lp.paint);
   }
+  // Content-aware fill (contentAwareFillVideo.ts contentAwareFillAt): the stored
+  // fill frame nearest the layer's time stands in for the footage.
   if (fx.at("contentAwareFill").is_object() && fx.at("contentAwareFill").at("frames").is_array() &&
       !fx.at("contentAwareFill").at("frames").arr().empty()) {
-    unported(l, n, "content-aware fill");
+    const Json::Array& frames = fx.at("contentAwareFill").at("frames").arr();
+    const Json* best = &frames.front();
+    double bestD = std::abs(best->at("t").num() - layerTimeNow);
+    for (const Json& fr : frames) {
+      const double dd = std::abs(fr.at("t").num() - layerTimeNow);
+      if (dd < bestD) {
+        best = &fr;
+        bestD = dd;
+      }
+    }
+    if (best->at("dataUrl").is_string()) l.contentAwareFillSrc = best->at("dataUrl").str();
   }
   l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
   if (layerKind == LayerKind::video) {

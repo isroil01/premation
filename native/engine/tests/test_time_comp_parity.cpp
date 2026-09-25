@@ -20,6 +20,7 @@
 #include "json.hpp"
 #include "model.hpp"
 #include "snapshot_build.hpp"
+#include "scene_textures.hpp"
 #include "timeline.hpp"
 
 using premation::js::Json;
@@ -158,6 +159,8 @@ void cmp_layer(Cmp& c, const std::string& at, const sc::RLayer& l, const Json& w
   } else if (!l.particles.is_undefined()) {
     c.diffs.push_back(p + "particles: unexpected");
   }
+  c.str(p + "contentAwareFillSrc", l.contentAwareFillSrc.value_or("<null>"),
+        w.at("contentAwareFillSrc").is_string() ? w.at("contentAwareFillSrc") : Json::string("<null>"));
   optArr("matrix", l.matrix, w.at("matrix"));
   optArr("quad3d", l.quad3d, w.at("quad3d"));
   optArr("lighting", l.lighting, w.at("lighting"));
@@ -286,4 +289,24 @@ TEST_CASE("time/comp parity: the C++ scene builder reproduces buildSnapshot + sn
     }
   }
   CHECK(frames >= 14);
+}
+
+TEST_CASE("content-aware fill: a data: URL still decodes as the footage texture", "[scene][timecomp]") {
+  // A 2×1 PNG: (255,0,0,128) then (0,0,0,255), premultiplied at decode.
+  sc::SceneTextures tex(sc::SceneTextures::Options{});
+  sc::TextureRequest r;
+  r.key = "asset:filled";
+  r.kind = sc::TexKind::media;
+  r.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEklEQVR4nGP4z8DQwMDA8P8/AA7+A35TPsZnAAAAAElFTkSuQmCC";
+  std::vector<api::RenderTextureRef> refs;
+  sc::PrepareStats stats;
+  tex.prepare({r}, refs, stats);
+  REQUIRE(refs.size() == 1);
+  CHECK(stats.unsupported.empty());
+  REQUIRE(refs[0].ready);
+  const sc::RasterEntry* e = tex.raster(refs[0].hash);
+  REQUIRE(e != nullptr);
+  CHECK(e->width == 2);
+  CHECK(e->height == 1);
+  CHECK(e->rgba == std::vector<std::uint8_t>{128, 0, 0, 128, 0, 0, 0, 255});
 }
