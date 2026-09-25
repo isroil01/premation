@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,9 +27,14 @@ struct RasterOutput {
   std::vector<std::string> unsupported;
 };
 
+/// A layer's CPU bake (the mask matte + applyEffectChain), run on the raster
+/// canvas after its content is painted: (canvas, padded box w, h in layer px,
+/// raster scale, unsupported). Supplied by the scene builder (bake_chain.cpp).
+using BakeHook = std::function<void(Canvas2D&, double, double, double, std::vector<std::string>&)>;
+
 /// Draw one raster: Canvas2DVectorRasterizer.rasterize's miss path.
 /// `resolutionScale` and `padding` are the RasterRequest's.
 [[nodiscard]] RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, double resolutionScale,
-                                              double padding, const CanvasOptions& opts);
+                                              double padding, const CanvasOptions& opts, const BakeHook* bake = nullptr);
 
 }  // namespace premation::raster

@@ -185,10 +185,10 @@ class Canvas2D {
   [[nodiscard]] virtual std::string globalCompositeOperation() const = 0;
   virtual void setFilter(const css::Filter& f) = 0;
   /// `ctx.filter = css` with the whole CSS filter list (the bake chain's CSS
-  /// effects: blur, drop-shadow, brightness, …). The default applies what
-  /// css::parse_filter understands — `none` and a lone blur() — and returns
-  /// false, leaving the filter unchanged, for anything else: the Skia canvas
-  /// does not draw the other filter functions yet (E4).
+  /// effects: blur, drop-shadow, brightness, …), parsed by css::parse_filter_list
+  /// into the operations Blink's FilterEffectBuilder builds (the Skia canvas
+  /// chains them as image filters); false, leaving the filter unchanged, for a
+  /// list that does not parse.
   virtual bool setFilterString(std::string_view css);
   virtual void setImageSmoothing(bool on) = 0;
 

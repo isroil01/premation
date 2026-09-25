@@ -18,6 +18,7 @@
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
+#include "include/core/SkColorFilter.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkMatrix.h"
@@ -227,6 +228,7 @@ struct State {
   double globalAlpha = 1.0;
   SkBlendMode blend = SkBlendMode::kSrcOver;
   double blurPx = 0.0;
+  std::vector<css::FilterOp> filterOps;  // a filter-function list (the bake chain's CSS effects)
   css::Color shadowColor{0, 0, 0, 0};  // transparent black: no shadow
   double shadowBlur = 0.0;
   double shadowOffsetX = 0.0;
@@ -335,7 +337,10 @@ class SkiaCanvas final : public Canvas2D {
     return true;
   }
   [[nodiscard]] std::string globalCompositeOperation() const override { return std::string(blend_name(st_.blend)); }
-  void setFilter(const css::Filter& f) override { st_.blurPx = f.blurPx; }
+  void setFilter(const css::Filter& f) override {
+    st_.blurPx = f.blurPx;
+    st_.filterOps = f.ops;
+  }
   void setImageSmoothing(bool on) override { st_.smoothing = on; }
   void setShadowColor(const css::Color& c) override { st_.shadowColor = c; }
   void setShadowBlur(double b) override {
@@ -519,6 +524,32 @@ class SkiaCanvas final : public Canvas2D {
 
   SkCanvas* canvas() { return surface_->getCanvas(); }
 
+  /// FilterEffectBuilder + PaintFilterBuilder for a filter-function list: each
+  /// function's effect takes the previous one as its input, in sRGB (the CSS
+  /// shorthand functions' operating space), unclipped. Lengths are canvas px
+  /// (the filter layer is saved under an identity matrix, as for blur).
+  [[nodiscard]] static sk_sp<SkImageFilter> filter_chain(const std::vector<css::FilterOp>& ops) {
+    sk_sp<SkImageFilter> prev;
+    for (const css::FilterOp& op : ops) {
+      switch (op.kind) {
+        case css::FilterOp::Kind::blur:
+          prev = SkImageFilters::Blur(f(op.sigma), f(op.sigma), SkTileMode::kDecal, prev);
+          break;
+        case css::FilterOp::Kind::matrix:
+          prev = SkImageFilters::ColorFilter(SkColorFilters::Matrix(op.matrix.data()), prev);
+          break;
+        case css::FilterOp::Kind::table:
+          prev = SkImageFilters::ColorFilter(
+              SkColorFilters::TableARGB(op.table[3].data(), op.table[0].data(), op.table[1].data(), op.table[2].data()), prev);
+          break;
+        case css::FilterOp::Kind::dropShadow:
+          prev = SkImageFilters::DropShadow(f(op.dx), f(op.dy), f(op.sigma), f(op.sigma), to_skcolor(op.color, 1.0), prev);
+          break;
+      }
+    }
+    return prev;
+  }
+
   void alloc(std::uint32_t w, std::uint32_t h) {
     w_ = std::max<std::uint32_t>(w, 1);
     h_ = std::max<std::uint32_t>(h, 1);
@@ -657,7 +688,7 @@ class SkiaCanvas final : public Canvas2D {
     SkCanvas* c = canvas();
     // CanvasRenderingContext2DState::ShouldDrawShadows.
     const bool shadows = st_.shadowColor.a > 0 && (st_.shadowBlur > 0 || st_.shadowOffsetX != 0 || st_.shadowOffsetY != 0);
-    const bool layer = st_.blurPx > 0 || shadows || is_full_canvas_op(st_.blend);
+    const bool layer = st_.blurPx > 0 || !st_.filterOps.empty() || shadows || is_full_canvas_op(st_.blend);
     if (!layer) {
       paint.setBlendMode(st_.blend);
       c->setMatrix(to_sk(st_.ctm));
@@ -666,7 +697,9 @@ class SkiaCanvas final : public Canvas2D {
     }
     SkPaint lp;
     lp.setBlendMode(st_.blend);
-    if (st_.blurPx > 0) {
+    if (!st_.filterOps.empty()) {
+      lp.setImageFilter(filter_chain(st_.filterOps));
+    } else if (st_.blurPx > 0) {
       // BaseRenderingContext2D::CompositedDraw saves the filter layer under an
       // IDENTITY matrix, so a canvas filter length is canvas (device) pixels —
       // the transform does not scale it. Measured on mask-feather (2× raster).

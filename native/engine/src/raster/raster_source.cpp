@@ -28,7 +28,7 @@ double supersample_for(double tier, double boxW, double boxH, bool bake, double 
 }  // namespace
 
 RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, double resolutionScale, double padding,
-                                const CanvasOptions& opts) {
+                                const CanvasOptions& opts, const BakeHook* bakeHook) {
   RasterOutput out;
   json::Value spec;
   if (!json::parse(specJson, spec, out.error)) return out;
@@ -48,7 +48,7 @@ RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, doub
     return out;
   }
   const bool bake = spec["__baked"].truthy();
-  if (bake) out.unsupported.emplace_back("CPU-baked effect chain / fill opacity (applyEffectChain, E4)");
+  if (bake && bakeHook == nullptr) out.unsupported.emplace_back("CPU-baked effect chain / fill opacity (applyEffectChain, E4)");
   const double deviceMax = spec["__deviceMax"].is_number() ? spec["__deviceMax"].num() : kDefaultMaxRasterDimension;
   const double w0 = spec["width"].num(std::nan(""));
   const double h0 = spec["height"].num(std::nan(""));
@@ -74,6 +74,8 @@ RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, doub
     ctx->translate(bw / 2, bh / 2);
     paint_path_layer(*ctx, spec, out.unsupported);
   }
+  // finishBake / drawPath's bake branch: the mask matte, then the effect chain.
+  if (bake && bakeHook != nullptr) (*bakeHook)(*ctx, bw, bh, ss, out.unsupported);
   out.width = w;
   out.height = h;
   out.rgba = ctx->pixels();
