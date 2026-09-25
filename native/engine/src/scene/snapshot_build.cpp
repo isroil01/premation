@@ -9,6 +9,7 @@
 #include <set>
 #include <unordered_map>
 
+#include "cloner_port.hpp"
 #include "comp_instance.hpp"
 #include "effect_handoff.hpp"
 #include "effects_port.hpp"
@@ -282,6 +283,8 @@ class Walk final : public Scene3DHost {
   }
   const Values& values_of(const std::string& id);
   double remap(const std::string& id, double tt, bool subFrame, bool extrapolate = false);
+  /// `cloneTimeOffsetOf(id)`: the nearest clone root's cascade delay, or 0.
+  [[nodiscard]] double clone_time_offset(const std::string& id) const;
   /// buildSnapshot `retimedAt` / `retimedSourceAt` (retime_port.cpp).
   std::optional<double> retimed_at(const std::string& id, double tt);
   double retimed_source_at(const std::string& id, double tt);
@@ -379,8 +382,11 @@ double Walk::retimed_source_at(const std::string& id, double tt) {
   return retimed ? remap(id, *retimed, true, true) : remap(id, tt, false);
 }
 
-double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrapolate) {
+double Walk::remap(const std::string& id, double ttIn, bool subFrame, bool extrapolate) {
   const doc::Node* n = node(id);
+  // Cloner cascade: a clone plays its animation `timeOffset` behind, at COMP time,
+  // outside every clip map, loop and precomp remap (the offset lives on the clone root).
+  const double tt0 = ttIn - clone_time_offset(id);
   // Precomp time remap (buildRemap): the precomp ANCESTORS' retimes fold first,
   // outermost → innermost; the node's own retime is its container sourceTime.
   double tt = tt0;
@@ -457,6 +463,16 @@ double Walk::remap(const std::string& id, double tt0, bool subFrame, bool extrap
     }
   }
   return time;
+}
+
+double Walk::clone_time_offset(const std::string& id) const {
+  if (wn_.cloneOffsets.empty()) return 0;
+  const doc::Node* cur = node(id);
+  for (int i = 0; cur != nullptr && i < 64; ++i) {
+    if (const auto it = wn_.cloneOffsets.find(cur->id); it != wn_.cloneOffsets.end()) return it->second.timeOffset;
+    cur = cur->parent ? node(*cur->parent) : nullptr;
+  }
+  return 0;
 }
 
 bool Walk::is_live_at(const std::string& id) {
@@ -1015,7 +1031,10 @@ void Walk::build_node(const doc::Node& n) {
   l.id = n.id;
   l.kind = layerKind;
   const double layerTimeNow = remap(n.id, t_, false);
-  const double baseOpacity = a.has("opacity") ? *a.get("opacity") / 100 : base.opacity;
+  // A cloner clone's opacity MULTIPLIES the resolved one (cloner_port.cpp).
+  const auto cloneOff = wn_.cloneOffsets.find(n.id);
+  const CloneOffset* clone = cloneOff != wn_.cloneOffsets.end() ? &cloneOff->second : nullptr;
+  const double baseOpacity = (a.has("opacity") ? *a.get("opacity") / 100 : base.opacity) * (clone != nullptr ? clone->opacity / 100 : 1);
   l.effects = effects_of(n, a, layerTimeNow, &l);
 
   const bool isSolid = fx.at("solid").is_bool() && fx.at("solid").b();
@@ -1086,6 +1105,13 @@ void Walk::build_node(const doc::Node& n) {
   double sx = world.scale_x;
   double sy = world.scale_y;
   double rot = world.rotation;
+  if (clone != nullptr) {  // the cloner offset, on the RESOLVED transform
+    px += clone->x;
+    py += clone->y;
+    rot += clone->rotation;
+    sx *= clone->scaleX;
+    sy *= clone->scaleY;
+  }
   // Auto-orient (motionPath.ts autoOrientAngleDeg): a moving layer faces its
   // direction of travel, the velocity over 1/120 s at its own time.
   if (autoOrientPath) {
@@ -1497,9 +1523,15 @@ void Walk::build_node(const doc::Node& n) {
 Snapshot Walk::run() {
   // Collapsed instances expand into clones; a sealed pass applies its overrides (comp_instance.cpp).
   wn_ = expand_walk_nodes(d_, flatten_composition(d_, comp_.rootId), comp_.rootId, comp_.compOverrides);
+  std::vector<std::pair<std::string, std::string>> clonerNotes;
+  expand_cloners(wn_, raw_, clonerNotes);  // cloner_port.cpp
   nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
+  for (auto& [id, what] : clonerNotes) {
+    const doc::Node* cn = d_.node(id);
+    errors_.push_back({id, cn != nullptr ? cn->name : std::string(), "unported", std::move(what)});
+  }
   fps_ = comp_.fps ? *comp_.fps : doc::comp_fps(d_, comp_.rootId);
   // The camera, DOF and lights resolve before the walk (buildSnapshot order).
   three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);

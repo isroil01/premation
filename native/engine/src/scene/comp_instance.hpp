@@ -45,6 +45,14 @@ using InstanceOverrides = std::map<std::string, Json, std::less<>>;
 /// `readInstanceOverrides(node)`.
 [[nodiscard]] InstanceOverrides read_comp_overrides(const doc::Node& n);
 
+/// cloner.ts `CloneTransform`: where one clone sits relative to the cloner layer.
+struct CloneOffset {
+  int index = 0;
+  double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1;
+  double opacity = 100;   ///< 0..100
+  double timeOffset = 0;  ///< seconds this clone's animation runs behind
+};
+
 /// The nodes one snapshot walks: the flattened composition with its COLLAPSED
 /// instances expanded inline and the pass's own overrides applied.
 struct WalkNodes {
@@ -57,6 +65,8 @@ struct WalkNodes {
   std::unordered_set<std::string> instanceRoots;
   /// `__overriddenProps` per walked id.
   std::unordered_map<std::string, std::set<std::string, std::less<>>> overridden;
+  /// A cloner clone ROOT's offset (`__cloneOffset`, cloner_port.cpp).
+  std::unordered_map<std::string, CloneOffset> cloneOffsets;
 
   /// `srcId(id)`: the node whose animation and clip bars a walked id samples.
   [[nodiscard]] const std::string& src(const std::string& id) const {

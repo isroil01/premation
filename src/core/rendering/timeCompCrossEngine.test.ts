@@ -150,6 +150,37 @@ const DEFS: Def[] = [
     comp: { rootId: 'host' },
   },
   {
+    id: 'cloners',
+    frames: [0, 16],
+    build(graph, anim) {
+      // A radial cloner of a keyframed group (children cloned too) with a step
+      // ramp, a cascade, hashed randomness and an order falloff.
+      graph.addNode(node('ring', { kind: 'group', position: { x: 150, y: 160 }, rotation: 10 }));
+      graph.addChild('ring', rect('petal', 0, 0, 40, 14, '#ff595e'));
+      anim.setKeyframe('petal', 'rotation', 0, 0);
+      anim.setKeyframe('petal', 'rotation', 1, 180);
+      graph.setFxKey('ring', '__cloner', {
+        enabled: true, mode: 'radial', count: 7, radius: 90, startAngle: -90, arc: 360, alignToRadius: true,
+        step: { x: 0, y: 0, rotation: 30, scale: 0.6, opacity: -60, time: 0.4 },
+        random: { seed: 7, position: 6, rotation: 12, scale: 0.1 },
+        falloff: { shape: 'radial', source: 'order', position: 0.3, width: 0.6, invert: false },
+      });
+      // A grid cloner driven by a moving null's field, with push.
+      graph.addNode(node('field', { kind: 'null', position: { x: 360, y: 160 } }));
+      anim.setKeyframe('field', 'x', 0, 300);
+      anim.setKeyframe('field', 'x', 1, 420);
+      graph.addNode(ellipse('dot', 360, 160, 16, '#1982c4'));
+      graph.setFxKey('dot', '__cloner', {
+        enabled: true, mode: 'grid', countX: 5, countY: 4, offsetX: 30, offsetY: 30,
+        step: { scale: 1 }, random: { seed: 3, position: 0, rotation: 0, scale: 0 },
+        falloff: { shape: 'linear', source: 'layer', layerId: 'field', radius: 80, push: 25 },
+      });
+      // A plain linear cloner.
+      graph.addNode(rect('bar', 240, 280, 30, 10, '#8ac926'));
+      graph.setFxKey('bar', '__cloner', { enabled: true, mode: 'linear', count: 4, offsetX: 40, offsetY: -5 });
+    },
+  },
+  {
     id: 'instance-cycle-guard',
     frames: [0],
     sizes: { A: { width: 240, height: 160 }, B: { width: 160, height: 100 } },
@@ -375,7 +406,7 @@ test('the C++ time/comp parity fixture matches what buildSnapshot + snapshotToFr
   // Every case really exercises its feature (a vacuous fixture pins nothing).
   const all = JSON.stringify(cases);
   for (const needle of ['inst::iRect', 'inst::iDeep::dRect', 'inst2::iRect', 'coll::iRect', 'seal::iRect', 'vfa:clip', 'vfb:clip',
-    'echoed__echo0', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
+    'echoed__echo0', 'ring~c6::petal', 'dot~c19::root', 'bar~c3::root', 'wide__echo4', '"quad3d":[', '"cornerPin":[0.05', 'hA::aB::bRect', '"continuousRaster":true']) {
     expect(all).toContain(needle);
   }
   for (const c of cases as Array<{ frames: Array<{ errors: string[] }> }>) for (const f of c.frames) expect(f.errors).toEqual([]);
