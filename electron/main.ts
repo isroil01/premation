@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
 import { FfmpegStdinStream, RAW_PIPE_MAX_CHUNK_BYTES } from './ffmpegStream';
+import { resolveFfmpegBinary } from './ffmpegBinary';
 import { EncoderProbe } from './encoderProbe';
 import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
@@ -559,13 +560,13 @@ function registerRenderIpc(): RenderIpcControl {
    */
   const CHAPTER_METADATA_FILE = 'chapters.ffmetadata';
 
-  const resolveFfmpeg = (): string => {
-    if (process.env.FFMPEG_PATH && existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
-    const name = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-    const bundled = path.join(process.resourcesPath ?? '', 'ffmpeg', name);
-    if (existsSync(bundled)) return bundled;
-    return 'ffmpeg'; // fall back to PATH
-  };
+  // The same rule the engine's export jobs use (ffmpegBinary.ts).
+  const resolveFfmpeg = (): string => resolveFfmpegBinary({
+    vars: process.env,
+    resourcesPath: process.resourcesPath ?? '',
+    platform: process.platform,
+    exists: existsSync,
+  });
 
   /**
    * Cached encoder probe (`ffmpeg -encoders` once per session, plus a smoke

@@ -112,6 +112,8 @@ export interface ExportJobRecord {
   error?: string;
   warnings?: string[];
   attempts: number;
+  /** Which renderer runs the current attempt: premation-engine (F1) or a hidden window. */
+  renderer?: 'engine' | 'chromium';
 }
 
 export type ExportQueueEvent =

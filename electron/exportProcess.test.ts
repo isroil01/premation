@@ -27,6 +27,8 @@ import {
   compareQueued,
   registerExportSupervisorIpc,
   validateSpec,
+  exportEngineEnabled,
+  type EngineLauncher,
   type ExportJobRecord,
   type ExportJobSpec,
   type ExportQueueEvent,
@@ -34,6 +36,7 @@ import {
   type WorkerWindow,
 } from './exportProcess';
 import path from 'node:path';
+import type { EngineExportCallbacks, EngineExportOutcome } from './engineExport';
 
 /** An absolute path on THIS platform (the supervisor refuses relative ones; `C:\\…` is relative on POSIX). */
 const abs = (...parts: string[]): string => path.join(process.platform === 'win32' ? 'C:\\' : '/', ...parts);
@@ -475,5 +478,132 @@ describe('IPC', () => {
     await expect(invoke('export:workerJob', editorEvent)).rejects.toThrow(/no export job/);
     // A subframe is refused before any handler body runs.
     await expect(invoke('export:list', { senderFrame: { url: mainFrame.url }, sender: editor })).rejects.toThrow(/not available/);
+  });
+});
+
+describe('F1: engine jobs', () => {
+  interface FakeEngineRun {
+    spec: ExportJobSpec;
+    cb: EngineExportCallbacks;
+    cancelled: boolean;
+    finish(o: EngineExportOutcome): void;
+  }
+  function engineHarness(ineligible: (s: ExportJobSpec) => string | null = () => null): Harness & { runs: FakeEngineRun[] } {
+    const runs: FakeEngineRun[] = [];
+    const engine: EngineLauncher = {
+      ineligible,
+      start: (_id, s, cb) => {
+        let finish!: (o: EngineExportOutcome) => void;
+        const done = new Promise<EngineExportOutcome>((r) => { finish = r; });
+        const rec: FakeEngineRun = { spec: s, cb, cancelled: false, finish };
+        runs.push(rec);
+        return { done, cancel: () => { rec.cancelled = true; finish({ kind: 'cancelled' }); } };
+      },
+    };
+    return { ...harness({ engine }), runs };
+  }
+  const flush = async (): Promise<void> => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+  it('an eligible job renders in the engine: no window, progress, completed', async () => {
+    const h = engineHarness();
+    h.sup.enqueue(spec(), 'a');
+    expect(h.windows).toHaveLength(0);
+    expect(h.runs).toHaveLength(1);
+    expect(h.sup.get('a')!.renderer).toBe('engine');
+    expect(status(h, 'a')).toBe('preparing');
+    h.runs[0]!.cb.started?.({ frames: 24, width: 1920, height: 1080, fps: 24, alpha: false, audio: null, comp: 'c', compName: 'C' });
+    h.clock.now += 1000;
+    h.runs[0]!.cb.progress(0.5);
+    expect(status(h, 'a')).toBe('rendering');
+    expect(h.sup.get('a')!.progress.frame).toBe(12);
+    h.runs[0]!.cb.progress(1);
+    expect(status(h, 'a')).toBe('encoding');
+    h.runs[0]!.finish({ kind: 'completed', frames: 24 });
+    await flush();
+    expect(status(h, 'a')).toBe('completed');
+    expect(h.runs[0]!.cancelled).toBe(false);
+    expect(h.sup.activeCount()).toBe(0);
+  });
+
+  it('a fallback (unported frame, no GPU, engine crash) continues the same attempt in a window', async () => {
+    const h = engineHarness();
+    h.sup.enqueue(spec(), 'a');
+    h.runs[0]!.cb.progress(0.25);
+    h.runs[0]!.finish({ kind: 'fallback', reason: 'premation-engine stopped unexpectedly (exit code 3221225477)' });
+    await flush();
+    expect(h.windows).toHaveLength(1);
+    const job = h.sup.get('a')!;
+    expect(job.renderer).toBe('chromium');
+    expect(job.attempts).toBe(1);
+    expect(job.status).toBe('preparing');
+    expect(job.progress.frame).toBe(0);
+    h.sup.takeJob(h.windows[0]!.id);
+    h.sup.reportDone(h.windows[0]!.id, { ok: true, outPath: abs('out', 'job1.mp4'), frames: 24 });
+    expect(status(h, 'a')).toBe('completed');
+  });
+
+  it('an export failure (the encoder) fails the job without a window', async () => {
+    const h = engineHarness();
+    h.sup.enqueue(spec(), 'a');
+    h.runs[0]!.finish({ kind: 'failed', message: 'The encode failed: ffmpeg exited 1' });
+    await flush();
+    expect(status(h, 'a')).toBe('failed');
+    expect(h.sup.get('a')!.error).toMatch(/ffmpeg exited 1/);
+    expect(h.windows).toHaveLength(0);
+  });
+
+  it('cancel stops the engine job; a late outcome changes nothing', async () => {
+    const h = engineHarness();
+    h.sup.enqueue(spec(), 'a');
+    expect(h.sup.cancel('a')).toBe(true);
+    expect(h.runs[0]!.cancelled).toBe(true);
+    expect(status(h, 'a')).toBe('cancelled');
+    h.runs[0]!.finish({ kind: 'fallback', reason: 'late' });
+    await flush();
+    expect(h.windows).toHaveLength(0);
+    expect(status(h, 'a')).toBe('cancelled');
+  });
+
+  it('an ineligible spec renders in a window from the start', () => {
+    const h = engineHarness((s) => (s.format === 'png-sequence' ? 'the engine does not write "png-sequence"' : null));
+    h.sup.enqueue({ ...spec(), format: 'png-sequence' }, 'a');
+    expect(h.runs).toHaveLength(0);
+    expect(h.windows).toHaveLength(1);
+    expect(h.sup.get('a')!.renderer).toBe('chromium');
+  });
+
+  it('an engine that never starts rendering is failed by the boot watchdog', () => {
+    const h = engineHarness();
+    const sup = new ExportSupervisor({
+      createWindow: () => new FakeWindow(),
+      persist: { read: async () => null, write: async () => undefined },
+      prepareSnapshot: async (id) => abs('snap', id, 'project.motion'),
+      removeSnapshot: async () => undefined,
+      abortRenderJobsOwnedBy: () => undefined,
+      bootTimeoutMs: 1000,
+      engine: { ineligible: () => null, start: () => ({ done: new Promise(() => undefined), cancel: () => undefined }) },
+      log: () => undefined,
+    });
+    void h;
+    sup.enqueue(spec(), 'a');
+    jest.advanceTimersByTime(1000);
+    expect(sup.get('a')!.status).toBe('failed');
+    expect(sup.get('a')!.error).toMatch(/engine did not start/);
+  });
+
+  it('the flag is off unless PREMATION_EXPORT_ENGINE=1', () => {
+    expect(exportEngineEnabled({})).toBe(false);
+    expect(exportEngineEnabled({ PREMATION_EXPORT_ENGINE: '0' })).toBe(false);
+    expect(exportEngineEnabled({ PREMATION_EXPORT_ENGINE: '1' })).toBe(true);
+  });
+
+  it('the renderer survives the queue file', async () => {
+    const h = engineHarness();
+    h.sup.enqueue(spec(), 'a');
+    await h.sup.flushed();
+    const again = harness();
+    again.disk.text = h.disk.text;
+    await again.sup.load();
+    expect(again.sup.get('a')!.renderer).toBe('engine');
   });
 });
