@@ -120,7 +120,10 @@ family "PropertyGroups";
 enum MaskMode { none = 0; add = 1; subtract = 2; intersect = 3; lighten = 4; darken = 5; difference = 6; }
 
 /// Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order.
-command addEffect = 600 { layers: LayerId[] = 1; effect: string = 2; index?: u32 = 3; params: PropertyInit[] = 4; } -> GroupList;
+/// B5 `id`: a CALLER-CHOSEN effect id, used on every layer (an automation client's handle: an AI library emitter keys
+/// `effects/<id>/<param>` before the call returns). Letters, digits, '_' and '-' only (`invalidArgument`); a layer that
+/// already has an effect with that id is `conflict`. Absent = the engine mints `fx_<n>`.
+command addEffect = 600 { layers: LayerId[] = 1; effect: string = 2; index?: u32 = 3; params: PropertyInit[] = 4; id?: string = 5; } -> GroupList;
 /// Add a mask. Returns 'masks/<id>'.
 command addMask = 601 { layer: LayerId = 1; path: BezierPath = 2; mode: MaskMode = 3; name?: string = 4; index?: u32 = 5; inverted: bool = 6; } -> GroupList;
 /// Add any other group under `parent` by match name: text animator ('text/animators', 'ADBE Text Animator'), selector, shape content (rect, ellipse, polystar, path, fill, stroke, gradient fill/stroke, trim, repeater, merge, offset, round corners, twist, wiggle, zig-zag, pucker), layer style, paint stroke, puppet pin, expression control, essential property.

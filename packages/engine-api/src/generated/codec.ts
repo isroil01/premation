@@ -5580,6 +5580,7 @@ function encS_AddEffect(w: Writer, v: T.AddEffect): void {
   w.byte(18); w.str(v.effect);
   if (v.index !== undefined) { w.byte(24); w.u32(v.index); }
   { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(34); { const s = w.beginLd(); encS_PropertyInit(w, a[i]!); w.endLd(s); } } }
+  if (v.id !== undefined) { w.byte(42); w.str(v.id); }
 }
 function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
   const l_layers: string[] = [];
@@ -5587,6 +5588,7 @@ function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
   let h_effect = false;
   let v_effect: string | undefined;
   let v_index: number | undefined;
+  let v_id: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5594,6 +5596,7 @@ function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
       case 18: v_effect = r.str(); h_effect = true; break;
       case 24: v_index = r.u32(); break;
       case 34: l_params.push(decS_PropertyInit(r, r.ldEnd(), {})); break;
+      case 42: v_id = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -5603,6 +5606,7 @@ function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
   o.effect = v_effect;
   if (v_index !== undefined) o.index = v_index;
   o.params = l_params;
+  if (v_id !== undefined) o.id = v_id;
   return o;
 }
 function encS_AddMask(w: Writer, v: T.AddMask): void {

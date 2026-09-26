@@ -12,7 +12,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { baseLocal } from '@core/scene/parenting';
 import { worldTransformOf } from '@core/scene/worldTransform';
-import { createLegacyDocumentContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/lottie/lottieDocumentContext';
 import { planLottieImport, type LottieJson } from '../lottieImport';
 import { applyImportPlan } from '../lottieImportApply';
 import type { SceneNode } from '@core/types';

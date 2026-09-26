@@ -306,6 +306,32 @@ export function memberWrite(nodeId: string, track: string, n: number, seconds: n
   return { prop: r.ref, value: valueOfNumbers(r.valueType, nums), time };
 }
 
+/**
+ * Several member tracks of ONE layer (`{ 'ta.0.x': 10, 'ta.0.y': 4 }`) as
+ * whole-value writes — members of the same property merge into ONE write (two
+ * `memberWrite`s of X and Y would each carry the other's OLD value). Null when
+ * any track is not a member of an addressed property.
+ */
+export function memberWrites(nodeId: string, patch: Readonly<Record<string, number>>, seconds: number): PropertyWrite[] | null {
+  const byPath = new Map<string, { w: PropertyWrite; type: ValueType }>();
+  for (const [track, n] of Object.entries(patch)) {
+    if (!Number.isFinite(n)) return null;
+    const r = propRefForTrack(nodeId, track);
+    if (!r || !r.members.includes(track)) return null;
+    const e = byPath.get(r.ref.path);
+    if (!e) {
+      const w = memberWrite(nodeId, track, n, seconds);
+      if (!w) return null;
+      byPath.set(r.ref.path, { w, type: r.valueType });
+      continue;
+    }
+    const nums = numbersOfValue(e.w.value);
+    nums[r.member] = n * apiUnitFactor(track);
+    e.w = { ...e.w, value: valueOfNumbers(e.type, nums) };
+  }
+  return [...byPath.values()].map((e) => e.w);
+}
+
 /** The same scalar written on several layers as ONE `setProperties` command. */
 export function scalarWrites(nodeIds: readonly string[], track: string, value: number | ((nodeId: string) => number), seconds: number): PropertyWrite[] {
   const out: PropertyWrite[] = [];

@@ -423,7 +423,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 
 | Command | Semantics / inverse |
 |---|---|
-| `addEffect` | By match name, on several layers, at a stack index, with initial params. Returns `effects/<id>` per layer. Inverse: remove them. |
+| `addEffect` | By match name, on several layers, at a stack index, with initial params. Returns `effects/<id>` per layer. B5 `id`: a caller-chosen effect id used on every layer (an AI library emitter's handle — it keys `effects/<id>/<param>` before the call returns); letters, digits, `_`, `-` (`invalidArgument`), one a layer already has is `conflict`; absent = the engine mints `fx_<n>`. Inverse: remove them. |
 | `addMask` | Path, mode (none/add/subtract/intersect/lighten/darken/difference), name, index, inverted. Inverse: remove. |
 | `addPropertyGroup` | Any other group under a parent path by match name: text animators, selectors, shape contents (rect, ellipse, polystar, path, fill, stroke, gradient fill/stroke, trim, repeater, merge, offset, round corners, twist, wiggle, zig-zag, pucker/bloat), layer styles, paint strokes, puppet pins, expression controls. Inverse: remove. |
 | `removePropertyGroups` | With their keys and expressions. Inverse: back at their index with the same ids. |
@@ -1159,17 +1159,53 @@ and replays to a byte-identical saved project.
 
 What still writes AROUND the engine is pinned by the B5 ratchet
 (`npm run lint:automation-writes`, `scripts/lint/automationWritesReport.mjs`,
-`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites — ai 92, plugins 41,
-scripts/automation 0. Every one is a named fallback, not a default path: `LEGACY_GAPS`
-in toolContext.ts (kinds the layer factory lacks, caller-chosen effect ids, NTSC comp
-rates, puppet rigs, points data keys, per-member keys the API cannot address, a
-refusal); the plugin layer-kind machinery (`plugin:<id>/<kind>` creation, proxy
-subtrees, structured props, inspector params, param supervision — the TS engine
-refuses `component` layers); `scene.apply` (its all-or-nothing guarantee is a
-synchronous document snapshot; as an engine gesture it needs an abort that reverts
-on the first failing op); `animation.setExpression` from a plugin (the stored
-expression carries its owner plugin id; `setExpression` has no owner field); colour
-channel and non-Position vector keyframes from a plugin; composition-less nodes.
+`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites at B5's
+finish — ai 92, plugins 41. Every one was a named fallback, not a default path:
+`LEGACY_GAPS` in toolContext.ts (kinds the layer factory lacks, caller-chosen
+effect ids, NTSC comp rates, puppet rigs, points data keys, per-member keys the
+API cannot address, a refusal); the plugin layer-kind machinery
+(`plugin:<id>/<kind>` creation, proxy subtrees, structured props, inspector
+params, param supervision — the TS engine refuses `component` layers);
+`scene.apply` (its all-or-nothing guarantee is a synchronous document snapshot;
+as an engine gesture it needs an abort that reverts on the first failing op);
+`animation.setExpression` from a plugin (the stored expression carries its
+owner plugin id; `setExpression` has no owner field); colour channel and
+non-Position vector keyframes from a plugin; composition-less nodes.
+
+**B5 leftovers (2026-09-26).** The AI tool layer no longer writes around the
+engine (ratchet ai 92 → 1: the snapshot-commit recorder flush in
+`aiTransaction.ts`, which goes with the legacy recorder). A write the API cannot
+express EXACTLY is now REFUSED — a failed tool call addressed to the model,
+`LEGACY_GAPS` naming why — never made by a legacy writer; the pre-engine
+refusal fallbacks are gone. The routes:
+
+- **Inserts `createLayer` cannot carry** (a line or a parametric Polystar, a
+  contain-fitted footage layer, an SVG document or its editable shapes, a
+  model placeholder null) are built OFF-DOCUMENT with the legacy builder and
+  sent as ONE `pasteLayers` (`buildLayerFragment`, offDocument.ts — the UI's
+  own route); media bytes are `importBytes`. `src/core/ai/hostWrites.ts`.
+- **Keyframe writes a track the API does not key alone** (an easing without
+  an API name, a lone member's ease / handles, a member of an unseparated
+  vector) run the per-track writer off-document and send the property's
+  `setKeyframes` (`assistantKeyframeCommands`; `AssistantPlan.unaddressed`
+  refuses a track the catalog does not address instead of dropping it).
+- **Existing API the facades did not use yet:** `layer/puppet` /
+  `layer/skeleton` (whole rigs), `puppet/pins/<id>/position` keys (a pin's
+  Position), `layer/precompose` (a group's time-remap switch),
+  `setExpression.member` (a member of an unseparated vector),
+  `setCompositionSettings.frameRate` as an exact rational (NTSC through
+  `fpsToRational`), `addPropertyGroup` for text animators / path operators /
+  layer styles with `setProperties` of their params (`memberWrites`,
+  propRefs.ts: members of one property merge into ONE write), `addMask`,
+  `reorderLayers` (Send to Back), `trimLayers` (a scene's in-point),
+  `setLayerSwitches.threeD`, `layer/fillPaint`, `layer/strokes`.
+- **New:** `addEffect.id` — a caller-chosen effect id (both engines).
+
+The Lottie importer's synchronous document context (`createLegacyDocumentContext`)
+moved to `src/core/lottie/lottieDocumentContext.ts`: it is an off-document
+builder, not an automation client. Tools still recorded as a gap wholesale
+(`buildAiTools`): `merge_paths` (the live merge edits source layers in place)
+and `export_video` (the editor's render-queue store, not `addRenderItems`).
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 

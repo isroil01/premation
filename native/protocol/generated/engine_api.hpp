@@ -2285,6 +2285,7 @@ struct AddEffect {
   std::string effect;
   std::optional<std::uint32_t> index;
   std::vector<PropertyInit> params;
+  std::optional<std::string> id;
   bool operator==(const AddEffect&) const = default;
 };
 

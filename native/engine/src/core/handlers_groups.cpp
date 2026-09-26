@@ -1312,6 +1312,13 @@ ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
     fail(ErrorCode::not_found, "no effect '" + c.effect + "'", {.detail = js::stringify(detail)});
   }
   native_check_addable(c.effect);  // G1: a disabled / failed plugin's effect
+  // B5: a caller-chosen id (an automation client's handle), the same on every layer.
+  if (c.id) {
+    const bool valid = !c.id->empty() && std::all_of(c.id->begin(), c.id->end(), [](char ch) {
+      return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+    });
+    if (!valid) fail(ErrorCode::invalid_argument, "effect id '" + *c.id + "' may use only letters, digits, '_' and '-'");
+  }
   std::vector<std::string> ids;
   for (const auto& layer : c.layers) {
     (void)require_layer(d, layer);
@@ -1320,6 +1327,13 @@ ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
       fail(ErrorCode::out_of_range,
            "index " + std::to_string(*c.index) + " is past the " + std::to_string(count) + " effects of '" + layer + "'",
            {.layer = layer});
+    }
+    if (c.id) {
+      if (find_by_id(get_node_effects(d, layer), *c.id) != nullptr) {
+        fail(ErrorCode::conflict, "layer '" + layer + "' already has an effect '" + *c.id + "'", {.layer = layer, .path = "effects/" + *c.id});
+      }
+      ids.push_back(*c.id);
+      continue;
     }
     ids.push_back(x.mint_group_id("fx_", [&](const std::string& id) { return find_by_id(get_node_effects(d, layer), id) != nullptr; }));
   }

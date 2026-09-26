@@ -5,7 +5,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { createLegacyDocumentContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/lottie/lottieDocumentContext';
 import { readTrimOp, pathOpPropPath } from '@core/scene/pathOps';
 import { planLottieImport, type LottieJson } from '../lottieImport';
 import { applyImportPlan } from '../lottieImportApply';

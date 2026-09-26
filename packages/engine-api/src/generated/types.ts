@@ -2100,12 +2100,18 @@ export interface KeyframeIds {
   ids: KeyframeId[];
 }
 
-/** Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order. */
+/**
+ * Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order.
+ * B5 `id`: a CALLER-CHOSEN effect id, used on every layer (an automation client's handle: an AI library emitter keys
+ * `effects/<id>/<param>` before the call returns). Letters, digits, '_' and '-' only (`invalidArgument`); a layer that
+ * already has an effect with that id is `conflict`. Absent = the engine mints `fx_<n>`.
+ */
 export interface AddEffect {
   layers: LayerId[];
   effect: string;
   index?: number;
   params: PropertyInit[];
+  id?: string;
 }
 
 /** Add a mask. Returns 'masks/<id>'. */

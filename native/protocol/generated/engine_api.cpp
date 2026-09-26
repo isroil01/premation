@@ -7543,6 +7543,7 @@ void encode(wire::Writer& w, const AddEffect& v) {
   w.varint(18U); w.str(v.effect);
   if (v.index.has_value()) { w.varint(24U); w.varint(*v.index); }
   for (const auto& e : v.params) { w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.id.has_value()) { w.varint(42U); w.str(*v.id); }
 }
 
 Status decode(wire::Reader& r, AddEffect& out) {
@@ -7570,6 +7571,12 @@ Status decode(wire::Reader& r, AddEffect& out) {
       case 34U: {
         auto& e = out.params.emplace_back();
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 42U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.id = std::move(e);
         break;
       }
       default:

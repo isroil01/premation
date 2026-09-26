@@ -109,15 +109,41 @@ describe('an AI turn on the engine', () => {
       { name: 'create_layer', args: { id: 's', kind: 'shape', shape: 'star', name: 'Box', fill: '#ff0000' } },
       { name: 'set_keyframes', args: { keyframes: [{ nodeId: 's', prop: 'opacity', t: 0, value: 0 }, { nodeId: 's', prop: 'opacity', t: 1, value: 100 }] } },
       { name: 'create_layer', args: { id: 'n', kind: 'null', name: 'N' } },
+      // merge_paths still edits source layers outside the engine: recorded as a gap wholesale.
+      { name: 'merge_paths', args: { op: 'union', nodeIds: ['no_such_a', 'no_such_b'] } },
     ]);
     expect(r.outcome.kind).toBe('snapshot');
-    expect(r.outcome.gaps.join('\n')).toContain('polystar');
+    expect(r.outcome.gaps.join('\n')).toContain('merge_paths');
     expect(historyLabels()).toEqual(['AI: boxes']);
     const after = h.doc();
     await h.run({ type: 'undo' });
     expect(h.doc()).toBe(before);
     await h.run({ type: 'redo' });
     expect(h.doc()).toBe(after);
+  });
+
+  it('B5: polystars, text animators, masks, path operators, styles, rigs and a group time remap stay on the engine', async () => {
+    const r = await runToolTurn('AI: b5', [
+      { name: 'create_layer', args: { id: 's', kind: 'shape', shape: 'star', name: 'Star', points: 7, fill: '#ff0000' } },
+      { name: 'create_layer', args: { id: 'e', kind: 'shape', shape: 'ellipse', name: 'Dot' } },
+      { name: 'create_layer', args: { id: 't', kind: 'text', name: 'Title', text: 'Hello' } },
+      { name: 'create_layer', args: { id: 'g', kind: 'group', name: 'G' } },
+      { name: 'text_animator', args: { nodeId: 't', basedOn: 'words', opacity: 0, y: 20, sweep: { fromSec: 0, toSec: 1 } } },
+      { name: 'create_mask', args: { nodeId: 'e', shape: 'ellipse', feather: 4 } },
+      { name: 'set_trim_path', args: { nodeId: 's', end: 40 } },
+      { name: 'add_repeater', args: { nodeId: 'e', copies: 4, rotation: 90, anchorX: 30 } },
+      { name: 'add_path_operator', args: { nodeId: 's', op: 'puckerBloat', amount: 20 } },
+      { name: 'apply_layer_style', args: { nodeId: 'e', styleType: 'drop_shadow', color: '#000000' } },
+      { name: 'add_effect', args: { nodeId: 's', type: 'glow', id: 'my_glow' } },
+      { name: 'set_keyframes', args: { keyframes: [{ nodeId: 's', prop: 'effect.my_glow.radius', t: 0, value: 4 }] } },
+      { name: 'set_time_remap', args: { nodeId: 'g', keys: [{ t: 0, sourceT: 0 }, { t: 1, sourceT: 2 }] } },
+      { name: 'create_puppet_rig', args: { layerId: 'e', pins: [{ name: 'A', x: 0, y: 0 }, { name: 'B', x: 20, y: 0 }] } },
+    ]);
+    expect(r.results.filter((x) => !x.ok).map((x) => x.content)).toEqual([]);
+    expect(r.outcome).toEqual({ kind: 'engine', gaps: [] });
+    expect(historyLabels()).toEqual(['AI: b5']);
+    const star = defaultSceneGraph.getNode((r.results[0]!.data as { id: string }).id)!;
+    expect(star.components.find((c) => c.type === 'fx')?.props.polystar).toMatchObject({ points: 7 });
   });
 
   it('G1: drawn layers, fill colour, text fields, an enum by value and a static write on a keyed property stay on the engine', async () => {

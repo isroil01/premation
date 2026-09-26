@@ -12,13 +12,14 @@
  */
 
 import type { ToolContext } from '@motion/ai-tools';
-import { set3DEnabled } from '@core/scene/threeD';
 import { PHYSICS, type Bezier, type MotionStyle } from './design';
-import { addPathOp, defaultPathOp, newPathOpId, pathOpPropPath, updateRepeaterOp } from '@core/scene/pathOps';
+import { pathOpPropPath } from '@core/scene/pathOps';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultPolystar, setNodePolystar } from '@core/scene/polystar';
+import { defaultPolystar } from '@core/scene/polystar';
 import { measureTextNodeBoxes } from '@core/text/measureText';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { defaultStroke, normalizeStroke } from '@core/paint/stroke';
+import { secondsToFlicks, type Command } from '@motion/engine-api';
+import { addPathOperator, ensurePathOperator, patchPathOperator, setThreeD } from './hostWrites';
 import { activeSceneWindow, nextSceneElementStart, beginSceneWindow } from './sceneWindow';
 import { applyEntrance, nonUniformStagger, type EntranceArchetype } from './archetypes';
 
@@ -63,14 +64,10 @@ async function nextStartAt(ctx: ToolContext, s: MotionStyle): Promise<number> {
  * there is no timeline to trim (headless runs, unit tests); callers keep their
  * opacity keys as the fallback, which is why those are still written.
  */
-function setLayerInPoint(nodeId: string, startSec: number): boolean {
+async function setLayerInPoint(ctx: ToolContext, nodeId: string, startSec: number): Promise<boolean> {
   if (!(startSec > 0)) return false;
-  const tl = getTimelineController();
-  tl.syncFromScene(tl.compIdForNode(nodeId));
-  const bars = tl.getLayersForNode(nodeId);
-  const first = bars[0];
-  if (!first) return false;
-  tl.trimClipTo(first.id, 'start', startSec);
+  // `trimLayers` of the in edge (the timeline's own trim).
+  await ctx.engine.apply([{ type: 'trimLayers', layers: [nodeId], edge: 'in', time: secondsToFlicks(startSec), ripple: false } as Command]);
   return true;
 }
 
@@ -82,7 +79,7 @@ function setLayerInPoint(nodeId: string, startSec: number): boolean {
 async function applySceneExit(ctx: ToolContext, id: string, cy: number): Promise<void> {
   const w = activeSceneWindow();
   if (!w) return;
-  setLayerInPoint(id, w.startSec);
+  await setLayerInPoint(ctx, id, w.startSec);
   const out = Math.min(w.transitionSec, 0.5);
   const exitAt = Math.max(w.startSec + 0.2, w.endSec - out);
   await kf(ctx, id, 'opacity', [
@@ -112,7 +109,7 @@ export async function recipeBackground(ctx: ToolContext, s: MotionStyle, color?:
   await ctx.scene.setProp(id, 'width', comp.width);
   await ctx.scene.setProp(id, 'height', comp.height);
   await ctx.scene.setProp(id, 'fill', color ?? s.palette.bg);
-  set3DEnabled(id, true);
+  await setThreeD(ctx.engine, id, true);
   await kf(ctx, id, 'z', [
     { t: 0, value: 500, easing: 'linear' },
     { t: comp.durationSeconds, value: 550, easing: 'linear' },
@@ -154,7 +151,7 @@ export async function recipeScene(
   // The scene's layers are not live before the scene: the in-point is the
   // authority, for EVERY transition type (see setLayerInPoint).
   const atStart = startSec <= 0.02;
-  if (!atStart) setLayerInPoint(id, startSec);
+  if (!atStart) await setLayerInPoint(ctx, id, startSec);
   // Opacity window: the first scene is opaque from frame 0; later scenes fade
   // in over `trans` (dissolve) and then hold — the previous scene's background
   // sits underneath and is revealed only while this one is transparent.
@@ -244,7 +241,7 @@ export async function recipeText(
   await ctx.scene.setProp(id, 'fill', opts.level === 'title' ? s.palette.fg : s.palette.muted);
 
   // Position at distinct Z-depth for 3D parallax (3D switch needed for the z track)
-  set3DEnabled(id, true);
+  await setThreeD(ctx.engine, id, true);
   const zDepth = opts.level === 'title' ? -80 : opts.level === 'subtitle' ? -40 : 0;
   await kf(ctx, id, 'z', [{ t: 0, value: zDepth }]);
 
@@ -265,12 +262,11 @@ export async function recipeEmblem(
   const cx = comp.width / 2;
   const cy = opts.y ?? comp.height * 0.3;
 
-  const id = await ctx.scene.create('shape', 'Emblem', { x: cx, y: cy });
-  await ctx.scene.setProp(id, 'shapeType', 'ellipse');
+  const id = await ctx.scene.create('shape', 'Emblem', { x: cx, y: cy }, { shapeType: 'ellipse' });
   await ctx.scene.setProp(id, 'width', d);
   await ctx.scene.setProp(id, 'height', d);
   await ctx.scene.setProp(id, 'fill', s.palette.accent);
-  set3DEnabled(id, true);
+  await setThreeD(ctx.engine, id, true);
   await kf(ctx, id, 'z', [{ t: 0, value: 0 }]);
 
   const start = (await nextStartAt(ctx, s));
@@ -325,12 +321,11 @@ export async function recipeCards(
   const ids: string[] = [];
   for (let i = 0; i < n; i++) {
     const x = firstX + i * (cardW + gap);
-    const id = await ctx.scene.create('shape', `Card ${i + 1}`, { x, y: cy });
-    await ctx.scene.setProp(id, 'shapeType', 'rect');
+    const id = await ctx.scene.create('shape', `Card ${i + 1}`, { x, y: cy }, { shapeType: 'rect' });
     await ctx.scene.setProp(id, 'width', Math.round(cardW));
     await ctx.scene.setProp(id, 'height', cardH);
     await ctx.scene.setProp(id, 'fill', s.palette.card);
-    set3DEnabled(id, true);
+    await setThreeD(ctx.engine, id, true);
 
     // 3D fan perspective & depth stagger
     const centerOffset = i - (n - 1) / 2;
@@ -477,8 +472,7 @@ export async function recipeLightSweep(ctx: ToolContext, s: MotionStyle, opts: {
   const cy = comp.height / 2;
   const startX = -comp.width * 0.25;
   const endX = comp.width * 1.25;
-  const id = await ctx.scene.create('shape', 'Light Sweep', { x: startX, y: cy });
-  await ctx.scene.setProp(id, 'shapeType', 'rect');
+  const id = await ctx.scene.create('shape', 'Light Sweep', { x: startX, y: cy }, { shapeType: 'rect' });
   await ctx.scene.setProp(id, 'width', Math.round(comp.width * 0.16));
   await ctx.scene.setProp(id, 'height', Math.round(comp.height * 1.8));
   await ctx.scene.setProp(id, 'fill', '#ffffff');
@@ -514,14 +508,13 @@ export async function recipeFloatingOrbs(ctx: ToolContext, s: MotionStyle, opts:
     const x = comp.width * (0.12 + 0.76 * frac((i + 1) * 0.618));
     const y = comp.height * (0.15 + 0.7 * frac((i + 1) * 0.381));
     const d = Math.round(minDim * (0.06 + (i % 3) * 0.035));
-    const id = await ctx.scene.create('shape', `Orb ${i + 1}`, { x, y });
-    await ctx.scene.setProp(id, 'shapeType', 'ellipse');
+    const id = await ctx.scene.create('shape', `Orb ${i + 1}`, { x, y }, { shapeType: 'ellipse' });
     await ctx.scene.setProp(id, 'width', d);
     await ctx.scene.setProp(id, 'height', d);
     await ctx.scene.setProp(id, 'fill', i % 2 === 0 ? s.palette.accent : s.palette.bgAccent);
     const blurFx = await ctx.scene.addEffect(id, 'blur');
     if (blurFx) await ctx.scene.updateEffect(id, blurFx, 18);
-    set3DEnabled(id, true);
+    await setThreeD(ctx.engine, id, true);
     await kf(ctx, id, 'z', [{ t: 0, value: 180 + i * 55 }]);
     // Slow vertical drift, alternating direction so the field feels alive.
     const drift = (i % 2 === 0 ? -1 : 1) * (28 + (i % 3) * 10);
@@ -554,8 +547,7 @@ export async function recipeLowerThird(
 
   // Accent bar grows vertically first — it "opens" the lower third.
   const barH = Math.round(titlePx * (opts.subtitle ? 2.4 : 1.5));
-  const bar = await ctx.scene.create('shape', 'LT Bar', { x: marginX, y: baseY });
-  await ctx.scene.setProp(bar, 'shapeType', 'rect');
+  const bar = await ctx.scene.create('shape', 'LT Bar', { x: marginX, y: baseY }, { shapeType: 'rect' });
   await ctx.scene.setProp(bar, 'width', 8);
   await ctx.scene.setProp(bar, 'height', barH);
   await ctx.scene.setProp(bar, 'fill', s.palette.accent);
@@ -636,7 +628,7 @@ export async function recipeCameraMove(
     .filter((n) => n.kind === 'shape' || n.kind === 'text' || n.kind === 'image');
 
   for (const n of targets) {
-    set3DEnabled(n.id, true);
+    await setThreeD(ctx.engine, n.id, true);
   }
 
   // 2. Find or create a dedicated 3D Camera layer
@@ -680,17 +672,21 @@ export async function recipeLogoReveal(
   const ids: string[] = [];
 
   // 1. Outline Trim-Path Shape
-  const outline = await ctx.scene.create('shape', 'Trim Outline', { x: cx, y: cy });
-  await ctx.scene.setProp(outline, 'shapeType', opts.shape ?? 'ellipse');
+  const outline = await ctx.scene.create('shape', 'Trim Outline', { x: cx, y: cy }, { shapeType: opts.shape ?? 'ellipse' });
   await ctx.scene.setProp(outline, 'width', d);
   await ctx.scene.setProp(outline, 'height', d);
-  await ctx.scene.setProp(outline, 'fill', 'transparent');
-  await ctx.scene.setProp(outline, 'stroke', s.palette.accent);
-  await ctx.scene.setProp(outline, 'strokeWidth', 4);
-  set3DEnabled(outline, true);
+  await ctx.scene.setProp(outline, 'fill', '#00000000');
+  // The outline's stroke is its stroke stack (`layer/strokes`, Contents ▸ Stroke 1).
+  await ctx.engine.apply([{
+    type: 'setProperty',
+    prop: { layer: outline, path: 'layer/strokes' },
+    value: { kind: 'json', value: JSON.stringify([normalizeStroke({ ...defaultStroke(), color: s.palette.accent, width: 4 })]) },
+  } as Command]);
+  await setThreeD(ctx.engine, outline, true);
   
-  // Trim path draw-in keyframes
-  await kf(ctx, outline, 'trimStart', [
+  // Trim path draw-in keyframes (the outline's Trim Paths ▸ Start).
+  const trimId = await ensurePathOperator(ctx.engine, outline, 'trim');
+  await kf(ctx, outline, pathOpPropPath(trimId, 'start'), [
     { t: start, value: 0, easing: 'bezier', bezier: PHYSICS.softOut },
     { t: start + 0.75, value: 100, easing: 'bezier', bezier: PHYSICS.softOut },
   ]);
@@ -701,12 +697,11 @@ export async function recipeLogoReveal(
   ids.push(outline);
 
   // 2. Inner Emblem Pop
-  const emblem = await ctx.scene.create('shape', 'Logo Emblem', { x: cx, y: cy });
-  await ctx.scene.setProp(emblem, 'shapeType', opts.shape ?? 'ellipse');
+  const emblem = await ctx.scene.create('shape', 'Logo Emblem', { x: cx, y: cy }, { shapeType: opts.shape ?? 'ellipse' });
   await ctx.scene.setProp(emblem, 'width', Math.round(d * 0.65));
   await ctx.scene.setProp(emblem, 'height', Math.round(d * 0.65));
   await ctx.scene.setProp(emblem, 'fill', s.palette.accent);
-  set3DEnabled(emblem, true);
+  await setThreeD(ctx.engine, emblem, true);
 
   const tEmblem = start + 0.45;
   await kf(ctx, emblem, 'scale', [
@@ -727,7 +722,7 @@ export async function recipeLogoReveal(
   await ctx.scene.setProp(title, 'fontSize', s.type.titlePx);
   await ctx.scene.setProp(title, 'fontWeight', s.type.weightTitle);
   await ctx.scene.setProp(title, 'fill', s.palette.fg);
-  set3DEnabled(title, true);
+  await setThreeD(ctx.engine, title, true);
 
   const tTitle = start + 0.6;
   await applyEntrance(ctx, title, tTitle, s, titleY, { role: 'title' });
@@ -754,12 +749,11 @@ export async function recipeRadialBurst(
   const copies = Math.max(4, Math.min(opts.count ?? 8, 16));
   const t0 = opts.atSec ?? (await nextStartAt(ctx, s));
 
-  const id = await ctx.scene.create('shape', 'Radial Burst', { x: cx, y: cy });
-  await ctx.scene.setProp(id, 'shapeType', 'ellipse');
+  const id = await ctx.scene.create('shape', 'Radial Burst', { x: cx, y: cy }, { shapeType: 'ellipse' });
   await ctx.scene.setProp(id, 'width', 16);
   await ctx.scene.setProp(id, 'height', 16);
   await ctx.scene.setProp(id, 'fill', s.palette.accent);
-  set3DEnabled(id, true);
+  await setThreeD(ctx.engine, id, true);
 
   // A ring, not a stack. Three things have to be true at once and only one of
   // them used to be: the write has to reach the engine (`updateRepeaterOp`, not
@@ -769,7 +763,7 @@ export async function recipeRadialBurst(
   // about a RADIUS — at anchorX 0 every copy spins about its own origin and all
   // N land on the same 16px dot.
   const radius = 42;
-  updateRepeaterOp(id, {
+  await patchPathOperator(ctx.engine, id, await ensurePathOperator(ctx.engine, id, 'repeater'), {
     copies,
     offsetX: 0,
     offsetY: 0,
@@ -846,18 +840,17 @@ export async function recipePathMorph(
   if (created) {
     const cx = opts.x ?? comp.width / 2;
     const cy = opts.y ?? comp.height / 2;
-    id = await ctx.scene.create('shape', 'Morph Shape', { x: cx, y: cy });
-    // A PARAMETRIC star (see polystar.ts). `shapeType: 'star'` alone names a
-    // primitive with no SDF and no Geometry, which renders as a square.
-    await ctx.scene.setProp(id, 'shapeType', 'polystar');
+    // A PARAMETRIC star (see polystar.ts), inserted whole. `shapeType: 'star'`
+    // alone names a primitive with no SDF and no Geometry, which renders as a square.
+    const polystar = defaultPolystar('star', 80, 5) as unknown as Record<string, unknown>;
+    id = await ctx.scene.create('shape', 'Morph Shape', { x: cx, y: cy }, { shapeType: 'polystar', polystar });
     await ctx.scene.setProp(id, 'width', 160);
     await ctx.scene.setProp(id, 'height', 160);
-    setNodePolystar(id, defaultPolystar('star', 80, 5));
     // The accent, not `palette.card`: the card colour is a near-background
     // panel tone, so the hero of this recipe was close to invisible on the
     // backgrounds the same style paints.
     await ctx.scene.setProp(id, 'fill', opts.fill ?? s.palette.accent);
-    set3DEnabled(id, true);
+    await setThreeD(ctx.engine, id, true);
   }
 
   // `fx.pathOps` is the operator CHAIN that replaced the single `fx.pathOp` slot
@@ -865,11 +858,9 @@ export async function recipePathMorph(
   // old shape. 'puckerBloat' is this recipe's public name for it; the engine
   // operator is 'pucker', and passing the alias straight through failed
   // `isPathOpType` and coerced the whole operator to 'none'.
-  const opId = newPathOpId();
-  addPathOp(id, {
-    ...defaultPathOp(),
-    id: opId,
-    type: opType === 'puckerBloat' ? 'pucker' : 'zigzag',
+  // The engine mints the operator's id (`contents` ▸ `pathop:<type>`) and
+  // seeds it with `defaultPathOpOf(type)` — `defaultPathOp`'s detail / wiggles.
+  const opId = await addPathOperator(ctx.engine, id, opType === 'puckerBloat' ? 'pucker' : 'zigzag', {
     // The static value is the morph's END state, so a frame sampled outside
     // the keyframed span — or with the track deleted — still shows the shape.
     amount,
