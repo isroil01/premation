@@ -19,6 +19,8 @@ import type { SceneNode } from '@core/types';
 import { ReplaceFontsBody, REPLACE_FONTS_MODAL_ID } from './ReplaceFontsDialog';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
+import { getEventBus } from '@core/events/EventBus';
+import { documentMirror } from '@stores/documentMirror';
 
 class StubResizeObserver {
   observe(): void {}
@@ -127,6 +129,14 @@ describe('ReplaceFontsBody', () => {
 });
 
 describe('the missing-font check', () => {
+  // The check reads the document MIRROR (B4): announce the fixture as a legacy writer does and let it land.
+  beforeEach(async () => {
+    getEventBus().emit('SceneGraphChanged', undefined);
+    await Promise.resolve();
+    await engineIdle();
+    await documentMirror().whenIdle();
+  });
+
   it('shows ONE toast whose action opens Replace Fonts', async () => {
     const notify = jest.spyOn(useUIStore.getState(), 'notify');
     const missing = await checkMissingFonts((f) => f.toLowerCase() !== 'brand sans');

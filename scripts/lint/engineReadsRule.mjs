@@ -176,6 +176,8 @@ const PURE_READS = new Set([
   'clampSignedStretch', // core/animation/timeStretch (re-exported by layerTimeCommands): clamps the percent given
   // B4 mirror reads (checked the same way).
   'notifyGuideLayerChange', // core/effects/layerSwitchFeedback: a toast about the flag value given
+  'styleOverRange', // core/text/richText: the shared style of a range over the runs given
+  'remapRunFonts', // core/fonts/replaceFonts: maps the families of the runs given
 ]);
 
 /**

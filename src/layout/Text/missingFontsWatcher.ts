@@ -12,12 +12,12 @@
  * chance to register before availability is judged.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
+import { documentMirror } from '@stores/documentMirror';
+import { loadTextTrees, mirrorMissingFonts } from '@core/mirror/fonts';
 import { useUIStore } from '@stores/uiStore';
 import { detectFontAvailability } from '@core/fonts/fontAvailability';
-import { findMissingFonts, familyKey, missingFontsMessage, type FontUsage } from '@core/fonts/missingFonts';
-import type { SceneNode } from '@core/types';
+import { familyKey, missingFontsMessage, type FontUsage } from '@core/fonts/missingFonts';
 import { openReplaceFontsDialog } from './ReplaceFontsDialog';
 
 export const MISSING_FONTS_TOAST_GROUP = 'missing-fonts';
@@ -26,10 +26,11 @@ export const MISSING_FONTS_TOAST_GROUP = 'missing-fonts';
 export async function checkMissingFonts(
   isAvailable?: (family: string) => boolean,
 ): Promise<FontUsage[]> {
-  const nodes: SceneNode[] = [];
-  defaultSceneGraph.traverse((n) => { nodes.push(n); });
+  // B4: every text layer's families from the document mirror (its trees loaded first).
+  const m = documentMirror();
+  await loadTextTrees(m);
   const check = isAvailable ?? await detectFontAvailability();
-  const missing = findMissingFonts(nodes, check);
+  const missing = mirrorMissingFonts(m, check);
   if (missing.length > 0) {
     const keys = new Set(missing.map((m) => familyKey(m.family)));
     useUIStore.getState().notify({
