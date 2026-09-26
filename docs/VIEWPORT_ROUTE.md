@@ -322,5 +322,6 @@ Flags: `--chromium-gpu=low` moves the whole stack to the integrated GPU.
 overlap, resize and minimize tests. With tests on, the host moves the real
 mouse once, clicks, and restores it.
 
-`native/engine/shaders/extract.mjs --check` fails if `renderer_wgsl.hpp` has
-drifted from `packages/renderer`.
+`renderer_wgsl.hpp` is generated at configure time from
+`native/engine/shaders/wgsl/` (`embed_wgsl.cmake`), the frozen copy of the
+`packages/renderer` WGSL.

@@ -367,8 +367,9 @@ adjustments, glass/backdrop blur, advanced blends, motion blur, deformed meshes,
 generators, plugin effects, the whole effect chain incl. every packFxBlock
 table effect, 3D depth groups with lights, env reflections, extruded/glTF PBR
 meshes, two shadow maps, SSAO, camera DOF gather, sealed-precomp 3D scopes).
-Every shader and material is extracted verbatim from packages/renderer
-(`shaders/extract.mjs`, 207 shaders, 211 materials, `--check` for drift).
+Every shader and material was extracted verbatim from packages/renderer and is
+now C++-owned data (`shaders/wgsl/*.wgsl` + `shaders/materials.json`, 207
+shaders, 211 materials, embedded by `shaders/embed_wgsl.cmake`).
 Colour: rgba16float scene-linear intermediates, the TS transfer functions and
 ODTs unchanged; OCIO is a hook on `ColorPipeline` (D3), output untouched.
 Parity: render-tests backend `native` (`premation-render --batch` over the

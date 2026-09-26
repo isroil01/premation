@@ -1,0 +1,3 @@
+# The shader bytes are embedded verbatim: never convert line endings.
+*.wgsl -text
+materials.json -text

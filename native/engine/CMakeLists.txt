@@ -50,6 +50,12 @@ target_link_libraries(engine_rg_core PRIVATE motion::options)
 
 # ── GPU + process ───────────────────────────────────────────────────────────
 if(Dawn_FOUND)
+  # The renderer WGSL + material table (shaders/wgsl/*.wgsl, shaders/materials.json)
+  # as C++: builtin_shaders.inc, materials.inc, renderer_wgsl.hpp.
+  include(${CMAKE_CURRENT_SOURCE_DIR}/shaders/embed_wgsl.cmake)
+  set(ENGINE_WGSL_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders)
+  premation_embed_wgsl(${ENGINE_WGSL_GENERATED})
+
   add_library(engine_gpu STATIC
     src/gpu.cpp
     src/os_ffi.cpp
@@ -66,12 +72,13 @@ if(Dawn_FOUND)
   target_include_directories(engine_gpu PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${ENGINE_WGSL_GENERATED})
   target_link_libraries(engine_gpu PUBLIC engine_core dawn::webgpu_dawn PRIVATE motion::options)
 
   # D2: the render graph on Dawn — FrameScene (engine-api 96_render.eapi) in,
-  # pixels out; WGSL + material table extracted verbatim from packages/renderer
-  # (shaders/extract.mjs → builtin_shaders.inc, materials.inc).
+  # pixels out; WGSL + material table from shaders/wgsl + shaders/materials.json
+  # (embedded above → builtin_shaders.inc, materials.inc).
   add_library(engine_render_graph STATIC
     src/render_graph/device.cpp
     src/render_graph/shader_library.cpp
@@ -85,7 +92,8 @@ if(Dawn_FOUND)
   )
   target_include_directories(engine_render_graph PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render_graph
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${ENGINE_WGSL_GENERATED})
   target_link_libraries(engine_render_graph PUBLIC engine_rg_core engine_protocol dawn::webgpu_dawn PRIVATE motion::options)
   if(MSVC)
     target_compile_options(engine_render_graph PRIVATE /bigobj)
