@@ -326,6 +326,9 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `setAutosave` | control | Recovery cadence (a preference the engine executes). |
 | `importProject` | edit | Import `.motion`/`.aep`/`.aepx` into a new folder. Inverse: remove every imported item. |
 | `setProjectSettings` | edit | Patch (bit depth, working space, linear blending, OCIO config, time display, expression engine, frame numbering, sample rate). Inverse: previous values of the patched fields. |
+| `setGuides` | edit | F2 — patch the persisted guide settings (rulers, grids, safe areas, motion-path display, overlay opacity, ruler guides, camera bookmarks); keys replace, sanitized as on open, unknown keys ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings. |
+| `setSwatches` | edit | F2 — replace the project palette, in order. Colours canonicalized; a non-hex colour is `invalidArgument`; empty or repeated ids re-minted (`sw_doc_<n>`). Inverse: the previous palette. |
+| `setMaterials` | edit | F2 — replace the project material library, in order. `params` normalized; non-object params are `invalidArgument`; empty, repeated or `builtin:` ids re-minted (`mat_doc_<n>`). Inverse: the previous library. |
 
 ### 4.2 Items (footage, folders) and render queue
 
@@ -563,6 +566,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | Query | Returns |
 |---|---|
 | `getDocument` | `DocumentSnapshot`: revision, path, dirty, project settings, items, comps (settings + layer order + markers), layer headers, optionally every property tree and keyframe set, render queue. The mirror's initial load. |
+| `exportDocument` | F2 — the whole project document at the answer's revision, exactly as `saveProject` writes it (cloud upload, versions, templates and export read it here instead of capturing a copy in the page). Key order is the engine's: parse it, don't compare bytes across engines. |
 | `getComposition`, `getLayers` | Comp + its layer headers; layer headers by id. |
 | `getPropertyTree` | `PropertyInfo` nodes under a path to a depth, with values at a time: name, match name, kind, value type, animatable/animated, dimensions, separated, enabled, value, default, min/max/soft range, choices, unit, expression + error, key count, children, hidden. |
 | `getPropertyValues` | Values at a time, evaluated or pre-expression. |
@@ -635,6 +639,9 @@ compute.
 | `propertyGroupsChanged` | The new ordered child list under a parent path (group added/removed/moved/renamed/enabled). |
 | `markersChanged` | All markers of one owner. |
 | `transitionsChanged` | Every transition of one composition (full replacement), after a transition command or its undo. |
+| `guidesChanged` | F2 — the guide settings (full replacement, as `DocumentSnapshot.guides`), after `setGuides`, a restore or their undo. |
+| `swatchesChanged` | F2 — the project palette (full replacement). |
+| `materialsChanged` | F2 — the project material library (full replacement). |
 | `renderQueueChanged` | All render items. |
 
 Ephemeral (no revision, `fromRevision == toRevision`): `historyChanged`,
