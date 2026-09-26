@@ -370,6 +370,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       transparent: alpha,
       quality,
       ...(format === 'mov' ? { proresProfile } : {}),
+      // F1: offered only on the engine export path; main's queue honours it (mov only).
+      ...(format === 'mov' && useExportFormStore.getState().bitDepth === 16 ? { bitDepth: 16 as const } : {}),
       // Captured at queue time, like the range — see RenderJobSpec.videoEncoder.
       ...(format === 'mp4' ? { videoEncoder: usePreferenceStore.getState().exportVideoEncoder } : {}),
       ...(chapterMarks.length ? { chapters: chapterMarks } : {}),

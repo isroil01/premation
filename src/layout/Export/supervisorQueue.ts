@@ -98,6 +98,7 @@ export async function enqueueSupervisorJob(job: QueueJobInput, priority = 0): Pr
       range: { startSec: job.rangeStartSec ?? 0, endSec: job.rangeEndSec ?? job.durationSec },
       quality: job.quality ?? 'high',
       ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
+      ...(job.bitDepth === 16 ? { bitDepth: 16 as const } : {}),
       ...(job.videoEncoder ? { videoEncoder: job.videoEncoder } : {}),
       transparent: job.transparent,
       ...(job.chapters && job.chapters.length > 0 ? { chapters: job.chapters } : {}),
