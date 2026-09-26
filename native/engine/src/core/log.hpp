@@ -8,9 +8,11 @@
 // since process start on the monotonic clock — measurement only.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace premation::log {
 
@@ -36,6 +38,12 @@ class Line {
   Line& kv(std::string_view key, std::uint64_t value);
   Line& kv(std::string_view key, std::int32_t value) { return kv(key, static_cast<std::int64_t>(value)); }
   Line& kv(std::string_view key, std::uint32_t value) { return kv(key, static_cast<std::uint64_t>(value)); }
+  // size_t is unsigned long on macOS, a different type from uint64_t
+  // (unsigned long long), so `.size()` would be ambiguous there. Elsewhere
+  // they are the same type and this overload does not exist.
+  template <class T>
+    requires(std::is_same_v<T, std::size_t> && !std::is_same_v<std::size_t, std::uint64_t>)
+  Line& kv(std::string_view key, T value) { return kv(key, static_cast<std::uint64_t>(value)); }
   Line& kv(std::string_view key, double value);
   Line& kv(std::string_view key, bool value);
 

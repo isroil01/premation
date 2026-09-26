@@ -122,6 +122,8 @@ export interface EngineOwnedDocument {
   open(path: string): Promise<unknown>;
   save(path: string): Promise<unknown>;
   saveCopy(path: string): Promise<unknown>;
+  /** F2: Save Portable Copy — the engine packs the `.motion` zip (footage embedded). */
+  savePortableCopy?(path: string): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -354,6 +356,19 @@ export class ProjectManager {
   }
 
   /**
+   * F2: Save Portable Copy with the ENGINE as owner — the engine writes the
+   * portable `.motion` zip at `path` (portableMotion.ts's format, the footage
+   * it can reach embedded); the current project keeps its path and dirty flag.
+   * False when the engine does not own the document (the page's
+   * `saveToComputer` packs it, as before).
+   */
+  async snapshotPortableTo(path: string): Promise<boolean> {
+    if (!this.engineDocument?.savePortableCopy) return false;
+    await this.engineDocument.savePortableCopy(path);
+    return true;
+  }
+
+  /**
    * Read a document from `path` through this manager's storage (bundle or
    * single file) WITHOUT restoring it or becoming it — the engine API's file
    * port (src/core/engine/appPorts.ts). Null when there is nothing there.
@@ -367,7 +382,14 @@ export class ProjectManager {
    * footage collected into a bundle) without changing the current project —
    * the engine API's file port. The caller decides what the write means.
    */
-  async writeDocument(path: string, doc: VersionedDocument): Promise<void> {
+  async writeDocument(path: string, doc: VersionedDocument, form?: 'json' | 'bundle'): Promise<void> {
+    // F2: saveProject{format} names the form; the routed storage writes it (a
+    // storage without forms — tests, the legacy blob — keeps its own routing).
+    const routed = this.storage as ProjectStorage & { saveAs?(path: string, doc: VersionedDocument, form: 'json' | 'bundle'): Promise<void> };
+    if (form && typeof routed.saveAs === 'function') {
+      await routed.saveAs(path, doc, form);
+      return;
+    }
     await this.storage.save(path, doc);
   }
 

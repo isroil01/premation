@@ -197,6 +197,10 @@ class Session {
   api::Revision revision_ = 0;
   api::Revision savedRevision_ = 0;
   std::string projectPath_;
+  /// F2: the `.motion` bundle the document's `motion-blob:` footage lives in —
+  /// the bundle last opened or saved to (not a copy); '' = none. A bundle save
+  /// collects from it (bundle_io.hpp).
+  std::string bundleRoot_;
   std::vector<api::LogRecord> log_;
   struct Autosave {
     bool enabled = false;

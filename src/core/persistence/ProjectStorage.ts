@@ -93,6 +93,15 @@ export class RoutedProjectStorage<T extends VersionedDocument = VersionedDocumen
     return this.file.save(path, doc);
   }
 
+  /**
+   * F2: write the form the caller asked for (saveProject's `format`), not the
+   * one the flag routes to — the engine API names the form so both engines
+   * write the same thing for the same request.
+   */
+  async saveAs(path: string, doc: T, form: 'json' | 'bundle'): Promise<void> {
+    return form === 'bundle' ? this.bundle.save(path, doc) : this.file.save(path, doc);
+  }
+
   async load(path: string): Promise<T | null> {
     // A path that already holds a bundle opens as a bundle regardless of the
     // flag, so bundles remain readable if LOCAL_FIRST is later turned off.

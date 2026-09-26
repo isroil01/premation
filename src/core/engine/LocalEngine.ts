@@ -914,9 +914,13 @@ export class LocalEngine extends EngineClientBase {
         if (!port) fail('unsupported', 'no project file port is attached to this engine');
         const path = cmd.path ?? this.projectPath;
         if (!path) fail('invalidArgument', 'the project has no path yet; pass one');
+        const format = cmd.format ?? 'auto';
+        if (format === 'portable' && !cmd.copy) {
+          fail('invalidArgument', 'a portable .motion is a copy (copy:true): the project stays bound to its own file');
+        }
         let bytes = 0;
         try {
-          bytes = (await port(path, captureDocument())).bytes;
+          bytes = (await port(path, captureDocument(), format)).bytes;
         } catch (err) {
           fail('io', `could not write '${path}': ${err instanceof Error ? err.message : String(err)}`);
         }

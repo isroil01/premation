@@ -257,6 +257,15 @@ enum class ExpressionEngine : std::uint32_t {
 [[nodiscard]] std::string_view to_string(ExpressionEngine v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, ExpressionEngine& out) noexcept;
 
+enum class ProjectFormat : std::uint32_t {
+  auto_ = 0,
+  json = 1,
+  bundle = 2,
+  portable = 3,
+};
+[[nodiscard]] std::string_view to_string(ProjectFormat v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, ProjectFormat& out) noexcept;
+
 enum class ItemKind : std::uint32_t {
   folder = 0,
   composition = 1,
@@ -1491,6 +1500,7 @@ struct OpenProject {
 struct SaveProject {
   std::optional<std::string> path;
   bool copy = false;
+  std::optional<ProjectFormat> format;
   bool operator==(const SaveProject&) const = default;
 };
 

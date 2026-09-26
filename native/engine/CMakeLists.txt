@@ -145,6 +145,7 @@ endif()
 if(MOTION_BUILD_TESTS)
   find_package(Catch2 3 CONFIG REQUIRED)
   add_executable(engine_tests
+    tests/test_bundle_io.cpp
     tests/test_framing.cpp
     tests/test_session.cpp
     tests/test_paint_strokes.cpp
@@ -254,6 +255,7 @@ endif()
 set(ENGINE_DOC_SOURCES
   src/core/anim.cpp
   src/core/anim_json.cpp
+  src/core/bundle_io.cpp
   src/core/catalog_data.cpp
   src/core/docexpr.cpp
   src/core/docio.cpp
