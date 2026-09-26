@@ -6,6 +6,7 @@
 #include <cmath>
 #include <set>
 
+#include "anim_json.hpp"
 #include "catalog_data.hpp"
 #include "controls.hpp"
 #include "docexpr.hpp"
@@ -260,6 +261,76 @@ struct Q {
       out.sets.push_back(std::move(set));
     }
     return query_result_for<api::GetKeyframes>(std::move(out));
+  }
+  api::QueryResult operator()(const api::CopyKeyframes& q) const {
+    // B4: whole keys in API form, per property, in the order the ids first name them (queries.ts).
+    std::unordered_map<std::string, std::vector<api::KeyframeSet>> layerSets;
+    std::vector<api::KeyframeSet> picked;
+    std::vector<std::set<std::string>> pickedIds;
+    for (const std::string& id : q.keys) {
+      const auto loc = c.keys.resolve(d, id);
+      if (!loc || d.node(loc->layer) == nullptr) continue;
+      auto it = layerSets.find(loc->layer);
+      if (it == layerSets.end()) it = layerSets.emplace(loc->layer, keyframe_sets(pc, loc->layer, query_catalog(c, loc->layer))).first;
+      for (const api::KeyframeSet& set : it->second) {
+        const auto k = std::find_if(set.keyframes.begin(), set.keyframes.end(), [&](const api::Keyframe& x) { return x.id == id; });
+        if (k == set.keyframes.end()) continue;
+        auto at = std::find_if(picked.begin(), picked.end(), [&](const api::KeyframeSet& e) { return e.prop == set.prop; });
+        if (at == picked.end()) {
+          picked.push_back(api::KeyframeSet{set.prop, {}});
+          pickedIds.emplace_back();
+          at = picked.end() - 1;
+        }
+        auto& seen = pickedIds[static_cast<std::size_t>(at - picked.begin())];
+        if (seen.insert(k->id).second) at->keyframes.push_back(*k);
+        break;
+      }
+    }
+    for (api::KeyframeSet& s : picked) {
+      std::stable_sort(s.keyframes.begin(), s.keyframes.end(), [](const api::Keyframe& a, const api::Keyframe& b) { return a.time < b.time; });
+    }
+    api::KeyframeSets out;
+    out.sets = std::move(picked);
+    return query_result_for<api::CopyKeyframes>(std::move(out));
+  }
+  api::QueryResult operator()(const api::CopyEffects& q) const {
+    // B4: effectClipboard.ts captureEffect per picked effect, in stack order (queries.ts).
+    (void)require_layer(d, q.layer);
+    std::set<std::string> wanted;
+    for (const std::string& p : q.effects) {
+      const auto seg = split(p, '/');
+      if (seg.size() == 2 && seg[0] == "effects" && !seg[1].empty()) wanted.insert(seg[1]);
+    }
+    const NodeAnim* anim = d.anim(q.layer);
+    Json captures = Json::array();
+    api::CopiedEffects out;
+    for (const Json& e : get_node_effects(d, q.layer)) {
+      const std::string id = e.at("id").is_string() ? e.at("id").str() : std::string{};
+      if (!q.effects.empty() && !wanted.contains(id)) continue;
+      const std::string prefix = "effect." + id + ".";
+      Json tracks = Json::object();
+      if (anim != nullptr) {
+        for (const auto& [prop, keys] : anim->tracks) {
+          if (!prop.starts_with(prefix) || keys.empty()) continue;
+          Json list = Json::array();
+          for (const Key& k : keys) list.arr_mut().push_back(key_to_json(k));
+          tracks.set(prop.substr(prefix.size()), std::move(list));
+        }
+        // The legacy single-scalar track is `effect.<id>` with no param suffix.
+        if (const std::vector<Key>* legacy = anim->tracks.find("effect." + id); legacy != nullptr && !legacy->empty()) {
+          Json list = Json::array();
+          for (const Key& k : *legacy) list.arr_mut().push_back(key_to_json(k));
+          tracks.set("", std::move(list));
+        }
+      }
+      Json cap = Json::object();
+      cap.set("effect", e);
+      cap.set("tracks", std::move(tracks));
+      captures.arr_mut().push_back(std::move(cap));
+      out.paths.push_back("effects/" + id);
+    }
+    out.effects = stringify(captures);
+    return query_result_for<api::CopyEffects>(std::move(out));
   }
   api::QueryResult operator()(const api::GetMarkers& q) const {
     require_comp(d, q.owner.comp);

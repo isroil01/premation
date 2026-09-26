@@ -6,9 +6,10 @@
  * process with the renderer (phase D/E).
  */
 
-import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind } from '@motion/engine-api';
+import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind, Keyframe } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
 import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
+import { captureEffect } from '@core/effects/effectClipboard';
 import { listPresets, capturePresetBody } from '@core/animation/animationPresets';
 import { presetContextFor } from '@core/animation/presetContext';
 import { world2DAt, world3DAt } from '@core/scene/layerSpace';
@@ -179,6 +180,44 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         return { prop: p, keyframes: keys };
       });
       return { type: q.type, sets };
+    }
+    case 'copyKeyframes': {
+      // B4: whole keys in API form, per property, in the order the ids first name them.
+      const layerSets = new Map<string, ReturnType<typeof keyframeSets>>();
+      const picked = new Map<string, { prop: { layer: string; path: string }; ids: Set<string>; keys: Keyframe[] }>();
+      for (const id of q.keys) {
+        const loc = ctx.keyIndex.resolve(id);
+        if (!loc) continue;
+        let sets = layerSets.get(loc.layer);
+        if (!sets) {
+          sets = keyframeSets(loc.layer);
+          layerSets.set(loc.layer, sets);
+        }
+        for (const set of sets) {
+          const k = set.keyframes.find((x) => x.id === id);
+          if (!k) continue;
+          const key = `${set.prop.layer}\u0000${set.prop.path}`;
+          const entry = picked.get(key) ?? { prop: set.prop, ids: new Set<string>(), keys: [] };
+          if (!entry.ids.has(k.id)) {
+            entry.ids.add(k.id);
+            entry.keys.push(k);
+          }
+          picked.set(key, entry);
+          break;
+        }
+      }
+      return { type: q.type, sets: [...picked.values()].map((e) => ({ prop: e.prop, keyframes: [...e.keys].sort((a, b) => a.time - b.time) })) };
+    }
+    case 'copyEffects': {
+      // B4: the effect clipboard's capture (effectClipboard.ts captureEffect), stack order.
+      requireLayer(q.layer);
+      const wanted = new Set(q.effects.flatMap((p) => {
+        const seg = p.split('/');
+        return seg.length === 2 && seg[0] === 'effects' && seg[1] ? [seg[1]] : [];
+      }));
+      const stack = getNodeEffects(q.layer);
+      const picked = q.effects.length === 0 ? stack : stack.filter((e) => wanted.has(e.id));
+      return { type: q.type, effects: JSON.stringify(picked.map((e) => captureEffect(q.layer, e))), paths: picked.map((e) => `effects/${e.id}`) };
     }
     case 'getMarkers': {
       requireComp(q.owner.comp);

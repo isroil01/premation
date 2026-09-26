@@ -116,7 +116,7 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
       items.push({
         id: 'kf-copy',
         label: 'Copy Keyframe',
-        onSelect: () => copyKeyframeAt(nodeId, prop, at.t),
+        onSelect: () => { void copyKeyframeAt(nodeId, prop, keyframeToCompTime(nodeId, at.t, prop)); },
       });
     }
 
@@ -126,7 +126,7 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
         label: 'Paste Keyframes',
         // Paste lands at the playhead, so it needs COMP time — the clipboard
         // re-derives each target's own axis from it.
-        onSelect: () => pasteKeyframes([nodeId], keyframeToCompTime(nodeId, layerT, prop)),
+        onSelect: () => { void pasteKeyframes([nodeId], keyframeToCompTime(nodeId, layerT, prop)); },
       });
     }
 

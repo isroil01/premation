@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "core/json.hpp"
@@ -42,11 +44,21 @@ api::LayerId make_layer(Harness& h, const api::ItemId& comp, api::LayerKind kind
   return result_layer(r);
 }
 
+/// The query's typed answer (by visit: several queries share a result type, e.g. KeyframeSets).
 template <class T>
 T query(Harness& h, api::Query q) {
   const auto r = h.ask(std::move(q));
   REQUIRE(is_ok(r));
-  return std::get<T>(std::get<api::QueryResult>(r.outcome.v).v);
+  return std::visit(
+      [](const auto& x) -> T {
+        if constexpr (std::is_same_v<std::decay_t<decltype(x)>, T>) {
+          return x;
+        } else {
+          FAIL("unexpected query result type");
+          return T{};
+        }
+      },
+      std::get<api::QueryResult>(r.outcome.v).v);
 }
 
 js::Json parse_or_fail(const std::string& s) {
@@ -172,4 +184,55 @@ TEST_CASE("getTextLayout / getLayerBounds on text: unsupported without fonts; no
   const auto rb = h.ask(qry(b));
   REQUIRE_FALSE(is_ok(rb));
   CHECK(std::get<api::EngineError>(rb.outcome.v).code == api::ErrorCode::unsupported);
+}
+
+TEST_CASE("copyKeyframes: whole keys per property in time order; unknown ids skipped", "[b4r2][clipboard]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  api::AddKeyframes a;
+  for (const auto& [t, x] : std::vector<std::pair<api::Time, double>>{{0, 100}, {kSec, 300}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "transform/position"};
+    k.time = t;
+    k.value = vec2(x, 200);
+    a.keys.push_back(std::move(k));
+  }
+  const auto ids = result_as<api::KeyframeIds>(h.run(cmd(a))).ids;
+  REQUIRE(ids.size() == 2);
+  const auto clip = query<api::KeyframeSets>(h, qry(api::CopyKeyframes{{ids[1], "nope", ids[0]}}));
+  REQUIRE(clip.sets.size() == 1);
+  CHECK(clip.sets[0].prop.path == "transform/position");
+  REQUIRE(clip.sets[0].keyframes.size() == 2);
+  CHECK(clip.sets[0].keyframes[0].id == ids[0]);
+  CHECK(clip.sets[0].keyframes[1].time == kSec);
+  CHECK(query<api::KeyframeSets>(h, qry(api::CopyKeyframes{{"nope"}})).sets.empty());
+}
+
+TEST_CASE("copyEffects: the capture pasteEffects takes, equal until the effect changes", "[b4r2][clipboard]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  api::AddEffect add;
+  add.layers = {layer};
+  add.effect = "glow";
+  const auto added = result_as<api::GroupList>(h.run(cmd(add)));
+  REQUIRE(added.groups.size() == 1);
+  const std::string path = added.groups[0];
+  const auto one = query<api::CopiedEffects>(h, qry(api::CopyEffects{layer, {path, "effects/nope"}}));
+  REQUIRE(one.paths == std::vector<std::string>{path});
+  const js::Json cap = parse_or_fail(one.effects);
+  REQUIRE(cap.arr().size() == 1);
+  CHECK(cap.arr()[0].at("effect").at("type").str() == "glow");
+  CHECK(cap.arr()[0].at("tracks").obj().empty());
+  CHECK(query<api::CopiedEffects>(h, qry(api::CopyEffects{layer, {path}})).effects == one.effects);
+  api::SetAnimated anim;
+  anim.prop = {layer, path + "/radius"};
+  anim.animated = true;
+  REQUIRE(is_ok(h.run(cmd(anim))));
+  const js::Json keyed = parse_or_fail(query<api::CopiedEffects>(h, qry(api::CopyEffects{layer, {}})).effects);
+  REQUIRE(keyed.arr().size() == 1);
+  CHECK(keyed.arr()[0].at("tracks").has("radius"));
 }

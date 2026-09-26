@@ -171,7 +171,7 @@ describe('easing', () => {
 describe('copy / paste', () => {
   it('pastes onto another layer at the playhead, spacing kept, one entry', async () => {
     const M = (await h.run({ type: 'createLayer', comp: COMP, kind: 'solid', name: 'M', init: [] })).layer;
-    copyKeyframes(new Set([uiKeyId(L, 'opacity', 1), uiKeyId(L, 'opacity', 2)]));
+    expect(await copyKeyframes(new Set([uiKeyId(L, 'opacity', 1), uiKeyId(L, 'opacity', 2)]))).toBe(true);
     const before = h.doc();
     await pasteKeyframesAt([M], 3);
     expect((defaultAnimation.getTrackKeyframes(M, 'opacity') ?? []).map((k) => [k.t, k.value])).toEqual([[3, 50], [4, 100]]);
@@ -182,7 +182,7 @@ describe('copy / paste', () => {
 
   it('pastes a merged Position key as one vec2', async () => {
     await keys('transform/position', [[0, { x: 1, y: 2 }], [1, { x: 10, y: 20 }]]);
-    copyKeyframes(new Set([uiKeyId(L, POSITION_PSEUDO_PROP, 1)]));
+    expect(await copyKeyframes(new Set([uiKeyId(L, POSITION_PSEUDO_PROP, 1)]))).toBe(true);
     await pasteKeyframesAt([L], 2);
     expect(key('x', 2)?.value).toBe(10);
     expect(key('y', 2)?.value).toBe(20);

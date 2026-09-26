@@ -1087,7 +1087,7 @@ function EditorShellInner(): JSX.Element {
         id: 'copy',
         label: `Copy Keyframe${easeTargets.length > 1 ? 's' : ''}`,
         shortcut: 'Ctrl+C',
-        onSelect: () => copyKeyframes(new Set(easeTargets)),
+        onSelect: () => { void copyKeyframes(new Set(easeTargets)); },
       },
       {
         id: 'paste',

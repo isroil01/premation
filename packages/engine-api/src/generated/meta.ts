@@ -178,6 +178,8 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   getMotionPath: { id: 1007, family: "Model", result: "PropertySamples", doc: "" },
   getMarkers: { id: 1008, family: "Model", result: "MarkerList", doc: "" },
   copyLayers: { id: 1009, family: "Model", result: "DocumentFragment", doc: "Serialize layers (with the items they reference) for the clipboard; pasteLayers consumes it." },
+  copyKeyframes: { id: 1889, family: "Model", result: "KeyframeSets", doc: "B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard." },
+  copyEffects: { id: 1890, family: "Model", result: "CopiedEffects", doc: "B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's \"still as copied\" test). Unknown effect paths are skipped." },
   getWaveform: { id: 1020, family: "Media", result: "WaveformPeaks", doc: "" },
   listFonts: { id: 1021, family: "Media", result: "FontList", doc: "" },
   getItems: { id: 1022, family: "Media", result: "ItemDetails", doc: "" },
@@ -240,4 +242,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":76,"structs":406,"unions":11,"commands":149,"queries":36,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":76,"structs":409,"unions":11,"commands":149,"queries":38,"events":31} as const;

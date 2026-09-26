@@ -128,8 +128,8 @@ export function useTimelineKeys(): void {
           const kfIds = useKeyframeSelectionStore.getState().ids;
           if (kfIds.size > 0) {
             e.preventDefault();
-            // B4-gap: the clipboard captures the TS keyframe records (stored axis, si/so, roving) — shared with propertyRowMenu.
-            copyKeyframes(kfIds);
+            // The engine's `copyKeyframes`: the whole keys, in API form.
+            void copyKeyframes(kfIds);
           }
           return;
         }

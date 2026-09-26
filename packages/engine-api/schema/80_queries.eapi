@@ -183,6 +183,18 @@ query getMotionPath = 1007 { layer: LayerId = 1; range: TimeRange = 2; samples: 
 query getMarkers = 1008 { owner: MarkerOwner = 1; range?: TimeRange = 2; } -> MarkerList;
 /// Serialize layers (with the items they reference) for the clipboard; pasteLayers consumes it.
 query copyLayers = 1009 { layers: LayerId[] = 1; } -> DocumentFragment;
+/// B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard.
+query copyKeyframes = 1889 { keys: KeyframeId[] = 1; } -> KeyframeSets;
+/// B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped.
+query copyEffects = 1890 { layer: LayerId = 1; effects: PropPath[] = 2; } -> CopiedEffects;
+
+/// B4 — copyEffects' answer.
+struct CopiedEffects {
+  /// The captures as JSON (see copyEffects); '[]' when none.
+  effects: string = 1;
+  /// The `effects/<id>` path of each capture, in the same order.
+  paths: PropPath[] = 2;
+}
 
 struct CompositionDetails { comp: CompInfo = 1; layers: LayerInfo[] = 2; }
 struct LayerDetails { layers: LayerInfo[] = 1; }

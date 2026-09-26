@@ -574,6 +574,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `sampleProperty`, `getMotionPath` | Dense samples (+ speed) for the graph editor and motion paths. |
 | `getKeyframes`, `getMarkers` | Keyframe sets / markers, optionally in a range. |
 | `copyLayers` | A `DocumentFragment` for the clipboard. |
+| `copyKeyframes`, `copyEffects` | B4: the keyframe / effect clipboards in API form — whole keys per property (`pasteKeyframes`), effect captures (`pasteEffects`) (§15.12). |
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. |
 | `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
@@ -1793,6 +1794,22 @@ from the struct's maximum + 800.
   plugin generator's live instance bounds (the TS unions the last render's) and
   text on a path's bent extent (its plain text box stands). Both engines size a
   `comp` layer by its OWN composition (readGeometry read the active one).
+- **`copyKeyframes {keys}`** (1889 → `KeyframeSets`): Edit ▸ Copy of keyframes
+  — the WHOLE keys the ids name (every dimension: a member row's diamond copies
+  its key), grouped per property in the order the ids first name them, keys in
+  time order at their composition times; unknown ids skipped. The editor's
+  clipboard (core/animation/keyframeClipboard.ts) holds the sets and pastes each
+  onto a target's property of the same path with `pasteKeyframes`, the earliest
+  copied key at the playhead. Spacing is now COMPOSITION time (before: the
+  source's keyframe-axis spacing — they differ only on a time-stretched source).
+- **`copyEffects {layer, effects}`** (1890 → `CopiedEffects {effects, paths}`):
+  the effect clipboard's capture (`captureEffect`: the stored effect and its
+  `effect.<id>.*` keyframe records) as JSON, exactly what `pasteEffects` takes;
+  none named = the whole stack, stack order. The editor holds them
+  (`holdCopiedEffects`), stores whole-stack captures as effect presets
+  (`storeEffectPreset`), and a paste compares a fresh capture of each source
+  with the held one to choose `copyPropertyGroups` (still as copied) over the
+  snapshot paste. TS `captureEffect`; C++ queries.cpp (keys as `key_to_json`).
 - UI: `useTextLayout(layer)` (src/hooks) re-asks on the layer's mirror keys;
   `layerBoxAt(layer, time)` / `fetchLayerBox` (src/stores/layerBoxes.ts) cache
   getLayerBounds per (layer, time) per revision for render-time reads, batched

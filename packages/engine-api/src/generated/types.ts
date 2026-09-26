@@ -2830,6 +2830,25 @@ export interface CopyLayers {
   layers: LayerId[];
 }
 
+/** B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard. */
+export interface CopyKeyframes {
+  keys: KeyframeId[];
+}
+
+/** B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped. */
+export interface CopyEffects {
+  layer: LayerId;
+  effects: PropPath[];
+}
+
+/** B4 — copyEffects' answer. */
+export interface CopiedEffects {
+  /** The captures as JSON (see copyEffects); '[]' when none. */
+  effects: string;
+  /** The `effects/<id>` path of each capture, in the same order. */
+  paths: PropPath[];
+}
+
 export interface CompositionDetails {
   comp: CompInfo;
   layers: LayerInfo[];
@@ -4305,6 +4324,8 @@ export type Query =
   | ({ type: 'getMotionPath' } & GetMotionPath)
   | ({ type: 'getMarkers' } & GetMarkers)
   | ({ type: 'copyLayers' } & CopyLayers)
+  | ({ type: 'copyKeyframes' } & CopyKeyframes)
+  | ({ type: 'copyEffects' } & CopyEffects)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
   | ({ type: 'getItems' } & GetItems)
@@ -4345,6 +4366,8 @@ export type QueryResult =
   | ({ type: 'getMotionPath' } & PropertySamples)
   | ({ type: 'getMarkers' } & MarkerList)
   | ({ type: 'copyLayers' } & DocumentFragment)
+  | ({ type: 'copyKeyframes' } & KeyframeSets)
+  | ({ type: 'copyEffects' } & CopiedEffects)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
   | ({ type: 'getItems' } & ItemDetails)
@@ -4726,6 +4749,8 @@ export interface QueryArgs {
   getMotionPath: GetMotionPath;
   getMarkers: GetMarkers;
   copyLayers: CopyLayers;
+  copyKeyframes: CopyKeyframes;
+  copyEffects: CopyEffects;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
   getItems: GetItems;
@@ -4766,6 +4791,8 @@ export interface QueryResults {
   getMotionPath: PropertySamples;
   getMarkers: MarkerList;
   copyLayers: DocumentFragment;
+  copyKeyframes: KeyframeSets;
+  copyEffects: CopiedEffects;
   getWaveform: WaveformPeaks;
   listFonts: FontList;
   getItems: ItemDetails;

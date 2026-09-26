@@ -8448,6 +8448,66 @@ function decS_CopyLayers(r: Reader, end: number, o: any): T.CopyLayers {
   o.layers = l_layers;
   return o;
 }
+function encS_CopyKeyframes(w: Writer, v: T.CopyKeyframes): void {
+  { const a = v.keys; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_CopyKeyframes(r: Reader, end: number, o: any): T.CopyKeyframes {
+  const l_keys: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_keys.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.keys = l_keys;
+  return o;
+}
+function encS_CopyEffects(w: Writer, v: T.CopyEffects): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_CopyEffects(r: Reader, end: number, o: any): T.CopyEffects {
+  const l_effects: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_effects.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('CopyEffects.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.effects = l_effects;
+  return o;
+}
+function encS_CopiedEffects(w: Writer, v: T.CopiedEffects): void {
+  w.byte(10); w.str(v.effects);
+  { const a = v.paths; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_CopiedEffects(r: Reader, end: number, o: any): T.CopiedEffects {
+  const l_paths: string[] = [];
+  let h_effects = false;
+  let v_effects: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_effects = r.str(); h_effects = true; break;
+      case 18: l_paths.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_effects) throw new DecodeError('CopiedEffects.effects: missing', 'missingField');
+  o.effects = v_effects;
+  o.paths = l_paths;
+  return o;
+}
 function encS_CompositionDetails(w: Writer, v: T.CompositionDetails): void {
   w.byte(10); { const s = w.beginLd(); encS_CompInfo(w, v.comp); w.endLd(s); }
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_LayerInfo(w, a[i]!); w.endLd(s); } } }
@@ -14033,6 +14093,8 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportDocument(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
+    case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_CopyKeyframes(w, v); w.endLd(s); } return;
+    case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14078,6 +14140,8 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
       case 8706: out = decS_ExportDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.Query; break;
       case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
+      case 15114: out = decS_CopyKeyframes(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.Query; break;
+      case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -14123,6 +14187,8 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportedDocument(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
+    case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_KeyframeSets(w, v); w.endLd(s); } return;
+    case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14168,6 +14234,8 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
       case 8706: out = decS_ExportedDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.QueryResult; break;
       case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
+      case 15114: out = decS_KeyframeSets(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.QueryResult; break;
+      case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -14538,6 +14606,9 @@ export const codecs = {
   GetMotionPath: mk<T.GetMotionPath>(encS_GetMotionPath, (r, e) => decS_GetMotionPath(r, e, {})),
   GetMarkers: mk<T.GetMarkers>(encS_GetMarkers, (r, e) => decS_GetMarkers(r, e, {})),
   CopyLayers: mk<T.CopyLayers>(encS_CopyLayers, (r, e) => decS_CopyLayers(r, e, {})),
+  CopyKeyframes: mk<T.CopyKeyframes>(encS_CopyKeyframes, (r, e) => decS_CopyKeyframes(r, e, {})),
+  CopyEffects: mk<T.CopyEffects>(encS_CopyEffects, (r, e) => decS_CopyEffects(r, e, {})),
+  CopiedEffects: mk<T.CopiedEffects>(encS_CopiedEffects, (r, e) => decS_CopiedEffects(r, e, {})),
   CompositionDetails: mk<T.CompositionDetails>(encS_CompositionDetails, (r, e) => decS_CompositionDetails(r, e, {})),
   LayerDetails: mk<T.LayerDetails>(encS_LayerDetails, (r, e) => decS_LayerDetails(r, e, {})),
   PropertyTree: mk<T.PropertyTree>(encS_PropertyTree, (r, e) => decS_PropertyTree(r, e, {})),

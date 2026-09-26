@@ -32,6 +32,8 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getMotionPath: (x) => ({ type: 'getMotionPath', layer: x.B, range: { start: 0, duration: sec(1) }, samples: 3 }),
   getMarkers: (x) => ({ type: 'getMarkers', owner: { comp: x.comp } }),
   copyLayers: (x) => ({ type: 'copyLayers', layers: [x.A] }),
+  copyKeyframes: (x) => ({ type: 'copyKeyframes', keys: x.posKeys }),
+  copyEffects: (x) => ({ type: 'copyEffects', layer: x.A, effects: [] }),
   getWaveform: (x) => ({ type: 'getWaveform', layer: x.V, range: { start: 0, duration: sec(1) }, buckets: 10 }),
   listFonts: () => ({ type: 'listFonts', query: '' }),
   getItems: (x) => ({ type: 'getItems', items: [x.footage, x.comp2, x.folder] }),
@@ -61,7 +63,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(36);
+  expect(Object.keys(QUERIES)).toHaveLength(38);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {
@@ -86,6 +88,29 @@ test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s co
   expect(p).toMatchObject({ empty: true, preset: '{}' });
   const bad = await h.engine.query({ type: 'capturePreset', layer: 'nope' });
   expect(!bad.ok && bad.error.code).toBe('notFound');
+});
+
+test('copyKeyframes: whole keys per property in time order; unknown ids skipped', async () => {
+  const r = await h.query({ type: 'copyKeyframes', keys: [s.posKeys[1]!, 'nope', s.posKeys[0]!] });
+  expect(r.sets).toHaveLength(1);
+  expect(r.sets[0]!.prop).toEqual({ layer: s.B, path: 'transform/position' });
+  expect(r.sets[0]!.keyframes.map((k) => k.id)).toEqual(s.posKeys);
+  expect(r.sets[0]!.keyframes[1]!.value).toEqual({ kind: 'vec2', value: { x: 300, y: 200 } });
+  expect((await h.query({ type: 'copyKeyframes', keys: ['nope'] })).sets).toEqual([]);
+});
+
+test('copyEffects: the capture pasteEffects takes, stack order; the same effect captures equal until it changes', async () => {
+  const all = await h.query({ type: 'copyEffects', layer: s.A, effects: [] });
+  const one = await h.query({ type: 'copyEffects', layer: s.A, effects: [`effects/${s.fx}`, 'effects/nope'] });
+  expect(one.paths).toEqual([`effects/${s.fx}`]);
+  expect(all.paths).toContain(`effects/${s.fx}`);
+  const cap = JSON.parse(one.effects) as Array<{ effect: { id: string; type: string }; tracks: Record<string, unknown> }>;
+  expect(cap[0]!.effect).toMatchObject({ id: s.fx, type: 'glow' });
+  expect(cap[0]!.tracks).toEqual({});
+  expect((await h.query({ type: 'copyEffects', layer: s.A, effects: [`effects/${s.fx}`] })).effects).toBe(one.effects);
+  await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `effects/${s.fx}/radius` }, animated: true, time: 0 });
+  const keyed = JSON.parse((await h.query({ type: 'copyEffects', layer: s.A, effects: [`effects/${s.fx}`] })).effects) as typeof cap;
+  expect(Object.keys(keyed[0]!.tracks)).toEqual(['radius']);
 });
 
 test('getLayerBounds: the drawn box in layer and comp space at the time; viewport space is the overlay push\'s', async () => {

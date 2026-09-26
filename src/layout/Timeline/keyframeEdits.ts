@@ -32,11 +32,11 @@
  * `storedTimeOf` (keySelection.ts: the one B4-gap).
  */
 
-import { secondsToFlicks, type Command, type CubicBezier, type Easing, type Keyframe, type KeyframePatch, type PropRef, type SpatialInterp, type Value } from '@motion/engine-api';
+import { secondsToFlicks, type Command, type CubicBezier, type Easing, type KeyframePatch, type PropRef, type Value } from '@motion/engine-api';
 import type { BezierHandles, EasingKind } from '@motion/animation';
 import { presetCurve, type EasingPreset } from '@core/animation/keyframeAssistants';
 import { EASING_KIND_LABEL } from '@core/animation/easingVocabulary';
-import { clipboardEntries } from '@core/animation/keyframeClipboard';
+import { pasteKeyframes } from '@core/animation/keyframeClipboard';
 import { apiUnitFactor } from '@core/engine/props';
 import { engine, engineIdle } from '@core/engine/engineInstance';
 import { edit, type GestureSession } from '@core/engine/uiEdits';
@@ -447,68 +447,10 @@ export { toCubic };
 
 /**
  * Ctrl+V: the copied keys onto every target layer, the earliest copied key at
- * the playhead (`atCompTime`, comp seconds), spacing kept — one undo entry.
- * One `pasteKeyframes` per (layer, property). The clipboard holds MEMBER keys;
- * Copy takes every member of a copied key (`copyKeyframes` — a whole key, as
- * AE copies it), so a property's keys are whole at each copied time; a member
- * missing from an older clipboard takes the target's own value there.
+ * the playhead (`atCompTime`, comp seconds), spacing kept — one undo entry, one
+ * `pasteKeyframes` per (layer, property). The clipboard holds whole keys in API
+ * form (core/animation/keyframeClipboard.ts, the engine's `copyKeyframes`).
  */
-export async function pasteKeyframesAt(targetNodeIds: readonly string[], atCompTime: number): Promise<void> {
-  const entries = clipboardEntries();
-  if (entries.length === 0 || targetNodeIds.length === 0) return;
-  const minT = Math.min(...entries.map((e) => e.t));
-  const cmds: Command[] = [];
-  for (const nodeId of targetNodeIds) {
-    // property path → time → member → entry
-    const groups = new Map<string, { ref: PropRef; members: readonly string[]; vt: Parameters<typeof valueOfNumbers>[0]; byT: Map<number, Map<string, typeof entries[number]>> }>();
-    for (const e of entries) {
-      const r = propRefForTrack(nodeId, e.prop);
-      if (!r) continue; // the target has no such property: skipped, as before
-      const g = groups.get(r.ref.path) ?? { ref: r.ref, members: r.members, vt: r.valueType, byT: new Map() };
-      const at = g.byT.get(e.t) ?? new Map();
-      at.set(e.prop, e);
-      g.byT.set(e.t, at);
-      groups.set(r.ref.path, g);
-    }
-    const storedT = storedTimeOf(nodeId);
-    for (const g of groups.values()) {
-      const keys: Keyframe[] = [];
-      for (const [t, byMember] of [...g.byT].sort((a, b) => a[0] - b[0])) {
-        const lead = g.members.map((m) => byMember.get(m)).find((e) => e !== undefined)!;
-        // A member the clipboard lacks takes the target's own number (API units, from the mirror).
-        const own = byMember.size < g.members.length ? apiNumbersAt(nodeId, g.ref.path, t, storedT) : [];
-        const nums = g.members.map((m, i) => {
-          const e = byMember.get(m);
-          return e ? toApi(g.vt, m, e.value) : own[i] ?? 0;
-        });
-        const anySpatial = g.members.some((m) => byMember.get(m)?.si !== undefined || byMember.get(m)?.so !== undefined);
-        const dims = g.members.map((m) => {
-          const e = byMember.get(m) ?? lead;
-          return { easing: (e.easing ?? 'linear') as Easing, ...(e.bezier ? { bezier: toCubic(e.bezier) } : {}), continuous: e.continuous === true };
-        });
-        const uniform = dims.every((d) => JSON.stringify(d) === JSON.stringify(dims[0]));
-        keys.push({
-          id: '',
-          time: compTime(t),
-          value: valueOfNumbers(g.vt, nums),
-          easing: (lead.easing ?? 'linear') as Easing,
-          ...(lead.bezier ? { bezier: toCubic(lead.bezier) } : {}),
-          continuous: lead.continuous === true,
-          roving: lead.roving === true,
-          spatialInterp: (lead.spatialInterp ?? 'legacy') as SpatialInterp,
-          spatialIn: anySpatial ? g.members.map((m) => byMember.get(m)?.si ?? 0) : [],
-          spatialOut: anySpatial ? g.members.map((m) => byMember.get(m)?.so ?? 0) : [],
-          label: 0,
-          dims: uniform || g.members.length < 2 ? [] : dims,
-        });
-      }
-      if (keys.length === 0) continue;
-      // The earliest key of THIS property lands where the earliest copied key
-      // of the whole clipboard would put it — spacing kept across properties.
-      const first = Math.min(...[...g.byT.keys()]);
-      cmds.push({ type: 'pasteKeyframes', prop: g.ref, time: compTime(atCompTime + (first - minT)), keys });
-    }
-  }
-  if (cmds.length === 0) return;
-  await edit('Paste keyframes', cmds);
+export function pasteKeyframesAt(targetNodeIds: readonly string[], atCompTime: number): Promise<void> {
+  return pasteKeyframes(targetNodeIds, atCompTime);
 }
