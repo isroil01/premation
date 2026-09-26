@@ -14,7 +14,7 @@
 //        samples a segment, after the mask's expansion) + `pathClosed`.
 //
 // Not ported, and reported: Write-on's brush form (the dab history, sampled at
-// past times) and Energy Beam on a paragraph text box's outline.
+// past times). Energy Beam on text, point or paragraph, traces the painted runs.
 #pragma once
 
 #include <optional>

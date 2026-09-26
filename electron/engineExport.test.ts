@@ -111,7 +111,8 @@ describe('engineIneligible', () => {
     expect(engineIneligible(spec({ format: 'jpg-sequence' }), exe)).toMatch(/jpg-sequence/);
     expect(engineIneligible(spec({ chapters: [{ t: 0, title: 'A' }] }), exe)).toMatch(/chapters/);
     expect(engineIneligible(spec({ chapters: [{ startMs: 0, endMs: 1000, title: 'Intro' }] }), exe)).toBeNull();
-    expect(engineIneligible(spec({ videoEncoder: 'h264_nvenc' }), exe)).toMatch(/h264_nvenc/);
+    expect(engineIneligible(spec({ videoEncoder: 'h264_nvenc' }), exe)).toBeNull();
+    expect(engineEncodeArgs(spec({ videoEncoder: 'h264_nvenc' }), pre, abs('w', 'out.mp4'))).toEqual(expect.arrayContaining(['-c:v', 'h264_nvenc']));
     expect(engineIneligible(spec({ videoEncoder: 'libx264' }), exe)).toBeNull();
   });
 });

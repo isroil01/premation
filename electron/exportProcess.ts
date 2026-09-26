@@ -49,7 +49,9 @@ import {
   type EngineExportRun,
 } from './engineExport';
 import { resolveEngineExecutable } from './engineSupervisor';
+import { EncoderProbe } from './encoderProbe';
 import { resolveFfmpegBinary } from './ffmpegBinary';
+import { isHwVideoEncoder } from './ffmpegEncodeArgs';
 
 /*
   ★ The three payload shapes below are DUPLICATED in src/types/motionEditor.d.ts
@@ -1003,9 +1005,31 @@ function createEngineLauncher(root: string): EngineLauncher {
     workDirFor: (id: string) => path.join(root, id, 'engine'),
     log: (m: string) => console.log(`[export/engine] ${m}`),
   };
+  const probe = new EncoderProbe({ bin: deps.ffmpegPath });
   return {
     ineligible: (spec) => engineIneligible(spec, enginePath),
-    start: (jobId, spec, cb) => startEngineExport(jobId, spec, cb, deps),
+    start: (jobId, spec, cb) => {
+      let handle: ReturnType<typeof startEngineExport> | null = null;
+      let abandon = false;
+      const done = (async () => {
+        let next = spec;
+        if (spec.format === 'mp4' && isHwVideoEncoder(spec.videoEncoder)) {
+          const resolved = await probe.resolveVideoEncoder(spec.videoEncoder);
+          if (resolved.fallbackReason) deps.log(`job ${jobId}: ${resolved.fallbackReason}`);
+          next = { ...spec, videoEncoder: resolved.encoder };
+        }
+        if (abandon) return { kind: 'cancelled' as const };
+        handle = startEngineExport(jobId, next, cb, deps);
+        return handle.done;
+      })();
+      return {
+        cancel(): void {
+          abandon = true;
+          handle?.cancel();
+        },
+        done,
+      };
+    },
   };
 }
 

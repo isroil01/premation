@@ -19,10 +19,11 @@
  *
  *  - Off unless `PREMATION_EXPORT_ENGINE=1` (CLAUDE.md: every native
  *    replacement ships behind a flag with the TypeScript path intact).
- *  - Ineligible specs (`engineIneligible`): JPEG sequences, a hardware encoder,
- *    chapters that are not already resolved `{startMs,endMs,title}` records,
- *    or no engine executable — the window path, unchanged. PNG and EXR
- *    sequences and resolved chapters run in the engine.
+ *  - Ineligible specs (`engineIneligible`): JPEG sequences, chapters that are
+ *    not already resolved `{startMs,endMs,title}` records, or no engine
+ *    executable — the window path, unchanged. PNG and EXR sequences, resolved
+ *    chapters, and a probed hardware encoder run in the engine. A hardware
+ *    encoder that will not initialise falls back to libx264 before the job starts.
  *  - The engine's PREFLIGHT builds every frame of the range with the C++ scene
  *    builder first; one frame that uses a feature the builder has not ported
  *    (or audio it does not mix) reports `fallback`, and the supervisor renders
@@ -40,7 +41,7 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { copyFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { buildEncodeArgs, rawVideoInput, type EncodeFormat } from './ffmpegEncodeArgs';
+import { buildEncodeArgs, rawVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
 
 /** The spec fields an engine job reads (a subset of exportProcess.ts `ExportJobSpec`). */
 export interface EngineExportSpec {
@@ -143,8 +144,14 @@ export function engineIneligible(spec: EngineExportSpec, enginePath: string | nu
   if (!enginePath) return 'premation-engine is not available';
   if (!ENGINE_FORMATS.has(spec.format)) return `the engine does not write "${spec.format}"`;
   if (Array.isArray(spec.chapters) && spec.chapters.length > 0 && !resolvedChapters(spec.chapters)) return 'chapters are formatted by the editor';
-  if (spec.videoEncoder && spec.videoEncoder !== 'libx264') return `hardware encoder ${spec.videoEncoder} is probed by the Chromium path`;
   return null;
+}
+
+function videoEncoderOf(spec: EngineExportSpec): VideoEncoder {
+  if (spec.format !== 'mp4') return 'libx264';
+  const e = spec.videoEncoder;
+  if (e === 'h264_nvenc' || e === 'hevc_nvenc' || e === 'h264_qsv' || e === 'h264_videotoolbox' || e === 'libx264') return e;
+  return 'libx264';
 }
 
 /** The job file the engine reads (export_job.hpp `parse_job`). */
@@ -178,7 +185,7 @@ export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, o
       ? path.join(path.dirname(out), 'chapters.ffmeta')
       : null,
     alpha: pre.alpha,
-    videoEncoder: 'libx264',
+    videoEncoder: videoEncoderOf(spec),
     tagSrgb: true,
     out,
   });

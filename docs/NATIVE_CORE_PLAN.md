@@ -655,8 +655,8 @@ over the two decoded frames — the decoded frames are GPU textures in
 `MediaTextures`, so the warp belongs in the render graph); the audio waveform
 generator draws once the referenced layer's source has conformed
 (`MediaClock::waveform`, 1024 mono buckets). Until then the layer still
-reports it. Energy Beam on a paragraph text box. Point text is traced through
-the extrusion run cache; that path is not in the fixture.
+reports it. Energy Beam on text, point or paragraph, traces the painted runs.
+That path is not in the fixture, because the trace depends on the installed fonts.
 
 **D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
 content.** A frame drawn before is a GPU copy into the slot instead of rasters,
@@ -1294,8 +1294,8 @@ a hidden window, unchanged. These fall back:
 An image-sequence job (`sequence`: `png`, `exr`, `png-zip`, or `exr-zip`) writes
 numbered frames, or one STORE zip, instead of spawning an encoder. Chapters on the
 job are written to `chapters.ffmeta` (FFMETADATA1, the same text as the editor)
-before the encoder starts. Hardware encoders still go straight to the window:
-`encoderProbe` lives in main's render IPC.
+before the encoder starts. A hardware encoder is probed first; if it will not
+start, the job encodes with libx264.
 
 Real engine, through the launcher: a kill -9 mid-render gives fallback, with no
 file and no orphaned ffmpeg. Cancel gives cancelled. `effect-echo` gives fallback
@@ -1340,7 +1340,9 @@ only; not yet exposed in the Export UI.
 **Open:**
 - The engine's own native-plugin host and the remaining preflight fallbacks
   (D2w/E4 ports).
-- Hardware encoders: `encoderProbe` lives in main's render IPC. PNG and EXR
+- Hardware encoders: the engine export path probes with the same `EncoderProbe`
+  as the window path and passes the winner (`libx264` when the device will not
+  start). PNG and EXR
   sequences, and chapters already resolved to `{startMs, endMs, title}`, run
   in the engine when the export flag is on. JPEG sequences stay on the window path.
 - Partial-alpha unpremultiply is modelled on Skia's float path and is only
