@@ -12,9 +12,10 @@
 // component, whose `glbData` data: URL is the document's copy of the file.
 // Parsed once per model key (process-wide, like the TS session registry).
 //
-// Not here: images are kept as their file bytes (decoded by the texture stage),
-// skinning and morph targets are parsed (the entry says it has them) but not
-// applied — the caller reports those layers.
+// Not here: images are kept as their file bytes (decoded by the texture stage).
+// Skins and morph targets are carried on the entry / model (the deltas flipped
+// into compositor space, the inverse binds conjugated); model_deform.cpp
+// applies them per frame.
 //
 // Pinned by tests/data/gltf_model_parity.json (src/core/scene/modelCrossEngine.test.ts).
 #pragma once
@@ -87,11 +88,17 @@ struct Mesh {
   std::vector<double> weights;
 };
 
+struct Skin {
+  std::vector<double> joints;  ///< glTF node indices (`sk.joints ?? []`; a non-number reads NaN)
+  std::optional<std::vector<float>> inverseBindMatrices;  ///< 16 floats per joint, glTF space
+};
+
 struct Parsed {
   std::vector<Mesh> meshes;
   std::vector<Material> materials;
   std::vector<Image> images;
   std::size_t skins = 0;
+  std::vector<Skin> skinList;  ///< GltfSkin[], parallel to `skins`
 };
 
 /// parseGltf: nullopt + the TypeScript's error message when the file is refused.
@@ -121,9 +128,26 @@ struct Entry {
   std::array<double, 3> emissive{0, 0, 0};
   std::optional<std::array<double, 5>> uvTransform;  ///< offsetX offsetY scaleX scaleY rotation
   bool skinned = false;
+  /// skinData: joints as u16 (ToUint16), weights renormalized to sum 1 — set when `skinned`.
+  std::vector<std::uint16_t> skinJoints;
+  std::vector<float> skinWeights;
   std::size_t morphTargets = 0;
+  /// morphTargets' deltas, y/z flipped like the base attributes (flipYZTriples).
+  struct MorphTarget {
+    std::optional<std::vector<float>> positions, normals;
+  };
+  std::vector<MorphTarget> morphTargetData;
   std::vector<double> morphDefaults;
 };
+
+/// ModelSkin: joint node indices + inverse binds conjugated into compositor space (F·B·F).
+struct ModelSkin {
+  std::vector<double> joints;
+  std::vector<float> invBind;  ///< 16 per joint
+};
+
+/// conjugateGltfMatrix(m, offset): each element × sign(row)·sign(col), -0 → 0.
+[[nodiscard]] std::array<double, 16> conjugate_gltf_matrix(std::span<const float> m, std::size_t offset);
 
 /// primitiveToEntry; nullopt when (mesh, prim) names no primitive.
 [[nodiscard]] std::optional<Entry> primitive_to_entry(const Parsed& p, std::string_view modelKey, std::size_t mesh, std::size_t prim);
@@ -133,6 +157,7 @@ struct Model {
   std::string key;
   std::optional<Parsed> parsed;
   std::map<std::pair<std::size_t, std::size_t>, Entry> entries;
+  std::vector<ModelSkin> skins;
   std::string error;
 };
 

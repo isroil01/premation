@@ -333,9 +333,11 @@ remap keys, reverse, freeze, a remapped precomp) and *B3z: plugin properties*.
 - **Remaining for D1:** the render-side evaluation — the engine producing its
   own FrameScene from the C++ document (`scene/snapshot_build`, buildSnapshot's
   port) — is gated by the D2 golden suite, not by this fixture, and still
-  reports shape operators, paragraph text and image-layer rig culling;
-  `getLayerTransforms` is 2D in both engines (3D world space is observable only
-  through toWorld/toComp expressions, which the fixture covers); the corpus
+  reports paragraph text's Fit Text to Box and CJK line breaking (the inserted
+  soft breaks; `text_measure.cpp`). Shape operators were already built
+  (`path_ops`, nothing reports them); image-layer rig culling and 3D
+  `getLayerTransforms` landed 2026-09-26 (see "D2w leftovers, d2w-cpp-ports"
+  below); the corpus
   has no session for footage decode-dependent values (E1) or audio-driven
   expressions (E2); 12 of 114 edit commands are never issued by the corpus
   (`restoreDocument`, `importBytes`, `clearWorkArea`, `timeStretchLayers`,
@@ -484,10 +486,10 @@ and 0 differing pixels against webgpu. `harness/scenes/modelMaps.ts` now stores
 pair ports. The displaced sphere stays pinned by the fixture only; porting that
 golden needs an image-backed field, which means re-blessing it.
 
-**Remaining:** per-character 3D text (layoutPerChar3D); the extrusion slice
-stack and geometric-face fallbacks; glTF morph targets and skinning; EXR
-skies. Sealed-precomp 3D scopes landed with composition instances (D2w
-time/comp: `comp_instance`'s `precompScene3d`).
+**Remaining:** EXR skies. Per-character 3D text, the extrusion slice stack and
+geometric faces, and glTF morph targets / skinning landed 2026-09-26 ("D2w
+leftovers, d2w-cpp-ports" below). Sealed-precomp 3D scopes landed with
+composition instances (D2w time/comp: `comp_instance`'s `precompScene3d`).
 
 **D2 leftovers + D3 (2026-09-23): 436/436 frames bit-identical, 32 bpc, OCIO.**
 *The 7 low-alpha frames were never a renderer difference*: the C++ surface
@@ -525,8 +527,13 @@ states each disabled check); the render graph incl. Dawn + OCIO runs under
 ASan (all unit tests + all 436 frames, byte-identical). **Remaining for D3**:
 porting OCIO's fixed-function ops (ACES RRT/ODT, grading curves) into the op
 program so output views stop using the lattice (1.5e-2 in gamut at 65³ today),
-16/32-bit export (F*), and the C++ document producing `colorManagement` + footage
-`inputSpace` (the TS producer never sets them).
+16/32-bit export (F*). The C++ document already produces `colorManagement`
+(`scene/color_settings.cpp`: Project Settings ▸ Working Space + OCIO config,
+the viewer's display transform, the output module's space; unmanaged exactly
+where the TS pipeline renders itself) and every texture's `inputSpace`
+(`scene_textures.cpp`: footage by its H.273 tags, stills and authored rasters
+as sRGB, masks / LUT strips untagged); what the vocabulary cannot express
+(Display P3 working space, PQ / HLG viewers) stays unmanaged with a frame note.
 
 **D2w effects (2026-09-25): baked layers, colour LUTs and the paint effects
 render from the C++ document, on the E4 chain.** `native/engine/src/scene`:
@@ -563,8 +570,7 @@ ported (4/4, 9/9). **Not ported, by decision:** JS/WGSL plugin effects and
 plugin generator layers (13 frames) — their shaders, passes and params live in
 the page's plugin registry (`registerEffects`), not in the document, and G2
 keeps that system out of the engine; reported as such. Also still reported:
-footage (image / video) bakes, Write-on's brush form (dab history sampled at
-past times). **E4 exit not met yet:** per-effect bench (162 effects, a
+footage (image / video) bakes. (Write-on's brush form landed 2026-09-26.) **E4 exit not met yet:** per-effect bench (162 effects, a
 full-frame 1080p shape baked every frame, opacity animated so no raster hit,
 `premation-scene --bench`, RTX 4060): the bake with no effect costs 50 ms (46
 ms raster: the 1080p path raster + ImageData round trips), median 80 ms with
@@ -652,11 +658,48 @@ Both are in the time/comp fixture (`ghosts-3d`, `energy-beam-paths`).
 
 **Still reported, and why:** Pixel Motion frame blending (optical flow + warp
 over the two decoded frames — the decoded frames are GPU textures in
-`MediaTextures`, so the warp belongs in the render graph); the audio waveform
+`MediaTextures`, so the warp belongs in the render graph; the flow / warp
+kernels themselves are ported, `scene/pixel_motion.cpp`), interlaced fields
+(same seam: `deinterlace_data` is ported, the feed does not call it yet); the audio waveform
 generator draws once the referenced layer's source has conformed
 (`MediaClock::waveform`, 1024 mono buckets). Until then the layer still
 reports it. Energy Beam on text, point or paragraph, traces the painted runs.
 That path is not in the fixture, because the trace depends on the installed fonts.
+
+**D2w leftovers, d2w-cpp-ports (2026-09-26).** Each port is pinned by a
+cross-engine fixture generated from the editor's code; the pure halves compile
+in the headless build (`engine_scene_core`), the Scene3D / snapshot_build hooks
+are syntax-checked only on this machine (engine_scene needs Skia + Dawn), and
+none of the fixtures has been generated or run yet.
+- **Write-on brush form** — `write_on_trail` ports `resolveWriteOnTrail`
+  (the dab history on a Brush Spacing grid from the first key, Stroke Length,
+  the 2048-sample thinning); `effect_handoff` hands `brushTrail*` to the
+  kernel through the walk's animation wrapper. `write_on_trail_parity.json`
+  replays the TS sampler's recorded answers. Energy Beam on point text already
+  traced (130d7e82 covered paragraph text too).
+- **glTF morph targets + skinning** — `model_deform` ports modelMorph.ts and
+  modelSkinning.ts; the parse keeps skins (inverse binds conjugated once) and
+  the entries their skin attributes and flipped deltas; Scene3D morphs, then
+  skins, under the weight- / pose-hashed keys (`model_deform_parity.json`).
+- **Extrusion fallbacks** — `extrusion_faces` ports extrusionGeometry (walls,
+  chamfer rings, rounded / elliptical rings); Scene3D draws the slice stack and
+  the geometric faces with faceEffectsFor, the per-face styles, wallFillAt and
+  one-sided lighting (`extrusion_faces_parity.json`).
+- **Per-character 3D text** — `per_char3d` ports layoutPerChar3D over the
+  rasterizer's layout; Scene3D emits one glyph plane per character and, when
+  extruded, one body per glyph. No fixture (glyph advances depend on fonts).
+- **Rigs on image layers** — `rig_coverage` decodes the bitmap into ≤64²,
+  `alpha_mesh` ports the coverage mask and alphaMesh.ts; rig_mesh culls its grid
+  by the mask or traces it in silhouette mode (`alpha_mesh_parity.json`).
+  `extractAlphaContours` moved to `effects/alpha_contours.cpp` (engine_contours).
+- **Pixel Motion / fields kernels** — `pixel_motion` ports pixelMotionFlow.ts
+  and deinterlace.ts (`pixel_motion_parity.json`); not wired into the feed.
+- **getLayerTransforms 3D** — both engines answer a 3D layer's / camera's /
+  light's layer → world 4×4 (`world3DAt` / `world_3d_at`, split out of
+  layerSpaceAt), at its comp's size.
+Still reported: paragraph Fit Text to Box and CJK wrapping, Pixel Motion and
+interlaced-field wiring, EXR skies, SVG-sourced image rigs, footage bakes;
+channelView is the viewport's channel display, not part of the frame.
 
 **D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
 content.** A frame drawn before is a GPU copy into the slot instead of rasters,

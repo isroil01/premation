@@ -372,9 +372,26 @@ struct Q {
     api::LayerTransformList out;
     for (const auto& id : q.layers) {
       (void)require_layer(d, id);
-      const auto m = world_2d_at(pc, id, flicks_to_seconds(q.time));
+      const double seconds = flicks_to_seconds(q.time);
       api::LayerTransform t;
       t.layer = id;
+      // A 3D layer (or a camera / light): its world 4x4, as toWorld reads it —
+      // at the layer's comp size (compSizeOf ?? 1920x1080).
+      double cw = 1920;
+      double ch = 1080;
+      if (const auto comp = comp_of_layer(d, id)) {
+        if (const Json* rec = d.comp(*comp); rec != nullptr && rec->at("width").is_number() && rec->at("height").is_number()) {
+          cw = rec->at("width").num();
+          ch = rec->at("height").num();
+        }
+      }
+      if (const auto m3 = world_3d_at(SpaceCtx{d, pc.view, pc.expr, pc.cache}, id, seconds, cw, ch)) {
+        t.matrix.assign(m3->begin(), m3->end());
+        t.anchor = api::Vec3{0, 0, 0};
+        out.transforms.push_back(std::move(t));
+        continue;
+      }
+      const auto m = world_2d_at(pc, id, seconds);
       t.matrix = {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.e, m.f, 0, 1};
       t.anchor = api::Vec3{0, 0, 0};
       out.transforms.push_back(std::move(t));

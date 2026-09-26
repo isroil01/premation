@@ -365,6 +365,12 @@ if(TARGET engine_render_graph)
   endif()
 endif()
 
+# engine_contours: vegas.ts extractAlphaContours, shared by the Vegas effect
+# (engine_canvas_effects) and the image-alpha puppet mesh (engine_scene_core).
+add_library(engine_contours STATIC src/effects/alpha_contours.cpp)
+target_include_directories(engine_contours PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
+target_link_libraries(engine_contours PUBLIC motion::jsmath PRIVATE motion::options)
+
 # engine_scene_core: the scene builder's GPU- and raster-free ports — rigs
 # (rig_mesh + the document bridge), extrusion geometry (extrude_mesh,
 # trace_bitmap). engine_scene builds on it; the cross-engine rig parity test
@@ -383,9 +389,14 @@ add_library(engine_scene_core STATIC
   src/scene/gltf_model.cpp  # gltf.ts parse + modelMesh.ts entries + the model registry
   src/scene/styled_surface.cpp  # layerStyles.ts styledSurfaceFill (extrusion walls under overlays)
   src/scene/corner_pin.cpp  # cornerPin.ts + resolveCornerPin + Homography.ts
+  src/scene/write_on_trail.cpp  # writeOnBrush.ts resolveWriteOnTrail (Write-on's dab history)
+  src/scene/model_deform.cpp  # modelMorph.ts + modelSkinning.ts (glTF morph targets, skinning)
+  src/scene/pixel_motion.cpp  # pixelMotionFlow.ts + deinterlace.ts (footage pixel kernels)
+  src/scene/extrusion_faces.cpp  # extrusion.ts extrusionGeometry (the fallback body faces)
+  src/scene/alpha_mesh.cpp  # puppet.ts coverage mask + alphaMesh.ts (image-layer rig meshes)
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
-target_link_libraries(engine_scene_core PUBLIC engine_core motion::jsmath PRIVATE motion::options)
+target_link_libraries(engine_scene_core PUBLIC engine_core engine_contours motion::jsmath PRIVATE motion::options)
 if(MSVC)
   target_compile_options(engine_scene_core PRIVATE /bigobj)
 endif()
@@ -395,7 +406,9 @@ if(MOTION_BUILD_TESTS)
   add_executable(engine_scene_core_tests tests/test_rig_parity.cpp tests/test_primitive_parity.cpp tests/test_extrude_parity.cpp tests/test_threed_parity.cpp
                                          tests/test_height_displacement_parity.cpp tests/test_gltf_model_parity.cpp
                                          tests/test_env_asset_parity.cpp tests/test_styled_surface_parity.cpp
-                                         tests/test_corner_pin_parity.cpp)
+                                         tests/test_corner_pin_parity.cpp tests/test_write_on_trail_parity.cpp
+                                         tests/test_model_deform_parity.cpp tests/test_pixel_motion_parity.cpp
+                                         tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -707,7 +720,7 @@ target_link_libraries(engine_effects PUBLIC motion::jsmath PRIVATE motion::optio
 # Canvas2D interface — Skia-free here; Skia sits behind the interface.
 add_library(engine_canvas_effects STATIC src/effects/canvas_effects.cpp src/effects/canvas_effects_generate.cpp)
 target_include_directories(engine_canvas_effects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE engine_effects motion::options)
+target_link_libraries(engine_canvas_effects PUBLIC engine_raster_core motion::jsmath PRIVATE engine_effects engine_contours motion::options)
 
 # The bake CHAIN (effectBake.ts applyEffectChain): param mapping of the apply*
 # wrappers, LUT / colour-matrix / CSS / procedural routes, fill opacity, the
@@ -856,6 +869,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/lut_port.cpp          # D2w effects: colour LUT strips (colorLut.ts, cubeLut.ts)
     src/scene/bake_chain.cpp        # D2w effects: a baked raster's mask + stack handed to engine_effect_chain
     src/scene/effect_handoff.cpp    #   the path / paint effects' resolved geometry (buildSnapshot)
+    src/scene/per_char3d.cpp        # D2w 3D: per-character 3D text (perChar3D.ts layoutPerChar3D)
+    src/scene/rig_coverage.cpp      # D1: image-layer rig coverage (imageAlphaCoverage.ts decode)
   src/scene/comp_instance.cpp     # D2w time/comp: nested + collapsed composition instances
   src/scene/precomp_frame.cpp     #   their frame side (sealed 3D scopes, the 3D card)
   src/scene/temporal_ghosts.cpp   #   Echo / Wide Time ghost copies

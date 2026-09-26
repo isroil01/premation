@@ -25,6 +25,15 @@ constexpr std::uint32_t kChunkJson = 0x4e4f534a;
 constexpr std::uint32_t kChunkBin = 0x004e4942;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
+/// ECMAScript ToUint16 (a Uint16Array store): NaN / ±Infinity → 0, truncate, mod 2^16.
+std::uint16_t to_uint16(double v) {
+  if (!std::isfinite(v)) return 0;
+  const double t = std::trunc(v);
+  double m = std::fmod(t, 65536.0);
+  if (m < 0) m += 65536.0;
+  return static_cast<std::uint16_t>(m);
+}
+
 /// A parse failure carrying the TypeScript's message (thrown inside parse only).
 struct ParseError : std::runtime_error {
   using std::runtime_error::runtime_error;
@@ -462,7 +471,13 @@ Parsed parse_json(const Json& g, const Buffer* glbBin) {
   // Skins' inverse binds and animation streams are read for the same failures
   // the TS parse would raise (a bad accessor refuses the whole file).
   for (const Json& sk : g.at("skins").arr()) {
-    if (!sk.at("inverseBindMatrices").is_undefined()) (void)rd.accessor(sk.at("inverseBindMatrices"));
+    // Skins: joints + inverse bind matrices (16 floats each, glTF space).
+    Skin skin;
+    if (sk.at("joints").is_array()) {
+      for (const Json& j : sk.at("joints").arr()) skin.joints.push_back(j.is_number() ? j.num() : kNaN);
+    }
+    if (!sk.at("inverseBindMatrices").is_undefined()) skin.inverseBindMatrices = rd.accessor(sk.at("inverseBindMatrices"));
+    out.skinList.push_back(std::move(skin));
     ++out.skins;
   }
   for (const Json& an : g.at("animations").arr()) {
@@ -516,6 +531,18 @@ std::shared_ptr<const Model> build_model(std::string_view modelKey, std::span<co
       if (auto e = primitive_to_entry(*m->parsed, modelKey, mi, pi)) m->entries.emplace(std::make_pair(mi, pi), std::move(*e));
     }
   }
+  // registerModel's skins: every inverse bind conjugated into compositor space once.
+  for (const Skin& sk : m->parsed->skinList) {
+    ModelSkin ms;
+    ms.joints = sk.joints;
+    ms.invBind.resize(sk.joints.size() * 16);
+    for (std::size_t j = 0; j < sk.joints.size(); ++j) {
+      std::array<double, 16> conv = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+      if (sk.inverseBindMatrices) conv = conjugate_gltf_matrix(*sk.inverseBindMatrices, j * 16);
+      for (std::size_t k = 0; k < 16; ++k) ms.invBind[(j * 16) + k] = static_cast<float>(conv[k]);
+    }
+    m->skins.push_back(std::move(ms));
+  }
   return m;
 }
 
@@ -567,6 +594,20 @@ std::string model_key_for_bytes(std::span<const std::uint8_t> bytes) {
   return s;
 }
 
+std::array<double, 16> conjugate_gltf_matrix(std::span<const float> m, std::size_t offset) {
+  constexpr std::array<double, 4> sgn = {1, -1, -1, 1};
+  std::array<double, 16> out{};
+  for (std::size_t col = 0; col < 4; ++col) {
+    for (std::size_t row = 0; row < 4; ++row) {
+      const std::size_t k = offset + (col * 4) + row;
+      const double src = k < m.size() ? static_cast<double>(m[k]) : 0;  // `?? 0`
+      const double v = src * sgn[row] * sgn[col];
+      out[(col * 4) + row] = v == 0 ? 0 : v;
+    }
+  }
+  return out;
+}
+
 std::optional<Entry> primitive_to_entry(const Parsed& parsed, std::string_view modelKey, std::size_t meshIndex, std::size_t primIndex) {
   if (meshIndex >= parsed.meshes.size() || primIndex >= parsed.meshes[meshIndex].primitives.size()) return std::nullopt;
   const Primitive& prim = parsed.meshes[meshIndex].primitives[primIndex];
@@ -611,6 +652,24 @@ std::optional<Entry> primitive_to_entry(const Parsed& parsed, std::string_view m
     if (pz > maxZ) maxZ = pz;
   }
   e.skinned = prim.joints && prim.weights && prim.joints->size() == vcount * 4 && prim.weights->size() == vcount * 4;
+  if (e.skinned) {
+    // Skin attributes: joints as u16, weights renormalized to sum 1 (exporters
+    // quantize; a drifting sum scales the whole vertex, visibly).
+    const std::vector<float>& jw = *prim.weights;
+    const std::vector<float>& jj = *prim.joints;
+    e.skinJoints.resize(vcount * 4);
+    e.skinWeights.resize(vcount * 4);
+    for (std::size_t i = 0; i < vcount; ++i) {
+      const std::size_t o = i * 4;
+      const double sum = static_cast<double>(jw[o]) + static_cast<double>(jw[o + 1]) + static_cast<double>(jw[o + 2]) +
+                         static_cast<double>(jw[o + 3]);
+      const double inv = sum > 1e-6 ? 1 / sum : 0;
+      for (std::size_t c = 0; c < 4; ++c) {
+        e.skinJoints[o + c] = to_uint16(static_cast<double>(jj[o + c]));
+        e.skinWeights[o + c] = static_cast<float>(inv > 0 ? static_cast<double>(jw[o + c]) * inv : (c == 0 ? 1 : 0));
+      }
+    }
+  }
   const std::array<double, 4> f = material != nullptr ? material->baseColorFactor : std::array<double, 4>{1, 1, 1, 1};
   e.fill = "#" + hex2(f[0]) + hex2(f[1]) + hex2(f[2]) + hex2(f[3]);
   if (material != nullptr && material->baseColorTexture) e.textureImage = material->baseColorTexture->image;
@@ -641,6 +700,22 @@ std::optional<Entry> primitive_to_entry(const Parsed& parsed, std::string_view m
   }
   if (ktActive) e.uvTransform = std::array<double, 5>{kt->offset[0], kt->offset[1], kt->scale[0], kt->scale[1], kt->rotation};
   e.morphTargets = prim.targets.size();
+  // Morph deltas get the same y/z flip as the base attributes (flipYZTriples).
+  const auto flip = [](const std::vector<float>& src) {
+    std::vector<float> out(src.size(), 0.0F);
+    for (std::size_t i = 0; i + 2 < src.size(); i += 3) {
+      out[i] = src[i];
+      out[i + 1] = 0.0F - src[i + 1];
+      out[i + 2] = 0.0F - src[i + 2];
+    }
+    return out;
+  };
+  for (const Primitive::Target& tg : prim.targets) {
+    Entry::MorphTarget mt;
+    if (tg.positions) mt.positions = flip(*tg.positions);
+    if (tg.normals) mt.normals = flip(*tg.normals);
+    e.morphTargetData.push_back(std::move(mt));
+  }
   const std::vector<double>& mw = parsed.meshes[meshIndex].weights;
   for (std::size_t i = 0; i < prim.targets.size(); ++i) e.morphDefaults.push_back(i < mw.size() ? mw[i] : 0);
   return e;
