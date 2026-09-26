@@ -6,7 +6,7 @@
 #include "log.hpp"
 #include "os_ffi.hpp"
 
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
 #include "shared_texture_ffi.hpp"
 #endif
 
@@ -31,14 +31,14 @@ struct RenderThread::SlotSet {
   bool copyable = true;
   std::vector<wgpu::Texture> textures;  // every slot's texture (offscreen, or the shared slot's own)
   std::vector<wgpu::TextureView> views;
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
   std::unique_ptr<shared::SharedTexturePool> pool;
 #endif
   SteadyClock::time_point retiredAt{};
 
   SlotSet() = default;
   ~SlotSet() {
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
     if (pool) pool->close_remote_handles();
 #endif
   }
@@ -144,10 +144,11 @@ FrameCacheStats RenderThread::cache_stats() const {
 }
 
 std::string RenderThread::open_gpu() {
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
+  // Windows (NT handles) and macOS (IOSurfaces): a host to share with.
   const bool wantShared = options_.hostPid != 0;
 #else
-  const bool wantShared = false;
+  const bool wantShared = false;  // Linux: no shared route yet — the route-A copy
 #endif
   gpu_ = create_gpu(wantShared, options_.highPerformance, options_.vendorId);
   if (!gpu_) return "no GPU adapter / device (Dawn)";
@@ -280,7 +281,7 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
   std::uint32_t count = 0;
   if (config.open && config.width > 0 && config.height > 0) {
     count = options_.slots;
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
     if (shared) {
       auto pool = std::make_unique<shared::SharedTexturePool>();
       std::string error;
@@ -341,7 +342,7 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   SlotSet& set = *slots_;
   const double startUs = os::epoch_us();
   const auto t0 = SteadyClock::now();
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
   shared::Slot* shared = set.pool ? &set.pool->slots()[slot] : nullptr;
   if (shared != nullptr && !set.pool->begin_access(*shared)) {
     PREMATION_LOG(error, "begin_access_failed").kv("slot", slot);
@@ -383,7 +384,7 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
     const wgpu::CommandBuffer cb = enc.Finish();
     gpu_->queue.Submit(1, &cb);
   }
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
   if (shared != nullptr) (void)set.pool->end_access(*shared);
 #endif
   // Electron's rgba sharedTexture import takes no fence, so a frame is

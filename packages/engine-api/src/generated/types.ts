@@ -3373,7 +3373,7 @@ export interface FrameSlots {
   width: number;
   height: number;
   format: PixelFormat;
-  /** true: `handles` are NT handles valid in the host process (sharedTexture import); the ENGINE owns them — the host never closes one. false: offscreen slots (headless, tests); handles are 0. */
+  /** true: shared slots for sharedTexture import — Windows: NT handles valid in the host process, owned by the ENGINE (the host never closes one); macOS: global IOSurfaceIDs the host resolves with IOSurfaceLookup and holds while the ring is current. false: offscreen slots (headless, tests, the route-A copy); handles are 0. */
   shared: boolean;
   /** One per slot, at most 16. */
   handles: number[];

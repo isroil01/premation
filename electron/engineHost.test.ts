@@ -8,6 +8,8 @@
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
 import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, type SharedTextureApi } from './engineHost';
+import type { IoSurfaceBridge } from './ioSurfaceBridge';
+import { ioSurfaceSource, type SlotTextureHandle as SharedTextureImportHandle } from './sharedTextureHandles';
 import type { FrameReadyMessage, SlotsMessage } from './engineFraming';
 
 describe('engineBackendEnabled', () => {
@@ -73,7 +75,7 @@ describe('FrameForwarder', () => {
     const imports: Array<{ handle: bigint; allReleased?: () => void; released: boolean }> = [];
     const st: SharedTextureApi = {
       importSharedTexture: (o) => {
-        const rec = { handle: o.textureInfo.handle.ntHandle.readBigUInt64LE(0), allReleased: o.allReferencesReleased, released: false };
+        const rec = { handle: o.textureInfo.handle.ntHandle!.readBigUInt64LE(0), allReleased: o.allReferencesReleased, released: false };
         imports.push(rec);
         return { release: () => { rec.released = true; } };
       },
@@ -135,6 +137,38 @@ describe('FrameForwarder', () => {
     fw.onFrame(ready(9, 0));
     expect(imports).toHaveLength(0);
     expect(released).toEqual([[1, 0], [9, 0]]);
+  });
+
+  it('macOS: imports the IOSurfaceRef looked up for the slot, and drops a replaced ring once its transfer ends', async () => {
+    const released: Array<[number, number]> = [];
+    const sends: Array<{ resolve: () => void }> = [];
+    const handles: Array<SharedTextureImportHandle> = [];
+    const bridgeReleased: number[] = [];
+    const bridge: IoSurfaceBridge = {
+      lookup: (id) => ({ id, handle: Buffer.from([id & 0xff, 0, 0, 0, 0, 0, 0, 0]) }),
+      release: (s) => { bridgeReleased.push(s.id); },
+    };
+    const st: SharedTextureApi = {
+      importSharedTexture: (o) => {
+        handles.push(o.textureInfo.handle);
+        return { release: () => {} };
+      },
+      sendSharedTexture: () => new Promise<void>((resolve) => sends.push({ resolve })),
+    };
+    const fw = new FrameForwarder({ sharedTexture: st, target: () => ({}), release: (g, s) => released.push([g, s]), handles: ioSurfaceSource(bridge) });
+    fw.engineStarted();
+    fw.setReceiverReady(true);
+    fw.onFrame(slots(1));
+    fw.onFrame(ready(1, 2));
+    expect(handles[0]!.ntHandle).toBeUndefined();
+    expect(handles[0]!.ioSurface![0]).toBe(0x08);
+    fw.onFrame(slots(2));                        // resize while slot 2 of ring 1 is in flight
+    expect(bridgeReleased).toEqual([]);
+    sends[0]!.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bridgeReleased).toEqual([0x100, 0x104, 0x108]);
+    fw.engineStarted();
+    expect(bridgeReleased).toHaveLength(6);      // ring 2 goes with the engine
   });
 
   it('never releases a dead engine’s slot to its successor', async () => {

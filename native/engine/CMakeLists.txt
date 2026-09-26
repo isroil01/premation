@@ -7,7 +7,9 @@
 #                     session + transport clock. No GPU, no OS calls: unit-tested,
 #                     stress-tested and fuzzed on its own.
 #   engine_gpu        Dawn device, compositor, render thread + frame-slot ring,
-#                     shared textures (Windows)
+#                     shared textures (Windows NT handles, macOS IOSurfaces)
+#   premation-host-bridge  (macOS) the N-API module Electron main loads to turn an
+#                     announced IOSurfaceID into its own IOSurfaceRef (host_bridge/)
 #   premation-engine  the process: pipes, reader/writer threads, core loop
 #   premation-viewport-proto   the C1 prototype (routes A, C, bench), kept so
 #                     docs/VIEWPORT_ROUTE.md stays reproducible
@@ -58,10 +60,15 @@ if(Dawn_FOUND)
     src/render/render_thread.cpp
     src/render/vram_ffi.cpp
   )
+  # Route C's shared-texture ring, one implementation per OS (shared_texture_ffi.hpp).
   if(WIN32)
     target_sources(engine_gpu PRIVATE src/shared_texture_ffi.cpp)
     target_link_libraries(engine_gpu PUBLIC d3d11 dxgi winmm)
-    target_compile_definitions(engine_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_definitions(engine_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE PREMATION_SHARED_TEXTURE=1)
+  elseif(APPLE)
+    target_sources(engine_gpu PRIVATE src/shared_texture_ffi_mac.cpp)
+    target_link_libraries(engine_gpu PUBLIC "-framework IOSurface" "-framework CoreFoundation")
+    target_compile_definitions(engine_gpu PUBLIC PREMATION_SHARED_TEXTURE=1)
   endif()
   target_include_directories(engine_gpu PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -141,6 +148,40 @@ if(WIN32)
   target_compile_definitions(premation-engine-headless PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 endif()
 
+# ── premation-host-bridge (macOS): IOSurfaceID → IOSurfaceRef in Electron main ─
+# Route C on macOS: Electron's sharedTexture takes an IOSurfaceRef local to
+# main, so main resolves the ids the engine announces (host_bridge/). No Dawn,
+# so it builds with the headless configuration too. Written against the C
+# N-API: the headers of any Node ≥ 16 work, and the module is not tied to one
+# Electron version. Lands beside premation-engine; electron-builder ships both.
+if(APPLE)
+  option(PREMATION_HOST_BRIDGE "Build premation-host-bridge.node (macOS engine viewport)" ON)
+endif()
+if(APPLE AND PREMATION_HOST_BRIDGE)
+  if(NOT NODE_API_INCLUDE_DIR)
+    find_program(PREMATION_NODE_EXECUTABLE node)
+    if(PREMATION_NODE_EXECUTABLE)
+      get_filename_component(_node_bin "${PREMATION_NODE_EXECUTABLE}" REALPATH)
+      get_filename_component(_node_bin "${_node_bin}" DIRECTORY)
+      set(_node_hint "${_node_bin}/../include/node")
+    endif()
+    find_path(NODE_API_INCLUDE_DIR node_api.h HINTS ${_node_hint} "${CMAKE_SOURCE_DIR}/../node_modules/node-api-headers/include")
+  endif()
+  if(NODE_API_INCLUDE_DIR)
+    add_library(premation-host-bridge MODULE host_bridge/iosurface_bridge_ffi.cpp)
+    set_target_properties(premation-host-bridge PROPERTIES PREFIX "" SUFFIX ".node"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_include_directories(premation-host-bridge SYSTEM PRIVATE "${NODE_API_INCLUDE_DIR}")
+    target_compile_definitions(premation-host-bridge PRIVATE NAPI_VERSION=8 NODE_GYP_MODULE_NAME=premation_host_bridge)
+    target_link_libraries(premation-host-bridge PRIVATE motion::options "-framework IOSurface" "-framework CoreFoundation")
+    # N-API symbols come from the loading process (Electron / node).
+    target_link_options(premation-host-bridge PRIVATE -undefined dynamic_lookup)
+  else()
+    message(WARNING "premation-host-bridge: node_api.h not found (set NODE_API_INCLUDE_DIR) — "
+                    "the macOS engine viewport falls back to the route-A frame copy")
+  endif()
+endif()
+
 # ── tests ───────────────────────────────────────────────────────────────────
 if(MOTION_BUILD_TESTS)
   find_package(Catch2 3 CONFIG REQUIRED)
@@ -168,6 +209,10 @@ if(MOTION_BUILD_TESTS)
       target_compile_options(engine_gpu_tests PRIVATE /bigobj)
     endif()
     add_test(NAME engine_gpu_tests COMMAND engine_gpu_tests --reporter compact)
+    if(APPLE)
+      target_sources(engine_gpu_tests PRIVATE tests/test_shared_texture_mac.cpp)
+      target_link_libraries(engine_gpu_tests PRIVATE "-framework IOSurface" "-framework CoreFoundation")
+    endif()
     if(WIN32 AND DEFINED _dxc_bin)
       add_custom_command(TARGET engine_gpu_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxc_bin}/dxcompiler.dll" "${_dxc_bin}/dxil.dll"

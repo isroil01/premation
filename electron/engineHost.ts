@@ -20,10 +20,13 @@
  *  - Frames: the engine's FrameSlots/FrameReady (frame channel, fd 3) become
  *    `sharedTexture.importSharedTexture` + `sendSharedTexture` into the main
  *    frame; the ring slot is released back to the engine on
- *    `allReferencesReleased`. Main NEVER closes a slot handle — the engine owns
- *    them (it duplicated them into this process and closes them itself when a
- *    ring is retired). Nothing is sent until the page says its receiver is
- *    installed: C4 measured every early send timing out.
+ *    `allReferencesReleased`. The slot handle per OS comes from
+ *    sharedTextureHandles.ts: an NT handle on Windows (main NEVER closes one —
+ *    the engine duplicated it into this process and closes it itself when a
+ *    ring is retired), an IOSurfaceRef looked up from the announced
+ *    IOSurfaceID on macOS (ioSurfaceBridge.ts; main holds it while the ring is
+ *    current). Nothing is sent until the page says its receiver is installed:
+ *    C4 measured every early send timing out.
  *
  * Main stays a relay: it never decodes a document or an event batch.
  */
@@ -35,6 +38,8 @@ import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
 import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { EngineCommandLog } from './engineCommandLog';
+import { hostBridgePath, loadIoSurfaceBridge } from './ioSurfaceBridge';
+import { ntHandleSource, slotHandleSourceFor, type SlotHandleSource, type SlotTextureHandle } from './sharedTextureHandles';
 import { EngineGoneError } from './engineTransport';
 import {
   EngineSupervisor,
@@ -110,7 +115,7 @@ function readText(p: string): string | null {
 /** The part of Electron's `sharedTexture` main uses (injectable for tests). */
 export interface SharedTextureApi {
   importSharedTexture(options: {
-    textureInfo: { pixelFormat: 'rgba'; codedSize: { width: number; height: number }; handle: { ntHandle: Buffer } };
+    textureInfo: { pixelFormat: 'rgba'; codedSize: { width: number; height: number }; handle: SlotTextureHandle };
     allReferencesReleased?: () => void;
   }): { release(): void };
   sendSharedTexture(options: { frame: unknown; importedSharedTexture: { release(): void } }, ...args: unknown[]): Promise<void>;
@@ -136,6 +141,9 @@ export class FrameForwarder {
   private epoch = 0;
   private receiverReady = false;
   private inFlight = false;
+  /** A newer ring arrived while a transfer was in flight: retire the older ones when it ends. */
+  private retirePending = false;
+  private readonly handles: SlotHandleSource;
   readonly stats: FrameForwarderStats = { forwarded: 0, dropped: 0, engineDropped: 0, errors: [] };
 
   constructor(
@@ -144,15 +152,21 @@ export class FrameForwarder {
       /** The page frame to send to (the main window's main frame), or null. */
       target(): unknown;
       release(generation: number, slot: number): void;
+      /** Slot handles for this OS (sharedTextureHandles.ts); default: Windows NT handles. */
+      handles?: SlotHandleSource;
       now?(): number;
     },
-  ) {}
+  ) {
+    this.handles = deps.handles ?? ntHandleSource();
+  }
 
   /** A new engine process: forget every ring of the old one. */
   engineStarted(): void {
     this.epoch += 1;
     this.rings.clear();
+    this.handles.closeAll();
     this.inFlight = false;
+    this.retirePending = false;
   }
 
   setReceiverReady(ready: boolean): void {
@@ -168,6 +182,10 @@ export class FrameForwarder {
       // A new ring retires every older generation of this process.
       this.rings.clear();
       this.rings.set(m.generation, m);
+      if (m.shared) this.handles.open(m);
+      // An import in flight may still be using an older ring's handle.
+      if (this.inFlight) this.retirePending = true;
+      else this.handles.retire(m.generation);
       return;
     }
     if (m.type === 'frameReady') this.onFrameReady(m);
@@ -176,9 +194,9 @@ export class FrameForwarder {
   private onFrameReady(f: FrameReadyMessage): void {
     this.stats.engineDropped += f.dropped;
     const ring = this.rings.get(f.generation);
-    const handle = ring?.handles[f.slot];
     const target = this.deps.target();
     const st = this.deps.sharedTexture;
+    const handle = ring?.shared && !this.inFlight ? this.handles.handle(f.generation, f.slot) : null;
     if (!ring || !ring.shared || !handle || !st || !target || !this.receiverReady || this.inFlight) {
       this.stats.dropped += 1;
       this.deps.release(f.generation, f.slot);
@@ -196,10 +214,8 @@ export class FrameForwarder {
     this.inFlight = true;
     let imported: { release(): void };
     try {
-      const nt = Buffer.alloc(8);
-      nt.writeBigUInt64LE(BigInt(handle));
       imported = st.importSharedTexture({
-        textureInfo: { pixelFormat: 'rgba', codedSize: { width: f.width, height: f.height }, handle: { ntHandle: nt } },
+        textureInfo: { pixelFormat: 'rgba', codedSize: { width: f.width, height: f.height }, handle },
         allReferencesReleased: releaseOnce,
       });
     } catch (e) {
@@ -228,7 +244,14 @@ export class FrameForwarder {
         } catch (e) {
           this.fail(e);
         }
-        if (epoch === this.epoch) this.inFlight = false;
+        if (epoch === this.epoch) {
+          this.inFlight = false;
+          if (this.retirePending) {
+            this.retirePending = false;
+            const current = [...this.rings.keys()][0];
+            this.handles.retire(current ?? -1);
+          }
+        }
       });
   }
 
@@ -262,6 +285,8 @@ export interface EngineHostOptions {
   /** F2: keep the command log here and replay it into a restarted engine (default true). */
   recordLog?: boolean;
   sharedTexture: SharedTextureApi | null;
+  /** The OS (tests); default process.platform. Decides how slot handles are imported. */
+  platform?: NodeJS.Platform;
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
   nativePluginDir?: string;
@@ -329,6 +354,27 @@ export class EngineHost {
 
   constructor(private readonly o: EngineHostOptions) {
     this.commandLog = new EngineCommandLog(o.recordLog ?? true);
+    const log = o.log ?? ((line: string) => console.info(line));
+    const platform = o.platform ?? process.platform;
+    const resolveExe = (): string | null =>
+      resolveEngineExecutable({
+        isPackaged: o.isPackaged,
+        resourcesPath: o.resourcesPath,
+        appPath: o.appPath,
+        platform,
+        vars: process.env,
+        exists: existsSync,
+      });
+    // Route C where this OS can import the engine's slots; otherwise (Linux,
+    // macOS without the host bridge, no sharedTexture module) the engine is
+    // not offered `frames.sharedTexture`.
+    const handles = o.enabled && o.sharedTexture
+      ? slotHandleSourceFor(
+        platform,
+        () => loadIoSurfaceBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
+        (m) => log(`[engine] warn shared_texture ${m}`),
+      )
+      : null;
     this.frames = new FrameForwarder({
       sharedTexture: o.sharedTexture,
       target: () => {
@@ -336,28 +382,21 @@ export class EngineHost {
         return w && !w.isDestroyed() ? w.webContents.mainFrame : null;
       },
       release: (g, s) => this.supervisor?.releaseSlot(g, s),
+      ...(handles ? { handles } : {}),
     });
     if (!o.enabled) {
       this.supervisor = null;
       return;
     }
-    const log = o.log ?? ((line: string) => console.info(line));
+    const capabilities = handles ? ['frames.sharedTexture'] : [];
     this.supervisor = new EngineSupervisor(
       {
         spawn: (exe, args) =>
           spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true }) as unknown as EngineChild,
-        resolveExe: () =>
-          resolveEngineExecutable({
-            isPackaged: o.isPackaged,
-            resourcesPath: o.resourcesPath,
-            appPath: o.appPath,
-            platform: process.platform,
-            vars: process.env,
-            exists: existsSync,
-          }),
+        resolveExe,
         gpuVendor: () => chromiumGpuVendor(o.getGPUInfo),
         hostPid: o.hostPid,
-        hello: { client: 'premation-ui', clientVersion: o.appVersion, capabilities: ['frames.sharedTexture'] },
+        hello: { client: 'premation-ui', clientVersion: o.appVersion, capabilities },
         log: (level, event, data) => log(`[engine] ${level} ${event}${data ? ` ${JSON.stringify(data)}` : ''}`),
       },
       {
