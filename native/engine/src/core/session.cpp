@@ -539,6 +539,7 @@ void Session::load_new_project(api::ResetReason reason, bool emit) {
   rec.set("startFrame", doc::Json::number(0));
   view_ = doc::EditorView{};
   projectPath_.clear();
+  bundleRoot_.clear();
   after_load(reason, emit);
 }
 
@@ -712,6 +713,7 @@ struct ControlVisitor {
     doc::Json file = s.ports_->read_project(c.path);
     s.load_document(file, api::ResetReason::opened);
     s.projectPath_ = c.path;
+    s.bundleRoot_ = s.ports_->is_bundle(c.path) ? c.path : std::string();
     s.emit_status();
     api::OpenProjectResult r;
     r.missing_items = s.lastMissing_;
@@ -730,9 +732,15 @@ struct ControlVisitor {
     if (!s.ports_->has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
     const std::string path = c.path ? *c.path : s.projectPath_;
     if (path.empty()) fail(ErrorCode::invalid_argument, "the project has no path yet; pass one");
-    const std::uint64_t bytes = s.ports_->write_project(path, s.capture_document());
+    const api::ProjectFormat format = c.format.value_or(api::ProjectFormat::auto_);
+    if (format == api::ProjectFormat::portable && !c.copy) {
+      fail(ErrorCode::invalid_argument, "a portable .motion is a copy (copy:true): the project stays bound to its own file");
+    }
+    const std::uint64_t bytes = s.ports_->write_project_as(path, s.capture_document(), format, s.bundleRoot_);
     if (!c.copy) {
       s.projectPath_ = path;
+      // A bundle now holds every blob the document names (collected in); a JSON file holds none.
+      if (s.ports_->is_bundle(path)) s.bundleRoot_ = path;
       s.savedRevision_ = s.revision_;
       std::vector<api::Event> ev;
       ev.push_back(make_event(api::ProjectSavedEvent{path, s.revision_}));

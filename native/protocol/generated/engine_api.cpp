@@ -457,6 +457,24 @@ bool from_u32(std::uint32_t n, ExpressionEngine& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(ProjectFormat v) noexcept {
+  switch (v) {
+    case ProjectFormat::auto_: return "auto";
+    case ProjectFormat::json: return "json";
+    case ProjectFormat::bundle: return "bundle";
+    case ProjectFormat::portable: return "portable";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, ProjectFormat& out) noexcept {
+  switch (n) {
+    case 0: out = ProjectFormat::auto_; return true;
+    case 1: out = ProjectFormat::json; return true;
+    case 2: out = ProjectFormat::bundle; return true;
+    case 3: out = ProjectFormat::portable; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(ItemKind v) noexcept {
   switch (v) {
     case ItemKind::folder: return "folder";
@@ -3234,6 +3252,7 @@ Status decode(wire::Reader& r, OpenProject& out) {
 void encode(wire::Writer& w, const SaveProject& v) {
   if (v.path.has_value()) { w.varint(10U); w.str(*v.path); }
   w.varint(16U); w.boolean(v.copy);
+  if (v.format.has_value()) { w.varint(24U); w.varint(static_cast<std::uint32_t>(*v.format)); }
 }
 
 Status decode(wire::Reader& r, SaveProject& out) {
@@ -3251,6 +3270,12 @@ Status decode(wire::Reader& r, SaveProject& out) {
       case 16U: {
         if (!r.boolean(out.copy)) return Status::truncated;
         has_copy = true;
+        break;
+      }
+      case 24U: {
+        ProjectFormat e = ProjectFormat::auto_;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.format = std::move(e);
         break;
       }
       default:

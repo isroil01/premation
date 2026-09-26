@@ -72,6 +72,10 @@ const ExpressionEngine_TO_NUM: Record<string, number> = { 'premation': 0, 'javas
 const ExpressionEngine_FROM_NUM: readonly (T.ExpressionEngine | undefined)[] = ['premation', 'javascript'];
 function enc_ExpressionEngine(v: T.ExpressionEngine): number { const n = ExpressionEngine_TO_NUM[v]; if (n === undefined) throw new RangeError('ExpressionEngine: invalid value ' + String(v)); return n; }
 function dec_ExpressionEngine(n: number): T.ExpressionEngine { const v = ExpressionEngine_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ExpressionEngine: unknown value ' + n, 'badEnum'); return v; }
+const ProjectFormat_TO_NUM: Record<string, number> = { 'auto': 0, 'json': 1, 'bundle': 2, 'portable': 3 };
+const ProjectFormat_FROM_NUM: readonly (T.ProjectFormat | undefined)[] = ['auto', 'json', 'bundle', 'portable'];
+function enc_ProjectFormat(v: T.ProjectFormat): number { const n = ProjectFormat_TO_NUM[v]; if (n === undefined) throw new RangeError('ProjectFormat: invalid value ' + String(v)); return n; }
+function dec_ProjectFormat(n: number): T.ProjectFormat { const v = ProjectFormat_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ProjectFormat: unknown value ' + n, 'badEnum'); return v; }
 const ItemKind_TO_NUM: Record<string, number> = { 'folder': 0, 'composition': 1, 'footage': 2, 'solid': 3, 'placeholder': 4 };
 const ItemKind_FROM_NUM: readonly (T.ItemKind | undefined)[] = ['folder', 'composition', 'footage', 'solid', 'placeholder'];
 function enc_ItemKind(v: T.ItemKind): number { const n = ItemKind_TO_NUM[v]; if (n === undefined) throw new RangeError('ItemKind: invalid value ' + String(v)); return n; }
@@ -1796,16 +1800,19 @@ function decS_OpenProject(r: Reader, end: number, o: any): T.OpenProject {
 function encS_SaveProject(w: Writer, v: T.SaveProject): void {
   if (v.path !== undefined) { w.byte(10); w.str(v.path); }
   w.byte(16); w.bool(v.copy);
+  if (v.format !== undefined) { w.byte(24); w.varint(enc_ProjectFormat(v.format)); }
 }
 function decS_SaveProject(r: Reader, end: number, o: any): T.SaveProject {
   let h_copy = false;
   let v_path: string | undefined;
   let v_copy: boolean | undefined;
+  let v_format: T.ProjectFormat | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_path = r.str(); break;
       case 16: v_copy = r.bool(); h_copy = true; break;
+      case 24: v_format = dec_ProjectFormat(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -1813,6 +1820,7 @@ function decS_SaveProject(r: Reader, end: number, o: any): T.SaveProject {
   if (!h_copy) throw new DecodeError('SaveProject.copy: missing', 'missingField');
   if (v_path !== undefined) o.path = v_path;
   o.copy = v_copy;
+  if (v_format !== undefined) o.format = v_format;
   return o;
 }
 function encS_ImportProject(w: Writer, v: T.ImportProject): void {

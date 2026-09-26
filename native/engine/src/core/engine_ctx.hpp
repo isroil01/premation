@@ -100,6 +100,13 @@ class Ports {
   [[nodiscard]] virtual Json read_project(const std::string& path);
   /// Returns the byte count written; throws EngineFail(io).
   virtual std::uint64_t write_project(const std::string& path, const Json& doc);
+  /// F2: saveProject with its `format` and the bundle the document's
+  /// `motion-blob:` footage lives in (empty = none). The default ignores both
+  /// (`write_project`); FilePorts writes the form asked for (bundle_io.hpp).
+  virtual std::uint64_t write_project_as(const std::string& path, const Json& doc, api::ProjectFormat format,
+                                         const std::string& sourceBundle);
+  /// F2: does `path` name a `.motion` bundle (so the document's footage lives there)?
+  [[nodiscard]] virtual bool is_bundle(const std::string& path) const;
   [[nodiscard]] virtual bool has_collect() const { return false; }
 };
 
@@ -126,12 +133,17 @@ class FakePorts final : public Ports {
   std::string dir_;
 };
 
-/// Project files on disk: JSON EditorDocuments, written temp-file + rename.
+/// Project files on disk, written temp-file + rename: JSON EditorDocuments,
+/// `.motion` directory bundles and portable zips (bundle_io.hpp). A directory
+/// is read as a bundle.
 class FilePorts final : public Ports {
  public:
   [[nodiscard]] bool has_projects() const override { return true; }
   [[nodiscard]] Json read_project(const std::string& path) override;
   std::uint64_t write_project(const std::string& path, const Json& doc) override;
+  std::uint64_t write_project_as(const std::string& path, const Json& doc, api::ProjectFormat format,
+                                 const std::string& sourceBundle) override;
+  [[nodiscard]] bool is_bundle(const std::string& path) const override;
 };
 
 /// handler.ts `HandlerCtx`.

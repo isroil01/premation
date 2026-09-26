@@ -26,7 +26,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   restoreDocument: { id: 20, kind: 'edit', coalesce: false, family: "History", result: "Empty", doc: "B3z — replace the whole document with `document` (a .motion project's JSON, UTF-8 — a saved or cloud VERSION) as ONE undoable entry; history is kept, so undo brings the document back exactly. Items follow the version's item list (footage the session holds that the version does not list leaves the project; undo restores it). The version's guides, swatches and materials are part of the entry; its plugin storage is applied too but — like every authored extra no command edits — is not. A document this engine cannot read (malformed JSON, a newer format) is `decode` / `unsupported` and changes nothing. `label` names the entry (default \"Restore Version\")." },
   newProject: { id: 10, kind: 'io', coalesce: false, family: "Project", result: "Empty", doc: "Replace the document with an empty project. Clears history." },
   openProject: { id: 11, kind: 'io', coalesce: false, family: "Project", result: "OpenProjectResult", doc: "Open a .motion project (or a recovery file). Clears history; the UI receives documentReset." },
-  saveProject: { id: 12, kind: 'io', coalesce: false, family: "Project", result: "SaveProjectResult", doc: "Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged." },
+  saveProject: { id: 12, kind: 'io', coalesce: false, family: "Project", result: "SaveProjectResult", doc: "Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged. `format` absent = `auto`. `portable` without copy is `invalidArgument`; `bundle` over an existing plain file, or `json` over a directory, is `io` and writes nothing." },
   importProject: { id: 13, kind: 'edit', coalesce: false, family: "Project", result: "ItemList", doc: "Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder. Undoable." },
   setProjectSettings: { id: 14, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "" },
   revertProject: { id: 15, kind: 'io', coalesce: false, family: "Project", result: "Empty", doc: "Revert to the last saved state. Clears history." },
@@ -238,4 +238,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":74,"structs":400,"unions":11,"commands":148,"queries":35,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":75,"structs":400,"unions":11,"commands":148,"queries":35,"events":31} as const;

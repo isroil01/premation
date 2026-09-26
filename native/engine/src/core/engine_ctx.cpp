@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "bundle_io.hpp"
 #include "fail.hpp"
 #include "fxstate.hpp"
 #include "scene.hpp"
@@ -197,6 +198,11 @@ Json Ports::read_project(const std::string& /*path*/) {
 std::uint64_t Ports::write_project(const std::string& /*path*/, const Json& /*doc*/) {
   fail(api::ErrorCode::unsupported, "no project file port is attached to this engine");
 }
+std::uint64_t Ports::write_project_as(const std::string& path, const Json& doc, api::ProjectFormat /*format*/,
+                                      const std::string& /*sourceBundle*/) {
+  return write_project(path, doc);
+}
+bool Ports::is_bundle(const std::string& /*path*/) const { return false; }
 
 namespace {
 std::string base_name(std::string_view path) {
@@ -303,7 +309,11 @@ std::uint64_t FakePorts::write_project(const std::string& path, const Json& doc)
 }
 
 Json FilePorts::read_project(const std::string& path) {
-  std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary);
+  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  std::error_code dirEc;
+  // F2: a `.motion` bundle is a directory (bundleCodec.ts `decodeBundle`).
+  if (std::filesystem::is_directory(p, dirEc)) return read_bundle(p);
+  std::ifstream in(p, std::ios::binary);
   if (!in) fail(api::ErrorCode::io, "could not read '" + path + "'");
   std::ostringstream ss;
   ss << in.rdbuf();
@@ -331,6 +341,31 @@ std::uint64_t FilePorts::write_project(const std::string& path, const Json& doc)
     fail(api::ErrorCode::io, "could not write '" + path + "'");
   }
   return text.size();
+}
+
+bool FilePorts::is_bundle(const std::string& path) const {
+  return is_bundle_dir(std::filesystem::path(std::u8string(path.begin(), path.end())));
+}
+
+std::uint64_t FilePorts::write_project_as(const std::string& path, const Json& doc, api::ProjectFormat format,
+                                          const std::string& sourceBundle) {
+  const std::filesystem::path target(std::u8string(path.begin(), path.end()));
+  const std::filesystem::path source(std::u8string(sourceBundle.begin(), sourceBundle.end()));
+  std::error_code ec;
+  const bool isDir = std::filesystem::is_directory(target, ec);
+  switch (format) {
+    case api::ProjectFormat::auto_:
+      // Keep the target's form: a bundle stays a bundle; everything else is one JSON file.
+      return isDir ? write_bundle(target, doc, source) : write_project(path, doc);
+    case api::ProjectFormat::json:
+      if (isDir) fail(api::ErrorCode::io, "could not write '" + path + "': a folder is there, not a project file");
+      return write_project(path, doc);
+    case api::ProjectFormat::bundle:
+      return write_bundle(target, doc, source);
+    case api::ProjectFormat::portable:
+      return write_portable(target, doc, source);
+  }
+  return write_project(path, doc);
 }
 
 // ── handler context ──────────────────────────────────────────────────────

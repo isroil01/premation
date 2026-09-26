@@ -198,6 +198,14 @@ export type ExpressionEngine =
   | 'javascript';
 export const ExpressionEngineValues = ['premation', 'javascript'] as const;
 
+/** F2 — the form saveProject writes. `auto` keeps the target's form: an existing `.motion` bundle directory is rewritten as a bundle, anything else is one JSON document (what saveProject did before `format` existed). `json`: one JSON document. `bundle`: a `.motion` directory bundle (bundleCodec.ts chunks, each temp + rename, manifest last; footage the document references as `motion-blob:<hash>` that the target lacks is copied in from the bundle the document was opened from or last saved to, with its asset-registry rows). `portable`: one STORE zip of the same chunks with that footage embedded under `assets/` (portableMotion.ts, Save Portable Copy); `copy` only. */
+export type ProjectFormat =
+  | 'auto'
+  | 'json'
+  | 'bundle'
+  | 'portable';
+export const ProjectFormatValues = ['auto', 'json', 'bundle', 'portable'] as const;
+
 export type ItemKind =
   | 'folder'
   | 'composition'
@@ -1079,10 +1087,11 @@ export interface OpenProject {
   path: string;
 }
 
-/** Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged. */
+/** Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged. `format` absent = `auto`. `portable` without copy is `invalidArgument`; `bundle` over an existing plain file, or `json` over a directory, is `io` and writes nothing. */
 export interface SaveProject {
   path?: string;
   copy: boolean;
+  format?: ProjectFormat;
 }
 
 /** Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder. Undoable. */
