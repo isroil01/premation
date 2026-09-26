@@ -396,15 +396,24 @@ std::optional<RestMesh> build_silhouette_mesh(double width, double height, doubl
   return finish_rest_mesh(std::move(vertices), std::move(triangles), numVertices, rig.pins);
 }
 
-/// buildRestMesh (no alpha coverage mask: image layers are reported by the caller).
-/// `gridCells` is the clamped integer grid density; nullopt (a fractional density)
-/// returns nullopt when the grid is needed — the TS indexes a typed array at
-/// fractional offsets there, which this port does not imitate.
+/// buildRestMesh. `gridCells` is the clamped integer grid density; nullopt (a
+/// fractional density) returns nullopt when the grid is needed — the TS indexes
+/// a typed array at fractional offsets there, which this port does not imitate.
+/// `density` is `rig.meshDensity ?? 22` as stored (the alpha outline mesher
+/// rounds it itself); `coverage` an image layer's alpha mask (alpha_mesh.cpp).
 std::optional<RestMesh> build_rest_mesh(double width, double height, double pad, const MeshRig& rig,
                                         const std::optional<std::vector<V2>>& silhouette, std::optional<int> gridCells,
-                                        double expansion) {
-  if (rig.silhouette && silhouette && silhouette->size() >= 3) {
-    if (auto built = build_silhouette_mesh(width, height, pad, rig, *silhouette)) return built;
+                                        double expansion, double density, const rig::CoverageMask* coverage) {
+  const bool haveCoverage = coverage != nullptr && coverage->cols > 0 && coverage->rows > 0 && !coverage->cells.empty();
+  if (rig.silhouette) {
+    if (silhouette && silhouette->size() >= 3) {
+      if (auto built = build_silhouette_mesh(width, height, pad, rig, *silhouette)) return built;
+    } else if (haveCoverage) {
+      // An image layer: its alpha traced, simplified, expanded and Delaunay-filled.
+      if (auto geom = rig::build_alpha_outline_geometry(width, height, pad, density, expansion, *coverage)) {
+        return finish_rest_mesh(std::move(geom->vertices), std::move(geom->triangles), geom->numVertices, rig.pins);
+      }
+    }
   }
   if (!gridCells) return std::nullopt;
   const int cols = *gridCells;
@@ -439,12 +448,28 @@ std::optional<RestMesh> build_rest_mesh(double width, double height, double pad,
 
   const std::size_t cellCount = ucols * urows;
   std::optional<std::vector<std::uint8_t>> keepCell;
-  if (silhouette && silhouette->size() >= 3) {
-    const std::vector<V2>& poly = *silhouette;
-    const auto covered = [&poly](double x, double y) { return point_in_polygon(x, y, poly); };
+  const bool polyCover = silhouette && silhouette->size() >= 3;
+  if (polyCover || haveCoverage) {
+    // One coverage predicate — polygon silhouette OR image-alpha mask.
+    const std::function<bool(double, double)> covered = polyCover
+        ? std::function<bool(double, double)>([&poly = *silhouette](double x, double y) { return point_in_polygon(x, y, poly); })
+        : std::function<bool(double, double)>(
+              [coverage, width, height](double x, double y) { return rig::coverage_covered(*coverage, x, y, width, height); });
     std::vector<std::uint8_t> inside(gridVerts);
     for (std::size_t i = 0; i < gridVerts; ++i) inside[i] = covered(gridPos[i * 4 + 0], gridPos[i * 4 + 1]) ? 1 : 0;
-    // Polygon silhouettes keep the single centre probe (subX = subY = 1).
+    // Interior probe lattice per cell: for an alpha mask no coarser than a mask
+    // cell (a one-cell limb must not slip between probes); polygons keep the
+    // single centre probe.
+    int subX = 1;
+    int subY = 1;
+    if (!polyCover) {
+      const double cellW = (Xmax - Xmin) / cols;
+      const double cellH = (Ymax - Ymin) / rows;
+      const double maskW = width / coverage->cols;
+      const double maskH = height / coverage->rows;
+      subX = static_cast<int>(std::max(1.0, std::min(8.0, std::ceil(cellW / std::max(1e-6, maskW)))));
+      subY = static_cast<int>(std::max(1.0, std::min(8.0, std::ceil(cellH / std::max(1e-6, maskH)))));
+    }
     std::vector<std::uint8_t> kept(cellCount, 0);
     bool anyKept = false;
     for (std::size_t r = 0; r < urows; ++r) {
@@ -459,9 +484,16 @@ std::optional<RestMesh> build_rest_mesh(double width, double height, double pad,
           const double y0 = gridPos[i0 * 4 + 1];
           const double cw = static_cast<double>(gridPos[i3 * 4 + 0]) - x0;
           const double ch = static_cast<double>(gridPos[i3 * 4 + 1]) - y0;
-          const double py = y0 + ((0 + 0.5) / 1) * ch;
-          const double px = x0 + ((0 + 0.5) / 1) * cw;
-          if (covered(px, py)) keep = true;
+          for (int sj = 0; sj < subY && !keep; ++sj) {
+            const double py = y0 + ((sj + 0.5) / subY) * ch;
+            for (int si = 0; si < subX; ++si) {
+              const double px = x0 + ((si + 0.5) / subX) * cw;
+              if (covered(px, py)) {
+                keep = true;
+                break;
+              }
+            }
+          }
         }
         if (keep) {
           kept[r * ucols + c] = 1;
@@ -1957,17 +1989,14 @@ bool rig_present(const Json& fx) {
          (s.is_object() && s.at("bones").is_array() && !s.at("bones").arr().empty());
 }
 
-RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
-  RigResult res;
+namespace {
+
+/// build_rig_mesh's rest-mesh half: the shared MeshRig (puppet settings win; a
+/// skeleton-only layer reads its own), then buildRestMesh.
+std::optional<RestMesh> resolve_rest_mesh(const RigInputs& in, bool hasPuppet, MeshRig& rig, RigResult& res) {
   const Json& fx = *in.fx;
   const Json& puppet = fx.at("puppet");
   const Json& skel = fx.at("skeleton");
-  const bool hasPuppet = puppet.is_object() && puppet.at("pins").is_array() && !puppet.at("pins").arr().empty();
-  const bool hasSkel = skel.is_object() && skel.at("bones").is_array() && !skel.at("bones").arr().empty();
-  if (!hasPuppet && !hasSkel) return res;
-
-  // The shared rest mesh: puppet settings win; a skeleton-only layer reads its own.
-  MeshRig rig;
   const Json& meshSrc = hasPuppet ? puppet : skel;
   if (hasPuppet) {
     for (const Json& p : puppet.at("pins").arr()) rig.pins.push_back(read_pin(p));
@@ -1984,7 +2013,7 @@ RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
   double expansion = 0;
   if (rig.expansion.is_number()) expansion = rig.expansion.num();
   else if (!rig.expansion.is_undefined() && !rig.expansion.is_null()) res.unported.emplace_back("non-numeric rig mesh expansion");
-  if (!res.unported.empty()) return res;
+  if (!res.unported.empty()) return std::nullopt;
   const double gridD = jmax(2, jmin(50, density));
   const std::optional<int> cells = std::floor(gridD) == gridD ? std::optional<int>(static_cast<int>(gridD)) : std::nullopt;
 
@@ -1996,11 +2025,36 @@ RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
     silhouette = std::move(pts);
   }
 
-  std::optional<RestMesh> built = build_rest_mesh(in.width, in.height, in.pad, rig, silhouette, cells, expansion);
-  if (!built) {
-    res.unported.emplace_back("fractional rig mesh density (grid mesh)");
-    return res;
-  }
+  std::optional<RestMesh> built = build_rest_mesh(in.width, in.height, in.pad, rig, silhouette, cells, expansion, density, in.coverage);
+  if (!built) res.unported.emplace_back("fractional rig mesh density (grid mesh)");
+  return built;
+}
+
+}  // namespace
+
+std::optional<RestMeshView> rest_mesh_for(const RigInputs& in) {
+  const Json& fx = *in.fx;
+  const Json& puppet = fx.at("puppet");
+  const bool hasPuppet = puppet.is_object() && puppet.at("pins").is_array() && !puppet.at("pins").arr().empty();
+  MeshRig rig;
+  RigResult res;
+  const std::optional<RestMesh> built = resolve_rest_mesh(in, hasPuppet, rig, res);
+  if (!built) return std::nullopt;
+  return RestMeshView{built->v, built->tris};
+}
+
+RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
+  RigResult res;
+  const Json& fx = *in.fx;
+  const Json& puppet = fx.at("puppet");
+  const Json& skel = fx.at("skeleton");
+  const bool hasPuppet = puppet.is_object() && puppet.at("pins").is_array() && !puppet.at("pins").arr().empty();
+  const bool hasSkel = skel.is_object() && skel.at("bones").is_array() && !skel.at("bones").arr().empty();
+  if (!hasPuppet && !hasSkel) return res;
+
+  MeshRig rig;
+  std::optional<RestMesh> built = resolve_rest_mesh(in, hasPuppet, rig, res);
+  if (!built) return res;
   const RestMesh& rest = *built;
   std::vector<float> deformed = rest.v;
   std::optional<std::vector<float>> overlapDepth;

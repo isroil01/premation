@@ -20,12 +20,14 @@
 // bytes (CLAUDE.md determinism).
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "alpha_mesh.hpp"
 #include "scene_types.hpp"
 
 namespace premation::scene {
@@ -44,6 +46,8 @@ struct RigInputs {
   const Json* pathPoints = nullptr;  ///< BezierPoint[] | undefined
   bool pathOpen = false;
   double rigT = 0;                   ///< layer.sourceTime ?? t
+  /// An image layer's alpha coverage (rigCoverageMask; null = the bbox grid).
+  const rig::CoverageMask* coverage = nullptr;
 };
 
 struct RigResult {
@@ -54,6 +58,15 @@ struct RigResult {
 
 /// `hasPuppet || hasSkel` (pins / bones non-empty).
 [[nodiscard]] bool rig_present(const Json& fx);
+
+/// buildRestMesh's output for these inputs (x, y, u, v + triangles) — the cross-
+/// engine tests of the image-alpha coverage paths; nullopt when build_rig_mesh
+/// would report the layer.
+struct RestMeshView {
+  std::vector<float> vertices;
+  std::vector<std::uint16_t> triangles;
+};
+[[nodiscard]] std::optional<RestMeshView> rest_mesh_for(const RigInputs& in);
 
 /// The rig block: rest mesh → puppet deform → skeleton skinning → overlap order.
 [[nodiscard]] RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim);

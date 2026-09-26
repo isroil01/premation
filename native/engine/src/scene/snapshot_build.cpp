@@ -15,6 +15,7 @@
 #include "effects_port.hpp"
 #include "frame_build.hpp"
 #include "rig_bridge.hpp"
+#include "rig_coverage.hpp"
 #include "fxstate.hpp"
 #include "layer_styles.hpp"
 #include "merge_paths.hpp"
@@ -1624,10 +1625,14 @@ void Walk::build_node(const doc::Node& n) {
   // Rigs: puppet pins and skeletons → layer.deformedMesh (rig_mesh.cpp).
   if (rig_present(fx)) {
     const bool pathSilhouette = !l.pathOpen && l.pathPoints.is_array() && l.pathPoints.arr().size() >= 3;
-    if (layerKind == LayerKind::image && l.src && !pathSilhouette) {
-      // buildSnapshot culls an image's rest mesh by the bitmap's alpha
-      // (rigCoverageMask); that needs the decoded pixels on this side.
-      unported(l, n, "rigs on image layers (alpha coverage mesh)");
+    // rigCoverageMask: an image's rest mesh is culled by / traced from the
+    // bitmap's alpha (rig_coverage.cpp; key = assetId ?? src).
+    CoverageLookup coverage;
+    if (layerKind == LayerKind::image && l.src && !l.src->empty() && !pathSilhouette) {
+      coverage = image_coverage_mask(l.assetId.value_or(*l.src), *l.src);
+    }
+    if (!coverage.unreachable.empty()) {
+      unported(l, n, "rigs on image layers (" + coverage.unreachable + ")");
     } else {
       RigInputs ri;
       ri.fx = &fx;
@@ -1637,6 +1642,7 @@ void Walk::build_node(const doc::Node& n) {
       ri.pathPoints = l.pathPoints.is_array() ? &l.pathPoints : nullptr;
       ri.pathOpen = l.pathOpen;
       ri.rigT = l.sourceTime.value_or(t_);
+      ri.coverage = coverage.mask.get();
       RigResult rig = build_rig_mesh_for(d_, c_.expr, c_.cache, sid(n.id), ri);
       for (std::string& what : rig.unported) unported(l, n, std::move(what));
       if (rig.unported.empty()) l.deformedMesh = std::move(rig.mesh);
