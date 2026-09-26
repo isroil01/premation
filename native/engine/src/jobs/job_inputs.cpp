@@ -8,6 +8,8 @@
 #include "model.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
+#include "time_conv.hpp"
+#include "timeline.hpp"
 
 namespace premation::jobs {
 
@@ -58,9 +60,7 @@ double num_prop(const doc::Json& o, std::string_view key, double fallback) {
 
 }  // namespace
 
-api::Time flicks_of(double seconds) noexcept {
-  return static_cast<api::Time>(std::llround(seconds * kFlicksPerSecond));
-}
+api::Time flicks_of(double seconds) noexcept { return doc::seconds_to_flicks(seconds); }
 
 std::string resolve_footage_path(std::string_view src, std::string_view bundleRoot) {
   if (src.empty() || src.starts_with("blob:") || src.starts_with("data:") || src.starts_with("http:") ||
@@ -147,6 +147,11 @@ FootageLayer footage_layer(const JobDocContext& ctx, std::string_view id, Need n
   if (f.timing.time_remap_enabled || f.timing.retime != api::RetimeMode::normal) {
     fail(ErrorCode::invalid_argument, "layer '" + f.layer + "' is retimed; analyse its footage on an un-retimed layer", {.layer = f.layer});
   }
+  // mirror/audio.ts hasOwnBar: a layer inside a plain group is timed by the group, not a bar of its own.
+  {
+    const doc::Node* parent = n->parent ? d.node(*n->parent) : nullptr;
+    f.hasBar = parent == nullptr || parent->id == f.comp || doc::layer_kind_of(*parent) != api::LayerKind::group;
+  }
   f.compFps = doc::comp_fps(d, f.comp);
   if (const doc::Json* c = d.comp(f.comp); c != nullptr) {
     f.compWidth = static_cast<std::uint32_t>(std::max(1.0, num_prop(*c, "width", 1920)));
@@ -163,6 +168,21 @@ double FootageLayer::comp_seconds(double sourceSec) const noexcept {
 double FootageLayer::source_seconds(double compSec) const noexcept {
   const double stretch = timing.stretch != 0 ? timing.stretch : 1.0;
   return (compSec - seconds_of(timing.start_time)) / stretch;
+}
+
+std::vector<FootageLayer::ClipTiming> FootageLayer::clip_timings() const {
+  if (!hasBar) return {};
+  const double inSec = seconds_of(timing.in_point - timing.start_time);
+  return {ClipTiming{seconds_of(timing.in_point), inSec, inSec + seconds_of(timing.out_point - timing.in_point)}};
+}
+
+std::optional<double> FootageLayer::comp_seconds_through_bar(double sourceSec) const {
+  const std::vector<ClipTiming> bars = clip_timings();
+  if (bars.empty()) return sourceSec;
+  for (const ClipTiming& t : bars) {
+    if (sourceSec >= t.inSec && sourceSec < t.outSec) return t.startSec + (sourceSec - t.inSec);
+  }
+  return std::nullopt;
 }
 
 double FootageLayer::in_seconds() const noexcept { return seconds_of(timing.in_point); }

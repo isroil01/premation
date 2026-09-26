@@ -7130,6 +7130,11 @@ function encS_TrackMotionJob(w: Writer, v: T.TrackMotionJob): void {
   w.byte(34); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
   w.byte(40); w.varint(enc_TrackDirection(v.direction));
   if (v.applyTo !== undefined) { w.byte(50); { const s = w.beginLd(); encS_PropRef(w, v.applyTo); w.endLd(s); } }
+  if (v.origin !== undefined) { w.varint(5648); w.i64(v.origin); }
+  if (v.minConfidence !== undefined) { w.varint(5657); w.f64(v.minConfidence); }
+  if (v.maxCoastFrames !== undefined) { w.varint(5664); w.u32(v.maxCoastFrames); }
+  if (v.analysisMaxEdge !== undefined) { w.varint(5672); w.u32(v.analysisMaxEdge); }
+  w.varint(5680); w.bool(v.stabilize);
 }
 function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   const l_points: T.TrackPointSpec[] = [];
@@ -7137,11 +7142,17 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   let h_kind = false;
   let h_range = false;
   let h_direction = false;
+  let h_stabilize = false;
   let v_layer: string | undefined;
   let v_kind: T.TrackKind | undefined;
   let v_range: T.TimeRange | undefined;
   let v_direction: T.TrackDirection | undefined;
   let v_applyTo: T.PropRef | undefined;
+  let v_origin: number | undefined;
+  let v_minConfidence: number | undefined;
+  let v_maxCoastFrames: number | undefined;
+  let v_analysisMaxEdge: number | undefined;
+  let v_stabilize: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7151,6 +7162,11 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
       case 34: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
       case 40: v_direction = dec_TrackDirection(r.varint()); h_direction = true; break;
       case 50: v_applyTo = decS_PropRef(r, r.ldEnd(), {}); break;
+      case 5648: v_origin = r.i64(); break;
+      case 5657: v_minConfidence = r.f64(); break;
+      case 5664: v_maxCoastFrames = r.u32(); break;
+      case 5672: v_analysisMaxEdge = r.u32(); break;
+      case 5680: v_stabilize = r.bool(); h_stabilize = true; break;
       default: r.skip(key);
     }
   }
@@ -7159,12 +7175,18 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   if (!h_kind) throw new DecodeError('TrackMotionJob.kind: missing', 'missingField');
   if (!h_range) throw new DecodeError('TrackMotionJob.range: missing', 'missingField');
   if (!h_direction) throw new DecodeError('TrackMotionJob.direction: missing', 'missingField');
+  if (!h_stabilize) throw new DecodeError('TrackMotionJob.stabilize: missing', 'missingField');
   o.layer = v_layer;
   o.kind = v_kind;
   o.points = l_points;
   o.range = v_range;
   o.direction = v_direction;
   if (v_applyTo !== undefined) o.applyTo = v_applyTo;
+  if (v_origin !== undefined) o.origin = v_origin;
+  if (v_minConfidence !== undefined) o.minConfidence = v_minConfidence;
+  if (v_maxCoastFrames !== undefined) o.maxCoastFrames = v_maxCoastFrames;
+  if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
+  o.stabilize = v_stabilize;
   return o;
 }
 function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {
@@ -7172,6 +7194,7 @@ function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {
   w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
   w.byte(25); w.f64(v.smoothness);
   w.byte(34); w.str(v.method);
+  if (v.analysisMaxEdge !== undefined) { w.varint(5632); w.u32(v.analysisMaxEdge); }
 }
 function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   let h_layer = false;
@@ -7182,6 +7205,7 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   let v_range: T.TimeRange | undefined;
   let v_smoothness: number | undefined;
   let v_method: string | undefined;
+  let v_analysisMaxEdge: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7189,6 +7213,7 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
       case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
       case 25: v_smoothness = r.f64(); h_smoothness = true; break;
       case 34: v_method = r.str(); h_method = true; break;
+      case 5632: v_analysisMaxEdge = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -7201,6 +7226,7 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   o.range = v_range;
   o.smoothness = v_smoothness;
   o.method = v_method;
+  if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
   return o;
 }
 function encS_AutoTraceJob(w: Writer, v: T.AutoTraceJob): void {
@@ -7269,6 +7295,8 @@ function encS_SceneDetectJob(w: Writer, v: T.SceneDetectJob): void {
   w.byte(24); w.bool(v.splitLayers);
   if (v.threshold !== undefined) { w.varint(5625); w.f64(v.threshold); }
   if (v.minShotSeconds !== undefined) { w.varint(5633); w.f64(v.minShotSeconds); }
+  if (v.sensitivity !== undefined) { w.varint(5641); w.f64(v.sensitivity); }
+  if (v.dissolves !== undefined) { w.varint(5648); w.bool(v.dissolves); }
 }
 function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
   let h_layer = false;
@@ -7279,6 +7307,8 @@ function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
   let v_splitLayers: boolean | undefined;
   let v_threshold: number | undefined;
   let v_minShotSeconds: number | undefined;
+  let v_sensitivity: number | undefined;
+  let v_dissolves: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7287,6 +7317,8 @@ function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
       case 24: v_splitLayers = r.bool(); h_splitLayers = true; break;
       case 5625: v_threshold = r.f64(); break;
       case 5633: v_minShotSeconds = r.f64(); break;
+      case 5641: v_sensitivity = r.f64(); break;
+      case 5648: v_dissolves = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -7299,6 +7331,8 @@ function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
   o.splitLayers = v_splitLayers;
   if (v_threshold !== undefined) o.threshold = v_threshold;
   if (v_minShotSeconds !== undefined) o.minShotSeconds = v_minShotSeconds;
+  if (v_sensitivity !== undefined) o.sensitivity = v_sensitivity;
+  if (v_dissolves !== undefined) o.dissolves = v_dissolves;
   return o;
 }
 function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
@@ -7308,6 +7342,7 @@ function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
   { const a = v.backgroundPrompts; for (let i = 0; i < a.length; i++) { w.varint(5626); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
   w.varint(5634); w.str(v.encoderModel);
   w.varint(5642); w.str(v.decoderModel);
+  if (v.box !== undefined) { w.varint(5650); { const s = w.beginLd(); encS_Rect(w, v.box); w.endLd(s); } }
 }
 function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   const l_prompts: T.Vec2[] = [];
@@ -7320,6 +7355,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   let v_range: T.TimeRange | undefined;
   let v_encoderModel: string | undefined;
   let v_decoderModel: string | undefined;
+  let v_box: T.Rect | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7329,6 +7365,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
       case 5626: l_backgroundPrompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
       case 5634: v_encoderModel = r.str(); h_encoderModel = true; break;
       case 5642: v_decoderModel = r.str(); h_decoderModel = true; break;
+      case 5650: v_box = decS_Rect(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -7343,6 +7380,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   o.backgroundPrompts = l_backgroundPrompts;
   o.encoderModel = v_encoderModel;
   o.decoderModel = v_decoderModel;
+  if (v_box !== undefined) o.box = v_box;
   return o;
 }
 function encS_TranscribeJob(w: Writer, v: T.TranscribeJob): void {
@@ -7386,6 +7424,11 @@ function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {
   if (v.silencePaddingMs !== undefined) { w.varint(5657); w.f64(v.silencePaddingMs); }
   if (v.amplitudeChannel !== undefined) { w.varint(5666); w.str(v.amplitudeChannel); }
   if (v.amplitudeSmoothing !== undefined) { w.varint(5672); w.u32(v.amplitudeSmoothing); }
+  if (v.amplitudeFrameStep !== undefined) { w.varint(5680); w.u32(v.amplitudeFrameStep); }
+  if (v.amplitudeMinDelta !== undefined) { w.varint(5689); w.f64(v.amplitudeMinDelta); }
+  if (v.amplitudeGain !== undefined) { w.varint(5697); w.f64(v.amplitudeGain); }
+  w.varint(5704); w.bool(v.beatMarkers);
+  if (v.beatEvery !== undefined) { w.varint(5712); w.u32(v.beatEvery); }
 }
 function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJob {
   let h_layer = false;
@@ -7393,6 +7436,7 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   let h_amplitudeKeyframes = false;
   let h_silence = false;
   let h_removeSilence = false;
+  let h_beatMarkers = false;
   let v_layer: string | undefined;
   let v_beats: boolean | undefined;
   let v_amplitudeKeyframes: boolean | undefined;
@@ -7403,6 +7447,11 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   let v_silencePaddingMs: number | undefined;
   let v_amplitudeChannel: string | undefined;
   let v_amplitudeSmoothing: number | undefined;
+  let v_amplitudeFrameStep: number | undefined;
+  let v_amplitudeMinDelta: number | undefined;
+  let v_amplitudeGain: number | undefined;
+  let v_beatMarkers: boolean | undefined;
+  let v_beatEvery: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7416,6 +7465,11 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
       case 5657: v_silencePaddingMs = r.f64(); break;
       case 5666: v_amplitudeChannel = r.str(); break;
       case 5672: v_amplitudeSmoothing = r.u32(); break;
+      case 5680: v_amplitudeFrameStep = r.u32(); break;
+      case 5689: v_amplitudeMinDelta = r.f64(); break;
+      case 5697: v_amplitudeGain = r.f64(); break;
+      case 5704: v_beatMarkers = r.bool(); h_beatMarkers = true; break;
+      case 5712: v_beatEvery = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -7425,6 +7479,7 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   if (!h_amplitudeKeyframes) throw new DecodeError('AudioAnalysisJob.amplitudeKeyframes: missing', 'missingField');
   if (!h_silence) throw new DecodeError('AudioAnalysisJob.silence: missing', 'missingField');
   if (!h_removeSilence) throw new DecodeError('AudioAnalysisJob.removeSilence: missing', 'missingField');
+  if (!h_beatMarkers) throw new DecodeError('AudioAnalysisJob.beatMarkers: missing', 'missingField');
   o.layer = v_layer;
   o.beats = v_beats;
   o.amplitudeKeyframes = v_amplitudeKeyframes;
@@ -7435,6 +7490,11 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   if (v_silencePaddingMs !== undefined) o.silencePaddingMs = v_silencePaddingMs;
   if (v_amplitudeChannel !== undefined) o.amplitudeChannel = v_amplitudeChannel;
   if (v_amplitudeSmoothing !== undefined) o.amplitudeSmoothing = v_amplitudeSmoothing;
+  if (v_amplitudeFrameStep !== undefined) o.amplitudeFrameStep = v_amplitudeFrameStep;
+  if (v_amplitudeMinDelta !== undefined) o.amplitudeMinDelta = v_amplitudeMinDelta;
+  if (v_amplitudeGain !== undefined) o.amplitudeGain = v_amplitudeGain;
+  o.beatMarkers = v_beatMarkers;
+  if (v_beatEvery !== undefined) o.beatEvery = v_beatEvery;
   return o;
 }
 function encS_AudioDuckJob(w: Writer, v: T.AudioDuckJob): void {

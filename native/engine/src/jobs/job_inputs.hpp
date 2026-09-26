@@ -4,6 +4,8 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -26,6 +28,9 @@ struct FootageLayer {
   /// The layer's stored picture size (0 for sound-only).
   std::uint32_t width = 0;
   std::uint32_t height = 0;
+  /// The layer has a timeline bar (mirror/audio.ts hasOwnBar); without one its
+  /// source plays from composition 0 (audioClipTimings → []).
+  bool hasBar = true;
 
   /// Composition seconds at which SOURCE second `s` plays (normal speed, the
   /// layer's stretch; time remap is refused by `footage_layer`).
@@ -34,6 +39,17 @@ struct FootageLayer {
   [[nodiscard]] double source_seconds(double compSec) const noexcept;
   [[nodiscard]] double in_seconds() const noexcept;
   [[nodiscard]] double out_seconds() const noexcept;
+
+  /// mirror/audio.ts audioClipTimings: the bar as (comp start, source in, source out) seconds.
+  struct ClipTiming {
+    double startSec = 0;
+    double inSec = 0;
+    double outSec = 0;
+  };
+  [[nodiscard]] std::vector<ClipTiming> clip_timings() const;
+  /// audioEdits.ts sourceFrameToCompTime: where a SOURCE second plays in the
+  /// composition through the bar; nullopt where the bar trims it away.
+  [[nodiscard]] std::optional<double> comp_seconds_through_bar(double sourceSec) const;
 };
 
 enum class Need : std::uint8_t { picture, sound };

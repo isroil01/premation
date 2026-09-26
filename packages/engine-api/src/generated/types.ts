@@ -2517,6 +2517,16 @@ export interface TrackMotionJob {
   direction: TrackDirection;
   /** Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only. */
   applyTo?: PropRef;
+  /** The time the points' positions are given at (layer pixels on that frame). Default: `range.start` for `forward`, the range's last frame for `backward`, the playhead clamped into the range for `both` (tracked outward from there, autoTrack.ts). */
+  origin?: Time;
+  /** NCC below this is a lost frame: the point coasts on its last confident velocity (tracker.ts `minConfidence`, default 0.55). */
+  minConfidence?: number;
+  /** Consecutive coasted frames before a point is given up (tracker.ts `maxCoastFrames`, default 8). */
+  maxCoastFrames?: number;
+  /** Long edge the footage is decoded at for the analysis (the TS analysis tier; default 960, 0 = full size). Points, sizes and the result stay in layer pixels. */
+  analysisMaxEdge?: number;
+  /** Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only. */
+  stabilize: boolean;
 }
 
 /** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
@@ -2525,6 +2535,8 @@ export interface StabilizeJob {
   range: TimeRange;
   smoothness: number;
   method: string;
+  /** Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts. */
+  analysisMaxEdge?: number;
 }
 
 /** `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range). */
@@ -2533,7 +2545,7 @@ export interface AutoTraceJob {
   range: TimeRange;
   channel: string;
   threshold: number;
-  /** Path simplification tolerance in pixels (autoTrace.ts `tolerance`, default 1). */
+  /** Path simplification tolerance in pixels (autoTrace.ts `tolerance`, default 1.5). */
   tolerance?: number;
   /** Blur radius (px) applied to the channel before thresholding (default 0). */
   blur?: number;
@@ -2544,13 +2556,15 @@ export interface AutoTraceJob {
   invert: boolean;
 }
 
-/** Cuts in a footage layer's picture. `threshold` 0…1 (the frame-difference score above which a frame starts a new shot; default 0.35); `minShotSeconds` default 0.5. */
+/** Scene Edit Detection (sceneEditDetect.ts): cuts and dissolves in a video layer's visible span, from 64-bin luma-histogram distances with an adaptive threshold. `createMarkers`: composition markers "Cut N" / "Dissolve N"; `splitLayers`: the layer split at every cut (markers win when both are set). `threshold` is the L1 floor (0…2, default 0.3), `sensitivity` the multiple of the local median (default 5), `minShotSeconds` absent = 6 frames; `dissolves` default true. */
 export interface SceneDetectJob {
   layer: LayerId;
   createMarkers: boolean;
   splitLayers: boolean;
   threshold?: number;
   minShotSeconds?: number;
+  sensitivity?: number;
+  dissolves?: boolean;
 }
 
 /** `prompts` are foreground clicks in layer pixels at `range.start`; `backgroundPrompts` background clicks. The matte is applied as masks traced from the segmentation. */
@@ -2562,6 +2576,8 @@ export interface ObjectMatteJob {
   /** The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR). */
   encoderModel: string;
   decoderModel: string;
+  /** A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept. */
+  box?: Rect;
 }
 
 export interface TranscribeJob {
@@ -2573,7 +2589,7 @@ export interface TranscribeJob {
 /** One audio analysis over a layer's sound (an audio layer, or a video layer's own track). */
 export interface AudioAnalysisJob {
   layer: LayerId;
-  /** Beat grid → composition markers on the beats (beatGrid.ts). */
+  /** Beat grid (beatGrid.ts analyseLayerBeats): bpm, confidence, beats and onsets in composition seconds in the summary. */
   beats: boolean;
   /** Amplitude envelope → keyframes (audioKeyframes.ts): on the layer's `audioAmplitude` slider control. */
   amplitudeKeyframes: boolean;
@@ -2587,16 +2603,23 @@ export interface AudioAnalysisJob {
   amplitudeChannel?: string;
   /** Envelope smoothing window in frames (default 1 = none). */
   amplitudeSmoothing?: number;
+  /** Sample every Nth frame (default 1), keep a frame only when it moves ≥ minDelta (0–100, default 2), scale by gain (default 1) — AudioKeyframeOptions. */
+  amplitudeFrameStep?: number;
+  amplitudeMinDelta?: number;
+  amplitudeGain?: number;
+  /** With `beats`: composition markers "Beat N" on every `beatEvery`-th beat (default 1; at most 512) — Markers on Beats. Without it the grid is the summary only (Animate on Beats reads it). */
+  beatMarkers: boolean;
+  beatEvery?: number;
 }
 
-/** Ducking (ducking.ts): lower `music`'s level under the `voices`, as Audio Levels keyframes. `params` is the DuckingParams JSON (amountDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults. */
+/** Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults. */
 export interface AudioDuckJob {
   music: LayerId;
   voices: LayerId[];
   params: string;
 }
 
-/** Noise gate (audioGate.ts): close the layer's level while it is quiet, as Audio Levels keyframes. `params` is the GateParams JSON. */
+/** Noise gate (audioGate.ts computeGateEnvelope + planGate): close the layer's level while it is quiet, over its audible span inside the work area, as Audio Levels keyframes, and remember the parameters (`audio/gate`). `params` is the GateParams JSON (thresholdDb, attackMs, holdMs, releaseMs, rangeDb). */
 export interface AudioGateJob {
   layer: LayerId;
   params: string;

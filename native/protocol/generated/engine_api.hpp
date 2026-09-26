@@ -2646,6 +2646,11 @@ struct TrackMotionJob {
   TimeRange range;
   TrackDirection direction = TrackDirection::forward;
   std::optional<PropRef> apply_to;
+  std::optional<Time> origin;
+  std::optional<double> min_confidence;
+  std::optional<std::uint32_t> max_coast_frames;
+  std::optional<std::uint32_t> analysis_max_edge;
+  bool stabilize = false;
   bool operator==(const TrackMotionJob&) const = default;
 };
 
@@ -2654,6 +2659,7 @@ struct StabilizeJob {
   TimeRange range;
   double smoothness = 0.0;
   std::string method;
+  std::optional<std::uint32_t> analysis_max_edge;
   bool operator==(const StabilizeJob&) const = default;
 };
 
@@ -2676,6 +2682,8 @@ struct SceneDetectJob {
   bool split_layers = false;
   std::optional<double> threshold;
   std::optional<double> min_shot_seconds;
+  std::optional<double> sensitivity;
+  std::optional<bool> dissolves;
   bool operator==(const SceneDetectJob&) const = default;
 };
 
@@ -2686,6 +2694,7 @@ struct ObjectMatteJob {
   std::vector<Vec2> background_prompts;
   std::string encoder_model;
   std::string decoder_model;
+  std::optional<Rect> box;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 
@@ -2707,6 +2716,11 @@ struct AudioAnalysisJob {
   std::optional<double> silence_padding_ms;
   std::optional<std::string> amplitude_channel;
   std::optional<std::uint32_t> amplitude_smoothing;
+  std::optional<std::uint32_t> amplitude_frame_step;
+  std::optional<double> amplitude_min_delta;
+  std::optional<double> amplitude_gain;
+  bool beat_markers = false;
+  std::optional<std::uint32_t> beat_every;
   bool operator==(const AudioAnalysisJob&) const = default;
 };
 

@@ -35,6 +35,7 @@ import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
 import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { EngineCommandLog } from './engineCommandLog';
+import { resolveFfmpegBinary } from './ffmpegBinary';
 import { EngineGoneError } from './engineTransport';
 import {
   EngineSupervisor,
@@ -345,7 +346,15 @@ export class EngineHost {
     this.supervisor = new EngineSupervisor(
       {
         spawn: (exe, args) =>
-          spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true }) as unknown as EngineChild,
+          spawn(exe, args, {
+            stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            // Engine jobs (proxies) run the same ffmpeg an export does (ffmpegBinary.ts).
+            env: {
+              ...process.env,
+              PREMATION_FFMPEG: resolveFfmpegBinary({ vars: process.env, resourcesPath: o.resourcesPath, platform: process.platform, exists: existsSync }),
+            },
+          }) as unknown as EngineChild,
         resolveExe: () =>
           resolveEngineExecutable({
             isPackaged: o.isPackaged,

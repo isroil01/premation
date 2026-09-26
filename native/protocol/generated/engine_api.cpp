@@ -9462,6 +9462,11 @@ void encode(wire::Writer& w, const TrackMotionJob& v) {
   w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
   w.varint(40U); w.varint(static_cast<std::uint32_t>(v.direction));
   if (v.apply_to.has_value()) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, *v.apply_to); w.end_ld(s); } }
+  if (v.origin.has_value()) { w.varint(5648U); w.svarint(*v.origin); }
+  if (v.min_confidence.has_value()) { w.varint(5657U); w.f64(*v.min_confidence); }
+  if (v.max_coast_frames.has_value()) { w.varint(5664U); w.varint(*v.max_coast_frames); }
+  if (v.analysis_max_edge.has_value()) { w.varint(5672U); w.varint(*v.analysis_max_edge); }
+  w.varint(5680U); w.boolean(v.stabilize);
 }
 
 Status decode(wire::Reader& r, TrackMotionJob& out) {
@@ -9469,6 +9474,7 @@ Status decode(wire::Reader& r, TrackMotionJob& out) {
   bool has_kind = false;
   bool has_range = false;
   bool has_direction = false;
+  bool has_stabilize = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -9504,6 +9510,35 @@ Status decode(wire::Reader& r, TrackMotionJob& out) {
         out.apply_to = std::move(e);
         break;
       }
+      case 5648U: {
+        Time e = 0;
+        if (!r.svarint(e)) return Status::truncated;
+        out.origin = std::move(e);
+        break;
+      }
+      case 5657U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.min_confidence = std::move(e);
+        break;
+      }
+      case 5664U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.max_coast_frames = std::move(e);
+        break;
+      }
+      case 5672U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.analysis_max_edge = std::move(e);
+        break;
+      }
+      case 5680U: {
+        if (!r.boolean(out.stabilize)) return Status::truncated;
+        has_stabilize = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9513,6 +9548,7 @@ Status decode(wire::Reader& r, TrackMotionJob& out) {
   if (!has_kind) return Status::missing_field;
   if (!has_range) return Status::missing_field;
   if (!has_direction) return Status::missing_field;
+  if (!has_stabilize) return Status::missing_field;
   return Status::ok;
 }
 
@@ -9521,6 +9557,7 @@ void encode(wire::Writer& w, const StabilizeJob& v) {
   w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
   w.varint(25U); w.f64(v.smoothness);
   w.varint(34U); w.str(v.method);
+  if (v.analysis_max_edge.has_value()) { w.varint(5632U); w.varint(*v.analysis_max_edge); }
 }
 
 Status decode(wire::Reader& r, StabilizeJob& out) {
@@ -9550,6 +9587,12 @@ Status decode(wire::Reader& r, StabilizeJob& out) {
       case 34U: {
         if (!r.str(out.method)) return Status::truncated;
         has_method = true;
+        break;
+      }
+      case 5632U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.analysis_max_edge = std::move(e);
         break;
       }
       default:
@@ -9655,6 +9698,8 @@ void encode(wire::Writer& w, const SceneDetectJob& v) {
   w.varint(24U); w.boolean(v.split_layers);
   if (v.threshold.has_value()) { w.varint(5625U); w.f64(*v.threshold); }
   if (v.min_shot_seconds.has_value()) { w.varint(5633U); w.f64(*v.min_shot_seconds); }
+  if (v.sensitivity.has_value()) { w.varint(5641U); w.f64(*v.sensitivity); }
+  if (v.dissolves.has_value()) { w.varint(5648U); w.boolean(*v.dissolves); }
 }
 
 Status decode(wire::Reader& r, SceneDetectJob& out) {
@@ -9692,6 +9737,18 @@ Status decode(wire::Reader& r, SceneDetectJob& out) {
         out.min_shot_seconds = std::move(e);
         break;
       }
+      case 5641U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.sensitivity = std::move(e);
+        break;
+      }
+      case 5648U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.dissolves = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9710,6 +9767,7 @@ void encode(wire::Writer& w, const ObjectMatteJob& v) {
   for (const auto& e : v.background_prompts) { w.varint(5626U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   w.varint(5634U); w.str(v.encoder_model);
   w.varint(5642U); w.str(v.decoder_model);
+  if (v.box.has_value()) { w.varint(5650U); { const std::size_t s = w.begin_ld(); encode(w, *v.box); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, ObjectMatteJob& out) {
@@ -9749,6 +9807,12 @@ Status decode(wire::Reader& r, ObjectMatteJob& out) {
       case 5642U: {
         if (!r.str(out.decoder_model)) return Status::truncated;
         has_decoder_model = true;
+        break;
+      }
+      case 5650U: {
+        Rect e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.box = std::move(e);
         break;
       }
       default:
@@ -9814,6 +9878,11 @@ void encode(wire::Writer& w, const AudioAnalysisJob& v) {
   if (v.silence_padding_ms.has_value()) { w.varint(5657U); w.f64(*v.silence_padding_ms); }
   if (v.amplitude_channel.has_value()) { w.varint(5666U); w.str(*v.amplitude_channel); }
   if (v.amplitude_smoothing.has_value()) { w.varint(5672U); w.varint(*v.amplitude_smoothing); }
+  if (v.amplitude_frame_step.has_value()) { w.varint(5680U); w.varint(*v.amplitude_frame_step); }
+  if (v.amplitude_min_delta.has_value()) { w.varint(5689U); w.f64(*v.amplitude_min_delta); }
+  if (v.amplitude_gain.has_value()) { w.varint(5697U); w.f64(*v.amplitude_gain); }
+  w.varint(5704U); w.boolean(v.beat_markers);
+  if (v.beat_every.has_value()) { w.varint(5712U); w.varint(*v.beat_every); }
 }
 
 Status decode(wire::Reader& r, AudioAnalysisJob& out) {
@@ -9822,6 +9891,7 @@ Status decode(wire::Reader& r, AudioAnalysisJob& out) {
   bool has_amplitude_keyframes = false;
   bool has_silence = false;
   bool has_remove_silence = false;
+  bool has_beat_markers = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -9881,6 +9951,35 @@ Status decode(wire::Reader& r, AudioAnalysisJob& out) {
         out.amplitude_smoothing = std::move(e);
         break;
       }
+      case 5680U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.amplitude_frame_step = std::move(e);
+        break;
+      }
+      case 5689U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.amplitude_min_delta = std::move(e);
+        break;
+      }
+      case 5697U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.amplitude_gain = std::move(e);
+        break;
+      }
+      case 5704U: {
+        if (!r.boolean(out.beat_markers)) return Status::truncated;
+        has_beat_markers = true;
+        break;
+      }
+      case 5712U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.beat_every = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9891,6 +9990,7 @@ Status decode(wire::Reader& r, AudioAnalysisJob& out) {
   if (!has_amplitude_keyframes) return Status::missing_field;
   if (!has_silence) return Status::missing_field;
   if (!has_remove_silence) return Status::missing_field;
+  if (!has_beat_markers) return Status::missing_field;
   return Status::ok;
 }
 
