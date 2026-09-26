@@ -1,0 +1,258 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "canvas"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "canvas",
+    "name": "canvas",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 180,
+      "y": 140
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "canvas_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 180,
+       "y": 140,
+       "rotation": 0,
+       "width": 300,
+       "height": 220,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "canvas_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#c8d4e6"
+      }
+     },
+     {
+      "id": "canvas_fx",
+      "type": "fx",
+      "props": {
+       "paint": {
+        "strokes": [
+         {
+          "id": "d1",
+          "points": [
+           {
+            "x": -120,
+            "y": 60
+           },
+           {
+            "x": -40,
+            "y": -40
+           },
+           {
+            "x": 40,
+            "y": 50
+           },
+           {
+            "x": 120,
+            "y": -50
+           }
+          ],
+          "color": "#d02070",
+          "size": 26,
+          "opacity": 0.9,
+          "hardness": 0.2,
+          "mode": "paint",
+          "spacing": 0.25,
+          "flow": 0.4,
+          "roundness": 0.35,
+          "angle": 40
+         },
+         {
+          "id": "d2",
+          "points": [
+           {
+            "x": -120,
+            "y": -70
+           },
+           {
+            "x": 120,
+            "y": -70
+           }
+          ],
+          "color": "#1a6cff",
+          "size": 14,
+          "opacity": 1,
+          "hardness": 1,
+          "mode": "paint",
+          "spacing": 0.25,
+          "end": 0.6,
+          "transform": {
+           "anchorX": -120,
+           "anchorY": -70,
+           "x": -120,
+           "y": -70,
+           "scale": 100,
+           "rotation": 15
+          }
+         },
+         {
+          "id": "d3",
+          "points": [
+           {
+            "x": 0,
+            "y": -100
+           },
+           {
+            "x": 0,
+            "y": 100
+           }
+          ],
+          "color": "#ffcc00",
+          "size": 40,
+          "opacity": 0.8,
+          "hardness": 0.7,
+          "mode": "paint",
+          "spacing": 0.1,
+          "blend": "multiply"
+         },
+         {
+          "id": "e1",
+          "points": [
+           {
+            "x": -130,
+            "y": 10
+           },
+           {
+            "x": 130,
+            "y": 10
+           }
+          ],
+          "color": "#000000",
+          "size": 18,
+          "opacity": 1,
+          "hardness": 1,
+          "mode": "erase",
+          "eraseMode": "paintOnly"
+         }
+        ]
+       }
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 360,
+   "height": 280,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "paint-strokes-v2",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 360,
+   "h": 280
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Paint model v2: soft elliptical dab brush with flow, write-on End, per-stroke transform, multiply mode, Paint Only eraser."
+ }
+}

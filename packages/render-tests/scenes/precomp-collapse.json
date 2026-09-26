@@ -1,0 +1,369 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "innerC",
+    "name": "innerC",
+    "children": [
+     "iback",
+     "ibox"
+    ],
+    "parent": null,
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "innerC_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "group",
+       "x": 0,
+       "y": 0,
+       "rotation": 0
+      }
+     },
+     {
+      "id": "innerC_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "iback",
+    "name": "iback",
+    "children": [],
+    "parent": "innerC",
+    "transform": {
+     "position": {
+      "x": 75,
+      "y": 55
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "iback_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 75,
+       "y": 55,
+       "rotation": 0,
+       "width": 140,
+       "height": 100,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "iback_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#233047"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "ibox",
+    "name": "ibox",
+    "children": [],
+    "parent": "innerC",
+    "transform": {
+     "position": {
+      "x": 75,
+      "y": 55
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "ibox_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 75,
+       "y": 55,
+       "rotation": 0,
+       "width": 70,
+       "height": 70,
+       "shapeType": "rect",
+       "z": 0,
+       "rotationY": 45
+      }
+     },
+     {
+      "id": "ibox_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#ffb020"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "host",
+    "name": "host",
+    "children": [
+     "cam",
+     "flatInst",
+     "collInst"
+    ],
+    "parent": null,
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "host_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "group",
+       "x": 0,
+       "y": 0,
+       "rotation": 0
+      }
+     },
+     {
+      "id": "host_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "cam",
+    "name": "cam",
+    "children": [],
+    "parent": "host",
+    "transform": {
+     "position": {
+      "x": 220,
+      "y": 120
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "cam_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "camera",
+       "x": 220,
+       "y": 120,
+       "rotation": 0,
+       "z": -700,
+       "focalLength": 700
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "flatInst",
+    "name": "flatInst",
+    "children": [],
+    "parent": "host",
+    "transform": {
+     "position": {
+      "x": 95,
+      "y": 120
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "flatInst_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "comp",
+       "x": 95,
+       "y": 120,
+       "rotation": 0
+      }
+     },
+     {
+      "id": "flatInst_fx",
+      "type": "fx",
+      "props": {
+       "precomp": true,
+       "__compRef": "innerC"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "collInst",
+    "name": "collInst",
+    "children": [],
+    "parent": "host",
+    "transform": {
+     "position": {
+      "x": 265,
+      "y": 120
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "collInst_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "comp",
+       "x": 265,
+       "y": 120,
+       "rotation": 0
+      }
+     },
+     {
+      "id": "collInst_fx",
+      "type": "fx",
+      "props": {
+       "precomp": true,
+       "__compRef": "innerC",
+       "collapseTransforms": true
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "host": {
+   "id": "host",
+   "name": "host",
+   "width": 360,
+   "height": 240,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  },
+  "innerC": {
+   "id": "innerC",
+   "name": "innerC",
+   "width": 150,
+   "height": 110,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "host",
+    "breadcrumbPath": [
+     "host"
+    ],
+    "title": "host",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "precomp-collapse",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 360,
+   "h": 240
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "host",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Same placed comp twice: collapsed takes the host camera, uncollapsed stays a sealed card."
+ }
+}

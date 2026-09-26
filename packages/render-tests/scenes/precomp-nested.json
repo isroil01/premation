@@ -1,0 +1,288 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "outer"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "outer",
+    "name": "outer",
+    "children": [
+     "inner"
+    ],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "outer_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "group",
+       "x": 0,
+       "y": 0,
+       "rotation": 0
+      }
+     },
+     {
+      "id": "outer_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100
+      }
+     },
+     {
+      "id": "outer_fx",
+      "type": "fx",
+      "props": {
+       "precomp": true
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "inner",
+    "name": "inner",
+    "children": [
+     "c1",
+     "c2"
+    ],
+    "parent": "outer",
+    "transform": {
+     "position": {
+      "x": 40,
+      "y": 20
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "inner_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "group",
+       "x": 40,
+       "y": 20,
+       "rotation": 0
+      }
+     },
+     {
+      "id": "inner_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100
+      }
+     },
+     {
+      "id": "inner_fx",
+      "type": "fx",
+      "props": {
+       "precomp": true
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "c1",
+    "name": "c1",
+    "children": [],
+    "parent": "inner",
+    "transform": {
+     "position": {
+      "x": 100,
+      "y": 100
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "c1_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 100,
+       "y": 100,
+       "rotation": 0,
+       "width": 100,
+       "height": 100,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "c1_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#ff5d73"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "c2",
+    "name": "c2",
+    "children": [],
+    "parent": "inner",
+    "transform": {
+     "position": {
+      "x": 220,
+      "y": 140
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "c2_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 220,
+       "y": 140,
+       "rotation": 0,
+       "width": 110,
+       "height": 110,
+       "shapeType": "ellipse"
+      }
+     },
+     {
+      "id": "c2_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#5db4ff"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 360,
+   "height": 240,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "precomp-nested",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 360,
+   "h": 240
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Precomp containing another precomp (two isolation boundaries)."
+ }
+}

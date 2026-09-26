@@ -1,0 +1,153 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "gen"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "gen",
+    "name": "gen",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 180,
+      "y": 140
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "gen_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "studio.rendertest.gen.sprites",
+       "x": 180,
+       "y": 140,
+       "rotation": 0,
+       "width": 320,
+       "height": 240
+      }
+     },
+     {
+      "id": "gen_p",
+      "type": "pluginLayer:studio.rendertest.gen.sprites",
+      "props": {
+       "__kind": "studio.rendertest.gen.sprites",
+       "__pluginId": "studio.rendertest.gen",
+       "__kindId": "sprites",
+       "__schemaVersion": 1,
+       "density": 36
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 360,
+   "height": 280,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "generator-sprite",
+  "frames": [
+   12
+  ],
+  "fps": 30,
+  "size": {
+   "w": 360,
+   "h": 280
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "A plugin generator drawing a 6×6 grid of textured sprites from a 2×2 atlas the plugin package ships — the `pluginAsset:*` route end to end: the file is read out of the installed payload, decoded once, shared by every instance, and addressed per instance by the stride-11 u,v against `cellSize`. Each quadrant of the atlas is a different colour, so a wrong cell origin, a dropped cellSize or a V-flip moves colours between sprites rather than changing nothing."
+ }
+}
