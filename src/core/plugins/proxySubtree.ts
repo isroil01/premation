@@ -310,13 +310,11 @@ export async function regenerateProxyChildren(
   }
   if (cmds.length === 0) return result;
 
+  // The engine's own writes are not a user's edit either (no detach).
   regenerating += 1;
-  let res;
-  try {
-    res = await engine().batch(`${pluginName}: update layers`, cmds, { origin: 'plugin' });
-  } finally {
-    regenerating -= 1;
-  }
+  const res = await engine()
+    .batch(`${pluginName}: update layers`, cmds, { origin: 'plugin' })
+    .finally(() => { regenerating -= 1; });
   if (!res.ok) throw new Error(res.error.message || res.error.code);
   if (built) {
     const pasted = res.value[res.value.length - 1] as { layers?: string[] } | undefined;
