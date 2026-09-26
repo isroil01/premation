@@ -8,10 +8,9 @@
 
 import { useMemo } from 'react';
 import { useMirrorLayer } from '@hooks/useMirror';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readSvgLayer } from '@core/svg/svgLayer';
+import { useSvgDocument } from '@hooks/useSvgDocument';
 import { svgCapabilityWarnings } from '@core/svg/svgCapabilities';
-import { confirmAndConvertSvg } from './svgLayerActions';
+import { confirmAndConvertSvg, svgLayerDataOf } from './svgLayerActions';
 import { Icon } from '@components/Icon';
 import styles from './TransformSection.module.css';
 
@@ -63,12 +62,9 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // B4: the layer's mirror header decides whether it is (still) an SVG layer
   // and wakes the section when it changes.
   const layer = useMirrorLayer(nodeId);
-  const data = useMemo(() => {
-    if (layer?.kind !== 'svg') return null;
-    // B4-gap: an SVG layer's stored document (the `svg` component: file name, intrinsic size, capability scan, live playback) — no API field; closes with a `layer/svg` json field (or `svg/*` fields) on svg layers.
-    const node = defaultSceneGraph.getNode(nodeId);
-    return node ? readSvgLayer(node) : null;
-  }, [layer, nodeId]);
+  // The stored document (file name, intrinsic size, capability scan, playback) — the engine's `getSvgDocument`.
+  const doc = useSvgDocument(layer?.svg === 'layer' ? nodeId : null);
+  const data = useMemo(() => (layer?.svg === 'layer' ? svgLayerDataOf(doc) : null), [layer, doc]);
   if (!data) return null;
 
   const warnings = svgCapabilityWarnings(data.capabilities);

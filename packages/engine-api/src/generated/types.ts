@@ -437,6 +437,13 @@ export type TrackDirection =
   | 'both';
 export const TrackDirectionValues = ['forward', 'backward', 'both'] as const;
 
+/** B4 — what a layer holds of an SVG document (LayerInfo.svg). */
+export type SvgRole =
+  | 'none'
+  | 'layer'
+  | 'converted';
+export const SvgRoleValues = ['none', 'layer', 'converted'] as const;
+
 export type PropertyKind =
   | 'property'
   | 'group'
@@ -2682,6 +2689,8 @@ export interface LayerInfo {
   managedBy: string;
   /** B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it. */
   mographId: string;
+  /** B4 — `layer`: an SVG layer that stores its document (getSvgDocument reads it; Convert to Editable Shapes); `converted`: a group converted from one that still retains the original source (Revert to Original SVG); `none` otherwise. */
+  svg: SvgRole;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -2928,6 +2937,16 @@ export interface GetItems {
   items: ItemId[];
 }
 
+/** B4 — the SVG document a layer stores (LayerInfo.svg): an SVG layer's file name, intrinsic size, view box, capability scan, playback mode and markup, or a converted group's retained source. `role` none (every other field empty) for any other layer. */
+export interface GetSvgDocument {
+  layer: LayerId;
+}
+
+/** B4 — the Cryptomatte ID set a footage item's EXR carries (layer names and their objects, from the file's manifest): what Layer ▸ ID Matte lists. Empty when the file has none or was not decoded yet. `unsupported` where the engine does not decode EXR (the C++ engine, until its media decode reads EXR). */
+export interface GetCryptomatte {
+  item: ItemId;
+}
+
 /** A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes. */
 export interface GetThumbnail {
   item?: ItemId;
@@ -2949,6 +2968,34 @@ export interface Thumbnail {
   height: number;
   format: string;
   data: Uint8Array;
+}
+
+/** B4 — getSvgDocument's answer. */
+export interface SvgDocument {
+  role: SvgRole;
+  fileName: string;
+  intrinsicWidth: number;
+  intrinsicHeight: number;
+  viewBox?: Rect;
+  /** The import's capability scan (SvgCapabilities) as JSON: paths, text, gradients, filters, SMIL / CSS animation, … */
+  capabilities: string;
+  /** Re-rasterised at the playhead (SMIL / CSS) rather than a static texture. */
+  livePlayback: boolean;
+  /** The original markup (what Revert to Original SVG restores). */
+  sourceMarkup: string;
+  /** The sanitised markup the layer renders, under `sanitizePolicy` (the editor re-sanitises an older policy's from the source). */
+  sanitizedMarkup: string;
+  sanitizePolicy: number;
+}
+
+/** B4 — one Cryptomatte layer of an EXR (its channel prefix, e.g. "CryptoObject") and its objects' names, manifest order. */
+export interface CryptomatteLayerInfo {
+  name: string;
+  objects: string[];
+}
+
+export interface CryptomatteInfo {
+  layers: CryptomatteLayerInfo[];
 }
 
 export interface EffectParamInfo {
@@ -4329,6 +4376,8 @@ export type Query =
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
   | ({ type: 'getItems' } & GetItems)
+  | ({ type: 'getSvgDocument' } & GetSvgDocument)
+  | ({ type: 'getCryptomatte' } & GetCryptomatte)
   | ({ type: 'getThumbnail' } & GetThumbnail)
   | ({ type: 'listEffects' } & ListEffects)
   | ({ type: 'listGroupTypes' } & ListGroupTypes)
@@ -4371,6 +4420,8 @@ export type QueryResult =
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
   | ({ type: 'getItems' } & ItemDetails)
+  | ({ type: 'getSvgDocument' } & SvgDocument)
+  | ({ type: 'getCryptomatte' } & CryptomatteInfo)
   | ({ type: 'getThumbnail' } & Thumbnail)
   | ({ type: 'listEffects' } & EffectCatalog)
   | ({ type: 'listGroupTypes' } & GroupTypeList)
@@ -4754,6 +4805,8 @@ export interface QueryArgs {
   getWaveform: GetWaveform;
   listFonts: ListFonts;
   getItems: GetItems;
+  getSvgDocument: GetSvgDocument;
+  getCryptomatte: GetCryptomatte;
   getThumbnail: GetThumbnail;
   listEffects: ListEffects;
   listGroupTypes: ListGroupTypes;
@@ -4796,6 +4849,8 @@ export interface QueryResults {
   getWaveform: WaveformPeaks;
   listFonts: FontList;
   getItems: ItemDetails;
+  getSvgDocument: SvgDocument;
+  getCryptomatte: CryptomatteInfo;
   getThumbnail: Thumbnail;
   listEffects: EffectCatalog;
   listGroupTypes: GroupTypeList;

@@ -183,6 +183,8 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   getWaveform: { id: 1020, family: "Media", result: "WaveformPeaks", doc: "" },
   listFonts: { id: 1021, family: "Media", result: "FontList", doc: "" },
   getItems: { id: 1022, family: "Media", result: "ItemDetails", doc: "" },
+  getSvgDocument: { id: 1891, family: "Media", result: "SvgDocument", doc: "B4 — the SVG document a layer stores (LayerInfo.svg): an SVG layer's file name, intrinsic size, view box, capability scan, playback mode and markup, or a converted group's retained source. `role` none (every other field empty) for any other layer." },
+  getCryptomatte: { id: 1892, family: "Media", result: "CryptomatteInfo", doc: "B4 — the Cryptomatte ID set a footage item's EXR carries (layer names and their objects, from the file's manifest): what Layer ▸ ID Matte lists. Empty when the file has none or was not decoded yet. `unsupported` where the engine does not decode EXR (the C++ engine, until its media decode reads EXR)." },
   getThumbnail: { id: 1023, family: "Media", result: "Thumbnail", doc: "A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes." },
   listEffects: { id: 1040, family: "Catalog", result: "EffectCatalog", doc: "" },
   listGroupTypes: { id: 1041, family: "Catalog", result: "GroupTypeList", doc: "Which group match names can be added under a parent path (the Add ▸ menus)." },
@@ -242,4 +244,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":76,"structs":409,"unions":11,"commands":149,"queries":38,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":77,"structs":414,"unions":11,"commands":149,"queries":40,"events":31} as const;

@@ -300,7 +300,17 @@ export function layerInfo(layerId: string): LayerInfo {
     shapeType: kind === 'generator' ? '' : readShapeType(node) ?? '',
     managedBy: firstStringProp(node, '__ownedByPlugin'),
     mographId: firstStringProp(node, '__mographId'),
+    svg: svgRoleOf(node),
   };
+}
+
+/** B4: what the layer holds of an SVG document — its `svg` component's sanitized markup (an SVG layer) or only the retained source (a converted group). */
+export function svgRoleOf(node: SceneNode): LayerInfo['svg'] {
+  const p = node.components.find((c) => c.type === 'svg')?.props as Record<string, unknown> | undefined;
+  if (!p) return 'none';
+  if (typeof p.sanitizedMarkup === 'string' && p.sanitizedMarkup !== '') return 'layer';
+  if (typeof p.sourceMarkup === 'string' && p.sourceMarkup !== '') return 'converted';
+  return 'none';
 }
 
 /** B4: the first non-empty string a component of `node` stores under `prop` ('' when none) — `ownerOf` / `mographIdOf`. */

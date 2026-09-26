@@ -332,6 +332,36 @@ struct Q {
     out.effects = stringify(captures);
     return query_result_for<api::CopyEffects>(std::move(out));
   }
+  api::QueryResult operator()(const api::GetSvgDocument& q) const {
+    // B4: the `svg` component as stored (queries.ts / svgLayer.ts readSvgLayer).
+    const Node& n = require_layer(d, q.layer);
+    api::SvgDocument out;
+    out.role = svg_role_of(n);
+    out.capabilities = "{}";
+    const Component* svgc = n.comp("svg");
+    if (out.role == api::SvgRole::none || svgc == nullptr) return query_result_for<api::GetSvgDocument>(std::move(out));
+    const Json& p = svgc->props;
+    const auto str = [&p](std::string_view k) { return p.at(k).is_string() ? p.at(k).str() : std::string{}; };
+    const auto num = [&p](std::string_view k, double dflt) { return p.at(k).is_finite_number() ? p.at(k).num() : dflt; };
+    out.file_name = str("fileName").empty() ? std::string("untitled.svg") : str("fileName");
+    out.intrinsic_width = num("intrinsicWidth", 512);
+    out.intrinsic_height = num("intrinsicHeight", 512);
+    const Json& vb = p.at("viewBox");
+    if (vb.is_array() && vb.arr().size() == 4 &&
+        std::all_of(vb.arr().begin(), vb.arr().end(), [](const Json& v) { return v.is_number(); })) {
+      out.view_box = api::Rect{vb.arr()[0].num(), vb.arr()[1].num(), vb.arr()[2].num(), vb.arr()[3].num()};
+    }
+    out.capabilities = p.at("capabilities").is_object() ? stringify(p.at("capabilities")) : "{}";
+    out.live_playback = p.at("livePlayback").is_bool() && p.at("livePlayback").b();
+    out.sanitized_markup = str("sanitizedMarkup");
+    out.source_markup = str("sourceMarkup").empty() ? out.sanitized_markup : str("sourceMarkup");
+    out.sanitize_policy = static_cast<std::uint32_t>(std::max(0.0, std::round(num("sanitizePolicy", 0))));
+    return query_result_for<api::GetSvgDocument>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetCryptomatte& q) const {
+    if (!resolve_item(d, q.item)) fail(ErrorCode::not_found, "no item '" + q.item + "'", {.item = q.item});
+    fail(ErrorCode::unsupported, "EXR Cryptomatte manifests are read by the editor's EXR decoder until media decode in the engine reads EXR");
+  }
   api::QueryResult operator()(const api::GetMarkers& q) const {
     require_comp(d, q.owner.comp);
     std::vector<api::Marker> markers;

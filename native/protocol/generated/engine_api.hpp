@@ -553,6 +553,14 @@ enum class TrackDirection : std::uint32_t {
 [[nodiscard]] std::string_view to_string(TrackDirection v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TrackDirection& out) noexcept;
 
+enum class SvgRole : std::uint32_t {
+  none = 0,
+  layer = 1,
+  converted = 2,
+};
+[[nodiscard]] std::string_view to_string(SvgRole v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, SvgRole& out) noexcept;
+
 enum class PropertyKind : std::uint32_t {
   property = 0,
   group = 1,
@@ -1023,6 +1031,8 @@ struct CopyEffects;
 struct GetWaveform;
 struct ListFonts;
 struct GetItems;
+struct GetSvgDocument;
+struct GetCryptomatte;
 struct GetThumbnail;
 struct ListEffects;
 struct ListGroupTypes;
@@ -1104,6 +1114,9 @@ struct FontAxisInfo;
 struct FontInfo;
 struct FontList;
 struct ItemDetails;
+struct SvgDocument;
+struct CryptomatteLayerInfo;
+struct CryptomatteInfo;
 struct Thumbnail;
 struct EffectParamInfo;
 struct EffectInfo;
@@ -2994,6 +3007,16 @@ struct GetItems {
   bool operator==(const GetItems&) const = default;
 };
 
+struct GetSvgDocument {
+  LayerId layer;
+  bool operator==(const GetSvgDocument&) const = default;
+};
+
+struct GetCryptomatte {
+  ItemId item;
+  bool operator==(const GetCryptomatte&) const = default;
+};
+
 struct GetThumbnail {
   std::optional<ItemId> item;
   std::optional<LayerId> layer;
@@ -3151,6 +3174,8 @@ struct Query {
     get_waveform = 1020,
     list_fonts = 1021,
     get_items = 1022,
+    get_svg_document = 1891,
+    get_cryptomatte = 1892,
     get_thumbnail = 1023,
     list_effects = 1040,
     list_group_types = 1041,
@@ -3174,7 +3199,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, CopyEffects, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, CopyEffects, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3659,6 +3684,7 @@ struct LayerInfo {
   std::string shape_type;
   std::string managed_by;
   std::string mograph_id;
+  SvgRole svg = SvgRole::none;
   bool operator==(const LayerInfo&) const = default;
 };
 
@@ -3845,6 +3871,31 @@ struct FontList {
 struct ItemDetails {
   std::vector<ItemInfo> items;
   bool operator==(const ItemDetails&) const = default;
+};
+
+struct SvgDocument {
+  SvgRole role = SvgRole::none;
+  std::string file_name;
+  double intrinsic_width = 0.0;
+  double intrinsic_height = 0.0;
+  std::optional<Rect> view_box;
+  std::string capabilities;
+  bool live_playback = false;
+  std::string source_markup;
+  std::string sanitized_markup;
+  std::uint32_t sanitize_policy = 0;
+  bool operator==(const SvgDocument&) const = default;
+};
+
+struct CryptomatteLayerInfo {
+  std::string name;
+  std::vector<std::string> objects;
+  bool operator==(const CryptomatteLayerInfo&) const = default;
+};
+
+struct CryptomatteInfo {
+  std::vector<CryptomatteLayerInfo> layers;
+  bool operator==(const CryptomatteInfo&) const = default;
 };
 
 struct Thumbnail {
@@ -4147,6 +4198,8 @@ struct QueryResult {
     get_waveform = 1020,
     list_fonts = 1021,
     get_items = 1022,
+    get_svg_document = 1891,
+    get_cryptomatte = 1892,
     get_thumbnail = 1023,
     list_effects = 1040,
     list_group_types = 1041,
@@ -4170,7 +4223,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, CopiedEffects, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, CopiedEffects, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -5365,6 +5418,10 @@ void encode(wire::Writer& w, const ListFonts& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListFonts& out);
 void encode(wire::Writer& w, const GetItems& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetItems& out);
+void encode(wire::Writer& w, const GetSvgDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetSvgDocument& out);
+void encode(wire::Writer& w, const GetCryptomatte& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetCryptomatte& out);
 void encode(wire::Writer& w, const GetThumbnail& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetThumbnail& out);
 void encode(wire::Writer& w, const ListEffects& v);
@@ -5527,6 +5584,12 @@ void encode(wire::Writer& w, const FontList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FontList& out);
 void encode(wire::Writer& w, const ItemDetails& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ItemDetails& out);
+void encode(wire::Writer& w, const SvgDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SvgDocument& out);
+void encode(wire::Writer& w, const CryptomatteLayerInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CryptomatteLayerInfo& out);
+void encode(wire::Writer& w, const CryptomatteInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CryptomatteInfo& out);
 void encode(wire::Writer& w, const Thumbnail& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Thumbnail& out);
 void encode(wire::Writer& w, const EffectParamInfo& v);

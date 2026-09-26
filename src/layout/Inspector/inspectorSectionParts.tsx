@@ -17,7 +17,7 @@
 import { Button } from '@components/Button';
 import { documentMirror } from '@stores/documentMirror';
 import { childOrderOf } from '@core/mirror/layerTree';
-import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
+import { revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { useFocusStore } from '@stores/focusStore';
 import { PrecompControl } from './PrecompControl';
 import { RevertSvgRow } from './SvgSection';
@@ -40,9 +40,8 @@ export function TransformWithThreeDSection({ nodeId }: { nodeId: string }): JSX.
 /**
  * A group's pre-composition controls, its child count, and the way in.
  *
- * `canRevertToSvg` is asked per render rather than cached: the row is only
- * honest while the group still holds the paths the original SVG produced, and
- * editing them is exactly what removes it.
+ * Whether it can Revert to Original SVG is read per render (`LayerInfo.svg`
+ * 'converted': the group still retains the original source) rather than cached.
  */
 export function PrecompGroupSection({ nodeId }: { nodeId: string }): JSX.Element {
   // Before any early return — the hook count must not depend on the node.
@@ -50,12 +49,12 @@ export function PrecompGroupSection({ nodeId }: { nodeId: string }): JSX.Element
   // B4: the group's members (its header) and the layers parented to it (the comp's stack).
   useCompLayersWatch(nodeId);
   const childrenCount = childOrderOf(documentMirror(), nodeId).length;
-  // B4-gap: whether the group still holds the paths its original SVG produced (`canRevertToSvg`: the retained
-  // SVG source) — no API field (see SvgSection).
+  // Whether the group was converted from an SVG it still retains (`LayerInfo.svg`: Revert to Original SVG).
+  const retainsSvg = documentMirror().layer(nodeId)?.svg === 'converted';
   return (
     <>
       <PrecompControl nodeId={nodeId} />
-      {canRevertToSvg(nodeId) && <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />}
+      {retainsSvg && <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />}
       <div className={styles.groupMeta}>
         <span className={styles.groupCount}>Children: {childrenCount}</span>
         <Button size="sm" variant="secondary" fullWidth onClick={() => enterFocus(nodeId)}>

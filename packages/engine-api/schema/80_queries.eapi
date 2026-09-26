@@ -48,6 +48,9 @@ struct CompInfo {
   transitions: Transition[] = 5;
 }
 
+/// B4 — what a layer holds of an SVG document (LayerInfo.svg).
+enum SvgRole { none = 0; layer = 1; converted = 2; }
+
 /// The layer header the timeline and layer panel draw (no property tree).
 struct LayerInfo {
   id: LayerId = 1;
@@ -79,6 +82,8 @@ struct LayerInfo {
   managedBy: string = 119;
   /// B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it.
   mographId: string = 120;
+  /// B4 — `layer`: an SVG layer that stores its document (getSvgDocument reads it; Convert to Editable Shapes); `converted`: a group converted from one that still retains the original source (Revert to Original SVG); `none` otherwise.
+  svg: SvgRole = 920;
 }
 
 /// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).
@@ -240,12 +245,36 @@ struct FontAxisInfo { tag: string = 1; name: string = 2; min: f64 = 3; max: f64 
 query getWaveform = 1020 { layer?: LayerId = 1; item?: ItemId = 2; range: TimeRange = 3; buckets: u32 = 4; } -> WaveformPeaks;
 query listFonts = 1021 { query: string = 1; } -> FontList;
 query getItems = 1022 { items: ItemId[] = 1; } -> ItemDetails;
+/// B4 — the SVG document a layer stores (LayerInfo.svg): an SVG layer's file name, intrinsic size, view box, capability scan, playback mode and markup, or a converted group's retained source. `role` none (every other field empty) for any other layer.
+query getSvgDocument = 1891 { layer: LayerId = 1; } -> SvgDocument;
+/// B4 — the Cryptomatte ID set a footage item's EXR carries (layer names and their objects, from the file's manifest): what Layer ▸ ID Matte lists. Empty when the file has none or was not decoded yet. `unsupported` where the engine does not decode EXR (the C++ engine, until its media decode reads EXR).
+query getCryptomatte = 1892 { item: ItemId = 1; } -> CryptomatteInfo;
 /// A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes.
 query getThumbnail = 1023 { item?: ItemId = 1; layer?: LayerId = 2; time: Time = 3; maxSize: u32 = 4; } -> Thumbnail;
 
 struct FontList { fonts: FontInfo[] = 1; }
 struct ItemDetails { items: ItemInfo[] = 1; }
 struct Thumbnail { width: u32 = 1; height: u32 = 2; format: string = 3; data: bytes = 4; }
+/// B4 — getSvgDocument's answer.
+struct SvgDocument {
+  role: SvgRole = 1;
+  fileName: string = 2;
+  intrinsicWidth: f64 = 3;
+  intrinsicHeight: f64 = 4;
+  viewBox?: Rect = 5;
+  /// The import's capability scan (SvgCapabilities) as JSON: paths, text, gradients, filters, SMIL / CSS animation, …
+  capabilities: string = 6;
+  /// Re-rasterised at the playhead (SMIL / CSS) rather than a static texture.
+  livePlayback: bool = 7;
+  /// The original markup (what Revert to Original SVG restores).
+  sourceMarkup: string = 8;
+  /// The sanitised markup the layer renders, under `sanitizePolicy` (the editor re-sanitises an older policy's from the source).
+  sanitizedMarkup: string = 9;
+  sanitizePolicy: u32 = 10;
+}
+/// B4 — one Cryptomatte layer of an EXR (its channel prefix, e.g. "CryptoObject") and its objects' names, manifest order.
+struct CryptomatteLayerInfo { name: string = 1; objects: string[] = 2; }
+struct CryptomatteInfo { layers: CryptomatteLayerInfo[] = 1; }
 
 family "Catalog";
 

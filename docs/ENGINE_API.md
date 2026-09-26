@@ -577,6 +577,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `copyKeyframes`, `copyEffects` | B4: the keyframe / effect clipboards in API form — whole keys per property (`pasteKeyframes`), effect captures (`pasteEffects`) (§15.12). |
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. |
 | `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
+| `getSvgDocument`, `getCryptomatte` | B4: an SVG layer's stored document (or a converted group's retained source); an EXR item's Cryptomatte ID set (§15.12). |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
 | `capturePreset` | B4: a layer's animation as a preset body (Save as Preset) — keys in the preset's own units, text animators, effects, expressions (§15.12). |
@@ -1810,6 +1811,26 @@ from the struct's maximum + 800.
   (`storeEffectPreset`), and a paste compares a fresh capture of each source
   with the held one to choose `copyPropertyGroups` (still as copied) over the
   snapshot paste. TS `captureEffect`; C++ queries.cpp (keys as `key_to_json`).
+- **`LayerInfo.svg`** (920, enum `SvgRole {none, layer, converted}`): an SVG
+  layer storing its document (the `svg` component's sanitized markup) / a group
+  converted from one that retains the original source (Revert to Original SVG).
+  **`getSvgDocument {layer}`** (1891 → `SvgDocument`): the stored document —
+  file name, intrinsic size, view box, the capability scan (JSON), live
+  playback, source and sanitized markup, sanitize policy (the editor
+  re-sanitises an older policy's markup from the source itself). Both engines
+  read the `svg` component as stored.
+- **`getCryptomatte {item}`** (1892 → `CryptomatteInfo {layers: [{name,
+  objects}]}`): an EXR's Cryptomatte set, from its decoded manifest. TS: the
+  page's EXR decode cache (media/cryptomatte.ts); the decode announces itself
+  as `assetStatusChanged {item, ready, 'cryptomatte'}` (ephemeral) so the UI
+  re-asks. C++: `unsupported` until the engine's media decode reads EXR.
+- Not added (they are not document facts, and the owner of each is another
+  phase): the PROXY record (a job's state — generating / failed / size — lives
+  in the page's asset store and is not written through the engine; closes with
+  proxy generation as an engine job) and the asset preview URL (a page-minted
+  object URL; the engine's answer is `getThumbnail`). The plugin layer record's
+  schema version waits for the Custom Layer section's writes to move to paths
+  (a field alone would convert no read).
 - UI: `useTextLayout(layer)` (src/hooks) re-asks on the layer's mirror keys;
   `layerBoxAt(layer, time)` / `fetchLayerBox` (src/stores/layerBoxes.ts) cache
   getLayerBounds per (layer, time) per revision for render-time reads, batched

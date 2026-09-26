@@ -236,3 +236,22 @@ TEST_CASE("copyEffects: the capture pasteEffects takes, equal until the effect c
   REQUIRE(keyed.arr().size() == 1);
   CHECK(keyed.arr()[0].at("tracks").has("radius"));
 }
+
+TEST_CASE("getSvgDocument / LayerInfo.svg: none for an ordinary layer; getCryptomatte unsupported (no EXR decode)", "[b4r2][svg]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  const auto doc = query<api::SvgDocument>(h, qry(api::GetSvgDocument{layer}));
+  CHECK(doc.role == api::SvgRole::none);
+  CHECK(doc.capabilities == "{}");
+  const auto layers = query<api::LayerDetails>(h, qry(api::GetLayers{{layer}}));
+  REQUIRE(layers.layers.size() == 1);
+  CHECK(layers.layers[0].svg == api::SvgRole::none);
+  const auto crypto = h.ask(qry(api::GetCryptomatte{comp}));
+  REQUIRE_FALSE(is_ok(crypto));
+  CHECK(std::get<api::EngineError>(crypto.outcome.v).code == api::ErrorCode::unsupported);
+  const auto missing = h.ask(qry(api::GetCryptomatte{"nope"}));
+  REQUIRE_FALSE(is_ok(missing));
+  CHECK(std::get<api::EngineError>(missing.outcome.v).code == api::ErrorCode::not_found);
+}

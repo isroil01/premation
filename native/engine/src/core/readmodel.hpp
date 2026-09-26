@@ -73,6 +73,8 @@ struct MatteState {
 [[nodiscard]] std::vector<api::PropertyInfo> property_tree(const PCtx& c, std::string_view layer, const Catalog& cat,
                                                            std::string_view root = {}, std::uint32_t depth = 0);
 [[nodiscard]] std::vector<api::KeyframeSet> keyframe_sets(const PCtx& c, std::string_view layer, const Catalog& cat);
+/// B4: LayerInfo.svg — the `svg` component's sanitized markup (an SVG layer) or only its retained source (a converted group) (model.ts svgRoleOf).
+[[nodiscard]] api::SvgRole svg_role_of(const Node& n);
 
 [[nodiscard]] api::DocumentSnapshot document_snapshot(const PCtx& c, api::Revision revision, const std::string& projectPath,
                                                       bool dirty, bool includeProperties, bool includeKeyframes);

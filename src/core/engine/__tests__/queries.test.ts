@@ -37,6 +37,8 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getWaveform: (x) => ({ type: 'getWaveform', layer: x.V, range: { start: 0, duration: sec(1) }, buckets: 10 }),
   listFonts: () => ({ type: 'listFonts', query: '' }),
   getItems: (x) => ({ type: 'getItems', items: [x.footage, x.comp2, x.folder] }),
+  getSvgDocument: (x) => ({ type: 'getSvgDocument', layer: x.A }),
+  getCryptomatte: (x) => ({ type: 'getCryptomatte', item: x.footage }),
   getThumbnail: (x) => ({ type: 'getThumbnail', item: x.footage, time: 0, maxSize: 64 }),
   listEffects: () => ({ type: 'listEffects', category: '' }),
   listGroupTypes: (x) => ({ type: 'listGroupTypes', layer: x.T, parent: 'text/animators' }),
@@ -63,7 +65,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(38);
+  expect(Object.keys(QUERIES)).toHaveLength(40);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {
@@ -111,6 +113,14 @@ test('copyEffects: the capture pasteEffects takes, stack order; the same effect 
   await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `effects/${s.fx}/radius` }, animated: true, time: 0 });
   const keyed = JSON.parse((await h.query({ type: 'copyEffects', layer: s.A, effects: [`effects/${s.fx}`] })).effects) as typeof cap;
   expect(Object.keys(keyed[0]!.tracks)).toEqual(['radius']);
+});
+
+test('getSvgDocument / LayerInfo.svg: none for an ordinary layer; getCryptomatte: none decoded; unknown ids notFound', async () => {
+  expect(await h.query({ type: 'getSvgDocument', layer: s.A })).toMatchObject({ role: 'none', sanitizedMarkup: '', capabilities: '{}' });
+  expect((await h.query({ type: 'getLayers', layers: [s.A] })).layers[0]!.svg).toBe('none');
+  expect((await h.query({ type: 'getCryptomatte', item: s.footage })).layers).toEqual([]);
+  const bad = await h.engine.query({ type: 'getCryptomatte', item: 'nope' });
+  expect(!bad.ok && bad.error.code).toBe('notFound');
 });
 
 test('getLayerBounds: the drawn box in layer and comp space at the time; viewport space is the overlay push\'s', async () => {

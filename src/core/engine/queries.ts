@@ -10,6 +10,7 @@ import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, Effect
 import { defaultAnimation } from '@motion/animation';
 import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
 import { captureEffect } from '@core/effects/effectClipboard';
+import { getCryptomatteForAsset } from '@core/media/cryptomatte';
 import { listPresets, capturePresetBody } from '@core/animation/animationPresets';
 import { presetContextFor } from '@core/animation/presetContext';
 import { world2DAt, world3DAt } from '@core/scene/layerSpace';
@@ -28,6 +29,7 @@ import {
   compMarkers,
   layerMarkers,
   itemInfo,
+  svgRoleOf,
 } from './model';
 import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimated, flicksToKeyTime, keyTimeToFlicks, toApiNums, apiUnitFactor } from './props';
 import { valueAt } from './handlers/properties';
@@ -247,6 +249,37 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         return info;
       });
       return { type: q.type, items };
+    }
+    case 'getSvgDocument': {
+      // B4: the `svg` component as stored (svgLayer.ts readSvgLayer / readRetainedSvgSource).
+      const node = requireLayer(q.layer);
+      const role = svgRoleOf(node);
+      const p = (node.components.find((c) => c.type === 'svg')?.props ?? {}) as Record<string, unknown>;
+      const str = (k: string): string => (typeof p[k] === 'string' ? (p[k] as string) : '');
+      const num = (k: string, d: number): number => (typeof p[k] === 'number' && Number.isFinite(p[k]) ? (p[k] as number) : d);
+      const vb = Array.isArray(p.viewBox) && p.viewBox.length === 4 && p.viewBox.every((v) => typeof v === 'number') ? (p.viewBox as number[]) : null;
+      if (role === 'none') {
+        return { type: q.type, role, fileName: '', intrinsicWidth: 0, intrinsicHeight: 0, capabilities: '{}', livePlayback: false, sourceMarkup: '', sanitizedMarkup: '', sanitizePolicy: 0 };
+      }
+      return {
+        type: q.type,
+        role,
+        fileName: str('fileName') || 'untitled.svg',
+        intrinsicWidth: num('intrinsicWidth', 512),
+        intrinsicHeight: num('intrinsicHeight', 512),
+        ...(vb ? { viewBox: { x: vb[0]!, y: vb[1]!, width: vb[2]!, height: vb[3]! } } : {}),
+        capabilities: JSON.stringify(p.capabilities && typeof p.capabilities === 'object' ? p.capabilities : {}),
+        livePlayback: p.livePlayback === true,
+        sourceMarkup: str('sourceMarkup') || str('sanitizedMarkup'),
+        sanitizedMarkup: str('sanitizedMarkup'),
+        sanitizePolicy: Math.max(0, Math.round(num('sanitizePolicy', 0))),
+      };
+    }
+    case 'getCryptomatte': {
+      // B4: the EXR's decoded manifest — the page decodes EXR in this engine (media/floatExr.ts).
+      if (!resolveItem(q.item)) fail('notFound', `no item '${q.item}'`, { item: q.item });
+      const set = getCryptomatteForAsset(q.item);
+      return { type: q.type, layers: (set?.layers ?? []).map((l) => ({ name: l.name, objects: l.objects.map((o) => o.name) })) };
     }
     case 'getThumbnail':
       return fail('unsupported', 'thumbnails are rendered by the editor until the engine owns rendering (D2)');

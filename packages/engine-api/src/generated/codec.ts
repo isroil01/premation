@@ -196,6 +196,10 @@ const TrackDirection_TO_NUM: Record<string, number> = { 'forward': 0, 'backward'
 const TrackDirection_FROM_NUM: readonly (T.TrackDirection | undefined)[] = ['forward', 'backward', 'both'];
 function enc_TrackDirection(v: T.TrackDirection): number { const n = TrackDirection_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackDirection: invalid value ' + String(v)); return n; }
 function dec_TrackDirection(n: number): T.TrackDirection { const v = TrackDirection_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackDirection: unknown value ' + n, 'badEnum'); return v; }
+const SvgRole_TO_NUM: Record<string, number> = { 'none': 0, 'layer': 1, 'converted': 2 };
+const SvgRole_FROM_NUM: readonly (T.SvgRole | undefined)[] = ['none', 'layer', 'converted'];
+function enc_SvgRole(v: T.SvgRole): number { const n = SvgRole_TO_NUM[v]; if (n === undefined) throw new RangeError('SvgRole: invalid value ' + String(v)); return n; }
+function dec_SvgRole(n: number): T.SvgRole { const v = SvgRole_FROM_NUM[n]; if (v === undefined) throw new DecodeError('SvgRole: unknown value ' + n, 'badEnum'); return v; }
 const PropertyKind_TO_NUM: Record<string, number> = { 'property': 0, 'group': 1, 'indexedGroup': 2 };
 const PropertyKind_FROM_NUM: readonly (T.PropertyKind | undefined)[] = ['property', 'group', 'indexedGroup'];
 function enc_PropertyKind(v: T.PropertyKind): number { const n = PropertyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PropertyKind: invalid value ' + String(v)); return n; }
@@ -7713,6 +7717,7 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   w.varint(946); w.str(v.shapeType);
   w.varint(954); w.str(v.managedBy);
   w.varint(962); w.str(v.mographId);
+  w.varint(7360); w.varint(enc_SvgRole(v.svg));
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -7734,6 +7739,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let h_shapeType = false;
   let h_managedBy = false;
   let h_mographId = false;
+  let h_svg = false;
   let v_id: string | undefined;
   let v_comp: string | undefined;
   let v_kind: T.LayerKind | undefined;
@@ -7752,6 +7758,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_shapeType: string | undefined;
   let v_managedBy: string | undefined;
   let v_mographId: string | undefined;
+  let v_svg: T.SvgRole | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7776,6 +7783,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 946: v_shapeType = r.str(); h_shapeType = true; break;
       case 954: v_managedBy = r.str(); h_managedBy = true; break;
       case 962: v_mographId = r.str(); h_mographId = true; break;
+      case 7360: v_svg = dec_SvgRole(r.varint()); h_svg = true; break;
       default: r.skip(key);
     }
   }
@@ -7796,6 +7804,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   if (!h_shapeType) throw new DecodeError('LayerInfo.shapeType: missing', 'missingField');
   if (!h_managedBy) throw new DecodeError('LayerInfo.managedBy: missing', 'missingField');
   if (!h_mographId) throw new DecodeError('LayerInfo.mographId: missing', 'missingField');
+  if (!h_svg) throw new DecodeError('LayerInfo.svg: missing', 'missingField');
   o.id = v_id;
   o.comp = v_comp;
   o.kind = v_kind;
@@ -7817,6 +7826,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   o.shapeType = v_shapeType;
   o.managedBy = v_managedBy;
   o.mographId = v_mographId;
+  o.svg = v_svg;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
@@ -8842,6 +8852,42 @@ function decS_GetItems(r: Reader, end: number, o: any): T.GetItems {
   o.items = l_items;
   return o;
 }
+function encS_GetSvgDocument(w: Writer, v: T.GetSvgDocument): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_GetSvgDocument(r: Reader, end: number, o: any): T.GetSvgDocument {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetSvgDocument.layer: missing', 'missingField');
+  o.layer = v_layer;
+  return o;
+}
+function encS_GetCryptomatte(w: Writer, v: T.GetCryptomatte): void {
+  w.byte(10); w.str(v.item);
+}
+function decS_GetCryptomatte(r: Reader, end: number, o: any): T.GetCryptomatte {
+  let h_item = false;
+  let v_item: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_item = r.str(); h_item = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_item) throw new DecodeError('GetCryptomatte.item: missing', 'missingField');
+  o.item = v_item;
+  return o;
+}
 function encS_GetThumbnail(w: Writer, v: T.GetThumbnail): void {
   if (v.item !== undefined) { w.byte(10); w.str(v.item); }
   if (v.layer !== undefined) { w.byte(18); w.str(v.layer); }
@@ -8940,6 +8986,114 @@ function decS_Thumbnail(r: Reader, end: number, o: any): T.Thumbnail {
   o.height = v_height;
   o.format = v_format;
   o.data = v_data;
+  return o;
+}
+function encS_SvgDocument(w: Writer, v: T.SvgDocument): void {
+  w.byte(8); w.varint(enc_SvgRole(v.role));
+  w.byte(18); w.str(v.fileName);
+  w.byte(25); w.f64(v.intrinsicWidth);
+  w.byte(33); w.f64(v.intrinsicHeight);
+  if (v.viewBox !== undefined) { w.byte(42); { const s = w.beginLd(); encS_Rect(w, v.viewBox); w.endLd(s); } }
+  w.byte(50); w.str(v.capabilities);
+  w.byte(56); w.bool(v.livePlayback);
+  w.byte(66); w.str(v.sourceMarkup);
+  w.byte(74); w.str(v.sanitizedMarkup);
+  w.byte(80); w.u32(v.sanitizePolicy);
+}
+function decS_SvgDocument(r: Reader, end: number, o: any): T.SvgDocument {
+  let h_role = false;
+  let h_fileName = false;
+  let h_intrinsicWidth = false;
+  let h_intrinsicHeight = false;
+  let h_capabilities = false;
+  let h_livePlayback = false;
+  let h_sourceMarkup = false;
+  let h_sanitizedMarkup = false;
+  let h_sanitizePolicy = false;
+  let v_role: T.SvgRole | undefined;
+  let v_fileName: string | undefined;
+  let v_intrinsicWidth: number | undefined;
+  let v_intrinsicHeight: number | undefined;
+  let v_viewBox: T.Rect | undefined;
+  let v_capabilities: string | undefined;
+  let v_livePlayback: boolean | undefined;
+  let v_sourceMarkup: string | undefined;
+  let v_sanitizedMarkup: string | undefined;
+  let v_sanitizePolicy: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_role = dec_SvgRole(r.varint()); h_role = true; break;
+      case 18: v_fileName = r.str(); h_fileName = true; break;
+      case 25: v_intrinsicWidth = r.f64(); h_intrinsicWidth = true; break;
+      case 33: v_intrinsicHeight = r.f64(); h_intrinsicHeight = true; break;
+      case 42: v_viewBox = decS_Rect(r, r.ldEnd(), {}); break;
+      case 50: v_capabilities = r.str(); h_capabilities = true; break;
+      case 56: v_livePlayback = r.bool(); h_livePlayback = true; break;
+      case 66: v_sourceMarkup = r.str(); h_sourceMarkup = true; break;
+      case 74: v_sanitizedMarkup = r.str(); h_sanitizedMarkup = true; break;
+      case 80: v_sanitizePolicy = r.u32(); h_sanitizePolicy = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_role) throw new DecodeError('SvgDocument.role: missing', 'missingField');
+  if (!h_fileName) throw new DecodeError('SvgDocument.fileName: missing', 'missingField');
+  if (!h_intrinsicWidth) throw new DecodeError('SvgDocument.intrinsicWidth: missing', 'missingField');
+  if (!h_intrinsicHeight) throw new DecodeError('SvgDocument.intrinsicHeight: missing', 'missingField');
+  if (!h_capabilities) throw new DecodeError('SvgDocument.capabilities: missing', 'missingField');
+  if (!h_livePlayback) throw new DecodeError('SvgDocument.livePlayback: missing', 'missingField');
+  if (!h_sourceMarkup) throw new DecodeError('SvgDocument.sourceMarkup: missing', 'missingField');
+  if (!h_sanitizedMarkup) throw new DecodeError('SvgDocument.sanitizedMarkup: missing', 'missingField');
+  if (!h_sanitizePolicy) throw new DecodeError('SvgDocument.sanitizePolicy: missing', 'missingField');
+  o.role = v_role;
+  o.fileName = v_fileName;
+  o.intrinsicWidth = v_intrinsicWidth;
+  o.intrinsicHeight = v_intrinsicHeight;
+  if (v_viewBox !== undefined) o.viewBox = v_viewBox;
+  o.capabilities = v_capabilities;
+  o.livePlayback = v_livePlayback;
+  o.sourceMarkup = v_sourceMarkup;
+  o.sanitizedMarkup = v_sanitizedMarkup;
+  o.sanitizePolicy = v_sanitizePolicy;
+  return o;
+}
+function encS_CryptomatteLayerInfo(w: Writer, v: T.CryptomatteLayerInfo): void {
+  w.byte(10); w.str(v.name);
+  { const a = v.objects; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_CryptomatteLayerInfo(r: Reader, end: number, o: any): T.CryptomatteLayerInfo {
+  const l_objects: string[] = [];
+  let h_name = false;
+  let v_name: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_name = r.str(); h_name = true; break;
+      case 18: l_objects.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('CryptomatteLayerInfo.name: missing', 'missingField');
+  o.name = v_name;
+  o.objects = l_objects;
+  return o;
+}
+function encS_CryptomatteInfo(w: Writer, v: T.CryptomatteInfo): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_CryptomatteLayerInfo(w, a[i]!); w.endLd(s); } } }
+}
+function decS_CryptomatteInfo(r: Reader, end: number, o: any): T.CryptomatteInfo {
+  const l_layers: T.CryptomatteLayerInfo[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(decS_CryptomatteLayerInfo(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
   return o;
 }
 function encS_EffectParamInfo(w: Writer, v: T.EffectParamInfo): void {
@@ -14095,6 +14249,8 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_CopyKeyframes(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
+    case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_GetSvgDocument(w, v); w.endLd(s); } return;
+    case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_GetCryptomatte(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14142,6 +14298,8 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
       case 15114: out = decS_CopyKeyframes(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.Query; break;
       case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
+      case 15130: out = decS_GetSvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.Query; break;
+      case 15138: out = decS_GetCryptomatte(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -14189,6 +14347,8 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_KeyframeSets(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
+    case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_SvgDocument(w, v); w.endLd(s); } return;
+    case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_CryptomatteInfo(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14236,6 +14396,8 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
       case 15114: out = decS_KeyframeSets(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.QueryResult; break;
       case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
+      case 15130: out = decS_SvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.QueryResult; break;
+      case 15138: out = decS_CryptomatteInfo(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -14622,10 +14784,15 @@ export const codecs = {
   GetWaveform: mk<T.GetWaveform>(encS_GetWaveform, (r, e) => decS_GetWaveform(r, e, {})),
   ListFonts: mk<T.ListFonts>(encS_ListFonts, (r, e) => decS_ListFonts(r, e, {})),
   GetItems: mk<T.GetItems>(encS_GetItems, (r, e) => decS_GetItems(r, e, {})),
+  GetSvgDocument: mk<T.GetSvgDocument>(encS_GetSvgDocument, (r, e) => decS_GetSvgDocument(r, e, {})),
+  GetCryptomatte: mk<T.GetCryptomatte>(encS_GetCryptomatte, (r, e) => decS_GetCryptomatte(r, e, {})),
   GetThumbnail: mk<T.GetThumbnail>(encS_GetThumbnail, (r, e) => decS_GetThumbnail(r, e, {})),
   FontList: mk<T.FontList>(encS_FontList, (r, e) => decS_FontList(r, e, {})),
   ItemDetails: mk<T.ItemDetails>(encS_ItemDetails, (r, e) => decS_ItemDetails(r, e, {})),
   Thumbnail: mk<T.Thumbnail>(encS_Thumbnail, (r, e) => decS_Thumbnail(r, e, {})),
+  SvgDocument: mk<T.SvgDocument>(encS_SvgDocument, (r, e) => decS_SvgDocument(r, e, {})),
+  CryptomatteLayerInfo: mk<T.CryptomatteLayerInfo>(encS_CryptomatteLayerInfo, (r, e) => decS_CryptomatteLayerInfo(r, e, {})),
+  CryptomatteInfo: mk<T.CryptomatteInfo>(encS_CryptomatteInfo, (r, e) => decS_CryptomatteInfo(r, e, {})),
   EffectParamInfo: mk<T.EffectParamInfo>(encS_EffectParamInfo, (r, e) => decS_EffectParamInfo(r, e, {})),
   EffectInfo: mk<T.EffectInfo>(encS_EffectInfo, (r, e) => decS_EffectInfo(r, e, {})),
   ListEffects: mk<T.ListEffects>(encS_ListEffects, (r, e) => decS_ListEffects(r, e, {})),
