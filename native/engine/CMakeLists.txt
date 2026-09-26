@@ -7,7 +7,9 @@
 #                     session + transport clock. No GPU, no OS calls: unit-tested,
 #                     stress-tested and fuzzed on its own.
 #   engine_gpu        Dawn device, compositor, render thread + frame-slot ring,
-#                     shared textures (Windows)
+#                     shared textures (Windows NT handles, macOS IOSurfaces)
+#   premation-host-bridge  (macOS) the N-API module Electron main loads to turn an
+#                     announced IOSurfaceID into its own IOSurfaceRef (host_bridge/)
 #   premation-engine  the process: pipes, reader/writer threads, core loop
 #   premation-viewport-proto   the C1 prototype (routes A, C, bench), kept so
 #                     docs/VIEWPORT_ROUTE.md stays reproducible
@@ -58,10 +60,15 @@ if(Dawn_FOUND)
     src/render/render_thread.cpp
     src/render/vram_ffi.cpp
   )
+  # Route C's shared-texture ring, one implementation per OS (shared_texture_ffi.hpp).
   if(WIN32)
     target_sources(engine_gpu PRIVATE src/shared_texture_ffi.cpp)
     target_link_libraries(engine_gpu PUBLIC d3d11 dxgi winmm)
-    target_compile_definitions(engine_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_definitions(engine_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE PREMATION_SHARED_TEXTURE=1)
+  elseif(APPLE)
+    target_sources(engine_gpu PRIVATE src/shared_texture_ffi_mac.cpp)
+    target_link_libraries(engine_gpu PUBLIC "-framework IOSurface" "-framework CoreFoundation")
+    target_compile_definitions(engine_gpu PUBLIC PREMATION_SHARED_TEXTURE=1)
   endif()
   target_include_directories(engine_gpu PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -141,6 +148,40 @@ if(WIN32)
   target_compile_definitions(premation-engine-headless PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 endif()
 
+# ── premation-host-bridge (macOS): IOSurfaceID → IOSurfaceRef in Electron main ─
+# Route C on macOS: Electron's sharedTexture takes an IOSurfaceRef local to
+# main, so main resolves the ids the engine announces (host_bridge/). No Dawn,
+# so it builds with the headless configuration too. Written against the C
+# N-API: the headers of any Node ≥ 16 work, and the module is not tied to one
+# Electron version. Lands beside premation-engine; electron-builder ships both.
+if(APPLE)
+  option(PREMATION_HOST_BRIDGE "Build premation-host-bridge.node (macOS engine viewport)" ON)
+endif()
+if(APPLE AND PREMATION_HOST_BRIDGE)
+  if(NOT NODE_API_INCLUDE_DIR)
+    find_program(PREMATION_NODE_EXECUTABLE node)
+    if(PREMATION_NODE_EXECUTABLE)
+      get_filename_component(_node_bin "${PREMATION_NODE_EXECUTABLE}" REALPATH)
+      get_filename_component(_node_bin "${_node_bin}" DIRECTORY)
+      set(_node_hint "${_node_bin}/../include/node")
+    endif()
+    find_path(NODE_API_INCLUDE_DIR node_api.h HINTS ${_node_hint} "${CMAKE_SOURCE_DIR}/../node_modules/node-api-headers/include")
+  endif()
+  if(NODE_API_INCLUDE_DIR)
+    add_library(premation-host-bridge MODULE host_bridge/iosurface_bridge_ffi.cpp)
+    set_target_properties(premation-host-bridge PROPERTIES PREFIX "" SUFFIX ".node"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_include_directories(premation-host-bridge SYSTEM PRIVATE "${NODE_API_INCLUDE_DIR}")
+    target_compile_definitions(premation-host-bridge PRIVATE NAPI_VERSION=8 NODE_GYP_MODULE_NAME=premation_host_bridge)
+    target_link_libraries(premation-host-bridge PRIVATE motion::options "-framework IOSurface" "-framework CoreFoundation")
+    # N-API symbols come from the loading process (Electron / node).
+    target_link_options(premation-host-bridge PRIVATE -undefined dynamic_lookup)
+  else()
+    message(WARNING "premation-host-bridge: node_api.h not found (set NODE_API_INCLUDE_DIR) — "
+                    "the macOS engine viewport falls back to the route-A frame copy")
+  endif()
+endif()
+
 # ── tests ───────────────────────────────────────────────────────────────────
 if(MOTION_BUILD_TESTS)
   find_package(Catch2 3 CONFIG REQUIRED)
@@ -168,6 +209,10 @@ if(MOTION_BUILD_TESTS)
       target_compile_options(engine_gpu_tests PRIVATE /bigobj)
     endif()
     add_test(NAME engine_gpu_tests COMMAND engine_gpu_tests --reporter compact)
+    if(APPLE)
+      target_sources(engine_gpu_tests PRIVATE tests/test_shared_texture_mac.cpp)
+      target_link_libraries(engine_gpu_tests PRIVATE "-framework IOSurface" "-framework CoreFoundation")
+    endif()
     if(WIN32 AND DEFINED _dxc_bin)
       add_custom_command(TARGET engine_gpu_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxc_bin}/dxcompiler.dll" "${_dxc_bin}/dxil.dll"
@@ -185,13 +230,37 @@ endif()
 option(MOTION_ENGINE_FUZZER "Build the libFuzzer protocol target when the compiler supports it" ON)
 if(MOTION_ENGINE_FUZZER AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   include(CheckCXXSourceCompiles)
+  include(CMakePushCheckState)
+  set(_have_fuzzer OFF)
   if(MSVC)
     # clang-cl: CMake links with lld-link/link.exe, not the clang driver, so
     # the libFuzzer runtime is named explicitly.
     get_filename_component(_llvm_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
     file(GLOB _fuzzer_lib "${_llvm_bin}/../lib/clang/*/lib/windows/clang_rt.fuzzer-x86_64.lib")
+    if(_fuzzer_lib)
+      set(_have_fuzzer ON)
+    endif()
+  else()
+    # Apple's clang ships no libFuzzer runtime (Homebrew / upstream LLVM do):
+    # -fsanitize=fuzzer compiles but does not link. Probe a whole link.
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=fuzzer")
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles([=[
+#include <cstddef>
+#include <cstdint>
+extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }
+]=] PREMATION_HAVE_LIBFUZZER)
+    cmake_pop_check_state()
+    if(PREMATION_HAVE_LIBFUZZER)
+      set(_have_fuzzer ON)
+    endif()
   endif()
-  if(NOT MSVC OR _fuzzer_lib)
+  if(NOT _have_fuzzer)
+    message(STATUS "premation-engine: ${CMAKE_CXX_COMPILER} has no libFuzzer runtime — engine_fuzz is not built")
+  endif()
+  if(_have_fuzzer)
     # motion_eval is compiled in (not linked) so everything shares one CRT:
     # the Windows libFuzzer runtime is static-CRT (/MT), the libraries are /MD.
     set(_eval_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)
@@ -324,6 +393,12 @@ target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_link_libraries(engine_plugins PUBLIC engine_core Threads::Threads PRIVATE ${CMAKE_DL_LIBS} motion::options)
 if(MSVC)
   target_compile_options(engine_plugins PRIVATE /bigobj)
+endif()
+
+# listFonts answers from the installed-font catalogue (engine_process.cpp → font_catalog.hpp).
+target_link_libraries(premation-engine-headless PRIVATE engine_raster_core)
+if(TARGET premation-engine)
+  target_link_libraries(premation-engine PRIVATE engine_raster_core)
 endif()
 
 # The engine process starts the host (--plugins / PREMATION_PLUGIN_PATH, engine_process.cpp).
@@ -609,12 +684,22 @@ add_library(engine_raster_core STATIC
   src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
   src/raster/mask_paint.cpp       # paintMaskMatte (mask.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
-  src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
+  src/raster/system_fonts_ffi.cpp # fontconfig family matching + the Linux font catalogue
+  src/raster/font_catalog.cpp     # listFonts + font resolution over the installed faces
   src/raster/svg_doc.cpp          # SVG documents: XML, CSS cascade, path / transform micro-syntax (D2w)
 )
 target_include_directories(engine_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/raster)
 target_compile_features(engine_raster_core PUBLIC cxx_std_20)
 target_link_libraries(engine_raster_core PUBLIC motion::jsmath ${CMAKE_DL_LIBS} PRIVATE motion::options)
+# The installed-font catalogue per OS (font_catalog.hpp).
+if(WIN32)
+  target_sources(engine_raster_core PRIVATE src/raster/font_catalog_ffi_win.cpp)
+  target_link_libraries(engine_raster_core PRIVATE dwrite)
+  target_compile_definitions(engine_raster_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+elseif(APPLE)
+  target_sources(engine_raster_core PRIVATE src/raster/font_catalog_ffi_mac.cpp)
+  target_link_libraries(engine_raster_core PUBLIC "-framework CoreText" "-framework CoreFoundation")
+endif()
 if(NOT WIN32 AND NOT APPLE)
   find_package(Fontconfig QUIET)
   if(TARGET Fontconfig::Fontconfig)
@@ -665,7 +750,7 @@ else()
 endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
-                 tests/test_svg_doc.cpp)
+                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)

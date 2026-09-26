@@ -103,6 +103,11 @@ class FrameSink {
   /// Use shared (cross-process) slot textures. Called once, from Hello.
   virtual void set_shared(bool shared) = 0;
   [[nodiscard]] virtual bool shared_supported() const = 0;
+  /// Route A: read each frame back and write it to the pixel stream (fd 5,
+  /// pixel_channel.hpp) before its FrameReady — for hosts that cannot import
+  /// shared textures. Called once, from Hello, and only when not shared.
+  virtual void set_copy(bool /*copy*/) {}
+  [[nodiscard]] virtual bool copy_supported() const { return false; }
   [[nodiscard]] virtual RenderCounters counters() const = 0;
   [[nodiscard]] virtual std::string adapter() const = 0;
   [[nodiscard]] virtual std::string backend() const = 0;

@@ -116,7 +116,7 @@ describe('IPC registration goes through one door', () => {
     // `ipcMain` directly.
     const src = code(readFileSync(join(DIR, 'engineHost.ts'), 'utf8'));
     const registered = [...src.matchAll(/(?<![\w.])(?:handle|on)\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
-    expect(registered).toEqual(['engine:receiverReady', 'engine:request', 'engine:status']);
+    expect(registered).toEqual(['engine:pixelsRelease', 'engine:receiverReady', 'engine:request', 'engine:status']);
     const listed = [...src.matchAll(/^\s+'(engine:[A-Za-z]+)',$/gm)].map((m) => m[1]).sort();
     expect(listed).toEqual(registered);
     // main.ts wires it rather than registering engine channels itself.

@@ -61,6 +61,54 @@ function installEngineFrameReceiver(): boolean {
   return true;
 }
 
+// Route A (docs/VIEWPORT_ROUTE.md): where shared textures do not work, main
+// pushes each frame's RGBA8 pixels (`engine:pixels`). They become a VideoFrame
+// here, so the page's consumer is the same for both routes; its release()
+// closes the frame and tells main the engine's slot is free.
+let enginePixelsInstalled = false;
+
+function installEnginePixelReceiver(): boolean {
+  if (enginePixelsInstalled) return true;
+  if (typeof VideoFrame !== 'function') return false;
+  ipcRenderer.on('engine:pixels', (_event: unknown, meta: { generation: number; slot: number; width: number; height: number; renderDoneUs: number }, pixels: Uint8Array) => {
+    const free = (): void => ipcRenderer.send('engine:pixelsRelease', meta.generation, meta.slot);
+    const consumer = engineFrameConsumer;
+    if (!consumer) {
+      free();
+      return;
+    }
+    let frame: VideoFrame;
+    try {
+      frame = new VideoFrame(pixels, {
+        format: 'RGBA',
+        codedWidth: meta.width,
+        codedHeight: meta.height,
+        timestamp: Math.max(0, Math.trunc(meta.renderDoneUs)),
+      });
+    } catch {
+      free();
+      return;
+    }
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      try {
+        frame.close();
+      } finally {
+        free();
+      }
+    };
+    try {
+      consumer(frame, meta, release);
+    } catch {
+      release();
+    }
+  });
+  enginePixelsInstalled = true;
+  return true;
+}
+
 const bridge = {
   platform: process.platform,
   version: process.versions.electron,
@@ -607,11 +655,12 @@ const bridge = {
       ipcRenderer.on('engine:fallback', listener);
       return () => ipcRenderer.removeListener('engine:fallback', listener);
     },
-    /** Engine frames (shared textures); null stops. The consumer must `release()` each frame. */
+    /** Engine frames (shared textures, or route-A copies as VideoFrames); null stops. The consumer must `release()` each frame. */
     onFrame: (consumer: EngineFrameConsumer | null) => {
       engineFrameConsumer = consumer;
       const ready = consumer !== null && installEngineFrameReceiver();
-      ipcRenderer.send('engine:receiverReady', ready);
+      const copyReady = consumer !== null && installEnginePixelReceiver();
+      ipcRenderer.send('engine:receiverReady', ready, copyReady);
     },
   },
 };

@@ -75,6 +75,10 @@ struct RenderOptions {
   /// Makes the drawer for built frames on the render thread's device (null = C2's quads only).
   std::function<std::unique_ptr<BuiltFrameDrawer>(const Gpu& gpu, std::string& error)> makeDrawer;
   std::uint32_t hostPid = 0;     // Electron main; shared handles are duplicated into it
+  /// Route A: queue one framed pixel message (premation/protocol/pixel_channel.hpp)
+  /// on the pixel stream (fd 5); false once that pipe is gone. Unset = no
+  /// pixel stream, so `frames.copy` is not offered.
+  std::function<bool(std::vector<std::uint8_t>)> sendPixels;
   std::uint32_t vendorId = 0;    // Chromium's GPU (PCI vendor id); 0 = power preference decides
   bool highPerformance = false;
 };
@@ -103,6 +107,8 @@ class RenderThread final : public FrameSink {
   void configure(const ViewportConfig& config) override;
   void set_shared(bool shared) override;
   [[nodiscard]] bool shared_supported() const override;
+  void set_copy(bool copy) override;
+  [[nodiscard]] bool copy_supported() const override;
   [[nodiscard]] RenderCounters counters() const override;
   [[nodiscard]] std::string adapter() const override;
   [[nodiscard]] std::string backend() const override;
@@ -119,7 +125,9 @@ class RenderThread final : public FrameSink {
   void close_gpu();
   /// After a loss: close, then open again. False = the loss is fatal.
   bool recover_device();
-  void rebuild(const ViewportConfig& config, bool shared);
+  void rebuild(const ViewportConfig& config, bool shared, bool copy);
+  /// Route A: the slot's read-back buffer → one pixel message. False = nothing sent.
+  bool send_copy(SlotSet& set, std::uint32_t slot);
   void render(RenderJob& job, std::uint32_t slot, const ViewportConfig& config);
   void collect_retired(std::chrono::steady_clock::time_point now);
 
@@ -134,6 +142,7 @@ class RenderThread final : public FrameSink {
   bool configDirty_ = false;
   ViewportConfig config_;
   bool shared_ = false;
+  bool copy_ = false;
   std::optional<RenderJob> pending_;
   std::uint32_t droppedPending_ = 0;  // superseded + clock-skipped since the last FrameReady
 
@@ -149,6 +158,7 @@ class RenderThread final : public FrameSink {
   /// The job drawn last, drawn again on a recovered device.
   std::optional<RenderJob> lastJob_;
   std::uint32_t lossesSinceFrame_ = 0;
+  bool pixelPipeGone_ = false;  // logged once
 
   // Counters (m_).
   RenderCounters counters_;

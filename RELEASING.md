@@ -28,6 +28,23 @@ Per platform:
 | Windows | `npm run dist` (on Windows) | `Premation-Setup-Windows.exe` + `latest.yml` |
 | macOS | `npm run dist` (on macOS) | `Premation-macOS-arm64.dmg`, `Premation-macOS-x64.dmg` + `latest-mac.yml` |
 
+**The C++ engine is part of every package.** `scripts/stageEngine.cjs` (the
+electron-builder `beforePack` hook) copies it from the preset build into
+`<resources>/engine/` and **fails the package when it is missing** — build it
+first (`cd native && cmake --preset <preset> && cmake --build --preset <preset>`):
+
+| Package | Preset(s) | Ships beside `premation-engine` |
+| --- | --- | --- |
+| Windows x64 | `windows-clang-cl-engine` | `dxcompiler.dll`, `dxil.dll` |
+| macOS arm64 dmg | `macos-clang-engine` | `premation-host-bridge.node` |
+| macOS x64 dmg | `macos-clang-engine-x64` (cross-built on Apple silicon) | `premation-host-bridge.node` |
+
+The release workflow builds these in its `engine` job (vcpkg binary cache,
+`.github/actions/build-engine`) and the `build` job downloads them. On macOS
+both nested binaries are listed in `mac.binaries`, so they are signed with the
+hardened runtime before the app is sealed. `PREMATION_PACKAGE_WITHOUT_ENGINE=1`
+packages without it for a local installer rehearsal only — that app cannot run.
+
 Each platform must be built **on** that platform. That is what the release
 workflow's two-runner matrix is for. There is no Linux row on purpose — see
 "Platform support" below.
@@ -307,7 +324,8 @@ difference. CI is the only place that can refuse.
 - [ ] `npm run release:patch` (never edit the version by hand)
 - [ ] `git push --follow-tags`
 - [ ] Tag is on `main` (the workflow refuses otherwise)
-- [ ] Workflow green on both platforms
+- [ ] Workflow green on both platforms (the `engine` job included)
+- [ ] The installed app starts the C++ engine on each platform (`await motionEditor.engine.status()` in the dev tools: `state: 'running'`)
 - [ ] macOS artifact verified with `spctl` and `stapler validate` on a clean machine, downloaded via a browser
 - [ ] Installed the Windows build on a clean machine and confirmed it reaches the backend
 - [ ] Release notes written, then **Publish release**

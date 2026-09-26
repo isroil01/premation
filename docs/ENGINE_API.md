@@ -575,7 +575,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `getKeyframes`, `getMarkers` | Keyframe sets / markers, optionally in a range. |
 | `copyLayers` | A `DocumentFragment` for the clipboard. |
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. |
-| `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
+| `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts, file path — the installed faces (C++: CoreText on macOS, DirectWrite on Windows, fontconfig on Linux; `query` filters family / style / PostScript name; OS-internal faces such as macOS's `.AppleSystemUIFont` are not listed). Empty under the test ports. |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |
@@ -883,7 +883,7 @@ engine fd 4), framed like the command pipe:
 
 | Message | Direction | Meaning |
 |---|---|---|
-| `FrameSlots` | engine → host | A ring of N shared textures (generation, viewport, size, format, NT handles valid in the host). Retires every older generation. |
+| `FrameSlots` | engine → host | A ring of N slots (generation, viewport, size, format, one handle per slot). Retires every older generation. `shared: true` — Windows: NT handles valid in the host, owned by the engine; macOS: global IOSurfaceIDs the host resolves (`IOSurfaceLookup`, premation-host-bridge.node) and holds while the ring is current. `shared: false` — offscreen slots (headless) or route-A copies; handles are 0. |
 | `FrameReady` | engine → host | Slot N holds a finished frame (frame, comp time, the revision it shows, size, frames dropped since the last one, render timestamps for measurement). |
 | `FrameRelease` | host → engine | Chromium is done with a slot (a stale generation is ignored). |
 | `FramePing` / `FramePong` | host ⇄ engine | The supervisor's heartbeat, answered by the engine's document core thread. |
@@ -893,6 +893,27 @@ because Electron main cannot import packages/ — a standalone TypeScript module
 `electron/generated/frameChannel.ts` (+ a copy of the wire runtime), emitted by
 the same generator for exactly this family. The event ids 2100–2199 stay
 reserved and unused.
+
+**Frame routes are negotiated in Hello / Welcome capabilities:**
+
+| Capability | Route | Offered by the host | Offered by the engine |
+|---|---|---|---|
+| `frames.sharedTexture` | C: shared GPU textures | Windows; macOS when premation-host-bridge.node loads | Windows (DXGI shared handles) and macOS (IOSurface + MTLSharedEvent) when the device has the features and `--host-pid` is set |
+| `frames.copy` | A: read-back copies | always | when its fd 5 is open and it has a GPU |
+
+The engine uses shared slots when both sides offer them, otherwise copies when
+both offer those, otherwise offscreen slots (frames are announced and must be
+released, but carry no pixels).
+
+**Route A's pixel stream** is a third one-way pipe, engine fd 5 → host
+(`premation/protocol/pixel_channel.hpp`, TypeScript twin `electron/pixelChannel.ts`).
+Per copied frame the engine writes one message — the command pipe's 4-byte
+length, a 32-byte header (`'PXF1'`, generation, slot, width, height,
+bytesPerRow, format, reserved; little-endian), then the RGBA8 rows — and then
+the ordinary `FrameReady` on fd 3. The pipes are not ordered with respect to
+each other, so the host pairs the two by (generation, slot); the slot stays the
+host's until its `FrameRelease`, which bounds the bytes in flight to one frame
+per slot. It is not a schema type because its payload is raw pixels.
 
 ---
 

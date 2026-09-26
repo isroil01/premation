@@ -19,6 +19,7 @@
 #include "io/pipe_ffi.hpp"
 #include "os_ffi.hpp"
 #include "plugins/host.hpp"
+#include "raster/font_catalog.hpp"
 #include "premation/protocol/framing.hpp"
 
 #if defined(PREMATION_HAVE_SCENE)
@@ -135,14 +136,18 @@ int run_engine(const EngineOptions& options) {
   PREMATION_LOG(info, "start")
       .kv("version", kEngineVersion)
       .kv("frameChannel", pipes.framesOut.valid() && pipes.framesIn.valid())
+      .kv("pixelStream", pipes.pixelsOut.valid())
       .kv("noGpu", options.noGpu)
       .kv("hostPid", options.render.hostPid)
       .kv("gpuVendor", options.render.vendorId);
 
   io::FramedWriter commandOut(pipes.commandOut, "command");
   io::FramedWriter framesOut(pipes.framesOut, "frames");
+  // Route A's pixel stream (fd 5): only when the host opened it.
+  io::FramedWriter pixelsOut(pipes.pixelsOut, "pixels");
   commandOut.start();
   framesOut.start();
+  if (pixelsOut.valid()) pixelsOut.start();
   ProcessOutbox outbox(commandOut, framesOut);
   BlockingQueue<CoreItem> queue;
   const auto sendFrames = [&outbox](const frames::Message& m) { outbox.send_frames(m); };
@@ -178,6 +183,11 @@ int run_engine(const EngineOptions& options) {
   FrameSink* sink = nullptr;
 #if !defined(PREMATION_ENGINE_HEADLESS)
   render::RenderOptions renderOptions = options.render;
+  if (pixelsOut.valid()) {
+    renderOptions.sendPixels = [&pixelsOut](std::vector<std::uint8_t> framed) {
+      return pixelsOut.send(std::move(framed));
+    };
+  }
 #endif
 #if defined(PREMATION_HAVE_SCENE)
   // D2w: the viewport draws the engine's own document through the render
@@ -243,6 +253,26 @@ int run_engine(const EngineOptions& options) {
 
   SessionOptions sessionOptions;
   sessionOptions.engineVersion = kEngineVersion;
+  // listFonts: the installed fonts (CoreText / DirectWrite / fontconfig), enumerated
+  // on the first query, not at start-up.
+  sessionOptions.systemFonts = [](const std::string& query) {
+    api::FontList list;
+    for (const raster::CatalogFace& f : raster::find_system_fonts(query)) {
+      api::FontInfo info;
+      info.family = f.family;
+      info.style = f.style;
+      info.post_script_name = f.postScriptName;
+      info.weight = f.weight;
+      info.italic = f.italic;
+      info.scripts = f.scripts;
+      info.path = f.path;
+      for (const raster::CatalogAxis& a : f.axes) {
+        info.variable_axes.push_back(api::FontAxisInfo{a.tag, a.name, a.min, a.max, a.defaultValue});
+      }
+      list.fonts.push_back(std::move(info));
+    }
+    return list;
+  };
   sessionOptions.testPorts = options.testPorts;
   sessionOptions.testPortsDir = options.testPortsDir;
   Session session(outbox, *sink, sessionOptions);
@@ -293,7 +323,8 @@ int run_engine(const EngineOptions& options) {
 #endif
   commandOut.close(std::chrono::milliseconds(500));
   framesOut.close(std::chrono::milliseconds(200));
-  if (commandOut.detached() || framesOut.detached()) {
+  if (pixelsOut.valid()) pixelsOut.close(std::chrono::milliseconds(200));
+  if (commandOut.detached() || framesOut.detached() || pixelsOut.detached()) {
     // A writer is stuck in a write nobody will read; destroying it would free
     // memory its thread still uses. End here without unwinding.
     std::_Exit(exitCode);

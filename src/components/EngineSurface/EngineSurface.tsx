@@ -22,6 +22,10 @@
  *     (zero copy), newest frame wins, at most one draw per animation frame;
  *     every frame is released exactly once, after the GPU is done with it, so
  *     the engine's ring slot comes back.
+ *   - on route A (meta.route 'copy': Linux, or macOS without the host bridge —
+ *     docs/VIEWPORT_ROUTE.md) the VideoFrame wraps copied pixels; the surface
+ *     then asks for at most COPY_PIXEL_BUDGET physical pixels (a lower DPR),
+ *     because every copied megabyte costs ~2.3 ms between processes.
  *
  * No React render per frame (CLAUDE.md): frames, stats, the camera and the HUD
  * text go through refs and subscriptions; React renders only when the client,
@@ -46,6 +50,19 @@ import styles from './EngineSurface.module.css';
 
 /** The engine viewport id this surface owns. */
 export const ENGINE_SURFACE_VIEWPORT = 1;
+
+/**
+ * Route A's frame size cap, physical pixels: 1280×720 is ~3.7 MB a frame, which
+ * C1 measured holding the display rate; 1080p copies fell to ~36–43 fps.
+ */
+export const COPY_PIXEL_BUDGET = 1280 * 720;
+
+/** The DPR to ask for on route A: the page's, lowered until the viewport fits the budget. */
+export function copyRouteDpr(cssWidth: number, cssHeight: number, dpr: number): number {
+  const area = Math.max(1, cssWidth) * Math.max(1, cssHeight);
+  const fit = Math.sqrt(COPY_PIXEL_BUDGET / area);
+  return Math.max(0.25, Math.min(dpr, fit));
+}
 
 export type EngineSurfaceMode = 'beside' | 'viewport';
 
@@ -99,6 +116,8 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 /** What the real-app harness reads: `window.__premationEngineSurface`. */
 export interface EngineSurfaceStats {
   mode: EngineSurfaceMode;
+  /** How frames arrive: shared textures (route C) or pixel copies (route A); null before the first. */
+  route: 'shared' | 'copy' | null;
   received: number;
   drawn: number;
   superseded: number;
@@ -165,7 +184,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     const isViewport = mode === 'viewport';
 
     const stats: EngineSurfaceStats = {
-      mode, received: 0, drawn: 0, superseded: 0, fps: 0, lastRevision: 0, lastFrame: 0, lastLatencyMs: 0,
+      mode, route: null, received: 0, drawn: 0, superseded: 0, fps: 0, lastRevision: 0, lastFrame: 0, lastLatencyMs: 0,
       lastRenderMs: 0, engineBuildMs: 0, lastDrawnAt: 0, viewportsSent: 0, lastViewport: null, errors: [],
     };
     (window as unknown as { __premationEngineSurface?: EngineSurfaceStats }).__premationEngineSurface = stats;
@@ -290,6 +309,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
 
     bridge.onFrame((frame, meta, release) => {
       stats.received += 1;
+      const route = (meta as EngineFrameMeta).route ?? 'shared';
+      if (route !== stats.route) {
+        stats.route = route;
+        requestViewport();  // route A caps the size it asks for (copyRouteDpr)
+      }
       if (disposed) {
         release();
         return;
@@ -309,7 +333,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const r = box.getBoundingClientRect();
       const width = Math.max(1, Math.round(r.width));
       const height = Math.max(1, Math.round(r.height));
-      const dpr = window.devicePixelRatio || 1;
+      const pageDpr = window.devicePixelRatio || 1;
+      const dpr = stats.route === 'copy' ? copyRouteDpr(width, height, pageDpr) : pageDpr;
       if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0 };  // fit
       // The page's camera (WorkspaceController.getView: CSS px per comp px and
       // the comp origin on screen) → the comp point at the viewport centre.

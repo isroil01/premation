@@ -20,6 +20,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -65,6 +66,9 @@ struct SessionOptions {
   bool testPorts = false;
   /// With testPorts: mirror the in-memory project files to this directory (FakePorts).
   std::string testPortsDir;
+  /// `listFonts`: the installed fonts matching a query (the engine process
+  /// passes its font catalogue). Unset, or with testPorts: an empty list.
+  std::function<api::FontList(const std::string&)> systemFonts;
 };
 
 class Session {

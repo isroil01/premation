@@ -1,0 +1,145 @@
+# Build premation-engine (native/engine, a *-engine CMake preset: Dawn, Skia,
+# ffmpeg, OCIO … from the vcpkg `engine` feature) with a vcpkg BINARY CACHE, so
+# only the first run on a runner image pays for Dawn (≈16 min on a laptop,
+# longer on a hosted runner); later runs restore the archives and configure in
+# seconds. Used by .github/workflows/native.yml (gate) and release.yml (ship).
+#
+# Cache: vcpkg's `files` provider in a directory that actions/cache saves,
+# keyed on everything that changes what vcpkg builds — the manifest, the
+# configuration + overlays, the baseline commit, the triplet. A key miss
+# restores the newest cache of the same OS/triplet (restore-keys) and vcpkg
+# rebuilds only the packages whose ABI hash changed.
+#
+# Outputs the directory holding the engine and what ships beside it.
+
+name: Build premation-engine
+description: Configure + build a *-engine preset with a vcpkg binary cache (and optionally run its tests)
+
+inputs:
+  preset:
+    description: CMake configure/build preset (linux-clang-engine, macos-clang-engine, macos-clang-engine-x64, windows-clang-cl-engine)
+    required: true
+  triplet:
+    description: vcpkg target triplet (cache key; must match the preset)
+    required: true
+  vcpkg-commit:
+    description: vcpkg commit (native/vcpkg.json builtin-baseline)
+    required: true
+  test:
+    description: Run ctest for the preset after building ('true' / 'false')
+    required: false
+    default: 'false'
+
+outputs:
+  engine-dir:
+    description: native/build/<preset>/engine
+    value: ${{ steps.out.outputs.dir }}
+
+runs:
+  using: composite
+  steps:
+    # Node's headers build premation-host-bridge.node on macOS (C N-API, any Node ≥ 16).
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Toolchain (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        # clang/ninja; what vcpkg's ffmpeg / fontconfig / Dawn ports need to build;
+        # X11 + GL headers for Dawn's Vulkan-on-X11 backend.
+        sudo apt-get install -y clang ninja-build pkg-config autoconf autoconf-archive automake libtool \
+          nasm gperf bison flex python3-venv libltdl-dev \
+          libx11-dev libx11-xcb-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+          libxkbcommon-dev libgl1-mesa-dev
+        clang++ --version
+
+    - name: Toolchain (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install ninja nasm pkg-config autoconf automake libtool
+        clang++ --version
+
+    - name: MSVC environment for clang-cl (SDK, CRT, lib.exe)
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Toolchain (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install ninja --no-progress -y
+        Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files\LLVM\bin'
+        & 'C:\Program Files\LLVM\bin\clang-cl.exe' --version
+
+    - name: vcpkg binary cache location
+      id: bincache
+      shell: bash
+      run: |
+        dir="${RUNNER_TEMP}/vcpkg-bincache"
+        mkdir -p "$dir"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        # Every later step (and vcpkg run by CMake's manifest install) reads and writes it.
+        echo "VCPKG_BINARY_SOURCES=clear;files,$dir,readwrite" >> "$GITHUB_ENV"
+
+    - name: Restore the vcpkg binary cache
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.bincache.outputs.dir }}
+        key: vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json', 'native/vcpkg-overlays/**') }}
+        restore-keys: |
+          vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-
+          vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-
+
+    - name: vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: ${{ runner.workspace }}/vcpkg
+        vcpkgGitCommitId: ${{ inputs.vcpkg-commit }}
+        vcpkgJsonGlob: 'native/vcpkg.json'
+        # CMake's manifest mode installs (with the binary cache above).
+        runVcpkgInstall: false
+
+    - name: Configure (${{ inputs.preset }})
+      shell: bash
+      working-directory: native
+      run: cmake --preset ${{ inputs.preset }}
+
+    # Saved right after configure: the manifest install is where the hours go,
+    # and a later build/test failure must not throw the archives away.
+    - name: Save the vcpkg binary cache
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.bincache.outputs.dir }}
+        key: vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json', 'native/vcpkg-overlays/**') }}
+
+    - name: Build
+      shell: bash
+      working-directory: native
+      run: cmake --build --preset ${{ inputs.preset }}
+
+    - name: Test
+      if: inputs.test == 'true'
+      shell: bash
+      working-directory: native
+      run: ctest --preset ${{ inputs.preset }}
+
+    - name: Engine directory
+      id: out
+      shell: bash
+      run: |
+        dir="native/build/${{ inputs.preset }}/engine"
+        exe=premation-engine; [ "$RUNNER_OS" = "Windows" ] && exe=premation-engine.exe
+        test -f "$dir/$exe" || { echo "::error::$dir/$exe was not built"; exit 1; }
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          test -f "$dir/premation-host-bridge.node" || { echo "::error::$dir/premation-host-bridge.node was not built (the macOS viewport needs it)"; exit 1; }
+        fi
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        ls -la "$dir"

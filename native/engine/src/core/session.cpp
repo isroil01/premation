@@ -192,6 +192,12 @@ void Session::handle_hello(const api::Hello& hello) {
                           hello.capabilities.end();
   const bool shared = wantShared && sink_.shared_supported();
   sink_.set_shared(shared);
+  // Route A (docs/VIEWPORT_ROUTE.md): a host that cannot import this engine's
+  // shared slots (Linux, macOS without the host bridge) takes read-back copies.
+  const bool wantCopy = std::find(hello.capabilities.begin(), hello.capabilities.end(), "frames.copy") !=
+                        hello.capabilities.end();
+  const bool copy = !shared && wantCopy && sink_.copy_supported();
+  sink_.set_copy(copy);
   api::Welcome w;
   w.protocol_major = api::kProtocolMajor;
   w.protocol_minor = api::kProtocolMinor;
@@ -201,6 +207,7 @@ void Session::handle_hello(const api::Hello& hello) {
   w.session_id = options_.sessionId;
   w.capabilities = {"frames.channel", "frames.offscreen", "heartbeat"};
   if (sink_.shared_supported()) w.capabilities.emplace_back("frames.sharedTexture");
+  if (sink_.copy_supported()) w.capabilities.emplace_back("frames.copy");
   api::EngineMessage m;
   m.v = std::move(w);
   out_.send(m);
@@ -209,7 +216,8 @@ void Session::handle_hello(const api::Hello& hello) {
       .kv("client", hello.client)
       .kv("clientVersion", hello.client_version)
       .kv("minor", hello.protocol_minor)
-      .kv("sharedFrames", shared);
+      .kv("sharedFrames", shared)
+      .kv("copyFrames", copy);
 }
 
 void Session::close(api::GoodbyeReason reason, std::string message) {
@@ -897,7 +905,8 @@ api::CommandResult Session::run_control(const api::Command& cmd, api::Origin ori
 // ── queries ─────────────────────────────────────────────────────────────────
 
 api::QueryResult Session::run_query(const api::Query& q) {
-  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}};
+  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}, {}};
+  if (!options_.testPorts) c.fonts = options_.systemFonts;
   c.revision = revision_;
   c.projectPath = projectPath_;
   c.dirty = revision_ != savedRevision_;

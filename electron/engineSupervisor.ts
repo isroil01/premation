@@ -37,12 +37,13 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
-import type { HelloInfo, EngineFrameMessage, WelcomeInfo, GoodbyeReason } from './engineFraming';
+import { FrameDecoder, type HelloInfo, type EngineFrameMessage, type WelcomeInfo, type GoodbyeReason } from './engineFraming';
+import { MAX_PIXEL_PAYLOAD, decodePixelFrame, type PixelFrame } from './pixelChannel';
 import { EngineGoneError, EngineGoodbyeError, EngineTransport, type EventBatchBytes } from './engineTransport';
 
 // ── dependencies ─────────────────────────────────────────────────────────────
 
-/** The part of a ChildProcess the supervisor uses (stdio: pipe × 5). */
+/** The part of a ChildProcess the supervisor uses (stdio: pipe × 6 — fd 5 is the route-A pixel stream). */
 export interface EngineChild {
   readonly pid?: number | undefined;
   readonly stdio: readonly [Writable | null, Readable | null, Readable | null, ...unknown[]];
@@ -127,6 +128,8 @@ export interface SupervisorEvents {
   fallback: [FallbackInfo];
   events: [EventBatchBytes];
   frame: [EngineFrameMessage];
+  /** Route A: one copied frame from the engine's fd 5 (paired with its FrameReady by the host). */
+  pixels: [PixelFrame];
   log: [string];
 }
 
@@ -286,6 +289,8 @@ export class EngineSupervisor {
     stderr?.on('data', (d: Buffer) => this.onStderr(d));
     const framesOut = (child.stdio[3] ?? null) as Readable | null;
     const framesIn = (child.stdio[4] ?? null) as Writable | null;
+    const pixelsOut = (child.stdio[5] ?? null) as Readable | null;
+    if (pixelsOut) this.readPixels(gen, pixelsOut);
     if (!stdin || !stdout) {
       this.log('error', 'engine_stdio_missing');
       child.kill();
@@ -352,6 +357,29 @@ export class EngineSupervisor {
       return;
     }
     this.emitter.emit('frame', m);
+  }
+
+  /** fd 5: framed pixel messages. A malformed stream is abandoned (the viewport stops; commands go on). */
+  private readPixels(gen: number, stream: Readable): void {
+    const decoder = new FrameDecoder(MAX_PIXEL_PAYLOAD);
+    let failed = false;
+    stream.on('data', (chunk: Buffer) => {
+      if (failed || gen !== this.generation) return;
+      for (const payload of decoder.push(chunk)) {
+        const p = decodePixelFrame(payload);
+        if (!p) {
+          failed = true;
+          this.log('error', 'engine_pixel_stream_bad_message', { bytes: payload.length });
+          return;
+        }
+        this.emitter.emit('pixels', p);
+      }
+      if (decoder.error) {
+        failed = true;
+        this.log('error', 'engine_pixel_stream_framing_error');
+      }
+    });
+    stream.on('error', () => { /* the exit handler reports the engine going away */ });
   }
 
   private onStderr(d: Buffer): void {

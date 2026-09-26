@@ -20,10 +20,21 @@
  *  - Frames: the engine's FrameSlots/FrameReady (frame channel, fd 3) become
  *    `sharedTexture.importSharedTexture` + `sendSharedTexture` into the main
  *    frame; the ring slot is released back to the engine on
- *    `allReferencesReleased`. Main NEVER closes a slot handle — the engine owns
- *    them (it duplicated them into this process and closes them itself when a
- *    ring is retired). Nothing is sent until the page says its receiver is
- *    installed: C4 measured every early send timing out.
+ *    `allReferencesReleased`. The slot handle per OS comes from
+ *    sharedTextureHandles.ts: an NT handle on Windows (main NEVER closes one —
+ *    the engine duplicated it into this process and closes it itself when a
+ *    ring is retired), an IOSurfaceRef looked up from the announced
+ *    IOSurfaceID on macOS (ioSurfaceBridge.ts; main holds it while the ring is
+ *    current). Nothing is sent until the page says its receiver is installed:
+ *    C4 measured every early send timing out.
+ *  - Route A (docs/VIEWPORT_ROUTE.md), where slots cannot be shared (Linux,
+ *    macOS without the host bridge): the engine is offered `frames.copy`, reads
+ *    each frame back and writes it on its fd 5 before the FrameReady. Main
+ *    pairs the two by (generation, slot), pushes the pixels to the page
+ *    (`engine:pixels`; the preload wraps them in a VideoFrame, so EngineSurface
+ *    draws both routes the same way) and releases the slot when the page says
+ *    it is done with them (`engine:pixelsRelease`). At most two frames are
+ *    with the page; anything more goes straight back to the ring.
  *
  * Main stays a relay: it never decodes a document or an event batch.
  */
@@ -35,6 +46,9 @@ import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
 import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { EngineCommandLog } from './engineCommandLog';
+import type { PixelFrame } from './pixelChannel';
+import { hostBridgePath, loadIoSurfaceBridge } from './ioSurfaceBridge';
+import { ntHandleSource, slotHandleSourceFor, type SlotHandleSource, type SlotTextureHandle } from './sharedTextureHandles';
 import { EngineGoneError } from './engineTransport';
 import {
   EngineSupervisor,
@@ -49,13 +63,17 @@ import {
 
 /** Every channel this module registers (pinned by ipcRegistration.test.ts). */
 export const ENGINE_IPC_CHANNELS = [
+  'engine:pixelsRelease',
   'engine:receiverReady',
   'engine:request',
   'engine:status',
 ] as const;
 
 /** Pushes to the renderer. */
-export const ENGINE_PUSH_CHANNELS = ['engine:events', 'engine:state', 'engine:restarted', 'engine:fallback'] as const;
+export const ENGINE_PUSH_CHANNELS = ['engine:events', 'engine:state', 'engine:restarted', 'engine:fallback', 'engine:pixels'] as const;
+
+/** Most route-A frames with the page at once (each holds an engine ring slot). */
+export const MAX_COPY_FRAMES_IN_PAGE = 2;
 
 // ── the flag ─────────────────────────────────────────────────────────────────
 
@@ -110,14 +128,34 @@ function readText(p: string): string | null {
 /** The part of Electron's `sharedTexture` main uses (injectable for tests). */
 export interface SharedTextureApi {
   importSharedTexture(options: {
-    textureInfo: { pixelFormat: 'rgba'; codedSize: { width: number; height: number }; handle: { ntHandle: Buffer } };
+    textureInfo: { pixelFormat: 'rgba'; codedSize: { width: number; height: number }; handle: SlotTextureHandle };
     allReferencesReleased?: () => void;
   }): { release(): void };
   sendSharedTexture(options: { frame: unknown; importedSharedTexture: { release(): void } }, ...args: unknown[]): Promise<void>;
 }
 
+/** What the page gets with each frame (EngineFrameMeta in packages/engine-api). */
+export interface ForwardedFrameMeta {
+  viewport: number;
+  generation: number;
+  slot: number;
+  frame: number;
+  time: number;
+  revision: number;
+  width: number;
+  height: number;
+  dropped: number;
+  renderStartUs: number;
+  renderDoneUs: number;
+  sentUs: number;
+  /** How the frame travelled: a shared texture (route C) or a pixel copy (route A). */
+  route: 'shared' | 'copy';
+}
+
 export interface FrameForwarderStats {
   forwarded: number;
+  /** Of `forwarded`, how many went as route-A pixel copies. */
+  copied: number;
   /** Released at once: no receiver yet, a transfer in flight, offscreen slots, or an unknown generation. */
   dropped: number;
   engineDropped: number;
@@ -136,7 +174,16 @@ export class FrameForwarder {
   private epoch = 0;
   private receiverReady = false;
   private inFlight = false;
-  readonly stats: FrameForwarderStats = { forwarded: 0, dropped: 0, engineDropped: 0, errors: [] };
+  /** A newer ring arrived while a transfer was in flight: retire the older ones when it ends. */
+  private retirePending = false;
+  private readonly handles: SlotHandleSource;
+  readonly stats: FrameForwarderStats = { forwarded: 0, copied: 0, dropped: 0, engineDropped: 0, errors: [] };
+  // Route A: the two halves of a copied frame arrive on different pipes.
+  private copyReady = false;
+  private readonly copyWaiting = new Map<string, FrameReadyMessage>();
+  private readonly copyPixels = new Map<string, PixelFrame>();
+  /** Copied frames with the page, by slot key → frees the slot (once). */
+  private readonly copyInPage = new Map<string, () => void>();
 
   constructor(
     private readonly deps: {
@@ -144,19 +191,60 @@ export class FrameForwarder {
       /** The page frame to send to (the main window's main frame), or null. */
       target(): unknown;
       release(generation: number, slot: number): void;
+      /** Slot handles for this OS (sharedTextureHandles.ts); default: Windows NT handles. */
+      handles?: SlotHandleSource;
+      /** Route A: push one frame's pixels to the page; false when there is no page to take them. */
+      sendPixels?(meta: ForwardedFrameMeta, pixels: Uint8Array): boolean;
       now?(): number;
     },
-  ) {}
+  ) {
+    this.handles = deps.handles ?? ntHandleSource();
+  }
 
   /** A new engine process: forget every ring of the old one. */
   engineStarted(): void {
     this.epoch += 1;
     this.rings.clear();
+    this.handles.closeAll();
     this.inFlight = false;
+    this.retirePending = false;
+    // The dead engine's slots are gone with it: nothing to release.
+    this.copyWaiting.clear();
+    this.copyPixels.clear();
+    this.copyInPage.clear();
   }
 
-  setReceiverReady(ready: boolean): void {
+  /**
+   * The page's receivers: `ready` for shared textures, `copyReady` for route-A
+   * pixels (defaults to `ready`). Going away frees every copied frame the page
+   * held — a reloaded page never answers for them.
+   */
+  setReceiverReady(ready: boolean, copyReady: boolean = ready): void {
     this.receiverReady = ready;
+    this.copyReady = copyReady;
+    if (!copyReady) this.releaseCopiesInPage();
+  }
+
+  /** Route A: the page is done with a copied frame (`engine:pixelsRelease`). */
+  pixelsReleased(generation: number, slot: number): void {
+    const key = slotKey(generation, slot);
+    const free = this.copyInPage.get(key);
+    if (!free) return;  // unknown, already freed, or a previous engine's
+    this.copyInPage.delete(key);
+    free();
+  }
+
+  /** Route A: one frame's pixels from the engine's fd 5. */
+  onPixels(p: PixelFrame): void {
+    if (!this.rings.has(p.generation)) return;  // a retired ring's: its slot went with it
+    const key = slotKey(p.generation, p.slot);
+    const ready = this.copyWaiting.get(key);
+    if (ready) {
+      this.copyWaiting.delete(key);
+      this.forwardCopy(ready, p);
+      return;
+    }
+    this.copyPixels.set(key, p);
   }
 
   get ready(): boolean {
@@ -168,6 +256,14 @@ export class FrameForwarder {
       // A new ring retires every older generation of this process.
       this.rings.clear();
       this.rings.set(m.generation, m);
+      // Half-paired copies of the old ring: the engine ignores releases of a
+      // retired generation, so they are simply forgotten.
+      this.copyWaiting.clear();
+      this.copyPixels.clear();
+      if (m.shared) this.handles.open(m);
+      // An import in flight may still be using an older ring's handle.
+      if (this.inFlight) this.retirePending = true;
+      else this.handles.retire(m.generation);
       return;
     }
     if (m.type === 'frameReady') this.onFrameReady(m);
@@ -176,9 +272,21 @@ export class FrameForwarder {
   private onFrameReady(f: FrameReadyMessage): void {
     this.stats.engineDropped += f.dropped;
     const ring = this.rings.get(f.generation);
-    const handle = ring?.handles[f.slot];
+    if (ring && !ring.shared && this.deps.sendPixels) {
+      // Route A: forward once the pixels are here too.
+      const key = slotKey(f.generation, f.slot);
+      const pixels = this.copyPixels.get(key);
+      if (pixels) {
+        this.copyPixels.delete(key);
+        this.forwardCopy(f, pixels);
+      } else {
+        this.copyWaiting.set(key, f);
+      }
+      return;
+    }
     const target = this.deps.target();
     const st = this.deps.sharedTexture;
+    const handle = ring?.shared && !this.inFlight ? this.handles.handle(f.generation, f.slot) : null;
     if (!ring || !ring.shared || !handle || !st || !target || !this.receiverReady || this.inFlight) {
       this.stats.dropped += 1;
       this.deps.release(f.generation, f.slot);
@@ -196,10 +304,8 @@ export class FrameForwarder {
     this.inFlight = true;
     let imported: { release(): void };
     try {
-      const nt = Buffer.alloc(8);
-      nt.writeBigUInt64LE(BigInt(handle));
       imported = st.importSharedTexture({
-        textureInfo: { pixelFormat: 'rgba', codedSize: { width: f.width, height: f.height }, handle: { ntHandle: nt } },
+        textureInfo: { pixelFormat: 'rgba', codedSize: { width: f.width, height: f.height }, handle },
         allReferencesReleased: releaseOnce,
       });
     } catch (e) {
@@ -208,11 +314,7 @@ export class FrameForwarder {
       releaseOnce();
       return;
     }
-    const meta = {
-      viewport: f.viewport, generation: f.generation, slot: f.slot, frame: f.frame, time: f.time, revision: f.revision,
-      width: f.width, height: f.height, dropped: f.dropped, renderStartUs: f.renderStartUs, renderDoneUs: f.renderDoneUs,
-      sentUs: (this.deps.now?.() ?? Date.now()) * 1000,
-    };
+    const meta = this.meta(f, 'shared');
     st.sendSharedTexture({ frame: target, importedSharedTexture: imported }, meta)
       .then(() => {
         this.stats.forwarded += 1;
@@ -228,14 +330,74 @@ export class FrameForwarder {
         } catch (e) {
           this.fail(e);
         }
-        if (epoch === this.epoch) this.inFlight = false;
+        if (epoch === this.epoch) {
+          this.inFlight = false;
+          if (this.retirePending) {
+            this.retirePending = false;
+            const current = [...this.rings.keys()][0];
+            this.handles.retire(current ?? -1);
+          }
+        }
       });
+  }
+
+  private forwardCopy(f: FrameReadyMessage, p: PixelFrame): void {
+    const target = this.deps.target();
+    const send = this.deps.sendPixels;
+    const key = slotKey(f.generation, f.slot);
+    if (!send || !target || !this.copyReady || this.copyInPage.size >= MAX_COPY_FRAMES_IN_PAGE || this.copyInPage.has(key)
+      || p.width !== f.width || p.height !== f.height) {
+      this.stats.dropped += 1;
+      this.deps.release(f.generation, f.slot);
+      return;
+    }
+    const epoch = this.epoch;
+    let done = false;
+    const free = (): void => {
+      if (done) return;
+      done = true;
+      if (epoch === this.epoch) this.deps.release(f.generation, f.slot);
+    };
+    this.copyInPage.set(key, free);
+    let sent = false;
+    try {
+      sent = send(this.meta(f, 'copy'), p.data);
+    } catch (e) {
+      this.fail(e);
+    }
+    if (!sent) {
+      this.copyInPage.delete(key);
+      this.stats.dropped += 1;
+      free();
+      return;
+    }
+    this.stats.forwarded += 1;
+    this.stats.copied += 1;
+  }
+
+  private releaseCopiesInPage(): void {
+    const frees = [...this.copyInPage.values()];
+    this.copyInPage.clear();
+    for (const free of frees) free();
+  }
+
+  private meta(f: FrameReadyMessage, route: ForwardedFrameMeta['route']): ForwardedFrameMeta {
+    return {
+      viewport: f.viewport, generation: f.generation, slot: f.slot, frame: f.frame, time: f.time, revision: f.revision,
+      width: f.width, height: f.height, dropped: f.dropped, renderStartUs: f.renderStartUs, renderDoneUs: f.renderDoneUs,
+      sentUs: (this.deps.now?.() ?? Date.now()) * 1000,
+      route,
+    };
   }
 
   private fail(e: unknown): void {
     this.stats.errors.push(e instanceof Error ? e.message : String(e));
     if (this.stats.errors.length > 20) this.stats.errors.shift();
   }
+}
+
+function slotKey(generation: number, slot: number): string {
+  return `${generation}:${slot}`;
 }
 
 // ── the host ─────────────────────────────────────────────────────────────────
@@ -262,6 +424,8 @@ export interface EngineHostOptions {
   /** F2: keep the command log here and replay it into a restarted engine (default true). */
   recordLog?: boolean;
   sharedTexture: SharedTextureApi | null;
+  /** The OS (tests); default process.platform. Decides how slot handles are imported. */
+  platform?: NodeJS.Platform;
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
   nativePluginDir?: string;
@@ -329,6 +493,27 @@ export class EngineHost {
 
   constructor(private readonly o: EngineHostOptions) {
     this.commandLog = new EngineCommandLog(o.recordLog ?? true);
+    const log = o.log ?? ((line: string) => console.info(line));
+    const platform = o.platform ?? process.platform;
+    const resolveExe = (): string | null =>
+      resolveEngineExecutable({
+        isPackaged: o.isPackaged,
+        resourcesPath: o.resourcesPath,
+        appPath: o.appPath,
+        platform,
+        vars: process.env,
+        exists: existsSync,
+      });
+    // Route C where this OS can import the engine's slots; otherwise (Linux,
+    // macOS without the host bridge, no sharedTexture module) the engine is
+    // not offered `frames.sharedTexture`.
+    const handles = o.enabled && o.sharedTexture
+      ? slotHandleSourceFor(
+        platform,
+        () => loadIoSurfaceBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
+        (m) => log(`[engine] warn shared_texture ${m}`),
+      )
+      : null;
     this.frames = new FrameForwarder({
       sharedTexture: o.sharedTexture,
       target: () => {
@@ -336,28 +521,30 @@ export class EngineHost {
         return w && !w.isDestroyed() ? w.webContents.mainFrame : null;
       },
       release: (g, s) => this.supervisor?.releaseSlot(g, s),
+      ...(handles ? { handles } : {}),
+      sendPixels: (meta, pixels) => {
+        const w = o.getWindow();
+        if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return false;
+        w.webContents.send('engine:pixels', meta, pixels);
+        return true;
+      },
     });
     if (!o.enabled) {
       this.supervisor = null;
       return;
     }
-    const log = o.log ?? ((line: string) => console.info(line));
+    // Both offered where both work: the engine takes shared slots when it can
+    // and falls back to copies (route A) when it cannot.
+    const capabilities = handles ? ['frames.sharedTexture', 'frames.copy'] : ['frames.copy'];
     this.supervisor = new EngineSupervisor(
       {
         spawn: (exe, args) =>
-          spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true }) as unknown as EngineChild,
-        resolveExe: () =>
-          resolveEngineExecutable({
-            isPackaged: o.isPackaged,
-            resourcesPath: o.resourcesPath,
-            appPath: o.appPath,
-            platform: process.platform,
-            vars: process.env,
-            exists: existsSync,
-          }),
+          // fd 3/4 frame channel, fd 5 route-A pixel stream (pixelChannel.ts).
+          spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true }) as unknown as EngineChild,
+        resolveExe,
         gpuVendor: () => chromiumGpuVendor(o.getGPUInfo),
         hostPid: o.hostPid,
-        hello: { client: 'premation-ui', clientVersion: o.appVersion, capabilities: ['frames.sharedTexture'] },
+        hello: { client: 'premation-ui', clientVersion: o.appVersion, capabilities },
         log: (level, event, data) => log(`[engine] ${level} ${event}${data ? ` ${JSON.stringify(data)}` : ''}`),
       },
       {
@@ -368,6 +555,7 @@ export class EngineHost {
     const sup = this.supervisor;
     sup.on('ready', () => this.frames.engineStarted());
     sup.on('frame', (m) => this.frames.onFrame(m));
+    sup.on('pixels', (p) => this.frames.onPixels(p));
     sup.on('events', (b) => this.relayEvents(b.bytes, b.causedBy));
     sup.on('state', (s) => this.push('engine:state', s));
     sup.on('engine-restarted', (info: EngineRestartedInfo) => void this.recoverRestarted(info));
@@ -401,9 +589,9 @@ export class EngineHost {
     this.supervisor?.restart(`chromium GPU process gone (${reason})`);
   }
 
-  /** The page (re)loaded or went away: its receiver is gone until it says otherwise. */
+  /** The page (re)loaded or went away: its receivers are gone until it says otherwise. */
   pageReset(): void {
-    this.frames.setReceiverReady(false);
+    this.frames.setReceiverReady(false, false);
   }
 
   status(): EngineHostStatusReply {
@@ -527,7 +715,11 @@ export function registerEngineIpc(host: EngineHost): void {
   handle('engine:status', () => host.status());
   if (!host.enabled) return;
   handle('engine:request', (e: IpcMainInvokeEvent, bytes: Uint8Array) => host.request(bytes, e.sender.id));
-  on('engine:receiverReady', (_e: IpcMainEvent, ready: boolean) => host.frames.setReceiverReady(ready === true));
+  on('engine:receiverReady', (_e: IpcMainEvent, ready: boolean, copyReady?: boolean) =>
+    host.frames.setReceiverReady(ready === true, copyReady === undefined ? ready === true : copyReady === true));
+  on('engine:pixelsRelease', (_e: IpcMainEvent, generation: number, slot: number) => {
+    if (Number.isInteger(generation) && Number.isInteger(slot)) host.frames.pixelsReleased(generation, slot);
+  });
 }
 
 /** `<userData>/engine.json` — the persistent switch (`{ "backend": "process" }`). */

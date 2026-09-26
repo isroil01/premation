@@ -67,7 +67,8 @@ Data decisions:
 ## Gaps to close in C++ before cutting the UI over
 
 - Queries answering `unsupported`: `getWaveform`, `getThumbnail`, `hitTest`,
-  `getLayerBounds`, `getTextLayout`, `readPixels`; `listFonts` and `getJobs` empty.
+  `getLayerBounds`, `getTextLayout`, `readPixels`; `getJobs` empty (`listFonts`
+  answers from the OS font catalogue since p0-platform).
 - Commands answering `unsupported`: `startJob` (trackMotion, stabilize,
   autoTrace, sceneDetect, objectMatte, transcribe, audioAnalysis, render,
   prerender), `convertLayer`, `separateLayer`, `autoTrace`, `collectFiles`,

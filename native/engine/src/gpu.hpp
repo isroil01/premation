@@ -17,7 +17,9 @@ struct Gpu {
   wgpu::Queue queue;
   std::string adapterName;
   std::string backend;
-  bool sharedTextureCapable = false;  // DXGI shared-handle import + fences
+  /// Route C's shared memory + fence features are on: DXGI shared handles
+  /// (Windows) or IOSurface + MTLSharedEvent (macOS).
+  bool sharedTextureCapable = false;
   /// Float32Filterable + Float32Blendable on (the render graph's float32 working space).
   bool float32 = false;
   /// Set (from any thread) once the device is lost for a reason other than its
@@ -29,7 +31,9 @@ struct Gpu {
 };
 
 // D3D12 on Windows, Metal on macOS, Vulkan on Linux. `wantSharedTexture`
-// requests the DXGI shared-handle features route C needs (Windows only).
+// requests the shared-memory + fence features route C needs: DXGI shared
+// handles on Windows, IOSurface + MTLSharedEvent on macOS (none on Linux yet:
+// frames go through the route-A copy there).
 // `highPerformance`: the discrete GPU on a hybrid laptop. Routes B and C must
 // use the SAME adapter as Chromium's GPU process: the host passes Chromium's
 // active PCI `vendorId` (app.getGPUInfo), which wins over the power preference.
