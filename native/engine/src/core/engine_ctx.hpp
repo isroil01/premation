@@ -107,6 +107,17 @@ class Ports {
                                          const std::string& sourceBundle);
   /// F2: does `path` name a `.motion` bundle (so the document's footage lives there)?
   [[nodiscard]] virtual bool is_bundle(const std::string& path) const;
+  /// F2: what openProject loads. `portable` = a portable `.motion` zip: the
+  /// document is a COPY (the session stays untitled, as the page's
+  /// `adopt(name, null)`), its footage unpacked into `footageRoot`.
+  struct Opened {
+    Json doc;
+    std::string footageRoot;  ///< the bundle its `motion-blob:` footage lives in ('' = none)
+    bool portable = false;
+    std::size_t embedded = 0;
+  };
+  /// The default: `read_project`, with `path` as the footage root when it is a bundle.
+  [[nodiscard]] virtual Opened open_project(const std::string& path);
   [[nodiscard]] virtual bool has_collect() const { return false; }
 };
 
@@ -144,6 +155,13 @@ class FilePorts final : public Ports {
   std::uint64_t write_project_as(const std::string& path, const Json& doc, api::ProjectFormat format,
                                  const std::string& sourceBundle) override;
   [[nodiscard]] bool is_bundle(const std::string& path) const override;
+  /// A portable zip is unpacked into `<staging>/<hash of its path>` (bundle_io.hpp `read_portable`).
+  [[nodiscard]] Opened open_project(const std::string& path) override;
+  /// Where portable footage is unpacked: `<temp>/premation-portable` unless set.
+  void set_staging_root(std::string dir) { staging_ = std::move(dir); }
+
+ private:
+  std::string staging_;
 };
 
 /// handler.ts `HandlerCtx`.

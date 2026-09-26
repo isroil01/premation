@@ -203,6 +203,12 @@ std::uint64_t Ports::write_project_as(const std::string& path, const Json& doc, 
   return write_project(path, doc);
 }
 bool Ports::is_bundle(const std::string& /*path*/) const { return false; }
+Ports::Opened Ports::open_project(const std::string& path) {
+  Opened o;
+  o.doc = read_project(path);
+  if (is_bundle(path)) o.footageRoot = path;
+  return o;
+}
 
 namespace {
 std::string base_name(std::string_view path) {
@@ -345,6 +351,25 @@ std::uint64_t FilePorts::write_project(const std::string& path, const Json& doc)
 
 bool FilePorts::is_bundle(const std::string& path) const {
   return is_bundle_dir(std::filesystem::path(std::u8string(path.begin(), path.end())));
+}
+
+Ports::Opened FilePorts::open_project(const std::string& path) {
+  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  if (!is_portable_file(p)) return Ports::open_project(path);
+  std::error_code ec;
+  std::filesystem::path root = staging_.empty() ? std::filesystem::temp_directory_path(ec) / "premation-portable"
+                                                : std::filesystem::path(std::u8string(staging_.begin(), staging_.end()));
+  // One staging bundle per portable file: blobs are content-addressed, so
+  // reopening the same file reuses (and never corrupts) what is there.
+  root /= bundle_hash(path);
+  PortableOpen r = read_portable(p, root);
+  Opened o;
+  o.doc = std::move(r.doc);
+  const std::u8string u = r.footageRoot.u8string();
+  o.footageRoot.assign(u.begin(), u.end());
+  o.portable = true;
+  o.embedded = r.embedded;
+  return o;
 }
 
 std::uint64_t FilePorts::write_project_as(const std::string& path, const Json& doc, api::ProjectFormat format,

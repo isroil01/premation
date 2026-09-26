@@ -68,6 +68,7 @@ const bridge = {
   project: {
     open: () => ipcRenderer.invoke('project:open'),
     chooseSavePath: (defaultName: string) => ipcRenderer.invoke('project:chooseSavePath', defaultName),
+    chooseOpenPath: () => ipcRenderer.invoke('project:chooseOpenPath'),
     openBundleDir: () => ipcRenderer.invoke('project:openBundleDir'),
   },
 

@@ -553,6 +553,8 @@ export interface MotionEditorApi {
     open?(): Promise<MotionEditorFile | null>;
     /** Native save dialog → the chosen path (or null if cancelled). */
     chooseSavePath?(defaultName: string): Promise<string | null>;
+    /** F2: the native Open dialog for a project FILE, path only (the engine reads it). */
+    chooseOpenPath?(): Promise<string | null>;
     /** Native directory dialog → a chosen `.motion` bundle dir (local-first). */
     openBundleDir?(): Promise<string | null>;
   };

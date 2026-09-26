@@ -33,6 +33,7 @@
 // No OS or library FFI: std::filesystem and hand-written STORE zip framing.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -74,5 +75,33 @@ std::uint64_t write_portable(const std::filesystem::path& file, const js::Json& 
 /// `bytes` to `target` through a sibling temp file and a rename (parents created).
 /// Throws EngineFail(io).
 void write_file_atomic(const std::filesystem::path& target, std::string_view bytes);
+
+/// contentHash.ts `sha256Hex`: 64 lowercase hex digits (the blob store's content address).
+[[nodiscard]] std::string sha256_hex(std::string_view bytes);
+
+/// A regular file that starts with the zip magic (`PK`) — a portable `.motion`.
+[[nodiscard]] bool is_portable_file(const std::filesystem::path& file);
+
+/// What opening a portable `.motion` gives the session.
+struct PortableOpen {
+  js::Json doc;
+  /// The staging bundle its footage was unpacked into (blobs/ + assets/registry.json).
+  std::filesystem::path footageRoot;
+  /// Footage files embedded and referenced.
+  std::size_t embedded = 0;
+};
+
+/// portableMotion.ts `unpackPortableMotion` in the engine (F2: "Open portable
+/// copy" with the engine as owner): the zip's chunks decoded as a bundle (a
+/// wrapping `<name>.motion/` folder unwrapped), every embedded `assets/<file>`
+/// written content-addressed into `staging` (`blobs/<hh>/<sha256>` plus a
+/// registry row, id = the layer's `assetId` or `asset_<hash12>`) and each
+/// component `src` naming it rewritten to `motion-blob:<sha256>` — so the
+/// staging directory is the document's footage bundle and a later bundle save
+/// collects from it like any other. STORE entries only (what Premation writes);
+/// a compressed entry, a bad CRC or a zip that is not a project is
+/// EngineFail(io). The page instead minted session object URLs, which the
+/// engine cannot read.
+[[nodiscard]] PortableOpen read_portable(const std::filesystem::path& file, const std::filesystem::path& staging);
 
 }  // namespace premation::doc

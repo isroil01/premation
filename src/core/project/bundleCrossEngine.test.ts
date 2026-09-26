@@ -36,7 +36,7 @@ import type { BundleFs } from './bundle/BundleFs';
 import { decodeBundle, encodeBundle } from './bundle/bundleCodec';
 import { hashString } from './bundle/hash';
 import { CHUNK, CONTENT_CHUNKS, type BundleManifest } from './bundle/types';
-import { unpackPortableMotion } from './portableMotion';
+import { packPortableMotion, unpackPortableMotion } from './portableMotion';
 import preItemsBundle from './__fixtures__/pre-items-bundle-1.8.0.json';
 
 jest.setTimeout(60_000);
@@ -117,7 +117,11 @@ async function tsBackend(): Promise<Backend> {
   } as unknown as FileManager;
   const storage = new RoutedProjectStorage(new FileProjectStorage(service, files), new BundleProjectStorage(repo), () => true);
   const pm = new ProjectManager({ service, files, recent: { add: () => {} } as unknown as RecentProjects, storage });
-  const h: Harness = await setupEngine({ ports: createAppEnginePorts(pm, async (p, bytes) => writeAtomic(p, bytes)) });
+  const h: Harness = await setupEngine({ ports: createAppEnginePorts(
+      pm,
+      async (p, bytes) => writeAtomic(p, bytes),
+      async (p) => (existsSync(p) && statSync(p).isFile() ? new Uint8Array(readFileSync(p)) : null),
+    ) });
   return { client: h.engine, collectsFromSource: false, embedsBundleFootage: false, stop: () => h.dispose() };
 }
 
@@ -240,6 +244,51 @@ describe.each(backends)('F2 bundles: .motion written and read by the engine, in 
     // A copy: the engine's document is still bound to the bundle it opened.
     const snap = unwrap(await b.client.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false }));
     expect(snap.projectPath).toBe(oldRoot);
+  });
+
+  it('Open portable copy: the engine opens the zip itself — an untitled copy, footage reachable, Save As bundle carries it', async () => {
+    // The old path's zip: packPortableMotion with the plate embedded under assets/.
+    const oldRoot = path.join(dir, 'Old.motion');
+    const doc = await writeOldBundle(oldRoot);
+    const packedDoc = structuredClone(doc);
+    const plate = packedDoc.scene.nodes.find((n) => n.id === 'n1')!.components.find((c) => c.type === 'video')!;
+    (plate.props as Record<string, unknown>).src = 'assets/n1.mp4';
+    const zip = path.join(dir, 'Portable.motion');
+    writeAtomic(zip, packPortableMotion(packedDoc, [{ fileName: 'n1.mp4', mime: 'video/mp4', bytes: new TextEncoder().encode(BLOB), nodeIds: ['n1'] }]));
+    // jsdom has no object URLs; the TypeScript engine's port mints one per packaged file.
+    const g = URL as unknown as { createObjectURL?: (b: Blob) => string; revokeObjectURL?: (u: string) => void };
+    const restore = { create: g.createObjectURL, revoke: g.revokeObjectURL };
+    g.createObjectURL = () => 'blob:test/plate';
+    g.revokeObjectURL = () => {};
+    try {
+      const r = unwrap(await b.client.execute({ type: 'openProject', path: zip }));
+      expect(r.warnings.some((w) => w.startsWith('portable:'))).toBe(true);
+    } finally {
+      g.createObjectURL = restore.create;
+      g.revokeObjectURL = restore.revoke;
+    }
+    const opened = await exported(b.client);
+    expect(opened.comps?.comp_root?.name).toBe('Old Comp');
+    expect(videoProps(opened)?.assetId).toBe('asset_plate');
+    const src = String(videoProps(opened)?.src);
+    // C++: unpacked onto disk as bundle footage; TypeScript: a session object URL.
+    expect(src).toMatch(b.collectsFromSource ? /^motion-blob:[0-9a-f]{64}$/ : /^blob:/);
+    // A copy: untitled, not dirty; the zip is untouched.
+    const snap = unwrap(await b.client.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false }));
+    expect(snap.projectPath).toBe('');
+    expect(snap.dirty).toBe(false);
+    const zipBytes = readFileSync(zip);
+
+    const saved = path.join(dir, 'Saved.motion');
+    unwrap(await b.client.execute({ type: 'saveProject', path: saved, copy: false, format: 'bundle' }));
+    expect(readFileSync(zip).equals(zipBytes)).toBe(true);
+    if (b.collectsFromSource) {
+      const hash = src.slice('motion-blob:'.length);
+      expect(readFileSync(path.join(saved, 'blobs', hash.slice(0, 2), hash), 'utf8')).toBe(BLOB);
+      const reg = JSON.parse(readFileSync(path.join(saved, 'assets', 'registry.json'), 'utf8')) as { assets: Array<{ id: string; hash: string; mime: string }> };
+      expect(reg.assets.map((a) => [a.id, a.hash, a.mime])).toEqual([['asset_plate', hash, 'video/mp4']]);
+    }
+    expect(await repo.load(saved)).toEqual(viaCodec(await exported(b.client)));
   });
 
   it('refuses what would lose the user file: portable without copy, a bundle over a file, a JSON file over a bundle', async () => {

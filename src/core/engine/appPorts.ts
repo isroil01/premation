@@ -3,6 +3,9 @@
  * access, wired to the same code paths the editor already uses (ENGINE_API.md
  * §15.3 "Attach real EnginePorts"):
  *
+ *   readPortable               → a portable `.motion` zip (F2 "Open portable
+ *       copy" through the engine): unpacked by portableMotion.ts, footage as
+ *       session object URLs; null for anything else
  *   readProject / writeProject → ProjectManager's storage (bundle or single
  *       file; the storage owns temp-file + rename and footage collection).
  *       saveProject's `format` (F2) picks the form: `bundle` / `json` go to
@@ -27,7 +30,13 @@ import type { ProjectFile, VersionedDocument } from '@core/types';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { canImportFromDisk, fileNameOf, importMediaFile, mimeForPath } from '@core/assets/local/importFromDisk';
 import { probeMedia } from '@core/assets/mediaProbe';
-import { embedLiveAssets, packPortableMotion } from '@core/project/portableMotion';
+import {
+  embedLiveAssets,
+  isPortableMotionBytes,
+  materializePortableAssets,
+  packPortableMotion,
+  unpackPortableMotion,
+} from '@core/project/portableMotion';
 
 /** The slice of ProjectManager the file ports need (a fake in tests). */
 export interface ProjectFileAccess {
@@ -78,12 +87,39 @@ function detachFromSession(id: string): void {
   useAssetStore.setState((s) => ({ assets: s.assets.filter((a) => a.id !== id) }));
 }
 
-export function createAppEnginePorts(project: ProjectFileAccess, writeBytes: BytesWriter = bridgeWriteBytes): EnginePorts {
+/** A file's bytes by path, or null when it cannot be read (a directory, a missing file). */
+export type BytesReader = (path: string) => Promise<Uint8Array | null>;
+
+const bridgeReadBytes: BytesReader = async (path) => {
+  const read = typeof window !== 'undefined' ? window.motionEditor?.file?.readBytes : undefined;
+  if (!read) return null;
+  try {
+    return (await read(path)) ?? null;
+  } catch {
+    return null;
+  }
+};
+
+export function createAppEnginePorts(
+  project: ProjectFileAccess,
+  writeBytes: BytesWriter = bridgeWriteBytes,
+  readFileBytes: BytesReader = bridgeReadBytes,
+): EnginePorts {
   return {
     readProject: async (path) => {
       const doc = await project.readDocument(path);
       if (!doc) throw new Error('no project at that path');
       return asEditorDocument(doc);
+    },
+
+    readPortable: async (path) => {
+      // A `.motion` bundle is a directory and a JSON project is text: only a
+      // FILE starting with the zip magic is a portable copy. A directory does
+      // not read as bytes, which is the answer "not portable".
+      const bytes = await readFileBytes(path);
+      if (!bytes || !isPortableMotionBytes(bytes)) return null;
+      const { document, embedded } = materializePortableAssets(unpackPortableMotion(bytes));
+      return { document, embedded };
     },
 
     writeProject: async (path, doc, format) => {

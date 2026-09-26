@@ -259,6 +259,16 @@ function registerFileIpc(): void {
     }
   });
 
+  // F2: the engine opens the file itself (a portable `.motion` zip included),
+  // so the page needs only the path — never the bytes, which may be gigabytes.
+  handle('project:chooseOpenPath', async () => {
+    const res = await dialog.showOpenDialog({ ...rememberedDir('project'), properties: ['openFile'], filters: PROJECT_FILTERS });
+    const filePath = res.filePaths[0];
+    if (res.canceled || !filePath) return null;
+    rememberDir('project', filePath, false);
+    return filePath;
+  });
+
   handle('project:chooseSavePath', async (_event, defaultName: string) => {
     const res = await dialog.showSaveDialog({ defaultPath: defaultName, filters: PROJECT_FILTERS });
     if (res.canceled || !res.filePath) return null;

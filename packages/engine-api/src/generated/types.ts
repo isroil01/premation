@@ -1082,7 +1082,7 @@ export interface NewProject {
   template?: string;
 }
 
-/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. */
+/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. A compressed (DEFLATE) zip entry or a zip that is not a project is `io`. */
 export interface OpenProject {
   path: string;
 }

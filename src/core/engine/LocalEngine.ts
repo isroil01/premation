@@ -891,15 +891,21 @@ export class LocalEngine extends EngineClientBase {
         const port = this.options.ports?.readProject;
         if (!port) fail('unsupported', 'no project file port is attached to this engine');
         let doc: EditorDocument;
+        let portable: { document: EditorDocument; embedded: number } | null = null;
         try {
-          doc = await port(cmd.path);
+          // F2: a portable `.motion` zip opens as an untitled copy (session.cpp does the same).
+          portable = (await this.options.ports?.readPortable?.(cmd.path)) ?? null;
+          doc = portable ? portable.document : await port(cmd.path);
         } catch (err) {
           fail('io', `could not read '${cmd.path}': ${err instanceof Error ? err.message : String(err)}`);
         }
         this.loadDocument(doc, { reason: 'opened', resetWorkspace: true });
-        this.projectPath = cmd.path;
+        this.projectPath = portable ? '' : cmd.path;
         this.emitStatus();
-        return { warnings: [], missingItems: [...this.lastMissing] };
+        const warnings = portable
+          ? [`portable: opened a portable copy with ${portable.embedded} embedded footage file(s); the project is untitled until saved`]
+          : [];
+        return { warnings, missingItems: [...this.lastMissing] };
       }
       case 'revertProject': {
         if (this.gesture) fail('gestureOpen', 'close the gesture first');

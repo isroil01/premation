@@ -268,3 +268,40 @@ function finishUnpackDoc(doc: EditorDocument, assets: PortableAsset[] = []): Unp
     missing: findMissingAssets(migrated),
   };
 }
+
+/**
+ * Point every layer at its packaged footage: each `assets/<file>` becomes a
+ * session object URL (the page's renderer reads those). A packaged file no
+ * layer references is released at once. The TypeScript engine's portable
+ * open (appPorts `readPortable`) and the page's own open share this; the C++
+ * engine unpacks the footage onto disk instead (bundle_io.cpp `read_portable`).
+ */
+export function materializePortableAssets(unpacked: UnpackResult): { document: EditorDocument; missing: MissingAssetRef[]; embedded: number } {
+  const doc = structuredClone(unpacked.document);
+  let embedded = 0;
+  for (const a of unpacked.assets) {
+    const url = URL.createObjectURL(new Blob([a.bytes as BlobPart], { type: a.mime }));
+    const packaged = `assets/${a.fileName}`;
+    let referenced = false;
+    for (const node of doc.scene?.nodes ?? []) {
+      for (const c of node.components) {
+        const src = (c.props as Record<string, unknown>).src;
+        if (src === packaged) {
+          (c.props as Record<string, unknown>).src = url;
+          referenced = true;
+        }
+      }
+    }
+    // A packaged asset no layer points at (a leftover from a deleted layer)
+    // was still minted a URL that nothing could ever load or revoke — its
+    // bytes stayed pinned for the session. Nothing holds it, so release it.
+    if (referenced) embedded += 1;
+    else URL.revokeObjectURL(url);
+  }
+  return { document: doc, missing: findMissingAssets(doc), embedded };
+}
+
+/** Does `bytes` start with the zip magic — a portable `.motion`, not a JSON document? */
+export function isPortableMotionBytes(bytes: Uint8Array): boolean {
+  return isZip(bytes);
+}

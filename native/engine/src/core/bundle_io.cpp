@@ -335,21 +335,23 @@ void write_file_atomic(const fs::path& target, std::string_view bytes) {
   }
 }
 
-Json read_bundle(const fs::path& dir) {
-  const Json manifest = read_chunk(dir, kManifest);
-  if (!manifest.is_object()) fail(ErrorCode::io, "could not read '" + utf8(dir) + "': not a .motion bundle (no manifest.json)");
+namespace {
+
+/// bundleCodec.ts `decodeBundle` over any chunk source (a directory, a zip's entries).
+template <class ChunkFn>
+Json decode_chunks(const Json& manifest, ChunkFn&& chunk) {
   Json doc = Json::object();
   doc.set("version", manifest.at("documentVersion").is_undefined() || manifest.at("documentVersion").is_null()
                          ? Json::string("1.1.0")
                          : manifest.at("documentVersion"));
-  Json scene = read_chunk(dir, "scene.json");
+  Json scene = chunk("scene.json");
   if (scene.is_undefined() || scene.is_null()) {
     scene = Json::object();
     scene.set("version", Json::string("1.0.0"));
     scene.set("nodes", Json::array());
   }
   doc.set("scene", std::move(scene));
-  Json anim = read_chunk(dir, "animation.json");
+  Json anim = chunk("animation.json");
   if (anim.is_undefined() || anim.is_null()) {
     anim = Json::object();
     anim.set("tracks", Json::object());
@@ -357,10 +359,10 @@ Json read_bundle(const fs::path& dir) {
   }
   doc.set("animation", std::move(anim));
   // decodeBundle copies a field only when it is truthy: an object or array is.
-  auto lift = [&doc](const Json& chunk, std::initializer_list<const char*> keys) {
-    if (!chunk.is_object()) return;
+  auto lift = [&doc](const Json& c, std::initializer_list<const char*> keys) {
+    if (!c.is_object()) return;
     for (const char* k : keys) {
-      const Json& v = chunk.at(k);
+      const Json& v = c.at(k);
       const bool truthy = v.is_object() || v.is_array() || (v.is_string() && !v.str().empty()) ||
                           (v.is_number() && v.num() != 0 && v.num() == v.num()) || v.b();
       if (truthy) {
@@ -368,10 +370,18 @@ Json read_bundle(const fs::path& dir) {
       }
     }
   };
-  lift(read_chunk(dir, "timeline.json"), {"timelines", "motionBlur", "guides", "colorManagement"});
-  lift(read_chunk(dir, "meta.json"), {"comps", "comp", "swatches", "materials", "transitions"});
-  lift(read_chunk(dir, "project.json"), {"projectItems", "projectSettings", "renderQueue", "plugins", "pluginStorage"});
+  lift(chunk("timeline.json"), {"timelines", "motionBlur", "guides", "colorManagement"});
+  lift(chunk("meta.json"), {"comps", "comp", "swatches", "materials", "transitions"});
+  lift(chunk("project.json"), {"projectItems", "projectSettings", "renderQueue", "plugins", "pluginStorage"});
   return doc;
+}
+
+}  // namespace
+
+Json read_bundle(const fs::path& dir) {
+  const Json manifest = read_chunk(dir, kManifest);
+  if (!manifest.is_object()) fail(ErrorCode::io, "could not read '" + utf8(dir) + "': not a .motion bundle (no manifest.json)");
+  return decode_chunks(manifest, [&dir](const char* name) { return read_chunk(dir, name); });
 }
 
 std::uint64_t write_bundle(const fs::path& dir, const Json& doc, const fs::path& source) {
@@ -522,6 +532,263 @@ std::uint64_t write_portable(const fs::path& file, const Json& doc, const fs::pa
   const std::string zip = zip_store(entries);
   write_file_atomic(file, zip);
   return zip.size();
+}
+
+// ── opening a portable `.motion` (portableMotion.ts `unpackPortableMotion`) ──
+
+namespace {
+
+std::uint32_t rd16(std::string_view z, std::size_t o) {
+  return static_cast<std::uint32_t>(static_cast<unsigned char>(z[o])) |
+         (static_cast<std::uint32_t>(static_cast<unsigned char>(z[o + 1])) << 8U);
+}
+std::uint32_t rd32(std::string_view z, std::size_t o) { return rd16(z, o) | (rd16(z, o + 2) << 16U); }
+
+/// Every file entry of a zip (name → bytes) through its central directory.
+/// STORE only: Premation writes STORE (zip.ts `zipBytes`); a DEFLATE entry —
+/// the zip was repacked by another tool — is refused rather than guessed at.
+std::map<std::string, std::string, std::less<>> unzip_entries(std::string_view z, const std::string& what) {
+  auto bad = [&what](const std::string& why) { fail(ErrorCode::io, "could not read '" + what + "': " + why); };
+  if (z.size() < 22) bad("not a zip");
+  // End of central directory: the last signature within the 64 KiB comment window.
+  std::size_t eocd = std::string_view::npos;
+  const std::size_t floor = z.size() > 22 + 0xFFFFU ? z.size() - 22 - 0xFFFFU : 0;
+  for (std::size_t o = z.size() - 22;; --o) {
+    if (rd32(z, o) == 0x06054b50U) {
+      eocd = o;
+      break;
+    }
+    if (o == floor) break;
+  }
+  if (eocd == std::string_view::npos) bad("the zip has no central directory");
+  const std::uint32_t count = rd16(z, eocd + 10);
+  std::size_t c = rd32(z, eocd + 16);
+  std::map<std::string, std::string, std::less<>> out;
+  for (std::uint32_t i = 0; i < count; ++i) {
+    if (c + 46 > z.size() || rd32(z, c) != 0x02014b50U) bad("the zip's central directory is damaged");
+    const std::uint32_t method = rd16(z, c + 10);
+    const std::uint32_t crc = rd32(z, c + 16);
+    const std::uint32_t csize = rd32(z, c + 20);
+    const std::uint32_t nameLen = rd16(z, c + 28);
+    const std::uint32_t extraLen = rd16(z, c + 30);
+    const std::uint32_t commentLen = rd16(z, c + 32);
+    const std::size_t local = rd32(z, c + 42);
+    if (c + 46 + nameLen > z.size()) bad("the zip's central directory is damaged");
+    std::string name(z.substr(c + 46, nameLen));
+    c += 46 + nameLen + extraLen + commentLen;
+    if (name.empty() || name.back() == '/') continue;  // a folder entry
+    if (local + 30 > z.size() || rd32(z, local) != 0x04034b50U) bad("the zip entry '" + name + "' is damaged");
+    const std::size_t data = local + 30 + rd16(z, local + 26) + rd16(z, local + 28);
+    if (data + csize > z.size()) bad("the zip entry '" + name + "' is truncated");
+    if (method != 0) bad("'" + name + "' is compressed; re-save the portable copy from Premation");
+    std::string bytes(z.substr(data, csize));
+    if (zip_crc32(bytes) != crc) bad("the zip entry '" + name + "' is corrupt (CRC mismatch)");
+    out.insert_or_assign(std::move(name), std::move(bytes));
+  }
+  return out;
+}
+
+// SHA-256 (FIPS 180-4) — BlobStore's content address (contentHash.ts `sha256Hex`).
+struct Sha256 {
+  std::array<std::uint32_t, 8> h{0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+                                 0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U};
+  static std::uint32_t rotr(std::uint32_t x, unsigned n) { return (x >> n) | (x << (32U - n)); }
+  void block(const unsigned char* p) {
+    static constexpr std::array<std::uint32_t, 64> k = {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
+    std::array<std::uint32_t, 64> w{};
+    for (std::size_t i = 0; i < 16; ++i) {
+      w[i] = (static_cast<std::uint32_t>(p[i * 4]) << 24U) | (static_cast<std::uint32_t>(p[i * 4 + 1]) << 16U) |
+             (static_cast<std::uint32_t>(p[i * 4 + 2]) << 8U) | static_cast<std::uint32_t>(p[i * 4 + 3]);
+    }
+    for (std::size_t i = 16; i < 64; ++i) {
+      const std::uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3U);
+      const std::uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10U);
+      w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    std::array<std::uint32_t, 8> v = h;
+    for (std::size_t i = 0; i < 64; ++i) {
+      const std::uint32_t s1 = rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25);
+      const std::uint32_t ch = (v[4] & v[5]) ^ (~v[4] & v[6]);
+      const std::uint32_t t1 = v[7] + s1 + ch + k[i] + w[i];
+      const std::uint32_t s0 = rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22);
+      const std::uint32_t maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+      const std::uint32_t t2 = s0 + maj;
+      v[7] = v[6];
+      v[6] = v[5];
+      v[5] = v[4];
+      v[4] = v[3] + t1;
+      v[3] = v[2];
+      v[2] = v[1];
+      v[1] = v[0];
+      v[0] = t1 + t2;
+    }
+    for (std::size_t i = 0; i < 8; ++i) h[i] += v[i];
+  }
+};
+
+}  // namespace
+
+std::string sha256_hex(std::string_view bytes) {
+  Sha256 s;
+  const auto* p = reinterpret_cast<const unsigned char*>(bytes.data());  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): byte view
+  std::size_t n = bytes.size();
+  std::size_t off = 0;
+  for (; n - off >= 64; off += 64) s.block(p + off);
+  std::array<unsigned char, 128> tail{};
+  const std::size_t rest = n - off;
+  std::copy_n(p + off, rest, tail.begin());
+  tail[rest] = 0x80U;
+  const std::size_t total = rest + 9 <= 64 ? 64 : 128;
+  const std::uint64_t bits = static_cast<std::uint64_t>(n) * 8U;
+  for (std::size_t i = 0; i < 8; ++i) tail[total - 1 - i] = static_cast<unsigned char>((bits >> (8U * i)) & 0xFFU);
+  s.block(tail.data());
+  if (total == 128) s.block(tail.data() + 64);
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(64);
+  for (const std::uint32_t word : s.h) {
+    for (int sh = 28; sh >= 0; sh -= 4) out.push_back(kHex[(word >> static_cast<unsigned>(sh)) & 0xFU]);
+  }
+  return out;
+}
+
+bool is_portable_file(const fs::path& file) {
+  std::error_code ec;
+  if (!fs::is_regular_file(file, ec)) return false;
+  std::ifstream in(file, std::ios::binary);
+  std::array<char, 2> magic{};
+  in.read(magic.data(), 2);
+  return in.gcount() == 2 && magic[0] == 'P' && magic[1] == 'K';
+}
+
+PortableOpen read_portable(const fs::path& file, const fs::path& staging) {
+  const std::string what = utf8(file);
+  std::string zip;
+  if (!read_file(file, zip)) fail(ErrorCode::io, "could not read '" + what + "'");
+  auto entries = unzip_entries(zip, what);
+  zip.clear();
+  zip.shrink_to_fit();
+
+  // A wrapping folder (`project.motion/manifest.json`) is unwrapped, as the page does.
+  std::string root;
+  if (!entries.contains(kManifest) && !entries.contains("scene.json")) {
+    const auto it = std::find_if(entries.begin(), entries.end(), [](const auto& e) {
+      return e.first.size() > 13 && e.first.ends_with(std::string("/") + kManifest);
+    });
+    if (it == entries.end()) fail(ErrorCode::io, "could not read '" + what + "': the zip is not a Premation project");
+    root = it->first.substr(0, it->first.size() - std::string_view(kManifest).size());
+  }
+  auto entry = [&entries, &root](std::string_view name) -> const std::string* {
+    const auto it = entries.find(root + std::string(name));
+    return it == entries.end() ? nullptr : &it->second;
+  };
+  auto chunk = [&entry](const char* name) -> Json {
+    const std::string* text = entry(name);
+    if (text == nullptr) return {};
+    auto parsed = js::parse(*text);
+    return parsed ? std::move(*parsed) : Json();
+  };
+  Json manifest = chunk(kManifest);
+  if (!manifest.is_object()) manifest = Json::object();  // scene.json alone: decodeBundle's defaults
+  PortableOpen out;
+  out.doc = decode_chunks(manifest, chunk);
+
+  // The packed registry names each file's MIME (the page's unpack drops it; the engine keeps it).
+  std::map<std::string, std::string, std::less<>> mimeOf;
+  if (const Json reg = chunk(kRegistry); reg.is_object()) {
+    for (const Json& r : reg.at("assets").arr()) {
+      if (r.at("fileName").is_string() && r.at("mime").is_string()) mimeOf.emplace(r.at("fileName").str(), r.at("mime").str());
+    }
+  }
+
+  // Footage: `assets/<file>` → blobs/<hh>/<sha256> in the staging bundle, and
+  // every component `src` naming it → `motion-blob:<sha256>` (what a bundle
+  // holds, so a later Save As bundle collects it like any bundle footage).
+  struct Staged {
+    std::string hash;
+    std::string mime;
+    std::size_t size = 0;
+    std::string id;
+  };
+  std::map<std::string, Staged, std::less<>> staged;  // "assets/<file>" → blob
+  const std::string assetsPrefix = root + "assets/";
+  for (auto& [name, bytes] : entries) {
+    if (!name.starts_with(assetsPrefix) || name == root + kRegistry) continue;
+    const std::string fileName = name.substr(assetsPrefix.size());
+    if (fileName.empty() || fileName.find('/') != std::string::npos) continue;
+    Staged s;
+    s.hash = sha256_hex(bytes);
+    s.size = bytes.size();
+    const auto m = mimeOf.find(fileName);
+    s.mime = m != mimeOf.end() ? m->second : "application/octet-stream";
+    const fs::path to = blob_path(staging, s.hash);
+    std::error_code ec;
+    if (!fs::is_regular_file(to, ec) || fs::file_size(to, ec) != bytes.size()) write_file_atomic(to, bytes);
+    bytes.clear();
+    bytes.shrink_to_fit();
+    staged.emplace("assets/" + fileName, std::move(s));
+  }
+
+  std::map<std::string, std::string, std::less<>> names;  // hash → a display name
+  Json* nodes = out.doc.find_mut("scene") != nullptr ? out.doc.find_mut("scene")->find_mut("nodes") : nullptr;
+  if (nodes != nullptr && nodes->is_array()) {
+    for (Json& node : nodes->arr_mut()) {
+      Json* comps = node.find_mut("components");
+      if (comps == nullptr || !comps->is_array()) continue;
+      for (Json& c : comps->arr_mut()) {
+        Json* props = c.find_mut("props");
+        if (props == nullptr || !props->is_object()) continue;
+        Json* src = props->find_mut("src");
+        if (src == nullptr || !src->is_string()) continue;
+        const auto it = staged.find(src->str());
+        if (it == staged.end()) continue;
+        names.try_emplace(it->second.hash, src->str().substr(7));
+        if (it->second.id.empty()) {
+          if (const Json& aid = props->at("assetId"); aid.is_string() && !aid.str().empty()) it->second.id = aid.str();
+        }
+        *src = Json::string(std::string(kBlobScheme) + it->second.hash);
+      }
+    }
+  }
+
+  // The staging bundle's registry: one row per referenced blob (restoreBundleAssets' rows).
+  Json registry = Json::object();
+  registry.set("version", Json::string("1.0.0"));
+  Json rows = Json::array();
+  std::set<std::string, std::less<>> seen;
+  for (const auto& [packed, s] : staged) {
+    if (!names.contains(s.hash)) continue;  // nothing points at it: a leftover, as the page drops it
+    const std::string id = s.id.empty() ? "asset_" + s.hash.substr(0, 12) : s.id;
+    if (!seen.insert(id).second) continue;
+    const std::string& mime = s.mime;
+    const char* type = mime.starts_with("image/")   ? "image"
+                       : mime.starts_with("video/") ? "video"
+                       : mime.starts_with("audio/") ? "audio"
+                       : mime == "application/json" ? "json"
+                       : mime.find("font") != std::string::npos ? "font"
+                                                                : "other";
+    Json r = Json::object();
+    r.set("id", Json::string(id));
+    r.set("hash", Json::string(s.hash));
+    r.set("name", Json::string(names.at(s.hash)));
+    r.set("type", Json::string(type));
+    r.set("mime", Json::string(mime));
+    r.set("size", Json::number(static_cast<double>(s.size)));
+    rows.arr_mut().push_back(std::move(r));
+    ++out.embedded;
+  }
+  registry.set("assets", std::move(rows));
+  write_file_atomic(staging / kRegistry, js::stringify(registry));
+  out.footageRoot = staging;
+  return out;
 }
 
 }  // namespace premation::doc

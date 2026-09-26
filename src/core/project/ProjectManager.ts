@@ -264,6 +264,30 @@ export class ProjectManager {
     return ref;
   }
 
+  /**
+   * F2: Open a portable `.motion` zip through the engine. The engine unpacks
+   * it (openProject of a zip) and the session stays UNTITLED — a portable is a
+   * copy, so Save asks where, exactly as the page's own open (`adopt(name,
+   * null)`). Not added to the recent list (there is no project file to reopen).
+   * Null when the engine refused it or does not own the document.
+   */
+  async openPortable(path: string, name: string): Promise<ProjectRef | null> {
+    if (!this.engineDocument) return null;
+    try {
+      await this.engineDocument.open(path);
+    } catch (err) {
+      this.deps.logger?.error('Failed to open portable copy', err);
+      return null;
+    }
+    this.deps.editorView?.recall(null);
+    const ref: ProjectRef = { id: this.deps.newId(), name, path: null };
+    this.state = { current: ref };
+    this.emit();
+    this.deps.logger?.info(`Opened portable copy "${name}"`);
+    getEventBus().emit('ProjectLoaded', { projectId: ref.id });
+    return ref;
+  }
+
   /** F2: the engine opens (reads, migrates, loads) the file; become the current project. */
   private async openInEngine(path: string, name: string): Promise<ProjectRef | null> {
     try {

@@ -191,3 +191,74 @@ TEST_CASE("a portable .motion is portableMotion.ts's zip with the footage embedd
   CHECK(reg.at("assets").arr()[0].at("fileName").str() == "n1.mp4");
   CHECK(reg.at("assets").arr()[0].at("mime").str() == "video/mp4");
 }
+
+TEST_CASE("sha256_hex is contentHash.ts sha256Hex", "[bundle]") {
+  CHECK(doc::sha256_hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  CHECK(doc::sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  // 56 bytes: the padding spills into a second block.
+  CHECK(doc::sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+}
+
+TEST_CASE("a portable .motion opens in the engine: chunks decoded, footage staged as a bundle", "[bundle]") {
+  TempDir t;
+  const fs::path src = t.path / "Old.motion";
+  spit(src / "blobs" / "01" / kHash, "VIDEO-BYTES");
+  spit(src / "assets" / "registry.json",
+       std::string(R"({"version":"1.0.0","assets":[{"id":"asset_plate","hash":")") + kHash +
+           R"(","name":"plate.mp4","type":"video","mime":"video/mp4","size":11}]})");
+  const fs::path z = t.path / "Copy.motion";
+  doc::write_portable(z, sample_doc(), src);
+  REQUIRE(doc::is_portable_file(z));
+  CHECK_FALSE(doc::is_portable_file(src));  // a bundle directory is not a zip
+
+  const fs::path staging = t.path / "staging";
+  const doc::PortableOpen o = doc::read_portable(z, staging);
+  CHECK(o.embedded == 1);
+  CHECK(o.footageRoot == staging);
+  const std::string sha = doc::sha256_hex("VIDEO-BYTES");
+  CHECK(slurp(staging / "blobs" / sha.substr(0, 2) / sha) == "VIDEO-BYTES");
+  const Json& props = o.doc.at("scene").at("nodes").arr()[1].at("components").arr()[0].at("props");
+  CHECK(props.at("src").str() == "motion-blob:" + sha);
+  CHECK(props.at("assetId").str() == "asset_plate");
+  CHECK(js::stringify(o.doc.at("comps")) == js::stringify(sample_doc().at("comps")));
+  CHECK(o.doc.at("version").str() == "1.8.0");
+  const Json reg = parse(slurp(staging / "assets" / "registry.json"));
+  REQUIRE(reg.at("assets").arr().size() == 1);
+  CHECK(reg.at("assets").arr()[0].at("id").str() == "asset_plate");  // the layer's library binding kept
+  CHECK(reg.at("assets").arr()[0].at("mime").str() == "video/mp4");
+  CHECK(reg.at("assets").arr()[0].at("type").str() == "video");
+
+  // Save As bundle from the staging root collects the footage like any bundle's.
+  const fs::path out = t.path / "Saved.motion";
+  doc::write_bundle(out, o.doc, o.footageRoot);
+  CHECK(slurp(out / "blobs" / sha.substr(0, 2) / sha) == "VIDEO-BYTES");
+  CHECK(parse(slurp(out / "assets" / "registry.json")).at("assets").arr().size() == 1);
+}
+
+TEST_CASE("opening a zip that is not a STORE Premation project is refused", "[bundle]") {
+  TempDir t;
+  auto refused = [](const fs::path& p, const fs::path& staging) {
+    try {
+      (void)doc::read_portable(p, staging);
+    } catch (const doc::EngineFail& e) {
+      return e.error.code == api::ErrorCode::io;
+    }
+    return false;
+  };
+  const fs::path junk = t.path / "junk.motion";
+  spit(junk, "PK-not-really-a-zip");
+  CHECK(refused(junk, t.path / "s1"));
+  // A valid zip that holds no project.
+  const fs::path other = t.path / "other.zip";
+  Json d = sample_doc();
+  doc::write_portable(other, d, {});
+  std::string bytes = slurp(other);
+  const auto at = bytes.find("manifest.json");
+  REQUIRE(at != std::string::npos);
+  // Rename every "manifest.json" and "scene.json" entry so the zip no longer reads as a project.
+  for (std::size_t p = bytes.find("manifest.json"); p != std::string::npos; p = bytes.find("manifest.json", p + 1)) bytes[p] = 'X';
+  for (std::size_t p = bytes.find("scene.json"); p != std::string::npos; p = bytes.find("scene.json", p + 1)) bytes[p] = 'X';
+  spit(other, bytes);
+  CHECK(refused(other, t.path / "s2"));
+}

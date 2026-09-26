@@ -62,7 +62,7 @@ struct ProjectSettingsPatch {
 
 /// Replace the document with an empty project. Clears history.
 command newProject = 10 [io] { template?: string = 1; }
-/// Open a .motion project (or a recovery file). Clears history; the UI receives documentReset.
+/// Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. A compressed (DEFLATE) zip entry or a zip that is not a project is `io`.
 command openProject = 11 [io] { path: string = 1; } -> OpenProjectResult;
 /// F2 — the form saveProject writes. `auto` keeps the target's form: an existing `.motion` bundle directory is rewritten as a bundle, anything else is one JSON document (what saveProject did before `format` existed). `json`: one JSON document. `bundle`: a `.motion` directory bundle (bundleCodec.ts chunks, each temp + rename, manifest last; footage the document references as `motion-blob:<hash>` that the target lacks is copied in from the bundle the document was opened from or last saved to, with its asset-registry rows). `portable`: one STORE zip of the same chunks with that footage embedded under `assets/` (portableMotion.ts, Save Portable Copy); `copy` only.
 enum ProjectFormat { auto = 0; json = 1; bundle = 2; portable = 3; }

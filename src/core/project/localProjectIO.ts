@@ -18,11 +18,11 @@ import {
   embedLiveAssets,
   packPortableMotion,
   unpackPortableMotion,
+  materializePortableAssets,
   PortableMotionError,
-  type UnpackResult,
 } from './portableMotion';
 import { DocumentVersionError } from './migrations';
-import { findMissingAssets, type MissingAssetRef } from './missingAssets';
+import type { MissingAssetRef } from './missingAssets';
 import type { EditorDocument } from '@core/api/cloudDocument';
 
 export type LocalSaveStatus = 'saved' | 'cancelled' | 'failed';
@@ -127,29 +127,6 @@ export async function saveToComputer(name = suggestedName()): Promise<LocalSaveR
   }
 }
 
-function materializeAssets(unpacked: UnpackResult): { document: EditorDocument; missing: MissingAssetRef[] } {
-  const doc = structuredClone(unpacked.document);
-  for (const a of unpacked.assets) {
-    const url = URL.createObjectURL(new Blob([a.bytes as BlobPart], { type: a.mime }));
-    const packaged = `assets/${a.fileName}`;
-    let referenced = false;
-    for (const node of doc.scene?.nodes ?? []) {
-      for (const c of node.components) {
-        const src = (c.props as Record<string, unknown>).src;
-        if (src === packaged) {
-          (c.props as Record<string, unknown>).src = url;
-          referenced = true;
-        }
-      }
-    }
-    // A packaged asset no layer points at (a leftover from a deleted layer)
-    // was still minted a URL that nothing could ever load or revoke — its
-    // bytes stayed pinned for the session. Nothing holds it, so release it.
-    if (!referenced) URL.revokeObjectURL(url);
-  }
-  return { document: doc, missing: findMissingAssets(doc) };
-}
-
 function installDocument(doc: EditorDocument, name: string): void {
   restoreDocument(doc);
   getProjectManager().adopt(name, null);
@@ -187,13 +164,33 @@ function pickViaInput(): Promise<{ name: string; bytes: Uint8Array } | null> {
   });
 }
 
+/**
+ * F2: the ENGINE owns the document — it opens the zip itself (openProject of a
+ * portable `.motion`: chunks decoded, footage unpacked where the engine can
+ * read it). The page never sees the bytes; the copy opens untitled, as below.
+ * Desktop only: the engine reads a path, so the native dialog picks one.
+ */
+async function openThroughEngine(): Promise<LocalOpenResult> {
+  const choose = window.motionEditor?.project?.chooseOpenPath;
+  if (!choose) return { status: 'failed', missing: [], error: 'Opening a portable copy needs the desktop app.' };
+  const path = await choose();
+  if (!path) return { status: 'cancelled', missing: [] };
+  const name = stem(path.replace(/^.*[\\/]/, ''));
+  const opened = await getProjectManager().openPortable(path, name);
+  if (!opened) return { status: 'failed', missing: [], error: 'Could not open that project.' };
+  // Missing footage is reported by id (openProject.missingItems); the Assets
+  // panel shows those items as offline for relink.
+  return { status: 'opened', name, missing: [] };
+}
+
 /** Open a packed `.motion` / legacy JSON file into the live editor. */
 export async function openLocalMotionFile(): Promise<LocalOpenResult> {
   try {
+    if (getProjectManager().engineOwned) return await openThroughEngine();
     const picked = await pickLocalFile();
     if (!picked) return { status: 'cancelled', missing: [] };
     const unpacked = unpackPortableMotion(picked.bytes);
-    const { document, missing } = materializeAssets(unpacked);
+    const { document, missing } = materializePortableAssets(unpacked);
     installDocument(document, stem(picked.name));
     return { status: 'opened', name: stem(picked.name), missing };
   } catch (err) {

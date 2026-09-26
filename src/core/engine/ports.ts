@@ -13,6 +13,13 @@ export interface EnginePorts {
   /** Read a project document from disk (.motion). */
   readProject?(path: string): Promise<EditorDocument>;
   /**
+   * F2: open `path` as a portable `.motion` zip (Save Portable Copy's form).
+   * Null when the file is not one — openProject then reads it with
+   * `readProject`. A portable copy opens UNTITLED (the session is not bound to
+   * the zip); `embedded` counts the footage files the port made reachable.
+   */
+  readPortable?(path: string): Promise<{ document: EditorDocument; embedded: number } | null>;
+  /**
    * Write a project document (temp file + rename is the port's contract).
    * `format` is saveProject's (F2): absent / `auto` = the port's routing as
    * before; `json`, `bundle` and `portable` ask for that form.

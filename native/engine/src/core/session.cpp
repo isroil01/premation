@@ -710,12 +710,18 @@ struct ControlVisitor {
   R operator()(const api::OpenProject& c) const {
     no_gesture_for(s, "close the gesture first");
     if (!s.ports_->has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
-    doc::Json file = s.ports_->read_project(c.path);
-    s.load_document(file, api::ResetReason::opened);
-    s.projectPath_ = c.path;
-    s.bundleRoot_ = s.ports_->is_bundle(c.path) ? c.path : std::string();
+    doc::Ports::Opened opened = s.ports_->open_project(c.path);
+    s.load_document(opened.doc, api::ResetReason::opened);
+    // F2: a portable `.motion` is a copy — the project stays untitled (Save
+    // asks where), its footage in the staging bundle it was unpacked into.
+    s.projectPath_ = opened.portable ? std::string() : c.path;
+    s.bundleRoot_ = std::move(opened.footageRoot);
     s.emit_status();
     api::OpenProjectResult r;
+    if (opened.portable) {
+      r.warnings.push_back("portable: opened a portable copy with " + std::to_string(opened.embedded) +
+                           " embedded footage file(s); the project is untitled until saved");
+    }
     r.missing_items = s.lastMissing_;
     return result_for<api::OpenProject>(std::move(r));
   }
