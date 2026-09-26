@@ -20,6 +20,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { onCoreServicesReady, tryCoreServices } from '@core/services/coreServices';
 import { getEventBus } from '@core/events/EventBus';
 import { useProjectStore } from '@stores/projectStore';
+import { useMirrorSelect } from '@hooks/useMirror';
+import { useEngineOwnsDocument } from '@hooks/useEngineViewport';
 import styles from './ProjectStatus.module.css';
 
 /** Module-level so a remount (route change, pop-out) does not forget it. */
@@ -97,7 +99,10 @@ export function ProjectStatus({ compact = false }: { compact?: boolean }): JSX.E
     },
     () => tryCoreServices()?.project.getState().current ?? null,
   );
-  const dirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty === true : false));
+  const tabDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty === true : false));
+  // F2: with the engine as owner the dot is the engine's dirty flag (the mirror), not the tab's.
+  const engineDirty = useMirrorSelect(['status', 'doc'], (m) => m.dirty);
+  const dirty = useEngineOwnsDocument() ? engineDirty : tabDirty;
   const savedAt = useLastSaved();
 
   const name = current?.name;

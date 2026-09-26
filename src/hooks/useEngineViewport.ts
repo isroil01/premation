@@ -5,8 +5,13 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import { engineViewportActive, subscribeEngineOwnership } from '@core/engine/engineOwnership';
+import { engineOwnsDocumentNow, engineViewportActive, subscribeEngineOwnership } from '@core/engine/engineOwnership';
 
 export function useEngineViewportActive(): boolean {
   return useSyncExternalStore(subscribeEngineOwnership, engineViewportActive, () => false);
+}
+
+/** F2: does the C++ engine own the document (the owner flag, decided at boot)? */
+export function useEngineOwnsDocument(): boolean {
+  return useSyncExternalStore(subscribeEngineOwnership, engineOwnsDocumentNow, () => false);
 }

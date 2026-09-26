@@ -17,6 +17,8 @@ import { customSaveChoice } from '@components/Modal/Dialogs';
 import { tryCoreServices } from '@core/services/coreServices';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
+import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
+import { documentMirror } from '@stores/documentMirror';
 
 /**
  * `ProjectCommands.Save`, by value: the menu model lives in the layout layer,
@@ -39,6 +41,9 @@ function projectSubject(): string {
 
 /** True when the active document has edits that are not on disk / in the cloud. */
 export function hasUnsavedChanges(): boolean {
+  // F2: with the engine as owner the unsaved state is the ENGINE's (dirtyChanged
+  // → mirror.dirty; undo back to the saved revision clears it), not the tab flag.
+  if (engineOwnsDocumentNow()) return documentMirror().dirty;
   const { tabs, activeTabId } = useProjectStore.getState();
   if (!activeTabId) return false;
   return tabs[activeTabId]?.dirty === true;

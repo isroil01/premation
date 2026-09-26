@@ -252,8 +252,29 @@ function referencedAssetIdsOf(doc: EditorDocument): Set<string> {
  * and it throws BEFORE the first subsystem restore, so a document this build
  * cannot understand fails whole rather than half-populating the scene graph.
  */
+/** F2: depth of `restoreDocument` calls in progress (engineDocumentStores.ts ignores the store writes they make). */
+let restoreDepth = 0;
+
+/**
+ * True while `restoreDocument` is writing the page stores. With the engine as
+ * owner a restore is the page REPLICA catching up, never a user edit — the
+ * store→engine write-through (src/stores/engineDocumentStores.ts) skips it.
+ */
+export function isRestoringDocument(): boolean {
+  return restoreDepth > 0;
+}
+
 export function restoreDocument(doc: EditorDocument): void {
   if (!doc) return;
+  restoreDepth += 1;
+  try {
+    restoreDocumentNow(doc);
+  } finally {
+    restoreDepth -= 1;
+  }
+}
+
+function restoreDocumentNow(doc: EditorDocument): void {
 
   // Throws DocumentVersionError for a newer-than-us document or an uncovered
   // version gap. Deliberately not caught here — the caller must surface it, as

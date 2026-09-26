@@ -44,7 +44,8 @@
  * `layers` (membership), `comp:<id>`, `comps`, `order:<comp>`,
  * `transitions:<comp>`, `items`, `item:<id>`, `tree:<id>`,
  * `prop:<id>|<path>`, `keys:<id>`, `key:<id>|<path>`, `value:<id>|<path>`,
- * `history`, `status`, `settings`, `renderQueue`, `errors:<comp>`, `doc`
+ * `history`, `status`, `settings`, `renderQueue`, `errors:<comp>`, `doc`,
+ * and (F2) `guides`, `swatches`, `materials`
  * (anything revisioned). Listeners are called ONCE per batch however many
  * keys they matched — one React update per engine batch, never per event
  * (CLAUDE.md "no React render per played frame"; the playhead is not in here
@@ -73,11 +74,13 @@ import type {
   Keyframe,
   LayerError,
   LayerInfo,
+  LibraryMaterial,
   Marker,
   ProjectSettings,
   PropertyInfo,
   PropertyValues,
   PropertyTree,
+  Swatch,
   QueryOf,
   QueryResults,
   QueryType,
@@ -230,6 +233,10 @@ export class DocumentMirror {
   private readonly keyMap = new Map<string, ReadonlyMap<string, readonly Keyframe[]>>();
   private readonly trees = new Map<string, TreeEntry>();
   private renderQueueValue: readonly RenderItemInfo[] = [];
+  /** F2: the persisted guide settings as the engine saves them (a JSON object's text; '{}' = all default). */
+  private guidesValue = '{}';
+  private swatchesValue: readonly Swatch[] = [];
+  private materialsValue: readonly LibraryMaterial[] = [];
   private historyValue: MirrorHistory | null = null;
   private readonly errors = new Map<string, readonly LayerError[]>();
 
@@ -288,6 +295,12 @@ export class DocumentMirror {
   /** Composition ids in document order. */
   get compIds(): readonly string[] { return this.compIdsValue; }
   get renderQueue(): readonly RenderItemInfo[] { return this.renderQueueValue; }
+  /** F2: the document's guide settings, JSON (setGuides patches it). */
+  get guides(): string { return this.guidesValue; }
+  /** F2: the project palette, in order. */
+  get swatches(): readonly Swatch[] { return this.swatchesValue; }
+  /** F2: the project material library (user materials), in order. */
+  get materials(): readonly LibraryMaterial[] { return this.materialsValue; }
   get history(): MirrorHistory | null { return this.historyValue; }
 
   item(id: string): ItemInfo | undefined { return this.itemsValue.get(id); }
@@ -589,6 +602,9 @@ export class DocumentMirror {
       this.keyMap.set(layer, prev && same([...prev], [...m]) ? prev : m);
     }
     this.renderQueueValue = keep(this.renderQueueValue as RenderItemInfo[], doc.renderQueue);
+    this.guidesValue = doc.guides || '{}';
+    this.swatchesValue = keep(this.swatchesValue as Swatch[], doc.swatches ?? []);
+    this.materialsValue = keep(this.materialsValue as LibraryMaterial[], doc.materials ?? []);
     this.values.clear();
     this.early.clear();
     // Trees describe the previous document: refetch the retained ones, drop the rest.
@@ -932,6 +948,30 @@ export class DocumentMirror {
           if (next !== this.renderQueueValue) {
             this.renderQueueValue = next;
             this.touch('renderQueue');
+          }
+          break;
+        }
+        case 'guidesChanged': {
+          const next = e.guides || '{}';
+          if (next !== this.guidesValue) {
+            this.guidesValue = next;
+            this.touch('guides');
+          }
+          break;
+        }
+        case 'swatchesChanged': {
+          const next = keep(this.swatchesValue as Swatch[], e.swatches);
+          if (next !== this.swatchesValue) {
+            this.swatchesValue = next;
+            this.touch('swatches');
+          }
+          break;
+        }
+        case 'materialsChanged': {
+          const next = keep(this.materialsValue as LibraryMaterial[], e.materials);
+          if (next !== this.materialsValue) {
+            this.materialsValue = next;
+            this.touch('materials');
           }
           break;
         }

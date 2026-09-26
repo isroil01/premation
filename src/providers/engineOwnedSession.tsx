@@ -17,6 +17,8 @@
  *                 undoable "Recover Unsaved Work" entry, still bound to its file).
  *   transport     play / pause / seek / the active comp go to the engine, whose
  *                 playhead drives the timeline (core/engine/engineTransport.ts).
+ *   doc stores    guides / swatches / materials follow the mirror, and a user
+ *                 edit to them is an engine command (stores/engineDocumentStores.ts).
  *
  * The first document is an engine `newProject`, sent through the owner so the
  * page's replica starts from the same empty document (ownedEngineClient.ts).
@@ -31,6 +33,8 @@ import { projectNameFromFilePath } from '@core/project/projectName';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';
 import { documentMirror } from '@stores/documentMirror';
+import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
+import { edit } from '@core/engine/uiEdits';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { openModal } from '@stores/modalStore';
@@ -124,6 +128,10 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
 
   // The unsaved indicator follows the engine.
   track(documentMirror().subscribe(['status', 'doc'], syncDirtyFromMirror));
+
+  // F2: guides / swatches / materials are views of the engine's document; a
+  // user edit to them is an undoable engine command (engineDocumentStores.ts).
+  track(bindEngineDocumentStores({ mirror: documentMirror(), send: (label, cmd) => edit(label, cmd) }));
   let lastTab: string | null = null;
   track(useProjectStore.subscribe((s) => {
     if (s.activeTabId === lastTab) return;
