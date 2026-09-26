@@ -34,6 +34,9 @@ struct QCtx {
   /// D5: the per-layer errors the frame builder last reported for a comp ('' =
   /// the comp it last built) — what `layerErrors` announced. Unset = none.
   std::function<std::vector<api::LayerError>(const std::string&)> layerErrors;
+  /// The installed fonts matching a `listFonts` query (SessionOptions::systemFonts).
+  /// Unset = none (the test ports, and hosts without a font catalogue).
+  std::function<api::FontList(const std::string&)> fonts;
 };
 
 /// `catalogFor(layer)` through the query's cache (require_layer first).

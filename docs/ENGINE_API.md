@@ -574,7 +574,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `getKeyframes`, `getMarkers` | Keyframe sets / markers, optionally in a range. |
 | `copyLayers` | A `DocumentFragment` for the clipboard. |
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. |
-| `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
+| `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts, file path — the installed faces (C++: CoreText on macOS, DirectWrite on Windows, fontconfig on Linux; `query` filters family / style / PostScript name; OS-internal faces such as macOS's `.AppleSystemUIFont` are not listed). Empty under the test ports. |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |

@@ -280,10 +280,11 @@ struct Q {
   api::QueryResult operator()(const api::GetWaveform&) const {
     fail(ErrorCode::unsupported, "waveform peaks are computed by the editor's audio engine until audio moves into the engine (E2)");
   }
-  api::QueryResult operator()(const api::ListFonts&) const {
-    // The TypeScript engine lists the page's loaded font faces; the engine
-    // process has no font catalogue until text moves into it (D/E).
-    return query_result_for<api::ListFonts>(api::FontList{});
+  api::QueryResult operator()(const api::ListFonts& q) const {
+    // The installed fonts (CoreText / DirectWrite / fontconfig, the process's
+    // font catalogue — raster/font_catalog.hpp). The test ports have none, so
+    // replays stay deterministic across machines.
+    return query_result_for<api::ListFonts>(c.fonts ? c.fonts(q.query) : api::FontList{});
   }
   api::QueryResult operator()(const api::GetItems& q) const {
     api::ItemDetails out;

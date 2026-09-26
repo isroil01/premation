@@ -10,6 +10,7 @@
 // shaper; letter spacing added once per cluster; bidi runs in visual order.
 
 #include "fonts.hpp"
+#include "font_catalog.hpp"
 #include "system_fonts.hpp"
 #include "skia_ffi.hpp"
 
@@ -464,9 +465,38 @@ std::size_t FontSet::add_system_family(const std::string& family) {
     if (add_face(info, bytes, err)) ++added;
   }
   return added;
+#elif defined(__APPLE__)
+  // macOS: CoreText through the font catalogue (font_catalog_ffi_mac.cpp):
+  // Blink's generic defaults (sans-serif → Helvetica, serif → Times, …), the
+  // Blink alternate name, and the families macOS hides from its lists but
+  // resolves (Times, Courier, the system UI font). Faces are read from their
+  // files; a collection's index comes from its `name` tables. A face with no
+  // file (the system UI font's is not exposed) is skipped.
+  const std::string l = lower(family);
+  for (const auto& f : impl_->faces) {
+    if (f->familyLower == l) return 0;  // registered already (a manifest face wins)
+  }
+  const std::optional<CatalogFace> hit = resolve_system_font(family);
+  if (!hit) return 0;
+  std::size_t added = 0;
+  for (const CatalogFace& cf : system_family_faces(hit->family)) {
+    if (cf.path.empty()) continue;
+    std::ifstream in(cf.path, std::ios::binary);
+    if (!in) continue;
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    FaceInfo info;
+    info.family = family;
+    info.weight = static_cast<int>(cf.weight);
+    info.italic = cf.italic;
+    info.file = "system:" + cf.path;
+    info.ttcIndex = collection_index(cf.path, cf.postScriptName);
+    std::string err;
+    if (add_face(info, bytes, err)) ++added;
+  }
+  return added;
 #else
   // Linux: fontconfig, matched as Chromium's font service does
-  // (system_fonts_ffi.cpp); macOS (CoreText) is not ported — nothing found there.
+  // (system_fonts_ffi.cpp).
   const std::string l = lower(family);
   for (const auto& f : impl_->faces) {
     if (f->familyLower == l) return 0;  // registered already (a manifest face wins)

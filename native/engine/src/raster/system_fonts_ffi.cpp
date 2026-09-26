@@ -12,6 +12,8 @@
 
 #include "system_fonts.hpp"
 
+#include "font_catalog.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -274,11 +276,71 @@ std::vector<SystemFace> list_system_faces(std::string_view installedFamily) {
   return out;
 }
 
-#else  // no fontconfig (Windows: DirectWrite in fonts_ffi.cpp; macOS: not ported)
+#if !defined(_WIN32) && !defined(__APPLE__)
+namespace detail {
+
+// The font catalogue on Linux (font_catalog.hpp): every scalable face
+// fontconfig lists. Named instances of a variable font (FC_INDEX high bits)
+// are left out; the variable face itself is listed once. fontconfig reports
+// no axis ranges, so `axes` stays empty here.
+std::vector<CatalogFace> enumerate_system_fonts() {
+  std::vector<CatalogFace> out;
+  const std::lock_guard lock(fc_mutex());
+  if (FcInit() == FcFalse) return out;
+  const Pattern pattern(FcPatternCreate());
+  if (!pattern) return out;
+  FcPatternAddBool(pattern.get(), FC_SCALABLE, FcTrue);
+  const ObjectSet objects(FcObjectSetBuild(FC_FAMILY, FC_STYLE, FC_POSTSCRIPT_NAME, FC_FILE, FC_INDEX, FC_WEIGHT,
+                                           FC_WIDTH, FC_SLANT, FC_SCALABLE, FC_CHARSET, nullptr));
+  const FontSetPtr set(FcFontList(nullptr, pattern.get(), objects.get()));
+  if (!set) return out;
+  for (int i = 0; i < set->nfont; ++i) {
+    FcPattern* p = set->fonts[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    if (!valid_pattern(p)) continue;
+    int v = 0;
+    if (FcPatternGetInteger(p, FC_INDEX, 0, &v) == FcResultMatch && (v >> 16) != 0) continue;  // a named instance
+    CatalogFace f;
+    const char* family = string_of(p, FC_FAMILY);
+    if (family == nullptr) continue;
+    f.family = family;
+    if (const char* style = string_of(p, FC_STYLE)) f.style = style;
+    if (const char* ps = string_of(p, FC_POSTSCRIPT_NAME)) f.postScriptName = ps;
+    if (const char* file = string_of(p, FC_FILE)) f.path = file;
+    f.ttcIndex = v & 0xFFFF;
+    if (FcPatternGetInteger(p, FC_WEIGHT, 0, &v) == FcResultMatch) f.weight = FcWeightToOpenType(v);
+    if (FcPatternGetInteger(p, FC_WIDTH, 0, &v) == FcResultMatch) f.stretch = v;  // fontconfig widths are CSS percents
+    if (FcPatternGetInteger(p, FC_SLANT, 0, &v) == FcResultMatch) f.italic = v != FC_SLANT_ROMAN;
+    FcCharSet* chars = nullptr;
+    if (FcPatternGetCharSet(p, FC_CHARSET, 0, &chars) == FcResultMatch && chars != nullptr) {
+      for (const ScriptSample& sample : kScriptSamples) {
+        if (FcCharSetHasChar(chars, static_cast<FcChar32>(sample.codePoint)) != FcFalse) f.scripts.emplace_back(sample.script);
+      }
+    }
+    out.push_back(std::move(f));
+  }
+  return out;
+}
+
+std::vector<CatalogFace> unlisted_family_faces(std::string_view /*family*/) {
+  return {};  // FcFontList lists every installed family
+}
+
+}  // namespace detail
+#endif
+
+#else  // no fontconfig (Windows: DirectWrite in fonts_ffi.cpp; macOS: CoreText in fonts_ffi.cpp)
 
 bool system_fonts_available() noexcept { return false; }
 std::optional<std::string> match_system_family(std::string_view /*family*/, int /*weight*/, bool /*italic*/) { return std::nullopt; }
 std::vector<SystemFace> list_system_faces(std::string_view /*installedFamily*/) { return {}; }
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+namespace detail {
+// Linux without fontconfig: nothing to list (macOS and Windows have their own files).
+std::vector<CatalogFace> enumerate_system_fonts() { return {}; }
+std::vector<CatalogFace> unlisted_family_faces(std::string_view /*family*/) { return {}; }
+}  // namespace detail
+#endif
 
 #endif
 

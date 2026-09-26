@@ -19,6 +19,7 @@
 #include "io/pipe_ffi.hpp"
 #include "os_ffi.hpp"
 #include "plugins/host.hpp"
+#include "raster/font_catalog.hpp"
 #include "premation/protocol/framing.hpp"
 
 #if defined(PREMATION_HAVE_SCENE)
@@ -252,6 +253,26 @@ int run_engine(const EngineOptions& options) {
 
   SessionOptions sessionOptions;
   sessionOptions.engineVersion = kEngineVersion;
+  // listFonts: the installed fonts (CoreText / DirectWrite / fontconfig), enumerated
+  // on the first query, not at start-up.
+  sessionOptions.systemFonts = [](const std::string& query) {
+    api::FontList list;
+    for (const raster::CatalogFace& f : raster::find_system_fonts(query)) {
+      api::FontInfo info;
+      info.family = f.family;
+      info.style = f.style;
+      info.post_script_name = f.postScriptName;
+      info.weight = f.weight;
+      info.italic = f.italic;
+      info.scripts = f.scripts;
+      info.path = f.path;
+      for (const raster::CatalogAxis& a : f.axes) {
+        info.variable_axes.push_back(api::FontAxisInfo{a.tag, a.name, a.min, a.max, a.defaultValue});
+      }
+      list.fonts.push_back(std::move(info));
+    }
+    return list;
+  };
   sessionOptions.testPorts = options.testPorts;
   sessionOptions.testPortsDir = options.testPortsDir;
   Session session(outbox, *sink, sessionOptions);

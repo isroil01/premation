@@ -395,6 +395,12 @@ if(MSVC)
   target_compile_options(engine_plugins PRIVATE /bigobj)
 endif()
 
+# listFonts answers from the installed-font catalogue (engine_process.cpp → font_catalog.hpp).
+target_link_libraries(premation-engine-headless PRIVATE engine_raster_core)
+if(TARGET premation-engine)
+  target_link_libraries(premation-engine PRIVATE engine_raster_core)
+endif()
+
 # The engine process starts the host (--plugins / PREMATION_PLUGIN_PATH, engine_process.cpp).
 if(TARGET premation-engine)
   target_link_libraries(premation-engine PRIVATE engine_plugins)
@@ -678,12 +684,22 @@ add_library(engine_raster_core STATIC
   src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
   src/raster/mask_paint.cpp       # paintMaskMatte (mask.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
-  src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
+  src/raster/system_fonts_ffi.cpp # fontconfig family matching + the Linux font catalogue
+  src/raster/font_catalog.cpp     # listFonts + font resolution over the installed faces
   src/raster/svg_doc.cpp          # SVG documents: XML, CSS cascade, path / transform micro-syntax (D2w)
 )
 target_include_directories(engine_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/raster)
 target_compile_features(engine_raster_core PUBLIC cxx_std_20)
 target_link_libraries(engine_raster_core PUBLIC motion::jsmath ${CMAKE_DL_LIBS} PRIVATE motion::options)
+# The installed-font catalogue per OS (font_catalog.hpp).
+if(WIN32)
+  target_sources(engine_raster_core PRIVATE src/raster/font_catalog_ffi_win.cpp)
+  target_link_libraries(engine_raster_core PRIVATE dwrite)
+  target_compile_definitions(engine_raster_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+elseif(APPLE)
+  target_sources(engine_raster_core PRIVATE src/raster/font_catalog_ffi_mac.cpp)
+  target_link_libraries(engine_raster_core PUBLIC "-framework CoreText" "-framework CoreFoundation")
+endif()
 if(NOT WIN32 AND NOT APPLE)
   find_package(Fontconfig QUIET)
   if(TARGET Fontconfig::Fontconfig)
@@ -734,7 +750,7 @@ else()
 endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
-                 tests/test_svg_doc.cpp)
+                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
