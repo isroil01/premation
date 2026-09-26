@@ -7,6 +7,10 @@
 #
 #   build-test   ubuntu / macos / windows: configure preset → build → ctest,
 #                then the N-API addon (cmake-js) + its smoke test; clang-tidy on ubuntu
+#   engine       ubuntu / macos / windows: the *-engine presets (premation-engine
+#                with Dawn, Skia, ffmpeg, OCIO) → build → ctest, with a vcpkg
+#                binary cache (.github/actions/build-engine); the engine and what
+#                ships beside it are uploaded for release rehearsals
 #   sanitizers   ubuntu: ASan+UBSan and TSan builds run the full Catch2 suite
 #   wasm         Emscripten build + Node smoke test over the golden table
 #   format       clang-format --dry-run (non-blocking, see above)
@@ -26,6 +30,7 @@ on:
       - 'packages/native-bridge/**'
       - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
+      - '.github/actions/build-engine/**'
       - 'scripts/native.mjs'
   pull_request:
     paths:
@@ -33,6 +38,7 @@ on:
       - 'packages/native-bridge/**'
       - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
+      - '.github/actions/build-engine/**'
       - 'scripts/native.mjs'
   workflow_dispatch:
 
@@ -164,6 +170,53 @@ jobs:
           name: motion_napi-${{ matrix.os }}
           path: native/bindings/napi/build/Release/motion_napi.node
           if-no-files-found: error
+
+  # premation-engine itself, on every OS it ships on (and Linux, which it runs
+  # on through the route-A copy). The first run per triplet builds Dawn and the
+  # rest of the `engine` feature from source; the vcpkg binary cache makes the
+  # later ones minutes. GPU tests SKIP where the runner has no usable adapter.
+  engine:
+    name: engine · ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu · clang · Vulkan
+            os: ubuntu-latest
+            preset: linux-clang-engine
+            triplet: x64-linux
+          - name: macos · clang · Metal (arm64)
+            os: macos-latest
+            preset: macos-clang-engine
+            triplet: arm64-osx
+          - name: windows · clang-cl · D3D12
+            os: windows-latest
+            preset: windows-clang-cl-engine
+            triplet: x64-windows-static-md
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + test premation-engine
+        id: engine
+        uses: ./.github/actions/build-engine
+        with:
+          preset: ${{ matrix.preset }}
+          triplet: ${{ matrix.triplet }}
+          vcpkg-commit: ${{ env.VCPKG_COMMIT }}
+          test: 'true'
+      - name: Upload the engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: premation-engine-${{ matrix.preset }}
+          path: |
+            ${{ steps.engine.outputs.engine-dir }}/premation-engine
+            ${{ steps.engine.outputs.engine-dir }}/premation-engine.exe
+            ${{ steps.engine.outputs.engine-dir }}/premation-host-bridge.node
+            ${{ steps.engine.outputs.engine-dir }}/*.dll
+            ${{ steps.engine.outputs.engine-dir }}/*.so*
+          if-no-files-found: error
+          retention-days: 7
 
   sanitizers:
     name: ubuntu · ${{ matrix.preset }}

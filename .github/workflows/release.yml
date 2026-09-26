@@ -152,9 +152,61 @@ jobs:
       # A release must not ship unlinted either; CI gates dev, this gates the tag.
       - run: npm run lint
 
+  # ── The C++ engine, per shipped target ──
+  #
+  # premation-engine is the app's only engine (docs/TS_ENGINE_REMOVAL.md), so a
+  # release without it is not a release: every target builds it here, from the
+  # tagged commit, with the vcpkg binary cache (.github/actions/build-engine).
+  # The Intel Mac engine is cross-built on the Apple-silicon runner
+  # (macos-clang-engine-x64); electron-builder's beforePack
+  # (scripts/stageEngine.cjs) stages the engine matching each dmg's arch and
+  # FAILS the package if it is missing.
+  engine:
+    name: Engine ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            preset: windows-clang-cl-engine
+            triplet: x64-windows-static-md
+          - name: macOS arm64
+            os: macos-latest
+            preset: macos-clang-engine
+            triplet: arm64-osx
+          - name: macOS x64
+            os: macos-latest
+            preset: macos-clang-engine-x64
+            triplet: x64-osx
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build premation-engine
+        id: engine
+        uses: ./.github/actions/build-engine
+        with:
+          preset: ${{ matrix.preset }}
+          triplet: ${{ matrix.triplet }}
+          # native/vcpkg.json builtin-baseline (the same pin native.yml uses).
+          vcpkg-commit: c76c06644034521fb761a39f8f52d8e87d1103d5
+      - name: Upload the engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.preset }}
+          path: |
+            ${{ steps.engine.outputs.engine-dir }}/premation-engine
+            ${{ steps.engine.outputs.engine-dir }}/premation-engine.exe
+            ${{ steps.engine.outputs.engine-dir }}/premation-host-bridge.node
+            ${{ steps.engine.outputs.engine-dir }}/*.dll
+          if-no-files-found: error
+          retention-days: 3
+
   build:
     name: Build ${{ matrix.name }}
-    needs: verify
+    needs: [verify, engine]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -182,6 +234,39 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
+
+      # ── The engine the installers ship (built by the `engine` job) ──
+      # Into the preset directories scripts/stageEngine.cjs stages from. Unix
+      # permissions do not survive artifacts: the executable bit is restored.
+      - name: Fetch the Windows engine
+        if: matrix.os == 'windows-latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-windows-clang-cl-engine
+          path: native/build/windows-clang-cl-engine/engine
+      - name: Fetch the macOS engines (arm64 + x64)
+        if: matrix.os == 'macos-latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-macos-clang-engine
+          path: native/build/macos-clang-engine/engine
+      - name: Fetch the macOS x64 engine
+        if: matrix.os == 'macos-latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-macos-clang-engine-x64
+          path: native/build/macos-clang-engine-x64/engine
+      - name: Check the engines' architectures
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x native/build/macos-clang-engine/engine/premation-engine native/build/macos-clang-engine-x64/engine/premation-engine
+          lipo -archs native/build/macos-clang-engine/engine/premation-engine | grep -qx arm64
+          lipo -archs native/build/macos-clang-engine-x64/engine/premation-engine | grep -qx x86_64
+          lipo -archs native/build/macos-clang-engine/engine/premation-host-bridge.node | grep -qx arm64
+          lipo -archs native/build/macos-clang-engine-x64/engine/premation-host-bridge.node | grep -qx x86_64
+          echo "engines: arm64 + x86_64 OK"
 
       # better-sqlite3 is an OPTIONAL dependency so a contributor without a
       # native toolchain can still install (the driver is behind a guarded
@@ -286,6 +371,31 @@ jobs:
         run: |
           echo "::warning::Building ${{ matrix.name }} UNSIGNED — no signing certificate is configured."
           npx electron-builder ${{ matrix.args }} --publish never
+
+      # ── The engine is inside every package ──
+      # stageEngine.cjs already refuses to package without it; this checks the
+      # output, where a filter or signing mistake would drop it silently.
+      - name: Verify the engine shipped
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            for f in premation-engine.exe dxcompiler.dll dxil.dll; do
+              ls release/**/win-unpacked/resources/engine/$f >/dev/null || { echo "::error::$f missing from win-unpacked/resources/engine"; exit 1; }
+            done
+          else
+            found=0
+            for app in release/**/*.app; do
+              found=1
+              for f in premation-engine premation-host-bridge.node; do
+                test -f "$app/Contents/Resources/engine/$f" || { echo "::error::$f missing from $app"; exit 1; }
+              done
+              codesign --verify --strict --verbose=2 "$app/Contents/Resources/engine/premation-engine" || [ "${{ needs.verify.outputs.signMac }}" != "true" ]
+            done
+            [ "$found" = 1 ] || { echo "::error::no .app produced"; exit 1; }
+          fi
+          echo "engine present in every package"
 
       # ── macOS: notarize, then STAPLE ──
       # Stapling matters more than it looks. Without the ticket attached, a
