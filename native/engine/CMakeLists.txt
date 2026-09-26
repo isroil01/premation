@@ -185,13 +185,37 @@ endif()
 option(MOTION_ENGINE_FUZZER "Build the libFuzzer protocol target when the compiler supports it" ON)
 if(MOTION_ENGINE_FUZZER AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   include(CheckCXXSourceCompiles)
+  include(CMakePushCheckState)
+  set(_have_fuzzer OFF)
   if(MSVC)
     # clang-cl: CMake links with lld-link/link.exe, not the clang driver, so
     # the libFuzzer runtime is named explicitly.
     get_filename_component(_llvm_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
     file(GLOB _fuzzer_lib "${_llvm_bin}/../lib/clang/*/lib/windows/clang_rt.fuzzer-x86_64.lib")
+    if(_fuzzer_lib)
+      set(_have_fuzzer ON)
+    endif()
+  else()
+    # Apple's clang ships no libFuzzer runtime (Homebrew / upstream LLVM do):
+    # -fsanitize=fuzzer compiles but does not link. Probe a whole link.
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=fuzzer")
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles([=[
+#include <cstddef>
+#include <cstdint>
+extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }
+]=] PREMATION_HAVE_LIBFUZZER)
+    cmake_pop_check_state()
+    if(PREMATION_HAVE_LIBFUZZER)
+      set(_have_fuzzer ON)
+    endif()
   endif()
-  if(NOT MSVC OR _fuzzer_lib)
+  if(NOT _have_fuzzer)
+    message(STATUS "premation-engine: ${CMAKE_CXX_COMPILER} has no libFuzzer runtime — engine_fuzz is not built")
+  endif()
+  if(_have_fuzzer)
     # motion_eval is compiled in (not linked) so everything shares one CRT:
     # the Windows libFuzzer runtime is static-CRT (/MT), the libraries are /MD.
     set(_eval_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)

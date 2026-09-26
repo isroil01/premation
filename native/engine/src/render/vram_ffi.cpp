@@ -21,10 +21,20 @@ namespace premation::render {
 namespace {
 
 constexpr std::size_t kGiB = std::size_t{1} << 30U;
+/// The budget when the adapter cannot be asked (and, for now, on Metal / Vulkan).
 constexpr std::size_t kFallback = kGiB;
+
+}  // namespace
+
+#if defined(_WIN32)
+
+namespace {
+
 constexpr std::size_t kCap = 4 * kGiB;
 constexpr std::size_t kFloor = 256 * (std::size_t{1} << 20U);
 
+// Only the DXGI query below has a budget to scale; the other platforms return
+// kFallback, so these live under _WIN32 (unused otherwise, which -Werror rejects).
 std::size_t from_local_budget(std::uint64_t budget) {
   if (budget == 0) return kFallback;
   // A quarter: the render graph's own pools, footage textures, plugins and
@@ -33,8 +43,6 @@ std::size_t from_local_budget(std::uint64_t budget) {
 }
 
 }  // namespace
-
-#if defined(_WIN32)
 
 // COM's IID_PPV_ARGS is __uuidof, which -Wpedantic calls a language extension.
 #if defined(__clang__)
