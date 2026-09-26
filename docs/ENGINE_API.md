@@ -321,7 +321,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `addHistoryCheckpoint` | control | B3z — History ▸ Snapshot: a NAMED entry that changes nothing, a point to jump back to. Clears redo like any entry; `gestureOpen` while a gesture is open. |
 | `restoreDocument` | edit | B3z — replace the whole document with a saved / cloud version (`.motion` JSON) as ONE undoable entry; history is kept, undo brings the document back exactly. Unreadable input is `decode` / `unsupported` and changes nothing. |
 | `newProject`, `openProject`, `revertProject` | io | Replace the document; clear history; the UI receives `documentReset`. |
-| `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). F2 `format`: `auto` (absent) keeps the target's form — an existing `.motion` bundle directory stays a bundle, else one JSON file; `json`; `bundle` — the page's `.motion` directory format (bundleCodec chunks, only changed chunks rewritten, manifest last; `motion-blob:` footage the target lacks copied in from the bundle the document came from, with its registry rows); `portable` — portableMotion.ts's STORE zip with reachable footage under `assets/` (Save Portable Copy; `copy:true` only, else `invalidArgument`). A bundle over a plain file, or `json` over a directory, is `io` and writes nothing. `openProject` / `revertProject` / `importProject` read a directory as a bundle. |
+| `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). F2 `format`: `auto` (absent) keeps the target's form — an existing `.motion` bundle directory stays a bundle, else one JSON file; `json`; `bundle` — the page's `.motion` directory format (bundleCodec chunks, only changed chunks rewritten, manifest last; `motion-blob:` footage the target lacks copied in from the bundle the document came from, with its registry rows); `portable` — portableMotion.ts's STORE zip with reachable footage under `assets/` (Save Portable Copy; `copy:true` only, else `invalidArgument`). A bundle over a plain file, or `json` over a directory, is `io` and writes nothing. `openProject` / `revertProject` / `importProject` read a directory as a bundle. F2: `openProject` of a portable `.motion` ZIP opens an untitled copy (projectPath `''`, a `portable:` warning); the C++ engine unpacks its `assets/` footage content-addressed (SHA-256) into a staging bundle under `<temp>/premation-portable/<fnv(path)>` with registry rows (the layer's `assetId` kept) and rewrites each `src` to `motion-blob:<sha256>`, so a later bundle save collects it; STORE entries only (`io` for DEFLATE, a bad CRC, or a zip without a manifest/scene). The TypeScript engine unpacks through portableMotion.ts (port `readPortable`). |
 | `collectFiles` | io | Copy project + used files to a folder; document unchanged. |
 | `setAutosave` | control | Recovery cadence (a preference the engine executes). |
 | `importProject` | edit | Import `.motion`/`.aep`/`.aepx` into a new folder. Inverse: remove every imported item. |
@@ -857,6 +857,15 @@ moved on — for scripts and AI tools that read, think, then write.
   implementation) must reproduce the revisions and document hashes — the phase
   B–F safety net. Transport and viewport controls are logged too (so a replay
   can reproduce frames), but never change the hash.
+- **Crash-recovery log in Electron main (F2)**: with the process backend,
+  main is the engine connection's one client. `electron/engineCommandLog.ts`
+  records every applied non-query request main relays (envelope peeks only;
+  `newProject` clears), main renumbers each window's `seq` and maps a batch's
+  `causedBy` back for the window that caused it (others get it without, marked
+  `foreign` beside the bytes), and after a restart main replays the log before
+  any window's request and pushes `engine:restarted{replayedByHost, replayed,
+  mismatches, ms}`. `engine:status.hostCommandLog` tells renderer clients to
+  record nothing.
 
 ---
 
