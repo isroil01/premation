@@ -108,6 +108,14 @@ TEST_CASE("session: handshake", "[session]") {
     REQUIRE(w.revision == 0);
     REQUIRE(std::find(w.capabilities.begin(), w.capabilities.end(), "frames.channel") != w.capabilities.end());
   }
+  SECTION("frame routes are offered only when the sink has them") {
+    // The simulated sink has neither shared slots nor a pixel stream: asking
+    // for both gets neither (the GPU sink offers frames.copy when fd 5 is open).
+    Harness h;
+    const api::Welcome w = h.hello(api::kProtocolMajor, {"frames.sharedTexture", "frames.copy"});
+    REQUIRE(std::find(w.capabilities.begin(), w.capabilities.end(), "frames.sharedTexture") == w.capabilities.end());
+    REQUIRE(std::find(w.capabilities.begin(), w.capabilities.end(), "frames.copy") == w.capabilities.end());
+  }
   SECTION("a different major is refused with Goodbye{versionMismatch}") {
     Harness h;
     (void)h.hello(api::kProtocolMajor + 1);

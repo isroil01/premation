@@ -69,9 +69,9 @@ class Harness final : public Outbox {
     session.tick(now);
   }
 
-  api::Welcome hello(std::uint32_t major = api::kProtocolMajor) {
+  api::Welcome hello(std::uint32_t major = api::kProtocolMajor, std::vector<std::string> capabilities = {}) {
     api::EngineMessage m;
-    m.v = api::Hello{major, api::kProtocolMinor, "test", "1", {}};
+    m.v = api::Hello{major, api::kProtocolMinor, "test", "1", std::move(capabilities)};
     feed(m);
     for (const auto& msg : messages) {
       if (msg.kind() == api::EngineMessage::Kind::welcome) return std::get<api::Welcome>(msg.v);

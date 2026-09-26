@@ -1,5 +1,6 @@
-// The byte-stream half of the protocol: length-prefixed framing and the frame
-// channel codec (native/protocol/include/premation/protocol/{framing,frame_channel}.hpp).
+// The byte-stream half of the protocol: length-prefixed framing, the frame
+// channel codec and the route-A pixel header
+// (native/protocol/include/premation/protocol/{framing,frame_channel,pixel_channel}.hpp).
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -8,6 +9,7 @@
 
 #include "premation/protocol/frame_channel.hpp"
 #include "premation/protocol/framing.hpp"
+#include "premation/protocol/pixel_channel.hpp"
 
 using namespace premation;
 
@@ -90,4 +92,52 @@ TEST_CASE("frame channel: unknown variants are reported, too many slots refused"
   std::vector<std::uint8_t> bytes;
   frames::encode(frames::Message{.v = s}, bytes);
   REQUIRE(frames::decode(bytes, m) == wire::Status::bad_value);
+}
+TEST_CASE("pixel channel: a header round-trips and pins its byte layout", "[pixels]") {
+  pixels::Header h;
+  h.generation = 7;
+  h.slot = 2;
+  h.width = 3;
+  h.height = 2;
+  h.bytesPerRow = 12;
+  std::vector<std::uint8_t> payload(pixels::kHeaderBytes + pixels::pixel_bytes(h), 0xAB);
+  pixels::encode_header(h, payload);
+  // 'PXF1' little-endian, then generation 7 — the layout electron/pixelChannel.ts reads.
+  REQUIRE(payload[0] == 'P');
+  REQUIRE(payload[1] == 'X');
+  REQUIRE(payload[2] == 'F');
+  REQUIRE(payload[3] == '1');
+  REQUIRE(payload[4] == 7);
+  REQUIRE(payload[20] == 12);
+  pixels::Header back;
+  REQUIRE(pixels::decode_header(payload, back));
+  CHECK(back.generation == 7);
+  CHECK(back.slot == 2);
+  CHECK(back.width == 3);
+  CHECK(back.height == 2);
+  CHECK(back.bytesPerRow == 12);
+  CHECK(back.format == 0);
+}
+
+TEST_CASE("pixel channel: malformed payloads are refused", "[pixels]") {
+  pixels::Header h;
+  h.width = 4;
+  h.height = 4;
+  h.bytesPerRow = 16;
+  std::vector<std::uint8_t> payload(pixels::kHeaderBytes + pixels::pixel_bytes(h));
+  pixels::encode_header(h, payload);
+  pixels::Header out;
+  REQUIRE(pixels::decode_header(payload, out));
+  std::vector<std::uint8_t> shortBody(payload.begin(), payload.end() - 1);
+  CHECK_FALSE(pixels::decode_header(shortBody, out));
+  std::vector<std::uint8_t> shortHeader(payload.begin(), payload.begin() + 16);
+  CHECK_FALSE(pixels::decode_header(shortHeader, out));
+  std::vector<std::uint8_t> badMagic = payload;
+  badMagic[0] = 'Q';
+  CHECK_FALSE(pixels::decode_header(badMagic, out));
+  pixels::Header narrow = h;
+  narrow.bytesPerRow = 8;  // rows narrower than width × 4
+  std::vector<std::uint8_t> narrowRows(pixels::kHeaderBytes + pixels::pixel_bytes(narrow));
+  pixels::encode_header(narrow, narrowRows);
+  CHECK_FALSE(pixels::decode_header(narrowRows, out));
 }

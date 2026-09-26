@@ -234,8 +234,21 @@ different handle:
 Linux has no shared route yet: dmabuf needs GBM allocation in the engine
 (`SharedTextureMemoryDmaBuf` on Vulkan), fd passing into main (SCM_RIGHTS or
 `pidfd_getfd`, neither reachable from Node without native code) and
-`supportsZeroCopyWebGpuImport`. Until then the viewport runs on route A (next
-section of the code: `frames.copy`).
+`supportsZeroCopyWebGpuImport`. Until then the viewport runs on route A, wired
+end to end (`frames.copy`, docs/ENGINE_API.md §13):
+
+1. The host always offers `frames.copy`; the engine takes it when shared slots
+   are not in play and its fd 5 is open.
+2. The render thread copies each drawn slot into a per-slot read-back buffer
+   (same queue, after the draw), maps it after the queue wait it already does,
+   and writes one pixel message on fd 5 before the `FrameReady` on fd 3.
+3. Main (`FrameForwarder`) pairs pixels and `FrameReady` by (generation, slot),
+   pushes the pixels to the page (`engine:pixels`), at most two frames in the
+   page at once, and releases the slot on `engine:pixelsRelease`.
+4. The preload wraps the bytes in a `VideoFrame` (`format: 'RGBA'`), so
+   `EngineSurface` draws both routes the same way (`importExternalTexture`).
+5. On route A `EngineSurface` asks for at most 1280×720 physical pixels
+   (`copyRouteDpr`), where C1 measured copies holding the display rate.
 
 ## What the losing routes cost to keep
 

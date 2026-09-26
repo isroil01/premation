@@ -113,6 +113,8 @@ export interface EngineFrameMeta {
   renderDoneUs: number;
   /** Epoch µs when main handed the frame to Chromium (measurement only). */
   sentUs: number;
+  /** How the frame travelled: a shared GPU texture (route C) or a pixel copy (route A). Absent = shared. */
+  route?: 'shared' | 'copy';
 }
 
 /** Receives a frame; must call `release()` exactly once when done (after drawing). */
