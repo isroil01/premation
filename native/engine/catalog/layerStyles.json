@@ -1,0 +1,286 @@
+{
+  "numberParams": {
+    "dropShadow": {
+      "distance": {
+        "param": "distance",
+        "scale": 1
+      },
+      "angle": {
+        "param": "angle",
+        "scale": 1
+      },
+      "blur": {
+        "param": "softness",
+        "scale": 1
+      },
+      "spread": {
+        "param": "spread",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "opacity",
+        "scale": 100
+      }
+    },
+    "outerGlow": {
+      "size": {
+        "param": "radius",
+        "scale": 1
+      },
+      "spread": {
+        "param": "spread",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "intensity",
+        "scale": 100
+      }
+    },
+    "innerShadow": {
+      "distance": {
+        "param": "distance",
+        "scale": 1
+      },
+      "angle": {
+        "param": "angle",
+        "scale": 1
+      },
+      "size": {
+        "param": "softness",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "opacity",
+        "scale": 100
+      }
+    },
+    "innerGlow": {
+      "size": {
+        "param": "size",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "opacity",
+        "scale": 100
+      }
+    },
+    "satin": {
+      "distance": {
+        "param": "distance",
+        "scale": 1
+      },
+      "angle": {
+        "param": "angle",
+        "scale": 1
+      },
+      "size": {
+        "param": "size",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "opacity",
+        "scale": 100
+      }
+    },
+    "bevel": {
+      "size": {
+        "param": "size",
+        "scale": 1
+      },
+      "depth": {
+        "param": "depth",
+        "scale": 1
+      },
+      "angle": {
+        "param": "angle",
+        "scale": 1
+      },
+      "altitude": {
+        "param": "altitude",
+        "scale": 1
+      },
+      "highlightOpacity": {
+        "param": "highlightOpacity",
+        "scale": 100
+      },
+      "shadowOpacity": {
+        "param": "shadowOpacity",
+        "scale": 100
+      }
+    },
+    "colorOverlay": {
+      "opacity": {
+        "param": "opacity",
+        "scale": 100
+      }
+    },
+    "gradientOverlay": {
+      "angle": {
+        "param": "angle",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "blend",
+        "scale": 100
+      }
+    },
+    "stroke": {
+      "size": {
+        "param": "width",
+        "scale": 1
+      },
+      "opacity": {
+        "param": "opacity",
+        "scale": 100
+      }
+    }
+  },
+  "colorParams": {
+    "dropShadow": {
+      "color": "color"
+    },
+    "outerGlow": {
+      "color": "color"
+    },
+    "innerShadow": {
+      "color": "color"
+    },
+    "innerGlow": {
+      "color": "color"
+    },
+    "satin": {
+      "color": "color"
+    },
+    "bevel": {
+      "highlightColor": "highlightColor",
+      "shadowColor": "shadowColor"
+    },
+    "colorOverlay": {
+      "color": "color"
+    },
+    "gradientOverlay": {
+      "from": "colorA",
+      "to": "colorB"
+    },
+    "stroke": {
+      "color": "color"
+    }
+  },
+  "effectType": {
+    "dropShadow": "drop-shadow",
+    "outerGlow": "glow",
+    "innerShadow": "inner-shadow",
+    "innerGlow": "inner-glow",
+    "satin": "satin",
+    "bevel": "bevel",
+    "colorOverlay": "fill",
+    "gradientOverlay": "gradient-ramp",
+    "stroke": "stroke"
+  },
+  "label": {
+    "dropShadow": "Drop Shadow",
+    "outerGlow": "Outer Glow",
+    "innerShadow": "Inner Shadow",
+    "innerGlow": "Inner Glow",
+    "satin": "Satin",
+    "bevel": "Bevel & Emboss",
+    "colorOverlay": "Color Overlay",
+    "gradientOverlay": "Gradient Overlay",
+    "stroke": "Stroke"
+  },
+  "defaults": {
+    "glass": {
+      "enabled": true,
+      "blur": 28,
+      "saturation": 1.9,
+      "tintColor": "#ffffff",
+      "tintOpacity": 0.1,
+      "refraction": 34,
+      "edgeWidth": 3.5,
+      "chromaticAberration": 10,
+      "rimColor": "#ffffff",
+      "rimOpacity": 0.42,
+      "rimWidth": 7,
+      "rimAngle": 315,
+      "useGlobalLight": true,
+      "specularAngle": 315,
+      "specularIntensity": 0.38,
+      "specularFalloff": 10,
+      "grain": 0.04
+    },
+    "dropShadow": {
+      "enabled": true,
+      "color": "#000000",
+      "opacity": 0.5,
+      "distance": 8,
+      "angle": 90,
+      "blur": 8,
+      "spread": 0,
+      "useGlobalLight": true
+    },
+    "outerGlow": {
+      "enabled": true,
+      "color": "#78b4ff",
+      "opacity": 0.9,
+      "size": 16,
+      "spread": 0
+    },
+    "innerShadow": {
+      "enabled": true,
+      "color": "#000000",
+      "opacity": 0.55,
+      "distance": 6,
+      "angle": 135,
+      "size": 8,
+      "useGlobalLight": true
+    },
+    "innerGlow": {
+      "enabled": true,
+      "color": "#ffd070",
+      "opacity": 0.8,
+      "size": 14
+    },
+    "satin": {
+      "enabled": true,
+      "color": "#000000",
+      "opacity": 0.45,
+      "distance": 14,
+      "angle": 135,
+      "size": 16,
+      "invert": false
+    },
+    "bevel": {
+      "enabled": true,
+      "size": 10,
+      "depth": 100,
+      "direction": "up",
+      "angle": 135,
+      "altitude": 45,
+      "highlightColor": "#ffffff",
+      "highlightOpacity": 0.75,
+      "shadowColor": "#000000",
+      "shadowOpacity": 0.75,
+      "useGlobalLight": true
+    },
+    "colorOverlay": {
+      "enabled": true,
+      "color": "#ff2d55",
+      "opacity": 1
+    },
+    "gradientOverlay": {
+      "enabled": true,
+      "from": "#ffffff",
+      "to": "#2b7eff",
+      "opacity": 1,
+      "angle": 90,
+      "useGlobalLight": false
+    },
+    "stroke": {
+      "enabled": true,
+      "color": "#ffffff",
+      "opacity": 1,
+      "size": 4,
+      "position": "outside"
+    }
+  }
+}

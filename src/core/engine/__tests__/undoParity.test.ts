@@ -20,16 +20,15 @@
  * response byte-identical (refusals by error code) and every revision step
  * equal. Format: `__testHelpers__/parityFixture.ts`.
  *
- * `GEN_NATIVE_UNDO=1 npx jest undoParity` rewrites
- * native/engine/tests/data/undo_parity.bin; without it this test fails when
- * the checked-in fixture no longer matches the TypeScript.
- * GEN_NATIVE_UNDO_FULL=<file> writes every response in full (UNDO_FIXTURE=<file>
- * makes the C++ test explain each difference with both values).
+ * native/engine/tests/data/undo_parity.bin is frozen, C++-owned data: the C++
+ * test re-blesses it (PARITY_REBLESS=1). This test only fails when the
+ * TypeScript engine no longer produces it, a drift check kept until
+ * docs/TS_ENGINE_REMOVAL.md phase 4 deletes it.
  */
 
 import type { Command, Query, Request, Response } from '@motion/engine-api';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CORPUS as B2_CORPUS, CORPUS_FIXTURES, FAMILY_CORPUS, FIXTURE_BARE, FIXTURE_EXTRAS, GENERATED_CORPUS, type Session } from '../__testHelpers__/corpus';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
@@ -82,8 +81,6 @@ const LIFECYCLE_CORPUS: Record<string, Session> = {
 
 const CORPUS = { ...B2_CORPUS, ...FAMILY_CORPUS, ...GENERATED_CORPUS, ...LIFECYCLE_CORPUS };
 
-/** GEN_NATIVE_UNDO_FULL=<file>: keep every response whole (one session at a time with -t, or it will not fit). */
-const FULL = Boolean(process.env.GEN_NATIVE_UNDO_FULL);
 
 /** The corpus's project files as the sessions saw them (JSON). */
 const FILES = new Map<string, string>();
@@ -128,7 +125,7 @@ async function recordSession(name: string): Promise<{ rows: RecordRow[]; walkSte
       // so this is the order the engine ran them in, which the C++ replays.
       const kind = own.get(req.seq) ?? 0;
       // Whole-document probes are hashed at once: thousands of them would not fit in memory.
-      rows.push(compact({ kind, step: res.revision - before, label: requestLabel(req), request: bytes, response: normalized(res) }, FULL));
+      rows.push(compact({ kind, step: res.revision - before, label: requestLabel(req), request: bytes, response: normalized(res) }, false));
       if (kind !== 1 && req.body.kind !== 'query') await probe();
       return res;
     };
@@ -258,22 +255,16 @@ describe('F2: undo parity — history walked on the replay corpus (fixture for t
 
   afterAll(() => {
     sessions.sort((a, b) => Object.keys(CORPUS).indexOf(a[0]) - Object.keys(CORPUS).indexOf(b[0]));
-    const fullTo = process.env.GEN_NATIVE_UNDO_FULL;
-    if (fullTo) writeFileSync(fullTo, encodeFixture(FILES, sessions, true));
     const bytes = encodeFixture(FILES, sessions, false);
     const digest = createHash('sha256').update(bytes).digest('hex');
     const records = sessions.reduce((n, [, r]) => n + r.length, 0);
     const walk = sessions.reduce((n, [, r]) => n + r.filter((x) => x.kind === 2).length, 0);
     const probes = sessions.reduce((n, [, r]) => n + r.filter((x) => x.kind === 1).length, 0);
     console.log(`[F2 undo parity] ${sessions.length} sessions, ${records} records (${walk} walk steps, ${probes} probes), ${bytes.length} bytes, sha256 ${digest}`);
-    if (sessions.length !== Object.keys(CORPUS).length) return;  // a filtered run (-t) never writes or checks
-    if (process.env.GEN_NATIVE_UNDO === '1') {
-      writeFileSync(OUT, bytes);
-      return;
-    }
+    if (sessions.length !== Object.keys(CORPUS).length) return;  // a filtered run (-t) never checks
     const stored = existsSync(OUT) ? createHash('sha256').update(readFileSync(OUT)).digest('hex') : '(missing)';
     if (stored !== digest) {
-      throw new Error(`native/engine/tests/data/undo_parity.bin is stale (stored ${stored}, now ${digest}); regenerate with GEN_NATIVE_UNDO=1 npx jest undoParity`);
+      throw new Error(`native/engine/tests/data/undo_parity.bin is stale (stored ${stored}, now ${digest}); the TypeScript engine drifted from the frozen fixture`);
     }
   });
 });

@@ -1,0 +1,38 @@
+{
+  "params": [
+    "color",
+    "opacity",
+    "width",
+    "miterLimit",
+    "dash1",
+    "gap1",
+    "dash2",
+    "gap2",
+    "dash3",
+    "gap3",
+    "dashOffset",
+    "taperStartLength",
+    "taperEndLength",
+    "taperStartWidth",
+    "taperEndWidth",
+    "taperStartEase",
+    "taperEndEase",
+    "waveAmount",
+    "waveWavelength",
+    "wavePhase",
+    "gradientStartX",
+    "gradientStartY",
+    "gradientEndX",
+    "gradientEndY",
+    "highlightLength",
+    "highlightAngle"
+  ],
+  "dash": [
+    "dash1",
+    "gap1",
+    "dash2",
+    "gap2",
+    "dash3",
+    "gap3"
+  ]
+}

@@ -292,8 +292,8 @@ speed of every keyed or expressed property, and all keyframes.
 replays the same bytes into a C++ `Session` and compares every response byte
 for byte (refusals by error code) and every revision step; ratchet 0.
 Fixture `tests/data/d1_eval_parity.bin` (3.9 MB: large answers stored as
-length + hash, repeated probes as deltas; `GEN_NATIVE_D1_FULL=<file>` +
-`D1_FIXTURE=<file>` explain a difference with both values). Two new corpus
+length + hash, repeated probes as deltas; frozen data since phase 1 of
+TS_ENGINE_REMOVAL, `PARITY_REBLESS=1` re-blesses it from C++). Two new corpus
 sessions: *D1: evaluation* (a three-deep parent chain through a null with
 spatial Bézier / eased / hold / roving keys, a 3D sub-chain with orientation
 and axis rotations under a camera, toComp / toWorld / valueAtTime / velocity /
@@ -367,8 +367,9 @@ adjustments, glass/backdrop blur, advanced blends, motion blur, deformed meshes,
 generators, plugin effects, the whole effect chain incl. every packFxBlock
 table effect, 3D depth groups with lights, env reflections, extruded/glTF PBR
 meshes, two shadow maps, SSAO, camera DOF gather, sealed-precomp 3D scopes).
-Every shader and material is extracted verbatim from packages/renderer
-(`shaders/extract.mjs`, 207 shaders, 211 materials, `--check` for drift).
+Every shader and material was extracted verbatim from packages/renderer and is
+now C++-owned data (`shaders/wgsl/*.wgsl` + `shaders/materials.json`, 207
+shaders, 211 materials, embedded by `shaders/embed_wgsl.cmake`).
 Colour: rgba16float scene-linear intermediates, the TS transfer functions and
 ODTs unchanged; OCIO is a hook on `ColorPipeline` (D3), output untouched.
 Parity: render-tests backend `native` (`premation-render --batch` over the
@@ -1236,7 +1237,7 @@ lifecycle runs through either engine behind a flag.** Branch `f2-ownership`.
   `native/engine/tests/test_undo_parity.cpp` (`engine_undo_parity_tests`,
   ctest) replays the bytes into an in-process C++ `Session` and compares
   every response byte for byte and every revision step (fixture
-  `tests/data/undo_parity.bin`, 7.0 MB, `GEN_NATIVE_UNDO=1` regenerates; the
+  `tests/data/undo_parity.bin`, 7.0 MB, frozen, `PARITY_REBLESS=1` re-blesses; the
   fixture format and replayer are now shared with D1:
   `__testHelpers__/parityFixture.ts`, `tests/parity_fixture.hpp`;
   `PARITY_DUMP=<dir>` writes both engines' bytes for a difference).

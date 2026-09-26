@@ -1,10 +1,10 @@
 // Materials — packages/renderer/src/shaders/Material.ts as data.
 //
 // A material is a shader + fixed pipeline state (bind-group layout, vertex
-// buffers, depth). The table below is EXTRACTED from Material.ts
-// (shaders/extract.mjs → materials.inc) and the WGSL from BUILTIN_SHADERS
-// (→ builtin_shaders.inc), so the C++ graph draws with the TS engine's own
-// shaders, verbatim; `extract.mjs --check` fails on drift.
+// buffers, depth). The table below is shaders/materials.json and the WGSL is
+// shaders/wgsl/*.wgsl, both embedded by shaders/embed_wgsl.cmake at configure
+// time (→ materials.inc, builtin_shaders.inc). They were frozen from
+// packages/renderer's Material.ts / BUILTIN_SHADERS, verbatim.
 #pragma once
 
 #include <cstdint>
@@ -58,7 +58,7 @@ struct MaterialDesc {
 /// The builtin material m (m < Mat::Count_; dynamic materials resolve through Device::material_of).
 [[nodiscard]] inline const MaterialDesc& material(Mat m) noexcept { return std::span(kMaterials)[static_cast<std::size_t>(m)]; }
 
-/// One BUILTIN_SHADERS entry: WGSL split into raw-string pieces (see extract.mjs).
+/// One BUILTIN_SHADERS entry: WGSL split into raw-string pieces (see shaders/embed_wgsl.cmake).
 struct BuiltinShader {
   std::string_view name;
   const char* const* pieces;

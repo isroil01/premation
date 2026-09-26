@@ -34,7 +34,7 @@ managed about 36 fps and 6 fps.
 | Machine | Windows 11 Pro 26200. Hybrid laptop: **AMD Radeon 780M** (integrated) + **NVIDIA RTX 4060 Laptop**. Two displays: internal panel at DPR 2.18 and external at DPR 1.09, 75 Hz. The measurement window ran on the external display. |
 | Chromium's GPU | Electron 32 and 40 both choose the **RTX 4060** by default (`app.getGPUInfo`). The engine follows Chromium's adapter, matched by PCI vendor id. A second full run forced both onto the **780M** (`--chromium-gpu=low`). |
 | Engine | `premation-engine` in Release, clang-cl, Dawn `20260714.215939`, D3D12 backend. |
-| Scene | A tiled textured background plus a rotating textured card, then separable Gaussian blur H and V, then vignette, then the display encode and a 20-bit frame counter. The first three shaders are **WGSL taken verbatim from `packages/renderer`** (`textured`, `blur`, `vignette`), extracted by `native/engine/shaders/extract.mjs`. Intermediates are rgba16float at comp resolution. Pixels depend only on the frame index. |
+| Scene | A tiled textured background plus a rotating textured card, then separable Gaussian blur H and V, then vignette, then the display encode and a 20-bit frame counter. The first three shaders are **WGSL taken verbatim from `packages/renderer`** (`textured`, `blur`, `vignette`), now frozen under `native/engine/shaders/wgsl/`. Intermediates are rgba16float at comp resolution. Pixels depend only on the frame index. |
 | Pacing | The engine runs at a 60 fps playback clock (A, C). B is paced by its FIFO swapchain, which is the display's 75 Hz. The "ceiling" run is unpaced. |
 | Engine alone | 780M: 1080p render 284 fps, render + readback 312 fps; 4K render 75 fps, render + readback 73 fps. RTX 4060: 1080p 571 / 469 fps; 4K 146 / 114 fps. Source: `premation-engine --route bench`. |
 
@@ -374,5 +374,6 @@ Flags: `--chromium-gpu=low` moves the whole stack to the integrated GPU.
 overlap, resize and minimize tests. With tests on, the host moves the real
 mouse once, clicks, and restores it.
 
-`native/engine/shaders/extract.mjs --check` fails if `renderer_wgsl.hpp` has
-drifted from `packages/renderer`.
+`renderer_wgsl.hpp` is generated at configure time from
+`native/engine/shaders/wgsl/` (`embed_wgsl.cmake`), the frozen copy of the
+`packages/renderer` WGSL.

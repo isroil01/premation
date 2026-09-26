@@ -1,0 +1,78 @@
+{
+  "optionKeys": [
+    "start",
+    "end",
+    "diameter",
+    "angle",
+    "hardness",
+    "roundness",
+    "spacing",
+    "opacity",
+    "flow"
+  ],
+  "cloneKeys": [
+    "clonePositionX",
+    "clonePositionY",
+    "cloneTime",
+    "cloneTimeShift"
+  ],
+  "transformKeys": [
+    "anchorX",
+    "anchorY",
+    "positionX",
+    "positionY",
+    "scale",
+    "rotation"
+  ],
+  "label": {
+    "start": "Start",
+    "end": "End",
+    "diameter": "Diameter",
+    "angle": "Angle",
+    "hardness": "Hardness",
+    "roundness": "Roundness",
+    "spacing": "Spacing",
+    "opacity": "Opacity",
+    "flow": "Flow",
+    "clonePositionX": "Clone Position X",
+    "clonePositionY": "Clone Position Y",
+    "cloneTime": "Clone Time",
+    "cloneTimeShift": "Clone Time Shift",
+    "anchorX": "Anchor Point X",
+    "anchorY": "Anchor Point Y",
+    "positionX": "Position X",
+    "positionY": "Position Y",
+    "scale": "Scale",
+    "rotation": "Rotation"
+  },
+  "unit": {
+    "start": "%",
+    "end": "%",
+    "diameter": "px",
+    "angle": "°",
+    "hardness": "%",
+    "roundness": "%",
+    "spacing": "%",
+    "opacity": "%",
+    "flow": "%",
+    "clonePositionX": "px",
+    "clonePositionY": "px",
+    "cloneTime": "s",
+    "cloneTimeShift": "s",
+    "anchorX": "px",
+    "anchorY": "px",
+    "positionX": "px",
+    "positionY": "px",
+    "scale": "%",
+    "rotation": "°"
+  },
+  "percentKeys": [
+    "start",
+    "end",
+    "hardness",
+    "roundness",
+    "spacing",
+    "opacity",
+    "flow"
+  ]
+}

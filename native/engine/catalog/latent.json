@@ -1,0 +1,478 @@
+[
+  {
+    "member": "skew",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "notKinds": [
+        "camera",
+        "light",
+        "audio"
+      ]
+    }
+  },
+  {
+    "member": "skewAxis",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "notKinds": [
+        "camera",
+        "light",
+        "audio"
+      ]
+    }
+  },
+  {
+    "member": "fillOpacity",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "notKinds": [
+        "camera",
+        "light",
+        "audio"
+      ]
+    }
+  },
+  {
+    "member": "cornerRadius",
+    "home": [
+      "Style"
+    ],
+    "when": {
+      "component": "Style"
+    }
+  },
+  {
+    "member": "cornerRadiusTL",
+    "home": [
+      "Style"
+    ],
+    "when": {
+      "component": "Style"
+    }
+  },
+  {
+    "member": "cornerRadiusTR",
+    "home": [
+      "Style"
+    ],
+    "when": {
+      "component": "Style"
+    }
+  },
+  {
+    "member": "cornerRadiusBR",
+    "home": [
+      "Style"
+    ],
+    "when": {
+      "component": "Style"
+    }
+  },
+  {
+    "member": "cornerRadiusBL",
+    "home": [
+      "Style"
+    ],
+    "when": {
+      "component": "Style"
+    }
+  },
+  {
+    "member": "strokeWidth",
+    "home": [
+      "Text"
+    ],
+    "when": {
+      "component": "Text"
+    }
+  },
+  {
+    "member": "fillAngle",
+    "home": [],
+    "when": {
+      "fillType": "linear"
+    }
+  },
+  {
+    "member": "fillCenterX",
+    "home": [],
+    "when": {
+      "fillType": "radial"
+    }
+  },
+  {
+    "member": "fillCenterY",
+    "home": [],
+    "when": {
+      "fillType": "radial"
+    }
+  },
+  {
+    "member": "fillRadius",
+    "home": [],
+    "when": {
+      "fillType": "radial"
+    }
+  },
+  {
+    "member": "taperStartWidth",
+    "home": [],
+    "when": {
+      "kinds": [
+        "shape"
+      ]
+    },
+    "expand": "strokes"
+  },
+  {
+    "member": "taperEndWidth",
+    "home": [],
+    "when": {
+      "kinds": [
+        "shape"
+      ]
+    },
+    "expand": "strokes"
+  },
+  {
+    "member": "waveAmount",
+    "home": [],
+    "when": {
+      "kinds": [
+        "shape"
+      ]
+    },
+    "expand": "strokes"
+  },
+  {
+    "member": "intensity",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "radius",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "falloffDistance",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "lightAngle",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "lightCone",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "lightConeFeather",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "envRotation",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "envReflections",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "shadowDarkness",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "shadowDiffusion",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "shadowBias",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "shadowSoftness",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "light"
+      ]
+    }
+  },
+  {
+    "member": "focalLength",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "orbitYaw",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "orbitPitch",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "dofStrength",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "focusDistance",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "dofAperture",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "fStop",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "irisBlades",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "irisRoundness",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "irisRotation",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "irisAspect",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "highlightGain",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "highlightThreshold",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "highlightSaturation",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "diffractionFringe",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "kinds": [
+        "camera"
+      ]
+    }
+  },
+  {
+    "member": "morph",
+    "home": [
+      "Transform"
+    ],
+    "when": {
+      "component": "Model"
+    },
+    "expand": "morph"
+  },
+  {
+    "member": "letterSpacing",
+    "home": [
+      "Text"
+    ],
+    "when": {
+      "component": "Text"
+    }
+  },
+  {
+    "member": "lineHeight",
+    "home": [
+      "Text"
+    ],
+    "when": {
+      "component": "Text"
+    }
+  }
+]

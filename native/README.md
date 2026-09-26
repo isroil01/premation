@@ -472,11 +472,11 @@ both and is what the sanitizer presets test.
   them; `ts_envelope` gives the TS consumer's `peaks` (max |x| of the mono
   mix, clamped to 1), identical to `computePeaks` (test: 4 ranges).
 
-**Parity gate** (`test_audio_parity.cpp`): `node
-native/engine/tests/gen_audio_parity.mjs` runs the REAL `audioMixdown.ts`
-`mixdownBuffer` in Electron's Chromium (OfflineAudioContext) over 36 scenes and
-writes `tests/data/audio_parity.bin`; the C++ rebuilds the sources bit for bit
-and compares. Gain, pan, keyframed level/pan, trims, varispeed, reverse, export
+**Parity gate** (`test_audio_parity.cpp`): `tests/data/audio_parity.bin` is
+frozen from the TypeScript engine (the REAL `audioMixdown.ts` `mixdownBuffer`
+run in Electron's Chromium OfflineAudioContext over 36 scenes); the C++
+rebuilds the sources bit for bit and compares. `PARITY_REBLESS=1` writes the
+C++ mixes into the file instead (`tests/parity_rebless.hpp`). Gain, pan, keyframed level/pan, trims, varispeed, reverse, export
 offset, backwards, stereo mixer, white-noise tone, compressor (incl. output
 limit, de-esser, mono→stereo chain): bit-identical or ≤ 4e-7; biquads/delay/
 reverb ≤ 4e-6 (> 110 dB SNR); oscillators 97–130 dB; flanger 45 dB (Chromium
@@ -533,8 +533,9 @@ branch. The OS's ICU may be older or newer than Chromium's: raw word segments ca
 differ (ICU 74 vs 78 disagree on `x:y`), the break opportunities built from them
 did not on the fixture.
 
-**Cross-engine fixtures (Skia-free).** Four TS tests write fixtures that the
-native tests replay, each `GEN_NATIVE_*=1 npx jest <name>` to regenerate:
+**Cross-engine fixtures (Skia-free).** Four fixtures, frozen from the TS
+engine's answers, that the native tests replay (`PARITY_REBLESS=1` on the
+native test writes its own answers instead; review the diff):
 `lineBreakCrossEngine` → `line_break_parity.json`; `opticalKerningCrossEngine`
 → `optical_kerning_parity.json` (synthetic exact-coverage glyph rasters);
 `paintRasterCrossEngine` and `canvasEffectsCrossEngine` → the Canvas2D PROGRAM
@@ -632,11 +633,12 @@ serially in scan order (the last writer wins, as in the TS). No intrinsics: the 
 are plain C++ (branch-free JS stores, no libm in the inner loops, since baseline
 x86-64 has no `roundsd`), one path for every target.
 
-**Parity.** `npx jest nativeKernelCrossEngine` (with `GEN_NATIVE_EFFECT_KERNELS=1`
-to regenerate) runs the TS kernels on three synthetic inputs (odd sizes, a
-transparent band with junk colour, a soft alpha ramp, one > 512 px wide for the
-budget proxy) and writes `tests/data/effect_kernel_parity.json` (input bytes +
-per-case FNV-1a 64); `engine_effects_tests` must match every hash.
+**Parity.** `tests/data/effect_kernel_parity.json` (frozen from the TS kernels'
+answers, `nativeKernelCrossEngine.test.ts`) holds three synthetic inputs (odd
+sizes, a transparent band with junk colour, a soft alpha ramp, one > 512 px wide
+for the budget proxy) and per-case FNV-1a 64s; `engine_effects_tests` must match
+every hash, and with `PARITY_REBLESS=1` writes its own hashes instead (review
+the diff).
 `EFFECT_KERNEL_DUMP=<dir>` on either side dumps outputs as raw RGBA.
 
 **Bench.** Same cases, same 1920×1080 input (`tests/data/effect_kernel_bench.json`):
@@ -666,8 +668,9 @@ in `ChainReport::unported`; a canvas feature the Skia canvas cannot apply yet
 `ChainReport::unsupported`. `Canvas2D::setFilterString` carries the whole CSS
 filter list.
 
-**Parity.** `npx jest effectChainCrossEngine` (`GEN_NATIVE_EFFECT_CHAIN=1` to
-regenerate) runs `runBakeJob` on the recording canvas
+**Parity.** `tests/data/effect_chain_parity.json` is frozen from
+`effectChainCrossEngine.test.ts` (`PARITY_REBLESS=1` on `engine_effects_tests`
+writes the C++ answers instead; review the diff), which ran `runBakeJob` on the recording canvas
 (`recordingCanvas.ts` / `tests/recording_canvas.hpp`), which now holds pixels:
 getImageData / putImageData read and write them, every put logs the FNV-1a 64
 of its bytes, and the chain's own composites (full-frame `fillRect` /

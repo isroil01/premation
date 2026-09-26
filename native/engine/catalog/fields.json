@@ -1,0 +1,2419 @@
+{
+  "text": [
+    {
+      "key": "fontFamily",
+      "label": "Font",
+      "type": "string",
+      "default": "Inter"
+    },
+    {
+      "key": "fontStyle",
+      "label": "Font Style",
+      "type": "string",
+      "default": "normal"
+    },
+    {
+      "key": "stroke",
+      "label": "Stroke Color",
+      "type": "color",
+      "default": "#000000"
+    },
+    {
+      "key": "strokePaint",
+      "label": "Stroke Paint",
+      "type": "json",
+      "default": null,
+      "clearAtDefault": true
+    },
+    {
+      "key": "strokeLineJoin",
+      "label": "Line Join",
+      "type": "choice",
+      "default": "round",
+      "choices": [
+        "miter",
+        "round",
+        "bevel"
+      ]
+    },
+    {
+      "key": "strokeOrder",
+      "label": "Fill and Stroke",
+      "type": "choice",
+      "default": "fill-over-stroke",
+      "choices": [
+        "fill-over-stroke",
+        "stroke-over-fill",
+        "all-fills-over-all-strokes",
+        "all-strokes-over-all-fills"
+      ]
+    },
+    {
+      "key": "noFill",
+      "label": "No Fill",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "noStroke",
+      "label": "No Stroke",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "fauxBold",
+      "label": "Faux Bold",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "fauxItalic",
+      "label": "Faux Italic",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "kerningMode",
+      "label": "Kerning",
+      "type": "choice",
+      "default": "metrics",
+      "choices": [
+        "metrics",
+        "optical"
+      ]
+    },
+    {
+      "key": "textTransform",
+      "label": "Caps",
+      "type": "choice",
+      "default": "none",
+      "choices": [
+        "none",
+        "uppercase",
+        "lowercase",
+        "capitalize"
+      ]
+    },
+    {
+      "key": "fontVariant",
+      "label": "Small Caps",
+      "type": "choice",
+      "default": "normal",
+      "choices": [
+        "normal",
+        "small-caps"
+      ]
+    },
+    {
+      "key": "verticalAlign",
+      "label": "Baseline",
+      "type": "choice",
+      "default": "baseline",
+      "choices": [
+        "baseline",
+        "super",
+        "sub"
+      ]
+    },
+    {
+      "key": "verticalScale",
+      "label": "Vertical Scale",
+      "type": "scalar",
+      "default": 100,
+      "min": 1
+    },
+    {
+      "key": "horizontalScale",
+      "label": "Horizontal Scale",
+      "type": "scalar",
+      "default": 100,
+      "min": 1
+    },
+    {
+      "key": "baselineShift",
+      "label": "Baseline Shift",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "align",
+      "label": "Justification",
+      "type": "choice",
+      "default": "left",
+      "choices": [
+        "left",
+        "center",
+        "right",
+        "justify",
+        "justify-left",
+        "justify-center",
+        "justify-right",
+        "justify-all"
+      ]
+    },
+    {
+      "key": "paragraphSpacing",
+      "label": "Paragraph Spacing",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "leftIndent",
+      "label": "Indent Before",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "rightIndent",
+      "label": "Indent After",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "firstLineIndent",
+      "label": "First Line Indent",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "spaceBefore",
+      "label": "Space Before",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "spaceAfter",
+      "label": "Space After",
+      "type": "scalar",
+      "default": 0
+    },
+    {
+      "key": "direction",
+      "label": "Direction",
+      "type": "choice",
+      "default": "ltr",
+      "choices": [
+        "ltr",
+        "rtl",
+        "auto"
+      ]
+    },
+    {
+      "key": "orientation",
+      "label": "Orientation",
+      "type": "choice",
+      "default": "horizontal",
+      "choices": [
+        "horizontal",
+        "vertical"
+      ]
+    },
+    {
+      "key": "verticalRomanAlignment",
+      "label": "Standard Vertical Roman Alignment",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "tateChuYokoAuto",
+      "label": "Tate-Chu-Yoko",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "tateChuYokoDigits",
+      "label": "Tate-Chu-Yoko Digits",
+      "type": "scalar",
+      "default": 2,
+      "min": 1,
+      "max": 4
+    },
+    {
+      "key": "boxWidth",
+      "label": "Box Width",
+      "type": "scalar",
+      "default": 0,
+      "min": 0
+    },
+    {
+      "key": "boxHeight",
+      "label": "Box Height",
+      "type": "scalar",
+      "default": 0,
+      "min": 0
+    },
+    {
+      "key": "boxAutoSize",
+      "label": "Box Auto-Size",
+      "type": "choice",
+      "default": "off",
+      "choices": [
+        "off",
+        "height",
+        "fit"
+      ]
+    },
+    {
+      "key": "boxVerticalAlign",
+      "label": "Box Vertical Alignment",
+      "type": "choice",
+      "default": "top",
+      "choices": [
+        "top",
+        "center",
+        "bottom"
+      ]
+    },
+    {
+      "key": "anchorGrouping",
+      "label": "Anchor Point Grouping",
+      "type": "choice",
+      "default": "character",
+      "choices": [
+        "character",
+        "word",
+        "line",
+        "all"
+      ]
+    },
+    {
+      "key": "fillStrokeMode",
+      "label": "Fill & Stroke",
+      "type": "choice",
+      "default": "perCharacter",
+      "choices": [
+        "perCharacter",
+        "allAsOne"
+      ]
+    },
+    {
+      "key": "interCharacterBlending",
+      "label": "Inter-Character Blending",
+      "type": "choice",
+      "default": "normal",
+      "choices": [
+        "normal",
+        "darken",
+        "multiply",
+        "color-burn",
+        "add",
+        "lighten",
+        "screen",
+        "color-dodge",
+        "overlay",
+        "soft-light",
+        "hard-light",
+        "difference",
+        "exclusion",
+        "hue",
+        "saturation",
+        "color",
+        "luminosity"
+      ]
+    },
+    {
+      "key": "ligatures",
+      "label": "Standard Ligatures",
+      "type": "bool",
+      "default": true,
+      "clearAtDefault": true
+    },
+    {
+      "key": "discretionaryLigatures",
+      "label": "Discretionary Ligatures",
+      "type": "bool",
+      "default": false,
+      "clearAtDefault": true
+    },
+    {
+      "key": "contextualAlternates",
+      "label": "Contextual Alternates",
+      "type": "bool",
+      "default": true,
+      "clearAtDefault": true
+    },
+    {
+      "key": "stylisticSets",
+      "label": "Stylistic Sets",
+      "type": "scalars",
+      "default": [],
+      "clearAtDefault": true
+    }
+  ],
+  "animator": [
+    {
+      "key": "trackingType",
+      "label": "Tracking Type",
+      "type": "choice",
+      "default": "after",
+      "choices": [
+        "after",
+        "before",
+        "beforeAfter"
+      ],
+      "clearAtDefault": true
+    },
+    {
+      "key": "characterRange",
+      "label": "Character Range",
+      "type": "choice",
+      "default": "preserve",
+      "choices": [
+        "preserve",
+        "full"
+      ],
+      "clearAtDefault": true
+    }
+  ],
+  "animatorOptional": [
+    {
+      "key": "color",
+      "label": "Fill Color",
+      "type": "color",
+      "default": "#ff3b30"
+    },
+    {
+      "key": "strokeColor",
+      "label": "Stroke Color",
+      "type": "color",
+      "default": "#ff3b30"
+    }
+  ],
+  "selector": [
+    {
+      "key": "kind",
+      "label": "Selector",
+      "type": "choice",
+      "default": "range",
+      "choices": [
+        "range",
+        "wiggly",
+        "expression"
+      ]
+    },
+    {
+      "key": "basedOn",
+      "label": "Based On",
+      "type": "choice",
+      "default": "characters",
+      "choices": [
+        "characters",
+        "charactersExcludingSpaces",
+        "words",
+        "lines"
+      ]
+    },
+    {
+      "key": "mode",
+      "label": "Mode",
+      "type": "choice",
+      "default": "add",
+      "choices": [
+        "add",
+        "subtract",
+        "intersect",
+        "min",
+        "max",
+        "difference"
+      ]
+    },
+    {
+      "key": "units",
+      "label": "Units",
+      "type": "choice",
+      "default": "percentage",
+      "choices": [
+        "percentage",
+        "index"
+      ],
+      "kinds": [
+        "range"
+      ]
+    },
+    {
+      "key": "shape",
+      "label": "Shape",
+      "type": "choice",
+      "default": "square",
+      "choices": [
+        "square",
+        "rampUp",
+        "rampDown",
+        "triangle",
+        "round",
+        "smooth"
+      ],
+      "kinds": [
+        "range"
+      ]
+    },
+    {
+      "key": "randomizeOrder",
+      "label": "Randomize Order",
+      "type": "bool",
+      "default": false,
+      "kinds": [
+        "range"
+      ]
+    },
+    {
+      "key": "lockDimensions",
+      "label": "Lock Dimensions",
+      "type": "bool",
+      "default": false,
+      "kinds": [
+        "wiggly"
+      ]
+    },
+    {
+      "key": "randomSeed",
+      "label": "Random Seed",
+      "type": "scalar",
+      "default": 0,
+      "kinds": [
+        "range",
+        "wiggly"
+      ]
+    },
+    {
+      "key": "expression",
+      "label": "Amount Expression",
+      "type": "string",
+      "default": "selectorValue",
+      "kinds": [
+        "expression"
+      ]
+    }
+  ],
+  "selectorKindParams": {
+    "range": [
+      "start",
+      "end",
+      "offset",
+      "amount",
+      "smoothness",
+      "easeHigh",
+      "easeLow"
+    ],
+    "wiggly": [
+      "maxAmount",
+      "minAmount",
+      "wigglesPerSecond",
+      "correlation",
+      "temporalPhase",
+      "spatialPhase"
+    ],
+    "expression": [
+      "amount"
+    ]
+  },
+  "layer": [
+    {
+      "path": "material/shading",
+      "key": "shadingModel",
+      "label": "Shading",
+      "type": "choice",
+      "default": "phong",
+      "choices": [
+        "phong",
+        "pbr",
+        "toon"
+      ],
+      "store": {
+        "component": "Transform",
+        "key": "shadingModel"
+      },
+      "when": {
+        "threeD": true
+      },
+      "encode": [
+        [
+          "phong",
+          null
+        ],
+        [
+          "pbr",
+          "pbr"
+        ],
+        [
+          "toon",
+          "toon"
+        ]
+      ]
+    },
+    {
+      "path": "material/toonBands",
+      "key": "toonBands",
+      "label": "Toon Bands",
+      "type": "scalar",
+      "default": 3,
+      "min": 2,
+      "max": 8,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "toonBands"
+      },
+      "when": {
+        "threeD": true
+      }
+    },
+    {
+      "path": "material/heightMap",
+      "key": "heightMapAssetId",
+      "label": "Height Map",
+      "type": "string",
+      "default": "",
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "heightMapAssetId"
+      },
+      "when": {
+        "threeD": true
+      }
+    },
+    {
+      "path": "material/displacementSubdivisions",
+      "key": "displacementSubdiv",
+      "label": "Displacement Subdivisions",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "max": 3,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "displacementSubdiv"
+      },
+      "when": {
+        "threeD": true
+      }
+    },
+    {
+      "path": "material/faceMaterials",
+      "key": "faceMaterials",
+      "label": "Face Materials",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "component": "Transform",
+        "key": "faceMaterials"
+      },
+      "when": {
+        "threeD": true
+      }
+    },
+    {
+      "path": "geometry/bevelStyle",
+      "key": "bevelStyle",
+      "label": "Bevel Style",
+      "type": "choice",
+      "default": "angular",
+      "choices": [
+        "angular",
+        "concave",
+        "convex"
+      ],
+      "store": {
+        "component": "Transform",
+        "key": "bevelStyle"
+      },
+      "when": {
+        "threeD": true,
+        "notKinds": [
+          "camera",
+          "light",
+          "null",
+          "group",
+          "audio"
+        ]
+      },
+      "encode": [
+        [
+          "angular",
+          null
+        ],
+        [
+          "concave",
+          "concave"
+        ],
+        [
+          "convex",
+          "convex"
+        ]
+      ]
+    },
+    {
+      "path": "text/perCharacter3D",
+      "key": "perChar3D",
+      "label": "Per-character 3D",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "perChar3D"
+      },
+      "when": {
+        "component": "Text"
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ]
+      ]
+    },
+    {
+      "path": "light/lightType",
+      "key": "lightType",
+      "label": "Light Type",
+      "type": "choice",
+      "default": "point",
+      "choices": [
+        "point",
+        "ambient",
+        "spot",
+        "parallel",
+        "environment"
+      ],
+      "store": {
+        "component": "Transform",
+        "key": "lightType"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      }
+    },
+    {
+      "path": "light/falloff",
+      "key": "falloff",
+      "label": "Falloff",
+      "type": "choice",
+      "default": "none",
+      "choices": [
+        "none",
+        "legacy",
+        "smooth",
+        "inverse-square"
+      ],
+      "store": {
+        "component": "Transform",
+        "key": "falloff"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      }
+    },
+    {
+      "path": "light/environment",
+      "key": "envPreset",
+      "label": "Environment",
+      "type": "string",
+      "default": "studio",
+      "store": {
+        "component": "Transform",
+        "key": "envPreset"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      }
+    },
+    {
+      "path": "light/castsShadows",
+      "key": "castShadows",
+      "label": "Casts Shadows",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "castShadows"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
+      "path": "light/glow",
+      "key": "lightGlow",
+      "label": "Visible Glow",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "lightGlow"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
+      "path": "light/shadowMap",
+      "key": "shadowMap",
+      "label": "Shadow Map",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "shadowMap"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
+      "path": "light/shadowMapSize",
+      "key": "shadowMapSize",
+      "label": "Shadow Map Size",
+      "type": "scalar",
+      "default": 1024,
+      "min": 64,
+      "max": 8192,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "shadowMapSize"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      }
+    },
+    {
+      "path": "camera/filmSize",
+      "key": "filmSize",
+      "label": "Film Size",
+      "type": "scalar",
+      "default": 36,
+      "min": 1,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "filmSize"
+      },
+      "when": {
+        "kinds": [
+          "camera"
+        ]
+      }
+    },
+    {
+      "path": "primitive/type",
+      "key": "type",
+      "label": "Shape",
+      "type": "choice",
+      "default": "box",
+      "choices": [
+        "sphere",
+        "cylinder",
+        "cone",
+        "torus",
+        "capsule",
+        "box"
+      ],
+      "store": {
+        "component": "Primitive",
+        "key": "type"
+      },
+      "when": {
+        "component": "Primitive"
+      },
+      "mirror": {
+        "component": "Transform",
+        "key": "primitiveType"
+      }
+    },
+    {
+      "path": "primitive/radius",
+      "key": "radius",
+      "label": "radius",
+      "type": "scalar",
+      "default": 100,
+      "min": 1,
+      "store": {
+        "component": "Primitive",
+        "key": "radius"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/radiusTop",
+      "key": "radiusTop",
+      "label": "radiusTop",
+      "type": "scalar",
+      "default": 100,
+      "min": 1,
+      "store": {
+        "component": "Primitive",
+        "key": "radiusTop"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/height",
+      "key": "height",
+      "label": "height",
+      "type": "scalar",
+      "default": 100,
+      "min": 1,
+      "store": {
+        "component": "Primitive",
+        "key": "height"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/width",
+      "key": "width",
+      "label": "width",
+      "type": "scalar",
+      "default": 100,
+      "min": 1,
+      "store": {
+        "component": "Primitive",
+        "key": "width"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/depth",
+      "key": "depth",
+      "label": "depth",
+      "type": "scalar",
+      "default": 100,
+      "min": 1,
+      "store": {
+        "component": "Primitive",
+        "key": "depth"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/tube",
+      "key": "tube",
+      "label": "tube",
+      "type": "scalar",
+      "default": 100,
+      "min": 1,
+      "store": {
+        "component": "Primitive",
+        "key": "tube"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/radialSegments",
+      "key": "radialSegments",
+      "label": "radialSegments",
+      "type": "scalar",
+      "default": 32,
+      "min": 3,
+      "max": 256,
+      "store": {
+        "component": "Primitive",
+        "key": "radialSegments"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/heightSegments",
+      "key": "heightSegments",
+      "label": "heightSegments",
+      "type": "scalar",
+      "default": 32,
+      "min": 3,
+      "max": 256,
+      "store": {
+        "component": "Primitive",
+        "key": "heightSegments"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "primitive/capped",
+      "key": "capped",
+      "label": "End Caps",
+      "type": "bool",
+      "default": true,
+      "store": {
+        "component": "Primitive",
+        "key": "capped"
+      },
+      "when": {
+        "component": "Primitive"
+      }
+    },
+    {
+      "path": "layer/particle",
+      "key": "particle",
+      "label": "Particle Emitter",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "fx": "particle"
+      },
+      "when": {
+        "kinds": [
+          "particle"
+        ]
+      }
+    },
+    {
+      "path": "layer/cloner",
+      "key": "__cloner",
+      "label": "Cloner",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "fx": "__cloner"
+      },
+      "when": {
+        "notKinds": [
+          "camera",
+          "light",
+          "audio"
+        ]
+      }
+    },
+    {
+      "path": "layer/physics",
+      "key": "__physics",
+      "label": "Physics",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "fx": "__physics"
+      },
+      "when": {
+        "notKinds": [
+          "camera",
+          "light",
+          "audio"
+        ]
+      }
+    },
+    {
+      "path": "layer/audioWaveform",
+      "key": "audioWaveform",
+      "label": "Audio Waveform",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "fx": "audioWaveform"
+      },
+      "when": {
+        "notKinds": [
+          "camera",
+          "light",
+          "audio"
+        ]
+      }
+    },
+    {
+      "path": "layer/modifiers",
+      "key": "__modifiers",
+      "label": "Modifier Stacks",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "component": "Transform",
+        "key": "__modifiers"
+      }
+    },
+    {
+      "path": "layer/precompose",
+      "key": "precomp",
+      "label": "Precompose",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "fx": "precomp"
+      },
+      "when": {
+        "kinds": [
+          "group"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ]
+      ]
+    },
+    {
+      "path": "layer/compOverrides",
+      "key": "__compOverrides",
+      "label": "Essential Properties",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "fx": "__compOverrides"
+      },
+      "when": {
+        "kinds": [
+          "precomp"
+        ]
+      }
+    },
+    {
+      "path": "layer/sequenceLoop",
+      "key": "loop",
+      "label": "Loop Sequence",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "fx": "imageSequence",
+        "key": "loop"
+      },
+      "when": {
+        "fx": "imageSequence"
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
+      "path": "audio/effects",
+      "key": "audioEffects",
+      "label": "Audio Effects",
+      "type": "json",
+      "default": null,
+      "json": "array",
+      "store": {
+        "fx": "audioEffects"
+      },
+      "when": {
+        "kinds": [
+          "audio",
+          "video",
+          "precomp"
+        ]
+      }
+    },
+    {
+      "path": "audio/drivers",
+      "key": "__audioDriver",
+      "label": "Audio Drivers",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "component": "Transform",
+        "key": "__audioDriver"
+      }
+    },
+    {
+      "path": "audio/ducking",
+      "key": "__ducking",
+      "label": "Ducking",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "component": "Transform",
+        "key": "__ducking"
+      },
+      "when": {
+        "kinds": [
+          "audio",
+          "video",
+          "precomp"
+        ]
+      }
+    },
+    {
+      "path": "audio/gate",
+      "key": "__gate",
+      "label": "Noise Gate",
+      "type": "json",
+      "default": null,
+      "json": "object",
+      "store": {
+        "component": [
+          "Audio",
+          "Transform"
+        ],
+        "key": "__gate"
+      },
+      "when": {
+        "kinds": [
+          "audio",
+          "video",
+          "precomp"
+        ]
+      }
+    },
+    {
+      "path": "audio/clipStart",
+      "key": "__start",
+      "label": "Start",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "store": {
+        "component": "Audio",
+        "key": "__start"
+      },
+      "when": {
+        "component": "Audio"
+      }
+    },
+    {
+      "path": "audio/clipIn",
+      "key": "__in",
+      "label": "In Point",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "store": {
+        "component": "Audio",
+        "key": "__in"
+      },
+      "when": {
+        "component": "Audio"
+      }
+    },
+    {
+      "path": "audio/clipOut",
+      "key": "__out",
+      "label": "Out Point",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "store": {
+        "component": "Audio",
+        "key": "__out"
+      },
+      "when": {
+        "component": "Audio"
+      }
+    },
+    {
+      "path": "camera/trackerSolve",
+      "key": "__planarSolveCamera",
+      "label": "Tracker Solve Camera",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "__planarSolveCamera"
+      },
+      "when": {
+        "kinds": [
+          "camera"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ]
+      ]
+    },
+    {
+      "path": "layer/cornersLinked",
+      "key": "cornersLinked",
+      "label": "Link Corners",
+      "type": "bool",
+      "default": true,
+      "store": {
+        "component": "Style",
+        "key": "cornersLinked"
+      },
+      "when": {
+        "component": "Style"
+      }
+    },
+    {
+      "path": "layer/backdropBlur",
+      "key": "backdropBlur",
+      "label": "Backdrop Blur",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Style",
+        "key": "backdropBlur"
+      },
+      "when": {
+        "component": "Style"
+      }
+    },
+    {
+      "path": "layer/pathRotoBezier",
+      "key": "rotoBezier",
+      "label": "RotoBezier",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Geometry",
+        "key": "rotoBezier"
+      },
+      "when": {
+        "component": "Geometry"
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
+      "path": "layer/pointBindings",
+      "key": "pointBindings",
+      "label": "Point Bindings",
+      "type": "json",
+      "default": null,
+      "json": "array",
+      "store": {
+        "component": "Geometry",
+        "key": "pointBindings"
+      },
+      "when": {
+        "component": "Geometry"
+      }
+    }
+  ],
+  "rig": [
+    {
+      "owner": "layer",
+      "path": "puppet",
+      "label": "Puppet",
+      "matchName": "Premation Puppet Rig",
+      "type": "json",
+      "codec": "wholeRig",
+      "keys": [
+        "puppet"
+      ],
+      "default": null
+    },
+    {
+      "owner": "layer",
+      "path": "skeleton",
+      "label": "Skeleton",
+      "matchName": "Premation Skeleton Rig",
+      "type": "json",
+      "codec": "wholeRig",
+      "keys": [
+        "skeleton"
+      ],
+      "default": null
+    },
+    {
+      "owner": "puppet",
+      "path": "mesh/density",
+      "label": "Density",
+      "matchName": "ADBE FreePin3 Mesh Density",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "meshDensity"
+      ],
+      "default": 22,
+      "min": 1
+    },
+    {
+      "owner": "puppet",
+      "path": "mesh/expansion",
+      "label": "Expansion",
+      "matchName": "ADBE FreePin3 Mesh Expansion",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "meshExpansion"
+      ],
+      "default": 0,
+      "unit": "px"
+    },
+    {
+      "owner": "puppet",
+      "path": "mesh/mode",
+      "label": "Mesh",
+      "matchName": "Premation Puppet Mesh Mode",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "meshMode"
+      ],
+      "default": "grid",
+      "choices": [
+        "grid",
+        "silhouette"
+      ]
+    },
+    {
+      "owner": "puppet",
+      "path": "mesh/solver",
+      "label": "Solver",
+      "matchName": "Premation Puppet Solver",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "solver"
+      ],
+      "default": "arap",
+      "choices": [
+        "arap",
+        "lbs"
+      ]
+    },
+    {
+      "owner": "puppet",
+      "path": "mesh/rotationRefinement",
+      "label": "Mesh Rotation Refinement",
+      "matchName": "ADBE FreePin3 Mesh Rotation Refinement",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "maxRotationDeg"
+      ],
+      "default": 0,
+      "min": 0,
+      "unit": "°",
+      "clearAtDefault": true
+    },
+    {
+      "owner": "pin",
+      "path": "position",
+      "label": "Position",
+      "matchName": "ADBE FreePin3 PosPin Position",
+      "type": "vec2",
+      "codec": "pinPosition",
+      "keys": [
+        "position"
+      ],
+      "dataTrack": "puppet.{id}.position",
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px"
+    },
+    {
+      "owner": "pin",
+      "path": "rotation",
+      "label": "Rotation",
+      "matchName": "ADBE FreePin3 PosPin Rotation",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "rotation"
+      ],
+      "tracks": [
+        "puppet.{id}.rotation"
+      ],
+      "default": 0,
+      "unit": "°"
+    },
+    {
+      "owner": "pin",
+      "path": "scale",
+      "label": "Scale",
+      "matchName": "ADBE FreePin3 PosPin Scale",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "scale"
+      ],
+      "tracks": [
+        "puppet.{id}.scale"
+      ],
+      "default": 1,
+      "scale": "percent",
+      "unit": "%"
+    },
+    {
+      "owner": "pin",
+      "path": "stiffness",
+      "label": "Amount",
+      "matchName": "ADBE FreePin3 Stiffness Amount",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "stiffness"
+      ],
+      "tracks": [
+        "puppet.{id}.stiffness"
+      ],
+      "default": 0,
+      "min": 0
+    },
+    {
+      "owner": "pin",
+      "path": "overlap",
+      "label": "In Front",
+      "matchName": "ADBE FreePin3 PosPin Overlap",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "overlap"
+      ],
+      "tracks": [
+        "puppet.{id}.overlap"
+      ],
+      "default": 0,
+      "min": -100,
+      "max": 100,
+      "clearAtDefault": true
+    },
+    {
+      "owner": "pin",
+      "path": "overlapExtent",
+      "label": "Extent",
+      "matchName": "ADBE FreePin3 PosPin Overlap Extent",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "overlapExtent"
+      ],
+      "default": 1,
+      "min": 0.05
+    },
+    {
+      "owner": "pin",
+      "path": "kind",
+      "label": "Pin Type",
+      "matchName": "Premation Puppet Pin Type",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "kind"
+      ],
+      "default": "advanced",
+      "choices": [
+        "position",
+        "starch",
+        "bend",
+        "advanced",
+        "overlap"
+      ]
+    },
+    {
+      "owner": "pin",
+      "path": "restPosition",
+      "label": "Rest Position",
+      "matchName": "Premation Puppet Pin Rest",
+      "type": "vec2",
+      "codec": "xy",
+      "keys": [
+        "x",
+        "y"
+      ],
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px"
+    },
+    {
+      "owner": "skeleton",
+      "path": "mesh/density",
+      "label": "Density",
+      "matchName": "Premation Skeleton Mesh Density",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "meshDensity"
+      ],
+      "default": 22,
+      "min": 1
+    },
+    {
+      "owner": "skeleton",
+      "path": "mesh/expansion",
+      "label": "Expansion",
+      "matchName": "Premation Skeleton Mesh Expansion",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "meshExpansion"
+      ],
+      "default": 0,
+      "unit": "px"
+    },
+    {
+      "owner": "skeleton",
+      "path": "mesh/mode",
+      "label": "Mesh",
+      "matchName": "Premation Skeleton Mesh Mode",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "meshMode"
+      ],
+      "default": "grid",
+      "choices": [
+        "grid",
+        "silhouette"
+      ]
+    },
+    {
+      "owner": "skeleton",
+      "path": "weightPaint",
+      "label": "Weight Paint",
+      "matchName": "Premation Skeleton Weight Paint",
+      "type": "json",
+      "codec": "json",
+      "keys": [
+        "weightPaint"
+      ],
+      "default": null
+    },
+    {
+      "owner": "bone",
+      "path": "position",
+      "label": "Position",
+      "matchName": "Premation Bone Position",
+      "type": "vec2",
+      "codec": "xy",
+      "keys": [
+        "x",
+        "y"
+      ],
+      "tracks": [
+        "bone.{id}.x",
+        "bone.{id}.y"
+      ],
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px",
+      "poseCapture": true
+    },
+    {
+      "owner": "bone",
+      "path": "rotation",
+      "label": "Rotation",
+      "matchName": "Premation Bone Rotation",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "rotation"
+      ],
+      "tracks": [
+        "bone.{id}.rotation"
+      ],
+      "default": 0,
+      "scale": "radians",
+      "unit": "°",
+      "poseCapture": true
+    },
+    {
+      "owner": "bone",
+      "path": "scale",
+      "label": "Scale",
+      "matchName": "Premation Bone Scale",
+      "type": "vec2",
+      "codec": "xy",
+      "keys": [
+        "scaleX",
+        "scaleY"
+      ],
+      "tracks": [
+        "bone.{id}.scaleX",
+        "bone.{id}.scaleY"
+      ],
+      "default": [
+        1,
+        1
+      ],
+      "scale": "percent",
+      "unit": "%",
+      "poseCapture": true
+    },
+    {
+      "owner": "bone",
+      "path": "parent",
+      "label": "Parent",
+      "matchName": "Premation Bone Parent",
+      "type": "string",
+      "codec": "parent",
+      "keys": [
+        "parentId"
+      ],
+      "default": ""
+    },
+    {
+      "owner": "bone",
+      "path": "length",
+      "label": "Length",
+      "matchName": "Premation Bone Length",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "length"
+      ],
+      "default": 100,
+      "min": 1,
+      "unit": "px"
+    },
+    {
+      "owner": "bone",
+      "path": "influenceRadius",
+      "label": "Influence Radius",
+      "matchName": "Premation Bone Influence",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "influenceRadius"
+      ],
+      "default": 0,
+      "min": 0,
+      "unit": "px",
+      "clearAtDefault": true
+    },
+    {
+      "owner": "bone",
+      "path": "restPosition",
+      "label": "Rest Position",
+      "matchName": "Premation Bone Rest Position",
+      "type": "vec2",
+      "codec": "bind",
+      "keys": [
+        "x",
+        "y"
+      ],
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px"
+    },
+    {
+      "owner": "bone",
+      "path": "restRotation",
+      "label": "Rest Rotation",
+      "matchName": "Premation Bone Rest Rotation",
+      "type": "scalar",
+      "codec": "bind",
+      "keys": [
+        "rotation"
+      ],
+      "default": 0,
+      "scale": "radians",
+      "unit": "°"
+    },
+    {
+      "owner": "bone",
+      "path": "restScale",
+      "label": "Rest Scale",
+      "matchName": "Premation Bone Rest Scale",
+      "type": "vec2",
+      "codec": "bind",
+      "keys": [
+        "scaleX",
+        "scaleY"
+      ],
+      "default": [
+        1,
+        1
+      ],
+      "scale": "percent",
+      "unit": "%"
+    },
+    {
+      "owner": "ik",
+      "path": "target",
+      "label": "Target",
+      "matchName": "Premation IK Target",
+      "type": "vec2",
+      "codec": "xy",
+      "keys": [
+        "x",
+        "y"
+      ],
+      "tracks": [
+        "ikTarget.{id}.x",
+        "ikTarget.{id}.y"
+      ],
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px",
+      "poseCapture": true
+    },
+    {
+      "owner": "ik",
+      "path": "pole",
+      "label": "Pole",
+      "matchName": "Premation IK Pole",
+      "type": "vec2",
+      "codec": "point",
+      "keys": [
+        "pole"
+      ],
+      "tracks": [
+        "ikPole.{id}.x",
+        "ikPole.{id}.y"
+      ],
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px",
+      "optional": true,
+      "poseCapture": true
+    },
+    {
+      "owner": "ik",
+      "path": "mode",
+      "label": "IK/FK",
+      "matchName": "Premation IK Mode",
+      "type": "scalar",
+      "codec": "ikMode",
+      "keys": [
+        "ikMode"
+      ],
+      "tracks": [
+        "ikMode.{id}"
+      ],
+      "default": 1,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "owner": "ik",
+      "path": "chainLength",
+      "label": "Chain Length",
+      "matchName": "Premation IK Chain Length",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "chainLength"
+      ],
+      "default": 2,
+      "min": 1,
+      "max": 8
+    },
+    {
+      "owner": "controller",
+      "path": "shape",
+      "label": "Shape",
+      "matchName": "Premation Controller Shape",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "shape"
+      ],
+      "default": "circle",
+      "choices": [
+        "square",
+        "circle",
+        "arrow",
+        "arc"
+      ]
+    },
+    {
+      "owner": "controller",
+      "path": "side",
+      "label": "Side",
+      "matchName": "Premation Controller Side",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "side"
+      ],
+      "default": "centre",
+      "choices": [
+        "left",
+        "right",
+        "centre"
+      ]
+    },
+    {
+      "owner": "controller",
+      "path": "size",
+      "label": "Size",
+      "matchName": "Premation Controller Size",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "size"
+      ],
+      "default": 14,
+      "min": 1,
+      "unit": "px"
+    },
+    {
+      "owner": "controller",
+      "path": "offset",
+      "label": "Offset",
+      "matchName": "Premation Controller Offset",
+      "type": "vec2",
+      "codec": "xy",
+      "keys": [
+        "offsetX",
+        "offsetY"
+      ],
+      "default": [
+        0,
+        0
+      ],
+      "unit": "px",
+      "clearAtDefault": true
+    },
+    {
+      "owner": "controller",
+      "path": "drives",
+      "label": "Drives",
+      "matchName": "Premation Controller Link",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "link.kind"
+      ],
+      "default": "ikTarget",
+      "choices": [
+        "bone",
+        "ikTarget"
+      ]
+    },
+    {
+      "owner": "controller",
+      "path": "bone",
+      "label": "Bone",
+      "matchName": "Premation Controller Bone",
+      "type": "string",
+      "codec": "string",
+      "keys": [
+        "link.boneId"
+      ],
+      "default": ""
+    }
+  ],
+  "control": [
+    {
+      "kind": "slider",
+      "matchName": "ADBE Slider Control",
+      "label": "Slider Control",
+      "displayName": "Slider",
+      "param": "slider",
+      "propName": "Slider",
+      "propMatchName": "ADBE Slider Control-0001",
+      "valueType": "scalar",
+      "components": [
+        ""
+      ],
+      "defaults": [
+        50
+      ],
+      "unit": ""
+    },
+    {
+      "kind": "angle",
+      "matchName": "ADBE Angle Control",
+      "label": "Angle Control",
+      "displayName": "Angle",
+      "param": "angle",
+      "propName": "Angle",
+      "propMatchName": "ADBE Angle Control-0001",
+      "valueType": "scalar",
+      "components": [
+        ""
+      ],
+      "defaults": [
+        0
+      ],
+      "unit": "°"
+    },
+    {
+      "kind": "point",
+      "matchName": "ADBE Point Control",
+      "label": "Point Control",
+      "displayName": "Point",
+      "param": "point",
+      "propName": "Point",
+      "propMatchName": "ADBE Point Control-0001",
+      "valueType": "vec2",
+      "components": [
+        ".x",
+        ".y"
+      ],
+      "defaults": [
+        0,
+        0
+      ],
+      "unit": "px"
+    },
+    {
+      "kind": "color",
+      "matchName": "ADBE Color Control",
+      "label": "Color Control",
+      "displayName": "Color",
+      "param": "color",
+      "propName": "Color",
+      "propMatchName": "ADBE Color Control-0001",
+      "valueType": "color",
+      "components": [
+        ".r",
+        ".g",
+        ".b"
+      ],
+      "defaults": [
+        255,
+        255,
+        255
+      ],
+      "unit": ""
+    },
+    {
+      "kind": "checkbox",
+      "matchName": "ADBE Checkbox Control",
+      "label": "Checkbox Control",
+      "displayName": "Checkbox",
+      "param": "checkbox",
+      "propName": "Checkbox",
+      "propMatchName": "ADBE Checkbox Control-0001",
+      "valueType": "scalar",
+      "components": [
+        ""
+      ],
+      "defaults": [
+        0
+      ],
+      "unit": ""
+    },
+    {
+      "kind": "dropdown",
+      "matchName": "ADBE Dropdown Control",
+      "label": "Dropdown Menu Control",
+      "displayName": "Dropdown",
+      "param": "menu",
+      "propName": "Menu",
+      "propMatchName": "ADBE Dropdown Control-0001",
+      "valueType": "scalar",
+      "components": [
+        ""
+      ],
+      "defaults": [
+        0
+      ],
+      "unit": ""
+    },
+    {
+      "kind": "layer",
+      "matchName": "ADBE Layer Control",
+      "label": "Layer Control",
+      "displayName": "Layer",
+      "param": "layer",
+      "propName": "Layer",
+      "propMatchName": "ADBE Layer Control-0001",
+      "valueType": "scalar",
+      "components": [
+        ""
+      ],
+      "defaults": [
+        0
+      ],
+      "unit": ""
+    }
+  ],
+  "effect": [
+    {
+      "path": "compositing/mask",
+      "key": "maskId",
+      "label": "Effect Mask",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "path": "compositing/label",
+      "key": "labelColor",
+      "label": "Label",
+      "type": "string",
+      "default": ""
+    }
+  ],
+  "style": [
+    {
+      "style": "glass",
+      "key": "useGlobalLight",
+      "label": "Use Global Light",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "style": "dropShadow",
+      "key": "useGlobalLight",
+      "label": "Use Global Light",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "style": "innerShadow",
+      "key": "useGlobalLight",
+      "label": "Use Global Light",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "style": "satin",
+      "key": "invert",
+      "label": "Invert",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "style": "bevel",
+      "key": "direction",
+      "label": "Direction",
+      "type": "choice",
+      "default": "up",
+      "choices": [
+        "up",
+        "down"
+      ]
+    },
+    {
+      "style": "bevel",
+      "key": "useGlobalLight",
+      "label": "Use Global Light",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "style": "gradientOverlay",
+      "key": "useGlobalLight",
+      "label": "Use Global Light",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "style": "stroke",
+      "key": "position",
+      "label": "Position",
+      "type": "choice",
+      "default": "outside",
+      "choices": [
+        "outside",
+        "inside",
+        "center"
+      ]
+    }
+  ],
+  "glass": [
+    {
+      "key": "blur",
+      "label": "Blur",
+      "type": "scalar"
+    },
+    {
+      "key": "saturation",
+      "label": "Saturation",
+      "type": "scalar"
+    },
+    {
+      "key": "tintOpacity",
+      "label": "Tint Opacity",
+      "type": "scalar"
+    },
+    {
+      "key": "refraction",
+      "label": "Refraction",
+      "type": "scalar"
+    },
+    {
+      "key": "edgeWidth",
+      "label": "Edge Width",
+      "type": "scalar"
+    },
+    {
+      "key": "chromaticAberration",
+      "label": "Chromatic Aberration",
+      "type": "scalar"
+    },
+    {
+      "key": "rimOpacity",
+      "label": "Rim Opacity",
+      "type": "scalar"
+    },
+    {
+      "key": "rimWidth",
+      "label": "Rim Width",
+      "type": "scalar"
+    },
+    {
+      "key": "rimAngle",
+      "label": "Rim Angle",
+      "type": "scalar"
+    },
+    {
+      "key": "specularAngle",
+      "label": "Specular Angle",
+      "type": "scalar"
+    },
+    {
+      "key": "specularIntensity",
+      "label": "Specular Intensity",
+      "type": "scalar"
+    },
+    {
+      "key": "specularFalloff",
+      "label": "Specular Falloff",
+      "type": "scalar"
+    },
+    {
+      "key": "grain",
+      "label": "Grain",
+      "type": "scalar"
+    },
+    {
+      "key": "tintColor",
+      "label": "Tint Color",
+      "type": "color"
+    },
+    {
+      "key": "rimColor",
+      "label": "Rim Color",
+      "type": "color"
+    }
+  ],
+  "pathOp": [
+    {
+      "key": "type",
+      "label": "Type",
+      "type": "choice",
+      "default": "zigzag",
+      "choices": [
+        "zigzag",
+        "roundCorners",
+        "pucker",
+        "twist",
+        "offset",
+        "roughen",
+        "wiggleTransform"
+      ],
+      "ops": [
+        "zigzag",
+        "roundCorners",
+        "pucker",
+        "twist",
+        "offset",
+        "roughen",
+        "wiggleTransform",
+        "none"
+      ]
+    },
+    {
+      "key": "composite",
+      "label": "Composite",
+      "type": "choice",
+      "default": "above",
+      "choices": [
+        "above",
+        "below"
+      ],
+      "ops": [
+        "repeater"
+      ]
+    },
+    {
+      "key": "lineJoin",
+      "label": "Line Join",
+      "type": "choice",
+      "default": "miter",
+      "choices": [
+        "miter",
+        "round",
+        "bevel"
+      ],
+      "ops": [
+        "offset"
+      ]
+    },
+    {
+      "key": "trimMultipleShapes",
+      "label": "Trim Multiple Shapes",
+      "type": "choice",
+      "default": "simultaneously",
+      "choices": [
+        "simultaneously",
+        "individually"
+      ],
+      "ops": [
+        "trim"
+      ]
+    },
+    {
+      "key": "seed",
+      "label": "Random Seed",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "ops": [
+        "roughen",
+        "wiggleTransform"
+      ]
+    }
+  ],
+  "polystar": [
+    {
+      "path": "type",
+      "key": "starType",
+      "label": "Type",
+      "type": "choice",
+      "default": "star",
+      "choices": [
+        "star",
+        "polygon"
+      ]
+    }
+  ],
+  "particle": {
+    "numeric": [
+      "emitterWidth",
+      "emitterHeight",
+      "birthRate",
+      "lifetime",
+      "lifetimeRandom",
+      "speed",
+      "speedRandom",
+      "direction",
+      "spread",
+      "gravityX",
+      "gravityY",
+      "spin",
+      "sizeStart",
+      "sizeEnd",
+      "opacityStart",
+      "opacityEnd",
+      "windX",
+      "windY",
+      "turbulence",
+      "turbulenceScale",
+      "turbulenceSpeed",
+      "emitterDepth",
+      "speedZ",
+      "perspective",
+      "drag",
+      "sizeMid",
+      "opacityMid",
+      "midAge",
+      "subRate",
+      "motionBlur",
+      "plexusDistance",
+      "plexusWidth",
+      "plexusOpacity",
+      "plexusTriangleOpacity"
+    ],
+    "color": [
+      "colorStart",
+      "colorEnd",
+      "colorMid"
+    ]
+  }
+}

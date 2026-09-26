@@ -2,17 +2,17 @@
 // particleRender.ts drawParticleField. The C++ paint on a recording Canvas2D must
 // issue the TypeScript's Canvas2D program op for op — the closed-form and the
 // frame-stepping emitters, trails, bursts, streaks, every shape and the plexus
-// (tests/data/particle_parity.json, written by
-// src/core/particles/particleFieldCrossEngine.test.ts).
+// (tests/data/particle_parity.json, frozen from the TypeScript engine's
+// particleFieldCrossEngine.test.ts; PARITY_REBLESS=1 writes the C++ answers
+// instead (parity_rebless.hpp)).
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <fstream>
 #include <memory>
-#include <sstream>
 #include <string>
 
 #include "json.hpp"
+#include "parity_rebless.hpp"
 #include "particle_port.hpp"
 #include "recording_canvas.hpp"
 
@@ -21,15 +21,11 @@ namespace js = premation::js;
 namespace raster = premation::raster;
 
 TEST_CASE("particles: the C++ field issues particleRender.ts's Canvas2D program", "[scene][particles][parity]") {
-  std::ifstream in(std::string(PREMATION_ENGINE_TEST_DATA) + "/particle_parity.json", std::ios::binary);
-  REQUIRE(in.good());
-  std::stringstream ss;
-  ss << in.rdbuf();
-  const auto fx = js::parse(ss.str());
-  REQUIRE(fx.has_value());
-  const js::Json::Array& cases = fx->at("cases").arr();
+  premation::test::JsonFixture fx("particle_parity.json");
+  REQUIRE(fx.ok());
+  js::Json::Array& cases = fx.root().find_mut("cases")->arr_mut();
   REQUIRE(cases.size() >= 11);
-  for (const js::Json& c : cases) {
+  for (js::Json& c : cases) {
     const std::string name = c.at("name").str();
     INFO(name);
     const auto w = static_cast<std::uint32_t>(c.at("pxW").num());
@@ -37,8 +33,12 @@ TEST_CASE("particles: the C++ field issues particleRender.ts's Canvas2D program"
     auto rec = std::make_shared<raster::test::Recording>();
     raster::test::RecordingCanvas oc(rec, w, h);
     sc::paint_particle_field(oc, c.at("spec"));
-    const js::Json::Array& want = c.at("ops").arr();
     const auto& got = rec->ops;
+    js::Json::Array got_json;
+    got_json.reserve(got.size());
+    for (const auto& op : got) got_json.push_back(js::Json::string(op));
+    if (fx.answer(c, "ops", js::Json::array(std::move(got_json)))) continue;
+    const js::Json::Array& want = c.at("ops").arr();
     std::size_t first = std::min(want.size(), got.size());
     for (std::size_t i = 0; i < std::min(want.size(), got.size()); ++i) {
       if (want[i].str() != got[i]) {
@@ -53,4 +53,5 @@ TEST_CASE("particles: the C++ field issues particleRender.ts's Canvas2D program"
     }
     CHECK(got.size() == want.size());
   }
+  REQUIRE(fx.finish());
 }

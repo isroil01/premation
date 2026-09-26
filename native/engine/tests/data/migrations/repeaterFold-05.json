@@ -1,0 +1,255 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/repeaterFold.migration.test.ts › v1_4_0_to_v1_5_0 — registered in the chain brings a 1.4.0 document to the current version through the real walker",
+ "input": {
+  "version": "1.4.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "rect",
+     "name": "rect",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 200,
+       "y": 300
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "rect_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 200,
+        "y": 300,
+        "rotation": 0
+       }
+      },
+      {
+       "id": "rect_s",
+       "type": "Style",
+       "props": {
+        "opacity": 100,
+        "fill": "#2b7eff"
+       }
+      },
+      {
+       "id": "rect_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "z1",
+          "type": "zigzag",
+          "amount": 16,
+          "detail": 5
+         },
+         {
+          "id": "trimop_rect",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 100,
+          "offset": 0
+         },
+         {
+          "id": "repop_rect",
+          "type": "repeater",
+          "amount": 0,
+          "detail": 0,
+          "copies": 4,
+          "offsetX": 100,
+          "offsetY": 0,
+          "offsetRotation": 0,
+          "offsetScale": 1,
+          "offsetOpacity": 0.5,
+          "offset": 0,
+          "anchorX": 0,
+          "anchorY": 0,
+          "composite": "above"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "rect": {
+     "pathop.z1.amount": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 4
+       }
+      ]
+     },
+     "pathop.repop_rect.copies": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 1
+       },
+       {
+        "t": 2,
+        "v": 8
+       }
+      ]
+     },
+     "pathop.repop_rect.offsetRotation": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 0
+       },
+       {
+        "t": 2,
+        "v": 90
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "rect",
+     "name": "rect",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 200,
+       "y": 300
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "rect_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 200,
+        "y": 300,
+        "rotation": 0
+       }
+      },
+      {
+       "id": "rect_s",
+       "type": "Style",
+       "props": {
+        "opacity": 100,
+        "fill": "#2b7eff"
+       }
+      },
+      {
+       "id": "rect_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "z1",
+          "type": "zigzag",
+          "amount": 16,
+          "detail": 5
+         },
+         {
+          "id": "trimop_rect",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 100,
+          "offset": 0
+         },
+         {
+          "id": "repop_rect",
+          "type": "repeater",
+          "amount": 0,
+          "detail": 0,
+          "copies": 4,
+          "offsetX": 100,
+          "offsetY": 0,
+          "offsetRotation": 0,
+          "offsetScale": 1,
+          "offsetOpacity": 0.5,
+          "offset": 0,
+          "anchorX": 0,
+          "anchorY": 0,
+          "composite": "above"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "rect": {
+     "pathop.z1.amount": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 4,
+        "id": "k1"
+       }
+      ]
+     },
+     "pathop.repop_rect.copies": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 1,
+        "id": "k2"
+       },
+       {
+        "t": 2,
+        "v": 8,
+        "id": "k3"
+       }
+      ]
+     },
+     "pathop.repop_rect.offsetRotation": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 0,
+        "id": "k4"
+       },
+       {
+        "t": 2,
+        "v": 90,
+        "id": "k5"
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

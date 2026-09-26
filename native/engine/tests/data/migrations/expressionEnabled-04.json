@@ -1,0 +1,76 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/expressionEnabled.migration.test.ts › IDEMPOTENCE — the case every load actually takes migrating twice is the same as migrating once",
+ "input": {
+  "version": "1.5.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": []
+  },
+  "animation": {
+   "tracks": {
+    "n1": {
+     "x": {
+      "nodeId": "n1",
+      "prop": "x",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": 0
+       },
+       {
+        "t": 2,
+        "value": 100
+       }
+      ]
+     }
+    }
+   },
+   "expressions": {
+    "n1": {
+     "x": {
+      "src": "value + 200",
+      "enabled": true
+     }
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": []
+  },
+  "animation": {
+   "tracks": {
+    "n1": {
+     "x": {
+      "nodeId": "n1",
+      "prop": "x",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": 0,
+        "id": "k1"
+       },
+       {
+        "t": 2,
+        "value": 100,
+        "id": "k2"
+       }
+      ]
+     }
+    }
+   },
+   "expressions": {
+    "n1": {
+     "x": {
+      "src": "value + 200",
+      "enabled": true
+     }
+    }
+   }
+  }
+ }
+}

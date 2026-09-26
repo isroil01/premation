@@ -52,6 +52,12 @@ target_link_libraries(engine_rg_core PRIVATE motion::options)
 
 # ── GPU + process ───────────────────────────────────────────────────────────
 if(Dawn_FOUND)
+  # The renderer WGSL + material table (shaders/wgsl/*.wgsl, shaders/materials.json)
+  # as C++: builtin_shaders.inc, materials.inc, renderer_wgsl.hpp.
+  include(${CMAKE_CURRENT_SOURCE_DIR}/shaders/embed_wgsl.cmake)
+  set(ENGINE_WGSL_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders)
+  premation_embed_wgsl(${ENGINE_WGSL_GENERATED})
+
   add_library(engine_gpu STATIC
     src/gpu.cpp
     src/os_ffi.cpp
@@ -73,12 +79,13 @@ if(Dawn_FOUND)
   target_include_directories(engine_gpu PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${ENGINE_WGSL_GENERATED})
   target_link_libraries(engine_gpu PUBLIC engine_core dawn::webgpu_dawn PRIVATE motion::options)
 
   # D2: the render graph on Dawn — FrameScene (engine-api 96_render.eapi) in,
-  # pixels out; WGSL + material table extracted verbatim from packages/renderer
-  # (shaders/extract.mjs → builtin_shaders.inc, materials.inc).
+  # pixels out; WGSL + material table from shaders/wgsl + shaders/materials.json
+  # (embedded above → builtin_shaders.inc, materials.inc).
   add_library(engine_render_graph STATIC
     src/render_graph/device.cpp
     src/render_graph/shader_library.cpp
@@ -92,7 +99,8 @@ if(Dawn_FOUND)
   )
   target_include_directories(engine_render_graph PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render_graph
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${ENGINE_WGSL_GENERATED})
   target_link_libraries(engine_render_graph PUBLIC engine_rg_core engine_protocol dawn::webgpu_dawn PRIVATE motion::options)
   if(MSVC)
     target_compile_options(engine_render_graph PRIVATE /bigobj)
@@ -192,6 +200,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
     tests/test_expression_controls.cpp
+    tests/test_migrations.cpp
     tests/test_stress.cpp
     tests/test_render_graph.cpp
   )
@@ -319,8 +328,15 @@ endif()
 #   handlers_*                       one family of edit commands each
 #   props/meta/ptree/readmodel       the property catalog + read model
 #   queries/events/docio             queries, change events, save/open
-#   catalog_data                     registries generated from the TS
-#                                    (crossEngineCatalog.test.ts)
+#   catalog_data                     the property/effect catalog: catalog/*.json
+#                                    (+ the schema's commands.json), embedded by
+#                                    catalog/embed_catalog.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/catalog/embed_catalog.cmake)
+set(ENGINE_CATALOG_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/catalog)
+premation_embed_catalog(${ENGINE_CATALOG_GENERATED})
+# A source property, so every target compiling catalog_data.cpp (engine_core,
+# engine_fuzz) finds catalog_data.inc.
+set_source_files_properties(src/core/catalog_data.cpp PROPERTIES INCLUDE_DIRECTORIES ${ENGINE_CATALOG_GENERATED})
 set(ENGINE_DOC_SOURCES
   src/core/anim.cpp
   src/core/anim_json.cpp
@@ -349,7 +365,6 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_properties.cpp
   src/core/handlers_strokes.cpp
   src/core/handlers_paths.cpp
-  src/core/json.cpp
   src/core/layer_clone.cpp
   src/core/meta.cpp
   src/core/model.cpp
@@ -367,7 +382,15 @@ set(ENGINE_DOC_SOURCES
   src/core/timeline.cpp
   src/core/worldxf.cpp
 )
+# The JavaScript value type (src/core/json.hpp) on its own, a leaf: the test
+# fixtures' re-bless mode (tests/parity_rebless.hpp) reads and writes JSON in
+# test targets that do not link the document core.
+add_library(engine_json STATIC src/core/json.cpp)
+target_compile_features(engine_json PUBLIC cxx_std_20)
+target_link_libraries(engine_json PUBLIC motion::jsmath PRIVATE motion::options)
+
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
+target_link_libraries(engine_core PUBLIC engine_json)
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
 # ── G1: the native plugin SDK host (src/plugins, GPU-free half) ────────────
 #   engine_plugins   manifest scan, module load (module_ffi), per-call crash
@@ -563,7 +586,7 @@ if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).
   set(_libs_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
   file(GLOB _doc_fuzz_expr ${_libs_dir}/motion_expr/*.cpp)
-  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} ${_doc_fuzz_expr}
+  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} src/core/json.cpp ${_doc_fuzz_expr}
                  ${_libs_dir}/motion_jsmath/fdlibm.cpp ${_libs_dir}/motion_jsmath/numconv.cpp
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
@@ -751,7 +774,7 @@ endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
                  tests/test_svg_doc.cpp tests/test_font_catalog.cpp)
-  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
     target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp)
@@ -823,7 +846,7 @@ endif()
 
 if(MOTION_BUILD_TESTS)
   add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv
@@ -898,6 +921,9 @@ endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_audio_tests tests/test_audio.cpp tests/test_audio_clock.cpp tests/test_audio_parity.cpp)
   target_link_libraries(engine_audio_tests PRIVATE engine_audio_core motion::jsmath motion::options Catch2::Catch2WithMain)
+  # tests/parity_rebless.hpp: the audio test only uses its file helpers, but the
+  # header's JSON half needs the value type.
+  target_link_libraries(engine_audio_tests PRIVATE engine_json)
   target_compile_definitions(engine_audio_tests PRIVATE
     PREMATION_AUDIO_PARITY="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/audio_parity.bin")
   if(TARGET engine_audio)

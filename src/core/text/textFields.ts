@@ -13,7 +13,8 @@
  *
  * This module is DATA, shared by both engines: the TypeScript catalog
  * (`src/core/engine/fields.ts`) reads it directly and the C++ catalog reads
- * the copy `crossEngineCatalog.test.ts` generates from it. Pure — no scene
+ * its own copy in native/engine/catalog/fields.json (`crossEngineCatalog.test.ts`
+ * fails when the two differ). Pure — no scene
  * graph, no stores.
  *
  * Storage is the field's own key on its owner (the Text component, the

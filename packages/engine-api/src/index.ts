@@ -4,7 +4,9 @@
  *
  * Everything under ./generated is produced from ../schema/*.eapi by
  * `npm run engine-api:gen`; the same schema generates the C++ structs and
- * codec in native/protocol/generated. No React, no DOM, no editor state.
+ * codec in native/protocol/generated. generated/catalog.ts is the engine's
+ * effect / property catalog (native/engine/catalog/*.json), for synchronous
+ * UI metadata. No React, no DOM, no editor state.
  */
 
 export * from './generated/types';
@@ -12,6 +14,16 @@ export { codecs, encodeEngineMessage, decodeEngineMessage, encodeEngineMessageIn
 export type { Codec, CodecName } from './generated/codec';
 export { COMMANDS, QUERIES, EVENTS, SCHEMA_COUNTS } from './generated/meta';
 export type { CommandKind, CommandInfo, QueryInfo, EventInfo } from './generated/meta';
+export { EFFECT_CATALOG, STATIC_PROPERTY_META, BLEND_MODE_IDS, LABEL_COLOR_CATALOG, CATALOG_DATA, catalogEffect } from './generated/catalog';
+export type {
+  CatalogJson,
+  CatalogEffect,
+  CatalogEffectParam,
+  CatalogEffectParamType,
+  CatalogEffectOption,
+  CatalogStaticMeta,
+  CatalogLabelColor,
+} from './generated/catalog';
 export { Reader, Writer, DecodeError } from './wire';
 export type { DecodeErrorCode } from './wire';
 export { FLICKS_PER_SECOND, secondsToFlicks, flicksToSeconds, frameToFlicks, flicksToFrame } from './time';

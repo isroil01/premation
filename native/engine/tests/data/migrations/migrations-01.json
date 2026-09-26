@@ -1,0 +1,52 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/migrations.test.ts › migrateDocument — current documents returns the SAME object when already current (no needless clone)",
+ "input": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Rect",
+     "kind": "shape",
+     "components": []
+    },
+    {
+     "id": "n2",
+     "name": "Text",
+     "kind": "text",
+     "components": []
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Rect",
+     "kind": "shape",
+     "components": []
+    },
+    {
+     "id": "n2",
+     "name": "Text",
+     "kind": "text",
+     "components": []
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  }
+ }
+}

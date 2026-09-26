@@ -1,0 +1,1021 @@
+{
+  "anchorX": {
+    "label": "Anchor Point X",
+    "group": "transform",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "anchorY": {
+    "label": "Anchor Point Y",
+    "group": "transform",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "anchorZ": {
+    "label": "Anchor Point Z",
+    "group": "transform",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "x": {
+    "label": "Position X",
+    "group": "transform",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "y": {
+    "label": "Position Y",
+    "group": "transform",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "z": {
+    "label": "Position Z",
+    "group": "transform",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "scale": {
+    "label": "Scale",
+    "group": "transform",
+    "type": "multiplier",
+    "unit": "x",
+    "defaultValue": 1
+  },
+  "scaleX": {
+    "label": "Scale X",
+    "group": "transform",
+    "type": "multiplier",
+    "unit": "x",
+    "defaultValue": 1
+  },
+  "scaleY": {
+    "label": "Scale Y",
+    "group": "transform",
+    "type": "multiplier",
+    "unit": "x",
+    "defaultValue": 1
+  },
+  "scaleZ": {
+    "label": "Scale Z",
+    "group": "transform",
+    "type": "multiplier",
+    "unit": "x",
+    "defaultValue": 1
+  },
+  "rotation": {
+    "label": "Rotation",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "rotationX": {
+    "label": "Rotation X",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "rotationY": {
+    "label": "Rotation Y",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "orientationX": {
+    "label": "Orientation X",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "orientationY": {
+    "label": "Orientation Y",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "orientationZ": {
+    "label": "Orientation Z",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "skew": {
+    "label": "Skew",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "skewAxis": {
+    "label": "Skew Axis",
+    "group": "transform",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "opacity": {
+    "label": "Opacity",
+    "group": "transform",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "fillOpacity": {
+    "label": "Fill Opacity",
+    "group": "transform",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "width": {
+    "label": "Width",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "height": {
+    "label": "Height",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "cornerRadius": {
+    "label": "Corner Radius",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "cornerRadiusTL": {
+    "label": "Corner TL",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "cornerRadiusTR": {
+    "label": "Corner TR",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "cornerRadiusBR": {
+    "label": "Corner BR",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "cornerRadiusBL": {
+    "label": "Corner BL",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "path.points": {
+    "label": "Path",
+    "group": "geometry",
+    "type": "path",
+    "unit": "",
+    "defaultValue": null
+  },
+  "fillAngle": {
+    "label": "Fill Angle",
+    "group": "fill",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "fillCenterX": {
+    "label": "Fill Center X",
+    "group": "fill",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "fillCenterY": {
+    "label": "Fill Center Y",
+    "group": "fill",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "fillRadius": {
+    "label": "Fill Radius",
+    "group": "fill",
+    "type": "percent",
+    "unit": "%",
+    "min": 0.01,
+    "max": 2,
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "fill.stops": {
+    "label": "Gradient Stops",
+    "group": "fill",
+    "type": "gradient",
+    "unit": "",
+    "defaultValue": null
+  },
+  "strokeAngle": {
+    "label": "Stroke Gradient Angle",
+    "group": "stroke",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "strokeCenterX": {
+    "label": "Stroke Gradient Center X",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "strokeCenterY": {
+    "label": "Stroke Gradient Center Y",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "strokeRadius": {
+    "label": "Stroke Gradient Radius",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0.01,
+    "max": 2,
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "strokeWidth": {
+    "label": "Stroke Width",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 4
+  },
+  "strokeDashOffset": {
+    "label": "Dash Offset",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "strokeTaperStartWidth": {
+    "label": "Taper Start Width",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 1,
+    "displayScale": 100
+  },
+  "strokeTaperEndWidth": {
+    "label": "Taper End Width",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 1,
+    "displayScale": 100
+  },
+  "strokeTaperStartLength": {
+    "label": "Taper Start Length",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0,
+    "displayScale": 100
+  },
+  "strokeTaperEndLength": {
+    "label": "Taper End Length",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0,
+    "displayScale": 100
+  },
+  "strokeTaperStartEase": {
+    "label": "Taper Start Ease",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": -1,
+    "max": 1,
+    "defaultValue": 0,
+    "displayScale": 100
+  },
+  "strokeTaperEndEase": {
+    "label": "Taper End Ease",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": -1,
+    "max": 1,
+    "defaultValue": 0,
+    "displayScale": 100
+  },
+  "strokeWaveAmount": {
+    "label": "Wave Amount",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "strokeWaveWavelength": {
+    "label": "Wavelength",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "strokeWavePhase": {
+    "label": "Wave Phase",
+    "group": "stroke",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "strokeOpacity": {
+    "label": "Stroke Opacity",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 1,
+    "displayScale": 100
+  },
+  "strokeMiterLimit": {
+    "label": "Miter Limit",
+    "group": "stroke",
+    "type": "number",
+    "unit": "",
+    "min": 1,
+    "defaultValue": 4
+  },
+  "strokeDash1": {
+    "label": "Dash",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 10
+  },
+  "strokeGap1": {
+    "label": "Gap",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 10
+  },
+  "strokeDash2": {
+    "label": "Dash 2",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 10
+  },
+  "strokeGap2": {
+    "label": "Gap 2",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 10
+  },
+  "strokeDash3": {
+    "label": "Dash 3",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 10
+  },
+  "strokeGap3": {
+    "label": "Gap 3",
+    "group": "stroke",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 10
+  },
+  "strokeGradientStartX": {
+    "label": "Stroke Gradient Start X",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "strokeGradientStartY": {
+    "label": "Stroke Gradient Start Y",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 0,
+    "displayScale": 100
+  },
+  "strokeGradientEndX": {
+    "label": "Stroke Gradient End X",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 0.5,
+    "displayScale": 100
+  },
+  "strokeGradientEndY": {
+    "label": "Stroke Gradient End Y",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 1,
+    "displayScale": 100
+  },
+  "strokeHighlightLength": {
+    "label": "Highlight Length",
+    "group": "stroke",
+    "type": "percent",
+    "unit": "%",
+    "min": -1,
+    "max": 1,
+    "defaultValue": 0,
+    "displayScale": 100
+  },
+  "strokeHighlightAngle": {
+    "label": "Highlight Angle",
+    "group": "stroke",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "timeSpeed": {
+    "label": "Speed",
+    "group": "time",
+    "type": "percent",
+    "unit": "%",
+    "min": -1000,
+    "max": 1000,
+    "defaultValue": 100
+  },
+  "timeRemap": {
+    "label": "Time Remap",
+    "group": "time",
+    "type": "time",
+    "unit": "s",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "precompTime": {
+    "label": "Precomp Time",
+    "group": "time",
+    "type": "time",
+    "unit": "s",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "text.source": {
+    "label": "Source Text",
+    "group": "text",
+    "type": "text",
+    "unit": "",
+    "defaultValue": null
+  },
+  "fontSize": {
+    "label": "Font Size",
+    "group": "text",
+    "type": "number",
+    "unit": "px",
+    "min": 1,
+    "defaultValue": 48
+  },
+  "fontWeight": {
+    "label": "Font Weight",
+    "group": "text",
+    "type": "number",
+    "unit": "",
+    "min": 1,
+    "max": 1000,
+    "defaultValue": 400
+  },
+  "fontWidth": {
+    "label": "Font Width",
+    "group": "text",
+    "type": "number",
+    "unit": "",
+    "min": 50,
+    "max": 200,
+    "defaultValue": 100
+  },
+  "fontSlant": {
+    "label": "Font Slant",
+    "group": "text",
+    "type": "number",
+    "unit": "°",
+    "min": -15,
+    "max": 0,
+    "defaultValue": 0
+  },
+  "letterSpacing": {
+    "label": "Letter Spacing",
+    "group": "text",
+    "type": "number",
+    "unit": "px",
+    "defaultValue": 0
+  },
+  "lineHeight": {
+    "label": "Line Height",
+    "group": "text",
+    "type": "multiplier",
+    "unit": "x",
+    "min": 0,
+    "defaultValue": 1.2
+  },
+  "groupingAlignX": {
+    "label": "Grouping Alignment X",
+    "group": "text",
+    "type": "percent",
+    "unit": "%",
+    "min": -100,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "groupingAlignY": {
+    "label": "Grouping Alignment Y",
+    "group": "text",
+    "type": "percent",
+    "unit": "%",
+    "min": -100,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "ambient": {
+    "label": "Ambient",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "diffuse": {
+    "label": "Diffuse",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 50
+  },
+  "specular": {
+    "label": "Specular Intensity",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "shininess": {
+    "label": "Shininess",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 1,
+    "max": 200,
+    "defaultValue": 32
+  },
+  "metal": {
+    "label": "Metal",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "lightTransmission": {
+    "label": "Light Transmission",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "roughness": {
+    "label": "Roughness",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 50
+  },
+  "displacement": {
+    "label": "Displacement",
+    "group": "material",
+    "type": "number",
+    "unit": "px",
+    "min": -2000,
+    "max": 2000,
+    "defaultValue": 0
+  },
+  "reflectionIntensity": {
+    "label": "Reflection Intensity",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "reflectionSharpness": {
+    "label": "Reflection Sharpness",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "reflectionRolloff": {
+    "label": "Reflection Rolloff",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "transparency": {
+    "label": "Transparency",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "transparencyRolloff": {
+    "label": "Transparency Rolloff",
+    "group": "material",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "ior": {
+    "label": "Index of Refraction",
+    "group": "material",
+    "type": "number",
+    "unit": "",
+    "min": 1,
+    "max": 4,
+    "defaultValue": 1.52
+  },
+  "acceptsLights": {
+    "label": "Accepts Lights",
+    "group": "material",
+    "type": "boolean",
+    "unit": "",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0
+  },
+  "castsShadows": {
+    "label": "Casts Shadows",
+    "group": "material",
+    "type": "enum",
+    "unit": "",
+    "min": 0,
+    "max": 2,
+    "defaultValue": 1
+  },
+  "acceptsShadows": {
+    "label": "Accepts Shadows",
+    "group": "material",
+    "type": "enum",
+    "unit": "",
+    "min": 0,
+    "max": 2,
+    "defaultValue": 1
+  },
+  "extrusionDepth": {
+    "label": "Extrusion Depth",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "max": 1000,
+    "defaultValue": 0
+  },
+  "bevelDepth": {
+    "label": "Bevel Depth",
+    "group": "geometry",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "max": 200,
+    "defaultValue": 0
+  },
+  "holeBevelDepth": {
+    "label": "Hole Bevel Depth",
+    "group": "geometry",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "audioLevelDb": {
+    "label": "Audio Levels",
+    "group": "audio",
+    "type": "number",
+    "unit": "dB",
+    "min": -60,
+    "max": 12,
+    "defaultValue": 0
+  },
+  "audioPan": {
+    "label": "Pan",
+    "group": "audio",
+    "type": "number",
+    "unit": "%",
+    "min": -100,
+    "max": 100,
+    "defaultValue": 0
+  },
+  "focalLength": {
+    "label": "Zoom",
+    "group": "camera",
+    "type": "number",
+    "unit": "px",
+    "min": 50,
+    "defaultValue": null
+  },
+  "orbitYaw": {
+    "label": "Orbit Yaw",
+    "group": "camera",
+    "type": "angle",
+    "unit": "°",
+    "min": -180,
+    "max": 180,
+    "defaultValue": 0
+  },
+  "orbitPitch": {
+    "label": "Orbit Pitch",
+    "group": "camera",
+    "type": "angle",
+    "unit": "°",
+    "min": -89,
+    "max": 89,
+    "defaultValue": 0
+  },
+  "dofStrength": {
+    "label": "Blur Strength",
+    "group": "camera",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "max": 60,
+    "defaultValue": 0
+  },
+  "focusDistance": {
+    "label": "Focus Distance",
+    "group": "camera",
+    "type": "number",
+    "unit": "px",
+    "min": 1,
+    "defaultValue": null
+  },
+  "dofAperture": {
+    "label": "Aperture",
+    "group": "camera",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": null
+  },
+  "fStop": {
+    "label": "F-Stop",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 32,
+    "defaultValue": 0
+  },
+  "irisBlades": {
+    "label": "Iris Blades",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 11,
+    "defaultValue": 0
+  },
+  "irisRoundness": {
+    "label": "Iris Roundness",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0.65
+  },
+  "irisRotation": {
+    "label": "Iris Rotation",
+    "group": "camera",
+    "type": "angle",
+    "unit": "°",
+    "min": -180,
+    "max": 180,
+    "defaultValue": 0
+  },
+  "irisAspect": {
+    "label": "Iris Aspect Ratio",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0.25,
+    "max": 4,
+    "defaultValue": 1
+  },
+  "highlightGain": {
+    "label": "Highlight Gain",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 4,
+    "defaultValue": 0
+  },
+  "highlightThreshold": {
+    "label": "Highlight Threshold",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0
+  },
+  "highlightSaturation": {
+    "label": "Highlight Saturation",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 4,
+    "defaultValue": 0
+  },
+  "diffractionFringe": {
+    "label": "Diffraction Fringe",
+    "group": "camera",
+    "type": "number",
+    "unit": "",
+    "min": 0,
+    "max": 1,
+    "defaultValue": 0
+  },
+  "falloffDistance": {
+    "label": "Falloff Distance",
+    "group": "light",
+    "type": "number",
+    "unit": "px",
+    "min": 1,
+    "defaultValue": 500
+  },
+  "lightAngle": {
+    "label": "Direction",
+    "group": "light",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "lightCone": {
+    "label": "Cone Angle",
+    "group": "light",
+    "type": "angle",
+    "unit": "°",
+    "min": 1,
+    "max": 179,
+    "defaultValue": 45
+  },
+  "lightConeFeather": {
+    "label": "Cone Feather",
+    "group": "light",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 50
+  },
+  "envRotation": {
+    "label": "Sky Rotation",
+    "group": "light",
+    "type": "angle",
+    "unit": "°",
+    "defaultValue": 0
+  },
+  "envReflections": {
+    "label": "Reflections",
+    "group": "light",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 200,
+    "defaultValue": 100
+  },
+  "shadowDarkness": {
+    "label": "Shadow Darkness",
+    "group": "light",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "shadowDiffusion": {
+    "label": "Shadow Diffusion",
+    "group": "light",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
+  "shadowBias": {
+    "label": "Shadow Bias",
+    "group": "light",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 3
+  },
+  "shadowSoftness": {
+    "label": "Map Softness",
+    "group": "light",
+    "type": "number",
+    "unit": "tx",
+    "min": 0,
+    "defaultValue": 1
+  },
+  "Position": {
+    "label": "Position",
+    "group": "transform",
+    "type": "group",
+    "unit": "px",
+    "defaultValue": 0
+  }
+}

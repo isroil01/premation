@@ -1,0 +1,186 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "emitter"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "emitter",
+    "name": "emitter",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 160,
+      "y": 110
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "emitter_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 160,
+       "y": 110,
+       "rotation": 0,
+       "width": 300,
+       "height": 200,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "emitter_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#141a26"
+      }
+     },
+     {
+      "id": "emitter_fx",
+      "type": "fx",
+      "props": {
+       "effects": [
+        {
+         "id": "ps",
+         "type": "particle-systems",
+         "params": {
+          "birthRate": 60,
+          "longevity": 1.2,
+          "producerX": 0,
+          "producerY": 40,
+          "producerRadiusX": 0,
+          "producerRadiusY": 0,
+          "animation": 0,
+          "direction": 0,
+          "spread": 60,
+          "velocity": 110,
+          "velocityVariation": 50,
+          "gravity": 140,
+          "resistance": 0,
+          "birthSize": 9,
+          "deathSize": 2,
+          "sizeVariation": 40,
+          "birthColor": "#ffe27a",
+          "deathColor": "#ff3b00",
+          "opacity": 100,
+          "blend": 0,
+          "seed": 1
+         }
+        }
+       ]
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 320,
+   "height": 220,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "effect-particle-systems",
+  "frames": [
+   30
+  ],
+  "fps": 30,
+  "size": {
+   "w": 320,
+   "h": 220
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "CC Particle Systems II one second in: an explosive emitter under gravity."
+ }
+}

@@ -111,6 +111,14 @@ log in main; CoreText/fontconfig/DirectWrite `listFonts`.
 
 **Phase 1 — freeze data the C++ build takes from TS:** WGSL; catalog; vertical
 orientation table; parity re-bless modes; migration pairs; golden scenes as documents.
+*Done on `p1-freeze-data` (not yet verified on the test machine — see
+`docs/VERIFY_ON_TEST_MACHINE.md`):* `native/engine/shaders/wgsl/` +
+`materials.json` (`embed_wgsl.cmake`); `native/engine/catalog/*.json`
+(`embed_catalog.cmake`) with `engine-api:gen` emitting `generated/catalog.ts`
+and `native/protocol/generated/commands.json`; `raster/vertical_orientation.inc`
+hand-owned; every parity fixture frozen with `PARITY_REBLESS=1`
+(`tests/parity_rebless.hpp`); 45 migration pairs + `test_migrations.cpp`;
+`packages/render-tests/scenes/*.json` + `scripts/native-golden.mjs`.
 
 **Phase 2 — close gaps, flip defaults:** the C++ queries; the geometry push;
 B4 mirror fields; engine jobs (one per kind, incl. analysis/ML); port every

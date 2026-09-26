@@ -1,19 +1,26 @@
 // E2 parity: the C++ mixer against the TypeScript offline mix.
 //
-// tests/data/audio_parity.bin is written by gen_audio_parity.mjs, which runs
-// the REAL src/core/audio/audioMixdown.ts `mixdownBuffer` in Electron's
-// Chromium (OfflineAudioContext) over 36 scenes — gain, pan (mono and stereo
-// laws), keyframed level and pan, trims, overlaps, varispeed, reverse, an
-// export window that starts mid-voice, and every built-in audio effect incl.
-// keyframed effect parameters and a chain. The C++ rebuilds each scene's
-// sources bit for bit (motion_jsmath's V8 sin, the same integer xorshift),
-// renders it with render_offline, and compares per sample.
+// tests/data/audio_parity.bin is frozen from the TypeScript engine: its
+// generator ran the REAL src/core/audio/audioMixdown.ts `mixdownBuffer` in
+// Electron's Chromium (OfflineAudioContext) over 36 scenes — gain, pan (mono
+// and stereo laws), keyframed level and pan, trims, overlaps, varispeed,
+// reverse, an export window that starts mid-voice, and every built-in audio
+// effect incl. keyframed effect parameters and a chain. The file carries the
+// scene descriptions (the "scenes" section), each scene's mix ("out:<scene>")
+// and the distortion curves ("curve:<shape>:<drive>:<bits>"). The C++ rebuilds
+// each scene's sources bit for bit (motion_jsmath's V8 sin, the same integer
+// xorshift), renders it with render_offline, and compares per sample.
 //
 // Tolerances are stated per scene (max |error| over both channels, and the
 // signal-to-error ratio): exact-arithmetic scenes are held to float rounding;
 // DSP whose Chromium implementation differs in internals (band-limited
 // oscillator tables, Lagrange-interpolated LFOs, FFT reverb, the half-band
 // oversamplers) to an SNR floor. The table prints on every run.
+//
+// PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp): the
+// mixes and curves are replaced in the same binary layout, the scene text and
+// the section order are kept. Each TEST_CASE re-reads the file and replaces
+// only its own sections, so running both (or either) leaves one consistent file.
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -23,8 +30,10 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <span>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -32,6 +41,7 @@
 #include "effects.hpp"
 #include "jsmath.hpp"
 #include "mixer.hpp"
+#include "parity_rebless.hpp"
 #include "source_store.hpp"
 
 using namespace premation::audio;  // NOLINT(google-build-using-namespace)
@@ -41,9 +51,18 @@ namespace {
 constexpr int kSr = 48000;
 constexpr int kSrcFrames = 24000;
 
+/// A section of audio_parity.bin: [u32 nameLen][name][u32 kind][u32 len][payload]
+/// (little-endian; kind 1 = the scene text, 2 = planes).
+struct Section {
+  std::string name;
+  std::uint32_t kind = 0;
+  std::vector<char> payload;
+};
+
 struct ParityFile {
   std::string scenes;
   std::map<std::string, std::vector<std::vector<float>>> planes;
+  std::vector<Section> sections;  ///< every section, raw and in file order (re-bless)
 };
 
 std::uint32_t rd32(const std::vector<char>& b, std::size_t& o) {
@@ -65,6 +84,7 @@ bool load(ParityFile& f) {
     o += nl;
     const std::uint32_t kind = rd32(b, o);
     const std::uint32_t len = rd32(b, o);
+    f.sections.push_back(Section{name, kind, std::vector<char>(b.data() + o, b.data() + o + len)});
     if (kind == 1) {
       f.scenes.assign(b.data() + o, len);
     } else {
@@ -83,7 +103,63 @@ bool load(ParityFile& f) {
   return true;
 }
 
-// ── Sources, rebuilt exactly as gen_audio_parity_entry.ts makes them ────────
+// ── Re-bless: the same layout, written back ─────────────────────────────────
+
+void put32(std::vector<char>& b, std::uint32_t v) {
+  std::array<char, 4> raw{};
+  std::memcpy(raw.data(), &v, 4);
+  b.insert(b.end(), raw.begin(), raw.end());
+}
+
+/// A kind-2 payload: [u32 channels][u32 frames] then each plane's float32s
+/// (`p[i] ?? 0` past a plane's end, as the generator wrote them).
+std::vector<char> planes_payload(const std::vector<std::vector<float>>& planes, std::size_t frames) {
+  std::vector<char> out;
+  out.reserve(8 + (planes.size() * frames * 4));
+  put32(out, static_cast<std::uint32_t>(planes.size()));
+  put32(out, static_cast<std::uint32_t>(frames));
+  for (const auto& p : planes) {
+    for (std::size_t i = 0; i < frames; ++i) {
+      const float v = i < p.size() ? p[i] : 0.0F;
+      std::array<char, 4> raw{};
+      std::memcpy(raw.data(), &v, 4);
+      out.insert(out.end(), raw.begin(), raw.end());
+    }
+  }
+  return out;
+}
+
+std::vector<char> serialize(const ParityFile& f) {
+  std::vector<char> b{'P', 'A', 'P', '1'};
+  for (const Section& s : f.sections) {
+    put32(b, static_cast<std::uint32_t>(s.name.size()));
+    b.insert(b.end(), s.name.begin(), s.name.end());
+    put32(b, s.kind);
+    put32(b, static_cast<std::uint32_t>(s.payload.size()));
+    b.insert(b.end(), s.payload.begin(), s.payload.end());
+  }
+  return b;
+}
+
+/// Re-read the file, replace the named plane sections with `got` (each
+/// `{planes, frames}`), and write it back. False when a name is not in the file
+/// or the write failed.
+bool rebless_planes(const std::map<std::string, std::pair<std::vector<std::vector<float>>, std::size_t>>& got) {
+  ParityFile f;
+  if (!load(f)) return false;
+  std::size_t replaced = 0;
+  for (Section& s : f.sections) {
+    const auto it = got.find(s.name);
+    if (it == got.end() || s.kind != 2) continue;
+    s.payload = planes_payload(it->second.first, it->second.second);
+    ++replaced;
+  }
+  if (replaced != got.size()) return false;
+  const std::vector<char> bytes = serialize(f);
+  return premation::test::write_fixture_file(PREMATION_AUDIO_PARITY, bytes);
+}
+
+// ── Sources, rebuilt exactly as the TypeScript generator made them ──────────
 
 std::vector<std::vector<float>> make_source(const std::string& name) {
   const double pi = 3.141592653589793;
@@ -308,10 +384,9 @@ Tol tolerance(const std::string& scene) {
 
 TEST_CASE("parity: C++ mix vs the TypeScript offline mix (Chromium Web Audio)", "[audio][parity]") {
   ParityFile file;
-  if (!load(file)) {
-    WARN("tests/data/audio_parity.bin missing — run: node native/engine/tests/gen_audio_parity.mjs");
-    return;
-  }
+  REQUIRE(load(file));
+  const bool rebless = premation::test::parity_rebless();
+  std::map<std::string, std::pair<std::vector<std::vector<float>>, std::size_t>> reblessed;
   std::map<std::string, std::shared_ptr<SourceData>> sources;
   const auto scenes = parse(file.scenes, sources);
   REQUIRE(scenes.size() >= 30);
@@ -342,25 +417,41 @@ TEST_CASE("parity: C++ mix vs the TypeScript offline mix (Chromium Web Audio)", 
     }
     const Tol tol = tolerance(s.name);
     std::printf("%-24s %12.3g %10.1f   <= %.0e, >= %.0f dB\n", s.name.c_str(), maxErr, snr, tol.maxAbs, tol.minSnrDb);
+    if (rebless) {
+      // The generator wrote both channels of the scene's window.
+      std::vector<std::vector<float>> planes(cpp.begin(), cpp.begin() + 2);
+      reblessed.emplace("out:" + s.name, std::make_pair(std::move(planes), static_cast<std::size_t>(s.frames)));
+      continue;
+    }
     INFO("scene " << s.name << ": max |err| " << maxErr << ", SNR " << snr << " dB");
     CHECK(maxErr <= tol.maxAbs);
     CHECK(snr >= tol.minSnrDb);
   }
+  if (rebless) REQUIRE(rebless_planes(reblessed));
 }
 
 TEST_CASE("parity: distortion curves are bit-identical to audioEffects.ts", "[audio][parity]") {
   ParityFile file;
-  if (!load(file)) return;
+  REQUIRE(load(file));
+  const bool rebless = premation::test::parity_rebless();
+  std::map<std::string, std::pair<std::vector<std::vector<float>>, std::size_t>> reblessed;
   const std::map<std::string, DistortionShape> shapes{
       {"soft-clip", DistortionShape::softClip}, {"hard-clip", DistortionShape::hardClip},
       {"saturation-1", DistortionShape::saturation1}, {"saturation-2", DistortionShape::saturation2},
       {"tube", DistortionShape::tube}, {"fuzz", DistortionShape::fuzz}};
   for (const auto& [name, shape] : shapes) {
     for (const auto& [drive, bits] : std::vector<std::pair<int, int>>{{60, 16}, {35, 5}}) {
-      const auto& ts = file.planes.at("curve:" + name + ":" + std::to_string(drive) + ":" + std::to_string(bits));
-      const auto cpp = distortion_curve(shape, drive, bits);
+      const std::string key = "curve:" + name + ":" + std::to_string(drive) + ":" + std::to_string(bits);
+      const auto& ts = file.planes.at(key);
+      auto cpp = distortion_curve(shape, drive, bits);
+      if (rebless) {
+        const std::size_t n = cpp.size();
+        reblessed.emplace(key, std::make_pair(std::vector<std::vector<float>>{std::move(cpp)}, n));
+        continue;
+      }
       INFO(name << " drive " << drive << " bits " << bits);
       CHECK(cpp == ts[0]);
     }
   }
+  if (rebless) REQUIRE(rebless_planes(reblessed));
 }

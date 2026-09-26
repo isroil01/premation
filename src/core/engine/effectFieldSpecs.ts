@@ -15,8 +15,8 @@
  *                                    Position), stored on the style object
  *
  * DATA shared by both engines: the TypeScript catalog reads it directly, the
- * C++ catalog reads the copy crossEngineCatalog.test.ts generates into
- * catalog_data.inc. Row ORDER is the order both engines add the bindings in.
+ * C++ catalog reads its own copy in native/engine/catalog/fields.json
+ * (crossEngineCatalog.test.ts fails when the two differ). Row ORDER is the order both engines add the bindings in.
  * Pure — no scene graph, no stores.
  */
 
