@@ -1497,17 +1497,26 @@ const setPuppetPinKeyframes: AiTool['handler'] = async (input, ctx) => {
   };
 };
 
-import { liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import type { MergeOp } from '@core/scene/mergePaths';
+import { liveMergeBatch, liveMergeResultId } from '@core/scene/liveMergeCommands';
 
+/**
+ * Live merge keeps sources animatable — the designed-motion default. ONE
+ * engine batch (liveMergeCommands.ts): the result layer pasted, the operands
+ * flagged `layer/booleanOperand` and hidden — the menus' own route.
+ */
 const mergePathsHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { op: MergeOp; nodeIds: string[] };
   const missing = await filterSeq(i.nodeIds, async (id) => !(await ctx.scene.has(id)));
   if (missing.length > 0) return fail(`Unknown nodeId(s): ${missing.join(', ')}`);
+  // The planner merges the selection (editor state, not the document).
   useSelectionStore.getState().set(i.nodeIds);
-  // Live merge keeps sources animatable — the designed-motion default.
-  const resultIds = liveMergeSelectedPaths(i.op);
-  if (resultIds.length === 0) return fail(`Failed to apply merge operation '${i.op}' on layers.`);
-  return ok(`Applied live merge '${i.op}'. Result: ${resultIds.join(', ')}. Sources stay editable.`, { resultIds });
+  const batch = liveMergeBatch(i.op);
+  if (!batch) return fail(`Failed to apply merge operation '${i.op}': give at least two overlapping shape layers with closed paths.`);
+  const resultId = liveMergeResultId(await ctx.engine.apply(batch.commands));
+  if (!resultId) return fail(`Failed to apply merge operation '${i.op}' on layers.`);
+  useSelectionStore.getState().set([resultId]);
+  return ok(`Applied live merge '${i.op}'. Result: ${resultId}. Sources stay editable.`, { resultIds: [resultId] });
 };
 
 /** Patch (creating if absent) a node's trim entry through the engine; resolves to its op id. */
@@ -1941,10 +1950,8 @@ const addPathMorph: AiTool['handler'] = async (input, ctx) => {
  * (hostWrites.ts) — audited for B5. A write the API cannot express is REFUSED
  * (a failed tool call), never made around the engine. `export_video` writes
  * no document state (the editor's render-job queue, persisted with the app's
- * settings — not the project's `addRenderItems` queue). The one tool not
- * listed, `merge_paths`, still edits source layers outside the engine (the
- * live merge builder flags its operands in place) and is recorded as a gap
- * wholesale by `buildAiTools`.
+ * settings — not the project's `addRenderItems` queue). `merge_paths` is
+ * one batch: the result pasted, the operands flagged `layer/booleanOperand`.
  */
 export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'create_layer', 'delete_layer', 'reparent_layer', 'update_layer',
@@ -1959,7 +1966,7 @@ export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'add_path_operator', 'create_skeleton_rig', 'apply_layer_style', 'recolor_lottie_vector', 'create_gradient',
   'add_surface_treatment', 'define_style', 'add_background', 'add_title', 'add_emblem', 'add_cards', 'stagger_in',
   'add_camera_move', 'add_kinetic_title', 'add_light_sweep', 'add_ambient_orbs', 'add_lower_third', 'add_scene',
-  'add_transition', 'add_logo_reveal', 'add_radial_burst', 'add_path_morph', 'export_video',
+  'add_transition', 'add_logo_reveal', 'add_radial_burst', 'add_path_morph', 'export_video', 'merge_paths',
 ]);
 
 const HANDLERS: Record<string, AiTool['handler']> = {

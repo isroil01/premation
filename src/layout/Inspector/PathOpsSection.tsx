@@ -3,7 +3,7 @@
  *
  * ## Why this exists
  *
- * Both engines shipped complete. `liveMergeSelectedPaths` (operands stay
+ * Both engines shipped complete. `liveMergePathsEdit` (operands stay
  * editable and animatable, the result re-evaluates every frame) and
  * `mergeSelectedPaths` (a one-shot bake) were reachable from a "Merge Paths"
  * submenu inside the Scene panel's node kebab — which you find by

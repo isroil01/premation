@@ -1127,6 +1127,31 @@
       ]
     },
     {
+      "path": "layer/booleanOperand",
+      "key": "booleanOperand",
+      "label": "Boolean Operand",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "fx": "booleanOperand"
+      },
+      "when": {
+        "kinds": [
+          "shape"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ]
+      ]
+    },
+    {
       "path": "layer/compOverrides",
       "key": "__compOverrides",
       "label": "Essential Properties",

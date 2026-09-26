@@ -1287,6 +1287,20 @@ live merge flags its operand layers in place (`fx.booleanOperand`), which
 no API property addresses yet — the same helper backs the canvas menu's
 Live Union / Subtract / Intersect.
 
+**B5 round 2 (2026-09-27).**
+
+- **`layer/booleanOperand`** (new catalog row, both engines — `layerFieldSpecs.ts`
+  and `native/engine/catalog/fields.json`): bool, stored as `fx.booleanOperand`
+  (false = absent), on `shape` layers. A live Merge Paths operand: sampled by
+  the boolean result, not painted. Live Merge Paths is ONE batch
+  (`src/core/scene/liveMergeCommands.ts`): `planLiveMerge` (mergePaths.ts, pure)
+  plans the result layer from the selection, it is built off-document and
+  pasted where the first operand sits, then `setProperties` of
+  `layer/booleanOperand` and `setLayerSwitches{visible:false}` on the
+  operands. The AI's `merge_paths`, the Workspace / Scene menus' Live
+  Union / Subtract / Intersect / Exclude and the palette's Path Operation
+  commands all send it (`liveMergePathsEdit`); `merge_paths` is engine-routed.
+
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 
 **Fields.** Everything a layer stores outside its keyframe tracks that the UI

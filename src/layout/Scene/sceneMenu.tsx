@@ -39,12 +39,12 @@ import {
   bakeMergePathsEdit,
   duplicateSelectedLayersEdit,
   groupSelectedLayersEdit,
+  liveMergePathsEdit,
   setLabelColorEdit,
   ungroupSelectedEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout/Inspector/inspectorEdits';
 import { splitSelectedAtPlayhead, unfreezeEdit } from '@layout/Timeline/timelineEdits';
-import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { masksFromTextEdit } from '@layout/Text/textEdits';
 import { canOutlineText } from '@layout/Text/textMirror';
@@ -412,10 +412,10 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
             id: 'merge-paths',
             label: 'Merge Paths',
             children: [
-              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => liveMergeSelectedPaths('union') },
-              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => liveMergeSelectedPaths('subtract') },
-              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
-              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
+              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => { void liveMergePathsEdit('union'); } },
+              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => { void liveMergePathsEdit('subtract'); } },
+              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => { void liveMergePathsEdit('intersect'); } },
+              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => { void liveMergePathsEdit('exclude'); } },
               { id: 'merge-sep', separator: true },
               // The boolean runs off-document; deleteLayers + pasteLayers, one entry.
               { id: 'merge-union', label: 'Bake Union', onSelect: () => { void bakeMergePathsEdit('union'); } },

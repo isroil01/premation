@@ -19,6 +19,7 @@ import { apiParentOf, compOfLayer, graph as docGraph, isLayer, layerIdsOfComp } 
 import { offDocument } from '@core/engine/offDocument';
 import { encodeFragment } from '@core/engine/handlers/layers';
 import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { liveMergeBatch, liveMergeResultId, type LiveMergeBatch } from '@core/scene/liveMergeCommands';
 import { labelIndexOf } from '@core/engine/model';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -357,6 +358,31 @@ export async function bakeMergePathsEdit(op: MergeOp): Promise<string[]> {
   const ids = (res.value[res.value.length - 1] as { layers?: string[] } | undefined)?.layers ?? [];
   if (ids.length > 0) useSelectionStore.getState().set(ids);
   return ids;
+}
+
+/**
+ * Merge Paths ▸ Live <op>: the selected paths stay in the document as hidden
+ * operands and a result layer re-evaluates their boolean every frame
+ * (liveMergeCommands.ts — pasteLayers of the result, `layer/booleanOperand`
+ * and the visibility switch on the operands). One undo entry; the result is
+ * selected. Resolves to its id, or null (fewer than two closed paths, an empty
+ * boolean, or the engine refused).
+ */
+export async function liveMergePathsEdit(op: MergeOp): Promise<string | null> {
+  const label = `Live Merge Paths (${op})`;
+  let batch: LiveMergeBatch | null;
+  try {
+    batch = liveMergeBatch(op);
+  } catch (err) {
+    reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+  if (!batch) return null;
+  const res = await edit(label, batch.commands);
+  if (!res.ok) return null;
+  const id = liveMergeResultId(res.value);
+  if (id) useSelectionStore.getState().set([id]);
+  return id;
 }
 
 /** Dissolve every selected group layer; its members end up selected. One entry. */

@@ -173,6 +173,7 @@ import {
   arrangeLayersEdit,
   bakeMergePathsEdit,
   deleteSelectedLayersEdit,
+  liveMergePathsEdit,
   duplicateSelectedLayersEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import {
@@ -676,7 +677,7 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  * commands exist with no menu home". They live in the Animation menu now (see
  * menuModel), so they're discoverable rather than shortcut-only.
  */
-import { liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { type MergeOp } from '@core/scene/mergePaths';
 import { compSizeOf } from '@core/composition/compSizes';
 import { installProductAnalytics, noteNextProjectSource } from '@core/analytics/productEvents';
 
@@ -711,9 +712,11 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     icon: 'layers' as const,
     enabled,
     execute: () => {
-      const ids = liveMergeSelectedPaths(op);
-      if (ids.length > 0) notify(`Live boolean (${op}) — operands stay editable`, 'success');
-      else notify('Select at least two shape layers with closed paths', 'warning');
+      // The result is pasted and the operands flagged in ONE batch (liveMergeCommands.ts).
+      void liveMergePathsEdit(op).then((id) => {
+        if (id) notify(`Live boolean (${op}) — operands stay editable`, 'success');
+        else notify('Select at least two shape layers with closed paths', 'warning');
+      });
     },
   }));
   const baked: Command[] = MERGE_OPS.map(({ op, label, bakeId }) => ({
