@@ -23,6 +23,9 @@
 #include "scene.hpp"
 #include "scene_math.hpp"
 #include "styled_surface.hpp"
+#include "effects_port.hpp"
+#include "extrusion_faces.hpp"
+#include "paint_common.hpp"
 #include "timeline.hpp"
 #include "worldxf.hpp"
 
@@ -808,6 +811,69 @@ std::optional<std::string> primitive_key_of(const doc::Node& n) {
   return "prim:box:" + nn(width) + ":" + nn(height) + ":" + nn(depth);
 }
 
+
+/// faceEffects.ts `faceEffectsFor(effects, {faceCount, extra})`: what a
+/// synthesized face may carry — no layer styles (decided per face by the
+/// caller, appended as `extra`), no exterior shadows / glows, nothing that
+/// needs the CPU bake, and GPU-pass effects only within SPATIAL_FACE_BUDGET.
+std::vector<Json> face_effects_for(const std::vector<Json>& effects, int faceCount, const std::vector<Json>& extra) {
+  constexpr int kSpatialFaceBudget = 16;  // SPATIAL_FACE_BUDGET
+  const bool paidAllowed = faceCount <= kSpatialFaceBudget;
+  std::vector<Json> kept;
+  for (const Json& e : effects) {
+    if (!fx_enabled(e)) continue;
+    if (e.at("id").is_string() && e.at("id").str().starts_with("layerstyle:")) continue;  // styleKeyFromEffectId
+    const std::string t = type_of(e);
+    if (t == "drop-shadow" || t == "radial-shadow" || t == "glow") continue;  // EXTERIOR_FACE_EFFECTS
+    if (effects_need_cpu_bake(std::vector<Json>{e})) continue;
+    if (!paidAllowed && !(is_color_type(t) || is_lut_type(t))) continue;
+    kept.push_back(e);
+  }
+  for (const Json& e : extra) kept.push_back(e);
+  return kept;
+}
+
+/// fill.ts `sampleFillAt(paint, w, h, x, y)`: the paint's colour at one point
+/// of the centred box (a synthesized wall's own centre); nullopt = no colour.
+std::optional<std::string> sample_fill_at(const Json& paint, double w, double h, double x, double y) {
+  if (!paint.is_object()) return std::nullopt;
+  const std::string type = paint.at("type").is_string() ? paint.at("type").str() : "";
+  if (type == "solid") return paint.at("color").is_string() ? std::optional<std::string>(paint.at("color").str()) : std::nullopt;
+  const auto num = [&paint](std::string_view k, double fb) { return paint.at(k).is_number() ? paint.at(k).num() : fb; };
+  double t = 0;
+  if (type == "linear") {
+    const double a = (num("angle", 0) * std::numbers::pi) / 180;
+    const double dx = motion::js::cos(a);
+    const double dy = motion::js::sin(a);
+    const double half = ((std::abs(dx) * w) + (std::abs(dy) * h)) / 2;
+    t = half <= 0 ? 0 : raster::clamp01(((x * dx) + (y * dy) + half) / (2 * half));
+  } else {
+    const double cx = (num("cx", 0.5) - 0.5) * w;
+    const double cy = (num("cy", 0.5) - 0.5) * h;
+    const std::array<double, 2> wh = {w, h};
+    const double r = (std::max(0.01, num("radius", 0.5)) * motion::js::hypot(wh)) / 2;
+    const std::array<double, 2> d = {x - cx, y - cy};
+    t = r <= 0 ? 0 : raster::clamp01(motion::js::hypot(d) / r);
+  }
+  std::vector<raster::ColorStop> colors;
+  if (paint.at("stops").is_array()) {
+    for (const Json& st : paint.at("stops").arr()) {
+      colors.push_back({st.at("offset").is_number() ? st.at("offset").num() : 0, st.at("color").is_string() ? st.at("color").str() : ""});
+    }
+  }
+  std::ranges::stable_sort(colors, {}, &raster::ColorStop::offset);
+  if (colors.empty()) return std::nullopt;
+  const std::string color = raster::sample_gradient_color(colors, t);
+  std::vector<raster::OpacityStop> alphas;
+  if (paint.at("opacityStops").is_array()) {
+    for (const Json& st : paint.at("opacityStops").arr()) {
+      alphas.push_back({st.at("offset").is_number() ? st.at("offset").num() : 0, st.at("opacity").is_number() ? st.at("opacity").num() : 1});
+    }
+  }
+  std::ranges::stable_sort(alphas, {}, &raster::OpacityStop::offset);
+  return alphas.empty() ? color : raster::apply_alpha(color, raster::sample_gradient_opacity(alphas, t));
+}
+
 }  // namespace
 
 void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLayer layer,
@@ -982,9 +1048,157 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
       }
     }
     if (!meshEmitted) {
-      // perGlyphExtrusion / the slice stack / the geometric faces (extrusion.ts).
+      // The FALLBACK bodies (extrusion.ts via extrusion_faces.cpp): a slice
+      // stack for text / complex paths, exact wall planes for rect / ellipse.
       const bool isComplexContent = layer.kind == LayerKind::text || (layer.kind == LayerKind::shape && layer.primitive != "rect" && layer.primitive != "ellipse");
-      report(isComplexContent ? "3D extrusion slice stack (no traceable outline)" : "3D extrusion faces (effects or interior styles)");
+      const xf::Mat4 W = [&] {
+        xf::Mat4 m{};
+        std::copy(layer.world3d->begin(), layer.world3d->end(), m.begin());
+        return m;
+      }();
+      const std::vector<SceneLight>& solid = sceneLights_.empty() ? formRig_ : sceneLights_;  // solidLights()
+      const auto explicitFill = [&](std::string_view kind) {
+        const Json& f = faceMats.at(kind).at("fill");
+        return f.is_string() && !f.str().empty();
+      };
+      // A face's own placement: projected origin + the affine of its unit axes.
+      struct Placed {
+        xf::Mat4 M{};
+        xf::Projected O;
+        std::array<double, 6> fm{};
+      };
+      const auto place_face = [&](const xf::Mat4& local) -> std::optional<Placed> {
+        Placed pl;
+        pl.M = xf::multiply(W, local);
+        pl.O = project(xf::transform_point(pl.M, {0, 0, 0}));
+        // Behind the near plane ⇒ drop it (projectPoint clamps instead of rejecting).
+        if (pl.O.clipped) return std::nullopt;
+        const xf::Projected FX = project(xf::transform_point(pl.M, {1, 0, 0}));
+        const xf::Projected FY = project(xf::transform_point(pl.M, {0, 1, 0}));
+        pl.fm = {FX.x - pl.O.x, FX.y - pl.O.y, FY.x - pl.O.x, FY.y - pl.O.y, pl.O.x, pl.O.y};
+        return pl;
+      };
+      const auto set_pose = [](RLayer& f, const Placed& pl) {
+        constexpr double kDegR = std::numbers::pi / 180;
+        f.x = pl.O.x;
+        f.y = pl.O.y;
+        f.rotation = motion::js::atan2(pl.fm[1], pl.fm[0]) / kDegR;
+        const std::array<double, 2> ax = {pl.fm[0], pl.fm[1]};
+        const std::array<double, 2> ay = {pl.fm[2], pl.fm[3]};
+        f.scaleX = motion::js::hypot(ax);
+        f.scaleY = motion::js::hypot(ay);
+        f.matrix = pl.fm;
+        f.world3d = to_arr(pl.M);
+        f.depth = pl.O.depth;
+      };
+      const auto lit_shade = [&](bool oneSided) {
+        api::RenderShade3D sh = mesh_shade(extMat);
+        if (!oneSided) sh.one_sided = std::nullopt;
+        return sh;
+      };
+      if (isComplexContent) {
+        // Contour Volume Extrusion: slices along z ∈ [step, depth], BACK-TO-FRONT.
+        const int sliceCount = std::min(extrude::kMaxSlices, std::max(2, static_cast<int>(std::ceil(s.extrusionDepth / extrude::kSliceStepPx))));
+        const double sliceStep = s.extrusionDepth / sliceCount;
+        const std::vector<Json> sliceFx = face_effects_for(layer.effects, sliceCount, {});
+        for (int i = sliceCount; i >= 1; --i) {
+          const double zOffset = i * sliceStep;
+          const bool isBackCap = i == sliceCount;
+          const xf::Mat4 sliceMat = xf::compose(xf::Parts3D{.position = {0, 0, zOffset}, .rotation = {0, 0, 0}, .scale = {1, 1, 1}, .anchor = {0, 0, 0}});
+          const auto pl = place_face(sliceMat);
+          if (!pl) continue;
+          RLayer sl = layer;
+          sl.id = layer.id + "::ext-" + (isBackCap ? std::string("back") : "slice-" + std::to_string(i));
+          set_pose(sl, *pl);
+          sl.width = layerW;
+          sl.height = layerH;
+          sl.effects = sliceFx;
+          sl.matte = std::nullopt;
+          sl.isMatteSource = false;
+          sl.isAdjustment = false;
+          sl.motionSamples.clear();
+          sl.deformedMesh = std::nullopt;
+          sl.frameBlend = std::nullopt;
+          sl.glass = std::nullopt;
+          sl.backdropBlur = std::nullopt;
+          sl.preserveTransparency = false;
+          const std::string_view kind = isBackCap ? "back" : "side";
+          const FaceMat sm = resolve_face_material(faceMats, kind, wallFill);
+          sl.fill = sm.fill;
+          if (extLit) {
+            // The material's Ambient / Diffuse; two-sided (the slices' normals are all +Z).
+            if (const auto lg = shade_layer(plane_normal_of(to_arr(pl->M)), {s.worldX, s.worldY, s.z3}, solid, extMat.ambient, extMat.diffuse)) {
+              sl.lighting = *lg;
+              sl.shade3d = lit_shade(false);
+            }
+          } else {
+            const double g = explicitFill(kind) ? 1 : sm.gain;
+            sl.lighting = std::array<double, 3>{g, g, g};
+          }
+          emit(std::move(sl));
+        }
+      } else {
+        // Geometric Face Extrusion: exact wall planes (+ chamfer rings) for rect / ellipse.
+        const bool ellipse = layer.kind == LayerKind::shape && layer.primitive == "ellipse";
+        extrude::Options eo;
+        eo.bevel = meshBevel;
+        eo.cornerRadius = ellipse ? 0 : layer.cornerRadius;
+        const bool gradientWalls = layer.fillPaint.is_object() && layer.fillPaint.at("type").is_string() && layer.fillPaint.at("type").str() != "solid";
+        eo.wallSegments = gradientWalls ? extrude::kGradientWallSegments : 1;
+        const extrude::Geometry geom = extrude::extrusion_geometry(layerW, layerH, s.extrusionDepth, ellipse, extrude::kEllipseWallSegments, eo);
+        frontInset = geom.bevel;  // the bevel the geometry EMITTED
+        const auto faceCount = static_cast<int>(geom.faces.size());
+        for (const extrude::Face& f : geom.faces) {
+          const auto pl = place_face(f.m);
+          if (!pl) continue;
+          // Interior styles only on a whole SURFACE (box walls, back cap), not on facets.
+          const bool surface = f.suffix == "back" || (f.suffix.size() == 1 && std::string_view("rltb").find(f.suffix[0]) != std::string_view::npos);
+          const std::vector<Json> faceFx = face_effects_for(layer.effects, faceCount, surface ? faceStyles : std::vector<Json>{});
+          const std::string_view kind = extrude::face_kind_of(f);
+          RLayer fl;
+          if (f.back) {
+            fl = layer;
+            fl.matte = std::nullopt;
+            fl.isMatteSource = false;
+            fl.isAdjustment = false;
+            fl.motionSamples.clear();
+            fl.deformedMesh = std::nullopt;
+            fl.frameBlend = std::nullopt;
+            fl.glass = std::nullopt;
+            fl.backdropBlur = std::nullopt;
+            fl.preserveTransparency = false;
+            fl.lighting = std::nullopt;
+            fl.shade3d = std::nullopt;
+            fl.fill = resolve_face_material(faceMats, "back", wallFill).fill;
+          } else {
+            fl.kind = LayerKind::shape;
+            fl.blend = layer.blend;
+            fl.opacity = layer.opacity;
+            fl.visible = layer.visible;
+            // wallFillAt: the paint sampled at this face's own centre, then the overlays.
+            const std::optional<std::string> sampled = sample_fill_at(layer.fillPaint, layerW, layerH, f.m[12], f.m[13]);
+            fl.fill = resolve_face_material(faceMats, kind, styled_surface_fill(styles, sampled.value_or(wallFill))).fill;
+            fl.primitive = "rect";
+            fl.flatFacet = true;  // facets of one body: no SDF edge hairline at the joins
+          }
+          fl.id = layer.id + "::ext-" + f.suffix;
+          set_pose(fl, *pl);
+          fl.width = f.w;
+          fl.height = f.h;
+          fl.effects = faceFx;
+          if (extLit) {
+            // ONE-SIDED: these faces bound a volume and are wound outward.
+            if (const auto lg = shade_layer(plane_normal_of(to_arr(pl->M)), {s.worldX, s.worldY, s.z3}, solid, extMat.ambient, extMat.diffuse, true)) {
+              fl.lighting = *lg;
+              fl.shade3d = lit_shade(true);
+            }
+          } else {
+            const double g = explicitFill(kind) ? 1 : resolve_face_material(faceMats, kind, wallFill).gain;
+            fl.lighting = std::array<double, 3>{g, g, g};
+          }
+          emit(std::move(fl));
+        }
+      }
     }
   }
 
