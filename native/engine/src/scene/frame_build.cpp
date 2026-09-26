@@ -428,6 +428,10 @@ void Flattener::feed(const RLayer& l) {
     r.fill = l.fill;
     r.compFps = fps_;
     r.layerId = l.id;
+    if (l.kind == LayerKind::video) {
+      r.pulldownPhase = l.pulldownSource;
+      r.fields = l.fieldsSource;
+    }
     if (l.kind == LayerKind::video && l.contentAwareFillSrc) {
       // A content-aware fill frame: the still stands in for the decoded footage.
       r.src = *l.contentAwareFillSrc;
@@ -435,7 +439,13 @@ void Flattener::feed(const RLayer& l) {
       textures_.push_back(std::move(r));
     } else if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l) && !layer_is_baked(l)) {
       if (l.frameBlend->mode == "pixelMotion") {
-        r.key = "vfm:" + l.id;  // the flow warp is not ported: the walk reports it, the key stays nearest-frame
+        // The bracket pair and the weight; the texture feed warps between them
+        // (scene_textures.cpp pixel_motion_ref, pixel_motion.cpp).
+        r.key = "vfm:" + l.id;
+        r.sourceTime = l.frameBlend->a;
+        r.pixelMotion = true;
+        r.blendTime = l.frameBlend->b;
+        r.blendWeight = l.frameBlend->weight;
         textures_.push_back(std::move(r));
       } else {  // Frame Mix: both bracket frames
         TextureRequest b = r;

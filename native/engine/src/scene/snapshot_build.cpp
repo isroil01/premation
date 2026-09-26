@@ -1506,7 +1506,6 @@ void Walk::build_node(const doc::Node& n) {
         const double weight = exact - lo;
         if (weight > 1e-3) {
           l.frameBlend = RLayer::FrameBlend{lo / sourceFps, (lo + 1) / sourceFps, weight, cfg->frameBlend};
-          if (cfg->frameBlend == "pixelMotion") unported(l, n, "frame blending (Pixel Motion optical flow)");
         }
       }
     }
@@ -1583,9 +1582,17 @@ void Walk::build_node(const doc::Node& n) {
       if (asset->at("interpret").at("alpha").is_string() && asset->at("interpret").at("alpha").str() == "premultiplied") {
         l.premultipliedSource = true;
       }
+      // Mutually exclusive (footageSourceOf): Remove Pulldown serves progressive
+      // frames, so its fields are not separated again.
       const Json& fields = asset->at("interpret").at("fields");
-      if (fields.is_string() && (fields.str() == "upper" || fields.str() == "lower")) unported(l, n, "interlaced footage (fields)");
-      if (asset->at("interpret").at("pulldownPhase").is_number()) unported(l, n, "pulldown removal");
+      const Json& phase = asset->at("interpret").at("pulldownPhase");
+      // interpretationOf: only a whole phase 0..4 means anything; anything else is off.
+      const double ph = phase.is_number() ? phase.num() : -1;
+      if (ph >= 0 && ph <= 4 && std::floor(ph) == ph) {
+        l.pulldownSource = static_cast<int>(ph);
+      } else if (fields.is_string() && (fields.str() == "upper" || fields.str() == "lower")) {
+        l.fieldsSource = fields.str() == "upper" ? 'u' : 'l';
+      }
     }
     l.src = src;
     if (kind == "svg") {  // svgLayerSrc: the stored document (svg_layer.cpp)

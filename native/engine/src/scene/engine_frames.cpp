@@ -421,8 +421,13 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
       h.f64(t.padding);
       h.str(t.src);
       h.f64(t.sourceTime);
-      h.u64((t.video ? 1U : 0U) | (t.premultiplied ? 2U : 0U));
+      h.u64((t.video ? 1U : 0U) | (t.premultiplied ? 2U : 0U) | (t.pixelMotion ? 4U : 0U));
       h.f64(t.compFps);
+      // Footage interpretation and the Pixel Motion pair pick other pixels.
+      h.u64((t.pulldownPhase ? static_cast<std::uint64_t>(*t.pulldownPhase) + 1U : 0U) |
+            (static_cast<std::uint64_t>(static_cast<unsigned char>(t.fields)) << 8U));
+      h.f64(t.blendTime);
+      h.f64(t.blendWeight);
       // Builder-computed textures (TexKind::pixels: the colour-LUT strips).
       h.u64((std::uint64_t{t.pxWidth} << 32U) | t.pxHeight);
       h.bytes(t.pixels);

@@ -38,6 +38,16 @@ struct TextureRequest {
   std::optional<std::string> fill;
   /// The composition's frame rate (the frame-blend grid's last fallback).
   double compFps = 30;
+  /// Footage: Interpret Footage ▸ Remove Pulldown (3:2 phase 0–4, the frames
+  /// woven back from fields) or ▸ Fields ('u' / 'l' = the field kept, the other
+  /// rebuilt; 0 = progressive) — RLayer pulldownSource / fieldsSource.
+  std::optional<int> pulldownPhase;
+  char fields = 0;
+  /// Pixel Motion (`vfm:`): the flow-warped in-between of the frame at
+  /// sourceTime and the frame at blendTime, at blendWeight toward the second.
+  bool pixelMotion = false;
+  double blendTime = 0;
+  double blendWeight = 0;
   /// Pixels: straight RGBA8 rows (alpha 255 for the LUT strips), pxWidth × pxHeight.
   std::vector<std::uint8_t> pixels;
   std::uint32_t pxWidth = 0;
