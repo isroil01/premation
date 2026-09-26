@@ -127,8 +127,15 @@ class SceneTextures final : public rg::ExternalTextureSource {
   /// A still carried as a `data:image/…;base64,` URL (a content-aware fill frame).
   std::string data_image_ref(const TextureRequest& r, PrepareStats& stats);
   std::string svg_ref(const TextureRequest& r, PrepareStats& stats);
+  /// A CPU-baked chain on footage: `base` (the decoded frame, premultiplied;
+  /// default = the cached raster `baseHash`) drawn at the bake size, fields
+  /// rebuilt, then bake_chain bake_footage — an `img:bake:` raster.
+  std::string footage_bake_ref(const TextureRequest& r, const std::string& baseHash, PrepareStats& stats,
+                               std::shared_ptr<const RasterEntry> base = nullptr);
   // Footage (defined with E1 media; declared unconditionally so the class is
   // one layout in every translation unit).
+  /// A baked video frame: converted, read back, then footage_bake_ref.
+  std::string video_bake_ref(const TextureRequest& r, std::uint32_t id, const media::FramePick& pick, PrepareStats& stats);
   /// Pixel Motion (`vfm:`): the flow-warped in-between of frames a and b of
   /// source `id` at the request's weight, as an `img:pm:` raster — or the
   /// nearer frame's media hash while either is still decoding.

@@ -68,6 +68,18 @@ double continuous_resolution_tier(double scale, double boxW, double boxH) {
 
 /// AppTextureProvider.tierFor: Continuous Rasterization off, the clamped ladder up
 /// to 4x and the bounded extended ladder past it; on, the extended ladder at every scale.
+/// AppTextureProvider bakeResolutionTier: a still's bake width is layer width × this × 1.5.
+double bake_resolution_tier(double s) {
+  if (!(s > 0)) s = 1;
+  if (s <= 0.28) return 0.25;
+  if (s <= 0.55) return 0.5;
+  if (s <= 1.05) return 1;
+  if (s <= 1.55) return 1.5;
+  if (s <= 2.1) return 2;
+  if (s <= 3.1) return 3;
+  return 4;
+}
+
 double tier_for(double scale, double boxW, double boxH, bool continuous = false) {
   if (!continuous && scale <= kTiers.back()) return resolution_tier(scale);
   return continuous_resolution_tier(scale, boxW, boxH);
@@ -432,6 +444,31 @@ void Flattener::feed(const RLayer& l) {
       r.pulldownPhase = l.pulldownSource;
       r.fields = l.fieldsSource;
     }
+    if (layer_is_baked(l) && !(l.kind == LayerKind::video && l.contentAwareFillSrc)) {
+      // Canvas2D-only styles on footage bake into the bitmap (MotionRendererBackend:
+      // the whole stack, the mask, the fill opacity), the GPU draws the result.
+      r.bake = true;
+      Json spec = Json::object();
+      Json fx = Json::array();
+      for (const Json& e : l.effects) fx.arr_mut().push_back(e);
+      spec.set("effects", std::move(fx));
+      spec.set("width", Json::number(l.width));
+      spec.set("height", Json::number(l.height));
+      if (l.fillOpacity) spec.set("fillOpacity", Json::number(*l.fillOpacity));
+      if (l.mask.is_object() && l.mask.at("paths").is_array() && !l.mask.at("paths").arr().empty()) spec.set("mask", l.mask);
+      r.spec = std::move(spec);
+      if (l.kind == LayerKind::video) {
+        // Device px per layer unit this frame: the view's raster scale × the layer's own.
+        r.bakeTargetScale = rasterScale_ * std::max(std::abs(l.scaleX), std::abs(l.scaleY));
+        // The bake decodes one frame and cannot weave: a pulldown source is bobbed.
+        if (r.pulldownPhase) {
+          r.pulldownPhase.reset();
+          if (r.fields == 0) r.fields = 'l';
+        }
+      } else {
+        r.resolutionScale = bake_resolution_tier(rasterScale_);
+      }
+    }
     if (l.kind == LayerKind::video && l.contentAwareFillSrc) {
       // A content-aware fill frame: the still stands in for the decoded footage.
       r.src = *l.contentAwareFillSrc;
@@ -618,11 +655,8 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   }
   r.effects = extract_spatial_effects(l, baked);
   if (l.deformedMesh) r.deformed_mesh = deformed_mesh_wire(*l.deformedMesh, l.width, l.height, pad);
-  // Shape / text bakes run on their raster (bake_chain.cpp); footage bakes
-  // (AppTextureProvider setImage / setVideo) are not ported yet.
-  if (baked && (l.kind == LayerKind::image || l.kind == LayerKind::video)) {
-    unported_.emplace_back(l.id, "CPU-baked effect chain on footage (E4)");
-  }
+  // Shape / text bakes run on their raster, footage bakes on the decoded frame
+  // (scene_textures.cpp footage_bake_ref → bake_chain.cpp bake_footage).
   apply_three_d(l, parent, r, placement);  // threeD / castsShadow / Accepts-Lights routing (threed_frame.cpp)
   return r;
 }
@@ -843,7 +877,8 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         const Mat3 tOrigin = translation(-l.width / 2 - l.anchorX, -l.height / 2 - l.anchorY);
         const Mat3 childParent = mat3_mul(parent, mat3_mul(compose(l.x, l.y, rad, l.scaleX, l.scaleY), tOrigin));
         flatten(*l.precompLayers, childParent, parentOpacity * l.opacity, out, placement);
-      } else if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l)) {
+      } else if (l.kind == LayerKind::video && l.frameBlend && !has_paint_strokes(l) && !layer_is_baked(l)) {
+        // (A baked clip skips frame blending, as the feed does: the bake is one frame.)
         // Frame blending: Pixel Motion samples the flow-warped in-between (`vfm:`);
         // Frame Mix cross-dissolves the two bracket frames, B at the sub-frame weight.
         api::Renderable a = layer_to_renderable(l, parent, parentOpacity, placement);

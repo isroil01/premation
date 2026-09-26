@@ -48,6 +48,12 @@ struct TextureRequest {
   bool pixelMotion = false;
   double blendTime = 0;
   double blendWeight = 0;
+  /// Footage with a CPU-baked effect chain (layer_is_baked): `spec` is the
+  /// bake {effects, width, height, fillOpacity?, mask?}; a video bakes at
+  /// min(native, layer box × bakeTargetScale), a still at the view's bake tier
+  /// (`resolutionScale`) × 1.5 — AppTextureProvider setVideoBaked / setImage.
+  bool bake = false;
+  double bakeTargetScale = 0;
   /// Pixels: straight RGBA8 rows (alpha 255 for the LUT strips), pxWidth × pxHeight.
   std::vector<std::uint8_t> pixels;
   std::uint32_t pxWidth = 0;

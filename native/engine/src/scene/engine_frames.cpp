@@ -440,6 +440,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
             (static_cast<std::uint64_t>(static_cast<unsigned char>(t.fields)) << 8U));
       h.f64(t.blendTime);
       h.f64(t.blendWeight);
+      h.f64(t.bake ? t.bakeTargetScale + 1 : 0);  // a footage bake and the size it bakes at
       // Builder-computed textures (TexKind::pixels: the colour-LUT strips).
       h.u64((std::uint64_t{t.pxWidth} << 32U) | t.pxHeight);
       h.bytes(t.pixels);

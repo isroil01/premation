@@ -7,6 +7,7 @@
 #include <span>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <thread>
 
@@ -386,11 +387,16 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
   space = api::RenderColorSpace::srgb;
   if (r.src.empty()) return {};
+  // A still's CPU-baked effect chain runs on its decoded bitmap (setImage's bake).
+  const auto baked_still = [&](std::string hash) {
+    if (!r.bake || r.video || hash.empty()) return hash;
+    return footage_bake_ref(r, hash, stats);
+  };
   // SVG footage and SVG layers: AppTextureProvider.rasterizeSvg, on the C++ SVG renderer (svg_layer.cpp).
-  if (is_svg_src(r.src)) return svg_ref(r, stats);
+  if (is_svg_src(r.src)) return baked_still(svg_ref(r, stats));
   // An imported model's images (gltf_model.hpp): decoded out of the model file.
   if (r.src.starts_with("gltf:")) return model_ref(r, stats);
-  if (r.src.starts_with("data:image/") && !r.video) return data_image_ref(r, stats);
+  if (r.src.starts_with("data:image/") && !r.video) return baked_still(data_image_ref(r, stats));
   if (r.src.starts_with("data:") || r.src.starts_with("blob:") || r.src.starts_with("http:") ||
       r.src.starts_with("https:")) {
     stats.unsupported.emplace_back(r.key, "footage that is not a file on disk");
@@ -398,7 +404,7 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   }
   std::filesystem::path p = file_url_path(r.src);
   if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
-  if (is_still_image_path(p)) return image_ref(r, p, stats);
+  if (is_still_image_path(p)) return baked_still(image_ref(r, p, stats));
 #if defined(PREMATION_HAVE_MEDIA)
   if (media_ == nullptr) return {};
   const std::string key = p.lexically_normal().string();
@@ -446,6 +452,7 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   ++stats.mediaRefs;
   // Playback: the source's worker decodes ahead of the playhead (MediaSystem::playhead).
   if (playing_) media_->playhead(id, plan.a.index, 1);
+  if (r.bake) return video_bake_ref(r, id, plan.a, stats);
   if (r.pixelMotion) {
     const media::FramePlan second =
         media::plan_frames(*index, r.blendTime, interp, media::FrameBlend::none, probeFps, r.compFps);
@@ -581,6 +588,30 @@ bool SceneTextures::read_frame_rgba8(const media::ConvertedFrame& f, std::vector
   return true;
 }
 
+std::string SceneTextures::video_bake_ref(const TextureRequest& r, std::uint32_t id, const media::FramePick& pick,
+                                          PrepareStats& stats) {
+  // setVideoBaked: the decoded frame (fields rebuilt), the mask and the chain,
+  // at the size it will be shown. While the exact frame is still decoding the
+  // stand-in frame is baked under its own key (the TS's `:seeking` signature),
+  // so the settled frame bakes again.
+  const std::string plain = media::media_hash(id, pick.index, std::nullopt, 0);
+  if (dev_ == nullptr || mediaFrames_ == nullptr) return media::media_hash(id, pick.index, std::nullopt, r.fields);
+  media::ConvertedFrame f;
+  bool exact = false;
+  std::string error;
+  if (!mediaFrames_->convert_frame(id, pick.index, f, exact, error)) return media::media_hash(id, pick.index, std::nullopt, r.fields);
+  std::shared_ptr<RasterEntry> frame = std::make_shared<RasterEntry>();
+  frame->width = f.width;
+  frame->height = f.height;
+  const bool read = read_frame_rgba8(f, frame->rgba, error);
+  mediaFrames_->recycle(std::move(f));
+  if (!read) {
+    stats.unsupported.emplace_back(r.key, "baked footage: " + error);
+    return media::media_hash(id, pick.index, std::nullopt, r.fields);
+  }
+  return footage_bake_ref(r, exact ? plain : plain + "~near", stats, frame);
+}
+
 std::string SceneTextures::pixel_motion_ref(const TextureRequest& r, std::uint32_t id, const media::FramePick& a,
                                             const media::FramePick& b, PrepareStats& stats) {
   const double t = std::clamp(r.blendWeight, 0.0, 1.0);
@@ -653,6 +684,89 @@ std::string SceneTextures::pixel_motion_ref(const TextureRequest& r, std::uint32
   return hash;
 }
 #endif
+
+std::string SceneTextures::footage_bake_ref(const TextureRequest& r, const std::string& baseHash, PrepareStats& stats,
+                                            std::shared_ptr<const RasterEntry> base) {
+  if (!base) base = find(baseHash);
+  if (!base || base->width == 0 || base->height == 0) return baseHash;
+  const double srcW = base->width;
+  const double srcH = base->height;
+  const double lw = r.spec.at("width").is_number() ? r.spec.at("width").num() : 0;
+  const double lh = r.spec.at("height").is_number() ? r.spec.at("height").num() : 0;
+  double w = srcW;
+  double h = srcH;
+  if (r.video) {
+    // bakeSize: the layer box's device px, the limiting axis decides; never above native.
+    const double ts = r.bakeTargetScale;
+    if (ts > 0 && std::isfinite(ts)) {
+      const double boxW = std::max(1.0, lw) * ts;
+      const double boxH = std::max(1.0, lh) * ts;
+      const double factor = std::min(1.0, std::max(boxW / srcW, boxH / srcH));
+      w = std::max(1.0, std::round(srcW * factor));
+      h = std::max(1.0, std::round(srcH * factor));
+    }
+  } else {
+    // bakeImageBitmap: the displayed width × BAKE_HEADROOM, 0.05..1 of the source, ≤ the max raster dimension.
+    constexpr double kBakeHeadroom = 1.5;
+    constexpr double kMaxRasterDimension = 8192;  // DEFAULT_MAX_RASTER_DIMENSION
+    const double needW = lw > 0 ? lw * r.resolutionScale * kBakeHeadroom : srcW;
+    const double factor = std::min(1.0, std::max(0.05, needW / srcW));
+    w = std::max(1.0, std::round(srcW * factor));
+    h = std::max(1.0, std::round(srcH * factor));
+    if (w > kMaxRasterDimension || h > kMaxRasterDimension) {
+      const double clampScale = std::min(kMaxRasterDimension / w, kMaxRasterDimension / h);
+      w = std::max(1.0, std::round(w * clampScale));
+      h = std::max(1.0, std::round(h * clampScale));
+    }
+  }
+  const auto bw = static_cast<std::uint32_t>(w);
+  const auto bh = static_cast<std::uint32_t>(h);
+  std::array<char, 48> dims{};
+  std::snprintf(dims.data(), dims.size(), "|%ux%u|%c", bw, bh, r.fields != 0 ? r.fields : '-');  // NOLINT(cppcoreguidelines-pro-type-vararg)
+  const std::string hash = "img:bake:" + hex64(fnv1a(js::stringify(r.spec), fnv1a(dims.data(), fnv1a(baseHash))));
+  if (const std::shared_ptr<const RasterEntry> hit = find(hash)) {
+    ++stats.rasterHits;
+    for (const std::string& u : hit->unsupported) stats.unsupported.emplace_back(r.key, u);
+    return hash;
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  // The frame into a canvas (straight alpha, as a canvas holds it), drawn at the bake size.
+  std::vector<std::uint8_t> straight = base->rgba;
+  for (std::size_t i = 0; i + 3 < straight.size(); i += 4) {
+    const unsigned a = straight[i + 3];
+    if (a == 0 || a == 255) continue;
+    for (std::size_t c = 0; c < 3; ++c) straight[i + c] = static_cast<std::uint8_t>(std::min(255U, (straight[i + c] * 255U + a / 2) / a));
+  }
+  const auto canvas = raster::Canvas2D::make(bw, bh, opts_.canvas);
+  if (!canvas) return baseHash;
+  if (bw == base->width && bh == base->height) {
+    canvas->putImageData(straight, bw, bh, 0, 0);
+  } else {
+    const auto src = raster::Canvas2D::make(base->width, base->height, opts_.canvas);
+    if (!src) return baseHash;
+    src->putImageData(straight, base->width, base->height, 0, 0);
+    canvas->setImageSmoothing(true);
+    canvas->drawImage(*src, 0, 0, srcW, srcH, 0, 0, w, h);
+  }
+  if (r.fields != 0) {
+    // Before the chain: effects sampling a combed frame would smear the comb into their output.
+    std::vector<std::uint8_t> px = canvas->getImageData(0, 0, bw, bh);
+    pixmo::deinterlace_data(px, static_cast<int>(bw), static_cast<int>(bh), r.fields == 'u');
+    canvas->putImageData(px, bw, bh, 0, 0);
+  }
+  std::vector<std::string> unsupported;
+  bake::bake_footage(*canvas, r.spec, unsupported, bake::SharedPool{bakePool_.get(), &bakePoolM_});
+  auto e = std::make_shared<RasterEntry>();
+  e->width = bw;
+  e->height = bh;
+  e->rgba = canvas->pixels();
+  e->unsupported = unsupported;
+  for (const std::string& u : unsupported) stats.unsupported.emplace_back(r.key, u);
+  insert(hash, std::move(e));
+  ++stats.rasterMisses;
+  stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return hash;
+}
 
 std::string SceneTextures::data_image_ref(const TextureRequest& r, PrepareStats& stats) {
   // Cached by the URL itself (its bytes ARE the content) × the alpha mode.

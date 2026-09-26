@@ -61,29 +61,67 @@ void draw_at(Canvas2D& dst, const Canvas2D& src) {
   dst.drawImage(src, 0, 0, sw, sh, 0, 0, sw, sh);
 }
 
+/// The layer mask as a destination-in matte drawn through `t` (layer px →
+/// canvas px), when the spec has one; true when it did.
+bool apply_mask_matte(Canvas2D& ctx, const Json& spec, const Mat2D& t, rj::Value& rmask, std::vector<std::string>& unsupported) {
+  const Json& mask = spec.at("mask");
+  const bool masked = mask.is_object() && mask.at("paths").is_array() && !mask.at("paths").arr().empty();
+  if (!masked) return false;
+  rmask = to_raster(mask);
+  const auto matte = ctx.create_canvas(ctx.width(), ctx.height());
+  matte->setTransform(t);
+  const double lw = spec.at("width").is_number() ? spec.at("width").num() : std::nan("");
+  const double lh = spec.at("height").is_number() ? spec.at("height").num() : std::nan("");
+  raster::paint_mask_matte(*matte, rmask, lw, lh, unsupported);
+  ctx.setTransform(Mat2D{});
+  (void)ctx.setGlobalCompositeOperation("destination-in");
+  draw_at(ctx, *matte);
+  (void)ctx.setGlobalCompositeOperation("source-over");
+  return true;
+}
+
+void apply_stack(Canvas2D& ctx, const Json& spec, double ss, bool masked, const rj::Value& rmask,
+                 std::vector<std::string>& unsupported, SharedPool pool);
+
 }  // namespace
 
 void bake_layer_raster(Canvas2D& ctx, const Json& spec, double bw, double bh, double ss, std::vector<std::string>& unsupported,
                        SharedPool pool) {
-  const Json& mask = spec.at("mask");
-  const bool masked = mask.is_object() && mask.at("paths").is_array() && !mask.at("paths").arr().empty();
-  const rj::Value rmask = masked ? to_raster(mask) : rj::Value{};
-  if (masked) {
-    // The layer mask as a destination-in matte, centred on the PADDED box.
-    const auto matte = ctx.create_canvas(ctx.width(), ctx.height());
-    Mat2D t;
-    t.e = bw / 2;
-    t.f = bh / 2;
-    matte->setTransform(t);
-    const double lw = spec.at("width").is_number() ? spec.at("width").num() : std::nan("");
-    const double lh = spec.at("height").is_number() ? spec.at("height").num() : std::nan("");
-    raster::paint_mask_matte(*matte, rmask, lw, lh, unsupported);
-    ctx.setTransform(Mat2D{});
-    (void)ctx.setGlobalCompositeOperation("destination-in");
-    draw_at(ctx, *matte);
-    (void)ctx.setGlobalCompositeOperation("source-over");
-  }
+  // The layer mask as a destination-in matte, centred on the PADDED box.
+  Mat2D t;
+  t.e = bw / 2;
+  t.f = bh / 2;
+  rj::Value rmask;
+  const bool masked = apply_mask_matte(ctx, spec, t, rmask, unsupported);
   ctx.setTransform(Mat2D{});
+  apply_stack(ctx, spec, ss, masked, rmask, unsupported, pool);
+}
+
+void bake_footage(Canvas2D& ctx, const Json& spec, std::vector<std::string>& unsupported, SharedPool pool) {
+  // The matte in the layer's CENTRED space scaled onto the bitmap
+  // (setTransform(k, 0, 0, ky, w / 2, h / 2)): the two are rarely one size.
+  const double w = ctx.width();
+  const double h = ctx.height();
+  const double lw = spec.at("width").is_number() ? spec.at("width").num() : 0;
+  const double lh = spec.at("height").is_number() ? spec.at("height").num() : 0;
+  const double k = lw > 0 ? w / lw : 1;
+  const double ky = lh > 0 ? h / lh : 1;
+  Mat2D t;
+  t.a = k;
+  t.d = ky;
+  t.e = w / 2;
+  t.f = h / 2;
+  rj::Value rmask;
+  const bool masked = apply_mask_matte(ctx, spec, t, rmask, unsupported);
+  ctx.setTransform(Mat2D{});
+  apply_stack(ctx, spec, k, masked, rmask, unsupported, pool);
+}
+
+namespace {
+
+/// The stack as the chain takes it, px lengths × `ss`, through the E4 chain.
+void apply_stack(Canvas2D& ctx, const Json& spec, double ss, bool masked, const rj::Value& rmask,
+                 std::vector<std::string>& unsupported, SharedPool pool) {
   // The stack as the chain takes it: {type, enabled?, params (resolved, scaled), opacity?, maskId?}.
   Json stack = Json::array();
   if (spec.at("effects").is_array()) {
@@ -112,6 +150,8 @@ void bake_layer_raster(Canvas2D& ctx, const Json& spec, double bw, double bh, do
   for (std::string& u : report.unported) unsupported.push_back("effect chain: " + std::move(u));
   for (std::string& u : report.unsupported) unsupported.push_back(std::move(u));
 }
+
+}  // namespace
 
 double baked_effect_spread(const RLayer& l) {
   if (!layer_is_baked(l)) return 0;

@@ -11,9 +11,11 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "bake_chain.hpp"
+#include "canvas.hpp"
 #include "json.hpp"
 #include "recording_canvas.hpp"
 
@@ -86,4 +88,80 @@ TEST_CASE("bake chain: the C++ issues effectBake.ts's Canvas2D program", "[scene
   }
   std::printf("bake chains vs effectBake.ts: %d/%zu cases op-for-op, %zu/%zu ops identical\n", exact, cases.size(), opsSame,
               opsTotal);
+}
+
+namespace {
+
+/// A closed rectangular mask path (corner points), layer px.
+js::Json rect_mask(double x0, double y0, double x1, double y1) {
+  js::Json pts = js::Json::array();
+  for (const auto& [x, y] : std::vector<std::pair<double, double>>{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}) {
+    js::Json p = js::Json::object();
+    for (const char* k : {"x", "inX", "outX"}) p.set(k, js::Json::number(x));
+    for (const char* k : {"y", "inY", "outY"}) p.set(k, js::Json::number(y));
+    pts.arr_mut().push_back(std::move(p));
+  }
+  js::Json path = js::Json::object();
+  path.set("id", js::Json::string("m"));
+  path.set("mode", js::Json::string("add"));
+  path.set("closed", js::Json::boolean(true));
+  path.set("points", std::move(pts));
+  path.set("feather", js::Json::number(0));
+  path.set("opacity", js::Json::number(1));
+  path.set("expansion", js::Json::number(0));
+  js::Json paths = js::Json::array();
+  paths.arr_mut().push_back(std::move(path));
+  js::Json mask = js::Json::object();
+  mask.set("paths", std::move(paths));
+  return mask;
+}
+
+}  // namespace
+
+TEST_CASE("footage bake: the mask matte lands on the bitmap (bake_footage)", "[scene][bake][footage]") {
+  // A 40 × 20 layer baked at 2× (80 × 40), opaque red.
+  const raster::CanvasOptions opts;
+  const auto frame = [&opts] {
+    auto c = raster::Canvas2D::make(80, 40, opts);
+    std::vector<std::uint8_t> red(80U * 40U * 4U);
+    for (std::size_t i = 0; i < red.size(); i += 4) {
+      red[i] = 255;
+      red[i + 3] = 255;
+    }
+    c->putImageData(red, 80, 40, 0, 0);
+    return c;
+  };
+  const auto alpha_at = [](const raster::Canvas2D& c, std::uint32_t x, std::uint32_t y) {
+    return c.pixels().at((static_cast<std::size_t>(y) * c.width() + x) * 4 + 3);
+  };
+  js::Json spec = js::Json::object();
+  spec.set("effects", js::Json::array());
+  spec.set("width", js::Json::number(40));
+  spec.set("height", js::Json::number(20));
+  std::vector<std::string> unsupported;
+  {
+    // A mask covering the layer box however its space is anchored: nothing is cut.
+    auto c = frame();
+    js::Json s = spec;
+    s.set("mask", rect_mask(-40, -20, 40, 20));
+    sc::bake::bake_footage(*c, s, unsupported);
+    CHECK(alpha_at(*c, 5, 5) == 255);
+    CHECK(alpha_at(*c, 75, 35) == 255);
+  }
+  {
+    // A mask far outside the box: the whole bitmap is cut away.
+    auto c = frame();
+    js::Json s = spec;
+    s.set("mask", rect_mask(1000, 1000, 1100, 1100));
+    sc::bake::bake_footage(*c, s, unsupported);
+    CHECK(alpha_at(*c, 5, 5) == 0);
+    CHECK(alpha_at(*c, 40, 20) == 0);
+  }
+  {
+    // No mask, no effects: the frame as drawn.
+    auto c = frame();
+    sc::bake::bake_footage(*c, spec, unsupported);
+    CHECK(alpha_at(*c, 40, 20) == 255);
+  }
+  CHECK(unsupported.empty());
 }
