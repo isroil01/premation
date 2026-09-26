@@ -470,6 +470,48 @@ on an effect or mask path — one command, one inverse implementation.
 | `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
+**Engine jobs (2026-09-27, branch `engine-jobs`; C++ engine only — the TypeScript engine answers `startJob` `unsupported` and the UI then runs its page path).**
+The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
+`engine_core`: `jobs/job_runner`, `core/session_jobs.cpp`):
+
+1. **prepare** (core thread) validates the spec against the document and copies
+   out what the work reads — a footage layer's file (`motion-blob:` resolved in
+   the bundle, `file://` / `local-file://` decoded; a session `blob:` is
+   `unsupported`), its timing, the comp's rate. A refusal is `startJob`'s answer
+   and nothing is queued. Ids: `job_<n>` (session state; `getJobs` lists the last 64).
+2. **work** (a worker thread; two workers) decodes and analyses, never touching
+   the document; `jobProgress` (ephemeral, ≤ 20/s per job) carries `JobInfo`
+   {status, progress, message}. A job that loads a model (objectMatte) runs its
+   work in a child `premation-engine --job FILE` (JSON lines on stdout), so a
+   crash fails the job, not the engine; renders run a child `--export`.
+3. **apply** (core thread) writes the result through ordinary commands inside
+   ONE journal: one history entry, `origin: engine`, the label below, the usual
+   events; a failing command (the layer was deleted meanwhile) rolls the whole
+   result back and the job ends `failed` with that error. Held while a gesture
+   is open. `apply:false` holds the result: `jobFinished` (status `done`,
+   `applied:false`) → `applyJobResult` (once; again `jobFinished`, `applied:true`)
+   or `cancelJob` (drops it). A new / opened / reverted document cancels running
+   jobs and drops held results. `JobInfo.result` is the kind's summary (JSON).
+
+| Kind | Reference (TS) | Writes (one entry) | `result` |
+|---|---|---|---|
+| `trackMotion` | tracker.ts, patchMatch.ts, autoTrack.ts merge, planarFit / Homography; applyTrack.ts plans | with `applyTo`: keys spliced into the span (`addKeyframes` + `deleteKeyframes` of the keys the span drops) — follow (layer / camera POI), position-rotation-scale (2 points), corner pin (`addEffect corner-pin` if missing; RANSAC beyond 4 points); `stabilize:true`: planStabilize on the tracked layer. No `applyTo`: nothing ("Track Motion") | `{kind, direction, status, sourceWidth, sourceHeight, tracks:[[[t,x,y,conf,coasted]…]…]}` |
+| `stabilize` | globalMotion.ts + smoothStabilize.ts (similarity) | position (+ rotation, scale per `method`) keys on the layer | `{fittedPairs, totalPairs, …}` |
+| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace") | `{pathsAdded, keyframes, frames}` |
+| `sceneDetect` | sceneEditDetect.ts / sceneEditDetectLayer.ts | "Cut N" / "Dissolve N" comp markers, or `splitLayers` at every cut | `{cutsCompSec, dissolvesCompSec, mode}` |
+| `objectMatte` | samPipeline.ts / samSegment.ts / objectMask.ts (SlimSAM ONNX pair) | `addMask` "Object mask" + feather 2 ("Object Mask") | `{contourPoints, engine, iou}` |
+| `audioAnalysis` | beatGrid + @motion/audio, audioKeyframes.ts, silenceRemoval.ts | `setKeyframes` on `audioAmplitude`; "Beat N" markers (`beatMarkers`); Remove Silence's split / delete / local-ripple steps on the paired layers | `{amplitude:{keyframes,keys}, beats:{bpm,tempoConfidence,beatsCompSec,onsetsCompSec}, silence:{ranges,totalSec,gaps,secondsRemoved,layers}}` |
+| `audioDuck` / `audioGate` | ducking.ts / audioGate.ts, audioDriver's detector | `audio/ducking` \| `audio/gate` record, expression on `audio/levels` cleared, `setKeyframes` on `audio/levels` ("Duck Music" / "Noise Gate") | `{keyframes, keys, start, end, fps, envelope, peakDuckDb?, closedFraction?}` |
+| `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
+| `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
+| `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
+| `transcribe` | captions/transcribe.ts | — `unsupported`: the page transcribes through the user's speech provider in Electron main (the key never leaves main); no local model ships | — |
+
+Limits: the jobs read FOOTAGE (a layer's own decoded frames), not a solo
+render of the layer — auto-trace ignores the layer's effects; retimed layers
+are refused. A job's result is not in the command log (it is not a request),
+so a replay after an engine crash does not reproduce it.
+
 ### 4.10 Transport and viewport — §6.
 
 ---
@@ -977,7 +1019,7 @@ B2 (2026-09-23) implements every command, query and event on today's engine:
 |---|---|
 | 91 edit commands | All dispatched. **86** implemented with exact inverses. **5** answer a typed error and change nothing: `convertLayer`, `separateLayer`, `autoTrace` (need font outlines / rendered pixels the TS engine only has inside editor dialogs — E3/D2), `invokeEffectAction` (native-SDK plugins, G1; JS plugins are not ported, plan §5 G2), `applyJobResult` (`notFound`: no engine jobs yet). Partial: `importProject` takes `.motion` only; `setInterpretation` refuses ignore/invert alpha, matte colour, start timecode and colour profile; `setCompositionSettings` refuses `backgroundGradient` and maps `motionBlur` onto the project-wide store (the TS engine has one); `setBlendMode` refuses the modes the TS renderer lacks; `setProxy` is footage-only; `reorderLayers`/`groupLayers` need one parent (parenting is nesting, below). |
 | 30 controls + io | All implemented. `openProject`/`saveProject`/`revertProject`/`collectFiles`/`importFiles` go through injected `EnginePorts` (`unsupported` when none is attached — B3 attaches the Electron ones). `startJob` answers `unsupported` (jobs run in the editor until E/F). Transport forwards to today's controller for the ACTIVE comp and keeps the rest as engine state; viewport/cache/preview controls are recorded state (the TS renderer still draws the viewport). |
-| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `getLayerBounds`, `getTextLayout`, `readPixels` answer `unsupported` (renderer-side until D2/E2); `getRenderStats`/`getLayerErrors`/`getJobs` answer empty (the editor's renderer owns those numbers today). |
+| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `getLayerBounds`, `getTextLayout`, `readPixels` answer `unsupported` (renderer-side until D2/E2); `getRenderStats`/`getLayerErrors` answer empty (the editor's renderer owns those numbers today); `getJobs` lists the engine's jobs (§4.9, C++). |
 | 27 events | All 13 revisioned events emitted from the changed parts; ephemeral `historyChanged`, `dirtyChanged`, `transportChanged`, `playhead`, `projectSaved` emitted; the render/job/asset/font/autosave ones have no TS source yet. |
 
 ### 15.2 Undo: parts

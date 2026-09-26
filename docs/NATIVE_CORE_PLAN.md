@@ -757,6 +757,19 @@ in the real app; then the default flips.
 | E3 | Text and vector with Skia + HarfBuzz; bidi, vertical, kinsoku parity with today | Noto text goldens match; animated-text bench ≥ 3× | 8 wk |
 | E4 | Effects: GPU effects keep their WGSL; the 28 Canvas2D-only effects and 44 CPU bake sites become SIMD kernels on all cores | No effect drops the bench comp below 24 fps; golden parity | 8–10 wk |
 
+**Engine jobs (2026-09-27, branch `engine-jobs`; TS_ENGINE_REMOVAL decision B).**
+The analysis jobs run in the engine: a runner in engine_core (worker threads,
+progress events, cancel, results applied through commands as one undoable
+entry), and in `native/engine/src/jobs` the kinds ported from the TypeScript —
+trackMotion / stabilize, autoTrace, sceneDetect, objectMatte (SAM through ONNX
+Runtime in a child engine process), audioAnalysis / audioDuck / audioGate,
+proxy, render / prerender (a child `--export` per item). The UI asks the
+engine first (`src/core/engine/engineJobs.ts`) and falls back to its page path
+when the TypeScript engine answers `unsupported`. Not ported: transcribe (a
+provider call through main — needs a decision), auto-reframe, mask / planar
+tracks, roto brush, content-aware fill, camera solve. ENGINE_API.md §4.9;
+docs/VERIFY_ON_TEST_MACHINE.md `### engine-jobs`.
+
 **E1 local results (2026-09-25, Windows 11, RTX 4060 Laptop + Radeon 780M,
 Ryzen 16 threads; branch `worktree-agent-a3ee1a99a16026443` off `native-core`).**
 Clips from `native/engine/tools/gen_media_clips.mjs` (testsrc2 + grain, 23.976
@@ -1276,9 +1289,13 @@ lifecycle runs through either engine behind a flag.** Branch `f2-ownership`.
   are now written by the engine (`saveProject{format}`, see the inventory row;
   left: `blob:` session footage the
   engine cannot read until an engine import port exists — E1); then the
-  inventory rows still open (motion blur / colour management commands, the
-  assets store as a mirror view, comps restore, Versions ▸ Compare as an
-  engine still), and deleting the TS engine after one release. `setGuides`,
+  inventory rows still open (Versions ▸ Compare as an engine still), and
+  deleting the TS engine after one release. **2026-09-27 (`engine-jobs`):**
+  motion blur / colour management are commands in both engines
+  (`setMotionBlur` / `setColorManagement`, their stores mirror views), the
+  assets store's items and projectStore.comps are mirror views
+  (`engineItemsView.ts`), DEFLATE portable zips open in the engine, and the
+  Render Queue Output Module offers 16-bit mov on the engine export path. `setGuides`,
   `setSwatches`, `setMaterials` and `exportDocument` landed 2026-09-26 (both
   engines; undo is a part of the document). **Done 2026-09-26 on
   `f2-ownership`** (see the rows): Open Portable Copy in the engine, the
@@ -1301,11 +1318,11 @@ is where it stands on `f2-ownership`.
 |---|---|---|---|---|
 | `defaultSceneGraph` (`src/core/scene`) | every layer row: components, switches, nesting (= parenting), effects, masks, text, styles | `captureDocument` saves it; the TS renderer draws it; 53 UI files still import it | the engine's `doc::Document` nodes. Reads → mirror (B4 read ratchet, 681 left, mostly per-frame viewport reads); the TS renderer's input goes with D5 (engine viewport default-on) | reads ratcheted; writes 0 (B3) |
 | `defaultAnimation` | tracks, keyframes, expressions, data tracks | same; 26 UI files import it | the engine's `anim` parts; reads → `mirror.keyframes` / `valueAt` | as above |
-| `useProjectStore.comps` | composition settings per comp | `captureDocument().comps`; `replaceComps` on restore | `mirror.comps` (`CompInfo.settings`); the store keeps TABS only (editor state, `editorView.ts`) | mirror carries them; store still written by restore |
+| `useProjectStore.comps` | composition settings per comp | `captureDocument().comps`; `replaceComps` on restore | `mirror.comps` (`CompInfo.settings`); the store keeps TABS only (editor state, `editorView.ts`) | mirror carries them; **2026-09-27:** with the engine as owner `projectStore.comps` follow CompInfo (`bindEngineComps`) |
 | `useCompositionStore` | the active comp's settings incl. background gradient | render hooks read it into `buildSnapshot` | derived: `useActiveMirrorComp()`; deleted with the TS renderer (D5) | derived copy |
 | `TimelineController` (`src/core/timeline`) | bars (clip ids, in/out, stretch), comp/layer markers, work area, bar order | `capture()`/`restore()` in the document (`timelines`) | `LayerInfo.timing`, `CompInfo.markers/workArea` in the mirror; the controller keeps zoom/scroll only | mirror complete (B4 exit for the timeline) |
-| `useAssetStore` + `documentItems` + localStorage caches (`saveFolders/Assignments/Interpretations`) | footage records, folders, interpretation, proxy, tags, label, comment | `captureProjectItems` / `applyProjectItems` | engine items (`ItemInfo`, item commands exist); object URLs, thumbnails and decode caches stay UI session state keyed by item id until E1 moves decode | commands + mirror exist; store still the TS source |
-| `motionBlurStore`, `guidesStore`, `colorManagementStore`, `swatchStore`, `materialStore`, `transitionStore` | project motion blur, guides/grid/camera bookmarks, colour management, swatches, materials, transition records | captured/restored whole by `cloudDocument` | the C++ document already saves/loads all of them (D1: identical saves). `setGuides` / `setSwatches` / `setMaterials` exist in both engines. **2026-09-26:** the mirror carries `guides` / `swatches` / `materials` (snapshot + `guidesChanged` / `swatchesChanged` / `materialsChanged`); with the engine as owner `src/stores/engineDocumentStores.ts` makes the three stores VIEWS — the engine's value lands in the store, a user edit is ONE undoable `setGuides` / `setSwatches` / `setMaterials` (whole value; a replica `restoreDocument` is never sent, `isRestoringDocument()`). Motion blur and colour management: no engine command yet (saved/loaded by both engines); transitions: engine commands + `CompInfo.transitions` in the mirror, store written by the replica | guides / swatches / materials engine-sourced behind the flag; motion blur / colour management need commands |
+| `useAssetStore` + `documentItems` + localStorage caches (`saveFolders/Assignments/Interpretations`) | footage records, folders, interpretation, proxy, tags, label, comment | `captureProjectItems` / `applyProjectItems` | engine items (`ItemInfo`, item commands exist); object URLs, thumbnails and decode caches stay UI session state keyed by item id until E1 moves decode | commands + mirror exist; **2026-09-27:** with the engine as owner the store's items follow ItemInfo (`src/stores/engineItemsView.ts` bindEngineItems; session fields kept per id) |
+| `motionBlurStore`, `guidesStore`, `colorManagementStore`, `swatchStore`, `materialStore`, `transitionStore` | project motion blur, guides/grid/camera bookmarks, colour management, swatches, materials, transition records | captured/restored whole by `cloudDocument` | the C++ document already saves/loads all of them (D1: identical saves). `setGuides` / `setSwatches` / `setMaterials` exist in both engines. **2026-09-26:** the mirror carries `guides` / `swatches` / `materials` (snapshot + `guidesChanged` / `swatchesChanged` / `materialsChanged`); with the engine as owner `src/stores/engineDocumentStores.ts` makes the three stores VIEWS — the engine's value lands in the store, a user edit is ONE undoable `setGuides` / `setSwatches` / `setMaterials` (whole value; a replica `restoreDocument` is never sent, `isRestoringDocument()`). Motion blur and colour management: no engine command yet (saved/loaded by both engines); transitions: engine commands + `CompInfo.transitions` in the mirror, store written by the replica | guides / swatches / materials engine-sourced behind the flag; **2026-09-27:** motion blur and colour management too — `setMotionBlur` / `setColorManagement` (both engines; setCompositionSettings{motionBlur} writes the same record, now clamped in C++), `DocumentSnapshot.motionBlur/colorManagement` + `motionBlurChanged` / `colorManagementChanged`, the two stores bound in `engineDocumentStores.ts` |
 | `documentExtras.ts` | project settings, the SAVED render queue | captured/restored by `cloudDocument` | engine (`setProjectSettings`, render-queue commands; mirror `settings` / `renderQueue`); module deleted with the TS engine | engine-owned in C++ |
 | `projectStorage` / `restoredPluginRefs` | JS plugin storage and dependency block | captured into the document | JS plugins are not ported (G2); native SDK sequence data lives in the engine (G1) | retire with G2 |
 | `HistoryService` (CommandSystem) + `EngineHistoryEntry` | the undo stack, labels, position, limit | the TS engine's entries live on the app's stack | the C++ `History`; the page reads `mirror.history`, Ctrl+Z / History-panel jumps are already engine requests (`setHistoryRoute`). **Parity: `engine_undo_parity_tests`** | parity suite green |
