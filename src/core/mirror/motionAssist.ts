@@ -129,3 +129,15 @@ export function layerHasAnimation(m: Pick<MotionAssistRead, 'layerKeyframes' | '
   }
   return false;
 }
+
+/**
+ * The Time Stretch percentage a layer shows (the twin of `layerTimeCommands.stretchValueOf`): footage, audio and
+ * precomps their live playback rate, unsigned (Reverse is its own switch); any other layer the signed factor its
+ * last bake left (`LayerTiming.bakedStretch`, 100 when none). 100 for an unknown layer.
+ */
+export function mirrorStretchPercent(m: Pick<MotionAssistRead, 'layer'>, id: string): number {
+  const layer = m.layer(id);
+  if (!layer) return 100;
+  const factor = retimableLayerIds(m, [id]).length > 0 ? Math.abs(layer.timing.stretch) : layer.timing.bakedStretch ?? 1;
+  return Math.round(factor * 100 * 1e6) / 1e6 || 100;
+}

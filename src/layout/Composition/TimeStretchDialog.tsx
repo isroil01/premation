@@ -21,7 +21,7 @@ import {
 } from '@core/animation/layerTimeCommands';
 import { documentMirror } from '@stores/documentMirror';
 import { settingsFps, timingBarFrames } from '@core/mirror/compFacts';
-import { retimableLayerIds } from '@core/mirror/motionAssist';
+import { mirrorStretchPercent, retimableLayerIds } from '@core/mirror/motionAssist';
 import { framesToTimecode } from '@core/time/timecode';
 import { parseGoToTime } from '@layout/Timeline/goToTime';
 import styles from './PrecomposeDialog.module.css';
@@ -67,9 +67,7 @@ function TimeStretchDialog({ ids, close }: { ids: string[]; close: () => void })
   // bookkeeping value a non-footage layer's bake left behind (e.g. 200, −100).
   // From the mirror: footage's rate unsigned (`LayerTiming.stretch`; Reverse is its own switch), a bake's signed factor
   // (`LayerTiming.bakedStretch`, absent = 100 %).
-  const firstRetimable = retimableLayerIds(m, [ids[0]!]).length > 0;
-  const factor = first ? (firstRetimable ? Math.abs(first.timing.stretch) : first.timing.bakedStretch ?? 1) : 1;
-  const initialStretch = Math.round(factor * 100 * 1e6) / 1e6 || 100;
+  const initialStretch = mirrorStretchPercent(m, ids[0]!);
   const base = useMemo(() => {
     const frames = first ? timingBarFrames(first.timing, fps).duration : 0;
     return baseDurationFrames(frames, Math.abs(initialStretch));
