@@ -495,8 +495,8 @@ function projLayer(l: RenderLayer): Proj {
     contentAwareFillSrc: l.contentAwareFillSrc ?? null,
     sampleQuads: (l.motionSamples?.length ?? 0) > 1 ? l.motionSamples!.map((s) => (s.quad ? [...s.quad] : null)) : [],
     effectPaths: (l.effects ?? [])
-      .filter((e) => Array.isArray(e.params.pathPoints))
-      .map((e) => ({ id: e.id, points: e.params.pathPoints, closed: e.params.pathClosed ?? null })),
+      .filter((e) => Array.isArray(e.params?.pathPoints))
+      .map((e) => ({ id: e.id, points: e.params?.pathPoints, closed: e.params?.pathClosed ?? null })),
     precompLayers: l.precompLayers ? l.precompLayers.map(projLayer) : null,
   };
 }
