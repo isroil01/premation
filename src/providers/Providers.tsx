@@ -124,11 +124,9 @@ import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
-import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
-import { readGeometry } from '@core/workspace/geometry';
 import { eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import {
   eligibleExpressionProps,
@@ -140,7 +138,9 @@ import {
 } from '@core/animation/keyframeAssistants';
 import { openSmootherDialog, smootherTracks, smootherTracksOf } from '@layout/Motion/SmootherDialog';
 import { openWigglerDialog, wigglerTracks, wigglerTracksOf } from '@layout/Motion/WigglerDialog';
-import { fetchMemberTracks } from '@stores/memberTracks';
+import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
+import { fetchLayerBox } from '@stores/layerBoxes';
+import { compTime } from '@core/engine/propRefs';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
@@ -1108,7 +1108,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'skip-back',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).length > 0;
+        // The engine's member lists (every animated track, catalog or not), last known — asked on first use.
+        return !!id && (memberTracksNow(id)?.length ?? 0) > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1128,7 +1129,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'track',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).length > 0;
+        // The engine's member lists (every animated track, catalog or not), last known — asked on first use.
+        return !!id && (memberTracksNow(id)?.length ?? 0) > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1507,12 +1509,9 @@ function buildRigPresetCommands(): ReadonlyArray<Command> {
     execute: async () => {
       const nodeId = useSelectionStore.getState().ids[0];
       if (!nodeId) return;
-      const node = defaultSceneGraph.getNode(nodeId);
-      if (!node) return;
-      // Sized from the layer's own box, so the rig fits the artwork. `readGeometry`
-      // reports the UNSCALED size, which is what keeps a scaled layer from getting
-      // a differently-proportioned skeleton.
-      const geom = readGeometry(node);
+      // Sized from the layer's own box (the engine's `getLayerBounds`), so the rig fits the artwork. The
+      // box is the UNSCALED size, which is what keeps a scaled layer from getting a differently-proportioned skeleton.
+      const geom = await fetchLayerBox(nodeId, compTime(getTime()));
       // One entry: a whole-rig `layer/skeleton` write (ENGINE_API.md §15.9).
       const problems = await applyRigPresetEdit(
         nodeId,

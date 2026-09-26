@@ -172,6 +172,44 @@ preset unit conversion), the keyframe / effect clipboards in API form, the
 proxy record, the Cryptomatte set, an SVG layer's document, the plugin schema
 version, per-member expression preview, the Assets panel's object URLs.
 
+### Closed in b4-round2 (2026-09-27, both engines — ENGINE_API.md §15.12; the ratchet 592 → 530)
+
+- A layer-as-preset capture: `capturePreset {layer}` (Motion Presets ▸ Save;
+  the library stays the editor's — `saveUserPreset`).
+- A text-layout query: `getTextLayout {layer, time, overrides?}` — the render
+  and selection boxes, the wrap, the paragraph box, where the line block sits;
+  the overrides ask "where would the lines be if…". Point ⇄ Paragraph and Box
+  Auto-Size compose their writes from two answers (paragraphTextCommands.ts);
+  the Text Box card reads `useTextLayout` (measured) + `mirrorParagraphBox`
+  (stored). The C++ answer measures with the scene port's TextMeasurer.
+- Layer bounds: `getLayerBounds {layers, time, space}` (readGeometry's box, a
+  group's union at the time; layer / comp space) — Align & Distribute, stroke
+  gradient defaults (`layerBoxAt`, src/stores/layerBoxes.ts), SAM masks and
+  Auto-Rig (`fetchLayerBox`).
+- The keyframe / effect clipboards in API form: `copyKeyframes {keys}` (whole
+  keys per property → `pasteKeyframes`), `copyEffects {layer, effects}` (the
+  capture `pasteEffects` takes; the paste's "still as copied" test compares two
+  captures).
+- Per-member key lists: `getMemberKeyframes {layer, members}` — The Smoother,
+  The Wiggler (lists, menu predicates, the previews' "before"), the Motion
+  editor's property list, U / Shift+U reveal, Time-Reverse / Easy Ease All
+  enablement (src/stores/memberTracks.ts, `useMemberTracks`).
+- An SVG layer's document: `LayerInfo.svg` (role) + `getSvgDocument`.
+- The Cryptomatte set: `getCryptomatte {item}` (TS: the page's EXR decode,
+  announced as `assetStatusChanged`; C++: `unsupported` until EXR decode).
+- The frame-synchronous overlay geometry push: `setOverlayGeometry` →
+  `FrameGeometry` before each FrameReady (src/stores/overlayGeometry.ts) — the
+  motion path overlay (draw + hit test) reads it.
+
+Still open after round 2: the proxy record (job state in the page's asset
+store — proxy generation as an engine job closes it), the Assets panel's object
+URLs (`getThumbnail`), the plugin schema version (waits for the Custom Layer
+section's path writes), per-member expression preview, rig pins / bones in the
+geometry push (the rig sampler is scene-side), and the WorkspaceController's
+geometry-backed SceneGraphPort (the push carries matrices and boxes; the port
+also needs anchors, 3D projection per view, extruded hulls, clip gating, path
+points and masks from the mirror — a parity-checked step of its own).
+
 ## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools
