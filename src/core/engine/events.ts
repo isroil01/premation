@@ -29,6 +29,8 @@ import {
   keyframeSets,
   barsOf,
   transitionsOf,
+  motionBlurInfo,
+  colorManagementInfo,
 } from './model';
 import { catalogFor } from './props';
 import { getProjectSettings, getRenderQueue } from '@core/project/documentExtras';
@@ -84,6 +86,8 @@ export class EventBuilder {
     let guidesDirty = false;
     let swatchesDirty = false;
     let materialsDirty = false;
+    let motionBlurDirty = false;
+    let colorDirty = false;
     let allComps = false;
     const txComps = new Set<string>();
 
@@ -175,7 +179,8 @@ export class EventBuilder {
         case 'guides': guidesDirty = true; break;
         case 'swatches': swatchesDirty = true; break;
         case 'materials': materialsDirty = true; break;
-        case 'mb': allComps = true; break;
+        case 'mb': allComps = true; motionBlurDirty = true; break;
+        case 'cm': colorDirty = true; break;
         case 'tx': {
           const b = (before.get(key) ?? {}) as Record<string, unknown>;
           const a = (after.get(key) ?? {}) as Record<string, unknown>;
@@ -264,6 +269,8 @@ export class EventBuilder {
     for (const comp of [...txComps].sort()) {
       if (isCompItem(comp)) events.push({ type: 'transitionsChanged', comp, transitions: transitionsOf(comp) });
     }
+    if (motionBlurDirty) events.push({ type: 'motionBlurChanged', motionBlur: motionBlurInfo() });
+    if (colorDirty) events.push({ type: 'colorManagementChanged', colorManagement: colorManagementInfo() });
     return events;
   }
 

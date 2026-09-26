@@ -37,4 +37,7 @@ bool write_stdout(const void* data, std::size_t bytes);
 // An environment variable (nullopt when unset). Read at startup, before threads.
 [[nodiscard]] std::optional<std::string> env_var(const char* name);
 
+// This process's executable, resolved (engine jobs start child engines from it). Empty when unknown.
+[[nodiscard]] std::string executable_path();
+
 }  // namespace premation::os

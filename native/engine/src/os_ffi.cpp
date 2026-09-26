@@ -12,6 +12,12 @@
 #else
 #include <sys/resource.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+#include <climits>
+#include <cstdint>
+#include <vector>
 #endif
 
 namespace premation::os {
@@ -108,6 +114,32 @@ std::optional<std::string> env_var(const char* name) {
   const char* value = std::getenv(name);  // NOLINT(concurrency-mt-unsafe): read at startup
   if (value == nullptr) return std::nullopt;
   return std::string(value);
+#endif
+}
+
+std::string executable_path() {
+#ifdef _WIN32
+  std::wstring buf(32768, L'\0');
+  const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+  if (n == 0 || n >= buf.size()) return {};
+  buf.resize(n);
+  const int bytes = WideCharToMultiByte(CP_UTF8, 0, buf.data(), static_cast<int>(buf.size()), nullptr, 0, nullptr, nullptr);
+  std::string out(static_cast<std::size_t>(bytes), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, buf.data(), static_cast<int>(buf.size()), out.data(), bytes, nullptr, nullptr);
+  return out;
+#elif defined(__APPLE__)
+  std::uint32_t size = 0;
+  (void)_NSGetExecutablePath(nullptr, &size);
+  std::vector<char> buf(size + 1U, '\0');
+  if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
+  std::vector<char> real(PATH_MAX + 1, '\0');
+  if (realpath(buf.data(), real.data()) != nullptr) return std::string(real.data());
+  return std::string(buf.data());
+#else
+  std::vector<char> buf(PATH_MAX + 1, '\0');
+  const ssize_t n = readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+  if (n <= 0) return {};
+  return std::string(buf.data(), static_cast<std::size_t>(n));
 #endif
 }
 

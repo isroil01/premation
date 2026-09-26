@@ -34,6 +34,7 @@ import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';
 import { documentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
+import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
 import { edit } from '@core/engine/uiEdits';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
@@ -132,6 +133,10 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
   // F2: guides / swatches / materials are views of the engine's document; a
   // user edit to them is an undoable engine command (engineDocumentStores.ts).
   track(bindEngineDocumentStores({ mirror: documentMirror(), send: (label, cmd) => edit(label, cmd) }));
+  // F2: the assets store's items half follows the engine's ItemInfo (session
+  // fields stay the page's); the project store's compositions follow CompInfo.
+  track(bindEngineItems(documentMirror()));
+  track(bindEngineComps(documentMirror()));
   let lastTab: string | null = null;
   track(useProjectStore.subscribe((s) => {
     if (s.activeTabId === lastTab) return;

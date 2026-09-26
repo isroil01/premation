@@ -26,6 +26,8 @@ import type {
   AutoOrient,
   RetimeMode,
   Interpretation,
+  MotionBlurSettings,
+  ColorManagementSettings,
 } from '@motion/engine-api';
 import type { MarkerData, Layer as TimelineBar } from '@motion/timeline';
 import { defaultAnimation } from '@motion/animation';
@@ -33,6 +35,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from '@stores/projectStore';
 import { useAssetStore, type ImportedAsset, type AssetFolder } from '@stores/assetStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useTransitionStore } from '@stores/transitionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSwatchStore } from '@stores/swatchStore';
@@ -345,7 +348,6 @@ export function compSettings(compId: string): CompSettings {
   const reg = getTimelineController().peekTimeline(compId);
   const wa = reg?.timeline.getRanges().workArea;
   const durFrames = compDurationFrames(compId);
-  const mb = useMotionBlurStore.getState().settings();
   const world: Record<string, unknown> = {};
   if (c.defaultEnvPreset !== undefined) world.defaultEnvPreset = c.defaultEnvPreset;
   if (c.groundLevel !== undefined) world.groundLevel = c.groundLevel;
@@ -364,13 +366,7 @@ export function compSettings(compId: string): CompSettings {
     workArea: wa
       ? { start: framesToFlicks(wa.start, fps), duration: framesToFlicks(wa.duration, fps) }
       : { start: 0, duration: framesToFlicks(durFrames, fps) },
-    motionBlur: {
-      shutterAngle: mb.shutterAngle,
-      shutterPhase: mb.shutterPhase,
-      samplesPerFrame: mb.samples,
-      adaptiveSampleLimit: mb.adaptiveSampleLimit,
-      enabled: mb.enabled,
-    },
+    motionBlur: motionBlurInfo(),
     renderer3d: c.renderer3d ?? 'classic',
     globalLightAngle: c.globalLightAngle ?? DEFAULT_GLOBAL_LIGHT.angle,
     globalLightAltitude: c.globalLightAltitude ?? DEFAULT_GLOBAL_LIGHT.altitude,
@@ -674,5 +670,29 @@ function documentSnapshotIndexed(
     guides: JSON.stringify(useGuidesStore.getState().settings()),
     swatches: useSwatchStore.getState().list(),
     materials: useMaterialStore.getState().list().map((m) => ({ id: m.id, name: m.name, params: JSON.stringify(m.params), swatch: m.swatch ?? '' })),
+    motionBlur: motionBlurInfo(),
+    colorManagement: colorManagementInfo(),
+  };
+}
+
+/** F2: the project's motion-blur record (motionBlurStore) as CompSettings / DocumentSnapshot report it. */
+export function motionBlurInfo(): MotionBlurSettings {
+  const mb = useMotionBlurStore.getState().settings();
+  return {
+    shutterAngle: mb.shutterAngle,
+    shutterPhase: mb.shutterPhase,
+    samplesPerFrame: mb.samples,
+    adaptiveSampleLimit: mb.adaptiveSampleLimit,
+    enabled: mb.enabled,
+  };
+}
+
+/** F2: colorManagementStore.settings() as the API reports it. */
+export function colorManagementInfo(): ColorManagementSettings {
+  const cm = useColorManagementStore.getState().settings();
+  return {
+    workingSpace: cm.workingSpace === 'aces-cg' ? 'acesCg' : 'srgbLinear',
+    displayTransform: cm.displayTransform,
+    bitDepth: cm.bitDepth === 32 ? 32 : 16,
   };
 }

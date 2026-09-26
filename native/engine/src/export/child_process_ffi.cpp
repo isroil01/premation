@@ -74,13 +74,15 @@ std::string last_error_text(const char* what) {
 struct ChildProcess::Os {
   HANDLE process = nullptr;
   HANDLE stdinWrite = nullptr;
+  HANDLE stdoutRead = nullptr;
   HANDLE job = nullptr;
   bool exited = false;
   int code = -1;
 };
 
 std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const std::vector<std::string>& args,
-                                                  const std::string& stderrPath, std::string& error) {
+                                                  const std::string& stderrPath, std::string& error,
+                                                  bool captureStdout) {
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof(sa);
   sa.bInheritHandle = TRUE;
@@ -92,6 +94,17 @@ std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const 
     return nullptr;
   }
   SetHandleInformation(writeEnd, HANDLE_FLAG_INHERIT, 0);
+  HANDLE outRead = nullptr;
+  HANDLE outWrite = nullptr;
+  if (captureStdout) {
+    if (CreatePipe(&outRead, &outWrite, &sa, 1U << 16U) == 0) {
+      error = last_error_text("CreatePipe");
+      CloseHandle(readEnd);
+      CloseHandle(writeEnd);
+      return nullptr;
+    }
+    SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
+  }
   HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
   HANDLE errFile = stderrPath.empty()
                        ? nul
@@ -109,7 +122,7 @@ std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const 
   si.cb = sizeof(si);
   si.dwFlags = STARTF_USESTDHANDLES;
   si.hStdInput = readEnd;
-  si.hStdOutput = nul;
+  si.hStdOutput = captureStdout ? outWrite : nul;
   si.hStdError = errFile;
   PROCESS_INFORMATION pi{};
   // Suspended until it is in the job, so it can never outlive the engine.
@@ -117,10 +130,12 @@ std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const 
                                  nullptr, &si, &pi);
   const std::string spawnError = ok == 0 ? last_error_text("starting the encoder") : std::string();
   CloseHandle(readEnd);
+  if (outWrite != nullptr) CloseHandle(outWrite);
   if (errFile != nul) CloseHandle(errFile);
   if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
   if (ok == 0) {
     CloseHandle(writeEnd);
+    if (outRead != nullptr) CloseHandle(outRead);
     error = spawnError;
     return nullptr;
   }
@@ -128,6 +143,7 @@ std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const 
   child->os_ = std::make_unique<Os>();
   child->os_->process = pi.hProcess;
   child->os_->stdinWrite = writeEnd;
+  child->os_->stdoutRead = outRead;
   HANDLE job = CreateJobObjectW(nullptr, nullptr);
   if (job != nullptr) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
@@ -148,6 +164,7 @@ ChildProcess::~ChildProcess() {
   if (!os_) return;
   if (!os_->exited) kill();
   if (os_->stdinWrite != nullptr) CloseHandle(os_->stdinWrite);
+  if (os_->stdoutRead != nullptr) CloseHandle(os_->stdoutRead);
   if (os_->process != nullptr) CloseHandle(os_->process);
   if (os_->job != nullptr) CloseHandle(os_->job);
 }
@@ -187,28 +204,55 @@ void ChildProcess::kill() noexcept {
   os_->code = -1;
 }
 
+long ChildProcess::read_stdout(std::span<std::uint8_t> into) noexcept {
+  if (!os_ || os_->stdoutRead == nullptr || into.empty()) return -1;
+  DWORD got = 0;
+  const DWORD want = static_cast<DWORD>(std::min<std::size_t>(into.size(), 1U << 20U));
+  if (ReadFile(os_->stdoutRead, into.data(), want, &got, nullptr) == 0) {
+    return GetLastError() == ERROR_BROKEN_PIPE ? 0 : -1;  // the child closed its end: end of stream
+  }
+  return static_cast<long>(got);
+}
+
 #else  // POSIX
 
 struct ChildProcess::Os {
   pid_t pid = -1;
   int stdinWrite = -1;
+  int stdoutRead = -1;
   bool exited = false;
   int code = -1;
 };
 
 std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const std::vector<std::string>& args,
-                                                  const std::string& stderrPath, std::string& error) {
+                                                  const std::string& stderrPath, std::string& error,
+                                                  bool captureStdout) {
   std::array<int, 2> fds{-1, -1};
   if (pipe(fds.data()) != 0) {
     error = std::string("pipe: ") + std::strerror(errno);  // NOLINT(concurrency-mt-unsafe)
     return nullptr;
   }
   (void)fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+  std::array<int, 2> out{-1, -1};
+  if (captureStdout) {
+    if (pipe(out.data()) != 0) {
+      error = std::string("pipe: ") + std::strerror(errno);  // NOLINT(concurrency-mt-unsafe)
+      close(fds[0]);
+      close(fds[1]);
+      return nullptr;
+    }
+    (void)fcntl(out[0], F_SETFD, FD_CLOEXEC);
+  }
   posix_spawn_file_actions_t fa;
   posix_spawn_file_actions_init(&fa);
   posix_spawn_file_actions_adddup2(&fa, fds[0], 0);
   posix_spawn_file_actions_addclose(&fa, fds[0]);
-  posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+  if (captureStdout) {
+    posix_spawn_file_actions_adddup2(&fa, out[1], 1);
+    posix_spawn_file_actions_addclose(&fa, out[1]);
+  } else {
+    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+  }
   posix_spawn_file_actions_addopen(&fa, 2, stderrPath.empty() ? "/dev/null" : stderrPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
   std::vector<std::string> storage;
   storage.reserve(args.size() + 1);
@@ -222,8 +266,10 @@ std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const 
   const int rc = posix_spawnp(&pid, exe.c_str(), &fa, nullptr, argv.data(), environ);
   posix_spawn_file_actions_destroy(&fa);
   close(fds[0]);
+  if (out[1] >= 0) close(out[1]);
   if (rc != 0) {
     close(fds[1]);
+    if (out[0] >= 0) close(out[0]);
     error = rc == ENOENT ? "starting the encoder: the executable was not found"
                          : std::string("starting the encoder: ") + std::strerror(rc);  // NOLINT(concurrency-mt-unsafe)
     return nullptr;
@@ -232,6 +278,7 @@ std::unique_ptr<ChildProcess> ChildProcess::spawn(const std::string& exe, const 
   child->os_ = std::make_unique<Os>();
   child->os_->pid = pid;
   child->os_->stdinWrite = fds[1];
+  child->os_->stdoutRead = out[0];
   return child;
 }
 
@@ -239,6 +286,7 @@ ChildProcess::~ChildProcess() {
   if (!os_) return;
   if (!os_->exited) kill();
   if (os_->stdinWrite >= 0) close(os_->stdinWrite);
+  if (os_->stdoutRead >= 0) close(os_->stdoutRead);
 }
 
 bool ChildProcess::write(std::span<const std::uint8_t> bytes) noexcept {
@@ -274,6 +322,15 @@ void ChildProcess::kill() noexcept {
   (void)waitpid(os_->pid, &status, 0);
   os_->exited = true;
   os_->code = -1;
+}
+
+long ChildProcess::read_stdout(std::span<std::uint8_t> into) noexcept {
+  if (!os_ || os_->stdoutRead < 0 || into.empty()) return -1;
+  for (;;) {
+    const ssize_t n = ::read(os_->stdoutRead, into.data(), into.size());
+    if (n < 0 && errno == EINTR) continue;
+    return static_cast<long>(n);
+  }
 }
 
 #endif

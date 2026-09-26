@@ -49,6 +49,7 @@ import { EngineCommandLog } from './engineCommandLog';
 import type { PixelFrame } from './pixelChannel';
 import { hostBridgePath, loadIoSurfaceBridge } from './ioSurfaceBridge';
 import { ntHandleSource, slotHandleSourceFor, type SlotHandleSource, type SlotTextureHandle } from './sharedTextureHandles';
+import { resolveFfmpegBinary } from './ffmpegBinary';
 import { EngineGoneError } from './engineTransport';
 import {
   EngineSupervisor,
@@ -540,7 +541,19 @@ export class EngineHost {
       {
         spawn: (exe, args) =>
           // fd 3/4 frame channel, fd 5 route-A pixel stream (pixelChannel.ts).
-          spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true }) as unknown as EngineChild,
+          spawn(exe, args, {
+            stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            // Engine jobs (proxies) run the same ffmpeg an export does (ffmpegBinary.ts).
+            env: {
+              ...process.env,
+              PREMATION_FFMPEG: resolveFfmpegBinary({ vars: process.env, resourcesPath: o.resourcesPath, platform: process.platform, exists: existsSync }),
+              // The objectMatte job's SAM pair: <resources>/models/object-matte when
+              // packaged (electron-builder extraResources), dist/ in development.
+              PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
+                ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
+            },
+          }) as unknown as EngineChild,
         resolveExe,
         gpuVendor: () => chromiumGpuVendor(o.getGPUInfo),
         hostPid: o.hostPid,

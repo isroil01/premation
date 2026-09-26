@@ -66,14 +66,29 @@ Data decisions:
 
 ## Gaps to close in C++ before cutting the UI over
 
-- Queries answering `unsupported`: `getLayerBounds`, `getTextLayout` (B4);
-  `getJobs` empty. (`listFonts` answers from the OS font catalogue since
+- Queries answering `unsupported`: `getLayerBounds`, `getTextLayout` (B4).
+  (`listFonts` answers from the OS font catalogue since
   p0-platform; `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer
   from the C++ engine since d2w-round2.)
-- Commands answering `unsupported`: `startJob` (trackMotion, stabilize,
-  autoTrace, sceneDetect, objectMatte, transcribe, audioAnalysis, render,
-  prerender), `convertLayer`, `separateLayer`, `autoTrace`, `collectFiles`,
-  `.aep` `importProject`, portable-zip open.
+- Commands answering `unsupported`: `convertLayer`, `separateLayer`,
+  `autoTrace` (the command; the JOB exists), `collectFiles`, `.aep` `importProject`.
+- **Jobs (2026-09-27, branch `engine-jobs`, written and syntax-checked, not
+  built or run):** the C++ engine runs `startJob` for trackMotion (position,
+  rotation/scale, corner pin, stabilize-by-point), stabilize (similarity),
+  autoTrace, sceneDetect, objectMatte (ONNX Runtime, child process),
+  audioAnalysis (beats, amplitude track, silence detect/remove), audioDuck,
+  audioGate, proxy, render and prerender (child `--export`); `getJobs` lists
+  them (ENGINE_API.md §4.9). UI callers ask the engine first
+  (`src/core/engine/engineJobs.ts`) and fall back to the page path on
+  `unsupported`. Still page-only: mask / planar tracks, Create Null & Apply,
+  mesh warp / camera solve / roto brush / content-aware fill, the smooth
+  stabilizer's subspace and rolling-shutter variants, auto-reframe (saliency
+  + a path — no job kind yet), and **transcribe** — the page sends the comp's
+  mixdown to the user's speech provider through Electron main, which holds
+  the key; no local model ships, so the engine refuses the job. Decision
+  needed: a bundled local model (whisper.cpp) or the engine calling the
+  provider with a key main hands over. Portable DEFLATE zips open in the
+  engine (2026-09-27).
 - **Frame-synchronous overlay geometry push** (world matrices, bounds, motion
   paths, pins/bones, text boxes on `FrameReady`) — replaces ~75 per-frame reads.
 - B4 exit fields (media type, proxy, playable URL, mographId, svg, essentialProps,

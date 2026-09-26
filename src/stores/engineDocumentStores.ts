@@ -26,24 +26,29 @@
  * (the 3D view mode, the channel, the camera tool) is not document state and
  * never leaves the page.
  *
- * Motion blur, colour management and transitions: motion blur and colour
- * management have no engine command yet (their document fields are saved and
- * loaded by both engines — D1); transitions already are engine commands with
- * the mirror carrying them (`CompInfo.transitions`), their store written by
- * the replica. See the plan's inventory row for what remains.
+ * Motion blur and colour management (2026-09-27) follow the same route: the
+ * mirror carries `motionBlur` / `colorManagement` (DocumentSnapshot +
+ * motionBlurChanged / colorManagementChanged) and a user edit is ONE
+ * `setMotionBlur` / `setColorManagement` with the whole record. Transitions
+ * already are engine commands with the mirror carrying them
+ * (`CompInfo.transitions`), their store written by the replica.
  */
 
-import type { Command, EngineResult, LibraryMaterial, Swatch } from '@motion/engine-api';
+import type { ColorManagementSettings, Command, EngineResult, LibraryMaterial, MotionBlurSettings, Swatch } from '@motion/engine-api';
 import { isRestoringDocument } from '@core/api/cloudDocument';
 import { DEFAULT_GUIDES_SETTINGS, useGuidesStore, type GuidesSettings } from './guidesStore';
 import { useSwatchStore, type ProjectSwatch } from './swatchStore';
 import { useMaterialStore, type NamedMaterial } from './materialStore';
+import { useMotionBlurStore } from './motionBlurStore';
+import { useColorManagementStore } from './colorManagementStore';
 
 /** What the binder reads from the document mirror (DocumentMirror satisfies it). */
 export interface StoreMirrorView {
   readonly guides: string;
   readonly swatches: readonly Swatch[];
   readonly materials: readonly LibraryMaterial[];
+  readonly motionBlur: MotionBlurSettings;
+  readonly colorManagement: ColorManagementSettings;
   subscribe(keys: readonly string[], listener: () => void): () => void;
 }
 
@@ -68,6 +73,17 @@ function fullGuides(): GuidesSettings {
 
 const swatchesOf = (list: readonly ProjectSwatch[]): Swatch[] => list.map((s) => ({ id: s.id, name: s.name, hex: s.hex }));
 
+/** The motion-blur store as the engine's record (every field stated, so the command is the whole value). */
+function motionBlurOf(): MotionBlurSettings {
+  const m = useMotionBlurStore.getState().settings();
+  return { enabled: m.enabled, shutterAngle: m.shutterAngle, shutterPhase: m.shutterPhase, samplesPerFrame: m.samples, adaptiveSampleLimit: m.adaptiveSampleLimit };
+}
+
+function colorManagementOf(): ColorManagementSettings {
+  const c = useColorManagementStore.getState().settings();
+  return { workingSpace: c.workingSpace === 'aces-cg' ? 'acesCg' : 'srgbLinear', displayTransform: c.displayTransform, bitDepth: c.bitDepth };
+}
+
 const materialsOf = (list: readonly NamedMaterial[]): LibraryMaterial[] =>
   list.map((m) => ({ id: m.id, name: m.name, params: JSON.stringify(m.params), swatch: m.swatch ?? '' }));
 
@@ -80,7 +96,7 @@ interface Binding {
   /** The command that makes the engine hold the store's value. */
   command(): Command;
   subscribeStore(listener: () => void): () => void;
-  mirrorKey: 'guides' | 'swatches' | 'materials';
+  mirrorKey: 'guides' | 'swatches' | 'materials' | 'motionBlur' | 'colorManagement';
 }
 
 /**
@@ -133,6 +149,41 @@ export function bindEngineDocumentStores(o: EngineDocumentStoresOptions): () => 
         ),
       command: () => ({ type: 'setMaterials', materials: materialsOf(useMaterialStore.getState().materials) }),
       subscribeStore: (l) => useMaterialStore.subscribe(l),
+    },
+    {
+      label: 'Motion Blur',
+      mirrorKey: 'motionBlur',
+      storeKey: () => JSON.stringify(motionBlurOf()),
+      applyMirror: () => {
+        const m = o.mirror.motionBlur;
+        useMotionBlurStore.getState().restore({
+          enabled: m.enabled ?? true,
+          shutterAngle: m.shutterAngle,
+          shutterPhase: m.shutterPhase,
+          samples: m.samplesPerFrame,
+          adaptiveSampleLimit: m.adaptiveSampleLimit,
+        });
+      },
+      command: () => {
+        const m = motionBlurOf();
+        return { type: 'setMotionBlur', patch: { ...m } };
+      },
+      subscribeStore: (l) => useMotionBlurStore.subscribe(l),
+    },
+    {
+      label: 'Color Management',
+      mirrorKey: 'colorManagement',
+      storeKey: () => JSON.stringify(colorManagementOf()),
+      applyMirror: () => {
+        const c = o.mirror.colorManagement;
+        useColorManagementStore.getState().restore({
+          workingSpace: c.workingSpace === 'acesCg' ? 'aces-cg' : 'srgb-linear',
+          displayTransform: c.displayTransform,
+          bitDepth: c.bitDepth === 32 ? 32 : 16,
+        });
+      },
+      command: () => ({ type: 'setColorManagement', patch: { ...colorManagementOf() } }),
+      subscribeStore: (l) => useColorManagementStore.subscribe(l),
     },
   ];
 

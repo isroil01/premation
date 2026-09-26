@@ -321,7 +321,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `addHistoryCheckpoint` | control | B3z — History ▸ Snapshot: a NAMED entry that changes nothing, a point to jump back to. Clears redo like any entry; `gestureOpen` while a gesture is open. |
 | `restoreDocument` | edit | B3z — replace the whole document with a saved / cloud version (`.motion` JSON) as ONE undoable entry; history is kept, undo brings the document back exactly. Unreadable input is `decode` / `unsupported` and changes nothing. |
 | `newProject`, `openProject`, `revertProject` | io | Replace the document; clear history; the UI receives `documentReset`. |
-| `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). F2 `format`: `auto` (absent) keeps the target's form — an existing `.motion` bundle directory stays a bundle, else one JSON file; `json`; `bundle` — the page's `.motion` directory format (bundleCodec chunks, only changed chunks rewritten, manifest last; `motion-blob:` footage the target lacks copied in from the bundle the document came from, with its registry rows); `portable` — portableMotion.ts's STORE zip with reachable footage under `assets/` (Save Portable Copy; `copy:true` only, else `invalidArgument`). A bundle over a plain file, or `json` over a directory, is `io` and writes nothing. `openProject` / `revertProject` / `importProject` read a directory as a bundle. F2: `openProject` of a portable `.motion` ZIP opens an untitled copy (projectPath `''`, a `portable:` warning); the C++ engine unpacks its `assets/` footage content-addressed (SHA-256) into a staging bundle under `<temp>/premation-portable/<fnv(path)>` with registry rows (the layer's `assetId` kept) and rewrites each `src` to `motion-blob:<sha256>`, so a later bundle save collects it; STORE entries only (`io` for DEFLATE, a bad CRC, or a zip without a manifest/scene). The TypeScript engine unpacks through portableMotion.ts (port `readPortable`). |
+| `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). F2 `format`: `auto` (absent) keeps the target's form — an existing `.motion` bundle directory stays a bundle, else one JSON file; `json`; `bundle` — the page's `.motion` directory format (bundleCodec chunks, only changed chunks rewritten, manifest last; `motion-blob:` footage the target lacks copied in from the bundle the document came from, with its registry rows); `portable` — portableMotion.ts's STORE zip with reachable footage under `assets/` (Save Portable Copy; `copy:true` only, else `invalidArgument`). A bundle over a plain file, or `json` over a directory, is `io` and writes nothing. `openProject` / `revertProject` / `importProject` read a directory as a bundle. F2: `openProject` of a portable `.motion` ZIP opens an untitled copy (projectPath `''`, a `portable:` warning); the C++ engine unpacks its `assets/` footage content-addressed (SHA-256) into a staging bundle under `<temp>/premation-portable/<fnv(path)>` with registry rows (the layer's `assetId` kept) and rewrites each `src` to `motion-blob:<sha256>`, so a later bundle save collects it; STORE and DEFLATE entries (DEFLATE inflated to exactly its declared size through the shared zlib FFI, `core/deflate_ffi.cpp`, 2026-09-27; `io` for another method, a bad CRC, an entry that does not inflate to its size, or a zip without a manifest/scene). The TypeScript engine unpacks through portableMotion.ts (port `readPortable`). |
 | `collectFiles` | io | Copy project + used files to a folder; document unchanged. |
 | `setAutosave` | control | Recovery cadence (a preference the engine executes). |
 | `importProject` | edit | Import `.motion`/`.aep`/`.aepx` into a new folder. Inverse: remove every imported item. |
@@ -329,6 +329,8 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `setGuides` | edit | F2 — patch the persisted guide settings (rulers, grids, safe areas, motion-path display, overlay opacity, ruler guides, camera bookmarks); keys replace, sanitized as on open, unknown keys ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings. |
 | `setSwatches` | edit | F2 — replace the project palette, in order. Colours canonicalized; a non-hex colour is `invalidArgument`; empty or repeated ids re-minted (`sw_doc_<n>`). Inverse: the previous palette. |
 | `setMaterials` | edit | F2 — replace the project material library, in order. `params` normalized; non-object params are `invalidArgument`; empty, repeated or `builtin:` ids re-minted (`mat_doc_<n>`). Inverse: the previous library. |
+| `setMotionBlur` | edit | F2 — patch the project's motion-blur record (motionBlurStore: the Enable Motion Blur master switch, shutter angle/phase, samples, adaptive limit), clamped as on open (angle 0…360, phase ±360, samples 2…32, limit 2…128); non-finite angle/phase `invalidArgument`. One record per document: every comp reports it as `CompSettings.motionBlur`, and `setCompositionSettings{motionBlur}` (the per-comp route) writes the same record with the same clamps (the C++ engine did not clamp before 2026-09-27). Inverse: the previous record. |
+| `setColorManagement` | edit | F2 — patch working space (`srgbLinear`/`acesCg`), display transform (`srgb`/`aces`/`pq`/`hlg`) and intermediate bit depth (16/32; anything else `invalidArgument`). Inverse: the previous settings. |
 
 ### 4.2 Items (footage, folders) and render queue
 
@@ -468,6 +470,48 @@ on an effect or mask path — one command, one inverse implementation.
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
 | `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
+
+**Engine jobs (2026-09-27, branch `engine-jobs`; C++ engine only — the TypeScript engine answers `startJob` `unsupported` and the UI then runs its page path).**
+The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
+`engine_core`: `jobs/job_runner`, `core/session_jobs.cpp`):
+
+1. **prepare** (core thread) validates the spec against the document and copies
+   out what the work reads — a footage layer's file (`motion-blob:` resolved in
+   the bundle, `file://` / `local-file://` decoded; a session `blob:` is
+   `unsupported`), its timing, the comp's rate. A refusal is `startJob`'s answer
+   and nothing is queued. Ids: `job_<n>` (session state; `getJobs` lists the last 64).
+2. **work** (a worker thread; two workers) decodes and analyses, never touching
+   the document; `jobProgress` (ephemeral, ≤ 20/s per job) carries `JobInfo`
+   {status, progress, message}. A job that loads a model (objectMatte) runs its
+   work in a child `premation-engine --job FILE` (JSON lines on stdout), so a
+   crash fails the job, not the engine; renders run a child `--export`.
+3. **apply** (core thread) writes the result through ordinary commands inside
+   ONE journal: one history entry, `origin: engine`, the label below, the usual
+   events; a failing command (the layer was deleted meanwhile) rolls the whole
+   result back and the job ends `failed` with that error. Held while a gesture
+   is open. `apply:false` holds the result: `jobFinished` (status `done`,
+   `applied:false`) → `applyJobResult` (once; again `jobFinished`, `applied:true`)
+   or `cancelJob` (drops it). A new / opened / reverted document cancels running
+   jobs and drops held results. `JobInfo.result` is the kind's summary (JSON).
+
+| Kind | Reference (TS) | Writes (one entry) | `result` |
+|---|---|---|---|
+| `trackMotion` | tracker.ts, patchMatch.ts, autoTrack.ts merge, planarFit / Homography; applyTrack.ts plans | with `applyTo`: keys spliced into the span (`addKeyframes` + `deleteKeyframes` of the keys the span drops) — follow (layer / camera POI), position-rotation-scale (2 points), corner pin (`addEffect corner-pin` if missing; RANSAC beyond 4 points); `stabilize:true`: planStabilize on the tracked layer. No `applyTo`: nothing ("Track Motion") | `{kind, direction, status, sourceWidth, sourceHeight, tracks:[[[t,x,y,conf,coasted]…]…]}` |
+| `stabilize` | globalMotion.ts + smoothStabilize.ts (similarity) | position (+ rotation, scale per `method`) keys on the layer | `{fittedPairs, totalPairs, …}` |
+| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace") | `{pathsAdded, keyframes, frames}` |
+| `sceneDetect` | sceneEditDetect.ts / sceneEditDetectLayer.ts | "Cut N" / "Dissolve N" comp markers, or `splitLayers` at every cut | `{cutsCompSec, dissolvesCompSec, mode}` |
+| `objectMatte` | samPipeline.ts / samSegment.ts / objectMask.ts (SlimSAM ONNX pair) | `addMask` "Object mask" + feather 2 ("Object Mask") | `{contourPoints, engine, iou}` |
+| `audioAnalysis` | beatGrid + @motion/audio, audioKeyframes.ts, silenceRemoval.ts | `setKeyframes` on `audioAmplitude`; "Beat N" markers (`beatMarkers`); Remove Silence's split / delete / local-ripple steps on the paired layers | `{amplitude:{keyframes,keys}, beats:{bpm,tempoConfidence,beatsCompSec,onsetsCompSec}, silence:{ranges,totalSec,gaps,secondsRemoved,layers}}` |
+| `audioDuck` / `audioGate` | ducking.ts / audioGate.ts, audioDriver's detector | `audio/ducking` \| `audio/gate` record, expression on `audio/levels` cleared, `setKeyframes` on `audio/levels` ("Duck Music" / "Noise Gate") | `{keyframes, keys, start, end, fps, envelope, peakDuckDb?, closedFraction?}` |
+| `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
+| `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
+| `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
+| `transcribe` | captions/transcribe.ts | — `unsupported`: the page transcribes through the user's speech provider in Electron main (the key never leaves main); no local model ships | — |
+
+Limits: the jobs read FOOTAGE (a layer's own decoded frames), not a solo
+render of the layer — auto-trace ignores the layer's effects; retimed layers
+are refused. A job's result is not in the command log (it is not a request),
+so a replay after an engine crash does not reproduce it.
 
 ### 4.10 Transport and viewport — §6.
 
@@ -643,6 +687,8 @@ compute.
 | `guidesChanged` | F2 — the guide settings (full replacement, as `DocumentSnapshot.guides`), after `setGuides`, a restore or their undo. |
 | `swatchesChanged` | F2 — the project palette (full replacement). |
 | `materialsChanged` | F2 — the project material library (full replacement). |
+| `motionBlurChanged` | F2 — the motion-blur record (full replacement, as `DocumentSnapshot.motionBlur`), after `setMotionBlur`, `setCompositionSettings{motionBlur}`, a restore or their undo; every comp's `compositionChanged` follows too. |
+| `colorManagementChanged` | F2 — colour management (full replacement, as `DocumentSnapshot.colorManagement`), after `setColorManagement`, `setProjectSettings`, a restore or their undo. |
 | `renderQueueChanged` | All render items. |
 
 Ephemeral (no revision, `fromRevision == toRevision`): `historyChanged`,

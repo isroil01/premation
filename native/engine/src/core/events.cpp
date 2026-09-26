@@ -338,6 +338,8 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
   if (before.guides) events.push_back(make_event(api::GuidesChangedEvent{guides_info(d)}));
   if (before.swatches) events.push_back(make_event(api::SwatchesChangedEvent{swatch_infos(d)}));
   if (before.materials) events.push_back(make_event(api::MaterialsChangedEvent{material_infos(d)}));
+  if (before.mb) events.push_back(make_event(api::MotionBlurChangedEvent{motion_blur_info(d)}));
+  if (before.cm) events.push_back(make_event(api::ColorManagementChangedEvent{color_management_info(d)}));
   return events;
 }
 

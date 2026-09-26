@@ -100,6 +100,16 @@
     "type": "setMaterials"
   },
   {
+    "id": 724,
+    "kind": "edit",
+    "type": "setMotionBlur"
+  },
+  {
+    "id": 725,
+    "kind": "edit",
+    "type": "setColorManagement"
+  },
+  {
     "id": 50,
     "kind": "edit",
     "type": "importFiles"

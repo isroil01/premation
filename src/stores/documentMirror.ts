@@ -45,7 +45,7 @@
  * `transitions:<comp>`, `items`, `item:<id>`, `tree:<id>`,
  * `prop:<id>|<path>`, `keys:<id>`, `key:<id>|<path>`, `value:<id>|<path>`,
  * `history`, `status`, `settings`, `renderQueue`, `errors:<comp>`, `doc`,
- * and (F2) `guides`, `swatches`, `materials`
+ * and (F2) `guides`, `swatches`, `materials`, `motionBlur`, `colorManagement`
  * (anything revisioned). Listeners are called ONCE per batch however many
  * keys they matched — one React update per engine batch, never per event
  * (CLAUDE.md "no React render per played frame"; the playhead is not in here
@@ -75,6 +75,8 @@ import type {
   LayerError,
   LayerInfo,
   LibraryMaterial,
+  MotionBlurSettings,
+  ColorManagementSettings,
   Marker,
   ProjectSettings,
   PropertyInfo,
@@ -167,6 +169,11 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 /** `next` unless it equals `prev`, in which case `prev` (identity survives a restatement). */
+/** The motion-blur record of a new project (motionBlurStore's defaults), until the first snapshot. */
+const DEFAULT_MIRROR_MOTION_BLUR: MotionBlurSettings = { shutterAngle: 180, shutterPhase: -90, samplesPerFrame: 8, adaptiveSampleLimit: 128, enabled: true };
+/** Colour management of a new project (colorManagementStore's defaults). */
+const DEFAULT_MIRROR_COLOR_MANAGEMENT: ColorManagementSettings = { workingSpace: 'srgbLinear', displayTransform: 'srgb', bitDepth: 16 };
+
 function keep<T>(prev: T | undefined, next: T): T {
   return prev !== undefined && same(prev, next) ? prev : next;
 }
@@ -237,6 +244,8 @@ export class DocumentMirror {
   private guidesValue = '{}';
   private swatchesValue: readonly Swatch[] = [];
   private materialsValue: readonly LibraryMaterial[] = [];
+  private motionBlurValue: MotionBlurSettings = DEFAULT_MIRROR_MOTION_BLUR;
+  private colorManagementValue: ColorManagementSettings = DEFAULT_MIRROR_COLOR_MANAGEMENT;
   private historyValue: MirrorHistory | null = null;
   private readonly errors = new Map<string, readonly LayerError[]>();
 
@@ -301,6 +310,10 @@ export class DocumentMirror {
   get swatches(): readonly Swatch[] { return this.swatchesValue; }
   /** F2: the project material library (user materials), in order. */
   get materials(): readonly LibraryMaterial[] { return this.materialsValue; }
+  /** F2: the project's motion-blur record (master switch + shutter; every comp reports the same). */
+  get motionBlur(): MotionBlurSettings { return this.motionBlurValue; }
+  /** F2: the project's colour management (working space, display transform, bit depth). */
+  get colorManagement(): ColorManagementSettings { return this.colorManagementValue; }
   get history(): MirrorHistory | null { return this.historyValue; }
 
   item(id: string): ItemInfo | undefined { return this.itemsValue.get(id); }
@@ -605,6 +618,8 @@ export class DocumentMirror {
     this.guidesValue = doc.guides || '{}';
     this.swatchesValue = keep(this.swatchesValue as Swatch[], doc.swatches ?? []);
     this.materialsValue = keep(this.materialsValue as LibraryMaterial[], doc.materials ?? []);
+    this.motionBlurValue = keep(this.motionBlurValue, doc.motionBlur ?? DEFAULT_MIRROR_MOTION_BLUR);
+    this.colorManagementValue = keep(this.colorManagementValue, doc.colorManagement ?? DEFAULT_MIRROR_COLOR_MANAGEMENT);
     this.values.clear();
     this.early.clear();
     // Trees describe the previous document: refetch the retained ones, drop the rest.
@@ -972,6 +987,22 @@ export class DocumentMirror {
           if (next !== this.materialsValue) {
             this.materialsValue = next;
             this.touch('materials');
+          }
+          break;
+        }
+        case 'motionBlurChanged': {
+          const next = keep(this.motionBlurValue, e.motionBlur);
+          if (next !== this.motionBlurValue) {
+            this.motionBlurValue = next;
+            this.touch('motionBlur');
+          }
+          break;
+        }
+        case 'colorManagementChanged': {
+          const next = keep(this.colorManagementValue, e.colorManagement);
+          if (next !== this.colorManagementValue) {
+            this.colorManagementValue = next;
+            this.touch('colorManagement');
           }
           break;
         }

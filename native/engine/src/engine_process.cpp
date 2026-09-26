@@ -25,6 +25,10 @@
 #if defined(PREMATION_HAVE_SCENE)
 #include "scene/engine_frames.hpp"
 #endif
+#if defined(PREMATION_HAVE_JOBS)
+#include "jobs/child_job.hpp"
+#include "jobs/job_kinds.hpp"
+#endif
 
 namespace premation {
 namespace {
@@ -279,6 +283,17 @@ int run_engine(const EngineOptions& options) {
 #if defined(PREMATION_HAVE_SCENE)
   session.set_frame_builder(frameBuilder.get());
   session.set_media_clock(mediaClock.get());
+#endif
+#if defined(PREMATION_HAVE_JOBS)
+  // Engine jobs (jobs/job_api.hpp). The kinds are only read by `prepare` on
+  // this thread (a running job's work owns copies of its inputs); a
+  // model-loading job's work runs in a child of this executable (`--job`),
+  // proxies and renders use the export's ffmpeg.
+  jobs::set_child_executable(os::executable_path());
+  jobs::set_ffmpeg_executable(os::env_var("PREMATION_FFMPEG").value_or(""));
+  jobs::register_child_works();
+  const std::unique_ptr<jobs::JobKinds> jobKinds = jobs::make_job_kinds();
+  session.set_job_kinds(jobKinds.get());
 #endif
   int exitCode = kExitOk;
   bool running = true;

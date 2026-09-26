@@ -791,3 +791,59 @@ TEST_CASE("session: composition JSON fields are stored, read back, cleared and u
   bad.patch.template_fields = R"({"not":"an array"})";
   CHECK(is_error(h.run(cmd(bad)), api::ErrorCode::invalid_argument));
 }
+
+TEST_CASE("session: motion blur and colour management are undoable document records", "[session][f2]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const DocState before = state_of(h.session.document());
+
+  const std::size_t mark = h.messages.size();
+  api::SetMotionBlur mb;
+  mb.patch.enabled = false;
+  mb.patch.shutter_angle = 400;  // clamped to 360, as motionBlurStore.restore
+  mb.patch.samples_per_frame = 1;  // clamped to 2
+  REQUIRE(is_ok(h.run(cmd(mb))));
+  const auto batches = h.batches_since(mark);
+  REQUIRE(batches.size() == 1);
+  const auto mbe = events_of<api::MotionBlurChangedEvent>(batches[0].events);
+  REQUIRE(mbe.size() == 1);
+  CHECK(mbe[0].motion_blur.shutter_angle == Approx(360));
+  CHECK(mbe[0].motion_blur.samples_per_frame == 2);
+  CHECK(mbe[0].motion_blur.enabled == std::optional<bool>(false));
+  // Every composition reports the record.
+  CHECK_FALSE(events_of<api::CompositionChangedEvent>(batches[0].events).empty());
+  api::GetComposition q;
+  q.comp = comp;
+  CHECK(query<api::CompositionDetails>(h, qry(q)).comp.settings.motion_blur.shutter_angle == Approx(360));
+
+  api::SetColorManagement cm;
+  cm.patch.working_space = api::RenderWorkingSpace::aces_cg;
+  cm.patch.display_transform = api::RenderDisplayTransform::pq;
+  cm.patch.bit_depth = 32;
+  REQUIRE(is_ok(h.run(cmd(cm))));
+  api::GetDocument gd;
+  const auto snap = query<api::DocumentSnapshot>(h, qry(gd));
+  CHECK(snap.color_management.working_space == api::RenderWorkingSpace::aces_cg);
+  CHECK(snap.color_management.display_transform == api::RenderDisplayTransform::pq);
+  CHECK(snap.color_management.bit_depth == 32);
+  CHECK(snap.motion_blur.shutter_angle == Approx(360));
+
+  api::SetColorManagement bad;
+  bad.patch.bit_depth = 8;
+  CHECK(is_error(h.run(cmd(bad)), api::ErrorCode::invalid_argument));
+
+  // The per-comp route writes the same record with the same clamps.
+  api::SetCompositionSettings s;
+  s.comp = comp;
+  s.patch.motion_blur = api::MotionBlurSettings{-5, 900, 64, 500, true};
+  REQUIRE(is_ok(h.run(cmd(s))));
+  const auto after = query<api::DocumentSnapshot>(h, qry(gd)).motion_blur;
+  CHECK(after.shutter_angle == Approx(0));
+  CHECK(after.shutter_phase == Approx(360));
+  CHECK(after.samples_per_frame == 32);
+  CHECK(after.adaptive_sample_limit == 128);
+
+  for (int i = 0; i < 3; ++i) REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(state_of(h.session.document()) == before);
+}

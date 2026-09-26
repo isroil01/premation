@@ -90,6 +90,12 @@ export interface RenderJobSpec {
   /** mov only — ProRes flavour, captured from the dialog at queue time. */
   proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
   /**
+   * mov only — 16 bits per channel (F1). Honoured only by main's queue on the
+   * engine export path (`export:capabilities` bitDepth16); the in-window queue
+   * renders 8 bits whatever this says.
+   */
+  bitDepth?: 8 | 16;
+  /**
    * mp4 only — the H.264/HEVC encoder, captured from Settings at queue time
    * for the same reason the range is: a preference changed while the job
    * waits must not change what the job was queued to produce.
