@@ -46,7 +46,7 @@ import {
   selectedVideoLayerId,
   type AssembleTarget,
 } from '@layout/Assets/footageAssembly';
-import { selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
+import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
@@ -1577,7 +1577,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       id: asCommandId('comp.multicam'),
       label: 'New Multicam from Library…',
       icon: 'layers',
-      enabled: () => useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image').length >= 2,
+      // B4: two or more video / still items in the project (`ItemInfo.mediaType`, the document mirror).
+      enabled: () => [...documentMirror().items.values()].filter((i) => i.kind === 'footage' && (i.mediaType === 'video' || i.mediaType === 'image')).length >= 2,
       execute: async () => {
         const vids = useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image');
         if (vids.length < 2) return;
@@ -1601,7 +1602,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       id: asCommandId('comp.newFromSelectedClips'),
       label: 'New Composition from Selected Clips…',
       icon: 'component',
-      enabled: () => selectedPanelFootage().length > 0,
+      // B4: the panel's selection that is video / still footage, from the document mirror.
+      enabled: () => panelAssetSelectionIds().some((id) => {
+        const i = documentMirror().item(id);
+        return i?.kind === 'footage' && (i.mediaType === 'video' || i.mediaType === 'image');
+      }),
       execute: () => {
         const assets = selectedPanelFootage();
         if (assets.length === 0) {

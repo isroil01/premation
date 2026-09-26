@@ -17,11 +17,10 @@
 
 import { useUIStore } from '@stores/uiStore';
 import { customPrompt } from '@components/Modal';
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import type { ImportedAsset } from '@stores/assetStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { assetIdOf } from '@core/source/sourceInfo';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { settingsFps } from '@core/mirror/compFacts';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { detectForAssembly } from '@core/composition/assembleFromFootage';
 import { assembleShotsEdit, newCompFromClipsEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
@@ -96,15 +95,13 @@ export type AssembleTarget =
   | { kind: 'layer'; nodeId: string }
   | { kind: 'asset'; asset: ImportedAsset };
 
-/** The first selected layer whose source is a video asset, or null. */
+/** The first selected layer whose source is a video item, or null (B4: the document mirror). */
 export function selectedVideoLayerId(): string | null {
-  const assets = useAssetStore.getState().assets;
+  const m = documentMirror();
   for (const id of useSelectionStore.getState().ids) {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) continue;
-    const assetId = assetIdOf(node);
-    if (!assetId) continue;
-    if (assets.find((a) => a.id === assetId)?.type === 'video') return id;
+    const source = m.layer(id)?.source;
+    const item = source ? m.item(source) : undefined;
+    if (item?.kind === 'footage' && item.mediaType === 'video') return id;
   }
   return null;
 }
@@ -126,20 +123,20 @@ export function selectedVideoLayerId(): string | null {
  * is the thing this feature promises.
  */
 export async function runAssembleFromFootage(target: AssembleTarget): Promise<void> {
-  const controller = getTimelineController();
+  const m = documentMirror();
 
   // The dialog opens FIRST, before anything is created or read, so Cancel is
   // free. Its frame rate is the one the result will be quoted in: the layer's
   // comp, or the rate the file itself reports for footage with no comp yet.
   const fps =
     target.kind === 'layer'
-      ? controller.fpsForNode(target.nodeId) || DEFAULT_COMPOSITION.fps
+      ? settingsFps(m.comp(m.layer(target.nodeId)?.comp ?? '')?.settings, 0) || DEFAULT_COMPOSITION.fps
       : target.asset.metadata?.fps && target.asset.metadata.fps > 0
         ? target.asset.metadata.fps
         : DEFAULT_COMPOSITION.fps;
   const name =
     target.kind === 'layer'
-      ? (defaultSceneGraph.getNode(target.nodeId)?.name ?? 'the clip')
+      ? (m.layer(target.nodeId)?.name ?? 'the clip')
       : target.asset.name;
 
   const opts = await openAssembleDialog(name, fps);

@@ -24,10 +24,10 @@ import {
 } from '@core/paint/fill';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { useCompositionStore, sanitize as sanitizeComp } from '@stores/compositionStore';
+import { sanitize as sanitizeComp } from '@stores/compositionStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
-import { settingsFps } from '@core/mirror/compFacts';
+import { compRecordFromSettings, settingsFps } from '@core/mirror/compFacts';
 import {
   resolveSsao,
   resolvePixelAspect,
@@ -114,11 +114,21 @@ function useDraft(initial: CompRecord): {
   };
 }
 
+/** The active composition's record, from the mirror (a blank default when the document has none yet). */
+function initialRecord(): CompRecord {
+  const id = activeCompIdNow() ?? '';
+  const settings = documentMirror().comp(id)?.settings;
+  return settings
+    ? compRecordFromSettings(id, settings)
+    : { id, name: 'Composition', width: 1920, height: 1080, fps: 30, durationSeconds: 10, background: '#000000', transparent: false, startFrame: 0 };
+}
+
 /** FPS chips match a typed rate within display precision (23.976 is not exactly representable). */
 const sameRate = (a: number, b: number): boolean => Math.abs(a - b) < 1e-3;
 
 export function CompositionSettings({ close }: { close?: () => void }): JSX.Element {
-  const initialComp = useRef(useCompositionStore.getState().comp()).current;
+  // B4: the draft starts from the active composition's settings in the document mirror.
+  const initialComp = useRef(initialRecord()).current;
   const { s, update, setBackgroundPaint, setTransparent } = useDraft(initialComp);
 
   const [activeTab, setActiveTab] = useState<TabId>('general');

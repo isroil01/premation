@@ -23,11 +23,10 @@ import { framesToFlicks } from '@core/engine/time';
 import { labelIndexOf } from '@core/engine/model';
 import { isLayer } from '@core/engine/doc';
 import { parseColorChannels } from '@core/effects/effects';
-import { pristineCompToAdopt } from '@core/composition/compositionOps';
 import { openLayerComposition } from '@core/composition/compNavigation';
 import type { AutoOrientMode } from '@core/scene/autoOrient';
 import { mirrorAutoOrientMode, mirrorCanAutoOrient, mirrorCanBe3D } from '@core/mirror/layerFacts';
-import { settingsFps } from '@core/mirror/compFacts';
+import { mirrorPristineCompToAdopt, settingsFps } from '@core/mirror/compFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { layerSettingsKind, sanitizeLayerSize, type LayerSettingsValues } from '@core/scene/layerSettings';
@@ -94,7 +93,8 @@ function newCompPatch(init: NewCompositionInit): CompSettingsPatch {
  */
 export async function createCompositionEdit(init: NewCompositionInit): Promise<string | null> {
   const patch = newCompPatch(init);
-  const adopt = pristineCompToAdopt();
+  // B4: the pristine placeholder from the document mirror (`CompSettings.pristine`, no layers).
+  const adopt = mirrorPristineCompToAdopt(documentMirror());
   let id: string;
   if (adopt) {
     const res = await edit('New Composition', { type: 'setCompositionSettings', comp: adopt, patch });

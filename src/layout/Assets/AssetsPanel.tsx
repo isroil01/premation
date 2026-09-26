@@ -177,7 +177,8 @@ export function AssetsPanel(): JSX.Element {
   const folders = useAssetStore((s) => s.folders);
   // The label menu through the engine (B3z): setItemLabel stores the palette id this panel reads.
   const setLabel = (ids: string[], labelId: string | null): void => {
-    const items = ids.filter((id) => useAssetStore.getState().assets.some((a) => a.id === id));
+    const m = documentMirror();
+    const items = ids.filter((id) => m.item(id)?.kind === 'footage');
     void setItemLabelEdit(items, labelId);
   };
   const setTags = (assetId: string, tags: string[]): void => { void setItemTagsEdit([{ id: assetId, tags }]); };
@@ -248,7 +249,7 @@ export function AssetsPanel(): JSX.Element {
       const folder = currentFolderRef.current;
       const { imported, failed } = await importPathsEdit(
         chosen,
-        folder && useAssetStore.getState().folders.some((f) => f.id === folder) ? folder : null,
+        folder && documentMirror().item(folder)?.kind === 'folder' ? folder : null,
       );
       if (failed.length > 0) {
         const names = failed.map((p) => p.replace(/^.*[\\/]/, ''));
