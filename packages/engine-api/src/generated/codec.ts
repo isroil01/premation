@@ -8474,6 +8474,28 @@ function decS_CopyKeyframes(r: Reader, end: number, o: any): T.CopyKeyframes {
   o.keys = l_keys;
   return o;
 }
+function encS_GetMemberKeyframes(w: Writer, v: T.GetMemberKeyframes): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.members; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_GetMemberKeyframes(r: Reader, end: number, o: any): T.GetMemberKeyframes {
+  const l_members: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_members.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetMemberKeyframes.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.members = l_members;
+  return o;
+}
 function encS_CopyEffects(w: Writer, v: T.CopyEffects): void {
   w.byte(10); w.str(v.layer);
   { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
@@ -8494,6 +8516,70 @@ function decS_CopyEffects(r: Reader, end: number, o: any): T.CopyEffects {
   if (!h_layer) throw new DecodeError('CopyEffects.layer: missing', 'missingField');
   o.layer = v_layer;
   o.effects = l_effects;
+  return o;
+}
+function encS_MemberTrack(w: Writer, v: T.MemberTrack): void {
+  w.byte(10); w.str(v.member);
+  w.byte(18); w.str(v.path);
+  w.byte(24); w.u32(v.index);
+  w.byte(34); w.str(v.keyframes);
+  w.byte(40); w.u32(v.count);
+  w.byte(48); w.bool(v.hasExpression);
+}
+function decS_MemberTrack(r: Reader, end: number, o: any): T.MemberTrack {
+  let h_member = false;
+  let h_path = false;
+  let h_index = false;
+  let h_keyframes = false;
+  let h_count = false;
+  let h_hasExpression = false;
+  let v_member: string | undefined;
+  let v_path: string | undefined;
+  let v_index: number | undefined;
+  let v_keyframes: string | undefined;
+  let v_count: number | undefined;
+  let v_hasExpression: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_member = r.str(); h_member = true; break;
+      case 18: v_path = r.str(); h_path = true; break;
+      case 24: v_index = r.u32(); h_index = true; break;
+      case 34: v_keyframes = r.str(); h_keyframes = true; break;
+      case 40: v_count = r.u32(); h_count = true; break;
+      case 48: v_hasExpression = r.bool(); h_hasExpression = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_member) throw new DecodeError('MemberTrack.member: missing', 'missingField');
+  if (!h_path) throw new DecodeError('MemberTrack.path: missing', 'missingField');
+  if (!h_index) throw new DecodeError('MemberTrack.index: missing', 'missingField');
+  if (!h_keyframes) throw new DecodeError('MemberTrack.keyframes: missing', 'missingField');
+  if (!h_count) throw new DecodeError('MemberTrack.count: missing', 'missingField');
+  if (!h_hasExpression) throw new DecodeError('MemberTrack.hasExpression: missing', 'missingField');
+  o.member = v_member;
+  o.path = v_path;
+  o.index = v_index;
+  o.keyframes = v_keyframes;
+  o.count = v_count;
+  o.hasExpression = v_hasExpression;
+  return o;
+}
+function encS_MemberTracks(w: Writer, v: T.MemberTracks): void {
+  { const a = v.tracks; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_MemberTrack(w, a[i]!); w.endLd(s); } } }
+}
+function decS_MemberTracks(r: Reader, end: number, o: any): T.MemberTracks {
+  const l_tracks: T.MemberTrack[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_tracks.push(decS_MemberTrack(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.tracks = l_tracks;
   return o;
 }
 function encS_CopiedEffects(w: Writer, v: T.CopiedEffects): void {
@@ -14251,6 +14337,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
     case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_GetSvgDocument(w, v); w.endLd(s); } return;
     case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_GetCryptomatte(w, v); w.endLd(s); } return;
+    case 'getMemberKeyframes': w.varint(15146); { const s = w.beginLd(); encS_GetMemberKeyframes(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14300,6 +14387,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
       case 15130: out = decS_GetSvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.Query; break;
       case 15138: out = decS_GetCryptomatte(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.Query; break;
+      case 15146: out = decS_GetMemberKeyframes(r, r.ldEnd(), { type: 'getMemberKeyframes' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -14349,6 +14437,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
     case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_SvgDocument(w, v); w.endLd(s); } return;
     case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_CryptomatteInfo(w, v); w.endLd(s); } return;
+    case 'getMemberKeyframes': w.varint(15146); { const s = w.beginLd(); encS_MemberTracks(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14398,6 +14487,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
       case 15130: out = decS_SvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.QueryResult; break;
       case 15138: out = decS_CryptomatteInfo(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.QueryResult; break;
+      case 15146: out = decS_MemberTracks(r, r.ldEnd(), { type: 'getMemberKeyframes' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -14769,7 +14859,10 @@ export const codecs = {
   GetMarkers: mk<T.GetMarkers>(encS_GetMarkers, (r, e) => decS_GetMarkers(r, e, {})),
   CopyLayers: mk<T.CopyLayers>(encS_CopyLayers, (r, e) => decS_CopyLayers(r, e, {})),
   CopyKeyframes: mk<T.CopyKeyframes>(encS_CopyKeyframes, (r, e) => decS_CopyKeyframes(r, e, {})),
+  GetMemberKeyframes: mk<T.GetMemberKeyframes>(encS_GetMemberKeyframes, (r, e) => decS_GetMemberKeyframes(r, e, {})),
   CopyEffects: mk<T.CopyEffects>(encS_CopyEffects, (r, e) => decS_CopyEffects(r, e, {})),
+  MemberTrack: mk<T.MemberTrack>(encS_MemberTrack, (r, e) => decS_MemberTrack(r, e, {})),
+  MemberTracks: mk<T.MemberTracks>(encS_MemberTracks, (r, e) => decS_MemberTracks(r, e, {})),
   CopiedEffects: mk<T.CopiedEffects>(encS_CopiedEffects, (r, e) => decS_CopiedEffects(r, e, {})),
   CompositionDetails: mk<T.CompositionDetails>(encS_CompositionDetails, (r, e) => decS_CompositionDetails(r, e, {})),
   LayerDetails: mk<T.LayerDetails>(encS_LayerDetails, (r, e) => decS_LayerDetails(r, e, {})),

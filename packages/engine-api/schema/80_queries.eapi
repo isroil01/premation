@@ -190,8 +190,25 @@ query getMarkers = 1008 { owner: MarkerOwner = 1; range?: TimeRange = 2; } -> Ma
 query copyLayers = 1009 { layers: LayerId[] = 1; } -> DocumentFragment;
 /// B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard.
 query copyKeyframes = 1889 { keys: KeyframeId[] = 1; } -> KeyframeSets;
+/// B4 — a layer's stored MEMBER keyframe lists: every animated member track (a keyed track — `x` keyed apart from `y` on an unseparated Position, a colour channel, an effect param, a track outside the catalog — then the expression-only ones), in the engine's order, with its keyframe records in the stored form the keyframe assistants (The Smoother, The Wiggler, the motion editor) transform. The API's own key lists are per PROPERTY (§3.3); these are the assistants' input, written back as `setKeyframes` per property. `members` narrows to those tracks (empty = all).
+query getMemberKeyframes = 1893 { layer: LayerId = 1; members: string[] = 2; } -> MemberTracks;
 /// B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped.
 query copyEffects = 1890 { layer: LayerId = 1; effects: PropPath[] = 2; } -> CopiedEffects;
+
+/// B4 — one member track (getMemberKeyframes).
+struct MemberTrack {
+  /// The stored track name (`x`, `scaleX`, `opacity`, `effect.<id>.<param>`, …).
+  member: string = 1;
+  /// The API property that owns the member ('' outside the catalog) and its index among the property's members.
+  path: PropPath = 2;
+  index: u32 = 3;
+  /// The keyframe records as stored, JSON: `[{t: keyframe-axis seconds, value: stored units, easing?, bezier?, si?, so?, spatialInterp?, continuous?, roving?, id?, label?}]` ('[]' for an expression-only member).
+  keyframes: string = 4;
+  count: u32 = 5;
+  /// The member carries an expression (enabled or not).
+  hasExpression: bool = 6;
+}
+struct MemberTracks { tracks: MemberTrack[] = 1; }
 
 /// B4 — copyEffects' answer.
 struct CopiedEffects {

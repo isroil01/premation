@@ -1027,6 +1027,7 @@ struct GetMotionPath;
 struct GetMarkers;
 struct CopyLayers;
 struct CopyKeyframes;
+struct GetMemberKeyframes;
 struct CopyEffects;
 struct GetWaveform;
 struct ListFonts;
@@ -1108,6 +1109,8 @@ struct PropertyValues;
 struct PropertySamples;
 struct KeyframeSets;
 struct MarkerList;
+struct MemberTrack;
+struct MemberTracks;
 struct CopiedEffects;
 struct WaveformPeaks;
 struct FontAxisInfo;
@@ -2983,6 +2986,12 @@ struct CopyKeyframes {
   bool operator==(const CopyKeyframes&) const = default;
 };
 
+struct GetMemberKeyframes {
+  LayerId layer;
+  std::vector<std::string> members;
+  bool operator==(const GetMemberKeyframes&) const = default;
+};
+
 struct CopyEffects {
   LayerId layer;
   std::vector<PropPath> effects;
@@ -3170,6 +3179,7 @@ struct Query {
     get_markers = 1008,
     copy_layers = 1009,
     copy_keyframes = 1889,
+    get_member_keyframes = 1893,
     copy_effects = 1890,
     get_waveform = 1020,
     list_fonts = 1021,
@@ -3199,7 +3209,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, CopyEffects, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3828,6 +3838,21 @@ struct MarkerList {
   bool operator==(const MarkerList&) const = default;
 };
 
+struct MemberTrack {
+  std::string member;
+  PropPath path;
+  std::uint32_t index = 0;
+  std::string keyframes;
+  std::uint32_t count = 0;
+  bool has_expression = false;
+  bool operator==(const MemberTrack&) const = default;
+};
+
+struct MemberTracks {
+  std::vector<MemberTrack> tracks;
+  bool operator==(const MemberTracks&) const = default;
+};
+
 struct CopiedEffects {
   std::string effects;
   std::vector<PropPath> paths;
@@ -4194,6 +4219,7 @@ struct QueryResult {
     get_markers = 1008,
     copy_layers = 1009,
     copy_keyframes = 1889,
+    get_member_keyframes = 1893,
     copy_effects = 1890,
     get_waveform = 1020,
     list_fonts = 1021,
@@ -4223,7 +4249,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, CopiedEffects, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -5410,6 +5436,8 @@ void encode(wire::Writer& w, const CopyLayers& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CopyLayers& out);
 void encode(wire::Writer& w, const CopyKeyframes& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CopyKeyframes& out);
+void encode(wire::Writer& w, const GetMemberKeyframes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetMemberKeyframes& out);
 void encode(wire::Writer& w, const CopyEffects& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CopyEffects& out);
 void encode(wire::Writer& w, const GetWaveform& v);
@@ -5572,6 +5600,10 @@ void encode(wire::Writer& w, const KeyframeSets& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, KeyframeSets& out);
 void encode(wire::Writer& w, const MarkerList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerList& out);
+void encode(wire::Writer& w, const MemberTrack& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MemberTrack& out);
+void encode(wire::Writer& w, const MemberTracks& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MemberTracks& out);
 void encode(wire::Writer& w, const CopiedEffects& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CopiedEffects& out);
 void encode(wire::Writer& w, const WaveformPeaks& v);

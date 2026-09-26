@@ -2844,10 +2844,34 @@ export interface CopyKeyframes {
   keys: KeyframeId[];
 }
 
+/** B4 — a layer's stored MEMBER keyframe lists: every animated member track (a keyed track — `x` keyed apart from `y` on an unseparated Position, a colour channel, an effect param, a track outside the catalog — then the expression-only ones), in the engine's order, with its keyframe records in the stored form the keyframe assistants (The Smoother, The Wiggler, the motion editor) transform. The API's own key lists are per PROPERTY (§3.3); these are the assistants' input, written back as `setKeyframes` per property. `members` narrows to those tracks (empty = all). */
+export interface GetMemberKeyframes {
+  layer: LayerId;
+  members: string[];
+}
+
 /** B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped. */
 export interface CopyEffects {
   layer: LayerId;
   effects: PropPath[];
+}
+
+/** B4 — one member track (getMemberKeyframes). */
+export interface MemberTrack {
+  /** The stored track name (`x`, `scaleX`, `opacity`, `effect.<id>.<param>`, …). */
+  member: string;
+  /** The API property that owns the member ('' outside the catalog) and its index among the property's members. */
+  path: PropPath;
+  index: number;
+  /** The keyframe records as stored, JSON: `[{t: keyframe-axis seconds, value: stored units, easing?, bezier?, si?, so?, spatialInterp?, continuous?, roving?, id?, label?}]` ('[]' for an expression-only member). */
+  keyframes: string;
+  count: number;
+  /** The member carries an expression (enabled or not). */
+  hasExpression: boolean;
+}
+
+export interface MemberTracks {
+  tracks: MemberTrack[];
 }
 
 /** B4 — copyEffects' answer. */
@@ -4372,6 +4396,7 @@ export type Query =
   | ({ type: 'getMarkers' } & GetMarkers)
   | ({ type: 'copyLayers' } & CopyLayers)
   | ({ type: 'copyKeyframes' } & CopyKeyframes)
+  | ({ type: 'getMemberKeyframes' } & GetMemberKeyframes)
   | ({ type: 'copyEffects' } & CopyEffects)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
@@ -4416,6 +4441,7 @@ export type QueryResult =
   | ({ type: 'getMarkers' } & MarkerList)
   | ({ type: 'copyLayers' } & DocumentFragment)
   | ({ type: 'copyKeyframes' } & KeyframeSets)
+  | ({ type: 'getMemberKeyframes' } & MemberTracks)
   | ({ type: 'copyEffects' } & CopiedEffects)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
@@ -4801,6 +4827,7 @@ export interface QueryArgs {
   getMarkers: GetMarkers;
   copyLayers: CopyLayers;
   copyKeyframes: CopyKeyframes;
+  getMemberKeyframes: GetMemberKeyframes;
   copyEffects: CopyEffects;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
@@ -4845,6 +4872,7 @@ export interface QueryResults {
   getMarkers: MarkerList;
   copyLayers: DocumentFragment;
   copyKeyframes: KeyframeSets;
+  getMemberKeyframes: MemberTracks;
   copyEffects: CopiedEffects;
   getWaveform: WaveformPeaks;
   listFonts: FontList;

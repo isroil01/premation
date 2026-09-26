@@ -35,6 +35,7 @@ import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimate
 import { valueAt } from './handlers/properties';
 import { textLayoutAnswer } from './textLayoutQuery';
 import { layerBoundsAnswer } from './layerBoundsQuery';
+import { memberTracksAnswer } from './memberKeysQuery';
 import { encodeFragment } from './handlers/layers';
 import { GROUP_TYPES } from './handlers/groups';
 import { checkTime, flicksToSeconds } from './time';
@@ -210,6 +211,9 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       }
       return { type: q.type, sets: [...picked.values()].map((e) => ({ prop: e.prop, keyframes: [...e.keys].sort((a, b) => a.time - b.time) })) };
     }
+    case 'getMemberKeyframes':
+      // B4: the stored member tracks the keyframe assistants transform (memberKeysQuery.ts).
+      return { type: q.type, tracks: memberTracksAnswer(q) };
     case 'copyEffects': {
       // B4: the effect clipboard's capture (effectClipboard.ts captureEffect), stack order.
       requireLayer(q.layer);

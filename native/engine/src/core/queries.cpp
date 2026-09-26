@@ -293,6 +293,39 @@ struct Q {
     out.sets = std::move(picked);
     return query_result_for<api::CopyKeyframes>(std::move(out));
   }
+  api::QueryResult operator()(const api::GetMemberKeyframes& q) const {
+    // B4: AnimationEngine.animatedProps (keyed tracks, then expression-only), keys as stored (memberKeysQuery.ts).
+    (void)require_layer(d, q.layer);
+    const std::set<std::string> wanted(q.members.begin(), q.members.end());
+    const Catalog& cat = query_catalog(c, q.layer);
+    api::MemberTracks out;
+    const NodeAnim* anim = d.anim(q.layer);
+    if (anim == nullptr) return query_result_for<api::GetMemberKeyframes>(std::move(out));
+    std::vector<std::string> members;
+    for (const auto& [prop, keys] : anim->tracks) members.push_back(prop);
+    for (const auto& [prop, st] : anim->exprs) {
+      if (std::find(members.begin(), members.end(), prop) == members.end()) members.push_back(prop);
+    }
+    for (const std::string& member : members) {
+      if (!wanted.empty() && !wanted.contains(member)) continue;
+      api::MemberTrack t;
+      t.member = member;
+      if (const PropBinding* b = cat.by_member(member)) {
+        t.path = b->path;
+        const auto at = std::find(b->members.begin(), b->members.end(), member);
+        t.index = static_cast<std::uint32_t>(at == b->members.end() ? 0 : at - b->members.begin());
+      }
+      Json list = Json::array();
+      if (const std::vector<Key>* keys = anim->tracks.find(member)) {
+        for (const Key& k : *keys) list.arr_mut().push_back(key_to_json(k));
+        t.count = static_cast<std::uint32_t>(keys->size());
+      }
+      t.keyframes = stringify(list);
+      t.has_expression = anim->exprs.contains(member);
+      out.tracks.push_back(std::move(t));
+    }
+    return query_result_for<api::GetMemberKeyframes>(std::move(out));
+  }
   api::QueryResult operator()(const api::CopyEffects& q) const {
     // B4: effectClipboard.ts captureEffect per picked effect, in stack order (queries.ts).
     (void)require_layer(d, q.layer);

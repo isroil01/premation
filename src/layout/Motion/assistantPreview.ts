@@ -47,21 +47,20 @@ export interface TrackPreview {
 }
 
 /**
- * B4-gap: the capture below is the exact "before" in the engine's own
- * per-member form (stored units, keyframe axis) — the assistants transform
- * member lists; the mirror holds one key list per PROPERTY in API units.
+ * Open a preview over the captured `originals` — each prop's keyframes in the
+ * engine's per-member stored form (stored units, keyframe axis), as the
+ * engine's `getMemberKeyframes` reports them (src/stores/memberTracks.ts):
+ * the exact "before" the assistants transform and Cancel restores.
  */
 export function beginTrackPreview(
   nodeId: string,
-  props: ReadonlyArray<PropPath>,
+  originals: ReadonlyMap<PropPath, ReadonlyArray<Keyframe>>,
   label: string,
 ): TrackPreview {
   const captured = new Map<PropPath, Keyframe[]>();
-  for (const prop of props) {
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-    // `getTrackKeyframes` already hands back copies; the clone here is against
-    // a future engine that stops doing so, since this array IS the revert state.
-    if (kfs && kfs.length) captured.set(prop, kfs.map((k) => ({ ...k })));
+  for (const [prop, kfs] of originals) {
+    // A copy: this array IS the revert state.
+    if (kfs.length) captured.set(prop, kfs.map((k) => ({ ...k })));
   }
   const always = new Map([[nodeId, new Set<string>(captured.keys())]]);
   let session: GestureSession | null = null;

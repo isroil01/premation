@@ -7,6 +7,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -254,4 +255,33 @@ TEST_CASE("getSvgDocument / LayerInfo.svg: none for an ordinary layer; getCrypto
   const auto missing = h.ask(qry(api::GetCryptomatte{"nope"}));
   REQUIRE_FALSE(is_ok(missing));
   CHECK(std::get<api::EngineError>(missing.outcome.v).code == api::ErrorCode::not_found);
+}
+
+TEST_CASE("getMemberKeyframes: the stored member tracks with their owning property", "[b4r2][members]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  api::AddKeyframes a;
+  for (const auto& [t, x] : std::vector<std::pair<api::Time, double>>{{0, 100}, {kSec, 300}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "transform/position"};
+    k.time = t;
+    k.value = vec2(x, 200);
+    a.keys.push_back(std::move(k));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  const auto all = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {}}));
+  const auto x = std::find_if(all.tracks.begin(), all.tracks.end(), [](const api::MemberTrack& t) { return t.member == "x"; });
+  REQUIRE(x != all.tracks.end());
+  CHECK(x->path == "transform/position");
+  CHECK(x->index == 0);
+  CHECK(x->count == 2);
+  const js::Json keys = parse_or_fail(x->keyframes);
+  REQUIRE(keys.arr().size() == 2);
+  CHECK(keys.arr()[1].at("t").num() == Approx(1));
+  CHECK(keys.arr()[1].at("value").num() == Approx(300));
+  const auto only = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {"y"}}));
+  REQUIRE(only.tracks.size() == 1);
+  CHECK(only.tracks[0].index == 1);
 }

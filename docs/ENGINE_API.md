@@ -574,6 +574,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `sampleProperty`, `getMotionPath` | Dense samples (+ speed) for the graph editor and motion paths. |
 | `getKeyframes`, `getMarkers` | Keyframe sets / markers, optionally in a range. |
 | `copyLayers` | A `DocumentFragment` for the clipboard. |
+| `getMemberKeyframes` | B4: a layer's stored MEMBER keyframe lists (every animated track, catalog or not) — the keyframe assistants' input (§15.12). |
 | `copyKeyframes`, `copyEffects` | B4: the keyframe / effect clipboards in API form — whole keys per property (`pasteKeyframes`), effect captures (`pasteEffects`) (§15.12). |
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. |
 | `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
@@ -1811,6 +1812,17 @@ from the struct's maximum + 800.
   (`storeEffectPreset`), and a paste compares a fresh capture of each source
   with the held one to choose `copyPropertyGroups` (still as copied) over the
   snapshot paste. TS `captureEffect`; C++ queries.cpp (keys as `key_to_json`).
+- **`getMemberKeyframes {layer, members}`** (1893 → `MemberTracks`): the
+  per-MEMBER key lists B4 lacked — every animated member track in
+  AnimationEngine order (keyed tracks, then expression-only ones; catalog or
+  not), each with the API property that owns it (`path`, '' outside the
+  catalog; `index` among its members), its stored keyframe records as JSON
+  (keyframe-axis seconds, stored units — what The Smoother / The Wiggler
+  transform) and whether it carries an expression. The editor caches it per
+  revision (src/stores/memberTracks.ts, `useMemberTracks`): the Smoother /
+  Wiggler menu predicates and track lists, the Motion editor's property list,
+  and the previews' "before" (`beginTrackPreview` takes the captured lists).
+  The assistants' writes stay `setKeyframes` per property (assistantKeys.ts).
 - **`LayerInfo.svg`** (920, enum `SvgRole {none, layer, converted}`): an SVG
   layer storing its document (the `svg` component's sanitized markup) / a group
   converted from one that retains the original source (Revert to Original SVG).

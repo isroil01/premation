@@ -138,8 +138,9 @@ import {
   timeReverseKeyframes,
   easyEaseAll,
 } from '@core/animation/keyframeAssistants';
-import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
-import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
+import { openSmootherDialog, smootherTracks, smootherTracksOf } from '@layout/Motion/SmootherDialog';
+import { openWigglerDialog, wigglerTracks, wigglerTracksOf } from '@layout/Motion/WigglerDialog';
+import { fetchMemberTracks } from '@stores/memberTracks';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
@@ -1162,7 +1163,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         // A real dialog rather than `customPrompt`: tolerance is a look-at-it
         // control, and the prompt could not express WHICH tracks to touch at
         // all. The dialog previews live and commits as one undo entry.
-        if (smootherTracks(id).length === 0) {
+        // The exact member lists (the engine's `getMemberKeyframes`), not the menu's last known ones.
+        if (smootherTracksOf(id, await fetchMemberTracks(id)).length === 0) {
           notify('Needs a track with 3+ keyframes', 'warning');
           return;
         }
@@ -1189,7 +1191,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         // Was a prompt that parsed "5, 25" out of a string — two numbers with
         // different units, unlabelled, and rejected wholesale on a typo.
-        if (wigglerTracks(id).length === 0) {
+        if (wigglerTracksOf(await fetchMemberTracks(id, ['x', 'y'])).size === 0) {
           notify('Animate position first (2+ keyframes on x or y)', 'warning');
           return;
         }

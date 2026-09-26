@@ -33,6 +33,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getMarkers: (x) => ({ type: 'getMarkers', owner: { comp: x.comp } }),
   copyLayers: (x) => ({ type: 'copyLayers', layers: [x.A] }),
   copyKeyframes: (x) => ({ type: 'copyKeyframes', keys: x.posKeys }),
+  getMemberKeyframes: (x) => ({ type: 'getMemberKeyframes', layer: x.B, members: [] }),
   copyEffects: (x) => ({ type: 'copyEffects', layer: x.A, effects: [] }),
   getWaveform: (x) => ({ type: 'getWaveform', layer: x.V, range: { start: 0, duration: sec(1) }, buckets: 10 }),
   listFonts: () => ({ type: 'listFonts', query: '' }),
@@ -65,7 +66,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(40);
+  expect(Object.keys(QUERIES)).toHaveLength(41);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {
@@ -99,6 +100,17 @@ test('copyKeyframes: whole keys per property in time order; unknown ids skipped'
   expect(r.sets[0]!.keyframes.map((k) => k.id)).toEqual(s.posKeys);
   expect(r.sets[0]!.keyframes[1]!.value).toEqual({ kind: 'vec2', value: { x: 300, y: 200 } });
   expect((await h.query({ type: 'copyKeyframes', keys: ['nope'] })).sets).toEqual([]);
+});
+
+test('getMemberKeyframes: the stored member tracks with their owning property; narrowed by name', async () => {
+  const all = (await h.query({ type: 'getMemberKeyframes', layer: s.B, members: [] })).tracks;
+  const x = all.find((t) => t.member === 'x')!;
+  expect(x).toMatchObject({ path: 'transform/position', index: 0, count: 2, hasExpression: false });
+  expect((JSON.parse(x.keyframes) as Array<{ t: number; value: number }>).map((k) => [k.t, k.value])).toEqual([[0, 100], [1, 300]]);
+  expect(all.find((t) => t.member === 'y')).toMatchObject({ index: 1 });
+  const only = (await h.query({ type: 'getMemberKeyframes', layer: s.B, members: ['y'] })).tracks;
+  expect(only.map((t) => t.member)).toEqual(['y']);
+  expect((await h.query({ type: 'getMemberKeyframes', layer: s.P, members: [] })).tracks).toEqual([]);
 });
 
 test('copyEffects: the capture pasteEffects takes, stack order; the same effect captures equal until it changes', async () => {
