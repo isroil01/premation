@@ -1180,8 +1180,8 @@ Mode / Units / Shape / Randomize Order / Lock Dimensions / Random Seed /
 expression, Path Options ▸ Path, style runs, fill paints — is a property of the
 catalog with `special: 'field'` (`src/core/engine/fields.ts`, C++
 `native/engine/src/core/fields.cpp`), typed by one spec table both engines read
-(`src/core/text/textFields.ts`, generated into the C++ catalog data by
-`GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`). `setProperty` /
+(`src/core/text/textFields.ts`; the C++ catalog's copy is
+`native/engine/catalog/fields.json`, kept equal by `crossEngineCatalog.test.ts`). `setProperty` /
 `setProperties` / `resetProperty` type-check a field against its spec
 (`typeMismatch`, a choice outside the list `outOfRange`, a number outside
 min..max `outOfRange`); `setAnimated` / keys / expressions refuse it
@@ -1496,8 +1496,8 @@ table is DATA shared by both engines: `src/core/engine/controlSpecs.ts`
 
 G1's static FIELDS (§15.7) generalised from the Text component to every
 layer. `src/core/engine/layerFieldSpecs.ts` is a DATA table (`LAYER_FIELDS`,
-pure; generated into the C++ catalog as `fields.layer` by
-`GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`), read by
+pure; the C++ catalog's copy is `fields.layer` in
+`native/engine/catalog/fields.json`, kept equal by `crossEngineCatalog.test.ts`), read by
 `src/core/engine/fields.ts` (owner `layer`) and `native/engine/src/core/fields.cpp`
 (`layer_*`). Each row is one static (`animatable: false`) property:
 

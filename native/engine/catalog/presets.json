@@ -1,0 +1,4590 @@
+[
+  {
+    "name": "Fade In",
+    "builtin": true,
+    "description": "Gradually fade opacity from 0% to 100%.",
+    "category": "Entrances",
+    "tracks": [
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.5,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Pop In",
+    "builtin": true,
+    "description": "Scale up with a bouncing animation.",
+    "category": "Entrances",
+    "tracks": [
+      {
+        "prop": "scale",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.34,
+              1.56,
+              0.64,
+              1
+            ]
+          },
+          {
+            "t": 0.5,
+            "value": 1
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.3,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Slide In",
+    "builtin": true,
+    "description": "Slide into view horizontally.",
+    "category": "Entrances",
+    "tracks": [
+      {
+        "prop": "x",
+        "relative": true,
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -0.21,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.6,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.35,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Rise Up",
+    "builtin": true,
+    "description": "Slide up into view from below.",
+    "category": "Entrances",
+    "tracks": [
+      {
+        "prop": "y",
+        "relative": true,
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.11,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.6,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Fade Out",
+    "builtin": true,
+    "description": "Gradually fade opacity from 100% to 0%.",
+    "category": "Exits",
+    "tracks": [
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.5,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Zoom Out Exit",
+    "builtin": true,
+    "description": "Slight scale pop, then zoom out to nothing.",
+    "category": "Exits",
+    "tracks": [
+      {
+        "prop": "scale",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 1,
+            "easing": "bezier",
+            "bezier": [
+              0.6,
+              -0.28,
+              0.735,
+              0.045
+            ]
+          },
+          {
+            "t": 0.6,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.45,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Spin",
+    "builtin": true,
+    "description": "Rotate 360 degrees around the anchor point.",
+    "category": "Emphases & Loops",
+    "tracks": [
+      {
+        "prop": "rotation",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1,
+            "value": 360
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Pulse",
+    "builtin": true,
+    "description": "Gently grow and shrink in scale.",
+    "category": "Emphases & Loops",
+    "tracks": [
+      {
+        "prop": "scale",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 1,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": 1.18,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 1
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Shake",
+    "builtin": true,
+    "description": "Rapid rotation oscillations for emphasis.",
+    "category": "Emphases & Loops",
+    "tracks": [
+      {
+        "prop": "rotation",
+        "relative": true,
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.08,
+            "value": 8,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.16,
+            "value": -7,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.24,
+            "value": 5,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.32,
+            "value": -3,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Elastic Float",
+    "builtin": true,
+    "description": "Continuous smooth vertical floating movement.",
+    "category": "Emphases & Loops",
+    "tracks": [
+      {
+        "prop": "y",
+        "relative": true,
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": -0.0185,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.6,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Flip In 3D",
+    "builtin": true,
+    "description": "Smooth entry flip around the 3D Y-axis.",
+    "category": "3D Motions",
+    "tracks": [
+      {
+        "prop": "rotationY",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -90,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.6,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.3,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Swing In 3D",
+    "builtin": true,
+    "description": "Pendulum-like swing from the top axis.",
+    "category": "3D Motions",
+    "tracks": [
+      {
+        "prop": "rotationX",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -80,
+            "easing": "bezier",
+            "bezier": [
+              0.175,
+              0.885,
+              0.32,
+              1.275
+            ]
+          },
+          {
+            "t": 0.6,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.25,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Depth Push In",
+    "builtin": true,
+    "description": "Push forward from deep Z space.",
+    "category": "3D Motions",
+    "tracks": [
+      {
+        "prop": "z",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.74,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.35,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "3D Twirl In",
+    "builtin": true,
+    "description": "Spin X and Y axes while scaling up into view.",
+    "category": "3D Motions",
+    "tracks": [
+      {
+        "prop": "rotationX",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -180,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.7,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "rotationY",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -180,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.7,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "scale",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.34,
+              1.56,
+              0.64,
+              1
+            ]
+          },
+          {
+            "t": 0.7,
+            "value": 1
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.3,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Cinematic Pan 3D",
+    "builtin": true,
+    "description": "Gentle 3D parallax rotation and depth panning.",
+    "category": "3D Motions",
+    "tracks": [
+      {
+        "prop": "rotationY",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -15,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.8,
+            "value": 15
+          }
+        ]
+      },
+      {
+        "prop": "rotationX",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 10,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.8,
+            "value": -5
+          }
+        ]
+      },
+      {
+        "prop": "z",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.185,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.8,
+            "value": -0.093
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Typewriter",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "Characters land one at a time with a hard edge, left to right.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.start",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.35,
+              0.1,
+              0.65,
+              0.9
+            ]
+          },
+          {
+            "t": 1.4,
+            "value": 140
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -60,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 0,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Cascade",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "A long soft stagger — characters rise, untwist and settle in a flowing band.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.start",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.35,
+              0.1,
+              0.65,
+              0.9
+            ]
+          },
+          {
+            "t": 2,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.07
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -60,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 210,
+            "easeHigh": 20,
+            "easeLow": 60,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0.07,
+        "z": 0,
+        "scale": 72,
+        "scaleY": 72,
+        "rotation": -14,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Decode",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "Characters scramble through their own alphabet, then resolve.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.start",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.35,
+              0.1,
+              0.65,
+              0.9
+            ]
+          },
+          {
+            "t": 1.8,
+            "value": 140
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -60,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 0,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 22,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Focus Pull",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "Text resolves out of defocus. No movement at all — only blur and fill.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.start",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.35,
+              0.1,
+              0.65,
+              0.9
+            ]
+          },
+          {
+            "t": 1.6,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.blur",
+        "unit": "fontSize",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.55
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -60,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 200,
+            "easeHigh": 0,
+            "easeLow": 40,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 0,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0.55,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Word Rise",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "Whole words lift into place — calmer than per-character on long lines.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.start",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.3,
+              0.1,
+              0.5,
+              0.95
+            ]
+          },
+          {
+            "t": 1.5,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.05
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "words",
+            "units": "percentage",
+            "mode": "add",
+            "start": -60,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 130,
+            "easeHigh": 0,
+            "easeLow": 45,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0.05,
+        "z": 0,
+        "scale": 88,
+        "scaleY": 88,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Scatter In",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "Characters assemble in a shuffled order, not left to right.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.start",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.35,
+              0.1,
+              0.65,
+              0.9
+            ]
+          },
+          {
+            "t": 1.7,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.x",
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -0.04
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.05
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -60,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 200,
+            "easeHigh": 0,
+            "easeLow": 50,
+            "randomizeOrder": true,
+            "randomSeed": 12
+          }
+        ],
+        "x": -0.04,
+        "y": 0.05,
+        "z": 0,
+        "scale": 60,
+        "scaleY": 60,
+        "rotation": 25,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Spring In",
+    "builtin": true,
+    "folder": "Text/Animate In",
+    "category": "Animate In",
+    "description": "Each character overshoots and settles on its own damped spring.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -0.06
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "expression",
+            "basedOn": "characters",
+            "mode": "add",
+            "amount": 100,
+            "expression": "Math.max(0, Math.sin((time - textIndex * 0.055) * 9) * Math.exp(-(time - textIndex * 0.055) * 3.6)) * 100"
+          }
+        ],
+        "x": 0,
+        "y": -0.06,
+        "z": 0,
+        "scale": 135,
+        "scaleY": 135,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Type Out",
+    "builtin": true,
+    "folder": "Text/Animate Out",
+    "category": "Animate Out",
+    "description": "The typewriter in reverse — characters delete left to right.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.end",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.35,
+              0.1,
+              0.65,
+              0.9
+            ]
+          },
+          {
+            "t": 1.1,
+            "value": 140
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -200,
+            "end": -60,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 0,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Dissolve Out",
+    "builtin": true,
+    "folder": "Text/Animate Out",
+    "category": "Animate Out",
+    "description": "Characters defocus and fade away in a soft travelling band.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.end",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.45,
+              0.05,
+              0.7,
+              0.85
+            ]
+          },
+          {
+            "t": 1.4,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.blur",
+        "unit": "fontSize",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.7
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -200,
+            "end": -60,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 210,
+            "easeHigh": 45,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0.7,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Fall Away",
+    "builtin": true,
+    "folder": "Text/Animate Out",
+    "category": "Animate Out",
+    "description": "Characters tip over and drop out of frame under gravity.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.end",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.45,
+              0.05,
+              0.7,
+              0.85
+            ]
+          },
+          {
+            "t": 1.3,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.18
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -200,
+            "end": -60,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 180,
+            "easeHigh": 55,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0.18,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 52,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 18,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Converge Out",
+    "builtin": true,
+    "folder": "Text/Animate Out",
+    "category": "Animate Out",
+    "description": "Letter spacing collapses inward until the word folds into itself.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.end",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -60,
+            "easing": "bezier",
+            "bezier": [
+              0.45,
+              0.05,
+              0.7,
+              0.85
+            ]
+          },
+          {
+            "t": 1.2,
+            "value": 140
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.tracking",
+        "unit": "fontSize",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -0.45
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -200,
+            "end": -60,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 210,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 80,
+        "scaleY": 80,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 0,
+        "fillOpacity": 100,
+        "tracking": -0.45,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Wave",
+    "builtin": true,
+    "folder": "Text/Emphasis",
+    "category": "Emphasis",
+    "description": "A smooth vertical wave travels through the line and leaves it as it was.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.offset",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -30,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 2.2,
+            "value": 100
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -0.032
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": 0,
+            "end": 30,
+            "offset": 0,
+            "amount": 100,
+            "shape": "smooth",
+            "smoothness": 100,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": -0.032,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Colour Sweep",
+    "builtin": true,
+    "folder": "Text/Emphasis",
+    "category": "Emphasis",
+    "description": "A colour highlight glides across the text.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.offset",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -26,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 2,
+            "value": 100
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": 0,
+            "end": 26,
+            "offset": 0,
+            "amount": 100,
+            "shape": "smooth",
+            "smoothness": 100,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0,
+        "color": "#ffcc00"
+      }
+    ]
+  },
+  {
+    "name": "Spotlight",
+    "builtin": true,
+    "folder": "Text/Emphasis",
+    "category": "Emphasis",
+    "description": "Everything dims except a travelling window — built by subtracting one selector from another.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.s1.offset",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -24,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 2.4,
+            "value": 100
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "add",
+            "start": -200,
+            "end": 200,
+            "offset": 0,
+            "amount": 100,
+            "shape": "square",
+            "smoothness": 0,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          },
+          {
+            "kind": "range",
+            "basedOn": "characters",
+            "units": "percentage",
+            "mode": "subtract",
+            "start": 0,
+            "end": 24,
+            "offset": 0,
+            "amount": 100,
+            "shape": "smooth",
+            "smoothness": 100,
+            "easeHigh": 0,
+            "easeLow": 0,
+            "randomizeOrder": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 28,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Flicker",
+    "builtin": true,
+    "folder": "Text/Emphasis",
+    "category": "Emphasis",
+    "description": "Characters flicker in a scrambled order, like a failing sign.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 15
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "wiggly",
+            "basedOn": "characters",
+            "mode": "add",
+            "maxAmount": 100,
+            "minAmount": -40,
+            "wigglesPerSecond": 9,
+            "correlation": 0,
+            "temporalPhase": 0,
+            "spatialPhase": 0,
+            "lockDimensions": true,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 15,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Jitter",
+    "builtin": true,
+    "folder": "Text/Organic",
+    "category": "Organic",
+    "description": "Continuous uncorrelated per-character noise — reads as static.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.x",
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.005
+          }
+        ]
+      },
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.005
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "wiggly",
+            "basedOn": "characters",
+            "mode": "add",
+            "maxAmount": 100,
+            "minAmount": -100,
+            "wigglesPerSecond": 11,
+            "correlation": 0,
+            "temporalPhase": 0,
+            "spatialPhase": 0,
+            "lockDimensions": false,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0.005,
+        "y": 0.005,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 5,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Sway",
+    "builtin": true,
+    "folder": "Text/Organic",
+    "category": "Organic",
+    "description": "Slow correlated drift — neighbouring characters move together, like cloth.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.y",
+        "unit": "compH",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.018
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "wiggly",
+            "basedOn": "characters",
+            "mode": "add",
+            "maxAmount": 100,
+            "minAmount": -100,
+            "wigglesPerSecond": 0.8,
+            "correlation": 88,
+            "temporalPhase": 0,
+            "spatialPhase": 0,
+            "lockDimensions": true,
+            "randomSeed": 0
+          }
+        ],
+        "x": 0,
+        "y": 0.018,
+        "z": 0,
+        "scale": 100,
+        "scaleY": 100,
+        "rotation": 3.5,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Inch Worm",
+    "builtin": true,
+    "folder": "Text/Expressions",
+    "category": "Expressions",
+    "description": "A compression wave crawls along the line, squeezing tracking as it goes.",
+    "requires": "text",
+    "tracks": [
+      {
+        "prop": "ta.0.tracking",
+        "unit": "fontSize",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.45
+          }
+        ]
+      }
+    ],
+    "animators": [
+      {
+        "enabled": true,
+        "selectors": [
+          {
+            "kind": "expression",
+            "basedOn": "characters",
+            "mode": "add",
+            "amount": 100,
+            "expression": "Math.max(0, Math.sin(time * 3.4 - textIndex * 0.85)) * 100"
+          }
+        ],
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 118,
+        "scaleY": 88,
+        "rotation": 0,
+        "rotationX": 0,
+        "rotationY": 0,
+        "opacity": 100,
+        "fillOpacity": 100,
+        "tracking": 0.45,
+        "lineSpacing": 0,
+        "characterOffset": 0,
+        "blur": 0,
+        "skew": 0,
+        "strokeWidth": 0
+      }
+    ]
+  },
+  {
+    "name": "Fade In+Out",
+    "builtin": true,
+    "folder": "Behaviors",
+    "category": "Behaviors",
+    "description": "Fades up at the start and down at the end, sized to the composition — retime the comp and it still fits.",
+    "requires": "any",
+    "tracks": [],
+    "expressions": [
+      {
+        "prop": "opacity",
+        "expr": "Math.min(linear(time, 0, thisComp.duration * 0.15, 0, 100), linear(time, thisComp.duration * 0.85, thisComp.duration, 100, 0))"
+      }
+    ]
+  },
+  {
+    "name": "Auto-Scroll",
+    "builtin": true,
+    "folder": "Behaviors",
+    "category": "Behaviors",
+    "description": "Travels at a constant speed forever — for credits, tickers and marquees.",
+    "requires": "any",
+    "tracks": [],
+    "expressions": [
+      {
+        "prop": "y",
+        "expr": "value - time * thisComp.height * 0.12"
+      }
+    ]
+  },
+  {
+    "name": "Drift",
+    "builtin": true,
+    "folder": "Behaviors",
+    "category": "Behaviors",
+    "description": "Slow continuous wander on both axes. Seeded, so it replays identically every time.",
+    "requires": "any",
+    "tracks": [],
+    "expressions": [
+      {
+        "prop": "x",
+        "expr": "wiggle(0.35, thisComp.width * 0.02)"
+      },
+      {
+        "prop": "y",
+        "expr": "wiggle(0.35, thisComp.height * 0.02)"
+      }
+    ]
+  },
+  {
+    "name": "Pendulum",
+    "builtin": true,
+    "folder": "Behaviors",
+    "category": "Behaviors",
+    "description": "Endless pendulum rotation, like something hanging in a draught.",
+    "requires": "any",
+    "tracks": [],
+    "expressions": [
+      {
+        "prop": "rotation",
+        "expr": "value + Math.sin(time * 1.8) * 6"
+      }
+    ]
+  },
+  {
+    "name": "Orbit",
+    "builtin": true,
+    "folder": "Behaviors",
+    "category": "Behaviors",
+    "description": "Circles a point on a parametric path — no keyframes, no drift over time.",
+    "requires": "any",
+    "tracks": [],
+    "expressions": [
+      {
+        "prop": "x",
+        "expr": "value + Math.cos(time * 1.2) * thisComp.width * 0.06"
+      },
+      {
+        "prop": "y",
+        "expr": "value + Math.sin(time * 1.2) * thisComp.width * 0.06"
+      }
+    ]
+  },
+  {
+    "name": "Audio Throb",
+    "builtin": true,
+    "folder": "Behaviors",
+    "category": "Behaviors",
+    "description": "Scales with the live audio level. Impossible to keyframe — it depends on the soundtrack.",
+    "requires": "any",
+    "tracks": [],
+    "expressions": [
+      {
+        "prop": "scale",
+        "expr": "value * (1 + clamp(audio, 0, 1) * 0.35)"
+      }
+    ]
+  },
+  {
+    "name": "Wipe In",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A hard-edged wipe reveals the layer left to right.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "linear-wipe",
+        "params": {
+          "wipeAngle": 90,
+          "feather": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.feather",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Wipe Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A hard-edged wipe clears the layer left to right.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "linear-wipe",
+        "params": {
+          "wipeAngle": 90,
+          "feather": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 100
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.feather",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Soft Wipe In",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A wide feathered edge sweeps the layer in — a gradient wipe, not a hard line.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "linear-wipe",
+        "params": {
+          "wipeAngle": 90,
+          "feather": 120
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.feather",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.1111111111111111
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Diagonal Wipe Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A feathered edge clears the layer on the diagonal.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "linear-wipe",
+        "params": {
+          "wipeAngle": 45,
+          "feather": 60
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 100
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.feather",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0.05555555555555555
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dissolve In",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "Resolves out of noise rather than simply fading — grain thins as opacity rises.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "noise",
+        "params": {
+          "amount": 100,
+          "monochrome": true
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.amount",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Blur Dissolve Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "Defocuses into nothing — the layer leaves by losing definition, not by sliding.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "blur",
+        "params": {
+          "amount": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.amount",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 0.05
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0.2,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Gradient Drift",
+    "builtin": true,
+    "folder": "Backgrounds",
+    "category": "Backgrounds",
+    "description": "A two-colour ramp whose angle rotates slowly. Apply to a solid.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "gradient-ramp",
+        "params": {
+          "colorA": "#1b2a6b",
+          "colorB": "#c2417a",
+          "blend": 100
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.angle",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 12,
+            "value": 360
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Aurora",
+    "builtin": true,
+    "folder": "Backgrounds",
+    "category": "Backgrounds",
+    "description": "Four colours bleeding into each other, breathing. Apply to a solid.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "four-color-gradient",
+        "params": {
+          "colorTL": "#0f2557",
+          "colorTR": "#1f8a8c",
+          "colorBL": "#6b2d8f",
+          "colorBR": "#e05a8a",
+          "blend": 100
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.blend",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 70,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 5,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 10,
+            "value": 70
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Drifting Noise",
+    "builtin": true,
+    "folder": "Backgrounds",
+    "category": "Backgrounds",
+    "description": "Slow organic fractal texture — a film-grain-ish bed rather than a flat colour.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "fractal-noise",
+        "params": {
+          "scale": 10
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.scale",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 8,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 8,
+            "value": 16,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 16,
+            "value": 8
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Teal & Orange",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "The blockbuster grade — cool shadows, warm skin, gentle corner falloff.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "toner",
+        "params": {
+          "blackTone": "#04131a",
+          "shadowTone": "#0e3c4a",
+          "midTone": "#8a7f70",
+          "highlightTone": "#f0c9a0",
+          "whiteTone": "#fff6ec",
+          "blend": 35
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "vignette",
+        "params": {
+          "amount": 38,
+          "size": 62,
+          "feather": 75,
+          "roundness": 30
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Bleach Bypass",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Silver-retention look — crushed contrast, drained colour, hot highlights.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "auto-contrast",
+        "params": {
+          "blackClip": 0.5,
+          "whiteClip": 0.2,
+          "blend": 20
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "leave-color",
+        "params": {
+          "targetColor": "#c08050",
+          "tolerance": 30,
+          "softness": 70,
+          "amount": 65
+        }
+      },
+      {
+        "id": "fx2",
+        "type": "vignette",
+        "params": {
+          "amount": 25,
+          "size": 70,
+          "feather": 90,
+          "roundness": 0
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Faded Film",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Lifted blacks and milky highlights — the look of a print left in the sun.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "toner",
+        "params": {
+          "blackTone": "#2b2a33",
+          "shadowTone": "#4a4650",
+          "midTone": "#8f8880",
+          "highlightTone": "#ddd2c0",
+          "whiteTone": "#f2ece0",
+          "blend": 25
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "noise-alpha",
+        "params": {
+          "amount": 6,
+          "uniformNoise": false,
+          "seed": 4,
+          "clipResult": true
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Night Grade",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Day-for-night — cool, dim, contrast pulled into the shadows.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "toner",
+        "params": {
+          "blackTone": "#01040c",
+          "shadowTone": "#0a1630",
+          "midTone": "#28405f",
+          "highlightTone": "#6f88ab",
+          "whiteTone": "#b9c9de",
+          "blend": 15
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "vignette",
+        "params": {
+          "amount": 55,
+          "size": 45,
+          "feather": 85,
+          "roundness": 20
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Cross Process",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "C-41 in E-6 chemistry — hue-twisted midtones and a hard contrast curve.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "equalize",
+        "params": {
+          "equalizeMode": 0,
+          "amount": 45,
+          "blend": 30
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "change-color",
+        "params": {
+          "targetColor": "#3aa0d0",
+          "hueTolerance": 22,
+          "satTolerance": 80,
+          "lightTolerance": 80,
+          "softness": 60,
+          "hueShift": -25,
+          "satScale": 35,
+          "lightScale": 0
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Selective Colour Pop",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "One hue stays saturated, everything else goes monochrome.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "leave-color",
+        "params": {
+          "targetColor": "#d32020",
+          "tolerance": 14,
+          "softness": 45,
+          "amount": 100
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "auto-contrast",
+        "params": {
+          "blackClip": 0.2,
+          "whiteClip": 0.2,
+          "blend": 40
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Anamorphic Bokeh",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Shallow depth with a bladed iris — highlights bloom into hexagons.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "camera-lens-blur",
+        "params": {
+          "radius": 9,
+          "blades": 6,
+          "irisRotation": 15,
+          "gain": 4,
+          "highlightThreshold": 62
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "vignette",
+        "params": {
+          "amount": 30,
+          "size": 60,
+          "feather": 80,
+          "roundness": 100
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Clean Skin",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Edge-preserving smoothing — texture goes, features stay sharp.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "bilateral-blur",
+        "params": {
+          "radius": 7,
+          "colorSigma": 26,
+          "preserveAlpha": true
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "unsharp-mask",
+        "params": {
+          "amount": 40,
+          "radius": 1.5,
+          "threshold": 12
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Restore Old Footage",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Removes specks and scratches, then re-levels the contrast.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "dust-scratches",
+        "params": {
+          "radius": 2,
+          "threshold": 28
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "auto-levels",
+        "params": {
+          "blackClip": 0.3,
+          "whiteClip": 0.3,
+          "blend": 25
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Comic Book",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Flat cel shading with inked edges over a rotated dot screen.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "cartoon",
+        "params": {
+          "smoothness": 3,
+          "levels": 5,
+          "edgeThreshold": 22,
+          "edgeWidth": 1,
+          "edgeOpacity": 100
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "halftone",
+        "params": {
+          "cellSize": 5,
+          "screenAngle": 15,
+          "contrast": 120,
+          "colorize": true,
+          "blendWithOriginal": 45
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Newsprint",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Coarse black-and-white halftone on off-white paper.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "halftone",
+        "params": {
+          "cellSize": 7,
+          "screenAngle": 45,
+          "contrast": 140,
+          "inkColor": "#141210",
+          "paperColor": "#efe9dc",
+          "colorize": false,
+          "blendWithOriginal": 0
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Oil Painting",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Directional brushwork with the palette flattened behind it.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "smart-blur",
+        "params": {
+          "radius": 6,
+          "threshold": 30,
+          "mode": 0
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "brush-strokes",
+        "params": {
+          "strokeAngle": 38,
+          "strokeLength": 9,
+          "randomness": 55,
+          "cellSize": 14,
+          "density": 85
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Kaleidoscope Mandala",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Eight mirrored wedges, slowly rotating.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "kaleidoscope",
+        "params": {
+          "segments": 8,
+          "zoom": 130
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.rotation",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 8,
+            "value": 360
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Chromatic Lens",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Barrel distortion with a bladed defocus — a cheap-glass look.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "warp",
+        "params": {
+          "style": 4,
+          "bend": 22,
+          "warpAxis": 0
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "camera-lens-blur",
+        "params": {
+          "radius": 4,
+          "blades": 5,
+          "gain": 2.5,
+          "highlightThreshold": 70
+        }
+      },
+      {
+        "id": "fx2",
+        "type": "vignette",
+        "params": {
+          "amount": 45,
+          "size": 55,
+          "feather": 70,
+          "roundness": 100
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Broadcast Interference",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Rolling-shutter skew and torn coverage — a signal losing lock.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "rolling-shutter",
+        "params": {
+          "sweep": 18,
+          "wobble": 9,
+          "scanDirection": 0
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "noise-alpha",
+        "params": {
+          "amount": 22,
+          "uniformNoise": true,
+          "seed": 11,
+          "clipResult": true
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.sweep",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.12,
+            "value": 34,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.3,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx1.noisePhase",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 0.3,
+            "value": 12
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Iris In",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A circular aperture opens from the centre.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "iris-wipe",
+        "params": {
+          "irisPoints": 0,
+          "feather": 3
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.7,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Hex Iris Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A six-sided aperture closes the frame down.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "iris-wipe",
+        "params": {
+          "irisPoints": 6,
+          "rotation": 15,
+          "feather": 2
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 0.7,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Light Wipe In",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A glowing edge sweeps across and leaves the layer behind it.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "light-wipe",
+        "params": {
+          "wipeShape": 0,
+          "angle": 0,
+          "lightWidth": 90,
+          "lightColor": "#ffffff",
+          "intensity": 85,
+          "feather": 3
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Grid Dissolve Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The frame breaks into tiles that open from their own centres.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "grid-wipe",
+        "params": {
+          "columns": 14,
+          "rows": 9,
+          "tileShape": 2,
+          "randomSeed": 55,
+          "feather": 8
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 1,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Line Sweep Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "Parallel lines clear in sequence — a travelling comb.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "line-sweep",
+        "params": {
+          "lineCount": 28,
+          "angle": 0,
+          "stagger": 65,
+          "feather": 3
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Burn Away",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The frame chars and blows out from a point, like film in the gate.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "burn-film",
+        "params": {
+          "burn": 0,
+          "burnColor": "#fff6e0",
+          "charColor": "#3d1f0a",
+          "randomness": 65,
+          "seed": 3
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.burn",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 1.1,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Page Turn Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The layer peels back over a curl and lifts away.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "page-turn",
+        "params": {
+          "angle": 45,
+          "curlRadius": 70,
+          "backOpacity": 55,
+          "shading": 60
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.amount",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 1,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ripple Through",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "A shock ring crosses the frame and settles.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "ripple",
+        "params": {
+          "amplitude": 0,
+          "frequency": 3,
+          "decay": 1.5
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.amplitude",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.25,
+            "value": 34,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 1.1,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.phase",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 1.1,
+            "value": 540
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Split Apart",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The frame cuts in two and the halves separate.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "split",
+        "params": {
+          "splitOffset": 0,
+          "angle": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.splitOffset",
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 1.1
+          }
+        ]
+      },
+      {
+        "prop": "opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 100,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Radial Light Burst",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "Rays fan out from the centre and fade — a flash cut that is not just white.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "light-rays",
+        "params": {
+          "rayCount": 64,
+          "rayLength": 0,
+          "spread": 100,
+          "color": "#fff3c4",
+          "opacity": 0,
+          "falloff": 45,
+          "seed": 5,
+          "composite": 1
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.rayLength",
+        "unit": "compMin",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.5,
+            "value": 1.4
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.opacity",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.14,
+            "value": 90,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 0.6,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.rotation",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 0.6,
+            "value": 25
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Falling Snow",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Soft snowfall drifting across the frame, ready-wound for six seconds.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "snowfall",
+        "params": {
+          "amount": 45,
+          "size": 3,
+          "wind": 12,
+          "opacity": 85,
+          "flakeColor": "#ffffff",
+          "seed": 7,
+          "evolution": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.evolution",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 6,
+            "value": 300
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Driving Rain",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "Streaking rain with drops rippling the picture beneath it.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "rainfall",
+        "params": {
+          "amount": 50,
+          "length": 34,
+          "angle": 12,
+          "opacity": 50,
+          "rainColor": "#cfe6ff",
+          "seed": 11,
+          "evolution": 0
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "drizzle",
+        "params": {
+          "dripRate": 35,
+          "rippleHeight": 8,
+          "spreading": 110,
+          "seed": 4,
+          "evolution": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.evolution",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 6,
+            "value": 420
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx1.evolution",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 6,
+            "value": 1200
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Star Voyage",
+    "builtin": true,
+    "folder": "Stylize",
+    "category": "Stylize",
+    "description": "The layer scattered into a starfield being flown through.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "star-burst",
+        "params": {
+          "amount": 60,
+          "size": 2.5,
+          "starColor": "#ffffff",
+          "blend": 20,
+          "seed": 9,
+          "phase": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.phase",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 6,
+            "value": 2400
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dream Glass",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "The frame refracted through its own relief — soft, expensive, slightly wet.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "glass",
+        "params": {
+          "bumpSoftness": 6,
+          "height": 22,
+          "displacement": 9,
+          "lightAngle": 130,
+          "lightIntensity": 55,
+          "shininess": 35
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "vignette",
+        "params": {
+          "amount": 30,
+          "size": 68,
+          "feather": 85,
+          "roundness": 20
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Retro Chromatic",
+    "builtin": true,
+    "folder": "Looks",
+    "category": "Looks",
+    "description": "Edge fringing, grain and a corner shade — the worn-lens music-video look.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "chromatic-aberration",
+        "params": {
+          "amount": 7,
+          "aberrationMode": 0,
+          "falloff": 55,
+          "angle": 0,
+          "centerX": 0,
+          "centerY": 0
+        }
+      },
+      {
+        "id": "fx1",
+        "type": "add-grain",
+        "params": {
+          "intensity": 28,
+          "size": 1.4,
+          "seed": 6
+        }
+      },
+      {
+        "id": "fx2",
+        "type": "vignette",
+        "params": {
+          "amount": 42,
+          "size": 58,
+          "feather": 70,
+          "roundness": 10
+        }
+      }
+    ],
+    "tracks": []
+  },
+  {
+    "name": "Shatter Away",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The frame breaks into shards that fly, tumble and fade.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "pixel-polly",
+        "params": {
+          "completion": 0,
+          "cellSize": 34,
+          "gravity": 55,
+          "spin": 240,
+          "centerX": 0,
+          "centerY": 0,
+          "seed": 5
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.9,
+              0.4
+            ]
+          },
+          {
+            "t": 1.1,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Jaws Bite",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The picture bitten in two along a toothed seam.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "jaws",
+        "params": {
+          "completion": 0,
+          "direction": 0,
+          "teethHeight": 46,
+          "teethWidth": 52
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Wring Out",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The frame wrings itself edge-on around its own middle and vanishes.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "twister",
+        "params": {
+          "completion": 0,
+          "centerY": 0,
+          "twist": 140
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.completion",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 0.9,
+            "value": 100
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Card Cascade",
+    "builtin": true,
+    "folder": "Transitions",
+    "category": "Transitions",
+    "description": "The frame lifts into dancing cards and settles back — a hit, not a cut.",
+    "requires": "any",
+    "effects": [
+      {
+        "id": "fx0",
+        "type": "card-dance",
+        "params": {
+          "rows": 8,
+          "columns": 14,
+          "amount": 0,
+          "cardRotation": 24,
+          "phase": 0
+        }
+      }
+    ],
+    "tracks": [
+      {
+        "prop": "effect.fx0.amount",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.16,
+              1,
+              0.3,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": 38,
+            "easing": "bezier",
+            "bezier": [
+              0.65,
+              0,
+              0.35,
+              1
+            ]
+          },
+          {
+            "t": 1.2,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "effect.fx0.phase",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0
+          },
+          {
+            "t": 1.2,
+            "value": 160
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Push In",
+    "builtin": true,
+    "folder": "Camera",
+    "category": "Camera",
+    "requires": "camera",
+    "description": "Slow dolly toward the scene — a quarter of the way in, eased.",
+    "tracks": [
+      {
+        "prop": "z",
+        "relative": true,
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3,
+            "value": 0.33
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Pull Out",
+    "builtin": true,
+    "folder": "Camera",
+    "category": "Camera",
+    "requires": "camera",
+    "description": "The reveal — dolly back away from the scene.",
+    "tracks": [
+      {
+        "prop": "z",
+        "relative": true,
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3,
+            "value": -0.33
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Orbit Sweep",
+    "builtin": true,
+    "folder": "Camera",
+    "category": "Camera",
+    "requires": "camera",
+    "description": "A gentle arc around the point of interest, with a slight rise.",
+    "tracks": [
+      {
+        "prop": "orbitYaw",
+        "relative": true,
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -8,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 8
+          }
+        ]
+      },
+      {
+        "prop": "orbitPitch",
+        "relative": true,
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2,
+            "value": 2.5,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Drift Parallax",
+    "builtin": true,
+    "folder": "Camera",
+    "category": "Camera",
+    "requires": "camera",
+    "description": "Small lateral drift with a slight push — the move that shows layer depth.",
+    "tracks": [
+      {
+        "prop": "x",
+        "relative": true,
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": -0.03,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 0.03
+          }
+        ]
+      },
+      {
+        "prop": "z",
+        "relative": true,
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 0.1
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dolly Zoom (Vertigo)",
+    "builtin": true,
+    "folder": "Camera",
+    "category": "Camera",
+    "requires": "camera",
+    "description": "Dolly in while the lens zooms out — framing holds, the background falls away.",
+    "tracks": [],
+    "hasApplyFn": true
+  },
+  {
+    "name": "Handheld",
+    "builtin": true,
+    "folder": "Camera",
+    "category": "Camera",
+    "requires": "camera",
+    "description": "Subtle operator wobble — pan, tilt and a breath of dolly, baked as keyframes.",
+    "tracks": [
+      {
+        "prop": "orientationX",
+        "relative": true,
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": 0.3611,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 0.3011,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.2,
+            "value": 0.2068,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.6,
+            "value": 0.2618,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2,
+            "value": 0.1846,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2.4,
+            "value": -0.1957,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2.8,
+            "value": -0.6642,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3.2,
+            "value": -0.8148,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3.6,
+            "value": -0.3309,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "orientationY",
+        "relative": true,
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": 0.4166,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": 0.6294,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.2,
+            "value": 0.3047,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.6,
+            "value": -0.2805,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2,
+            "value": -0.8495,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2.4,
+            "value": -1.112,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2.8,
+            "value": -0.9729,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3.2,
+            "value": -0.5926,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3.6,
+            "value": -0.1697,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "prop": "z",
+        "relative": true,
+        "unit": "compW",
+        "keyframes": [
+          {
+            "t": 0,
+            "value": 0,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.4,
+            "value": -0.0029,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 0.8,
+            "value": -0.0022,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.2,
+            "value": -0.0009,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 1.6,
+            "value": -0.0009,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2,
+            "value": -0.001,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2.4,
+            "value": 0.0002,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 2.8,
+            "value": 0.0029,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3.2,
+            "value": 0.0054,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 3.6,
+            "value": 0.0038,
+            "easing": "bezier",
+            "bezier": [
+              0.4,
+              0,
+              0.2,
+              1
+            ]
+          },
+          {
+            "t": 4,
+            "value": 0
+          }
+        ]
+      }
+    ]
+  }
+]

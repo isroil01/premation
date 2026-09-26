@@ -1,0 +1,742 @@
+[
+  {
+    "id": 1,
+    "kind": "control",
+    "type": "undo"
+  },
+  {
+    "id": 2,
+    "kind": "control",
+    "type": "redo"
+  },
+  {
+    "id": 3,
+    "kind": "control",
+    "type": "jumpToHistory"
+  },
+  {
+    "id": 4,
+    "kind": "control",
+    "type": "beginGesture"
+  },
+  {
+    "id": 5,
+    "kind": "control",
+    "type": "endGesture"
+  },
+  {
+    "id": 6,
+    "kind": "control",
+    "type": "clearHistory"
+  },
+  {
+    "id": 7,
+    "kind": "control",
+    "type": "setHistoryLimit"
+  },
+  {
+    "id": 21,
+    "kind": "control",
+    "type": "addHistoryCheckpoint"
+  },
+  {
+    "id": 20,
+    "kind": "edit",
+    "type": "restoreDocument"
+  },
+  {
+    "id": 10,
+    "kind": "io",
+    "type": "newProject"
+  },
+  {
+    "id": 11,
+    "kind": "io",
+    "type": "openProject"
+  },
+  {
+    "id": 12,
+    "kind": "io",
+    "type": "saveProject"
+  },
+  {
+    "id": 13,
+    "kind": "edit",
+    "type": "importProject"
+  },
+  {
+    "id": 14,
+    "kind": "edit",
+    "type": "setProjectSettings"
+  },
+  {
+    "id": 15,
+    "kind": "io",
+    "type": "revertProject"
+  },
+  {
+    "id": 16,
+    "kind": "io",
+    "type": "collectFiles"
+  },
+  {
+    "id": 17,
+    "kind": "control",
+    "type": "setAutosave"
+  },
+  {
+    "id": 22,
+    "kind": "edit",
+    "type": "setGuides"
+  },
+  {
+    "id": 23,
+    "kind": "edit",
+    "type": "setSwatches"
+  },
+  {
+    "id": 24,
+    "kind": "edit",
+    "type": "setMaterials"
+  },
+  {
+    "id": 50,
+    "kind": "edit",
+    "type": "importFiles"
+  },
+  {
+    "id": 70,
+    "kind": "edit",
+    "type": "importBytes"
+  },
+  {
+    "id": 51,
+    "kind": "edit",
+    "type": "relinkItem"
+  },
+  {
+    "id": 52,
+    "kind": "control",
+    "type": "reloadItems"
+  },
+  {
+    "id": 53,
+    "kind": "edit",
+    "type": "removeItems"
+  },
+  {
+    "id": 54,
+    "kind": "edit",
+    "type": "renameItem"
+  },
+  {
+    "id": 55,
+    "kind": "edit",
+    "type": "createFolder"
+  },
+  {
+    "id": 56,
+    "kind": "edit",
+    "type": "moveItems"
+  },
+  {
+    "id": 57,
+    "kind": "edit",
+    "type": "setInterpretation"
+  },
+  {
+    "id": 58,
+    "kind": "edit",
+    "type": "setItemLabel"
+  },
+  {
+    "id": 59,
+    "kind": "edit",
+    "type": "removeUnusedItems"
+  },
+  {
+    "id": 60,
+    "kind": "edit",
+    "type": "setProxy"
+  },
+  {
+    "id": 61,
+    "kind": "edit",
+    "type": "setItemComment"
+  },
+  {
+    "id": 62,
+    "kind": "edit",
+    "type": "setItemTags"
+  },
+  {
+    "id": 100,
+    "kind": "edit",
+    "type": "createComposition"
+  },
+  {
+    "id": 101,
+    "kind": "edit",
+    "type": "duplicateComposition"
+  },
+  {
+    "id": 102,
+    "kind": "edit",
+    "type": "setCompositionSettings"
+  },
+  {
+    "id": 103,
+    "kind": "edit",
+    "type": "setWorkArea"
+  },
+  {
+    "id": 120,
+    "kind": "edit",
+    "type": "clearWorkArea"
+  },
+  {
+    "id": 104,
+    "kind": "edit",
+    "type": "precompose"
+  },
+  {
+    "id": 105,
+    "kind": "edit",
+    "type": "trimCompToWorkArea"
+  },
+  {
+    "id": 106,
+    "kind": "edit",
+    "type": "cropComposition"
+  },
+  {
+    "id": 107,
+    "kind": "edit",
+    "type": "assembleComposition"
+  },
+  {
+    "id": 150,
+    "kind": "edit",
+    "type": "addRenderItems"
+  },
+  {
+    "id": 151,
+    "kind": "edit",
+    "type": "setRenderItem"
+  },
+  {
+    "id": 152,
+    "kind": "edit",
+    "type": "removeRenderItems"
+  },
+  {
+    "id": 153,
+    "kind": "edit",
+    "type": "reorderRenderItems"
+  },
+  {
+    "id": 200,
+    "kind": "edit",
+    "type": "createLayer"
+  },
+  {
+    "id": 201,
+    "kind": "edit",
+    "type": "deleteLayers"
+  },
+  {
+    "id": 202,
+    "kind": "edit",
+    "type": "duplicateLayers"
+  },
+  {
+    "id": 203,
+    "kind": "edit",
+    "type": "reorderLayers"
+  },
+  {
+    "id": 204,
+    "kind": "edit",
+    "type": "setParent"
+  },
+  {
+    "id": 205,
+    "kind": "edit",
+    "type": "renameLayer"
+  },
+  {
+    "id": 206,
+    "kind": "edit",
+    "type": "setLayerSwitches"
+  },
+  {
+    "id": 207,
+    "kind": "edit",
+    "type": "setBlendMode"
+  },
+  {
+    "id": 208,
+    "kind": "edit",
+    "type": "setTrackMatte"
+  },
+  {
+    "id": 209,
+    "kind": "edit",
+    "type": "replaceLayerSource"
+  },
+  {
+    "id": 210,
+    "kind": "edit",
+    "type": "groupLayers"
+  },
+  {
+    "id": 211,
+    "kind": "edit",
+    "type": "ungroupLayer"
+  },
+  {
+    "id": 212,
+    "kind": "edit",
+    "type": "convertLayer"
+  },
+  {
+    "id": 213,
+    "kind": "edit",
+    "type": "pasteLayers"
+  },
+  {
+    "id": 214,
+    "kind": "edit",
+    "type": "separateLayer"
+  },
+  {
+    "id": 215,
+    "kind": "edit",
+    "type": "autoTrace"
+  },
+  {
+    "id": 216,
+    "kind": "edit",
+    "type": "setLayerComment"
+  },
+  {
+    "id": 300,
+    "kind": "edit",
+    "type": "setLayerTiming"
+  },
+  {
+    "id": 301,
+    "kind": "edit",
+    "type": "moveLayersInTime"
+  },
+  {
+    "id": 302,
+    "kind": "edit",
+    "type": "trimLayers"
+  },
+  {
+    "id": 303,
+    "kind": "edit",
+    "type": "slipLayers"
+  },
+  {
+    "id": 304,
+    "kind": "edit",
+    "type": "slideLayer"
+  },
+  {
+    "id": 305,
+    "kind": "edit",
+    "type": "rollEdit"
+  },
+  {
+    "id": 306,
+    "kind": "edit",
+    "type": "splitLayers"
+  },
+  {
+    "id": 307,
+    "kind": "edit",
+    "type": "rippleDeleteLayers"
+  },
+  {
+    "id": 308,
+    "kind": "edit",
+    "type": "editWorkArea"
+  },
+  {
+    "id": 309,
+    "kind": "edit",
+    "type": "insertGap"
+  },
+  {
+    "id": 310,
+    "kind": "edit",
+    "type": "timeReverseLayers"
+  },
+  {
+    "id": 311,
+    "kind": "edit",
+    "type": "setTimeRemap"
+  },
+  {
+    "id": 312,
+    "kind": "edit",
+    "type": "freezeFrame"
+  },
+  {
+    "id": 313,
+    "kind": "edit",
+    "type": "setRetime"
+  },
+  {
+    "id": 314,
+    "kind": "edit",
+    "type": "sequenceLayers"
+  },
+  {
+    "id": 330,
+    "kind": "edit",
+    "type": "timeStretchLayers"
+  },
+  {
+    "id": 331,
+    "kind": "edit",
+    "type": "unfreezeLayers"
+  },
+  {
+    "id": 332,
+    "kind": "edit",
+    "type": "rippleDeleteRange"
+  },
+  {
+    "id": 333,
+    "kind": "edit",
+    "type": "shiftLayerKeyframes"
+  },
+  {
+    "id": 334,
+    "kind": "edit",
+    "type": "addTransition"
+  },
+  {
+    "id": 335,
+    "kind": "edit",
+    "type": "setTransition"
+  },
+  {
+    "id": 336,
+    "kind": "edit",
+    "type": "removeTransitions"
+  },
+  {
+    "id": 400,
+    "kind": "edit",
+    "type": "setProperty"
+  },
+  {
+    "id": 401,
+    "kind": "edit",
+    "type": "setProperties"
+  },
+  {
+    "id": 402,
+    "kind": "edit",
+    "type": "resetProperty"
+  },
+  {
+    "id": 403,
+    "kind": "edit",
+    "type": "setAnimated"
+  },
+  {
+    "id": 404,
+    "kind": "edit",
+    "type": "setDimensionsSeparated"
+  },
+  {
+    "id": 405,
+    "kind": "edit",
+    "type": "setExpression"
+  },
+  {
+    "id": 406,
+    "kind": "edit",
+    "type": "setExpressionEnabled"
+  },
+  {
+    "id": 407,
+    "kind": "edit",
+    "type": "convertExpressionToKeyframes"
+  },
+  {
+    "id": 408,
+    "kind": "edit",
+    "type": "linkProperty"
+  },
+  {
+    "id": 500,
+    "kind": "edit",
+    "type": "addKeyframes"
+  },
+  {
+    "id": 501,
+    "kind": "edit",
+    "type": "deleteKeyframes"
+  },
+  {
+    "id": 502,
+    "kind": "edit",
+    "type": "moveKeyframes"
+  },
+  {
+    "id": 503,
+    "kind": "edit",
+    "type": "updateKeyframes"
+  },
+  {
+    "id": 504,
+    "kind": "edit",
+    "type": "scaleKeyframes"
+  },
+  {
+    "id": 505,
+    "kind": "edit",
+    "type": "reverseKeyframes"
+  },
+  {
+    "id": 506,
+    "kind": "edit",
+    "type": "pasteKeyframes"
+  },
+  {
+    "id": 520,
+    "kind": "edit",
+    "type": "setKeyframes"
+  },
+  {
+    "id": 600,
+    "kind": "edit",
+    "type": "addEffect"
+  },
+  {
+    "id": 601,
+    "kind": "edit",
+    "type": "addMask"
+  },
+  {
+    "id": 602,
+    "kind": "edit",
+    "type": "addPropertyGroup"
+  },
+  {
+    "id": 603,
+    "kind": "edit",
+    "type": "removePropertyGroups"
+  },
+  {
+    "id": 604,
+    "kind": "edit",
+    "type": "movePropertyGroup"
+  },
+  {
+    "id": 605,
+    "kind": "edit",
+    "type": "duplicatePropertyGroups"
+  },
+  {
+    "id": 606,
+    "kind": "edit",
+    "type": "setGroupEnabled"
+  },
+  {
+    "id": 607,
+    "kind": "edit",
+    "type": "renamePropertyGroup"
+  },
+  {
+    "id": 608,
+    "kind": "edit",
+    "type": "copyPropertyGroups"
+  },
+  {
+    "id": 609,
+    "kind": "edit",
+    "type": "applyPreset"
+  },
+  {
+    "id": 610,
+    "kind": "edit",
+    "type": "invokeEffectAction"
+  },
+  {
+    "id": 611,
+    "kind": "edit",
+    "type": "addProperties"
+  },
+  {
+    "id": 612,
+    "kind": "edit",
+    "type": "removeProperties"
+  },
+  {
+    "id": 613,
+    "kind": "edit",
+    "type": "pasteEffects"
+  },
+  {
+    "id": 614,
+    "kind": "edit",
+    "type": "removeStroke"
+  },
+  {
+    "id": 615,
+    "kind": "edit",
+    "type": "addPaintStroke"
+  },
+  {
+    "id": 616,
+    "kind": "edit",
+    "type": "updatePaintStroke"
+  },
+  {
+    "id": 617,
+    "kind": "edit",
+    "type": "removePaintStrokes"
+  },
+  {
+    "id": 618,
+    "kind": "edit",
+    "type": "setPaintOnTransparent"
+  },
+  {
+    "id": 619,
+    "kind": "edit",
+    "type": "setPaintStrokePath"
+  },
+  {
+    "id": 620,
+    "kind": "edit",
+    "type": "setPaintPathAnimated"
+  },
+  {
+    "id": 630,
+    "kind": "edit",
+    "type": "editPathTopology"
+  },
+  {
+    "id": 631,
+    "kind": "edit",
+    "type": "setShapeOutline"
+  },
+  {
+    "id": 700,
+    "kind": "edit",
+    "type": "addMarkers"
+  },
+  {
+    "id": 701,
+    "kind": "edit",
+    "type": "updateMarkers"
+  },
+  {
+    "id": 702,
+    "kind": "edit",
+    "type": "deleteMarkers"
+  },
+  {
+    "id": 703,
+    "kind": "edit",
+    "type": "moveMarkers"
+  },
+  {
+    "id": 800,
+    "kind": "control",
+    "type": "play"
+  },
+  {
+    "id": 801,
+    "kind": "control",
+    "type": "pause"
+  },
+  {
+    "id": 802,
+    "kind": "control",
+    "type": "seek"
+  },
+  {
+    "id": 803,
+    "kind": "control",
+    "type": "step"
+  },
+  {
+    "id": 804,
+    "kind": "control",
+    "type": "setLoop"
+  },
+  {
+    "id": 805,
+    "kind": "control",
+    "type": "setPreviewQuality"
+  },
+  {
+    "id": 806,
+    "kind": "control",
+    "type": "setAudioPreview"
+  },
+  {
+    "id": 807,
+    "kind": "control",
+    "type": "setActiveComposition"
+  },
+  {
+    "id": 808,
+    "kind": "control",
+    "type": "setViewport"
+  },
+  {
+    "id": 809,
+    "kind": "control",
+    "type": "closeViewport"
+  },
+  {
+    "id": 810,
+    "kind": "control",
+    "type": "setCacheBudget"
+  },
+  {
+    "id": 811,
+    "kind": "control",
+    "type": "purgeCache"
+  },
+  {
+    "id": 812,
+    "kind": "control",
+    "type": "setInteracting"
+  },
+  {
+    "id": 850,
+    "kind": "control",
+    "type": "startJob"
+  },
+  {
+    "id": 851,
+    "kind": "control",
+    "type": "cancelJob"
+  },
+  {
+    "id": 852,
+    "kind": "edit",
+    "type": "applyJobResult"
+  },
+  {
+    "id": 870,
+    "kind": "control",
+    "type": "setPluginEnabled"
+  },
+  {
+    "id": 871,
+    "kind": "edit",
+    "type": "setPluginData"
+  }
+]

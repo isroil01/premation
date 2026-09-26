@@ -1,0 +1,85 @@
+{
+  "params": [
+    "points",
+    "rotation",
+    "outerRadius",
+    "innerRadius",
+    "outerRoundness",
+    "innerRoundness"
+  ],
+  "star": [
+    {
+      "param": "points",
+      "label": "Points",
+      "min": 3,
+      "max": 100,
+      "step": 1
+    },
+    {
+      "param": "rotation",
+      "label": "Rotation",
+      "unit": "°",
+      "signed": true
+    },
+    {
+      "param": "outerRadius",
+      "label": "Outer Radius",
+      "unit": "px",
+      "min": 0
+    },
+    {
+      "param": "innerRadius",
+      "label": "Inner Radius",
+      "unit": "px",
+      "min": 0
+    },
+    {
+      "param": "outerRoundness",
+      "label": "Outer Roundness",
+      "unit": "%",
+      "signed": true
+    },
+    {
+      "param": "innerRoundness",
+      "label": "Inner Roundness",
+      "unit": "%",
+      "signed": true
+    }
+  ],
+  "polygon": [
+    {
+      "param": "points",
+      "label": "Points",
+      "min": 3,
+      "max": 100,
+      "step": 1
+    },
+    {
+      "param": "rotation",
+      "label": "Rotation",
+      "unit": "°",
+      "signed": true
+    },
+    {
+      "param": "outerRadius",
+      "label": "Outer Radius",
+      "unit": "px",
+      "min": 0
+    },
+    {
+      "param": "outerRoundness",
+      "label": "Outer Roundness",
+      "unit": "%",
+      "signed": true
+    }
+  ],
+  "default": {
+    "starType": "star",
+    "points": 5,
+    "rotation": 0,
+    "outerRadius": 100,
+    "innerRadius": 50,
+    "outerRoundness": 0,
+    "innerRoundness": 0
+  }
+}

@@ -1,10 +1,12 @@
-// The TypeScript registries the property catalog is built from, as data —
-// generated/catalog_data.inc, written by
-// src/core/engine/__tests__/crossEngineCatalog.test.ts from the live modules
-// (EFFECT_DEFS, propertyMeta's STATIC table, layer styles, shape operators,
-// polystar, text animators/selectors, paint, label colours, animation presets,
-// the layer factory's component data). Never hand-edited: a registry change
-// regenerates it, and the Jest test fails while it is stale.
+// The engine's property / effect catalog, as data: native/engine/catalog/*.json
+// (effect definitions, the static property-metadata table, layer styles, shape
+// operators, polystar, text animators/selectors, paint, label colours,
+// animation presets, the layer factory's component data) plus the schema's
+// command classes (native/protocol/generated/commands.json), embedded by
+// catalog/embed_catalog.cmake as catalog_data.inc. The JSON is engine-owned:
+// edit it there (it was frozen from the TypeScript registries); `npm run
+// engine-api:gen` publishes the same files to the UI as
+// packages/engine-api/src/generated/catalog.ts.
 #pragma once
 
 #include <map>

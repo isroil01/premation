@@ -1,0 +1,236 @@
+{
+  "animatorParams": [
+    "start",
+    "end",
+    "offset",
+    "wiggleFreq",
+    "x",
+    "y",
+    "scale",
+    "scaleY",
+    "rotation",
+    "opacity",
+    "tracking",
+    "skew",
+    "z",
+    "rotationX",
+    "rotationY",
+    "fillOpacity",
+    "strokeWidth",
+    "lineSpacing",
+    "characterOffset",
+    "blur",
+    "blurY",
+    "anchorX",
+    "anchorY",
+    "anchorZ",
+    "skewAxis",
+    "lineAnchor",
+    "characterValue",
+    "fillHue",
+    "fillSaturation",
+    "fillBrightness",
+    "strokeOpacity",
+    "strokeHue",
+    "strokeSaturation",
+    "strokeBrightness"
+  ],
+  "selectorParams": [
+    "start",
+    "end",
+    "offset",
+    "amount",
+    "smoothness",
+    "easeHigh",
+    "easeLow",
+    "maxAmount",
+    "minAmount",
+    "wigglesPerSecond",
+    "correlation",
+    "temporalPhase",
+    "spatialPhase"
+  ],
+  "optional": [
+    {
+      "param": "anchorX",
+      "label": "Anchor Point X",
+      "unit": "px",
+      "defaultValue": 0,
+      "group": "transform"
+    },
+    {
+      "param": "anchorY",
+      "label": "Anchor Point Y",
+      "unit": "px",
+      "defaultValue": 0,
+      "group": "transform"
+    },
+    {
+      "param": "anchorZ",
+      "label": "Anchor Point Z",
+      "unit": "px",
+      "defaultValue": 0,
+      "group": "transform"
+    },
+    {
+      "param": "skewAxis",
+      "label": "Skew Axis",
+      "unit": "°",
+      "defaultValue": 0,
+      "group": "transform"
+    },
+    {
+      "param": "lineAnchor",
+      "label": "Line Anchor",
+      "unit": "%",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 100,
+      "group": "typography"
+    },
+    {
+      "param": "characterValue",
+      "label": "Character Value",
+      "unit": "",
+      "defaultValue": 65,
+      "min": 0,
+      "max": 1114111,
+      "step": 1,
+      "group": "typography"
+    },
+    {
+      "param": "fillHue",
+      "label": "Fill Hue",
+      "unit": "°",
+      "defaultValue": 0,
+      "group": "fill"
+    },
+    {
+      "param": "fillSaturation",
+      "label": "Fill Saturation",
+      "unit": "%",
+      "defaultValue": 0,
+      "min": -100,
+      "max": 100,
+      "group": "fill"
+    },
+    {
+      "param": "fillBrightness",
+      "label": "Fill Brightness",
+      "unit": "%",
+      "defaultValue": 0,
+      "min": -100,
+      "max": 100,
+      "group": "fill"
+    },
+    {
+      "param": "strokeOpacity",
+      "label": "Stroke Opacity",
+      "unit": "%",
+      "defaultValue": 100,
+      "min": 0,
+      "max": 100,
+      "group": "stroke"
+    },
+    {
+      "param": "strokeHue",
+      "label": "Stroke Hue",
+      "unit": "°",
+      "defaultValue": 0,
+      "group": "stroke"
+    },
+    {
+      "param": "strokeSaturation",
+      "label": "Stroke Saturation",
+      "unit": "%",
+      "defaultValue": 0,
+      "min": -100,
+      "max": 100,
+      "group": "stroke"
+    },
+    {
+      "param": "strokeBrightness",
+      "label": "Stroke Brightness",
+      "unit": "%",
+      "defaultValue": 0,
+      "min": -100,
+      "max": 100,
+      "group": "stroke"
+    }
+  ],
+  "defaultAnimator": {
+    "enabled": true,
+    "selectors": [
+      {
+        "kind": "range",
+        "basedOn": "characters",
+        "units": "percentage",
+        "mode": "add",
+        "start": 0,
+        "end": 100,
+        "offset": 0,
+        "amount": 100,
+        "shape": "square",
+        "smoothness": 100,
+        "easeHigh": 0,
+        "easeLow": 0,
+        "randomizeOrder": false,
+        "randomSeed": 0
+      }
+    ],
+    "x": 0,
+    "y": 0,
+    "z": 0,
+    "scale": 100,
+    "scaleY": 100,
+    "rotation": 0,
+    "rotationX": 0,
+    "rotationY": 0,
+    "opacity": 100,
+    "fillOpacity": 100,
+    "tracking": 0,
+    "lineSpacing": 0,
+    "characterOffset": 0,
+    "blur": 0,
+    "skew": 0,
+    "strokeWidth": 0
+  },
+  "selectors": {
+    "range": {
+      "kind": "range",
+      "basedOn": "characters",
+      "units": "percentage",
+      "mode": "add",
+      "start": 0,
+      "end": 100,
+      "offset": 0,
+      "amount": 100,
+      "shape": "square",
+      "smoothness": 100,
+      "easeHigh": 0,
+      "easeLow": 0,
+      "randomizeOrder": false,
+      "randomSeed": 0
+    },
+    "wiggly": {
+      "kind": "wiggly",
+      "basedOn": "characters",
+      "mode": "intersect",
+      "maxAmount": 100,
+      "minAmount": -100,
+      "wigglesPerSecond": 2,
+      "correlation": 50,
+      "temporalPhase": 0,
+      "spatialPhase": 0,
+      "lockDimensions": false,
+      "randomSeed": 0
+    },
+    "expression": {
+      "kind": "expression",
+      "basedOn": "characters",
+      "mode": "intersect",
+      "amount": 100,
+      "expression": "selectorValue"
+    }
+  }
+}

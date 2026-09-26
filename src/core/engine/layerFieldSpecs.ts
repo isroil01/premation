@@ -16,8 +16,9 @@
  *
  * This module is DATA shared by both engines: the TypeScript catalog
  * (`src/core/engine/fields.ts`) reads it directly, the C++ catalog
- * (`native/engine/src/core/fields.cpp`) reads the copy
- * `crossEngineCatalog.test.ts` generates into catalog_data.inc. Pure — no scene
+ * (`native/engine/src/core/fields.cpp`) reads its own copy in
+ * native/engine/catalog/fields.json (`crossEngineCatalog.test.ts` fails when
+ * the two differ). Pure — no scene
  * graph, no stores. Row ORDER is the order both engines add the bindings in
  * (the property tree is compared across engines).
  */

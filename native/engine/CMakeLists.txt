@@ -258,8 +258,15 @@ endif()
 #   handlers_*                       one family of edit commands each
 #   props/meta/ptree/readmodel       the property catalog + read model
 #   queries/events/docio             queries, change events, save/open
-#   catalog_data                     registries generated from the TS
-#                                    (crossEngineCatalog.test.ts)
+#   catalog_data                     the property/effect catalog: catalog/*.json
+#                                    (+ the schema's commands.json), embedded by
+#                                    catalog/embed_catalog.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/catalog/embed_catalog.cmake)
+set(ENGINE_CATALOG_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/catalog)
+premation_embed_catalog(${ENGINE_CATALOG_GENERATED})
+# A source property, so every target compiling catalog_data.cpp (engine_core,
+# engine_fuzz) finds catalog_data.inc.
+set_source_files_properties(src/core/catalog_data.cpp PROPERTIES INCLUDE_DIRECTORIES ${ENGINE_CATALOG_GENERATED})
 set(ENGINE_DOC_SOURCES
   src/core/anim.cpp
   src/core/anim_json.cpp

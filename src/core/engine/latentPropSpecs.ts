@@ -17,15 +17,16 @@
  *
  * DATA shared by both engines: the TypeScript catalog (`props.ts`
  * `addLatentBindings`) reads it directly, the C++ catalog (`props.cpp`) reads
- * the copy `crossEngineCatalog.test.ts` generates into catalog_data.inc. Row
+ * its own copy in native/engine/catalog/latent.json (`crossEngineCatalog.test.ts`
+ * fails when the two differ). Row
  * ORDER is the order both engines add the bindings in, after the fields and
  * before the unclaimed tracks. A row whose member is already bound (a stored
  * or animated prop, a property-tree row) is skipped: the latent binding and
  * the stored one have the same API path (`apiPathFor(member, groupForProp)`),
  * so a property keeps its path when it becomes stored.
  *
- * Adding a row needs no engine code (like layerFieldSpecs.ts): add it, run
- * `GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`, rebuild native.
+ * Adding a row needs no engine code (like layerFieldSpecs.ts): add it here and
+ * to native/engine/catalog/latent.json, rebuild native.
  */
 
 import type { LayerFieldWhen } from './layerFieldSpecs';

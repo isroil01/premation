@@ -23,8 +23,9 @@
  * the legacy picker did; After Effects has no in-place switch to compare with.
  *
  * DATA shared by both engines: the TypeScript catalog reads it directly, the
- * C++ catalog reads the copy crossEngineCatalog.test.ts generates into
- * catalog_data.inc (`fields.pathOp`, `fields.polystar`). Row ORDER is the
+ * C++ catalog reads its own copy in native/engine/catalog/fields.json
+ * (`pathOp`, `polystar`; crossEngineCatalog.test.ts fails when the two
+ * differ). Row ORDER is the
  * order both engines add the bindings in. Pure — no scene graph, no stores.
  */
 
