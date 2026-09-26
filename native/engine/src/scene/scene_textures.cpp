@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <thread>
 
+#include "core/joining_thread.hpp"
 #include "bake_chain.hpp"
 #include "image_decode.hpp"
 #include "json.hpp"
@@ -297,7 +298,7 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     for (std::size_t i = 0; i < misses.size(); ++i) work(i);
   } else {
     std::atomic<std::size_t> next{0};
-    std::vector<std::jthread> pool;
+    std::vector<JoiningThread> pool;
     pool.reserve(threads);
     for (unsigned t = 0; t < threads; ++t) {
       pool.emplace_back([&] {

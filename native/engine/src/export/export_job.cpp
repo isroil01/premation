@@ -18,6 +18,7 @@
 #include <sstream>
 #include <thread>
 
+#include "core/joining_thread.hpp"
 #include "child_process.hpp"
 #include "docexpr.hpp"
 #include "docio.hpp"
@@ -343,7 +344,7 @@ class Pipeline {
     std::atomic<std::int64_t> next{plan_.start};
     std::atomic<bool> stop{false};
     std::mutex m;
-    std::vector<std::jthread> pool;
+    std::vector<JoiningThread> pool;
     for (auto& dc : docs_) {
       pool.emplace_back([&, d = dc.get()] {
         for (std::int64_t i = next.fetch_add(1); i <= plan_.end && !stop.load() && !ctl_.cancelled(); i = next.fetch_add(1)) {
@@ -370,7 +371,7 @@ class Pipeline {
     const std::size_t frameBytes = static_cast<std::size_t>(plan_.width) * static_cast<std::size_t>(plan_.height) * (plan_.depth == 16 ? 8U : 4U);
 
     // Build workers: claim the next index while it is within `window` of the render cursor.
-    std::vector<std::jthread> workers;
+    std::vector<JoiningThread> workers;
     for (auto& dc : docs_) {
       workers.emplace_back([this, window, d = dc.get()] {
         for (;;) {
@@ -400,7 +401,7 @@ class Pipeline {
     std::condition_variable wcv;
     bool writerDone = false;
     bool writerFailed = false;
-    std::jthread writer([&] {
+    JoiningThread writer([&] {
       for (;;) {
         OutFrame f;
         {
@@ -694,12 +695,12 @@ int run_export(const std::string& jobPath) {
   std::unique_ptr<rg::SceneRenderer> renderer;
   std::string gpuErr;
   double gpuInitMs = 0;
-  std::jthread gpuInit;
+  JoiningThread gpuInit;
   if (!job.preflightOnly) {
     rg::RendererOptions ro;
     ro.highPerformance = true;
     if (const char* v = std::getenv("PREMATION_EXPORT_GPU_VENDOR")) ro.vendorId = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 0));  // NOLINT(concurrency-mt-unsafe): read before the thread starts
-    gpuInit = std::jthread([&renderer, &gpuErr, &gpuInitMs, ro] {
+    gpuInit = JoiningThread([&renderer, &gpuErr, &gpuInitMs, ro] {
       const auto t0 = Clock::now();
       renderer = rg::SceneRenderer::create(ro, gpuErr);
       gpuInitMs = ms_since(t0);
@@ -744,7 +745,7 @@ int run_export(const std::string& jobPath) {
     std::vector<std::unique_ptr<DocCopy>> more(std::max(1U, nThreads) - 1);
     std::vector<std::string> errs(more.size());
     {
-      std::vector<std::jthread> loaders;
+      std::vector<JoiningThread> loaders;
       for (std::size_t k = 0; k < more.size(); ++k) {
         loaders.emplace_back([&, k] {
           more[k] = std::make_unique<DocCopy>();

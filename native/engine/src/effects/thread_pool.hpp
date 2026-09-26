@@ -1,4 +1,4 @@
-// E4 effect kernels — a small fixed pool of std::jthread workers that split a
+// E4 effect kernels — a small fixed pool of joining worker threads that split a
 // kernel's rows.
 //
 // Every kernel is written so that each OUTPUT row depends only on the input
@@ -13,6 +13,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#include "core/joining_thread.hpp"
 
 namespace premation::effects {
 
@@ -35,11 +37,10 @@ class ThreadPool {
   void parallel_for(int n, int grain, const std::function<void(int, int)>& fn);
 
  private:
-  void worker_loop(const std::stop_token& stop);
+  void worker_loop();
 
-  std::vector<std::jthread> workers_;
   std::mutex m_;
-  std::condition_variable_any wake_;
+  std::condition_variable wake_;
   std::condition_variable done_cv_;
   const std::function<void(int, int)>* job_ = nullptr;
   int n_ = 0;
@@ -47,6 +48,10 @@ class ThreadPool {
   int next_ = 0;         // next chunk start handed out
   int outstanding_ = 0;  // chunks not yet finished
   std::size_t generation_ = 0;
+  bool stop_ = false;  // set under m_ by the destructor
+  // Last: the workers read every member above, so they are joined (by this
+  // vector's destruction, after ~ThreadPool has set stop_) before those go.
+  std::vector<JoiningThread> workers_;
 };
 
 /// Rows [0, h) of a kernel: through `pool` when one is given, else inline.
