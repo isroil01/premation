@@ -1300,6 +1300,16 @@ Live Union / Subtract / Intersect.
   operands. The AI's `merge_paths`, the Workspace / Scene menus' Live
   Union / Subtract / Intersect / Exclude and the palette's Path Operation
   commands all send it (`liveMergePathsEdit`); `merge_paths` is engine-routed.
+- **Proxy ownership is an engine rule** (both engines: `src/core/engine/proxyOwnership.ts`,
+  called from `LocalEngine.runEdits`; C++ `detach_proxy_ownership` in `session.cpp`
+  `run_edits`, after `stamp_missing_key_ids`). After each edit command whose origin
+  is not `plugin`: if it changed an EXISTING layer carrying `__ownedByPlugin` (a
+  proxy layer's generated child; a layer it created or deleted does not count),
+  every owned layer under that child's proxy layer (the parent of its topmost
+  owned ancestor-or-self) gets the mark written `null` — inside the same command,
+  so undo re-attaches and a log replays it. The page-side `noteManualEdit` /
+  `detachSubtree` (the plugin write hook) are gone; `setProxyChildren` sends
+  origin `plugin` and never detaches its own writes.
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 

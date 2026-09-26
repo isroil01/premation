@@ -5,8 +5,8 @@
  * actually WIRED — which is the failure this repo has seen before: a feature
  * registered, rendered, fully tested and unreachable.
  *
- * Both behaviours are hooked at `SceneGraph.writeProp`, and that placement is
- * the claim under test. It makes the playback property STRUCTURAL rather than a
+ * The authored-change report is hooked at `SceneGraph.writeProp`, and that
+ * placement is the claim under test (the detach is the engine's rule now). It makes the playback property STRUCTURAL rather than a
  * discipline: animation samples tracks and never writes props, so it cannot
  * reach the hook at all — no amount of coalescing is doing that work.
  */
@@ -136,9 +136,12 @@ describe('an authored edit reaches the plugin', () => {
 
 describe('a user edit detaches a generated subtree', () => {
   // B5: regeneration is an engine batch — the app's engine, a fresh project,
-  // the custom layer inside its composition.
+  // the custom layer inside its composition. The detach is the ENGINE's rule
+  // (src/core/engine/proxyOwnership.ts): any command whose origin is not
+  // `plugin` that changes a generated child.
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
   let dispose: () => Promise<void> = async () => {};
-  beforeEach(async () => { dispose = (await setupAppEngine()).dispose; });
+  beforeEach(async () => { h = await setupAppEngine(); dispose = h.dispose; });
   afterEach(async () => { await dispose(); });
 
   it('detaches wherever the edit came from, not only from the inspector', async () => {
@@ -151,11 +154,9 @@ describe('a user edit detaches a generated subtree', () => {
     const ids = defaultSceneGraph.getChildren('depth-1').map((c) => c.id);
     expect(ids).toHaveLength(2);
 
-    // A plain scene-graph write — the same path a canvas drag or a menu command
-    // takes. Instrumenting only the inspector would miss both.
-    const child = defaultSceneGraph.getNode(ids[0]!)!;
-    const component = child.components.find((c) => c.type === 'Transform')!;
-    defaultSceneGraph.writeProp(ids[0]!, component.id, 'x', 99);
+    // The command a canvas drag, a menu or the Inspector sends — the rule sits
+    // in the engine, so no surface can forget it.
+    await h.run({ type: 'setProperty', prop: { layer: ids[0]!, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 99, y: 0 } } });
 
     for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(false);
   });

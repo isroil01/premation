@@ -199,6 +199,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_session.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
+    tests/test_proxy_ownership.cpp
     tests/test_expression_controls.cpp
     tests/test_migrations.cpp
     tests/test_stress.cpp

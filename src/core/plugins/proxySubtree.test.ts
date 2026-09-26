@@ -9,7 +9,8 @@
  *     undo granularity collapses — all far from the parameter tweak that caused
  *     it. Asserted on IDS, not on shape.
  *   • **A manual edit detaches rather than being overwritten.** Marking owned
- *     children exists precisely to prevent silent overwriting.
+ *     children exists precisely to prevent silent overwriting. The detach is
+ *     the ENGINE's rule, inside the user's command (proxyOwnership.ts).
  *   • **The host stops a regeneration loop.** A plugin that regenerates in
  *     response to its own regeneration wedges the editor, and the author's own
  *     testing is where a one-plugin loop is least likely to appear.
@@ -23,8 +24,6 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { buildCustomLayerNode, customPropPath, isPluginOwned, ownerOf } from './customLayers';
 import {
-  detachSubtree,
-  noteManualEdit,
   regenerateProxyChildren,
   resetRateLimitForTests,
   type ProxyChildSpec,
@@ -130,25 +129,33 @@ describe('regeneration diffs rather than recreating', () => {
   });
 });
 
-describe('a user takes the subtree over', () => {
+describe('a user takes the subtree over (the engine rule, proxyOwnership.ts)', () => {
   beforeEach(async () => {
     await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
   });
 
-  it('detaches the WHOLE subtree on a manual edit, and destroys nothing', () => {
+  /** A user's edit of one generated child: an engine command, origin ui. */
+  const userRename = (id: string, name = 'Mine'): Promise<unknown> => h.run({ type: 'renameLayer', layer: id, name });
+
+  it('detaches the WHOLE subtree inside the user\'s command, and destroys nothing', async () => {
     const ids = childIds();
-    noteManualEdit(ids[0]!);
+    const before = historyLabels().length;
+    await userRename(ids[0]!);
 
     // Both children, not just the one edited: a half-owned subtree is a state
     // neither side can reason about.
     for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(false);
     // Still there. Detaching clears a mark; it does not delete work.
     expect(childIds()).toEqual(ids);
+    // Part of the user's command: ONE entry, and undo re-attaches.
+    expect(historyLabels().length).toBe(before + 1);
+    await h.run({ type: 'undo' });
+    for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(true);
   });
 
   it('then REFUSES the next regeneration rather than overwriting', async () => {
     // Silently overwriting is exactly what the ownership mark exists to prevent.
-    noteManualEdit(childIds()[0]!);
+    await userRename(childIds()[0]!);
     const ids = childIds();
 
     const result = await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')]);
@@ -157,17 +164,18 @@ describe('a user takes the subtree over', () => {
     expect(childIds()).toEqual(ids);
   });
 
-  it('does not detach while the plugin is regenerating its own children', async () => {
-    // Both go through the same scene-graph calls. Without the guard, the first
-    // write of a regeneration would detach the subtree being regenerated.
+  it('does not detach on the plugin\'s own writes (origin plugin)', async () => {
     const ids = childIds();
-    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a', 'Renamed A'), child('b')]);
+    for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(true);
+    expect((await h.engine.execute({ type: 'renameLayer', layer: ids[1]!, name: 'By the plugin' }, { origin: 'plugin' })).ok).toBe(true);
     for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(true);
   });
 
-  it('ignores an edit to a layer no plugin owns', () => {
-    detachSubtree('depth-1', PLUGIN);
-    expect(() => noteManualEdit(childIds()[0]!)).not.toThrow();
+  it('leaves an edit to a layer no plugin owns alone', async () => {
+    const ids = childIds();
+    await userRename('depth-1', 'The proxy layer');
+    for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(true);
   });
 });
 

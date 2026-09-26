@@ -64,7 +64,8 @@ import { useProjectStore } from '@stores/projectStore';
 import { reconcileDocumentItems } from './documentLoad';
 import { EngineFail, fail, toEngineError } from './errors';
 import { IdAllocator, allKeyframeIds, type IdCounters } from './ids';
-import { captureScope, applyParts, changedKeys, documentScope, type Parts, type Scope } from './state';
+import { captureScope, applyParts, changedKeys, documentScope, newScope, K, type Parts, type Scope } from './state';
+import { detachProxyLayers, proxyLayersToDetach } from './proxyOwnership';
 import { EventBuilder } from './events';
 import { idTaken, compItemIds } from './doc';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -662,6 +663,21 @@ export class LocalEngine extends EngineClientBase {
           useHistoryStore.setState({ restoring: false });
         }
         const a = captureScope(scope);
+        // A non-plugin edit of a plugin-generated layer detaches its proxy
+        // subtree, inside this command (proxyOwnership.ts; C++ session.cpp).
+        const detach = proxyLayersToDetach(origin, b, a);
+        if (detach.length > 0) {
+          const extra = newScope();
+          for (const id of detach) extra.keys.add(K.node(id));
+          for (const [k, v] of captureScope(extra)) if (!b.has(k)) b.set(k, v);
+          useHistoryStore.setState({ restoring: true });
+          try {
+            detachProxyLayers(detach);
+          } finally {
+            useHistoryStore.setState({ restoring: false });
+          }
+          for (const [k, v] of captureScope(extra)) a.set(k, v);
+        }
         for (const [k, v] of b) if (!before.has(k)) before.set(k, v);
         // A key only the AFTER capture has did not exist before this command
         // (document scope enumerates the parts that exist). Its first-seen

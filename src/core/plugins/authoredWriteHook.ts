@@ -24,15 +24,11 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { setPluginPropWriteHandler } from '@core/scene/pluginPropWrites';
 import { notifyAuthoredChange } from './layerChangeNotifier';
-import { noteManualEdit } from './proxySubtree';
 import { readCustomLayer, customLayerComponent } from './customLayers';
 
 /** Install the hook (idempotent: a second call replaces the first). */
 export function installAuthoredWriteHook(): void {
   setPluginPropWriteHandler((nodeId, componentId, propName) => {
-    // A generated child the user touched: the plugin stops managing it.
-    noteManualEdit(nodeId);
-
     // An authored edit on a custom layer's OWN property: tell its plugin.
     const node = defaultSceneGraph.getNode(nodeId);
     if (!node) return;

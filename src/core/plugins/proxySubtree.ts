@@ -38,13 +38,17 @@
  * comprehensible — "you have taken this over" — and it is reversible, because
  * re-attaching is just another regeneration.
  *
- * Nothing is destroyed either way. Detaching only clears a mark.
+ * Nothing is destroyed either way. Detaching only clears a mark. The rule
+ * is the ENGINE's (src/core/engine/proxyOwnership.ts, C++ session.cpp): an
+ * edit whose origin is not `plugin` that changes an owned child clears every
+ * mark under the proxy layer inside the same command — one undo entry, in
+ * the command log. The regeneration below sends origin `plugin`, so its own
+ * writes never detach.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { rewriteNameRefsToIds } from './bindingMigration';
-import { bumpScene } from '@stores/sceneStore';
 import type { Command } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { compOfLayer, layerSubtree } from '@core/engine/doc';
@@ -76,100 +80,6 @@ export interface RegenerateResult {
   removed: string[];
   /** Set when the subtree was detached and the plugin no longer owns it. */
   refused?: 'detached';
-}
-
-/*
- * Is a regeneration in progress?
- *
- * The one thing that distinguishes a plugin writing to its own children from a
- * USER writing to them — both go through the same scene-graph calls. Without
- * this flag, a regeneration would detach the very subtree it was regenerating
- * on its first write.
- */
-let regenerating = 0;
-
-export function isRegenerating(): boolean {
-  return regenerating > 0;
-}
-
-function withRegeneration<T>(fn: () => T): T {
-  regenerating += 1;
-  try {
-    return fn();
-  } finally {
-    regenerating -= 1;
-  }
-}
-
-/**
- * A user touched a plugin-owned layer.
- *
- * Called from the scene-graph write path. Detaches the whole subtree, once —
- * subsequent edits are then ordinary edits on ordinary layers.
- */
-export function noteManualEdit(nodeId: string): void {
-  if (isRegenerating()) return;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const owner = ownerOf(node);
-  if (!owner) return;
-
-  /*
-    Detach from the PROXY LAYER, not from the node that was edited.
-
-    The unit of ownership is the subtree, so the walk goes up to the topmost
-    owned node and then one step further, to its unowned parent — the custom
-    layer these children belong to. Detaching from the edited node alone would
-    leave its SIBLINGS owned, which is the half-owned state this rule exists to
-    avoid: the next regeneration would find some children managed and some not.
-  */
-  detachSubtree(proxyRootOf(nodeId) ?? nodeId, owner);
-}
-
-/** The proxy layer whose subtree contains `nodeId`, or null. */
-function proxyRootOf(nodeId: string): string | null {
-  let current = defaultSceneGraph.getNode(nodeId);
-  let topmostOwned: SceneNode | null = null;
-  let guard = 0;
-  while (current && guard < 64) {
-    if (ownerOf(current)) topmostOwned = current;
-    const parentId = current.parent;
-    if (!parentId) break;
-    current = defaultSceneGraph.getNode(parentId);
-    guard += 1;
-  }
-  if (!topmostOwned) return null;
-  // The parent of the topmost owned node is the custom layer itself, which is
-  // never marked owned — it belongs to the user, only its output is generated.
-  return topmostOwned.parent ?? topmostOwned.id;
-}
-
-/** Clear plugin ownership from a node and everything under it. */
-export function detachSubtree(nodeId: string, owner: string): void {
-  const touched: string[] = [];
-  const walk = (id: string): void => {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) return;
-    if (ownerOf(node)) touched.push(id);
-    for (const child of defaultSceneGraph.getChildren(id)) walk(child.id);
-  };
-  walk(nodeId);
-  if (touched.length === 0) return;
-
-  withRegeneration(() => {
-    for (const id of touched) {
-      const node = defaultSceneGraph.getNode(id);
-      const component = node?.components.find(
-        (c) => (c.props as Record<string, unknown>)[OWNED_BY_KEY] !== undefined,
-      );
-      // Written as `null`, not `undefined`: the scene graph's write path
-      // treats undefined as "no change", so the mark would survive.
-      // `isPluginOwned` tests for a STRING, so null reads as unowned.
-      if (node && component) defaultSceneGraph.writeProp(id, component.id, OWNED_BY_KEY, null);
-    }
-  });
-  console.info(`[plugins] "${owner}" no longer manages this subtree — you edited it.`);
-  bumpScene();
 }
 
 /*
@@ -281,27 +191,21 @@ export async function regenerateProxyChildren(
   // New: built whole, off-document, and pasted into the proxy layer.
   let built: BuiltLayers | null = null;
   if (fresh.length > 0) {
-    // Regenerating: the scratch writes are not a user's edit (no detach).
-    regenerating += 1;
-    try {
-      built = buildLayerFragment(comp, () => {
-        for (const spec of fresh) {
-          const id = `${parentId}__${sanitiseKey(spec.key)}`;
-          defaultSceneGraph.addChild(parentId, buildChild(id, spec, pluginId));
-          // Props and bindings in place (SCRATCH writes: the build is off-document).
-          const t = defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Transform');
-          for (const [name, value] of Object.entries(spec.props ?? {})) {
-            if (name.startsWith('__') || !t) continue; // Bookkeeping is the host's.
-            defaultSceneGraph.writeProp(id, t.id, name, value);
-          }
-          for (const [prop, src] of Object.entries(bindByStableId(spec.expressions ?? {}, parentRef.id, parentRef.name))) {
-            defaultAnimation.setExpression(id, prop, src, pluginId);
-          }
+    built = buildLayerFragment(comp, () => {
+      for (const spec of fresh) {
+        const id = `${parentId}__${sanitiseKey(spec.key)}`;
+        defaultSceneGraph.addChild(parentId, buildChild(id, spec, pluginId));
+        // Props and bindings in place (SCRATCH writes: the build is off-document).
+        const t = defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Transform');
+        for (const [name, value] of Object.entries(spec.props ?? {})) {
+          if (name.startsWith('__') || !t) continue; // Bookkeeping is the host's.
+          defaultSceneGraph.writeProp(id, t.id, name, value);
         }
-      });
-    } finally {
-      regenerating -= 1;
-    }
+        for (const [prop, src] of Object.entries(bindByStableId(spec.expressions ?? {}, parentRef.id, parentRef.name))) {
+          defaultAnimation.setExpression(id, prop, src, pluginId);
+        }
+      }
+    });
     if (built) {
       cmds.push({
         type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}),
@@ -310,11 +214,8 @@ export async function regenerateProxyChildren(
   }
   if (cmds.length === 0) return result;
 
-  // The engine's own writes are not a user's edit either (no detach).
-  regenerating += 1;
-  const res = await engine()
-    .batch(`${pluginName}: update layers`, cmds, { origin: 'plugin' })
-    .finally(() => { regenerating -= 1; });
+  // Origin plugin: the engine's ownership rule does not detach the plugin's own writes.
+  const res = await engine().batch(`${pluginName}: update layers`, cmds, { origin: 'plugin' });
   if (!res.ok) throw new Error(res.error.message || res.error.code);
   if (built) {
     const pasted = res.value[res.value.length - 1] as { layers?: string[] } | undefined;

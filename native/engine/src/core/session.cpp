@@ -16,6 +16,7 @@
 #include "native_effects.hpp"
 #include "queries.hpp"
 #include "readmodel.hpp"
+#include "scene.hpp"
 #include "scene_build.hpp"
 #include "time_conv.hpp"
 #include "variant_util.hpp"
@@ -386,6 +387,67 @@ void Session::ensure_timelines() {
   }
 }
 
+namespace {
+
+// ── Proxy ownership (src/core/engine/proxyOwnership.ts) ─────────────────────
+// A plugin's proxy layer generates child layers marked `__ownedByPlugin`. An
+// edit whose origin is not `plugin` that changes an EXISTING owned layer
+// detaches the whole proxy subtree: every mark under the proxy layer is
+// written null inside the same command (its inverse, its log record).
+
+constexpr std::string_view kOwnedBy = "__ownedByPlugin";
+
+bool is_owned(const doc::Node* n) {
+  if (n == nullptr) return false;
+  return std::any_of(n->components.begin(), n->components.end(),
+                     [](const doc::Component& c) { return c.props.at(kOwnedBy).is_string(); });
+}
+
+/// The parent of the topmost owned ancestor-or-self of `id` (the proxy layer).
+std::string proxy_root_of(const doc::Document& d, const std::string& id) {
+  std::string top = id;
+  const doc::Node* cur = d.node(id);
+  for (int guard = 0; cur != nullptr && guard < 256; ++guard) {
+    if (is_owned(cur)) top = cur->id;
+    if (!cur->parent) break;
+    cur = d.node(*cur->parent);
+  }
+  const doc::Node* t = d.node(top);
+  return t != nullptr && t->parent ? *t->parent : top;
+}
+
+void collect_owned(const doc::Document& d, const std::string& id, std::vector<std::string>& out) {
+  if (is_owned(d.node(id)) && std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
+  for (const std::string& c : doc::sg_child_order(d, id)) collect_owned(d, c, out);
+}
+
+/// `touched.before` = the command's journal so far (the parts as they were before it).
+void detach_proxy_ownership(doc::Document& d, const doc::ChangeSet& touched, api::Origin origin) {
+  if (origin == api::Origin::plugin) return;
+  std::vector<std::string> roots;
+  for (const auto& [id, before] : touched.before.nodes) {
+    if (!before) continue;  // created by this command
+    const doc::Node* now = d.node(id);
+    if (now == nullptr || !is_owned(now) || *now == *before) continue;
+    std::string root = proxy_root_of(d, id);
+    if (std::find(roots.begin(), roots.end(), root) == roots.end()) roots.push_back(std::move(root));
+  }
+  std::vector<std::string> owned;
+  for (const std::string& r : roots) collect_owned(d, r, owned);
+  for (const std::string& id : owned) {
+    const doc::Node* n = d.node(id);
+    if (n == nullptr) continue;
+    for (const doc::Component& c : n->components) {
+      if (!c.props.at(kOwnedBy).is_string()) continue;
+      // null, as the TypeScript writes it (a string test reads it as unowned).
+      doc::sg_write_prop(d, id, c.id, kOwnedBy, doc::Json::null());
+      break;
+    }
+  }
+}
+
+}  // namespace
+
 void Session::stamp_missing_key_ids(const doc::ChangeSet& touched, doc::HCtx& x) {
   // stamp.ts: any key in the edited scope without an id gets one, tracks and
   // keys in engine order, inside the command (part of its inverse).
@@ -457,6 +519,7 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
       doc::ChangeSet sofar;
       doc_.peek_journal(sofar.before);
       stamp_missing_key_ids(sofar, x);
+      detach_proxy_ownership(doc_, sofar, origin);
       doc::tl_sync_all(doc_);
       results.push_back(std::move(r));
       if (!batchLabel) label = x.label ? *x.label : humanize(name);
