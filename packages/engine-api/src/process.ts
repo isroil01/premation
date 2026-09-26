@@ -37,6 +37,7 @@ import type {
   EngineMessage,
   EventBatch,
   LogRecord,
+  OverlayLayerGeometry,
   Request,
   Response,
   Revision,
@@ -113,6 +114,12 @@ export interface EngineFrameMeta {
   renderDoneUs: number;
   /** Epoch µs when main handed the frame to Chromium (measurement only). */
   sentUs: number;
+  /**
+   * B4 round 2: the overlay geometry of THIS frame (setOverlayGeometry), the
+   * FrameGeometry records the engine sent before it, in arrival order (one
+   * layer's records merge, arrays concatenating). Absent without a subscription.
+   */
+  geometry?: OverlayLayerGeometry[];
 }
 
 /** Receives a frame; must call `release()` exactly once when done (after drawing). */

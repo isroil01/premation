@@ -159,6 +159,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   setCacheBudget: { id: 810, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "" },
   purgeCache: { id: 811, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "" },
   setInteracting: { id: 812, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "Interaction hint: the UI is dragging, the engine may drop to draft quality until it ends." },
+  setOverlayGeometry: { id: 1771, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md \"Gaps\"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision." },
   startJob: { id: 850, kind: 'control', coalesce: false, family: "Jobs", result: "JobRef", doc: "" },
   cancelJob: { id: 851, kind: 'control', coalesce: false, family: "Jobs", result: "Empty", doc: "" },
   applyJobResult: { id: 852, kind: 'edit', coalesce: false, family: "Jobs", result: "ItemList", doc: "Apply a finished job's result (when started with apply=false). One history entry." },
@@ -245,4 +246,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":77,"structs":417,"unions":11,"commands":149,"queries":41,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":78,"structs":420,"unions":11,"commands":150,"queries":41,"events":31} as const;

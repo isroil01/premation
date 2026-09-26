@@ -32,12 +32,14 @@ export const CONTROLS_COVERED: CommandType[] = [
   'startJob', 'cancelJob', 'setPluginEnabled',
   // B3z History ▸ Snapshot — exercised in b3zLastWrites.test.ts.
   'addHistoryCheckpoint',
+  // B4 round 2 overlay geometry push — exercised in overlayGeometry.test.ts.
+  'setOverlayGeometry',
 ];
 
 test('the list above covers every non-edit command', () => {
   const nonEdit = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t].kind !== 'edit');
   expect(nonEdit.filter((t) => !CONTROLS_COVERED.includes(t))).toEqual([]);
-  expect(nonEdit.length).toBe(31);
+  expect(nonEdit.length).toBe(32);
 });
 
 test('undo / redo / jumpToHistory walk one linear history; empty stacks are typed errors', async () => {

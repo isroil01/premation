@@ -52,6 +52,41 @@ struct FrameReady {
   height: u32 = 11;
 }
 
+/// B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order.
+struct OverlayLayerGeometry {
+  layer: LayerId = 1;
+  /// transform: the column-major 4×4 layer → comp matrix (getLayerTransforms: a 3D layer's world matrix, else the 2D chain as a 4×4).
+  matrix: f64[] = 2;
+  /// bounds: readGeometry's LOCAL box as x, y, width, height (getLayerBounds, layer space) …
+  box: f64[] = 3;
+  /// … and its four corners through the 2D world chain: x0, y0 … x3, y3 (getLayerBounds, comp space).
+  corners: f64[] = 4;
+  /// motionPath: the trajectory of the layer's Position, sampled over its keyed span (16 per key segment, at least 8), as t, x, y, z quadruples: x / y through the parent's world matrix at the frame's time (comp space), z the layer's raw z (0 for 2D; the page projects a 3D layer through its view camera).
+  path: f64[] = 5;
+  /// motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex).
+  pathKeys: f64[] = 6;
+  /// rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side).
+  pins: f64[] = 7;
+  bones: f64[] = 8;
+  /// textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box).
+  textBox: f64[] = 9;
+  /// motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`.
+  pathFrames: f64[] = 10;
+  /// motionPath: the position at the frame's own time: x, y, z (comp space as `path`).
+  pathNow: f64[] = 11;
+}
+
+/// Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription.
+struct FrameGeometry {
+  viewport: u32 = 1;
+  generation: u32 = 2;
+  frame: i64 = 3;
+  time: Time = 4;
+  revision: Revision = 5;
+  layers: OverlayLayerGeometry[] = 6;
+  last: bool = 7;
+}
+
 /// Engine → host. Heartbeat answer, sent by the document core thread.
 struct FramePong {
   nonce: u64 = 1;
@@ -72,6 +107,7 @@ union FrameChannelMessage flat {
   slots: FrameSlots = 1;
   frameReady: FrameReady = 2;
   pong: FramePong = 3;
+  geometry: FrameGeometry = 4;
   release: FrameRelease = 16;
   ping: FramePing = 17;
 }

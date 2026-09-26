@@ -422,6 +422,15 @@ export type PurgeKind =
   | 'images';
 export const PurgeKindValues = ['all', 'ram', 'disk', 'undo', 'images'] as const;
 
+/** B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames). */
+export type OverlayKind =
+  | 'transform'
+  | 'bounds'
+  | 'motionPath'
+  | 'rig'
+  | 'textBox';
+export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox'] as const;
+
 export type TrackKind =
   | 'position'
   | 'positionRotation'
@@ -2503,6 +2512,13 @@ export interface SetInteracting {
   interacting: boolean;
 }
 
+/** B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md "Gaps"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision. */
+export interface SetOverlayGeometry {
+  viewport: number;
+  layers: LayerId[];
+  kinds: OverlayKind[];
+}
+
 export interface TrackPointSpec {
   /** Feature region centre + size, search region size, in layer pixels. */
   feature: Rect;
@@ -3605,6 +3621,41 @@ export interface FrameReady {
   height: number;
 }
 
+/** B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order. */
+export interface OverlayLayerGeometry {
+  layer: LayerId;
+  /** transform: the column-major 4×4 layer → comp matrix (getLayerTransforms: a 3D layer's world matrix, else the 2D chain as a 4×4). */
+  matrix: number[];
+  /** bounds: readGeometry's LOCAL box as x, y, width, height (getLayerBounds, layer space) … */
+  box: number[];
+  /** … and its four corners through the 2D world chain: x0, y0 … x3, y3 (getLayerBounds, comp space). */
+  corners: number[];
+  /** motionPath: the trajectory of the layer's Position, sampled over its keyed span (16 per key segment, at least 8), as t, x, y, z quadruples: x / y through the parent's world matrix at the frame's time (comp space), z the layer's raw z (0 for 2D; the page projects a 3D layer through its view camera). */
+  path: number[];
+  /** motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex). */
+  pathKeys: number[];
+  /** rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side). */
+  pins: number[];
+  bones: number[];
+  /** textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box). */
+  textBox: number[];
+  /** motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`. */
+  pathFrames: number[];
+  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
+  pathNow: number[];
+}
+
+/** Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription. */
+export interface FrameGeometry {
+  viewport: number;
+  generation: number;
+  frame: number;
+  time: Time;
+  revision: Revision;
+  layers: OverlayLayerGeometry[];
+  last: boolean;
+}
+
 /** Engine → host. Heartbeat answer, sent by the document core thread. */
 export interface FramePong {
   nonce: number;
@@ -3630,6 +3681,7 @@ export type FrameChannelMessage =
   | ({ type: 'slots' } & FrameSlots)
   | ({ type: 'frameReady' } & FrameReady)
   | ({ type: 'pong' } & FramePong)
+  | ({ type: 'geometry' } & FrameGeometry)
   | ({ type: 'release' } & FrameRelease)
   | ({ type: 'ping' } & FramePing);
 export type FrameChannelMessageType = FrameChannelMessage['type'];
@@ -4222,6 +4274,7 @@ export type Command =
   | ({ type: 'setCacheBudget' } & SetCacheBudget)
   | ({ type: 'purgeCache' } & PurgeCache)
   | ({ type: 'setInteracting' } & SetInteracting)
+  | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
   | ({ type: 'startJob' } & StartJob)
   | ({ type: 'cancelJob' } & CancelJob)
   | ({ type: 'applyJobResult' } & ApplyJobResult)
@@ -4375,6 +4428,7 @@ export type CommandResult =
   | ({ type: 'setCacheBudget' } & Empty)
   | ({ type: 'purgeCache' } & Empty)
   | ({ type: 'setInteracting' } & Empty)
+  | ({ type: 'setOverlayGeometry' } & Empty)
   | ({ type: 'startJob' } & JobRef)
   | ({ type: 'cancelJob' } & Empty)
   | ({ type: 'applyJobResult' } & ItemList)
@@ -4653,6 +4707,7 @@ export interface CommandArgs {
   setCacheBudget: SetCacheBudget;
   purgeCache: PurgeCache;
   setInteracting: SetInteracting;
+  setOverlayGeometry: SetOverlayGeometry;
   startJob: StartJob;
   cancelJob: CancelJob;
   applyJobResult: ApplyJobResult;
@@ -4806,6 +4861,7 @@ export interface CommandResults {
   setCacheBudget: Empty;
   purgeCache: Empty;
   setInteracting: Empty;
+  setOverlayGeometry: Empty;
   startJob: JobRef;
   cancelJob: Empty;
   applyJobResult: ItemList;

@@ -287,6 +287,7 @@ set(ENGINE_DOC_SOURCES
   src/core/meta.cpp
   src/core/model.cpp
   src/core/native_effects.cpp
+  src/core/overlay_geometry.cpp
   src/core/parenting.cpp
   src/core/particle_props.cpp
   src/core/plugin_props.cpp

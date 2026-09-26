@@ -8,12 +8,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <variant>
 #include <vector>
 
 #include "core/json.hpp"
+#include "core/overlay_geometry.hpp"
 #include "session_harness.hpp"
 
 using namespace premation;
@@ -284,4 +287,104 @@ TEST_CASE("getMemberKeyframes: the stored member tracks with their owning proper
   const auto only = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {"y"}}));
   REQUIRE(only.tracks.size() == 1);
   CHECK(only.tracks[0].index == 1);
+}
+
+TEST_CASE("setOverlayGeometry: every frame of the viewport is preceded by its geometry", "[b4r2][overlay]") {
+  Harness h;
+  (void)h.hello();
+  const auto layer = make_layer(h, "comp_root", api::LayerKind::shape);
+  api::AddKeyframes a;
+  for (const auto& [t, x] : std::vector<std::pair<api::Time, double>>{{0, 100}, {kSec, 300}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "transform/position"};
+    k.time = t;
+    k.value = vec2(x, 200);
+    a.keys.push_back(std::move(k));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  api::SetOverlayGeometry sub;
+  sub.viewport = 1;
+  sub.layers = {layer, "nope"};
+  sub.kinds = {api::OverlayKind::transform, api::OverlayKind::bounds, api::OverlayKind::motion_path};
+  REQUIRE(is_ok(h.run(cmd(sub))));
+  h.release_all();
+  h.frameMsgs.clear();
+  REQUIRE(is_ok(h.run(cmd(api::Seek{kSec / 2}))));
+  h.advance(std::chrono::milliseconds(40));
+  // The geometry, complete (`last`), then the FrameReady of the same frame.
+  std::vector<api::FrameGeometry> parts;
+  std::optional<api::FrameReady> ready;
+  for (const auto& m : h.frameMsgs) {
+    if (const auto* g = std::get_if<api::FrameGeometry>(&m.v)) {
+      REQUIRE_FALSE(ready.has_value());
+      parts.push_back(*g);
+    }
+    if (const auto* f = std::get_if<api::FrameReady>(&m.v); f != nullptr && !ready) ready = *f;
+  }
+  REQUIRE(ready.has_value());
+  REQUIRE_FALSE(parts.empty());
+  CHECK(parts.back().last);
+  CHECK(parts.back().frame == ready->frame);
+  std::vector<double> matrix;
+  std::vector<double> path;
+  std::vector<double> keys;
+  std::vector<double> now;
+  for (const auto& p : parts) {
+    for (const auto& g : p.layers) {
+      REQUIRE(g.layer == layer);  // "nope" is skipped
+      matrix.insert(matrix.end(), g.matrix.begin(), g.matrix.end());
+      path.insert(path.end(), g.path.begin(), g.path.end());
+      keys.insert(keys.end(), g.path_keys.begin(), g.path_keys.end());
+      now.insert(now.end(), g.path_now.begin(), g.path_now.end());
+    }
+  }
+  REQUIRE(matrix.size() == 16);
+  CHECK(matrix[12] == Approx(200));  // halfway between the keys, at the frame's time
+  REQUIRE(keys.size() == 16);        // two keys × (t, x, y, z, inX, inY, outX, outY)
+  CHECK(keys[1] == Approx(100));
+  CHECK(std::isnan(keys[4]));        // the first key has no in-handle
+  CHECK(keys[9] == Approx(300));
+  CHECK(std::isnan(keys[14]));       // the last key has no out-handle
+  REQUIRE(path.size() % 4 == 0);
+  CHECK(path.size() / 4 <= doc::kOverlayPathPoints);
+  REQUIRE(now.size() == 3);
+  CHECK(now[0] == Approx(200));
+
+  // Unsubscribe: frames carry no geometry.
+  sub.layers.clear();
+  REQUIRE(is_ok(h.run(cmd(sub))));
+  h.release_all();
+  h.frameMsgs.clear();
+  REQUIRE(is_ok(h.run(cmd(api::Seek{kSec}))));
+  h.advance(std::chrono::milliseconds(40));
+  for (const auto& m : h.frameMsgs) CHECK_FALSE(std::holds_alternative<api::FrameGeometry>(m.v));
+}
+
+TEST_CASE("pack_frame_geometry: long paths split under the frame channel's payload cap and merge back", "[b4r2][overlay]") {
+  api::OverlayLayerGeometry g;
+  g.layer = "layer_with_a_long_path";
+  g.matrix.assign(16, 1.0);
+  for (int i = 0; i < 2000; ++i) g.path_frames.push_back(static_cast<double>(i));
+  const auto msgs = doc::pack_frame_geometry(1, 2, 3, 4, 5, {g});
+  REQUIRE(msgs.size() > 1);
+  CHECK(msgs.back().last);
+  std::vector<double> merged;
+  for (const auto& m : msgs) {
+    CHECK((m.last == (&m == &msgs.back())));
+    std::vector<std::uint8_t> bytes;
+    frames::encode(frames::Message{.v = m}, bytes);
+    CHECK(bytes.size() <= frames::kMaxPayload);
+    for (const auto& r : m.layers) merged.insert(merged.end(), r.path_frames.begin(), r.path_frames.end());
+  }
+  CHECK(merged == g.path_frames);
+  const auto none = doc::pack_frame_geometry(1, 2, 3, 4, 5, {});
+  REQUIRE(none.size() == 1);
+  CHECK(none[0].last);
+  CHECK(none[0].layers.empty());
 }

@@ -891,6 +891,7 @@ engine fd 4), framed like the command pipe:
 | `FrameReady` | engine → host | Slot N holds a finished frame (frame, comp time, the revision it shows, size, frames dropped since the last one, render timestamps for measurement). |
 | `FrameRelease` | host → engine | Chromium is done with a slot (a stale generation is ignored). |
 | `FramePing` / `FramePong` | host ⇄ engine | The supervisor's heartbeat, answered by the engine's document core thread. |
+| `FrameGeometry` | engine → host | B4: the overlay geometry of the NEXT FrameReady of a subscribed viewport (`setOverlayGeometry`, §15.12), in parts under the payload cap. |
 
 They are generated like everything else: C++ `api::FrameChannelMessage`, and —
 because Electron main cannot import packages/ — a standalone TypeScript module
@@ -1823,6 +1824,31 @@ from the struct's maximum + 800.
   Wiggler menu predicates and track lists, the Motion editor's property list,
   and the previews' "before" (`beginTrackPreview` takes the captured lists).
   The assistants' writes stay `setKeyframes` per property (assistantKeys.ts).
+- **The overlay geometry push** (docs/TS_ENGINE_REMOVAL.md "Gaps"):
+  **`setOverlayGeometry {viewport, layers, kinds}`** (control 1771; enum
+  `OverlayKind {transform, bounds, motionPath, rig, textBox}`) subscribes a
+  viewport; from its next frame on the engine sends, on the FRAME CHANNEL,
+  **`FrameGeometry {viewport, generation, frame, time, revision, layers:
+  OverlayLayerGeometry[], last}`** (FrameChannelMessage variant 4) right
+  before that frame's FrameReady — the geometry evaluated at the frame's own
+  time and revision, read on the core thread when the frame is built
+  (Session::submit_frame → RenderJob.geometry) and sent by the render thread
+  (or the simulated sink) with the frame: the world 4×4, readGeometry's local
+  box and its comp corners, the motion path (≤ 128 trajectory points, the keys
+  with their effective tangent handles, the per-frame dots, the position now —
+  t, x, y, z; x / y through the parent at the frame, z raw), a text layer's
+  measured box. `rig` (pins / bones) is declared and sent empty in both engines
+  (the rig sampler is scene-side). A frame's records span several messages
+  under the 4096-byte payload cap (`pack_frame_geometry`: a layer's long arrays
+  split in whole groups; the host concatenates). Electron main
+  (`FrameForwarder`) collects them and attaches `geometry` to the frame's meta
+  (`EngineFrameMeta.geometry`), so EngineSurface publishes the geometry of the
+  frame it draws (src/stores/overlayGeometry.ts). When the page's own renderer
+  draws the viewport, the TypeScript engine answers the same records per
+  painted (time, revision) (core/engine/overlayGeometry.ts). The viewport's
+  motion path (draw + hit test) reads it; the workspace subscribes the
+  selection (boxes + matrices for every selected layer, the path and text box
+  for a single one).
 - **`LayerInfo.svg`** (920, enum `SvgRole {none, layer, converted}`): an SVG
   layer storing its document (the `svg` component's sanitized markup) / a group
   converted from one that retains the original source (Revert to Original SVG).

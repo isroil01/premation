@@ -447,8 +447,10 @@ export function decodeGoodbye(body: Uint8Array): { reason: GoodbyeReason; messag
 export type SlotsMessage = Extract<FrameChannelMessage, { type: 'slots' }>;
 export type FrameReadyMessage = Extract<FrameChannelMessage, { type: 'frameReady' }>;
 export type PongMessage = Extract<FrameChannelMessage, { type: 'pong' }>;
+/** B4 round 2: the overlay geometry of the next FrameReady (setOverlayGeometry), possibly in several parts. */
+export type FrameGeometryMessage = Extract<FrameChannelMessage, { type: 'geometry' }>;
 /** What the engine sends on fd 3. Slot handles are NT handles valid in THIS process; the engine owns their lifetime — never close them. */
-export type EngineFrameMessage = SlotsMessage | FrameReadyMessage | PongMessage;
+export type EngineFrameMessage = SlotsMessage | FrameReadyMessage | PongMessage | FrameGeometryMessage;
 
 /** Most slots a ring may announce (FrameSlots.handles). */
 export const MAX_FRAME_SLOTS = 16;
@@ -466,6 +468,7 @@ export function decodeFrameMessage(p: Uint8Array): EngineFrameMessage | null {
       return m.handles.length <= MAX_FRAME_SLOTS ? m : null;
     case 'frameReady':
     case 'pong':
+    case 'geometry':
       return m;
     default:
       return null;

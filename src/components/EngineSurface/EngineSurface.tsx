@@ -42,6 +42,7 @@ import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
 import { viewportHudStats } from '@stores/viewportDisplayStore';
+import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import styles from './EngineSurface.module.css';
 
 /** The engine viewport id this surface owns. */
@@ -177,6 +178,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let disposed = false;
     let device: SurfDevice | null = null;
     let ctx: SurfContext | null = null;
+    // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames' (overlayGeometry.ts).
+    if (isViewport) setEngineDrivenViewport(ENGINE_SURFACE_VIEWPORT, true);
     let pipeline: { getBindGroupLayout(i: number): unknown } | null = null;
     let sampler: unknown = null;
     let pending: Pending | null = null;
@@ -252,6 +255,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         // The slot goes back to the engine once the GPU no longer reads it.
         device.queue.onSubmittedWorkDone().then(p.release, p.release);
         const now = performance.now();
+        // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on.
+        if (isViewport && p.meta.geometry) publishFrameGeometry(p.meta.viewport, p.meta.time, p.meta.revision, p.meta.geometry);
         stats.drawn += 1;
         stats.lastRevision = p.meta.revision;
         stats.lastFrame = p.meta.frame;
@@ -426,6 +431,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       pending?.release();
       pending = null;
       void client.execute({ type: 'closeViewport', viewport: ENGINE_SURFACE_VIEWPORT });
+      if (isViewport) setEngineDrivenViewport(ENGINE_SURFACE_VIEWPORT, false);
       device?.destroy();
     };
   }, [client, mode]);

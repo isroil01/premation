@@ -1011,6 +1011,26 @@ bool from_u32(std::uint32_t n, PurgeKind& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(OverlayKind v) noexcept {
+  switch (v) {
+    case OverlayKind::transform: return "transform";
+    case OverlayKind::bounds: return "bounds";
+    case OverlayKind::motion_path: return "motionPath";
+    case OverlayKind::rig: return "rig";
+    case OverlayKind::text_box: return "textBox";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, OverlayKind& out) noexcept {
+  switch (n) {
+    case 0: out = OverlayKind::transform; return true;
+    case 1: out = OverlayKind::bounds; return true;
+    case 2: out = OverlayKind::motion_path; return true;
+    case 3: out = OverlayKind::rig; return true;
+    case 4: out = OverlayKind::text_box; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(TrackKind v) noexcept {
   switch (v) {
     case TrackKind::position: return "position";
@@ -9351,6 +9371,43 @@ Status decode(wire::Reader& r, SetInteracting& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const SetOverlayGeometry& v) {
+  w.varint(8U); w.varint(v.viewport);
+  for (const auto& e : v.layers) { w.varint(18U); w.str(e); }
+  if (!v.kinds.empty()) { w.varint(26U); const std::size_t s = w.begin_ld(); for (const auto& e : v.kinds) w.varint(static_cast<std::uint32_t>(e)); w.end_ld(s); }
+}
+
+Status decode(wire::Reader& r, SetOverlayGeometry& out) {
+  bool has_viewport = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.viewport)) return Status::bad_value;
+        has_viewport = true;
+        break;
+      }
+      case 18U: {
+        auto& e = out.layers.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 26U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { OverlayKind e = OverlayKind::transform; { std::uint32_t n = 0; if (!sub.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; } out.kinds.push_back(e); }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_viewport) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const TrackPointSpec& v) {
   w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, v.feature); w.end_ld(s); }
   w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.search); w.end_ld(s); }
@@ -10033,7 +10090,7 @@ Status decode(wire::Reader& r, SetPluginData& out) {
 }
 
 Command::Kind Command::kind() const noexcept {
-  static constexpr std::array<Kind, 149> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_plugin_enabled, Kind::set_plugin_data};
+  static constexpr std::array<Kind, 150> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::set_overlay_geometry, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_plugin_enabled, Kind::set_plugin_data};
   return kKinds[v.index()];
 }
 
@@ -10183,11 +10240,12 @@ void encode(wire::Writer& w, const Command& v) {
     case 141: w.varint(6482U); { const std::size_t s = w.begin_ld(); encode(w, std::get<141>(v.v)); w.end_ld(s); } return;
     case 142: w.varint(6490U); { const std::size_t s = w.begin_ld(); encode(w, std::get<142>(v.v)); w.end_ld(s); } return;
     case 143: w.varint(6498U); { const std::size_t s = w.begin_ld(); encode(w, std::get<143>(v.v)); w.end_ld(s); } return;
-    case 144: w.varint(6802U); { const std::size_t s = w.begin_ld(); encode(w, std::get<144>(v.v)); w.end_ld(s); } return;
-    case 145: w.varint(6810U); { const std::size_t s = w.begin_ld(); encode(w, std::get<145>(v.v)); w.end_ld(s); } return;
-    case 146: w.varint(6818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<146>(v.v)); w.end_ld(s); } return;
-    case 147: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<147>(v.v)); w.end_ld(s); } return;
-    case 148: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<148>(v.v)); w.end_ld(s); } return;
+    case 144: w.varint(14170U); { const std::size_t s = w.begin_ld(); encode(w, std::get<144>(v.v)); w.end_ld(s); } return;
+    case 145: w.varint(6802U); { const std::size_t s = w.begin_ld(); encode(w, std::get<145>(v.v)); w.end_ld(s); } return;
+    case 146: w.varint(6810U); { const std::size_t s = w.begin_ld(); encode(w, std::get<146>(v.v)); w.end_ld(s); } return;
+    case 147: w.varint(6818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<147>(v.v)); w.end_ld(s); } return;
+    case 148: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<148>(v.v)); w.end_ld(s); } return;
+    case 149: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<149>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -11350,11 +11408,19 @@ Status decode(wire::Reader& r, Command& out) {
         seen = true;
         break;
       }
+      case 14170U: {
+        if (seen) return Status::multiple_variants;
+        SetOverlayGeometry e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<144>(std::move(e));
+        seen = true;
+        break;
+      }
       case 6802U: {
         if (seen) return Status::multiple_variants;
         StartJob e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<144>(std::move(e));
+        out.v.emplace<145>(std::move(e));
         seen = true;
         break;
       }
@@ -11362,7 +11428,7 @@ Status decode(wire::Reader& r, Command& out) {
         if (seen) return Status::multiple_variants;
         CancelJob e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<145>(std::move(e));
+        out.v.emplace<146>(std::move(e));
         seen = true;
         break;
       }
@@ -11370,7 +11436,7 @@ Status decode(wire::Reader& r, Command& out) {
         if (seen) return Status::multiple_variants;
         ApplyJobResult e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<146>(std::move(e));
+        out.v.emplace<147>(std::move(e));
         seen = true;
         break;
       }
@@ -11378,7 +11444,7 @@ Status decode(wire::Reader& r, Command& out) {
         if (seen) return Status::multiple_variants;
         SetPluginEnabled e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<147>(std::move(e));
+        out.v.emplace<148>(std::move(e));
         seen = true;
         break;
       }
@@ -11386,7 +11452,7 @@ Status decode(wire::Reader& r, Command& out) {
         if (seen) return Status::multiple_variants;
         SetPluginData e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<148>(std::move(e));
+        out.v.emplace<149>(std::move(e));
         seen = true;
         break;
       }
@@ -13830,7 +13896,7 @@ Status decode(wire::Reader& r, JobRef& out) {
 }
 
 CommandResult::Kind CommandResult::kind() const noexcept {
-  static constexpr std::array<Kind, 149> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_plugin_enabled, Kind::set_plugin_data};
+  static constexpr std::array<Kind, 150> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::set_overlay_geometry, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_plugin_enabled, Kind::set_plugin_data};
   return kKinds[v.index()];
 }
 
@@ -13980,11 +14046,12 @@ void encode(wire::Writer& w, const CommandResult& v) {
     case 141: w.varint(6482U); { const std::size_t s = w.begin_ld(); encode(w, std::get<141>(v.v)); w.end_ld(s); } return;
     case 142: w.varint(6490U); { const std::size_t s = w.begin_ld(); encode(w, std::get<142>(v.v)); w.end_ld(s); } return;
     case 143: w.varint(6498U); { const std::size_t s = w.begin_ld(); encode(w, std::get<143>(v.v)); w.end_ld(s); } return;
-    case 144: w.varint(6802U); { const std::size_t s = w.begin_ld(); encode(w, std::get<144>(v.v)); w.end_ld(s); } return;
-    case 145: w.varint(6810U); { const std::size_t s = w.begin_ld(); encode(w, std::get<145>(v.v)); w.end_ld(s); } return;
-    case 146: w.varint(6818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<146>(v.v)); w.end_ld(s); } return;
-    case 147: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<147>(v.v)); w.end_ld(s); } return;
-    case 148: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<148>(v.v)); w.end_ld(s); } return;
+    case 144: w.varint(14170U); { const std::size_t s = w.begin_ld(); encode(w, std::get<144>(v.v)); w.end_ld(s); } return;
+    case 145: w.varint(6802U); { const std::size_t s = w.begin_ld(); encode(w, std::get<145>(v.v)); w.end_ld(s); } return;
+    case 146: w.varint(6810U); { const std::size_t s = w.begin_ld(); encode(w, std::get<146>(v.v)); w.end_ld(s); } return;
+    case 147: w.varint(6818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<147>(v.v)); w.end_ld(s); } return;
+    case 148: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<148>(v.v)); w.end_ld(s); } return;
+    case 149: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<149>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -15147,11 +15214,19 @@ Status decode(wire::Reader& r, CommandResult& out) {
         seen = true;
         break;
       }
+      case 14170U: {
+        if (seen) return Status::multiple_variants;
+        Empty e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<144>(std::move(e));
+        seen = true;
+        break;
+      }
       case 6802U: {
         if (seen) return Status::multiple_variants;
         JobRef e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<144>(std::move(e));
+        out.v.emplace<145>(std::move(e));
         seen = true;
         break;
       }
@@ -15159,7 +15234,7 @@ Status decode(wire::Reader& r, CommandResult& out) {
         if (seen) return Status::multiple_variants;
         Empty e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<145>(std::move(e));
+        out.v.emplace<146>(std::move(e));
         seen = true;
         break;
       }
@@ -15167,7 +15242,7 @@ Status decode(wire::Reader& r, CommandResult& out) {
         if (seen) return Status::multiple_variants;
         ItemList e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<146>(std::move(e));
+        out.v.emplace<147>(std::move(e));
         seen = true;
         break;
       }
@@ -15175,7 +15250,7 @@ Status decode(wire::Reader& r, CommandResult& out) {
         if (seen) return Status::multiple_variants;
         Empty e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<147>(std::move(e));
+        out.v.emplace<148>(std::move(e));
         seen = true;
         break;
       }
@@ -15183,7 +15258,7 @@ Status decode(wire::Reader& r, CommandResult& out) {
         if (seen) return Status::multiple_variants;
         Empty e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<148>(std::move(e));
+        out.v.emplace<149>(std::move(e));
         seen = true;
         break;
       }
@@ -21562,6 +21637,170 @@ Status decode(wire::Reader& r, FrameReady& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const OverlayLayerGeometry& v) {
+  w.varint(10U); w.str(v.layer);
+  if (!v.matrix.empty()) { w.varint(18U); const std::size_t s = w.begin_ld(); for (const auto& e : v.matrix) w.f64(e); w.end_ld(s); }
+  if (!v.box.empty()) { w.varint(26U); const std::size_t s = w.begin_ld(); for (const auto& e : v.box) w.f64(e); w.end_ld(s); }
+  if (!v.corners.empty()) { w.varint(34U); const std::size_t s = w.begin_ld(); for (const auto& e : v.corners) w.f64(e); w.end_ld(s); }
+  if (!v.path.empty()) { w.varint(42U); const std::size_t s = w.begin_ld(); for (const auto& e : v.path) w.f64(e); w.end_ld(s); }
+  if (!v.path_keys.empty()) { w.varint(50U); const std::size_t s = w.begin_ld(); for (const auto& e : v.path_keys) w.f64(e); w.end_ld(s); }
+  if (!v.pins.empty()) { w.varint(58U); const std::size_t s = w.begin_ld(); for (const auto& e : v.pins) w.f64(e); w.end_ld(s); }
+  if (!v.bones.empty()) { w.varint(66U); const std::size_t s = w.begin_ld(); for (const auto& e : v.bones) w.f64(e); w.end_ld(s); }
+  if (!v.text_box.empty()) { w.varint(74U); const std::size_t s = w.begin_ld(); for (const auto& e : v.text_box) w.f64(e); w.end_ld(s); }
+  if (!v.path_frames.empty()) { w.varint(82U); const std::size_t s = w.begin_ld(); for (const auto& e : v.path_frames) w.f64(e); w.end_ld(s); }
+  if (!v.path_now.empty()) { w.varint(90U); const std::size_t s = w.begin_ld(); for (const auto& e : v.path_now) w.f64(e); w.end_ld(s); }
+}
+
+Status decode(wire::Reader& r, OverlayLayerGeometry& out) {
+  bool has_layer = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.layer)) return Status::truncated;
+        has_layer = true;
+        break;
+      }
+      case 18U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.matrix.push_back(e); }
+        break;
+      }
+      case 26U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.box.push_back(e); }
+        break;
+      }
+      case 34U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.corners.push_back(e); }
+        break;
+      }
+      case 42U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.path.push_back(e); }
+        break;
+      }
+      case 50U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.path_keys.push_back(e); }
+        break;
+      }
+      case 58U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.pins.push_back(e); }
+        break;
+      }
+      case 66U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.bones.push_back(e); }
+        break;
+      }
+      case 74U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.text_box.push_back(e); }
+        break;
+      }
+      case 82U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.path_frames.push_back(e); }
+        break;
+      }
+      case 90U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.path_now.push_back(e); }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_layer) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const FrameGeometry& v) {
+  w.varint(8U); w.varint(v.viewport);
+  w.varint(16U); w.varint(v.generation);
+  w.varint(24U); w.svarint(v.frame);
+  w.varint(32U); w.svarint(v.time);
+  w.varint(40U); w.varint(v.revision);
+  for (const auto& e : v.layers) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  w.varint(56U); w.boolean(v.last);
+}
+
+Status decode(wire::Reader& r, FrameGeometry& out) {
+  bool has_viewport = false;
+  bool has_generation = false;
+  bool has_frame = false;
+  bool has_time = false;
+  bool has_revision = false;
+  bool has_last = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.viewport)) return Status::bad_value;
+        has_viewport = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.generation)) return Status::bad_value;
+        has_generation = true;
+        break;
+      }
+      case 24U: {
+        if (!r.svarint(out.frame)) return Status::truncated;
+        has_frame = true;
+        break;
+      }
+      case 32U: {
+        if (!r.svarint(out.time)) return Status::truncated;
+        has_time = true;
+        break;
+      }
+      case 40U: {
+        if (!r.varint(out.revision)) return Status::truncated;
+        has_revision = true;
+        break;
+      }
+      case 50U: {
+        auto& e = out.layers.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 56U: {
+        if (!r.boolean(out.last)) return Status::truncated;
+        has_last = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_viewport) return Status::missing_field;
+  if (!has_generation) return Status::missing_field;
+  if (!has_frame) return Status::missing_field;
+  if (!has_time) return Status::missing_field;
+  if (!has_revision) return Status::missing_field;
+  if (!has_last) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const FramePong& v) {
   w.varint(8U); w.varint(v.nonce);
   w.varint(16U); w.varint(v.revision);
@@ -21667,7 +21906,7 @@ Status decode(wire::Reader& r, FramePing& out) {
 }
 
 FrameChannelMessage::Kind FrameChannelMessage::kind() const noexcept {
-  static constexpr std::array<Kind, 5> kKinds = {Kind::slots, Kind::frame_ready, Kind::pong, Kind::release, Kind::ping};
+  static constexpr std::array<Kind, 6> kKinds = {Kind::slots, Kind::frame_ready, Kind::pong, Kind::geometry, Kind::release, Kind::ping};
   return kKinds[v.index()];
 }
 
@@ -21676,8 +21915,9 @@ void encode(wire::Writer& w, const FrameChannelMessage& v) {
     case 0: w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, std::get<0>(v.v)); w.end_ld(s); } return;
     case 1: w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, std::get<1>(v.v)); w.end_ld(s); } return;
     case 2: w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, std::get<2>(v.v)); w.end_ld(s); } return;
-    case 3: w.varint(130U); { const std::size_t s = w.begin_ld(); encode(w, std::get<3>(v.v)); w.end_ld(s); } return;
-    case 4: w.varint(138U); { const std::size_t s = w.begin_ld(); encode(w, std::get<4>(v.v)); w.end_ld(s); } return;
+    case 3: w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, std::get<3>(v.v)); w.end_ld(s); } return;
+    case 4: w.varint(130U); { const std::size_t s = w.begin_ld(); encode(w, std::get<4>(v.v)); w.end_ld(s); } return;
+    case 5: w.varint(138U); { const std::size_t s = w.begin_ld(); encode(w, std::get<5>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -21712,11 +21952,19 @@ Status decode(wire::Reader& r, FrameChannelMessage& out) {
         seen = true;
         break;
       }
+      case 34U: {
+        if (seen) return Status::multiple_variants;
+        FrameGeometry e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<3>(std::move(e));
+        seen = true;
+        break;
+      }
       case 130U: {
         if (seen) return Status::multiple_variants;
         FrameRelease e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<3>(std::move(e));
+        out.v.emplace<4>(std::move(e));
         seen = true;
         break;
       }
@@ -21724,7 +21972,7 @@ Status decode(wire::Reader& r, FrameChannelMessage& out) {
         if (seen) return Status::multiple_variants;
         FramePing e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<4>(std::move(e));
+        out.v.emplace<5>(std::move(e));
         seen = true;
         break;
       }
@@ -24262,7 +24510,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 428> kNames = {
+constexpr std::array<std::string_view, 431> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -24495,6 +24743,7 @@ constexpr std::array<std::string_view, 428> kNames = {
     "SetCacheBudget",
     "PurgeCache",
     "SetInteracting",
+    "SetOverlayGeometry",
     "TrackPointSpec",
     "TrackMotionJob",
     "StabilizeJob",
@@ -24649,6 +24898,8 @@ constexpr std::array<std::string_view, 428> kNames = {
     "AutosavedEvent",
     "FrameSlots",
     "FrameReady",
+    "OverlayLayerGeometry",
+    "FrameGeometry",
     "FramePong",
     "FrameRelease",
     "FramePing",
@@ -24929,6 +25180,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "SetCacheBudget") return roundtrip<SetCacheBudget>(bytes, out);
   if (type == "PurgeCache") return roundtrip<PurgeCache>(bytes, out);
   if (type == "SetInteracting") return roundtrip<SetInteracting>(bytes, out);
+  if (type == "SetOverlayGeometry") return roundtrip<SetOverlayGeometry>(bytes, out);
   if (type == "TrackPointSpec") return roundtrip<TrackPointSpec>(bytes, out);
   if (type == "TrackMotionJob") return roundtrip<TrackMotionJob>(bytes, out);
   if (type == "StabilizeJob") return roundtrip<StabilizeJob>(bytes, out);
@@ -25083,6 +25335,8 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "AutosavedEvent") return roundtrip<AutosavedEvent>(bytes, out);
   if (type == "FrameSlots") return roundtrip<FrameSlots>(bytes, out);
   if (type == "FrameReady") return roundtrip<FrameReady>(bytes, out);
+  if (type == "OverlayLayerGeometry") return roundtrip<OverlayLayerGeometry>(bytes, out);
+  if (type == "FrameGeometry") return roundtrip<FrameGeometry>(bytes, out);
   if (type == "FramePong") return roundtrip<FramePong>(bytes, out);
   if (type == "FrameRelease") return roundtrip<FrameRelease>(bytes, out);
   if (type == "FramePing") return roundtrip<FramePing>(bytes, out);

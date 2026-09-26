@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "engine_api.hpp"
+
 namespace premation {
 
 /// One filled quad: the unit square [0,1]² mapped into comp pixels by
@@ -46,6 +48,10 @@ struct RenderJob {
   std::uint64_t revision = 0;
   /// Frames the clock skipped before this one (reported with the frame).
   std::uint32_t clockDropped = 0;
+  /// B4 round 2: the viewport's overlays subscribed (setOverlayGeometry): the sink sends `geometry` as
+  /// FrameGeometry messages right before this frame's FrameReady (even when empty).
+  bool geometrySubscribed = false;
+  std::vector<api::OverlayLayerGeometry> geometry;
 };
 
 /// A viewport's output: slot textures of width × height physical pixels.

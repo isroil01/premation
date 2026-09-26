@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "frame_scene.hpp"
+#include "overlay_geometry.hpp"
 #include "premation/protocol/frame_channel.hpp"
 #include "render/frame_ring.hpp"
 
@@ -93,6 +94,13 @@ class SimulatedSink final : public FrameSink {
     f.width = config_.width;
     f.height = config_.height;
     droppedPending_ = 0;
+    // B4 round 2: the overlays' geometry first, as the render thread sends it.
+    if (pending_->geometrySubscribed && send_) {
+      for (api::FrameGeometry& g : doc::pack_frame_geometry(f.viewport, f.generation, f.frame, f.time, f.revision,
+                                                            std::move(pending_->geometry))) {
+        send_(frames::Message{.v = std::move(g)});
+      }
+    }
     pending_.reset();
     ++counters_.rendered;
     if (send_) send_(frames::Message{.v = f});

@@ -33,7 +33,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
-import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
+import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { EngineCommandLog } from './engineCommandLog';
 import { EngineGoneError } from './engineTransport';
 import {
@@ -168,13 +168,41 @@ export class FrameForwarder {
       // A new ring retires every older generation of this process.
       this.rings.clear();
       this.rings.set(m.generation, m);
+      this.geometry = null;
+      return;
+    }
+    if (m.type === 'geometry') {
+      this.onGeometry(m);
       return;
     }
     if (m.type === 'frameReady') this.onFrameReady(m);
   }
 
+  /**
+   * B4 round 2: the overlay geometry of the NEXT FrameReady (setOverlayGeometry) —
+   * collected over its parts, then handed to the page WITH that frame (its meta),
+   * so the overlays draw the geometry of the very frame they are drawn over.
+   */
+  private geometry: { viewport: number; generation: number; frame: number; layers: FrameGeometryMessage['layers']; complete: boolean } | null = null;
+
+  private onGeometry(g: FrameGeometryMessage): void {
+    const cur = this.geometry;
+    const same = cur !== null && !cur.complete && cur.viewport === g.viewport && cur.generation === g.generation && cur.frame === g.frame;
+    this.geometry = same
+      ? { ...cur, layers: [...cur.layers, ...g.layers], complete: g.last }
+      : { viewport: g.viewport, generation: g.generation, frame: g.frame, layers: [...g.layers], complete: g.last };
+  }
+
+  /** The collected geometry for `f` (and forget it): only a complete set for this very frame. */
+  private takeGeometry(f: FrameReadyMessage): FrameGeometryMessage['layers'] | undefined {
+    const g = this.geometry;
+    this.geometry = null;
+    return g && g.complete && g.viewport === f.viewport && g.generation === f.generation && g.frame === f.frame ? g.layers : undefined;
+  }
+
   private onFrameReady(f: FrameReadyMessage): void {
     this.stats.engineDropped += f.dropped;
+    const geometry = this.takeGeometry(f);
     const ring = this.rings.get(f.generation);
     const handle = ring?.handles[f.slot];
     const target = this.deps.target();
@@ -212,6 +240,7 @@ export class FrameForwarder {
       viewport: f.viewport, generation: f.generation, slot: f.slot, frame: f.frame, time: f.time, revision: f.revision,
       width: f.width, height: f.height, dropped: f.dropped, renderStartUs: f.renderStartUs, renderDoneUs: f.renderDoneUs,
       sentUs: (this.deps.now?.() ?? Date.now()) * 1000,
+      ...(geometry ? { geometry } : {}),
     };
     st.sendSharedTexture({ frame: target, importedSharedTexture: imported }, meta)
       .then(() => {

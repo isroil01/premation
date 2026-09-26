@@ -534,6 +534,16 @@ enum class PurgeKind : std::uint32_t {
 [[nodiscard]] std::string_view to_string(PurgeKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PurgeKind& out) noexcept;
 
+enum class OverlayKind : std::uint32_t {
+  transform = 0,
+  bounds = 1,
+  motion_path = 2,
+  rig = 3,
+  text_box = 4,
+};
+[[nodiscard]] std::string_view to_string(OverlayKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, OverlayKind& out) noexcept;
+
 enum class TrackKind : std::uint32_t {
   position = 0,
   position_rotation = 1,
@@ -998,6 +1008,7 @@ struct CloseViewport;
 struct SetCacheBudget;
 struct PurgeCache;
 struct SetInteracting;
+struct SetOverlayGeometry;
 struct TrackPointSpec;
 struct TrackMotionJob;
 struct StabilizeJob;
@@ -1197,6 +1208,8 @@ struct Goodbye;
 struct EngineMessage;
 struct FrameSlots;
 struct FrameReady;
+struct OverlayLayerGeometry;
+struct FrameGeometry;
 struct FramePong;
 struct FrameRelease;
 struct FramePing;
@@ -2637,6 +2650,13 @@ struct SetInteracting {
   bool operator==(const SetInteracting&) const = default;
 };
 
+struct SetOverlayGeometry {
+  std::uint32_t viewport = 0;
+  std::vector<LayerId> layers;
+  std::vector<OverlayKind> kinds;
+  bool operator==(const SetOverlayGeometry&) const = default;
+};
+
 struct TrackPointSpec {
   Rect feature;
   Rect search;
@@ -2903,13 +2923,14 @@ struct Command {
     set_cache_budget = 810,
     purge_cache = 811,
     set_interacting = 812,
+    set_overlay_geometry = 1771,
     start_job = 850,
     cancel_job = 851,
     apply_job_result = 852,
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -3506,13 +3527,14 @@ struct CommandResult {
     set_cache_budget = 810,
     purge_cache = 811,
     set_interacting = 812,
+    set_overlay_geometry = 1771,
     start_job = 850,
     cancel_job = 851,
     apply_job_result = 852,
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -4566,6 +4588,32 @@ struct FrameReady {
   bool operator==(const FrameReady&) const = default;
 };
 
+struct OverlayLayerGeometry {
+  LayerId layer;
+  std::vector<double> matrix;
+  std::vector<double> box;
+  std::vector<double> corners;
+  std::vector<double> path;
+  std::vector<double> path_keys;
+  std::vector<double> pins;
+  std::vector<double> bones;
+  std::vector<double> text_box;
+  std::vector<double> path_frames;
+  std::vector<double> path_now;
+  bool operator==(const OverlayLayerGeometry&) const = default;
+};
+
+struct FrameGeometry {
+  std::uint32_t viewport = 0;
+  std::uint32_t generation = 0;
+  std::int64_t frame = 0;
+  Time time = 0;
+  Revision revision = 0;
+  std::vector<OverlayLayerGeometry> layers;
+  bool last = false;
+  bool operator==(const FrameGeometry&) const = default;
+};
+
 struct FramePong {
   std::uint64_t nonce = 0;
   Revision revision = 0;
@@ -4590,10 +4638,11 @@ struct FrameChannelMessage {
     slots = 1,
     frame_ready = 2,
     pong = 3,
+    geometry = 4,
     release = 16,
     ping = 17,
   };
-  std::variant<FrameSlots, FrameReady, FramePong, FrameRelease, FramePing> v;
+  std::variant<FrameSlots, FrameReady, FramePong, FrameGeometry, FrameRelease, FramePing> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const FrameChannelMessage&) const = default;
 };
@@ -5378,6 +5427,8 @@ void encode(wire::Writer& w, const PurgeCache& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PurgeCache& out);
 void encode(wire::Writer& w, const SetInteracting& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetInteracting& out);
+void encode(wire::Writer& w, const SetOverlayGeometry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetOverlayGeometry& out);
 void encode(wire::Writer& w, const TrackPointSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TrackPointSpec& out);
 void encode(wire::Writer& w, const TrackMotionJob& v);
@@ -5776,6 +5827,10 @@ void encode(wire::Writer& w, const FrameSlots& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameSlots& out);
 void encode(wire::Writer& w, const FrameReady& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameReady& out);
+void encode(wire::Writer& w, const OverlayLayerGeometry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayLayerGeometry& out);
+void encode(wire::Writer& w, const FrameGeometry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FrameGeometry& out);
 void encode(wire::Writer& w, const FramePong& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FramePong& out);
 void encode(wire::Writer& w, const FrameRelease& v);

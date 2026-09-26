@@ -886,6 +886,19 @@ struct ControlVisitor {
   R operator()(const api::SetCacheBudget&) const { return result_for<api::SetCacheBudget>(); }
   R operator()(const api::PurgeCache&) const { return result_for<api::PurgeCache>(); }
   R operator()(const api::SetInteracting&) const { return result_for<api::SetInteracting>(); }
+  R operator()(const api::SetOverlayGeometry& c) const {
+    // B4 round 2: replace this viewport's subscription (none = unsubscribe); the next frame carries it.
+    auto& subs = s.overlays_;
+    subs.erase(std::remove_if(subs.begin(), subs.end(), [&](const doc::OverlaySubscription& o) { return o.viewport == c.viewport; }),
+               subs.end());
+    doc::OverlaySubscription sub;
+    sub.viewport = c.viewport;
+    sub.layers = c.layers;
+    sub.kinds = c.kinds;
+    if (sub.active()) subs.push_back(std::move(sub));
+    s.request_render();
+    return result_for<api::SetOverlayGeometry>();
+  }
 };
 
 api::CommandResult Session::run_control(const api::Command& cmd, api::Origin origin, Clock::time_point now) {
@@ -1219,6 +1232,13 @@ void Session::submit_frame(std::uint32_t clockDropped) {
   job.time = time_;
   job.revision = revision_;
   job.clockDropped = clockDropped;
+  // B4 round 2: the overlays' geometry at this frame's time and revision, read here on the core thread;
+  // the sink sends it (FrameGeometry) right before the frame's FrameReady.
+  for (const doc::OverlaySubscription& o : overlays_) {
+    if (o.viewport != job.viewport) continue;
+    job.geometrySubscribed = true;
+    job.geometry = doc::overlay_geometry(pctx(), frameBuilder_ != nullptr ? frameBuilder_->text_queries() : nullptr, o, time_);
+  }
   sink_.submit(std::move(job));
 }
 

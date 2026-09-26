@@ -8,7 +8,7 @@
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
 import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, type SharedTextureApi } from './engineHost';
-import type { FrameReadyMessage, SlotsMessage } from './engineFraming';
+import type { FrameGeometryMessage, FrameReadyMessage, SlotsMessage } from './engineFraming';
 
 describe('engineBackendEnabled', () => {
   const read = (text: string | null) => () => text;
@@ -113,6 +113,33 @@ describe('FrameForwarder', () => {
     expect(released).toHaveLength(2);
     expect(fw.stats.forwarded).toBe(1);
     expect(sends[0]!.meta).toMatchObject({ viewport: 1, generation: 1, slot: 1, revision: 3, width: 64, height: 32 });
+  });
+
+  it('hands a frame its overlay geometry (the parts before it, merged) and nothing else', () => {
+    const { fw, sends } = setup();
+    fw.setReceiverReady(true);
+    fw.onFrame(slots(1));
+    const rec = (layer: string, matrix: number[]) => ({ layer, matrix, box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [] });
+    const part = (layers: ReturnType<typeof rec>[], last: boolean): FrameGeometryMessage => ({ type: 'geometry', viewport: 1, generation: 1, frame: 1, time: 0, revision: 3, layers, last });
+    fw.onFrame(part([rec('a', [1])], false));
+    fw.onFrame(part([rec('b', [2])], true));
+    fw.onFrame(ready(1, 0));
+    expect((sends[0]!.meta as { geometry?: Array<{ layer: string }> }).geometry?.map((g) => g.layer)).toEqual(['a', 'b']);
+  });
+
+  it('an incomplete geometry set, or one for another frame, is not attached', async () => {
+    const { fw, sends } = setup();
+    fw.setReceiverReady(true);
+    fw.onFrame(slots(1));
+    const rec = { layer: 'a', matrix: [1], box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [] };
+    fw.onFrame({ type: 'geometry', viewport: 1, generation: 1, frame: 1, time: 0, revision: 3, layers: [rec], last: false });
+    fw.onFrame(ready(1, 0));
+    expect((sends[0]!.meta as { geometry?: unknown }).geometry).toBeUndefined();
+    sends[0]!.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    fw.onFrame({ type: 'geometry', viewport: 1, generation: 1, frame: 99, time: 0, revision: 3, layers: [rec], last: true });
+    fw.onFrame(ready(1, 1));
+    expect((sends[1]!.meta as { geometry?: unknown }).geometry).toBeUndefined();
   });
 
   it('a failed send frees the slot', async () => {
