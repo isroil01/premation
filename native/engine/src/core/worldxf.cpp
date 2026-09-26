@@ -258,19 +258,14 @@ motion::xf::Camera read_scene_camera(const SpaceCtx& c, double w, double h, doub
 
 }  // namespace
 
-std::optional<LayerSpace> layer_space_at(const SpaceCtx& c, std::string_view node, double seconds, double compWidth,
-                                         double compHeight) {
+std::optional<motion::xf::Mat4> world_3d_at(const SpaceCtx& c, std::string_view node, double seconds, double compWidth,
+                                            double compHeight) {
   const Node* n = c.d.node(node);
   if (n == nullptr) return std::nullopt;
   const std::string kind = n->kind();
   const bool device = kind == "camera" || kind == "light";
-  if (!is_3d_enabled(*n) && !device) {
-    // 2D: the composition is the world plane.
-    return LayerSpace{motion::xf::LayerSpace2D(
-        world_matrix_of(c.d, node, [&c, seconds](const std::string& id) { return local_at(c, id, seconds); }))};
-  }
-  // 3D. Devices first: a camera's space is its EYE, a light's its lifted position.
-  std::optional<motion::xf::Mat4> m;
+  if (!is_3d_enabled(*n) && !device) return std::nullopt;
+  // Devices first: a camera's space is its EYE, a light's its lifted position.
   if (device) {
     motion::xf::Vec3 position;
     if (kind == "camera") {
@@ -282,10 +277,24 @@ std::optional<LayerSpace> layer_space_at(const SpaceCtx& c, std::string_view nod
                                    {get(av, "x").value_or(g ? g->x : 0), get(av, "y").value_or(g ? g->y : 0),
                                     get(av, "z").value_or(transform_num(*n, "z"))});
     }
-    m = motion::xf::compose(motion::xf::Parts3D{.position = position, .rotation = {}, .scale = {1, 1, 1}, .anchor = {}});
-  } else {
-    m = node_world_with_parents_3d(c, *n, seconds);
+    return motion::xf::compose(motion::xf::Parts3D{.position = position, .rotation = {}, .scale = {1, 1, 1}, .anchor = {}});
   }
+  return node_world_with_parents_3d(c, *n, seconds);
+}
+
+std::optional<LayerSpace> layer_space_at(const SpaceCtx& c, std::string_view node, double seconds, double compWidth,
+                                         double compHeight) {
+  const Node* n = c.d.node(node);
+  if (n == nullptr) return std::nullopt;
+  const std::string kind = n->kind();
+  const bool device = kind == "camera" || kind == "light";
+  if (!is_3d_enabled(*n) && !device) {
+    // 2D: the composition is the world plane.
+    return LayerSpace{motion::xf::LayerSpace2D(
+        world_matrix_of(c.d, node, [&c, seconds](const std::string& id) { return local_at(c, id, seconds); }))};
+  }
+  // 3D: layer → world is a 4x4 (world_3d_at); world → comp is the camera.
+  const std::optional<motion::xf::Mat4> m = world_3d_at(c, node, seconds, compWidth, compHeight);
   if (!m) return std::nullopt;
   return LayerSpace{
       motion::xf::LayerSpace3D(*m, read_scene_camera(c, compWidth, compHeight, seconds), compWidth, compHeight)};

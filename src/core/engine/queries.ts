@@ -10,7 +10,8 @@ import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, Effect
 import { defaultAnimation } from '@motion/animation';
 import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
 import { listPresets } from '@core/animation/animationPresets';
-import { world2DAt } from '@core/scene/layerSpace';
+import { world2DAt, world3DAt } from '@core/scene/layerSpace';
+import { compSizeOf } from '@core/composition/compSizes';
 import { readCompRef } from '@core/scene/compInstance';
 import { getFontWeights } from '@core/text/fontCatalog';
 import { captureDocument } from '@core/api/cloudDocument';
@@ -257,7 +258,14 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       checkTime(q.time);
       const transforms = q.layers.map((id) => {
         requireLayer(id);
-        const m = world2DAt(id, flicksToSeconds(q.time));
+        const seconds = flicksToSeconds(q.time);
+        // A 3D layer (or a camera / light): its world 4×4, as toWorld reads it —
+        // a device through the active camera's eye, at the layer's comp size.
+        const comp = compOfLayer(id);
+        const size = (comp ? compSizeOf(comp) : undefined) ?? { width: 1920, height: 1080 };
+        const m3 = world3DAt(id, seconds, { width: size.width, height: size.height });
+        if (m3) return { layer: id, matrix: Array.from(m3), anchor: { x: 0, y: 0, z: 0 } };
+        const m = world2DAt(id, seconds);
         return { layer: id, matrix: [m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.e, m.f, 0, 1], anchor: { x: 0, y: 0, z: 0 } };
       });
       return { type: q.type, transforms };

@@ -201,6 +201,18 @@ function deviceMatrixAt(node: SceneNode, time: number, comp: SpaceComp): Matrix4
 }
 
 /**
+ * A 3D layer's (or a camera's / light's) layer → world 4×4 at `time`: the same
+ * matrix `layerSpaceAt`'s 3D branch converts through. Null for a 2D layer, a
+ * missing node, or a 3D node with no geometry — the caller then uses the 2D
+ * world affine.
+ */
+export function world3DAt(nodeId: string, time: number, comp: SpaceComp): Matrix4 | null {
+  const node: SceneNode | undefined = defaultSceneGraph.getNode(nodeId) ?? undefined;
+  if (!node || (!is3DEnabled(node) && !isDeviceNode(node))) return null;
+  return isDeviceNode(node) ? deviceMatrixAt(node, time, comp) : nodeWorldWithParents3d(node, time);
+}
+
+/**
  * The conversions for one layer at one time, or undefined when the node is gone.
  *
  * 2D and 3D are genuinely different code paths, not one with a flag: a 2D
