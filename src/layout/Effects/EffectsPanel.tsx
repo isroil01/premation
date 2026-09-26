@@ -19,10 +19,8 @@ import { Dropdown } from '@components/Dropdown';
 import { VirtualList } from '@components/VirtualList';
 import { BrowserRow, BrowserTag, BrowserEmpty } from '@components/BrowserTree';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { EffectDef } from '@core/effects/effects';
 import { pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { addEffectAndReveal, revealEffectsInProperties } from './revealEffectControls';
@@ -39,24 +37,21 @@ import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
 import { customPrompt } from '@components/Modal/Dialogs';
 import { PATH_OP_CATALOG } from '@core/scene/pathOps';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorTree } from '@hooks/useMirror';
+import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { secondsToFlicks } from '@motion/engine-api';
+import { mirrorMaskShapeKeyed, mirrorMasksAt, mirrorMaskWatchKeys } from '@core/mirror/masks';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorPathOps } from '@core/mirror/layerFacts';
 import { jsonField } from '@core/mirror/layerFields';
 import {
-  getNodeMask,
-  readNodeMaskAt,
   rectangleMask,
   ellipseMask,
-  hasMaskAnim,
   type MaskMode,
   type MaskPath,
 } from '@core/effects/mask';
-import { layerTimeFor } from '@core/inspector/multiSelection';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { SIZE } from '@core/rendering/buildSnapshot';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import {
   addMaskEdit,
@@ -877,13 +872,15 @@ function MaskCard({
  */
 export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
-  useSceneRevision((s) => s.rev);
   // The playhead (comp seconds): engine edits take comp time and the engine
-  // maps it onto the layer's keyframe axis. The mask DISPLAY is read on that
-  // axis — where the renderer reads the mask — so a moved or trimmed layer
-  // shows the shape that actually draws.
+  // maps it onto the layer's keyframe axis, as the mirror's values at a time
+  // do — so a moved or trimmed layer shows the mask shape that actually draws.
   const maskCompTime = useActiveWorkspace()?.time ?? 0;
-  const hasSelection = !!(primary && defaultSceneGraph.getNode(primary));
+  // B4: the layer and its masks from the document mirror; the list wakes on its masks' own properties.
+  const layer = useMirrorLayer(primary);
+  const tree = useMirrorTree(primary);
+  useMirrorKeys(primary ? mirrorMaskWatchKeys(tree, primary) : []);
+  const hasSelection = !!(primary && layer);
 
   // NOTE: the empty-state early return must come AFTER every hook — returning
   // before one changed the hook count the moment a layer was selected, which
@@ -898,17 +895,15 @@ export function EffectsPanel(): JSX.Element {
     );
   }
 
-  const node = defaultSceneGraph.getNode(primary);
-  const kind = node ? readNodeKind(node) : 'shape';
+  const m = documentMirror();
+  const kind = uiKindOf(layer) ?? 'shape';
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
-  // Display read (B4's mirror replaces it): the playhead on the layer's keyframe axis.
-  const maskTime = layerTimeFor(primary, '', maskCompTime);
-  // The mask the renderer draws at the playhead — an animated mask's
+  // The masks the renderer draws at the playhead — an animated mask's
   // interpolated shape, whose values the edits below patch — not the static
   // shape it stops reading once keyed (same read as the Layer panel).
-  const masks = node ? (readNodeMaskAt(node, maskTime) ?? getNodeMask(primary)).paths : [];
-  const shapeKeyed = !!node && hasMaskAnim(node);
+  const masks = mirrorMasksAt(m, primary, secondsToFlicks(maskCompTime));
+  const shapeKeyed = mirrorMaskShapeKeyed(m, primary);
 
   return (
     <div className={styles.root}>
