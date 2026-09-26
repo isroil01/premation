@@ -388,6 +388,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `splitLayers` | Original keeps the left part and its id; right parts get new ids (keyframes/markers split). Inverse: delete right parts, restore original out point. |
 | `rippleDeleteLayers` | Delete and close gaps. Inverse: restore layers and shifted timings. |
 | `rippleDeleteRange` | B3z — delete a comp TIME RANGE and close the gap (transcript editing): layers crossing an edge are split there, the parts inside deleted, later unlocked layers move left by the range's length. Inverse: every split, deleted and shifted layer. |
+| `liftRange` | B4 (id 971) — AE Lift: the same cut WITHOUT the ripple (the gap stays). Returns `TimeRangeEdit {layers, splits, deleted}`: the layers the splits created, the edges cut, the pieces removed. Inverse: every split and deleted layer. |
 | `shiftLayerKeyframes` | B3z — move every keyframe a layer owns by a layer-time delta (Stagger / Sequence animation), data tracks included, time remap / speed excluded. Inverse: shift back. |
 | `addTransition`, `setTransition` [c], `removeTransitions` | B3z — a transition on the cut between two layers (kind, whole-frame duration, alignment); refused with the frames the handles lack when a source cannot pay for the overlap. Remove puts each cut back exactly as it was before the transition. Inverse: the previous records and everything they materialised. Event: `transitionsChanged`. |
 | `editWorkArea` | Lift or extract the work area. Inverse: restore every trimmed/split/shifted layer. |
@@ -1692,6 +1693,46 @@ synchronous callers beside their own expression / 3D-switch writes; that
 module's migration) and `sendNodeValues`' fallback for a node outside a
 composition. `providers/clipboardEdits.ts` calls `pastePathEdit` — an engine
 edit; the ratchet flags the write verb lexically.
+
+### 15.11 B4 mirror reads — the header facts panels were reading around the API (both engines, 2026-09-26)
+
+Data the UI mirror lacked (B4_MIRROR.md §4), added so the panels that drew it
+from the scene graph read the mirror instead. Field numbers start at the
+struct's maximum + 100 (parallel agents). All are read-only facts (no patch
+field); both engines report them from the same stored keys.
+
+- **`LayerInfo.shapeType`** (118): the stored shape primitive (`rect`,
+  `ellipse`, `star`, `polygon`, `triangle`, `line`, `arrow`, `heart`, `cross`,
+  `diamond`, `crescent`), '' for a drawn path, a generator or a non-shape
+  layer. `kind` folds star / triangle into `polygon`; the Layers tree's glyph
+  needs the primitive.
+- **`LayerInfo.managedBy`** (119): the plugin that generated the layer
+  (`__ownedByPlugin`), '' when the user owns it.
+- **`LayerInfo.mographId`** (120): the library item an inserted
+  motion-graphics element came from (`__mographId`, on its root group).
+- **`LayerTiming.freeze?`** (108): the time Freeze Frame holds, on the
+  layer's own time axis (keyframe / source time — what `freezeFrame` resolved
+  the comp time to); absent = not frozen. **`LayerTiming.bakedStretch?`** (109): the factor a
+  `timeStretchLayers` bake left on a layer with no source (1 = 100 %, negative
+  = reversed); absent = none. Footage and precomps keep reporting their live
+  rate in `stretch`.
+- **`ItemInfo.mediaType`** (124, enum `MediaType {none, image, video,
+  audio}`): what a footage item's file holds (`none` for compositions,
+  folders, solids, placeholders). **`ItemInfo.alphaProbed` / `audioProbed`**
+  (125 / 126): the import probe answered alpha / an audio stream — `hasAlpha`
+  / `hasAudio` false with these false means "never probed", not "no".
+- **`CompSettings.essentialProps`** (125): the Essential Properties the
+  composition publishes (`__essentialProps` on its root: `<layerId>/<prop>`
+  keys, publish order, once each). Rides `compositionChanged` like the other
+  root-stored settings (`responsiveTime`, `templateFields`); not in
+  `CompSettingsPatch`.
+- **`LayerInfo.generator`** now names EVERY plugin-provided kind: a custom
+  plugin layer (`pluginLayer:<kind>` component) reports its `<pluginId>.<kindId>`
+  too, although its `kind` stays the shape it draws (before, only `generator`
+  layers did, so the Layers tree and the Inspector could not tell one apart).
+- **`liftRange`** (command 971, result `TimeRangeEdit`): Lift, `rippleDeleteRange`
+  without the ripple, reporting what it cut (the timeline's Lift Work Area
+  toast states it). Both engines run one shared plan for the two commands.
 
 ## 16. Files
 

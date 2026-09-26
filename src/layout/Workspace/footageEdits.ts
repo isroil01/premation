@@ -34,7 +34,8 @@ import { layerIdsOfComp } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { insertMedia, insertSvgDocument, setNodeWorldPosition } from '@core/scene/sceneInsert';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { pristineCompToAdopt } from '@core/composition/compositionOps';
+import { mirrorPristineCompToAdopt } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
 import { rateOf } from '@layout/Composition/compositionEdits';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import type { ImportedAsset } from '@stores/assetStore';
@@ -319,7 +320,8 @@ async function createFootageComp(
   };
   let comp: string;
   let layer: string | undefined;
-  const adopt = pristineCompToAdopt();
+  // B4: the pristine placeholder from the document mirror (`CompSettings.pristine`, no layers).
+  const adopt = mirrorPristineCompToAdopt(documentMirror());
   if (adopt) {
     const res = await client.batch(label, [
       { type: 'setCompositionSettings', comp: adopt, patch },

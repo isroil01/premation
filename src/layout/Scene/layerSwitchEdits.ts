@@ -24,7 +24,7 @@ import { nextQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { notifyGuideLayerChange } from '@core/effects/layerSwitchFeedback';
 import { mirrorLayerFlagAvailable, mirrorLayerFlagOn } from '@core/mirror/layerFlagFacts';
 import { documentMirror } from '@stores/documentMirror';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
+import { notifyCameraTipIfMissingIn } from '@core/mirror/cameras';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -158,7 +158,7 @@ export async function toggleLayerFlagsEdit(ids: ReadonlyArray<string>, flag: Lay
   if (!res.ok || typeof next !== 'boolean') return;
   // The feedback `toggleLayerFlag` gave (layerSwitchFeedback.ts / cameraNav).
   if (flag === 'guide') notifyGuideLayerChange(next, targets.length > 1);
-  else if (flag === 'threeD' && next) notifyCameraTipIfMissing((message, level) => notify(message, level));
+  else if (flag === 'threeD' && next) notifyCameraTipIfMissingIn(documentMirror(), activeCompIdNow(), (message, level) => notify(message, level));
   else if (flag === 'motionBlur' && next) {
     if (master.length > 0) notify('Motion Blur enabled for this layer and the composition', 'success');
     if (useRenderQualityStore.getState().draft) {

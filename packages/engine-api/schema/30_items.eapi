@@ -4,6 +4,8 @@
 family "Items";
 
 enum ItemKind { folder = 0; composition = 1; footage = 2; solid = 3; placeholder = 4; }
+/// B4 — what a footage item's file holds (ItemInfo.mediaType).
+enum MediaType { none = 0; image = 1; video = 2; audio = 3; }
 enum AlphaMode { auto = 0; ignore = 1; straight = 2; premultiplied = 3; }
 enum FieldOrder { progressive = 0; upperFirst = 1; lowerFirst = 2; }
 
@@ -137,6 +139,8 @@ struct CompSettings {
   backgroundPaint?: string = 23;
   /// B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too.
   pristine?: bool = 24;
+  /// B4 — the Essential Properties the composition PUBLISHES to the layers that place it (AE Master Properties), as stored on its root (`__essentialProps`: `<layerId>/<editorProp>` keys), in publish order. Empty = none published (an instance then lists every overridable property of the comp's top layers). Read-only here: not in CompSettingsPatch.
+  essentialProps: string[] = 125;
 }
 
 struct CompSettingsPatch {

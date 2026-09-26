@@ -136,6 +136,7 @@ export const CASES: Partial<Record<CommandType, Case>> = {
     },
   },
   rippleDeleteRange: { cmd: (s) => ({ type: 'rippleDeleteRange', comp: s.comp, range: { start: sec(1), duration: sec(1) }, layers: [] }) },
+  liftRange: { cmd: (s) => ({ type: 'liftRange', comp: s.comp, range: { start: sec(1), duration: sec(1) }, layers: [] }) },
   shiftLayerKeyframes: { cmd: (s) => ({ type: 'shiftLayerKeyframes', items: [{ layer: s.B, delta: sec(0.5) }] }) },
   addTransition: {
     cmd: async (s, h) => {

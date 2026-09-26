@@ -23,8 +23,8 @@ import { activeCompIdNow } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { childOrderOf } from '@core/mirror/layerTree';
 import { mirrorLayerFlag, mirrorLayerFlagAvailable } from '@core/mirror/layerSwitchFacts';
-import { readNodeMask } from '@core/effects/mask';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
+import { notifyCameraTipIfMissingIn } from '@core/mirror/cameras';
+import { mirrorMaskIds } from '@core/mirror/masks';
 import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
 import { compTime, type TrackRef } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
@@ -142,7 +142,7 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
   if (flag === 'guide') {
     notify(on ? 'Guide layer — visible while editing, omitted from export' : 'No longer a guide layer', 'success');
   } else if (flag === 'threeD' && on) {
-    notifyCameraTipIfMissing((message, level) => notify(message, level));
+    notifyCameraTipIfMissingIn(documentMirror(), activeCompIdNow(), (message, level) => notify(message, level));
   } else if (flag === 'motionBlur' && on) {
     if (master.length > 0) notify('Motion Blur enabled for this layer and the composition', 'success');
     if (useRenderQualityStore.getState().draft) {
@@ -253,11 +253,12 @@ export async function propertyStopwatchEdit(nodeId: string, props: readonly stri
  * first mask's Path stands for all of them. False when the layer has no mask.
  */
 export async function maskShapeStopwatchEdit(nodeId: string, animated: boolean, seconds: number): Promise<boolean> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const first = node ? readNodeMask(node)?.paths[0] : undefined;
-  if (!node || !first || !isLayer(nodeId)) return false;
+  // B4: the layer's first mask from its mirror tree (`masks/<id>`).
+  const m = documentMirror();
+  const first = m.layer(nodeId) ? mirrorMaskIds(m.tree(nodeId))[0] : undefined;
+  if (!first || !isLayer(nodeId)) return false;
   await edit(animated ? 'Disable mask animation' : 'Enable mask animation', {
-    type: 'setAnimated', prop: { layer: nodeId, path: `masks/${first.id}/path` }, animated: !animated, time: compTime(seconds),
+    type: 'setAnimated', prop: { layer: nodeId, path: `masks/${first}/path` }, animated: !animated, time: compTime(seconds),
   });
   return true;
 }

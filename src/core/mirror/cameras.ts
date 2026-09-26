@@ -62,3 +62,21 @@ export function mirrorLookThroughCamera(m: MirrorCameraRead, layerId: string | n
 export function mirrorLookThroughCameras(m: MirrorCameraRead, comp?: string): LayerInfo[] {
   return viewableLayers(m, comp).filter(isViewCamera);
 }
+
+/** Whether `comp` holds any camera layer (hidden ones too) — the twin of `cameraNav.sceneHasCamera`. */
+export function mirrorCompHasCamera(m: MirrorCameraRead, comp?: string): boolean {
+  return viewableLayers(m, comp).some((l) => uiKindOf(l) === 'camera');
+}
+
+/**
+ * The nudge after a layer is made 3D (`cameraNav.notifyCameraTipIfMissing`):
+ * without a camera, 3D depth doesn't move — surface the one-step fix. No-op
+ * when the composition already has a camera.
+ */
+export function notifyCameraTipIfMissingIn(
+  m: MirrorCameraRead,
+  comp: string | undefined,
+  notify: (message: string, level: 'info' | 'warning') => void,
+): void {
+  if (!mirrorCompHasCamera(m, comp)) notify('Tip: add a Camera (+ camera button in the viewport bar) to move in 3D', 'info');
+}

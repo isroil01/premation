@@ -16,10 +16,11 @@
 import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { PropertyRow } from '@components/PropertyRow';
-import { essentialPropsOf, setPinnedProp, type PinnedEntry } from '@core/inspector/pinnedProps';
+import { setPinnedProp, type PinnedEntry } from '@core/inspector/pinnedProps';
+import { mirrorEssentialPropsOf } from '@core/mirror/compOverrides';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayersWatch } from '@hooks/useMirror';
+import { useMirrorKeys, useMirrorLayersWatch } from '@hooks/useMirror';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { readTrack } from '@core/mirror/selection';
 import { MultiPropertyRow } from './MultiPropertyRow';
@@ -40,10 +41,10 @@ function labelOf(nodeId: string, prop: string): string {
  * of `pinnedEntriesFor`).
  */
 export function pinnedEntriesOf(nodeId: string): PinnedEntry[] {
-  const pins = documentMirror().layer(nodeId)?.pinned ?? [];
-  // B4-gap: the Essential Properties published on the composition (`__essentialProps` on its root) — no API datum
-  // (a `CompInfo.essentialProps` would close it; CompOverridesSection has the same gap).
-  const essentials = new Set(essentialPropsOf(nodeId));
+  const m = documentMirror();
+  const pins = m.layer(nodeId)?.pinned ?? [];
+  // The Essential Properties promoted from this layer (`CompSettings.essentialProps` of its composition).
+  const essentials = new Set(mirrorEssentialPropsOf(m, nodeId));
   const out: PinnedEntry[] = pins.map((prop) => ({ prop, pinned: true, essential: essentials.has(prop) }));
   for (const prop of essentials) {
     if (!pins.includes(prop)) out.push({ prop, pinned: false, essential: true });
@@ -105,9 +106,10 @@ function PinnedRow({ nodeId, entry, time }: { nodeId: string; entry: PinnedEntry
 }
 
 export function PinnedSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4: the layer's header (its pins), property tree and keyframes.
+  // B4: the layer's header (its pins), property tree and keyframes, and its composition (what it publishes).
   const watchIds = useMemo(() => [nodeId], [nodeId]);
   useMirrorLayersWatch(watchIds);
+  useMirrorKeys(['comps']);
   const time = useThrottledTime();
   if (!documentMirror().layer(nodeId)) return null;
   const entries = pinnedEntriesOf(nodeId);

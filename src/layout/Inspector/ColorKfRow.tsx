@@ -101,7 +101,7 @@ export function ColorKfRow({
   const onContextMenu = (e: React.MouseEvent): void => {
     // The shared builder leads with a separator, which only makes sense when it
     // follows other entries.
-    // B4-gap: a composition's Essential Properties list (`__essentialProps` on the comp root) — no API datum (CompInfo has none); read at click time.
+    // The composition's Essential Properties from the mirror (`CompSettings.essentialProps`), read at click time.
     const items = essentialPropMenuItems(nodeId, propPrefix).filter((i) => !i.separator);
     if (items.length === 0) return; // not promotable — leave the native menu
     e.preventDefault();

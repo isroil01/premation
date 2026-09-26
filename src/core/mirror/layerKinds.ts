@@ -63,7 +63,7 @@ const THREE_D_CAPABLE: ReadonlySet<SceneKind> = new Set(['shape', 'text', 'image
  * not one (its editor kind is the plugin's own).
  */
 export function canBe3DLayer(layer: Pick<LayerInfo, 'kind' | 'source' | 'generator' | 'switches'> | undefined): boolean {
-  if (!layer || (layer.kind === 'generator' && layer.generator !== '')) return false;
+  if (!layer || layer.generator !== '') return false;
   const k = uiKindOf(layer);
   if (k === 'comp') return !layer.switches.collapse;
   return k !== null && THREE_D_CAPABLE.has(k);
@@ -76,7 +76,7 @@ const PAINTABLE: ReadonlySet<SceneKind> = new Set(['shape', 'text', 'image', 'sv
  * A plugin generator layer is not one (its editor kind is the plugin's own).
  */
 export function isPaintableLayer(layer: Pick<LayerInfo, 'kind' | 'source' | 'generator'> | undefined): boolean {
-  if (!layer || (layer.kind === 'generator' && layer.generator !== '')) return false;
+  if (!layer || layer.generator !== '') return false;
   const k = uiKindOf(layer);
   return k !== null && PAINTABLE.has(k);
 }

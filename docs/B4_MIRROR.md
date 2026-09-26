@@ -130,6 +130,48 @@ commit. Files are CRLF: use the Edit tool, never `sed -i`. Never start Vite.
   per-MEMBER key lists; a text-layout query; clip source windows (roll limits);
   a Lift (non-ripple range delete) command; a layer-as-preset capture query.
 
+### Closed in b4-mirror-reads (2026-09-26, both engines — ENGINE_API.md §15.11; the ratchet 679 → 592)
+
+Converted on the way (§1 conversions, no gap): the Layers tree and its filter
+facts (`sceneRows` over the mirror: kinds, glyphs, plugin marks, labels,
+sources, keys, effect counts), reparent reveal, the Character panel, the
+missing-font check and Replace Fonts, the Effects panel's mask list
+(`core/mirror/masks.ts`), the Composition Settings draft
+(`compRecordFromSettings`), pristine-comp adoption, footage assembly, the
+asset predicates, the Compositing / Media / time-stretch reads, the still-image
+pickers, Essential Properties (section, Pinned tab, promote menu), the mograph
+root, the clip menu's time verbs, the stopwatch's lock / mask state, the 3D
+camera tip.
+
+
+- An item's media type and probe state: `ItemInfo.mediaType` (`none` / `image`
+  / `video` / `audio`), `ItemInfo.alphaProbed` / `audioProbed`.
+- The Essential Properties a comp publishes: `CompSettings.essentialProps`
+  (rides `compositionChanged`).
+- The inserted-element tag: `LayerInfo.mographId`; the plugin that generated a
+  layer: `LayerInfo.managedBy`; the shape primitive the Layers glyph narrows on:
+  `LayerInfo.shapeType`.
+- Plugin layer kinds: `LayerInfo.generator` now names a custom plugin layer's
+  kind too (its `kind` stays the shape it draws); the editor-kind readers
+  (`inspectorMirror`, `canBe3DLayer`, `isPaintableLayer`) key on it.
+- The layer time config: `LayerTiming.freeze?` (the held layer-axis time),
+  `LayerTiming.bakedStretch?` (a bake's factor on a layer with no source).
+- Lift: the `liftRange` command (971) → `TimeRangeEdit {layers, splits,
+  deleted}`; Extract's toast counts come off the mirror before
+  `rippleDeleteRange`.
+- Clip roll limits: from the two layers' `LayerTiming` (`inPoint - startTime`
+  is the source-in, `sourceDuration` the bounded source) —
+  `core/mirror/rollLimits.ts`, no API needed.
+
+Still open (each site marked `B4-gap`): a text-layout query (`getTextLayout`:
+lines, box, fit scale — paragraph ⇄ point, box auto-size, the Text Box card),
+layer bounds (`readGeometry` / `getLayerBounds`; C++ needs text measure and the
+group union), per-member key lists (keyframe assistants over non-catalog
+tracks), a layer-as-preset capture (`capturePreset {layer}`: C++ needs the
+preset unit conversion), the keyframe / effect clipboards in API form, the
+proxy record, the Cryptomatte set, an SVG layer's document, the plugin schema
+version, per-member expression preview, the Assets panel's object URLs.
+
 ## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools

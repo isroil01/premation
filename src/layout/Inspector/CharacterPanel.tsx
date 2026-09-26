@@ -1,22 +1,21 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { getRemappedTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
+import { documentMirror } from '@stores/documentMirror';
+import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { currentRuns, isSourceTextAnimated, maskIdsOf, SOURCE_TEXT_PATH, sourceTextAt, STYLE_RUNS_PATH, textPathOf } from '@layout/Text/textMirror';
 import { useComponentProp, type ComponentPropHandle } from './useComponentProp';
 import { useGesture } from '@hooks/useGesture';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands, fieldEdit, sourceTextCommand, sourceTextStopwatchCommand, textPresetEdit } from '@layout/Text/textEdits';
 import { getFontWeights, WEIGHT_LABELS } from '@core/text/fontCatalog';
 import { useTextEditStore, hasRange, TEXT_EDIT_KEEP_ATTR } from '@stores/textEditStore';
-import { readRuns, applyStyleToRange, styleOverRange, type RunStyleKey, type RichRun } from '@core/text/richText';
+import { applyStyleToRange, styleOverRange, type RunStyleKey, type RichRun } from '@core/text/richText';
 import type { TextStyle } from '@core/text/textLayout';
 import { graphemeCount } from '@core/text/graphemes';
 import { AUTO_LEADING, STROKE_ORDERS, strokeOrderOf, type StrokeOrder, type StrokeLineJoin } from '@core/text/textExtras';
-import { readTextPathConfig } from '@core/text/textPath';
-import type { MaskPath } from '@core/effects/mask';
 import { captureTextPreset } from '@core/inspector/sectionPresets';
 import { FontPicker } from './FontPicker';
 import { SectionPresetMenu } from './SectionPresetMenu';
@@ -73,6 +72,9 @@ function mirrorAlign(a: string): string {
   }
 }
 
+/** The Text component, resolved at write time (the mirror has no component ids — useComponentProp's ComponentRef). */
+const TEXT_COMPONENT = { type: 'Text' } as const;
+
 const LINE_JOINS: ReadonlyArray<{ value: StrokeLineJoin; label: string }> = [
   { value: 'miter', label: 'Miter' },
   { value: 'round', label: 'Round' },
@@ -112,58 +114,62 @@ export interface TextSettingsBodyProps {
 export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSettingsBodyProps): JSX.Element {
   const primary = nodeId;
   const selected = useMemo(() => nodeIds ?? (nodeId ? [nodeId] : []), [nodeIds, nodeId]);
-  useSceneRevision((s) => s.rev);
   // Swap Fill and Stroke (Shift+X) is a registered command.
   useEffect(() => installTextCommands(), []);
 
   const time = useActiveWorkspace()?.time ?? 0;
-  const layerT = primary ? getRemappedTime(primary, time) : 0;
 
-  const node = primary ? defaultSceneGraph.getNode(primary) : null;
-  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Text'), [node]);
+  // B4: the layer, its tree (style runs, masks, Path Options) and Source Text's keys / value from the mirror;
+  // each field below wakes on its own property (useComponentProp).
+  const layer = useMirrorLayer(primary);
+  useMirrorTree(primary);
+  useMirrorKeys(primary ? [`prop:${primary}|${STYLE_RUNS_PATH}`, `key:${primary}|${SOURCE_TEXT_PATH}`, `value:${primary}|${SOURCE_TEXT_PATH}`] : []);
+  const m = documentMirror();
+  const isText = uiKindOf(layer) === 'text';
+  const tComp = isText ? TEXT_COMPONENT : undefined;
 
   // Bound layer hooks — Character properties
-  const [content, setContent] = useComponentProp(primary, tComp?.id, 'content');
-  const [fontSize, setFontSize, fontSizeH] = useComponentProp(primary, tComp?.id, 'fontSize');
-  const [fontFamily, setFontFamily] = useComponentProp(primary, tComp?.id, 'fontFamily');
-  const [fontWeight, setFontWeight] = useComponentProp(primary, tComp?.id, 'fontWeight');
-  const [fontStyle, setFontStyle] = useComponentProp(primary, tComp?.id, 'fontStyle');
-  const [fill, setFill] = useComponentProp(primary, tComp?.id, 'fill');
-  const [stroke, setStroke] = useComponentProp(primary, tComp?.id, 'stroke');
-  const [strokeWidth, setStrokeWidth, strokeWidthH] = useComponentProp(primary, tComp?.id, 'strokeWidth');
-  const [letterSpacing, setLetterSpacing, letterSpacingH] = useComponentProp(primary, tComp?.id, 'letterSpacing');
-  const [lineHeight, setLineHeight, lineHeightH] = useComponentProp(primary, tComp?.id, 'lineHeight');
-  const [strokeOverFill] = useComponentProp(primary, tComp?.id, 'strokeOverFill');
-  const [strokeOrder] = useComponentProp(primary, tComp?.id, 'strokeOrder');
-  const [strokeLineJoin, setStrokeLineJoin] = useComponentProp(primary, tComp?.id, 'strokeLineJoin');
-  const [noFill, setNoFill] = useComponentProp(primary, tComp?.id, 'noFill');
-  const [noStroke, setNoStroke] = useComponentProp(primary, tComp?.id, 'noStroke');
-  const [fauxBold, setFauxBold] = useComponentProp(primary, tComp?.id, 'fauxBold');
-  const [fauxItalic, setFauxItalic] = useComponentProp(primary, tComp?.id, 'fauxItalic');
-  const [kerningMode, setKerningMode] = useComponentProp(primary, tComp?.id, 'kerningMode');
-  const [boxWidth, setBoxWidth] = useComponentProp(primary, tComp?.id, 'boxWidth');
-  const [boxHeight, setBoxHeight] = useComponentProp(primary, tComp?.id, 'boxHeight');
-  const [boxVerticalAlign, setBoxVerticalAlign] = useComponentProp(primary, tComp?.id, 'boxVerticalAlign');
-  const [verticalScale, setVerticalScale] = useComponentProp(primary, tComp?.id, 'verticalScale');
-  const [horizontalScale, setHorizontalScale] = useComponentProp(primary, tComp?.id, 'horizontalScale');
-  const [baselineShift, setBaselineShift] = useComponentProp(primary, tComp?.id, 'baselineShift');
-  const [textTransform, setTextTransform] = useComponentProp(primary, tComp?.id, 'textTransform');
-  const [fontVariant, setFontVariant] = useComponentProp(primary, tComp?.id, 'fontVariant');
-  const [verticalAlign, setVerticalAlign] = useComponentProp(primary, tComp?.id, 'verticalAlign');
+  const [content, setContent] = useComponentProp(primary, tComp, 'content');
+  const [fontSize, setFontSize, fontSizeH] = useComponentProp(primary, tComp, 'fontSize');
+  const [fontFamily, setFontFamily] = useComponentProp(primary, tComp, 'fontFamily');
+  const [fontWeight, setFontWeight] = useComponentProp(primary, tComp, 'fontWeight');
+  const [fontStyle, setFontStyle] = useComponentProp(primary, tComp, 'fontStyle');
+  const [fill, setFill] = useComponentProp(primary, tComp, 'fill');
+  const [stroke, setStroke] = useComponentProp(primary, tComp, 'stroke');
+  const [strokeWidth, setStrokeWidth, strokeWidthH] = useComponentProp(primary, tComp, 'strokeWidth');
+  const [letterSpacing, setLetterSpacing, letterSpacingH] = useComponentProp(primary, tComp, 'letterSpacing');
+  const [lineHeight, setLineHeight, lineHeightH] = useComponentProp(primary, tComp, 'lineHeight');
+  const [strokeOverFill] = useComponentProp(primary, tComp, 'strokeOverFill');
+  const [strokeOrder] = useComponentProp(primary, tComp, 'strokeOrder');
+  const [strokeLineJoin, setStrokeLineJoin] = useComponentProp(primary, tComp, 'strokeLineJoin');
+  const [noFill, setNoFill] = useComponentProp(primary, tComp, 'noFill');
+  const [noStroke, setNoStroke] = useComponentProp(primary, tComp, 'noStroke');
+  const [fauxBold, setFauxBold] = useComponentProp(primary, tComp, 'fauxBold');
+  const [fauxItalic, setFauxItalic] = useComponentProp(primary, tComp, 'fauxItalic');
+  const [kerningMode, setKerningMode] = useComponentProp(primary, tComp, 'kerningMode');
+  const [boxWidth, setBoxWidth] = useComponentProp(primary, tComp, 'boxWidth');
+  const [boxHeight, setBoxHeight] = useComponentProp(primary, tComp, 'boxHeight');
+  const [boxVerticalAlign, setBoxVerticalAlign] = useComponentProp(primary, tComp, 'boxVerticalAlign');
+  const [verticalScale, setVerticalScale] = useComponentProp(primary, tComp, 'verticalScale');
+  const [horizontalScale, setHorizontalScale] = useComponentProp(primary, tComp, 'horizontalScale');
+  const [baselineShift, setBaselineShift] = useComponentProp(primary, tComp, 'baselineShift');
+  const [textTransform, setTextTransform] = useComponentProp(primary, tComp, 'textTransform');
+  const [fontVariant, setFontVariant] = useComponentProp(primary, tComp, 'fontVariant');
+  const [verticalAlign, setVerticalAlign] = useComponentProp(primary, tComp, 'verticalAlign');
 
   // Bound layer hooks — Paragraph properties
-  const [align, setAlign] = useComponentProp(primary, tComp?.id, 'align');
-  const [paragraphSpacing, setParagraphSpacing] = useComponentProp(primary, tComp?.id, 'paragraphSpacing');
-  const [leftIndent, setLeftIndent] = useComponentProp(primary, tComp?.id, 'leftIndent');
-  const [rightIndent, setRightIndent] = useComponentProp(primary, tComp?.id, 'rightIndent');
-  const [firstLineIndent, setFirstLineIndent] = useComponentProp(primary, tComp?.id, 'firstLineIndent');
-  const [spaceBefore, setSpaceBefore] = useComponentProp(primary, tComp?.id, 'spaceBefore');
-  const [spaceAfter, setSpaceAfter] = useComponentProp(primary, tComp?.id, 'spaceAfter');
-  const [direction, setDirection] = useComponentProp(primary, tComp?.id, 'direction');
-  const [orientation, setOrientation] = useComponentProp(primary, tComp?.id, 'orientation');
-  const [verticalRomanAlignment, setVerticalRomanAlignment] = useComponentProp(primary, tComp?.id, 'verticalRomanAlignment');
-  const [tateChuYokoAuto] = useComponentProp(primary, tComp?.id, 'tateChuYokoAuto');
-  const [tateChuYokoDigits] = useComponentProp(primary, tComp?.id, 'tateChuYokoDigits');
+  const [align, setAlign] = useComponentProp(primary, tComp, 'align');
+  const [paragraphSpacing, setParagraphSpacing] = useComponentProp(primary, tComp, 'paragraphSpacing');
+  const [leftIndent, setLeftIndent] = useComponentProp(primary, tComp, 'leftIndent');
+  const [rightIndent, setRightIndent] = useComponentProp(primary, tComp, 'rightIndent');
+  const [firstLineIndent, setFirstLineIndent] = useComponentProp(primary, tComp, 'firstLineIndent');
+  const [spaceBefore, setSpaceBefore] = useComponentProp(primary, tComp, 'spaceBefore');
+  const [spaceAfter, setSpaceAfter] = useComponentProp(primary, tComp, 'spaceAfter');
+  const [direction, setDirection] = useComponentProp(primary, tComp, 'direction');
+  const [orientation, setOrientation] = useComponentProp(primary, tComp, 'orientation');
+  const [verticalRomanAlignment, setVerticalRomanAlignment] = useComponentProp(primary, tComp, 'verticalRomanAlignment');
+  const [tateChuYokoAuto] = useComponentProp(primary, tComp, 'tateChuYokoAuto');
+  const [tateChuYokoDigits] = useComponentProp(primary, tComp, 'tateChuYokoDigits');
 
   /** The Content box's typing session (one gesture per focus — see onContentEdit). */
   const sourceTyping = useGesture({ quiet: true });
@@ -209,7 +215,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   /** The section layout's "More text options" — shut by default: they are the rarer controls. */
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const hasTarget = Boolean(primary && tComp && node);
+  const hasTarget = Boolean(primary && tComp && layer);
 
   // Range styling state
   const editingNodeId = useTextEditStore((s) => s.nodeId);
@@ -226,9 +232,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
    * one undo step each (writeRuns alone bypasses history).
    */
   const restyleRange = (label: string, lo: number, hi: number, patch: Partial<TextStyle>): void => {
-    if (!primary || !node) return;
+    if (!primary || !hasTarget) return;
     // The runs are computed here (pure) and sent whole: `text/styleRuns` (G1).
-    const runs: RichRun[] = applyStyleToRange(readRuns(node), lo, hi, patch, textLen);
+    const runs: RichRun[] = applyStyleToRange(currentRuns(primary), lo, hi, patch, textLen);
     void edit(label, fieldCommands(primary, 'text/styleRuns', runs));
   };
 
@@ -237,7 +243,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     val: TextStyle[K],
     setLayerWide: (v: TextStyle[K]) => void,
   ): void => {
-    if (!ranged || !node || !primary) {
+    if (!ranged || !hasTarget || !primary) {
       setLayerWide(val);
       return;
     }
@@ -278,7 +284,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   const strokeWidthTyping = typing('strokeWidth', strokeWidthH, setStrokeWidth);
 
   const clearRunStyling = (): void => {
-    if (!ranged || !node || !primary) return;
+    if (!ranged || !hasTarget || !primary) return;
     restyleRange('Reset Character Styling', selection.start, selection.end, {
       fontSize: undefined, fontFamily: undefined, fontWeight: undefined, fontStyle: undefined,
       letterSpacing: undefined, fill: undefined, kerning: undefined, fauxBold: undefined, fauxItalic: undefined,
@@ -350,19 +356,18 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   // caret — stored on the character before it. With a range selected it
   // applies after every selected character.
   const kernRange = ((): { lo: number; hi: number } | null => {
-    if (!selection || !node) return null;
+    if (!selection || !hasTarget) return null;
     if (selection.end > selection.start) return { lo: selection.start, hi: selection.end };
     return selection.start > 0 ? { lo: selection.start - 1, hi: selection.start } : null;
   })();
-  const kernInfo = kernRange && node ? styleOverRange(readRuns(node), kernRange.lo, kernRange.hi, textLen) : null;
+  const kernInfo = kernRange && hasTarget && primary ? styleOverRange(currentRuns(primary), kernRange.lo, kernRange.hi, textLen) : null;
   const manualKerning = kernInfo?.style.kerning ?? 0;
   const kerningMixed = kernInfo?.mixed.has('kerning') ?? false;
 
   // Source text keyframe support
-  const sourceAnimated = Boolean(primary && defaultAnimation.isDataAnimated(primary, 'text.source'));
-  const sampledSource = sourceAnimated && primary
-    ? defaultAnimation.sampleData(primary, 'text.source', layerT)
-    : undefined;
+  // The keyed value at the playhead (comp time: the mirror maps it through the layer's time).
+  const sourceAnimated = Boolean(primary && isSourceTextAnimated(m, primary));
+  const sampledSource = sourceAnimated && primary ? sourceTextAt(m, primary, time) : undefined;
   const contentStr = typeof sampledSource === 'string' ? sampledSource : contentStrRaw;
 
   /**
@@ -389,14 +394,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   };
 
   // Mask path riding
-  const fxProps = node?.components.find((c) => c.type === 'fx')?.props as
-    | { mask?: { paths?: MaskPath[] } }
-    | undefined;
-  const maskPaths: MaskPath[] = fxProps?.mask?.paths ?? [];
-  const textPathCfg = node ? readTextPathConfig(node) : null;
-  const activePathId = textPathCfg
-    ? textPathCfg.pathId || (maskPaths[0]?.id ?? '')
-    : '';
+  // The layer's masks (`masks/<id>`) and the one Path Options ▸ Path rides ('' = none; an unset path is the first mask).
+  const maskPaths = primary && hasTarget ? maskIdsOf(m, primary).map((id) => ({ id })) : [];
+  const activePathId = primary && hasTarget ? textPathOf(m, primary) : '';
 
   const handleFamilyChange = (fam: string) => {
     setCharProp('fontFamily', fam, (v) => {
@@ -429,7 +429,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   /** `undefined` = Auto. With a range selected, the leading is the range's own
    *  (AE uses the largest leading on each line). */
   const handleLeadingChange = (l: number | undefined) => {
-    if (ranged && node && primary) {
+    if (ranged && hasTarget && primary) {
       restyleRange('Leading', selection.start, selection.end, { lineHeight: l });
       return;
     }
@@ -495,7 +495,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   };
 
   const handleKerningChange = (v: number) => {
-    if (!kernRange || !node || !primary) return;
+    if (!kernRange || !hasTarget || !primary) return;
     const value = Math.round(v);
     restyleRange('Kerning', kernRange.lo, kernRange.hi, { kerning: value === 0 ? undefined : value });
   };
@@ -573,7 +573,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
       fontStyle: preset.fontStyle,
       ...(preset.fontFamily ? { fontFamily: preset.fontFamily } : {}),
     };
-    if (ranged && node && primary) {
+    if (ranged && hasTarget && primary) {
       restyleRange('Apply Text Preset', selection.start, selection.end, bag);
       return;
     }
@@ -590,7 +590,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
 
   // Faux Bold / Faux Italic are SYNTHETIC styles, independent of the font's
   // weight and italic: the weight menu and the font's italic stay as they are.
-  const rangeStyle = ranged && node ? styleOverRange(readRuns(node), selection.start, selection.end, textLen).style : null;
+  const rangeStyle = ranged && hasTarget && primary ? styleOverRange(currentRuns(primary), selection.start, selection.end, textLen).style : null;
   const isFauxBold = rangeStyle?.fauxBold ?? (hasTarget ? fauxBold === true : fallbackFauxBold);
   const isFauxItalic = rangeStyle?.fauxItalic ?? (hasTarget ? fauxItalic === true : fallbackFauxItalic);
   // With a range selected these read (and write) the RANGE's own styles.
@@ -622,7 +622,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
         <div className={styles.panelHeadLeft}>
           <span className={styles.panelHeadTitle}>Text</span>
           <span className={`${styles.targetBadge}${hasTarget ? ` ${styles.targetBadgeActive}` : ''}`}>
-            {hasTarget ? node?.name || 'Selected Text' : 'Default Preset'}
+            {hasTarget ? layer?.name || 'Selected Text' : 'Default Preset'}
           </span>
         </div>
         {hasTarget && (
@@ -1349,7 +1349,10 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
    * only where it is drawn, not behind a collapsed disclosure.
    */
   const renderTextBox = (): JSX.Element | null => {
-        if (!hasTarget || !primary || !node) return null;
+        // B4-gap: the box is MEASURED from the text as it lays out (a `getTextLayout` answer: lines, box, fit
+        // scale) and the stored box props are read beside it — the TS engine's text node until the query lands.
+        const node = hasTarget && primary ? defaultSceneGraph.getNode(primary) : undefined;
+        if (!node || !primary) return null;
         const paraBox = readParagraphBox(node);
         // Text on a path is point text (AE): no box to convert into or edit.
         const onPath = hasTextPath(node);
@@ -1481,7 +1484,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
             </select>
           </div>
           {/* Path Options — keyframeable, also listed under Text in the timeline */}
-          {textPathCfg && primary && <TextPathOptions nodeId={primary} />}
+          {activePathId !== '' && primary && <TextPathOptions nodeId={primary} />}
         </div>
   );
 

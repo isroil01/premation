@@ -14,7 +14,8 @@ import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { useAssetsViewStore } from '@stores/assetsViewStore';
 import { useLayoutStore } from '@stores/layoutStore';
-import { selectedPanelAssets } from '@core/composition/assetSelection';
+import { documentMirror } from '@stores/documentMirror';
+import { panelAssetSelectionIds, selectedPanelAssets } from '@core/composition/assetSelection';
 import { canRevealAssets, revealAsset } from './assetReveal';
 
 export const ASSETS_TOGGLE_VIEW_COMMAND = asCommandId('assets.toggleGridView');
@@ -133,7 +134,8 @@ export function buildAssetCommands(): ReadonlyArray<Command> {
       label: revealLabel(),
       description: 'Show the selected asset’s file in the OS file manager.',
       icon: 'folder-open',
-      enabled: () => canRevealAssets() && selectedPanelAssets().length === 1,
+      // B4: the panel's selection that is still footage, from the document mirror.
+      enabled: () => canRevealAssets() && panelAssetSelectionIds().filter((id) => documentMirror().item(id)?.kind === 'footage').length === 1,
       execute: async () => {
         const [asset] = selectedPanelAssets();
         if (asset) await revealAsset(asset);

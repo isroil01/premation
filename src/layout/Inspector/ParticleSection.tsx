@@ -24,9 +24,8 @@ import {
 import { edit } from '@core/engine/uiEdits';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { useAssetStore } from '@stores/assetStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
+import { useMirrorFootage, useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { ColorKfRow } from './ColorKfRow';
@@ -57,8 +56,8 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
   const picking = useGesture();
   const [bakeOpen, setBakeOpen] = useState(false);
   // Image assets for the sprite picker — a hook, so it sits above the early return.
-  // B4-gap: an item's media type (a still image vs other footage) — `ItemInfo` has none yet.
-  const imageAssets = useAssetStore((s) => s.assets).filter((a) => a.type === 'image');
+  // B4: the project's still images (`ItemInfo.mediaType`).
+  const imageAssets = useMirrorFootage('image');
   if (!layer) return null;
   // The stored config over the defaults (`readNodeParticle`'s rule).
   const cfg: ParticleConfig = stored && typeof stored === 'object' ? { ...DEFAULT_PARTICLE_CONFIG, ...stored } : DEFAULT_PARTICLE_CONFIG;

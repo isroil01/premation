@@ -6,6 +6,8 @@
  */
 
 import { flicksToSeconds, type CompSettings, type LayerTiming, type Rational } from '@motion/engine-api';
+import type { CompositionSettings } from '@stores/projectStore';
+import type { FillPaint } from '@core/paint/fill';
 
 /**
  * Frames per second as stored (29.97, 23.976, 30): the API's NTSC rates are
@@ -105,3 +107,62 @@ export function settingsWorld(s: Pick<CompSettings, 'world'> | undefined): Reado
 }
 
 const EMPTY_WORLD: Record<string, unknown> = Object.freeze({}) as Record<string, unknown>;
+
+/**
+ * A composition's settings as the editor's composition RECORD (`CompositionSettings`: fps as typed, duration in
+ * seconds, start timecode in frames, background hex + paint, the World keys) — what the Composition Settings
+ * dialog drafts from, rebuilt from the mirror (B4) instead of the composition store. Only the fields the
+ * record carries; unset optional fields stay absent.
+ */
+export function compRecordFromSettings(id: string, s: CompSettings): CompositionSettings {
+  const world = settingsWorld(s);
+  let backgroundPaint: FillPaint | undefined;
+  if (s.backgroundPaint) {
+    try {
+      const p = JSON.parse(s.backgroundPaint) as unknown;
+      if (p && typeof p === 'object' && typeof (p as { type?: unknown }).type === 'string') backgroundPaint = p as FillPaint;
+    } catch { /* an unreadable paint reads as none */ }
+  }
+  return {
+    id,
+    name: s.name,
+    ...(s.pristine ? { pristine: true } : {}),
+    width: s.width,
+    height: s.height,
+    fps: settingsFps(s),
+    durationSeconds: settingsDurationSeconds(s),
+    background: colorHex(s.background),
+    ...(backgroundPaint ? { backgroundPaint } : {}),
+    transparent: s.transparent,
+    startFrame: settingsStartFrame(s),
+    ...(s.pixelAspect !== 1 ? { pixelAspect: s.pixelAspect } : {}),
+    globalLightAngle: s.globalLightAngle,
+    globalLightAltitude: s.globalLightAltitude,
+    ...(world.defaultEnvPreset !== undefined ? { defaultEnvPreset: world.defaultEnvPreset } : {}),
+    ...(world.groundLevel !== undefined ? { groundLevel: world.groundLevel } : {}),
+    ...(world.showSkyBackdrop !== undefined ? { showSkyBackdrop: world.showSkyBackdrop } : {}),
+    ...(world.ssao !== undefined ? { ssao: world.ssao } : {}),
+  } as CompositionSettings;
+}
+
+const hex2 = (n: number): string => Math.round(Math.min(1, Math.max(0, n)) * 255).toString(16).padStart(2, '0');
+
+/** A 0..1 colour as `#rrggbb` (`#rrggbbaa` when not opaque) — paintFields' `channelsToHex`. */
+function colorHex(c: { r: number; g: number; b: number; a: number }): string {
+  return `#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}${c.a < 1 ? hex2(c.a) : ''}`;
+}
+
+/**
+ * The fresh project's auto-minted, layerless "pristine" composition a New Composition CONFIGURES instead of stacking
+ * a second one beside it — the mirror twin of `compositionOps.pristineCompToAdopt`. Null when there is none.
+ */
+export function mirrorPristineCompToAdopt(m: {
+  readonly compIds: readonly string[];
+  comp(id: string): { readonly settings: Pick<CompSettings, 'pristine'>; readonly layers: readonly string[] } | undefined;
+}): string | null {
+  for (const id of m.compIds) {
+    const c = m.comp(id);
+    if (c?.settings.pristine === true && c.layers.length === 0) return id;
+  }
+  return null;
+}

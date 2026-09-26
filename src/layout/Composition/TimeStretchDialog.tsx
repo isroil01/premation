@@ -17,12 +17,11 @@ import { useUIStore } from '@stores/uiStore';
 import { timeStretchEdit } from '@layout/Timeline/timelineEdits';
 import {
   clampSignedStretch,
-  stretchValueOf,
   type StretchHold,
 } from '@core/animation/layerTimeCommands';
 import { documentMirror } from '@stores/documentMirror';
 import { settingsFps, timingBarFrames } from '@core/mirror/compFacts';
-import { retimableLayerIds } from '@core/mirror/motionAssist';
+import { mirrorStretchPercent, retimableLayerIds } from '@core/mirror/motionAssist';
 import { framesToTimecode } from '@core/time/timecode';
 import { parseGoToTime } from '@layout/Timeline/goToTime';
 import styles from './PrecomposeDialog.module.css';
@@ -66,8 +65,9 @@ function TimeStretchDialog({ ids, close }: { ids: string[]; close: () => void })
   const allowNegative = retimableLayerIds(m, ids).length === 0;
   // The layer's CURRENT stretch, absolute: footage's playback rate, or the
   // bookkeeping value a non-footage layer's bake left behind (e.g. 200, −100).
-  // B4-gap: the baked value (`fx.__bakedStretch` on a layer with no source) has no API datum.
-  const initialStretch = stretchValueOf(ids[0]!);
+  // From the mirror: footage's rate unsigned (`LayerTiming.stretch`; Reverse is its own switch), a bake's signed factor
+  // (`LayerTiming.bakedStretch`, absent = 100 %).
+  const initialStretch = mirrorStretchPercent(m, ids[0]!);
   const base = useMemo(() => {
     const frames = first ? timingBarFrames(first.timing, fps).duration : 0;
     return baseDurationFrames(frames, Math.abs(initialStretch));

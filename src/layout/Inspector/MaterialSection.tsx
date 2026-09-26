@@ -38,7 +38,6 @@ import {
   materialParamsOf,
   type MaterialParams,
 } from '@core/scene/material';
-import { useAssetStore } from '@stores/assetStore';
 import {
   useMaterialStore,
   builtinMaterials,
@@ -657,8 +656,8 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           aria-label="Height map asset"
         >
           <option value="">None</option>
-          {/* B4-gap: an item's media type (a still image vs other footage) — `ItemInfo` has none yet. */}
-          {useAssetStore.getState().assets.filter((a) => a.type === 'image').map((a) => (
+          {/* B4: the project's still images (`ItemInfo.mediaType`), from the mirror at render. */}
+          {[...documentMirror().items.values()].filter((a) => a.kind === 'footage' && a.mediaType === 'image').map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </select>

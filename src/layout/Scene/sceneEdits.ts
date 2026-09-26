@@ -20,7 +20,6 @@ import type { Command, EngineClient, RenameLayerResult as EngineRenameResult } f
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { canReparent, enclosingCompRootOf } from '@core/scene/parenting';
 import type { RenameLayerResult, RepairedRef } from '@core/scene/renameLayer';
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { apiParentOf, compOfLayer, isCompItem, isLayer, layersUsingItem } from '@core/engine/doc';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -258,8 +257,9 @@ export async function reverseLayersEdit(ids: ReadonlyArray<string>): Promise<voi
 export async function freezeLayersEdit(ids: ReadonlyArray<string>, seconds: number): Promise<boolean> {
   const layers = ids.filter((id) => isLayer(id));
   if (layers.length === 0) return true;
-  // B4-gap: a layer's Freeze Frame hold (`layerTime.freeze`) has no `LayerTiming` field.
-  if (!layers.some((id) => !getNodeLayerTime(id).freeze)) return false;
+  // B4: a frozen layer's timing names the held time (`LayerTiming.freeze`).
+  const m = documentMirror();
+  if (!layers.some((id) => m.layer(id)?.timing.freeze === undefined)) return false;
   const time = compTime(seconds);
   await edit('Freeze Frame', layers.map((layer) => ({ type: 'freezeFrame', layer, time, lastFrame: false }) as Command));
   return true;

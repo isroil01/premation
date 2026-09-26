@@ -174,6 +174,14 @@ const PURE_READS = new Set([
   'previewChoreography', // core/library/insertPreview: seek + play + a scheduled pause of the transport (§6 control), no document read
   'notifyNoSvgGeometry', 'notifySvgConverted', // core/svg/svgConvert: a toast about the file name / SvgLayerData given
   'clampSignedStretch', // core/animation/timeStretch (re-exported by layerTimeCommands): clamps the percent given
+  // B4 mirror reads (checked the same way).
+  'notifyGuideLayerChange', // core/effects/layerSwitchFeedback: a toast about the flag value given
+  'styleOverRange', // core/text/richText: the shared style of a range over the runs given
+  'remapRunFonts', // core/fonts/replaceFonts: maps the families of the runs given
+  'batchFileName', // core/template/batchRenderEditor: appends the format's extension to the pattern given
+  'animPresetThumbnail', // core/template/animPresets: renders the preset into its OWN throwaway graph + animation engine (previewSpec), never the document
+  'panelAssetSelectionIds', // core/composition/assetSelection: the Assets panel's published selection (editor state), not the document
+  'essentialPropMenuItems', // core/inspector/propertyMenu: reads the document MIRROR (CompSettings.essentialProps); its onSelect is the promotion writer (the write ratchet's)
 ]);
 
 /**

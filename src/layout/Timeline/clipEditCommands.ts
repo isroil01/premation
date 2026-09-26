@@ -29,11 +29,15 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
-import { documentMirror } from '@stores/documentMirror';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import { extractRange, liftRange, type RangeSeconds } from '@core/timeline/rangeEdits';
-import { settingsSetWorkArea } from '@core/mirror/compFacts';
+import type { RangeSeconds } from '@core/timeline/rangeEdits';
+import type { TimeRangeEdit } from '@motion/engine-api';
+import { edit } from '@core/engine/uiEdits';
+import { compTime } from '@core/engine/propRefs';
+import { settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { activeCompId, barOf, rippleDeleteLayers } from './timelineEdits';
 
 /**
@@ -130,18 +134,60 @@ async function runRangeEdit(kind: 'lift' | 'extract'): Promise<void> {
   // Scoped to the selection when there is one — "lift this out of the title
   // layer" — and to everything the range crosses when there is not, which is
   // what removing a moment from a cut means.
-  const nodeIds = useSelectionStore.getState().ids;
-  // B4-gap: Lift has no API command (`rippleDeleteRange` is Extract, and reports
-  // new layer ids, not the split / deleted / shifted counts the toast states);
-  // both still run the controller's clip macro (rangeEdits). A `liftRange`
-  // (= deleteRange without ripple) returning those counts closes it.
-  const result = kind === 'lift' ? await liftRange(range, nodeIds) : await extractRange(range, nodeIds);
-  bumpScene();
-  notify(
-    `${kind === 'lift' ? 'Lifted' : 'Extracted'} ${result.removedSeconds.toFixed(2)}s — `
-    + `${result.deletedClips} clip piece(s) removed, ${result.splits} split`
-    + (kind === 'extract' ? `, ${result.rippled} shifted` : ''),
-  );
+  const comp = activeCompIdNow();
+  if (!comp) return;
+  const m = documentMirror();
+  const layers = useSelectionStore.getState().ids.filter((id) => m.layer(id)?.comp === comp);
+  const fps = settingsFps(m.comp(comp)?.settings);
+  const startF = Math.round(range.start * fps);
+  const endF = Math.round(range.end * fps);
+  // Nothing to remove in less than a frame (rounding UP would eat a frame the user can see).
+  if (endF <= startF) return;
+  const apiRange = { start: compTime(startF / fps), duration: compTime((endF - startF) / fps) };
+  const removedSeconds = (endF - startF) / fps;
+  // B4: through the engine — Lift is `liftRange` (it reports the cuts), Extract is `rippleDeleteRange`
+  // (the counts the toast states are read off the mirror before the edit: `rangeCounts`).
+  if (kind === 'lift') {
+    const res = await edit('Lift', { type: 'liftRange', comp, range: apiRange, layers });
+    if (!res.ok) return;
+    const r = res.value[0] as TimeRangeEdit;
+    notify(`Lifted ${removedSeconds.toFixed(2)}s — ${r.deleted} clip piece(s) removed, ${r.splits} split`);
+    return;
+  }
+  const counts = rangeCounts(m, comp, layers, apiRange);
+  const res = await edit('Extract', { type: 'rippleDeleteRange', comp, range: apiRange, layers });
+  if (!res.ok) return;
+  notify(`Extracted ${removedSeconds.toFixed(2)}s — ${counts.deleted} clip piece(s) removed, ${counts.splits} split, ${counts.rippled} shifted`);
+}
+
+/**
+ * What a range delete will do, from the mirror's layer timings (the engine's own rule, `deleteRangePlan`):
+ * edges cut, pieces removed, and the unlocked layers at or after the range end that the ripple shifts.
+ */
+function rangeCounts(
+  m: DocumentMirror,
+  comp: string,
+  only: readonly string[],
+  range: { start: number; duration: number },
+): { splits: number; deleted: number; rippled: number } {
+  const s = range.start;
+  const e = range.start + range.duration;
+  const restrict = only.length > 0 ? new Set(only) : null;
+  let splits = 0;
+  let deleted = 0;
+  let rippled = 0;
+  for (const id of m.comp(comp)?.layers ?? []) {
+    const l = m.layer(id);
+    if (!l || l.switches.locked) continue;
+    const { inPoint, outPoint } = l.timing;
+    if (inPoint >= e) rippled += 1;
+    if (restrict && !restrict.has(id)) continue;
+    if (outPoint <= s || inPoint >= e) continue;
+    deleted += 1;
+    if (inPoint < s && outPoint > e) splits += 2;
+    else if (inPoint < s || outPoint > e) splits += 1;
+  }
+  return { splits, deleted, rippled };
 }
 
 export function buildTimelineClipEditCommands(): ReadonlyArray<Command> {

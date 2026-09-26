@@ -90,7 +90,7 @@ import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
 import { installModelHydration } from '@core/scene/modelHydrate';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
-import { readNodeMaskAnim } from '@core/effects/mask';
+import { mirrorMaskShapeKeyed } from '@core/mirror/masks';
 import { EditorLayout } from '@layout/EditorLayout';
 
 import { EditorStatusBar } from '@layout/StatusBar';
@@ -128,7 +128,7 @@ import {
   setTimelineEditMode,
   getTimelineEditMode,
 } from '@layout/Timeline/timelineEditMode';
-import { isRetimableLayer, stretchValueOf } from '@core/animation/layerTimeCommands';
+import { mirrorStretchPercent, retimableLayerIds } from '@core/mirror/motionAssist';
 import { AUDIO_WAVEFORM_ROW } from '@core/timeline/propertyTree';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
@@ -139,7 +139,6 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { useResponsiveLayout } from '@hooks/useResponsiveLayout';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { useAssetStore } from '@stores/assetStore';
 import { customPrompt, customAlert } from '@components/Modal';
 
@@ -856,8 +855,10 @@ function EditorShellInner(): JSX.Element {
    * turning the placeholder into a live animated row.
    */
   const handlePropertyStopwatch = (trackId: string, props: ReadonlyArray<string>): void => {
-    const node = defaultSceneGraph.getNode(trackId);
-    if (!node || node.locked) return;
+    // B4: the layer's lock and whether its mask shape is keyed, from the mirror.
+    const m = documentMirror();
+    const layer = m.layer(trackId);
+    if (!layer || layer.switches.locked) return;
     const now = playheadNow();
     // The mask row is not a numeric track: its keyframes are whole-mask
     // snapshots kept on the scene graph — the first mask's Path addresses them
@@ -865,7 +866,7 @@ function EditorShellInner(): JSX.Element {
     if (props[0] === MASK_ANIM_PROP) {
       // A row that exists only while the layer has a mask, so there is always
       // a first mask to address.
-      void maskShapeStopwatchEdit(trackId, readNodeMaskAnim(node).length > 0, now);
+      void maskShapeStopwatchEdit(trackId, mirrorMaskShapeKeyed(m, trackId), now);
       return;
     }
     // The stopwatch is lit when animated, so clicking it means "turn this off" —
@@ -1147,11 +1148,14 @@ function EditorShellInner(): JSX.Element {
     const c = getTimelineController();
     const layer = c.timeline.getLayer(clipId);
     const nodeId = layer?.sourceId;
-    const node = nodeId ? defaultSceneGraph.getNode(nodeId) : null;
-    const tComp = node?.components.find((comp) => comp.type === 'Transform');
-    const assetId = (tComp?.props?.assetId as string | undefined) ?? (tComp?.props?.__assetId as string | undefined);
+    // B4: the layer's source item and its time config (Reverse = a negative stretch, Freeze Frame) from the mirror.
+    const m = documentMirror();
+    const mirrorLayer = nodeId ? m.layer(nodeId) : undefined;
+    const assetId = mirrorLayer?.source && m.item(mirrorLayer.source)?.kind === 'footage' ? mirrorLayer.source : undefined;
+    // B4-gap: Interpret Footage and Scene Edit Detection take the asset RECORD (the import's interpretation / media
+    // fields the dialog edits), not an ItemInfo.
     const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : null;
-    const time = nodeId ? getNodeLayerTime(nodeId) : null;
+    const time = mirrorLayer ? { reverse: mirrorLayer.timing.stretch < 0, freeze: mirrorLayer.timing.freeze !== undefined } : null;
 
     /*
      * The cut this clip takes part in, if any.
@@ -1267,12 +1271,12 @@ function EditorShellInner(): JSX.Element {
         disabled: !nodeId,
         onSelect: async () => {
           if (!nodeId || !time) return;
-          const raw = await customPrompt('Time Stretch', 'Enter new stretch percentage (100% = original speed):', String(stretchValueOf(nodeId)));
+          const raw = await customPrompt('Time Stretch', 'Enter new stretch percentage (100% = original speed):', String(mirrorStretchPercent(documentMirror(), nodeId)));
           if (raw !== null) {
             const parsed = parseFloat(raw);
             // The shared path: footage changes rate; any other layer bakes bar,
             // keys and markers (negative = reverse). One undo step either way.
-            const allowed = isRetimableLayer(nodeId) ? parsed >= 1 : parsed !== 0;
+            const allowed = retimableLayerIds(documentMirror(), [nodeId]).length > 0 ? parsed >= 1 : parsed !== 0;
             if (!isNaN(parsed) && allowed && Math.abs(parsed) <= 1000) {
               void timeStretchEdit([nodeId], parsed, 'in', c.currentSeconds);
             }

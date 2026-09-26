@@ -16,12 +16,12 @@ import { Button } from '@components/Button';
 import { DialogFooter } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { loadTextTrees, mirrorFontUsage } from '@core/mirror/fonts';
 import { FontPicker } from '@layout/Inspector/FontPicker';
-import { collectFontUsage, familyKey, type FontUsage } from '@core/fonts/missingFonts';
+import { familyKey, type FontUsage } from '@core/fonts/missingFonts';
 import { detectFontAvailability } from '@core/fonts/fontAvailability';
 import { replaceFontFamiliesEdit } from './textEdits';
-import type { SceneNode } from '@core/types';
 import styles from './TextDialogs.module.css';
 
 export const REPLACE_FONTS_MODAL_ID = 'replace-fonts';
@@ -117,19 +117,16 @@ export function openReplaceFontsDialog(usages: ReadonlyArray<FontUsage>, missing
   });
 }
 
-/** Every text node in the document. */
-function allNodes(): SceneNode[] {
-  const out: SceneNode[] = [];
-  defaultSceneGraph.traverse((n) => { out.push(n); });
-  return out;
-}
 
 /**
  * Find and Replace Fonts: every family used, with missing ones marked.
  * Resolves false (and says so) when the project uses no fonts.
  */
 export async function openFindAndReplaceFonts(): Promise<boolean> {
-  const usages = collectFontUsage(allNodes());
+  // B4: every text layer's families from the document mirror (its trees loaded first).
+  const m = documentMirror();
+  await loadTextTrees(m);
+  const usages = mirrorFontUsage(m);
   if (usages.length === 0) {
     useUIStore.getState().notify({ level: 'info', message: 'No text layer in this project sets a font', durationMs: 2600 });
     return false;

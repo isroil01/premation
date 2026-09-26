@@ -8,7 +8,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { collectClipSnapTargets, snapClipEdges, type ClipSnapTarget } from './clipSnap';
 import { findClipCutNear, type ClipCut } from './clipCuts';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorRollLimits } from '@core/mirror/rollLimits';
 import { clamp } from '@utils/lang';
 import type { TimelineModel, TimelineClip } from './TimelineModel';
 import { exceedsDragThreshold } from './marqueeSelection';
@@ -254,13 +255,12 @@ export function useClipDrag({
                 clip.trackId,
               );
         if (!cut) return;
-        // B4-gap: clip GEOMETRY — the roll's limits are the two bars' source
-        // handles in stored clip frames (sourceIn / sourceOut after stretch);
-        // `LayerTiming` gives the bar and `sourceDuration`, not the clip's
-        // source window. A `rollLimits` query (or clip source-in on the timing) closes it.
-        const limits = getTimelineController().rollLimitsFor(cut.leftNodeId, cut.rightNodeId);
-        if (!limits) return;
+        // B4: the roll's limits are the two bars' source handles, from their mirror timing
+        // (the bar, the source-in `inPoint - startTime`, the bounded source's `sourceDuration`).
         const fps = model.frameRate || 30;
+        const mirror = documentMirror();
+        const limits = mirrorRollLimits(mirror.layer(cut.leftNodeId), mirror.layer(cut.rightNodeId), fps);
+        if (!limits) return;
         const bars = new Map<string, TimelineClip>();
         for (const t of model.tracks) for (const c of t.clips ?? []) bars.set(c.id, c);
         const leftBar = bars.get(cut.leftClipId);

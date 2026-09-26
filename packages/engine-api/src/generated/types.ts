@@ -214,6 +214,14 @@ export type ItemKind =
   | 'placeholder';
 export const ItemKindValues = ['folder', 'composition', 'footage', 'solid', 'placeholder'] as const;
 
+/** B4 — what a footage item's file holds (ItemInfo.mediaType). */
+export type MediaType =
+  | 'none'
+  | 'image'
+  | 'video'
+  | 'audio';
+export const MediaTypeValues = ['none', 'image', 'video', 'audio'] as const;
+
 export type AlphaMode =
   | 'auto'
   | 'ignore'
@@ -1348,6 +1356,8 @@ export interface CompSettings {
   backgroundPaint?: string;
   /** B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too. */
   pristine?: boolean;
+  /** B4 — the Essential Properties the composition PUBLISHES to the layers that place it (AE Master Properties), as stored on its root (`__essentialProps`: `<layerId>/<editorProp>` keys), in publish order. Empty = none published (an instance then lists every overridable property of the comp's top layers). Read-only here: not in CompSettingsPatch. */
+  essentialProps: string[];
 }
 
 export interface CompSettingsPatch {
@@ -1562,6 +1572,10 @@ export interface LayerTiming {
   retime: RetimeMode;
   /** B4 — the length of a BOUNDED source (footage, a precomp) on the comp axis at the layer's stretch: what a bar can be trimmed / slipped within (the timeline's source-handle clamps). Absent = unbounded (shapes, text, solids, nulls, a still image, a time-remapped or frozen layer). */
   sourceDuration?: Time;
+  /** B4 — Freeze Frame: the time the layer holds for its whole bar (Layer ▸ Time ▸ Freeze Frame), on the layer's OWN time axis (its keyframe / source time, what `freezeFrame` resolved the comp time to). Absent = not frozen. */
+  freeze?: Time;
+  /** B4 — a BAKED Time Stretch on a layer with no source (shape, text, solid, null, camera, light): the factor its last `timeStretchLayers` bake left (1 = 100 %, negative = reversed), what the Time Stretch field shows. Absent = none (100 %). Footage and precomps report their live rate in `stretch` instead. */
+  bakedStretch?: number;
 }
 
 export interface LayerTimingPatch {
@@ -1843,6 +1857,23 @@ export interface RippleDeleteRange {
   comp: ItemId;
   range: TimeRange;
   layers: LayerId[];
+}
+
+/** B4 — Lift (AE Lift Work Area): delete a composition TIME RANGE and LEAVE the gap — `rippleDeleteRange` without the ripple. Every unlocked layer of `layers` (empty = every layer of the comp) that crosses an edge of `range` is split there and the parts inside are deleted; nothing moves. Locked layers are never cut or deleted. Returns the layers the splits created, how many edges were cut and how many pieces were removed. Inverse: the layers and bars restored exactly. */
+export interface LiftRange {
+  comp: ItemId;
+  range: TimeRange;
+  layers: LayerId[];
+}
+
+/** B4 — what a range delete did (liftRange). */
+export interface TimeRangeEdit {
+  /** The layers the splits created (the part after the range of a layer that straddled it). */
+  layers: LayerId[];
+  /** Range edges a layer was cut at (a layer straddling the whole range counts two). */
+  splits: number;
+  /** Pieces removed: a layer wholly inside the range, or the part of a layer inside it. */
+  deleted: number;
 }
 
 /** One layer's keyframe shift (shiftLayerKeyframes). */
@@ -2602,6 +2633,12 @@ export interface ItemInfo {
   audioSampleRate: number;
   colorProfile: string;
   fileBytes: number;
+  /** B4 — what a FOOTAGE item holds: a still image, video or audio (`none` for compositions, folders, solids and placeholders). What the Inspector's pickers (a still image for a sky, a sprite, a height map) and the proxy row filter on. */
+  mediaType: MediaType;
+  /** B4 — the import probe looked for an alpha channel: `hasAlpha` false with this false means "never probed", not "opaque" (the Alpha interpretation control stays offered). */
+  alphaProbed: boolean;
+  /** B4 — the import probe looked for an audio stream: `hasAudio` false on video with this false means "never probed". */
+  audioProbed: boolean;
 }
 
 export interface CompInfo {
@@ -2633,12 +2670,18 @@ export interface LayerInfo {
   /** Layer markers. */
   markers: Marker[];
   comment: string;
-  /** B4 — for a `generator` layer provided by a plugin layer kind: the kind id `<pluginId>.<kindId>` (what the Inspector keys its sections on). '' otherwise. */
+  /** B4 — for a layer provided by a plugin layer kind: the kind id `<pluginId>.<kindId>` (what the Inspector keys its sections on) — a `generator` layer, or a custom plugin layer (`pluginLayer:<kind>` component) whose `kind` reads as the shape it draws. '' otherwise. */
   generator: string;
   /** B4 — the layer's Pinned properties (the Inspector's Pinned tab), in the order they were pinned: the editor's track names (`x`, `opacity`, `effect.<id>.<param>`) as stored in the document (`__pinnedProps`). */
   pinned: string[];
   /** B4 — how many effects the layer's effect stack holds (the `effects` group's children, disabled ones included): what a collapsed timeline row needs to draw the fx switch without loading the property tree. */
   effectCount: number;
+  /** B4 — a shape layer's primitive (`rect`, `ellipse`, `star`, `polygon`, `triangle`, `line`, `arrow`, `heart`, `cross`, `diamond`, `crescent`: the stored `shapeType`), '' for a drawn path or any other layer. What the Layers tree's glyph narrows on (`kind` folds star / triangle into `polygon`). */
+  shapeType: string;
+  /** B4 — the plugin that GENERATED this layer and will overwrite it on its next run (`__ownedByPlugin`), '' for a layer the user owns. The Layers tree marks it. */
+  managedBy: string;
+  /** B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it. */
+  mographId: string;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -3953,6 +3996,7 @@ export type Command =
   | ({ type: 'timeStretchLayers' } & TimeStretchLayers)
   | ({ type: 'unfreezeLayers' } & UnfreezeLayers)
   | ({ type: 'rippleDeleteRange' } & RippleDeleteRange)
+  | ({ type: 'liftRange' } & LiftRange)
   | ({ type: 'shiftLayerKeyframes' } & ShiftLayerKeyframes)
   | ({ type: 'addTransition' } & AddTransition)
   | ({ type: 'setTransition' } & SetTransition)
@@ -4105,6 +4149,7 @@ export type CommandResult =
   | ({ type: 'timeStretchLayers' } & Empty)
   | ({ type: 'unfreezeLayers' } & Empty)
   | ({ type: 'rippleDeleteRange' } & LayerList)
+  | ({ type: 'liftRange' } & TimeRangeEdit)
   | ({ type: 'shiftLayerKeyframes' } & Empty)
   | ({ type: 'addTransition' } & TransitionRef)
   | ({ type: 'setTransition' } & Empty)
@@ -4370,6 +4415,7 @@ export interface CommandArgs {
   timeStretchLayers: TimeStretchLayers;
   unfreezeLayers: UnfreezeLayers;
   rippleDeleteRange: RippleDeleteRange;
+  liftRange: LiftRange;
   shiftLayerKeyframes: ShiftLayerKeyframes;
   addTransition: AddTransition;
   setTransition: SetTransition;
@@ -4522,6 +4568,7 @@ export interface CommandResults {
   timeStretchLayers: Empty;
   unfreezeLayers: Empty;
   rippleDeleteRange: LayerList;
+  liftRange: TimeRangeEdit;
   shiftLayerKeyframes: Empty;
   addTransition: TransitionRef;
   setTransition: Empty;

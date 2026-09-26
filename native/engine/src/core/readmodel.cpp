@@ -121,6 +121,12 @@ api::LayerTiming layer_timing(const Document& d, std::string_view layer) {
   t.stretch = (cfg.stretch / 100) * (cfg.reverse ? -1 : 1);
   t.retime = read_retime_mode(d, layer);
   t.time_remap_enabled = anim_is_animated(d, layer, "timeRemap");
+  // B4: Freeze Frame (the held time, on the layer's own axis) and a baked Time Stretch's factor (`fx.bakedStretch`, 100 = none) - model.ts layerTiming.
+  if (cfg.freeze) t.freeze = seconds_to_flicks(cfg.freezeTime);
+  if (n != nullptr) {
+    const Json& baked = n->fx().at("bakedStretch");
+    if (baked.is_number() && std::isfinite(baked.num()) && baked.num() != 0 && baked.num() != 100) t.baked_stretch = baked.num() / 100;
+  }
   if (bars.empty()) {
     t.in_point = 0;
     t.out_point = frames_to_flicks(comp_duration_frames(d, comp), fps);
@@ -334,6 +340,15 @@ std::string plugin_kind_of(const Node& n) {
   return k;
 }
 
+/// B4 - the first non-empty string a component of `n` stores under `prop` ('' when none): model.ts firstStringProp.
+std::string first_string_prop(const Node& n, std::string_view prop) {
+  for (const Component& c : n.components) {
+    const Json& v = c.props.at(prop);
+    if (v.is_string() && !v.str().empty()) return v.str();
+  }
+  return {};
+}
+
 }  // namespace
 
 api::LayerInfo layer_info(const Document& d, std::string_view layer) {
@@ -366,7 +381,8 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   info.markers = layer_markers(d, layer);
   const Json& comment = fx_at(n, "comment");
   info.comment = comment.is_string() ? comment.str() : "";
-  if (k == api::LayerKind::generator) info.generator = plugin_kind_of(n);
+  // Every plugin-provided kind: a generator, or a custom plugin layer (its `kind` reads as the shape it draws).
+  info.generator = plugin_kind_of(n);
   // B4: pinned properties — `__pinnedProps` on the first component carrying the list (model.ts pinnedOf).
   for (const Component& c : n.components) {
     const Json& bag = c.props.at("__pinnedProps");
@@ -378,6 +394,10 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   }
   // B4: the effect stack's size (model.ts readNodeEffects(node).length).
   info.effect_count = static_cast<std::uint32_t>(read_node_effects(n).size());
+  // B4: the shape primitive, the generating plugin and the inserted-element tag (model.ts layerInfo).
+  if (k != api::LayerKind::generator) info.shape_type = read_shape_type(n).value_or("");
+  info.managed_by = first_string_prop(n, "__ownedByPlugin");
+  info.mograph_id = first_string_prop(n, "__mographId");
   return info;
 }
 
@@ -442,6 +462,18 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   if (c.at("backgroundPaint").is_object()) s.background_paint = stringify(c.at("backgroundPaint"));
   // The empty project's placeholder mark; absent when unset (the TS engine's compSettings).
   if (c.at("pristine").is_bool() && c.at("pristine").b()) s.pristine = true;
+  // B4: the Essential Properties published on the root (`__essentialProps`, every component's list, once each) - model.ts essentialPropsOf.
+  if (const Node* root = d.node(comp)) {
+    for (const Component& cc : root->components) {
+      const Json& bag = cc.props.at("__essentialProps");
+      if (!bag.is_array()) continue;
+      for (const Json& k : bag.arr()) {
+        if (k.is_string() && std::find(s.essential_props.begin(), s.essential_props.end(), k.str()) == s.essential_props.end()) {
+          s.essential_props.push_back(k.str());
+        }
+      }
+    }
+  }
   return s;
 }
 
@@ -563,6 +595,13 @@ api::ItemInfo footage_info(const Json& a) {
   info.audio_channels = u32_of(std::max(0.0, motion::js::round(mdn("audioChannels"))));
   info.audio_sample_rate = 0;
   info.file_bytes = u64_of(std::max(0.0, motion::js::round(a.at("size").is_number() ? a.at("size").num() : 0.0)));
+  // B4: the stored media type and whether the probe answered alpha / audio (model.ts footageInfo).
+  info.media_type = type == "image" ? api::MediaType::image
+                  : type == "video" ? api::MediaType::video
+                  : type == "audio" ? api::MediaType::audio
+                                    : api::MediaType::none;
+  info.alpha_probed = md.at("hasAlpha").is_bool();
+  info.audio_probed = md.at("hasAudioTrack").is_bool();
   return info;
 }
 
