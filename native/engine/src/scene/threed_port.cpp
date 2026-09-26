@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numbers>
 #include <utility>
@@ -14,6 +15,7 @@
 #include "layer_styles.hpp"
 #include "gltf_model.hpp"
 #include "mesh_displacement.hpp"
+#include "model_deform.hpp"
 #include "model_carrier.hpp"
 #include "primitive_mesh.hpp"
 #include "text_measure.hpp"
@@ -1009,17 +1011,42 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
     if (entry != nullptr) {
       const Material& mMat = s.mat;
       const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
-      if (entry->morphTargets > 0) report("glTF morph targets (morphedMeshFor)");
-      if (entry->skinned && mp.at("skin").is_number()) report("glTF skinning (skinnedMeshFor)");
+      // Morph, then skin (the glTF order; model_deform.cpp). Each stage swaps in
+      // deformed vertices under a weight- / pose-hashed key; an unresolvable
+      // skin pose falls back to the morphed or rigid bind pose.
+      const std::optional<gltf::Deformed> morphed = entry->morphTargets > 0 ? gltf::morphed_mesh_for(n, *entry, &a) : std::nullopt;
+      std::optional<gltf::Deformed> skinned;
+      if (entry->skinned && s.world3d) {
+        const gltf::SkinResolvers resolvers{
+            [this](const std::string& id) { return h_.node3d(id); },
+            [this](const std::string& id) { return h_.parent3d_of(id); },
+            [this](const std::string& id) -> std::optional<xf::Mat4> {
+              const auto local = local3d(id);
+              if (!local) return std::nullopt;
+              const xf::Mat4 own = xf::compose_node_3d(*local);
+              const auto p3 = parent_world_3d(id);
+              return p3 ? xf::multiply(*p3, own) : own;
+            }};
+        const std::optional<double> skinIdx = mp.at("skin").is_number() ? std::optional<double>(mp.at("skin").num()) : std::nullopt;
+        skinned = gltf::skinned_mesh_for(n, modelKey, skinIdx, *entry, model->skins, *s.world3d, resolvers, jointMapCache_,
+                                         morphed ? &*morphed : nullptr);
+      }
+      const gltf::Deformed* deformed = skinned ? &*skinned : morphed ? &*morphed : nullptr;
       const bool textured = entry->textureImage && layer.kind == LayerKind::image && layer.src && !layer.src->empty();
       std::string dispWhy;
-      const auto disp = displaced_carrier_for(c_.d, entry->key, entry->vertices, entry->indices, mMat, dispWhy);
+      const auto disp = displaced_carrier_for(c_.d, deformed != nullptr ? deformed->key : entry->key,
+                                              deformed != nullptr ? deformed->vertices : entry->vertices, entry->indices, mMat, dispWhy);
       if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
       auto data = std::make_shared<ExtrudedMeshData>();
       if (disp) {
         displaced_to_api(*disp, data->geometry);
       } else {
         model_entry_to_api(*entry, data->geometry);
+        if (deformed != nullptr) {
+          data->geometry.key = deformed->key;
+          data->geometry.vertices.resize(deformed->vertices.size() * sizeof(float));
+          std::memcpy(data->geometry.vertices.data(), deformed->vertices.data(), data->geometry.vertices.size());
+        }
       }
       MeshRange3D r;
       r.role = entry->doubleSided ? api::RenderMeshRole::front : api::RenderMeshRole::side;
