@@ -356,8 +356,8 @@ struct GlyphBox { index: u32 = 1; line: u32 = 2; box: Rect = 3; baseline: f64 = 
 query hitTest = 1060 { comp: ItemId = 1; time: Time = 2; point: Vec2 = 3; mode: HitMode = 4; includeLocked: bool = 5; } -> HitResult;
 query getLayerBounds = 1061 { layers: LayerId[] = 1; time: Time = 2; space: BoundsSpace = 3; includeEffects: bool = 4; viewport?: u32 = 5; } -> LayerBoundsList;
 query getLayerTransforms = 1062 { layers: LayerId[] = 1; time: Time = 2; } -> LayerTransformList;
-/// Text layout for in-viewport editing (caret, selection, hit-testing glyphs).
-query getTextLayout = 1063 { layer: LayerId = 1; time: Time = 2; } -> TextLayout;
+/// Text layout: how a text layer's lines measure (B4: the render box, the selection box, the wrap, the paragraph box, where the line block sits in the layer). The STORED style is measured (animated values at their base, as Convert / Box Auto-Size hold the text still) with `overrides` winning — a "where would the lines sit if…" before a write. `time` is reserved for evaluated layouts (glyph boxes for in-viewport editing). `invalidArgument` for a layer with no text; `unsupported` where the engine cannot measure (no fonts: the headless engine, a jsdom page) or the style is outside its text port (the message says which).
+query getTextLayout = 1063 { layer: LayerId = 1; time: Time = 2; overrides?: TextLayoutOverrides = 802; } -> TextLayout;
 /// Evaluate an expression without storing it (expression editor preview).
 query evaluateExpression = 1064 { prop: PropRef = 1; time: Time = 2; source: string = 3; } -> ExpressionEvaluation;
 /// Pixel values under a point of a viewport (Info panel, eyedropper), in working space.
@@ -369,7 +369,69 @@ query getDependencies = 1067 { layer?: LayerId = 1; item?: ItemId = 2; } -> Depe
 struct HitResult { layers: LayerId[] = 1; }
 struct LayerBoundsList { bounds: LayerBounds[] = 1; }
 struct LayerTransformList { transforms: LayerTransform[] = 1; }
-struct TextLayout { glyphs: GlyphBox[] = 1; lines: u32 = 2; box: Rect = 3; }
+struct TextLayout {
+  /// Per-glyph boxes for in-viewport editing — not filled yet (both engines answer empty; the text-edit overlay still measures in the page).
+  glyphs: GlyphBox[] = 1;
+  /// Lines as laid out (after the paragraph wrap).
+  lines: u32 = 2;
+  /// The SELECTION box: the font-metric box of the laid-out lines, relative to the layer origin (x = −advance / 2), before the Character panel's scale. Stable while typing (font metrics, not ink).
+  box: Rect = 3;
+  /// B4 — the RENDER box (the texture the text rasterises into, padding included): measureTextSize's {w, h}.
+  size: Vec2 = 803;
+  /// B4 — the content as laid out: paragraph text with each soft wrap as '\n' (one space replaced per wrap, so character indices keep); point text unchanged.
+  wrapped: string = 804;
+  /// B4 — the wrapped line numbers that end in a SOFT wrap (not a typed return).
+  softBreaks: u32[] = 805;
+  /// B4 — the paragraph box; absent for point text (and text on a path).
+  paragraph?: ParagraphLayout = 806;
+  /// B4 — where the line block sits in the layer, local units after the Character panel's scale: the x its lines start / centre / end at (by alignment and first-paragraph direction, indents included) and its vertical offset from the centred position. What a Point ⇄ Paragraph conversion holds still (the difference of two answers; the render padding cancels).
+  lineBlock: Vec2 = 807;
+  /// B4 — the Character panel's whole-layer glyph scale (horizontal / vertical scale, × 0.65 for super / subscript).
+  styleScale: Vec2 = 808;
+  /// B4 — the text rides a mask path (point text: no box).
+  onPath: bool = 809;
+  /// B4 — the style measured (overrides applied): what a Fit Text to Box bake multiplies.
+  fontSize: f64 = 810;
+  letterSpacing: f64 = 811;
+  paragraphSpacing: f64 = 812;
+}
+/// B4 — getTextLayout's hypothetical style: each set field replaces the stored one for the measurement only.
+struct TextLayoutOverrides {
+  content?: string = 1;
+  /// 0 = point text.
+  boxWidth?: f64 = 2;
+  /// 0 = no authored height (auto height).
+  boxHeight?: f64 = 3;
+  /// 'off' | 'height' | 'fit'.
+  boxAutoSize?: string = 4;
+  fontSize?: f64 = 5;
+  letterSpacing?: f64 = 6;
+  paragraphSpacing?: f64 = 7;
+}
+/// B4 — a paragraph text layer's box as it measures (measureParagraphBox + readParagraphBox).
+struct ParagraphLayout {
+  boxWidth: f64 = 1;
+  /// The box's height: authored when fixed, the text's own when auto.
+  boxHeight: f64 = 2;
+  fixedHeight: bool = 3;
+  /// Text runs past the bottom of a fixed box (AE's red overflow mark).
+  overflow: bool = 4;
+  /// Fit Text to Box's type scale; 1 otherwise.
+  fitScale: f64 = 5;
+  /// The height the lines occupy as drawn (after the fit scale), px.
+  contentHeight: f64 = 6;
+  lineCount: u32 = 7;
+  /// Lines actually drawn (the rest are clipped by a fixed box).
+  visibleLines: u32 = 8;
+  /// How far the line block sits below where it would sit centred on the origin, px (a fixed box aligning its lines top / bottom; an anchored auto-height box).
+  lineOffsetY: f64 = 9;
+  /// The resolved auto-size mode: 'off' | 'height' | 'fit' (no stored height is auto height whatever the mode says).
+  autoSize: string = 10;
+  /// 'top' | 'center' | 'bottom'.
+  verticalAlign: string = 11;
+  /// The STORED box height (0 = none): an auto-height box keeps the top edge of a box this tall.
+  storedHeight: f64 = 12;
+}
 struct ExpressionEvaluation { value?: Value = 1; diagnostics: ExpressionDiagnostic[] = 2; }
 struct PixelSamples { width: u32 = 1; height: u32 = 2; rgba: f32[] = 3; }
 struct Dependencies { uses: PropRef[] = 1; usedBy: PropRef[] = 2; items: ItemId[] = 3; }

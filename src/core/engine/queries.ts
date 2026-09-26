@@ -30,6 +30,8 @@ import {
 } from './model';
 import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimated, flicksToKeyTime, keyTimeToFlicks, toApiNums, apiUnitFactor } from './props';
 import { valueAt } from './handlers/properties';
+import { textLayoutAnswer } from './textLayoutQuery';
+import { layerBoundsAnswer } from './layerBoundsQuery';
 import { encodeFragment } from './handlers/layers';
 import { GROUP_TYPES } from './handlers/groups';
 import { checkTime, flicksToSeconds } from './time';
@@ -256,9 +258,14 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         colorManagement: true, float32: false, pluginApis: [], expressionEngines: ['premation'],
         cpuThreads: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?? 1 : 1,
       };
-    case 'hitTest':
-    case 'getLayerBounds':
     case 'getTextLayout':
+      // B4: measured with the page's canvas metrics, as the painter lays the text out (textLayoutQuery.ts).
+      checkTime(q.time);
+      return { type: q.type, ...textLayoutAnswer(q) };
+    case 'getLayerBounds':
+      // B4: readGeometry's box at the time (layerBoundsQuery.ts).
+      return { type: q.type, bounds: layerBoundsAnswer(q) };
+    case 'hitTest':
     case 'readPixels':
       return fail('unsupported', `'${q.type}' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2`);
     case 'getLayerTransforms': {

@@ -42,7 +42,7 @@ import type {
 } from '@motion/engine-api';
 import { parentOptionsFor } from '@core/scene/parenting';
 import type { TrackMatte } from '@core/effects/matte';
-import { isDistributeMode, planAlign, type AlignMode } from '@core/scene/alignNodes';
+import { isDistributeMode, planAlignBoxes, type AlignMode } from '@core/scene/alignNodes';
 import { getTime } from '@stores/playbackClockStore';
 import {
   clearTrackTangents,
@@ -358,23 +358,68 @@ export function setLayersSwitch(nodeIds: readonly string[], patch: LayerSwitches
 }
 
 /**
- * Align / distribute the selection — a client macro: `planAlign` measures the
- * boxes (world space, at the playhead) and returns each moved layer's new
- * parent-space Position; they go out as ONE `setProperties` (keyed at the
- * playhead where Position is animated, as the canvas does).
+ * Align / distribute the selection — a client macro: the engine measures the
+ * boxes (`getLayerBounds`, composition space, at the playhead: the drawn box's
+ * axis-aligned extent) and the world matrices (`getLayerTransforms`); the pure
+ * `planAlignBoxes` places the box centres, and each moved layer's origin
+ * follows its box by the same delta, back through its parent's inverse into
+ * the Position it writes. ONE `setProperties` (keyed at the playhead where
+ * Position is animated, as the canvas does). A 3D parent contributes its
+ * matrix's 2D part (the depth is not unprojected).
  */
-export function alignLayers(
+export async function alignLayers(
   ids: ReadonlyArray<string>,
   mode: AlignMode,
   alignTo: 'selection' | 'composition',
   compWidth: number,
   compHeight: number,
-): void {
+): Promise<void> {
   const seconds = getTime();
-  // B4-gap: world-space layer bounds and the parent-space inverse (planAlign's getBounds / toParentSpace evaluate the TS engine's transforms) — the API answers them as getLayerBounds / getLayerTransforms QUERIES; this synchronous macro still measures the scene graph.
-  const writes = planAlign(ids.filter((id) => isLayer(id)), mode, alignTo, compWidth, compHeight)
-    .flatMap((m) => trackWrites(m.id, { x: m.x, y: m.y }, seconds));
-  if (writes.length > 0) void edit(isDistributeMode(mode) ? 'Distribute' : 'Align', { type: 'setProperties', writes });
+  const time = compTime(seconds);
+  const layers = ids.filter((id) => isLayer(id));
+  if (layers.length === 0) return;
+  const m = documentMirror();
+  const parents = [...new Set(layers.flatMap((id) => {
+    const p = m.layer(id)?.parent;
+    return p ? [p] : [];
+  }))];
+  const [bounds, xforms] = await Promise.all([
+    engine().query({ type: 'getLayerBounds', layers, time, space: 'comp', includeEffects: false }),
+    engine().query({ type: 'getLayerTransforms', layers: [...new Set([...layers, ...parents])], time }),
+  ]);
+  if (!bounds.ok || !xforms.ok) return;
+  const matrixOf = new Map(xforms.value.transforms.map((t) => [t.layer, t.matrix]));
+  const boxes = bounds.value.bounds.map((b) => ({
+    id: b.layer,
+    b: {
+      x: b.bounds.x, y: b.bounds.y, w: b.bounds.width, h: b.bounds.height,
+      cx: b.bounds.x + b.bounds.width / 2, cy: b.bounds.y + b.bounds.height / 2,
+    },
+  }));
+  const byId = new Map(boxes.map((v) => [v.id, v.b]));
+  const writes = planAlignBoxes(boxes, mode, alignTo, compWidth, compHeight).flatMap((mv) => {
+    const b = byId.get(mv.id);
+    const own = matrixOf.get(mv.id);
+    if (!b || !own) return [];
+    // The layer's origin in comp space moves with its box.
+    const ox = (own[12] ?? 0) + (mv.cx - b.cx);
+    const oy = (own[13] ?? 0) + (mv.cy - b.cy);
+    const parent = m.layer(mv.id)?.parent;
+    const local = parent ? toParentSpace(matrixOf.get(parent), ox, oy) : { x: ox, y: oy };
+    return trackWrites(mv.id, { x: local.x, y: local.y }, seconds);
+  });
+  if (writes.length > 0) await edit(isDistributeMode(mode) ? 'Distribute' : 'Align', { type: 'setProperties', writes });
+}
+
+/** A comp-space point through the inverse of a parent's world matrix (column-major 4×4; its 2D part). */
+function toParentSpace(matrix: readonly number[] | undefined, x: number, y: number): { x: number; y: number } {
+  if (!matrix) return { x, y };
+  const a = matrix[0] ?? 1, b = matrix[1] ?? 0, c = matrix[4] ?? 0, d = matrix[5] ?? 1, e = matrix[12] ?? 0, f = matrix[13] ?? 0;
+  const det = a * d - b * c;
+  if (Math.abs(det) < 1e-12) return { x: x - e, y: y - f };
+  const px = x - e;
+  const py = y - f;
+  return { x: (d * px - c * py) / det, y: (-b * px + a * py) / det };
 }
 
 /**

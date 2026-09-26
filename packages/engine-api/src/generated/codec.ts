@@ -9687,17 +9687,20 @@ function decS_GetLayerTransforms(r: Reader, end: number, o: any): T.GetLayerTran
 function encS_GetTextLayout(w: Writer, v: T.GetTextLayout): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.i64(v.time);
+  if (v.overrides !== undefined) { w.varint(6418); { const s = w.beginLd(); encS_TextLayoutOverrides(w, v.overrides); w.endLd(s); } }
 }
 function decS_GetTextLayout(r: Reader, end: number, o: any): T.GetTextLayout {
   let h_layer = false;
   let h_time = false;
   let v_layer: string | undefined;
   let v_time: number | undefined;
+  let v_overrides: T.TextLayoutOverrides | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 16: v_time = r.i64(); h_time = true; break;
+      case 6418: v_overrides = decS_TextLayoutOverrides(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -9706,6 +9709,7 @@ function decS_GetTextLayout(r: Reader, end: number, o: any): T.GetTextLayout {
   if (!h_time) throw new DecodeError('GetTextLayout.time: missing', 'missingField');
   o.layer = v_layer;
   o.time = v_time;
+  if (v_overrides !== undefined) o.overrides = v_overrides;
   return o;
 }
 function encS_EvaluateExpression(w: Writer, v: T.EvaluateExpression): void {
@@ -9866,28 +9870,208 @@ function encS_TextLayout(w: Writer, v: T.TextLayout): void {
   { const a = v.glyphs; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_GlyphBox(w, a[i]!); w.endLd(s); } } }
   w.byte(16); w.u32(v.lines);
   w.byte(26); { const s = w.beginLd(); encS_Rect(w, v.box); w.endLd(s); }
+  w.varint(6426); { const s = w.beginLd(); encS_Vec2(w, v.size); w.endLd(s); }
+  w.varint(6434); w.str(v.wrapped);
+  { const a = v.softBreaks; if (a.length) { w.varint(6442); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  if (v.paragraph !== undefined) { w.varint(6450); { const s = w.beginLd(); encS_ParagraphLayout(w, v.paragraph); w.endLd(s); } }
+  w.varint(6458); { const s = w.beginLd(); encS_Vec2(w, v.lineBlock); w.endLd(s); }
+  w.varint(6466); { const s = w.beginLd(); encS_Vec2(w, v.styleScale); w.endLd(s); }
+  w.varint(6472); w.bool(v.onPath);
+  w.varint(6481); w.f64(v.fontSize);
+  w.varint(6489); w.f64(v.letterSpacing);
+  w.varint(6497); w.f64(v.paragraphSpacing);
 }
 function decS_TextLayout(r: Reader, end: number, o: any): T.TextLayout {
   const l_glyphs: T.GlyphBox[] = [];
+  const l_softBreaks: number[] = [];
   let h_lines = false;
   let h_box = false;
+  let h_size = false;
+  let h_wrapped = false;
+  let h_lineBlock = false;
+  let h_styleScale = false;
+  let h_onPath = false;
+  let h_fontSize = false;
+  let h_letterSpacing = false;
+  let h_paragraphSpacing = false;
   let v_lines: number | undefined;
   let v_box: T.Rect | undefined;
+  let v_size: T.Vec2 | undefined;
+  let v_wrapped: string | undefined;
+  let v_paragraph: T.ParagraphLayout | undefined;
+  let v_lineBlock: T.Vec2 | undefined;
+  let v_styleScale: T.Vec2 | undefined;
+  let v_onPath: boolean | undefined;
+  let v_fontSize: number | undefined;
+  let v_letterSpacing: number | undefined;
+  let v_paragraphSpacing: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: l_glyphs.push(decS_GlyphBox(r, r.ldEnd(), {})); break;
       case 16: v_lines = r.u32(); h_lines = true; break;
       case 26: v_box = decS_Rect(r, r.ldEnd(), {}); h_box = true; break;
+      case 6426: v_size = decS_Vec2(r, r.ldEnd(), {}); h_size = true; break;
+      case 6434: v_wrapped = r.str(); h_wrapped = true; break;
+      case 6442: { const e = r.ldEnd(); while (r.pos < e) l_softBreaks.push(r.u32()); r.expectAt(e); break; }
+      case 6450: v_paragraph = decS_ParagraphLayout(r, r.ldEnd(), {}); break;
+      case 6458: v_lineBlock = decS_Vec2(r, r.ldEnd(), {}); h_lineBlock = true; break;
+      case 6466: v_styleScale = decS_Vec2(r, r.ldEnd(), {}); h_styleScale = true; break;
+      case 6472: v_onPath = r.bool(); h_onPath = true; break;
+      case 6481: v_fontSize = r.f64(); h_fontSize = true; break;
+      case 6489: v_letterSpacing = r.f64(); h_letterSpacing = true; break;
+      case 6497: v_paragraphSpacing = r.f64(); h_paragraphSpacing = true; break;
       default: r.skip(key);
     }
   }
   r.expectAt(end);
   if (!h_lines) throw new DecodeError('TextLayout.lines: missing', 'missingField');
   if (!h_box) throw new DecodeError('TextLayout.box: missing', 'missingField');
+  if (!h_size) throw new DecodeError('TextLayout.size: missing', 'missingField');
+  if (!h_wrapped) throw new DecodeError('TextLayout.wrapped: missing', 'missingField');
+  if (!h_lineBlock) throw new DecodeError('TextLayout.lineBlock: missing', 'missingField');
+  if (!h_styleScale) throw new DecodeError('TextLayout.styleScale: missing', 'missingField');
+  if (!h_onPath) throw new DecodeError('TextLayout.onPath: missing', 'missingField');
+  if (!h_fontSize) throw new DecodeError('TextLayout.fontSize: missing', 'missingField');
+  if (!h_letterSpacing) throw new DecodeError('TextLayout.letterSpacing: missing', 'missingField');
+  if (!h_paragraphSpacing) throw new DecodeError('TextLayout.paragraphSpacing: missing', 'missingField');
   o.glyphs = l_glyphs;
   o.lines = v_lines;
   o.box = v_box;
+  o.size = v_size;
+  o.wrapped = v_wrapped;
+  o.softBreaks = l_softBreaks;
+  if (v_paragraph !== undefined) o.paragraph = v_paragraph;
+  o.lineBlock = v_lineBlock;
+  o.styleScale = v_styleScale;
+  o.onPath = v_onPath;
+  o.fontSize = v_fontSize;
+  o.letterSpacing = v_letterSpacing;
+  o.paragraphSpacing = v_paragraphSpacing;
+  return o;
+}
+function encS_TextLayoutOverrides(w: Writer, v: T.TextLayoutOverrides): void {
+  if (v.content !== undefined) { w.byte(10); w.str(v.content); }
+  if (v.boxWidth !== undefined) { w.byte(17); w.f64(v.boxWidth); }
+  if (v.boxHeight !== undefined) { w.byte(25); w.f64(v.boxHeight); }
+  if (v.boxAutoSize !== undefined) { w.byte(34); w.str(v.boxAutoSize); }
+  if (v.fontSize !== undefined) { w.byte(41); w.f64(v.fontSize); }
+  if (v.letterSpacing !== undefined) { w.byte(49); w.f64(v.letterSpacing); }
+  if (v.paragraphSpacing !== undefined) { w.byte(57); w.f64(v.paragraphSpacing); }
+}
+function decS_TextLayoutOverrides(r: Reader, end: number, o: any): T.TextLayoutOverrides {
+  let v_content: string | undefined;
+  let v_boxWidth: number | undefined;
+  let v_boxHeight: number | undefined;
+  let v_boxAutoSize: string | undefined;
+  let v_fontSize: number | undefined;
+  let v_letterSpacing: number | undefined;
+  let v_paragraphSpacing: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_content = r.str(); break;
+      case 17: v_boxWidth = r.f64(); break;
+      case 25: v_boxHeight = r.f64(); break;
+      case 34: v_boxAutoSize = r.str(); break;
+      case 41: v_fontSize = r.f64(); break;
+      case 49: v_letterSpacing = r.f64(); break;
+      case 57: v_paragraphSpacing = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_content !== undefined) o.content = v_content;
+  if (v_boxWidth !== undefined) o.boxWidth = v_boxWidth;
+  if (v_boxHeight !== undefined) o.boxHeight = v_boxHeight;
+  if (v_boxAutoSize !== undefined) o.boxAutoSize = v_boxAutoSize;
+  if (v_fontSize !== undefined) o.fontSize = v_fontSize;
+  if (v_letterSpacing !== undefined) o.letterSpacing = v_letterSpacing;
+  if (v_paragraphSpacing !== undefined) o.paragraphSpacing = v_paragraphSpacing;
+  return o;
+}
+function encS_ParagraphLayout(w: Writer, v: T.ParagraphLayout): void {
+  w.byte(9); w.f64(v.boxWidth);
+  w.byte(17); w.f64(v.boxHeight);
+  w.byte(24); w.bool(v.fixedHeight);
+  w.byte(32); w.bool(v.overflow);
+  w.byte(41); w.f64(v.fitScale);
+  w.byte(49); w.f64(v.contentHeight);
+  w.byte(56); w.u32(v.lineCount);
+  w.byte(64); w.u32(v.visibleLines);
+  w.byte(73); w.f64(v.lineOffsetY);
+  w.byte(82); w.str(v.autoSize);
+  w.byte(90); w.str(v.verticalAlign);
+  w.byte(97); w.f64(v.storedHeight);
+}
+function decS_ParagraphLayout(r: Reader, end: number, o: any): T.ParagraphLayout {
+  let h_boxWidth = false;
+  let h_boxHeight = false;
+  let h_fixedHeight = false;
+  let h_overflow = false;
+  let h_fitScale = false;
+  let h_contentHeight = false;
+  let h_lineCount = false;
+  let h_visibleLines = false;
+  let h_lineOffsetY = false;
+  let h_autoSize = false;
+  let h_verticalAlign = false;
+  let h_storedHeight = false;
+  let v_boxWidth: number | undefined;
+  let v_boxHeight: number | undefined;
+  let v_fixedHeight: boolean | undefined;
+  let v_overflow: boolean | undefined;
+  let v_fitScale: number | undefined;
+  let v_contentHeight: number | undefined;
+  let v_lineCount: number | undefined;
+  let v_visibleLines: number | undefined;
+  let v_lineOffsetY: number | undefined;
+  let v_autoSize: string | undefined;
+  let v_verticalAlign: string | undefined;
+  let v_storedHeight: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_boxWidth = r.f64(); h_boxWidth = true; break;
+      case 17: v_boxHeight = r.f64(); h_boxHeight = true; break;
+      case 24: v_fixedHeight = r.bool(); h_fixedHeight = true; break;
+      case 32: v_overflow = r.bool(); h_overflow = true; break;
+      case 41: v_fitScale = r.f64(); h_fitScale = true; break;
+      case 49: v_contentHeight = r.f64(); h_contentHeight = true; break;
+      case 56: v_lineCount = r.u32(); h_lineCount = true; break;
+      case 64: v_visibleLines = r.u32(); h_visibleLines = true; break;
+      case 73: v_lineOffsetY = r.f64(); h_lineOffsetY = true; break;
+      case 82: v_autoSize = r.str(); h_autoSize = true; break;
+      case 90: v_verticalAlign = r.str(); h_verticalAlign = true; break;
+      case 97: v_storedHeight = r.f64(); h_storedHeight = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_boxWidth) throw new DecodeError('ParagraphLayout.boxWidth: missing', 'missingField');
+  if (!h_boxHeight) throw new DecodeError('ParagraphLayout.boxHeight: missing', 'missingField');
+  if (!h_fixedHeight) throw new DecodeError('ParagraphLayout.fixedHeight: missing', 'missingField');
+  if (!h_overflow) throw new DecodeError('ParagraphLayout.overflow: missing', 'missingField');
+  if (!h_fitScale) throw new DecodeError('ParagraphLayout.fitScale: missing', 'missingField');
+  if (!h_contentHeight) throw new DecodeError('ParagraphLayout.contentHeight: missing', 'missingField');
+  if (!h_lineCount) throw new DecodeError('ParagraphLayout.lineCount: missing', 'missingField');
+  if (!h_visibleLines) throw new DecodeError('ParagraphLayout.visibleLines: missing', 'missingField');
+  if (!h_lineOffsetY) throw new DecodeError('ParagraphLayout.lineOffsetY: missing', 'missingField');
+  if (!h_autoSize) throw new DecodeError('ParagraphLayout.autoSize: missing', 'missingField');
+  if (!h_verticalAlign) throw new DecodeError('ParagraphLayout.verticalAlign: missing', 'missingField');
+  if (!h_storedHeight) throw new DecodeError('ParagraphLayout.storedHeight: missing', 'missingField');
+  o.boxWidth = v_boxWidth;
+  o.boxHeight = v_boxHeight;
+  o.fixedHeight = v_fixedHeight;
+  o.overflow = v_overflow;
+  o.fitScale = v_fitScale;
+  o.contentHeight = v_contentHeight;
+  o.lineCount = v_lineCount;
+  o.visibleLines = v_visibleLines;
+  o.lineOffsetY = v_lineOffsetY;
+  o.autoSize = v_autoSize;
+  o.verticalAlign = v_verticalAlign;
+  o.storedHeight = v_storedHeight;
   return o;
 }
 function encS_ExpressionEvaluation(w: Writer, v: T.ExpressionEvaluation): void {
@@ -14406,6 +14590,8 @@ export const codecs = {
   LayerBoundsList: mk<T.LayerBoundsList>(encS_LayerBoundsList, (r, e) => decS_LayerBoundsList(r, e, {})),
   LayerTransformList: mk<T.LayerTransformList>(encS_LayerTransformList, (r, e) => decS_LayerTransformList(r, e, {})),
   TextLayout: mk<T.TextLayout>(encS_TextLayout, (r, e) => decS_TextLayout(r, e, {})),
+  TextLayoutOverrides: mk<T.TextLayoutOverrides>(encS_TextLayoutOverrides, (r, e) => decS_TextLayoutOverrides(r, e, {})),
+  ParagraphLayout: mk<T.ParagraphLayout>(encS_ParagraphLayout, (r, e) => decS_ParagraphLayout(r, e, {})),
   ExpressionEvaluation: mk<T.ExpressionEvaluation>(encS_ExpressionEvaluation, (r, e) => decS_ExpressionEvaluation(r, e, {})),
   PixelSamples: mk<T.PixelSamples>(encS_PixelSamples, (r, e) => decS_PixelSamples(r, e, {})),
   Dependencies: mk<T.Dependencies>(encS_Dependencies, (r, e) => decS_Dependencies(r, e, {})),

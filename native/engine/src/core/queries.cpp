@@ -1,6 +1,7 @@
 #include "queries.hpp"
 
 #include <algorithm>
+#include <array>
 #include <unordered_map>
 #include <cmath>
 #include <set>
@@ -14,11 +15,13 @@
 #include "handlers_common.hpp"
 #include "handlers_layers.hpp"
 #include "handlers_native.hpp"
+#include "layer_geometry.hpp"
 #include "native_effects.hpp"
 #include "presets_capture.hpp"
 #include "readmodel.hpp"
 #include "rig.hpp"
 #include "scene.hpp"
+#include "scene/session_hooks.hpp"
 #include "strutil.hpp"
 #include "time_conv.hpp"
 #include "variant_util.hpp"
@@ -369,11 +372,56 @@ struct Q {
   api::QueryResult operator()(const api::HitTest&) const {
     fail(ErrorCode::unsupported, "'hitTest' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
   }
-  api::QueryResult operator()(const api::GetLayerBounds&) const {
-    fail(ErrorCode::unsupported, "'getLayerBounds' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
+  api::QueryResult operator()(const api::GetLayerBounds& q) const {
+    // B4 round 2: readGeometry's box at the time (core/layer_geometry.cpp; text through the text port),
+    // in the layer's own space or through its 2D world chain (queries.ts / layerBoundsQuery.ts).
+    if (q.space == api::BoundsSpace::viewport) {
+      fail(ErrorCode::unsupported, "viewport-space bounds need the viewport's camera: the overlay geometry push (setOverlayGeometry) carries them");
+    }
+    if (q.include_effects) fail(ErrorCode::unsupported, "effect growth is not in layer bounds yet (includeEffects)");
+    const double seconds = flicks_to_seconds(q.time);
+    const SpaceCtx sc{d, pc.view, pc.expr, pc.cache};
+    api::LayerBoundsList out;
+    for (const auto& id : q.layers) {
+      (void)require_layer(d, id);
+      const auto g = layer_geometry_at(sc, c.text, id, seconds);
+      if (!g) continue;  // no canvas box (audio, adjustment)
+      const double l = g->offsetX - g->width / 2;
+      const double t = g->offsetY - g->height / 2;
+      const double r = l + g->width;
+      const double b = t + g->height;
+      std::array<double, 8> corners{l, t, r, t, r, b, l, b};
+      if (q.space == api::BoundsSpace::comp) {
+        const auto m = world_2d_at(pc, id, seconds);
+        for (std::size_t i = 0; i < corners.size(); i += 2) {
+          const double x = corners[i];
+          const double y = corners[i + 1];
+          corners[i] = m.a * x + m.c * y + m.e;
+          corners[i + 1] = m.b * x + m.d * y + m.f;
+        }
+      }
+      double minX = corners[0], maxX = corners[0], minY = corners[1], maxY = corners[1];
+      for (std::size_t i = 2; i < corners.size(); i += 2) {
+        minX = std::min(minX, corners[i]);
+        maxX = std::max(maxX, corners[i]);
+        minY = std::min(minY, corners[i + 1]);
+        maxY = std::max(maxY, corners[i + 1]);
+      }
+      api::LayerBounds lb;
+      lb.layer = id;
+      lb.bounds = api::Rect{minX, minY, maxX - minX, maxY - minY};
+      lb.corners.assign(corners.begin(), corners.end());
+      out.bounds.push_back(std::move(lb));
+    }
+    return query_result_for<api::GetLayerBounds>(std::move(out));
   }
-  api::QueryResult operator()(const api::GetTextLayout&) const {
-    fail(ErrorCode::unsupported, "'getTextLayout' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
+  api::QueryResult operator()(const api::GetTextLayout& q) const {
+    // B4 round 2: measured by the text port on the frame builder's fonts (scene/text_query.cpp).
+    const Node& n = require_layer(d, q.layer);
+    if (n.comp("Text") == nullptr) fail(ErrorCode::invalid_argument, "layer '" + q.layer + "' is not a text layer", {.layer = q.layer});
+    if (c.text == nullptr) fail(ErrorCode::unsupported, "text is measured with fonts, which this engine has none of (headless)");
+    api::TextLayout out = c.text->text_layout(n, q.overrides ? &*q.overrides : nullptr);
+    return query_result_for<api::GetTextLayout>(std::move(out));
   }
   api::QueryResult operator()(const api::ReadPixels&) const {
     fail(ErrorCode::unsupported, "'readPixels' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");

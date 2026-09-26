@@ -112,7 +112,7 @@ test('the value / stopwatch / diamond builders round-trip through undo', async (
 test('align left moves the selection as ONE "Align" entry', async () => {
   await edit('', valueCommands([{ nodeId: s.A, values: { x: 100 } }, { nodeId: s.P, values: { x: 900 } }], { seconds: 0 }));
   getCommandSystem().getHistory().clear();
-  alignLayers([s.A, s.P], 'left', 'selection', 1920, 1080);
+  await alignLayers([s.A, s.P], 'left', 'selection', 1920, 1080);
   await idle();
   expect(historyLabels()).toEqual(['Align']);
   expect(stored(s.P, 'x')).not.toBeCloseTo(900);

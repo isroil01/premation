@@ -1032,6 +1032,7 @@ struct GetEffectUi;
 struct HitTest;
 struct GetLayerBounds;
 struct GetLayerTransforms;
+struct TextLayoutOverrides;
 struct GetTextLayout;
 struct EvaluateExpression;
 struct ReadPixels;
@@ -1120,6 +1121,7 @@ struct LayerBoundsList;
 struct LayerTransform;
 struct LayerTransformList;
 struct GlyphBox;
+struct ParagraphLayout;
 struct TextLayout;
 struct ExpressionEvaluation;
 struct PixelSamples;
@@ -3046,9 +3048,21 @@ struct GetLayerTransforms {
   bool operator==(const GetLayerTransforms&) const = default;
 };
 
+struct TextLayoutOverrides {
+  std::optional<std::string> content;
+  std::optional<double> box_width;
+  std::optional<double> box_height;
+  std::optional<std::string> box_auto_size;
+  std::optional<double> font_size;
+  std::optional<double> letter_spacing;
+  std::optional<double> paragraph_spacing;
+  bool operator==(const TextLayoutOverrides&) const = default;
+};
+
 struct GetTextLayout {
   LayerId layer;
   Time time = 0;
+  std::optional<TextLayoutOverrides> overrides;
   bool operator==(const GetTextLayout&) const = default;
 };
 
@@ -3967,10 +3981,36 @@ struct GlyphBox {
   bool operator==(const GlyphBox&) const = default;
 };
 
+struct ParagraphLayout {
+  double box_width = 0.0;
+  double box_height = 0.0;
+  bool fixed_height = false;
+  bool overflow = false;
+  double fit_scale = 0.0;
+  double content_height = 0.0;
+  std::uint32_t line_count = 0;
+  std::uint32_t visible_lines = 0;
+  double line_offset_y = 0.0;
+  std::string auto_size;
+  std::string vertical_align;
+  double stored_height = 0.0;
+  bool operator==(const ParagraphLayout&) const = default;
+};
+
 struct TextLayout {
   std::vector<GlyphBox> glyphs;
   std::uint32_t lines = 0;
   Rect box;
+  Vec2 size;
+  std::string wrapped;
+  std::vector<std::uint32_t> soft_breaks;
+  std::optional<ParagraphLayout> paragraph;
+  Vec2 line_block;
+  Vec2 style_scale;
+  bool on_path = false;
+  double font_size = 0.0;
+  double letter_spacing = 0.0;
+  double paragraph_spacing = 0.0;
   bool operator==(const TextLayout&) const = default;
 };
 
@@ -5319,6 +5359,8 @@ void encode(wire::Writer& w, const GetLayerBounds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetLayerBounds& out);
 void encode(wire::Writer& w, const GetLayerTransforms& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetLayerTransforms& out);
+void encode(wire::Writer& w, const TextLayoutOverrides& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TextLayoutOverrides& out);
 void encode(wire::Writer& w, const GetTextLayout& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetTextLayout& out);
 void encode(wire::Writer& w, const EvaluateExpression& v);
@@ -5495,6 +5537,8 @@ void encode(wire::Writer& w, const LayerTransformList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerTransformList& out);
 void encode(wire::Writer& w, const GlyphBox& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GlyphBox& out);
+void encode(wire::Writer& w, const ParagraphLayout& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ParagraphLayout& out);
 void encode(wire::Writer& w, const TextLayout& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TextLayout& out);
 void encode(wire::Writer& w, const ExpressionEvaluation& v);

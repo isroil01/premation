@@ -283,6 +283,7 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_paths.cpp
   src/core/json.cpp
   src/core/layer_clone.cpp
+  src/core/layer_geometry.cpp
   src/core/meta.cpp
   src/core/model.cpp
   src/core/native_effects.cpp
@@ -857,6 +858,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/light_wash.cpp
     src/scene/frame_build.cpp
     src/scene/text_measure.cpp
+    src/scene/text_query.cpp        # B4 round 2: getTextLayout / getLayerBounds' text boxes over text_measure
     src/scene/scene_textures.cpp
     src/scene/image_decode_ffi.cpp
     src/scene/svg_layer.cpp

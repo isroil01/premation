@@ -192,7 +192,7 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   hitTest: { id: 1060, family: "Interaction", result: "HitResult", doc: "" },
   getLayerBounds: { id: 1061, family: "Interaction", result: "LayerBoundsList", doc: "" },
   getLayerTransforms: { id: 1062, family: "Interaction", result: "LayerTransformList", doc: "" },
-  getTextLayout: { id: 1063, family: "Interaction", result: "TextLayout", doc: "Text layout for in-viewport editing (caret, selection, hit-testing glyphs)." },
+  getTextLayout: { id: 1063, family: "Interaction", result: "TextLayout", doc: "Text layout: how a text layer's lines measure (B4: the render box, the selection box, the wrap, the paragraph box, where the line block sits in the layer). The STORED style is measured (animated values at their base, as Convert / Box Auto-Size hold the text still) with `overrides` winning — a \"where would the lines sit if…\" before a write. `time` is reserved for evaluated layouts (glyph boxes for in-viewport editing). `invalidArgument` for a layer with no text; `unsupported` where the engine cannot measure (no fonts: the headless engine, a jsdom page) or the style is outside its text port (the message says which)." },
   evaluateExpression: { id: 1064, family: "Interaction", result: "ExpressionEvaluation", doc: "Evaluate an expression without storing it (expression editor preview)." },
   readPixels: { id: 1065, family: "Interaction", result: "PixelSamples", doc: "Pixel values under a point of a viewport (Info panel, eyedropper), in working space." },
   findLayers: { id: 1066, family: "Interaction", result: "LayerList", doc: "" },
@@ -240,4 +240,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":76,"structs":404,"unions":11,"commands":149,"queries":36,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":76,"structs":406,"unions":11,"commands":149,"queries":36,"events":31} as const;

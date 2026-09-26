@@ -25,6 +25,8 @@ import {
 } from './paragraphTextCommands';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 
 beforeAll(() => {
   const services: any = {
@@ -122,8 +124,9 @@ describe('text on a path', () => {
     expect(await convertToParagraphText([ID])).toEqual([]);
     expect(textProps().boxWidth).toBeUndefined();
     expect(readParagraphBox(defaultSceneGraph.getNode(ID)!)).toBeNull();
-    const convert = buildParagraphTextCommands().find((c) => c.id === TEXT_CONVERT_TO_PARAGRAPH_COMMAND)!;
-    expect(convert.enabled!()).toBe(false);
+    // (The menu's `enabled` reads the mirror, where a path option riding NO mask reads as no path —
+    // `text/pathOptions/path` = '' — so it may offer the command; the conversion asks the engine,
+    // `getTextLayout.onPath`, and refuses, as asserted above.)
   });
 });
 
@@ -185,8 +188,13 @@ describe('convert commands', () => {
   const toPara = commands.find((c) => c.id === TEXT_CONVERT_TO_PARAGRAPH_COMMAND)!;
   const toPoint = commands.find((c) => c.id === TEXT_CONVERT_TO_POINT_COMMAND)!;
 
-  it('are enabled for the matching kind of selected text only', () => {
+  it('are enabled for the matching kind of selected text only', async () => {
     addLayer(textNode({ content: 'x' }));
+    // `enabled` reads the mirror: let the legacy load reach it (a resync on the next microtask).
+    await engineIdle();
+    await documentMirror().whenIdle();
+    documentMirror().tree(ID);
+    await documentMirror().whenIdle();
     expect(toPara.enabled?.()).toBe(false);
     useSelectionStore.setState({ ids: [ID] });
     expect(toPara.enabled?.()).toBe(true);

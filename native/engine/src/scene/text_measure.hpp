@@ -68,6 +68,14 @@ struct MeasuredStyle {
 /// `DEFAULT_LINE_HEIGHT`.
 inline constexpr double kDefaultLineHeight = 1.2;
 
+/// measureTextBoxes' FONT box (stroke width 0), relative to the draw origin:
+/// the line block's font-metric top / bottom and half the widest advance.
+struct FontBox {
+  double top = 0;
+  double bottom = 0;
+  double halfWidth = 0;
+};
+
 class TextMeasurer {
  public:
   TextMeasurer() = default;
@@ -86,6 +94,14 @@ class TextMeasurer {
   /// its soft breaks recorded; point text unchanged. nullopt = a wrap outside
   /// the port (CJK line breaking, Fit Text to Box); `why` names it.
   [[nodiscard]] virtual std::optional<MeasuredStyle> wrapped_style(const MeasuredStyle& s, std::string* why) = 0;
+  /// `measureTextBoxes(s).font` on the style's own (uncased) content — the
+  /// selection box (B4 round 2: getTextLayout.box, getLayerBounds). Paragraph
+  /// text measures its wrapped content. nullopt outside the port (vertical
+  /// type, variable axes, a wrap outside it).
+  [[nodiscard]] virtual std::optional<FontBox> measure_font_box(const MeasuredStyle& s) {
+    (void)s;
+    return std::nullopt;
+  }
 };
 
 /// The Canvas2D-metrics measurer over the E3 raster module (fonts from `opts`).

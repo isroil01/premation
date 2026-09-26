@@ -3,6 +3,7 @@
 import { QUERIES, unwrap, type Query, type QueryType } from '@motion/engine-api';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
 import { buildScene, type Scene } from '../__testHelpers__/scene';
+import { hasCanvas } from '@core/effects/__testHelpers__/canvasFidelity';
 
 jest.useFakeTimers();
 
@@ -15,7 +16,9 @@ beforeEach(async () => {
 afterEach(async () => { await h.dispose(); });
 
 /** Queries the TypeScript engine cannot answer from document data (they need the renderer). */
-const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'hitTest', 'getLayerBounds', 'getTextLayout', 'readPixels'];
+const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'hitTest', 'readPixels'];
+/** Measured with the page's canvas: answered where the test canvas has metrics, `unsupported` where it has none. */
+const NEEDS_METRICS: QueryType[] = ['getTextLayout'];
 
 const CASES: Record<QueryType, (s: Scene) => Query> = {
   getDocument: () => ({ type: 'getDocument', includeProperties: true, includeKeyframes: true }),
@@ -85,6 +88,22 @@ test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s co
   expect(!bad.ok && bad.error.code).toBe('notFound');
 });
 
+test('getLayerBounds: the drawn box in layer and comp space at the time; viewport space is the overlay push\'s', async () => {
+  // B's Position is keyed 100,100 → 300,200 over the first second.
+  const at = async (t: number, space: 'layer' | 'comp') => (await h.query({ type: 'getLayerBounds', layers: [s.B], time: t, space, includeEffects: false })).bounds[0]!;
+  const local = await at(0, 'layer');
+  expect(local.corners).toHaveLength(8);
+  expect(local.bounds.x).toBeCloseTo(-local.bounds.width / 2, 6);
+  const c0 = await at(0, 'comp');
+  const c1 = await at(sec(1), 'comp');
+  expect(c0.bounds.x + c0.bounds.width / 2).toBeCloseTo(100, 6);
+  expect(c1.bounds.x + c1.bounds.width / 2).toBeCloseTo(300, 6);
+  expect(c1.bounds.y + c1.bounds.height / 2).toBeCloseTo(200, 6);
+  expect(c1.bounds.width).toBeCloseTo(local.bounds.width, 6);
+  const vp = await h.engine.query({ type: 'getLayerBounds', layers: [s.B], time: 0, space: 'viewport', includeEffects: false });
+  expect(!vp.ok && vp.error.code).toBe('unsupported');
+});
+
 test('listPlugins: the TypeScript engine hosts no native plugins (G1: the C++ engine does)', async () => {
   expect((await h.query({ type: 'listPlugins' })).plugins).toEqual([]);
 });
@@ -101,7 +120,7 @@ test.each(Object.keys(CASES) as QueryType[])('%s answers (or says unsupported) a
   const before = h.doc();
   const rev = h.engine.documentRevision;
   const r = await h.engine.query(CASES[type](s));
-  if (UNSUPPORTED.includes(type)) {
+  if (UNSUPPORTED.includes(type) || (NEEDS_METRICS.includes(type) && !hasCanvas)) {
     expect(!r.ok && r.error.code).toBe('unsupported');
   } else {
     if (!r.ok) throw new Error(`${type}: ${r.error.code} ${r.error.message}`);

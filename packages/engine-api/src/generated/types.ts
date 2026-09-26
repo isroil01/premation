@@ -3113,10 +3113,11 @@ export interface GetLayerTransforms {
   time: Time;
 }
 
-/** Text layout for in-viewport editing (caret, selection, hit-testing glyphs). */
+/** Text layout: how a text layer's lines measure (B4: the render box, the selection box, the wrap, the paragraph box, where the line block sits in the layer). The STORED style is measured (animated values at their base, as Convert / Box Auto-Size hold the text still) with `overrides` winning — a "where would the lines sit if…" before a write. `time` is reserved for evaluated layouts (glyph boxes for in-viewport editing). `invalidArgument` for a layer with no text; `unsupported` where the engine cannot measure (no fonts: the headless engine, a jsdom page) or the style is outside its text port (the message says which). */
 export interface GetTextLayout {
   layer: LayerId;
   time: Time;
+  overrides?: TextLayoutOverrides;
 }
 
 /** Evaluate an expression without storing it (expression editor preview). */
@@ -3158,9 +3159,69 @@ export interface LayerTransformList {
 }
 
 export interface TextLayout {
+  /** Per-glyph boxes for in-viewport editing — not filled yet (both engines answer empty; the text-edit overlay still measures in the page). */
   glyphs: GlyphBox[];
+  /** Lines as laid out (after the paragraph wrap). */
   lines: number;
+  /** The SELECTION box: the font-metric box of the laid-out lines, relative to the layer origin (x = −advance / 2), before the Character panel's scale. Stable while typing (font metrics, not ink). */
   box: Rect;
+  /** B4 — the RENDER box (the texture the text rasterises into, padding included): measureTextSize's {w, h}. */
+  size: Vec2;
+  /** B4 — the content as laid out: paragraph text with each soft wrap as '\n' (one space replaced per wrap, so character indices keep); point text unchanged. */
+  wrapped: string;
+  /** B4 — the wrapped line numbers that end in a SOFT wrap (not a typed return). */
+  softBreaks: number[];
+  /** B4 — the paragraph box; absent for point text (and text on a path). */
+  paragraph?: ParagraphLayout;
+  /** B4 — where the line block sits in the layer, local units after the Character panel's scale: the x its lines start / centre / end at (by alignment and first-paragraph direction, indents included) and its vertical offset from the centred position. What a Point ⇄ Paragraph conversion holds still (the difference of two answers; the render padding cancels). */
+  lineBlock: Vec2;
+  /** B4 — the Character panel's whole-layer glyph scale (horizontal / vertical scale, × 0.65 for super / subscript). */
+  styleScale: Vec2;
+  /** B4 — the text rides a mask path (point text: no box). */
+  onPath: boolean;
+  /** B4 — the style measured (overrides applied): what a Fit Text to Box bake multiplies. */
+  fontSize: number;
+  letterSpacing: number;
+  paragraphSpacing: number;
+}
+
+/** B4 — getTextLayout's hypothetical style: each set field replaces the stored one for the measurement only. */
+export interface TextLayoutOverrides {
+  content?: string;
+  /** 0 = point text. */
+  boxWidth?: number;
+  /** 0 = no authored height (auto height). */
+  boxHeight?: number;
+  /** 'off' | 'height' | 'fit'. */
+  boxAutoSize?: string;
+  fontSize?: number;
+  letterSpacing?: number;
+  paragraphSpacing?: number;
+}
+
+/** B4 — a paragraph text layer's box as it measures (measureParagraphBox + readParagraphBox). */
+export interface ParagraphLayout {
+  boxWidth: number;
+  /** The box's height: authored when fixed, the text's own when auto. */
+  boxHeight: number;
+  fixedHeight: boolean;
+  /** Text runs past the bottom of a fixed box (AE's red overflow mark). */
+  overflow: boolean;
+  /** Fit Text to Box's type scale; 1 otherwise. */
+  fitScale: number;
+  /** The height the lines occupy as drawn (after the fit scale), px. */
+  contentHeight: number;
+  lineCount: number;
+  /** Lines actually drawn (the rest are clipped by a fixed box). */
+  visibleLines: number;
+  /** How far the line block sits below where it would sit centred on the origin, px (a fixed box aligning its lines top / bottom; an anchored auto-height box). */
+  lineOffsetY: number;
+  /** The resolved auto-size mode: 'off' | 'height' | 'fit' (no stored height is auto height whatever the mode says). */
+  autoSize: string;
+  /** 'top' | 'center' | 'bottom'. */
+  verticalAlign: string;
+  /** The STORED box height (0 = none): an auto-height box keeps the top edge of a box this tall. */
+  storedHeight: number;
 }
 
 export interface ExpressionEvaluation {

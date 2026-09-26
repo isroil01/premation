@@ -897,7 +897,8 @@ api::CommandResult Session::run_control(const api::Command& cmd, api::Origin ori
 // ── queries ─────────────────────────────────────────────────────────────────
 
 api::QueryResult Session::run_query(const api::Query& q) {
-  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}};
+  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}, nullptr};
+  c.text = frameBuilder_ != nullptr ? frameBuilder_->text_queries() : nullptr;
   c.revision = revision_;
   c.projectPath = projectPath_;
   c.dirty = revision_ != savedRevision_;

@@ -30,7 +30,6 @@ import { useMemo } from 'react';
 import type { Command } from '@motion/engine-api';
 import { Icon } from '@components/Icon';
 import { Checkbox } from '@components/Checkbox';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayersWatch } from '@hooks/useMirror';
 import { mirrorStrokeAt, mirrorStrokes } from '@core/mirror/paintFields';
@@ -64,7 +63,10 @@ import {
   strokeTrackPathsFor,
   type StrokeTrackParam,
 } from '@core/rendering/strokeTracks';
-import { readGeometry } from '@core/workspace/geometry';
+import { layerBoxAt } from '@stores/layerBoxes';
+import { useLayerBoxes } from '@hooks/useLayerBoxes';
+import { getTime } from '@stores/playbackClockStore';
+import { compTime } from '@core/engine/propRefs';
 import type { PropertyAccess } from '@core/inspector/multiSelection';
 import { useGradientEditStore } from '@layout/Workspace/gradientEditStore';
 import { ColorKfRow } from '../ColorKfRow';
@@ -129,31 +131,34 @@ function enabledStrokeAt(nodeId: string, index: number): Stroke | undefined {
 /** The gradient points the stroke SHOWS: stored, or implied by its angle/centre model. */
 function gradientOf(nodeId: string, s: Stroke): StrokeGradientGeometry {
   if (s.gradient) return s.gradient;
-  // B4-gap: the layer's drawn box (a text layer's measured extent) — `readGeometry` sizes every kind; the mirror
-  // carries only a shape's `layer/width|height` fields.
-  const node = defaultSceneGraph.getNode(nodeId);
-  const geom = node ? readGeometry(node) : null;
-  return strokeGradientGeometryFor(s.paint, geom?.width ?? 0, geom?.height ?? 0);
+  // The layer's drawn box (a text layer's measured extent) as the engine measures it (`getLayerBounds`),
+  // at the playhead — the last known box while the answer is in flight (StrokeBlock re-renders on it).
+  const box = layerBoxAt(nodeId, compTime(getTime()));
+  return strokeGradientGeometryFor(s.paint, box?.width ?? 0, box?.height ?? 0);
 }
 
 /**
  * Per-node READ accessors, cached by (index, key) so their identity is stable
  * across renders — the row memoises its aggregate on them.
  */
-const ACCESS = new Map<string, PropertyAccess>();
-function strokeAccess(index: number, key: string, read: (s: Stroke, nodeId: string) => number | undefined): PropertyAccess {
+const ACCESS = new Map<string, { ver: number; access: PropertyAccess }>();
+function strokeAccess(index: number, key: string, read: (s: Stroke, nodeId: string) => number | undefined, ver = 0): PropertyAccess {
   const cacheKey = `${index}:${key}`;
-  let access = ACCESS.get(cacheKey);
-  if (!access) {
-    access = {
-      read: (id) => {
-        const s = enabledStrokeAt(id, index);
-        return s ? read(s, id) : undefined;
+  let hit = ACCESS.get(cacheKey);
+  // A new identity when the engine's layer boxes land (`ver`): the gradient rows derive their default points from them.
+  if (!hit || hit.ver !== ver) {
+    hit = {
+      ver,
+      access: {
+        read: (id) => {
+          const s = enabledStrokeAt(id, index);
+          return s ? read(s, id) : undefined;
+        },
       },
     };
-    ACCESS.set(cacheKey, access);
+    ACCESS.set(cacheKey, hit);
   }
-  return access;
+  return hit.access;
 }
 
 /** A dash slot's AE label: Dash, Gap, Dash 2, Gap 2, … */
@@ -163,8 +168,10 @@ function dashLabel(k: number): string {
 }
 
 function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number; stroke: Stroke }): JSX.Element {
+  // The gradient's default geometry reads the layer's drawn box (gradientOf): its rows re-read when a box lands.
+  const boxes = useLayerBoxes();
   const path = (p: StrokeTrackParam): string => strokeTrackPath(index, p);
-  const acc = (key: StrokeTrackParam, read: (s: Stroke, id: string) => number | undefined) => strokeAccess(index, key, read);
+  const acc = (key: StrokeTrackParam, read: (s: Stroke, id: string) => number | undefined) => strokeAccess(index, key, read, boxes);
   const hasTaper = !isIdentityTaper(stroke.taper);
   const hasWave = !isIdentityWave(stroke.wave);
   const gradient = stroke.paint && stroke.paint.type !== 'solid' ? stroke.paint : undefined;

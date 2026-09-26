@@ -582,8 +582,8 @@ Queries answer at the revision in their `Response` and never change anything.
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |
 | `listPlugins`, `getEffectUi` | G1: the native SDK plugins the engine found (loaded / disabled / failed with why / quarantined after ending the engine); a plugin effect's parameter UI at a time (UPDATE_PARAMS_UI: enabled, hidden, renamed). The TypeScript engine hosts no native plugins (empty list; builtin effects answer every param enabled). |
 | `hitTest` | Layers under a comp point at a time (topmost or all). |
-| `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer/viewport space; 4×4 layer→comp matrices — what gizmos draw from. |
-| `getTextLayout` | Glyph boxes/lines for in-viewport text editing. |
+| `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer space (viewport: the overlay push, §15.12); 4×4 layer→comp matrices — what gizmos draw from. |
+| `getTextLayout` | The measured layout of a text layer: render / selection box, wrap, paragraph box, line-block placement, with hypothetical overrides (§15.12). |
 | `evaluateExpression` | Preview an expression without storing it. |
 | `readPixels` | Working-space pixel values of a viewport region (Info panel, eyedropper). |
 | `findLayers`, `getDependencies` | Search; uses/used-by (flowchart, expression refs, precomp nesting). |
@@ -1756,6 +1756,50 @@ from the struct's maximum + 800.
   the stored prop paths of the preset format, not API paths. TS:
   `capturePresetBody`; C++: `core/presets_capture.cpp`. The library stays the
   editor's (`saveUserPreset` writes settings).
+- **`getTextLayout {layer, time, overrides?}`** (1063, now answered; `overrides`
+  802, `TextLayout` fields 803–812, `TextLayoutOverrides`, `ParagraphLayout`):
+  the STORED style measured as the painter lays it out, with the overrides
+  winning — the question Convert to Paragraph / Point Text and Box Auto-Size
+  ask before they write, and what the Character panel's Text Box card shows.
+  `box` is the font-metric selection box, `size` the render box, `wrapped` /
+  `softBreaks` the paragraph wrap, `paragraph` the box (fixed / auto height,
+  overflow, fit scale, content height, line offset, stored height), `lineBlock`
+  where the lines sit in the layer (the difference of two answers is what the
+  conversions compensate Position by), `styleScale`, `onPath` (a text path is
+  point text) and the measured font size / tracking / paragraph spacing (what a
+  Fit Text to Box bake multiplies). `glyphs` stays empty (in-viewport editing
+  still measures in the page). TS: `core/engine/textLayoutQuery.ts` over
+  measureText.ts — `unsupported` in a page without canvas metrics. C++:
+  `scene/text_query.cpp` over the scene port's `TextMeasurer` on the frame
+  builder's fonts (`TextQueries`, session_hooks.hpp; the new
+  `TextMeasurer::measure_font_box`) — `unsupported` in the headless engine
+  (no fonts) and for styles outside the text port (vertical type, Fit Text to
+  Box, runs that change a line's size or leading, variable axes, Capitalize,
+  CJK wrapping). An anchored auto-height box's `size.y` may read 1 px taller
+  than the TypeScript's (the port rounds before adding the anchor offset).
+- **`getLayerBounds {layers, time, space}`** (1061, now answered): readGeometry's
+  box — the box the viewport selects, hit-tests and snaps with — at the time:
+  per-kind size, a shape's points, a text layer's measured box (a fixed
+  paragraph box as authored), an unseeded solid's comp frame, a GROUP's union
+  of its children AT THE SAME TIME. `layer` space: the local box (centred on
+  the origin, offset for groups and text); `comp`: its corners through the 2D
+  world chain (`world2DAt`: a 3D layer's depth and the camera are not applied),
+  `bounds` their axis-aligned extent. `viewport` space and `includeEffects`
+  answer `unsupported` (the overlay push carries viewport geometry; effect
+  growth is not measured). Layers with no canvas box (audio, adjustment) are
+  left out of the list. TS: `core/engine/layerBoundsQuery.ts`; C++:
+  `core/layer_geometry.cpp` (text through `TextQueries`: a text layer, or a
+  group holding one, is `unsupported` without fonts). Not in the C++ port: a
+  plugin generator's live instance bounds (the TS unions the last render's) and
+  text on a path's bent extent (its plain text box stands). Both engines size a
+  `comp` layer by its OWN composition (readGeometry read the active one).
+- UI: `useTextLayout(layer)` (src/hooks) re-asks on the layer's mirror keys;
+  `layerBoxAt(layer, time)` / `fetchLayerBox` (src/stores/layerBoxes.ts) cache
+  getLayerBounds per (layer, time) per revision for render-time reads, batched
+  per tick; `useLayerBoxes()` re-renders when they land. Align / Distribute
+  (`alignLayers`) now places the drawn box's comp-space extent (before: the
+  stored width × world scale around the origin) and moves each origin by its
+  box's delta through the parent's inverse (`getLayerTransforms`).
 
 ## 16. Files
 

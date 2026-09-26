@@ -113,3 +113,63 @@ TEST_CASE("capturePreset: position keys leave pixels as comp fractions; an empty
   const auto missing = h.ask(qry(api::CapturePreset{"nope"}));
   CHECK_FALSE(is_ok(missing));
 }
+
+TEST_CASE("getLayerBounds: the drawn box in layer and comp space follows the keyed position", "[b4r2][bounds]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp, api::LayerKind::shape);
+  api::AddKeyframes a;
+  for (const auto& [t, x] : std::vector<std::pair<api::Time, double>>{{0, 100}, {kSec, 300}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "transform/position"};
+    k.time = t;
+    k.value = vec2(x, 200);
+    a.keys.push_back(std::move(k));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  const auto at = [&](api::Time t, api::BoundsSpace space) {
+    api::GetLayerBounds q;
+    q.layers = {layer};
+    q.time = t;
+    q.space = space;
+    const auto list = query<api::LayerBoundsList>(h, qry(q));
+    REQUIRE(list.bounds.size() == 1);
+    return list.bounds[0];
+  };
+  const auto local = at(0, api::BoundsSpace::layer);
+  REQUIRE(local.corners.size() == 8);
+  CHECK(local.bounds.x == Approx(-local.bounds.width / 2));
+  const auto c1 = at(kSec, api::BoundsSpace::comp);
+  CHECK(c1.bounds.x + c1.bounds.width / 2 == Approx(300));
+  CHECK(c1.bounds.y + c1.bounds.height / 2 == Approx(200));
+  CHECK(c1.bounds.width == Approx(local.bounds.width));
+
+  api::GetLayerBounds vp;
+  vp.layers = {layer};
+  vp.space = api::BoundsSpace::viewport;
+  CHECK_FALSE(is_ok(h.ask(qry(vp))));
+}
+
+TEST_CASE("getTextLayout / getLayerBounds on text: unsupported without fonts; not a text layer is invalid", "[b4r2][text]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto text = make_layer(h, comp, api::LayerKind::text);
+  const auto solid = make_layer(h, comp);
+  api::GetTextLayout q;
+  q.layer = text;
+  const auto r = h.ask(qry(q));
+  REQUIRE_FALSE(is_ok(r));
+  CHECK(std::get<api::EngineError>(r.outcome.v).code == api::ErrorCode::unsupported);
+  q.layer = solid;
+  const auto bad = h.ask(qry(q));
+  REQUIRE_FALSE(is_ok(bad));
+  CHECK(std::get<api::EngineError>(bad.outcome.v).code == api::ErrorCode::invalid_argument);
+  api::GetLayerBounds b;
+  b.layers = {text};
+  b.space = api::BoundsSpace::layer;
+  const auto rb = h.ask(qry(b));
+  REQUIRE_FALSE(is_ok(rb));
+  CHECK(std::get<api::EngineError>(rb.outcome.v).code == api::ErrorCode::unsupported);
+}

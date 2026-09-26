@@ -15,6 +15,10 @@
 #include "engine_ctx.hpp"
 #include "props.hpp"
 
+namespace premation {
+class TextQueries;  // scene/session_hooks.hpp
+}
+
 namespace premation::doc {
 
 struct QCtx {
@@ -34,6 +38,9 @@ struct QCtx {
   /// D5: the per-layer errors the frame builder last reported for a comp ('' =
   /// the comp it last built) — what `layerErrors` announced. Unset = none.
   std::function<std::vector<api::LayerError>(const std::string&)> layerErrors;
+  /// B4 round 2: text measurement on the frame builder's fonts (getTextLayout,
+  /// getLayerBounds' text boxes). Null = no fonts in this engine: `unsupported`.
+  TextQueries* text = nullptr;
 };
 
 /// `catalogFor(layer)` through the query's cache (require_layer first).

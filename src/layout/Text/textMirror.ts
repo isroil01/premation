@@ -99,6 +99,41 @@ export function textPathOf(m: DocumentMirror, id: string): string {
   return typeof v === 'string' ? v : '';
 }
 
+/**
+ * The paragraph box a text layer STORES (`readParagraphBox`'s mirror twin over
+ * `text/boxWidth|boxHeight|boxAutoSize|boxVerticalAlign`), or null for point
+ * text. Text on a path has no box — read here as a `text/pathOptions/path`
+ * naming a mask; a path option that rides NO mask reads '' in the API, so the
+ * engine's `getTextLayout.onPath` is the exact answer where it matters.
+ */
+export function mirrorParagraphBox(m: DocumentMirror, id: string): {
+  boxWidth: number;
+  boxHeight: number;
+  autoSize: 'off' | 'height' | 'fit';
+  verticalAlign: 'top' | 'center' | 'bottom';
+  fixedHeight: boolean;
+} | null {
+  if (textPathOf(m, id) !== '') return null;
+  const num = (k: string): number => {
+    const v = textField(m, id, k);
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  };
+  const boxWidth = num('boxWidth');
+  if (!(boxWidth > 0)) return null;
+  const boxHeight = num('boxHeight');
+  const mode = textField(m, id, 'boxAutoSize');
+  const va = textField(m, id, 'boxVerticalAlign');
+  // A height with no mode is a fixed box; no height is auto height, whatever the mode says.
+  const autoSize = boxHeight > 0 ? (mode === 'height' || mode === 'fit' ? mode : 'off') : 'height';
+  return {
+    boxWidth,
+    boxHeight: boxHeight > 0 ? boxHeight : 0,
+    autoSize,
+    verticalAlign: va === 'center' || va === 'bottom' ? va : 'top',
+    fixedHeight: autoSize !== 'height',
+  };
+}
+
 /** `{r,g,b,a}` 0..1 → `#rrggbb` (`#rrggbbaa` when translucent) — the form colour pickers hold. */
 export function hexOfColorValue(v: Value | undefined): string | undefined {
   if (!v || v.kind !== 'color') return undefined;

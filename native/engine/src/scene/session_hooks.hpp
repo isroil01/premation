@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "core/frame_scene.hpp"
@@ -25,12 +26,49 @@ class Document;
 struct EditorView;
 class ExprEnv;
 class ExprCache;
+struct Node;
 }  // namespace doc
 
 /// One frame the scene builder produced (scene/built_frame.hpp) — opaque to the core.
 struct BuiltFrame;
 
 class MediaClock;
+
+/// readGeometry's measured box of a text layer (B4 round 2, getLayerBounds):
+/// its size and the box centre's vertical offset from the layer origin, local
+/// px before the layer's own scale.
+struct TextGeometry {
+  double width = 0;
+  double height = 0;
+  double dy = 0;
+};
+
+/// What the document core asks of the text port for the B4 round-2 queries
+/// (ENGINE_API.md §15.12) — measurement needs fonts, which engine_core does not
+/// link. Implemented over the scene port's TextMeasurer (scene/text_query.cpp,
+/// on the frame builder's fonts); a Session without it answers `unsupported`
+/// (the headless engine).
+class TextQueries {
+ public:
+  TextQueries() = default;
+  virtual ~TextQueries() = default;
+  TextQueries(const TextQueries&) = delete;
+  TextQueries& operator=(const TextQueries&) = delete;
+  TextQueries(TextQueries&&) = delete;
+  TextQueries& operator=(TextQueries&&) = delete;
+
+  /// `getTextLayout` for the text node `n` (the stored style, `overrides`
+  /// winning). Throws EngineFail: `invalidArgument` (no content), `unsupported`
+  /// (a style outside the text port — vertical type, Fit Text to Box, line runs,
+  /// variable axes, CJK wrapping — the message names it).
+  [[nodiscard]] virtual api::TextLayout text_layout(const doc::Node& n, const api::TextLayoutOverrides* overrides) = 0;
+  /// readGeometry's text box for `n` with the evaluated `overrides` (x, fontSize,
+  /// boxWidth, …): the fixed paragraph box, else the font-metric selection box
+  /// (an anchored auto-height box offset by its line block); nullopt when the
+  /// style is outside the port.
+  [[nodiscard]] virtual std::optional<TextGeometry> text_geometry(
+      const doc::Node& n, const std::vector<std::pair<std::string, double>>& overrides) = 0;
+};
 
 /// The composition at a time → the frame the render thread draws (D2w).
 class FrameBuilder {
@@ -54,6 +92,8 @@ class FrameBuilder {
                                                           const ViewportConfig& viewport, bool playing,
                                                           std::vector<api::LayerError>& errors) = 0;
   virtual void bind_audio(MediaClock* /*clock*/) {}
+  /// The text measurer's queries on this builder's fonts (B4 round 2); null = none.
+  [[nodiscard]] virtual TextQueries* text_queries() noexcept { return nullptr; }
 };
 
 /// The transport's master clock and the document's sound — the seam of

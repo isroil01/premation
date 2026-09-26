@@ -12192,9 +12192,75 @@ Status decode(wire::Reader& r, GetLayerTransforms& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const TextLayoutOverrides& v) {
+  if (v.content.has_value()) { w.varint(10U); w.str(*v.content); }
+  if (v.box_width.has_value()) { w.varint(17U); w.f64(*v.box_width); }
+  if (v.box_height.has_value()) { w.varint(25U); w.f64(*v.box_height); }
+  if (v.box_auto_size.has_value()) { w.varint(34U); w.str(*v.box_auto_size); }
+  if (v.font_size.has_value()) { w.varint(41U); w.f64(*v.font_size); }
+  if (v.letter_spacing.has_value()) { w.varint(49U); w.f64(*v.letter_spacing); }
+  if (v.paragraph_spacing.has_value()) { w.varint(57U); w.f64(*v.paragraph_spacing); }
+}
+
+Status decode(wire::Reader& r, TextLayoutOverrides& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.content = std::move(e);
+        break;
+      }
+      case 17U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.box_width = std::move(e);
+        break;
+      }
+      case 25U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.box_height = std::move(e);
+        break;
+      }
+      case 34U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.box_auto_size = std::move(e);
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.font_size = std::move(e);
+        break;
+      }
+      case 49U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.letter_spacing = std::move(e);
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.paragraph_spacing = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const GetTextLayout& v) {
   w.varint(10U); w.str(v.layer);
   w.varint(16U); w.svarint(v.time);
+  if (v.overrides.has_value()) { w.varint(6418U); { const std::size_t s = w.begin_ld(); encode(w, *v.overrides); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, GetTextLayout& out) {
@@ -12212,6 +12278,12 @@ Status decode(wire::Reader& r, GetTextLayout& out) {
       case 16U: {
         if (!r.svarint(out.time)) return Status::truncated;
         has_time = true;
+        break;
+      }
+      case 6418U: {
+        TextLayoutOverrides e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.overrides = std::move(e);
         break;
       }
       default:
@@ -18121,15 +18193,145 @@ Status decode(wire::Reader& r, GlyphBox& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const ParagraphLayout& v) {
+  w.varint(9U); w.f64(v.box_width);
+  w.varint(17U); w.f64(v.box_height);
+  w.varint(24U); w.boolean(v.fixed_height);
+  w.varint(32U); w.boolean(v.overflow);
+  w.varint(41U); w.f64(v.fit_scale);
+  w.varint(49U); w.f64(v.content_height);
+  w.varint(56U); w.varint(v.line_count);
+  w.varint(64U); w.varint(v.visible_lines);
+  w.varint(73U); w.f64(v.line_offset_y);
+  w.varint(82U); w.str(v.auto_size);
+  w.varint(90U); w.str(v.vertical_align);
+  w.varint(97U); w.f64(v.stored_height);
+}
+
+Status decode(wire::Reader& r, ParagraphLayout& out) {
+  bool has_box_width = false;
+  bool has_box_height = false;
+  bool has_fixed_height = false;
+  bool has_overflow = false;
+  bool has_fit_scale = false;
+  bool has_content_height = false;
+  bool has_line_count = false;
+  bool has_visible_lines = false;
+  bool has_line_offset_y = false;
+  bool has_auto_size = false;
+  bool has_vertical_align = false;
+  bool has_stored_height = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.box_width)) return Status::truncated;
+        has_box_width = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.box_height)) return Status::truncated;
+        has_box_height = true;
+        break;
+      }
+      case 24U: {
+        if (!r.boolean(out.fixed_height)) return Status::truncated;
+        has_fixed_height = true;
+        break;
+      }
+      case 32U: {
+        if (!r.boolean(out.overflow)) return Status::truncated;
+        has_overflow = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.fit_scale)) return Status::truncated;
+        has_fit_scale = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.content_height)) return Status::truncated;
+        has_content_height = true;
+        break;
+      }
+      case 56U: {
+        if (!r.u32(out.line_count)) return Status::bad_value;
+        has_line_count = true;
+        break;
+      }
+      case 64U: {
+        if (!r.u32(out.visible_lines)) return Status::bad_value;
+        has_visible_lines = true;
+        break;
+      }
+      case 73U: {
+        if (!r.f64(out.line_offset_y)) return Status::truncated;
+        has_line_offset_y = true;
+        break;
+      }
+      case 82U: {
+        if (!r.str(out.auto_size)) return Status::truncated;
+        has_auto_size = true;
+        break;
+      }
+      case 90U: {
+        if (!r.str(out.vertical_align)) return Status::truncated;
+        has_vertical_align = true;
+        break;
+      }
+      case 97U: {
+        if (!r.f64(out.stored_height)) return Status::truncated;
+        has_stored_height = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_box_width) return Status::missing_field;
+  if (!has_box_height) return Status::missing_field;
+  if (!has_fixed_height) return Status::missing_field;
+  if (!has_overflow) return Status::missing_field;
+  if (!has_fit_scale) return Status::missing_field;
+  if (!has_content_height) return Status::missing_field;
+  if (!has_line_count) return Status::missing_field;
+  if (!has_visible_lines) return Status::missing_field;
+  if (!has_line_offset_y) return Status::missing_field;
+  if (!has_auto_size) return Status::missing_field;
+  if (!has_vertical_align) return Status::missing_field;
+  if (!has_stored_height) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const TextLayout& v) {
   for (const auto& e : v.glyphs) { w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   w.varint(16U); w.varint(v.lines);
   w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, v.box); w.end_ld(s); }
+  w.varint(6426U); { const std::size_t s = w.begin_ld(); encode(w, v.size); w.end_ld(s); }
+  w.varint(6434U); w.str(v.wrapped);
+  if (!v.soft_breaks.empty()) { w.varint(6442U); const std::size_t s = w.begin_ld(); for (const auto& e : v.soft_breaks) w.varint(e); w.end_ld(s); }
+  if (v.paragraph.has_value()) { w.varint(6450U); { const std::size_t s = w.begin_ld(); encode(w, *v.paragraph); w.end_ld(s); } }
+  w.varint(6458U); { const std::size_t s = w.begin_ld(); encode(w, v.line_block); w.end_ld(s); }
+  w.varint(6466U); { const std::size_t s = w.begin_ld(); encode(w, v.style_scale); w.end_ld(s); }
+  w.varint(6472U); w.boolean(v.on_path);
+  w.varint(6481U); w.f64(v.font_size);
+  w.varint(6489U); w.f64(v.letter_spacing);
+  w.varint(6497U); w.f64(v.paragraph_spacing);
 }
 
 Status decode(wire::Reader& r, TextLayout& out) {
   bool has_lines = false;
   bool has_box = false;
+  bool has_size = false;
+  bool has_wrapped = false;
+  bool has_line_block = false;
+  bool has_style_scale = false;
+  bool has_on_path = false;
+  bool has_font_size = false;
+  bool has_letter_spacing = false;
+  bool has_paragraph_spacing = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -18149,6 +18351,58 @@ Status decode(wire::Reader& r, TextLayout& out) {
         has_box = true;
         break;
       }
+      case 6426U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.size); st != Status::ok) return st; }
+        has_size = true;
+        break;
+      }
+      case 6434U: {
+        if (!r.str(out.wrapped)) return Status::truncated;
+        has_wrapped = true;
+        break;
+      }
+      case 6442U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { std::uint32_t e = 0; if (!sub.u32(e)) return Status::bad_value; out.soft_breaks.push_back(e); }
+        break;
+      }
+      case 6450U: {
+        ParagraphLayout e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.paragraph = std::move(e);
+        break;
+      }
+      case 6458U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.line_block); st != Status::ok) return st; }
+        has_line_block = true;
+        break;
+      }
+      case 6466U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.style_scale); st != Status::ok) return st; }
+        has_style_scale = true;
+        break;
+      }
+      case 6472U: {
+        if (!r.boolean(out.on_path)) return Status::truncated;
+        has_on_path = true;
+        break;
+      }
+      case 6481U: {
+        if (!r.f64(out.font_size)) return Status::truncated;
+        has_font_size = true;
+        break;
+      }
+      case 6489U: {
+        if (!r.f64(out.letter_spacing)) return Status::truncated;
+        has_letter_spacing = true;
+        break;
+      }
+      case 6497U: {
+        if (!r.f64(out.paragraph_spacing)) return Status::truncated;
+        has_paragraph_spacing = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -18156,6 +18410,14 @@ Status decode(wire::Reader& r, TextLayout& out) {
   }
   if (!has_lines) return Status::missing_field;
   if (!has_box) return Status::missing_field;
+  if (!has_size) return Status::missing_field;
+  if (!has_wrapped) return Status::missing_field;
+  if (!has_line_block) return Status::missing_field;
+  if (!has_style_scale) return Status::missing_field;
+  if (!has_on_path) return Status::missing_field;
+  if (!has_font_size) return Status::missing_field;
+  if (!has_letter_spacing) return Status::missing_field;
+  if (!has_paragraph_spacing) return Status::missing_field;
   return Status::ok;
 }
 
@@ -23493,7 +23755,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 415> kNames = {
+constexpr std::array<std::string_view, 417> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -23816,6 +24078,8 @@ constexpr std::array<std::string_view, 415> kNames = {
     "LayerBoundsList",
     "LayerTransformList",
     "TextLayout",
+    "TextLayoutOverrides",
+    "ParagraphLayout",
     "ExpressionEvaluation",
     "PixelSamples",
     "Dependencies",
@@ -24237,6 +24501,8 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "LayerBoundsList") return roundtrip<LayerBoundsList>(bytes, out);
   if (type == "LayerTransformList") return roundtrip<LayerTransformList>(bytes, out);
   if (type == "TextLayout") return roundtrip<TextLayout>(bytes, out);
+  if (type == "TextLayoutOverrides") return roundtrip<TextLayoutOverrides>(bytes, out);
+  if (type == "ParagraphLayout") return roundtrip<ParagraphLayout>(bytes, out);
   if (type == "ExpressionEvaluation") return roundtrip<ExpressionEvaluation>(bytes, out);
   if (type == "PixelSamples") return roundtrip<PixelSamples>(bytes, out);
   if (type == "Dependencies") return roundtrip<Dependencies>(bytes, out);
