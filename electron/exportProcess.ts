@@ -395,6 +395,17 @@ export class ExportSupervisor {
 
   // ── The queue ──────────────────────────────────────────────────────────
 
+  /**
+   * F1: what a job may ask for here. `engineExport` = the engine path is on
+   * (PREMATION_EXPORT_ENGINE=1, a launcher attached); `bitDepth16` = a mov job
+   * may ask for 16 bits per channel (rgba64le from the engine's half-float
+   * surface — the window path has 8 and warns when it has to fall back).
+   */
+  capabilities(): { engineExport: boolean; bitDepth16: boolean } {
+    const on = this.deps.engine != null;
+    return { engineExport: on, bitDepth16: on };
+  }
+
   list(): ExportJobRecord[] {
     return [...this.jobs.values()].map((j) => ({ ...j, spec: { ...j.spec }, progress: { ...j.progress } }));
   }
@@ -854,6 +865,7 @@ export const EXPORT_IPC_CHANNELS = [
   'export:setPriority',
   'export:remove',
   'export:list',
+  'export:capabilities',
   'export:subscribe',
   'export:chooseOutputPath',
   'export:workerJob',
@@ -896,6 +908,7 @@ export function registerExportSupervisorIpc(
   handle('export:setPriority', (_e, id: string, priority: number) => supervisor.setPriority(String(id), Number(priority)));
   handle('export:remove', (_e, id: string) => supervisor.remove(String(id)));
   handle('export:list', () => supervisor.list());
+  handle('export:capabilities', () => supervisor.capabilities());
   handle('export:subscribe', (e: IpcMainInvokeEvent) => {
     const wc = e.sender;
     if (!subscribers.has(wc)) {

@@ -196,6 +196,8 @@ const bridge = {
     setPriority: (id: string, priority: number) => ipcRenderer.invoke('export:setPriority', id, priority),
     remove: (id: string) => ipcRenderer.invoke('export:remove', id),
     list: () => ipcRenderer.invoke('export:list'),
+    /** F1: `{ engineExport, bitDepth16 }` — what a job may ask for (the engine export flag). */
+    capabilities: () => ipcRenderer.invoke('export:capabilities'),
     /** Start receiving `onEvent` pushes; resolves the current list. */
     subscribe: () => ipcRenderer.invoke('export:subscribe'),
     /** Native save dialog for the destination, asked BEFORE the render. */

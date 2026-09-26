@@ -790,6 +790,8 @@ export interface MotionEditorApi {
     setPriority?(id: string, priority: number): Promise<boolean>;
     remove?(id: string): Promise<boolean>;
     list?(): Promise<ExportJobRecord[]>;
+    /** F1: what a job may ask for (`bitDepth16` with the engine export flag on). */
+    capabilities?(): Promise<{ engineExport: boolean; bitDepth16: boolean }>;
     subscribe?(): Promise<ExportJobRecord[]>;
     chooseOutputPath?(defaultName: string): Promise<string | null>;
     onEvent?(handler: (event: ExportQueueEvent) => void): () => void;

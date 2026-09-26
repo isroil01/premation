@@ -173,6 +173,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       scaleIdx: 0,
       quality: 'high',
       proresProfile: '4444',
+      bitDepth: 8,
       // Seeded from the COMP's own setting: a user who set "Transparent
       // background" in Composition Settings got an opaque export (and preview)
       // unless they re-toggled it here — the dialog's `false` overrode the comp.
@@ -188,6 +189,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   const scaleIdx = useExportFormStore((s) => s.scaleIdx);
   const quality = useExportFormStore((s) => s.quality);
   const proresProfile = useExportFormStore((s) => s.proresProfile);
+  const bitDepth = useExportFormStore((s) => s.bitDepth);
   const transparent = useExportFormStore((s) => s.transparent);
   const chapters = useExportFormStore((s) => s.chapters);
   const rangeMode = useExportFormStore((s) => s.rangeMode);
@@ -264,6 +266,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
         quality,
         ...(format === 'mov' ? { proresProfile } : {}),
         ...(format === 'mp4' ? { videoEncoder: exportVideoEncoder } : {}),
+        // F1: offered only when main's engine export path is on (useEngineExportCaps).
+        ...(format === 'mov' && bitDepth === 16 ? { bitDepth: 16 as const } : {}),
         transparent: alpha,
         ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
         projectPath,
@@ -275,7 +279,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     } catch (err) {
       ui.notify({ level: 'error', message: err instanceof Error ? err.message : 'The export could not be queued', durationMs: 8000 });
     }
-  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, quality, proresProfile, alpha]);
+  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, quality, proresProfile, bitDepth, alpha]);
 
   const doExport = useCallback(async (): Promise<void> => {
     const store = useExportFormStore.getState();
@@ -481,6 +485,17 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
     () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha, compSizeOf }),
     [baseComp, alpha],
   );
+
+  // F1: 16 bits per channel exists only on the engine export path (main's
+  // PREMATION_EXPORT_ENGINE flag) and only for the out-of-process export.
+  const bitDepth = useExportFormStore((s) => s.bitDepth);
+  const [bitDepth16, setBitDepth16] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void exportSupervisorClient.capabilities().then((c) => { if (!cancelled) setBitDepth16(c.bitDepth16); });
+    return () => { cancelled = true; };
+  }, []);
+  const offerBitDepth = format === 'mov' && bitDepth16 && shouldUseSupervisor(format, usePreferenceStore.getState().exportInProcess);
 
   /** null = probing / unknown; true/false = host ffmpeg has libx265. */
   const [hdrLibx265, setHdrLibx265] = useState<boolean | null>(null);
@@ -726,6 +741,32 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
                 {proresProfile === '4444'
                   ? 'Highest fidelity, and the only profile that carries alpha.'
                   : 'No alpha channel — smaller files for opaque delivery and edit handoff.'}
+              </p>
+            </div>
+          ) : null}
+
+          {offerBitDepth ? (
+            <div className={styles.section}>
+              <div className={styles.label}>Bits per channel</div>
+              <div className={styles.seg} role="radiogroup" aria-label="Bits per channel">
+                {([8, 16] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    role="radio"
+                    aria-checked={bitDepth === d}
+                    disabled={busy}
+                    className={cn(styles.segChip, bitDepth === d && styles.segChipOn)}
+                    onClick={() => patch({ bitDepth: d })}
+                  >
+                    {d}-bit
+                  </button>
+                ))}
+              </div>
+              <p className={styles.fieldNote}>
+                {bitDepth === 16
+                  ? 'Rendered by the engine into a half-float surface (rgba64le). A job the engine cannot render is delivered at 8 bits, with a warning.'
+                  : '8 bits per channel, as every renderer writes it.'}
               </p>
             </div>
           ) : null}

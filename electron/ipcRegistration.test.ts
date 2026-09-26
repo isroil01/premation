@@ -92,6 +92,7 @@ describe('IPC registration goes through one door', () => {
     const registered = [...src.matchAll(/(?<![\w.])(?:handle|on)\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
     expect(registered).toEqual([
       'export:cancel',
+      'export:capabilities',
       'export:chooseOutputPath',
       'export:enqueue',
       'export:list',

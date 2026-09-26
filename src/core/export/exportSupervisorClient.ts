@@ -101,6 +101,8 @@ export interface SupervisorSpecInput {
   projectPath: string;
   /** Where the finished file goes. */
   outPath: string;
+  /** F1: 16 bits per channel (mov only, the engine export path). */
+  bitDepth?: 8 | 16;
 }
 
 /**
@@ -140,6 +142,8 @@ export function buildSupervisorSpec(input: SupervisorSpecInput): ExportJobSpec {
   if (input.proresProfile) spec.proresProfile = input.proresProfile;
   if (input.videoEncoder) spec.videoEncoder = input.videoEncoder;
   if (input.chapters && input.chapters.length > 0) spec.chapters = input.chapters;
+  // Main refuses 16 bits for anything but mov; the form only offers it there.
+  if (input.bitDepth === 16 && input.format === 'mov') spec.bitDepth = 16;
   return spec;
 }
 
@@ -203,6 +207,19 @@ export const exportSupervisorClient = {
   },
   setPriority: (id: string, priority: number): Promise<boolean> => requireBridge().setPriority(id, priority),
   remove: (id: string): Promise<boolean> => requireBridge().remove(id),
+  /**
+   * F1: what a job may ask for here — `bitDepth16` only with the engine export
+   * flag on (PREMATION_EXPORT_ENGINE=1). Both false on an older main.
+   */
+  async capabilities(): Promise<{ engineExport: boolean; bitDepth16: boolean }> {
+    const b = typeof window !== 'undefined' ? window.motionEditor?.exportSupervisor : undefined;
+    try {
+      const c = await b?.capabilities?.();
+      return { engineExport: c?.engineExport === true, bitDepth16: c?.bitDepth16 === true };
+    } catch {
+      return { engineExport: false, bitDepth16: false };
+    }
+  },
   async list(): Promise<ExportJobRecord[]> {
     const list = await requireBridge().list();
     return Array.isArray(list) ? list.filter(isExportJobRecord) : [];

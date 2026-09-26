@@ -120,6 +120,12 @@ describe('buildSupervisorSpec', () => {
     expect(full.videoEncoder).toBe('h264_nvenc');
     expect(full.chapters).toHaveLength(1);
   });
+
+  it('F1: 16 bits per channel rides only on a mov job', () => {
+    expect(buildSupervisorSpec({ ...base, format: 'mov', bitDepth: 16 }).bitDepth).toBe(16);
+    expect(buildSupervisorSpec({ ...base, format: 'mp4', bitDepth: 16 })).not.toHaveProperty('bitDepth');
+    expect(buildSupervisorSpec({ ...base, format: 'mov', bitDepth: 8 })).not.toHaveProperty('bitDepth');
+  });
 });
 
 describe('the boundary', () => {

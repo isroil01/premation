@@ -25,6 +25,8 @@ export interface ExportFormChoices {
   scaleIdx: number;
   quality: ExportQuality;
   proresProfile: ProresProfile;
+  /** F1: bits per channel of a mov through the engine export path (8 elsewhere). */
+  bitDepth: 8 | 16;
   transparent: boolean;
   chapters: boolean;
   rangeMode: RangeMode;
@@ -49,6 +51,7 @@ export const useExportFormStore = create<ExportFormState>((set, get) => ({
   scaleIdx: 0,
   quality: 'high',
   proresProfile: '4444',
+  bitDepth: 8,
   transparent: false,
   chapters: false,
   rangeMode: 'full',
