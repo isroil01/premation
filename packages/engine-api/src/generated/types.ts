@@ -2670,7 +2670,7 @@ export interface LayerInfo {
   /** Layer markers. */
   markers: Marker[];
   comment: string;
-  /** B4 — for a `generator` layer provided by a plugin layer kind: the kind id `<pluginId>.<kindId>` (what the Inspector keys its sections on). '' otherwise. */
+  /** B4 — for a layer provided by a plugin layer kind: the kind id `<pluginId>.<kindId>` (what the Inspector keys its sections on) — a `generator` layer, or a custom plugin layer (`pluginLayer:<kind>` component) whose `kind` reads as the shape it draws. '' otherwise. */
   generator: string;
   /** B4 — the layer's Pinned properties (the Inspector's Pinned tab), in the order they were pinned: the editor's track names (`x`, `opacity`, `effect.<id>.<param>`) as stored in the document (`__pinnedProps`). */
   pinned: string[];

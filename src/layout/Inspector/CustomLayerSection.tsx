@@ -64,9 +64,8 @@ export function CustomLayerSection({ nodeId }: { nodeId: string }): JSX.Element 
   const installed = usePluginStore((s) => s.plugins);
 
   // B4-gap: the plugin layer's record — its `__schemaVersion` (what decides needs-migration / downgrade) and the
-  // component id `useComponentProp` writes through have no API field (the values themselves are `plugin/<name>`), and
-  // `LayerInfo.generator` is '' for these layers (`pluginLayer:<kind>` components: doc.ts `layerKindOf` never answers
-  // 'generator' for them). Closes with a working `generator` plus a schema-version field (e.g. `layer/pluginSchemaVersion`).
+  // component id `useComponentProp` writes through have no API field (the values themselves are `plugin/<name>`;
+  // `LayerInfo.generator` names the kind). Closes with a schema-version field (e.g. `layer/pluginSchemaVersion`).
   const node = defaultSceneGraph.getNode(nodeId);
   const record = useMemo(() => (node ? readCustomLayer(node) : null), [node]);
   const component = useMemo(() => (node ? customLayerComponent(node) : null), [node]);

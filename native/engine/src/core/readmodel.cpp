@@ -381,7 +381,8 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   info.markers = layer_markers(d, layer);
   const Json& comment = fx_at(n, "comment");
   info.comment = comment.is_string() ? comment.str() : "";
-  if (k == api::LayerKind::generator) info.generator = plugin_kind_of(n);
+  // Every plugin-provided kind: a generator, or a custom plugin layer (its `kind` reads as the shape it draws).
+  info.generator = plugin_kind_of(n);
   // B4: pinned properties — `__pinnedProps` on the first component carrying the list (model.ts pinnedOf).
   for (const Component& c : n.components) {
     const Json& bag = c.props.at("__pinnedProps");

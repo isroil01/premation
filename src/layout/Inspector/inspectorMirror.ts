@@ -31,7 +31,7 @@ export function inspectorKindOf(id: string | null | undefined): string | null {
   const layer = mirrorLayer(id);
   if (!layer) return null;
   // A plugin-provided kind: LayerInfo.generator names it (B4).
-  if (layer.kind === 'generator' && layer.generator !== '') return layer.generator;
+  if (layer.generator !== '') return layer.generator;
   return uiKindOf(layer);
 }
 

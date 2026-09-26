@@ -293,7 +293,8 @@ export function layerInfo(layerId: string): LayerInfo {
     hasAudio: kind === 'audio' || (kind === 'video' && node.components.some((c) => (c.props as Record<string, unknown>).hasAudioTrack !== false)),
     markers: layerMarkers(layerId),
     comment: typeof comment === 'string' ? comment : '',
-    generator: kind === 'generator' ? pluginKindOf(node) : '',
+    // Every plugin-provided kind: a generator, or a custom plugin layer (its `kind` reads as the shape it draws).
+    generator: pluginKindOf(node),
     pinned: pinnedOf(node),
     effectCount: readNodeEffects(node).length,
     shapeType: kind === 'generator' ? '' : readShapeType(node) ?? '',
