@@ -35,6 +35,11 @@ struct SpaceCtx {
 /// (`readSceneCamera` over the whole scene, as the editor's expression provider
 /// asks); nullopt when the node is gone or a 3D node has no geometry.
 using LayerSpace = std::variant<motion::xf::LayerSpace2D, motion::xf::LayerSpace3D>;
+/// layerSpace.ts `world3DAt(node, seconds, {width, height})`: a 3D layer's /
+/// camera's / light's layer → world 4x4 (what layer_space_at converts through);
+/// nullopt for a 2D layer, a missing node or a 3D node with no geometry.
+[[nodiscard]] std::optional<motion::xf::Mat4> world_3d_at(const SpaceCtx& c, std::string_view node, double seconds,
+                                                          double compWidth, double compHeight);
 [[nodiscard]] std::optional<LayerSpace> layer_space_at(const SpaceCtx& c, std::string_view node, double seconds,
                                                        double compWidth, double compHeight);
 

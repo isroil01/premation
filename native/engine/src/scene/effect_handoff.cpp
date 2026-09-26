@@ -206,7 +206,7 @@ Json mask_now(const doc::Node& n, std::optional<double> t) {
 }  // namespace
 
 void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, const Values& a, std::optional<double> layerTimeSec,
-                             TextMeasurer* measurer, std::vector<std::string>& unported) {
+                             TextMeasurer* measurer, std::vector<std::string>& unported, const HandoffAnim* anim) {
   constexpr double kBeamSourceText = 2;  // BEAM_SOURCE.text
   std::optional<Json> tracked;  // effectMaskNow, resolved once
   for (Json& e : effects) {
@@ -259,9 +259,20 @@ void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, con
       p.set("wiggleState", Json::number(state));
       extra = true;
     }
-    if (t == "write-on" && effect_enabled(e)) {
-      const Json& mode = p.at("writeOnMode");
-      if (mode.is_number() && mjs::round(mode.num()) == 0) unported.emplace_back("Write-on brush form (dab history)");
+    // Write-on's brush form draws values of its tracks at PAST times: the dab
+    // history is sampled here, where the animation engine is reachable.
+    if (t == "write-on" && layerTimeSec && write_on_uses_brush(p)) {
+      if (anim == nullptr) {
+        if (effect_enabled(e)) unported.emplace_back("Write-on brush form (no animation sampler)");
+      } else {
+        const std::string id = e.at("id").is_string() ? e.at("id").str() : "";
+        const WriteOnTrail trail = resolve_write_on_trail(id, p, *layerTimeSec, anim->sample, anim->isAnimated, anim->firstKey);
+        p.set("brushTrailXY", numbers(trail.xy));
+        p.set("brushTrailSize", numbers(trail.size));
+        p.set("brushTrailAttr", numbers(trail.attr));
+        p.set("brushTrailFilled", Json::number(trail.filled ? 1 : 0));
+        extra = true;
+      }
     }
     const Json& pm = p.at("pathMaskId");
     if (!pm.is_string() || pm.str().empty()) {

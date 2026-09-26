@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numbers>
 #include <utility>
@@ -14,6 +15,7 @@
 #include "layer_styles.hpp"
 #include "gltf_model.hpp"
 #include "mesh_displacement.hpp"
+#include "model_deform.hpp"
 #include "model_carrier.hpp"
 #include "primitive_mesh.hpp"
 #include "text_measure.hpp"
@@ -21,6 +23,10 @@
 #include "scene.hpp"
 #include "scene_math.hpp"
 #include "styled_surface.hpp"
+#include "effects_port.hpp"
+#include "extrusion_faces.hpp"
+#include "paint_common.hpp"
+#include "per_char3d.hpp"
 #include "timeline.hpp"
 #include "worldxf.hpp"
 
@@ -493,12 +499,9 @@ Material Scene3D::material_of(const doc::Node& n, const Values& a) const {
 std::vector<std::string> Scene3D::unported_features(const doc::Node& n, const Values& /*a*/) const {
   // Mesh bodies (extrusions, primitives, models) report from finish_layer, where
   // the TypeScript decides between them; per-character planes replace the quad.
-  std::vector<std::string> out;
-  const doc::Component* t = n.comp("Transform");
-  if (n.kind() == "text" && t != nullptr && t->props.at("perChar3D").is_bool() && t->props.at("perChar3D").b()) {
-    out.emplace_back("per-character 3D text");
-  }
-  return out;
+  // Per-character 3D text is laid out in finish_layer (per_char3d.cpp).
+  (void)n;
+  return {};
 }
 
 bool Scene3D::place(const doc::Node& n, const Values& a, double baseX, double baseY, double baseRot, double baseScaleX,
@@ -806,6 +809,69 @@ std::optional<std::string> primitive_key_of(const doc::Node& n) {
   return "prim:box:" + nn(width) + ":" + nn(height) + ":" + nn(depth);
 }
 
+
+/// faceEffects.ts `faceEffectsFor(effects, {faceCount, extra})`: what a
+/// synthesized face may carry — no layer styles (decided per face by the
+/// caller, appended as `extra`), no exterior shadows / glows, nothing that
+/// needs the CPU bake, and GPU-pass effects only within SPATIAL_FACE_BUDGET.
+std::vector<Json> face_effects_for(const std::vector<Json>& effects, int faceCount, const std::vector<Json>& extra) {
+  constexpr int kSpatialFaceBudget = 16;  // SPATIAL_FACE_BUDGET
+  const bool paidAllowed = faceCount <= kSpatialFaceBudget;
+  std::vector<Json> kept;
+  for (const Json& e : effects) {
+    if (!fx_enabled(e)) continue;
+    if (e.at("id").is_string() && e.at("id").str().starts_with("layerstyle:")) continue;  // styleKeyFromEffectId
+    const std::string t = type_of(e);
+    if (t == "drop-shadow" || t == "radial-shadow" || t == "glow") continue;  // EXTERIOR_FACE_EFFECTS
+    if (effects_need_cpu_bake(std::vector<Json>{e})) continue;
+    if (!paidAllowed && !(is_color_type(t) || is_lut_type(t))) continue;
+    kept.push_back(e);
+  }
+  for (const Json& e : extra) kept.push_back(e);
+  return kept;
+}
+
+/// fill.ts `sampleFillAt(paint, w, h, x, y)`: the paint's colour at one point
+/// of the centred box (a synthesized wall's own centre); nullopt = no colour.
+std::optional<std::string> sample_fill_at(const Json& paint, double w, double h, double x, double y) {
+  if (!paint.is_object()) return std::nullopt;
+  const std::string type = paint.at("type").is_string() ? paint.at("type").str() : "";
+  if (type == "solid") return paint.at("color").is_string() ? std::optional<std::string>(paint.at("color").str()) : std::nullopt;
+  const auto num = [&paint](std::string_view k, double fb) { return paint.at(k).is_number() ? paint.at(k).num() : fb; };
+  double t = 0;
+  if (type == "linear") {
+    const double a = (num("angle", 0) * std::numbers::pi) / 180;
+    const double dx = motion::js::cos(a);
+    const double dy = motion::js::sin(a);
+    const double half = ((std::abs(dx) * w) + (std::abs(dy) * h)) / 2;
+    t = half <= 0 ? 0 : raster::clamp01(((x * dx) + (y * dy) + half) / (2 * half));
+  } else {
+    const double cx = (num("cx", 0.5) - 0.5) * w;
+    const double cy = (num("cy", 0.5) - 0.5) * h;
+    const std::array<double, 2> wh = {w, h};
+    const double r = (std::max(0.01, num("radius", 0.5)) * motion::js::hypot(wh)) / 2;
+    const std::array<double, 2> d = {x - cx, y - cy};
+    t = r <= 0 ? 0 : raster::clamp01(motion::js::hypot(d) / r);
+  }
+  std::vector<raster::ColorStop> colors;
+  if (paint.at("stops").is_array()) {
+    for (const Json& st : paint.at("stops").arr()) {
+      colors.push_back({st.at("offset").is_number() ? st.at("offset").num() : 0, st.at("color").is_string() ? st.at("color").str() : ""});
+    }
+  }
+  std::ranges::stable_sort(colors, {}, &raster::ColorStop::offset);
+  if (colors.empty()) return std::nullopt;
+  const std::string color = raster::sample_gradient_color(colors, t);
+  std::vector<raster::OpacityStop> alphas;
+  if (paint.at("opacityStops").is_array()) {
+    for (const Json& st : paint.at("opacityStops").arr()) {
+      alphas.push_back({st.at("offset").is_number() ? st.at("offset").num() : 0, st.at("opacity").is_number() ? st.at("opacity").num() : 1});
+    }
+  }
+  std::ranges::stable_sort(alphas, {}, &raster::OpacityStop::offset);
+  return alphas.empty() ? color : raster::apply_alpha(color, raster::sample_gradient_opacity(alphas, t));
+}
+
 }  // namespace
 
 void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLayer layer,
@@ -822,6 +888,45 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
   const bool perCharText = layer.kind == LayerKind::text && tp.at("perChar3D").is_bool() && tp.at("perChar3D").b();
   const double layerW = layer.width;
   const double layerH = layer.height;
+
+  // Per-character 3D (per_char3d.cpp, layoutPerChar3D): one plane per glyph.
+  // Computed BEFORE the extrusion block — an extruded per-character layer
+  // builds its body PER GLYPH from these placements.
+  std::vector<GlyphPlacement> perCharGlyphs;
+  Json glyphExtras;
+  if (perCharText) {
+    const raster::CanvasOptions* canvas = c_.measurer != nullptr ? c_.measurer->canvas_options() : nullptr;
+    if (canvas == nullptr) {
+      report("per-character 3D text (no fonts to lay the glyphs out)");
+    } else {
+      perCharGlyphs = layout_per_char_3d(layer, layerW, *canvas);
+    }
+    if (!perCharGlyphs.empty()) glyphExtras = glyph_extras_of(layer.textExtras);
+  }
+  // A glyph plane: the layer as a one-character text layer, its string's
+  // animators / runs already resolved into the placement.
+  const auto glyph_layer_of = [&](const GlyphPlacement& g) {
+    RLayer gl = layer;
+    gl.text = g.ch;
+    gl.glyphs = Json();
+    gl.runs = Json();
+    gl.textExtras = glyphExtras;
+    gl.width = g.width;
+    gl.height = g.height;
+    return gl;
+  };
+  /// buildSnapshot `perGlyphExtrusion`: the material context the glyph-plane
+  /// loop needs to emit each glyph's own body.
+  struct PerGlyphExtrusion {
+    double depth = 0, bevel = 0, holeBevelScale = 1;
+    mesh::BevelProfile bevelStyle = mesh::BevelProfile::angular;
+    std::vector<Json> effects;
+    Json faceMats;
+    std::string wallFill;
+    bool lit = false;
+    Material mat;
+  };
+  std::optional<PerGlyphExtrusion> perGlyph;
 
   // ── TRUE 3D extrusion: the mesh carrier (extrusionMesh.ts) ──
   if (s.extrusionDepth > 0 && !primKey) {
@@ -867,9 +972,27 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
     } else {
       meshEffects = layer.effects;
     }
-    if (perCharText) report("per-character 3D text (per-glyph extrusion)");
+    // Per-character 3D + extrusion: one solid PER GLYPH, when the first glyph
+    // traces (headless, or a painter that cannot trace, keeps the string body).
+    if (perCharText && !perCharGlyphs.empty() && !meshBlockedByFx && !meshBlockedByStyles) {
+      const raster::CanvasOptions* canvas = c_.measurer != nullptr ? c_.measurer->canvas_options() : nullptr;
+      const GlyphPlacement& probe = perCharGlyphs.front();
+      if (extrusion_outline_for(glyph_layer_of(probe), probe.width, probe.height, canvas)) {
+        PerGlyphExtrusion pg;
+        pg.depth = s.extrusionDepth;
+        pg.bevel = meshBevel;
+        pg.bevelStyle = bevel_profile_of(tp.at("bevelStyle").is_string() ? tp.at("bevelStyle").str() : "angular");
+        pg.holeBevelScale = holeBevelScale;
+        pg.effects = meshEffects;
+        pg.faceMats = faceMats;
+        pg.wallFill = wallFill;
+        pg.lit = extLit;
+        pg.mat = extMat;
+        perGlyph = std::move(pg);
+      }
+    }
     std::optional<KeyedMesh> built;
-    if (!(meshBlockedByFx || meshBlockedByStyles)) {
+    if (!perGlyph && !(meshBlockedByFx || meshBlockedByStyles)) {
       const raster::CanvasOptions* canvas = c_.measurer != nullptr ? c_.measurer->canvas_options() : nullptr;
       if (const auto outline = extrusion_outline_for(layer, layerW, layerH, canvas)) {
         ExtrusionMeshRequest req;
@@ -979,10 +1102,158 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
         if (hasFrontCap) frontDrawnByMesh = true;
       }
     }
-    if (!meshEmitted) {
-      // perGlyphExtrusion / the slice stack / the geometric faces (extrusion.ts).
+    if (!meshEmitted && !perGlyph) {
+      // The FALLBACK bodies (extrusion.ts via extrusion_faces.cpp): a slice
+      // stack for text / complex paths, exact wall planes for rect / ellipse.
       const bool isComplexContent = layer.kind == LayerKind::text || (layer.kind == LayerKind::shape && layer.primitive != "rect" && layer.primitive != "ellipse");
-      report(isComplexContent ? "3D extrusion slice stack (no traceable outline)" : "3D extrusion faces (effects or interior styles)");
+      const xf::Mat4 W = [&] {
+        xf::Mat4 m{};
+        std::copy(layer.world3d->begin(), layer.world3d->end(), m.begin());
+        return m;
+      }();
+      const std::vector<SceneLight>& solid = sceneLights_.empty() ? formRig_ : sceneLights_;  // solidLights()
+      const auto explicitFill = [&](std::string_view kind) {
+        const Json& f = faceMats.at(kind).at("fill");
+        return f.is_string() && !f.str().empty();
+      };
+      // A face's own placement: projected origin + the affine of its unit axes.
+      struct Placed {
+        xf::Mat4 M{};
+        xf::Projected O;
+        std::array<double, 6> fm{};
+      };
+      const auto place_face = [&](const xf::Mat4& local) -> std::optional<Placed> {
+        Placed pl;
+        pl.M = xf::multiply(W, local);
+        pl.O = project(xf::transform_point(pl.M, {0, 0, 0}));
+        // Behind the near plane ⇒ drop it (projectPoint clamps instead of rejecting).
+        if (pl.O.clipped) return std::nullopt;
+        const xf::Projected FX = project(xf::transform_point(pl.M, {1, 0, 0}));
+        const xf::Projected FY = project(xf::transform_point(pl.M, {0, 1, 0}));
+        pl.fm = {FX.x - pl.O.x, FX.y - pl.O.y, FY.x - pl.O.x, FY.y - pl.O.y, pl.O.x, pl.O.y};
+        return pl;
+      };
+      const auto set_pose = [](RLayer& f, const Placed& pl) {
+        constexpr double kDegR = std::numbers::pi / 180;
+        f.x = pl.O.x;
+        f.y = pl.O.y;
+        f.rotation = motion::js::atan2(pl.fm[1], pl.fm[0]) / kDegR;
+        const std::array<double, 2> ax = {pl.fm[0], pl.fm[1]};
+        const std::array<double, 2> ay = {pl.fm[2], pl.fm[3]};
+        f.scaleX = motion::js::hypot(ax);
+        f.scaleY = motion::js::hypot(ay);
+        f.matrix = pl.fm;
+        f.world3d = to_arr(pl.M);
+        f.depth = pl.O.depth;
+      };
+      const auto lit_shade = [&](bool oneSided) {
+        api::RenderShade3D sh = mesh_shade(extMat);
+        if (!oneSided) sh.one_sided = std::nullopt;
+        return sh;
+      };
+      if (isComplexContent) {
+        // Contour Volume Extrusion: slices along z ∈ [step, depth], BACK-TO-FRONT.
+        const int sliceCount = std::min(extrude::kMaxSlices, std::max(2, static_cast<int>(std::ceil(s.extrusionDepth / extrude::kSliceStepPx))));
+        const double sliceStep = s.extrusionDepth / sliceCount;
+        const std::vector<Json> sliceFx = face_effects_for(layer.effects, sliceCount, {});
+        for (int i = sliceCount; i >= 1; --i) {
+          const double zOffset = i * sliceStep;
+          const bool isBackCap = i == sliceCount;
+          const xf::Mat4 sliceMat = xf::compose(xf::Parts3D{.position = {0, 0, zOffset}, .rotation = {0, 0, 0}, .scale = {1, 1, 1}, .anchor = {0, 0, 0}});
+          const auto pl = place_face(sliceMat);
+          if (!pl) continue;
+          RLayer sl = layer;
+          sl.id = layer.id + "::ext-" + (isBackCap ? std::string("back") : "slice-" + std::to_string(i));
+          set_pose(sl, *pl);
+          sl.width = layerW;
+          sl.height = layerH;
+          sl.effects = sliceFx;
+          sl.matte = std::nullopt;
+          sl.isMatteSource = false;
+          sl.isAdjustment = false;
+          sl.motionSamples.clear();
+          sl.deformedMesh = std::nullopt;
+          sl.frameBlend = std::nullopt;
+          sl.glass = std::nullopt;
+          sl.backdropBlur = std::nullopt;
+          sl.preserveTransparency = false;
+          const std::string_view kind = isBackCap ? "back" : "side";
+          const FaceMat sm = resolve_face_material(faceMats, kind, wallFill);
+          sl.fill = sm.fill;
+          if (extLit) {
+            // The material's Ambient / Diffuse; two-sided (the slices' normals are all +Z).
+            if (const auto lg = shade_layer(plane_normal_of(to_arr(pl->M)), {s.worldX, s.worldY, s.z3}, solid, extMat.ambient, extMat.diffuse)) {
+              sl.lighting = *lg;
+              sl.shade3d = lit_shade(false);
+            }
+          } else {
+            const double g = explicitFill(kind) ? 1 : sm.gain;
+            sl.lighting = std::array<double, 3>{g, g, g};
+          }
+          emit(std::move(sl));
+        }
+      } else {
+        // Geometric Face Extrusion: exact wall planes (+ chamfer rings) for rect / ellipse.
+        const bool ellipse = layer.kind == LayerKind::shape && layer.primitive == "ellipse";
+        extrude::Options eo;
+        eo.bevel = meshBevel;
+        eo.cornerRadius = ellipse ? 0 : layer.cornerRadius;
+        const bool gradientWalls = layer.fillPaint.is_object() && layer.fillPaint.at("type").is_string() && layer.fillPaint.at("type").str() != "solid";
+        eo.wallSegments = gradientWalls ? extrude::kGradientWallSegments : 1;
+        const extrude::Geometry geom = extrude::extrusion_geometry(layerW, layerH, s.extrusionDepth, ellipse, extrude::kEllipseWallSegments, eo);
+        frontInset = geom.bevel;  // the bevel the geometry EMITTED
+        const auto faceCount = static_cast<int>(geom.faces.size());
+        for (const extrude::Face& f : geom.faces) {
+          const auto pl = place_face(f.m);
+          if (!pl) continue;
+          // Interior styles only on a whole SURFACE (box walls, back cap), not on facets.
+          const bool surface = f.suffix == "back" || (f.suffix.size() == 1 && std::string_view("rltb").find(f.suffix[0]) != std::string_view::npos);
+          const std::vector<Json> faceFx = face_effects_for(layer.effects, faceCount, surface ? faceStyles : std::vector<Json>{});
+          const std::string_view kind = extrude::face_kind_of(f);
+          RLayer fl;
+          if (f.back) {
+            fl = layer;
+            fl.matte = std::nullopt;
+            fl.isMatteSource = false;
+            fl.isAdjustment = false;
+            fl.motionSamples.clear();
+            fl.deformedMesh = std::nullopt;
+            fl.frameBlend = std::nullopt;
+            fl.glass = std::nullopt;
+            fl.backdropBlur = std::nullopt;
+            fl.preserveTransparency = false;
+            fl.lighting = std::nullopt;
+            fl.shade3d = std::nullopt;
+            fl.fill = resolve_face_material(faceMats, "back", wallFill).fill;
+          } else {
+            fl.kind = LayerKind::shape;
+            fl.blend = layer.blend;
+            fl.opacity = layer.opacity;
+            fl.visible = layer.visible;
+            // wallFillAt: the paint sampled at this face's own centre, then the overlays.
+            const std::optional<std::string> sampled = sample_fill_at(layer.fillPaint, layerW, layerH, f.m[12], f.m[13]);
+            fl.fill = resolve_face_material(faceMats, kind, styled_surface_fill(styles, sampled.value_or(wallFill))).fill;
+            fl.primitive = "rect";
+            fl.flatFacet = true;  // facets of one body: no SDF edge hairline at the joins
+          }
+          fl.id = layer.id + "::ext-" + f.suffix;
+          set_pose(fl, *pl);
+          fl.width = f.w;
+          fl.height = f.h;
+          fl.effects = faceFx;
+          if (extLit) {
+            // ONE-SIDED: these faces bound a volume and are wound outward.
+            if (const auto lg = shade_layer(plane_normal_of(to_arr(pl->M)), {s.worldX, s.worldY, s.z3}, solid, extMat.ambient, extMat.diffuse, true)) {
+              fl.lighting = *lg;
+              fl.shade3d = lit_shade(true);
+            }
+          } else {
+            const double g = explicitFill(kind) ? 1 : resolve_face_material(faceMats, kind, wallFill).gain;
+            fl.lighting = std::array<double, 3>{g, g, g};
+          }
+          emit(std::move(fl));
+        }
+      }
     }
   }
 
@@ -1009,17 +1280,42 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
     if (entry != nullptr) {
       const Material& mMat = s.mat;
       const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
-      if (entry->morphTargets > 0) report("glTF morph targets (morphedMeshFor)");
-      if (entry->skinned && mp.at("skin").is_number()) report("glTF skinning (skinnedMeshFor)");
+      // Morph, then skin (the glTF order; model_deform.cpp). Each stage swaps in
+      // deformed vertices under a weight- / pose-hashed key; an unresolvable
+      // skin pose falls back to the morphed or rigid bind pose.
+      const std::optional<gltf::Deformed> morphed = entry->morphTargets > 0 ? gltf::morphed_mesh_for(n, *entry, &a) : std::nullopt;
+      std::optional<gltf::Deformed> skinned;
+      if (entry->skinned && s.world3d) {
+        const gltf::SkinResolvers resolvers{
+            [this](const std::string& id) { return h_.node3d(id); },
+            [this](const std::string& id) { return h_.parent3d_of(id); },
+            [this](const std::string& id) -> std::optional<xf::Mat4> {
+              const auto local = local3d(id);
+              if (!local) return std::nullopt;
+              const xf::Mat4 own = xf::compose_node_3d(*local);
+              const auto p3 = parent_world_3d(id);
+              return p3 ? xf::multiply(*p3, own) : own;
+            }};
+        const std::optional<double> skinIdx = mp.at("skin").is_number() ? std::optional<double>(mp.at("skin").num()) : std::nullopt;
+        skinned = gltf::skinned_mesh_for(n, modelKey, skinIdx, *entry, model->skins, *s.world3d, resolvers, jointMapCache_,
+                                         morphed ? &*morphed : nullptr);
+      }
+      const gltf::Deformed* deformed = skinned ? &*skinned : morphed ? &*morphed : nullptr;
       const bool textured = entry->textureImage && layer.kind == LayerKind::image && layer.src && !layer.src->empty();
       std::string dispWhy;
-      const auto disp = displaced_carrier_for(c_.d, entry->key, entry->vertices, entry->indices, mMat, dispWhy);
+      const auto disp = displaced_carrier_for(c_.d, deformed != nullptr ? deformed->key : entry->key,
+                                              deformed != nullptr ? deformed->vertices : entry->vertices, entry->indices, mMat, dispWhy);
       if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
       auto data = std::make_shared<ExtrudedMeshData>();
       if (disp) {
         displaced_to_api(*disp, data->geometry);
       } else {
         model_entry_to_api(*entry, data->geometry);
+        if (deformed != nullptr) {
+          data->geometry.key = deformed->key;
+          data->geometry.vertices.resize(deformed->vertices.size() * sizeof(float));
+          std::memcpy(data->geometry.vertices.data(), deformed->vertices.data(), data->geometry.vertices.size());
+        }
       }
       MeshRange3D r;
       r.role = entry->doubleSided ? api::RenderMeshRole::front : api::RenderMeshRole::side;
@@ -1087,6 +1383,118 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
 
   if (modelLayer) {
     emit(std::move(*modelLayer));
+  } else if (!perCharGlyphs.empty()) {
+    const Material& pcMat = s.mat;
+    const bool pcLit = pcMat.acceptsLights && !sceneLights_.empty();
+    const xf::Mat4 W = [&] {
+      xf::Mat4 m{};
+      std::copy(layer.world3d->begin(), layer.world3d->end(), m.begin());
+      return m;
+    }();
+    constexpr double kDegR = std::numbers::pi / 180;
+    copiedOnEmit_.push_back(layer.id);  // the layer itself is replaced by its glyph planes
+    for (const GlyphPlacement& g : perCharGlyphs) {
+      // Glyph frame: offset in the box, its own depth, tumble about its axes, the
+      // animator's scale — pivoting about the per-character Anchor Point.
+      const xf::Mat4 gm = xf::compose(xf::Parts3D{.position = {g.offsetX, g.offsetY, g.offsetZ},
+                                                  .rotation = {g.rotationX * kDegR, g.rotationY * kDegR, g.rotation * kDegR},
+                                                  .scale = {g.scale, g.scale, 1},
+                                                  .anchor = {g.anchorX, g.anchorY, g.anchorZ}});
+      const xf::Mat4 M = xf::multiply(W, gm);
+      const xf::Projected O = project(xf::transform_point(M, {0, 0, 0}));
+      if (O.clipped) continue;  // a glyph behind the camera would come back at focal-length scale
+      const xf::Projected GX = project(xf::transform_point(M, {1, 0, 0}));
+      const xf::Projected GY = project(xf::transform_point(M, {0, 1, 0}));
+      const std::array<double, 6> gfm = {GX.x - O.x, GX.y - O.y, GY.x - O.x, GY.y - O.y, O.x, O.y};
+      RLayer gl = glyph_layer_of(g);
+      gl.id = layer.id + "::ch" + std::to_string(g.index);
+      gl.x = O.x;
+      gl.y = O.y;
+      gl.rotation = motion::js::atan2(gfm[1], gfm[0]) / kDegR;
+      const std::array<double, 2> ax = {gfm[0], gfm[1]};
+      const std::array<double, 2> ay = {gfm[2], gfm[3]};
+      gl.scaleX = motion::js::hypot(ax);
+      gl.scaleY = motion::js::hypot(ay);
+      gl.matrix = gfm;
+      gl.world3d = to_arr(M);
+      gl.depth = layer.depth;
+      gl.opacity = layer.opacity * g.opacity;
+      if (g.fill && !g.fill->empty()) gl.fill = g.fill;
+      gl.lighting = std::nullopt;
+      gl.shade3d = std::nullopt;
+      // The glyph's OWN body (perGlyphExtrusion): traced from this glyph, back-chamfered
+      // only (the plane is the full-size front), under the same world matrix.
+      if (perGlyph) {
+        const PerGlyphExtrusion& pg = *perGlyph;
+        const raster::CanvasOptions* canvas = c_.measurer != nullptr ? c_.measurer->canvas_options() : nullptr;
+        std::optional<KeyedMesh> body;
+        if (const auto outline = extrusion_outline_for(gl, g.width, g.height, canvas)) {
+          ExtrusionMeshRequest req;
+          req.depth = pg.depth;
+          req.bevel = pg.bevel;
+          req.bevelStyle = pg.bevelStyle;
+          req.frontBevel = false;
+          req.holeBevelScale = pg.holeBevelScale;
+          body = extrusion_mesh_for(*outline, g.width, g.height, req);
+        }
+        if (body) {
+          // An animator fill recolours the glyph's whole solid.
+          const std::string wallBase = g.fill ? *g.fill : pg.wallFill;
+          auto data = std::make_shared<ExtrudedMeshData>();
+          mesh_to_api(body->key, *body->mesh, data->geometry);
+          data->geometry.ranges.clear();
+          for (const mesh::MeshRange& r : body->mesh->ranges) {
+            MeshRange3D o;
+            o.role = api_role(r.role);
+            o.first = r.first;
+            o.count = r.count;
+            const api::RenderMeshRole role = o.role == api::RenderMeshRole::front ? api::RenderMeshRole::side : o.role;
+            const std::string_view rn = role_name(role);
+            const FaceMat fm = resolve_face_material(pg.faceMats, rn, wallBase);
+            const Json& ef = pg.faceMats.at(rn).at("fill");
+            o.fill = fm.fill;
+            o.gain = ef.is_string() && !ef.str().empty() ? 1 : fm.gain;
+            data->ranges.push_back(std::move(o));
+          }
+          RLayer bl;
+          bl.id = gl.id + "::ext-mesh";
+          bl.kind = LayerKind::shape;
+          bl.primitive = "rect";
+          bl.blend = layer.blend;
+          bl.x = gl.x;
+          bl.y = gl.y;
+          bl.rotation = gl.rotation;
+          bl.scaleX = gl.scaleX;
+          bl.scaleY = gl.scaleY;
+          bl.matrix = gfm;
+          bl.world3d = gl.world3d;
+          bl.depth = layer.depth;
+          bl.opacity = layer.opacity * g.opacity;
+          bl.width = g.width;
+          bl.height = g.height;
+          bl.fill = resolve_face_material(pg.faceMats, "side", wallBase).fill;
+          bl.visible = layer.visible;
+          bl.flatFacet = true;
+          bl.effects = pg.effects;
+          bl.castsShadow3d = layer.castsShadow3d;
+          bl.extrudedMesh = std::move(data);
+          if (pg.lit) {
+            bl.lighting = std::array<double, 3>{1, 1, 1};
+            bl.shade3d = mesh_shade(pg.mat);
+          }
+          emit(std::move(bl));
+        }
+      }
+      if (pcLit) {
+        if (const auto lg = shade_layer(plane_normal_of(to_arr(M)), {O.x, O.y, s.z3 + g.offsetZ}, sceneLights_, pcMat.ambient, pcMat.diffuse)) {
+          gl.lighting = *lg;
+          api::RenderShade3D sh = mesh_shade(pcMat);
+          sh.one_sided = std::nullopt;
+          gl.shade3d = sh;
+        }
+      }
+      emit(std::move(gl));
+    }
   } else if (frontDrawnByMesh) {
     // The front cap is part of the extrusion mesh.
   } else if (frontInset > 0) {

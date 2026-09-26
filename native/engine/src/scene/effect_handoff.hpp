@@ -13,8 +13,11 @@
 //   any effect with a `pathMaskId`          `pathPoints` (maskPathPolyline, 16
 //        samples a segment, after the mask's expansion) + `pathClosed`.
 //
-// Not ported, and reported: Write-on's brush form (the dab history, sampled at
-// past times). Energy Beam on text, point or paragraph, traces the painted runs.
+//   Write-on ▸ Brush Position              `brushTrailXY` / `brushTrailSize` /
+//        `brushTrailAttr` / `brushTrailFilled` (resolveWriteOnTrail, the dab
+//        history sampled at past times through `anim`; write_on_trail.cpp).
+//
+// Energy Beam on text, point or paragraph, traces the painted runs.
 #pragma once
 
 #include <optional>
@@ -23,15 +26,25 @@
 
 #include "readers.hpp"
 #include "scene_types.hpp"
+#include "write_on_trail.hpp"
 
 namespace premation::scene {
 
 class TextMeasurer;
 
+/// The walk's animation wrapper for one node (buildSnapshot's `anim` bound to
+/// `node.id`): sample / isAnimated drop Essential-Properties-overridden tracks,
+/// `firstKey` is `anim.timeSpan(node.id)?.start`.
+struct HandoffAnim {
+  TrailSample sample;
+  TrailIsAnimated isAnimated;
+  std::optional<double> firstKey;
+};
+
 /// Apply the hand-offs to `effects` (resolveEffectParams output) in place;
 /// features outside the port are appended to `unported`. `measurer` supplies the
 /// fonts a text outline is traced with (null = none).
 void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, const Values& a, std::optional<double> layerTimeSec,
-                             TextMeasurer* measurer, std::vector<std::string>& unported);
+                             TextMeasurer* measurer, std::vector<std::string>& unported, const HandoffAnim* anim = nullptr);
 
 }  // namespace premation::scene

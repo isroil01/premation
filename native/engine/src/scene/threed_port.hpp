@@ -20,6 +20,7 @@
 
 #include "camera3d_port.hpp"
 #include "lights3d.hpp"
+#include "model_deform.hpp"
 #include "readers.hpp"
 #include "scene_types.hpp"
 #include "snapshot_build.hpp"
@@ -190,6 +191,8 @@ class Scene3D {
   std::unordered_map<double, motion::xf::Camera> subFrameCameras_;
 
   std::unordered_map<std::string, std::optional<motion::xf::Mat4>> parent3dCache_;
+  /// buildSnapshot `jointMapCache`: a skinned model instance's glTF node → joint layer.
+  gltf::JointMapCache jointMapCache_;
 
   // Lights.
   std::vector<SceneLight> sceneLights_;
