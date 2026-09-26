@@ -10,7 +10,8 @@
 
 import type { FileAdapter, StoredFile, OpenOptions } from './FileManager';
 import { api, isAuthenticated } from '@core/api/client';
-import { captureDocument, type EditorDocument } from '@core/api/cloudDocument';
+import type { EditorDocument } from '@core/api/cloudDocument';
+import { liveDocument } from '@core/project/liveDocument';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 
 export class ApiFileAdapter implements FileAdapter {
@@ -72,7 +73,8 @@ export class ApiFileAdapter implements FileAdapter {
   async chooseSavePath(defaultName: string): Promise<string | null> {
     if (!isAuthenticated()) return null;
     const name = defaultName.replace(/\.(motion|json)$/i, '');
-    const project = await api.createProject(name, captureDocument());
+    // F2: the owner's document (the engine's exportDocument when it owns it).
+    const project = await api.createProject(name, await liveDocument());
     return project.id;
   }
 

@@ -19,6 +19,7 @@ import { BundleRepository } from './BundleRepository';
 import { ProjectBundleService } from './ProjectBundleService';
 import type { VersionEntry, VersionKind } from './VersionStore';
 import { detectBundleFs } from './bundleFsEnv';
+import { liveDocument, liveDocumentFromEngine, saveLiveDocument } from '@core/project/liveDocument';
 
 let shared: BundleRepository | null = null;
 let sharedService: ProjectBundleService | null = null;
@@ -82,6 +83,16 @@ export async function saveProjectBundleVersion(
   label?: string,
   svc = getProjectBundleService(),
 ): Promise<void> {
+  if (liveDocumentFromEngine()) {
+    // F2: the engine writes the bundle (chunks, footage, manifest last; dirty
+    // clears) and hands back the document it wrote; the page records only the
+    // version snapshot beside it.
+    await saveLiveDocument(root, { copy: false, format: 'bundle' });
+    const saved = await liveDocument();
+    await svc.snapshotVersion(root, saved, { kind, ...(label != null ? { label } : {}) });
+    await recordProjectSaved(root, saved);
+    return;
+  }
   const doc = captureDocument();
   await svc.save(root, doc, { version: { kind, ...(label != null ? { label } : {}) } });
   await recordProjectSaved(root, doc);

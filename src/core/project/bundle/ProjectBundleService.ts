@@ -52,6 +52,22 @@ export class ProjectBundleService {
     }
   }
 
+  /**
+   * F2: record a version of `doc` WITHOUT writing the bundle — the engine
+   * already wrote it (saveProject{bundle}); only the version snapshot is the
+   * page's (versions/ is a file the engine's codec leaves alone).
+   */
+  async snapshotVersion(root: string, doc: EditorDocument, version: NonNullable<SaveOptions['version']>, keepAutosaves = 20): Promise<void> {
+    const vs = this.versions(root);
+    await vs.snapshot(doc, {
+      kind: version.kind,
+      ...(version.label != null ? { label: version.label } : {}),
+      ...(version.time != null ? { time: version.time } : {}),
+      createdAt: this.clock(),
+    });
+    if (version.kind === 'autosave') await vs.prune('autosave', keepAutosaves);
+  }
+
   load(root: string): Promise<EditorDocument | null> {
     return this.repo.load(root);
   }

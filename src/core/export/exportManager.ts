@@ -30,7 +30,7 @@ import {
 } from '@core/rendering/strokeTracks';
 import { paintBlendToLottie } from '@core/rendering/raster/paintBlend';
 import { paintRenderOrder } from '@core/rendering/raster/vectorDraw';
-import { captureDocument } from '@core/api/cloudDocument';
+import { liveDocument } from '@core/project/liveDocument';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import { compRootOf } from '@core/scene/parenting';
@@ -386,8 +386,9 @@ function throwIfAborted(signal?: AbortSignal): void {
  * advertised "Re-openable Motion project file". It now writes exactly what
  * `File ▸ Open` restores, so the claim is true.
  */
-function exportJSON(opts: ExportOptions): void {
-  const doc = { ...captureDocument(), exportedAt: new Date().toISOString() };
+async function exportJSON(opts: ExportOptions): Promise<void> {
+  // F2: the owner's document (the engine's exportDocument when it owns it).
+  const doc = { ...(await liveDocument()), exportedAt: new Date().toISOString() };
   opts.onProgress?.(1);
   download(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }), 'motion-project.json');
 }
@@ -414,8 +415,8 @@ function exportFCPXML(opts: ExportOptions): void {
 }
 
 /** Premation .mogrt foothold — template fields + document in a zip (not Adobe AME). */
-function exportMogrt(opts: ExportOptions): void {
-  const bytes = exportMogrtZip('MOTION');
+async function exportMogrt(opts: ExportOptions): Promise<void> {
+  const bytes = await exportMogrtZip('MOTION');
   opts.onProgress?.(1);
   download(new Blob([bytes as BlobPart], { type: 'application/zip' }), 'template.mogrt.zip');
 }
@@ -1486,12 +1487,12 @@ async function runExportFormat(opts: ExportOptions): Promise<ExportResult> {
     case 'jpg-sequence': await exportSequence(opts, 'jpg'); return {};
     case 'exr-sequence': await exportExrSequence(opts); return {};
     case 'wav': await exportWavAudio(opts); return {};
-    case 'json': exportJSON(opts); return {};
+    case 'json': await exportJSON(opts); return {};
     case 'edl': exportEDL(opts); return {};
     case 'otio': exportOTIO(opts); return {};
     case 'fcpxml': exportFCPXML(opts); return {};
     case 'ale': exportALE(opts); return {};
-    case 'mogrt': exportMogrt(opts); return {};
+    case 'mogrt': await exportMogrt(opts); return {};
     case 'lottie': exportLottie(opts); return {};
     case 'webm':
     case 'mp4':

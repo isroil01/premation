@@ -6,7 +6,7 @@
  */
 
 import { api, isAuthenticated } from '@core/api/client';
-import { captureDocument } from '@core/api/cloudDocument';
+import { liveDocument } from '@core/project/liveDocument';
 import { readAuthoredFields } from '@core/template/templateAuthoring';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
@@ -38,7 +38,7 @@ export async function publishCurrentTemplate(name: string, description?: string)
     const row = await api.publishAutomationTemplate({
       name: name.trim(),
       description,
-      document: captureDocument(),
+      document: await liveDocument(),
       inputs: fields.map((f) => ({
         id: f.id,
         label: f.label,

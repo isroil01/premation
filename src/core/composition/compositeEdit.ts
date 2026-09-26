@@ -46,6 +46,22 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
 import { bumpScene } from '@stores/sceneStore';
 import { internDocumentParts, noteRestoredState } from '@core/commands/snapshotSharing';
+import { liveDocumentFromEngine, replaceLiveDocument } from '@core/project/liveDocument';
+
+/**
+ * F2: with the ENGINE as owner the page's stores are its replica, and the undo
+ * stack is the engine's. The operation still runs against the replica (these
+ * builders are page-side automation until B5 moves them onto the API); what it
+ * produced lands in the owner as ONE `restoreDocument` entry labelled `label`
+ * — undoable there, and the replica receives the same request (a no-op, it is
+ * already that document). Nothing is pushed on the page's history.
+ */
+function landInOwner(label: string): void {
+  const after = captureDocument();
+  void replaceLiveDocument(after, label).catch((err: unknown) => {
+    console.error(`[F2] "${label}" could not be applied to the engine's document`, err);
+  });
+}
 
 /**
  * `captureDocument`, with its scene and animation re-expressed in the shared
@@ -91,7 +107,8 @@ export async function runAsOneHistoryEntry<T>(
   // being swallowed by the baseline this operation is about to take.
   store.flush();
 
-  const before = captureShared();
+  const toOwner = liveDocumentFromEngine();
+  const before = toOwner ? null : captureShared();
   const history = historyService();
 
   history?.suspend();
@@ -107,6 +124,10 @@ export async function runAsOneHistoryEntry<T>(
     history?.resume();
   }
 
+  if (toOwner || !before) {
+    landInOwner(label);
+    return result;
+  }
   const after = captureShared();
   history?.push({
     label,
@@ -147,7 +168,8 @@ export async function runAsOneHistoryEntry<T>(
  */
 export function runAsOneHistoryEntrySync<T>(label: string, fn: () => T): T {
   useHistoryStore.getState().flush();
-  const before = captureShared();
+  const toOwner = liveDocumentFromEngine();
+  const before = toOwner ? null : captureShared();
   const history = historyService();
 
   history?.suspend();
@@ -161,6 +183,10 @@ export function runAsOneHistoryEntrySync<T>(label: string, fn: () => T): T {
     history?.resume();
   }
 
+  if (toOwner || !before) {
+    landInOwner(label);
+    return result;
+  }
   const after = captureShared();
   const swapTo = (doc: EditorDocument): void => {
     history?.suspend();

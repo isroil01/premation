@@ -2,16 +2,16 @@ import { crc32 } from './zip';
 import { buildMogrtPackage, exportMogrtZip } from './exportMogrt';
 
 describe('exportMogrt', () => {
-  it('builds a package with fields array and format tag', () => {
-    const pkg = buildMogrtPackage('Test');
+  it('builds a package with fields array and format tag', async () => {
+    const pkg = await buildMogrtPackage('Test');
     expect(pkg.format).toBe('premation-mogrt-v1');
     expect(pkg.name).toBe('Test');
     expect(Array.isArray(pkg.fields)).toBe(true);
     expect(pkg.document).toBeTruthy();
   });
 
-  it('zips to a valid local-file header', () => {
-    const bytes = exportMogrtZip('Test');
+  it('zips to a valid local-file header', async () => {
+    const bytes = await exportMogrtZip('Test');
     expect(bytes.length).toBeGreaterThan(64);
     // PK\x03\x04 local file header
     expect(bytes[0]).toBe(0x50);

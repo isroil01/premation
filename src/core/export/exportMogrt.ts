@@ -9,7 +9,7 @@
 
 import { zipBytes, type ZipEntry } from '@core/export/zip';
 import { readAuthoredFields } from '@core/template/templateAuthoring';
-import { captureDocument } from '@core/api/cloudDocument';
+import { liveDocument } from '@core/project/liveDocument';
 import type { TemplateField } from '@core/template/templateTypes';
 
 export interface MogrtPackage {
@@ -21,19 +21,20 @@ export interface MogrtPackage {
   document: unknown;
 }
 
-export function buildMogrtPackage(name = 'Untitled'): MogrtPackage {
+/** F2: the document is the owner's (the engine's exportDocument when it owns it). */
+export async function buildMogrtPackage(name = 'Untitled'): Promise<MogrtPackage> {
   return {
     format: 'premation-mogrt-v1',
     name,
     createdAt: new Date().toISOString(),
     fields: readAuthoredFields(),
-    document: captureDocument(),
+    document: await liveDocument(),
   };
 }
 
 /** Zip bytes for download (manifest.json + package.json). */
-export function exportMogrtZip(name = 'Untitled'): Uint8Array {
-  const pkg = buildMogrtPackage(name);
+export async function exportMogrtZip(name = 'Untitled'): Promise<Uint8Array> {
+  const pkg = await buildMogrtPackage(name);
   const enc = new TextEncoder();
   const entries: ZipEntry[] = [
     {

@@ -23,7 +23,7 @@
 
 import { getProjectManager } from '@core/services/coreServices';
 import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/repaintScheduler';
-import { captureDocument } from '@core/api/cloudDocument';
+import { liveDocument } from '@core/project/liveDocument';
 import { findMissingAssets } from '@core/project/missingAssets';
 import { renderJobOutput, outputExtFor, type OutputFormat, type RenderJobSpec } from '@core/export/renderJob';
 import { renderStillFrame } from '@core/export/offlineRenderer';
@@ -374,7 +374,8 @@ async function openForRender(projectPath: string): Promise<string[]> {
   // machine does not have (a bundle rendered on a build agent), and the choice
   // between "render the rest" and "refuse" belongs to whoever reads the log —
   // but they can only make it if the log says so.
-  return findMissingAssets(captureDocument()).map(
+  // F2: the document the owner opened (the engine's exportDocument when it owns it).
+  return findMissingAssets(await liveDocument()).map(
     (miss) => `Layer "${miss.nodeName}" points at media this machine cannot resolve (${miss.reason}): ${miss.src}`,
   );
 }

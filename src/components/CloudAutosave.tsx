@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { api } from '@core/api/client';
-import { captureDocument } from '@core/api/cloudDocument';
+import { liveDocument } from '@core/project/liveDocument';
 import { clearRecovery } from '@core/persistence/recovery';
 import { useWorkspaceStore } from '@stores/index';
 import { useEntitlementStore, canWriteCloud } from '@stores/entitlementStore';
@@ -59,9 +59,9 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
       try {
         // Yield to the event loop before the potentially-large serialization so
         // the current React paint completes first and the UI stays responsive.
-        const doc = await new Promise<ReturnType<typeof captureDocument>>((resolve) => {
-          setTimeout(() => resolve(captureDocument()), 0);
-        });
+        await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+        // F2: the owner's document (the engine's exportDocument when it owns it).
+        const doc = await liveDocument();
         await api.autosave(projectId, doc);
         const ws = useWorkspaceStore.getState();
         if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
