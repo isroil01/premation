@@ -495,6 +495,24 @@ bool from_u32(std::uint32_t n, ItemKind& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(MediaType v) noexcept {
+  switch (v) {
+    case MediaType::none: return "none";
+    case MediaType::image: return "image";
+    case MediaType::video: return "video";
+    case MediaType::audio: return "audio";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, MediaType& out) noexcept {
+  switch (n) {
+    case 0: out = MediaType::none; return true;
+    case 1: out = MediaType::image; return true;
+    case 2: out = MediaType::video; return true;
+    case 3: out = MediaType::audio; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(AlphaMode v) noexcept {
   switch (v) {
     case AlphaMode::auto_: return "auto";
@@ -14984,6 +15002,9 @@ void encode(wire::Writer& w, const ItemInfo& v) {
   w.varint(176U); w.varint(v.audio_sample_rate);
   w.varint(186U); w.str(v.color_profile);
   w.varint(192U); w.varint(v.file_bytes);
+  w.varint(992U); w.varint(static_cast<std::uint32_t>(v.media_type));
+  w.varint(1000U); w.boolean(v.alpha_probed);
+  w.varint(1008U); w.boolean(v.audio_probed);
 }
 
 Status decode(wire::Reader& r, ItemInfo& out) {
@@ -15007,6 +15028,9 @@ Status decode(wire::Reader& r, ItemInfo& out) {
   bool has_audio_sample_rate = false;
   bool has_color_profile = false;
   bool has_file_bytes = false;
+  bool has_media_type = false;
+  bool has_alpha_probed = false;
+  bool has_audio_probed = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -15134,6 +15158,21 @@ Status decode(wire::Reader& r, ItemInfo& out) {
         has_file_bytes = true;
         break;
       }
+      case 992U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.media_type)) return Status::bad_enum; }
+        has_media_type = true;
+        break;
+      }
+      case 1000U: {
+        if (!r.boolean(out.alpha_probed)) return Status::truncated;
+        has_alpha_probed = true;
+        break;
+      }
+      case 1008U: {
+        if (!r.boolean(out.audio_probed)) return Status::truncated;
+        has_audio_probed = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -15159,6 +15198,9 @@ Status decode(wire::Reader& r, ItemInfo& out) {
   if (!has_audio_sample_rate) return Status::missing_field;
   if (!has_color_profile) return Status::missing_field;
   if (!has_file_bytes) return Status::missing_field;
+  if (!has_media_type) return Status::missing_field;
+  if (!has_alpha_probed) return Status::missing_field;
+  if (!has_audio_probed) return Status::missing_field;
   return Status::ok;
 }
 
@@ -15186,6 +15228,7 @@ void encode(wire::Writer& w, const CompSettings& v) {
   if (v.template_fields.has_value()) { w.varint(178U); w.str(*v.template_fields); }
   if (v.background_paint.has_value()) { w.varint(186U); w.str(*v.background_paint); }
   if (v.pristine.has_value()) { w.varint(192U); w.boolean(*v.pristine); }
+  for (const auto& e : v.essential_props) { w.varint(1002U); w.str(e); }
 }
 
 Status decode(wire::Reader& r, CompSettings& out) {
@@ -15329,6 +15372,11 @@ Status decode(wire::Reader& r, CompSettings& out) {
         bool e = false;
         if (!r.boolean(e)) return Status::truncated;
         out.pristine = std::move(e);
+        break;
+      }
+      case 1002U: {
+        auto& e = out.essential_props.emplace_back();
+        if (!r.str(e)) return Status::truncated;
         break;
       }
       default:
@@ -15749,6 +15797,8 @@ void encode(wire::Writer& w, const LayerTiming& v) {
   w.varint(40U); w.boolean(v.time_remap_enabled);
   w.varint(48U); w.varint(static_cast<std::uint32_t>(v.retime));
   if (v.source_duration.has_value()) { w.varint(56U); w.svarint(*v.source_duration); }
+  if (v.freeze.has_value()) { w.varint(864U); w.svarint(*v.freeze); }
+  if (v.baked_stretch.has_value()) { w.varint(873U); w.f64(*v.baked_stretch); }
 }
 
 Status decode(wire::Reader& r, LayerTiming& out) {
@@ -15798,6 +15848,18 @@ Status decode(wire::Reader& r, LayerTiming& out) {
         out.source_duration = std::move(e);
         break;
       }
+      case 864U: {
+        Time e = 0;
+        if (!r.svarint(e)) return Status::truncated;
+        out.freeze = std::move(e);
+        break;
+      }
+      case 873U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.baked_stretch = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -15831,6 +15893,9 @@ void encode(wire::Writer& w, const LayerInfo& v) {
   w.varint(130U); w.str(v.generator);
   for (const auto& e : v.pinned) { w.varint(138U); w.str(e); }
   w.varint(144U); w.varint(v.effect_count);
+  w.varint(946U); w.str(v.shape_type);
+  w.varint(954U); w.str(v.managed_by);
+  w.varint(962U); w.str(v.mograph_id);
 }
 
 Status decode(wire::Reader& r, LayerInfo& out) {
@@ -15847,6 +15912,9 @@ Status decode(wire::Reader& r, LayerInfo& out) {
   bool has_comment = false;
   bool has_generator = false;
   bool has_effect_count = false;
+  bool has_shape_type = false;
+  bool has_managed_by = false;
+  bool has_mograph_id = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -15943,6 +16011,21 @@ Status decode(wire::Reader& r, LayerInfo& out) {
         has_effect_count = true;
         break;
       }
+      case 946U: {
+        if (!r.str(out.shape_type)) return Status::truncated;
+        has_shape_type = true;
+        break;
+      }
+      case 954U: {
+        if (!r.str(out.managed_by)) return Status::truncated;
+        has_managed_by = true;
+        break;
+      }
+      case 962U: {
+        if (!r.str(out.mograph_id)) return Status::truncated;
+        has_mograph_id = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -15961,6 +16044,9 @@ Status decode(wire::Reader& r, LayerInfo& out) {
   if (!has_comment) return Status::missing_field;
   if (!has_generator) return Status::missing_field;
   if (!has_effect_count) return Status::missing_field;
+  if (!has_shape_type) return Status::missing_field;
+  if (!has_managed_by) return Status::missing_field;
+  if (!has_mograph_id) return Status::missing_field;
   return Status::ok;
 }
 

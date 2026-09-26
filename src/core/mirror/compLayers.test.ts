@@ -11,7 +11,7 @@ import { compHas3DContent, flattenCompLayers, type MirrorCompLayersRead } from '
 function layer(id: string, comp: string, kind: LayerInfo['kind'], extra: Partial<LayerInfo> = {}, threeD = false): LayerInfo {
   return {
     id, comp, kind, name: id, children: [], hasVideo: true, hasAudio: false, markers: [], comment: '', generator: '',
-    pinned: [], effectCount: 0,
+    pinned: [], effectCount: 0, shapeType: '', managedBy: '', mographId: '',
     switches: { threeD, visible: true } as LayerInfo['switches'],
     timing: {} as LayerInfo['timing'], blendMode: 'normal' as LayerInfo['blendMode'], matte: {} as LayerInfo['matte'],
     ...extra,

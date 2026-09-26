@@ -214,6 +214,14 @@ export type ItemKind =
   | 'placeholder';
 export const ItemKindValues = ['folder', 'composition', 'footage', 'solid', 'placeholder'] as const;
 
+/** B4 — what a footage item's file holds (ItemInfo.mediaType). */
+export type MediaType =
+  | 'none'
+  | 'image'
+  | 'video'
+  | 'audio';
+export const MediaTypeValues = ['none', 'image', 'video', 'audio'] as const;
+
 export type AlphaMode =
   | 'auto'
   | 'ignore'
@@ -1348,6 +1356,8 @@ export interface CompSettings {
   backgroundPaint?: string;
   /** B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too. */
   pristine?: boolean;
+  /** B4 — the Essential Properties the composition PUBLISHES to the layers that place it (AE Master Properties), as stored on its root (`__essentialProps`: `<layerId>/<editorProp>` keys), in publish order. Empty = none published (an instance then lists every overridable property of the comp's top layers). Read-only here: not in CompSettingsPatch. */
+  essentialProps: string[];
 }
 
 export interface CompSettingsPatch {
@@ -1562,6 +1572,10 @@ export interface LayerTiming {
   retime: RetimeMode;
   /** B4 — the length of a BOUNDED source (footage, a precomp) on the comp axis at the layer's stretch: what a bar can be trimmed / slipped within (the timeline's source-handle clamps). Absent = unbounded (shapes, text, solids, nulls, a still image, a time-remapped or frozen layer). */
   sourceDuration?: Time;
+  /** B4 — Freeze Frame: the comp time the layer holds for its whole bar (Layer ▸ Time ▸ Freeze Frame). Absent = not frozen. */
+  freeze?: Time;
+  /** B4 — a BAKED Time Stretch on a layer with no source (shape, text, solid, null, camera, light): the factor its last `timeStretchLayers` bake left (1 = 100 %, negative = reversed), what the Time Stretch field shows. Absent = none (100 %). Footage and precomps report their live rate in `stretch` instead. */
+  bakedStretch?: number;
 }
 
 export interface LayerTimingPatch {
@@ -2602,6 +2616,12 @@ export interface ItemInfo {
   audioSampleRate: number;
   colorProfile: string;
   fileBytes: number;
+  /** B4 — what a FOOTAGE item holds: a still image, video or audio (`none` for compositions, folders, solids and placeholders). What the Inspector's pickers (a still image for a sky, a sprite, a height map) and the proxy row filter on. */
+  mediaType: MediaType;
+  /** B4 — the import probe looked for an alpha channel: `hasAlpha` false with this false means "never probed", not "opaque" (the Alpha interpretation control stays offered). */
+  alphaProbed: boolean;
+  /** B4 — the import probe looked for an audio stream: `hasAudio` false on video with this false means "never probed". */
+  audioProbed: boolean;
 }
 
 export interface CompInfo {
@@ -2639,6 +2659,12 @@ export interface LayerInfo {
   pinned: string[];
   /** B4 — how many effects the layer's effect stack holds (the `effects` group's children, disabled ones included): what a collapsed timeline row needs to draw the fx switch without loading the property tree. */
   effectCount: number;
+  /** B4 — a shape layer's primitive (`rect`, `ellipse`, `star`, `polygon`, `triangle`, `line`, `arrow`, `heart`, `cross`, `diamond`, `crescent`: the stored `shapeType`), '' for a drawn path or any other layer. What the Layers tree's glyph narrows on (`kind` folds star / triangle into `polygon`). */
+  shapeType: string;
+  /** B4 — the plugin that GENERATED this layer and will overwrite it on its next run (`__ownedByPlugin`), '' for a layer the user owns. The Layers tree marks it. */
+  managedBy: string;
+  /** B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it. */
+  mographId: string;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */

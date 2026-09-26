@@ -80,6 +80,10 @@ const ItemKind_TO_NUM: Record<string, number> = { 'folder': 0, 'composition': 1,
 const ItemKind_FROM_NUM: readonly (T.ItemKind | undefined)[] = ['folder', 'composition', 'footage', 'solid', 'placeholder'];
 function enc_ItemKind(v: T.ItemKind): number { const n = ItemKind_TO_NUM[v]; if (n === undefined) throw new RangeError('ItemKind: invalid value ' + String(v)); return n; }
 function dec_ItemKind(n: number): T.ItemKind { const v = ItemKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ItemKind: unknown value ' + n, 'badEnum'); return v; }
+const MediaType_TO_NUM: Record<string, number> = { 'none': 0, 'image': 1, 'video': 2, 'audio': 3 };
+const MediaType_FROM_NUM: readonly (T.MediaType | undefined)[] = ['none', 'image', 'video', 'audio'];
+function enc_MediaType(v: T.MediaType): number { const n = MediaType_TO_NUM[v]; if (n === undefined) throw new RangeError('MediaType: invalid value ' + String(v)); return n; }
+function dec_MediaType(n: number): T.MediaType { const v = MediaType_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MediaType: unknown value ' + n, 'badEnum'); return v; }
 const AlphaMode_TO_NUM: Record<string, number> = { 'auto': 0, 'ignore': 1, 'straight': 2, 'premultiplied': 3 };
 const AlphaMode_FROM_NUM: readonly (T.AlphaMode | undefined)[] = ['auto', 'ignore', 'straight', 'premultiplied'];
 function enc_AlphaMode(v: T.AlphaMode): number { const n = AlphaMode_TO_NUM[v]; if (n === undefined) throw new RangeError('AlphaMode: invalid value ' + String(v)); return n; }
@@ -2689,8 +2693,10 @@ function encS_CompSettings(w: Writer, v: T.CompSettings): void {
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
   if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
+  { const a = v.essentialProps; for (let i = 0; i < a.length; i++) { w.varint(1002); w.str(a[i]!); } }
 }
 function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
+  const l_essentialProps: string[] = [];
   let h_name = false;
   let h_width = false;
   let h_height = false;
@@ -2757,6 +2763,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
       case 192: v_pristine = r.bool(); break;
+      case 1002: l_essentialProps.push(r.str()); break;
       default: r.skip(key);
     }
   }
@@ -2801,6 +2808,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   if (v_pristine !== undefined) o.pristine = v_pristine;
+  o.essentialProps = l_essentialProps;
   return o;
 }
 function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
@@ -3621,6 +3629,8 @@ function encS_LayerTiming(w: Writer, v: T.LayerTiming): void {
   w.byte(40); w.bool(v.timeRemapEnabled);
   w.byte(48); w.varint(enc_RetimeMode(v.retime));
   if (v.sourceDuration !== undefined) { w.byte(56); w.i64(v.sourceDuration); }
+  if (v.freeze !== undefined) { w.varint(864); w.i64(v.freeze); }
+  if (v.bakedStretch !== undefined) { w.varint(873); w.f64(v.bakedStretch); }
 }
 function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
   let h_inPoint = false;
@@ -3636,6 +3646,8 @@ function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
   let v_timeRemapEnabled: boolean | undefined;
   let v_retime: T.RetimeMode | undefined;
   let v_sourceDuration: number | undefined;
+  let v_freeze: number | undefined;
+  let v_bakedStretch: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3646,6 +3658,8 @@ function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
       case 40: v_timeRemapEnabled = r.bool(); h_timeRemapEnabled = true; break;
       case 48: v_retime = dec_RetimeMode(r.varint()); h_retime = true; break;
       case 56: v_sourceDuration = r.i64(); break;
+      case 864: v_freeze = r.i64(); break;
+      case 873: v_bakedStretch = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -3663,6 +3677,8 @@ function decS_LayerTiming(r: Reader, end: number, o: any): T.LayerTiming {
   o.timeRemapEnabled = v_timeRemapEnabled;
   o.retime = v_retime;
   if (v_sourceDuration !== undefined) o.sourceDuration = v_sourceDuration;
+  if (v_freeze !== undefined) o.freeze = v_freeze;
+  if (v_bakedStretch !== undefined) o.bakedStretch = v_bakedStretch;
   return o;
 }
 function encS_LayerTimingPatch(w: Writer, v: T.LayerTimingPatch): void {
@@ -7442,6 +7458,9 @@ function encS_ItemInfo(w: Writer, v: T.ItemInfo): void {
   w.varint(176); w.u32(v.audioSampleRate);
   w.varint(186); w.str(v.colorProfile);
   w.varint(192); w.u64(v.fileBytes);
+  w.varint(992); w.varint(enc_MediaType(v.mediaType));
+  w.varint(1000); w.bool(v.alphaProbed);
+  w.varint(1008); w.bool(v.audioProbed);
 }
 function decS_ItemInfo(r: Reader, end: number, o: any): T.ItemInfo {
   const l_tags: string[] = [];
@@ -7465,6 +7484,9 @@ function decS_ItemInfo(r: Reader, end: number, o: any): T.ItemInfo {
   let h_audioSampleRate = false;
   let h_colorProfile = false;
   let h_fileBytes = false;
+  let h_mediaType = false;
+  let h_alphaProbed = false;
+  let h_audioProbed = false;
   let v_id: string | undefined;
   let v_kind: T.ItemKind | undefined;
   let v_name: string | undefined;
@@ -7488,6 +7510,9 @@ function decS_ItemInfo(r: Reader, end: number, o: any): T.ItemInfo {
   let v_audioSampleRate: number | undefined;
   let v_colorProfile: string | undefined;
   let v_fileBytes: number | undefined;
+  let v_mediaType: T.MediaType | undefined;
+  let v_alphaProbed: boolean | undefined;
+  let v_audioProbed: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7515,6 +7540,9 @@ function decS_ItemInfo(r: Reader, end: number, o: any): T.ItemInfo {
       case 176: v_audioSampleRate = r.u32(); h_audioSampleRate = true; break;
       case 186: v_colorProfile = r.str(); h_colorProfile = true; break;
       case 192: v_fileBytes = r.u64(); h_fileBytes = true; break;
+      case 992: v_mediaType = dec_MediaType(r.varint()); h_mediaType = true; break;
+      case 1000: v_alphaProbed = r.bool(); h_alphaProbed = true; break;
+      case 1008: v_audioProbed = r.bool(); h_audioProbed = true; break;
       default: r.skip(key);
     }
   }
@@ -7539,6 +7567,9 @@ function decS_ItemInfo(r: Reader, end: number, o: any): T.ItemInfo {
   if (!h_audioSampleRate) throw new DecodeError('ItemInfo.audioSampleRate: missing', 'missingField');
   if (!h_colorProfile) throw new DecodeError('ItemInfo.colorProfile: missing', 'missingField');
   if (!h_fileBytes) throw new DecodeError('ItemInfo.fileBytes: missing', 'missingField');
+  if (!h_mediaType) throw new DecodeError('ItemInfo.mediaType: missing', 'missingField');
+  if (!h_alphaProbed) throw new DecodeError('ItemInfo.alphaProbed: missing', 'missingField');
+  if (!h_audioProbed) throw new DecodeError('ItemInfo.audioProbed: missing', 'missingField');
   o.id = v_id;
   o.kind = v_kind;
   o.name = v_name;
@@ -7563,6 +7594,9 @@ function decS_ItemInfo(r: Reader, end: number, o: any): T.ItemInfo {
   o.audioSampleRate = v_audioSampleRate;
   o.colorProfile = v_colorProfile;
   o.fileBytes = v_fileBytes;
+  o.mediaType = v_mediaType;
+  o.alphaProbed = v_alphaProbed;
+  o.audioProbed = v_audioProbed;
   return o;
 }
 function encS_CompInfo(w: Writer, v: T.CompInfo): void {
@@ -7620,6 +7654,9 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   w.varint(130); w.str(v.generator);
   { const a = v.pinned; for (let i = 0; i < a.length; i++) { w.varint(138); w.str(a[i]!); } }
   w.varint(144); w.u32(v.effectCount);
+  w.varint(946); w.str(v.shapeType);
+  w.varint(954); w.str(v.managedBy);
+  w.varint(962); w.str(v.mographId);
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -7638,6 +7675,9 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let h_comment = false;
   let h_generator = false;
   let h_effectCount = false;
+  let h_shapeType = false;
+  let h_managedBy = false;
+  let h_mographId = false;
   let v_id: string | undefined;
   let v_comp: string | undefined;
   let v_kind: T.LayerKind | undefined;
@@ -7653,6 +7693,9 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_comment: string | undefined;
   let v_generator: string | undefined;
   let v_effectCount: number | undefined;
+  let v_shapeType: string | undefined;
+  let v_managedBy: string | undefined;
+  let v_mographId: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7674,6 +7717,9 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 130: v_generator = r.str(); h_generator = true; break;
       case 138: l_pinned.push(r.str()); break;
       case 144: v_effectCount = r.u32(); h_effectCount = true; break;
+      case 946: v_shapeType = r.str(); h_shapeType = true; break;
+      case 954: v_managedBy = r.str(); h_managedBy = true; break;
+      case 962: v_mographId = r.str(); h_mographId = true; break;
       default: r.skip(key);
     }
   }
@@ -7691,6 +7737,9 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   if (!h_comment) throw new DecodeError('LayerInfo.comment: missing', 'missingField');
   if (!h_generator) throw new DecodeError('LayerInfo.generator: missing', 'missingField');
   if (!h_effectCount) throw new DecodeError('LayerInfo.effectCount: missing', 'missingField');
+  if (!h_shapeType) throw new DecodeError('LayerInfo.shapeType: missing', 'missingField');
+  if (!h_managedBy) throw new DecodeError('LayerInfo.managedBy: missing', 'missingField');
+  if (!h_mographId) throw new DecodeError('LayerInfo.mographId: missing', 'missingField');
   o.id = v_id;
   o.comp = v_comp;
   o.kind = v_kind;
@@ -7709,6 +7758,9 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   o.generator = v_generator;
   o.pinned = l_pinned;
   o.effectCount = v_effectCount;
+  o.shapeType = v_shapeType;
+  o.managedBy = v_managedBy;
+  o.mographId = v_mographId;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {

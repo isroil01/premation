@@ -75,6 +75,10 @@ struct LayerTiming {
   retime: RetimeMode = 6;
   /// B4 — the length of a BOUNDED source (footage, a precomp) on the comp axis at the layer's stretch: what a bar can be trimmed / slipped within (the timeline's source-handle clamps). Absent = unbounded (shapes, text, solids, nulls, a still image, a time-remapped or frozen layer).
   sourceDuration?: Time = 7;
+  /// B4 — Freeze Frame: the comp time the layer holds for its whole bar (Layer ▸ Time ▸ Freeze Frame). Absent = not frozen.
+  freeze?: Time = 108;
+  /// B4 — a BAKED Time Stretch on a layer with no source (shape, text, solid, null, camera, light): the factor its last `timeStretchLayers` bake left (1 = 100 %, negative = reversed), what the Time Stretch field shows. Absent = none (100 %). Footage and precomps report their live rate in `stretch` instead.
+  bakedStretch?: f64 = 109;
 }
 
 struct LayerTimingPatch {

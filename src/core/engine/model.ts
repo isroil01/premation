@@ -49,7 +49,7 @@ import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { parseColorChannels, readNodeEffects } from '@core/effects/effects';
 import { readRetimeMode } from '@core/animation/retime';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { readNodeKind, readShapeType } from '@core/scene/sceneDerive';
 import { splitKind } from '@core/plugins/layerKindSchema';
 import { BLEND_MODES as API_BLEND_MODES } from './enums';
 import type { SceneNode } from '@core/types';
@@ -163,14 +163,22 @@ export function layerTiming(layerId: string): LayerTiming {
   const stretch = (cfg.stretch / 100) * (cfg.reverse ? -1 : 1);
   const retime: RetimeMode = readRetimeMode(defaultAnimation, layerId);
   const timeRemapEnabled = defaultAnimation.isAnimated(layerId, 'timeRemap');
+  // B4: Freeze Frame (the held comp time) and a baked Time Stretch's factor (`fx.bakedStretch`, 100 = none).
+  const bakedRaw = (graph.getNode(layerId)?.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined)?.bakedStretch;
+  const baked = typeof bakedRaw === 'number' && Number.isFinite(bakedRaw) && bakedRaw !== 0 ? bakedRaw : 100;
+  const freezeAndBake: Partial<LayerTiming> = {
+    ...(cfg.freeze ? { freeze: secondsToFlicks(cfg.freezeTime) } : {}),
+    ...(baked !== 100 ? { bakedStretch: baked / 100 } : {}),
+  };
   if (bars.length === 0) {
-    return { inPoint: 0, outPoint: framesToFlicks(compDurationFrames(comp), fps), startTime: 0, stretch, timeRemapEnabled, retime };
+    return { ...freezeAndBake, inPoint: 0, outPoint: framesToFlicks(compDurationFrames(comp), fps), startTime: 0, stretch, timeRemapEnabled, retime };
   }
   const first = bars[0]!;
   const last = bars[bars.length - 1]!;
   // B4: the bar's source bound (Clip.sourceDuration, comp frames) — null = unbounded.
   const srcDur = first.clip.sourceDuration;
   return {
+    ...freezeAndBake,
     inPoint: framesToFlicks(first.start, fps),
     outPoint: framesToFlicks(last.start + last.duration, fps),
     startTime: framesToFlicks(first.start - first.clip.sourceIn, fps),
@@ -288,7 +296,19 @@ export function layerInfo(layerId: string): LayerInfo {
     generator: kind === 'generator' ? pluginKindOf(node) : '',
     pinned: pinnedOf(node),
     effectCount: readNodeEffects(node).length,
+    shapeType: kind === 'generator' ? '' : readShapeType(node) ?? '',
+    managedBy: firstStringProp(node, '__ownedByPlugin'),
+    mographId: firstStringProp(node, '__mographId'),
   };
+}
+
+/** B4: the first non-empty string a component of `node` stores under `prop` ('' when none) — `ownerOf` / `mographIdOf`. */
+function firstStringProp(node: SceneNode, prop: string): string {
+  for (const c of node.components) {
+    const v = (c.props as Record<string, unknown>)[prop];
+    if (typeof v === 'string' && v) return v;
+  }
+  return '';
 }
 
 /** B4: the layer's pinned properties — `__pinnedProps` on the first component carrying the list (pinnedProps.ts `readPinnedProps`). */
@@ -362,7 +382,19 @@ export function compSettings(compId: string): CompSettings {
     ...(c.backgroundPaint ? { backgroundPaint: JSON.stringify(c.backgroundPaint) } : {}),
     // The empty project's placeholder mark (setCompositionSettings `pristine`); absent when unset.
     ...(c.pristine === true ? { pristine: true } : {}),
+    essentialProps: essentialPropsOf(compId),
   };
+}
+
+/** B4: the Essential Properties published on a composition root (`__essentialProps`, every component's list, in order, once each). */
+function essentialPropsOf(compId: string): string[] {
+  const out: string[] = [];
+  for (const c of graph.getNode(compId)?.components ?? []) {
+    const bag = (c.props as Record<string, unknown>).__essentialProps;
+    if (!Array.isArray(bag)) continue;
+    for (const k of bag) if (typeof k === 'string' && !out.includes(k)) out.push(k);
+  }
+  return out;
 }
 
 /** A composition-root prop as a CompSettings JSON field (absent when unset). */
@@ -450,6 +482,9 @@ export function footageInfo(a: ImportedAsset): ItemInfo {
     audioSampleRate: 0,
     colorProfile: '',
     fileBytes: Math.max(0, Math.round(a.size ?? 0)),
+    mediaType: a.type === 'image' || a.type === 'video' || a.type === 'audio' ? a.type : 'none',
+    alphaProbed: typeof md.hasAlpha === 'boolean',
+    audioProbed: typeof md.hasAudioTrack === 'boolean',
   };
 }
 
@@ -459,6 +494,7 @@ export function folderInfo(f: AssetFolder): ItemInfo {
     label: 0, comment: '', path: '', missing: false, width: 0, height: 0, duration: 0,
     hasVideo: false, hasAudio: false, hasAlpha: false, proxyPath: '', proxyEnabled: false,
     tags: [], codec: '', audioChannels: 0, audioSampleRate: 0, colorProfile: '', fileBytes: 0,
+    mediaType: 'none', alphaProbed: false, audioProbed: false,
   };
 }
 
@@ -471,6 +507,7 @@ export function compItemInfo(compId: string): ItemInfo {
     width: s.width, height: s.height, duration: s.duration, frameRate: s.frameRate,
     hasVideo: true, hasAudio: false, hasAlpha: s.transparent, proxyPath: '', proxyEnabled: false,
     tags: [], codec: '', audioChannels: 0, audioSampleRate: 0, colorProfile: '', fileBytes: 0,
+    mediaType: 'none', alphaProbed: false, audioProbed: false,
   };
 }
 

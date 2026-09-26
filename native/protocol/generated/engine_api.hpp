@@ -276,6 +276,15 @@ enum class ItemKind : std::uint32_t {
 [[nodiscard]] std::string_view to_string(ItemKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, ItemKind& out) noexcept;
 
+enum class MediaType : std::uint32_t {
+  none = 0,
+  image = 1,
+  video = 2,
+  audio = 3,
+};
+[[nodiscard]] std::string_view to_string(MediaType v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, MediaType& out) noexcept;
+
 enum class AlphaMode : std::uint32_t {
   auto_ = 0,
   ignore = 1,
@@ -3468,6 +3477,9 @@ struct ItemInfo {
   std::uint32_t audio_sample_rate = 0;
   std::string color_profile;
   std::uint64_t file_bytes = 0;
+  MediaType media_type = MediaType::none;
+  bool alpha_probed = false;
+  bool audio_probed = false;
   bool operator==(const ItemInfo&) const = default;
 };
 
@@ -3495,6 +3507,7 @@ struct CompSettings {
   std::optional<std::string> template_fields;
   std::optional<std::string> background_paint;
   std::optional<bool> pristine;
+  std::vector<std::string> essential_props;
   bool operator==(const CompSettings&) const = default;
 };
 
@@ -3563,6 +3576,8 @@ struct LayerTiming {
   bool time_remap_enabled = false;
   RetimeMode retime = RetimeMode::normal;
   std::optional<Time> source_duration;
+  std::optional<Time> freeze;
+  std::optional<double> baked_stretch;
   bool operator==(const LayerTiming&) const = default;
 };
 
@@ -3585,6 +3600,9 @@ struct LayerInfo {
   std::string generator;
   std::vector<std::string> pinned;
   std::uint32_t effect_count = 0;
+  std::string shape_type;
+  std::string managed_by;
+  std::string mograph_id;
   bool operator==(const LayerInfo&) const = default;
 };
 

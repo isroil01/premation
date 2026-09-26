@@ -30,6 +30,12 @@ struct ItemInfo {
   audioSampleRate: u32 = 22;
   colorProfile: string = 23;
   fileBytes: u64 = 24;
+  /// B4 — what a FOOTAGE item holds: a still image, video or audio (`none` for compositions, folders, solids and placeholders). What the Inspector's pickers (a still image for a sky, a sprite, a height map) and the proxy row filter on.
+  mediaType: MediaType = 124;
+  /// B4 — the import probe looked for an alpha channel: `hasAlpha` false with this false means "never probed", not "opaque" (the Alpha interpretation control stays offered).
+  alphaProbed: bool = 125;
+  /// B4 — the import probe looked for an audio stream: `hasAudio` false on video with this false means "never probed".
+  audioProbed: bool = 126;
 }
 
 struct CompInfo {
@@ -67,6 +73,12 @@ struct LayerInfo {
   pinned: string[] = 17;
   /// B4 — how many effects the layer's effect stack holds (the `effects` group's children, disabled ones included): what a collapsed timeline row needs to draw the fx switch without loading the property tree.
   effectCount: u32 = 18;
+  /// B4 — a shape layer's primitive (`rect`, `ellipse`, `star`, `polygon`, `triangle`, `line`, `arrow`, `heart`, `cross`, `diamond`, `crescent`: the stored `shapeType`), '' for a drawn path or any other layer. What the Layers tree's glyph narrows on (`kind` folds star / triangle into `polygon`).
+  shapeType: string = 118;
+  /// B4 — the plugin that GENERATED this layer and will overwrite it on its next run (`__ownedByPlugin`), '' for a layer the user owns. The Layers tree marks it.
+  managedBy: string = 119;
+  /// B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it.
+  mographId: string = 120;
 }
 
 /// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).
