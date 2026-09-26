@@ -185,6 +185,7 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   listEffects: { id: 1040, family: "Catalog", result: "EffectCatalog", doc: "" },
   listGroupTypes: { id: 1041, family: "Catalog", result: "GroupTypeList", doc: "Which group match names can be added under a parent path (the Add ▸ menus)." },
   listPresets: { id: 1042, family: "Catalog", result: "PresetList", doc: "" },
+  capturePreset: { id: 1888, family: "Catalog", result: "CapturedPreset", doc: "B4 — Save as Preset: the layer's animation as a preset BODY, in the preset format `applyPreset` replays (the Motion Presets panel stores it in the user's library under a name). Keyframe tracks rebased to t = 0 and converted out of pixels into the units each property travels in (position → comp fractions, type metrics → font sizes, against the layer's own composition), text animators, the effect stack in the preset's own id namespace (`fx0`, … with its `effect.<id>.*` tracks re-pointed) and enabled expressions. `notFound` for no such layer." },
   getCapabilities: { id: 1043, family: "Catalog", result: "Capabilities", doc: "" },
   listPlugins: { id: 1086, family: "Catalog", result: "PluginList", doc: "G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list." },
   getEffectUi: { id: 1087, family: "Catalog", result: "EffectUi", doc: "G1 — a native plugin effect's parameter UI at `time` (UPDATE_PARAMS_UI: which params are enabled, hidden or renamed for the current values). A builtin effect answers every param enabled and visible under its catalog name. `notFound` for no such layer or effect." },
@@ -239,4 +240,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":76,"structs":402,"unions":11,"commands":149,"queries":35,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":76,"structs":404,"unions":11,"commands":149,"queries":36,"events":31} as const;

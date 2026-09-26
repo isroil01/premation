@@ -2973,6 +2973,11 @@ export interface ListPresets {
   category: string;
 }
 
+/** B4 — Save as Preset: the layer's animation as a preset BODY, in the preset format `applyPreset` replays (the Motion Presets panel stores it in the user's library under a name). Keyframe tracks rebased to t = 0 and converted out of pixels into the units each property travels in (position → comp fractions, type metrics → font sizes, against the layer's own composition), text animators, the effect stack in the preset's own id namespace (`fx0`, … with its `effect.<id>.*` tracks re-pointed) and enabled expressions. `notFound` for no such layer. */
+export interface CapturePreset {
+  layer: LayerId;
+}
+
 export interface GetCapabilities {}
 
 /** G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list. */
@@ -3040,6 +3045,14 @@ export interface PresetInfo {
 
 export interface PresetList {
   presets: PresetInfo[];
+}
+
+/** B4 — capturePreset's answer. */
+export interface CapturedPreset {
+  /** The preset body as JSON: `{tracks: [{prop, unit?, keyframes: [{t, value, easing?, bezier?, …}]}], animators?, requires?: 'text', effects?: [{id, type, params?}], expressions?: [{prop, expr}]}` — every field of an AnimationPreset but its name and folder. Track names are the stored (legacy) prop paths the preset format uses, not API paths. '{}' when `empty`. */
+  preset: string;
+  /** Nothing to save: no keyframes, animators, effects or enabled expressions on the layer. */
+  empty: boolean;
 }
 
 export interface Capabilities {
@@ -4238,6 +4251,7 @@ export type Query =
   | ({ type: 'listEffects' } & ListEffects)
   | ({ type: 'listGroupTypes' } & ListGroupTypes)
   | ({ type: 'listPresets' } & ListPresets)
+  | ({ type: 'capturePreset' } & CapturePreset)
   | ({ type: 'getCapabilities' } & GetCapabilities)
   | ({ type: 'listPlugins' } & ListPlugins)
   | ({ type: 'getEffectUi' } & GetEffectUi)
@@ -4277,6 +4291,7 @@ export type QueryResult =
   | ({ type: 'listEffects' } & EffectCatalog)
   | ({ type: 'listGroupTypes' } & GroupTypeList)
   | ({ type: 'listPresets' } & PresetList)
+  | ({ type: 'capturePreset' } & CapturedPreset)
   | ({ type: 'getCapabilities' } & Capabilities)
   | ({ type: 'listPlugins' } & PluginList)
   | ({ type: 'getEffectUi' } & EffectUi)
@@ -4657,6 +4672,7 @@ export interface QueryArgs {
   listEffects: ListEffects;
   listGroupTypes: ListGroupTypes;
   listPresets: ListPresets;
+  capturePreset: CapturePreset;
   getCapabilities: GetCapabilities;
   listPlugins: ListPlugins;
   getEffectUi: GetEffectUi;
@@ -4696,6 +4712,7 @@ export interface QueryResults {
   listEffects: EffectCatalog;
   listGroupTypes: GroupTypeList;
   listPresets: PresetList;
+  capturePreset: CapturedPreset;
   getCapabilities: Capabilities;
   listPlugins: PluginList;
   getEffectUi: EffectUi;

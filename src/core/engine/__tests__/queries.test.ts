@@ -36,6 +36,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   listEffects: () => ({ type: 'listEffects', category: '' }),
   listGroupTypes: (x) => ({ type: 'listGroupTypes', layer: x.T, parent: 'text/animators' }),
   listPresets: () => ({ type: 'listPresets', category: '' }),
+  capturePreset: (x) => ({ type: 'capturePreset', layer: x.B }),
   getCapabilities: () => ({ type: 'getCapabilities' }),
   hitTest: (x) => ({ type: 'hitTest', comp: x.comp, time: 0, point: { x: 1, y: 1 }, mode: 'topmost', includeLocked: false }),
   getLayerBounds: (x) => ({ type: 'getLayerBounds', layers: [x.A], time: 0, space: 'comp', includeEffects: false }),
@@ -57,7 +58,31 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(35);
+  expect(Object.keys(QUERIES)).toHaveLength(36);
+});
+
+test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {
+  const comp = unwrap(await h.engine.query({ type: 'getComposition', comp: s.comp }));
+  const { width, height } = comp.comp.settings;
+  const b = await h.query({ type: 'capturePreset', layer: s.B });
+  expect(b.empty).toBe(false);
+  const body = JSON.parse(b.preset) as { tracks: Array<{ prop: string; unit: string; keyframes: Array<{ t: number; value: number }> }> };
+  const x = body.tracks.find((t) => t.prop === 'x')!;
+  const y = body.tracks.find((t) => t.prop === 'y')!;
+  expect(x.unit).toBe('compW');
+  expect(y.unit).toBe('compH');
+  expect(x.keyframes.map((k) => k.t)).toEqual([0, 1]);
+  expect(x.keyframes[1]!.value).toBeCloseTo(300 / width, 9);
+  expect(y.keyframes[0]!.value).toBeCloseTo(100 / height, 9);
+  // A layer with only an effect stack is a preset: the stack in the preset's own ids.
+  const a = await h.query({ type: 'capturePreset', layer: s.A });
+  const fx = (JSON.parse(a.preset) as { effects?: Array<{ id: string; type: string }> }).effects;
+  expect(fx?.map((e) => [e.id, e.type])).toEqual([['fx0', 'glow']]);
+  // Nothing authored: empty.
+  const p = await h.query({ type: 'capturePreset', layer: s.P });
+  expect(p).toMatchObject({ empty: true, preset: '{}' });
+  const bad = await h.engine.query({ type: 'capturePreset', layer: 'nope' });
+  expect(!bad.ok && bad.error.code).toBe('notFound');
 });
 
 test('listPlugins: the TypeScript engine hosts no native plugins (G1: the C++ engine does)', async () => {

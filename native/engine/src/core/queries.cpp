@@ -15,6 +15,7 @@
 #include "handlers_layers.hpp"
 #include "handlers_native.hpp"
 #include "native_effects.hpp"
+#include "presets_capture.hpp"
 #include "readmodel.hpp"
 #include "rig.hpp"
 #include "scene.hpp"
@@ -341,6 +342,15 @@ struct Q {
                                             p.at("description").is_string() ? p.at("description").str() : ""});
     }
     return query_result_for<api::ListPresets>(std::move(out));
+  }
+  api::QueryResult operator()(const api::CapturePreset& q) const {
+    // B4: Save as Preset — animationPresets.ts capturePresetBody against the layer's own comp (queries.ts).
+    (void)require_layer(d, q.layer);
+    api::CapturedPreset out;
+    const auto body = capture_preset_body(d, q.layer);
+    out.preset = body ? stringify(*body) : "{}";
+    out.empty = !body;
+    return query_result_for<api::CapturePreset>(std::move(out));
   }
   api::QueryResult operator()(const api::GetCapabilities&) const {
     return query_result_for<api::GetCapabilities>(c.capabilities());

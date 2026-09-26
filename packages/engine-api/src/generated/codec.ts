@@ -9072,6 +9072,24 @@ function decS_ListPresets(r: Reader, end: number, o: any): T.ListPresets {
   o.category = v_category;
   return o;
 }
+function encS_CapturePreset(w: Writer, v: T.CapturePreset): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_CapturePreset(r: Reader, end: number, o: any): T.CapturePreset {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('CapturePreset.layer: missing', 'missingField');
+  o.layer = v_layer;
+  return o;
+}
 function encS_GetCapabilities(w: Writer, v: T.GetCapabilities): void {
   void w; void v;
 }
@@ -9370,6 +9388,30 @@ function decS_PresetList(r: Reader, end: number, o: any): T.PresetList {
   }
   r.expectAt(end);
   o.presets = l_presets;
+  return o;
+}
+function encS_CapturedPreset(w: Writer, v: T.CapturedPreset): void {
+  w.byte(10); w.str(v.preset);
+  w.byte(16); w.bool(v.empty);
+}
+function decS_CapturedPreset(r: Reader, end: number, o: any): T.CapturedPreset {
+  let h_preset = false;
+  let h_empty = false;
+  let v_preset: string | undefined;
+  let v_empty: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_preset = r.str(); h_preset = true; break;
+      case 16: v_empty = r.bool(); h_empty = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_preset) throw new DecodeError('CapturedPreset.preset: missing', 'missingField');
+  if (!h_empty) throw new DecodeError('CapturedPreset.empty: missing', 'missingField');
+  o.preset = v_preset;
+  o.empty = v_empty;
   return o;
 }
 function encS_Capabilities(w: Writer, v: T.Capabilities): void {
@@ -13806,6 +13848,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_ListPlugins(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportDocument(w, v); w.endLd(s); } return;
+    case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13850,6 +13893,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8690: out = decS_ListPlugins(r, r.ldEnd(), { type: 'listPlugins' }) as T.Query; break;
       case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
       case 8706: out = decS_ExportDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.Query; break;
+      case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -13894,6 +13938,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportedDocument(w, v); w.endLd(s); } return;
+    case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13938,6 +13983,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8690: out = decS_PluginList(r, r.ldEnd(), { type: 'listPlugins' }) as T.QueryResult; break;
       case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
       case 8706: out = decS_ExportedDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.QueryResult; break;
+      case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -14330,6 +14376,7 @@ export const codecs = {
   ListEffects: mk<T.ListEffects>(encS_ListEffects, (r, e) => decS_ListEffects(r, e, {})),
   ListGroupTypes: mk<T.ListGroupTypes>(encS_ListGroupTypes, (r, e) => decS_ListGroupTypes(r, e, {})),
   ListPresets: mk<T.ListPresets>(encS_ListPresets, (r, e) => decS_ListPresets(r, e, {})),
+  CapturePreset: mk<T.CapturePreset>(encS_CapturePreset, (r, e) => decS_CapturePreset(r, e, {})),
   GetCapabilities: mk<T.GetCapabilities>(encS_GetCapabilities, (r, e) => decS_GetCapabilities(r, e, {})),
   ListPlugins: mk<T.ListPlugins>(encS_ListPlugins, (r, e) => decS_ListPlugins(r, e, {})),
   GetEffectUi: mk<T.GetEffectUi>(encS_GetEffectUi, (r, e) => decS_GetEffectUi(r, e, {})),
@@ -14342,6 +14389,7 @@ export const codecs = {
   GroupTypeList: mk<T.GroupTypeList>(encS_GroupTypeList, (r, e) => decS_GroupTypeList(r, e, {})),
   PresetInfo: mk<T.PresetInfo>(encS_PresetInfo, (r, e) => decS_PresetInfo(r, e, {})),
   PresetList: mk<T.PresetList>(encS_PresetList, (r, e) => decS_PresetList(r, e, {})),
+  CapturedPreset: mk<T.CapturedPreset>(encS_CapturedPreset, (r, e) => decS_CapturedPreset(r, e, {})),
   Capabilities: mk<T.Capabilities>(encS_Capabilities, (r, e) => decS_Capabilities(r, e, {})),
   LayerBounds: mk<T.LayerBounds>(encS_LayerBounds, (r, e) => decS_LayerBounds(r, e, {})),
   LayerTransform: mk<T.LayerTransform>(encS_LayerTransform, (r, e) => decS_LayerTransform(r, e, {})),

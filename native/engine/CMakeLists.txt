@@ -148,6 +148,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_bundle_io.cpp
     tests/test_framing.cpp
     tests/test_session.cpp
+    tests/test_b4_round2.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
     tests/test_expression_controls.cpp
@@ -288,6 +289,7 @@ set(ENGINE_DOC_SOURCES
   src/core/parenting.cpp
   src/core/particle_props.cpp
   src/core/plugin_props.cpp
+  src/core/presets_capture.cpp
   src/core/props.cpp
   src/core/ptree.cpp
   src/core/queries.cpp

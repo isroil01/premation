@@ -88,6 +88,7 @@ const PURE_READS = new Set([
   'makeKeyframeId', 'parseKeyframeId', 'updateNodeComponentProp',
   // Libraries and clipboards the user keeps across projects — not the document.
   'listPresets', 'exportPresets', 'presetFolder', 'listEffectPresets', 'hasEffectClipboard',
+  'saveUserPreset', // core/animation/animationPresets: stores a captured body in the user's library (settings), reads nothing
   'effectClipboardSize', 'readEffectClipboard', // core/effects/effectClipboard: the clipboard's own module state
   'getTransitionItem', // core/library/transitionLibrary: a lookup in the static TRANSITION_ITEMS catalog
   // Pure string helpers living in modules that also read the scene.

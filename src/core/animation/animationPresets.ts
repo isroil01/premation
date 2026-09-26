@@ -728,30 +728,45 @@ export function saveCurrentAsPreset(
   name: string,
   folder = USER_PRESET_FOLDER,
 ): boolean {
-  const ctx = presetContextFor(nodeId);
+  const body = capturePresetBody(nodeId);
+  if (!body) return false; // nothing to save
+  saveUserPreset(name, body, folder);
+  return true;
+}
+
+/** What `capturePresetBody` returns: an AnimationPreset without its name and place in the library. */
+export type CapturedPresetBody = Pick<AnimationPreset, 'tracks' | 'animators' | 'requires' | 'effects' | 'expressions'>;
+
+/**
+ * A layer's animation as a preset BODY — what the engine's `capturePreset`
+ * query answers (ENGINE_API.md §15.12; the C++ twin is `capture_preset` in
+ * native/engine/src/core/presets_capture.cpp). Null when there is nothing to
+ * save. `ctx` defaults to the active composition (`presetContextFor`); the
+ * query passes the layer's OWN composition.
+ */
+export function capturePresetBody(nodeId: string, ctx: PresetContext = presetContextFor(nodeId)): CapturedPresetBody | null {
   const captured = captureAnimation(nodeId, defaultAnimation, ctx);
   const node = defaultSceneGraph.getNode(nodeId);
   const animators = node && hasTextComponent(node) ? readAnimatorData(node) : [];
   const expressions = captureExpressions(nodeId);
   const { effects, tracks } = captureEffects(nodeId, captured);
+  if (!tracks.length && !animators.length && !effects.length && !expressions.length) return null;
+  return {
+    tracks,
+    ...(animators.length ? { animators, requires: 'text' as const } : {}),
+    ...(effects.length ? { effects } : {}),
+    ...(expressions.length ? { expressions } : {}),
+  };
+}
 
-  if (!tracks.length && !animators.length && !effects.length && !expressions.length) {
-    return false; // nothing to save
-  }
-
+/**
+ * Store a captured preset body in the user's library under `name` (a
+ * same-named user preset is replaced — the import rule). The library is the
+ * editor's, not the document: this writes settings, never the engine.
+ */
+export function saveUserPreset(name: string, body: CapturedPresetBody, folder = USER_PRESET_FOLDER): void {
   const others = readUserPresets().filter((p) => p.name !== name);
-  writeUserPresets([
-    ...others,
-    {
-      name,
-      folder,
-      tracks,
-      ...(animators.length ? { animators, requires: 'text' as const } : {}),
-      ...(effects.length ? { effects } : {}),
-      ...(expressions.length ? { expressions } : {}),
-    },
-  ]);
-  return true;
+  writeUserPresets([...others, { name, folder, ...body, tracks: body.tracks ?? [] }]);
 }
 
 /**

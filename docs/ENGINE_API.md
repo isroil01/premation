@@ -578,6 +578,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
+| `capturePreset` | B4: a layer's animation as a preset body (Save as Preset) — keys in the preset's own units, text animators, effects, expressions (§15.12). |
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |
 | `listPlugins`, `getEffectUi` | G1: the native SDK plugins the engine found (loaded / disabled / failed with why / quarantined after ending the engine); a plugin effect's parameter UI at a time (UPDATE_PARAMS_UI: enabled, hidden, renamed). The TypeScript engine hosts no native plugins (empty list; builtin effects answer every param enabled). |
 | `hitTest` | Layers under a comp point at a time (topmost or all). |
@@ -1733,6 +1734,28 @@ field); both engines report them from the same stored keys.
 - **`liftRange`** (command 971, result `TimeRangeEdit`): Lift, `rippleDeleteRange`
   without the ripple, reporting what it cut (the timeline's Lift Work Area
   toast states it). Both engines run one shared plan for the two commands.
+
+### 15.12 B4 round 2 — measured geometry, captures and clipboards in API form (both engines, 2026-09-27)
+
+The data the B4 exit left as `B4-gap` reads (B4_MIRROR.md §4 "Still open"),
+added so the sites that computed them over the TypeScript engine's scene graph
+ask the engine instead. Ids and field numbers start at the current maximum +
+800 (parallel agents): queries from 1888, commands from 1771, struct fields
+from the struct's maximum + 800.
+
+- **`capturePreset {layer}`** (query 1888 → `CapturedPreset {preset, empty}`):
+  Save as Preset. The body is JSON in the preset format `applyPreset` replays
+  (`animationPresets.ts` `AnimationPreset` without its name / folder): every
+  keyed track rebased to t = 0, its values converted OUT of pixels by the
+  property's default unit (`x` → `compW`, `y` → `compH`, `z` → `compMin`,
+  tracking / line spacing / blur / stroke width → `fontSize`, the rest `abs`)
+  against the layer's OWN composition and its stored width / height / font
+  size; the text animators (`requires: 'text'`); the effect stack renumbered
+  `fx0`, `fx1`, … with its `effect.<id>.*` tracks re-pointed; the ENABLED,
+  non-blank expressions. `empty` when there is none of that. Track names are
+  the stored prop paths of the preset format, not API paths. TS:
+  `capturePresetBody`; C++: `core/presets_capture.cpp`. The library stays the
+  editor's (`saveUserPreset` writes settings).
 
 ## 16. Files
 

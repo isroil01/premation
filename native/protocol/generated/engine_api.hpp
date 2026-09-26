@@ -1025,6 +1025,7 @@ struct GetThumbnail;
 struct ListEffects;
 struct ListGroupTypes;
 struct ListPresets;
+struct CapturePreset;
 struct GetCapabilities;
 struct ListPlugins;
 struct GetEffectUi;
@@ -1107,6 +1108,7 @@ struct GroupTypeInfo;
 struct GroupTypeList;
 struct PresetInfo;
 struct PresetList;
+struct CapturedPreset;
 struct Capabilities;
 struct PluginInfo;
 struct PluginList;
@@ -3000,6 +3002,11 @@ struct ListPresets {
   bool operator==(const ListPresets&) const = default;
 };
 
+struct CapturePreset {
+  LayerId layer;
+  bool operator==(const CapturePreset&) const = default;
+};
+
 struct GetCapabilities {
   bool operator==(const GetCapabilities&) const = default;
 };
@@ -3118,6 +3125,7 @@ struct Query {
     list_effects = 1040,
     list_group_types = 1041,
     list_presets = 1042,
+    capture_preset = 1888,
     get_capabilities = 1043,
     list_plugins = 1086,
     get_effect_ui = 1087,
@@ -3136,7 +3144,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3869,6 +3877,12 @@ struct PresetList {
   bool operator==(const PresetList&) const = default;
 };
 
+struct CapturedPreset {
+  std::string preset;
+  bool empty = false;
+  bool operator==(const CapturedPreset&) const = default;
+};
+
 struct Capabilities {
   std::string gpu_adapter;
   std::string gpu_backend;
@@ -4073,6 +4087,7 @@ struct QueryResult {
     list_effects = 1040,
     list_group_types = 1041,
     list_presets = 1042,
+    capture_preset = 1888,
     get_capabilities = 1043,
     list_plugins = 1086,
     get_effect_ui = 1087,
@@ -4091,7 +4106,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -5290,6 +5305,8 @@ void encode(wire::Writer& w, const ListGroupTypes& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListGroupTypes& out);
 void encode(wire::Writer& w, const ListPresets& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListPresets& out);
+void encode(wire::Writer& w, const CapturePreset& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CapturePreset& out);
 void encode(wire::Writer& w, const GetCapabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetCapabilities& out);
 void encode(wire::Writer& w, const ListPlugins& v);
@@ -5454,6 +5471,8 @@ void encode(wire::Writer& w, const PresetInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PresetInfo& out);
 void encode(wire::Writer& w, const PresetList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PresetList& out);
+void encode(wire::Writer& w, const CapturedPreset& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CapturedPreset& out);
 void encode(wire::Writer& w, const Capabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Capabilities& out);
 void encode(wire::Writer& w, const PluginInfo& v);

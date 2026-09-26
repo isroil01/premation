@@ -268,6 +268,8 @@ query listEffects = 1040 { category: string = 1; } -> EffectCatalog;
 /// Which group match names can be added under a parent path (the Add ▸ menus).
 query listGroupTypes = 1041 { layer: LayerId = 1; parent: PropPath = 2; } -> GroupTypeList;
 query listPresets = 1042 { category: string = 1; } -> PresetList;
+/// B4 — Save as Preset: the layer's animation as a preset BODY, in the preset format `applyPreset` replays (the Motion Presets panel stores it in the user's library under a name). Keyframe tracks rebased to t = 0 and converted out of pixels into the units each property travels in (position → comp fractions, type metrics → font sizes, against the layer's own composition), text animators, the effect stack in the preset's own id namespace (`fx0`, … with its `effect.<id>.*` tracks re-pointed) and enabled expressions. `notFound` for no such layer.
+query capturePreset = 1888 { layer: LayerId = 1; } -> CapturedPreset;
 query getCapabilities = 1043 {} -> Capabilities;
 /// G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list.
 query listPlugins = 1086 {} -> PluginList;
@@ -307,6 +309,13 @@ struct GroupTypeInfo { matchName: string = 1; displayName: string = 2; category:
 struct GroupTypeList { types: GroupTypeInfo[] = 1; }
 struct PresetInfo { id: string = 1; name: string = 2; category: string = 3; description: string = 4; }
 struct PresetList { presets: PresetInfo[] = 1; }
+/// B4 — capturePreset's answer.
+struct CapturedPreset {
+  /// The preset body as JSON: `{tracks: [{prop, unit?, keyframes: [{t, value, easing?, bezier?, …}]}], animators?, requires?: 'text', effects?: [{id, type, params?}], expressions?: [{prop, expr}]}` — every field of an AnimationPreset but its name and folder. Track names are the stored (legacy) prop paths the preset format uses, not API paths. '{}' when `empty`.
+  preset: string = 1;
+  /// Nothing to save: no keyframes, animators, effects or enabled expressions on the layer.
+  empty: bool = 2;
+}
 
 struct Capabilities {
   gpuAdapter: string = 1;

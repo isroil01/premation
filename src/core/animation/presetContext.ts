@@ -10,12 +10,13 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useProjectStore } from '@stores/projectStore';
 import { DEFAULT_PRESET_CONTEXT, type PresetContext } from './presetUnits';
 
-/** The active composition's settings, or undefined outside a project (tests). */
-function activeComp(): { width: number; height: number; durationSeconds: number } | undefined {
+/** A composition's settings (the active one when `compId` is omitted), or undefined outside a project (tests). */
+function compSettingsOf(compId?: string): { width: number; height: number; durationSeconds: number } | undefined {
   try {
     const s = useProjectStore.getState();
     const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
-    const comp = tab ? s.comps[tab.compositionId] : undefined;
+    const id = compId ?? tab?.compositionId;
+    const comp = id ? s.comps[id] : undefined;
     return comp ? { width: comp.width, height: comp.height, durationSeconds: comp.durationSeconds } : undefined;
   } catch {
     return undefined;
@@ -41,10 +42,12 @@ function nodeNumber(nodeId: string, key: string): number | undefined {
  *
  * Falls back field-by-field rather than all-or-nothing: a layer with no
  * explicit width still gets the real comp size, so a slide-in lands correctly
- * even when the layer's own box is unknown.
+ * even when the layer's own box is unknown. `compId` names the composition
+ * to resolve against (the engine's `capturePreset` passes the layer's own);
+ * omitted = the active one.
  */
-export function presetContextFor(nodeId: string): PresetContext {
-  const comp = activeComp();
+export function presetContextFor(nodeId: string, compId?: string): PresetContext {
+  const comp = compSettingsOf(compId);
   const compWidth = comp?.width ?? DEFAULT_PRESET_CONTEXT.compWidth;
   const compHeight = comp?.height ?? DEFAULT_PRESET_CONTEXT.compHeight;
   return {

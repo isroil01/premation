@@ -9,7 +9,8 @@
 import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
 import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
-import { listPresets } from '@core/animation/animationPresets';
+import { listPresets, capturePresetBody } from '@core/animation/animationPresets';
+import { presetContextFor } from '@core/animation/presetContext';
 import { world2DAt, world3DAt } from '@core/scene/layerSpace';
 import { compSizeOf } from '@core/composition/compSizes';
 import { readCompRef } from '@core/scene/compInstance';
@@ -227,6 +228,12 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         .filter((p) => q.category === '' || p.category === q.category || p.folder === q.category)
         .map((p) => ({ id: p.name, name: p.name, category: p.folder ?? p.category ?? '', description: p.description ?? '' }));
       return { type: q.type, presets };
+    }
+    case 'capturePreset': {
+      // B4: Save as Preset — the preset body resolved against the layer's OWN composition.
+      requireLayer(q.layer);
+      const body = capturePresetBody(q.layer, presetContextFor(q.layer, compOfLayer(q.layer) ?? undefined));
+      return { type: q.type, preset: body ? JSON.stringify(body) : '{}', empty: body === null };
     }
     case 'listPlugins':
       // Native SDK plugins live in the C++ engine process (G1); this engine hosts none.
