@@ -108,7 +108,7 @@ describe('engineIneligible', () => {
     expect(engineIneligible(spec({ format: 'gif' }), exe)).toBeNull();
     expect(engineIneligible(spec(), null)).toMatch(/not available/);
     expect(engineIneligible(spec({ format: 'png-sequence' }), exe)).toBeNull();
-    expect(engineIneligible(spec({ format: 'jpg-sequence' }), exe)).toMatch(/jpg-sequence/);
+    expect(engineIneligible(spec({ format: 'jpg-sequence' }), exe)).toBeNull();
     expect(engineIneligible(spec({ chapters: [{ t: 0, title: 'A' }] }), exe)).toMatch(/chapters/);
     expect(engineIneligible(spec({ chapters: [{ startMs: 0, endMs: 1000, title: 'Intro' }] }), exe)).toBeNull();
     expect(engineIneligible(spec({ videoEncoder: 'h264_nvenc' }), exe)).toBeNull();

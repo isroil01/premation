@@ -940,6 +940,7 @@ add_library(engine_export_core STATIC
   src/export/project_open.cpp
   src/export/child_process_ffi.cpp
   src/export/png_write.cpp
+  src/export/jpeg_write.cpp
   src/export/zlib_ffi.cpp
   src/export/zip_write.cpp)
 target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
@@ -947,6 +948,7 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(engine_export_core PUBLIC engine_core ZLIB::ZLIB PRIVATE motion::options)
 if(WIN32)
   target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+  target_link_libraries(engine_export_core PRIVATE windowscodecs ole32)
 endif()
 add_executable(premation-export-sink tools/premation_export_sink.cpp)
 target_link_libraries(premation-export-sink PRIVATE motion::options)

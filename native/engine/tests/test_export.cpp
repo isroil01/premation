@@ -14,6 +14,7 @@
 #include "exr_write.hpp"
 #include "ffmetadata.hpp"
 #include "frame_convert.hpp"
+#include "jpeg_write.hpp"
 #include "png_write.hpp"
 #include "project_open.hpp"
 #include "wav_write.hpp"
@@ -206,6 +207,10 @@ TEST_CASE("a PNG sequence frame is a readable RGBA PNG, and a zip of frames stor
   REQUIRE(ex::encode_png_rgba8(px, 2, 2, png));
   REQUIRE(png.size() > 8);
   CHECK(png[0] == 0x89);
+  std::vector<std::uint8_t> jpg;
+  REQUIRE(ex::encode_jpeg_rgba8(px, 2, 2, 0.9F, jpg));
+  CHECK(jpg[0] == 0xFF);
+  CHECK(jpg[1] == 0xD8);
   CHECK(png[1] == 'P');
   CHECK(png[2] == 'N');
   CHECK(png[3] == 'G');

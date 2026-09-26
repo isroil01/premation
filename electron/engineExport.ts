@@ -115,10 +115,10 @@ export interface EngineExportDeps {
 }
 
 /** The formats the engine path writes: the raw pipe, plus zipped image sequences. */
-const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'exr-sequence']);
+const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
 
 function isSequence(format: string): boolean {
-  return format === 'png-sequence' || format === 'exr-sequence';
+  return format === 'png-sequence' || format === 'jpg-sequence' || format === 'exr-sequence';
 }
 
 function resolvedChapters(raw: unknown): Array<{ startMs: number; endMs: number; title: string }> | null {
@@ -166,6 +166,7 @@ export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<s
   // A GIF carries no sound (buildEncodeArgs drops it), so the engine skips the mix.
   job.audio = spec.format !== 'gif' && !isSequence(spec.format);
   if (spec.format === 'png-sequence') job.sequence = 'png-zip';
+  if (spec.format === 'jpg-sequence') job.sequence = 'jpg-zip';
   if (spec.format === 'exr-sequence') job.sequence = 'exr-zip';
   const chapters = resolvedChapters(spec.chapters);
   if (chapters) job.chapters = chapters;
@@ -194,6 +195,7 @@ export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, o
 /** Where the engine writes the encode before it is delivered. */
 export function engineOutputFile(workDir: string, format: string): string {
   if (format === 'png-sequence') return path.join(workDir, 'frames.png.zip');
+  if (format === 'jpg-sequence') return path.join(workDir, 'frames.jpg.zip');
   if (format === 'exr-sequence') return path.join(workDir, 'frames.exr.zip');
   return path.join(workDir, `out.${format}`);
 }

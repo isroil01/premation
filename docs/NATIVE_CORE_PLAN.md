@@ -1344,7 +1344,7 @@ only; not yet exposed in the Export UI.
   as the window path and passes the winner (`libx264` when the device will not
   start). PNG and EXR
   sequences, and chapters already resolved to `{startMs, endMs, title}`, run
-  in the engine when the export flag is on. JPEG sequences stay on the window path.
+  in the engine when the export flag is on, and so do JPEG sequences (WIC on Windows).
 - Partial-alpha unpremultiply is modelled on Skia's float path and is only
   unit-tested; the alpha golden scenes cannot run in the CLI because their
   harness footage is not resolvable there.
